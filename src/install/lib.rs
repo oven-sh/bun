@@ -561,19 +561,65 @@ pub mod bin {
 /// Stub: `lockfile.rs` — type surface for `dependency.rs` / `npm.rs`.
 pub mod lockfile {
     pub use bun_semver::StringBuilder;
+    use crate::{Dependency, PackageID, PackageNameHash};
+    use crate::external_slice::ExternalSlice;
+    use crate::resolution::Resolution;
+
     #[derive(Default)] pub struct Lockfile {
         pub buffers: Buffers,
         pub packages: PackageList,
     }
-    /// Stub: `MultiArrayList<Package>` column accessor surface for
-    /// `UpdateRequest::get_name_in_lockfile`. Real body in `lockfile.rs`
-    /// (gated behind `package_manager_real`, reconciler-6).
-    #[derive(Default)] pub struct PackageList;
+    impl Lockfile {
+        /// Port of `Lockfile.getWorkspacePackageID`
+        /// (src/install/lockfile.zig:621). Returns the package id whose
+        /// resolution tag is `.workspace` and whose `name_hash` matches; falls
+        /// back to root (0) when no match / no workspace hash.
+        pub fn get_workspace_package_id(
+            &self,
+            workspace_name_hash: Option<PackageNameHash>,
+        ) -> PackageID {
+            let Some(hash) = workspace_name_hash else { return 0 };
+            let pkgs = self.packages.slice();
+            let name_hashes = pkgs.items_name_hash();
+            let resolutions = pkgs.items_resolution();
+            for (i, (res, name_hash)) in
+                resolutions.iter().zip(name_hashes.iter()).enumerate()
+            {
+                if res.tag == crate::resolution::Tag::Workspace && *name_hash == hash {
+                    return i as PackageID;
+                }
+            }
+            // should not hit this, default to root just in case
+            0
+        }
+    }
+    /// Stub: `MultiArrayList<Package>` column accessor surface. Real body in
+    /// `lockfile.rs` (gated behind `package_manager_real`, reconciler-6).
+    /// Backed by per-column Vecs so the audit/why CLI walkers can iterate
+    /// `name` / `dependencies` / `resolutions` / `resolution` without
+    /// instantiating the full `MultiArrayList<Package>` (which still has 1200+
+    /// port errors against `bun_semver` generics).
+    #[derive(Default)] pub struct PackageList {
+        pub name: Vec<bun_semver::String>,
+        pub name_hash: Vec<PackageNameHash>,
+        pub dependencies: Vec<ExternalSlice<Dependency>>,
+        pub resolutions: Vec<ExternalSlice<PackageID>>,
+        pub resolution: Vec<Resolution>,
+    }
     impl PackageList {
-        pub fn items_name(&self) -> &[bun_semver::String] { &[] }
+        #[inline] pub fn slice(&self) -> &Self { self }
+        #[inline] pub fn len(&self) -> usize { self.name.len() }
+        #[inline] pub fn is_empty(&self) -> bool { self.name.is_empty() }
+        #[inline] pub fn items_name(&self) -> &[bun_semver::String] { &self.name }
+        #[inline] pub fn items_name_hash(&self) -> &[PackageNameHash] { &self.name_hash }
+        #[inline] pub fn items_dependencies(&self) -> &[ExternalSlice<Dependency>] { &self.dependencies }
+        #[inline] pub fn items_resolutions(&self) -> &[ExternalSlice<PackageID>] { &self.resolutions }
+        #[inline] pub fn items_resolution(&self) -> &[Resolution] { &self.resolution }
     }
     #[derive(Default)] pub struct Buffers {
         pub string_bytes: Vec<u8>,
+        pub dependencies: Vec<Dependency>,
+        pub resolutions: Vec<PackageID>,
     }
     #[derive(Default)] pub struct PatchedDep;
     #[derive(Default)] pub struct LoadResult;
@@ -615,8 +661,37 @@ pub mod package_manager {
             DefaultNoProgress,
             VerboseNoProgress,
         }
-        pub fn open_global_dir(_explicit: &[u8]) -> Result<bun_sys::Dir, bun_core::Error> {
-            todo!("blocked_on: bun_install::package_manager_real un-gate (reconciler-6)")
+        /// Port of `Options.openGlobalDir` (src/install/PackageManager/PackageManagerOptions.zig).
+        /// Resolution order matches Zig: `$BUN_INSTALL_GLOBAL_DIR` → explicit arg →
+        /// `$BUN_INSTALL/install/global` → `{$XDG_CACHE_HOME,$HOME}/.bun/install/global`.
+        pub fn open_global_dir(explicit_global_dir: &[u8]) -> Result<bun_sys::Dir, bun_core::Error> {
+            use bun_core::env_var;
+            use bun_paths::{resolve_path::join_abs_string_buf, platform, PathBuffer};
+            use bun_sys::{Dir, OpenDirOptions};
+
+            if let Some(home_dir) = env_var::BUN_INSTALL_GLOBAL_DIR.get() {
+                return Dir::cwd().make_open_path(home_dir, OpenDirOptions::default());
+            }
+
+            if !explicit_global_dir.is_empty() {
+                return Dir::cwd().make_open_path(explicit_global_dir, OpenDirOptions::default());
+            }
+
+            if let Some(home_dir) = env_var::BUN_INSTALL.get() {
+                let mut buf = PathBuffer::uninit();
+                let parts: [&[u8]; 2] = [b"install", b"global"];
+                let path = join_abs_string_buf::<platform::Auto>(home_dir, &mut buf.0, &parts);
+                return Dir::cwd().make_open_path(path, OpenDirOptions::default());
+            }
+
+            if let Some(home_dir) = env_var::XDG_CACHE_HOME.get().or_else(|| env_var::HOME.get()) {
+                let mut buf = PathBuffer::uninit();
+                let parts: [&[u8]; 3] = [b".bun", b"install", b"global"];
+                let path = join_abs_string_buf::<platform::Auto>(home_dir, &mut buf.0, &parts);
+                return Dir::cwd().make_open_path(path, OpenDirOptions::default());
+            }
+
+            Err(bun_core::err!("No global directory found"))
         }
     }
     pub use Options::LogLevel;
@@ -664,20 +739,68 @@ pub mod package_manager {
     }
     pub use workspace_package_json_cache::WorkspacePackageJSONCache;
 
-    /// Stub: `WorkspaceFilter` (src/install/PackageManager.zig). Real body in
-    /// gated `package_manager_real`. Variant payloads are owned glob patterns.
+    /// Port of `WorkspaceFilter` (src/install/PackageManager.zig). Variant
+    /// payloads are owned glob patterns (Zig allocated via `allocator.alloc`;
+    /// here `Box<[u8]>` so `deinit` is just Drop).
     pub enum WorkspaceFilter {
         All,
         Name(Box<[u8]>),
         Path(Box<[u8]>),
     }
     impl WorkspaceFilter {
+        /// Port of `WorkspaceFilter.init` (src/install/PackageManager.zig).
+        /// `*` / `**` → `All`; leading `!`s toggle a negate prefix re-prepended
+        /// onto the owned pattern; leading `.` (after `!`-stripping) means a
+        /// path filter resolved against `cwd`, else a name filter.
         pub fn init(
-            _input: &[u8],
-            _cwd: &[u8],
-            _path_buf: &mut bun_paths::PathBuffer,
+            input: &[u8],
+            cwd: &[u8],
+            path_buf: &mut bun_paths::PathBuffer,
         ) -> Self {
-            todo!("blocked_on: bun_install::package_manager_real un-gate (reconciler-6)")
+            use bun_string::strings;
+            if (input.len() == 1 && input[0] == b'*') || strings::eql_comptime(input, b"**") {
+                return WorkspaceFilter::All;
+            }
+
+            let mut remain = input;
+            let mut prepend_negate = false;
+            while !remain.is_empty() && remain[0] == b'!' {
+                prepend_negate = !prepend_negate;
+                remain = &remain[1..];
+            }
+
+            let is_path = !remain.is_empty() && remain[0] == b'.';
+
+            let filter: &[u8] = if is_path {
+                strings::without_trailing_slash(
+                    bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Posix>(
+                        cwd,
+                        &mut path_buf.0,
+                        &[remain],
+                    ),
+                )
+            } else {
+                remain
+            };
+
+            if filter.is_empty() {
+                // won't match anything
+                return WorkspaceFilter::Path(Box::from(&b""[..]));
+            }
+
+            let copy_start = usize::from(prepend_negate);
+            let copy_end = copy_start + filter.len();
+            let mut buf = vec![0u8; copy_end].into_boxed_slice();
+            buf[copy_start..copy_end].copy_from_slice(filter);
+            if prepend_negate {
+                buf[0] = b'!';
+            }
+
+            if is_path {
+                WorkspaceFilter::Path(buf)
+            } else {
+                WorkspaceFilter::Name(buf)
+            }
         }
     }
 
@@ -890,14 +1013,38 @@ impl ExtractTarball {
     pub is_extended_manifest: bool,
 }
 #[derive(Default)] pub struct TarballStream;
+/// Port of `RootPackageId` (src/install/PackageManager.zig:38) — lazy cache
+/// for the root/workspace package id. `get()` resolves on first call via
+/// `Lockfile::get_workspace_package_id` and memoises.
+#[derive(Default)] pub struct RootPackageId {
+    pub id: Option<PackageID>,
+}
+impl RootPackageId {
+    pub fn get(
+        &mut self,
+        lockfile: &Lockfile,
+        workspace_name_hash: Option<PackageNameHash>,
+    ) -> PackageID {
+        if let Some(id) = self.id {
+            return id;
+        }
+        let id = lockfile.get_workspace_package_id(workspace_name_hash);
+        self.id = Some(id);
+        id
+    }
+}
 #[derive(Default)] pub struct PackageManager {
     pub options: PackageManagerOptionsStub,
     pub timestamp_for_manifest_cache_control: u32,
-    /// Zig: `lockfile: *Lockfile` (src/install/PackageManager.zig) — owned,
+    /// Zig: `lockfile: *Lockfile` (src/install/PackageManager.zig:88) — owned,
     /// heap-allocated at `init()`. Stub holds it inline (`Default`-derive
     /// sentinel) until `package_manager_real` un-gates and the real
     /// `Box<Lockfile>` shape lands.
     pub lockfile: Lockfile,
+    /// Zig: `root_package_id: RootPackageId = .{}`.
+    pub root_package_id: RootPackageId,
+    /// Zig: `workspace_name_hash: ?PackageNameHash = null`.
+    pub workspace_name_hash: Option<PackageNameHash>,
     /// Zig: `env: *DotEnv.Loader` (src/install/PackageManager.zig:11) — set
     /// once by `PackageManager.init()` and never null afterward. `Option` is
     /// only the `Default`-derive sentinel; accessors `env()`/`env_mut()` unwrap

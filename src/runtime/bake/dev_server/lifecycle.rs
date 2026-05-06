@@ -74,9 +74,13 @@ impl WatcherAtomics {
         let mk_event = || HotReloadEvent::init_empty(owner);
         WatcherAtomics {
             events: [mk_event(), mk_event(), mk_event()],
-            next_event: core::sync::atomic::AtomicU8::new(0),
+            next_event: core::sync::atomic::AtomicU8::new(super::NextEvent::DONE.0),
             current_event: None,
             pending_event: None,
+            #[cfg(debug_assertions)]
+            dbg_watcher_event: None,
+            #[cfg(debug_assertions)]
+            dbg_server_event: None,
         }
     }
 }

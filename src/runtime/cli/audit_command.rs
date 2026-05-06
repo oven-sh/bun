@@ -5,6 +5,7 @@ use bun_collections::StringHashMap;
 use bun_core::{Global, Output};
 use bun_http::{self as http, HeaderBuilder};
 use bun_install::package_manager::command_line_arguments::AuditLevel;
+use bun_install::resolution::Tag as ResolutionTag;
 use bun_install::PackageManager;
 use bun_interchange::json as bun_json;
 use bun_libdeflate_sys::libdeflate;
@@ -183,21 +184,96 @@ fn print_skipped_packages(skipped_packages: &Vec<Box<[u8]>>) {
 fn build_dependency_tree(
     pm: &mut PackageManager,
 ) -> Result<StringHashMap<Vec<Box<[u8]>>>, bun_alloc::AllocError> {
-    let _ = pm;
-    // Body iterates `pm.lockfile.packages` / `pm.lockfile.buffers` and
-    // `Resolution::Tag` columns — all gated behind the upstream
-    // `bun_install::PackageManager::lockfile` field (reconciler-6).
-    todo!("blocked_on: bun_install::PackageManager::lockfile")
+    let mut dependency_tree: StringHashMap<Vec<Box<[u8]>>> = StringHashMap::default();
+
+    let packages = pm.lockfile.packages.slice();
+    let pkg_names = packages.items_name();
+    let pkg_dependencies = packages.items_dependencies();
+    let pkg_resolutions = packages.items_resolutions();
+    let pkg_resolution = packages.items_resolution();
+    let buf = pm.lockfile.buffers.string_bytes.as_slice();
+    let dependencies = pm.lockfile.buffers.dependencies.as_slice();
+    let resolutions = pm.lockfile.buffers.resolutions.as_slice();
+
+    for pkg_idx in 0..pkg_names.len() {
+        let package_name = pkg_names[pkg_idx].slice(buf);
+
+        if pkg_resolution[pkg_idx].tag != ResolutionTag::Npm {
+            continue;
+        }
+
+        let dep_slice = pkg_dependencies[pkg_idx].get(dependencies);
+        let res_slice = pkg_resolutions[pkg_idx].get(resolutions);
+
+        for (_, &resolved_pkg_id) in dep_slice.iter().zip(res_slice.iter()) {
+            if (resolved_pkg_id as usize) >= pkg_names.len() {
+                continue;
+            }
+
+            let resolved_name = pkg_names[resolved_pkg_id as usize].slice(buf);
+
+            // PORT NOTE: Zig `getOrPut` then `dupe` key only when not found.
+            // `StringHashMap::get_or_put` always boxes the key on miss, so the
+            // separate `allocator.dupe` is folded in.
+            let result = dependency_tree.get_or_put(resolved_name)?;
+            result.value_ptr.push(Box::<[u8]>::from(package_name));
+        }
+    }
+
+    Ok(dependency_tree)
 }
 
 fn build_production_package_set(
     pm: &mut PackageManager,
     prod_set: &mut StringHashMap<()>,
 ) -> Result<(), bun_alloc::AllocError> {
-    let _ = (pm, prod_set);
-    // Body walks `pm.lockfile.packages` / `pm.root_package_id` /
-    // `pm.workspace_name_hash` — gated behind upstream PackageManager stub.
-    todo!("blocked_on: bun_install::PackageManager::lockfile")
+    let root_id = pm
+        .root_package_id
+        .get(&pm.lockfile, pm.workspace_name_hash);
+
+    let packages = pm.lockfile.packages.slice();
+    let pkg_names = packages.items_name();
+    let pkg_dependencies = packages.items_dependencies();
+    let pkg_resolutions = packages.items_resolutions();
+    let buf = pm.lockfile.buffers.string_bytes.as_slice();
+    let dependencies = pm.lockfile.buffers.dependencies.as_slice();
+    let resolutions = pm.lockfile.buffers.resolutions.as_slice();
+
+    let mut queue: std::collections::VecDeque<u32> = std::collections::VecDeque::new();
+
+    let root_deps = pkg_dependencies[root_id as usize];
+    let root_resolutions = pkg_resolutions[root_id as usize];
+    let dep_slice = root_deps.get(dependencies);
+    let res_slice = root_resolutions.get(resolutions);
+
+    for (dep, &resolved_pkg_id) in dep_slice.iter().zip(res_slice.iter()) {
+        if !dep.behavior.is_dev() && (resolved_pkg_id as usize) < packages.len() {
+            let pkg_name = pkg_names[resolved_pkg_id as usize].slice(buf);
+            prod_set.put(pkg_name, ())?;
+            queue.push_back(resolved_pkg_id);
+        }
+    }
+
+    while let Some(current_pkg_id) = queue.pop_front() {
+        let current_deps = pkg_dependencies[current_pkg_id as usize];
+        let current_resolutions = pkg_resolutions[current_pkg_id as usize];
+        let current_dep_slice = current_deps.get(dependencies);
+        let current_res_slice = current_resolutions.get(resolutions);
+
+        for (_, &resolved_pkg_id) in current_dep_slice.iter().zip(current_res_slice.iter()) {
+            if (resolved_pkg_id as usize) >= pkg_names.len() {
+                continue;
+            }
+
+            let pkg_name = pkg_names[resolved_pkg_id as usize].slice(buf);
+            if !prod_set.contains_key(pkg_name) {
+                prod_set.put(pkg_name, ())?;
+                queue.push_back(resolved_pkg_id);
+            }
+        }
+    }
+
+    Ok(())
 }
 
 struct CollectPackagesResult {
@@ -210,19 +286,90 @@ struct PackageVersions {
     versions: Vec<Box<[u8]>>,
 }
 
-#[allow(unreachable_code, unused)]
 fn collect_packages_for_audit(
     pm: &mut PackageManager,
     prod_only: bool,
 ) -> Result<CollectPackagesResult, bun_alloc::AllocError> {
-    // Body iterates `pm.lockfile.packages` / `pm.root_package_id` /
-    // `pm.workspace_name_hash` and per-package resolution tags — all gated
-    // behind the upstream PackageManager stub (reconciler-6).
-    let packages_list: Vec<PackageVersions> =
-        todo!("blocked_on: bun_install::PackageManager::lockfile");
-    let _ = build_production_package_set;
-    let _ = (pm, prod_only);
-    let skipped_packages: Vec<Box<[u8]>> = Vec::new();
+    let root_id = pm
+        .root_package_id
+        .get(&pm.lockfile, pm.workspace_name_hash);
+
+    let mut packages_list: Vec<PackageVersions> = Vec::new();
+    let mut skipped_packages: Vec<Box<[u8]>> = Vec::new();
+
+    let mut prod_packages: Option<StringHashMap<()>> = None;
+    if prod_only {
+        let mut set = StringHashMap::default();
+        build_production_package_set(pm, &mut set)?;
+        prod_packages = Some(set);
+    }
+
+    // PORT NOTE: reshaped for borrowck — column slices borrow `pm.lockfile`
+    // immutably for the loop, so resolve `root_id` / `prod_packages` (which
+    // need `&mut pm`) above, and take `scope_for_package_name`'s receiver via
+    // a raw pointer below to avoid the shared/mut overlap (`pm.lockfile` vs
+    // `pm.options.scope` are disjoint fields; Zig had no aliasing model).
+    let pm_ptr: *const PackageManager = pm;
+    let packages = pm.lockfile.packages.slice();
+    let pkg_names = packages.items_name();
+    let pkg_resolutions = packages.items_resolution();
+    let buf = pm.lockfile.buffers.string_bytes.as_slice();
+
+    for (idx, (name, res)) in pkg_names.iter().zip(pkg_resolutions.iter()).enumerate() {
+        if idx as u32 == root_id {
+            continue;
+        }
+        if res.tag != ResolutionTag::Npm {
+            continue;
+        }
+
+        let name_slice = name.slice(buf);
+
+        if prod_only {
+            if let Some(ref prod) = prod_packages {
+                if !prod.contains_key(name_slice) {
+                    continue;
+                }
+            }
+        }
+
+        // SAFETY: `scope_for_package_name` only reads `pm.options.scope`,
+        // disjoint from the `pm.lockfile` borrow held by `packages`/`buf`.
+        let package_scope = unsafe { &*pm_ptr }.scope_for_package_name(name_slice);
+        if package_scope.url_hash != unsafe { &*pm_ptr }.options.scope.url_hash {
+            skipped_packages.push(Box::<[u8]>::from(name_slice));
+            continue;
+        }
+
+        let mut ver_str: Vec<u8> = Vec::new();
+        write!(&mut ver_str, "{}", res.value.npm.version.fmt(buf)).expect("unreachable");
+        let ver_str: Box<[u8]> = ver_str.into_boxed_slice();
+
+        let found_package = packages_list
+            .iter_mut()
+            .find(|item| item.name.as_ref() == name_slice);
+
+        let found_package = match found_package {
+            Some(p) => p,
+            None => {
+                packages_list.push(PackageVersions {
+                    name: Box::<[u8]>::from(name_slice),
+                    versions: Vec::new(),
+                });
+                packages_list.last_mut().unwrap()
+            }
+        };
+
+        let version_exists = found_package
+            .versions
+            .iter()
+            .any(|existing_ver| existing_ver.as_ref() == ver_str.as_ref());
+
+        if !version_exists {
+            found_package.versions.push(ver_str);
+        }
+        // else: ver_str dropped (Zig: allocator.free)
+    }
 
     // PERF(port): Zig used MutableString with initial capacity 1024.
     let mut body: Vec<u8> = Vec::with_capacity(1024);
@@ -413,11 +560,152 @@ fn find_dependency_paths(
     dependency_tree: &StringHashMap<Vec<Box<[u8]>>>,
     pm: &mut PackageManager,
 ) -> Result<Vec<DependencyPath>, bun_alloc::AllocError> {
-    let _ = (target_package, dependency_tree, pm);
-    // Body walks `pm.lockfile.packages` columns + `pm.root_package_id` /
-    // `pm.workspace_name_hash` and resolution tags — gated behind upstream
-    // PackageManager stub (reconciler-6).
-    todo!("blocked_on: bun_install::PackageManager::lockfile")
+    let mut paths: Vec<DependencyPath> = Vec::new();
+
+    let root_id = pm
+        .root_package_id
+        .get(&pm.lockfile, pm.workspace_name_hash);
+
+    let packages = pm.lockfile.packages.slice();
+    let dependencies = pm.lockfile.buffers.dependencies.as_slice();
+    let buf = pm.lockfile.buffers.string_bytes.as_slice();
+    let pkg_names = packages.items_name();
+    let pkg_resolutions = packages.items_resolution();
+    let pkg_deps = packages.items_dependencies();
+
+    let root_deps = pkg_deps[root_id as usize];
+    let dep_slice = root_deps.get(dependencies);
+
+    for dependency in dep_slice {
+        let dep_name = dependency.name.slice(buf);
+        if dep_name == target_package {
+            paths.push(DependencyPath {
+                path: vec![Box::<[u8]>::from(target_package)],
+                is_direct: true,
+            });
+            break;
+        }
+    }
+
+    for ((resolution, workspace_deps), pkg_name) in
+        pkg_resolutions.iter().zip(pkg_deps.iter()).zip(pkg_names.iter())
+    {
+        if resolution.tag != ResolutionTag::Workspace {
+            continue;
+        }
+
+        let workspace_name = pkg_name.slice(buf);
+        let workspace_dep_slice = workspace_deps.get(dependencies);
+
+        for dependency in workspace_dep_slice {
+            let dep_name = dependency.name.slice(buf);
+            if dep_name == target_package {
+                let mut workspace_prefix: Vec<u8> = Vec::new();
+                write!(&mut workspace_prefix, "workspace:{}", BStr::new(workspace_name))
+                    .expect("unreachable");
+                paths.push(DependencyPath {
+                    path: vec![
+                        workspace_prefix.into_boxed_slice(),
+                        Box::<[u8]>::from(target_package),
+                    ],
+                    is_direct: false,
+                });
+                break;
+            }
+        }
+    }
+
+    let mut queue: std::collections::VecDeque<Box<[u8]>> = std::collections::VecDeque::new();
+    let mut visited: StringHashMap<()> = StringHashMap::default();
+    let mut parent_map: StringHashMap<Box<[u8]>> = StringHashMap::default();
+
+    if let Some(dependents) = dependency_tree.get(target_package) {
+        for dependent in dependents {
+            queue.push_back(dependent.clone());
+            parent_map.put(dependent, Box::<[u8]>::from(target_package))?;
+        }
+    }
+
+    while let Some(current) = queue.pop_front() {
+        if visited.contains_key(&*current) {
+            continue;
+        }
+        visited.put(&current, ())?;
+
+        let mut is_root_dep = false;
+        for dependency in dep_slice {
+            let dep_name = dependency.name.slice(buf);
+            if dep_name == &*current {
+                is_root_dep = true;
+                break;
+            }
+        }
+
+        let mut workspace_name_for_dep: Option<&[u8]> = None;
+        for ((resolution, workspace_deps), pkg_name) in
+            pkg_resolutions.iter().zip(pkg_deps.iter()).zip(pkg_names.iter())
+        {
+            if resolution.tag != ResolutionTag::Workspace {
+                continue;
+            }
+
+            let workspace_dep_slice = workspace_deps.get(dependencies);
+            for dependency in workspace_dep_slice {
+                let dep_name = dependency.name.slice(buf);
+                if dep_name == &*current {
+                    workspace_name_for_dep = Some(pkg_name.slice(buf));
+                    break;
+                }
+            }
+            if workspace_name_for_dep.is_some() {
+                break;
+            }
+        }
+
+        if is_root_dep || workspace_name_for_dep.is_some() {
+            let mut path = DependencyPath { path: Vec::new(), is_direct: false };
+
+            let mut trace: Box<[u8]> = current.clone();
+            let mut seen_in_trace: StringHashMap<()> = StringHashMap::default();
+
+            loop {
+                // Check for cycle before processing
+                if seen_in_trace.contains_key(&*trace) {
+                    // Cycle detected, stop tracing
+                    break;
+                }
+
+                // Add to path and mark as seen
+                path.path.insert(0, trace.clone());
+                seen_in_trace.put(&trace, ())?;
+
+                // Get parent for next iteration
+                if let Some(parent) = parent_map.get(&*trace) {
+                    trace = parent.clone();
+                } else {
+                    break;
+                }
+            }
+
+            if let Some(workspace_name) = workspace_name_for_dep {
+                let mut workspace_prefix: Vec<u8> = Vec::new();
+                write!(&mut workspace_prefix, "workspace:{}", BStr::new(workspace_name))
+                    .expect("unreachable");
+                path.path.insert(0, workspace_prefix.into_boxed_slice());
+            }
+
+            paths.push(path);
+        } else if let Some(dependents) = dependency_tree.get(&*current) {
+            for dependent in dependents {
+                if !visited.contains_key(&**dependent) {
+                    queue.push_back(dependent.clone());
+                    parent_map.put(dependent, current.clone())?;
+                }
+            }
+        }
+    }
+
+    Ok(paths)
 }
 
 #[derive(Default)]

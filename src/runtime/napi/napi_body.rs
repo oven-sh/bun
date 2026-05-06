@@ -817,7 +817,7 @@ pub extern "C" fn napi_create_string_utf16(
         return env.ok();
     }
 
-    let (string, chars) = bun_str::String::create_uninitialized_utf16(slice.len());
+    let (mut string, chars) = bun_str::String::create_uninitialized_utf16(slice.len());
     chars.copy_from_slice(slice);
 
     let js = match string.transfer_to_js(env.to_js()) {

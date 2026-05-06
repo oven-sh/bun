@@ -4767,17 +4767,26 @@ pub mod formatter {
             //   Then, we print it each property on a new line, recursively.
             let prev_always_newline_scope = self.always_newline_scope;
             let _ans = defer_restore!(self.always_newline_scope, prev_always_newline_scope);
+            // PORT NOTE: hoist all `self.*` reads before constructing the
+            // iterator ctx — `formatter: self` is a `&mut Self` reborrow, so
+            // once it's moved into the struct literal we can no longer touch
+            // `self` until `iter` is dropped (or via `iter.formatter`).
+            let single_line = self.single_line;
+            let always_newline =
+                !single_line && (self.always_newline_scope || self.good_time_for_a_new_line());
+            let depth_exceeded = self.depth > self.max_depth;
+            let ordered_properties = self.ordered_properties;
+            let global_this = self.global_this;
             let mut iter = PropertyIteratorCtx::<C> {
                 formatter: self,
                 writer: writer_,
-                always_newline: !self.single_line
-                    && (self.always_newline_scope || self.good_time_for_a_new_line()),
-                single_line: self.single_line,
+                always_newline,
+                single_line,
                 parent: value,
                 i: 0,
             };
 
-            if self.depth > self.max_depth {
+            if depth_exceeded {
                 if self.single_line {
                     let _ = writer_.write_all(b" ");
                 } else if self.always_newline_scope || self.good_time_for_a_new_line() {
@@ -4798,25 +4807,30 @@ pub mod formatter {
                     pf!("<r>")
                 );
                 return Ok(());
-            } else if self.ordered_properties {
+            } else if ordered_properties {
                 value.for_each_property_ordered(
-                    self.global_this,
+                    global_this,
                     &mut iter as *mut _ as *mut c_void,
                     PropertyIteratorCtx::<C>::for_each,
                 )?;
             } else {
                 value.for_each_property(
-                    self.global_this,
+                    global_this,
                     &mut iter as *mut _ as *mut c_void,
                     PropertyIteratorCtx::<C>::for_each,
                 )?;
             }
 
+            // Extract what we need from `iter` so its `&mut self` / `&mut writer_`
+            // reborrows end here (NLL) and the tail can use `self`/`writer_` again.
+            let iter_i = iter.i;
+            let iter_always_newline = iter.always_newline;
+
             if self.failed {
                 return Ok(());
             }
 
-            if iter.i == 0 {
+            if iter_i == 0 {
                 if value.is_class(self.global_this) {
                     self.print_as::<{ Tag::Class }, C>(writer_, value, js_type)?;
                 } else if value.is_callable() {
@@ -4830,7 +4844,7 @@ pub mod formatter {
             } else {
                 self.depth -= 1;
 
-                if iter.always_newline {
+                if iter_always_newline {
                     self.indent = self.indent.saturating_sub(1);
                     self.print_comma::<C>(writer_).expect("unreachable");
                     let _ = writer_.write_all(b"\n");

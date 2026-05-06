@@ -2493,8 +2493,11 @@ impl VirtualMachine {
         // SAFETY: `vm` is the unique live VM on this thread.
         let vm_ref = unsafe { &mut *vm };
         // SAFETY: `graph` outlives the VM (owned by the caller / embedded binary).
+        // PORT NOTE: the resolver's `StandaloneModuleGraph` is a forward-decl
+        // opaque (resolver/__forward_decls); we hold it as `*mut c_void` here
+        // and cast on store — `.cast()` infers the resolver's expected type.
         vm_ref.transpiler.resolver.standalone_module_graph =
-            Some(unsafe { &*graph.as_ptr() });
+            Some(unsafe { &*graph.as_ptr().cast() });
         // Avoid reading from tsconfig.json & package.json when in standalone mode
         vm_ref.transpiler.configure_linker_with_auto_jsx(false);
         vm_ref.transpiler.resolver.store_fd = false;

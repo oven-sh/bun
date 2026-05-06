@@ -916,7 +916,8 @@ impl Response {
         }
 
         let headers_ref = response.get_or_create_headers(global_this)?;
-        headers_ref.put_default(FetchHeaders::HTTPHeaderName::ContentType, &bun_http_types::MimeType::JSON.value, global_this)?;
+        let json_mime = bun_http_types::MimeType::JSON;
+        headers_ref.put_default(HTTPHeaderName::ContentType, json_mime.value.as_ref(), global_this)?;
         Ok(Box::leak(Box::new(response)).to_js(global_this))
     }
 

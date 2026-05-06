@@ -3086,7 +3086,7 @@ where
             }
 
             self.do_write_status(status);
-            self.do_write_headers(&headers_);
+            self.do_write_headers(&mut headers_);
             headers_.deref();
         } else if needs_content_range {
             status = 206;

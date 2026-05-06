@@ -1553,7 +1553,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                                     // TODO: add a .cloneNonOptional()?
                                     .clone();
 
-                            let mut taken_active_file = active_file_strong.take().unwrap();
+                            let taken_active_file = active_file_strong.take().unwrap();
 
                             // SAFETY: jsc_vm_ptr is the live thread VM.
                             crate::test_runner::jest::Jest::runner()

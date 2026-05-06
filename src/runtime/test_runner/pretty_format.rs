@@ -959,7 +959,15 @@ impl<'w, W: bun_io::Write> WrappedWriter<'w, W> {
 
     #[inline]
     pub fn write_16_bit(&mut self, input: &[u16]) {
-        if bun_fmt::format_utf16_type(input, self.ctx).is_err() {
+        // `format_utf16_type` writes through `fmt::Write`; buffer to a `String`
+        // and forward bytes (UTF-16 → UTF-8 conversion is the point, so the
+        // intermediate allocation is unavoidable without a `bun_io::Write` overload).
+        let mut buf = String::new();
+        if bun_fmt::format_utf16_type(input, &mut buf).is_err() {
+            self.failed = true;
+            return;
+        }
+        if self.ctx.write_all(buf.as_bytes()).is_err() {
             self.failed = true;
         }
     }

@@ -1176,12 +1176,30 @@ pub struct Detached {
     _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
 }
 
-// TODO(b2-blocked): `crate::api::Subprocess` is currently a module re-export,
-// not the `Subprocess<'a>` struct — and TaggedPtrUnion can't carry a borrowed
-// type. Use `Detached` as both tags so `DestructorPtr` is nameable for
-// FileSink/subprocess::Writable; the `as_mut::<Subprocess>` arm in the gated
-// body below restores the real second variant.
-pub type DestructorPtr = TaggedPtrUnion<(Detached, Detached)>;
+// PORT NOTE: `bun_ptr::impl_tagged_ptr_union!` would impl the foreign
+// `TypeList` trait for a tuple type, hitting orphan rules from this crate.
+// Hand-roll a local marker struct + impls instead (matches the
+// `AnyServerTypes` pattern in server_body.rs). The second variant
+// (`Subprocess<'_>`) carries a lifetime so it cannot implement
+// `UnionMember`; only `Detached` is a typed member, and the Subprocess arm
+// in `Bun__onSinkDestroyed` casts the raw pointer manually.
+pub struct DestructorTypes;
+impl bun_ptr::tagged_pointer::TypeList for DestructorTypes {
+    const LEN: usize = 2;
+    const MIN_TAG: bun_ptr::tagged_pointer::TagType = 1024 - 1;
+    fn type_name_from_tag(tag: bun_ptr::tagged_pointer::TagType) -> Option<&'static str> {
+        match tag {
+            1024 => Some("Detached"),
+            1023 => Some("Subprocess"),
+            _ => None,
+        }
+    }
+}
+impl bun_ptr::tagged_pointer::UnionMember<DestructorTypes> for Detached {
+    const TAG: bun_ptr::tagged_pointer::TagType = 1024;
+    const NAME: &'static str = "Detached";
+}
+pub type DestructorPtr = TaggedPtrUnion<DestructorTypes>;
 
 /// Encode a `*Subprocess` as the second `DestructorPtr` tag (1023). Manual
 /// re-encoding of `TaggedPtr::init(ptr, 1023)` because `Subprocess<'_>` carries

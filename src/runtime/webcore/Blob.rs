@@ -1647,10 +1647,10 @@ fn write_file_with_empty_source_to_destination(
         }
         // Writing to a buffer-backed blob should be a type error,
         // making this unreachable. TODO: `{}` -> `unreachable`
-        Store::Data::Bytes(_) => {}
+        store::Data::Bytes(_) => {}
     }
 
-    Ok(JSPromise::resolved_promise_value(ctx, JSValue::js_number(0)))
+    Ok(JSPromise::resolved_promise_value(ctx, JSValue::js_number(0.0)))
 }
 
 pub fn write_file_with_source_destination(

@@ -571,7 +571,7 @@ impl FetchTasklet {
                 if matches!(old, BodyValue::Locked(_)) {
                     bun_output::scoped_log!(FetchTasklet, "onBodyReceived old.resolve");
                     let mut old = old;
-                    old.resolve(body, self.global_this, response.get_fetch_headers())?;
+                    BodyValue::resolve(&mut old, body, self.global_this, response.get_fetch_headers())?;
                 }
             }
         }

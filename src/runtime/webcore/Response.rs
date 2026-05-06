@@ -639,64 +639,71 @@ impl Response {
         &mut self,
         formatter: &mut F,
         writer: &mut W,
-    ) -> Result<(), bun_core::Error>
+    ) -> core::fmt::Result
     where
         F: bun_jsc::ConsoleFormatter,
         W: core::fmt::Write,
     {
-        // TODO(port): narrow error set
-        write!(writer, "Response ({}) {{\n", bun_core::fmt::size(self.body.len(), Default::default()))?;
+        // PORT NOTE: return type narrowed to `core::fmt::Result`. The trait
+        // methods produce `fmt::Error`/`JsError`/`bun_core::Error`; none of
+        // those convert into the others, so funnel everything through
+        // `fmt::Error` (Zig's `anyerror!void` carried no payload either).
+        let js_err = |_: JsError| core::fmt::Error;
+        let core_err = |_: bun_core::Error| core::fmt::Error;
+
+        write!(writer, "Response ({}) {{\n", bun_core::fmt::size(self.body.len() as usize, Default::default()))?;
 
         {
-            formatter.indent_mut().add(1);
+            formatter.indent_inc();
             // Zig: `defer formatter.indent -|= 1;` — must run on every exit incl. `?` error paths.
             // SAFETY: `formatter` outlives `_indent_guard` (same scope, guard dropped first);
             // the raw pointer is only dereferenced in the closure at scope exit, at which point
             // no other borrow of `formatter` is live.
             let _indent_guard = scopeguard::guard(
-                formatter.indent_mut() as *mut _,
-                |p| unsafe { *p = (*p).saturating_sub(1) },
+                formatter as *mut F,
+                |p| unsafe { (*p).indent_dec() },
             );
 
             formatter.write_indent(writer)?;
-            writer.write_str(Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>ok<d>:<r> "))?;
-            formatter.print_as::<_, ENABLE_ANSI_COLORS>(bun_jsc::FormatAs::Boolean, writer, JSValue::from(self.is_ok()), bun_jsc::JSType::BooleanObject)?;
+            write!(writer, "{}", Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>ok<d>:<r> "))?;
+            formatter.print_as::<_, ENABLE_ANSI_COLORS>(bun_jsc::FormatAs::Boolean, writer, JSValue::from(self.is_ok()), bun_jsc::JSType::BooleanObject).map_err(js_err)?;
             formatter.print_comma::<_, ENABLE_ANSI_COLORS>(writer)?;
             writer.write_str("\n")?;
 
             formatter.write_indent(writer)?;
-            writer.write_str(Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>url<d>:<r> \""))?;
+            write!(writer, "{}", Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>url<d>:<r> \""))?;
             write!(writer, "{}", Output::pretty_fmt_args("<r><b>{}<r>", ENABLE_ANSI_COLORS, (&self.url,)))?;
             writer.write_str("\"")?;
             formatter.print_comma::<_, ENABLE_ANSI_COLORS>(writer)?;
             writer.write_str("\n")?;
 
             formatter.write_indent(writer)?;
-            writer.write_str(Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>status<d>:<r> "))?;
-            formatter.print_as::<_, ENABLE_ANSI_COLORS>(bun_jsc::FormatAs::Double, writer, JSValue::js_number(self.init.status_code), bun_jsc::JSType::NumberObject)?;
+            write!(writer, "{}", Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>status<d>:<r> "))?;
+            formatter.print_as::<_, ENABLE_ANSI_COLORS>(bun_jsc::FormatAs::Double, writer, JSValue::js_number(self.init.status_code as f64), bun_jsc::JSType::NumberObject).map_err(js_err)?;
             formatter.print_comma::<_, ENABLE_ANSI_COLORS>(writer)?;
             writer.write_str("\n")?;
 
             formatter.write_indent(writer)?;
-            writer.write_str(Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>statusText<d>:<r> "))?;
+            write!(writer, "{}", Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>statusText<d>:<r> "))?;
             write!(writer, "{}", Output::pretty_fmt_args("<r>\"<b>{}<r>\"", ENABLE_ANSI_COLORS, (&self.init.status_text,)))?;
             formatter.print_comma::<_, ENABLE_ANSI_COLORS>(writer)?;
             writer.write_str("\n")?;
 
             formatter.write_indent(writer)?;
-            writer.write_str(Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>headers<d>:<r> "))?;
-            formatter.print_as::<_, ENABLE_ANSI_COLORS>(bun_jsc::FormatAs::Private, writer, self.get_headers(formatter.global_this())?, bun_jsc::JSType::DOMWrapper)?;
+            write!(writer, "{}", Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>headers<d>:<r> "))?;
+            let headers_js = Self::get_headers(self, formatter.global_this()).map_err(js_err)?;
+            formatter.print_as::<_, ENABLE_ANSI_COLORS>(bun_jsc::FormatAs::Private, writer, headers_js, bun_jsc::JSType::DOMWrapper).map_err(js_err)?;
             formatter.print_comma::<_, ENABLE_ANSI_COLORS>(writer)?;
             writer.write_str("\n")?;
 
             formatter.write_indent(writer)?;
-            writer.write_str(Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>redirected<d>:<r> "))?;
-            formatter.print_as::<_, ENABLE_ANSI_COLORS>(bun_jsc::FormatAs::Boolean, writer, JSValue::from(self.redirected), bun_jsc::JSType::BooleanObject)?;
+            write!(writer, "{}", Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>redirected<d>:<r> "))?;
+            formatter.print_as::<_, ENABLE_ANSI_COLORS>(bun_jsc::FormatAs::Boolean, writer, JSValue::from(self.redirected), bun_jsc::JSType::BooleanObject).map_err(js_err)?;
             formatter.print_comma::<_, ENABLE_ANSI_COLORS>(writer)?;
             writer.write_str("\n")?;
 
             formatter.reset_line();
-            self.body.write_format::<F, W, ENABLE_ANSI_COLORS>(formatter, writer)?;
+            self.body.write_format::<F, W, ENABLE_ANSI_COLORS>(formatter, writer).map_err(core_err)?;
             // indent restored by `_indent_guard` on scope exit (incl. error returns)
         }
         writer.write_str("\n")?;

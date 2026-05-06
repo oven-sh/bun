@@ -238,15 +238,15 @@ impl<'a> Snapshots<'a> {
         // SAFETY: single-threaded JS VM; RUNNER is set before any Snapshots method runs
         // (Snapshots is a field of TestRunner). Raw-pointer place projection touches only
         // `.files` bytes, disjoint from `&mut self`.
-        let test_file = unsafe {
+        let test_file_source = unsafe {
             let p = Jest::RUNNER.expect("Jest runner not set").as_ptr();
-            (*p).files.get(file.id)
+            &(*p).files.items_source()[file.id as usize]
         };
-        let test_filename = test_file.source.path.name.filename;
-        let dir_path = test_file.source.path.name.dir_with_trailing_slash();
+        let test_filename = test_file_source.path.name.filename;
+        let dir_path = test_file_source.path.name.dir_with_trailing_slash();
 
         let mut snapshot_file_path_buf = PathBuffer::uninit();
-        let buf = snapshot_file_path_buf.as_mut_slice();
+        let buf = snapshot_file_path_buf.0.as_mut_slice();
         let mut pos = 0usize;
         buf[pos..pos + dir_path.len()].copy_from_slice(dir_path);
         pos += dir_path.len();

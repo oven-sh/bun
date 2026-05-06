@@ -2433,31 +2433,33 @@ impl ExpectMatcherUtils {
         value: JSValue,
         color_or_null: Option<&'static str>,
     ) -> JsResult<JSValue> {
+        use std::io::Write as _;
         // TODO(port): narrow error set
         // PERF(port): was stack-fallback allocator — profile in Phase B
         let mut mutable_string = bun_str::MutableString::init_2048()?;
 
         // TODO(port): BufferedWriter wrapper
-        let mut writer = mutable_string.writer();
+        let writer = mutable_string.writer();
 
         if let Some(color) = color_or_null {
             if Output::enable_ansi_colors_stderr() {
-                writer.write_all(Output::pretty_fmt(color, true).as_bytes())?;
+                // MutableString writes to a Vec; can't fail.
+                let _ = writer.write_all(Output::pretty_fmt::<true>(color).as_ref());
             }
         }
 
         let mut formatter = ConsoleObject::Formatter::new(global_this).with_quote_strings(true);
-        write!(writer, "{}", value.to_fmt(&mut formatter))?;
+        let _ = write!(writer, "{}", value.to_fmt(&mut formatter));
 
         if color_or_null.is_some() {
             if Output::enable_ansi_colors_stderr() {
-                writer.write_all(Output::pretty_fmt("<r>", true).as_bytes())?;
+                let _ = writer.write_all(Output::pretty_fmt::<true>("<r>").as_ref());
             }
         }
 
         // buffered_writer.flush() — no-op with direct Vec writer
 
-        bun_str::String::create_utf8_for_js(global_this, mutable_string.slice())
+        bun_jsc::bun_string_jsc::create_utf8_for_js(global_this, mutable_string.slice())
     }
 
     #[inline]

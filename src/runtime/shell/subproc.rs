@@ -1403,8 +1403,8 @@ impl BufferedOutput {
     #[inline]
     pub fn len(&self) -> usize {
         match self {
-            BufferedOutput::Bytelist(b) => usize::from(b.len),
-            BufferedOutput::ArrayBuffer { i, .. } => usize::from(*i),
+            BufferedOutput::Bytelist(b) => b.len as usize,
+            BufferedOutput::ArrayBuffer { i, .. } => *i as usize,
         }
     }
 

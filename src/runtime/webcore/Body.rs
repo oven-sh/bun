@@ -2162,8 +2162,11 @@ impl<'a> ValueBufferer<'a> {
                     // return self.create_js_sink(stream);
                     return Err(bun_core::err!("UnsupportedStreamType"));
                 }
-                webcore::readable_stream::Source::Bytes(byte_stream) => {
-                    debug_assert!(byte_stream.pipe.ctx.is_null());
+                webcore::readable_stream::Source::Bytes(byte_stream_ptr) => {
+                    // SAFETY: `Source::Bytes` holds a live `*mut ByteStream` owned by the
+                    // readable stream; kept alive via `self.readable_stream_ref` above.
+                    let byte_stream = unsafe { &mut *byte_stream_ptr };
+                    debug_assert!(byte_stream.pipe.ctx.is_none());
                     debug_assert!(self.byte_stream.is_none());
 
                     let bytes = byte_stream.buffer.as_slice();
@@ -2181,8 +2184,8 @@ impl<'a> ValueBufferer<'a> {
                         return Ok(());
                     }
 
-                    byte_stream.pipe = Pipe::wrap::<Self>(Self::on_stream_pipe).init(self);
-                    self.byte_stream = Some(NonNull::from(byte_stream));
+                    byte_stream.pipe = crate::webcore::Wrap::<Self>::init(self);
+                    self.byte_stream = NonNull::new(byte_stream_ptr);
                     bun_core::scoped_log!(
                         BodyValueBufferer,
                         "byte stream pre-buffered {}",

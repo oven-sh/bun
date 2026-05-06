@@ -3339,10 +3339,9 @@ pub fn js_upgrade_duplex_to_tls(
     // controls lifecycle (markInactive expects a Listener parent when .server).
     // The TLS direction (client vs server) is controlled by DuplexUpgradeContext.mode.
     let handlers = Handlers::from_js(global, socket_obj, false)?;
+    // PORT NOTE: Zig `handlers.deinit()` → `Drop for Handlers`.
     let mut handlers_guard = scopeguard::guard(Some(handlers), |h| {
-        if let Some(mut h) = h {
-            h.deinit();
-        }
+        drop(h);
     });
 
     // Resolve the `SSL_CTX*`. Prefer a passed `SecureContext` (the memoised

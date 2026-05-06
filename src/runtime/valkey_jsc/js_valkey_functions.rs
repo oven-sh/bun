@@ -75,6 +75,29 @@ fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<JSArgumen
     JSArgument::from_js_maybe_file(global, value, false)
 }
 
+/// Shim around `protocol::valkey_error_to_js` that:
+/// 1. accepts whatever error type `JSValkeyClient::send` currently returns
+///    (presently `bun_core::Error`; the Zig spec uses an open `!` set), and
+/// 2. wraps the resulting `JSValue` in `Ok` for use in `JsResult<JSValue>`
+///    host functions.
+// TODO(port): once `send`'s error set is narrowed back to `RedisError`,
+// forward `_err` instead of defaulting to `ConnectionClosed`.
+#[inline]
+fn send_err_to_js<E>(global: &JSGlobalObject, message: &str, _err: E) -> JsResult<JSValue> {
+    Ok(protocol::valkey_error_to_js(
+        global,
+        message,
+        bun_valkey::valkey_protocol::RedisError::ConnectionClosed,
+    ))
+}
+
+/// `JSValkeyClient::send` returns a `*mut JSPromise`; raw pointers don't
+/// auto-deref, so call `JSPromise::to_js` through an explicit unsafe deref.
+#[inline]
+fn promise_to_js(p: *mut JSPromise) -> JSValue {
+    unsafe { (*p).to_js() }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // compile: comptime command generators
 // ──────────────────────────────────────────────────────────────────────────

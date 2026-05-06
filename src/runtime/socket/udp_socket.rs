@@ -1153,7 +1153,7 @@ impl UDPSocket {
         if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::send) {
             return Err(global_this.throw_value(err.to_js(global_this)));
         }
-        Ok(JSValue::js_number(res))
+        Ok(JSValue::js_number(res as f64))
     }
 
     #[bun_jsc::host_fn(method)]

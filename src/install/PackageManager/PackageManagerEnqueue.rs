@@ -30,7 +30,10 @@ const assign_root_resolution: SuccessFn = PackageManager::assign_root_resolution
 #[allow(non_upper_case_globals)]
 const fail_root_resolution: FailFn = PackageManager::fail_root_resolution;
 
-bun_output::declare_scope!(PackageManager, hidden);
+// Zig: `const debug = PackageManager.debug;` — the `use package_manager_real::PackageManager`
+// above already pulls the `declare_scope!`-generated `static PackageManager: ScopedLogger`
+// (value namespace) alongside the struct (type namespace), so re-declaring it here
+// would collide. `scoped_log!(PackageManager, ...)` below resolves to that import.
 
 pub type EnqueuePackageForDownloadError = crate::network_task::ForTarballError;
 pub type EnqueueTarballForDownloadError = crate::network_task::ForTarballError;

@@ -734,9 +734,11 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     // subclasses — not just plain objects — so the check lives here, before
     // `specialObjectsDequal` and the array branch dispatch on type.
     //
-    // Gated on `!enableAsymmetricMatchers` so it only affects `node:assert`
-    // and `node:util.isDeepStrictEqual`. bun:test's `toStrictEqual` (which
-    // runs with `enableAsymmetricMatchers=true`) keeps its existing
+    // Gated on `!enableAsymmetricMatchers` so it only affects the
+    // `Bun__deepEquals<true, false>` instantiation — i.e. `node:assert`,
+    // `node:util.isDeepStrictEqual`, and the public `Bun.deepEquals(a, b, true)`
+    // API. bun:test's `toStrictEqual` (which runs with
+    // `enableAsymmetricMatchers=true`) keeps its existing
     // `calculatedClassName`-based type guard to avoid breaking cross-realm
     // objects and tests that compare Buffer against Uint8Array by content.
     // See issue #29030.

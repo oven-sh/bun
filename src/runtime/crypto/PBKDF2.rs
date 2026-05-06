@@ -346,7 +346,16 @@ impl Job {
         // SAFETY: `job` was just allocated and is uniquely owned here.
         let job_ref = unsafe { &mut *job };
         job_ref.promise = JSPromiseStrong::init(global_this);
-        job_ref.any_task = AnyTask::new::<Job>(Job::run_from_js).init(job);
+        // Zig: `AnyTask.New(@This(), &runFromJS).init(job)`. Rust's `AnyTask::New<T>`
+        // cannot carry a comptime callback (see event_loop/AnyTask.rs), so build the
+        // erased AnyTask directly with a non-capturing shim that adapts the JsResult
+        // error type (event_loop's `JsResult` erases jsc::Error to `*mut ()`).
+        job_ref.any_task = AnyTask {
+            ctx: NonNull::new(job.cast::<c_void>()),
+            callback: |ctx: *mut c_void| {
+                Job::run_from_js(ctx.cast::<Job>()).map_err(|_| core::ptr::null_mut())
+            },
+        };
         job_ref.poll.ref_(vm);
         WorkPool::schedule(&mut job_ref.task);
 

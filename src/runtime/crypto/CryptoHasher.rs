@@ -439,7 +439,7 @@ impl CryptoHasher {
     }
 
     pub fn getter(global: &JSGlobalObject, _: &JSObject) -> JSValue {
-        bun_jsc::codegen::JSCryptoHasher::get_constructor(global)
+        bun_jsc::codegen::js::get_constructor::<CryptoHasher>(global)
     }
 
     #[bun_jsc::host_fn(method)]

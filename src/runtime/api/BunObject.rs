@@ -2317,7 +2317,8 @@ pub mod environment_variables {
     ) -> bool {
         // SAFETY: caller is C++ with live pointers.
         let global_object = unsafe { &*global_object };
-        let vm = global_object.bun_vm();
+        // SAFETY: bun_vm() returns the live thread-local VM.
+        let vm = unsafe { &*global_object.bun_vm() };
         let name_slice = unsafe { (*name).to_utf8() };
         let Some(val) = vm.transpiler.env.get(name_slice.slice()) else {
             return false;

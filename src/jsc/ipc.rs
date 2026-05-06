@@ -780,7 +780,7 @@ impl CallbackList {
                 *self = CallbackList::CallbackArray(arr);
             }
             CallbackList::CallbackArray(arr) => {
-                arr.push(global, callback)?;
+                js_value_push(*arr, global, callback)?;
             }
         }
         Ok(())
@@ -791,7 +791,7 @@ impl CallbackList {
             CallbackList::AckNack => {}
             CallbackList::None => {}
             CallbackList::Callback(cb) => {
-                JSValue::call_next_tick_1(*cb, global, JSValue::NULL)?;
+                js_value_call_next_tick_1(*cb, global, JSValue::NULL)?;
                 // Assignment runs `Drop` on the old `Callback(cb)` variant,
                 // which performs the single `unprotect()`.
                 *self = CallbackList::None;
@@ -799,7 +799,7 @@ impl CallbackList {
             CallbackList::CallbackArray(arr) => {
                 let mut iter = arr.array_iterator(global)?;
                 while let Some(item) = iter.next()? {
-                    JSValue::call_next_tick_1(item, global, JSValue::NULL)?;
+                    js_value_call_next_tick_1(item, global, JSValue::NULL)?;
                 }
                 // Assignment runs `Drop` on the old `CallbackArray(arr)`
                 // variant, which performs the single `unprotect()`.
@@ -1086,7 +1086,12 @@ impl SendQueue {
         // owner is about to free the memory that backs `this`, so scheduling
         // a task that points back into it would use-after-free.
         if was_open && self.after_close_task.is_none() {
-            let task = ManagedTask::new(self as *mut SendQueue, Self::_on_after_ipc_closed);
+            // PORT NOTE: `bun_event_loop::JsResult` erases the error to `*mut ()`;
+            // adapt the jsc-crate `JsResult` via a non-capturing closure (coerces to fn ptr).
+            let task = ManagedTask::new(self as *mut SendQueue, |p| {
+                let _ = Self::_on_after_ipc_closed(p);
+                Ok(())
+            });
             self.after_close_task = Some(task);
             // SAFETY: bun_vm() returns a &VirtualMachine borrowed from the
             // global; enqueue_task only mutates the task queue.
@@ -1131,7 +1136,11 @@ impl SendQueue {
             self.close_socket(CloseReason::Normal, CloseFrom::User);
             return;
         }
-        let task = ManagedTask::new(self as *mut SendQueue, Self::_close_socket_task);
+        // PORT NOTE: see `_socket_closed` — adapt `bun_event_loop::JsResult` via closure.
+        let task = ManagedTask::new(self as *mut SendQueue, |p| {
+            let _ = Self::_close_socket_task(p);
+            Ok(())
+        });
         self.close_next_tick = Some(task);
         // SAFETY: VirtualMachine::get() returns the singleton; enqueue_task
         // only mutates the task queue.
@@ -1252,7 +1261,8 @@ impl SendQueue {
                 if let Ok(warning_name_js) =
                     crate::bun_string_jsc::transfer_to_js(&mut warning_name, global)
                 {
-                    let _ = global.emit_warning(
+                    let _ = global_emit_warning(
+                        global,
                         warning_js,
                         warning_name_js,
                         JSValue::UNDEFINED,
@@ -1804,7 +1814,7 @@ fn do_send_err(
     from: FromEnum,
 ) -> JsResult<JSValue> {
     if callback.is_callable() {
-        JSValue::call_next_tick_1(callback, global_object, ex)?;
+        js_value_call_next_tick_1(callback, global_object, ex)?;
         return Ok(JSValue::FALSE);
     }
     if from == FromEnum::Process {
@@ -1817,7 +1827,7 @@ fn do_send_err(
             1,
             Default::default(),
         );
-        JSValue::call_next_tick_1(target, global_object, ex)?;
+        js_value_call_next_tick_1(target, global_object, ex)?;
         return Ok(JSValue::FALSE);
     }
     // Bun.spawn().send() should throw an error (unless callback is passed)
@@ -1855,16 +1865,25 @@ pub fn do_send(
                 "Subprocess.send() cannot be used after the process has exited."
             }
         };
-        let ex = global_object
-            .err(jsc::ErrorCode::IPC_CHANNEL_CLOSED, format_args!("{}", msg))
-            .to_js();
+        let ex = jsc::ErrorBuilder::new(
+            global_object,
+            jsc::ErrorCode::IPC_CHANNEL_CLOSED,
+            format_args!("{}", msg),
+        )
+        .to_js();
         return do_send_err(global_object, callback, ex, from);
     }
 
     let ipc_data = ipc.unwrap();
 
     if message.is_undefined() {
-        return Err(global_object.throw_missing_arguments_value(&["message"]));
+        // `JSGlobalObject::throw_missing_arguments_value` (gated) — single-arg case.
+        return Err(jsc::ErrorBuilder::new(
+            global_object,
+            jsc::ErrorCode::MISSING_ARGS,
+            format_args!("The \"message\" argument must be specified"),
+        )
+        .throw());
     }
     if !message.is_string()
         && !message.is_object()
@@ -1872,11 +1891,18 @@ pub fn do_send(
         && !message.is_boolean()
         && !message.is_null()
     {
-        return Err(global_object.throw_invalid_argument_type_value_one_of(
-            b"message",
-            b"string, object, number, or boolean",
-            message,
-        ));
+        // `JSGlobalObject::throw_invalid_argument_type_value_one_of` (gated).
+        // TODO(port): include `determine_specific_type(message)` in the message
+        // once that helper is available on the stub `JSGlobalObject`.
+        let _ = message;
+        return Err(jsc::ErrorBuilder::new(
+            global_object,
+            jsc::ErrorCode::INVALID_ARG_TYPE,
+            format_args!(
+                "The \"message\" argument must be one of type string, object, number, or boolean"
+            ),
+        )
+        .throw());
     }
 
     if !handle.is_undefined_or_null() {
@@ -1906,10 +1932,11 @@ pub fn do_send(
     if status == SerializeAndSendResult::Failure {
         let ex =
             global_object.create_type_error_instance(format_args!("process.send() failed"));
-        JSValue::put_zig_string(
-            ex,
+        // `JSValue.putZigString` → thin wrapper over `JSC__JSValue__put`; the
+        // ported `JSValue::put` takes the key as `&[u8]` directly.
+        ex.put(
             global_object,
-            &ZigString::static_(b"syscall"),
+            b"syscall",
             crate::bun_string_jsc::to_js(&BunString::static_(b"write"), global_object)?,
         );
         return do_send_err(global_object, callback, ex, from);
@@ -1967,7 +1994,7 @@ fn handle_ipc_message(
             DecodedIPCMessage::Version(version) => {
                 log!("received ipc message: version: {}", version)
             }
-            DecodedIPCMessage::Data(_) => log!("received ipc message: <data>"),
+            DecodedIPCMessage::Data(_) => log!("received ipc message: \\<data>"),
             DecodedIPCMessage::Internal(_) => log!("received ipc message: internal"),
         }
     }
@@ -1978,7 +2005,7 @@ fn handle_ipc_message(
             if msg_data.is_object() {
                 let cmd = match msg_data.fast_get(global_this, jsc::BuiltinName::cmd) {
                     Err(_) => {
-                        global_this.clear_exception();
+                        global_clear_exception(global_this);
                         break 'handle_message;
                     }
                     Ok(None) => break 'handle_message,

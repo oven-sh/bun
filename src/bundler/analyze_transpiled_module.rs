@@ -150,18 +150,21 @@ impl ModuleInfoDeserialized {
     /// `this` must have been produced by [`Self::create`] (heap box) or be the
     /// `_deserialized` field of a `Box<ModuleInfo>` after `finalize()`.
     pub unsafe fn deinit(this: *mut ModuleInfoDeserialized) {
-        match (*this).owner {
-            Owner::ModuleInfo => {
-                // SAFETY: `this` points to `ModuleInfo._deserialized`; recover
-                // the parent via container_of (Zig: @fieldParentPtr).
-                let mi = (this as *mut u8)
-                    .sub(offset_of!(ModuleInfo, _deserialized))
-                    .cast::<ModuleInfo>();
-                ModuleInfo::destroy(mi);
-            }
-            Owner::AllocatedSlice { slice } => {
-                drop(Box::from_raw(slice));
-                drop(Box::from_raw(this));
+        // SAFETY: caller contract — see fn doc above.
+        unsafe {
+            match (*this).owner {
+                Owner::ModuleInfo => {
+                    // SAFETY: `this` points to `ModuleInfo._deserialized`; recover
+                    // the parent via container_of (Zig: @fieldParentPtr).
+                    let mi = (this as *mut u8)
+                        .sub(offset_of!(ModuleInfo, _deserialized))
+                        .cast::<ModuleInfo>();
+                    ModuleInfo::destroy(mi);
+                }
+                Owner::AllocatedSlice { slice } => {
+                    drop(Box::from_raw(slice));
+                    drop(Box::from_raw(this));
+                }
             }
         }
     }
@@ -544,7 +547,8 @@ impl ModuleInfo {
     /// # Safety
     /// `this` must originate from `Box::into_raw(ModuleInfo::create(..))`.
     pub unsafe fn destroy(this: *mut ModuleInfo) {
-        drop(Box::from_raw(this));
+        // SAFETY: caller contract — `this` is `Box::into_raw` output.
+        drop(unsafe { Box::from_raw(this) });
     }
 
     pub fn str(&mut self, value: &[u8]) -> Result<StringID, bun_alloc::AllocError> {

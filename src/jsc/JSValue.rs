@@ -531,7 +531,8 @@ impl JSValue {
         let s = prop.to_bun_string(global)?;
         if s.is_empty() { Ok(None) } else { Ok(Some(s)) }
     }
-    pub fn get_array(self, global: &JSGlobalObject, property: &[u8]) -> JsResult<Option<JSValue>> {
+    pub fn get_array(self, global: &JSGlobalObject, property: impl AsRef<[u8]>) -> JsResult<Option<JSValue>> {
+        let property = property.as_ref();
         // JSValue.zig:1784 `getArray` → `coerceToArray`: `get(prop)`, require
         // `jsTypeLoose().isArray()` (numbers map to NumberObject — never an
         // array — so the cell guard is sufficient), then filter empty arrays.
@@ -807,4 +808,315 @@ unsafe extern "C" {
     ) -> JSValue;
     fn Bun__JSValue__protect(this: JSValue);
     fn Bun__JSValue__unprotect(this: JSValue);
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Additional ports (JSValue.zig — second tranche).
+// ──────────────────────────────────────────────────────────────────────────
+
+/// `JSValue.ProxyInternalField` (JSValue.zig:2320).
+#[repr(u32)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProxyField {
+    Target = 0,
+    Handler = 1,
+}
+/// Zig spelling.
+pub type ProxyInternalField = ProxyField;
+
+/// `JSValue.SerializedFlags` (JSValue.zig:2303).
+#[derive(Debug, Default, Clone, Copy)]
+pub struct SerializedFlags {
+    pub for_cross_process_transfer: bool,
+    pub for_storage: bool,
+}
+
+/// `JSValue.SerializedScriptValue` (JSValue.zig:2287) — owned view over a
+/// `WebCore::SerializedScriptValue` byte buffer. Call `deinit` to free.
+pub struct SerializedScriptValue {
+    pub data: &'static [u8],
+    handle: *mut c_void,
+}
+impl SerializedScriptValue {
+    #[inline]
+    pub fn deinit(self) {
+        // SAFETY: `handle` was returned by `Bun__serializeJSValue`.
+        unsafe { Bun__SerializedScriptSlice__free(self.handle) }
+    }
+}
+#[repr(C)]
+struct SerializedScriptValueExternal {
+    bytes: *const u8,
+    size: usize,
+    handle: *mut c_void,
+}
+
+/// Callback signature for [`JSValue::for_each`] / [`JSValue::for_each_with_context`]
+/// (Zig: `*const fn (vm, globalObject, ctx, nextValue) callconv(.c) void`).
+pub type ForEachCallback =
+    extern "C" fn(vm: *mut crate::VM, global: &JSGlobalObject, ctx: *mut c_void, next: JSValue);
+
+/// `JSValue.StringFormatter` (JSValue.zig:2019) — `Display` adapter that
+/// coerces the value via `toBunString` at format time.
+pub struct StringFormatter<'a> {
+    value: JSValue,
+    global: &'a JSGlobalObject,
+}
+impl core::fmt::Display for StringFormatter<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self.value.to_bun_string(self.global) {
+            Ok(s) => {
+                let r = core::fmt::Display::fmt(&s, f);
+                s.deref();
+                r
+            }
+            Err(_) => Err(core::fmt::Error),
+        }
+    }
+}
+
+impl JSValue {
+    // ── C-API bridging (JSValue.zig:2230-2247, deprecated in spec). ───────
+    /// `JSValue.c(JSValueRef)` — wrap a C-API `JSValueRef` as a `JSValue`.
+    #[inline]
+    pub fn c(ptr: crate::C::JSValueRef) -> JSValue {
+        JSValue(ptr as usize, PhantomData)
+    }
+    /// `JSValue.asRef()` — view as C-API `JSValueRef`.
+    #[inline]
+    pub fn as_ref(self) -> crate::C::JSValueRef {
+        self.0 as crate::C::JSValueRef
+    }
+    /// `JSValue.asObjectRef()` — view as C-API `JSObjectRef` (caller asserts
+    /// `is_object()`).
+    #[inline]
+    pub fn as_object_ref(self) -> crate::C::JSObjectRef {
+        self.0 as crate::C::JSObjectRef
+    }
+
+    // ── Equality / identity (JSValue.zig:1358-1361, 1948). ────────────────
+    #[inline]
+    pub fn eql_value(self, other: JSValue) -> bool {
+        // SAFETY: pure FFI predicate.
+        unsafe { JSC__JSValue__eqlValue(self, other) }
+    }
+    /// `JSValue.isSameValue` (Object.is semantics).
+    pub fn is_same_value(self, other: JSValue, global: &JSGlobalObject) -> JsResult<bool> {
+        // SAFETY: `global` is live; FFI may set an exception.
+        host_fn::from_js_host_call_generic(global, || unsafe {
+            JSC__JSValue__isSameValue(self, other, global)
+        })
+    }
+
+    // ── Numeric coercion (JSValue.zig:119, 153, 2156). ────────────────────
+    /// `JSValue.toNumber` — full ECMA `ToNumber` (`+value`); may throw.
+    pub fn to_number(self, global: &JSGlobalObject) -> JsResult<f64> {
+        // SAFETY: `global` is live; FFI may set an exception.
+        host_fn::from_js_host_call_generic(global, || unsafe {
+            Bun__JSValue__toNumber(self, global)
+        })
+    }
+    /// `JSValue.coerce(f64)` (JSValue.zig:153) — fast-path doubles, else `ToNumber`.
+    pub fn coerce_f64(self, global: &JSGlobalObject) -> JsResult<f64> {
+        if self.is_double() { return Ok(self.as_double()); }
+        self.to_number(global)
+    }
+    /// `JSValue.toU16` (JSValue.zig:2156) — truncating, clamped-at-zero.
+    #[inline]
+    pub fn to_u16(self) -> u16 {
+        (self.to_int32().max(0) as u32) as u16
+    }
+
+    // ── Object / cell views (JSValue.zig:1164, 1331, 1354). ───────────────
+    /// Statically cast to a `JSCell*`; `None` for non-cells.
+    #[inline]
+    pub fn to_cell(self) -> Option<*mut crate::JSCell> {
+        if self.is_cell() { Some(self.0 as *mut crate::JSCell) } else { None }
+    }
+    /// `JSValue.toObject` — ECMA `ToObject`; throws on null/undefined.
+    pub fn to_object(self, global: &JSGlobalObject) -> JsResult<*mut JSObject> {
+        // SAFETY: `global` is live; returns null on failure (exception set).
+        let p = unsafe { JSC__JSValue__toObject(self, global) };
+        if p.is_null() { Err(JsError::Thrown) } else { Ok(p) }
+    }
+    /// `JSValue.getPrototype`.
+    pub fn get_prototype(self, global: &JSGlobalObject) -> JSValue {
+        // SAFETY: `global` is live.
+        unsafe { JSC__JSValue__getPrototype(self, global) }
+    }
+
+    // ── Reflection / naming (JSValue.zig:1128, 1136, 1515). ───────────────
+    /// `JSValue.getName` — function/class display name.
+    pub fn get_name(self, global: &JSGlobalObject) -> JsResult<bun_string::String> {
+        let mut ret = bun_string::String::default();
+        // SAFETY: `global` is live; `ret` is a valid out-param.
+        host_fn::from_js_host_call_generic(global, || unsafe {
+            JSC__JSValue__getName(self, global, &mut ret)
+        })?;
+        Ok(ret)
+    }
+    /// `JSValue.getClassName` — writes the class name into `ret`.
+    pub fn get_class_name(
+        self,
+        global: &JSGlobalObject,
+        ret: &mut bun_string::ZigString,
+    ) -> JsResult<()> {
+        if !self.is_cell() {
+            *ret = bun_string::ZigString::init(b"[not a class]");
+            return Ok(());
+        }
+        // SAFETY: `global` is live; `ret` is a valid out-param.
+        host_fn::from_js_host_call_generic(global, || unsafe {
+            JSC__JSValue__getClassName(self, global, ret)
+        })
+    }
+    /// `JSValue.getDescription` — symbol description (empty if none).
+    pub fn get_description(self, global: &JSGlobalObject) -> bun_string::ZigString {
+        let mut zs = bun_string::ZigString::EMPTY;
+        // SAFETY: `global` is live; `zs` is a valid out-param.
+        unsafe { JSC__JSValue__getSymbolDescription(self, global, &mut zs) };
+        zs
+    }
+    /// `JSValue.symbolFor(global, key)` — `Symbol.for(key)`.
+    pub fn symbol_for(global: &JSGlobalObject, key: &mut bun_string::ZigString) -> JSValue {
+        // SAFETY: `global` is live; `key` borrowed for the call.
+        unsafe { JSC__JSValue__symbolFor(global, key) }
+    }
+
+    // ── Property access (JSValue.zig:328, 1578). ──────────────────────────
+    /// `JSValue.putZigString` — `JSC__JSValue__put` keyed by an existing
+    /// `ZigString` (avoids the temporary in [`JSValue::put`]).
+    pub fn put_zig_string(
+        self,
+        global: &JSGlobalObject,
+        key: &bun_string::ZigString,
+        value: JSValue,
+    ) {
+        // SAFETY: `global` is live; `key` borrowed for the call.
+        unsafe { JSC__JSValue__put(self, global, key, value) }
+    }
+    /// `JSValue.getOwn` — own-property lookup (no prototype walk).
+    pub fn get_own(
+        self,
+        global: &JSGlobalObject,
+        property_name: &bun_string::String,
+    ) -> JsResult<Option<JSValue>> {
+        // SAFETY: `global` is live; `property_name` borrowed for the call.
+        let v = unsafe { JSC__JSValue__getOwn(self, global, property_name) };
+        if global.has_exception() { return Err(JsError::Thrown); }
+        if v.is_empty() { Ok(None) } else { Ok(Some(v)) }
+    }
+
+    // ── Iteration (JSValue.zig:2199-2223). ────────────────────────────────
+    /// `JSValue.isIterable`.
+    pub fn is_iterable(self, global: &JSGlobalObject) -> JsResult<bool> {
+        // SAFETY: `global` is live; FFI may set an exception.
+        host_fn::from_js_host_call_generic(global, || unsafe {
+            JSC__JSValue__isIterable(self, global)
+        })
+    }
+    /// `JSValue.forEach` — invoke `callback` for each iterable element.
+    pub fn for_each(
+        self,
+        global: &JSGlobalObject,
+        ctx: *mut c_void,
+        callback: ForEachCallback,
+    ) -> JsResult<()> {
+        // SAFETY: `global` is live; `callback` has C ABI.
+        host_fn::from_js_host_call_generic(global, || unsafe {
+            JSC__JSValue__forEach(self, global, ctx, callback)
+        })
+    }
+    /// `JSValue.forEachWithContext` — typed-ctx wrapper (Zig erased the ctx
+    /// type via `@ptrCast`; callers here pass `*mut c_void` directly).
+    #[inline]
+    pub fn for_each_with_context(
+        self,
+        global: &JSGlobalObject,
+        ctx: *mut c_void,
+        callback: ForEachCallback,
+    ) -> JsResult<()> {
+        self.for_each(global, ctx, callback)
+    }
+
+    // ── Proxy internals (JSValue.zig:2326). ───────────────────────────────
+    /// Asserts `self` is a `Proxy`.
+    pub fn get_proxy_internal_field(self, field: ProxyField) -> JSValue {
+        // SAFETY: `self` is a Proxy cell (caller-checked).
+        unsafe { Bun__ProxyObject__getInternalField(self, field as u32) }
+    }
+
+    // ── Formatting (JSValue.zig:2030). ────────────────────────────────────
+    #[inline]
+    pub fn fmt_string(self, global: &JSGlobalObject) -> StringFormatter<'_> {
+        StringFormatter { value: self, global }
+    }
+
+    // ── Next-tick scheduling (JSValue.zig:275). ───────────────────────────
+    /// `JSValue.callNextTick(global, .{arg})` for the 1-arg case.
+    pub fn call_next_tick_1(
+        function: JSValue,
+        global: &JSGlobalObject,
+        arg: JSValue,
+    ) -> JsResult<()> {
+        // SAFETY: `global` is live; `function`/`arg` are valid encoded JSValues.
+        host_fn::from_js_host_call_generic(global, || unsafe {
+            Bun__Process__queueNextTick1(global, function, arg)
+        })
+    }
+
+    // ── Structured clone (JSValue.zig:2279, 2309). ────────────────────────
+    /// `JSValue.deserialize(bytes, global)`.
+    pub fn deserialize(bytes: &[u8], global: &JSGlobalObject) -> JsResult<JSValue> {
+        // SAFETY: `global` is live; `bytes` valid for the call.
+        host_fn::from_js_host_call(global, || unsafe {
+            Bun__JSValue__deserialize(global, bytes.as_ptr(), bytes.len())
+        })
+    }
+    /// `JSValue.serialize(global, flags)` — structured-clone to bytes.
+    pub fn serialize(
+        self,
+        global: &JSGlobalObject,
+        flags: SerializedFlags,
+    ) -> JsResult<SerializedScriptValue> {
+        let mut bits: u8 = 0;
+        if flags.for_cross_process_transfer { bits |= 1 << 0; }
+        if flags.for_storage { bits |= 1 << 1; }
+        // SAFETY: `global` is live; FFI may set an exception.
+        let ext = host_fn::from_js_host_call_generic(global, || unsafe {
+            Bun__serializeJSValue(global, self, bits)
+        })?;
+        if ext.bytes.is_null() || ext.handle.is_null() {
+            return Err(JsError::Thrown);
+        }
+        // SAFETY: C++ guarantees `bytes[..size]` is valid for the lifetime of
+        // `handle` (until `Bun__SerializedScriptSlice__free`).
+        let data = unsafe { core::slice::from_raw_parts(ext.bytes, ext.size) };
+        Ok(SerializedScriptValue { data, handle: ext.handle })
+    }
+}
+
+unsafe extern "C" {
+    fn JSC__JSValue__eqlValue(this: JSValue, other: JSValue) -> bool;
+    fn JSC__JSValue__isSameValue(this: JSValue, other: JSValue, global: *const JSGlobalObject) -> bool;
+    fn Bun__JSValue__toNumber(this: JSValue, global: *const JSGlobalObject) -> f64;
+    fn JSC__JSValue__toObject(this: JSValue, global: *const JSGlobalObject) -> *mut JSObject;
+    fn JSC__JSValue__getPrototype(this: JSValue, global: *const JSGlobalObject) -> JSValue;
+    fn JSC__JSValue__getName(this: JSValue, global: *const JSGlobalObject, out: *mut bun_string::String);
+    fn JSC__JSValue__getClassName(this: JSValue, global: *const JSGlobalObject, out: *mut bun_string::ZigString);
+    fn JSC__JSValue__getSymbolDescription(this: JSValue, global: *const JSGlobalObject, out: *mut bun_string::ZigString);
+    fn JSC__JSValue__symbolFor(global: *const JSGlobalObject, key: *mut bun_string::ZigString) -> JSValue;
+    fn JSC__JSValue__getOwn(this: JSValue, global: *const JSGlobalObject, name: *const bun_string::String) -> JSValue;
+    fn JSC__JSValue__isIterable(this: JSValue, global: *const JSGlobalObject) -> bool;
+    fn JSC__JSValue__forEach(
+        this: JSValue,
+        global: *const JSGlobalObject,
+        ctx: *mut c_void,
+        callback: ForEachCallback,
+    );
+    fn Bun__ProxyObject__getInternalField(this: JSValue, field: u32) -> JSValue;
+    fn Bun__Process__queueNextTick1(global: *const JSGlobalObject, func: JSValue, arg: JSValue);
+    fn Bun__JSValue__deserialize(global: *const JSGlobalObject, data: *const u8, len: usize) -> JSValue;
+    fn Bun__serializeJSValue(global: *const JSGlobalObject, value: JSValue, flags: u8) -> SerializedScriptValueExternal;
+    fn Bun__SerializedScriptSlice__free(handle: *mut c_void);
 }

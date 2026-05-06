@@ -97,10 +97,23 @@ pub mod Macro {
 
     /// Stand-in for `js_parser_jsc::Macro::MacroContext`.
     ///
-    /// Real fields (`env`, `macros`, `remap`, `js_ctx`) reference `Transpiler`
-    /// and JSC types; the higher-tier *_jsc crate owns the full definition.
-    #[derive(Default)]
-    pub struct MacroContext;
+    /// Real fields (`env`, `macros`, `remap`) reference `Transpiler` and JSC
+    /// types; the higher-tier *_jsc crate owns the full definition.
+    /// `javascript_object` is surfaced here as an opaque pointer so
+    /// `Transpiler::parse` can thread `this_parse.macro_js_ctx` through
+    /// (spec transpiler.zig:938-940) without this crate depending on
+    /// `bun_jsc::JSValue`.
+    pub struct MacroContext {
+        /// Opaque stand-in for `JSC.JSValue` (the caller-supplied macro JS
+        /// context). `bun_js_parser_jsc` reinterprets this as a `JSValue`.
+        pub javascript_object: *mut (),
+    }
+    impl Default for MacroContext {
+        #[inline]
+        fn default() -> Self {
+            Self { javascript_object: core::ptr::null_mut() }
+        }
+    }
     impl MacroContext {
         /// Zig: `pub fn init(transpiler: *Transpiler) MacroContext`.
         #[inline]

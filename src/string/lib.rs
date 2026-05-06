@@ -126,11 +126,18 @@ impl String {
     }
 
     /// `bun.String.static` — `'static` slice; converted to JS via
-    /// `WTF::ExternalStringImpl` without copying.
+    /// `WTF::ExternalStringImpl` without copying. Generic over `str`/`[u8]`
+    /// so call sites may pass either `"lit"` or `b"lit"` (Zig's `[:0]const u8`
+    /// literal maps to both in ported code).
     #[inline]
-    pub fn static_(s: &'static [u8]) -> Self {
+    pub fn static_<S: ?Sized + AsRef<[u8]>>(s: &'static S) -> Self {
         // Zig: ZigString.init(input) — no UTF-8 mark on the static path.
-        Self { tag: Tag::StaticZigString, value: StringImpl { zig: ZigString::init(s) } }
+        Self { tag: Tag::StaticZigString, value: StringImpl { zig: ZigString::init(s.as_ref()) } }
+    }
+    /// Alias of `static_` for callers that spell it `static_str`.
+    #[inline]
+    pub fn static_str<S: ?Sized + AsRef<[u8]>>(s: &'static S) -> Self {
+        Self::static_(s)
     }
 
     /// `bun.String.cloneUTF8` — copies `s` into a fresh WTF::StringImpl
@@ -563,6 +570,38 @@ impl String {
     // free fns / extension trait in `bun_jsc::string` (would otherwise create
     // a `bun_string ↔ bun_jsc` dependency cycle).
 }
+// `bun.String.init(anytype)` dispatch table (string.zig:331) — Rust side is
+// expressed as `From` impls feeding `String::init<T: Into<Self>>`. The
+// `String → String` identity case is covered by the std blanket `From<T> for T`.
+impl From<ZigString> for String {
+    #[inline]
+    fn from(z: ZigString) -> Self {
+        Self { tag: Tag::ZigString, value: StringImpl { zig: z } }
+    }
+}
+impl From<&ZigString> for String {
+    #[inline]
+    fn from(z: &ZigString) -> Self { Self::from(*z) }
+}
+impl From<&[u8]> for String {
+    /// `[]const u8` arm — `ZigString.fromBytes` (auto-marks UTF-8 if non-ASCII).
+    #[inline]
+    fn from(s: &[u8]) -> Self { Self::from(ZigString::from_bytes(s)) }
+}
+impl<const N: usize> From<&[u8; N]> for String {
+    #[inline]
+    fn from(s: &[u8; N]) -> Self { Self::from(&s[..]) }
+}
+impl From<&str> for String {
+    #[inline]
+    fn from(s: &str) -> Self { Self::from(ZigString::from_bytes(s.as_bytes())) }
+}
+impl From<&[u16]> for String {
+    /// `[]const u16` arm — `ZigString.from16Slice`.
+    #[inline]
+    fn from(s: &[u16]) -> Self { Self::from(ZigString::init_utf16(s)) }
+}
+
 impl Default for String {
     #[inline] fn default() -> Self { Self::EMPTY }
 }
@@ -720,13 +759,15 @@ impl ZigString {
     /// `ZigString.static` — wraps a `'static` ASCII literal. Zig returned a
     /// `*const ZigString` to a comptime-interned holder; Rust callers consume
     /// the value directly (ZigString is `Copy`), so we return by value.
+    /// Generic over `str`/`[u8]` so either `"lit"` or `b"lit"` is accepted.
     #[inline]
-    pub const fn static_(slice: &'static [u8]) -> Self {
-        Self { ptr: slice.as_ptr(), len: slice.len() }
+    pub fn static_<S: ?Sized + AsRef<[u8]>>(slice: &'static S) -> Self {
+        let bytes = slice.as_ref();
+        Self { ptr: bytes.as_ptr(), len: bytes.len() }
     }
     /// Alias of `static_` for callers that spell it `static_str`.
     #[inline]
-    pub const fn static_str(slice: &'static [u8]) -> Self { Self::static_(slice) }
+    pub fn static_str<S: ?Sized + AsRef<[u8]>>(slice: &'static S) -> Self { Self::static_(slice) }
 
     /// `ZigString.utf8ByteLength` — exact UTF-8 byte length needed to encode
     /// this string (ZigString.zig:221). UTF-16 → simdutf length; Latin-1

@@ -591,8 +591,9 @@ impl Worker {
         // Zig: `transpiler.* = from.*;`
         // SAFETY: `from` is the `BundleV2`-owned transpiler which outlives every
         // worker; the slot is `MaybeUninit` so `Drop` never runs on the bitwise
-        // copy (`clone_for_worker` contract).
-        transpiler.write(unsafe { Transpiler::<'static>::clone_for_worker(from) });
+        // copy (`clone_for_worker` contract). Written in-place so no owned
+        // aliased `Transpiler` ever exists on the stack across an unwind point.
+        unsafe { Transpiler::<'static>::clone_for_worker(from, transpiler) };
         // SAFETY: written on the line above.
         let t = unsafe { transpiler.assume_init_mut() };
         t.set_log(log);

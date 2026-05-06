@@ -121,11 +121,29 @@ impl<'a> Transpiler<'a> {
     ///   * the clone is stored where `Drop` never runs (`MaybeUninit` slot in
     ///     `WorkerData`), so no double-free occurs. `Worker::deinit` mirrors
     ///     Zig and only tears down the arena, never the per-worker `Transpiler`.
-    pub unsafe fn clone_for_worker(from: &Transpiler<'_>) -> Transpiler<'a> {
+    ///
+    /// PORT NOTE: writes in-place into the caller's `MaybeUninit` slot rather
+    /// than returning an owned `Transpiler<'a>` by value. Returning by value
+    /// would put an owned, fully-aliased `Transpiler` on the stack across the
+    /// caller's `.write()`; if a panic unwound at that point `Drop` would run
+    /// and double-free every heap field. Writing through `MaybeUninit::as_mut_ptr`
+    /// guarantees no aliased owned value ever exists where `Drop` can reach it
+    /// (PORTING.md §Forbidden — `ManuallyDrop`/`ptr::read` without paired drop).
+    pub unsafe fn clone_for_worker(
+        from: &Transpiler<'_>,
+        out: &mut core::mem::MaybeUninit<Transpiler<'a>>,
+    ) {
         // SAFETY: bitwise copy + lifetime erase per caller contract above.
         // `Transpiler<'x>` and `Transpiler<'a>` differ only in the lifetime
-        // parameter, so the pointer cast is layout-preserving.
-        unsafe { core::ptr::read((from as *const Transpiler<'_>).cast::<Transpiler<'a>>()) }
+        // parameter, so the pointer cast is layout-preserving. `from` and
+        // `out` cannot overlap (`from` is `&` and `out` is `&mut`).
+        unsafe {
+            core::ptr::copy_nonoverlapping(
+                (from as *const Transpiler<'_>).cast::<Transpiler<'a>>(),
+                out.as_mut_ptr(),
+                1,
+            );
+        }
     }
 }
 
@@ -1092,13 +1110,17 @@ impl<'a> Transpiler<'a> {
                     self.macro_context =
                         Some(js_ast::Macro::MacroContext::default());
                 }
+                // Spec transpiler.zig:938-940: thread the caller-supplied JS
+                // context into the macro runtime so macros invoked during
+                // runtime transpilation see it (instead of null). Written on
+                // `self.macro_context` before reborrowing into `opts` so the
+                // `&mut` handed to the parser already carries the value.
+                if target != crate::options_impl::Target::BunMacro {
+                    // SAFETY: `is_none()` check above guarantees `Some` here.
+                    self.macro_context.as_mut().unwrap().javascript_object =
+                        this_parse.macro_js_ctx;
+                }
                 opts.macro_context = self.macro_context.as_mut();
-                // TODO(port): Zig wrote `opts.macro_context.javascript_object =
-                // this_parse.macro_js_ctx` when `target != .bun_macro`. The
-                // CYCLEBREAK `MacroContext` stub has no `javascript_object`
-                // field yet; thread it once `bun_js_parser_jsc` lands the real
-                // struct.
-                let _ = this_parse.macro_js_ctx;
 
                 // Capture the cache pointer for the returned `ParseResult`
                 // before `this_parse` is otherwise consumed.

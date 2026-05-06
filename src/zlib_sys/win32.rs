@@ -35,8 +35,10 @@ pub type z_free_func = free_func;
 
 #[repr(C)]
 pub struct struct_internal_state {
-    _p: [u8; 0],
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
+    // Match the posix.rs layout (zlib's `struct internal_state { int dummy; }` stub)
+    // so rustc's clashing_extern_declarations lint sees the two z_stream definitions
+    // as structurally identical when both modules are compiled into the same crate.
+    dummy: c_int,
 }
 
 #[repr(C)]

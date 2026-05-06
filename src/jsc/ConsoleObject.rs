@@ -577,15 +577,12 @@ struct VisibleCharacterCounter<'a> {
 }
 
 impl bun_io::Write for VisibleCharacterCounter<'_> {
-    fn write(&mut self, bytes: &[u8]) -> Result<usize, bun_io::Error> {
-        *self.width += strings::visible::width::exclude_ansi_colors::utf8(bytes);
-        Ok(bytes.len())
-    }
-    fn write_all(&mut self, bytes: &[u8]) -> Result<(), bun_io::Error> {
-        *self.width += strings::visible::width::exclude_ansi_colors::utf8(bytes);
-        Ok(())
-    }
-    fn flush(&mut self) -> Result<(), bun_io::Error> {
+    fn write_all(&mut self, bytes: &[u8]) -> bun_io::Result<()> {
+        // TODO(phase-c): `strings::visible::width::exclude_ansi_colors::utf8`
+        // not yet ported — fall back to raw byte count so the build links.
+        #[cfg(any())]
+        { *self.width += strings::visible::width::exclude_ansi_colors::utf8(bytes); }
+        *self.width += bytes.len();
         Ok(())
     }
 }
@@ -694,7 +691,7 @@ impl<'a> TablePrinter<'a> {
         writer: &mut dyn bun_io::Write,
         s: &'static [u8],
         n: usize,
-    ) -> Result<(), bun_io::Error> {
+    ) -> bun_io::Result<()> {
         if s.len() == 1 {
             return writer.splat_byte_all(s[0], n);
         }
@@ -1015,29 +1012,35 @@ impl<'a> TablePrinter<'a> {
 // writeTrace
 // ───────────────────────────────────────────────────────────────────────────
 
-pub fn write_trace(writer: &mut impl bun_io::Write, global: &JSGlobalObject) {
-    let mut holder = ZigException::Holder::init();
-    let vm = VirtualMachine::get();
-    let _holder_guard = scopeguard::guard(&mut holder, |h| h.deinit(vm));
-    let exception = holder.zig_exception();
+pub fn write_trace(_writer: &mut impl bun_io::Write, _global: &JSGlobalObject) {
+    // TODO(phase-c): body re-gated — `ZigString::to_error_instance` /
+    // `VirtualMachine::{remap_zig_exception, print_stack_trace}` not yet
+    // ported. `console.trace()` falls through to a no-op until then.
+    #[cfg(any())]
+    {
+        let mut holder = ZigException::Holder::init();
+        let vm = VirtualMachine::get();
+        let _holder_guard = scopeguard::guard(&mut holder, |h| h.deinit(vm));
+        let exception = holder.zig_exception();
 
-    let mut source_code_slice: Option<ZigString::Slice> = None;
+        let mut source_code_slice: Option<ZigString::Slice> = None;
 
-    let err = ZigString::init(b"trace output").to_error_instance(global);
-    err.to_zig_exception(global, exception);
-    vm.remap_zig_exception(
-        exception,
-        err,
-        None,
-        &mut holder.need_to_clear_parser_arena_on_deinit,
-        &mut source_code_slice,
-        false,
-    );
+        let err = ZigString::init(b"trace output").to_error_instance(global);
+        err.to_zig_exception(global, exception);
+        vm.remap_zig_exception(
+            exception,
+            err,
+            None,
+            &mut holder.need_to_clear_parser_arena_on_deinit,
+            &mut source_code_slice,
+            false,
+        );
 
-    if Output::enable_ansi_colors_stderr() {
-        let _ = VirtualMachine::print_stack_trace::<true>(writer, &exception.stack);
-    } else {
-        let _ = VirtualMachine::print_stack_trace::<false>(writer, &exception.stack);
+        if Output::enable_ansi_colors_stderr() {
+            let _ = VirtualMachine::print_stack_trace::<true>(writer, &exception.stack);
+        } else {
+            let _ = VirtualMachine::print_stack_trace::<false>(writer, &exception.stack);
+        }
     }
 }
 
@@ -1143,6 +1146,9 @@ impl ErrorDisplayLevel {
     }
 }
 
+// TODO(phase-c): re-gated — body references unported `JSValue::coerce_f64` /
+// `get_boolean_loose`. Stub provided immediately below.
+#[cfg(any())]
 impl FormatOptions {
     pub fn from_js(
         &mut self,
@@ -1208,6 +1214,17 @@ impl FormatOptions {
                 }
             }
         }
+        Ok(())
+    }
+}
+
+impl FormatOptions {
+    /// Phase-C stub for the gated `from_js` above.
+    pub fn from_js(
+        &mut self,
+        _global_this: &JSGlobalObject,
+        _arguments: &[JSValue],
+    ) -> JsResult<()> {
         Ok(())
     }
 }
@@ -2455,7 +2472,7 @@ pub mod formatter {
         pub fn write_indent(
             &self,
             writer: &mut dyn bun_io::Write,
-        ) -> Result<(), bun_io::Error> {
+        ) -> bun_io::Result<()> {
             let mut total_remain: u32 = self.indent;
             while total_remain > 0 {
                 let written: u8 = total_remain.min(32) as u8;
@@ -2468,7 +2485,7 @@ pub mod formatter {
         pub fn print_comma<const ENABLE_ANSI_COLORS: bool>(
             &mut self,
             writer: &mut dyn bun_io::Write,
-        ) -> Result<(), bun_io::Error> {
+        ) -> bun_io::Result<()> {
             writer.write_all(pfmt!("<r><d>,<r>", ENABLE_ANSI_COLORS).as_bytes())?;
             self.estimated_line_length += 1;
             Ok(())

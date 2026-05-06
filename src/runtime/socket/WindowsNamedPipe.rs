@@ -619,7 +619,7 @@ impl WindowsNamedPipe {
 
     pub fn start_tls(
         &mut self,
-        ssl_options: SslConfig,
+        ssl_options: SSLConfig,
         is_client: bool,
     ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set

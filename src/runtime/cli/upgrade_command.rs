@@ -310,7 +310,11 @@ impl UpgradeCommand {
         // defer if SILENT log.deinit() — Drop handles this
         let source = logger::Source::init_path_string(b"releases.json", metadata_body.list.as_slice());
         initialize_store();
-        let expr = match JSON::parse_utf8(&source, &mut log) {
+        // PORT NOTE: `JSON::parse_utf8` and `Expr::as_string` need a bump arena;
+        // this is a one-shot CLI path so leak it (Zig used the global Expr/Stmt
+        // store which is process-lifetime anyway).
+        let bump: &'static Bump = Box::leak(Box::new(Bump::new()));
+        let expr = match JSON::parse_utf8(&source, &mut log, bump) {
             Ok(e) => e,
             Err(err) => {
                 if !SILENT {
@@ -318,7 +322,7 @@ impl UpgradeCommand {
                     refresher.unwrap().refresh();
 
                     if log.errors > 0 {
-                        log.print(Output::error_writer())?;
+                        let _ = log.print(Output::error_writer() as *mut _);
                         Global::exit(1);
                     } else {
                         Output::pretty_errorln(
@@ -340,7 +344,7 @@ impl UpgradeCommand {
                 progress.unwrap().end();
                 refresher.unwrap().refresh();
 
-                log.print(Output::error_writer())?;
+                let _ = log.print(Output::error_writer() as *mut _);
                 Global::exit(1);
             }
 
@@ -350,19 +354,18 @@ impl UpgradeCommand {
         let mut version = Version {
             zip_url: Box::default(),
             tag: Box::default(),
-            buf: metadata_body,
+            buf: MutableString::init_empty(),
             size: 0,
         };
 
-        if !matches!(expr.data, js_ast::Expr::Data::EObject(_)) {
+        if !matches!(expr.data, js_ast::ExprData::EObject(_)) {
             if !SILENT {
                 progress.unwrap().end();
                 refresher.unwrap().refresh();
 
-                let json_type: js_ast::Expr::Tag = expr.data.tag();
                 Output::pretty_errorln(format_args!(
-                    "JSON error - expected an object but received {}",
-                    <&'static str>::from(json_type)
+                    "JSON error - expected an object but received {:?}",
+                    core::mem::discriminant(&expr.data)
                 ));
                 Global::exit(1);
             }
@@ -371,7 +374,7 @@ impl UpgradeCommand {
         }
 
         if let Some(tag_name_) = expr.as_property(b"tag_name") {
-            if let Some(tag_name) = tag_name_.expr.as_string() {
+            if let Some(tag_name) = tag_name_.expr.as_string(bump) {
                 version.tag = tag_name.into();
             }
         }

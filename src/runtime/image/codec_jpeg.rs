@@ -2,8 +2,10 @@
 //! Dispatch lives in codecs.rs; this file is the codec body.
 
 use core::ffi::{c_char, c_int, c_void};
+use core::ptr::NonNull;
 
 use super::codecs;
+use crate::encoded_wrap_free;
 
 #[allow(non_camel_case_types)]
 type tjhandle = *mut c_void;

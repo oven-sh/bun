@@ -1776,48 +1776,59 @@ fn file_copier_copy(
                 continue;
             }
 
-            let outfile = match destination_dir_.create_file(entry.path, Default::default()) {
-                Ok(f) => bun_sys::Fd::from_std_file(f),
+            let outfile = match bun_sys::openat(
+                destination_dir_.fd,
+                entry.path,
+                bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
+                0o666,
+            ) {
+                Ok(f) => f,
                 Err(_) => 'brk: {
-                    if let Some(entry_dirname) = bun_resolver::Dirname::dirname(entry.path) {
-                        let _ = bun_sys::MakePath::make_path(destination_dir_, entry_dirname);
+                    let entry_dirname = bun_resolver::Dirname::dirname(entry.path.as_bytes());
+                    if !entry_dirname.is_empty() {
+                        let _ = bun_sys::make_path(destination_dir_, entry_dirname);
                     }
-                    match destination_dir_.create_file(entry.path, Default::default()) {
-                        Ok(f) => break 'brk bun_sys::Fd::from_std_file(f),
+                    match bun_sys::openat(
+                        destination_dir_.fd,
+                        entry.path,
+                        bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
+                        0o666,
+                    ) {
+                        Ok(f) => break 'brk f,
                         Err(err) => {
                             node_.end();
                             progress_.refresh();
                             Output::err(
                                 err,
                                 "failed to copy file {}",
-                                format_args!("{}", bun_core::fmt::fmt_os_path(entry.path, Default::default())),
+                                format_args!("{}", bun_core::fmt::fmt_os_path(entry.path.as_bytes(), Default::default())),
                             );
                             Global::crash();
                         }
                     }
                 }
             };
-            let _close_out = scopeguard::guard((), |_| outfile.close());
+            let _close_out = scopeguard::guard((), |_| { let _ = bun_sys::close(outfile); });
             let _complete = scopeguard::guard((), |_| node_.complete_one());
 
-            let infile = entry.dir.openat(entry.basename, bun_sys::O::RDONLY, 0).unwrap_result()?;
-            let _close_in = scopeguard::guard((), |_| infile.close());
+            let infile = bun_sys::openat(entry.dir, entry.basename, bun_sys::O::RDONLY, 0)?;
+            let _close_in = scopeguard::guard((), |_| { let _ = bun_sys::close(infile); });
 
             // Assumption: you only really care about making sure something that was executable is still executable
-            match infile.stat() {
-                bun_sys::Result::Err(_) => {}
-                bun_sys::Result::Ok(stat) => {
-                    let _ = outfile.chmod(u32::try_from(stat.mode()).unwrap());
+            match bun_sys::fstat(infile) {
+                Err(_) => {}
+                Ok(stat) => {
+                    let _ = bun_sys::fchmod(outfile, stat.st_mode as bun_core::Mode);
                 }
             }
 
-            if let Err(err) = CopyFile::copy_file(infile, outfile).unwrap_result() {
+            if let Err(err) = CopyFile::copy_file(infile, outfile) {
                 node_.end();
                 progress_.refresh();
                 Output::err(
                     err,
                     "failed to copy file {}",
-                    format_args!("{}", bun_core::fmt::fmt_os_path(entry.path, Default::default())),
+                    format_args!("{}", bun_core::fmt::fmt_os_path(entry.path.as_bytes(), Default::default())),
                 );
                 Global::crash();
             }

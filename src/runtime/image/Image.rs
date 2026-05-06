@@ -515,7 +515,7 @@ impl Image {
     ) -> JsResult<JSValue> {
         let args = callframe.arguments();
         if args.len() < 1 || !args[0].is_number() {
-            return global.throw_invalid_arguments("rotate(degrees) expects 90, 180 or 270");
+            return Err(global.throw_invalid_arguments("rotate(degrees) expects 90, 180 or 270"));
         }
         // coerce_int for the same NaN/Inf/huge-finite reasons as everywhere else;
         // ±1e15 is plenty of headroom for "any multiple of 90 a user might pass".

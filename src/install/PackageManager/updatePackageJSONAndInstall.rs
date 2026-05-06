@@ -146,7 +146,8 @@ fn update_package_json_and_install_with_manager_with_updates(
         },
     ) {
         GetResult::ParseErr(err) => {
-            let _ = manager.log.print(Output::error_writer());
+            // SAFETY: `manager.log` is a non-null backref to the CLI log set at init().
+            let _ = unsafe { &*manager.log }.print(Output::error_writer());
             Output::err_generic(format_args!(
                 "failed to parse package.json \"{}\": {}",
                 BStr::new(&manager.original_package_json_path),
@@ -420,7 +421,8 @@ fn update_package_json_and_install_with_manager_with_updates(
             },
         ) {
             GetResult::ParseErr(err) => {
-                let _ = manager.log.print(Output::error_writer());
+                // SAFETY: `manager.log` is a non-null backref to the CLI log set at init().
+                let _ = unsafe { &*manager.log }.print(Output::error_writer());
                 Output::err_generic(format_args!(
                     "failed to parse package.json \"{}\": {}",
                     BStr::new(root_package_json_path),

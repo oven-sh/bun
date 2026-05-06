@@ -4704,8 +4704,10 @@ impl<'a> BundleV2<'a> {
     /// resolve_tasks_waiting_for_import_source_index. Called after
     /// processResolveQueue has registered new modules.
     pub fn patch_import_record_source_indices(&mut self, import_records: &mut import_record::List, ctx: PatchImportRecordsCtx) {
-        let graph = &self.graph;
-        let input_file_loaders = graph.input_files.items_loader();
+        // PORT NOTE: Zig aliased `const graph = &this.graph;`. Borrowck rejects
+        // holding that across the `&mut self.graph.build_graphs[...]` borrow
+        // below, so address the disjoint `self.graph.*` fields directly instead.
+        let input_file_loaders = self.graph.input_files.items_loader();
         let save_import_record_source_index = ctx.force_save
             || self.dev_server.is_none()
             || ctx.loader == Loader::Html
@@ -4723,7 +4725,9 @@ impl<'a> BundleV2<'a> {
             drop(value);
         }
 
-        let path_to_source_index_map = self.path_to_source_index_map(ctx.target);
+        // Inlined `self.path_to_source_index_map(ctx.target)` (== `&mut self.graph.build_graphs[target]`)
+        // so borrowck sees it as disjoint from `self.graph.input_files` above.
+        let path_to_source_index_map = &mut self.graph.build_graphs[ctx.target];
         for (i, record) in import_records.slice_mut().iter_mut().enumerate() {
             if let Some(source_index) = path_to_source_index_map.get_path(&record.path) {
                 if save_import_record_source_index || input_file_loaders[source_index as usize].is_css() {

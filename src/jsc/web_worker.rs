@@ -584,8 +584,15 @@ mod __phase_a_body {
             debug_assert!(self.status == Status::Start);
             debug_assert!(self.vm.is_null());
 
-            // SAFETY: parent valid (see header).
-            let parent = unsafe { &mut *self.parent };
+            // SAFETY: `parent` is non-null and outlives this worker while
+            // `parent_poll_ref` is held (see file header). The parent VM runs
+            // concurrently on its own thread, so we must NOT materialise a
+            // `&mut VirtualMachine` here — Zig's `*T` aliases freely but a
+            // Rust `&mut` would assert uniqueness we don't have. All uses
+            // below are read-only (clone of transform_options, locked read of
+            // proxy_env_storage / env.map, copy of standalone_module_graph),
+            // so a shared reference is sufficient and matches the .zig intent.
+            let parent = unsafe { &*self.parent };
             let mut transform_options = parent.transpiler.options.transform_options.clone();
 
             if !self.inherit_exec_argv {

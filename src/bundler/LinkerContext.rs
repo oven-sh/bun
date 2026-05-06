@@ -332,16 +332,10 @@ impl<'a> LinkerContext<'a> {
     pub fn load(
         &mut self,
         bundle: &mut BundleV2,
-        entry_points: &[js_ast::Index],
+        entry_points: &[Index],
         server_component_boundaries: js_ast::ast::server_component_boundary::List,
         reachable: &[Index],
     ) -> Result<(), BunError> {
-        // PORT NOTE: `bun_js_parser::Index` and `crate::Index` are both
-        // `#[repr(transparent)]` u32 newtypes; callers pass the former, the
-        // linker graph is typed against the latter. Reinterpret in-place.
-        let entry_points: &[Index] = unsafe {
-            core::slice::from_raw_parts(entry_points.as_ptr().cast::<Index>(), entry_points.len())
-        };
         let _trace = bun::perf::trace("Bundler.CloneLinkerGraph");
         self.parse_graph = &mut bundle.graph;
 
@@ -353,7 +347,11 @@ impl<'a> LinkerContext<'a> {
         // SAFETY: `transpiler.log` is a `*mut Log` backref valid for the bundle's lifetime.
         self.log = unsafe { &mut *transpiler.log };
 
-        self.resolver = &mut transpiler.resolver;
+        // PORT NOTE: lifetime — `self.resolver` is `*mut Resolver<'static>` but
+        // `transpiler.resolver` is `Resolver<'_>`; raw `*mut T` is invariant in
+        // `T`, so erase the lifetime via a pointer cast (LIFETIMES.tsv:
+        // GRAPHBACKED — resolver outlives the link step).
+        self.resolver = core::ptr::from_mut(&mut transpiler.resolver).cast();
         self.cycle_detector = Vec::new();
 
         // PORT NOTE: `reachable_files` is `BabyList<Index>`; clone the
@@ -1074,7 +1072,6 @@ pub enum LinkerOptionsMode {
 }
 
 #[derive(Default)]
-#[derive(Default)]
 pub struct SourceMapData {
     pub line_offset_wait_group: WaitGroup,
     pub line_offset_tasks: Box<[SourceMapDataTask]>,
@@ -1169,7 +1166,7 @@ impl SourceMapDataTask {
         // SAFETY: `worker.ctx` is a `*mut BundleV2` backref; `transpiler` is a
         // `*mut Transpiler` backref. Both valid for the worker's lifetime.
         let alloc: *const Bump = unsafe {
-            if (*(*worker.ctx).transpiler).options.dev_server.is_some() {
+            if !(*(*worker.ctx).transpiler).options.dev_server.is_null() {
                 // CYCLEBREAK FORWARD_DECL: `bake::DevServer.allocator()` —
                 // dev_server is type-erased here (Option<()>); the real handle
                 // arrives with the bake crate. Fall through to the worker arena.

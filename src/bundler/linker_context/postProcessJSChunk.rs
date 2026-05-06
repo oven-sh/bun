@@ -540,7 +540,7 @@ pub fn post_process_js_chunk(
         c.options.mode == LinkerOptionsMode::Bundle && !c.options.minify_whitespace;
 
     let emit_targets_in_commands = show_comments
-        && (if let Some(fw) = ctx.c.framework {
+        && (if let Some(fw) = c.framework {
             // SAFETY: framework is a non-null bundler-owned pointer when Some.
             unsafe { (*fw).server_components.is_some() }
         } else {
@@ -730,8 +730,8 @@ pub fn post_process_js_chunk(
             j.push_static(b"\n");
             line_offset.advance(b"\n");
         }
-        j.push_static(ctx.c.options.footer);
-        line_offset.advance(ctx.c.options.footer);
+        j.push_static(c.options.footer);
+        line_offset.advance(c.options.footer);
         j.push_static(b"\n");
         line_offset.advance(b"\n");
     }
@@ -906,13 +906,13 @@ pub fn generate_entry_point_tail_js(
                         for (i, alias) in sorted_and_filtered_export_aliases.iter().enumerate() {
                             let mut resolved_export = resolved_exports.get(alias).unwrap();
 
-                            had_default_export = had_default_export || alias == b"default";
+                            had_default_export = had_default_export || **alias == *b"default";
 
                             // If this is an export of an import, reference the symbol that the import
                             // was eventually resolved to. We need to do this because imports have
                             // already been resolved by this point, so we can't generate a new import
                             // and have that be resolved later.
-                            if let Some(import_data) = imports_to_bind.get(resolved_export.data.import_ref) {
+                            if let Some(import_data) = imports_to_bind.get(&resolved_export.data.import_ref) {
                                 resolved_export.data.import_ref = import_data.data.import_ref;
                                 resolved_export.data.source_index = import_data.data.source_index;
                             }
@@ -994,7 +994,7 @@ pub fn generate_entry_point_tail_js(
                                         ref_: Some(temp_ref),
                                         loc: Logger::Loc::EMPTY,
                                     },
-                                    alias,
+                                    alias: &**alias as *const [u8],
                                     alias_loc: Logger::Loc::EMPTY,
                                     ..Default::default()
                                 });
@@ -1027,7 +1027,7 @@ pub fn generate_entry_point_tail_js(
                                         ref_: Some(resolved_export.data.import_ref),
                                         loc: resolved_export.data.name_loc,
                                     },
-                                    alias,
+                                    alias: &**alias as *const [u8],
                                     alias_loc: resolved_export.data.name_loc,
                                     ..Default::default()
                                 });
@@ -1093,7 +1093,7 @@ pub fn generate_entry_point_tail_js(
                                         export_item.alias_loc,
                                     )),
                                     kind: G::PropertyKind::Get,
-                                    flags: js_ast::flags::Property::IsMethod.into(),
+                                    flags: js_ast::Flags::Property::IsMethod.into(),
                                     ..Default::default()
                                 }).expect("OOM");
                             }

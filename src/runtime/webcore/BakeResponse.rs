@@ -19,6 +19,18 @@ unsafe extern "C" {
         this: *mut Response,
         kind: u8,
     ) -> JSValue;
+    // TODO(port): upstream lacks `JSValue::is_jsx_element`; shim the C++ export locally.
+    fn JSC__JSValue__isJSXElement(value: JSValue, global: *const JSGlobalObject) -> bool;
+}
+
+#[inline]
+fn is_jsx_element(value: JSValue, global: &JSGlobalObject) -> JsResult<bool> {
+    // SAFETY: `global` is a live JSGlobalObject borrow; `value` is a valid encoded JSValue.
+    let r = unsafe { JSC__JSValue__isJSXElement(value, global) };
+    if global.has_exception() {
+        return Err(JsError::Thrown);
+    }
+    Ok(r)
 }
 
 /// Corresponds to `JSBakeResponseKind` in

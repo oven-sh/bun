@@ -3465,14 +3465,15 @@ pub mod ret {
         const FIELD_BYTES_WRITTEN: ZigString = ZigString::init_static(b"bytesWritten");
         const FIELD_BUFFER: ZigString = ZigString::init_static(b"buffer");
         // Excited for the issue that's like "cannot read file bigger than 2 GB"
-        pub fn to_js(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+        pub fn to_js(&mut self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
             let _unprotect = scopeguard::guard(self.buffer_val, |v| if !v.is_empty_or_undefined_or_null() { v.unprotect() });
+            let buffer_js = if matches!(self.buffer, StringOrBuffer::Buffer(_)) { self.buffer_val } else { self.buffer.to_js(global_object)? };
             jsvalue_create_object_2(
                 global_object,
                 &Self::FIELD_BYTES_WRITTEN,
                 &Self::FIELD_BUFFER,
                 JSValue::js_number_from_uint64(self.bytes_written.min((1u64 << 52) - 1)),
-                if matches!(self.buffer, StringOrBuffer::Buffer(_)) { self.buffer_val } else { self.buffer.to_js(global_object) },
+                buffer_js,
             )
         }
     }

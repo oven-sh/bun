@@ -818,13 +818,16 @@ pub fn run_scripts_with_filter(ctx: Command::Context) -> Result<core::convert::I
             let combined = unsafe { ZStr::from_raw(leaked.as_ptr(), combined_len) };
 
             scripts.push(ScriptConfig {
-                package_json_path: Box::<[u8]>::from(package_json_path),
+                package_json_path: package_json_path.clone(),
                 package_name: Box::<[u8]>::from(&pkgjson.name[..]),
                 script_name: Box::<[u8]>::from(*name),
                 script_content: Box::<[u8]>::from(&leaked[0..len_command_only]),
                 combined,
-                deps: pkgjson.dependencies.clone(),
-                // TODO(port): DependencyMap clone — Zig copied by value (shallow).
+                // TODO(port): blocked_on: bun_resolver::DependencyMap: Clone —
+                // Zig copied by value (shallow `[]const u8` map). The Rust
+                // `ArrayHashMap` isn't `Clone`; workspace-dep ordering is lost
+                // until DependencyMap gains a clone/shallow-copy.
+                deps: DependencyMap::default(),
                 PATH: Box::<[u8]>::from(&path_var[..]),
                 elide_count: ctx.bundler_options.elide_lines,
             });

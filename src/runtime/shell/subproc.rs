@@ -320,7 +320,8 @@ impl ShellSubprocess {
         match kind {
             StdioKind::Stdin => match &mut self.stdin {
                 Writable::Pipe(pipe) => {
-                    pipe.signal.clear();
+                    // SAFETY: Arc<FileSink> is single-thread; raw mut access mirrors Zig.
+                    unsafe { (*(Arc::as_ptr(pipe) as *mut FileSink)).signal.clear() };
                     // drop Arc<FileSink>
                     self.stdin = Writable::Ignore;
                 }
@@ -328,7 +329,8 @@ impl ShellSubprocess {
                     self.on_static_pipe_writer_done();
                     // PORT NOTE: reshaped for borrowck — re-match after the &mut self call above.
                     if let Writable::Buffer(buffer) = &mut self.stdin {
-                        buffer.source.detach();
+                        // SAFETY: RefPtr<StaticPipeWriter> data is live.
+                        unsafe { (*buffer.data.as_ptr()).source.detach() };
                     }
                     self.stdin = Writable::Ignore;
                 }

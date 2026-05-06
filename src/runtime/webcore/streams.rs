@@ -1,4 +1,5 @@
 use core::ffi::c_void;
+use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
 
 use bun_collections::BabyList;

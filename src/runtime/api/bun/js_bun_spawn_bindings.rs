@@ -1572,33 +1572,33 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     SubprocessT::finalize(subprocess as *mut SubprocessT);
 
     let sync_value = JSValue::create_empty_object(global_this, 0);
-    sync_value.put(global_this, ZigString::static_("exitCode"), exit_code);
+    sync_value.put(global_this, b"exitCode", exit_code);
     if !signal_code.is_empty_or_undefined_or_null() {
-        sync_value.put(global_this, ZigString::static_("signalCode"), signal_code);
+        sync_value.put(global_this, b"signalCode", signal_code);
     }
-    sync_value.put(global_this, ZigString::static_("stdout"), stdout);
-    sync_value.put(global_this, ZigString::static_("stderr"), stderr);
+    sync_value.put(global_this, b"stdout", stdout);
+    sync_value.put(global_this, b"stderr", stderr);
     sync_value.put(
         global_this,
-        ZigString::static_("success"),
+        b"success",
         JSValue::from(exit_code.is_int32() && exit_code.as_int32() == 0),
     );
-    sync_value.put(global_this, ZigString::static_("resourceUsage"), resource_usage);
+    sync_value.put(global_this, b"resourceUsage", resource_usage);
     if timeout.is_some() {
         sync_value.put(
             global_this,
-            ZigString::static_("exitedDueToTimeout"),
+            b"exitedDueToTimeout",
             if exited_due_to_timeout { JSValue::TRUE } else { JSValue::FALSE },
         );
     }
     if max_buffer.is_some() {
         sync_value.put(
             global_this,
-            ZigString::static_("exitedDueToMaxBuffer"),
+            b"exitedDueToMaxBuffer",
             if exited_due_to_max_buffer.is_some() { JSValue::TRUE } else { JSValue::FALSE },
         );
     }
-    sync_value.put(global_this, ZigString::static_("pid"), result_pid);
+    sync_value.put(global_this, b"pid", result_pid);
 
     Ok(sync_value)
 }

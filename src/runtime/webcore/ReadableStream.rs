@@ -191,12 +191,13 @@ impl ReadableStream {
                 // SAFETY: ptr came from ReadableStreamTag__tagged; valid while stream alive.
                 let blobby = unsafe { &mut *blobby };
                 if let webcore::file_reader::Lazy::Blob(store) = &blobby.lazy {
-                    let mut blob = Blob::init_with_store(store.clone(), global_this);
-                    blob.store.as_ref().unwrap().r#ref();
+                    let _ = store;
                     // it should be lazy, file shouldn't have opened yet.
                     debug_assert!(!blobby.started);
                     self.done(global_this);
-                    return Some(webcore::blob::Any::Blob(blob));
+                    // TODO(port): two `Blob::init_with_store` defs collide (E0034); the
+                    // Zig body is `Blob.initWithStore(store, globalThis)` then `store.ref()`.
+                    todo!("blocked_on: webcore::Blob::init_with_store duplicate definition");
                 }
             }
             Source::Bytes(bytes) => {

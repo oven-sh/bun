@@ -774,29 +774,29 @@ impl AF {
             let fam_str = BunString::from_js(value, global)?;
             // `defer fam_str.deref()` → drops at scope exit
             if fam_str.length() != 4 {
-                return Err(global.throw_invalid_argument_property_value(b"options.family", Some("'ipv4' or 'ipv6'"), value));
+                return Err(throw_invalid_argument_property_value(global, "options.family", "'ipv4' or 'ipv6'", value));
             }
 
             if fam_str.is_8bit() {
                 let slice = fam_str.latin1();
                 if slice[..4].eq_ignore_ascii_case(b"ipv4") { return Ok(AF::INET); }
                 if slice[..4].eq_ignore_ascii_case(b"ipv6") { return Ok(AF::INET6); }
-                Err(global.throw_invalid_argument_property_value(b"options.family", Some("'ipv4' or 'ipv6'"), value))
+                Err(throw_invalid_argument_property_value(global, "options.family", "'ipv4' or 'ipv6'", value))
             } else {
                 // not full ignore-case since that would require converting
                 // utf16 -> latin1 and the allocation isn't worth it.
                 if fam_str.eql_comptime("ipv4") || fam_str.eql_comptime("IPv4") { return Ok(AF::INET); }
                 if fam_str.eql_comptime("ipv6") || fam_str.eql_comptime("IPv6") { return Ok(AF::INET6); }
-                Err(global.throw_invalid_argument_property_value(b"options.family", Some("'ipv4' or 'ipv6'"), value))
+                Err(throw_invalid_argument_property_value(global, "options.family", "'ipv4' or 'ipv6'", value))
             }
         } else if value.is_uint32_as_any_int() {
             match value.to_u32() {
                 v if v == AF::INET.int() as u32 => Ok(AF::INET),
                 v if v == AF::INET6.int() as u32 => Ok(AF::INET6),
-                _ => Err(global.throw_invalid_argument_property_value(b"options.family", Some("AF_INET or AF_INET6"), value)),
+                _ => Err(throw_invalid_argument_property_value(global, "options.family", "AF_INET or AF_INET6", value)),
             }
         } else {
-            Err(global.throw_invalid_argument_property_value(b"options.family", Some("a string or number"), value))
+            Err(throw_invalid_argument_property_value(global, "options.family", "a string or number", value))
         }
     }
 

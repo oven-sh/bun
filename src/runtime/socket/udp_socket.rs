@@ -5,14 +5,14 @@ use bun_aio::KeepAlive;
 use bun_jsc::array_buffer::BinaryType;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, MarkedArgumentBuffer,
-    Ref as JscRef, SystemError,
+    CallFrame, JSGlobalObject, JSValue, JsClass, JsRef, JsResult, MarkedArgumentBuffer,
+    Ref as JscRef, StringJsc, SysErrorJsc, SystemError,
 };
 use bun_str::{self as bun_string, String as BunString, ZigString, ZigStringSlice};
 
 use crate::node::validators;
 use bun_cares_sys::c_ares_draft as c_ares;
-use bun_sys::{self, posix, SystemErrno};
+use bun_sys::{self, SystemErrno};
 use bun_uws as uws;
 use libc::sockaddr_storage;
 #[cfg(not(windows))]
@@ -22,6 +22,43 @@ use crate::api::SocketAddress;
 use crate::socket::socket_address::inet::{self, sockaddr_in, sockaddr_in6};
 
 bun_output::declare_scope!(UdpSocket, visible);
+
+/// JS-thread `EventLoopCtx` for `KeepAlive::ref_/unref`. Zig passed the
+/// `*VirtualMachine` directly (anytype dispatch); the Rust split routes through
+/// the aio hook registered by `crate::init()`.
+#[inline]
+fn vm_ctx() -> bun_aio::EventLoopCtx {
+    bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js)
+}
+
+/// Local shim for Zig `bun.sys.Maybe(void).errnoSys(rc, tag)` — `bun_sys::Result`
+/// is a plain `core::result::Result` alias in Rust and has no associated
+/// `errno_sys` constructor.
+#[inline]
+fn errno_sys(rc: c_int, tag: bun_sys::Tag) -> Option<bun_sys::Error> {
+    if rc == 0 {
+        return None;
+    }
+    Some(bun_sys::Error::from_code_int(rc, tag))
+}
+
+/// Local extension: `JSValue::withAsyncContextIfNeeded` (JSValue.zig:2267).
+/// Upstream `bun_jsc::JSValue` does not yet expose this; bind the C++ FFI directly.
+trait JSValueAsyncCtxExt {
+    fn with_async_context_if_needed(self, global: &JSGlobalObject) -> JSValue;
+}
+impl JSValueAsyncCtxExt for JSValue {
+    fn with_async_context_if_needed(self, global: &JSGlobalObject) -> JSValue {
+        unsafe extern "C" {
+            fn AsyncContextFrame__withAsyncContextIfNeeded(
+                global: *const JSGlobalObject,
+                callback: JSValue,
+            ) -> JSValue;
+        }
+        // SAFETY: thin FFI; `global` is live, `self` is a valid encoded JSValue.
+        unsafe { AsyncContextFrame__withAsyncContextIfNeeded(global, self) }
+    }
+}
 
 #[cfg(windows)]
 const INET6_ADDRSTRLEN: usize = 65;

@@ -738,34 +738,34 @@ pub mod random {
     pub fn random_fill_sync(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let [buf_value, offset_value, size_value] = call_frame.arguments_as_array::<3>();
 
-        let Some(buf) = buf_value.as_array_buffer(global) else {
-            return global.throw_invalid_argument_type_value(
+        let Some(mut buf) = buf_value.as_array_buffer(global) else {
+            return Err(global.throw_invalid_argument_type_value(
                 "buf",
                 "ArrayBuffer or ArrayBufferView",
                 buf_value,
-            );
+            ));
         };
 
         let element_size = buf.bytes_per_element().unwrap_or(1);
 
         let offset = assert_offset(
             global,
-            if offset_value.is_undefined() { JSValue::js_number(0) } else { offset_value },
+            if offset_value.is_undefined() { JSValue::js_number(0.0) } else { offset_value },
             element_size,
-            buf.byte_len as usize,
+            buf.byte_len,
         )?;
 
-        let size = if size_value.is_undefined() {
-            buf.byte_len - offset
+        let size: u32 = if size_value.is_undefined() {
+            (buf.byte_len - offset as usize) as u32
         } else {
-            assert_size(global, size_value, element_size, offset, buf.byte_len as usize)?
+            assert_size(global, size_value, element_size, offset, buf.byte_len)?
         };
 
         if size == 0 {
             return Ok(buf_value);
         }
 
-        bun_core::csprng(&mut buf.slice()[offset as usize..][..size as usize]);
+        bun_core::csprng(&mut buf.slice_mut()[offset as usize..][..size as usize]);
 
         Ok(buf_value)
     }

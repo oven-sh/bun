@@ -2033,13 +2033,6 @@ impl AbortListener for SignalRef {
         SignalRef::abort_listener(self as *mut SignalRef, reason);
     }
 }
-// Real upstream trait (now that `bun_jsc::AbortSignal` is the un-stubbed type,
-// inherent `listen` resolves first and bounds on this trait, not the shim).
-impl bun_jsc::abort_signal::AbortListener for SignalRef {
-    fn on_abort(&mut self, reason: JSValue) {
-        SignalRef::abort_listener(self as *mut SignalRef, reason);
-    }
-}
 
 type HeaderValue = lshpack::DecodeResult;
 

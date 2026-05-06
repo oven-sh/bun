@@ -819,7 +819,7 @@ pub fn generate_entry_point_tail_js<'a>(
     // TODO(port): thread &'bump Bump from worker.allocator end-to-end in Phase B
     allocator: &'a Arena,
     temp_allocator: &Arena,
-    r: js_printer::renamer::Renamer<'a, 'a>,
+    mut r: js_printer::renamer::Renamer<'a, 'a>,
     mut module_info: Option<&'a mut ModuleInfo>,
 ) -> CompileResult {
     let flags: crate::js_meta::Flags = c.graph.meta.items_flags()[source_index as usize];

@@ -4238,8 +4238,15 @@ impl NodeFS {
     }
 
     fn writev_inner(&mut self, args: &args::Writev) -> Maybe<ret::Write> {
-        let _ = args;
-        todo!("blocked_on: bun_sys::writev")
+        // node_fs.zig:4526 — `@ptrCast(args.buffers.buffers.items)` reinterprets
+        // the mutable iovec slice as `iovec_const` for writev(2); the kernel
+        // never writes through `iov_base`. `PlatformIoVec` and
+        // `PlatformIoVecConst` are layout-identical (`{ *void, usize }`), so
+        // pass the slice through `Syscall::writev` as-is.
+        match Syscall::writev(args.fd, args.buffers.buffers.as_slice()) {
+            Maybe::Err(err) => Maybe::Err(err),
+            Maybe::Ok(amt) => Maybe::Ok(ret::Write { bytes_written: amt as u64 }),
+        }
     }
 
     pub fn readdir(&mut self, args: &args::Readdir, flavor: Flavor) -> Maybe<ret::Readdir> {

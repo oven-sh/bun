@@ -420,46 +420,40 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         }
 
         if !use_system_shell {
-            // TODO(b2-blocked): `crate::shell::Interpreter::init_and_run_from_source`
-            // — interpreter.rs has the struct but not this entrypoint yet.
-            
-            {
-                let mini =
-                    bun_event_loop::MiniEventLoop::init_global(Some(unsafe { &mut *(env as *mut _) }), Some(cwd));
-                let code = match crate::shell::Interpreter::init_and_run_from_source(
-                    ctx, mini, name, &copy_script, Some(cwd),
-                ) {
-                    Ok(c) => c,
-                    Err(err) => {
-                        if !silent {
-                            pretty_errorln!(
-                                "<r><red>error<r>: Failed to run script <b>{}<r> due to error <b>{}<r>",
-                                bstr::BStr::new(name),
-                                bstr::BStr::new(err.name()),
-                            );
-                        }
-                        Global::exit(1);
-                    }
-                };
-
-                if code > 0 {
-                    if code != 2 && !silent {
-                        pretty_errorln!(
-                            "<r><red>error<r><d>:<r> script <b>\"{}\"<r> exited with code {}<r>",
-                            bstr::BStr::new(name),
-                            code,
-                        );
-                        Output::flush();
-                    }
-                    Global::exit(code);
-                }
-                return Ok(());
-            }
-            let _ = ctx;
-            todo!(
-                "RunCommand::run_package_script_foreground: bun-shell path — \
-                 Interpreter::init_and_run_from_source gated"
+            // SAFETY: `MiniEventLoop` stores `env` as a raw `*mut`; the loader
+            // outlives the call (process-lifetime in `configure_env_for_run`).
+            let mini = bun_event_loop::MiniEventLoop::init_global(
+                Some(unsafe { &mut *(env as *mut _) }),
+                Some(cwd),
             );
+            let code = match crate::shell::Interpreter::init_and_run_from_source(
+                ctx, mini, name, &copy_script, Some(cwd),
+            ) {
+                Ok(c) => c,
+                Err(err) => {
+                    if !silent {
+                        pretty_errorln!(
+                            "<r><red>error<r>: Failed to run script <b>{}<r> due to error <b>{}<r>",
+                            bstr::BStr::new(name),
+                            bstr::BStr::new(err.name()),
+                        );
+                    }
+                    Global::exit(1);
+                }
+            };
+
+            if code > 0 {
+                if code != 2 && !silent {
+                    pretty_errorln!(
+                        "<r><red>error<r><d>:<r> script <b>\"{}\"<r> exited with code {}<r>",
+                        bstr::BStr::new(name),
+                        code,
+                    );
+                    Output::flush();
+                }
+                Global::exit(code);
+            }
+            return Ok(());
         }
 
         let argv: [&[u8]; 3] = [

@@ -386,8 +386,8 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     // `Box::new_uninit()` + per-field `addr_of_mut!().write()`, leaving the
     // `undefined` fields uninitialized until their real values are computed against
     // the stable `*mut DevServer`, then `assume_init()` once every field is written.
-    use core::mem::MaybeUninit;
-    use core::ptr::addr_of_mut;
+    use ::core::mem::MaybeUninit;
+    use ::core::ptr::addr_of_mut;
 
     let mut dev_uninit: Box<MaybeUninit<DevServer>> = Box::new(MaybeUninit::uninit());
     let p: *mut DevServer = dev_uninit.as_mut_ptr();

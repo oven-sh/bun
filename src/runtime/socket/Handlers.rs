@@ -127,10 +127,10 @@ impl Handlers {
         if self.active_connections == 0 {
             if self.mode == SocketMode::Server {
                 // SAFETY: self points to the `handlers` field of a Listener (server mode invariant)
-                let listen_socket: &mut Listener = unsafe {
+                let listen_socket: &mut SocketListener = unsafe {
                     &mut *(self as *mut Handlers as *mut u8)
-                        .sub(offset_of!(Listener, handlers))
-                        .cast::<Listener>()
+                        .sub(offset_of!(SocketListener, handlers))
+                        .cast::<SocketListener>()
                 };
                 // allow it to be GC'd once the last connection is closed and it's not listening anymore
                 if matches!(listen_socket.listener, ListenerType::None) {

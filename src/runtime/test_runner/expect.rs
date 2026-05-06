@@ -1710,7 +1710,7 @@ impl fmt::Display for CustomMatcherParamsFormatter<'_> {
 
 /// Static instance of expect, holding a set of flags.
 /// Returned for example when executing `expect.not`
-#[bun_jsc::JsClass]
+#[bun_jsc::JsClass(no_construct)]
 pub struct ExpectStatic {
     pub flags: Flags,
 }
@@ -1722,22 +1722,20 @@ impl ExpectStatic {
     }
 
     pub fn create(global_this: &JSGlobalObject, flags: Flags) -> JsResult<JSValue> {
-        let expect = Box::into_raw(Box::new(ExpectStatic { flags }));
-        // SAFETY: to_js takes ownership of m_ctx
-        let value = unsafe { (*expect).to_js(global_this) };
+        let value = ExpectStatic { flags }.to_js(global_this);
         value.ensure_still_alive();
         Ok(value)
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_not(this: &Self, _: JSValue, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    pub fn get_not(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         let mut flags = this.flags;
         flags.set_not(!this.flags.not());
         Self::create(global_this, flags)
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_resolves_to(this: &Self, _: JSValue, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    pub fn get_resolves_to(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         let mut flags = this.flags;
         if flags.promise() != Promise::None {
             return Err(Self::async_chaining_error(global_this, flags, b"resolvesTo"));
@@ -1747,7 +1745,7 @@ impl ExpectStatic {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_rejects_to(this: &Self, _: JSValue, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    pub fn get_rejects_to(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         let mut flags = this.flags;
         if flags.promise() != Promise::None {
             return Err(Self::async_chaining_error(global_this, flags, b"rejectsTo"));

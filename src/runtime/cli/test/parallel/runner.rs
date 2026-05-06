@@ -11,7 +11,8 @@ use bun_core::{Global, Output};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_options_types::Context::MacroOptions;
 use bun_resolver::fs::{FileSystem, RealFS};
-use bun_str::{PathString, ZBox};
+use bun_core::ZBox;
+use bun_str::PathString;
 use bun_sys::{Fd, FdDirExt, FdExt};
 
 use super::aggregate;

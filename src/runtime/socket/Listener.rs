@@ -539,7 +539,7 @@ impl Listener {
         } else if let Some(ssl_config) = SSLConfig::from_js(VirtualMachine::get(), global, tls)? {
             let mut cfg = ssl_config;
             // PORT NOTE: `defer cfg.deinit()` — handled by Drop on SSLConfig
-            let mut create_err = uws::CreateBunSocketError::None;
+            let mut create_err = uws::create_bun_socket_error_t::none;
             match VirtualMachine::get()
                 .rare_data()
                 .ssl_ctx_cache()
@@ -547,13 +547,16 @@ impl Listener {
             {
                 Some(ctx) => ctx,
                 None => {
-                    if create_err != uws::CreateBunSocketError::None {
-                        return global.throw_value(create_err.to_js(global));
+                    if create_err != uws::create_bun_socket_error_t::none {
+                        return global.throw_value(
+                            crate::socket::uws_jsc::create_bun_socket_error_to_js(create_err, global),
+                        );
                     }
                     // SAFETY: FFI — ERR_get_error reads thread-local BoringSSL error queue
-                    return global.throw_value(boringssl::err_to_js(global, unsafe {
-                        boring_sys::ERR_get_error()
-                    }));
+                    return global.throw_value(crate::crypto::boringssl_jsc::err_to_js(
+                        global,
+                        unsafe { boring_sys::ERR_get_error() },
+                    ));
                 }
             }
         } else {
@@ -1052,11 +1055,13 @@ impl Listener {
                 // applied per-SSL, not per-CTX) share one `SSL_CTX*`. The
                 // `requires_custom_request_ctx` gate is gone; the cache makes the
                 // default-vs-custom distinction by content.
-                let mut create_err = uws::CreateBunSocketError::None;
+                let mut create_err = uws::create_bun_socket_error_t::none;
                 *ssl_ctx_guard = match vm.rare_data().ssl_ctx_cache().get_or_create(ssl_cfg, &mut create_err) {
                     Some(c) => NonNull::new(c),
                     None => {
-                        return global.throw_value(create_err.to_js(global));
+                        return global.throw_value(
+                            crate::socket::uws_jsc::create_bun_socket_error_to_js(create_err, global),
+                        );
                     }
                 };
             }

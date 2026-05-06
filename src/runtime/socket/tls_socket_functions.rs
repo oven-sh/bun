@@ -201,7 +201,7 @@ pub fn get_tls_version(this: &mut This, global: &JSGlobalObject, _frame: &CallFr
 
     let Some(ssl_ptr) = this.socket.ssl() else { return Ok(JSValue::NULL) };
     // SAFETY: ssl_ptr is a live *mut SSL returned by this.socket.ssl().
-    let version = unsafe { boringssl::SSL_get_version(ssl_ptr) };
+    let version = unsafe { ffi::SSL_get_version(ssl_ptr) };
     if version.is_null() {
         return Ok(JSValue::NULL);
     }

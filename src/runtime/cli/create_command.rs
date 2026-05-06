@@ -1495,7 +1495,13 @@ impl CreateCommand {
                 let argv: [&[u8]; 1] = [bin.as_bytes()];
                 // Zig used `std.process.Child`; PORTING.md bans std::process — route through
                 // bun.spawnSync (`crate::api::bun_process::sync::spawn`).
-                crate::cli::open::open_url(bun_str::ZStr::from_bytes_with_nul(b"http://localhost:3000/\0").unwrap());
+                // SAFETY: literal is NUL-terminated; len excludes the sentinel.
+                crate::cli::open::open_url(unsafe {
+                    bun_str::ZStr::from_raw(
+                        b"http://localhost:3000/\0".as_ptr(),
+                        b"http://localhost:3000/".len(),
+                    )
+                });
 
                 let _ = spawn_sync::spawn(&spawn_sync::Options {
                     argv: argv.iter().map(|s| Box::<[u8]>::from(*s)).collect(),

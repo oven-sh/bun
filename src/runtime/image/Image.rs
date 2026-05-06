@@ -18,13 +18,21 @@ use bun_jsc::{
 };
 use bun_string::ZigString;
 use crate::webcore::Blob;
-use crate::webcore::blob::ReadBytesResult;
 use bun_str::{self as strings, ZStr};
+use bun_core::ZBox;
 use bun_sys as sys;
 
-use super::codecs;
+use super::codecs_body as codecs;
 use super::exif;
 use super::thumbhash;
+
+// TODO(port): `crate::webcore::blob::ReadBytesResult` lives in Blob.rs's
+// private `_jsc_gated` module — local stand-in until that's `pub use`-d.
+// Shape mirrors the gated enum so the body of `on_read_bytes` type-checks.
+pub enum ReadBytesResult {
+    Ok(Vec<u8>),
+    Err(sys::Error),
+}
 
 // `pub const js = jsc.Codegen.JSImage;` and the `fromJS`/`fromJSDirect`/`toJS`
 // re-exports are provided by `#[bun_jsc::JsClass]` codegen — see PORTING.md

@@ -283,7 +283,7 @@ impl<'a> CopyFile<'a> {
 
         // If they can't use copy_file_range, they probably also can't
         // use sendfile() or splice()
-        if !bun_sys::can_use_copy_file_range_syscall() {
+        if !bun_sys::copy_file::can_use_copy_file_range_syscall() {
             match node_fs::NodeFS::copy_file_using_read_write_loop(
                 b"",
                 b"",

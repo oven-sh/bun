@@ -1991,7 +1991,7 @@ impl Example {
     pub fn print(examples: &[Example], default_app_name: Option<&[u8]>) {
         for example in examples {
             // SAFETY: single-threaded CLI access to static buffer
-            let app_name_buf = unsafe { &mut APP_NAME_BUF };
+            let app_name_buf = unsafe { &mut *(&raw mut APP_NAME_BUF) };
             let app_name: &[u8] = default_app_name.unwrap_or_else(|| {
                 let mut cursor: &mut [u8] = &mut app_name_buf[..];
                 let cap = cursor.len();

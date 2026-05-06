@@ -872,7 +872,7 @@ enum ExtractResult {
     Err(ExtractError),
 }
 
-struct ExtractContext {
+pub struct ExtractContext {
     store: StoreRef,
     path: Box<[u8]>,
     glob_patterns: Option<Vec<Box<[u8]>>>,
@@ -983,7 +983,7 @@ enum BlobResult {
     Err(BlobError),
 }
 
-struct BlobContext {
+pub struct BlobContext {
     store: StoreRef,
     compress: Compression,
     output_type: BlobOutputType,

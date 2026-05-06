@@ -2759,7 +2759,7 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
     }
 }
 
-pub type List<SemverIntType: VersionInt> = MultiArrayList<Package<SemverIntType>>;
+pub type List<SemverIntType> = MultiArrayList<Package<SemverIntType>>;
 
 // ─── Serializer ──────────────────────────────────────────────────────────────
 

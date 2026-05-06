@@ -1,5 +1,5 @@
 use bun_paths::{AutoRelPath, Path};
-use bun_sys::{self as sys, Errno, Fd};
+use bun_sys::{self as sys, Errno, Fd, FdDirExt, FdExt};
 
 // macOS clonefileat only
 
@@ -24,7 +24,7 @@ impl FileCloner {
         match self.clonefileat() {
             Ok(()) => Ok(()),
             Err(err) => match err.get_errno() {
-                Errno::EXIST => {
+                Errno::EEXIST => {
                     // Stale leftover (an earlier crash, or a re-run after the
                     // global-store staging directory wasn't cleaned). The
                     // global-store entry is published by an entry-level
@@ -36,7 +36,7 @@ impl FileCloner {
                     self.clonefileat()
                 }
 
-                Errno::NOENT => {
+                Errno::ENOENT => {
                     let Some(parent_dest_dir) = self.dest_subpath.dirname() else {
                         return Err(err);
                     };

@@ -289,7 +289,7 @@ pub use lifecycle::{
     find_trusted_dependencies_from_update_requests, get_preinstall_state,
     has_no_more_pending_lifecycle_scripts, load_root_lifecycle_scripts,
     report_slow_lifecycle_scripts, set_preinstall_state, sleep, spawn_package_lifecycle_scripts,
-    tick_lifecycle_scripts, LifecycleScriptTimeLog,
+    tick_lifecycle_scripts, LifecycleScriptTimeLog, LifecycleScriptTimeLogEntry,
 };
 
 use self::package_manager_resolution as resolution;
@@ -1685,7 +1685,10 @@ pub fn init(
     };
 
     env.load_process()?;
-    env.load(entries_option.entries(), &[], dot_env::Mode::Production, false)?;
+    // TODO(port): blocked_on bun_sys::fs::FsVTable::read_directory — `env.load`
+    // takes the resolver-tier `*DirEntry` to discover `.env*` files; the opaque
+    // handle cannot be materialized here yet (see `entries_option` above).
+    let _ = (&entries_option, dot_env::Mode::Production);
 
     initialize_store();
 

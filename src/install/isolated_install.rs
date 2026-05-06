@@ -1976,7 +1976,7 @@ pub fn install_isolated_packages(
                     // thread.
 
                     // if injected=true this might be false
-                    if !seen_workspace_ids.get_or_put(pkg_id).found_existing {
+                    if !seen_workspace_ids.get_or_put(pkg_id)?.found_existing {
                         entry_steps[entry_id.get()].store(installer::Step::SymlinkDependencies, Ordering::Relaxed);
                         installer.start_task(entry_id);
                         continue;
@@ -2040,7 +2040,7 @@ pub fn install_isolated_packages(
                         }
                         #[cfg(not(windows))]
                         {
-                            break 'stale if let Some(st) = sys::lstat(local.slice_z()).as_value() {
+                            break 'stale if let Ok(st) = sys::lstat(local.slice_z()) {
                                 sys::posix::s_islnk(u32::try_from(st.mode).unwrap())
                             } else {
                                 false
@@ -2065,7 +2065,7 @@ pub fn install_isolated_packages(
                                 // final path is the completeness signal.
                                 installer.append_global_store_entry_path(&mut store_path, entry_id, installer::Which::Final);
                                 break 'needs_install !sys::directory_exists_at(Fd::cwd(), store_path.slice_z())
-                                    .as_value()
+                                    .ok()
                                     .unwrap_or(false);
                             }
                             installer.append_real_store_path(&mut store_path, entry_id, installer::Which::Final);

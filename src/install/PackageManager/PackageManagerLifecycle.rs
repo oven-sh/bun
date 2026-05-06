@@ -437,7 +437,7 @@ impl PackageManager {
             parent = bun_paths::dirname(dir);
         }
 
-        path.append(original_path)?;
+        path.append(original_path.as_slice())?;
         script_env.put(b"PATH", path.slice())?;
 
         let envp = script_env.create_null_delimited_env_map()?;

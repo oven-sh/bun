@@ -172,6 +172,15 @@ pub mod codecs {
         OutOfMemory,
     }
 
+    #[inline]
+    pub fn guard(w: u32, h: u32, max_pixels: u64) -> Result<(), Error> {
+        // u64 mul cannot overflow from two u32 factors.
+        if (w as u64) * (h as u64) > max_pixels {
+            return Err(Error::TooManyPixels);
+        }
+        Ok(())
+    }
+
     #[derive(Copy, Clone, Default)]
     pub struct DecodeHint {
         pub target_w: u32,

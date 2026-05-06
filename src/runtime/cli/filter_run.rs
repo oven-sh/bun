@@ -503,8 +503,7 @@ impl<'a> State<'a> {
         for handle in self.handles.iter_mut() {
             if let Some(proc) = &mut handle.process {
                 // if we get an error here we simply ignore it
-                let _ = proc.ptr.kill(bun_sys::posix::SIG::INT);
-                // TODO(port): SIGINT constant location (bun_sys vs libc)
+                let _ = proc.ptr.kill(bun_sys::SignalCode::SIGINT.0);
             }
         }
     }

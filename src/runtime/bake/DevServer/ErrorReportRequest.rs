@@ -126,18 +126,18 @@ impl ErrorReportRequest {
                 source_url: bun_str::String::init(&file_name),
                 position: if line > 0 {
                     ZigStackFramePosition {
-                        line: jsc::Ordinal::from_one_based(line),
+                        line: Ordinal::from_one_based(line),
                         column: if column < 1 {
-                            jsc::Ordinal::INVALID
+                            Ordinal::INVALID
                         } else {
-                            jsc::Ordinal::from_one_based(column)
+                            Ordinal::from_one_based(column)
                         },
                         line_start_byte: 0,
                     }
                 } else {
                     ZigStackFramePosition {
-                        line: jsc::Ordinal::INVALID,
-                        column: jsc::Ordinal::INVALID,
+                        line: Ordinal::INVALID,
+                        column: Ordinal::INVALID,
                         line_start_byte: 0,
                     }
                 },
@@ -244,8 +244,8 @@ impl ErrorReportRequest {
                 .find(frame.position.line, frame.position.column);
             if let Some(remapped_position) = &remapped {
                 frame.position = ZigStackFramePosition {
-                    line: jsc::Ordinal::from_zero_based(remapped_position.original_line()),
-                    column: jsc::Ordinal::from_zero_based(remapped_position.original_column()),
+                    line: Ordinal::from_zero_based(remapped_position.original_line()),
+                    column: Ordinal::from_zero_based(remapped_position.original_column()),
                     line_start_byte: 0,
                 };
                 let index = remapped_position.source_index;

@@ -25,7 +25,7 @@ use crate::api::bun::process::{self as spawn, Process, Rusage, SpawnOptions, Spa
 use bun_dotenv::Loader as DotEnvLoader;
 // TODO(port): crate path for `bun.io` BufferedReader/ReadState — assumed `bun_io`
 // TODO(port): crate path for Output writer type
-type OutputWriter = bun_core::output::Writer;
+type OutputWriter = bun_core::io::Writer;
 
 struct ScriptConfig {
     label: Box<[u8]>,

@@ -47,6 +47,40 @@ pub struct Task<'a> {
     pub next: *mut Task<'a>,
 }
 
+// SAFETY: `next` is the sole intrusive link and is only ever read/written via
+// these accessors by `UnboundedQueue<Task>`. Mirrors Zig's `@field(item, "next")`.
+unsafe impl<'a> bun_threading::unbounded_queue::Node for Task<'a> {
+    #[inline]
+    unsafe fn get_next(item: *mut Self) -> *mut Self {
+        unsafe { (*item).next }
+    }
+    #[inline]
+    unsafe fn set_next(item: *mut Self, ptr: *mut Self) {
+        unsafe { (*item).next = ptr }
+    }
+    #[inline]
+    unsafe fn atomic_load_next(
+        item: *mut Self,
+        ordering: core::sync::atomic::Ordering,
+    ) -> *mut Self {
+        unsafe {
+            (*(core::ptr::addr_of!((*item).next) as *const core::sync::atomic::AtomicPtr<Self>))
+                .load(ordering)
+        }
+    }
+    #[inline]
+    unsafe fn atomic_store_next(
+        item: *mut Self,
+        ptr: *mut Self,
+        ordering: core::sync::atomic::Ordering,
+    ) {
+        unsafe {
+            (*(core::ptr::addr_of!((*item).next) as *const core::sync::atomic::AtomicPtr<Self>))
+                .store(ptr, ordering)
+        }
+    }
+}
+
 /// An ID that lets us register a callback without keeping the same pointer around
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -425,7 +459,12 @@ impl<'a> Task<'a> {
                 }
             }
         }
-        manager.resolve_tasks.push(this);
+        // SAFETY: `Task<'a>` is layout-identical for all `'a` (the lifetime is
+        // a phantom on `&mut NetworkTask` borrows that the queue never reads
+        // through); erasing to `'static` matches Zig's lifetime-less queue.
+        manager
+            .resolve_tasks
+            .push(this as *mut Task<'a> as *mut Task<'static>);
         manager.wake();
 
         // Zig `defer Output.flush()` — outermost defer, runs last.

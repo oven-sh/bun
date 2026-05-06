@@ -494,15 +494,17 @@ impl<'a, Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<'a, J
         self.ref_count.set(self.ref_count.get() + 1);
     }
     #[inline]
-    pub fn deref_(&self) {
+    pub fn deref_(&mut self) {
         // TODO(port): IntrusiveRc::deref_raw — when count hits 0, run Drop and
         // free the Box allocated in init_exact_refs.
         let n = self.ref_count.get() - 1;
         self.ref_count.set(n);
         if n == 0 {
             // SAFETY: allocated via Box::into_raw in init_exact_refs; count==0
-            // means no other live refs.
-            unsafe { drop(Box::from_raw(self as *const Self as *mut Self)) };
+            // means no other live refs. `self` is `&mut` (matching Zig's
+            // `*ThisSink`), so the derived `*mut Self` carries write provenance
+            // back to the original Box allocation — no `*const`→`*mut` cast.
+            unsafe { drop(Box::from_raw(self as *mut Self)) };
         }
     }
 }

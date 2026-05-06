@@ -6302,7 +6302,7 @@ impl<'a> Resolver<'a> {
                 let _ = unsafe { &mut *self.log() }.add_error_fmt(
                     None,
                     logger::Loc::EMPTY,
-                    format_args!("Unable to open directory: {}", err.name()),
+                    format_args!("Unable to open directory: {}", bstr::BStr::new(err.name())),
                 );
                 return Err(err.into());
             }

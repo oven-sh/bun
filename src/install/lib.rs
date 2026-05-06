@@ -731,8 +731,10 @@ impl ExtractTarball {
     /// Zig: `known_npm_aliases: std.AutoHashMapUnmanaged(u64, void)`.
     pub known_npm_aliases: std::collections::HashMap<u64, ()>,
     /// Zig: `resolve_tasks: bun.UnboundedQueue(Task, .next)` — completed
-    /// off-thread tasks awaiting main-thread `runTasks` drain.
-    pub resolve_tasks: bun_threading::UnboundedQueue<package_manager_task::Task>,
+    /// off-thread tasks awaiting main-thread `runTasks` drain. The `'static`
+    /// erases the per-callback `'a` borrow on `NetworkTask` (Zig's queue is
+    /// lifetime-less; see `PackageManagerTask::callback` for the cast).
+    pub resolve_tasks: bun_threading::UnboundedQueue<package_manager_task::Task<'static>>,
     /// Zig: `thread_pool: ThreadPool`.
     pub thread_pool: bun_threading::ThreadPool,
 }

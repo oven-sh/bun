@@ -913,12 +913,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     p.new_expr(E::Function { func: core::mem::take(&mut data.func) }, stmt.loc);
                 let wrapped =
                     p.wrap_value_for_server_component_reference(func_expr, as_static(original_name));
+                let binding = p.b(B::Identifier { r#ref: name_ref }, name.loc);
                 stmts.push(p.s(
                     S::Local {
                         kind: S::Kind::KVar,
                         is_export: true,
                         decls: G::DeclList::from_slice(&[G::Decl {
-                            binding: p.b(B::Identifier { r#ref: name_ref }, name.loc),
+                            binding,
                             value: Some(wrapped),
                         }])
                         .expect("oom"),
@@ -1314,9 +1315,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 && matches!(bin.left.data, js_ast::ExprData::ECommonjsExportIdentifier(_))
                             {
                                 // last entry's value
-                                let key: &'a [u8] = as_static(unsafe {
-                                    arena_str(p.commonjs_named_exports.keys()[to_convert as usize])
-                                });
+                                let key: &'a [u8] = as_static(
+                                    &p.commonjs_named_exports.keys()[to_convert as usize],
+                                );
                                 let last = &mut p.commonjs_named_exports.values_mut()[to_convert as usize];
                                 if !last.needs_decl {
                                     break 'convert;

@@ -216,7 +216,9 @@ impl ByteBlobLoader {
     // allocation. Converting to `Drop` would double-free the parent.
     pub fn deinit(&mut self) {
         self.clear_data();
-        self.parent().deinit();
+        // SAFETY: `self` is the `context` field of a `Box<Source>` allocated via
+        // `Source::new`; this is the terminal call in the JS finalizer path.
+        unsafe { self.parent().deinit() };
     }
 
     fn clear_data(&mut self) {

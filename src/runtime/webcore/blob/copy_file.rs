@@ -432,13 +432,13 @@ impl<'a> CopyFile<'a> {
                     self.system_error = Some(
                         bun_sys::Error {
                             // PORT NOTE: @intCast is identity here (E repr == Error.Int); bare `as` matches Zig @intFromEnum.
-                            errno: bun_sys::E::INVAL as bun_sys::ErrorInt,
+                            errno: bun_sys::E::EINVAL as bun_sys::ErrorInt,
                             syscall: USE.tag(),
                             ..Default::default()
                         }
                         .to_system_error(),
                     );
-                    return Err(bun_core::errno_to_zig_err(bun_sys::E::INVAL as i32));
+                    return Err(bun_core::errno_to_zig_err(bun_sys::E::EINVAL as i32));
                 }
                 errno => {
                     self.system_error = Some(
@@ -456,7 +456,7 @@ impl<'a> CopyFile<'a> {
 
             // wrote zero bytes means EOF
             remain = remain.saturating_sub(usize::try_from(written).unwrap());
-            total_written += usize::try_from(written).unwrap();
+            total_written += u64::try_from(written).unwrap();
             if written == 0 || remain == 0 {
                 break;
             }

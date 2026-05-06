@@ -134,7 +134,8 @@ impl AsyncFormData {
         if let Encoding::Multipart(b) = &self.encoding {
             if b.is_empty() {
                 scoped_log!(FormData, "AsnycFormData.toJS -> promise.reject missing boundary");
-                promise.reject(
+                any_promise_reject(
+                    promise,
                     global,
                     ZigString::init(b"FormData missing boundary").to_error_instance(global),
                 )?;
@@ -146,14 +147,15 @@ impl AsyncFormData {
             Ok(v) => v,
             Err(e) => {
                 scoped_log!(FormData, "AsnycFormData.toJS -> failed ");
-                promise.reject(
+                any_promise_reject(
+                    promise,
                     global,
                     global.create_error_instance(format_args!("FormData {}", e.name())),
                 )?;
                 return Ok(());
             }
         };
-        promise.resolve(global, js_value)?;
+        any_promise_resolve(promise, global, js_value)?;
         Ok(())
     }
 }

@@ -97,6 +97,20 @@ impl SliceWithUnderlyingString {
         self.utf8 = ZigStringSlice::default();
         jsc::bun_string_jsc::transfer_to_js(&mut self.underlying, global_object)
     }
+
+    /// `bun.SliceWithUnderlyingString.transcodeFromOwnedSlice` — take ownership
+    /// of `bytes` and (eventually) transcode per `encoding` into a backing
+    /// `bun.String`. Upstream `bun_str` does not yet expose this; for now keep
+    /// the bytes in `utf8` so `read_file`'s emptiness check and later
+    /// `transfer_to_js` still see the data.
+    // TODO(b2-blocked): wire to `webcore::encoding::to_bun_string_from_owned_slice`
+    // once the runtime↔webcore dep cycle is broken.
+    pub fn transcode_from_owned_slice(bytes: Box<[u8]>, _encoding: Encoding) -> Self {
+        Self {
+            utf8: ZigStringSlice::init_owned(bytes.into_vec()),
+            underlying: bun_str::String::default(),
+        }
+    }
 }
 
 // `bun.jsc.MarkedArrayBuffer` (the `Buffer` payload).

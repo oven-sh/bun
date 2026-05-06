@@ -176,7 +176,7 @@ impl Crypto {
         let uuid = unsafe { &mut *global.bun_vm() }.rare_data().next_uuid();
 
         uuid.print((&mut bytes[0..36]).try_into().unwrap());
-        Ok(str.transfer_to_js(global))
+        str.transfer_to_js(global)
     }
 
     // DOMJIT fast path.

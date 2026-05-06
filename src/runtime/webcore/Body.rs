@@ -1921,15 +1921,17 @@ pub struct ValueBufferer<'a> {
 impl<'a> Drop for ValueBufferer<'a> {
     fn drop(&mut self) {
         // stream_buffer dropped automatically
-        if let Some(byte_stream) = self.byte_stream {
+        if let Some(mut byte_stream) = self.byte_stream {
             // SAFETY: kept alive by readable_stream_ref while set
-            unsafe { byte_stream.as_ref() }.unpipe_without_deref();
+            unsafe { byte_stream.as_mut() }.unpipe_without_deref();
         }
         self.readable_stream_ref.deinit();
 
-        if let Some(buffer_stream) = self.js_sink.take() {
-            buffer_stream.detach(self.global);
-            buffer_stream.sink.destroy();
+        if let Some(_buffer_stream) = self.js_sink.take() {
+            // TODO(blocked_on: webcore::sink::ArrayBufferSink): JSSink::detach /
+            // ArrayBufferSink::destroy not yet ported; create_js_sink (the only
+            // path that populates js_sink) is itself stubbed out.
+            todo!("blocked_on: webcore::sink::JSSink::detach / ArrayBufferSink::destroy");
         }
     }
 }

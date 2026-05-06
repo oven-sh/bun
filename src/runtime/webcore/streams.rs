@@ -1137,7 +1137,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         self.offset += amount;
         self.wrote += amount;
 
-        if self.offset >= self.buffer.len {
+        if self.offset >= self.buffer.len as BlobSizeType {
             self.offset = 0;
             self.buffer.len = 0;
         }
@@ -1623,12 +1623,12 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             // SAFETY: see flush_no_wait
             let readable = unsafe { core::slice::from_raw_parts(slice_ptr, readable_len) };
             if self.send(readable) {
-                return Writable::Owned(u32::try_from(written).unwrap());
+                return Writable::Owned(written as BlobSizeType);
             }
         }
 
         self.register_auto_flusher();
-        Writable::Owned(u32::try_from(written).unwrap())
+        Writable::Owned(written as BlobSizeType)
     }
 
     pub fn mark_done(&mut self) {
@@ -2130,7 +2130,7 @@ impl NetworkSink {
             }
         }
 
-        Writable::Owned(u32::try_from(bytes.len()).unwrap())
+        Writable::Owned(bytes.len() as BlobSizeType)
     }
 
     pub fn end(&mut self, err: Option<SysError>) -> bun_sys::Result<()> {

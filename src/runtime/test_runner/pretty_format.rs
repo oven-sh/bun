@@ -92,6 +92,97 @@ fn is_latin1_identifier_utf16(name: &[u16]) -> bool {
     true
 }
 
+/// Local extension over `ZigString` for the handful of slice ops the .zig spec
+/// uses (`indexOfAny`, `charAt`, `substring`, `substringWithLen`) that have not
+/// landed on `bun_str::ZigString` yet. Kept here to avoid touching the sibling
+/// `bun_str` crate this round.
+trait ZigStringPrettyExt {
+    fn index_of_any(&self, chars: &[u8]) -> Option<usize>;
+    fn char_at(&self, i: usize) -> u8;
+    fn substring(&self, start: usize) -> ZigString;
+    fn substring_with_len(&self, start: usize, len: usize) -> ZigString;
+}
+impl ZigStringPrettyExt for ZigString {
+    fn index_of_any(&self, chars: &[u8]) -> Option<usize> {
+        if self.is_16bit() {
+            self.utf16_slice()
+                .iter()
+                .position(|&c| c < 256 && chars.contains(&(c as u8)))
+        } else {
+            self.slice().iter().position(|c| chars.contains(c))
+        }
+    }
+    #[inline]
+    fn char_at(&self, i: usize) -> u8 {
+        if self.is_16bit() { self.utf16_slice()[i] as u8 } else { self.slice()[i] }
+    }
+    #[inline]
+    fn substring(&self, start: usize) -> ZigString {
+        self.substring_with_len(start, self.len.saturating_sub(start))
+    }
+    fn substring_with_len(&self, start: usize, len: usize) -> ZigString {
+        if self.is_16bit() {
+            ZigString::from16_slice(&self.utf16_slice()[start..start + len])
+        } else {
+            let mut z = ZigString::init(&self.slice()[start..start + len]);
+            if self.is_utf8() {
+                z.mark_utf8();
+            }
+            z
+        }
+    }
+}
+
+/// Port of Zig `@tagName(array_buffer.typed_array_type)` — `JSType` has no
+/// `Into<&'static str>` upstream, so map the typed-array variants locally
+/// (mirrors `ConsoleObject.rs::typed_array_type_name`).
+fn typed_array_type_name(t: JSType) -> &'static [u8] {
+    use JSType as T;
+    match t {
+        T::Int8Array => b"Int8Array",
+        T::Uint8Array => b"Uint8Array",
+        T::Uint8ClampedArray => b"Uint8ClampedArray",
+        T::Int16Array => b"Int16Array",
+        T::Uint16Array => b"Uint16Array",
+        T::Int32Array => b"Int32Array",
+        T::Uint32Array => b"Uint32Array",
+        T::Float16Array => b"Float16Array",
+        T::Float32Array => b"Float32Array",
+        T::Float64Array => b"Float64Array",
+        T::BigInt64Array => b"BigInt64Array",
+        T::BigUint64Array => b"BigUint64Array",
+        T::DataView => b"DataView",
+        T::ArrayBuffer => b"ArrayBuffer",
+        _ => b"TypedArray",
+    }
+}
+
+/// `Expect*.js.*GetCached` accessors (Zig: `ExpectAny.js.constructorValueGetCached` etc.)
+/// — generate-classes.ts emits these per-type for `cache: true` props
+/// (jest.classes.ts). The Rust port has no inherent associated modules, so each
+/// matcher gets a sibling `expect_js::*` module the same way `mod.rs` does for
+/// `Expect`.
+mod expect_js {
+    pub mod any {
+        ::bun_jsc::codegen_cached_accessors!("ExpectAny"; constructorValue);
+    }
+    pub mod close_to {
+        ::bun_jsc::codegen_cached_accessors!("ExpectCloseTo"; numberValue, digitsValue);
+    }
+    pub mod object_containing {
+        ::bun_jsc::codegen_cached_accessors!("ExpectObjectContaining"; objectValue);
+    }
+    pub mod string_containing {
+        ::bun_jsc::codegen_cached_accessors!("ExpectStringContaining"; stringValue);
+    }
+    pub mod string_matching {
+        ::bun_jsc::codegen_cached_accessors!("ExpectStringMatching"; testValue);
+    }
+    pub mod custom {
+        ::bun_jsc::codegen_cached_accessors!("ExpectCustomAsymmetricMatcher"; capturedArgs, matcherFn);
+    }
+}
+
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum EventType {

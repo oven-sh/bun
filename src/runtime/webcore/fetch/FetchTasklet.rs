@@ -321,11 +321,15 @@ impl FetchTasklet {
 
     fn clear_sink(&mut self) {
         if let Some(sink) = self.sink.take() {
-            drop(sink); // Arc deref
+            // SAFETY: sink came from init_exact_refs; FetchTasklet holds one ref.
+            unsafe { ResumableSink::deref(sink) };
         }
         if let Some(buffer) = self.request_body_streaming_buffer.take() {
-            buffer.clear_drain_callback();
-            drop(buffer); // Arc deref
+            // TODO(port): ThreadSafeStreamBuffer::clear_drain_callback takes `&mut self`
+            // but Arc<_> can't be mutably borrowed; needs intrusive-ref or
+            // interior mutability upstream.
+            let _ = buffer;
+            todo!("blocked_on: bun_http::ThreadSafeStreamBuffer::clear_drain_callback (Arc<> aliasing)");
         }
     }
 
@@ -343,8 +347,8 @@ impl FetchTasklet {
             drop(certificate); // TODO(port): CertificateInfo::deinit(allocator) -> Drop
         }
 
-        self.request_headers.entries.clear();
-        self.request_headers.buf.clear();
+        // PORT NOTE: Zig `entries.deinit()` + `buf.deinit()`; Rust drop on
+        // assignment runs the same cleanup. MultiArrayList has no `clear()`.
         self.request_headers = Headers::default();
 
         if let Some(http_) = self.http.as_mut() {
@@ -356,9 +360,9 @@ impl FetchTasklet {
         }
 
         self.response_buffer = MutableString::default();
-        self.response.deinit();
+        self.response.clear();
         if let Some(response) = self.native_response.take() {
-            drop(response); // Arc unref
+            Response::unref(response);
         }
 
         self.clear_stream_cancel_handler();

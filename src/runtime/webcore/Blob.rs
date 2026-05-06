@@ -3960,21 +3960,9 @@ impl Blob {
         Self::try_create(bytes_, global_this, was_string).expect("oom")
     }
 
-    pub fn init_with_store(store: StoreRef, global_this: &JSGlobalObject) -> Blob {
-        let size = store.size();
-        let content_type = if let Store::Data::File(ref f) = store.data {
-            f.mime_type.value as *const [u8]
-        } else {
-            b"" as &'static [u8] as *const [u8]
-        };
-        Blob {
-            size,
-            store: Some(store),
-            content_type,
-            global_this: global_this,
-            ..Default::default()
-        }
-    }
+    // PORT NOTE: non-generic `init_with_store(StoreRef, ...)` removed — duplicate of the
+    // generic `init_with_store<S: Into<StoreRef>>` below (E0034). All `StoreRef` callers
+    // resolve to the generic via the reflexive `Into` impl.
 
     pub fn init_empty(global_this: &JSGlobalObject) -> Blob {
         Blob {

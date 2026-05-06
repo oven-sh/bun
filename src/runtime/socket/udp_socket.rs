@@ -985,10 +985,10 @@ impl UDPSocket {
             callframe: &'a CallFrame,
             result: JsResult<JSValue>,
         }
-        extern "C" fn run(ctx: *mut c_void, payload_roots: *mut MarkedArgumentBuffer) {
+        extern "C" fn run(ctx: *mut Ctx<'_>, payload_roots: *mut MarkedArgumentBuffer) {
             // SAFETY: ctx points to a stack-local Ctx; payload_roots provided by
             // MarkedArgumentBuffer::run for the duration of this call.
-            let ctx = unsafe { &mut *(ctx as *mut Ctx) };
+            let ctx = unsafe { &mut *ctx };
             let payload_roots = unsafe { &mut *payload_roots };
             ctx.result =
                 UDPSocket::send_many_impl(ctx.this, ctx.global_this, ctx.callframe, payload_roots);
@@ -999,7 +999,7 @@ impl UDPSocket {
             callframe,
             result: Ok(JSValue::UNDEFINED),
         };
-        MarkedArgumentBuffer::run(&mut ctx as *mut _ as *mut c_void, run);
+        MarkedArgumentBuffer::run(&mut ctx, run);
         ctx.result
     }
 

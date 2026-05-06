@@ -1272,7 +1272,7 @@ impl FileSink {
         // we use this memory address to disable signals being sent
         self.signal.clear();
 
-        self.readable_stream = readable_stream::Strong::init(stream, global_this);
+        self.readable_stream = readable_stream::Strong::from_ref(stream, global_this);
         // PORT NOTE: reshaped for borrowck — re-borrow `signal` after assigning
         // `readable_stream`.
         let signal_ptr: *mut *mut c_void = &mut self.signal.ptr as *mut _ as *mut *mut c_void;

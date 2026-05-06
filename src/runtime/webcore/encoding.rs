@@ -7,22 +7,40 @@ use bun_str::encoding::Encoding;
 use crate::webcore::jsc::{JSGlobalObject, JSValue, JsResult, StringJsc as _};
 use bun_str::strings;
 use bun_str::String as BunString;
+use bun_simdutf_sys::simdutf as bun_simdutf;
 
 // ────────────────────────────────────────────────────────────────────────────
-// TODO(b2-blocked): `const ENCODING: Encoding` const-generic params require
-// `#![feature(adt_const_params)]` (Encoding is an enum, not an integral type).
-// The Zig used `comptime encoding: Encoding` which Rust cannot express on
-// stable without that feature. Phase B options:
-//   (a) enable `adt_const_params` + derive `ConstParamTy` on `Encoding`, or
-//   (b) reshape to `const ENCODING: u8` and `match Encoding::from_raw(ENCODING)`.
-// In addition the bodies depend on `bun_simdutf` (not a dep of bun_runtime)
-// and a number of `strings::` helpers that are still TODO in bun_string
-// (`copy_latin1_into_utf16_unaligned`, `to_utf16_alloc`,
-// `decode_hex_to_bytes_truncate<u16>`). Gate the entire impl until those land.
+// PORT NOTE: Zig used `comptime encoding: Encoding`. Stable Rust does not allow
+// enum-typed const generics without `#![feature(adt_const_params)]`, so per
+// PORTING.md we reshape to `const ENCODING: u8` and reconstitute the enum
+// inside each body via `encoding_from_u8(ENCODING)` (the optimizer folds the
+// match since `ENCODING` is a monomorphized constant).
 // ────────────────────────────────────────────────────────────────────────────
-#[cfg(any())]
-mod _gated {
-use super::*;
+
+/// `@enumFromInt` for [`Encoding`] (which is `#[repr(u8)]` with contiguous
+/// discriminants `0..=8`). Local because the enum lives in `bun_string`.
+#[inline(always)]
+const fn encoding_from_u8(n: u8) -> Encoding {
+    debug_assert!(n <= Encoding::Buffer as u8);
+    // SAFETY: Encoding is #[repr(u8)] with contiguous discriminants 0..=8.
+    unsafe { core::mem::transmute::<u8, Encoding>(n) }
+}
+
+/// `Encoding` discriminants as `u8` consts for use in `const ENCODING: u8`
+/// generic args (stable-Rust workaround for `adt_const_params`).
+#[allow(non_snake_case)]
+mod enc {
+    use super::Encoding;
+    pub const UTF8: u8 = Encoding::Utf8 as u8;
+    pub const UCS2: u8 = Encoding::Ucs2 as u8;
+    pub const UTF16LE: u8 = Encoding::Utf16le as u8;
+    pub const LATIN1: u8 = Encoding::Latin1 as u8;
+    pub const ASCII: u8 = Encoding::Ascii as u8;
+    pub const BASE64: u8 = Encoding::Base64 as u8;
+    pub const BASE64URL: u8 = Encoding::Base64url as u8;
+    pub const HEX: u8 = Encoding::Hex as u8;
+    pub const BUFFER: u8 = Encoding::Buffer as u8;
+}
 
 // ────────────────────────────────────────────────────────────────────────────
 // Exported C ABI entry points
@@ -37,16 +55,16 @@ pub extern "C" fn Bun__encoding__writeLatin1(
     encoding: u8,
 ) -> usize {
     // SAFETY: caller (C++) guarantees `input[..len]` and `to[..to_len]` are valid.
-    let r = match Encoding::from_raw(encoding) {
-        Encoding::Utf8 => write_u8::<{ Encoding::Utf8 }>(input, len, to, to_len),
-        Encoding::Latin1 => write_u8::<{ Encoding::Latin1 }>(input, len, to, to_len),
-        Encoding::Ascii => write_u8::<{ Encoding::Ascii }>(input, len, to, to_len),
-        Encoding::Ucs2 => write_u8::<{ Encoding::Utf16le }>(input, len, to, to_len),
-        Encoding::Utf16le => write_u8::<{ Encoding::Utf16le }>(input, len, to, to_len),
-        Encoding::Base64 => write_u8::<{ Encoding::Base64 }>(input, len, to, to_len),
-        Encoding::Base64url => write_u8::<{ Encoding::Base64url }>(input, len, to, to_len),
-        Encoding::Hex => write_u8::<{ Encoding::Hex }>(input, len, to, to_len),
-        _ => unreachable!(),
+    let r = match encoding_from_u8(encoding) {
+        Encoding::Utf8 => write_u8::<{ enc::UTF8 }>(input, len, to, to_len),
+        Encoding::Latin1 => write_u8::<{ enc::LATIN1 }>(input, len, to, to_len),
+        Encoding::Ascii => write_u8::<{ enc::ASCII }>(input, len, to, to_len),
+        Encoding::Ucs2 => write_u8::<{ enc::UTF16LE }>(input, len, to, to_len),
+        Encoding::Utf16le => write_u8::<{ enc::UTF16LE }>(input, len, to, to_len),
+        Encoding::Base64 => write_u8::<{ enc::BASE64 }>(input, len, to, to_len),
+        Encoding::Base64url => write_u8::<{ enc::BASE64URL }>(input, len, to, to_len),
+        Encoding::Hex => write_u8::<{ enc::HEX }>(input, len, to, to_len),
+        Encoding::Buffer => unreachable!(),
     };
     r.unwrap_or(0)
 }
@@ -59,16 +77,16 @@ pub extern "C" fn Bun__encoding__writeUTF16(
     to_len: usize,
     encoding: u8,
 ) -> usize {
-    let r = match Encoding::from_raw(encoding) {
-        Encoding::Utf8 => write_u16::<{ Encoding::Utf8 }, false>(input, len, to, to_len),
-        Encoding::Latin1 => write_u16::<{ Encoding::Ascii }, false>(input, len, to, to_len),
-        Encoding::Ascii => write_u16::<{ Encoding::Ascii }, false>(input, len, to, to_len),
-        Encoding::Ucs2 => write_u16::<{ Encoding::Utf16le }, false>(input, len, to, to_len),
-        Encoding::Utf16le => write_u16::<{ Encoding::Utf16le }, false>(input, len, to, to_len),
-        Encoding::Base64 => write_u16::<{ Encoding::Base64 }, false>(input, len, to, to_len),
-        Encoding::Base64url => write_u16::<{ Encoding::Base64url }, false>(input, len, to, to_len),
-        Encoding::Hex => write_u16::<{ Encoding::Hex }, false>(input, len, to, to_len),
-        _ => unreachable!(),
+    let r = match encoding_from_u8(encoding) {
+        Encoding::Utf8 => write_u16::<{ enc::UTF8 }, false>(input, len, to, to_len),
+        Encoding::Latin1 => write_u16::<{ enc::ASCII }, false>(input, len, to, to_len),
+        Encoding::Ascii => write_u16::<{ enc::ASCII }, false>(input, len, to, to_len),
+        Encoding::Ucs2 => write_u16::<{ enc::UTF16LE }, false>(input, len, to, to_len),
+        Encoding::Utf16le => write_u16::<{ enc::UTF16LE }, false>(input, len, to, to_len),
+        Encoding::Base64 => write_u16::<{ enc::BASE64 }, false>(input, len, to, to_len),
+        Encoding::Base64url => write_u16::<{ enc::BASE64URL }, false>(input, len, to, to_len),
+        Encoding::Hex => write_u16::<{ enc::HEX }, false>(input, len, to, to_len),
+        Encoding::Buffer => unreachable!(),
     };
     r.unwrap_or(0)
 }
@@ -76,7 +94,7 @@ pub extern "C" fn Bun__encoding__writeUTF16(
 // TODO(@190n) handle unpaired surrogates
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__encoding__byteLengthLatin1AsUTF8(input: *const u8, len: usize) -> usize {
-    byte_length_u8::<{ Encoding::Utf8 }>(input, len)
+    byte_length_u8::<{ enc::UTF8 }>(input, len)
 }
 
 // TODO(@190n) handle unpaired surrogates
@@ -94,17 +112,21 @@ pub extern "C" fn Bun__encoding__constructFromLatin1(
     len: usize,
     encoding: u8,
 ) -> JSValue {
-    let slice = match Encoding::from_raw(encoding) {
-        Encoding::Hex => construct_from_u8::<{ Encoding::Hex }>(input, len),
-        Encoding::Ascii => construct_from_u8::<{ Encoding::Ascii }>(input, len),
-        Encoding::Base64url => construct_from_u8::<{ Encoding::Base64url }>(input, len),
-        Encoding::Utf16le => construct_from_u8::<{ Encoding::Utf16le }>(input, len),
-        Encoding::Ucs2 => construct_from_u8::<{ Encoding::Utf16le }>(input, len),
-        Encoding::Utf8 => construct_from_u8::<{ Encoding::Utf8 }>(input, len),
-        Encoding::Base64 => construct_from_u8::<{ Encoding::Base64 }>(input, len),
-        _ => unreachable!(),
-    };
-    JSValue::create_buffer(global_object, slice)
+    // Ownership of the allocation transfers to JSC: `create_buffer` registers the
+    // pointer with `MarkedArrayBuffer_deallocator`, which frees it on GC. Wrapping
+    // in `ManuallyDrop` prevents Rust from also freeing it at scope exit (which
+    // would be a use-after-free + double-free). Mirrors encoding.zig:42-54.
+    let mut slice = core::mem::ManuallyDrop::new(match encoding_from_u8(encoding) {
+        Encoding::Hex => construct_from_u8::<{ enc::HEX }>(input, len),
+        Encoding::Ascii => construct_from_u8::<{ enc::ASCII }>(input, len),
+        Encoding::Base64url => construct_from_u8::<{ enc::BASE64URL }>(input, len),
+        Encoding::Utf16le => construct_from_u8::<{ enc::UTF16LE }>(input, len),
+        Encoding::Ucs2 => construct_from_u8::<{ enc::UTF16LE }>(input, len),
+        Encoding::Utf8 => construct_from_u8::<{ enc::UTF8 }>(input, len),
+        Encoding::Base64 => construct_from_u8::<{ enc::BASE64 }>(input, len),
+        Encoding::Latin1 | Encoding::Buffer => unreachable!(),
+    });
+    JSValue::create_buffer(global_object, &mut slice[..])
 }
 
 #[unsafe(no_mangle)]
@@ -114,18 +136,22 @@ pub extern "C" fn Bun__encoding__constructFromUTF16(
     len: usize,
     encoding: u8,
 ) -> JSValue {
-    let slice = match Encoding::from_raw(encoding) {
-        Encoding::Base64 => construct_from_u16::<{ Encoding::Base64 }>(input, len),
-        Encoding::Hex => construct_from_u16::<{ Encoding::Hex }>(input, len),
-        Encoding::Base64url => construct_from_u16::<{ Encoding::Base64url }>(input, len),
-        Encoding::Utf16le => construct_from_u16::<{ Encoding::Utf16le }>(input, len),
-        Encoding::Ucs2 => construct_from_u16::<{ Encoding::Utf16le }>(input, len),
-        Encoding::Utf8 => construct_from_u16::<{ Encoding::Utf8 }>(input, len),
-        Encoding::Ascii => construct_from_u16::<{ Encoding::Ascii }>(input, len),
-        Encoding::Latin1 => construct_from_u16::<{ Encoding::Latin1 }>(input, len),
-        _ => unreachable!(),
-    };
-    JSValue::create_buffer(global_object, slice)
+    // Ownership of the allocation transfers to JSC: `create_buffer` registers the
+    // pointer with `MarkedArrayBuffer_deallocator`, which frees it on GC. Wrapping
+    // in `ManuallyDrop` prevents Rust from also freeing it at scope exit (which
+    // would be a use-after-free + double-free). Mirrors encoding.zig:56-69.
+    let mut slice = core::mem::ManuallyDrop::new(match encoding_from_u8(encoding) {
+        Encoding::Base64 => construct_from_u16::<{ enc::BASE64 }>(input, len),
+        Encoding::Hex => construct_from_u16::<{ enc::HEX }>(input, len),
+        Encoding::Base64url => construct_from_u16::<{ enc::BASE64URL }>(input, len),
+        Encoding::Utf16le => construct_from_u16::<{ enc::UTF16LE }>(input, len),
+        Encoding::Ucs2 => construct_from_u16::<{ enc::UTF16LE }>(input, len),
+        Encoding::Utf8 => construct_from_u16::<{ enc::UTF8 }>(input, len),
+        Encoding::Ascii => construct_from_u16::<{ enc::ASCII }>(input, len),
+        Encoding::Latin1 => construct_from_u16::<{ enc::LATIN1 }>(input, len),
+        Encoding::Buffer => unreachable!(),
+    });
+    JSValue::create_buffer(global_object, &mut slice[..])
 }
 
 // for SQL statement
@@ -137,7 +163,7 @@ pub extern "C" fn Bun__encoding__toStringUTF8(
 ) -> JSValue {
     // SAFETY: caller guarantees `input[..len]` is valid.
     let input = unsafe { slice::from_raw_parts(input, len) };
-    match to_string_comptime::<{ Encoding::Utf8 }>(input, global_object) {
+    match to_string_comptime::<{ enc::UTF8 }>(input, global_object) {
         Ok(v) => v,
         Err(_) => JSValue::ZERO,
     }
@@ -152,7 +178,7 @@ pub extern "C" fn Bun__encoding__toString(
 ) -> JSValue {
     // SAFETY: caller guarantees `input[..len]` is valid.
     let input = unsafe { slice::from_raw_parts(input, len) };
-    match to_string(input, global_object, Encoding::from_raw(encoding)) {
+    match to_string(input, global_object, encoding_from_u8(encoding)) {
         Ok(v) => v,
         Err(_) => JSValue::ZERO,
     }
@@ -171,17 +197,17 @@ pub fn to_string(
         // treat buffer as utf8
         // callers are expected to check that before constructing `Buffer` objects
         Encoding::Buffer | Encoding::Utf8 => {
-            to_string_comptime::<{ Encoding::Utf8 }>(input, global_object)
+            to_string_comptime::<{ enc::UTF8 }>(input, global_object)
         }
 
         // PERF(port): was `inline else` comptime monomorphization — profile in Phase B
-        Encoding::Ascii => to_string_comptime::<{ Encoding::Ascii }>(input, global_object),
-        Encoding::Latin1 => to_string_comptime::<{ Encoding::Latin1 }>(input, global_object),
-        Encoding::Ucs2 => to_string_comptime::<{ Encoding::Ucs2 }>(input, global_object),
-        Encoding::Utf16le => to_string_comptime::<{ Encoding::Utf16le }>(input, global_object),
-        Encoding::Hex => to_string_comptime::<{ Encoding::Hex }>(input, global_object),
-        Encoding::Base64 => to_string_comptime::<{ Encoding::Base64 }>(input, global_object),
-        Encoding::Base64url => to_string_comptime::<{ Encoding::Base64url }>(input, global_object),
+        Encoding::Ascii => to_string_comptime::<{ enc::ASCII }>(input, global_object),
+        Encoding::Latin1 => to_string_comptime::<{ enc::LATIN1 }>(input, global_object),
+        Encoding::Ucs2 => to_string_comptime::<{ enc::UCS2 }>(input, global_object),
+        Encoding::Utf16le => to_string_comptime::<{ enc::UTF16LE }>(input, global_object),
+        Encoding::Hex => to_string_comptime::<{ enc::HEX }>(input, global_object),
+        Encoding::Base64 => to_string_comptime::<{ enc::BASE64 }>(input, global_object),
+        Encoding::Base64url => to_string_comptime::<{ enc::BASE64URL }>(input, global_object),
     }
 }
 
@@ -295,7 +321,7 @@ pub fn to_bun_string_from_owned_slice(input: Vec<u8>, encoding: Encoding) -> Bun
     }
 }
 
-pub fn to_string_comptime<const ENCODING: Encoding>(
+pub fn to_string_comptime<const ENCODING: u8>(
     input: &[u8],
     global: &JSGlobalObject,
 ) -> JsResult<JSValue> {
@@ -306,24 +332,24 @@ pub fn to_string_comptime<const ENCODING: Encoding>(
 pub fn to_bun_string(input: &[u8], encoding: Encoding) -> BunString {
     // PERF(port): was `inline else` comptime monomorphization — profile in Phase B
     match encoding {
-        Encoding::Utf8 => to_bun_string_comptime::<{ Encoding::Utf8 }>(input),
-        Encoding::Ascii => to_bun_string_comptime::<{ Encoding::Ascii }>(input),
-        Encoding::Latin1 => to_bun_string_comptime::<{ Encoding::Latin1 }>(input),
-        Encoding::Buffer => to_bun_string_comptime::<{ Encoding::Buffer }>(input),
-        Encoding::Ucs2 => to_bun_string_comptime::<{ Encoding::Ucs2 }>(input),
-        Encoding::Utf16le => to_bun_string_comptime::<{ Encoding::Utf16le }>(input),
-        Encoding::Hex => to_bun_string_comptime::<{ Encoding::Hex }>(input),
-        Encoding::Base64 => to_bun_string_comptime::<{ Encoding::Base64 }>(input),
-        Encoding::Base64url => to_bun_string_comptime::<{ Encoding::Base64url }>(input),
+        Encoding::Utf8 => to_bun_string_comptime::<{ enc::UTF8 }>(input),
+        Encoding::Ascii => to_bun_string_comptime::<{ enc::ASCII }>(input),
+        Encoding::Latin1 => to_bun_string_comptime::<{ enc::LATIN1 }>(input),
+        Encoding::Buffer => to_bun_string_comptime::<{ enc::BUFFER }>(input),
+        Encoding::Ucs2 => to_bun_string_comptime::<{ enc::UCS2 }>(input),
+        Encoding::Utf16le => to_bun_string_comptime::<{ enc::UTF16LE }>(input),
+        Encoding::Hex => to_bun_string_comptime::<{ enc::HEX }>(input),
+        Encoding::Base64 => to_bun_string_comptime::<{ enc::BASE64 }>(input),
+        Encoding::Base64url => to_bun_string_comptime::<{ enc::BASE64URL }>(input),
     }
 }
 
-pub fn to_bun_string_comptime<const ENCODING: Encoding>(input: &[u8]) -> BunString {
+pub fn to_bun_string_comptime<const ENCODING: u8>(input: &[u8]) -> BunString {
     if input.is_empty() {
         return BunString::empty();
     }
 
-    match ENCODING {
+    match encoding_from_u8(ENCODING) {
         Encoding::Ascii => {
             let (str, chars) = BunString::create_uninitialized_latin1(input.len());
             if str.is_dead() {
@@ -406,7 +432,7 @@ pub fn to_bun_string_comptime<const ENCODING: Encoding>(input: &[u8]) -> BunStri
 }
 
 // TODO(port): narrow error set — Zig signature is `!usize` but body never fails.
-pub fn write_u8<const ENCODING: Encoding>(
+pub fn write_u8<const ENCODING: u8>(
     input: *const u8,
     len: usize,
     to_ptr: *mut u8,
@@ -427,7 +453,7 @@ pub fn write_u8<const ENCODING: Encoding>(
     let input_slice = unsafe { slice::from_raw_parts(input, len) };
     let to_slice = unsafe { slice::from_raw_parts_mut(to_ptr, to_len) };
 
-    match ENCODING {
+    match encoding_from_u8(ENCODING) {
         Encoding::Buffer | Encoding::Latin1 => {
             let written = len.min(to_len);
             to_slice[..written].copy_from_slice(&input_slice[..written]);
@@ -487,7 +513,7 @@ pub fn write_u8<const ENCODING: Encoding>(
     }
 }
 
-pub fn byte_length_u8<const ENCODING: Encoding>(input: *const u8, len: usize) -> usize {
+pub fn byte_length_u8<const ENCODING: u8>(input: *const u8, len: usize) -> usize {
     if len == 0 {
         return 0;
     }
@@ -495,7 +521,7 @@ pub fn byte_length_u8<const ENCODING: Encoding>(input: *const u8, len: usize) ->
     // SAFETY: caller guarantees `input[..len]` is valid.
     let input_slice = unsafe { slice::from_raw_parts(input, len) };
 
-    match ENCODING {
+    match encoding_from_u8(ENCODING) {
         Encoding::Utf8 => strings::element_length_latin1_into_utf8(input_slice),
 
         Encoding::Latin1 | Encoding::Ascii | Encoding::Buffer => len,
@@ -511,14 +537,14 @@ pub fn byte_length_u8<const ENCODING: Encoding>(input: *const u8, len: usize) ->
     }
 }
 
-pub fn encode_into_from16<const ENCODING: Encoding, const ALLOW_PARTIAL_WRITE: bool>(
+pub fn encode_into_from16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bool>(
     input: &[u16],
     to: &mut [u8],
 ) -> Result<usize, bun_core::Error> {
     write_u16::<ENCODING, ALLOW_PARTIAL_WRITE>(input.as_ptr(), input.len(), to.as_mut_ptr(), to.len())
 }
 
-pub fn encode_into_from8<const ENCODING: Encoding>(
+pub fn encode_into_from8<const ENCODING: u8>(
     input: &[u8],
     to: &mut [u8],
 ) -> Result<usize, bun_core::Error> {
@@ -526,7 +552,7 @@ pub fn encode_into_from8<const ENCODING: Encoding>(
 }
 
 // TODO(port): narrow error set
-pub fn write_u16<const ENCODING: Encoding, const ALLOW_PARTIAL_WRITE: bool>(
+pub fn write_u16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bool>(
     input: *const u16,
     len: usize,
     to: *mut u8,
@@ -540,7 +566,7 @@ pub fn write_u16<const ENCODING: Encoding, const ALLOW_PARTIAL_WRITE: bool>(
     let input_slice = unsafe { slice::from_raw_parts(input, len) };
     let to_slice = unsafe { slice::from_raw_parts_mut(to, to_len) };
 
-    match ENCODING {
+    match encoding_from_u8(ENCODING) {
         Encoding::Utf8 => Ok(strings::copy_utf16_into_utf8_impl(
             to_slice,
             input_slice,
@@ -605,10 +631,10 @@ pub fn write_u16<const ENCODING: Encoding, const ALLOW_PARTIAL_WRITE: bool>(
 // / `construct_from_u16` directly.
 // TODO(port): if a generic entry point is needed, introduce a sealed trait
 // `ConstructFromEncoding` impl'd for u8/u16 so
-// `construct_from<T: ConstructFromEncoding, const ENCODING: Encoding>(input: &[T]) -> Vec<u8>`
+// `construct_from<T: ConstructFromEncoding, const ENCODING: u8>(input: &[T]) -> Vec<u8>`
 // dispatches correctly.
 
-pub fn construct_from_u8<const ENCODING: Encoding>(input: *const u8, len: usize) -> Vec<u8> {
+pub fn construct_from_u8<const ENCODING: u8>(input: *const u8, len: usize) -> Vec<u8> {
     if len == 0 {
         return Vec::new();
     }
@@ -616,7 +642,7 @@ pub fn construct_from_u8<const ENCODING: Encoding>(input: *const u8, len: usize)
     // SAFETY: caller guarantees `input[..len]` is valid.
     let input_slice = unsafe { slice::from_raw_parts(input, len) };
 
-    match ENCODING {
+    match encoding_from_u8(ENCODING) {
         Encoding::Buffer => {
             // TODO(port): Zig returned &[] on OOM; Rust aborts.
             let mut to = vec![0u8; len];
@@ -686,7 +712,7 @@ pub fn construct_from_u8<const ENCODING: Encoding>(input: *const u8, len: usize)
     }
 }
 
-pub fn construct_from_u16<const ENCODING: Encoding>(input: *const u16, len: usize) -> Vec<u8> {
+pub fn construct_from_u16<const ENCODING: u8>(input: *const u16, len: usize) -> Vec<u8> {
     if len == 0 {
         return Vec::new();
     }
@@ -694,7 +720,7 @@ pub fn construct_from_u16<const ENCODING: Encoding>(input: *const u16, len: usiz
     // SAFETY: caller guarantees `input[..len]` is valid.
     let input_slice = unsafe { slice::from_raw_parts(input, len) };
 
-    match ENCODING {
+    match encoding_from_u8(ENCODING) {
         Encoding::Utf8 => match strings::to_utf8_alloc_with_type(input_slice) {
             Ok(v) => v,
             Err(_) => Vec::new(),
@@ -747,12 +773,10 @@ pub fn construct_from_u16<const ENCODING: Encoding>(input: *const u16, len: usiz
     }
 }
 
-} // mod _gated
-
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/webcore/encoding.zig (554 lines)
 //   confidence: medium
 //   todos:      11
-//   notes:      const-generic Encoding requires ConstParamTy; Vec<u16>↔Vec<u8> reinterpretation and unaligned u16 writes need Phase B helpers; OOM returns empty/dead in Zig but aborts in Rust
+//   notes:      const-generic Encoding reshaped to u8 (adt_const_params not used); Vec<u16>↔Vec<u8> reinterpretation and unaligned u16 writes need Phase B helpers; OOM returns empty/dead in Zig but aborts in Rust
 // ──────────────────────────────────────────────────────────────────────────

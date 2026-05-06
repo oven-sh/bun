@@ -105,8 +105,9 @@ pub fn find_imported_files_in_css_order<'a>(
 
     struct Visitor<'a> {
         allocator: &'a Arena,
-        // PORT NOTE: column type matches `BundledAst.css: Option<*mut BundlerStyleSheet>`.
-        css_asts: &'a [Option<*mut BundlerStyleSheet>],
+        // PORT NOTE: `BundledAst.css` SoA column is type-erased to `*mut c_void`
+        // (js_parser cannot depend on bun_css); cast back at the deref site.
+        css_asts: &'a [Option<*mut core::ffi::c_void>],
         all_import_records: &'a [BabyList<ImportRecord>],
 
         // PORT NOTE: Zig's `graph: *LinkerGraph` is never read in `visit()`;
@@ -161,10 +162,11 @@ pub fn find_imported_files_in_css_order<'a>(
 
             handle_oom(self.visited.append(source_index));
 
-            // SAFETY: pointer comes from `Box<BundlerStyleSheet>` in `BundledAst.css`;
-            // valid for the link step.
-            let Some(repr): Option<&BundlerStyleSheet> =
-                self.css_asts[source_index.get() as usize].map(|p| unsafe { &*p })
+            // SAFETY: pointer comes from `Box<BundlerStyleSheet>` in `BundledAst.css`
+            // (type-erased to `*mut c_void`); valid for the link step.
+            let Some(repr): Option<&BundlerStyleSheet> = self.css_asts
+                [source_index.get() as usize]
+                .map(|p| unsafe { &*(p as *const BundlerStyleSheet) })
             else {
                 return; // Sanity check
             };
@@ -316,7 +318,8 @@ pub fn find_imported_files_in_css_order<'a>(
     }
 
     // PORT NOTE: reshaped for borrowck — read MultiArrayList columns before constructing visitor.
-    let css_asts_slice: &[Option<*mut BundlerStyleSheet>] = this.graph.ast.items_css();
+    // `items_css()` is type-erased (`*mut c_void`); cast back to `BundlerStyleSheet` at use sites.
+    let css_asts_slice: &[Option<*mut core::ffi::c_void>] = this.graph.ast.items_css();
     let all_import_records_slice: &[BabyList<ImportRecord>] = this.graph.ast.items_import_records();
     let allocator = this.graph.allocator();
 
@@ -350,7 +353,7 @@ pub fn find_imported_files_in_css_order<'a>(
     let mut wip_order =
         handle_oom(BabyList::<CssImportOrder>::init_capacity(order.len as usize));
 
-    let css_asts: &[Option<*mut BundlerStyleSheet>] = unsafe {
+    let css_asts: &[Option<*mut core::ffi::c_void>] = unsafe {
         core::slice::from_raw_parts(css_asts_slice.as_ptr(), css_asts_slice.len())
     };
 
@@ -432,7 +435,9 @@ pub fn find_imported_files_in_css_order<'a>(
                             // types until the ungate shadow is removed; cast through
                             // raw pointer to satisfy `Layers::borrow`.
                             let layer_names_ptr = unsafe {
-                                &(*css_asts[idx.get() as usize].unwrap()).layer_names
+                                &(*(css_asts[idx.get() as usize].unwrap()
+                                    as *const BundlerStyleSheet))
+                                    .layer_names
                                     as *const BabyList<_>
                                     as *const BabyList<LayerName>
                             };
@@ -568,8 +573,9 @@ pub fn find_imported_files_in_css_order<'a>(
             let layers_key: *const [LayerName] = match &entry.kind {
                 CssImportOrderKind::SourceIndex(idx) => unsafe {
                     // PORT NOTE: see LayerName nominal-type note above.
-                    (*css_asts[idx.get() as usize].unwrap()).layer_names.slice_const()
-                        as *const [_] as *const [LayerName]
+                    (*(css_asts[idx.get() as usize].unwrap() as *const BundlerStyleSheet))
+                        .layer_names
+                        .slice_const() as *const [_] as *const [LayerName]
                 },
                 CssImportOrderKind::Layers(layers) => layers.inner().slice_const(),
                 CssImportOrderKind::ExternalPath(_) => &[][..],

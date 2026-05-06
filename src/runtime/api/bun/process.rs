@@ -4415,7 +4415,7 @@ pub mod sync {
             if (ppid_fd != spawn_sys::INVALID_FD && buf[ppid_idx].revents != 0)
                 || (need_ppid_fallback && unsafe { libc::getppid() } != ppid)
             {
-                Global::exit(ParentDeathWatchdog::EXIT_CODE);
+                Global::exit(ParentDeathWatchdog::EXIT_CODE as u32);
             }
 
             // Drain the signalfd so the next poll blocks; the actual reap

@@ -5035,10 +5035,16 @@ impl DevServer<'_> {
     {
         debug_assert!(id == 0);
 
-        // TODO(b2-blocked): `dev_server::HmrSocket` keystone has no `new()`;
-        // full body lives in `dev_server::hmr_socket_body::HmrSocket`. Shim until
-        // the two HmrSocket shapes are unified.
-        let dw: Box<HmrSocket> = todo!("blocked_on: dev_server::HmrSocket unification with hmr_socket_body");
+        // LAYERING: `HmrSocket.dev` is typed as `*const dev_server::DevServer`
+        // (keystone). This body file's `DevServer<'_>` is the full-port
+        // replacement; bridge via `*const ()` pending the keystone collapse.
+        let dw: Box<HmrSocket> = Box::new(HmrSocket {
+            dev: self as *const _ as *const () as *const crate::bake::dev_server::DevServer,
+            underlying: None,
+            current_route: route_bundle::IndexOptional::NONE,
+            subscriptions: 0,
+            referenced_source_maps: ArrayHashMap::new(),
+        });
         let dw_ptr: *mut HmrSocket = Box::into_raw(dw);
         self.active_websocket_connections.put_no_clobber(dw_ptr, ()).expect("oom");
         res.upgrade::<*mut HmrSocket>(

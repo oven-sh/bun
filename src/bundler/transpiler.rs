@@ -2516,7 +2516,7 @@ impl<'a> Transpiler<'a> {
         let mut final_result = options::TransformResult::init(outbase, output_files, unsafe {
             &mut *log
         })?;
-        final_result.root_dir = self.options.output_dir_handle.as_ref().copied();
+        final_result.root_dir = self.options.output_dir_handle;
         Ok(final_result)
     }
 

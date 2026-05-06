@@ -3740,7 +3740,7 @@ impl<ThisServer, const SSL_ENABLED: bool, const DEBUG_MODE: bool, const HTTP3: b
 where
     TransportFor<SSL_ENABLED, HTTP3>: Transport,
     ThisServer: ServerLike + 'static,
-    Self: NativePromiseContext::NativePromiseContextType,
+    Self: NativePromiseContext::NativePromiseContextType + RequestContextHostFns,
 {
     fn on_pipe(&mut self, stream: WebCore::streams::Result) {
         // Forward to the inherent associated fn (not method-dispatched to avoid

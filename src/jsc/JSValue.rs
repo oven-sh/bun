@@ -439,6 +439,14 @@ impl JSValue {
         // SAFETY: `is_string()` ⇒ cell-tagged ⇒ payload is the JSString*.
         unsafe { JSC__JSValue__asString(self) }
     }
+    /// `jsTypeString()` — calls `JSC::jsTypeStringForValue`, returning the
+    /// JS `typeof` result as a `JSString*` cell (e.g. `"object"`, `"number"`).
+    /// Never throws; lifetime tied to `global` (cell is GC-rooted by the VM's
+    /// SmallStrings table).
+    pub fn js_type_string<'a>(self, global: &'a JSGlobalObject) -> &'a JSString {
+        // SAFETY: `global` is live; FFI returns a non-null SmallStrings cell.
+        unsafe { &*JSC__jsTypeStringForValue(global, self) }
+    }
     pub fn as_array_buffer(self, global: &JSGlobalObject) -> Option<ArrayBuffer> {
         let mut out = ArrayBuffer::default();
         // SAFETY: `global` is live; `out` is a valid out-param.

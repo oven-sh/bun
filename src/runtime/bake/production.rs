@@ -1565,8 +1565,8 @@ impl<'a> PerThread<'a> {
     // specifically for referenced files. This would remove the holes, but make
     // it harder to pre-allocate. It's probably worth it.
     pub fn preload_bundled_module(&mut self, id: OpaqueFileId) -> JsResult<JSValue> {
-        // SAFETY: vm.global is a live *mut JSGlobalObject for the VM's lifetime.
-        let global = unsafe { &*self.vm.global };
+        // SAFETY: self.vm is the live per-thread VM; vm.global is live for VM lifetime.
+        let global = unsafe { &*(*self.vm).global };
         if !self.loaded_files.is_set(id.get() as usize) {
             self.loaded_files.set(id.get() as usize);
             self.all_server_files.get().put_index(

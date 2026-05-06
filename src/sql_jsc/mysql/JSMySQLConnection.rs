@@ -909,6 +909,9 @@ impl JSMySQLConnection {
                 cached_structure,
             )
             .map_err(|_| OnResultRowError::JSError)?;
+        // `Row<'_>` has a Drop impl, so its `&statement.columns` borrow lives to
+        // end-of-scope; drop it now so `statement.result_count += 1` may take `&mut`.
+        drop(row);
         if let Some(err) = self.global_object.try_take_exception() {
             self.connection.queue.mark_current_request_as_finished(request);
             request.reject_with_js_value(self.get_queries_array(), err);

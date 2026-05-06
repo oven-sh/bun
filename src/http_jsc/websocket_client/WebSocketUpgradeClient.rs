@@ -345,7 +345,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
                 // Use target_is_secure from C++, not ssl template parameter
                 // (ssl may be true for HTTPS proxy even with ws:// target)
                 target_is_secure,
-                body,
+                body.into_boxed_slice(),
             );
             (Some(proxy), connect_request)
         } else {
@@ -528,7 +528,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
             return None;
         }
 
-        match Socket::<SSL>::connect_group(group, kind, secure_ptr, display_host, connect_port, client, false)
+        match Socket::<SSL>::connect_group(group, kind, secure_ptr, display_host, c_int::from(connect_port), client, false)
         {
             Ok(sock) => {
                 // SAFETY: `client` is live (refcount >= 1); re-derive a fresh
@@ -755,7 +755,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
                     // SAFETY: SSL_get_servername returns a NUL-terminated C string.
                     let hostname = unsafe { CStr::from_ptr(servername as *const _ as *const _) }
                         .to_bytes();
-                    if !boringssl::check_server_identity(ssl_ptr, hostname) {
+                    // SAFETY: ssl_ptr is a live `*SSL` from the open socket.
+                    if !boringssl::check_server_identity(unsafe { &mut *ssl_ptr }, hostname) {
                         // SAFETY: no `&mut Self` is live across this call.
                         unsafe { Self::fail(this, ErrorCode::TlsHandshakeFailed) };
                     }
@@ -786,15 +787,15 @@ impl<const SSL: bool> HTTPClient<SSL> {
                 if let Some(handle) = socket.get_native_handle() {
                     // SAFETY: native handle on a TLS socket is `*SSL`; live for the
                     // open socket's lifetime.
-                    let handle = unsafe { &mut *handle.cast::<boringssl::c::SSL>() };
-                    // TODO(port): ZStr — hostname includes trailing NUL.
-                    let len = me.hostname.len() - 1;
-                    // SAFETY: hostname[len] == 0 (written by dupe_z); the buffer
-                    // outlives this borrow.
-                    let zstr = unsafe {
-                        bun_string::ZStr::from_raw(me.hostname.as_ptr(), len)
-                    };
-                    handle.configure_http_client(zstr);
+                    let handle = handle.cast::<boringssl::c::SSL>();
+                    // hostname is NUL-terminated (`dupe_z`); pass the C string
+                    // directly. CYCLEBREAK: `configureHTTPClient` ext-method
+                    // hasn't landed on boringssl::SSL; use bun_http's helper.
+                    bun_http::configure_http_client_with_alpn(
+                        handle,
+                        me.hostname.as_ptr().cast(),
+                        bun_http::AlpnOffer::H1,
+                    );
                 }
                 me.hostname = Box::default();
             }
@@ -1031,7 +1032,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
 
         // Use the WebSocket upgrade request from proxy state (replaces CONNECT
         // request buffer; old Vec is dropped here).
-        me.input_body_buf = p.take_websocket_request_buf();
+        me.input_body_buf = p.take_websocket_request_buf().into_vec();
         me.to_send_len = 0;
 
         // Send the WebSocket upgrade request
@@ -1078,11 +1079,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
 
         // Create proxy tunnel with all parameters
         let target_host = p.get_target_host();
-        let tunnel = match WebSocketProxyTunnel::init(
-            SSL,
-            this as *mut c_void,
-            // TODO(port): WebSocketProxyTunnel::init signature — Zig passes
-            // `ssl, this, socket, target_host, reject_unauthorized`.
+        let tunnel = match WebSocketProxyTunnel::init::<SSL>(
+            this,
             socket,
             target_host,
             reject_unauthorized,
@@ -1124,7 +1122,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
             unsafe { Self::terminate(this, ErrorCode::ProxyTunnelFailed) };
             return;
         };
-        p.set_tunnel(tunnel);
+        p.set_tunnel(Some(tunnel));
         me.state = State::ProxyTlsHandshake;
     }
 
@@ -1155,7 +1153,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
 
         // Take the WebSocket upgrade request from proxy state (transfers ownership).
         // Store it in input_body_buf so handle_writable can retry on drain.
-        me.input_body_buf = p.take_websocket_request_buf();
+        me.input_body_buf = p.take_websocket_request_buf().into_vec();
         if me.input_body_buf.is_empty() {
             // SAFETY: `me`/`p` last used above; no `&mut Self` spans this call.
             unsafe { Self::terminate(this, ErrorCode::FailedToWrite) };
@@ -1165,7 +1163,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // Send through the tunnel (will be encrypted). Buffer any unwritten
         // portion in to_send so handle_writable retries when the socket drains.
         if let Some(tunnel) = p.get_tunnel() {
-            let wrote = match tunnel.write(&me.input_body_buf) {
+            // SAFETY: `p` holds a live ref on `tunnel`.
+            let wrote = match unsafe { WebSocketProxyTunnel::write(tunnel.as_ptr(), &me.input_body_buf) } {
                 Ok(n) => n,
                 Err(_) => {
                     // SAFETY: `me`/`p`/`tunnel` last used above; no `&mut Self` spans this call.
@@ -1263,7 +1262,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
             return;
         }
 
-        for header in response.headers.list() {
+        for header in response.headers.list {
             match header.name.len() {
                 len if len == b"Connection".len() => {
                     if connection_header.name.is_empty()
@@ -1649,7 +1648,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
                 unsafe { (*this).r#ref() };
                 // TODO(port): defer self.deref() — placed at return points below.
                 // SAFETY: short-lived `&self` for `to_send()`.
-                let wrote = match tunnel.write(unsafe { (*this).to_send() }) {
+                // SAFETY: `p` holds a live ref on `tunnel`.
+                let wrote = match unsafe { WebSocketProxyTunnel::write(tunnel.as_ptr(), (*this).to_send()) } {
                     Ok(n) => n,
                     Err(_) => {
                         // SAFETY: no `&mut Self` is live across this call.
@@ -1807,7 +1807,7 @@ impl<'a> Headers8Bit<'a> {
         len: usize,
     ) -> Self {
         if len == 0 {
-            return Self { slices: Vec::new() };
+            return Self { slices: Vec::new(), _marker: core::marker::PhantomData };
         }
         // SAFETY: per fn contract.
         let names_in = unsafe { core::slice::from_raw_parts(names_ptr, len) };

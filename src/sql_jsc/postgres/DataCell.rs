@@ -1439,11 +1439,11 @@ impl<'a> Putter<'a> {
         cached_structure: Option<PostgresCachedStructure>,
     ) -> Result<JSValue, AnyPostgresError> {
         // TODO(port): jsc.JSObject.ExternColumnIdentifier path — confirm bun_jsc export name
-        let mut names: Option<*mut crate::jsc::ExternColumnIdentifier> = None;
+        let mut names: *mut crate::jsc::ExternColumnIdentifier = core::ptr::null_mut();
         let mut names_count: u32 = 0;
         if let Some(c) = &cached_structure {
             if let Some(f) = c.fields.as_ref() {
-                names = Some(f.as_ptr() as *mut _);
+                names = f.as_ptr() as *mut _;
                 names_count = f.len() as u32;
             }
         }
@@ -1487,7 +1487,7 @@ impl<'a> Putter<'a> {
         bun_core::scoped_log!(Postgres, "index: {}, oid: {}", index, oid);
         let cell: &mut SQLDataCell = &mut self.list[index as usize];
         if IS_RAW {
-            *cell = SQLDataCell::raw(optional_bytes.as_deref());
+            *cell = SQLDataCell::raw(optional_bytes);
         } else {
             let tag = if (types::short::MAX as u32) < oid {
                 types::Tag::text

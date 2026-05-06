@@ -1,22 +1,27 @@
 use core::ffi::c_void;
-use std::rc::Rc;
+use core::marker::PhantomData;
 
 use crate::jsc::{JSGlobalObject, JSValue, MarkedArgumentBuffer};
 use bun_string::String as BunString;
 
+use bun_sql::mysql::mysql_param::Param;
 use bun_sql::mysql::mysql_request as mysql_request;
+use bun_sql::mysql::mysql_types::FieldType;
 use super::my_sql_value::Value;
 use bun_sql::mysql::protocol::any_mysql_error::{self as any_mysql_error, AnyMySQLError};
-use bun_sql::mysql::protocol::prepared_statement as prepared_statement;
+use bun_sql::mysql::protocol::column_definition41::ColumnFlags;
+use bun_sql::mysql::protocol::new_writer::{NewWriter, WriterContext};
+use bun_sql::mysql::protocol::prepared_statement::{self as prepared_statement, ExecuteParams};
 use bun_sql::mysql::query_status::Status;
 use bun_sql::shared::sql_query_result_mode::SQLQueryResultMode;
 
 use crate::mysql::protocol::any_mysql_error_jsc::mysql_error_to_js;
+use crate::mysql::protocol::error_packet_jsc::ErrorPacketJsc;
 use crate::mysql::protocol::signature::Signature;
 use crate::shared::query_binding_iterator::QueryBindingIterator;
 
 use super::js_mysql_connection::MySQLConnection;
-use super::my_sql_statement::{self as my_sql_statement, MySQLStatement};
+use super::my_sql_statement::{self as my_sql_statement, ExecutionFlags, MySQLStatement};
 
 bun_core::declare_scope!(MySQLQuery, visible);
 
@@ -25,11 +30,12 @@ macro_rules! debug {
 }
 
 pub struct MySQLQuery {
-    // TODO(port): LIFETIMES.tsv classifies this as `Option<Rc<MySQLStatement>>`, but the
-    // Zig uses intrusive `bun.ptr.RefCount` (ref()/deref()) and mutates `stmt.status` /
-    // `stmt.execution_flags` in place. Phase B must decide between `IntrusiveRc<MySQLStatement>`
-    // (matches Zig ABI, allows `&mut` via raw ptr) or `Rc<RefCell<MySQLStatement>>`.
-    statement: Option<Rc<MySQLStatement>>,
+    // Intrusive refcount (`MySQLStatement::ref_` / `::deref`). Null = none.
+    // Zig uses `bun.ptr.RefCount` and mutates `stmt.status` / `stmt.execution_flags`
+    // in place; the connection's `PreparedStatementsMap` also stores `*mut MySQLStatement`,
+    // so this pointer participates in the same intrusive ownership graph (each holder
+    // owns one ref).
+    statement: *mut MySQLStatement,
     query: BunString,
 
     status: Status,

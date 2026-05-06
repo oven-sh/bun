@@ -984,6 +984,23 @@ impl EventLoop {
         // TODO(port): export from Zig — `Bun__EventLoop__exitLoop(*EventLoop)`.
         unsafe { Bun__EventLoop__exitLoop(self._opaque.get() as *mut EventLoop) }
     }
+
+    /// event_loop.zig `runCallback` — wrap a JS callback in enter/exit so
+    /// microtasks drain and uncaught exceptions are reported as unhandled.
+    /// Mirrors `bun_jsc::EventLoop::run_callback` (event_loop.rs:408).
+    pub fn run_callback(
+        &self,
+        callback: JSValue,
+        global_object: &JSGlobalObject,
+        this_value: JSValue,
+        arguments: &[JSValue],
+    ) {
+        self.enter();
+        if let Err(err) = callback.call(global_object, this_value, arguments) {
+            global_object.report_active_exception_as_unhandled(err);
+        }
+        self.exit();
+    }
 }
 
 /// `bun_jsc::api::Timer::All` — heap of `EventLoopTimer`. Opaque on this side;
@@ -1606,10 +1623,15 @@ unsafe extern "C" {
 
 impl JSFunction {
     /// Zig: `JSFunction.create` (src/jsc/JSFunction.zig:30-53).
-    pub fn create(
+    ///
+    /// `implementation` accepts any [`IntoJSHostFn`] — a raw [`JSHostFn`], a
+    /// `fn(&JSGlobalObject, &CallFrame) -> JsResult<JSValue>`, or the
+    /// infallible `-> JSValue` form (mirrors the Zig `switch (@TypeOf(impl))`
+    /// dispatch over `JSHostFn` / `JSHostFnZig`).
+    pub fn create<M>(
         global: &JSGlobalObject,
         name: &str,
-        implementation: JSHostFn,
+        implementation: impl IntoJSHostFn<M>,
         arg_count: u32,
         opts: CreateJSFunctionOptions,
     ) -> JSValue {
@@ -1620,7 +1642,7 @@ impl JSFunction {
             JSFunction__createFromZig(
                 global.as_mut_ptr(),
                 fn_name,
-                implementation,
+                implementation.into_js_host_fn(),
                 arg_count,
                 opts.implementation_visibility,
                 opts.intrinsic,

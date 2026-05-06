@@ -1559,6 +1559,62 @@ pub enum PathOrFileDescriptorSerializeTag {
     Path,
 }
 
+impl PathOrFileDescriptorSerializeTag {
+    #[inline]
+    pub fn from_raw(raw: u8) -> Option<Self> {
+        match raw {
+            0 => Some(Self::Fd),
+            1 => Some(Self::Path),
+            _ => None,
+        }
+    }
+}
+
+// PORT NOTE: Zig copies these tagged unions by value freely; the Rust port adds
+// `Drop` for the path-owning variants, so an explicit `dupe()` is provided for
+// callers (Blob, Store::File) that need a fresh copy. Ref-counting variants are
+// bumped where the underlying type supports it; otherwise we bitwise-copy
+// (matching Zig semantics) and leave proper ref-counting to a later pass.
+impl PathLike {
+    pub fn dupe(&self) -> Self {
+        match self {
+            Self::String(s) => Self::String(*s),
+            // SAFETY: bitwise copy mirrors Zig's by-value union semantics. The
+            // wrapped types are POD-ish handles (JS-rooted buffer / WTF ref);
+            // a real ref-bump belongs here once those types expose `dupe()`.
+            // TODO(port): switch to `b.dupe()` / `s.dupe_ref()` when available.
+            Self::Buffer(b) => Self::Buffer(unsafe { core::ptr::read(b) }),
+            Self::SliceWithUnderlyingString(s) => {
+                Self::SliceWithUnderlyingString(unsafe { core::ptr::read(s) })
+            }
+            Self::ThreadsafeString(s) => {
+                Self::ThreadsafeString(unsafe { core::ptr::read(s) })
+            }
+            Self::EncodedSlice(s) => Self::EncodedSlice(unsafe { core::ptr::read(s) }),
+        }
+    }
+}
+
+impl Clone for PathLike {
+    #[inline]
+    fn clone(&self) -> Self { self.dupe() }
+}
+
+impl PathOrFileDescriptor {
+    #[inline]
+    pub fn dupe(&self) -> Self {
+        match self {
+            Self::Fd(fd) => Self::Fd(*fd),
+            Self::Path(p) => Self::Path(p.dupe()),
+        }
+    }
+}
+
+impl Clone for PathOrFileDescriptor {
+    #[inline]
+    fn clone(&self) -> Self { self.dupe() }
+}
+
 // Drop: unref()s the path string if it is a PathLike (via PathLike's Drop).
 // Does nothing for file descriptors, **does not** close file descriptors.
 // (No explicit `impl Drop` needed — field drop of PathLike handles it.)

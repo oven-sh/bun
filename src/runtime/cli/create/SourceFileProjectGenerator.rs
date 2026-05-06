@@ -423,13 +423,13 @@ pub fn generate_files(
                     shadcn_argv.push(b"--src-dir");
                 }
                 shadcn_argv.push(b"-y");
-                shadcn_argv.extend_from_slice(components.keys());
+                shadcn_argv.extend(components.keys().iter().map(|k| &k[..]));
 
                 // print "bun" but use bun.selfExePath()
                 Output::prettyln(format_args!(
                     "\n<r>😎 <b>Setting up shadcn/ui components<r>"
                 ));
-                Output::command_out(&shadcn_argv);
+                Output::command_out(Output::CommandArgv::List(&shadcn_argv));
                 Output::flush();
                 shadcn_argv[0] = bun_core::self_exe_path()?;
 
@@ -447,28 +447,28 @@ pub fn generate_files(
                     }) {
                         Ok(p) => p,
                         Err(err) => {
-                            Output::err(err, format_args!("failed to add shadcn components"));
+                            Output::err(err, "failed to add shadcn components", ());
                             Global::crash();
                         }
                     };
 
                 match shadcn_process {
                     bun_sys::Result::Err(err) => {
-                        Output::err(err, format_args!("failed to add shadcn components"));
+                        Output::err(err, "failed to add shadcn components", ());
                         Global::crash();
                     }
                     bun_sys::Result::Ok(spawn_result) => {
                         if !spawn_result.status.is_ok() {
                             if let Some(signal) = spawn_result.status.signal_code() {
                                 if let Some(exit_code) = signal.to_exit_code() {
-                                    Global::exit(exit_code);
+                                    Global::exit(exit_code as u32);
                                 }
                             }
 
                             if let bun_process::Status::Exited(exited) =
                                 spawn_result.status
                             {
-                                Global::exit(exited.code);
+                                Global::exit(exited.code as u32);
                             }
 
                             Global::crash();
@@ -491,7 +491,7 @@ pub fn generate_files(
     // Start dev server
     let start = match spawn_sync::spawn(&spawn_sync::Options {
         argv: vec![
-            Box::<[u8]>::from(bun_core::self_exe_path()?),
+            Box::<[u8]>::from(bun_core::self_exe_path()?.as_bytes()),
             Box::<[u8]>::from(&b"dev"[..]),
         ],
         envp: None,
@@ -508,14 +508,14 @@ pub fn generate_files(
     }) {
         Ok(p) => p,
         Err(err) => {
-            Output::err(err, format_args!("failed to start app"));
+            Output::err(err, "failed to start app", ());
             Global::crash();
         }
     };
 
     match start {
         bun_sys::Result::Err(err) => {
-            Output::err(err, format_args!("failed to start app"));
+            Output::err(err, "failed to start app", ());
             Global::crash();
         }
         bun_sys::Result::Ok(spawn_result) => {
@@ -686,10 +686,10 @@ fn find_react_component_export<'r>(bundler: &'r BundleV2<'_>) -> Option<&'r [u8]
                 return Some(b"default");
             }
 
-            let export_names = exports.keys();
+            let export_names: &[Box<[u8]>] = exports.keys();
             if export_names.len() == 1 {
                 // If there's only one export it can only be this.
-                return Some(export_names[0]);
+                return Some(&export_names[0][..]);
             }
 
             if export_names.is_empty() {
@@ -738,7 +738,7 @@ fn find_react_component_export<'r>(bundler: &'r BundleV2<'_>) -> Option<&'r [u8]
                             || duped[input_index] == b'-'
                             || duped[input_index] == b'_'
                             || (output_index == 0
-                                && !js_lexer::is_identifier_start(duped[input_index] as u32))
+                                && !js_lexer::is_identifier_start(duped[input_index] as i32))
                         {
                             capitalize_next = true;
                             input_index += 1;
@@ -795,20 +795,20 @@ fn find_react_component_export<'r>(bundler: &'r BundleV2<'_>) -> Option<&'r [u8]
             };
             if exports.contains(&name_to_try) {
                 // TODO(port): lifetime — Zig returns an allocator-owned slice; we leak to match.
-                return Some(Box::leak(name_to_try.into_boxed_slice()));
+                return Some(Box::leak(name_to_try));
             }
 
             // Okay we really have no idea now.
             // Let's just pick one that looks like a react component I guess.
             for export_name in export_names {
                 if !export_name.is_empty() && export_name[0] >= b'A' && export_name[0] <= b'Z' {
-                    return Some(export_name);
+                    return Some(&export_name[..]);
                 }
             }
 
             // Okay now we just have to pick one.
             if !export_names.is_empty() {
-                return Some(export_names[0]);
+                return Some(&export_names[0][..]);
             }
         }
     }

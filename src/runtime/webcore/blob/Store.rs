@@ -527,6 +527,18 @@ pub enum SerializeTag {
     Empty = 2,
 }
 
+impl SerializeTag {
+    #[inline]
+    pub fn from_raw(raw: u8) -> Option<Self> {
+        match raw {
+            0 => Some(Self::File),
+            1 => Some(Self::Bytes),
+            2 => Some(Self::Empty),
+            _ => None,
+        }
+    }
+}
+
 /// A blob store that references a file on disk.
 #[derive(Clone)]
 pub struct File {

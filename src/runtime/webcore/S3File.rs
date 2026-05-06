@@ -146,65 +146,69 @@ pub fn presign(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVal
 
 #[bun_jsc::host_fn]
 pub fn unlink(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let arguments = callframe.arguments_old(3).slice();
-    let mut args = bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), arguments);
+    let arguments = callframe.arguments_old::<3>();
+    // SAFETY: bun_vm() returns the live VM raw ptr.
+    let mut args = bun_jsc::call_frame::ArgumentsSlice::init(unsafe { &*global.bun_vm() }, arguments.slice());
 
     // accept a path or a blob
     let path_or_blob = PathOrBlob::from_js_no_copy(global, &mut args)?;
 
     if let PathOrBlob::Blob(blob) = &path_or_blob {
         if blob.store.is_none() || !matches!(blob.store.as_ref().unwrap().data, blob::store::Data::S3(_)) {
-            return global.throw_invalid_arguments("Expected a S3 or path to delete", &[]);
+            return Err(global.throw_invalid_arguments("Expected a S3 or path to delete"));
         }
     }
 
     match path_or_blob {
         PathOrBlob::Path(path) => {
             if matches!(path, crate::node::PathOrFileDescriptor::Fd(_)) {
-                return global.throw_invalid_arguments("Expected a S3 or path to delete", &[]);
+                return Err(global.throw_invalid_arguments("Expected a S3 or path to delete"));
             }
             let options = args.next_eat();
-            let blob = construct_s3_file_internal_store(global, path.path(), options)?;
-            let store = blob.store.as_ref().unwrap();
-            store.data.as_s3().unlink(store, global, options)
+            let blob = construct_s3_file_internal_store(global, path.path().clone(), options)?;
+            let store_ptr = blob.store.as_ref().unwrap().as_ptr();
+            // SAFETY: store_ptr is live for the duration of `blob`; aliasing
+            // `&mut S3` with `&Store` mirrors the Zig pointer semantics.
+            unsafe { (*store_ptr).data.as_s3_mut().unlink(&*store_ptr, global, options) }
         }
         PathOrBlob::Blob(blob) => {
-            let store = blob.store.as_ref().unwrap();
-            store.data.as_s3().unlink(store, global, args.next_eat())
+            let store_ptr = blob.store.as_ref().unwrap().as_ptr();
+            // SAFETY: see above.
+            unsafe { (*store_ptr).data.as_s3_mut().unlink(&*store_ptr, global, args.next_eat()) }
         }
     }
 }
 
 #[bun_jsc::host_fn]
 pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let arguments = callframe.arguments_old(3).slice();
-    let mut args = bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), arguments);
+    let arguments = callframe.arguments_old::<3>();
+    // SAFETY: bun_vm() returns the live VM raw ptr.
+    let mut args = bun_jsc::call_frame::ArgumentsSlice::init(unsafe { &*global.bun_vm() }, arguments.slice());
 
     // accept a path or a blob
-    let mut path_or_blob = PathOrBlob::from_js_no_copy(global, &mut args)?;
+    let path_or_blob = PathOrBlob::from_js_no_copy(global, &mut args)?;
 
     if let PathOrBlob::Blob(blob) = &path_or_blob {
         if blob.store.is_none() || !matches!(blob.store.as_ref().unwrap().data, blob::store::Data::S3(_)) {
-            return global.throw_invalid_arguments("Expected a S3 or path to upload", &[]);
+            return Err(global.throw_invalid_arguments("Expected a S3 or path to upload"));
         }
     }
 
     let Some(data) = args.next_eat() else {
-        return global.err(bun_jsc::ErrorCode::MISSING_ARGS, "Expected a Blob-y thing to upload", &[]).throw();
+        return Err(global
+            .err(bun_jsc::ErrorCode::MISSING_ARGS, format_args!("Expected a Blob-y thing to upload"))
+            .throw());
     };
 
     match path_or_blob {
         PathOrBlob::Path(path) => {
             let options = args.next_eat();
             if matches!(path, crate::node::PathOrFileDescriptor::Fd(_)) {
-                return global.throw_invalid_arguments("Expected a S3 or path to upload", &[]);
+                return Err(global.throw_invalid_arguments("Expected a S3 or path to upload"));
             }
-            let blob = construct_s3_file_internal_store(global, path.path(), options)?;
+            let blob = construct_s3_file_internal_store(global, path.path().clone(), options)?;
 
-            // PORT NOTE: `write_file_internal` currently takes the
-            // `webcore::node_types::PathOrBlob` stub; bridge until that module
-            // re-exports `crate::node::types::PathOrBlob` directly.
-            let mut blob_internal = crate::webcore::node_types::PathOrBlob::Blob(blob);
+            let mut blob_internal = PathOrBlob::Blob(blob);
             blob::write_file_internal(
                 global,
                 &mut blob_internal,
@@ -218,7 +222,7 @@ pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue
         }
         PathOrBlob::Blob(blob) => {
             // PORT NOTE: reshaped for borrowck — match consumes path_or_blob; rebuild to pass &mut PathOrBlob
-            let mut pob = crate::webcore::node_types::PathOrBlob::Blob(blob);
+            let mut pob = PathOrBlob::Blob(blob);
             blob::write_file_internal(
                 global,
                 &mut pob,

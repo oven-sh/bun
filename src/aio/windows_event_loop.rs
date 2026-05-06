@@ -447,7 +447,9 @@ impl Store {
     }
 
     unsafe extern "C" fn process_deferred_frees_thunk(ctx: *mut c_void) {
-        // SAFETY: ctx was set to `self as *mut Store` in `put` above.
+        // SAFETY: `ctx` was set to `self as *mut Store` in `put` above. The thunk fires
+        // from the event loop's after-tick hook with no other `&mut Store` borrow live,
+        // so this is the unique accessor (safe-single-owner).
         let this = unsafe { &mut *(ctx as *mut Store) };
         this.process_deferred_frees();
     }

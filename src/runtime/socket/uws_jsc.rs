@@ -87,20 +87,16 @@ pub fn any_web_socket_get_topics_as_js_array(
 ) -> JSValue {
     match this {
         AnyWebSocket::Ssl(_) => unsafe {
-            // SAFETY: this.raw() yields a live *mut RawWebSocket; global_object is valid for the call.
-            uws_ws_get_topics_as_js_array(
-                1,
-                this.raw(),
-                global_object as *const _ as *mut JSGlobalObject,
-            )
+            // SAFETY: this.raw() yields a live *mut RawWebSocket; `as_ptr()` is the
+            // sanctioned `&JSGlobalObject -> *mut` accessor (UnsafeCell-backed, see
+            // `JSGlobalObject::as_ptr`) so the FFI callee may mutate VM state.
+            uws_ws_get_topics_as_js_array(1, this.raw(), global_object.as_ptr())
         },
         AnyWebSocket::Tcp(_) => unsafe {
-            // SAFETY: this.raw() yields a live *mut RawWebSocket; global_object is valid for the call.
-            uws_ws_get_topics_as_js_array(
-                0,
-                this.raw(),
-                global_object as *const _ as *mut JSGlobalObject,
-            )
+            // SAFETY: this.raw() yields a live *mut RawWebSocket; `as_ptr()` is the
+            // sanctioned `&JSGlobalObject -> *mut` accessor (UnsafeCell-backed, see
+            // `JSGlobalObject::as_ptr`) so the FFI callee may mutate VM state.
+            uws_ws_get_topics_as_js_array(0, this.raw(), global_object.as_ptr())
         },
     }
 }

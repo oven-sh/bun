@@ -233,17 +233,16 @@ impl MySQLConnection {
 
     /// PORT NOTE: reshaped for borrowck — `self.queue.advance(js_connection)`
     /// would alias `&mut self.queue` with `&mut JSMySQLConnection` (which
-    /// embeds `self`). Route through raw pointers and pass the parent as a raw
-    /// `*mut JSMySQLConnection`; `MySQLRequestQueue::advance` dereferences it
-    /// only at disjoint-field call sites, never forming a full
-    /// `&mut JSMySQLConnection` while `&mut self` (the queue) is live.
+    /// embeds `self`). Route through raw pointers: `MySQLRequestQueue::advance`
+    /// takes both the queue and the parent as `*mut`, materializing only
+    /// short-lived non-overlapping borrows at each access site.
     fn advance(&mut self) {
         let js_connection = self.get_js_connection();
         let queue = &mut self.queue as *mut MySQLRequestQueue;
-        // SAFETY: `queue` and the rest of `*js_connection` are disjoint fields;
-        // advance() reads/writes connection state but not the queue's own
-        // backing storage through `js_connection`.
-        unsafe { (*queue).advance(js_connection) };
+        // SAFETY: `queue` is the `connection.queue` field embedded inside
+        // `*js_connection`; advance() never holds `&mut` to both at once and
+        // never touches the queue through `js_connection`.
+        unsafe { MySQLRequestQueue::advance(queue, js_connection) };
     }
 
     fn flush_data(&mut self) {

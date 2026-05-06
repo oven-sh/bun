@@ -1073,13 +1073,24 @@ pub enum CssImportOrderKind {
 
 // TODO(port): bun.ptr.Cow(BabyList<LayerName>, { copy = deepCloneInfallible, deinit = clearAndFree })
 // LayerName payload allocations live in the arena, so the Zig deinit is a shallow clearAndFree.
-// Mapped to std::borrow::Cow per PORTING.md; Phase B should thread `'bump` (arena-borrowed) and
-// confirm Clone semantics match deepCloneInfallible, or switch to Arc<BabyList<_>> + Arc::make_mut.
-pub struct Layers(pub std::borrow::Cow<'static, BabyList<bun_css::LayerName>>);
+// `std::borrow::Cow<'_, BabyList<_>>` requires `BabyList: Clone` (not implemented). Port the
+// Zig `bun.ptr.Cow` shape directly: a tag + raw pointer for the borrowed arm. Phase B should
+// thread `'bump` (arena-borrowed) and confirm Clone semantics match deepCloneInfallible.
+pub enum Layers {
+    /// Borrowed from another `CssImportOrder`'s `Layers` or the parsed stylesheet.
+    Borrowed(*const BabyList<bun_css::LayerName>),
+    Owned(BabyList<bun_css::LayerName>),
+}
 
 impl Layers {
+    #[inline]
     pub fn inner(&self) -> &BabyList<bun_css::LayerName> {
-        &*self.0
+        match self {
+            // SAFETY: borrowed pointer is into arena-owned storage that outlives
+            // the chunk pipeline (see TODO(port) above re: `'bump`).
+            Layers::Borrowed(p) => unsafe { &**p },
+            Layers::Owned(b) => b,
+        }
     }
 }
 
@@ -1099,9 +1110,9 @@ impl CssImportOrder {
         bun_core::write_any_to_hasher(hasher, &tag);
         match &self.kind {
             CssImportOrderKind::Layers(layers) => {
-                for layer in layers.inner().slice_const() {
+                for layer in layers.inner().slice() {
                     for (i, layer_name) in layer.v.slice().iter().enumerate() {
-                        let is_last = i == layers.inner().len() as usize - 1;
+                        let is_last = i == layers.inner().len as usize - 1;
                         if is_last {
                             hasher.update(layer_name);
                         } else {
@@ -1112,8 +1123,13 @@ impl CssImportOrder {
                 }
                 hasher.update(b"\x00");
             }
-            CssImportOrderKind::ExternalPath(path) => hasher.update(&path.text),
-            CssImportOrderKind::SourceIndex(idx) => bun_core::write_any_to_hasher(hasher, idx),
+            CssImportOrderKind::ExternalPath(path) => hasher.update(path.text),
+            // PORT NOTE: `Index` is a `#[repr(transparent)]` u32 newtype but
+            // doesn't impl `AsBytes`; hash the inner u32 (Zig hashed the
+            // `Index.Int` bytes directly).
+            CssImportOrderKind::SourceIndex(idx) => {
+                bun_core::write_any_to_hasher(hasher, &idx.get())
+            }
         }
     }
 

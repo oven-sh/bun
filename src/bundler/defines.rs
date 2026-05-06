@@ -1,7 +1,8 @@
 use core::ptr::NonNull;
 
-use bun_collections::{ArrayHashMap, StringHashMap};
+use bun_collections::{StringArrayHashMap, StringHashMap};
 use bun_js_parser as js_ast;
+use bun_js_parser::ast::expr::IntoExprData;
 use bun_js_parser::lexer as js_lexer;
 use bun_js_parser::ExprData;
 use bun_js_parser::Ref;

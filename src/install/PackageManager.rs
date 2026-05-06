@@ -759,7 +759,7 @@ impl PackageManager {
     pub fn has_enough_time_passed_between_waiting_messages() -> bool {
         // SAFETY: main-thread only (also guards TIME_PASSER_LAST_TIME below); reads
         // event_loop.iteration_number which is written only by the same main-thread tick loop.
-        let iter = unsafe { (*get()).event_loop.loop_().iteration_number() };
+        let iter = unsafe { (*get()).event_loop.iteration_number() };
         // SAFETY: only called from main thread
         unsafe {
             if TIME_PASSER_LAST_TIME < iter {
@@ -1691,7 +1691,8 @@ pub fn init(
                 preallocated_network_tasks: PreallocatedNetworkTasks::init(),
                 preallocated_resolve_tasks: PreallocatedTaskStore::init(),
                 options,
-                active_lifecycle_scripts: LifecycleScriptSubprocess::List {
+                active_lifecycle_scripts: crate::lifecycle_script_runner::List {
+                    root: core::ptr::null_mut(),
                     context: manager_ptr,
                 },
                 network_task_fifo: NetworkQueue::init(),
@@ -1817,7 +1818,8 @@ pub fn init(
         let evl = unsafe { &mut (*manager_ptr).event_loop };
         if let AnyEventLoop::Mini(mini) = evl {
             let mini_ptr: *mut MiniEventLoop<'static> = mini;
-            bun_event_loop::mini_event_loop::GLOBAL.with(|g| g.set(mini_ptr));
+            bun_event_loop::MiniEventLoop::GLOBAL.with(|g| g.set(mini_ptr));
+            bun_event_loop::MiniEventLoop::GLOBAL_INITIALIZED.with(|g| g.set(true));
         }
     }
     {
@@ -2019,7 +2021,8 @@ pub fn init_with_runtime_once(
                         .unwrap_or(cpu_count * 2),
                     ..Default::default()
                 },
-                active_lifecycle_scripts: LifecycleScriptSubprocess::List {
+                active_lifecycle_scripts: crate::lifecycle_script_runner::List {
+                    root: core::ptr::null_mut(),
                     context: manager_ptr,
                 },
                 network_task_fifo: NetworkQueue::init(),

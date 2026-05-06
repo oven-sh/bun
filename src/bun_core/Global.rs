@@ -208,6 +208,8 @@ pub mod features {
     #[inline] pub fn extracted_packages_inc() { EXTRACTED_PACKAGES.fetch_add(1, core::sync::atomic::Ordering::Relaxed); }
     /// yaml crate calls `bun_core::analytics::Features::yaml_parse_inc()`.
     #[inline] pub fn yaml_parse_inc() { YAML_PARSE.fetch_add(1, core::sync::atomic::Ordering::Relaxed); }
+    /// install crate calls `bun_core::analytics::Features::lifecycle_scripts_inc(1)`.
+    #[inline] pub fn lifecycle_scripts_inc(n: usize) { LIFECYCLE_SCRIPTS.fetch_add(n, core::sync::atomic::Ordering::Relaxed); }
     /// install/yarn crate calls `bun_core::analytics::Features::yarn_migration_inc(1)`.
     #[inline] pub fn yarn_migration_inc(n: usize) { YARN_MIGRATION.fetch_add(n, core::sync::atomic::Ordering::Relaxed); }
     /// install/pnpm crate calls `bun_core::analytics::Features::pnpm_migration_inc(1)`.

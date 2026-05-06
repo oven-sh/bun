@@ -39,7 +39,9 @@ use bun_install::lockfile::package::Meta;
 // PERF(port): anytype → dyn dispatch — profile in Phase B (Zig used `writer: anytype`;
 // PORTING.md prefers `impl Trait`, but the trait shape is unsettled so dyn for now).
 type Writer = dyn bun_io::Write;
-type WriteError = bun_io::Error;
+// `bun_io::Write` returns `core::result::Result<_, bun_core::Error>` (see
+// `bun_io::write::Result`), so the writer error is just the global `bun_core::Error`.
+type WriteError = bun_core::Error;
 
 #[repr(u32)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]

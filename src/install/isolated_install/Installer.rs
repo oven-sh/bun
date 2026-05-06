@@ -67,7 +67,7 @@ pub struct Installer<'a> {
     pub is_new_bun_modules: bool,
 
     pub manager: &'a mut PackageManager,
-    pub command_ctx: Command::Context,
+    pub command_ctx: Command::Context<'a>,
 
     pub store: &'a Store,
 
@@ -2084,7 +2084,7 @@ impl<'a> Installer<'a> {
     /// step renames staging → final.
     pub fn append_global_store_entry_path(
         &self,
-        buf: &mut paths::PathLike,
+        buf: &mut impl paths::PathLike,
         entry_id: StoreEntryId,
         which: Which,
     ) {
@@ -2179,7 +2179,7 @@ impl<'a> Installer<'a> {
     /// points at the global virtual-store entry). Relative to top-level dir.
     pub fn append_local_store_entry_path(
         &self,
-        buf: &mut paths::PathLike,
+        buf: &mut impl paths::PathLike,
         entry_id: StoreEntryId,
     ) {
         buf.append_fmt(format_args!(
@@ -2271,7 +2271,7 @@ impl<'a> Installer<'a> {
 
     pub fn append_store_node_modules_path(
         &self,
-        buf: &mut paths::PathLike,
+        buf: &mut impl paths::PathLike,
         entry_id: StoreEntryId,
     ) {
         let string_buf = self.lockfile.buffers.string_bytes.as_slice();
@@ -2314,7 +2314,7 @@ impl<'a> Installer<'a> {
     /// otherwise. See `Which` for when to pass `.staging` vs `.final`.
     pub fn append_real_store_node_modules_path(
         &self,
-        buf: &mut paths::PathLike,
+        buf: &mut impl paths::PathLike,
         entry_id: StoreEntryId,
         which: Which,
     ) {
@@ -2330,7 +2330,7 @@ impl<'a> Installer<'a> {
     /// `Which` for when to pass `.staging` vs `.final`.
     pub fn append_real_store_path(
         &self,
-        buf: &mut paths::PathLike,
+        buf: &mut impl paths::PathLike,
         entry_id: StoreEntryId,
         which: Which,
     ) {
@@ -2347,7 +2347,7 @@ impl<'a> Installer<'a> {
         self.append_store_path(buf, entry_id);
     }
 
-    pub fn append_store_path(&self, buf: &mut paths::PathLike, entry_id: StoreEntryId) {
+    pub fn append_store_path(&self, buf: &mut impl paths::PathLike, entry_id: StoreEntryId) {
         let string_buf = self.lockfile.buffers.string_bytes.as_slice();
 
         let entries = self.store.entries.slice();

@@ -789,6 +789,50 @@ pub mod lockfile {
         /// `package_manager_real` (runTasks / Enqueue) can name
         /// `bun_install::lockfile::Package` until `lockfile_real` un-gates.
         pub type Package = crate::lockfile_real::package::Package<u64>;
+
+        /// Port of `Package.Scripts` / `Package.Scripts.List`
+        /// (src/install/lockfile/Package/Scripts.zig). Stub shapes so
+        /// `isolated_install::{Installer,Store}` resolve until
+        /// `lockfile_real::package::scripts` un-gates; real bodies live in
+        /// `lockfile/Package/Scripts.rs`.
+        pub mod scripts {
+            use bun_semver::String;
+            use crate::resolution::Resolution;
+            use crate::Lockfile;
+
+            #[derive(Default, Clone, Copy)]
+            pub struct Scripts {
+                pub preinstall: String,
+                pub install: String,
+                pub postinstall: String,
+                pub preprepare: String,
+                pub prepare: String,
+                pub postprepare: String,
+                pub filled: bool,
+            }
+            impl Scripts {
+                /// Stub: real impl in `lockfile/Package/Scripts.rs::get_list`.
+                pub fn get_list(
+                    &mut self,
+                    _log: &mut bun_logger::Log,
+                    _lockfile: &Lockfile,
+                    _cwd: &mut impl bun_paths::PathLike,
+                    _name: &[u8],
+                    _res: &Resolution,
+                ) -> Result<Option<List>, bun_core::Error> {
+                    todo!("blocked_on: lockfile_real::package::scripts un-gate (reconciler-6)")
+                }
+            }
+            /// `Package.Scripts.List` — the resolved per-hook command list.
+            #[derive(Default)]
+            pub struct List {
+                pub first_index: u8,
+                pub total: u8,
+                pub items: [Option<Box<[u8]>>; 6],
+                pub cwd: Box<[u8]>,
+                pub package_name: Box<[u8]>,
+            }
+        }
     }
     pub use package::Package;
     pub mod tree {
@@ -796,6 +840,19 @@ pub mod lockfile {
         use super::DependencyIDSlice;
 
         pub type Id = u32;
+
+        /// `Lockfile.Tree.invalid_id` (src/install/lockfile/Tree.zig).
+        pub const INVALID_ID: Id = Id::MAX;
+        /// `Lockfile.Tree.max_depth`.
+        pub const MAX_DEPTH: usize = 256;
+        /// `Lockfile.Tree.DepthBuf` — fixed-size hoist-depth scratch.
+        pub type DepthBuf = [Id; MAX_DEPTH];
+        /// `Lockfile.Tree.Iterator.PathStyle`
+        /// (src/install/lockfile/Tree.zig). Aliased as `PathStyle` to match
+        /// the Zig namespace `Tree.Iterator(.node_modules)` callers use.
+        #[derive(Clone, Copy, PartialEq, Eq)]
+        pub enum IteratorPathStyle { NodeModules, PkgPath }
+        pub use IteratorPathStyle as PathStyle;
 
         /// Port of `Lockfile.Tree` (src/install/lockfile/Tree.zig) — the
         /// hoisted dependency tree node. Associated consts mirror the Zig
@@ -820,6 +877,24 @@ pub mod lockfile {
                     dependencies: DependencyIDSlice::default(),
                 }
             }
+        }
+
+        /// Port of `Lockfile.Tree.relativePathAndDepth`
+        /// (src/install/lockfile/Tree.zig). Typed against the stub `Lockfile`
+        /// so `PackageInstaller::link_remaining_bins` can call it before
+        /// `lockfile_real` un-gates. Full body lives in
+        /// `lockfile_real::tree::relative_path_and_depth`.
+        pub fn relative_path_and_depth<'b>(
+            _lockfile: &super::Lockfile,
+            _tree_id: Id,
+            path_buf: &'b mut bun_paths::PathBuffer,
+            _depth_buf: &mut DepthBuf,
+            _style: IteratorPathStyle,
+        ) -> (&'b [u8], usize) {
+            // TODO(port): the stub `Buffers` lacks `.trees`; route to the real
+            // impl once the Lockfile types unify (reconciler-6).
+            path_buf[0] = 0;
+            (&path_buf[..0], 0)
         }
     }
     pub mod bun_lock {}

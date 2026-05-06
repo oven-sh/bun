@@ -3492,7 +3492,7 @@ pub fn open_dir_absolute(path: &[u8]) -> Maybe<Fd> {
 pub fn symlink_running_executable(target: &ZStr, dest: &ZStr) -> Maybe<()> {
     match symlink(target, dest) {
         Err(err) => match err.get_errno() {
-            E::BUSY | E::TXTBSY => {
+            E::EBUSY | E::ETXTBSY => {
                 let _ = unlink(dest);
                 symlink(target, dest)
             }
@@ -5040,7 +5040,7 @@ pub fn renameat_concurrently_without_fallback(
             ) {
                 // if ENOENT don't retry
                 Err(err) => {
-                    if err.get_errno() == E::NOENT {
+                    if err.get_errno() == E::ENOENT {
                         return Err(err);
                     }
                     err

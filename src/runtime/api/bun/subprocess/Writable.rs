@@ -102,10 +102,10 @@ impl<'a> Writable<'a> {
     pub fn init(
         stdio: &mut Stdio,
         event_loop: &EventLoop,
-        subprocess: &mut Subprocess,
+        subprocess: &mut Subprocess<'a>,
         result: StdioResult,
         promise_for_stream: &mut JSValue,
-    ) -> Result<Writable, bun_core::Error> {
+    ) -> Result<Writable<'a>, bun_core::Error> {
         // TODO(port): narrow error set
         Subprocess::assert_stdio_result(&result);
 

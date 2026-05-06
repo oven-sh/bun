@@ -830,11 +830,11 @@ impl Execution {
 }
 
 pub fn step_group(
-    buntest_strong: BunTestPtr,
+    buntest_strong: &BunTestPtr,
     global_this: &JSGlobalObject,
     now: &mut Timespec,
 ) -> JsResult<StepResult> {
-    let _scope = group_log::begin();
+    group_begin!();
     let buntest = buntest_strong.get();
     let this = &mut buntest.execution;
 

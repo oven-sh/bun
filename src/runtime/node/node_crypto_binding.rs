@@ -395,22 +395,25 @@ impl<Ctx: CryptoJobCtx> CryptoJob<Ctx> {
     pub fn init_and_schedule(global: &JSGlobalObject, callback: JSValue, ctx: Ctx) -> JsResult<()> {
         let job = Self::init(global, callback, ctx)?;
         // SAFETY: job is a freshly-boxed live pointer.
-        unsafe { (*job).schedule() };
+        unsafe { Self::schedule(&mut *job) };
         Ok(())
     }
 
-    pub fn run_task(task: *mut WorkPoolTask) {
+    pub unsafe fn run_task(task: *mut WorkPoolTask) {
         // SAFETY: `task` points to `Self.task`; recover parent via offset_of.
         let job: *mut Self =
             unsafe { (task as *mut u8).sub(offset_of!(Self, task)).cast::<Self>() };
         // SAFETY: job is live for the duration of the work-pool task.
         let job = unsafe { &mut *job };
         let vm = job.vm;
-        let _guard = scopeguard::guard((), |_| {
-            vm.enqueue_task_concurrent(ConcurrentTask::create(job.any_task.task()));
-        });
 
         job.ctx.run_task();
+
+        // Mirror Zig `defer vm.enqueueTaskConcurrent(...)` — runs after the body.
+        // SAFETY: `vm` is the singleton JS VM; mutably borrowed only here.
+        unsafe {
+            (*vm).enqueue_task_concurrent(ConcurrentTask::create(job.any_task.task()));
+        }
     }
 
     pub fn run_from_js(this: *mut Self) {
@@ -422,7 +425,8 @@ impl<Ctx: CryptoJobCtx> CryptoJob<Ctx> {
         });
         let vm = this_ref.vm;
 
-        if vm.is_shutting_down() {
+        // SAFETY: `vm` is the singleton JS VM, live for process lifetime.
+        if unsafe { (*vm).is_shutting_down() } {
             return;
         }
 
@@ -430,20 +434,21 @@ impl<Ctx: CryptoJobCtx> CryptoJob<Ctx> {
             return;
         };
 
-        this_ref.ctx.run_from_js(vm.global, callback);
+        // SAFETY: `vm.global` is non-null while the VM lives.
+        this_ref.ctx.run_from_js(unsafe { &*(*vm).global }, callback);
     }
 
     unsafe fn deinit(this: *mut Self) {
         // SAFETY: caller guarantees `this` came from `Box::into_raw` in `init`.
         let mut this = unsafe { Box::from_raw(this) };
         this.ctx.deinit();
-        this.poll.unref(this.vm);
-        drop(this.callback.take());
+        this.poll.unref(vm_ctx());
+        this.callback.deinit();
         // Box drop frees `this`.
     }
 
     pub extern "C" fn schedule(this: &mut Self) {
-        this.poll.r#ref(this.vm);
+        this.poll.r#ref(vm_ctx());
         WorkPool::schedule(&mut this.task);
     }
 }

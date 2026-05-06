@@ -423,10 +423,8 @@ pub mod Runtime {
         // enum literals iterated with `inline for` + `@field`. Rust has no field
         // reflection; expanded by hand. Keep this list in sync with the Zig tuple.
         //
-        // NOTE: Spec runtime.zig:272 takes `*std.hash.Wyhash` (NOT `Wyhash11`).
-        // The `Wyhash` alias above is currently `Wyhash11` until `bun_wyhash::Wyhash`
-        // (the stdlib variant) is ported — see TODO at the top-level `use`.
-        pub fn hash_for_runtime_transpiler(&self, hasher: &mut bun_wyhash::Wyhash11) {
+        // Spec runtime.zig:272 takes `*std.hash.Wyhash` (NOT `Wyhash11`).
+        pub fn hash_for_runtime_transpiler(&self, hasher: &mut Wyhash) {
             debug_assert!(self.runtime_transpiler_cache.is_some());
 
             let bools: [bool; 17] = [

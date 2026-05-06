@@ -116,14 +116,112 @@ impl SyntaxString {
     }
 
     /// Parses a value according to the syntax grammar.
-    ///
-    /// blocked_on: `properties::transform::{Transform,TransformList}`,
-    /// `properties::custom::TokenList`, `values::{image,color}` un-gates —
-    /// `ParsedComponent` carries those types directly. Body re-enables once
-    /// those hubs flip.
-    #[cfg(any())]
     pub fn parse_value(&self, input: &mut css::Parser) -> CssResult<ParsedComponent> {
-        // (full body preserved in git history; see syntax.zig::parse_value)
+        match self {
+            SyntaxString::Universal => {
+                // blocked_on: properties::custom::TokenList::parse un-gate
+                // (its `parse_into` body is `#[cfg(any())]`). Body identical to
+                // Zig once that flips:
+                //   ParsedComponent::TokenList(TokenList::parse(input, &ParserOptions::default(None), 0)?)
+                let _ = input;
+                todo!("blocked_on: properties::custom::TokenList::parse un-gate")
+            }
+            SyntaxString::Components(components) => {
+                // Loop through each component, and return the first one that parses successfully.
+                for component in components.iter() {
+                    let state = input.state();
+                    // PERF: deinit this on error
+                    let mut parsed: Vec<ParsedComponent> = Vec::new();
+
+                    loop {
+                        let value_result = input.try_parse(|i| -> CssResult<ParsedComponent> {
+                            let value = match &component.kind {
+                                SyntaxComponentKind::Length => ParsedComponent::Length(Length::parse(i)?),
+                                SyntaxComponentKind::Number => ParsedComponent::Number(CSSNumberFns::parse(i)?),
+                                SyntaxComponentKind::Percentage => ParsedComponent::Percentage(Percentage::parse(i)?),
+                                SyntaxComponentKind::LengthPercentage => {
+                                    ParsedComponent::LengthPercentage(LengthPercentage::parse(i)?)
+                                }
+                                SyntaxComponentKind::Color => ParsedComponent::Color(CssColor::parse(i)?),
+                                SyntaxComponentKind::Image => ParsedComponent::Image(Image::parse(i)?),
+                                SyntaxComponentKind::Url => ParsedComponent::Url(Url::parse(i)?),
+                                SyntaxComponentKind::Integer => ParsedComponent::Integer(CSSIntegerFns::parse(i)?),
+                                SyntaxComponentKind::Angle => ParsedComponent::Angle(Angle::parse(i)?),
+                                SyntaxComponentKind::Time => ParsedComponent::Time(Time::parse(i)?),
+                                SyntaxComponentKind::Resolution => ParsedComponent::Resolution(Resolution::parse(i)?),
+                                SyntaxComponentKind::TransformFunction => {
+                                    // blocked_on: properties::transform un-gate — stub `Transform`
+                                    // has no `parse`. Body once un-gated:
+                                    //   ParsedComponent::TransformFunction(Transform::parse(i)?)
+                                    let _ = i;
+                                    todo!("blocked_on: properties::transform::Transform::parse un-gate")
+                                }
+                                SyntaxComponentKind::TransformList => {
+                                    // blocked_on: properties::transform un-gate — stub `TransformList`
+                                    // has no `parse`. Body once un-gated:
+                                    //   ParsedComponent::TransformList(TransformList::parse(i)?)
+                                    let _ = i;
+                                    todo!("blocked_on: properties::transform::TransformList::parse un-gate")
+                                }
+                                SyntaxComponentKind::CustomIdent => {
+                                    ParsedComponent::CustomIdent(CustomIdentFns::parse(i)?)
+                                }
+                                SyntaxComponentKind::Literal(value) => {
+                                    let location = i.current_source_location();
+                                    let ident = i.expect_ident()?;
+                                    if !strings::eql(ident, value) {
+                                        // SAFETY: `ident` borrows the parser source/arena which
+                                        // outlives the returned `ParseError`; see `css::src_str`.
+                                        let ident: &'static [u8] = unsafe { css::src_str(ident) };
+                                        return Err(location.new_unexpected_token_error(Token::Ident(ident)));
+                                    }
+                                    ParsedComponent::Literal(Ident { v: ident as *const [u8] })
+                                }
+                            };
+                            Ok(value)
+                        });
+
+                        if let Ok(value) = value_result {
+                            match component.multiplier {
+                                Multiplier::None => return Ok(value),
+                                Multiplier::Space => {
+                                    parsed.push(value);
+                                    if input.is_exhausted() {
+                                        return Ok(ParsedComponent::Repeated(Repeated {
+                                            components: parsed,
+                                            multiplier: component.multiplier,
+                                        }));
+                                    }
+                                }
+                                Multiplier::Comma => {
+                                    parsed.push(value);
+                                    match input.next() {
+                                        Ok(token) => {
+                                            if matches!(token, Token::Comma) {
+                                                continue;
+                                            }
+                                            break;
+                                        }
+                                        Err(_) => {
+                                            return Ok(ParsedComponent::Repeated(Repeated {
+                                                components: parsed,
+                                                multiplier: component.multiplier,
+                                            }));
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            break;
+                        }
+                    }
+
+                    input.reset(&state);
+                }
+
+                Err(input.new_error_for_next_token())
+            }
+        }
     }
 }
 

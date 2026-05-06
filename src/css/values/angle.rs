@@ -17,7 +17,7 @@ const TAG_TURN: u8 = 8;
 /// Angles may be explicit or computed by `calc()`, but are always stored and serialized
 /// as their computed value.
 #[repr(u8)]
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, crate::generics::CssEql, crate::generics::CssHash, crate::generics::DeepClone)]
 pub enum Angle {
     /// An angle in degrees. There are 360 degrees in a full circle.
     Deg(CSSNumber) = TAG_DEG,
@@ -287,12 +287,8 @@ impl Angle {
         }
     }
 
-    // TODO(port): css.implementHash / css.implementDeepClone are reflection
-    // helpers. Angle is `Copy` (POD f32 payload) so deep_clone is bitwise; the
-    // CssHash trait impl for Angle wires hash() once generics.rs covers it.
-    pub fn deep_clone(&self) -> Self {
-        *self
-    }
+    // css.implementHash / css.implementDeepClone — provided by
+    // `#[derive(CssHash, DeepClone)]` above (POD f32 payload → bitwise).
 }
 
 /// A CSS [`<angle-percentage>`](https://www.w3.org/TR/css-values-4/#typedef-angle-percentage) value.

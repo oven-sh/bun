@@ -98,7 +98,7 @@ macro_rules! define_length_units {
             $variant:ident : $unit:literal => $feature:expr
         ),* $(,)?
     ) => {
-        #[derive(Clone, Copy, Debug)]
+        #[derive(Clone, Copy, Debug, crate::generics::CssEql, crate::generics::CssHash, crate::generics::DeepClone)]
         pub enum LengthValue {
             $(
                 $(#[$doc])*

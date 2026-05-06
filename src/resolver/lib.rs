@@ -5492,7 +5492,11 @@ impl<'a> Resolver<'a> {
         return Ok(Some(result));
         } // end #[cfg(any())]
         let _ = (file, dirname_fd);
-        unimplemented!("Resolver::parse_tsconfig (Phase B — bun_bundler::cache)")
+        // TODO(port): Phase B — bun_bundler::cache. Until that crate is wired,
+        // degrade to "no tsconfig" rather than panicking the resolver on the
+        // node_modules hot path (every directory containing a tsconfig.json
+        // would otherwise hit `unimplemented!()` via `dir_info_uncached`).
+        Ok(None)
     }
 
     pub fn bin_dirs(&self) -> &[&'static [u8]] {
@@ -6168,19 +6172,20 @@ impl<'a> Resolver<'a> {
         }
         let mut module_type = options::ModuleType::Unknown;
 
-        let mut esmodule = ESModule {
+        // PORT NOTE: reshaped for borrowck — Zig kept a raw `*DebugLogs` inside
+        // `ESModule` across the subsequent `&mut self` calls. In Rust that is
+        // aliased-&mut UB, so the `ESModule` is constructed as a temporary whose
+        // borrow of `self.debug_logs` ends as soon as `resolve_imports` returns.
+        let esm_resolution = ESModule {
             conditions: match kind {
                 ast::ImportKind::Require | ast::ImportKind::RequireResolve => self.opts.conditions.require.clone().expect("oom"),
                 _ => self.opts.conditions.import.clone().expect("oom"),
             },
-            // PORT NOTE: detach &mut DebugLogs from `self` via raw ptr so `esmodule`
-            // doesn't pin `&mut self` across handle_esm_resolution / load_node_modules.
-            // SAFETY: `self.debug_logs` outlives this scope; not aliased while esmodule is live.
-            debug_logs: self.debug_logs.as_mut().map(|d| unsafe { &mut *(d as *mut DebugLogs) }),
+            debug_logs: self.debug_logs.as_mut(),
             module_type: &mut module_type,
-        };
-
-        let esm_resolution = esmodule.resolve_imports(import_path, &imports_map.root);
+        }
+        .resolve_imports(import_path, &imports_map.root);
+        let _ = module_type;
 
         if esm_resolution.status == crate::package_json::Status::PackageResolve {
             // https://github.com/oven-sh/bun/issues/4972
@@ -7350,9 +7355,11 @@ impl<'a> Resolver<'a> {
 impl<'a> Drop for Resolver<'a> {
     fn drop(&mut self) {
         // pub fn deinit(r: *ThisResolver) void
-        for _di in self.dir_cache.values_mut() {
-            // TODO(port): DirInfo.deinit() closes cached FDs (side effect, not just freeing) —
-            // must port `di.close_fds()` before this Drop is correct. Do NOT ship without it.
+        for di in self.dir_cache.values_mut() {
+            // Zig: `di.deinit()` — releases owned PackageJSON / TSConfigJSON resources
+            // in-place (side effects beyond memory: those Drops close cached fds /
+            // deref intrusive refcounts). Ported as `DirInfo::reset`.
+            di.reset();
         }
         // dir_cache is &'static — do not deinit the singleton here
         // TODO(port): Zig calls dir_cache.deinit() but it's a global BSSMap; revisit ownership

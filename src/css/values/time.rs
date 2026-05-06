@@ -10,7 +10,7 @@ use crate::values::number::{CSSNumber, CSSNumberFns};
 /// Time values may be explicit or computed by `calc()`, but are always stored and serialized
 /// as their computed value.
 #[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Debug)]
+#[derive(Clone, Copy, PartialEq, Debug, crate::generics::CssEql, crate::generics::CssHash, crate::generics::DeepClone)]
 pub enum Time {
     /// A time in seconds.
     Seconds(CSSNumber) = 1,
@@ -31,20 +31,8 @@ impl Time {
         }
     }
 
-    pub fn deep_clone(&self) -> Self {
-        // Zig: css.implementDeepClone — reflection-based field clone.
-        // Time holds only f32 payloads, so Copy suffices; allocator param dropped.
-        *self
-    }
-
-    pub fn eql(lhs: &Self, rhs: &Self) -> bool {
-        // Zig: css.implementEql — reflection-based field equality → #[derive(PartialEq)].
-        lhs == rhs
-    }
-
-    // TODO(port): css.implementHash — reflection-based field hashing.
-    // CssHash impl for Time wires once generics.rs covers it; Time is POD so
-    // wyhash over the discriminant+payload is the eventual body.
+    // css.implementDeepClone / css.implementEql / css.implementHash — provided
+    // by `#[derive(DeepClone, CssEql, CssHash)]` above (POD f32 payload).
 
     pub fn parse(input: &mut css::Parser) -> Result<Time> {
         match input.try_parse(Calc::<Time>::parse) {

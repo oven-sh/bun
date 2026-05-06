@@ -1326,7 +1326,10 @@ pub fn print_errorable(args: fmt::Arguments<'_>) -> Result<(), crate::Error> {
 /// Text automatically buffers
 #[macro_export]
 macro_rules! println {
-    ($fmt:literal $(, $arg:expr)* $(,)?) => {{
+    ($fmt:expr $(, $arg:expr)* $(,)?) => {{
+        // `:expr` (not `:literal`) so `concat!(..)` templates compile —
+        // Zig `comptime fmt: string` accepts `"a" ++ "b"` (output.zig:781).
+        // `concat!` accepts a nested `concat!`, so the trailing-`{}` join works.
         const __NL: &str = $crate::output::_needs_nl($fmt);
         $crate::output::print_to(
             $crate::output::Destination::Stdout,
@@ -1539,29 +1542,51 @@ macro_rules! declare_scope {
 #[macro_export]
 macro_rules! scoped_log {
     ($scope:ident, $fmt:expr $(, $arg:expr)* $(,)?) => {
-        if cfg!(feature = "debug_logs") && $scope.is_visible() {
+        // Gate on `debug_assertions` (== `Environment::ENABLE_LOGS`, env.rs:89) so
+        // release builds dead-strip the body. Do NOT gate on a Cargo feature —
+        // there is no `debug_logs` feature and §Forbidden bans silent no-ops.
+        if cfg!(debug_assertions) && $scope.is_visible() {
             const __NL: &str = $crate::output::_needs_nl($crate::pretty_fmt!($fmt, false));
             // Branch on ANSI *before* `format_args!` so each `$arg` evaluates
             // exactly once (Zig builds the args tuple once — output.zig:922-933).
+            // Prefix `[tag]` is built at runtime from `$scope.tagname` lowercased
+            // (Zig: output.zig:826-835 lowercases via `std.ascii.toLower`).
             if $crate::output::_scoped_use_ansi() {
                 $scope.log(::core::format_args!(
                     concat!(
-                        $crate::pretty_fmt!(concat!("<r><d>[", stringify!($scope), "]<r> ", $fmt), true),
+                        "\x1b[0m\x1b[2m[{}]\x1b[0m ",
+                        $crate::pretty_fmt!($fmt, true),
                         "{}",
                     ),
-                    $($arg,)* __NL
+                    $crate::output::_LowerTag($scope.tagname), $($arg,)* __NL
                 ));
             } else {
                 $scope.log(::core::format_args!(
                     concat!(
-                        $crate::pretty_fmt!(concat!("<r><d>[", stringify!($scope), "]<r> ", $fmt), false),
+                        "[{}] ",
+                        $crate::pretty_fmt!($fmt, false),
                         "{}",
                     ),
-                    $($arg,)* __NL
+                    $crate::output::_LowerTag($scope.tagname), $($arg,)* __NL
                 ));
             }
         }
     };
+}
+
+/// `Display` adapter that lowercases an ASCII tag on the fly. Used by
+/// `scoped_log!` so the printed `[tag]` prefix matches Zig's
+/// `std.ascii.toLower`-folded `tagname` (output.zig:826-835) without needing a
+/// compile-time lowercasing proc-macro.
+#[doc(hidden)]
+pub struct _LowerTag(pub &'static str);
+impl fmt::Display for _LowerTag {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for c in self.0.chars() {
+            fmt::Write::write_char(f, c.to_ascii_lowercase())?;
+        }
+        Ok(())
+    }
 }
 
 pub fn up(n: usize) {
@@ -2304,10 +2329,15 @@ pub fn init_scoped_debug_writer_at_startup() {
 }
 
 fn scoped_writer() -> QuietWriter {
-    #[cfg(not(any(debug_assertions, feature = "enable_logs")))]
-    {
-        compile_error!("scopedWriter() should only be called in debug mode");
-    }
+    // Zig used `@compileError` here (output.zig:1320-1325) which is lazy — it
+    // only fires if `scopedWriter()` is referenced, and in release Zig the
+    // `Scoped()` no-op struct never references it. Rust's `compile_error!` is
+    // eager and would break every release build, so assert at runtime instead.
+    // All callers are already gated on `Environment::ENABLE_LOGS`.
+    debug_assert!(
+        Environment::ENABLE_LOGS,
+        "scopedWriter() should only be called in debug mode",
+    );
     // SAFETY: initialized in init_scoped_debug_writer_at_startup; QuietWriter is Copy POD.
     unsafe { scoped_debug_writer::SCOPED_FILE_WRITER }
 }

@@ -113,7 +113,8 @@ impl Drop for HeadersRef {
     #[inline]
     fn drop(&mut self) {
         // SAFETY: self.0 is live; releasing our +1 ref via WebCore__FetchHeaders__deref.
-        unsafe { self.0.as_mut().deref() };
+        // Explicit UFCS to avoid `core::ops::Deref::deref` resolution ambiguity.
+        unsafe { FetchHeaders::deref(self.0.as_mut()) };
     }
 }
 

@@ -4,7 +4,7 @@ use crate::values::number::CSSNumber;
 use bun_string::strings;
 
 /// A CSS `<resolution>` value.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, crate::generics::CssEql, crate::generics::CssHash, crate::generics::DeepClone)]
 pub enum Resolution {
     /// A resolution in dots per inch.
     Dpi(CSSNumber),
@@ -17,8 +17,8 @@ pub enum Resolution {
 // ~toCssImpl
 
 impl Resolution {
-    // TODO(port): css.implementHash / css.implementEql — wires once
-    // generics::CssHash/CssEql blanket impls cover the f32-payload enum.
+    // css.implementHash / css.implementEql — provided by
+    // `#[derive(CssHash, CssEql)]` above (f32-payload enum).
 
     pub fn parse(input: &mut Parser) -> Result<Resolution> {
         // TODO: calc?

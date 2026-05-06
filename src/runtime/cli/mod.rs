@@ -876,14 +876,17 @@ pub mod command {
                 return super::outdated_command::OutdatedCommand::exec(ctx);
             }
             Tag::UpdateInteractiveCommand => {
+                // SAFETY: single-threaded startup (see RunAsNodeCommand arm).
                 let ctx = unsafe { &mut *init(Tag::UpdateInteractiveCommand, log)? };
                 return super::update_interactive_command::UpdateInteractiveCommand::exec(ctx);
             }
             Tag::PublishCommand => {
+                // SAFETY: single-threaded startup (see RunAsNodeCommand arm).
                 let ctx = unsafe { &mut *init(Tag::PublishCommand, log)? };
                 return super::publish_command::PublishCommand::exec(ctx);
             }
             Tag::AuditCommand => {
+                // SAFETY: single-threaded startup (see RunAsNodeCommand arm).
                 let ctx = unsafe { &mut *init(Tag::AuditCommand, log)? };
                 super::audit_command::AuditCommand::exec(ctx)?;
             }

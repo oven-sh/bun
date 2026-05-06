@@ -1001,18 +1001,26 @@ impl H2FrameParser {
 }
 
 /// The streams hashmap may mutate when growing we use this when we need to make sure its safe to iterate over it
-pub struct StreamResumableIterator<'a> {
-    parser: &'a mut H2FrameParser,
+pub struct StreamResumableIterator {
+    // PORT NOTE: Zig's `parser: *H2FrameParser` freely aliases. Holding a Rust `&mut` here would
+    // create a long-lived exclusive borrow that overlaps with the loop body's own `&mut self`
+    // accesses (aliased UB under Stacked Borrows). Store the raw pointer and only dereference it
+    // briefly inside `next()`, mirroring the Zig aliasing intent.
+    parser: *mut H2FrameParser,
     index: u32,
 }
-impl<'a> StreamResumableIterator<'a> {
-    pub fn init(parser: &'a mut H2FrameParser) -> Self {
+impl StreamResumableIterator {
+    pub fn init(parser: *mut H2FrameParser) -> Self {
         Self { index: 0, parser }
     }
     pub fn next(&mut self) -> Option<*mut Stream> {
         // TODO(port): Zig HashMap.iterator() exposes raw bucket index; bun_collections::HashMap
         // must expose a resumable bucket-index iterator. Stub here.
-        let mut it = self.parser.streams.iterator();
+        // SAFETY: `parser` was derived from a live `&mut H2FrameParser` at `init` time; the parser
+        // outlives this iterator and no other `&mut` to it is materialized for the duration of this
+        // short borrow (callers interleave `next()` with their own parser accesses, never overlapping).
+        let streams = unsafe { &mut (*self.parser).streams };
+        let mut it = streams.iterator();
         if it.index() > it.capacity() || self.index > it.capacity() {
             return None;
         }

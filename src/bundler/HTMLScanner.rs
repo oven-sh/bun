@@ -318,7 +318,6 @@ struct DocTagUserData<T> {
 
 impl<T: HTMLProcessorHandler> lol::DirectiveCallback<lol::Element> for DocTagUserData<T> {
     fn call(&mut self, element: &mut lol::Element) -> bool {
-        let element: *mut lol::Element = element;
         // SAFETY: `self.this` was set from `&mut T` in `run` and is valid for
         // the lifetime of the rewriter.
         unsafe {

@@ -169,7 +169,11 @@ pub fn csrf__generate(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
         csrf::GenerateOptions {
             secret: match &secret {
                 Some(s) => s.slice(),
-                None => global.bun_vm().rare_data().default_csrf_secret(),
+                // SAFETY: `bun_vm()` never returns null for a Bun-owned global; we are
+                // on the JS thread so the VM singleton is exclusively reachable here.
+                None => unsafe { &mut *global.bun_vm() }
+                    .rare_data()
+                    .default_csrf_secret(),
             },
             expires_in_ms: expires_in,
             encoding,
@@ -179,12 +183,12 @@ pub fn csrf__generate(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
     ) {
         Ok(v) => v,
         Err(err) => {
-            return match err {
+            return Err(match err {
                 csrf::Error::TokenCreationFailed => {
                     global.throw(format_args!("Failed to create CSRF token"))
                 }
-                _ => global.throw_error(err, "Failed to generate CSRF token"),
-            };
+                _ => global.throw_error(err.into(), "Failed to generate CSRF token"),
+            });
         }
     };
 

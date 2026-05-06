@@ -17,7 +17,19 @@ use bun_core::Timespec;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_uws::Loop;
 
-use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
+use crate::timer::{All, ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
+
+/// PORT NOTE (b2-cycle): `bun_jsc::VirtualMachine.timer` is a `()` placeholder;
+/// the real `timer::All` lives in `jsc_hooks::RuntimeState.timer`. Recover it
+/// as a raw ptr — `self` is (eventually) a field of that same `All`, so callers
+/// dereference per-field under `// SAFETY:` (raw-ptr-per-field re-entry pattern,
+/// see jsc_hooks.rs / mod.rs `EventLoopDelayMonitor::timer_all`).
+#[inline]
+fn timer_all() -> *mut All {
+    let state = crate::jsc_hooks::runtime_state();
+    // SAFETY: `runtime_state()` is non-null after `bun_runtime::init()`.
+    unsafe { core::ptr::addr_of_mut!((*state).timer) }
+}
 
 bun_output::declare_scope!(DateHeaderTimer, visible);
 

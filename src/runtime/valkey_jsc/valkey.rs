@@ -313,7 +313,7 @@ impl DeferredFailure {
         // PORT NOTE: Zig `defer { free(message); destroy(this) }` — both handled by Box<Self> drop.
         debug!("running deferred failure");
         let mut this = *self;
-        let err = valkey_error_to_js(this.global_this, Some(&this.message), this.err);
+        let err = valkey_error_to_js(this.global_this, &*this.message, this.err);
         ValkeyClient::reject_all_pending_commands(
             &mut this.in_flight,
             &mut this.queue,
@@ -386,7 +386,7 @@ impl ValkeyClient {
         if let Some(global_this) = global_object_or_finalizing {
             let object = valkey_error_to_js(
                 global_this,
-                Some(b"Connection closed"),
+                b"Connection closed",
                 RedisError::ConnectionClosed,
             );
             while let Some(mut pair) = pending.read_item() {
@@ -618,7 +618,7 @@ impl ValkeyClient {
         let global_this = self.global_object();
         self.fail_with_js_value(
             global_this,
-            valkey_error_to_js(global_this, Some(message), err),
+            valkey_error_to_js(global_this, message, err),
         )
     }
 

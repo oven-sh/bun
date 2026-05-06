@@ -1949,9 +1949,7 @@ impl TestCommand {
 
         // Start the debugger before we scan for files
         // But, don't block the main thread waiting if they used --inspect-wait.
-        //
-        // TODO(port): `vm.ensure_debugger(false)` — upstream exposes only via vtable hooks.
-        let _ = || -> () { todo!("blocked_on: bun_jsc::VirtualMachine::ensure_debugger") };
+        vm.ensure_debugger(false)?;
 
         let mut scanner = Scanner::init(&mut vm.transpiler, ctx.positionals.len()).expect("oom");
         // SAFETY: lifetime-erase; `path_ignore_patterns_view` lives in this never-returning

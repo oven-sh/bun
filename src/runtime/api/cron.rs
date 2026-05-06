@@ -12,16 +12,6 @@ use std::io::Write as _;
 
 use super::cron_parser::{self, CronExpression};
 
-// ─── JSC-heavy job/timer/spawn machinery ────────────────────────────────────
-// CronJobBase / CronRegisterJob / CronRemoveJob / CronJob / spawn_cmd_generic
-// all reference `bun_jsc`, `crate::api::bun::spawn` (gated under keystone-I),
-// and `#[bun_jsc::host_fn]`. Bodies preserved verbatim under `_jsc_gated`;
-// the OS-level cron→{crontab,plist,schtasks-XML} translators below are pure
-// and compile today.
-// TODO(b2-blocked): bun_jsc + #[bun_jsc::host_fn] proc-macro + api::bun::spawn
-
-mod _jsc_gated {
-use super::*;
 use core::ffi::c_char;
 use std::cell::Cell;
 

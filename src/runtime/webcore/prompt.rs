@@ -4,27 +4,12 @@ use bun_core::Output;
 use crate::webcore::jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_jsc::zig_string::ZigString;
 
-// TODO(b2-blocked): bun_core::Output::stdin_reader / buffered_stdin_reader —
-// the Zig used `std.fs.File.stdin().readerStreaming(..)` and
-// `bun.Output.buffered_stdin.reader()`. bun_core::output exposes neither yet,
-// so the host-fn bodies are gated until that surface lands. The
-// `#[bun_jsc::host_fn(export = "...")]` shim is verified working (see
-// bun_jsc::__macro_smoke), so once the reader API exists this block can be
-// un-gated by deleting the ``.
-
-mod _gated {
-use super::*;
-
-// TODO(port): verify #[bun_jsc::host_fn] supports `export = "..."` to emit the
-// `#[unsafe(no_mangle)] extern "C"` shim under the given symbol name. The Zig
-// did `@export(&jsc.toJSHostFn(alert), .{ .name = "WebCore__alert" })` etc.
-
 /// https://html.spec.whatwg.org/multipage/timers-and-user-prompts.html#dom-alert
 #[bun_jsc::host_fn(export = "WebCore__alert")]
 fn alert(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let arguments = frame.arguments_old::<1>();
     let arguments = arguments.slice();
-    let mut output = Output::writer();
+    let output = Output::writer();
     let has_message = !arguments.is_empty();
 
     // 2. If the method was invoked with no arguments, then let message be the empty string; otherwise, let message be the method's first argument.
@@ -60,8 +45,7 @@ fn alert(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     Output::flush();
 
     // 7. Optionally, pause while waiting for the user to acknowledge the message.
-    // TODO(port): Zig used `std.fs.File.stdin().readerStreaming(&[1]u8)`; map to
-    // bun_core's stdin byte reader (no std::fs allowed).
+    // Zig: `std.fs.File.stdin().readerStreaming(&[1]u8)` — unbuffered byte reader.
     let mut reader = Output::stdin_reader();
     loop {
         let Ok(byte) = reader.take_byte() else { break };
@@ -80,7 +64,7 @@ fn alert(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
 fn confirm(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let arguments = frame.arguments_old::<1>();
     let arguments = arguments.slice();
-    let mut output = Output::writer();
+    let output = Output::writer();
     let has_message = !arguments.is_empty();
 
     if has_message {
@@ -114,8 +98,7 @@ fn confirm(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     Output::flush();
 
     // 6. Pause until the user responds either positively or negatively.
-    // TODO(port): Zig used `std.fs.File.stdin().readerStreaming(&[1024]u8)`; map to
-    // bun_core's stdin byte reader (no std::fs allowed).
+    // Zig: `std.fs.File.stdin().readerStreaming(&[1024]u8)` — byte reader.
     let mut reader = Output::stdin_reader();
 
     let Ok(first_byte) = reader.take_byte() else {
@@ -172,8 +155,6 @@ fn confirm(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     Ok(JSValue::FALSE)
 }
 
-} // mod _gated
-
 pub mod prompt {
     use super::*;
 
@@ -186,9 +167,9 @@ pub mod prompt {
         Io,
     }
 
-    // TODO(port): `reader: anytype` — the only method called is `readByte()`.
-    // Bound on a small trait exposing `read_byte() -> Result<u8, _>`; Phase B
-    // should point this at the concrete bun_core stdin reader type.
+    /// `reader: anytype` in the Zig — the only method called is `readByte()`.
+    /// Bound on a small trait exposing `read_byte() -> Result<u8, _>`; the only
+    /// concrete impl is the process-global `BufferedStdin`.
     pub trait ReadByte {
         type Error;
         fn read_byte(&mut self) -> Result<u8, Self::Error>;
@@ -244,16 +225,13 @@ pub mod prompt {
         }
     }
 
-    // TODO(b2-blocked): `Output::buffered_stdin_reader()` + `output.print()` not
-    // yet on the bun_core::output surface. Gate the body; logic is 1:1 with Zig.
-    
     /// https://html.spec.whatwg.org/multipage/timers-and-user-prompts.html#dom-prompt
     #[bun_jsc::host_fn(export = "WebCore__prompt")]
     pub fn call(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let arguments = frame.arguments_old::<3>();
         let arguments = arguments.slice();
         // PERF(port): was stack-fallback (2048 bytes) — profile in Phase B
-        let mut output = Output::writer();
+        let output = Output::writer();
         let has_message = !arguments.is_empty();
         let has_default = arguments.len() >= 2;
         // 4. Set default to the result of optionally truncating default.
@@ -308,20 +286,20 @@ pub mod prompt {
         // deleting the entire line
         #[cfg(windows)]
         let original_mode: Option<bun_sys::windows::DWORD> = bun_sys::windows::update_stdio_mode_flags(
-            bun_sys::windows::StdioKind::StdIn,
-            bun_sys::windows::ModeFlagsUpdate {
-                unset: bun_sys::c::ENABLE_VIRTUAL_TERMINAL_INPUT,
+            bun_sys::Stdio::StdIn,
+            bun_sys::windows::UpdateStdioModeFlagsOpts {
+                unset: bun_sys::windows::ENABLE_VIRTUAL_TERMINAL_INPUT,
                 ..Default::default()
             },
         )
         .ok();
 
         #[cfg(windows)]
-        let _restore = scopeguard::guard((), |_| {
+        let _restore = scopeguard::guard((), move |_| {
             if let Some(mode) = original_mode {
                 // SAFETY: FFI call; handle is the process's stdin console handle.
                 unsafe {
-                    let _ = bun_sys::c::SetConsoleMode(bun_sys::Fd::stdin().native(), mode);
+                    let _ = bun_windows_sys::externs::SetConsoleMode(bun_sys::Fd::stdin().native(), mode);
                 }
             }
         });
@@ -419,11 +397,3 @@ pub mod prompt {
         Ok(result.to_js(global))
     }
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/webcore/prompt.zig (353 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      stdin reader API (Output::stdin_reader/buffered_stdin_reader) and host_fn export-name attr need Phase B wiring; logic 1:1. Host-fn bodies gated under  until bun_core stdin surface lands.
-// ──────────────────────────────────────────────────────────────────────────

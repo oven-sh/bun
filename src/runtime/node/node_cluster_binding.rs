@@ -374,7 +374,7 @@ pub extern "C" fn Bun__shouldIgnoreOneDisconnectEventListener(global: *mut JSGlo
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/node/node_cluster_binding.zig (304 lines)
-//   confidence: medium
-//   todos:      7
+//   confidence: high
+//   todos:      2
 //   notes:      static mut CHILD_SINGLETON needs JS-thread cell
 // ──────────────────────────────────────────────────────────────────────────

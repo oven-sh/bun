@@ -3,12 +3,12 @@
 use core::marker::PhantomData;
 use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicU32, Ordering};
+use std::sync::OnceLock;
 
 use bun_collections::{StringHashMap, StringSet};
 use bun_core::{self as core_, Output};
 use bun_resolver::fs::{self as Fs, FileSystem, PathName};
 use bun_paths::{self, PathBuffer, SEP, SEP_STR};
-use bun_resolver::__phase_a_body::ResolveWatcher;
 use bun_string::{strings, ZStr};
 use bun_sys::{self, Fd};
 use bun_watcher::{ChangedFilePath, Op as WatchOp, WatchItemColumns, WatchItemField, Watcher};

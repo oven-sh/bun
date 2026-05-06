@@ -323,14 +323,14 @@ impl All {
         let wrapped_callback = with_async_context_if_needed(callback, global);
         let countdown_int =
             all.js_value_to_countdown(global, countdown, CountdownOverflowBehavior::OneMs, true)?;
-        TimeoutObject::init(
+        Ok(TimeoutObject::init(
             global,
             id,
             Kind::SetTimeout,
             countdown_int,
             wrapped_callback,
             arguments,
-        )
+        ))
     }
 
     pub fn set_interval(
@@ -349,14 +349,14 @@ impl All {
         let wrapped_callback = with_async_context_if_needed(callback, global);
         let countdown_int =
             all.js_value_to_countdown(global, countdown, CountdownOverflowBehavior::OneMs, true)?;
-        TimeoutObject::init(
+        Ok(TimeoutObject::init(
             global,
             id,
             Kind::SetInterval,
             countdown_int,
             wrapped_callback,
             arguments,
-        )
+        ))
     }
 
     fn remove_timer_by_id(&mut self, id: i32) -> Option<*mut TimeoutObject> {

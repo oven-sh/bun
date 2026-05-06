@@ -153,8 +153,10 @@ impl RouteBundle {
     /// `RouteBundle.memoryCost` (RouteBundle.zig:137).
     pub fn memory_cost(&self) -> usize {
         let mut cost: usize = core::mem::size_of::<RouteBundle>();
-        // TODO(port): `client_bundle.memoryCost()` — blocked_on:
-        // crate::server::StaticRoute::memory_cost
+        if let Some(bundle) = self.client_bundle {
+            // SAFETY: pointer is live for the lifetime of `self` (intrusive ref held).
+            cost += unsafe { bundle.as_ref() }.memory_cost();
+        }
         match &self.data {
             Data::Framework(_) => {
                 // jsc.Strong.Optional children do not support memoryCost; not needed.
@@ -164,8 +166,10 @@ impl RouteBundle {
                 if let Some(text) = &html.bundled_html_text {
                     cost += text.len();
                 }
-                // TODO(port): `cached_response.memoryCost()` — blocked_on:
-                // crate::server::StaticRoute::memory_cost
+                if let Some(cached) = html.cached_response {
+                    // SAFETY: pointer is live for the lifetime of `self`.
+                    cost += unsafe { cached.as_ref() }.memory_cost();
+                }
             }
         }
         cost

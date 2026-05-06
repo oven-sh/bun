@@ -792,12 +792,12 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 if let Some(nanos) = maybe_duration {
                     if nanos > MIN_MILLISECONDS_TO_LOG * bun_core::time::NS_PER_MS {
                         self.manager_mut().lifecycle_script_time_log.append_concurrent(
-                            // TODO(port): Zig passed `manager.lockfile.allocator`; allocator param
-                            // dropped per §Allocators (non-AST crate).
+                            // PORT NOTE: Zig passed `manager.lockfile.allocator`; allocator param
+                            // dropped per §Allocators (non-AST crate). Zig borrowed the lockfile
+                            // string buffer for `package_name`; we own a `Box<[u8]>` that drops on
+                            // `destroy`, so the log entry takes its own owned copy.
                             LifecycleScriptTimeLogEntry {
-                                // TODO(port): lifetime — borrows lockfile string buffer; Phase-A
-                                // placeholder uses `'static` on the entry.
-                                package_name: Box::leak(self.package_name.clone()),
+                                package_name: self.package_name.clone(),
                                 script_id: self.current_script_index,
                                 duration: nanos,
                             },

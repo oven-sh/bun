@@ -1331,6 +1331,42 @@ pub mod webcore_encoding {
         ENCODE_INTO_FROM8_HOOK.store(encode8 as *mut (), Ordering::Release);
     }
 
+    // ──────────────────────────────────────────────────────────────────────
+    // construct_from{u8,u16} hooks — used by `ZigString::encode` (bun_jsc).
+    // Real impls live in `src/runtime/webcore/encoding.rs` (forward-dep on
+    // bun_jsc). Same hook pattern as `encode_into_from*` above.
+    // ──────────────────────────────────────────────────────────────────────
+    pub type ConstructFromU8 = unsafe fn(*const u8, usize, Encoding) -> alloc::vec::Vec<u8>;
+    pub type ConstructFromU16 = unsafe fn(*const u16, usize, Encoding) -> alloc::vec::Vec<u8>;
+
+    pub static CONSTRUCT_FROM_U8_HOOK: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
+    pub static CONSTRUCT_FROM_U16_HOOK: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
+
+    pub fn install_construct_hooks(from_u8: ConstructFromU8, from_u16: ConstructFromU16) {
+        CONSTRUCT_FROM_U8_HOOK.store(from_u8 as *mut (), Ordering::Release);
+        CONSTRUCT_FROM_U16_HOOK.store(from_u16 as *mut (), Ordering::Release);
+    }
+
+    #[inline]
+    pub fn construct_from_u8(input: &[u8], enc: Encoding) -> alloc::vec::Vec<u8> {
+        let f = CONSTRUCT_FROM_U8_HOOK.load(Ordering::Acquire);
+        debug_assert!(!f.is_null(), "webcore_encoding construct hooks not installed");
+        // SAFETY: hook installed by runtime init; input describes a valid slice.
+        unsafe {
+            core::mem::transmute::<*mut (), ConstructFromU8>(f)(input.as_ptr(), input.len(), enc)
+        }
+    }
+
+    #[inline]
+    pub fn construct_from_u16(input: &[u16], enc: Encoding) -> alloc::vec::Vec<u8> {
+        let f = CONSTRUCT_FROM_U16_HOOK.load(Ordering::Acquire);
+        debug_assert!(!f.is_null(), "webcore_encoding construct hooks not installed");
+        // SAFETY: hook installed by runtime init; input describes a valid slice.
+        unsafe {
+            core::mem::transmute::<*mut (), ConstructFromU16>(f)(input.as_ptr(), input.len(), enc)
+        }
+    }
+
     #[inline]
     pub fn encode_into_from16(
         input: &[u16],

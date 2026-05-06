@@ -6499,7 +6499,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     /// with ones that were imported, so that it can share an import record.
     ///
     /// This function replaces all specifier strings with `e_special.resolved_specifier_string`
-    #[cfg(any())] // reconciler-6 re-gate: E::String shape; rewrite helper
+    #[cfg(any())] // blocked_on: rewrite_import_meta_hot_accept_string; Log::add_error wants &[u8] (IMPORT_META_HOT_ACCEPT_ERR is &str)
     pub fn handle_import_meta_hot_accept_call(&mut self, call: &mut E::Call) {
         if call.args.len == 0 {
             return;
@@ -6530,7 +6530,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         call.target.data = js_ast::ExprData::ESpecial(E::Special::HotAcceptVisited);
     }
 
-    #[cfg(any())] // reconciler-6 re-gate: ResolvedSpecifierStringIndex; Path.pretty
+    #[cfg(any())] // blocked_on: EString::to_utf8 arena arg; ImportRecordList::items() accessor; E::Special::ResolvedSpecifierString takes u32 directly (drop ResolvedSpecifierStringIndex::init)
     fn rewrite_import_meta_hot_accept_string(&mut self, str_: &mut E::String, loc: logger::Loc) -> Option<js_ast::ExprData> {
         let _ = str_.to_utf8(self.allocator);
         let specifier = str_.data;

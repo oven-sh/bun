@@ -245,16 +245,6 @@ impl<'a> Parser<'a> {
         }
     }
 
-    // Dispatcher target with the real const-generic shape (Zig comptime
-    // `NewParser_(ts, jsx, false)`). Body blocked on P.rs round-D gate; see the
-    // `#[cfg(any())] fn _parse` below for the full ported body.
-    fn _parse<const TS: bool, JX: JsxT>(&mut self) -> Result<js_ast::Result, Error> {
-        let _ = (TS, JX::KIND, &self.options, &self.lexer);
-        todo!(
-            "Parser::_parse — blocked on P::{{init, prepare_for_visit_pass, append_part, to_ast}} (P.rs round-D gate)"
-        )
-    }
-
     // TODO(b2-ast-round-D): replace body with `_scan_imports::<...>()` dispatch
     // once the ScanOnly `P` instantiations compile.
     pub fn scan_imports(&mut self, scan_pass: &mut ScanPassResult) -> Result<(), Error> {
@@ -529,7 +519,6 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    #[cfg(any())] // blocked_on: P::{init, prepare_for_visit_pass, append_part, to_ast, add_import_record, generate_import_stmt, should_unwrap_commonjs_to_esm, deoptimize_commonjs_named_exports, is_deoptimized_commonjs} (P.rs round-D gate); RuntimeFeatures::runtime_transpiler_cache type
     fn _parse<const TS: bool, JX: JsxT>(&mut self) -> Result<js_ast::Result, Error> {
         // TODO(port): narrow error set
         let prev_action = (); // TODO(b2-blocked): bun_crash_handler::current_action

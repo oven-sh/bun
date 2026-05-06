@@ -110,28 +110,10 @@ macro_rules! gated_mod {
 // explicit #[path] attrs for PascalCase files.
 // ──────────────────────────────────────────────────────────────────────────
 
-pub mod extract_tarball;
-#[path = "NetworkTask.rs"]
-pub mod network_task;
-#[path = "TarballStream.rs"]
-pub mod tarball_stream;
 pub mod npm;
-#[path = "PackageManager.rs"]
-pub mod package_manager;
 #[path = "PackageManifestMap.rs"]
 pub mod package_manifest_map;
-#[path = "PackageManagerTask.rs"]
-pub mod package_manager_task;
-pub mod lockfile;
-pub mod bin;
-pub mod lifecycle_script_runner;
-#[path = "PackageInstall.rs"]
-pub mod package_install;
-#[path = "PackageInstaller.rs"]
-pub mod package_installer;
-pub mod repository;
 pub mod resolution;
-pub mod isolated_install;
 #[path = "PnpmMatcher.rs"]
 pub mod pnpm_matcher;
 pub mod postinstall_optimizer;
@@ -139,16 +121,99 @@ pub mod postinstall_optimizer;
 pub mod external_slice;
 pub mod integrity;
 pub mod dependency;
-pub mod patch_install;
 #[path = "ConfigVersion.rs"]
 pub mod config_version;
-pub mod hoisted_install;
 pub mod hosted_git_info;
-pub mod migration;
 pub mod padding_checker;
-pub mod pnpm;
 pub mod versioned_url;
-pub mod yarn;
+
+// ─── reconciler-6: heavy modules re-gated wholesale ────────────────────────
+// File bodies preserved on disk under `#![cfg(any())]` (1200+ port errors).
+// Declared here under `#[cfg(any())]` so the crate tree is addressable for
+// diff-pass; sibling inline stubs below expose the minimal surface that
+// `npm.rs`/`resolution.rs`/`dependency.rs` and downstream `bun_jsc` need.
+#[cfg(any())] pub mod extract_tarball;
+#[cfg(any())] #[path = "NetworkTask.rs"] pub mod network_task;
+#[cfg(any())] #[path = "TarballStream.rs"] pub mod tarball_stream;
+#[cfg(any())] #[path = "PackageManager.rs"] pub mod package_manager_real;
+#[cfg(any())] #[path = "PackageManagerTask.rs"] pub mod package_manager_task;
+#[cfg(any())] pub mod lockfile_real;
+#[cfg(any())] pub mod bin_real;
+#[cfg(any())] pub mod lifecycle_script_runner;
+#[cfg(any())] #[path = "PackageInstall.rs"] pub mod package_install;
+#[cfg(any())] #[path = "PackageInstaller.rs"] pub mod package_installer;
+#[cfg(any())] pub mod repository_real;
+#[cfg(any())] pub mod isolated_install;
+#[cfg(any())] pub mod patch_install;
+#[cfg(any())] pub mod hoisted_install;
+#[cfg(any())] pub mod migration;
+#[cfg(any())] pub mod pnpm;
+#[cfg(any())] pub mod yarn;
+
+/// Stub: `repository.rs` — only `Repository` struct shape is read by
+/// `resolution.rs` / `dependency.rs`.
+pub mod repository {
+    #[derive(Default, Clone, Copy)]
+    pub struct Repository {
+        pub owner: bun_semver::String,
+        pub repo: bun_semver::String,
+        pub committish: bun_semver::String,
+        pub resolved: bun_semver::String,
+        pub package_name: bun_semver::String,
+    }
+}
+/// Stub: `bin.rs` — only `Bin` struct is read by `npm.rs` parse.
+pub mod bin {
+    #[derive(Default, Clone, Copy)]
+    pub struct Bin {
+        pub tag: Tag,
+        pub value: crate::external_slice::ExternalString,
+        pub named_value: crate::external_slice::ExternalStringMap,
+        pub extern_string_buf: crate::external_slice::ExternalStringList,
+    }
+    #[derive(Default, Clone, Copy, PartialEq, Eq)]
+    #[repr(u8)]
+    pub enum Tag { #[default] None, File, NamedFile, Dir, Map }
+}
+/// Stub: `lockfile.rs` — type surface for `dependency.rs` / `npm.rs`.
+pub mod lockfile {
+    pub type StringBuilder = bun_semver::string_builder::StringBuilder;
+    #[derive(Default)] pub struct Lockfile;
+    #[derive(Default)] pub struct PatchedDep;
+    #[derive(Default)] pub struct LoadResult;
+    #[derive(Default)] pub struct LoadStep;
+    pub mod package {
+        #[derive(Default, Clone, Copy)] pub struct Meta;
+    }
+    pub mod tree {
+        pub type Id = u32;
+    }
+    pub mod bun_lock {}
+}
+/// Stub: `package_manager` — `PackageManager` struct + `Subcommand` enum only.
+pub mod package_manager {
+    pub use super::PackageManager;
+    pub use super::Subcommand;
+    pub mod security_scanner {
+        pub use crate::SecurityScanSubprocess;
+    }
+}
+pub mod extract_tarball { pub use super::ExtractTarball; }
+pub mod network_task { pub use super::NetworkTask; }
+pub mod tarball_stream { pub use super::TarballStream; }
+pub mod package_manager_task { pub type Task = (); }
+pub mod lifecycle_script_runner { pub use super::LifecycleScriptSubprocess; }
+pub mod package_install { pub use super::PackageInstall; }
+pub mod package_installer {}
+pub mod isolated_install {
+    pub use super::Store;
+    pub use super::FileCopier;
+}
+pub mod patch_install { pub use super::PatchTask; }
+pub mod hoisted_install {}
+pub mod migration {}
+pub mod pnpm {}
+pub mod yarn {}
 
 /// `crate::install::…` shim — Phase-A drafts (bin.rs, repository.rs,
 /// migration.rs, resolvers/folder_resolver.rs) were written against a
@@ -165,17 +230,17 @@ pub(crate) mod install {
 // synthetic `windows_shim/` directory, which doesn't exist on disk. Hoist the
 // file-backed module to crate level with an absolute-ish path and re-export
 // through the inline mod so `windows_shim::bin_linking_shim` keeps resolving.
-#[path = "windows-shim/BinLinkingShim.rs"]
+#[cfg(any())] #[path = "windows-shim/BinLinkingShim.rs"]
 mod _bin_linking_shim;
 pub mod windows_shim {
-    pub use super::_bin_linking_shim as bin_linking_shim;
+    pub mod bin_linking_shim { #[derive(Default)] pub struct BinLinkingShim; }
     pub use bin_linking_shim::BinLinkingShim;
 }
 
-#[path = "resolvers/folder_resolver.rs"]
+#[cfg(any())] #[path = "resolvers/folder_resolver.rs"]
 mod _folder_resolver;
 pub mod resolvers {
-    pub use super::_folder_resolver as folder_resolver;
+    pub mod folder_resolver { pub use crate::FolderResolution; }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -562,8 +627,11 @@ pub use dependency::Behavior;
 // The file-backed bodies are `#![cfg(any())]`-gated (1200+ port errors).
 // These opaque stubs keep `bun_jsc::AsyncModule` / `bun_runtime` callers
 // type-checking until the bodies un-gate per-file.
-pub mod TextLockfile {}
+pub use lockfile::bun_lock as TextLockfile;
 pub use patch_install as patch;
+pub use bin::Bin;
+pub use repository::Repository;
+pub use lockfile::{Lockfile, PatchedDep, LoadResult, LoadStep};
 #[derive(Default)] pub struct ExtractTarball;
 #[derive(Default)] pub struct NetworkTask;
 #[derive(Default)] pub struct TarballStream;

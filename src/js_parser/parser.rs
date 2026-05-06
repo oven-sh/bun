@@ -101,7 +101,7 @@ pub mod options {
             }
         }
         impl Pragma {
-            pub fn hash_for_runtime_transpiler(&self, hasher: &mut Wyhash) {
+            pub fn hash_for_runtime_transpiler(&self, hasher: &mut bun_wyhash::Wyhash11) {
                 for factory in self.factory.iter() { hasher.update(factory); }
                 for fragment in self.fragment.iter() { hasher.update(fragment); }
                 hasher.update(&self.import_source.development);
@@ -429,7 +429,7 @@ pub mod Runtime {
         // NOTE: Spec runtime.zig:272 takes `*std.hash.Wyhash` (NOT `Wyhash11`).
         // The `Wyhash` alias above is currently `Wyhash11` until `bun_wyhash::Wyhash`
         // (the stdlib variant) is ported — see TODO at the top-level `use`.
-        pub fn hash_for_runtime_transpiler(&self, hasher: &mut Wyhash) {
+        pub fn hash_for_runtime_transpiler(&self, hasher: &mut bun_wyhash::Wyhash11) {
             debug_assert!(self.runtime_transpiler_cache.is_some());
 
             let bools: [bool; 17] = [
@@ -590,32 +590,263 @@ pub mod Runtime {
     }
 
     // ─────────────────────────── Runtime.Imports ───────────────────────────
-    /// Stub of `runtime.rs::Imports` — only the fields/methods touched by
-    /// un-gated `P` helpers (`ensure_require_symbol`, `runtime_identifier_ref`).
-    /// Full table arrives when `runtime.rs` un-gates.
+    /// Port of `runtime.zig` `Runtime.Imports` — the closed set of 25 runtime
+    /// helper symbols a parsed file may reference from `bun:wrap`.
+    ///
+    /// If you change this, remember to update "runtime.js".
+    #[allow(non_snake_case)]
     #[derive(Default, Clone)]
     pub struct Imports {
+        pub __name: Option<Ref>,
         pub __require: Option<Ref>,
-        // TODO(port): remaining named fields — runtime.rs has the full struct.
-        // Un-gated callers only touch __require directly; the rest go through
-        // the by-name accessors below, which fall back to `extra`.
-        extra: std::collections::HashMap<&'static [u8], Ref>,
+        pub __export: Option<Ref>,
+        pub __reExport: Option<Ref>,
+        pub __exportValue: Option<Ref>,
+        pub __exportDefault: Option<Ref>,
+        // __refreshRuntime: ?GeneratedSymbol = null,
+        // __refreshSig: ?GeneratedSymbol = null, // $RefreshSig$
+        pub __merge: Option<Ref>,
+        pub __legacyDecorateClassTS: Option<Ref>,
+        pub __legacyDecorateParamTS: Option<Ref>,
+        pub __legacyMetadataTS: Option<Ref>,
+        pub __publicField: Option<Ref>,
+        pub __privateIn: Option<Ref>,
+        pub __privateGet: Option<Ref>,
+        pub __privateAdd: Option<Ref>,
+        pub __privateSet: Option<Ref>,
+        pub __privateMethod: Option<Ref>,
+        pub __decoratorStart: Option<Ref>,
+        pub __decoratorMetadata: Option<Ref>,
+        pub __runInitializers: Option<Ref>,
+        pub __decorateElement: Option<Ref>,
+        /// Zig field name: `@"$$typeof"` (not a valid Rust identifier).
+        pub dollar_dollar_typeof: Option<Ref>,
+        pub __using: Option<Ref>,
+        pub __callDispose: Option<Ref>,
+        pub __jsonParse: Option<Ref>,
+        pub __promiseAll: Option<Ref>,
     }
+
     impl Imports {
+        pub const ALL: [&'static [u8]; 25] = [
+            b"__name",
+            b"__require",
+            b"__export",
+            b"__reExport",
+            b"__exportValue",
+            b"__exportDefault",
+            b"__merge",
+            b"__legacyDecorateClassTS",
+            b"__legacyDecorateParamTS",
+            b"__legacyMetadataTS",
+            b"__publicField",
+            b"__privateIn",
+            b"__privateGet",
+            b"__privateAdd",
+            b"__privateSet",
+            b"__privateMethod",
+            b"__decoratorStart",
+            b"__decoratorMetadata",
+            b"__runInitializers",
+            b"__decorateElement",
+            b"$$typeof",
+            b"__using",
+            b"__callDispose",
+            b"__jsonParse",
+            b"__promiseAll",
+        ];
+
+        /// When generating the list of runtime imports, we sort it for determinism.
+        /// This is a lookup table so we don't need to resort the strings each time.
+        ///
+        /// Zig computed this at comptime via `std.sort.pdq`. Rust stable cannot
+        /// sort in `const`; precomputed here. `ALL_SORTED_INDEX[i]` is the rank
+        /// of `ALL[i]` in byte-lexicographic order.
+        // TODO(port): add a `#[test]` that re-derives and asserts equality.
+        pub const ALL_SORTED_INDEX: [usize; 25] = [
+            13, // __name
+            22, // __require
+            5,  // __export
+            21, // __reExport
+            7,  // __exportValue
+            6,  // __exportDefault
+            12, // __merge
+            9,  // __legacyDecorateClassTS
+            10, // __legacyDecorateParamTS
+            11, // __legacyMetadataTS
+            20, // __publicField
+            16, // __privateIn
+            15, // __privateGet
+            14, // __privateAdd
+            18, // __privateSet
+            17, // __privateMethod
+            4,  // __decoratorStart
+            3,  // __decoratorMetadata
+            23, // __runInitializers
+            2,  // __decorateElement
+            0,  // $$typeof
+            24, // __using
+            1,  // __callDispose
+            8,  // __jsonParse
+            19, // __promiseAll
+        ];
+
+        pub const NAME: &'static [u8] = b"bun:wrap";
+        pub const ALT_NAME: &'static [u8] = b"bun:wrap";
+
+        /// Index → field. Expansion of Zig `@field(this, all[i])`.
+        #[inline]
+        fn field(&self, i: usize) -> Option<Ref> {
+            match i {
+                0 => self.__name,
+                1 => self.__require,
+                2 => self.__export,
+                3 => self.__reExport,
+                4 => self.__exportValue,
+                5 => self.__exportDefault,
+                6 => self.__merge,
+                7 => self.__legacyDecorateClassTS,
+                8 => self.__legacyDecorateParamTS,
+                9 => self.__legacyMetadataTS,
+                10 => self.__publicField,
+                11 => self.__privateIn,
+                12 => self.__privateGet,
+                13 => self.__privateAdd,
+                14 => self.__privateSet,
+                15 => self.__privateMethod,
+                16 => self.__decoratorStart,
+                17 => self.__decoratorMetadata,
+                18 => self.__runInitializers,
+                19 => self.__decorateElement,
+                20 => self.dollar_dollar_typeof,
+                21 => self.__using,
+                22 => self.__callDispose,
+                23 => self.__jsonParse,
+                24 => self.__promiseAll,
+                _ => None,
+            }
+        }
+
+        #[inline]
+        fn field_mut(&mut self, i: usize) -> Option<&mut Option<Ref>> {
+            match i {
+                0 => Some(&mut self.__name),
+                1 => Some(&mut self.__require),
+                2 => Some(&mut self.__export),
+                3 => Some(&mut self.__reExport),
+                4 => Some(&mut self.__exportValue),
+                5 => Some(&mut self.__exportDefault),
+                6 => Some(&mut self.__merge),
+                7 => Some(&mut self.__legacyDecorateClassTS),
+                8 => Some(&mut self.__legacyDecorateParamTS),
+                9 => Some(&mut self.__legacyMetadataTS),
+                10 => Some(&mut self.__publicField),
+                11 => Some(&mut self.__privateIn),
+                12 => Some(&mut self.__privateGet),
+                13 => Some(&mut self.__privateAdd),
+                14 => Some(&mut self.__privateSet),
+                15 => Some(&mut self.__privateMethod),
+                16 => Some(&mut self.__decoratorStart),
+                17 => Some(&mut self.__decoratorMetadata),
+                18 => Some(&mut self.__runInitializers),
+                19 => Some(&mut self.__decorateElement),
+                20 => Some(&mut self.dollar_dollar_typeof),
+                21 => Some(&mut self.__using),
+                22 => Some(&mut self.__callDispose),
+                23 => Some(&mut self.__jsonParse),
+                24 => Some(&mut self.__promiseAll),
+                _ => None,
+            }
+        }
+
+        pub fn iter(&self) -> ImportsIterator<'_> {
+            ImportsIterator { i: 0, runtime_imports: self }
+        }
+
+        /// Zig: `contains(imports, comptime key: string)`.
+        // TODO(port): comptime-string key — Rust callers should access the field directly
+        // (`imports.__foo.is_some()`). Runtime fallback provided for parity.
         #[inline]
         pub fn contains(&self, key: &[u8]) -> bool {
-            if key == b"__require" { return self.__require.is_some(); }
-            self.extra.contains_key(key)
+            Self::ALL
+                .iter()
+                .position(|&k| k == key)
+                .and_then(|i| self.field(i))
+                .is_some()
         }
+
+        pub fn has_any(&self) -> bool {
+            for i in 0..Self::ALL.len() {
+                if self.field(i).is_some() {
+                    return true;
+                }
+            }
+            false
+        }
+
+        /// Zig: `put(imports, comptime key: string, ref: Ref)`.
+        // TODO(port): comptime-string key — Rust callers should assign the field directly.
+        #[inline]
+        pub fn put(&mut self, key: &[u8], ref_: Ref) {
+            if let Some(i) = Self::ALL.iter().position(|&k| k == key) {
+                if let Some(slot) = self.field_mut(i) {
+                    *slot = Some(ref_);
+                }
+            }
+        }
+
+        /// Zig: `at(imports, comptime key: string) ?Ref`.
+        // TODO(port): comptime-string key — Rust callers should read the field directly.
         #[inline]
         pub fn at(&self, key: &[u8]) -> Option<Ref> {
-            if key == b"__require" { return self.__require; }
-            self.extra.get(key).copied()
+            Self::ALL
+                .iter()
+                .position(|&k| k == key)
+                .and_then(|i| self.field(i))
         }
+
+        /// Zig: `get(imports, key: anytype) ?Ref` where `key` is a runtime index.
         #[inline]
-        pub fn put(&mut self, key: &'static [u8], ref_: Ref) {
-            if key == b"__require" { self.__require = Some(ref_); return; }
-            self.extra.insert(key, ref_);
+        pub fn get(&self, key: usize) -> Option<Ref> {
+            if key < Self::ALL.len() { self.field(key) } else { None }
+        }
+
+        pub fn count(&self) -> usize {
+            let mut n: usize = 0;
+            for i in 0..Self::ALL.len() {
+                if self.field(i).is_some() {
+                    n += 1;
+                }
+            }
+            n
+        }
+    }
+
+    /// Zig: `Runtime.Imports.Iterator`
+    pub struct ImportsIterator<'a> {
+        pub i: usize,
+        pub runtime_imports: &'a Imports,
+    }
+
+    #[derive(Clone, Copy)]
+    pub struct ImportsIteratorEntry {
+        pub key: u16,
+        pub value: Ref,
+    }
+
+    impl ImportsIterator<'_> {
+        pub fn next(&mut self) -> Option<ImportsIteratorEntry> {
+            while self.i < Imports::ALL.len() {
+                let t = self.i;
+                self.i += 1; // Zig: `defer this.i += 1;`
+                if let Some(val) = self.runtime_imports.field(t) {
+                    return Some(ImportsIteratorEntry {
+                        key: u16::try_from(t).unwrap(),
+                        value: val,
+                    });
+                }
+            }
+            None
         }
     }
     #[derive(Default, Clone, Copy)]

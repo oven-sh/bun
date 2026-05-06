@@ -1968,7 +1968,7 @@ mod bun_paths {
         dispatch_platform!(platform, |P| ::bun_paths::resolve_path::dirname::<P>(p))
     }
     /// Port of `bun.path.joinAbsStringBuf` (value-dispatched).
-    pub fn join_abs_string_buf<'b>(cwd: &[u8], buf: &'b mut [u8], parts: &[&[u8]], platform: Platform) -> &'b [u8] {
+    pub fn join_abs_string_buf<'b>(cwd: &'b [u8], buf: &'b mut [u8], parts: &[&[u8]], platform: Platform) -> &'b [u8] {
         dispatch_platform!(platform, |P| ::bun_paths::resolve_path::join_abs_string_buf::<P>(cwd, buf, parts))
     }
     pub fn join_abs(cwd: &[u8], platform: Platform, part: &[u8]) -> &'static [u8] {

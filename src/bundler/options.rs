@@ -2609,7 +2609,7 @@ pub fn open_output_dir(output_dir: &[u8]) -> Result<Dir, bun_core::Error> {
                     Output::print_errorln(format_args!(
                         "error: Unable to open \"{}\": \"{}\"",
                         bstr::BStr::new(output_dir),
-                        err2.name(),
+                        bstr::BStr::new(err2.name()),
                     ));
                     Global::crash();
                 }

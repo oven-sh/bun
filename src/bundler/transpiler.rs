@@ -805,20 +805,6 @@ impl<'a> Transpiler<'a> {
         let wrapper_ref = ast.wrapper_ref;
         let exports_kind = ast.exports_kind;
 
-        let base_opts = |source_map_handler| js_printer::Options {
-            bundling: false,
-            require_ref: Some(require_ref),
-            source_map_handler,
-            minify_whitespace: self.options.minify_whitespace,
-            minify_syntax: self.options.minify_syntax,
-            minify_identifiers: self.options.minify_identifiers,
-            transform_only: self.options.transform_only,
-            print_dce_annotations: self.options.emit_dce_annotations,
-            hmr_ref: wrapper_ref,
-            mangled_props: None,
-            ..Default::default()
-        };
-
         match format {
             js_printer::Format::Cjs => js_printer::print_common_js::<W, false, ENABLE_SOURCE_MAP>(
                 writer,
@@ -830,19 +816,38 @@ impl<'a> Transpiler<'a> {
                 &ast,
                 symbols,
                 source,
-                base_opts(source_map_context),
-            ),
-
-            js_printer::Format::Esm => js_printer::print_ast::<W, false, ENABLE_SOURCE_MAP>(
-                writer,
-                ast,
-                symbols,
-                source,
                 js_printer::Options {
-                    import_meta_ref,
-                    ..base_opts(source_map_context)
+                    bundling: false,
+                    require_ref: Some(require_ref),
+                    source_map_handler: source_map_context,
+                    minify_whitespace: self.options.minify_whitespace,
+                    minify_syntax: self.options.minify_syntax,
+                    minify_identifiers: self.options.minify_identifiers,
+                    transform_only: self.options.transform_only,
+                    print_dce_annotations: self.options.emit_dce_annotations,
+                    hmr_ref: wrapper_ref,
+                    mangled_props: None,
+                    ..Default::default()
                 },
             ),
+
+            js_printer::Format::Esm => {
+                let opts = js_printer::Options {
+                    bundling: false,
+                    require_ref: Some(require_ref),
+                    source_map_handler: source_map_context,
+                    minify_whitespace: self.options.minify_whitespace,
+                    minify_syntax: self.options.minify_syntax,
+                    minify_identifiers: self.options.minify_identifiers,
+                    transform_only: self.options.transform_only,
+                    import_meta_ref,
+                    print_dce_annotations: self.options.emit_dce_annotations,
+                    hmr_ref: wrapper_ref,
+                    mangled_props: None,
+                    ..Default::default()
+                };
+                js_printer::print_ast::<W, false, ENABLE_SOURCE_MAP>(writer, ast, symbols, source, opts)
+            }
 
             js_printer::Format::EsmAscii => {
                 // PORT NOTE: `switch (target.isBun()) { inline else => |is_bun| ... }`
@@ -851,23 +856,11 @@ impl<'a> Transpiler<'a> {
                 // also drive `module_type`.
                 if self.options.target.is_bun() {
                     self.print_ast_esm_ascii::<W, ENABLE_SOURCE_MAP, true>(
-                        writer,
-                        ast,
-                        symbols,
-                        source,
-                        source_map_context,
-                        import_meta_ref,
-                        exports_kind,
+                        writer, ast, symbols, source, source_map_context, exports_kind,
                     )
                 } else {
                     self.print_ast_esm_ascii::<W, ENABLE_SOURCE_MAP, false>(
-                        writer,
-                        ast,
-                        symbols,
-                        source,
-                        source_map_context,
-                        import_meta_ref,
-                        exports_kind,
+                        writer, ast, symbols, source, source_map_context, exports_kind,
                     )
                 }
             }
@@ -880,7 +873,6 @@ impl<'a> Transpiler<'a> {
     // PORT NOTE: hoisted from `inline else => |is_bun|` arm of
     // print_with_source_map_maybe to express the comptime bool dispatch as a
     // const generic.
-    #[allow(clippy::too_many_arguments)]
     fn print_ast_esm_ascii<W, const ENABLE_SOURCE_MAP: bool, const IS_BUN: bool>(
         &mut self,
         writer: W,
@@ -888,42 +880,36 @@ impl<'a> Transpiler<'a> {
         symbols: js_ast::ast::symbol::Map,
         source: &logger::Source,
         source_map_context: Option<js_printer::SourceMapHandler<'_>>,
-        import_meta_ref: js_ast::Ref,
         exports_kind: js_ast::ExportsKind,
     ) -> Result<usize, bun_core::Error>
     where
         W: js_printer::WriterTrait,
     {
-        js_printer::print_ast::<W, IS_BUN, ENABLE_SOURCE_MAP>(
-            writer,
-            ast,
-            symbols,
-            source,
-            js_printer::Options {
-                bundling: false,
-                require_ref: Some(ast.require_ref),
-                source_map_handler: source_map_context,
-                minify_whitespace: self.options.minify_whitespace,
-                minify_syntax: self.options.minify_syntax,
-                minify_identifiers: self.options.minify_identifiers,
-                transform_only: self.options.transform_only,
-                module_type: if IS_BUN && self.options.transform_only {
-                    // this is for when using `bun build --no-bundle`
-                    // it should copy what was passed for the cli
-                    self.options.output_format
-                } else if exports_kind == js_ast::ExportsKind::Cjs {
-                    options::Format::Cjs
-                } else {
-                    options::Format::Esm
-                },
-                inline_require_and_import_errors: false,
-                import_meta_ref,
-                print_dce_annotations: self.options.emit_dce_annotations,
-                hmr_ref: ast.wrapper_ref,
-                mangled_props: None,
-                ..Default::default()
+        let opts = js_printer::Options {
+            bundling: false,
+            require_ref: Some(ast.require_ref),
+            source_map_handler: source_map_context,
+            minify_whitespace: self.options.minify_whitespace,
+            minify_syntax: self.options.minify_syntax,
+            minify_identifiers: self.options.minify_identifiers,
+            transform_only: self.options.transform_only,
+            module_type: if IS_BUN && self.options.transform_only {
+                // this is for when using `bun build --no-bundle`
+                // it should copy what was passed for the cli
+                self.options.output_format
+            } else if exports_kind == js_ast::ExportsKind::Cjs {
+                options::Format::Cjs
+            } else {
+                options::Format::Esm
             },
-        )
+            inline_require_and_import_errors: false,
+            import_meta_ref: ast.import_meta_ref,
+            print_dce_annotations: self.options.emit_dce_annotations,
+            hmr_ref: ast.wrapper_ref,
+            mangled_props: None,
+            ..Default::default()
+        };
+        js_printer::print_ast::<W, IS_BUN, ENABLE_SOURCE_MAP>(writer, ast, symbols, source, opts)
     }
 
     pub fn print<W>(

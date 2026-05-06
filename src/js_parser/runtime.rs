@@ -274,8 +274,10 @@ pub struct Features<'a> {
     /// When `feature("FLAG_NAME")` is called, it returns true if FLAG_NAME is in this set.
     ///
     /// Zig: `*const bun.StringSet = &empty_bundler_feature_flags`. `None` ≡ the
-    /// empty static set; see `EMPTY_BUNDLER_FEATURE_FLAGS` TODO above.
-    pub bundler_feature_flags: Option<&'a StringSet>,
+    /// empty static set. Owned `Box` (not `&'a` / `&'static`) per PORTING.md
+    /// §Forbidden — the Zig caller frees it on `BundleOptions` teardown, so
+    /// Rust must too; never `Box::leak`.
+    pub bundler_feature_flags: Option<Box<StringSet>>,
 
     /// REPL mode: transforms code for interactive evaluation
     /// - Wraps lone object literals `{...}` in parentheses
@@ -325,27 +327,29 @@ impl Default for Features<'_> {
 
 impl Features<'_> {
     /// Initialize bundler feature flags for dead-code elimination via `import { feature } from "bun:bundle"`.
-    /// Returns a leaked `&'static StringSet`, or `None` if no flags are provided.
+    /// Returns an owned `Box<StringSet>`, or `None` if no flags are provided.
     /// Keys are kept sorted so iteration order is deterministic (for RuntimeTranspilerCache hashing).
-    pub fn init_bundler_feature_flags(feature_flags: &[&[u8]]) -> Option<&'static StringSet> {
+    pub fn init_bundler_feature_flags(feature_flags: &[&[u8]]) -> Option<Box<StringSet>> {
         // Zig returns `*const bun.StringSet` heap-allocated via `allocator.create`,
-        // and the caller frees it on `BundleOptions` teardown. Rust callers own the
-        // result for the process lifetime, so leak is acceptable. Empty path
-        // returns `None` (≡ the static empty).
+        // and the caller frees it on `BundleOptions` teardown. Empty path returns
+        // `None` (≡ the static empty). Owned `Box` per PORTING.md §Forbidden — never
+        // `Box::leak`.
         if feature_flags.is_empty() {
             return None;
         }
 
+        // PORT NOTE: reshaped for borrowck — Zig inserted then sorted via
+        // `set.map.sort(...)` with a comparator borrowing `set.map.keys()`.
+        // `StringSet` preserves insertion order and has no in-place key sort,
+        // so sort the inputs first; the resulting `keys()` iteration order is
+        // then byte-lexicographic and matches runtime.zig:241-246.
+        let mut sorted: Vec<&[u8]> = feature_flags.to_vec();
+        sorted.sort_unstable();
         let mut set = StringSet::new();
-        for flag in feature_flags {
+        for flag in sorted {
             let _ = set.insert(flag);
         }
-        // PORT NOTE: reshaped for borrowck — Zig sorted via `set.map.sort` with a
-        // comparator closure that borrowed `set.map.keys()`. Here we sort the
-        // backing ArrayHashMap by key bytes directly.
-        // TODO(port): exact API on bun_collections::StringSet for in-place key sort
-        // (currently no `sort_keys_by`; iteration order is insertion order).
-        Some(Box::leak(Box::new(set)))
+        Some(Box::new(set))
     }
 
     // Zig: `hash_fields_for_runtime_transpiler` — a comptime tuple of field-name enum
@@ -384,7 +388,7 @@ impl Features<'_> {
         // feature("NAME") replacement in visitExpr.zig. When empty, we add
         // nothing to the hash so existing cache entries remain valid.
         // Keys are sorted in init_bundler_feature_flags so flag order on the CLI doesn't matter.
-        if let Some(flags) = self.bundler_feature_flags {
+        if let Some(flags) = self.bundler_feature_flags.as_deref() {
             for flag in flags.keys() {
                 hasher.update(flag);
                 hasher.update(b"\x00");

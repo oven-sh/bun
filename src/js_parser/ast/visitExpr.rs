@@ -2233,6 +2233,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             .options
             .features
             .bundler_feature_flags
+            .as_ref()
             .is_some_and(|flags| flags.contains(flag_string.data));
         Some(Expr {
             data: Data::EBranchBoolean(E::Boolean { value: is_enabled }),

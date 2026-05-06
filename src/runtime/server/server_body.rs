@@ -968,7 +968,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         Ok(JSValue::js_number(unsafe { &*self.app.unwrap() }.num_subscribers(topic.slice())))
     }
 
-    #[bun_jsc::host_fn(constructor)]
+    // `#[bun_jsc::JsClass]` emits the C-ABI `*Class__construct` shim that calls
+    // this directly via `host_fn_construct_result` — no `#[host_fn]` attribute.
     pub fn constructor(global: &JSGlobalObject, _: &CallFrame) -> JsResult<*mut Self> {
         global.throw2(format_args!("Server() is not a constructor"))
     }

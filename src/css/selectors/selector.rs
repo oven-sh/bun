@@ -604,14 +604,15 @@ pub mod serialize {
         {
             bun_core::scoped_log!(CSS_SELECTORS, "Selector components:\n");
             for comp in selector.components.iter() {
-                bun_core::scoped_log!(CSS_SELECTORS, " {:?}\n", comp);
+                // `GenericComponent` impls `Display` (via `BunSelectorImpl`), not `Debug`.
+                bun_core::scoped_log!(CSS_SELECTORS, " {}\n", comp);
             }
 
             bun_core::scoped_log!(CSS_SELECTORS, "Compound selector iter\n");
             let mut compound_selectors = CompoundSelectorIter { sel: selector, i: 0 };
             while let Some(comp) = compound_selectors.next() {
                 for c in comp {
-                    bun_core::scoped_log!(CSS_SELECTORS, "  {:?}, ", c);
+                    bun_core::scoped_log!(CSS_SELECTORS, "  {}, ", c);
                 }
             }
             bun_core::scoped_log!(CSS_SELECTORS, "\n");
@@ -672,7 +673,7 @@ pub mod serialize {
                 match compound[0] {
                     Component::ExplicitAnyNamespace
                     | Component::ExplicitNoNamespace
-                    | Component::Namespace(_) => (false, first_index + 1),
+                    | Component::Namespace { .. } => (false, first_index + 1),
                     Component::DefaultNamespace(_) => (true, first_index + 1),
                     _ => (true, first_index),
                 }

@@ -205,7 +205,7 @@ impl ZigString {
         // PERF(port): was stack-fallback allocator (1024 bytes)
         let utf16_slice = self.to_slice_lowercase();
         let latin1_slice = other.to_slice_lowercase();
-        strings::eql_long(utf16_slice.slice(), latin1_slice.slice(), true)
+        strings::eql_long::<true>(utf16_slice.slice(), latin1_slice.slice())
     }
 
     pub fn to_slice_lowercase(&self) -> Slice {
@@ -217,14 +217,13 @@ impl ZigString {
         let mut buffer = vec![0u8; uppercase_buffer.len()];
         let out_len = strings::copy_lowercase(&uppercase_buffer, &mut buffer).len();
         buffer.truncate(out_len);
-        let leaked = Box::leak(buffer.into_boxed_slice());
-        Slice {
-            allocator: NullableAllocator::default_alloc(),
-            ptr: leaked.as_ptr(),
-            len: leaked.len() as u32,
-        }
+        Slice::Owned(buffer)
     }
 
+    // TODO(port): `index_of_any16` takes `&'static [u16]` but Zig callers pass
+    // ASCII char sets as `[]const u8`. Needs a widening adapter (or comptime
+    // string-to-u16-array as in Zig). Gated until adapter lands.
+    #[cfg(any())]
     pub fn index_of_any(&self, chars: &'static [u8]) -> Option<strings::OptionalUsize> {
         if self.is_16bit() {
             strings::index_of_any16(self.utf16_slice_aligned(), chars)
@@ -250,13 +249,12 @@ impl ZigString {
         let right_utf16 = other.is_16bit();
 
         if left_utf16 == right_utf16 && left_utf16 {
-            return strings::eql_long(
-                bytemuck::cast_slice(self.utf16_slice_aligned()),
-                bytemuck::cast_slice(other.utf16_slice_aligned()),
-                true,
+            return strings::eql_long::<true>(
+                bytemuck::cast_slice::<u16, u8>(self.utf16_slice_aligned()),
+                bytemuck::cast_slice::<u16, u8>(other.utf16_slice_aligned()),
             );
         } else if left_utf16 == right_utf16 {
-            return strings::eql_long(self.slice(), other.slice(), true);
+            return strings::eql_long::<true>(self.slice(), other.slice());
         }
 
         let utf16: &ZigString = if left_utf16 { self } else { other };
@@ -269,7 +267,7 @@ impl ZigString {
         // slow path
         let utf16_slice = utf16.to_slice();
         let latin1_slice = latin1.to_slice();
-        strings::eql_long(utf16_slice.slice(), latin1_slice.slice(), true)
+        strings::eql_long::<true>(utf16_slice.slice(), latin1_slice.slice())
     }
 
     pub fn is_all_ascii(&self) -> bool {
@@ -336,13 +334,14 @@ impl ZigString {
 
     pub fn utf16_byte_length(&self) -> usize {
         if self.is_utf8() {
-            return bun_simdutf::length::utf16_from_utf8(self.slice());
+            return simdutf::length::utf16::from::utf8(self.slice());
         }
         if self.is_16bit() {
             return self.len * 2;
         }
-        let s = self.slice();
-        encoding::byte_length_u8(s.as_ptr(), s.len(), Encoding::Utf16le)
+        // Latin-1 → UTF-16 byte length (encoding.zig:byteLengthU8(.utf16le)
+        // returns `simdutf.length.utf16.from.latin1(input) * 2`).
+        simdutf::length::utf16::from::latin1(self.slice()) * 2
     }
 
     pub fn latin1_byte_length(&self) -> usize {
@@ -361,8 +360,9 @@ impl ZigString {
         if self.is_16bit() {
             return strings::element_length_utf16_into_utf8(self.utf16_slice_aligned());
         }
-        let s = self.slice();
-        encoding::byte_length_u8(s.as_ptr(), s.len(), Encoding::Utf8)
+        // Latin-1 → UTF-8 byte length (encoding.zig:byteLengthU8(.utf8) is
+        // `simdutf.length.utf8.from.latin1(input)`).
+        simdutf::length::utf8::from::latin1(self.slice())
     }
 
     pub fn to_owned_slice(&self) -> Result<Vec<u8>, AllocError> {

@@ -1902,16 +1902,7 @@ fn handle_ipc_message(
             }
         }
     } else {
-        match send_queue.owner {
-            SendQueueOwner::Subprocess(owner) => {
-                // SAFETY: BACKREF — see SendQueueOwner.
-                unsafe { (*owner).handle_ipc_message(message, JSValue::UNDEFINED) };
-            }
-            SendQueueOwner::VirtualMachine(owner) => {
-                // SAFETY: BACKREF — see SendQueueOwner.
-                unsafe { (*owner).handle_ipc_message(message, JSValue::UNDEFINED) };
-            }
-        }
+        send_queue.owner.handle_ipc_message(message, JSValue::UNDEFINED);
     }
 }
 
@@ -2110,7 +2101,11 @@ pub mod IPCHandlers {
 
         pub fn on_data(send_queue: &mut SendQueue, _: Socket, all_data: &[u8]) {
             let global_this = send_queue.get_global_this();
-            let loop_ = global_this.bun_vm().event_loop();
+            // SAFETY: bun_vm() borrows the singleton VM; event_loop() needs
+            // &mut only for its enter/exit counter.
+            let loop_ = unsafe {
+                (*(global_this.bun_vm() as *const _ as *mut VirtualMachine)).event_loop()
+            };
             loop_.enter();
             // TODO(port): errdefer — scopeguard for loop.exit()
             on_data2(send_queue, all_data);
@@ -2139,7 +2134,10 @@ pub mod IPCHandlers {
             log!("onWritable");
 
             let global_this = send_queue.get_global_this();
-            let loop_ = global_this.bun_vm().event_loop();
+            // SAFETY: see on_data.
+            let loop_ = unsafe {
+                (*(global_this.bun_vm() as *const _ as *mut VirtualMachine)).event_loop()
+            };
             loop_.enter();
             // TODO(port): errdefer — scopeguard for loop.exit()
             log!("IPC call continueSend() from onWritable");
@@ -2209,7 +2207,10 @@ pub mod IPCHandlers {
         pub fn on_read(send_queue: &mut SendQueue, buffer: &[u8]) {
             log!("NewNamedPipeIPCHandler#onRead {}", buffer.len());
             let global_this = send_queue.get_global_this();
-            let loop_ = global_this.bun_vm().event_loop();
+            // SAFETY: see PosixSocket::on_data.
+            let loop_ = unsafe {
+                (*(global_this.bun_vm() as *const _ as *mut VirtualMachine)).event_loop()
+            };
             loop_.enter();
             // TODO(port): errdefer — scopeguard for loop.exit()
 

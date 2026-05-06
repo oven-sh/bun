@@ -1829,13 +1829,12 @@ impl<'a> PackageInstall<'a> {
                 //   bun install --ignore-scripts ran
                 //     1.45 ± 0.02 times faster than bun-1.1.2 install --ignore-scripts
                 //
-                let absolute_path = bun_str::ZStr::from_bytes(path::join_abs_string(
+                let absolute_path = path::resolve_path::join_abs_string::<path::platform::Auto>(
                     bun_fs::FileSystem::instance().top_level_dir,
                     &[&self.node_modules.path, temp_path.as_bytes()],
-                    path::Style::Auto,
-                ));
+                );
                 let task = Box::into_raw(Box::new(UninstallTask {
-                    absolute_path: absolute_path.into_boxed_bytes(),
+                    absolute_path: absolute_path.to_vec().into_boxed_slice(),
                     task: WorkPoolTask { callback: UninstallTask::run },
                 }));
                 PackageManager::get().increment_pending_tasks(1);
@@ -1850,9 +1849,9 @@ impl<'a> PackageInstall<'a> {
     pub fn is_dangling_symlink(path: &ZStr) -> bool {
         #[cfg(target_os = "linux")]
         {
-            match sys::open(path, sys::O::PATH, 0u32) {
-                sys::Result::Err(_) => return true,
-                sys::Result::Ok(fd) => {
+            match sys::open(path, sys::O::PATH, 0) {
+                Err(_) => return true,
+                Ok(fd) => {
                     fd.close();
                     return false;
                 }
@@ -1861,8 +1860,8 @@ impl<'a> PackageInstall<'a> {
         #[cfg(windows)]
         {
             match sys::sys_uv::open(path, 0, 0) {
-                sys::Result::Err(_) => return true,
-                sys::Result::Ok(fd) => {
+                Err(_) => return true,
+                Ok(fd) => {
                     fd.close();
                     return false;
                 }
@@ -1870,9 +1869,9 @@ impl<'a> PackageInstall<'a> {
         }
         #[cfg(not(any(target_os = "linux", windows)))]
         {
-            match sys::open(path, sys::O::PATH, 0u32) {
-                sys::Result::Err(_) => return true,
-                sys::Result::Ok(fd) => {
+            match sys::open(path, sys::O::PATH, 0) {
+                Err(_) => return true,
+                Ok(fd) => {
                     fd.close();
                     return false;
                 }
@@ -1968,9 +1967,7 @@ impl<'a> PackageInstall<'a> {
                 // SAFETY: NUL written at [i].
                 let fullpath = unsafe { bun_str::WStr::from_raw(wbuf.as_ptr(), i) };
 
-                let _ = node_fs_for_package_installer(|nfs| {
-                    nfs.mkdir_recursive_os_path_impl((), fullpath, 0, false)
-                });
+                let _ = mkdir_recursive_os_path(fullpath);
             }
 
             let res = strings::copy_utf16_into_utf8(&mut dest_buf[..], &wbuf[..i]);
@@ -1994,16 +1991,16 @@ impl<'a> PackageInstall<'a> {
             // https://github.com/npm/cli/blob/162c82e845d410ede643466f9f8af78a312296cc/workspaces/arborist/lib/arborist/reify.js#L738
             // https://github.com/npm/cli/commit/0e58e6f6b8f0cd62294642a502c17561aaf46553
             match sys::symlink_or_junction(dest_z, target_z, None) {
-                sys::Result::Err(err_) => 'brk: {
+                Err(err_) => 'brk: {
                     let mut err = err_;
-                    if err.get_errno() == sys::Errno::EXIST {
+                    if err.get_errno() == sys::E::EEXIST {
                         let _ = sys::rmdirat(
-                            Fd::from_std_dir(destination_dir),
+                            destination_dir.fd(),
                             self.destination_dir_subpath,
                         );
                         match sys::symlink_or_junction(dest_z, target_z, None) {
-                            sys::Result::Err(e) => err = e,
-                            sys::Result::Ok(_) => break 'brk,
+                            Err(e) => err = e,
+                            Ok(_) => break 'brk,
                         }
                     }
 
@@ -2013,13 +2010,13 @@ impl<'a> PackageInstall<'a> {
                         None,
                     );
                 }
-                sys::Result::Ok(_) => {}
+                Ok(_) => {}
             }
         }
         #[cfg(not(windows))]
         {
             let dest_dir = if let Some(dir) = subdir {
-                match bun_sys::MakePath::make_open_path(destination_dir, dir) {
+                match bun_sys::MakePath::make_open_path(destination_dir, dir, OpenDirOptions::default()) {
                     Ok(d) => d,
                     Err(err) => return InstallResult::fail(err, Step::LinkingDependency, None),
                 }

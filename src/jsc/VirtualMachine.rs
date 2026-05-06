@@ -282,7 +282,20 @@ unsafe extern "C" {
     fn Process__dispatchOnExit(global: *mut JSGlobalObject, code: u8);
     fn Bun__closeAllSQLiteDatabasesForTermination();
     fn Bun__WebView__closeAllForTermination();
+    /// `bun.api.node.process.exit` — exported from the Zig side as
+    /// `Bun__Process__exit` (see `runtime/node/node_process.zig` `@export`).
+    /// Main-thread is `noreturn`; in a worker it returns and the caller
+    /// `panic!`s, mirroring the Zig spec.
+    fn Bun__Process__exit(global: *mut JSGlobalObject, code: u8);
+    fn Zig__GlobalObject__destructOnExit(global: *mut JSGlobalObject);
 }
+
+/// `hot_reload` is stored as `u8` (TODO(b2-cycle): widen to
+/// `bun_options_types::Context::HotReload`). Mirror the Zig enum ordinals so
+/// the un-gated accessors below can compare without naming the type.
+pub const HOT_RELOAD_NONE: u8 = 0;
+pub const HOT_RELOAD_HOT: u8 = 1;
+pub const HOT_RELOAD_WATCH: u8 = 2;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Nested types

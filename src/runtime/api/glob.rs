@@ -431,8 +431,9 @@ impl Glob {
 
     #[bun_jsc::host_fn(method)]
     pub fn __scan_sync(&mut self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments_ = callframe.arguments_old(1);
-        let mut arguments = ArgumentsSlice::init(global_this.bun_vm(), arguments_.slice());
+        let arguments_ = callframe.arguments_old::<1>();
+        // SAFETY: bun_vm() returns a non-null *mut to the live VirtualMachine for this global.
+        let mut arguments = ArgumentsSlice::init(unsafe { &*global_this.bun_vm() }, arguments_.slice());
 
         let mut arena = Arena::new();
         let mut glob_walker = match self.make_glob_walker(global_this, &mut arguments, "scanSync", &mut arena) {

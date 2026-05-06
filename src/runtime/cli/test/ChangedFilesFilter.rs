@@ -14,17 +14,19 @@ use core::ffi::{c_char, c_int};
 
 use bstr::BStr;
 
-use bun_alloc::AllocError;
+use bun_alloc::{AllocError, Arena};
 use bun_bundler::{BundleV2, Transpiler};
+use bun_bundler::Graph::InputFileListExt as _;
 use bun_collections::{DynamicBitSet, StringHashMap, StringSet};
-use bun_core::{self, env_var, fmt as bun_fmt, getenv_z, which, Global, Output};
-use bun_bundler::bun_fs::FileSystem;
-use bun_event_loop::AnyEventLoop;
+use bun_core::{self, env_var, fmt as bun_fmt, getenv_z, which, Global, Output, ZBox};
+use bun_core::PathBuffer as CorePathBuffer;
 use bun_js_parser::Index;
+use bun_js_parser::ast::bundled_ast::BundledAstListExt as _;
 use bun_jsc::{self as jsc, EventLoopHandle};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_logger as logger;
 use bun_paths::{self, resolve_path, platform, PathBuffer, SEP};
+use bun_resolver::fs::RealFS;
 use bun_str::{strings, PathString, ZStr};
 use bun_sys as sys;
 

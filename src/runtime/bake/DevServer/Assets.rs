@@ -283,7 +283,8 @@ impl Assets {
 
     pub fn memory_cost(&self) -> usize {
         let mut cost: usize = 0;
-        cost += memory_cost_array_hash_map(&self.path_map);
+        // `StringArrayHashMap` derefs to its inner `ArrayHashMap<Box<[u8]>, V, _>`.
+        cost += memory_cost_array_hash_map(&*self.path_map);
         for &blob in self.files.values() {
             // SAFETY: every stored StaticRoute pointer is live while held in `files`.
             cost += unsafe { (*blob).memory_cost() };

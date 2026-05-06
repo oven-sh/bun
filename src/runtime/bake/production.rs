@@ -408,14 +408,14 @@ pub fn build_with_vm(
                          \n\
                          Learn more at https://bun.com/docs/ssg",
                         "  ", "  ", "  ", "  ", "  ", "  ", "  ", "  ", "  "
-                    ))
-                    .into());
+                    )));
+                return Err(bun_core::err!("JSError"));
             };
 
-            bake_body::UserOptions::from_js(app, global)?
+            bake_body::UserOptions::from_js(app, global).map_err(js_err)?
         }
         Unwrapped::Rejected(err) => {
-            return Err(global.throw_value(err.to_error().unwrap_or(err)).into());
+            return Err(js_err(global.throw_value(err.to_error().unwrap_or(err))));
         }
     };
 

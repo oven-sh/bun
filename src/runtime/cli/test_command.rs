@@ -841,7 +841,7 @@ impl CommandLineReporter {
                 break;
             }
             // SAFETY: scope is a live DescribeScope pointer kept alive for the test run
-            parent_ = unsafe { (*scope).base.parent };
+            parent_ = unsafe { (*scope).base.parent.map(|p| p as *const _) };
         }
 
         let scopes: &[*const bun_test::DescribeScope] = scopes_stack.as_slice();
@@ -994,7 +994,7 @@ impl CommandLineReporter {
                 break;
             }
             // SAFETY: scope kept alive for the test run
-            parent_ = unsafe { (*scope).base.parent };
+            parent_ = unsafe { (*scope).base.parent.map(|p| p as *const _) };
         }
 
         let scopes: &[*const bun_test::DescribeScope] = scopes_stack.as_slice();

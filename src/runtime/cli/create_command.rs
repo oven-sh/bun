@@ -245,7 +245,7 @@ impl CreateOptions {
         &*PARAMS
     }
 
-    pub fn parse(ctx: &Command::Context) -> Result<CreateOptions, bun_core::Error> {
+    pub fn parse(_ctx: Command::Context<'_>) -> Result<CreateOptions, bun_core::Error> {
         // Zig: `Output.is_verbose = Output.isVerbose();` — Rust has no setter; the
         // `is_verbose()` accessor reads the env directly each call, so this is a no-op.
         let _ = Output::is_verbose();

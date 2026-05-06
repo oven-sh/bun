@@ -179,7 +179,9 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::
     Ok(codecs::Decoded { rgba: out, width: w, height: h, icc_profile: icc })
 }
 
-pub fn encode(rgba: &[u8], w: u32, h: u32, quality: u8, lossless: bool, icc_profile: Option<&[u8]>) -> Result<codecs::Encoded, codecs::Error> {
+pub fn encode(rgba: &[u8], w: u32, h: u32, quality: u8, lossless: bool, icc_profile: Option<NonNull<[u8]>>) -> Result<codecs::Encoded, codecs::Error> {
+    // SAFETY: caller guarantees `icc_profile` points to valid bytes for the duration of encode().
+    let icc_profile: Option<&[u8]> = icc_profile.map(|p| unsafe { p.as_ref() });
     let mut out: *mut u8 = core::ptr::null_mut();
     let stride: c_int = c_int::try_from(w * 4).unwrap();
     // SAFETY: rgba.ptr/len describe a valid readable buffer of stride*h bytes; out is a valid out-param.

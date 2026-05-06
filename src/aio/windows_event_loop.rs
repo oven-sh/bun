@@ -399,10 +399,17 @@ impl Store {
 
     pub fn process_deferred_frees(&mut self) {
         let mut next = self.pending_free_head;
-        // SAFETY: intrusive deferred-free list; nodes are valid HiveArray slots until put().
-        while let Some(current) = unsafe { next.as_mut() } {
-            next = current.next_to_free;
-            current.next_to_free = ptr::null_mut();
+        while !next.is_null() {
+            let current = next;
+            // SAFETY: intrusive deferred-free list; nodes are valid HiveArray slots
+            // until put(). Walk via raw-pointer reads/writes only — materializing a
+            // `&mut FilePoll` here would alias the `&mut self.hive` borrow taken by
+            // `put()` below (the slot may live inside the inline hive buffer). Zig's
+            // `*FilePoll` freely aliases, so raw-ptr discipline is the faithful port.
+            unsafe {
+                next = (*current).next_to_free;
+                (*current).next_to_free = ptr::null_mut();
+            }
             self.hive.put(current);
         }
         self.pending_free_head = ptr::null_mut();

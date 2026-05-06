@@ -4913,11 +4913,11 @@ impl<'a> Resolver<'a> {
                 // SAFETY: ARENA — slot in the BSSMap-backed EntriesOptionMap singleton; outlives the resolver.
                 let entries = unsafe { &mut *entries };
                 if let Some(query) = entries.get(path.name.filename()) {
-                    let symlink_path = unsafe { &mut *query.entry }.symlink(&mut unsafe { &mut *self.fs() }.fs, self.store_fd);
+                    let symlink_path = unsafe { &*query.entry }.symlink(self.rfs_ptr(), self.store_fd);
                     if !symlink_path.is_empty() {
                         path.set_realpath(symlink_path);
                         if !result.file_fd.is_valid() {
-                            result.file_fd = unsafe { &mut *query.entry }.cache().fd;
+                            result.file_fd = unsafe { &*query.entry }.cache().fd;
                         }
 
                         if let Some(debug) = self.debug_logs.as_mut() {
@@ -4929,7 +4929,7 @@ impl<'a> Resolver<'a> {
                         }
                     } else if !dir.abs_real_path.is_empty() {
                         // When the directory is a symlink, we don't need to call getFdPath.
-                        let parts = [dir.abs_real_path.as_ref(), unsafe { &mut *query.entry }.base()];
+                        let parts = [dir.abs_real_path.as_ref(), unsafe { &*query.entry }.base()];
                         let mut buf = bun_paths::PathBuffer::uninit();
 
                         // PORT NOTE: `abs_buf` returns a borrow of `buf`; capture only the
@@ -4938,7 +4938,7 @@ impl<'a> Resolver<'a> {
 
                         let store_fd = self.store_fd;
 
-                        if !unsafe { &mut *query.entry }.cache().fd.is_valid() && store_fd {
+                        if !unsafe { &*query.entry }.cache().fd.is_valid() && store_fd {
                             buf[out_len] = 0;
                             // SAFETY: buf[out_len] == 0 written above
                             let span = unsafe { bun_core::ZStr::from_raw(buf.as_ptr(), out_len) };
@@ -4984,7 +4984,7 @@ impl<'a> Resolver<'a> {
                         // SAFETY: `entries_mutex` held by resolver mutex; sole writer.
                         unsafe { (*query.entry).cache_mut() }.symlink = PathString::init(symlink);
                         if !result.file_fd.is_valid() && store_fd {
-                            result.file_fd = unsafe { &mut *query.entry }.cache().fd;
+                            result.file_fd = unsafe { &*query.entry }.cache().fd;
                         }
 
                         path.set_realpath(symlink);
@@ -6697,7 +6697,7 @@ impl<'a> Resolver<'a> {
                     }
                 };
 
-                if unsafe { &mut *entry_query.entry }.kind(&mut unsafe { &mut *self.fs() }.fs, self.store_fd) == Fs::file_system::EntryKind::Dir {
+                if unsafe { &*entry_query.entry }.kind(self.rfs_ptr(), self.store_fd) == Fs::file_system::EntryKind::Dir {
                     let ends_with_star = esm_resolution.status == Status::ExactEndsWithStar;
                     esm_resolution.status = Status::UnsupportedDirectoryImport;
 
@@ -6718,7 +6718,7 @@ impl<'a> Resolver<'a> {
                                     file_name[index.len()..].copy_from_slice(ext);
                                     let index_query = dir_entries.get(&file_name[..]);
                                     if let Some(iq) = index_query {
-                                        if unsafe { &mut *iq.entry }.kind(&mut unsafe { &mut *self.fs() }.fs, self.store_fd) == Fs::file_system::EntryKind::File {
+                                        if unsafe { &*iq.entry }.kind(self.rfs_ptr(), self.store_fd) == Fs::file_system::EntryKind::File {
                                             if let Some(debug) = self.debug_logs.as_mut() {
                                                 let mut ms = Vec::with_capacity(1 + file_name.len());
                                                 ms.push(b'/');
@@ -6742,11 +6742,11 @@ impl<'a> Resolver<'a> {
                 }
 
                 let absolute_out_path: &[u8] = {
-                    if unsafe { &mut *entry_query.entry }.abs_path.is_empty() {
+                    if unsafe { &*entry_query.entry }.abs_path.is_empty() {
                         unsafe { &mut *entry_query.entry }.abs_path =
                             PathString::init(self.fs_ref().dirname_store.append_slice(abs_esm_path).expect("unreachable"));
                     }
-                    unsafe { &mut *entry_query.entry }.abs_path.slice()
+                    unsafe { &*entry_query.entry }.abs_path.slice()
                 };
                 let module_type = if let Some(pkg) = resolved_dir_info.package_json() {
                     pkg.module_type
@@ -6757,7 +6757,7 @@ impl<'a> Resolver<'a> {
                 Some(MatchResult {
                     path_pair: PathPair { primary: Path::init_with_namespace(absolute_out_path, b"file"), secondary: None },
                     dirname_fd: entries.fd,
-                    file_fd: unsafe { &mut *entry_query.entry }.cache().fd,
+                    file_fd: unsafe { &*entry_query.entry }.cache().fd,
                     dir_info: Some(resolved_dir_info as *const _),
                     diff_case: entry_query.diff_case,
                     is_node_module: true,
@@ -7015,7 +7015,7 @@ impl<'a> Resolver<'a> {
         Self::assert_valid_cache_key(root_path);
 
         // PORT NOTE: hold RealFS as a raw `*mut` so the entries-mutex/close-dirs
-        // scopeguards can capture it by Copy without keeping a `&mut unsafe { &mut *self.fs() }.fs`
+        // scopeguards can capture it by Copy without keeping a `self.rfs_ptr()`
         // borrow live across the loop body (which calls `&mut self` methods).
         // SAFETY: ARENA — `self.fs` points at the process-global FileSystem singleton.
         // Derive provenance from the raw `*mut FileSystem` field directly so later
@@ -7861,15 +7861,15 @@ impl<'a> Resolver<'a> {
             // SAFETY: ARENA — slot in the BSSMap-backed EntriesOptionMap singleton; outlives the resolver.
             let entries = unsafe { &mut *entries };
             if let Some(lookup) = entries.get(&base[..]) {
-                if unsafe { &mut *lookup.entry }.kind(unsafe { &mut *rfs }, self.store_fd) == Fs::file_system::EntryKind::File {
+                if unsafe { &*lookup.entry }.kind(unsafe { &mut *rfs }, self.store_fd) == Fs::file_system::EntryKind::File {
                     let out_buf: &[u8] = {
-                        if unsafe { &mut *lookup.entry }.abs_path.is_empty() {
+                        if unsafe { &*lookup.entry }.abs_path.is_empty() {
                             let parts = [dir_info.abs_path, &base[..]];
                             let out_buf_ = self.fs_ref().abs_buf(&parts, bufs!(index));
                             unsafe { &mut *lookup.entry }.abs_path =
                                 PathString::init(self.fs_ref().dirname_store.append_slice(out_buf_).expect("unreachable"));
                         }
-                        unsafe { &mut *lookup.entry }.abs_path.slice()
+                        unsafe { &*lookup.entry }.abs_path.slice()
                     };
 
                     if let Some(debug) = self.debug_logs.as_mut() {
@@ -8245,14 +8245,14 @@ impl<'a> Resolver<'a> {
         }
 
         if let Some(query) = entries!().get(base) {
-            if unsafe { &mut *query.entry }.kind(unsafe { &mut *rfs }, self.store_fd) == Fs::file_system::EntryKind::File {
+            if unsafe { &*query.entry }.kind(unsafe { &mut *rfs }, self.store_fd) == Fs::file_system::EntryKind::File {
                 if let Some(debug) = self.debug_logs.as_mut() {
                     debug.add_note_fmt(format_args!("Found file \"{}\" ", bstr::BStr::new(base)));
                 }
 
                 let abs_path: &'static [u8] = {
-                    if unsafe { &mut *query.entry }.abs_path.is_empty() {
-                        let abs_path_parts = [unsafe { &mut *query.entry }.dir, unsafe { &mut *query.entry }.base()];
+                    if unsafe { &*query.entry }.abs_path.is_empty() {
+                        let abs_path_parts = [unsafe { &*query.entry }.dir, unsafe { &*query.entry }.base()];
                         // PORT NOTE: split into two statements so the two `&mut FileSystem`
                         // borrows from `unsafe { &mut *self.fs() }` don't overlap (Stacked Borrows).
                         let joined = self.fs_ref().abs_buf(&abs_path_parts, bufs!(load_as_file));
@@ -8267,7 +8267,7 @@ impl<'a> Resolver<'a> {
                     path: abs_path,
                     diff_case: query.diff_case,
                     dirname_fd: entries!().fd,
-                    file_fd: unsafe { &mut *query.entry }.cache().fd,
+                    file_fd: unsafe { &*query.entry }.cache().fd,
                     dir_info: None,
                 }));
             }
@@ -8335,20 +8335,20 @@ impl<'a> Resolver<'a> {
                     buffer[segment.len()..].copy_from_slice(ext_to_replace);
 
                     if let Some(query) = entries!().get(&buffer[..]) {
-                        if unsafe { &mut *query.entry }.kind(unsafe { &mut *rfs }, self.store_fd) == Fs::file_system::EntryKind::File {
+                        if unsafe { &*query.entry }.kind(unsafe { &mut *rfs }, self.store_fd) == Fs::file_system::EntryKind::File {
                             if let Some(debug) = self.debug_logs.as_mut() {
                                 debug.add_note_fmt(format_args!("Rewrote to \"{}\" ", bstr::BStr::new(&buffer[..])));
                             }
 
                             dec_ret!(Some(LoadResult {
                                 path: {
-                                    if unsafe { &mut *query.entry }.abs_path.is_empty() {
-                                        if !unsafe { &mut *query.entry }.dir.is_empty() && unsafe { &mut *query.entry }.dir[unsafe { &mut *query.entry }.dir.len() - 1] == SEP {
-                                            let parts: [&[u8]; 2] = [unsafe { &mut *query.entry }.dir, &buffer[..]];
+                                    if unsafe { &*query.entry }.abs_path.is_empty() {
+                                        if !unsafe { &*query.entry }.dir.is_empty() && unsafe { &*query.entry }.dir[unsafe { &*query.entry }.dir.len() - 1] == SEP {
+                                            let parts: [&[u8]; 2] = [unsafe { &*query.entry }.dir, &buffer[..]];
                                             unsafe { &mut *query.entry }.abs_path = PathString::init(self.fs_ref().filename_store.append_parts(&parts).expect("unreachable"));
                                             // the trailing path CAN be missing here
                                         } else {
-                                            let parts: [&[u8]; 3] = [unsafe { &mut *query.entry }.dir, SEP_STR.as_bytes(), &buffer[..]];
+                                            let parts: [&[u8]; 3] = [unsafe { &*query.entry }.dir, SEP_STR.as_bytes(), &buffer[..]];
                                             unsafe { &mut *query.entry }.abs_path = PathString::init(self.fs_ref().filename_store.append_parts(&parts).expect("unreachable"));
                                         }
                                     }
@@ -8356,7 +8356,7 @@ impl<'a> Resolver<'a> {
                                 },
                                 diff_case: query.diff_case,
                                 dirname_fd: entries!().fd,
-                                file_fd: unsafe { &mut *query.entry }.cache().fd,
+                                file_fd: unsafe { &*query.entry }.cache().fd,
                                 dir_info: None,
                             }));
                         }
@@ -8403,7 +8403,7 @@ impl<'a> Resolver<'a> {
         }
 
         if let Some(query) = unsafe { &*entries }.get(file_name) {
-            if unsafe { &mut *query.entry }.kind(unsafe { &mut *rfs }, self.store_fd) == Fs::file_system::EntryKind::File {
+            if unsafe { &*query.entry }.kind(unsafe { &mut *rfs }, self.store_fd) == Fs::file_system::EntryKind::File {
                 if let Some(debug) = self.debug_logs.as_mut() {
                     debug.add_note_fmt(format_args!("Found file \"{}\" ", bstr::BStr::new(&buffer[..])));
                 }
@@ -8411,16 +8411,19 @@ impl<'a> Resolver<'a> {
                 // now that we've found it, we allocate it.
                 return Some(LoadResult {
                     path: {
-                        unsafe { &mut *query.entry }.abs_path = if unsafe { &mut *query.entry }.abs_path.is_empty() {
+                        // SAFETY: EntryStore-owned slot; resolver mutex held. RHS is fully
+                        // evaluated (shared reads) before the LHS `&mut Entry` is
+                        // materialized for the write — no overlapping unique borrow.
+                        unsafe { &mut *query.entry }.abs_path = if unsafe { &*query.entry }.abs_path.is_empty() {
                             PathString::init(self.fs_ref().dirname_store.append_slice(&buffer[..]).expect("unreachable"))
                         } else {
-                            unsafe { &mut *query.entry }.abs_path
+                            unsafe { &*query.entry }.abs_path
                         };
                         crate::path_string_static(&unsafe { &*query.entry }.abs_path)
                     },
                     diff_case: query.diff_case,
                     dirname_fd: unsafe { &*entries }.fd,
-                    file_fd: unsafe { &mut *query.entry }.cache().fd,
+                    file_fd: unsafe { &*query.entry }.cache().fd,
                     dir_info: None,
                 });
             }
@@ -8490,7 +8493,7 @@ impl<'a> Resolver<'a> {
         // if (entries != null) {
         if !info.is_node_modules() {
             if let Some(entry) = entries!().get_comptime_query(b"node_modules") {
-                info.flags.set_present(DirInfo::Flag::HasNodeModules, unsafe { &mut *entry.entry }.kind(rfs!(), self.store_fd) == Fs::file_system::EntryKind::Dir);
+                info.flags.set_present(DirInfo::Flag::HasNodeModules, unsafe { &*entry.entry }.kind(rfs!(), self.store_fd) == Fs::file_system::EntryKind::Dir);
             }
         }
 
@@ -8535,7 +8538,7 @@ impl<'a> Resolver<'a> {
 
                 if info.is_node_modules() {
                     if let Some(q) = entries!().get_comptime_query(b".bin") {
-                        if unsafe { &mut *q.entry }.kind(rfs!(), self.store_fd) == Fs::file_system::EntryKind::Dir {
+                        if unsafe { &*q.entry }.kind(rfs!(), self.store_fd) == Fs::file_system::EntryKind::Dir {
                             // SAFETY: BIN_FOLDERS_LOADED is single-thread init-once; protected by RESOLVER_MUTEX held by callers.
                             unsafe {
                                 if !BIN_FOLDERS_LOADED {
@@ -8609,7 +8612,7 @@ impl<'a> Resolver<'a> {
                     if let Some(lookup) = parent_entries.get(base) {
                         // SAFETY: entries_ptr is a slot in the BSSMap-backed entries singleton.
                         let entries_fd = unsafe { &*entries_ptr }.fd;
-                        if entries_fd.is_valid() && !unsafe { &mut *lookup.entry }.cache().fd.is_valid() && self.store_fd {
+                        if entries_fd.is_valid() && !unsafe { &*lookup.entry }.cache().fd.is_valid() && self.store_fd {
                             // SAFETY: `entries_mutex` held by caller; sole writer.
                             unsafe { (*lookup.entry).cache_mut() }.fd = entries_fd;
                         }

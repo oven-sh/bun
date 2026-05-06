@@ -68,18 +68,26 @@ impl JSMySQLConnection {
     pub fn ref_(&self) {
         self.ref_count.set(self.ref_count.get() + 1);
     }
+    /// Decrement the intrusive refcount; frees `*this` when it reaches 0.
+    ///
+    /// SAFETY: `this` must be the pointer originally produced by
+    /// `Box::into_raw` in `create_instance` (or an alias of it) and must be
+    /// valid for reads/writes. After this call returns the pointee may have
+    /// been freed — the caller must not hold any live `&`/`&mut Self` across
+    /// the call (Rust references must remain valid for their entire lifetime
+    /// even if never dereferenced; a dangling `&mut` is UB). All call sites
+    /// therefore go through a raw `*mut Self`, mirroring Zig's `*@This()`
+    /// which carries no aliasing/validity invariant.
     #[inline]
-    pub fn deref(&mut self) {
-        let n = self.ref_count.get() - 1;
-        self.ref_count.set(n);
+    pub unsafe fn deref(this: *mut Self) {
+        let n = (*this).ref_count.get() - 1;
+        (*this).ref_count.set(n);
         if n == 0 {
-            // Count hit 0; `self` came from `Box::into_raw` in
+            // Count hit 0; `this` came from `Box::into_raw` in
             // `create_instance`, so we are the unique owner here. `deinit`
             // takes ownership back via `Box::from_raw` (mirrors Zig
-            // `bun.destroy(this)`). Taking `&mut self` (all callers already
-            // hold `&mut`/`*mut`) avoids the `&T as *const T as *mut T`
-            // provenance-laundering cast that was UB when written through.
-            self.deinit();
+            // `bun.destroy(this)`).
+            Self::deinit(this);
         }
     }
 

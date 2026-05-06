@@ -249,15 +249,24 @@ impl ClientSession {
     }
 
     pub fn abort_by_http_id(&mut self, async_http_id: u32) -> bool {
+        // PORT NOTE: Zig iterates `pending.items` and calls `this.fail` (which
+        // mutates `pending`) mid-loop. Rust borrowck forbids reborrowing
+        // `&mut self` while the iterator holds `&self.pending`, and only one
+        // entry can match — so locate first via raw-ptr reads, then act.
+        let mut found: *mut Stream = core::ptr::null_mut();
         for &stream_ptr in self.pending.iter() {
-            // SAFETY: pending entries are live until detach().
-            let st = unsafe { &mut *stream_ptr };
-            let Some(cl) = st.client else { continue };
+            // SAFETY: pending entries are live until detach(); read-only raw
+            // field access — no `&mut Stream` materialized.
+            let Some(cl) = (unsafe { (*stream_ptr).client }) else { continue };
             // SAFETY: stream.client is a live backref while attached.
             if unsafe { (*cl.as_ptr()).async_http_id } == async_http_id {
-                self.fail(stream_ptr, err!(Aborted));
-                return true;
+                found = stream_ptr;
+                break;
             }
+        }
+        if !found.is_null() {
+            self.fail(found, err!(Aborted));
+            return true;
         }
         false
     }

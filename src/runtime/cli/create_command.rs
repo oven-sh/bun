@@ -1281,7 +1281,7 @@ impl CreateCommand {
                     props.shrink_retaining_capacity(property_i);
                 }
 
-                let file: bun_sys::Fd = bun_sys::Fd::from_std_file(package_json_file.as_ref().unwrap());
+                let file: bun_sys::Fd = package_json_file.as_ref().unwrap().handle;
 
                 let mut buffer_writer = JSPrinter::BufferWriter::init();
                 buffer_writer.append_newline = true;
@@ -1289,31 +1289,31 @@ impl CreateCommand {
 
                 if let Err(err) = JSPrinter::print_json(
                     &mut package_json_writer,
-                    package_json_expr,
+                    package_json_expr.into(),
                     &source,
-                    JSPrinter::PrintJsonOptions { mangled_props: None },
+                    JSPrinter::PrintJsonOptions { mangled_props: None, indent: Default::default() },
                 ) {
-                    Output::pretty_errorln(
+                    Output::pretty_errorln(format_args!(
                         "package.json failed to write due to error {}",
-                        format_args!("{}", err.name()),
-                    );
+                        err,
+                    ));
                     package_json_file = None;
                     break 'process_package_json;
                 }
                 let written = package_json_writer.ctx.get_written();
-                if let Err(err) = (bun_sys::File { handle: file }).write_all(written).unwrap_result() {
-                    Output::pretty_errorln(
+                if let Err(err) = (bun_sys::File { handle: file }).write_all(written) {
+                    Output::pretty_errorln(format_args!(
                         "package.json failed to write due to error {}",
-                        format_args!("{}", err.name()),
-                    );
+                        bstr::BStr::new(err.name()),
+                    ));
                     package_json_file = None;
                     break 'process_package_json;
                 }
-                if let Err(err) = file.truncate(u64::try_from(written.len()).unwrap()).unwrap_result() {
-                    Output::pretty_errorln(
+                if let Err(err) = bun_sys::ftruncate(file, written.len() as i64) {
+                    Output::pretty_errorln(format_args!(
                         "package.json failed to write due to error {}",
-                        format_args!("{}", err.name()),
-                    );
+                        bstr::BStr::new(err.name()),
+                    ));
                     package_json_file = None;
                     break 'process_package_json;
                 }
@@ -1321,10 +1321,10 @@ impl CreateCommand {
         }
 
         if create_options.verbose {
-            Output::pretty_errorln(
+            Output::pretty_errorln(format_args!(
                 "Has dependencies? {}",
-                format_args!("{}", has_dependencies as u8),
-            );
+                has_dependencies as u8,
+            ));
         }
 
         let mut npm_client_: Option<NPMClient> = None;

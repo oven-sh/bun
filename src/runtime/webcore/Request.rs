@@ -293,7 +293,8 @@ pub extern "C" fn Request__setCookiesOnRequestContext(
 ) {
     // SAFETY: called from C++ with a live Request* (m_ctx payload)
     let this = unsafe { &mut *this };
-    this.request_context.set_cookies(cookie_map);
+    this.request_context
+        .set_cookies(cookie_map.map(|c| c as *const CookieMap as *mut CookieMap));
 }
 
 #[unsafe(no_mangle)]

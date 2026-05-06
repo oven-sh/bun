@@ -1556,9 +1556,11 @@ impl napi_async_work {
             },
             concurrent_task: ConcurrentTask::default(),
             global: global_static,
-            env: NapiEnvRef::clone_from_raw(env),
+            // SAFETY: env outlives the async work; clone bumps the C++ refcount.
+            env: unsafe { NapiEnvRef::clone_from_raw(env.as_mut_ptr()) },
             execute,
-            event_loop: global.bun_vm().event_loop(),
+            // SAFETY: bun_vm() never null for a Bun-owned global.
+            event_loop: unsafe { &*global.bun_vm() }.event_loop(),
             complete,
             data,
             status: AtomicU32::new(AsyncWorkStatus::Pending as u32),
@@ -1578,7 +1580,7 @@ impl napi_async_work {
             return;
         }
         self.scheduled = true;
-        self.poll_ref.ref_(self.global.bun_vm());
+        self.poll_ref.ref_(vm_ctx());
         WorkPool::schedule(&mut self.task);
     }
 

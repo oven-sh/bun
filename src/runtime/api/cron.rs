@@ -100,8 +100,13 @@ impl JSValueCronExt for JSValue {
                 callback: JSValue,
             ) -> JSValue;
         }
-        // SAFETY: FFI into JSC; `global` is live.
-        unsafe { AsyncContextFrame__withAsyncContextIfNeeded(global.as_ptr(), self) }
+        // SAFETY: FFI into JSC; `global` is live for the call.
+        unsafe {
+            AsyncContextFrame__withAsyncContextIfNeeded(
+                global as *const JSGlobalObject as *mut JSGlobalObject,
+                self,
+            )
+        }
     }
 }
 
@@ -1653,10 +1658,9 @@ impl CronJob {
         if vm.hot_reload == HOT_RELOAD_HOT || vm.worker.is_some() {
             job_ref.ref_(); // owned by cron_jobs entry
             // PORT NOTE: `RareData::cron_jobs` stores the opaque high-tier
-            // placeholder type; cast through `*mut ()`.
-            vm.rare_data()
-                .cron_jobs
-                .push(job as *mut () as *mut bun_jsc::rare_data::high_tier::CronJob);
+            // placeholder type; cast through `*mut ()` and let inference pick
+            // the element type.
+            vm.rare_data().cron_jobs.push(job as *mut () as *mut _);
         }
 
         let js_value = job_ref.to_js(global);

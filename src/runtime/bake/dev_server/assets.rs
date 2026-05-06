@@ -51,7 +51,24 @@ impl Assets {
         }
     }
 
-    pub fn get_hash(&self, path: &[u8]) -> Option<u64> {
+    /// `Assets.reindexIfNeeded` — full body in gated `../DevServer/Assets.rs`.
+    pub fn reindex_if_needed(&mut self) -> Result<(), bun_alloc::AllocError> {
+        if !self.needs_reindex { return Ok(()); }
+        todo!("blocked_on: dev_server::Assets::reindex body un-gate")
+    }
+
+    /// `Assets.replacePath` — full body in gated `../DevServer/Assets.rs`.
+    pub fn replace_path(
+        &mut self,
+        _abs_path: &[u8],
+        _content: &crate::webcore::blob::Any,
+        _mime: &bun_http::MimeType,
+        _content_hash: u64,
+    ) -> Result<EntryIndex, bun_alloc::AllocError> {
+        todo!("blocked_on: dev_server::Assets::replace_path body un-gate")
+    }
+
+        pub fn get_hash(&self, path: &[u8]) -> Option<u64> {
         debug_assert!(self.owner().magic == Magic::Valid);
         self.path_map.get(path).map(|idx| self.files.keys()[idx.get()])
     }

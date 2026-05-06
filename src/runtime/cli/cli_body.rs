@@ -1579,7 +1579,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>
         let mut dash_dash_bun = false;
         let mut print_help = false;
         if args.len() > 2 {
-            let remainder = &args[1..];
+            let remainder: Vec<&'static ZStr> =
+                (1..args.len()).map(|i| args.get(i).unwrap()).collect();
             let mut remainder_i: usize = 0;
             while remainder_i < remainder.len() && positional_i < positionals.len() {
                 let slice = strings::trim(remainder[remainder_i].as_bytes(), b" \t\n");

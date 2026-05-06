@@ -2338,7 +2338,7 @@ unsafe fn get_loader_and_virtual_source<'a>(
                         // logger-local `fs::Path` (NOT `bun_resolver::fs::Path`
                         // — see logger/lib.rs:32-). Re-init from `path.text`.
                         path: bun_logger::fs::Path::init(path_text),
-                        contents,
+                        contents: bun_ptr::Cow::Borrowed(contents),
                         ..Default::default()
                     });
                     virtual_source = virtual_source_to_use.as_ref();

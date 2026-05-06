@@ -1013,7 +1013,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         if vm.aggressive_garbage_collection == jsc::virtual_machine::GCLevel::Aggressive {
             vm.auto_garbage_collect();
         } else {
-            vm.event_loop().perform_gc();
+            // SAFETY: event_loop() returns the VM's owned `*mut EventLoop`;
+            // non-null while the VM is alive.
+            unsafe { (*vm.event_loop()).perform_gc() };
         }
 
         route_list_value

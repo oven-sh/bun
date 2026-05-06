@@ -128,9 +128,9 @@ impl Handler {
             return Ok(handler);
         }
 
-        global_object.throw_invalid_arguments(format_args!(
+        Err(global_object.throw_invalid_arguments(format_args!(
             "WebSocketServerContext expects a message handler"
-        ))
+        )))
     }
 
     pub fn protect(&self) {
@@ -144,7 +144,9 @@ impl Handler {
     }
 
     pub fn unprotect(&self) {
-        if self.vm.is_shutting_down() {
+        // SAFETY: `vm` is set at construction (Handler::from_js → VirtualMachine::get())
+        // and is process-lifetime — LIFETIMES.tsv = STATIC.
+        if unsafe { &*self.vm }.is_shutting_down() {
             return;
         }
 

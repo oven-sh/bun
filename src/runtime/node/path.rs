@@ -1430,7 +1430,7 @@ pub fn is_absolute_posix_zig_string(path_zstr: &ZigString) -> bool {
 }
 
 pub fn is_absolute_windows_zig_string(path_zstr: &ZigString) -> bool {
-    if path_zstr.len() > 0 && path_zstr.is_16bit() {
+    if path_zstr.len > 0 && path_zstr.is_16bit() {
         // TODO(port): @alignCast on utf16Slice
         is_absolute_windows_t::<u16>(path_zstr.utf16_slice())
     } else {
@@ -1451,7 +1451,7 @@ pub fn is_absolute(
     validate_string(global_object, path_ptr, format_args!("path"))?;
 
     let path_zstr = path_ptr.get_zig_string(global_object)?;
-    if path_zstr.len() == 0 {
+    if path_zstr.len == 0 {
         return Ok(JSValue::FALSE);
     }
     if is_windows {

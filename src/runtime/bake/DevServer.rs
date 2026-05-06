@@ -2673,7 +2673,7 @@ impl DevServer<'_> {
         self.client_graph.reset();
         self.trace_all_route_imports(route_bundle, &mut gts, TraceImportGoal::FindCss)?;
 
-        let names: &[u64] = &self.client_graph.current_css_files();
+        let names: &[u64] = &self.client_graph.current_css_files;
         // SAFETY: vm is JSC_BORROW; vm.global is valid for VM lifetime
         let global = unsafe { &*(*self.vm).global };
         let arr = jsc::JSArray::create_empty(global, names.len())?;
@@ -3166,19 +3166,19 @@ pub fn finalize_bundle(
         debug_log!(
             "Bundle Round {}: {} server, {} client, {} ms",
             dev.generation,
-            dev.server_graph.current_chunk_parts_len(),
-            dev.client_graph.current_chunk_parts_len(),
+            dev.server_graph.current_chunk_parts.len(),
+            dev.client_graph.current_chunk_parts.len(),
             current_bundle.timer.elapsed().as_millis(),
         );
     }
 
     // Load all new chunks into the server runtime.
-    if !dev.frontend_only && dev.server_graph.current_chunk_len() > 0 {
+    if !dev.frontend_only && dev.server_graph.current_chunk_len > 0 {
         // Generate a script_id for server bundles
         let server_script_id = source_map_store::Key::init((1u64 << 63) | dev.generation as u64);
 
         // Get the source map if available and render to JSON
-        let source_map_json = if !dev.server_graph.current_chunk_source_maps_is_empty() {
+        let source_map_json = if !dev.server_graph.current_chunk_source_maps.is_empty() {
             'json: {
                 // Create a temporary source map entry to render
                 let mut source_map_entry = source_map_store::Entry {

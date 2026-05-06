@@ -142,7 +142,9 @@ fn erased_js_error(_err: *mut ()) -> bun_jsc::JsError {
 trait LinearFifoExt {
     fn reset_head_if_empty(&mut self);
 }
-impl<T, B> LinearFifoExt for bun_collections::LinearFifo<T, B> {
+impl<T, B: bun_collections::linear_fifo::LinearFifoBuffer<T>> LinearFifoExt
+    for bun_collections::LinearFifo<T, B>
+{
     #[inline]
     fn reset_head_if_empty(&mut self) {
         // TODO(port): blocked_on bun_collections::LinearFifo::reset_head_if_empty

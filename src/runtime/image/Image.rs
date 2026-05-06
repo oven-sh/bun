@@ -214,6 +214,28 @@ pub enum Fit {
     Inside,
 }
 // `pub const Map = bun.ComptimeEnumMap(Fit);` → covered by `strum::EnumString`.
+static FIT_MAP: phf::Map<&'static [u8], Fit> = phf::phf_map! {
+    b"fill" => Fit::Fill,
+    b"inside" => Fit::Inside,
+};
+impl jsc::FromJsEnum for Fit {
+    fn from_js_value(v: JSValue, global: &JSGlobalObject, prop: &'static str) -> JsResult<Self> {
+        use jsc::ComptimeStringMapExt as _;
+        match FIT_MAP.from_js(global, v)? {
+            Some(e) => Ok(e),
+            None => Err(global.throw_invalid_argument_type(prop, "\"fill\" | \"inside\"", v)),
+        }
+    }
+}
+impl jsc::FromJsEnum for codecs::Filter {
+    fn from_js_value(v: JSValue, global: &JSGlobalObject, prop: &'static str) -> JsResult<Self> {
+        use jsc::ComptimeStringMapExt as _;
+        match codecs::FILTER_MAP.from_js(global, v)? {
+            Some(e) => Ok(e),
+            None => Err(global.throw_invalid_argument_type(prop, "Filter name", v)),
+        }
+    }
+}
 
 #[derive(Clone, Copy)]
 pub struct Resize {

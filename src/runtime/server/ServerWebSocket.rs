@@ -713,9 +713,9 @@ impl ServerWebSocket {
             // if 0, return 0
             // else return number of bytes sent
             if result {
-                i32::try_from(buffer.len() as u32 & 0x7FFF_FFFF).unwrap()
+                (buffer.len() as u32 & 0x7FFF_FFFF) as f64
             } else {
-                0i32
+                0.0
             },
         );
         js_string.ensure_still_alive();
@@ -790,9 +790,9 @@ impl ServerWebSocket {
             // if 0, return 0
             // else return number of bytes sent
             if result {
-                i32::try_from(buffer.len() as u32 & 0x7FFF_FFFF).unwrap()
+                (buffer.len() as u32 & 0x7FFF_FFFF) as f64
             } else {
-                0i32
+                0.0
             },
         ))
     }
@@ -843,9 +843,9 @@ impl ServerWebSocket {
             // if 0, return 0
             // else return number of bytes sent
             if result {
-                i32::try_from(buffer.len() as u32 & 0x7FFF_FFFF).unwrap()
+                (buffer.len() as u32 & 0x7FFF_FFFF) as f64
             } else {
-                0i32
+                0.0
             },
         ))
     }
@@ -896,9 +896,9 @@ impl ServerWebSocket {
             // if 0, return 0
             // else return number of bytes sent
             if result {
-                i32::try_from(buffer.len() as u32 & 0x7FFF_FFFF).unwrap()
+                (buffer.len() as u32 & 0x7FFF_FFFF) as f64
             } else {
-                0i32
+                0.0
             },
         ))
     }

@@ -521,9 +521,9 @@ fn cpus_impl_darwin(global_this: &JSGlobalObject) -> Result<JSValue, OsError> {
         };
 
         let cpu = JSValue::create_empty_object(global_this, 3);
-        cpu.put(global_this, ZigString::static_("speed"), JSValue::js_number(speed / 1_000_000));
-        cpu.put(global_this, ZigString::static_("model"), model_name);
-        cpu.put(global_this, ZigString::static_("times"), times.to_value(global_this));
+        cpu.put(global_this, b"speed", JSValue::js_number((speed / 1_000_000) as f64));
+        cpu.put(global_this, b"model", model_name);
+        cpu.put(global_this, b"times", times.to_value(global_this));
 
         values.put_index(global_this, cpu_index, cpu)?;
         cpu_index += 1;
@@ -532,7 +532,7 @@ fn cpus_impl_darwin(global_this: &JSGlobalObject) -> Result<JSValue, OsError> {
 }
 
 #[cfg(windows)]
-pub fn cpus_impl_windows(global_this: &JSGlobalObject) -> Result<JSValue, bun_core::Error> {
+pub fn cpus_impl_windows(global_this: &JSGlobalObject) -> Result<JSValue, OsError> {
     let mut cpu_infos: *mut libuv::uv_cpu_info_t = core::ptr::null_mut();
     let mut count: c_int = 0;
     // SAFETY: valid out-pointers
@@ -561,9 +561,9 @@ pub fn cpus_impl_windows(global_this: &JSGlobalObject) -> Result<JSValue, bun_co
         let cpu = JSValue::create_empty_object(global_this, 3);
         // SAFETY: cpu_info.model is a NUL-terminated C string from libuv
         let model = unsafe { core::ffi::CStr::from_ptr(cpu_info.model) }.to_bytes();
-        cpu.put(global_this, ZigString::static_("model"), ZigString::init(model).with_encoding().to_js(global_this));
-        cpu.put(global_this, ZigString::static_("speed"), JSValue::js_number(cpu_info.speed));
-        cpu.put(global_this, ZigString::static_("times"), times.to_value(global_this));
+        cpu.put(global_this, b"model", ZigString::init(model).with_encoding().to_js(global_this));
+        cpu.put(global_this, b"speed", JSValue::js_number(cpu_info.speed as f64));
+        cpu.put(global_this, b"times", times.to_value(global_this));
 
         values.put_index(global_this, u32::try_from(i).unwrap(), cpu)?;
     }

@@ -235,10 +235,8 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     // `current_css_files` directly on the struct. The header shape carries
     // none of that yet, so DevServer.rs reads through these accessors to keep
     // the call sites real until those fields un-gate.
-    #[inline] pub fn current_chunk_parts_len(&self) -> usize { 0 }
-    #[inline] pub fn current_chunk_len(&self) -> usize { 0 }
-    #[inline] pub fn current_chunk_source_maps_is_empty(&self) -> bool { true }
-    #[inline] pub fn current_css_files(&self) -> Vec<u64> { Vec::new() }
+    #[inline] pub fn current_chunk_parts_len(&self) -> usize { self.current_chunk_parts.len() }
+    #[inline] pub fn current_chunk_source_maps_is_empty(&self) -> bool { self.current_chunk_source_maps.is_empty() }
 
     /// `IncrementalGraph(side).traceDependencies` — full body in gated draft.
     pub fn trace_dependencies(

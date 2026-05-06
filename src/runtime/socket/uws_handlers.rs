@@ -191,6 +191,32 @@ where
     }
 }
 
+// ── SocketEvents / NsSocketEvents impls ─────────────────────────────────────
+//
+// In Zig the consumer types carry `onOpen`/`onData`/… as inherent decls and
+// `@hasDecl` filters at comptime. Rust expresses that as a trait with default
+// no-ops; each consumer type opts in with an `impl` that overrides only the
+// events it actually handles. The bodies are filled in by `socket_body.rs` /
+// the per-driver ports — the empty impls here just satisfy `vtable::make`'s
+// `Handler` bound so dispatch tables compile.
+// TODO(port): replace default no-ops with the real event bodies once consumer
+// crates are ported (socket_body.rs, websocket_client, sql drivers).
+impl<const SSL: bool> SocketEvents<SSL> for api::NewSocket<SSL> {}
+impl<const SSL: bool> SocketEvents<SSL> for websocket_upgrade_client::NewHttpUpgradeClient<SSL> {}
+impl<const SSL: bool> SocketEvents<SSL> for websocket_client::WebSocket<SSL> {}
+impl<const SSL: bool> NsSocketEvents<postgres::PostgresSQLConnection, SSL>
+    for postgres::postgres_sql_connection::SocketHandler<SSL>
+{
+}
+impl<const SSL: bool> NsSocketEvents<mysql::js_my_sql_connection::JSMySQLConnection, SSL>
+    for mysql::js_my_sql_connection::SocketHandler<SSL>
+{
+}
+impl<const SSL: bool> NsSocketEvents<js_valkey::JSValkeyClient, SSL>
+    for js_valkey::SocketHandler<SSL>
+{
+}
+
 // ── Bun.connect / Bun.listen ────────────────────────────────────────────────
 pub type BunSocket<const SSL: bool> = PtrHandler<api::NewSocket<SSL>, SSL>;
 

@@ -33,3 +33,21 @@ pub struct SerializedFailure {
     /// Wire-format bytes (length-prefixed; see `hmr-runtime-error.ts`).
     pub data: Box<[u8]>,
 }
+
+impl SerializedFailure {
+    /// `SerializedFailure.getOwner` — decodes the leading 4-byte `Owner.Packed`
+    /// from `data` (Zig: `std.mem.bytesAsValue(Owner.Packed, data[0..4]).decode()`).
+    pub fn get_owner(&self) -> Owner {
+        let raw = u32::from_le_bytes(self.data[0..4].try_into().unwrap());
+        Packed(raw).decode()
+    }
+
+    /// `SerializedFailure.deinit` — releases `data`. The dev-server owns the
+    /// allocator in Zig; here `Box<[u8]>` drop suffices, but we keep the
+    /// signature so call sites stay 1:1 with the spec.
+    pub fn deinit<D>(&self, _dev: &D) {
+        // Drop happens via owner; nothing to do for the borrow form used by
+        // `index_failures` (which iterates `&SerializedFailure`).
+    }
+}
+

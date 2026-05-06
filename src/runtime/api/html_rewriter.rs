@@ -1437,7 +1437,7 @@ fn html_string_value(input: lolhtml::HTMLString, global_object: &JSGlobalObject)
 
 // ─────────────────────────── TextChunk ───────────────────────────────────
 
-#[bun_jsc::JsClass]
+#[bun_jsc::JsClass(no_construct, no_finalize)]
 pub struct TextChunk {
     // TODO(port): replace hand-rolled ref_/deref with bun_ptr::IntrusiveRc<Self>
     // per PORTING.md (intrusive RefCount; *Self is the JS wrapper m_ctx).
@@ -1466,7 +1466,7 @@ impl TextChunk {
 
     fn content_handler(
         &mut self,
-        callback: fn(*mut lolhtml::TextChunk, &[u8], bool) -> Result<(), lolhtml::Error>,
+        callback: unsafe fn(*mut lolhtml::TextChunk, &[u8], bool) -> Result<(), lolhtml::Error>,
         this_object: JSValue,
         global_object: &JSGlobalObject,
         content: ZigString,
@@ -1477,7 +1477,9 @@ impl TextChunk {
         }
         let content_slice = content.to_slice();
 
-        if callback(
+        // SAFETY: self.text_chunk is non-null (checked above) and valid for the
+        // duration of the lol-html callback.
+        if unsafe { callback(
             self.text_chunk,
             content_slice.slice(),
             content_options.map_or(false, |o| o.html),

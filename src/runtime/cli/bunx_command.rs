@@ -997,23 +997,23 @@ impl BunxCommand {
                                 // with an unrelated system binary when the package lives only in the bunx
                                 // cache (handled by the `orelse` absolute-path probe below) and not in a
                                 // local node_modules.
-                                if update_request.version.literal.is_empty() {
-                                    destination_ = bun_core::which(
-                                        as_core_path_buf(&mut path_buf),
-                                        &local_bin_dirs,
-                                        if !ignore_cwd.is_empty() { b"" } else { top_level_dir },
-                                        &package_name_for_bin,
-                                    );
-                                }
-
-                                let dest_or_cache2 = match destination_ {
-                                    Some(d) => Some(d),
-                                    None => bun_core::which(
+                                let dest_or_cache2: Option<&ZStr> = 'find2: {
+                                    if update_request.version.literal.is_empty() {
+                                        if let Some(d) = bun_core::which(
+                                            as_core_path_buf(&mut path_buf),
+                                            &local_bin_dirs,
+                                            if !ignore_cwd.is_empty() { b"" } else { top_level_dir },
+                                            &package_name_for_bin,
+                                        ) {
+                                            break 'find2 Some(d);
+                                        }
+                                    }
+                                    bun_core::which(
                                         as_core_path_buf(&mut path_buf),
                                         bunx_cache_dir,
                                         if !ignore_cwd.is_empty() { b"" } else { top_level_dir },
                                         absolute_in_cache_dir,
-                                    ),
+                                    )
                                 };
                                 if let Some(destination) = dest_or_cache2 {
                                     let out: &[u8] = destination.as_bytes();

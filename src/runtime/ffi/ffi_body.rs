@@ -1470,12 +1470,12 @@ impl FFI {
             dylib.close();
         }
 
-        if let Some(mut state) = this.shared_state.take() {
+        if let Some(state) = this.shared_state.take() {
             // SAFETY: state is a valid TCC::State pointer; we have exclusive ownership
-            unsafe { state.as_mut().deinit() };
+            unsafe { TCC::State::destroy(state.as_ptr()) };
         }
 
-        this.functions.clear();
+        this.functions.clear_retaining_capacity();
 
         Ok(JSValue::UNDEFINED)
     }

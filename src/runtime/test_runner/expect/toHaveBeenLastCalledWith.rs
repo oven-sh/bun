@@ -107,9 +107,11 @@ pub fn to_have_been_last_called_with(
     }
 
     let diff_format = DiffFormatter {
-        expected: expected_args_js_array,
-        received: last_call_value,
-        global_this: global,
+        expected: Some(expected_args_js_array),
+        received: Some(last_call_value),
+        expected_string: None,
+        received_string: None,
+        global_this: Some(global),
         not: false,
     };
     this.throw(global, signature, format_args!("\n\n{}\n", diff_format))

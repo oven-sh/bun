@@ -12,8 +12,8 @@ pub fn to_start_with(
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
     // Zig: `defer this.postMatch(globalThis);` — side-effect must run on every exit path.
-    let _post = scopeguard::guard((), |_| this.post_match(global));
-    // TODO(port): scopeguard captures `&mut *this` across the fn body; reshape if borrowck rejects.
+    // PORT NOTE: reshaped for borrowck (scopeguard owns the &mut Expect; access via DerefMut).
+    let mut this = scopeguard::guard(this, |t| t.post_match(global));
 
     let this_value = frame.this();
     let arguments_ = frame.arguments_old::<1>();

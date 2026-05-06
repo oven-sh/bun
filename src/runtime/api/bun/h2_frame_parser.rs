@@ -5333,7 +5333,7 @@ impl H2FrameParser {
                 if silent_js.is_boolean() {
                     silent = silent_js.as_boolean();
                 } else {
-                    return global_object.throw_invalid_argument_type_value("options.silent", "boolean", silent_js);
+                    return Err(global_object.throw_invalid_argument_type_value("options.silent", "boolean", silent_js));
                 }
             }
 
@@ -5347,7 +5347,7 @@ impl H2FrameParser {
                         }
                     }
                 } else {
-                    return global_object.throw_invalid_argument_type_value("options.endStream", "boolean", end_stream_js);
+                    return Err(global_object.throw_invalid_argument_type_value("options.endStream", "boolean", end_stream_js));
                 }
             }
 

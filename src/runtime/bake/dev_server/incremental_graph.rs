@@ -150,11 +150,40 @@ pub struct IncrementalGraph<const SIDE: bake::Side = { bake::Side::Server }> {
     pub current_css_files: Vec<u64>,
 }
 
+/// `IncrementalGraph(side).MemoryCost` (IncrementalGraph.zig:414).
+#[derive(Default, Clone, Copy)]
+pub struct GraphMemoryCost {
+    pub graph: usize,
+    pub code: usize,
+    pub source_maps: usize,
+}
+
 impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     /// Helper for `DevServer::is_file_cached`.
     #[inline]
     pub fn file_kind_at(&self, index: usize) -> FileKind {
         self.bundled_files.values()[index].kind
+    }
+
+    /// `IncrementalGraph(side).memoryCostDetailed` (IncrementalGraph.zig:420).
+    /// Does NOT count `size_of::<Self>()`.
+    ///
+    /// Full per-side body lives in the gated `../DevServer/IncrementalGraph.rs`
+    /// draft (different `File` layout); this keystone version computes the
+    /// container costs that are stable across both sides.
+    pub fn memory_cost_detailed(&self) -> GraphMemoryCost {
+        let mut graph: usize = 0;
+        // TODO(port): `bundled_files` capacityInBytes — blocked_on:
+        // bun_collections::StringArrayHashMap::capacity_in_bytes
+        graph += self.first_import.capacity() * core::mem::size_of::<Option<EdgeIndex>>();
+        graph += self.first_dependency.capacity() * core::mem::size_of::<Option<EdgeIndex>>();
+        graph += self.current_chunk_parts.capacity() * core::mem::size_of::<FileIndex<SIDE>>();
+        graph += self.current_chunk_source_maps.capacity()
+            * core::mem::size_of::<packed_map::Shared>();
+        graph += self.current_css_files.capacity() * core::mem::size_of::<u64>();
+        // TODO(port): per-file `code`/`source_maps` walk — blocked on keystone
+        // `File` per-side layout (see gated draft).
+        GraphMemoryCost { graph, code: 0, source_maps: 0 }
     }
 
     /// `IncrementalGraph(side).getFileByIndex` — direct value-slot accessor.

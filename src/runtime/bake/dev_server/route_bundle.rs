@@ -129,6 +129,27 @@ impl RouteBundle {
     pub fn source_map_id(&self) -> source_map_store::Key {
         source_map_store::Key(u64::from(self.client_script_generation) << 32)
     }
+
+    /// `RouteBundle.memoryCost` (RouteBundle.zig:137).
+    pub fn memory_cost(&self) -> usize {
+        let mut cost: usize = core::mem::size_of::<RouteBundle>();
+        // TODO(port): `client_bundle.memoryCost()` — blocked_on:
+        // crate::server::StaticRoute::memory_cost
+        match &self.data {
+            Data::Framework(_) => {
+                // jsc.Strong.Optional children do not support memoryCost; not needed.
+                // .evaluate_failure is not owned.
+            }
+            Data::Html(html) => {
+                if let Some(text) = &html.bundled_html_text {
+                    cost += text.len();
+                }
+                // TODO(port): `cached_response.memoryCost()` — blocked_on:
+                // crate::server::StaticRoute::memory_cost
+            }
+        }
+        cost
+    }
 }
 
 // `deinit` is fully subsumed by Drop:

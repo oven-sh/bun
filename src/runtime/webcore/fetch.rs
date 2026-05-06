@@ -322,9 +322,9 @@ pub fn bun_fetch_preconnect(
 
     if url.hostname.is_empty() {
         drop(href);
-        return global_object
+        return Err(global_object
             .err(jsc::ErrorCode::INVALID_ARG_TYPE, format_args!("{}", FETCH_ERROR_BLANK_URL))
-            .throw();
+            .throw());
     }
 
     if !url.has_valid_port() {
@@ -1176,9 +1176,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 _ => false,
             };
             if already_used {
-                return global_this
+                return Err(global_this
                     .err(jsc::ErrorCode::BODY_ALREADY_USED, format_args!("Request body already used"))
-                    .throw();
+                    .throw());
             }
 
             if matches!(*body_value, BodyValue::Locked(_)) {
@@ -1904,8 +1904,12 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         );
         todo!("blocked_on: FetchOptions self-referential url/url_proxy_buffer (ZigURL<'static>)")
     };
+    // SAFETY: `global_this` is the thread-local Bun global; it lives for the
+    // process. `FetchTasklet::queue` stores it as `&'static`.
+    let global_static: &'static JSGlobalObject =
+        unsafe { core::mem::transmute::<&JSGlobalObject, &'static JSGlobalObject>(global_this) };
     let _ = FetchTasklet::queue(
-        global_this,
+        global_static,
         fetch_options,
         // Pass the Strong value instead of creating a new one, or else we
         // will leak it

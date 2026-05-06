@@ -1,18 +1,64 @@
 use std::sync::OnceLock;
 
 use bun_collections::HashMap;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, UUID};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc, UUID};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_str as strings;
 use bun_threading::Guarded;
 
 use crate::webcore::Blob;
 
+// ──────────────────────────────────────────────────────────────────────────
+// Local shims — upstream `bun_jsc::JSGlobalObject::throw_not_enough_arguments`
+// and `bun_str::String::has_prefix_comptime` are still `#[cfg(any())]`-gated,
+// so provide module-local extension traits until those land.
+// ──────────────────────────────────────────────────────────────────────────
+trait JSGlobalObjectObjUrlExt {
+    fn throw_not_enough_arguments(
+        &self,
+        name_: &str,
+        expected: usize,
+        got: usize,
+    ) -> JsResult<JSValue>;
+}
+impl JSGlobalObjectObjUrlExt for JSGlobalObject {
+    fn throw_not_enough_arguments(
+        &self,
+        name_: &str,
+        expected: usize,
+        got: usize,
+    ) -> JsResult<JSValue> {
+        Err(self.throw_invalid_arguments(format_args!(
+            "Not enough arguments to '{name_}'. Expected {expected}, got {got}."
+        )))
+    }
+}
+
+trait BunStringPrefixExt {
+    fn has_prefix(&self, prefix: &'static [u8]) -> bool;
+}
+impl BunStringPrefixExt for bun_str::String {
+    fn has_prefix(&self, prefix: &'static [u8]) -> bool {
+        if self.length() < prefix.len() {
+            return false;
+        }
+        if self.is_8bit() {
+            strings::strings::has_prefix_comptime(self.latin1(), prefix)
+        } else {
+            strings::strings::has_prefix_comptime_utf16(self.utf16(), prefix)
+        }
+    }
+}
+
 // PORT NOTE: reshaped for borrowck — Zig had separate `lock: bun.Mutex` and
 // `map: AutoHashMap` fields with manual lock()/unlock() around every access.
 // In Rust the map is wrapped in a `Guarded` (mutex + value).
+//
+// Key is `[u8; 16]` (the UUID bytes) rather than `UUID` directly because
+// upstream `bun_jsc::UUID` does not yet derive `Hash + Eq`; using the raw
+// byte array avoids touching the upstream crate.
 pub struct ObjectURLRegistry {
-    map: Guarded<HashMap<UUID, Box<Entry>>>,
+    map: Guarded<HashMap<[u8; 16], Box<Entry>>>,
 }
 
 impl Default for ObjectURLRegistry {

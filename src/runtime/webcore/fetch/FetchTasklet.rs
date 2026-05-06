@@ -95,7 +95,11 @@ pub struct FetchTasklet {
     pub javascript_vm: &'static VirtualMachine,
     pub global_this: &'static JSGlobalObject, // TODO(port): JSC_BORROW lifetime; using 'static to match javascript_vm
     pub request_body: HTTPRequestBody,
-    pub request_body_streaming_buffer: Option<Arc<ThreadSafeStreamBuffer>>,
+    // PORT NOTE: ThreadSafeStreamBuffer is intrusively refcounted (`ref_count: AtomicU32`,
+    // starts at 2) and shared with the HTTP thread via raw ptr; was `Option<Arc<_>>` in
+    // Phase A — `Arc` can't be mutably borrowed for `acquire/release`. Model as raw like
+    // Zig's `?*http.ThreadSafeStreamBuffer`.
+    pub request_body_streaming_buffer: Option<core::ptr::NonNull<ThreadSafeStreamBuffer>>,
 
     /// buffer being used by AsyncHTTP
     pub response_buffer: MutableString,

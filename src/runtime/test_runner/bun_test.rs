@@ -522,10 +522,17 @@ impl BunTestRoot {
         // Zig: active_file = .new(undefined); active_file.get().?.init(...)
         // TODO(port): in-place init — Rc::new_cyclic or two-phase init may be
         // needed because BunTest stores a backref to BunTestRoot.
+        // SAFETY: erase the `'1` borrow lifetime to `'static` for storage in
+        // `BunTestCell(UnsafeCell<BunTest<'static>>)`. Zig stores
+        // `?*CommandLineReporter` (raw, untracked); the reporter is the global
+        // `CommandLineReporter` owned by `test_command::exec` which outlives
+        // every `BunTest`. `exit_file()` nulls this before the file is dropped.
+        let reporter_static: &'static CommandLineReporter =
+            unsafe { &*(reporter as *mut CommandLineReporter as *const CommandLineReporter) };
         let bun_test = BunTestCell::new(BunTest::init(
             stable_root,
             file_id,
-            Some(reporter),
+            Some(reporter_static),
             default_concurrent,
             first_last,
         ));
@@ -803,7 +810,9 @@ impl<'a> BunTest<'a> {
         let [value] = callframe.arguments_as_array::<1>();
 
         let was_error = !value.is_empty_or_undefined_or_null();
-        if this.called {
+        // SAFETY: `this` is the live `*mut DoneCallback` returned by `from_js`;
+        // single-threaded JS VM, GC keeps the wrapper alive for the call frame.
+        if unsafe { (*this).called } {
             // in Bun 1.2.20, this is a no-op
             // in Jest, this is "Expected done to be called once, but it was called multiple times."
             // Vitest does not support done callbacks
@@ -814,8 +823,12 @@ impl<'a> BunTest<'a> {
                 let _ = unsafe { &mut *global_this.bun_vm() }.uncaught_exception(global_this, value, false);
             }
         }
-        this.called = true;
-        let Some(ref_in) = this.r#ref.take() else {
+        // SAFETY: see above — `this` is a live `*mut DoneCallback`.
+        let ref_in = unsafe {
+            (*this).called = true;
+            (*this).r#ref.take()
+        };
+        let Some(ref_in) = ref_in else {
             return Ok(JSValue::UNDEFINED);
         };
         // defer this.ref = null → already taken above
@@ -867,7 +880,7 @@ impl<'a> BunTest<'a> {
             match (*this).phase {
                 Phase::Collection => {}
                 Phase::Execution => {
-                    if let Err(e) = (*this).execution.handle_timeout(global) {
+                    if let Err(e) = (*this).execution.handle_timeout(global as *const _ as *mut JSGlobalObject) {
                         (*this).on_uncaught_exception(global, Some(global.take_exception(e)), false, RefDataValue::Done);
                     }
                 }
@@ -881,9 +894,13 @@ impl<'a> BunTest<'a> {
     }
 
     pub fn run_next_tick(weak: &BunTestPtrWeak, global_this: &JSGlobalObject, phase: RefDataValue) {
+        // SAFETY: `RunTestsTask` stores `&'static JSGlobalObject` (Zig stored a
+        // raw `*JSGlobalObject`). The per-thread global outlives every queued
+        // task; erase the anonymous lifetime via raw-ptr round-trip.
+        let global_static: &'static JSGlobalObject = unsafe { &*(global_this as *const JSGlobalObject) };
         let done_callback_test = Box::into_raw(Box::new(RunTestsTask {
             weak: weak.clone(),
-            global_this,
+            global_this: global_static,
             phase,
         }));
         // errdefer bun.destroy(done_callback_test) → ManagedTask::run reconstitutes the Box
@@ -1166,11 +1183,14 @@ impl<'a> BunTest<'a> {
         let mut dcb_ref: Option<RefDataPtr> = None;
         if !done_callback.is_empty() && !result.is_empty() {
             if let Some(dcb_data) = DoneCallback::from_js(done_callback) {
-                if dcb_data.called {
+                // SAFETY: `dcb_data` is the live `*mut DoneCallback` from `from_js`;
+                // single-threaded JS VM, GC roots `done_callback` for this frame.
+                if unsafe { (*dcb_data).called } {
                     // done callback already called or the callback errored; add result immediately
                 } else {
                     let r = Self::ref_(&this_strong, cfg_data.clone());
-                    dcb_data.r#ref = Some(r.dupe_ref());
+                    // SAFETY: see above.
+                    unsafe { (*dcb_data).r#ref = Some(r.dupe_ref()) };
                     dcb_ref = Some(r);
                     // TODO(port): Zig stored the same pointer twice without bumping; verify DoneCallback owns a counted ref vs. raw alias
                 }

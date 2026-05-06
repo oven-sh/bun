@@ -1803,7 +1803,25 @@ impl TestCommand {
                     last_error_snapshot_name: None,
                 },
                 bun_test_root: bun_test::BunTestRoot::init(),
-                ..Default::default()
+                // PORT NOTE: Zig zero-init defaults; `TestRunner` cannot derive
+                // `Default` because of the `&'a TestOptions` field, so spell the
+                // remaining fields out explicitly.
+                current_file: jest::CurrentFile::default(),
+                files: jest::FileList::default(),
+                index: jest::FileMap::default(),
+                last_file: 0,
+                drainer: Default::default(),
+                has_pending_tests: false,
+                default_timeout_override: u32::MAX,
+                // SAFETY: lifetime-erase to `'static`; `ctx` is the
+                // process-lifetime CLI context and `exec()` never returns.
+                test_options: unsafe {
+                    core::mem::transmute::<&crate::TestOptions, &'static crate::TestOptions>(
+                        &ctx.test_options,
+                    )
+                },
+                unhandled_errors_between_tests: 0,
+                summary: Summary::default(),
             },
             last_dot: 0,
             prev_file: 0,

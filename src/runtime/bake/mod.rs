@@ -318,6 +318,15 @@ pub mod framework_router {
             todo!("blocked_on: framework_router::FrameworkRouter::init_empty")
         }
 
+        /// `FrameworkRouter.memoryCost` (FrameworkRouter.zig:163).
+        pub fn memory_cost(&self) -> usize {
+            let mut cost: usize = core::mem::size_of::<FrameworkRouter>();
+            cost += self.routes.capacity() * core::mem::size_of::<Route>();
+            // TODO(port): `StaticRouteMap`/`DynamicRouteMap` entries.capacityInBytes —
+            // blocked_on: bun_collections::ArrayHashMap::capacity_in_bytes
+            cost
+        }
+
         #[inline]
         pub fn route_ptr(&self, i: RouteIndex) -> &Route {
             &self.routes[i.get() as usize]

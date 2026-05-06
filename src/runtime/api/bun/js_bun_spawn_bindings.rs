@@ -1398,7 +1398,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     }
 
     match subprocess.process.watch_or_reap() {
-        sys::Result::Ok(()) => {
+        sys::Result::Ok(_) => {
             // Once everything is set up, we can add the abort listener
             // Adding the abort listener may call the onAbortSignal callback immediately if it was already aborted
             // Therefore, we must do this at the very end.

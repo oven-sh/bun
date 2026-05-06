@@ -29,10 +29,12 @@ use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, StrongOptional, SystemError,
     VirtualMachine, StringJsc as _, bun_string_jsc,
 };
-// PORT NOTE: `ZigString` is imported from `bun_jsc` (not `bun_string`) because
-// the JSC-side methods (`to_js`, `with_encoding`, `to_slice`) live on the
-// `bun_jsc::ZigString` newtype; the two are repr(C)-identical.
-use bun_jsc::ZigString;
+// PORT NOTE: `ZigString` is imported from `bun_jsc::zig_string` (NOT the
+// top-level `bun_jsc::ZigString` type alias, which points at
+// `bun_string::ZigString`). The `zig_string::ZigString` newtype carries the
+// JSC-side methods (`to_js`, `with_encoding`, `to_slice`); the two are
+// repr(C)-identical.
+use bun_jsc::zig_string::ZigString;
 // PORT NOTE: there is no `bun_lolhtml` safe-wrapper crate yet — the safe
 // surface lives directly in `bun_lolhtml_sys::lol_html`. The Phase-A draft
 // referenced both `lolhtml::Foo` (safe wrappers) and `lolhtml_sys::Foo` (raw

@@ -864,7 +864,7 @@ impl BunxCommand {
                         if let Some(d) = bun_core::which(
                             as_core_path_buf(&mut path_buf),
                             if initial_bin_name_is_a_guess { &local_bin_dirs } else { &path_for_bin_dirs },
-                            if !ignore_cwd.is_empty() { b"" } else { top_level_dir },
+                            if !ignore_cwd.is_empty() { b"".as_slice() } else { top_level_dir },
                             initial_bin_name,
                         ) {
                             break 'find Some(d);
@@ -873,7 +873,7 @@ impl BunxCommand {
                     bun_core::which(
                         as_core_path_buf(&mut path_buf),
                         bunx_cache_dir,
-                        if !ignore_cwd.is_empty() { b"" } else { top_level_dir },
+                        if !ignore_cwd.is_empty() { b"".as_slice() } else { top_level_dir },
                         absolute_in_cache_dir,
                     )
                 };
@@ -994,7 +994,7 @@ impl BunxCommand {
                                         if let Some(d) = bun_core::which(
                                             as_core_path_buf(&mut path_buf),
                                             &local_bin_dirs,
-                                            if !ignore_cwd.is_empty() { b"" } else { top_level_dir },
+                                            if !ignore_cwd.is_empty() { b"".as_slice() } else { top_level_dir },
                                             &package_name_for_bin,
                                         ) {
                                             break 'find2 Some(d);
@@ -1003,7 +1003,7 @@ impl BunxCommand {
                                     bun_core::which(
                                         as_core_path_buf(&mut path_buf),
                                         bunx_cache_dir,
-                                        if !ignore_cwd.is_empty() { b"" } else { top_level_dir },
+                                        if !ignore_cwd.is_empty() { b"".as_slice() } else { top_level_dir },
                                         absolute_in_cache_dir,
                                     )
                                 };
@@ -1217,7 +1217,7 @@ impl BunxCommand {
         if let Some(destination) = bun_core::which(
             as_core_path_buf(&mut path_buf),
             bunx_cache_dir,
-            if !ignore_cwd.is_empty() { b"" } else { top_level_dir },
+            if !ignore_cwd.is_empty() { b"".as_slice() } else { top_level_dir },
             absolute_in_cache_dir,
         ) {
             let out: &[u8] = destination.as_bytes();
@@ -1254,7 +1254,7 @@ impl BunxCommand {
                     if let Some(destination) = bun_core::which(
                         as_core_path_buf(&mut path_buf),
                         bunx_cache_dir,
-                        if !ignore_cwd.is_empty() { b"" } else { top_level_dir },
+                        if !ignore_cwd.is_empty() { b"".as_slice() } else { top_level_dir },
                         absolute_in_cache_dir,
                     ) {
                         let out: &[u8] = destination.as_bytes();

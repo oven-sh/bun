@@ -75,6 +75,26 @@ fn verify_error_to_js(
     todo!("blocked_on: bun_runtime::socket::uws_jsc::verify_error_to_js")
 }
 
+/// Local FFI shim for `JSGlobalObject.queueMicrotask` — `bun_jsc` only exposes
+/// the C-style `queue_microtask_callback`; the JS-function form lives in the
+/// gated `JSGlobalObject.rs` module. Forward to the C++ symbol directly.
+// TODO(port): once `bun_jsc::JSGlobalObject::queue_microtask` is un-gated,
+// drop this and call it directly.
+fn queue_microtask(global: &JSGlobalObject, function: JSValue, args: &[JSValue]) {
+    extern "C" {
+        fn JSC__JSGlobalObject__queueMicrotaskJob(
+            global: *const JSGlobalObject,
+            function: JSValue,
+            first: JSValue,
+            second: JSValue,
+        );
+    }
+    let first = args.get(0).copied().unwrap_or(JSValue::ZERO);
+    let second = args.get(1).copied().unwrap_or(JSValue::ZERO);
+    // SAFETY: `global` is live; JSValues are stack-rooted for the call.
+    unsafe { JSC__JSGlobalObject__queueMicrotaskJob(global, function, first, second) }
+}
+
 // TODO(b2-blocked): #[crate::jsc::JsClass] proc-macro attr
 pub struct PostgresSQLConnection {
     // TODO(port): bun.ptr.RefCount(@This(), "ref_count", deinit, .{}) — intrusive refcount;
@@ -182,8 +202,14 @@ impl PostgresSQLConnection {
     /// SAFETY: returns `&mut VirtualMachine` derived from `&self`; two calls
     /// alias the same VM. Caller must not hold another live `&mut` to it.
     /// (JSC_BORROW — vm outlives this connection.)
+    ///
+    /// PORT NOTE: the returned lifetime is **unbounded** (not tied to `&self`).
+    /// `self.vm` is a raw pointer to the singleton VM, so the borrow does not
+    /// actually overlap any of `self`'s own bytes; tying it to `&self` made
+    /// `vm.timer().remove(&mut self.timer)` / holding `event_loop` across
+    /// `&mut self` calls impossible under borrowck.
     #[inline]
-    unsafe fn vm(&self) -> &mut VirtualMachine {
+    unsafe fn vm<'a>(&self) -> &'a mut VirtualMachine {
         unsafe { &mut *self.vm }
     }
 
@@ -555,7 +581,7 @@ impl PostgresSQLConnection {
                 };
                 let js_value = self.js_value.get();
                 js_value.ensure_still_alive();
-                self.global().queue_microtask(on_connect, &[JSValue::NULL, js_value]);
+                queue_microtask(self.global(), on_connect, &[JSValue::NULL, js_value]);
                 self.poll_ref.unref(self.vm_ctx());
             }
             _ => {}

@@ -141,6 +141,14 @@ impl JsRef {
         }
     }
 
+    /// `try_get().unwrap_or(JSValue::UNDEFINED)`. Convenience for callers that
+    /// previously stored a bare `JSValue` field (Zig `this.js_value`) and read
+    /// it unconditionally — the `JsRef` wrapper was added on the Rust side for
+    /// GC-safety, so `get()` recovers the original ergonomics.
+    pub fn get(&self) -> JSValue {
+        self.try_get().unwrap_or(JSValue::UNDEFINED)
+    }
+
     pub fn set_weak(&mut self, value: JSValue) {
         debug_assert!(!value.is_empty_or_undefined_or_null());
         match self {

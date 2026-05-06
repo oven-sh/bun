@@ -223,11 +223,10 @@ pub mod options {
     pub type MacroRemap = bun_collections::StringHashMap<bun_collections::StringHashMap<Box<[u8]>>>;
 }
 pub use crate::renamer;
-#[derive(Copy, Clone, Default)]
-pub struct KnownGlobal;
+pub use crate::ast::known_global::KnownGlobal;
 pub use crate::ast::parser_entry::{Parser, Options as ParserOptions};
 pub use crate::ast::side_effects::SideEffects;
-pub fn fold_string_addition(_l: Expr, _r: Expr) -> Option<Expr> { None /* round-E */ }
+pub use crate::ast::fold_string_addition::fold_string_addition;
 pub use bun_paths::is_package_path;
 
 pub use crate::ast::base::Ref;

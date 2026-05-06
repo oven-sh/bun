@@ -789,12 +789,8 @@ impl PackageJSON {
         // PERF(port): include_scripts_ was a comptime enum param — profile in Phase B
         let include_scripts = include_scripts_ == IncludeScripts::IncludeScripts;
 
-        // SAFETY: Resolver stores `fs`/`log` as raw `*mut` to mirror Zig's freely-
-        // aliasing `*FileSystem`/`*Log` and break borrowck cycles between
-        // `Resolver` self-borrows. Both are always non-null for a live resolver
-        // and uniquely accessed for the duration of this call.
-        let r_fs: &mut fs::FileSystem = unsafe { &mut *r.fs };
-        let r_log: &mut logger::Log = unsafe { &mut *r.log };
+        let r_fs: &mut fs::FileSystem = r.fs();
+        let r_log: &mut logger::Log = r.log();
 
         // TODO: remove this extra copy
         let parts: [&[u8]; 2] = [input_path, b"package.json"];

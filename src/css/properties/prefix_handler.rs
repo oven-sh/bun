@@ -1,9 +1,10 @@
-use bun_css as css;
-use bun_css::css_properties::custom::UnparsedProperty;
-use bun_css::prefixes::Feature;
-use bun_css::Property;
-use bun_css::PropertyIdTag;
-use bun_css::VendorPrefix;
+#![allow(dead_code, unused_imports, unused_macros)]
+use crate as css;
+use crate::css_properties::custom::UnparsedProperty;
+use crate::prefixes::Feature;
+use crate::Property;
+use crate::PropertyIdTag;
+use crate::VendorPrefix;
 
 /// *NOTE* The struct field names must match their corresponding variants in `Property`!
 #[derive(Default)]
@@ -36,17 +37,19 @@ impl FallbackHandler {
         // TODO(port): proc-macro — if the field list grows, generate these arms from a
         // single source of truth shared with `Property`/`PropertyIdTag`.
 
+        let allocator = dest.bump();
+
         macro_rules! handle_unprefixed {
             ($self_field:ident, $Variant:ident) => {
                 if let Property::$Variant(payload) = property {
-                    let mut val = payload.deep_clone(context.allocator);
+                    let mut val = css::generic::deep_clone(payload, allocator);
 
                     if $self_field.is_none() {
-                        let fallbacks = val.get_fallbacks(context.allocator, context.targets);
+                        let mut fallbacks = val.get_fallbacks(allocator, context.targets);
                         // PORT NOTE: `has_fallbacks` only used in the vendor-prefixed branch in Zig.
                         let _has_fallbacks = !fallbacks.is_empty();
 
-                        for fallback in fallbacks.slice() {
+                        for fallback in fallbacks.drain() {
                             dest.push(Property::$Variant(fallback));
                         }
                     }
@@ -72,14 +75,14 @@ impl FallbackHandler {
         macro_rules! handle_prefixed {
             ($self_field:ident, $Variant:ident, $FeatureVariant:ident) => {
                 if let Property::$Variant((payload, prefix)) = property {
-                    let mut val = payload.deep_clone(context.allocator);
+                    let mut val = css::generic::deep_clone(payload, allocator);
                     let mut prefix = *prefix;
 
                     if $self_field.is_none() {
-                        let fallbacks = val.get_fallbacks(context.allocator, context.targets);
+                        let mut fallbacks = val.get_fallbacks(allocator, context.targets);
                         let has_fallbacks = !fallbacks.is_empty();
 
-                        for fallback in fallbacks.slice() {
+                        for fallback in fallbacks.drain() {
                             dest.push(Property::$Variant((fallback, prefix)));
                         }
                         // TODO(port): Zig source reads `@field(property, field.name[1])` here,
@@ -130,7 +133,7 @@ impl FallbackHandler {
                 macro_rules! match_unparsed_unprefixed {
                     ($self_field:ident, $Variant:ident) => {
                         if val.property_id.tag() == PropertyIdTag::$Variant {
-                            let newval = val.deep_clone(context.allocator);
+                            let newval = val.deep_clone(allocator);
                             break 'unparsed_and_index (newval, $self_field);
                         }
                     };
@@ -138,17 +141,17 @@ impl FallbackHandler {
                 macro_rules! match_unparsed_prefixed {
                     ($self_field:ident, $Variant:ident, $FeatureVariant:ident) => {
                         if val.property_id.tag() == PropertyIdTag::$Variant {
-                            // TODO(port): Zig accessed `@field(val.property_id, field.name)[1]`
-                            // to get the VendorPrefix from the PropertyId payload. Map to the
-                            // ported PropertyId accessor in Phase B.
+                            // PORT NOTE: Zig accessed `@field(val.property_id, field.name)[1]`
+                            // to get the VendorPrefix from the PropertyId payload. Mapped to
+                            // the generated `PropertyId::prefix()` accessor.
                             let newval = if val
                                 .property_id
                                 .prefix()
                                 .contains(VendorPrefix::NONE)
                             {
-                                val.get_prefixed(context.targets, Feature::$FeatureVariant)
+                                val.get_prefixed(allocator, context.targets, Feature::$FeatureVariant)
                             } else {
-                                val.deep_clone(context.allocator)
+                                val.deep_clone(allocator)
                             };
                             break 'unparsed_and_index (newval, $self_field);
                         }
@@ -157,9 +160,8 @@ impl FallbackHandler {
 
                 match_unparsed_unprefixed!(color, Color);
                 match_unparsed_unprefixed!(text_shadow, TextShadow);
-                // Silence unused-macro warning until a prefixed property is re-enabled.
-                #[allow(unused_macros)]
-                let _ = &match_unparsed_prefixed;
+                // (no prefixed properties active yet — `match_unparsed_prefixed!` kept for
+                // when filter/backdrop_filter/etc. are re-enabled in this handler.)
 
                 return false;
             };

@@ -238,6 +238,7 @@ impl BoxShadowHandler {
         if self.box_shadows.is_none() {
             return;
         }
+        let allocator = dest.bump();
 
         let Some((box_shadows, prefixes2)) = self.box_shadows.take() else {
             self.flushed = true;
@@ -251,25 +252,32 @@ impl BoxShadowHandler {
                 fallbacks.insert(shadow.color.get_necessary_fallbacks(context.targets));
             }
 
-            if fallbacks.contains(ColorFallbackKind::RGB) {
-                let mut rgb: SmallList<BoxShadow, 1> =
-                    SmallList::init_capacity(context.allocator, box_shadows.len());
-                rgb.set_len(box_shadows.len());
-                debug_assert_eq!(box_shadows.slice().len(), rgb.slice_mut().len());
-                for (input, output) in box_shadows.slice().iter().zip(rgb.slice_mut().iter_mut()) {
-                    output.color = input
-                        .color
-                        .to_rgb(context.allocator)
-                        .unwrap_or_else(|| input.color.deep_clone(context.allocator));
-                    // PORT NOTE: Zig used `inline for std.meta.fields(BoxShadow)` skipping `color`.
-                    // Expanded explicitly — keep in sync with BoxShadow field list.
-                    output.x_offset = css::generic::deep_clone(&input.x_offset, context.allocator);
-                    output.y_offset = css::generic::deep_clone(&input.y_offset, context.allocator);
-                    output.blur = css::generic::deep_clone(&input.blur, context.allocator);
-                    output.spread = css::generic::deep_clone(&input.spread, context.allocator);
-                    output.inset = input.inset;
-                }
+            // PORT NOTE: Zig used `initCapacity(len)` + `setLen(len)` + per-index field
+            // writes via `inline for std.meta.fields(BoxShadow)` skipping `color`. That
+            // pattern would observe partially-uninit `BoxShadow` values in Rust, so we
+            // build each fully-formed `BoxShadow` and `append`. Behavior is identical.
+            macro_rules! build_color_fallback {
+                ($conv:ident) => {{
+                    let mut out: SmallList<BoxShadow, 1> = SmallList::init_capacity(box_shadows.len());
+                    for input in box_shadows.slice().iter() {
+                        out.append(BoxShadow {
+                            color: input
+                                .color
+                                .$conv()
+                                .unwrap_or_else(|| input.color.deep_clone(allocator)),
+                            x_offset: css::generic::deep_clone(&input.x_offset, allocator),
+                            y_offset: css::generic::deep_clone(&input.y_offset, allocator),
+                            blur: css::generic::deep_clone(&input.blur, allocator),
+                            spread: css::generic::deep_clone(&input.spread, allocator),
+                            inset: input.inset,
+                        });
+                    }
+                    out
+                }};
+            }
 
+            if fallbacks.contains(ColorFallbackKind::RGB) {
+                let rgb = build_color_fallback!(to_rgb);
                 dest.push(Property::BoxShadow((rgb, prefixes)));
                 if prefixes.contains(VendorPrefix::NONE) {
                     prefixes = VendorPrefix::NONE;
@@ -280,42 +288,12 @@ impl BoxShadowHandler {
             }
 
             if fallbacks.contains(ColorFallbackKind::P3) {
-                let mut p3: SmallList<BoxShadow, 1> =
-                    SmallList::init_capacity(context.allocator, box_shadows.len());
-                p3.set_len(box_shadows.len());
-                debug_assert_eq!(box_shadows.slice().len(), p3.slice_mut().len());
-                for (input, output) in box_shadows.slice().iter().zip(p3.slice_mut().iter_mut()) {
-                    output.color = input
-                        .color
-                        .to_p3(context.allocator)
-                        .unwrap_or_else(|| input.color.deep_clone(context.allocator));
-                    // PORT NOTE: expanded `inline for std.meta.fields(BoxShadow)` skipping `color`.
-                    output.x_offset = css::generic::deep_clone(&input.x_offset, context.allocator);
-                    output.y_offset = css::generic::deep_clone(&input.y_offset, context.allocator);
-                    output.blur = css::generic::deep_clone(&input.blur, context.allocator);
-                    output.spread = css::generic::deep_clone(&input.spread, context.allocator);
-                    output.inset = input.inset;
-                }
+                let p3 = build_color_fallback!(to_p3);
                 dest.push(Property::BoxShadow((p3, VendorPrefix::NONE)));
             }
 
             if fallbacks.contains(ColorFallbackKind::LAB) {
-                let mut lab: SmallList<BoxShadow, 1> =
-                    SmallList::init_capacity(context.allocator, box_shadows.len());
-                lab.set_len(box_shadows.len());
-                debug_assert_eq!(box_shadows.slice().len(), lab.slice_mut().len());
-                for (input, output) in box_shadows.slice().iter().zip(lab.slice_mut().iter_mut()) {
-                    output.color = input
-                        .color
-                        .to_lab(context.allocator)
-                        .unwrap_or_else(|| input.color.deep_clone(context.allocator));
-                    // PORT NOTE: expanded `inline for std.meta.fields(BoxShadow)` skipping `color`.
-                    output.x_offset = css::generic::deep_clone(&input.x_offset, context.allocator);
-                    output.y_offset = css::generic::deep_clone(&input.y_offset, context.allocator);
-                    output.blur = css::generic::deep_clone(&input.blur, context.allocator);
-                    output.spread = css::generic::deep_clone(&input.spread, context.allocator);
-                    output.inset = input.inset;
-                }
+                let lab = build_color_fallback!(to_lab);
                 dest.push(Property::BoxShadow((lab, VendorPrefix::NONE)));
             } else {
                 dest.push(Property::BoxShadow((box_shadows, prefixes)));

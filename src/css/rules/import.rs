@@ -51,6 +51,14 @@ pub struct ImportConditions {
 }
 
 impl ImportConditions {
+    pub fn deep_clone(&self, bump: &Arena) -> Self {
+        Self {
+            layer: self.layer.as_ref().map(|l| l.deep_clone(bump)),
+            supports: self.supports.as_ref().map(|s| s.deep_clone(bump)),
+            media: super::dc::media_list(&self.media, bump),
+        }
+    }
+
     pub fn has_anonymous_layer(&self) -> bool {
         matches!(&self.layer, Some(l) if l.v.is_none())
     }

@@ -2725,9 +2725,12 @@ impl<AtRule> StyleSheet<AtRule> {
     }
 
     /// Parse a style sheet from a string.
+    // TODO(port): `ParserOptions<'static>` matches the `StyleSheet.options`
+    // field's `'static` erasure; re-threads to `<'bump>` alongside the rest of
+    // the crate.
     pub fn parse_with<P: CustomAtRuleParser<AtRule = AtRule>>(
         code: &[u8],
-        options: ParserOptions,
+        options: ParserOptions<'static>,
         at_rule_parser: &mut P,
         import_records: Option<&mut BabyList<ImportRecord>>,
         source_index: SrcIndex,

@@ -1290,7 +1290,7 @@ impl ShellExecEnv {
         };
         if required_len >= buf.len() {
             return Err(bun_sys::Error::from_code_int(
-                bun_sys::E::ENAMETOOLONG as _,
+                bun_sys::E::NAMETOOLONG as _,
                 bun_sys::Tag::chdir,
             ));
         }
@@ -1356,12 +1356,13 @@ impl ShellExecEnv {
         if !in_init {
             // Spec: `export_env.put("PWD", EnvStr.initSlice(cwd()))` etc.
             use crate::shell::env_str::EnvStr;
-            self.export_env
-                .put(EnvStr::init_slice(b"PWD"), EnvStr::init_slice(self.cwd()));
-            self.export_env.put(
-                EnvStr::init_slice(b"OLDPWD"),
-                EnvStr::init_slice(self.prev_cwd()),
-            );
+            // PORT NOTE: reshaped for borrowck — materialize the EnvStr (which
+            // erases the slice lifetime into a packed ptr) before taking
+            // `&mut self.export_env`.
+            let pwd = EnvStr::init_slice(self.cwd());
+            let oldpwd = EnvStr::init_slice(self.prev_cwd());
+            self.export_env.insert(EnvStr::init_slice(b"PWD"), pwd);
+            self.export_env.insert(EnvStr::init_slice(b"OLDPWD"), oldpwd);
         }
 
         Ok(())

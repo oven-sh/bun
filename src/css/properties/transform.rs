@@ -983,7 +983,15 @@ pub struct TransformHandler {
 }
 
 impl TransformHandler {
-    // No-op stubs so `DeclarationHandler` compiles; real bodies are gated below.
+    // PORT NOTE: these were silent no-op stubs (handle_property returned `false`,
+    // finalize did nothing) which is the forbidden silent-no-op pattern per
+    // PORTING.md §Forbidden — the spec (transform.zig:1196-1292) does real work
+    // (accumulates TransformList across vendor prefixes, OR-merges prefix bits,
+    // folds translate/rotate/scale into the transform list, flushes on finalize).
+    // Replaced with `todo!()` so the divergence is loud rather than passing
+    // properties through unhandled. Real bodies are gated below; un-gate once
+    // `PropertyHandlerContext::allocator` is restored (box_shadow.rs et al. already
+    // depend on it).
     #[inline]
     pub fn handle_property(
         &mut self,
@@ -991,7 +999,7 @@ impl TransformHandler {
         _dest: &mut DeclarationList<'_>,
         _context: &mut PropertyHandlerContext<'_>,
     ) -> bool {
-        false
+        todo!("blocked_on: PropertyHandlerContext::allocator (see gated impl below; transform.zig:1196-1260)")
     }
     #[inline]
     pub fn finalize(
@@ -999,8 +1007,11 @@ impl TransformHandler {
         _dest: &mut DeclarationList<'_>,
         _context: &mut PropertyHandlerContext<'_>,
     ) {
+        todo!("blocked_on: PropertyHandlerContext::allocator (see gated impl below; transform.zig:1262-1292)")
     }
 }
+
+#[cfg(any())] // blocked_on: PropertyHandlerContext::allocator field (context.rs dropped it; box_shadow.rs etc. need it too)
 
 #[cfg(any())] // blocked_on: Property variant payloads + prefixes::Feature method names
 impl TransformHandler {

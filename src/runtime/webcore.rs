@@ -6,34 +6,58 @@ use core::ptr::NonNull;
 // force-reference block is dropped — Rust links what's `pub`. (See PORTING.md §Don't translate.)
 
 // ─── submodules under ./webcore/ ─────────────────────────────────────────────
-// Remaining gated: depend on bun_jsc method surface (not yet a dep of bun_runtime).
+// `#[path]` is relative to the dir containing this file (`src/runtime/`); the
+// inline `_gated_submods` block below only re-exports — declaring `pub mod`
+// there would make rustc look in `src/runtime/_gated_submods/*.rs`.
 
+#[path = "webcore/Crypto.rs"]
+pub mod crypto;
+#[path = "webcore/BakeResponse.rs"]
+pub mod bake_response;
+#[path = "webcore/TextEncoder.rs"]
+pub mod text_encoder;
+#[path = "webcore/TextEncoderStreamEncoder.rs"]
+pub mod text_encoder_stream_encoder;
+#[path = "webcore/S3Stat.rs"]
+pub mod s3_stat;
+#[path = "webcore/ResumableSink.rs"]
+pub mod resumable_sink;
+#[path = "webcore/S3Client.rs"]
+pub mod s3_client;
+#[path = "webcore/CookieMap.rs"]
+pub mod cookie_map;
+#[path = "webcore/ByteBlobLoader.rs"]
+pub mod byte_blob_loader;
+#[path = "webcore/ByteStream.rs"]
+pub mod byte_stream;
+
+// Remaining gated: depend on bun_jsc method surface (not yet a dep of bun_runtime).
 mod _gated_submods {
     pub use bun_jsc::js_error_code::DOMExceptionCode;
     pub use bun_jsc::web_worker;
 
-    pub mod crypto;
-    pub mod bake_response;
-    pub mod text_encoder;
-    pub mod text_encoder_stream_encoder;
-    pub mod s3_stat;
-    pub use s3_stat::S3Stat;
-    pub mod resumable_sink;
-    pub use resumable_sink::ResumableFetchSink;
-    pub use resumable_sink::ResumableS3UploadSink;
-    pub use resumable_sink::ResumableSinkBackpressure;
-    pub mod s3_client;
-    pub use s3_client::S3Client;
-    pub mod cookie_map;
-    pub use cookie_map::CookieMap;
-    pub mod byte_blob_loader;
-    pub mod byte_stream;
+    pub use super::crypto;
+    pub use super::bake_response;
+    pub use super::text_encoder;
+    pub use super::text_encoder_stream_encoder;
+    pub use super::s3_stat;
+    pub use super::s3_stat::S3Stat;
+    pub use super::resumable_sink;
+    pub use super::resumable_sink::ResumableFetchSink;
+    pub use super::resumable_sink::ResumableS3UploadSink;
+    pub use super::resumable_sink::ResumableSinkBackpressure;
+    pub use super::s3_client;
+    pub use super::s3_client::S3Client;
+    pub use super::cookie_map;
+    pub use super::cookie_map::CookieMap;
+    pub use super::byte_blob_loader;
+    pub use super::byte_stream;
 
-    pub use streams::NetworkSink;
-    pub use streams::HTTPResponseSink;
-    pub use streams::HTTPSResponseSink;
-    pub use streams::H3ResponseSink;
-    pub use streams::HTTPServerWritable;
+    pub use super::streams::NetworkSink;
+    pub use super::streams::HTTPResponseSink;
+    pub use super::streams::HTTPSResponseSink;
+    pub use super::streams::H3ResponseSink;
+    pub use super::streams::HTTPServerWritable;
 }
 
 #[path = "webcore/ObjectURLRegistry.rs"]

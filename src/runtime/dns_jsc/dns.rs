@@ -2798,19 +2798,19 @@ pub enum RecordType {
     ANY = 255,
 }
 
+pub static RECORD_TYPE_MAP: phf::Map<&'static [u8], RecordType> = phf::phf_map! {
+    b"A" => RecordType::A, b"AAAA" => RecordType::AAAA, b"ANY" => RecordType::ANY,
+    b"CAA" => RecordType::CAA, b"CNAME" => RecordType::CNAME, b"MX" => RecordType::MX,
+    b"NS" => RecordType::NS, b"PTR" => RecordType::PTR, b"SOA" => RecordType::SOA,
+    b"SRV" => RecordType::SRV, b"TXT" => RecordType::TXT,
+    b"a" => RecordType::A, b"aaaa" => RecordType::AAAA, b"any" => RecordType::ANY,
+    b"caa" => RecordType::CAA, b"cname" => RecordType::CNAME, b"mx" => RecordType::MX,
+    b"ns" => RecordType::NS, b"ptr" => RecordType::PTR, b"soa" => RecordType::SOA,
+    b"srv" => RecordType::SRV, b"txt" => RecordType::TXT,
+};
+
 impl RecordType {
     pub const DEFAULT: Self = RecordType::A;
-
-    pub static MAP: phf::Map<&'static [u8], RecordType> = phf::phf_map! {
-        b"A" => RecordType::A, b"AAAA" => RecordType::AAAA, b"ANY" => RecordType::ANY,
-        b"CAA" => RecordType::CAA, b"CNAME" => RecordType::CNAME, b"MX" => RecordType::MX,
-        b"NS" => RecordType::NS, b"PTR" => RecordType::PTR, b"SOA" => RecordType::SOA,
-        b"SRV" => RecordType::SRV, b"TXT" => RecordType::TXT,
-        b"a" => RecordType::A, b"aaaa" => RecordType::AAAA, b"any" => RecordType::ANY,
-        b"caa" => RecordType::CAA, b"cname" => RecordType::CNAME, b"mx" => RecordType::MX,
-        b"ns" => RecordType::NS, b"ptr" => RecordType::PTR, b"soa" => RecordType::SOA,
-        b"srv" => RecordType::SRV, b"txt" => RecordType::TXT,
-    };
 }
 
 struct DNSQuery {
@@ -3641,7 +3641,7 @@ impl Resolver {
                     break 'brk RecordType::DEFAULT;
                 }
                 // TODO(port): phf custom hasher — Zig used getWithEql with ZigString.eqlComptime
-                match RecordType::MAP.get(record_type_str.get_zig_string(global_this).slice()) {
+                match RECORD_TYPE_MAP.get(record_type_str.get_zig_string(global_this).slice()) {
                     Some(r) => *r,
                     None => return global_this.throw_invalid_argument_property_value(
                         "record",
@@ -3829,36 +3829,38 @@ impl Resolver {
 
     // ───────── per-record-type global+instance resolve fns ─────────
     // These are mechanically identical; Zig had one per record type.
+}
 
-    macro_rules! resolve_record_fn {
-        ($global:ident, $method:ident, $jsname:literal, $ty:ty, $allow_empty:expr) => {
-            #[host_fn]
-            pub fn $global(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-                let vm = global_this.bun_vm();
-                let resolver = vm.rare_data().global_dns_resolver(vm);
-                resolver.$method(global_this, callframe)
+macro_rules! resolve_record_fn {
+    ($global:ident, $method:ident, $jsname:literal, $ty:ty, $allow_empty:expr) => {
+        #[host_fn]
+        pub fn $global(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+            let vm = global_this.bun_vm();
+            let resolver = vm.rare_data().global_dns_resolver(vm);
+            resolver.$method(global_this, callframe)
+        }
+
+        #[host_fn(method)]
+        pub fn $method(this: &mut Self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+            let arguments = callframe.arguments_old(2);
+            if arguments.len() < 1 {
+                return global_this.throw_not_enough_arguments($jsname, 1, arguments.len());
             }
-
-            #[host_fn(method)]
-            pub fn $method(this: &mut Self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-                let arguments = callframe.arguments_old(2);
-                if arguments.len() < 1 {
-                    return global_this.throw_not_enough_arguments($jsname, 1, arguments.len());
-                }
-                let name_value = arguments.ptr[0];
-                if name_value.is_empty_or_undefined_or_null() || !name_value.is_string() {
-                    return global_this.throw_invalid_argument_type($jsname, "hostname", "string");
-                }
-                let name_str = name_value.to_js_string(global_this)?;
-                if !$allow_empty && name_str.length() == 0 {
-                    return global_this.throw_invalid_argument_type($jsname, "hostname", "non-empty string");
-                }
-                let name = name_str.to_slice_clone(global_this)?;
-                this.do_resolve_cares::<$ty>(name.slice(), global_this)
+            let name_value = arguments.ptr[0];
+            if name_value.is_empty_or_undefined_or_null() || !name_value.is_string() {
+                return global_this.throw_invalid_argument_type($jsname, "hostname", "string");
             }
-        };
-    }
+            let name_str = name_value.to_js_string(global_this)?;
+            if !$allow_empty && name_str.length() == 0 {
+                return global_this.throw_invalid_argument_type($jsname, "hostname", "non-empty string");
+            }
+            let name = name_str.to_slice_clone(global_this)?;
+            this.do_resolve_cares::<$ty>(name.slice(), global_this)
+        }
+    };
+}
 
+impl Resolver {
     resolve_record_fn!(global_resolve_srv, resolve_srv, "resolveSrv", c_ares::struct_ares_srv_reply, false);
     resolve_record_fn!(global_resolve_soa, resolve_soa, "resolveSoa", c_ares::struct_ares_soa_reply, true);
     resolve_record_fn!(global_resolve_caa, resolve_caa, "resolveCaa", c_ares::struct_ares_caa_reply, false);

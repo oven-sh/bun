@@ -656,16 +656,17 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             app.any(p, Some(trampoline::on_request::<SSL, DEBUG>), self_ptr as *mut c_void);
         }
 
-        // --- 5. Static routes / DevServer / plugins / chrome-devtools ---
+        // --- 5-8. Static routes / DevServer / plugins / chrome-devtools ---
         // TODO(b2-blocked): apply_static_route + DevServer.set_routes +
-        // ServePlugins::init wiring (server_body.rs:3354-3454). Gated on
-        // StaticRoute/FileRoute/HTMLBundle on_request bodies and DevServer
-        // route surface; the per-route uws registration shape is identical to
-        // the user-route loop above and slots in here once those land.
-        
-        {
-            compile_error!("see server_body.rs::set_routes §5-8");
-        }
+        // ServePlugins::init wiring (server_body.rs:3476-3641). Gated on
+        // StaticRouteLike impls for StaticRoute/FileRoute/HTMLBundle (the
+        // `apply_static_route` helper takes `&mut bun_uws::NewApp<SSL>` whereas
+        // this stub holds `*mut bun_uws_sys::NewApp<SSL>`) and DevServer route
+        // surface; the per-route uws registration shape is identical to the
+        // user-route loop above and slots in here once those land.
+        let _ = &self.config.static_routes;
+        let _ = &self.dev_server;
+        let _ = &self.plugins;
 
         // --- 9. Consolidated "/*" HTTP fallback ---
         if !star_covered_by_user_any {
@@ -917,13 +918,36 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     }
                 }
 
-                // TODO(b2-blocked): h3_app.listen_with_config(..) — wire the
-                // bun_uws_sys::h3 typed wrapper here (h3.rs now exposes a real
-                // `listen_with_config` over `c::uws_h3_app_listen_with_config`).
-
                 if Self::HAS_H3 {
-                    if let Some(_h3_app) = self_.h3_app {
-                        compile_error!("see server_body.rs::listen — h3 listen_with_config")
+                    if let Some(h3_app) = self_.h3_app {
+                        // Same UDP port as the TCP listener so Alt-Svc works.
+                        // PORT NOTE: `listener` was set synchronously by
+                        // `on_listen` inside the h1 `listen_with_config` above;
+                        // see the scope-level PORT NOTE re: `self_` re-derive.
+                        let h3_port: u16 = match self_.listener {
+                            // SAFETY: ls is a live uws ListenSocket FFI handle
+                            // (just set by on_listen).
+                            Some(ls) => unsafe { (*ls).get_local_port() } as u16,
+                            None => *port,
+                        };
+                        let options = self_.config.get_usockets_options();
+                        // SAFETY: h3_app is a live H3::App handle owned by this server.
+                        unsafe { &mut *h3_app }.listen_with_config(
+                            this,
+                            |s: &mut Self, ls: Option<&mut uws_sys::h3::ListenSocket>| {
+                                s.on_h3_listen(ls.map(|l| l as *mut _));
+                            },
+                            uws_sys::h3::ListenConfig { port: h3_port, host, options },
+                        );
+                        if self_.h3_listener.is_none() && !global.has_exception() {
+                            let _ = global.throw(format_args!(
+                                "Failed to listen on UDP port {h3_port} for HTTP/3"
+                            ));
+                            // post-match `has_exception()` check below handles
+                            // deinit + return ZERO.
+                        }
+                        // TODO(b2-blocked): if !self_.config.h1 { vm.event_loop_handle = AsyncLoop::get() }
+                        // — bun_jsc::VirtualMachine.event_loop_handle setter not yet exposed.
                     }
                 }
             }

@@ -1603,7 +1603,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
             }
         }
 
-        if let Some(size_str) = args.option("--max-http-header-size") {
+        if let Some(size_str) = args.option(b"--max-http-header-size") {
             let size = match strings::parse_int::<usize>(size_str, 10) {
                 Ok(v) => v,
                 Err(_) => {
@@ -1620,7 +1620,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
             }
         }
 
-        if let Some(user_agent) = args.option("--user-agent") {
+        if let Some(user_agent) = args.option(b"--user-agent") {
             // SAFETY: single-threaded startup; argv slices are process-lifetime.
             unsafe {
                 bun_http::OVERRIDDEN_DEFAULT_USER_AGENT =
@@ -1628,19 +1628,19 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
             }
         }
 
-        ctx.debug.offline_mode_setting = if args.flag("--prefer-offline") {
+        ctx.debug.offline_mode_setting = if args.flag(b"--prefer-offline") {
             Bunfig::OfflineMode::Offline
-        } else if args.flag("--prefer-latest") {
+        } else if args.flag(b"--prefer-latest") {
             Bunfig::OfflineMode::Latest
         } else {
             Bunfig::OfflineMode::Online
         };
 
-        if args.flag("--no-install") {
+        if args.flag(b"--no-install") {
             ctx.debug.global_cache = options::GlobalCache::Disable;
-        } else if args.flag("-i") {
+        } else if args.flag(b"-i") {
             ctx.debug.global_cache = options::GlobalCache::Fallback;
-        } else if let Some(enum_value) = args.option("--install") {
+        } else if let Some(enum_value) = args.option(b"--install") {
             // -i=auto --install=force, --install=disable
             if let Some(result) = options::GlobalCache::MAP.get(enum_value) {
                 ctx.debug.global_cache = *result;
@@ -1653,20 +1653,20 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
             }
         }
 
-        if let Some(script) = args.option("--print") {
+        if let Some(script) = args.option(b"--print") {
             ctx.runtime_options.eval.script = script;
             ctx.runtime_options.eval.eval_and_print = true;
-        } else if let Some(script) = args.option("--eval") {
+        } else if let Some(script) = args.option(b"--eval") {
             ctx.runtime_options.eval.script = script;
         }
-        ctx.runtime_options.if_present = args.flag("--if-present");
-        ctx.runtime_options.smol = args.flag("--smol");
-        ctx.runtime_options.preconnect = args.options("--fetch-preconnect");
-        ctx.runtime_options.experimental_http2_fetch = args.flag("--experimental-http2-fetch");
-        ctx.runtime_options.experimental_http3_fetch = args.flag("--experimental-http3-fetch");
-        ctx.runtime_options.expose_gc = args.flag("--expose-gc");
+        ctx.runtime_options.if_present = args.flag(b"--if-present");
+        ctx.runtime_options.smol = args.flag(b"--smol");
+        ctx.runtime_options.preconnect = args.options(b"--fetch-preconnect");
+        ctx.runtime_options.experimental_http2_fetch = args.flag(b"--experimental-http2-fetch");
+        ctx.runtime_options.experimental_http3_fetch = args.flag(b"--experimental-http3-fetch");
+        ctx.runtime_options.expose_gc = args.flag(b"--expose-gc");
 
-        if let Some(depth_str) = args.option("--console-depth") {
+        if let Some(depth_str) = args.option(b"--console-depth") {
             let depth = match strings::parse_int::<u16>(depth_str, 10) {
                 Ok(v) => v,
                 Err(_) => {
@@ -1678,12 +1678,12 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
             ctx.runtime_options.console_depth = if depth == 0 { u16::MAX } else { depth };
         }
 
-        if let Some(order) = args.option("--dns-result-order") {
+        if let Some(order) = args.option(b"--dns-result-order") {
             ctx.runtime_options.dns_result_order = order;
         }
 
-        let has_cron_title = args.option("--cron-title");
-        let has_cron_period = args.option("--cron-period");
+        let has_cron_title = args.option(b"--cron-title");
+        let has_cron_period = args.option(b"--cron-period");
         if let Some(t) = has_cron_title {
             ctx.runtime_options.cron_title = t;
         }
@@ -1699,7 +1699,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
             Global::exit(1);
         }
 
-        if let Some(inspect_flag) = args.option("--inspect") {
+        if let Some(inspect_flag) = args.option(b"--inspect") {
             ctx.runtime_options.debugger = if inspect_flag.is_empty() {
                 Debugger::Enable(Default::default())
             } else {
@@ -1708,7 +1708,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
                     ..Default::default()
                 })
             };
-        } else if let Some(inspect_flag) = args.option("--inspect-wait") {
+        } else if let Some(inspect_flag) = args.option(b"--inspect-wait") {
             ctx.runtime_options.debugger = if inspect_flag.is_empty() {
                 Debugger::Enable(DebuggerEnable {
                     wait_for_connection: true,
@@ -1721,7 +1721,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
                     ..Default::default()
                 })
             };
-        } else if let Some(inspect_flag) = args.option("--inspect-brk") {
+        } else if let Some(inspect_flag) = args.option(b"--inspect-brk") {
             ctx.runtime_options.debugger = if inspect_flag.is_empty() {
                 Debugger::Enable(DebuggerEnable {
                     wait_for_connection: true,
@@ -1738,82 +1738,82 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
             };
         }
 
-        let cpu_prof_flag = args.flag("--cpu-prof");
-        let cpu_prof_md_flag = args.flag("--cpu-prof-md");
+        let cpu_prof_flag = args.flag(b"--cpu-prof");
+        let cpu_prof_md_flag = args.flag(b"--cpu-prof-md");
 
         // --cpu-prof-md alone enables profiling with markdown format
         // --cpu-prof alone enables profiling with JSON format
         // Both flags together enable profiling with both formats
         if cpu_prof_flag || cpu_prof_md_flag {
             ctx.runtime_options.cpu_prof.enabled = true;
-            if let Some(name) = args.option("--cpu-prof-name") {
+            if let Some(name) = args.option(b"--cpu-prof-name") {
                 ctx.runtime_options.cpu_prof.name = name;
             }
-            if let Some(dir) = args.option("--cpu-prof-dir") {
+            if let Some(dir) = args.option(b"--cpu-prof-dir") {
                 ctx.runtime_options.cpu_prof.dir = dir;
             }
             // md_format is true if --cpu-prof-md is passed (regardless of --cpu-prof)
             ctx.runtime_options.cpu_prof.md_format = cpu_prof_md_flag;
             // json_format is true if --cpu-prof is passed (regardless of --cpu-prof-md)
             ctx.runtime_options.cpu_prof.json_format = cpu_prof_flag;
-            if let Some(interval_str) = args.option("--cpu-prof-interval") {
+            if let Some(interval_str) = args.option(b"--cpu-prof-interval") {
                 ctx.runtime_options.cpu_prof.interval = strings::parse_int::<u32>(interval_str, 10).unwrap_or(1000);
             }
         } else {
             // Warn if --cpu-prof-name or --cpu-prof-dir is used without a profiler flag
-            if args.option("--cpu-prof-name").is_some() {
+            if args.option(b"--cpu-prof-name").is_some() {
                 Output::warn("--cpu-prof-name requires --cpu-prof or --cpu-prof-md to be enabled", format_args!(""));
             }
-            if args.option("--cpu-prof-dir").is_some() {
+            if args.option(b"--cpu-prof-dir").is_some() {
                 Output::warn("--cpu-prof-dir requires --cpu-prof or --cpu-prof-md to be enabled", format_args!(""));
             }
-            if args.option("--cpu-prof-interval").is_some() {
+            if args.option(b"--cpu-prof-interval").is_some() {
                 Output::warn("--cpu-prof-interval requires --cpu-prof or --cpu-prof-md to be enabled", format_args!(""));
             }
         }
 
-        let heap_prof_v8 = args.flag("--heap-prof");
-        let heap_prof_md = args.flag("--heap-prof-md");
+        let heap_prof_v8 = args.flag(b"--heap-prof");
+        let heap_prof_md = args.flag(b"--heap-prof-md");
 
         if heap_prof_v8 && heap_prof_md {
             // Both flags specified - warn and use markdown format
             Output::warn("Both --heap-prof and --heap-prof-md specified; using --heap-prof-md (markdown format)", format_args!(""));
             ctx.runtime_options.heap_prof.enabled = true;
             ctx.runtime_options.heap_prof.text_format = true;
-            if let Some(name) = args.option("--heap-prof-name") {
+            if let Some(name) = args.option(b"--heap-prof-name") {
                 ctx.runtime_options.heap_prof.name = name;
             }
-            if let Some(dir) = args.option("--heap-prof-dir") {
+            if let Some(dir) = args.option(b"--heap-prof-dir") {
                 ctx.runtime_options.heap_prof.dir = dir;
             }
         } else if heap_prof_v8 || heap_prof_md {
             ctx.runtime_options.heap_prof.enabled = true;
             ctx.runtime_options.heap_prof.text_format = heap_prof_md;
-            if let Some(name) = args.option("--heap-prof-name") {
+            if let Some(name) = args.option(b"--heap-prof-name") {
                 ctx.runtime_options.heap_prof.name = name;
             }
-            if let Some(dir) = args.option("--heap-prof-dir") {
+            if let Some(dir) = args.option(b"--heap-prof-dir") {
                 ctx.runtime_options.heap_prof.dir = dir;
             }
         } else {
             // Warn if --heap-prof-name or --heap-prof-dir is used without --heap-prof or --heap-prof-md
-            if args.option("--heap-prof-name").is_some() {
+            if args.option(b"--heap-prof-name").is_some() {
                 Output::warn("--heap-prof-name requires --heap-prof or --heap-prof-md to be enabled", format_args!(""));
             }
-            if args.option("--heap-prof-dir").is_some() {
+            if args.option(b"--heap-prof-dir").is_some() {
                 Output::warn("--heap-prof-dir requires --heap-prof or --heap-prof-md to be enabled", format_args!(""));
             }
         }
 
-        if args.flag("--no-deprecation") {
+        if args.flag(b"--no-deprecation") {
             // SAFETY: single-threaded startup; mirrors Zig export var write
             unsafe { Bun__Node__ProcessNoDeprecation = true; }
         }
-        if args.flag("--throw-deprecation") {
+        if args.flag(b"--throw-deprecation") {
             // SAFETY: single-threaded startup
             unsafe { Bun__Node__ProcessThrowDeprecation = true; }
         }
-        if let Some(title) = args.option("--title") {
+        if let Some(title) = args.option(b"--title") {
             // SAFETY: single-threaded startup; argv slice is process-lifetime.
             // Zig: `CLI.Bun__Node__ProcessTitle = title;`
             unsafe {
@@ -1821,13 +1821,13 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
                     Some(core::mem::transmute::<&[u8], &'static [u8]>(title));
             }
         }
-        if args.flag("--zero-fill-buffers") {
+        if args.flag(b"--zero-fill-buffers") {
             // SAFETY: single-threaded startup
             unsafe { Bun__Node__ZeroFillBuffers = true; }
         }
-        let use_system_ca = args.flag("--use-system-ca");
-        let use_openssl_ca = args.flag("--use-openssl-ca");
-        let use_bundled_ca = args.flag("--use-bundled-ca");
+        let use_system_ca = args.flag(b"--use-system-ca");
+        let use_openssl_ca = args.flag(b"--use-openssl-ca");
+        let use_bundled_ca = args.flag(b"--use-bundled-ca");
 
         // Disallow any combination > 1
         if (use_system_ca as u8) + (use_openssl_ca as u8) + (use_bundled_ca as u8) > 1 {
@@ -1865,15 +1865,15 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
     let output_dir: Option<&[u8]> = None;
     let output_file: Option<&[u8]> = None;
 
-    ctx.bundler_options.ignore_dce_annotations = args.flag("--ignore-dce-annotations");
+    ctx.bundler_options.ignore_dce_annotations = args.flag(b"--ignore-dce-annotations");
 
     if CMD == Command::Tag::BuildCommand {
-        ctx.bundler_options.transform_only = args.flag("--no-bundle");
-        ctx.bundler_options.bytecode = args.flag("--bytecode");
+        ctx.bundler_options.transform_only = args.flag(b"--no-bundle");
+        ctx.bundler_options.bytecode = args.flag(b"--bytecode");
 
-        let production = args.flag("--production");
+        let production = args.flag(b"--production");
 
-        if args.flag("--app") {
+        if args.flag(b"--app") {
             if !FeatureFlags::bake() {
                 Output::err_generic("To use the experimental \"--app\" option, upgrade to the canary build of bun via \"bun upgrade --canary\"", format_args!(""));
                 Global::crash();
@@ -1881,9 +1881,9 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
 
             ctx.bundler_options.bake = true;
             ctx.bundler_options.bake_debug_dump_server = FeatureFlags::BAKE_DEBUGGING_FEATURES
-                && args.flag("--debug-dump-server-files");
+                && args.flag(b"--debug-dump-server-files");
             ctx.bundler_options.bake_debug_disable_minify = FeatureFlags::BAKE_DEBUGGING_FEATURES
-                && args.flag("--debug-no-minify");
+                && args.flag(b"--debug-no-minify");
         }
 
         if ctx.bundler_options.bytecode {
@@ -1891,31 +1891,31 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
             ctx.args.target = Some(api::Target::Bun);
         }
 
-        if let Some(public_path) = args.option("--public-path") {
+        if let Some(public_path) = args.option(b"--public-path") {
             ctx.bundler_options.public_path = public_path;
         }
 
-        if let Some(banner) = args.option("--banner") {
+        if let Some(banner) = args.option(b"--banner") {
             ctx.bundler_options.banner = banner;
         }
 
-        if let Some(footer) = args.option("--footer") {
+        if let Some(footer) = args.option(b"--footer") {
             ctx.bundler_options.footer = footer;
         }
 
-        let minify_flag = args.flag("--minify") || production;
-        ctx.bundler_options.minify_syntax = minify_flag || args.flag("--minify-syntax");
-        ctx.bundler_options.minify_whitespace = minify_flag || args.flag("--minify-whitespace");
-        ctx.bundler_options.minify_identifiers = minify_flag || args.flag("--minify-identifiers");
-        ctx.bundler_options.keep_names = args.flag("--keep-names");
+        let minify_flag = args.flag(b"--minify") || production;
+        ctx.bundler_options.minify_syntax = minify_flag || args.flag(b"--minify-syntax");
+        ctx.bundler_options.minify_whitespace = minify_flag || args.flag(b"--minify-whitespace");
+        ctx.bundler_options.minify_identifiers = minify_flag || args.flag(b"--minify-identifiers");
+        ctx.bundler_options.keep_names = args.flag(b"--keep-names");
 
-        ctx.bundler_options.css_chunking = args.flag("--css-chunking");
+        ctx.bundler_options.css_chunking = args.flag(b"--css-chunking");
 
-        ctx.bundler_options.emit_dce_annotations = args.flag("--emit-dce-annotations")
+        ctx.bundler_options.emit_dce_annotations = args.flag(b"--emit-dce-annotations")
             || !ctx.bundler_options.minify_whitespace;
 
-        if !args.options("--external").is_empty() {
-            let ext_opts = args.options("--external");
+        if !args.options(b"--external").is_empty() {
+            let ext_opts = args.options(b"--external");
             let mut externals: Vec<&[u8]> = Vec::with_capacity(ext_opts.len());
             for (_i, external) in ext_opts.iter().enumerate() {
                 externals.push(external);
@@ -1923,13 +1923,13 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
             opts.external = externals;
         }
 
-        if args.flag("--reject-unresolved") && !args.options("--allow-unresolved").is_empty() {
+        if args.flag(b"--reject-unresolved") && !args.options(b"--allow-unresolved").is_empty() {
             Output::pretty_errorln(format_args!("<r><red>error<r>: --reject-unresolved and --allow-unresolved cannot be used together"));
             Global::crash();
-        } else if args.flag("--reject-unresolved") {
+        } else if args.flag(b"--reject-unresolved") {
             ctx.bundler_options.allow_unresolved = Vec::new();
-        } else if !args.options("--allow-unresolved").is_empty() {
-            let raw = args.options("--allow-unresolved");
+        } else if !args.options(b"--allow-unresolved").is_empty() {
+            let raw = args.options(b"--allow-unresolved");
             let mut allow: Vec<&[u8]> = Vec::with_capacity(raw.len());
             for (_i, val) in raw.iter().enumerate() {
                 // "<empty>" sentinel represents the empty-string pattern (for matching opaque specifiers)
@@ -1938,7 +1938,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
             ctx.bundler_options.allow_unresolved = allow;
         }
 
-        if let Some(packages) = args.option("--packages") {
+        if let Some(packages) = args.option(b"--packages") {
             if packages == b"bundle" {
                 opts.packages = api::Packages::Bundle;
             } else if packages == b"external" {
@@ -1949,7 +1949,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
             }
         }
 
-        if let Some(env) = args.option("--env") {
+        if let Some(env) = args.option(b"--env") {
             if let Some(asterisk) = strings::index_of_char(env, b'*') {
                 if asterisk == 0 {
                     ctx.bundler_options.env_behavior = options::EnvBehavior::LoadAll;
@@ -1968,10 +1968,10 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
         }
 
         // TODO(port): strings.ExactSizeMatcher(8) — phf or match on byte slice
-        if let Some(target) = args.option("--target") {
+        if let Some(target) = args.option(b"--target") {
             'brk: {
                 if CMD == Command::Tag::BuildCommand {
-                    if args.flag("--compile") {
+                    if args.flag(b"--compile") {
                         if target.len() > 4 && strings::has_prefix(target, b"bun-") {
                             ctx.bundler_options.compile_target = cli::Cli::CompileTarget::from(&target[3..]);
                             if !ctx.bundler_options.compile_target.is_supported() {
@@ -2007,21 +2007,21 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
             }
         }
 
-        if args.flag("--watch") {
+        if args.flag(b"--watch") {
             ctx.debug.hot_reload = HotReload::Watch;
             bun_core::set_auto_reload_on_crash(true);
 
-            if args.flag("--no-clear-screen") {
+            if args.flag(b"--no-clear-screen") {
                 bun_dotenv::Loader::set_has_no_clear_screen_cli_flag(true);
             }
         }
 
-        if args.flag("--compile") {
+        if args.flag(b"--compile") {
             ctx.bundler_options.compile = true;
             ctx.bundler_options.inline_entrypoint_import_meta_main = true;
         }
 
-        if let Some(compile_exec_argv) = args.option("--compile-exec-argv") {
+        if let Some(compile_exec_argv) = args.option(b"--compile-exec-argv") {
             if !ctx.bundler_options.compile {
                 Output::err_generic("--compile-exec-argv requires --compile", format_args!(""));
                 Global::crash();
@@ -2031,8 +2031,8 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
 
         // Handle --compile-autoload-dotenv flags
         {
-            let has_positive = args.flag("--compile-autoload-dotenv");
-            let has_negative = args.flag("--no-compile-autoload-dotenv");
+            let has_positive = args.flag(b"--compile-autoload-dotenv");
+            let has_negative = args.flag(b"--no-compile-autoload-dotenv");
 
             if has_positive || has_negative {
                 if !ctx.bundler_options.compile {
@@ -2049,8 +2049,8 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
 
         // Handle --compile-autoload-bunfig flags
         {
-            let has_positive = args.flag("--compile-autoload-bunfig");
-            let has_negative = args.flag("--no-compile-autoload-bunfig");
+            let has_positive = args.flag(b"--compile-autoload-bunfig");
+            let has_negative = args.flag(b"--no-compile-autoload-bunfig");
 
             if has_positive || has_negative {
                 if !ctx.bundler_options.compile {
@@ -2067,8 +2067,8 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
 
         // Handle --compile-autoload-tsconfig flags (default: false, tsconfig not loaded at runtime)
         {
-            let has_positive = args.flag("--compile-autoload-tsconfig");
-            let has_negative = args.flag("--no-compile-autoload-tsconfig");
+            let has_positive = args.flag(b"--compile-autoload-tsconfig");
+            let has_negative = args.flag(b"--no-compile-autoload-tsconfig");
 
             if has_positive || has_negative {
                 if !ctx.bundler_options.compile {
@@ -2085,8 +2085,8 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
 
         // Handle --compile-autoload-package-json flags (default: false, package.json not loaded at runtime)
         {
-            let has_positive = args.flag("--compile-autoload-package-json");
-            let has_negative = args.flag("--no-compile-autoload-package-json");
+            let has_positive = args.flag(b"--compile-autoload-package-json");
+            let has_negative = args.flag(b"--no-compile-autoload-package-json");
 
             if has_positive || has_negative {
                 if !ctx.bundler_options.compile {
@@ -2101,7 +2101,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
             }
         }
 
-        if let Some(path) = args.option("--compile-executable-path") {
+        if let Some(path) = args.option(b"--compile-executable-path") {
             if !ctx.bundler_options.compile {
                 Output::err_generic("--compile-executable-path requires --compile", format_args!(""));
                 Global::crash();
@@ -2109,7 +2109,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
             ctx.bundler_options.compile_executable_path = path;
         }
 
-        if args.flag("--windows-hide-console") {
+        if args.flag(b"--windows-hide-console") {
             // --windows-hide-console technically doesnt depend on WinAPI, but since since --windows-icon
             // does, all of these customization options have been gated to windows-only
             if !cfg!(windows) {
@@ -2126,7 +2126,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
             }
             ctx.bundler_options.windows.hide_console = true;
         }
-        if let Some(path) = args.option("--windows-icon") {
+        if let Some(path) = args.option(b"--windows-icon") {
             if !cfg!(windows) {
                 Output::err_generic("Using --windows-icon is only available when compiling on Windows", format_args!(""));
                 Global::crash();
@@ -2141,7 +2141,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
             }
             ctx.bundler_options.windows.icon = Some(path);
         }
-        if let Some(title) = args.option("--windows-title") {
+        if let Some(title) = args.option(b"--windows-title") {
             if !cfg!(windows) {
                 Output::err_generic("Using --windows-title is only available when compiling on Windows", format_args!(""));
                 Global::crash();
@@ -2156,7 +2156,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
             }
             ctx.bundler_options.windows.title = Some(title);
         }
-        if let Some(publisher) = args.option("--windows-publisher") {
+        if let Some(publisher) = args.option(b"--windows-publisher") {
             if !cfg!(windows) {
                 Output::err_generic("Using --windows-publisher is only available when compiling on Windows", format_args!(""));
                 Global::crash();
@@ -2171,7 +2171,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
             }
             ctx.bundler_options.windows.publisher = Some(publisher);
         }
-        if let Some(version) = args.option("--windows-version") {
+        if let Some(version) = args.option(b"--windows-version") {
             if !cfg!(windows) {
                 Output::err_generic("Using --windows-version is only available when compiling on Windows", format_args!(""));
                 Global::crash();
@@ -2186,7 +2186,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
             }
             ctx.bundler_options.windows.version = Some(version);
         }
-        if let Some(description) = args.option("--windows-description") {
+        if let Some(description) = args.option(b"--windows-description") {
             if !cfg!(windows) {
                 Output::err_generic("Using --windows-description is only available when compiling on Windows", format_args!(""));
                 Global::crash();
@@ -2201,7 +2201,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
             }
             ctx.bundler_options.windows.description = Some(description);
         }
-        if let Some(copyright) = args.option("--windows-copyright") {
+        if let Some(copyright) = args.option(b"--windows-copyright") {
             if !cfg!(windows) {
                 Output::err_generic("Using --windows-copyright is only available when compiling on Windows", format_args!(""));
                 Global::crash();
@@ -2217,17 +2217,17 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
             ctx.bundler_options.windows.copyright = Some(copyright);
         }
 
-        if let Some(outdir) = args.option("--outdir") {
+        if let Some(outdir) = args.option(b"--outdir") {
             if !outdir.is_empty() {
                 ctx.bundler_options.outdir = outdir;
             }
-        } else if let Some(outfile) = args.option("--outfile") {
+        } else if let Some(outfile) = args.option(b"--outfile") {
             if !outfile.is_empty() {
                 ctx.bundler_options.outfile = outfile;
             }
         }
 
-        if let Some(metafile) = args.option("--metafile") {
+        if let Some(metafile) = args.option(b"--metafile") {
             // If --metafile is passed without a value, default to "meta.json"
             ctx.bundler_options.metafile = if !metafile.is_empty() {
                 bun_str::ZStr::from_bytes(metafile).into()
@@ -2236,7 +2236,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
             };
         }
 
-        if let Some(metafile_md) = args.option("--metafile-md") {
+        if let Some(metafile_md) = args.option(b"--metafile-md") {
             // If --metafile-md is passed without a value, default to "meta.md"
             ctx.bundler_options.metafile_md = if !metafile_md.is_empty() {
                 bun_str::ZStr::from_bytes(metafile_md).into()
@@ -2245,13 +2245,13 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
             };
         }
 
-        if let Some(root_dir) = args.option("--root") {
+        if let Some(root_dir) = args.option(b"--root") {
             if !root_dir.is_empty() {
                 ctx.bundler_options.root_dir = root_dir;
             }
         }
 
-        if let Some(format_str) = args.option("--format") {
+        if let Some(format_str) = args.option(b"--format") {
             let Some(format) = options::Format::from_string(format_str) else {
                 Output::err_generic("Invalid format - must be esm, cjs, or iife", format_args!(""));
                 Global::crash();
@@ -2286,23 +2286,23 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
             }
         }
 
-        if args.flag("--splitting") {
+        if args.flag(b"--splitting") {
             ctx.bundler_options.code_splitting = true;
         }
 
-        if let Some(entry_naming) = args.option("--entry-naming") {
+        if let Some(entry_naming) = args.option(b"--entry-naming") {
             ctx.bundler_options.entry_naming = strings::concat(&[b"./", strings::remove_leading_dot_slash(entry_naming)])?;
         }
 
-        if let Some(chunk_naming) = args.option("--chunk-naming") {
+        if let Some(chunk_naming) = args.option(b"--chunk-naming") {
             ctx.bundler_options.chunk_naming = strings::concat(&[b"./", strings::remove_leading_dot_slash(chunk_naming)])?;
         }
 
-        if let Some(asset_naming) = args.option("--asset-naming") {
+        if let Some(asset_naming) = args.option(b"--asset-naming") {
             ctx.bundler_options.asset_naming = strings::concat(&[b"./", strings::remove_leading_dot_slash(asset_naming)])?;
         }
 
-        if args.flag("--server-components") {
+        if args.flag(b"--server-components") {
             ctx.bundler_options.server_components = true;
             if let Some(target) = opts.target {
                 if !options::Target::from(target).is_server_side() {
@@ -2314,11 +2314,11 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
             }
         }
 
-        if args.flag("--react-fast-refresh") {
+        if args.flag(b"--react-fast-refresh") {
             ctx.bundler_options.react_fast_refresh = true;
         }
 
-        if let Some(setting) = args.option("--sourcemap") {
+        if let Some(setting) = args.option(b"--sourcemap") {
             if setting.is_empty() {
                 // In the future, Bun is going to make this default to .linked
                 opts.source_map = api::SourceMap::Linked;
@@ -2371,19 +2371,19 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
         opts.entry_points = entry_points;
     }
 
-    let jsx_factory = args.option("--jsx-factory");
-    let jsx_fragment = args.option("--jsx-fragment");
-    let jsx_import_source = args.option("--jsx-import-source");
-    let jsx_runtime = args.option("--jsx-runtime");
-    let jsx_side_effects = args.flag("--jsx-side-effects");
+    let jsx_factory = args.option(b"--jsx-factory");
+    let jsx_fragment = args.option(b"--jsx-fragment");
+    let jsx_import_source = args.option(b"--jsx-import-source");
+    let jsx_runtime = args.option(b"--jsx-runtime");
+    let jsx_side_effects = args.flag(b"--jsx-side-effects");
 
     if matches!(CMD, Command::Tag::AutoCommand | Command::Tag::RunCommand) {
         // "run.silent" in bunfig.toml
-        if args.flag("--silent") {
+        if args.flag(b"--silent") {
             ctx.debug.silent = true;
         }
 
-        if let Some(elide_lines) = args.option("--elide-lines") {
+        if let Some(elide_lines) = args.option(b"--elide-lines") {
             if !elide_lines.is_empty() {
                 ctx.bundler_options.elide_lines = match strings::parse_int::<usize>(elide_lines, 10) {
                     Ok(v) => v,

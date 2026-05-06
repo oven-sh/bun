@@ -18,41 +18,19 @@ use crate::event_loop::{EventLoop, JsTerminated};
 use crate::virtual_machine::VirtualMachine;
 use crate::{JSGlobalObject, JsError};
 
-// ─── Task / TaskTag ──────────────────────────────────────────────────────────
-// The struct + tag table are defined once in `bun_event_loop` (lowest tier on
-// the hot-path list) and re-exported here so callers can write
-// `bun_jsc::Task` / `bun_jsc::task::Taskable` without reaching down a tier.
-pub use bun_event_loop::{Task, TaskTag, task_tag};
+// ─── Task / TaskTag / Taskable ───────────────────────────────────────────────
+// The struct + tag table + type→tag trait are defined once in `bun_event_loop`
+// (lowest tier on the hot-path list) and re-exported here so callers can write
+// `bun_jsc::Task` / `bun_jsc::Taskable` without reaching down a tier.
+pub use bun_event_loop::{Task, TaskTag, Taskable, task_tag};
 
-/// Type → tag binding for [`Task`]. Implement on every type that can be
-/// enqueued; the impl lives in whatever crate owns the type (mirrors Zig's
-/// comptime `TaggedPointerUnion` type-list lookup).
-///
-/// ```ignore
-/// impl bun_jsc::Taskable for FetchTasklet {
-///     const TAG: bun_jsc::TaskTag = bun_jsc::task_tag::FetchTasklet;
-/// }
-/// ```
-pub trait Taskable {
-    /// The tag constant from [`task_tag`] for this type. Both this and the
-    /// `bun_runtime::dispatch::run_tasks` match arm MUST agree.
-    const TAG: TaskTag;
-
-    /// Build a [`Task`] from a raw pointer to `Self`. Ownership semantics are
-    /// per-variant (most arms `Box::from_raw` on dispatch; a few are borrows).
-    #[inline]
-    fn into_task(ptr: *mut Self) -> Task {
-        Task::new(Self::TAG, ptr.cast::<()>())
-    }
-}
-
-/// `Task::new<T: Taskable>(ptr)` — typed constructor (free fn because [`Task`]
-/// is defined in a lower-tier crate and cannot grow inherent methods here).
+/// `Task::new<T: Taskable>(ptr)` — typed constructor. Kept as a free fn for
+/// back-compat with earlier Phase-A call sites; equivalent to [`Task::init`].
 /// Zig: `Task.init(of: anytype)` derived the tag at comptime from `@TypeOf(of)`;
 /// in Rust the tag comes from the [`Taskable`] impl.
 #[inline]
 pub fn new<T: Taskable>(ptr: *mut T) -> Task {
-    Task::new(T::TAG, ptr.cast::<()>())
+    Task::init(ptr)
 }
 
 // ─── RUN_TASK_HOOK ───────────────────────────────────────────────────────────

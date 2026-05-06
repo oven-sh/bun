@@ -160,6 +160,10 @@ impl<W: Write + ?Sized> Write for &mut W {
     fn write_fmt(&mut self, args: fmt::Arguments<'_>) -> Result<()> {
         (**self).write_fmt(args)
     }
+    #[inline]
+    fn written_len(&self) -> usize {
+        (**self).written_len()
+    }
 }
 
 impl<W: Write + ?Sized> Write for Box<W> {
@@ -170,6 +174,10 @@ impl<W: Write + ?Sized> Write for Box<W> {
     #[inline]
     fn flush(&mut self) -> Result<()> {
         (**self).flush()
+    }
+    #[inline]
+    fn written_len(&self) -> usize {
+        (**self).written_len()
     }
 }
 

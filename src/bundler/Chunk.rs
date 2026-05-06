@@ -656,7 +656,7 @@ impl IntermediateOutput {
                             // In standalone mode, inline chunk content and asset data URIs
                             if let Some(scc) = standalone_chunk_contents {
                                 let inline_content: Option<&[u8]> = match piece.query.kind() {
-                                    QueryKind::Chunk => scc[index],
+                                    QueryKind::Chunk => scc[index].as_deref(),
                                     QueryKind::Asset => {
                                         if index < urls_for_css.len()
                                             && !urls_for_css[index].is_empty()

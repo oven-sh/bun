@@ -128,7 +128,7 @@ type Processor<'a> = HTMLProcessor<HTMLScanner<'a>, false>;
 pub trait HTMLProcessorHandler {
     fn on_tag(
         &mut self,
-        element: *mut lol::Element,
+        element: &mut lol::Element,
         path: &[u8],
         url_attribute: &[u8],
         kind: ImportKind,
@@ -139,13 +139,13 @@ pub trait HTMLProcessorHandler {
     // Only required when VISIT_DOCUMENT_TAGS == true.
     // TODO(port): split into a separate trait if const-generic specialization
     // is unwieldy; Zig only references these inside `if (visit_document_tags)`.
-    fn on_body_tag(&mut self, _element: *mut lol::Element) -> bool {
+    fn on_body_tag(&mut self, _element: &mut lol::Element) -> bool {
         unreachable!()
     }
-    fn on_head_tag(&mut self, _element: *mut lol::Element) -> bool {
+    fn on_head_tag(&mut self, _element: &mut lol::Element) -> bool {
         unreachable!()
     }
-    fn on_html_tag(&mut self, _element: *mut lol::Element) -> bool {
+    fn on_html_tag(&mut self, _element: &mut lol::Element) -> bool {
         unreachable!()
     }
 }

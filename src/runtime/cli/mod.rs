@@ -760,8 +760,9 @@ pub mod command {
                     Output::flush();
                     Global::exit(1);
                 }
-                // SAFETY: process-lifetime *mut io::Writer (see Output::writer()).
-                let writer = unsafe { &mut *Output::writer() };
+                // `Output::writer()` already returns `&'static mut io::Writer`;
+                // no raw deref needed (was `*mut` in an earlier port pass).
+                let writer = Output::writer();
                 let _ = writer.write_all(shell.completions());
                 Output::flush();
                 // TODO(b2-blocked): tty path → write into shell completions dir

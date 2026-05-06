@@ -2341,10 +2341,17 @@ impl ReadResult {
             ReadResult::Err(err) => StreamResult::Err(StreamError::Error(err)),
             ReadResult::Done => StreamResult::Done,
             ReadResult::Read(slice) => 'brk: {
-                // SAFETY: slice is valid mutable slice from caller
-                let slice_ref = unsafe { &mut *slice };
-                let owned = slice_ref.as_ptr() != buf.as_ptr();
-                let done = is_done || (close_on_empty && slice_ref.is_empty());
+                // PORT NOTE: Zig's `slice` may point at the same allocation as
+                // `buf` (it checks `slice.ptr != buf.ptr`). Forming `&mut *slice`
+                // while the `buf: &mut [u8]` parameter is live would violate
+                // Rust's aliasing rules in the `!owned` case. Stay on raw
+                // pointers: `<*mut [u8]>::len()` reads only the fat-pointer
+                // metadata (no deref), and the cast to `*mut u8` projects the
+                // data pointer without creating a reference.
+                let slice_ptr = slice as *mut u8;
+                let slice_len = slice.len();
+                let owned = slice_ptr as *const u8 != buf.as_ptr();
+                let done = is_done || (close_on_empty && slice_len == 0);
 
                 // Zig `bun.ByteList.fromOwnedSlice(slice)` adopts an existing heap
                 // allocation by pointer/len (cap = len). The contract is: when
@@ -2354,26 +2361,27 @@ impl ReadResult {
                 // `clear_and_free`. Mirror that by adopting the raw allocation
                 // instead of copying — copying would leak the original buffer.
                 break 'brk if owned && done {
-                    let len = u32::try_from(slice_ref.len()).unwrap();
-                    // SAFETY: `owned` branch — caller transfers a default-allocator
-                    // heap allocation of exactly `len` bytes (cap == len), all initialized.
+                    let len = u32::try_from(slice_len).unwrap();
+                    // SAFETY: `owned` branch — `slice` is disjoint from `buf` and
+                    // the caller transfers a default-allocator heap allocation of
+                    // exactly `len` bytes (cap == len), all initialized.
                     StreamResult::OwnedAndDone(unsafe {
-                        ByteList::from_raw_parts(slice_ref.as_mut_ptr(), len, len)
+                        ByteList::from_raw_parts(slice_ptr, len, len)
                     })
                 } else if owned {
-                    let len = u32::try_from(slice_ref.len()).unwrap();
+                    let len = u32::try_from(slice_len).unwrap();
                     // SAFETY: see above — ownership of `slice` is transferred here.
                     StreamResult::Owned(unsafe {
-                        ByteList::from_raw_parts(slice_ref.as_mut_ptr(), len, len)
+                        ByteList::from_raw_parts(slice_ptr, len, len)
                     })
                 } else if done {
                     StreamResult::IntoArrayAndDone(IntoArray {
-                        len: slice_ref.len() as BlobSizeType,
+                        len: slice_len as BlobSizeType,
                         value: view,
                     })
                 } else {
                     StreamResult::IntoArray(IntoArray {
-                        len: slice_ref.len() as BlobSizeType,
+                        len: slice_len as BlobSizeType,
                         value: view,
                     })
                 };

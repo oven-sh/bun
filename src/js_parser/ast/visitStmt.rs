@@ -541,17 +541,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             data.is_export = false;
         }
 
-        // blocked_on: P::lower_class is in the #[cfg(any())] heavy impl block (P.rs:5422).
-        //   Until it un-gates, emit the class statement unchanged (Zig's no-decorator
-        //   fast path is `&[stmt]` anyway). Gate loud when lowering would actually
-        //   rewrite — silently emitting the un-lowered class is wrong output.
-        //   Spec (P.zig:4949-4958): the `&[stmt]` fast-path is only taken when
-        //   `!should_lower_standard_decorators && !is_typescript_enabled && !has_decorators`;
-        //   under TYPESCRIPT the full TS-legacy lowering runs even with no class-level decorators.
-        if TYPESCRIPT || data.class.has_decorators || data.class.should_lower_standard_decorators {
-            todo!("s_class: lower_class (TS-legacy / decorators) — see _draft");
-        }
-        let lowered: &[Stmt] = core::slice::from_ref(&*stmt);
+        // Lower class field syntax for browsers that don't support it
+        let lowered = p.lower_class(js_ast::StmtOrExpr::Stmt(*stmt));
 
         if !mark_as_dead || was_export_inside_namespace {
             // Lower class field syntax for browsers that don't support it

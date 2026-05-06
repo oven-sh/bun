@@ -77,8 +77,10 @@ impl ContentsOrFd {
 // ───────────────────────────────────────────────────────────────────────────
 
 pub struct ParseTask {
-    pub path: Fs::Path,
-    pub secondary_path_for_commonjs_interop: Option<Fs::Path>,
+    // PORT NOTE: lifetime-erased `'static` — paths borrow from `DirnameStore`
+    // (process-lifetime BSS string pool); see `bun_resolver::fs::Path<'a>`.
+    pub path: Fs::Path<'static>,
+    pub secondary_path_for_commonjs_interop: Option<Fs::Path<'static>>,
     pub contents_or_fd: ContentsOrFd,
     pub external_free_function: ExternalFreeFunction,
     pub side_effects: _resolver::SideEffects,
@@ -482,6 +484,9 @@ fn get_runtime_source_comptime(target: options::Target) -> RuntimeSource {
             text: b"runtime",
             namespace: b"bun:runtime",
             name: bun_logger::fs::PathName::init(b"runtime"),
+            pretty: b"",
+            is_disabled: false,
+            is_symlink: false,
         },
         contents: runtime_code.as_bytes(),
         // PORT NOTE: `Source.index` is `bun_logger::Index` (newtype `u32`),
@@ -1224,9 +1229,9 @@ pub struct OnBeforeParsePlugin<'a> {
     task: &'a mut ParseTask,
     log: &'a mut Log,
     transpiler: &'a mut Transpiler<'a>,
-    resolver: &'a mut Resolver,
+    resolver: &'a mut Resolver<'a>,
     bump: &'a Bump,
-    file_path: &'a mut Fs::Path,
+    file_path: &'a mut Fs::Path<'a>,
     loader: &'a mut Loader,
     deferred_error: Option<AnyError>,
     should_continue_running: &'a mut i32,

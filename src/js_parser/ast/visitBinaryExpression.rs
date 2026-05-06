@@ -4,7 +4,11 @@ use core::cmp::Ordering;
 use crate::ast::fold_string_addition::{fold_string_addition, FoldStringAdditionKind};
 use crate::ast::p::P;
 use crate::ast::side_effects::SideEffects;
-use crate::ast::{self as js_ast, expr::Equality, E, Expr, ExprData, ExprTag, Op, StoreRef, Symbol};
+use crate::ast::{
+    self as js_ast,
+    expr::{Equality, LooseEql, StrictEql},
+    E, Expr, ExprData, ExprTag, Op, StoreRef, Symbol,
+};
 use crate::parser::{float_to_int32, prefill, ExprIn, JsxT};
 use bun_logger as logger;
 

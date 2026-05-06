@@ -214,8 +214,8 @@ impl JustifyContent {
 
 /// A value for the [align-self](https://www.w3.org/TR/css-align-3/#align-self-property) property.
 #[derive(Clone, PartialEq)]
-// TODO(port): css.DeriveParse / css.DeriveToCss
-#[cfg_attr(any(), derive(css::Parse, css::ToCss))] // blocked_on: payload struct parse/to_css + Parser borrow lifetimes
+// Zig: `css.DeriveParse` / `css.DeriveToCss`
+#[derive(css::Parse, css::ToCss)]
 pub enum AlignSelf {
     /// Automatic alignment.
     Auto,
@@ -229,7 +229,9 @@ pub enum AlignSelf {
     SelfPosition(AlignSelfSelfPosition),
 }
 
-#[derive(Clone, PartialEq)]
+// Zig: `__generateToCss` marker — see `AlignContentContentPosition` note.
+#[derive(Clone, PartialEq, css::ToCss)]
+#[css(generate_to_css)]
 pub struct AlignSelfSelfPosition {
     /// An overflow alignment mode.
     pub overflow: Option<OverflowPosition>,
@@ -237,7 +239,6 @@ pub struct AlignSelfSelfPosition {
     pub value: SelfPosition,
 }
 
-#[cfg(any())] // blocked_on: SelfPosition::parse derive
 impl AlignSelfSelfPosition {
     pub fn to_inner(&self) -> SelfPositionInner {
         SelfPositionInner {
@@ -245,8 +246,6 @@ impl AlignSelfSelfPosition {
             value: self.value,
         }
     }
-
-    // Zig: __generateToCss marker — see AlignContentContentPosition note.
 
     pub fn parse(input: &mut Parser) -> CssResult<Self> {
         let overflow = input.try_parse(OverflowPosition::parse).ok();
@@ -304,7 +303,6 @@ impl JustifySelfSelfPosition {
     }
 }
 
-#[cfg(any())] // blocked_on: Token::Ident lifetime (see JustifyContent note)
 impl JustifySelf {
     pub fn parse(input: &mut Parser) -> CssResult<Self> {
         if input.try_parse(|i| i.expect_ident_matching(b"auto")).is_ok() {
@@ -332,7 +330,8 @@ impl JustifySelf {
         }
 
         let location = input.current_source_location();
-        let ident = input.expect_ident()?;
+        // SAFETY: see `src_str` — borrow detached so the slice can be stored in `Token`.
+        let ident = unsafe { src_str(input.expect_ident()?) };
         // TODO(port): bun.ComptimeEnumMap getASCIIICaseInsensitive
         if bun_string::strings::eql_case_insensitive_ascii::<true>(ident, b"left") {
             Ok(JustifySelf::Left { overflow })
@@ -380,8 +379,8 @@ impl JustifySelf {
 
 /// A value for the [align-items](https://www.w3.org/TR/css-align-3/#align-items-property) property.
 #[derive(Clone, PartialEq)]
-// TODO(port): css.DeriveParse / css.DeriveToCss
-#[cfg_attr(any(), derive(css::Parse, css::ToCss))] // blocked_on: payload struct parse/to_css + Parser borrow lifetimes
+// Zig: `css.DeriveParse` / `css.DeriveToCss`
+#[derive(css::Parse, css::ToCss)]
 pub enum AlignItems {
     /// Default alignment.
     Normal,
@@ -393,7 +392,9 @@ pub enum AlignItems {
     SelfPosition(AlignItemsSelfPosition),
 }
 
-#[derive(Clone, PartialEq)]
+// Zig: `__generateToCss` marker — see `AlignContentContentPosition` note.
+#[derive(Clone, PartialEq, css::ToCss)]
+#[css(generate_to_css)]
 pub struct AlignItemsSelfPosition {
     /// An overflow alignment mode.
     pub overflow: Option<OverflowPosition>,
@@ -401,7 +402,6 @@ pub struct AlignItemsSelfPosition {
     pub value: SelfPosition,
 }
 
-#[cfg(any())] // blocked_on: SelfPosition::parse derive
 impl AlignItemsSelfPosition {
     pub fn to_inner(&self) -> SelfPositionInner {
         SelfPositionInner {
@@ -418,8 +418,6 @@ impl AlignItemsSelfPosition {
             value: self_position,
         })
     }
-
-    // Zig: __generateToCss marker — see AlignContentContentPosition note.
 }
 
 // ──────────────────────────────────────────────────────────────────────────────

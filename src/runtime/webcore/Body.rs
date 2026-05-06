@@ -2007,9 +2007,6 @@ impl<'a> ValueBufferer<'a> {
         //         if data.is_temporary { drop(data.buf); }
         //     }
         // }
-        #[allow(unreachable_code)]
-        {
-        }
     }
 
     fn on_stream_pipe(&mut self, stream: streams::Result) {

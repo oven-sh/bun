@@ -1102,12 +1102,18 @@ pub type HTTPServerWritableJSSink<const SSL: bool, const HTTP3: bool> =
 // data access. Un-gate once the UwsResponse type-dispatch trait lands.
 
 impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
-    /// Don't include @sizeOf(This) because it's already included in the memoryCost of the sink
-    pub fn memory_cost(&self) -> usize {
-        // TODO: include Socket send buffer size. We can't here because we
-        // don't track if it's still accessible.
-        // Since this is a JSSink, the NewJSSink function does @sizeOf(JSSink) which includes @sizeOf(ArrayBufferSink).
-        self.buffer.cap as usize
+    /// Const-generic → runtime dispatch for the type-erased `res` field.
+    /// Mirrors Zig's `const UWSResponse = if (http3) uws.H3.Response else uws.NewApp(ssl).Response`.
+    #[inline]
+    fn any_res(&self) -> Option<uws::AnyResponse> {
+        let res = self.res?;
+        Some(if HTTP3 {
+            uws::AnyResponse::H3(res as *mut uws::H3::Response)
+        } else if SSL {
+            uws::AnyResponse::SSL(res as *mut uws::Response<true>)
+        } else {
+            uws::AnyResponse::TCP(res as *mut uws::Response<false>)
+        })
     }
 
     fn handle_wrote(&mut self, amount1: usize) {

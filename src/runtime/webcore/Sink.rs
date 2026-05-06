@@ -1,6 +1,11 @@
 use core::ffi::c_void;
+use core::mem::ManuallyDrop;
 
 use bun_collections::{ByteList, TaggedPtrUnion};
+use bun_core::Output;
+use bun_jsc::{JSGlobalObject, JSValue};
+use bun_string::strings;
+use crate::api::bun_subprocess::Subprocess;
 use crate::webcore::streams::{self, Signal};
 use bun_sys::{self as sys, Error as SysError};
 

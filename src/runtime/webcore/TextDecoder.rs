@@ -440,7 +440,9 @@ impl TextDecoder {
         }
     }
 
-    #[bun_jsc::host_fn]
+    // `#[JsClass]` emits `TextDecoderClass__construct` calling this; do not
+    // wrap with `#[bun_jsc::host_fn]` (its Free-kind shim emits a bare
+    // `constructor(...)` call that doesn't resolve inside an `impl` block).
     pub fn constructor(
         global_this: &JSGlobalObject,
         callframe: &CallFrame,

@@ -1353,10 +1353,10 @@ impl<'a> PipelineTask<'a> {
                     return;
                 }
             };
-            if !sys::S::is_reg(u32::try_from(st.mode).unwrap()) {
+            if !sys::S::ISREG(u32::try_from(st.mode).unwrap() as _) {
                 self.result = TaskResult::IoErr(sys::Error {
                     errno: sys::E::NODEV as _,
-                    syscall: sys::Syscall::Read,
+                    syscall: sys::Tag::read,
                     path: p.into(),
                     ..Default::default()
                 });
@@ -1496,7 +1496,7 @@ impl<'a> PipelineTask<'a> {
         if enc.icc_profile.is_none() {
             enc.icc_profile = decoded.icc_profile.clone();
         }
-        let out = match codecs::encode(&decoded.rgba, decoded.width, decoded.height, &enc) {
+        let out = match codecs::encode(&decoded.rgba, decoded.width, decoded.height, enc) {
             Ok(o) => o,
             Err(e) => {
                 self.result = TaskResult::Err(e);
@@ -1659,7 +1659,7 @@ impl<'a> PipelineTask<'a> {
     fn apply_pipeline(&self, d: &mut codecs::Decoded) -> Result<(), codecs::Error> {
         let p = &self.pipeline;
         if p.rotate != 0 {
-            let next = codecs::rotate(&d.rgba, d.width, d.height, p.rotate)?;
+            let next = codecs::rotate(&d.rgba, d.width, d.height, u32::from(p.rotate))?;
             // PORT NOTE: `bun.default_allocator.free(d.rgba)` — assignment drops
             // the old `Vec<u8>`/owned buffer.
             d.rgba = next.rgba;
@@ -1778,7 +1778,7 @@ fn apply_orientation(d: &mut codecs::Decoded, orient: exif::Orientation) -> Resu
     if t.rotate != 0 {
         // Swap pixel slots only — `next` carries no ICC profile, and the
         // one on `d` (set by decode) must survive EXIF auto-orient.
-        let next = codecs::rotate(&d.rgba, d.width, d.height, t.rotate)?;
+        let next = codecs::rotate(&d.rgba, d.width, d.height, u32::from(t.rotate))?;
         d.rgba = next.rgba;
         d.width = next.width;
         d.height = next.height;

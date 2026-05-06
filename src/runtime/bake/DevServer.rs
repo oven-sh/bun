@@ -2753,13 +2753,34 @@ pub struct HotUpdateContext<'a> {
     pub gts: &'a mut GraphTraceState,
 }
 
+/// Sentinel-encoded `Option<FileIndex>` packed into a `u32` (`u32::MAX` == none).
+/// Mirrors Zig `IncrementalGraph(side).FileIndex.Optional`. Side-erased so the
+/// `resolved_index_cache: &mut [u32]` backing slice can be reinterpreted in
+/// place; callers re-tag with the correct `FileIndex<SIDE>` on `unwrap`.
+#[repr(transparent)]
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub struct CachedFileIndex(pub u32);
+impl CachedFileIndex {
+    pub const NONE: Self = Self(u32::MAX);
+    #[inline] pub const fn raw(self) -> u32 { self.0 }
+    #[inline] pub fn unwrap<const SIDE: bake::Side>(self) -> Option<incremental_graph::FileIndex<SIDE>> {
+        if self.0 == u32::MAX { None } else { Some(incremental_graph::FileIndex::<SIDE>::init(self.0)) }
+    }
+}
+impl<const SIDE: bake::Side> From<Option<incremental_graph::FileIndex<SIDE>>> for CachedFileIndex {
+    fn from(v: Option<incremental_graph::FileIndex<SIDE>>) -> Self {
+        match v { Some(i) => Self(i.get()), None => Self::NONE }
+    }
+}
+
 impl<'a> HotUpdateContext<'a> {
-    pub fn get_cached_index<const SIDE: bake::Side>(
+    pub fn get_cached_index(
         &mut self,
+        side: bake::Side,
         i: bun_js_parser::ast::Index,
-    ) -> &mut incremental_graph::FileIndexOptional<SIDE> {
+    ) -> &mut CachedFileIndex {
         let len = self.sources.len();
-        let start = match SIDE {
+        let start = match side {
             bake::Side::Client => 0,
             bake::Side::Server => len,
         };
@@ -2767,19 +2788,18 @@ impl<'a> HotUpdateContext<'a> {
         let subslice = &mut self.resolved_index_cache[start..][..len];
 
         const _: () = assert!(
-            ::core::mem::align_of::<incremental_graph::FileIndexOptional<{ bake::Side::Client }>>()
-                == ::core::mem::align_of::<u32>()
+            ::core::mem::align_of::<CachedFileIndex>() == ::core::mem::align_of::<u32>()
         );
         const _: () = assert!(
-            ::core::mem::size_of::<incremental_graph::FileIndexOptional<{ bake::Side::Client }>>()
-                == ::core::mem::size_of::<u32>()
+            ::core::mem::size_of::<CachedFileIndex>() == ::core::mem::size_of::<u32>()
         );
         let elem: &mut u32 = &mut subslice[i.get() as usize];
-        // SAFETY: FileIndexOptional is repr(transparent) over u32; pointer derived
+        // SAFETY: CachedFileIndex is repr(transparent) over u32; pointer derived
         // from a unique `&mut u32` so the resulting `&mut` is non-aliased.
-        unsafe { &mut *(elem as *mut u32 as *mut incremental_graph::FileIndexOptional<SIDE>) }
+        unsafe { &mut *(elem as *mut u32 as *mut CachedFileIndex) }
     }
 }
+
 
 /// Called at the end of BundleV2 to index bundle contents into the `IncrementalGraph`s
 /// This function does not recover DevServer state if it fails (allocation failure)

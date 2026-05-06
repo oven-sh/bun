@@ -458,7 +458,7 @@ pub fn get_cipher(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) 
     }
 
     // SAFETY: cipher is a non-null *const SSL_CIPHER (null-checked above).
-    let name = unsafe { boringssl::SSL_CIPHER_get_name(cipher) };
+    let name = unsafe { ffi::SSL_CIPHER_get_name(cipher) };
     if name.is_null() {
         result.put(global, ZigString::static_("name"), JSValue::NULL);
     } else {
@@ -468,7 +468,7 @@ pub fn get_cipher(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) 
     }
 
     // SAFETY: cipher is a non-null *const SSL_CIPHER (null-checked above).
-    let standard_name = unsafe { boringssl::SSL_CIPHER_standard_name(cipher) };
+    let standard_name = unsafe { ffi::SSL_CIPHER_standard_name(cipher) };
     if standard_name.is_null() {
         result.put(global, ZigString::static_("standardName"), JSValue::NULL);
     } else {
@@ -478,7 +478,7 @@ pub fn get_cipher(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) 
     }
 
     // SAFETY: cipher is a non-null *const SSL_CIPHER (null-checked above).
-    let version = unsafe { boringssl::SSL_CIPHER_get_version(cipher) };
+    let version = unsafe { ffi::SSL_CIPHER_get_version(cipher) };
     if version.is_null() {
         result.put(global, ZigString::static_("version"), JSValue::NULL);
     } else {
@@ -500,7 +500,7 @@ pub fn get_tls_peer_finished_message(this: &mut This, global: &JSGlobalObject, _
     let mut dummy: [u8; 1] = [0; 1];
     // SAFETY: ssl_ptr is a live *mut SSL; dummy is a valid 1-byte writable buffer.
     let size = unsafe {
-        boringssl::SSL_get_peer_finished(ssl_ptr, dummy.as_mut_ptr().cast::<c_void>(), core::mem::size_of_val(&dummy))
+        ffi::SSL_get_peer_finished(ssl_ptr, dummy.as_mut_ptr().cast::<c_void>(), core::mem::size_of_val(&dummy))
     };
     if size == 0 {
         return Ok(JSValue::UNDEFINED);
@@ -511,7 +511,7 @@ pub fn get_tls_peer_finished_message(this: &mut This, global: &JSGlobalObject, _
     let buffer_ptr = buffer.as_array_buffer(global).unwrap().ptr.cast::<c_void>();
 
     // SAFETY: ssl_ptr is a live *mut SSL; buffer_ptr points to a buffer_size-byte JS ArrayBuffer kept alive on the stack.
-    let result_size = unsafe { boringssl::SSL_get_peer_finished(ssl_ptr, buffer_ptr, buffer_size) };
+    let result_size = unsafe { ffi::SSL_get_peer_finished(ssl_ptr, buffer_ptr, buffer_size) };
     debug_assert!(result_size == size);
     Ok(buffer)
 }
@@ -557,7 +557,7 @@ pub fn export_keying_material(this: &mut This, global: &JSGlobalObject, frame: &
 
             // SAFETY: ssl_ptr is a live *mut SSL; buffer_ptr/label_slice/context_slice are valid for the lengths passed.
             let result = unsafe {
-                boringssl::SSL_export_keying_material(
+                ffi::SSL_export_keying_material(
                     ssl_ptr,
                     buffer_ptr,
                     buffer_size,
@@ -582,7 +582,7 @@ pub fn export_keying_material(this: &mut This, global: &JSGlobalObject, frame: &
 
         // SAFETY: ssl_ptr is a live *mut SSL; buffer_ptr/label_slice are valid for the lengths passed; context is null with use_context=0.
         let result = unsafe {
-            boringssl::SSL_export_keying_material(
+            ffi::SSL_export_keying_material(
                 ssl_ptr,
                 buffer_ptr,
                 buffer_size,

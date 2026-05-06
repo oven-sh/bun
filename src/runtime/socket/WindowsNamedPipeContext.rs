@@ -85,6 +85,23 @@ pub enum SocketType {
     None,
 }
 
+/// Zig: `TLSSocket.Socket.fromNamedPipe(&this.named_pipe)` where
+/// `Socket = uws.NewSocketHandler(ssl)`. `bun_uws::NewSocketHandler` stores the
+/// pipe as a type-erased `*mut c_void` (the real `WindowsNamedPipe` lives in a
+/// higher tier), so build the variant directly here.
+#[inline]
+fn socket_from_named_pipe<const SSL: bool>(pipe: &mut WindowsNamedPipe) -> uws::NewSocketHandler<SSL> {
+    #[cfg(windows)]
+    {
+        uws::NewSocketHandler { socket: uws::InternalSocket::Pipe(pipe as *mut _ as *mut c_void) }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = pipe;
+        uws::NewSocketHandler { socket: uws::InternalSocket::Pipe }
+    }
+}
+
 impl WindowsNamedPipeContext {
     fn on_open(&mut self) {
         self.is_open = true;

@@ -319,7 +319,7 @@ impl AnyRoute {
         let cwd: &[u8] = if StandaloneModuleGraph::is_bun_standalone_file_path(path_slice) {
             // Zig: targetBasePublicPath(Environment.os, "root/") — comptime concat,
             // exposed as a const on the Rust side.
-            bun_standalone_graph::BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes()
+            StandaloneModuleGraph::BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes()
         } else {
             FileSystem::instance().top_level_dir
         };

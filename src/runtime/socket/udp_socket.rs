@@ -1064,7 +1064,7 @@ impl UDPSocket {
         let empty: &'static [u8] = b"";
         // TODO(port): `val.asString().toSlice(globalThis, alloc)` returned a ZigString.Slice owned
         // by the arena in Zig. Here we collect them into a Vec so they live until socket.send().
-        let mut string_slices: Vec<bun_str::Utf8Slice> = Vec::with_capacity(len);
+        let mut string_slices: Vec<ZigStringSlice> = Vec::with_capacity(len);
         for (slice_idx, val) in payload_vals.iter().enumerate() {
             let slice: &[u8] = 'brk: {
                 if let Some(array_buffer) = val.as_array_buffer(global_this) {
@@ -1201,11 +1201,11 @@ impl UDPSocket {
         let mut address_slice = str.to_owned_slice_z()?;
 
         // SAFETY: storage is large enough to hold sockaddr_in.
-        let addr4 = unsafe { &mut *(storage as *mut _ as *mut posix::sockaddr_in) };
+        let addr4 = unsafe { &mut *(storage as *mut _ as *mut sockaddr_in) };
         // SAFETY: libc addr-format fn; src is NUL-terminated, dst points to in_addr-sized storage.
         if unsafe {
             inet_pton(
-                posix::AF_INET as c_int,
+                inet::AF_INET as c_int,
                 address_slice.as_ptr() as *const c_char,
                 &mut addr4.addr as *mut _ as *mut c_void,
             )
@@ -1213,10 +1213,10 @@ impl UDPSocket {
         {
             // SAFETY: libc byte-order fn; pure on u16.
             addr4.port = unsafe { htons(port) };
-            addr4.family = posix::AF_INET;
+            addr4.family = inet::AF_INET as inet::sa_family_t;
         } else {
             // SAFETY: storage is large enough to hold sockaddr_in6.
-            let addr6 = unsafe { &mut *(storage as *mut _ as *mut posix::sockaddr_in6) };
+            let addr6 = unsafe { &mut *(storage as *mut _ as *mut sockaddr_in6) };
             addr6.scope_id = 0;
 
             if let Some(percent) = str.index_of_ascii_char(b'%') {

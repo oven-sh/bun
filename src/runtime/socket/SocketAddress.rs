@@ -595,24 +595,37 @@ impl SocketAddress {
 fn pton(global: &JSGlobalObject, af: c_int, addr: &ZStr, dst: *mut c_void) -> JsResult<()> {
     // SAFETY: addr is NUL-terminated, dst points to a valid in_addr/in6_addr
     match unsafe { ares::ares_inet_pton(af, addr.as_ptr(), dst) } {
-        0 => Err(global.throw_sys_error(
-            bun_jsc::SysErrorOptions { code: bun_jsc::ErrorCode::ERR_INVALID_IP_ADDRESS, ..Default::default() },
-            format_args!("Invalid socket address"),
-        )),
+        0 => Err(global
+            .err(bun_jsc::ErrorCode::ERR_INVALID_IP_ADDRESS, format_args!("Invalid socket address"))
+            .throw()),
 
         // TODO: figure out proper way to convert a c errno into a js exception
-        -1 => Err(global.throw_sys_error(
-            bun_jsc::SysErrorOptions {
-                code: bun_jsc::ErrorCode::ERR_INVALID_IP_ADDRESS,
-                // SAFETY: std.c._errno() returns thread-local errno pointer
-                errno: unsafe { *bun_sys::errno() },
-                ..Default::default()
-            },
-            format_args!("Invalid socket address"),
-        )),
+        // TODO(port): Zig set `.errno = std.c._errno().*` on the thrown SystemError;
+        // `JSGlobalObject::throw_sys_error` / `SysErrOptions` are not yet on the
+        // active stub, so the errno property is dropped for now.
+        -1 => {
+            let _ = bun_sys::last_errno();
+            Err(global
+                .err(bun_jsc::ErrorCode::ERR_INVALID_IP_ADDRESS, format_args!("Invalid socket address"))
+                .throw())
+        }
         1 => Ok(()),
         _ => unreachable!(),
     }
+}
+
+/// Non-throwing `ares_inet_pton` wrapper used by `SocketAddress::parse` (which
+/// returns `undefined` on failure instead of throwing). Copies `addr` into a
+/// stack buffer to NUL-terminate it for the C call.
+fn pton_noerr(af: c_int, addr: &[u8], dst: *mut c_void) -> bool {
+    let mut buf = [0u8; inet::INET6_ADDRSTRLEN as usize + 1];
+    if addr.len() >= buf.len() {
+        return false;
+    }
+    buf[..addr.len()].copy_from_slice(addr);
+    // buf[addr.len()] is already 0
+    // SAFETY: buf is NUL-terminated, dst points to a valid in_addr/in6_addr
+    unsafe { ares::ares_inet_pton(af, buf.as_ptr().cast(), dst) == 1 }
 }
 
 impl SocketAddress {
@@ -638,8 +651,8 @@ impl SocketAddress {
 // bindings though.
 // TODO(port): move to <area>_sys
 unsafe extern "C" {
-    static IPv4: bun_str::StaticStringImpl;
-    static IPv6: bun_str::StaticStringImpl;
+    static IPv4: bun_str::WTFStringImpl;
+    static IPv6: bun_str::WTFStringImpl;
 }
 // TODO(port): const bun.String construction from extern static — needs runtime init or const-fn wrapper
 // const ipv4: BunString = BunString { tag: .WTFStringImpl, value: .{ .WTFStringImpl = IPv4 } };
@@ -745,11 +758,11 @@ impl sockaddr {
     pub fn as_v4(&self) -> Option<u32> {
         // SAFETY: family field is at the same offset in both variants
         let fam = unsafe { self.sin.family };
-        if fam == bun_sys::posix::AF_INET {
+        if fam == inet::AF_INET as inet::sa_family_t {
             // SAFETY: fam == INET guarantees sin variant is active
             return Some(unsafe { self.sin.addr });
         }
-        if fam == bun_sys::posix::AF_INET6 {
+        if fam == inet::AF_INET6 as inet::sa_family_t {
             // SAFETY: fam == INET6 guarantees sin6 variant is active
             let sin6_addr = unsafe { &self.sin6.addr };
             if !sin6_addr[0..10].iter().all(|&b| b == 0) { return None; }

@@ -667,15 +667,22 @@ mod _gated_from_js {
     ) -> Result<CString, ReadFromBlobError> {
         let store = blob.store.as_ref().ok_or(ReadFromBlobError::NullStore)?;
         let file = match &store.data {
-            crate::webcore::blob::StoreData::File(f) => f,
+            crate::webcore::blob::store::Data::File(f) => f,
             _ => return Err(ReadFromBlobError::NotAFile),
         };
         let mut fs = crate::node::fs::NodeFS::default();
-        // TODO(port): verify NodeFS::read_file_with_options signature/variants
+        // TODO(port): Zig copied `file.pathlike` by value into the args struct;
+        // `PathOrFileDescriptor` is not `Clone` in Rust yet, so the path field
+        // is stubbed until a borrow-taking read_file variant or `Clone` lands.
+        let _ = file;
+        let read_args = crate::node::fs::args::ReadFile {
+            path: todo!("blocked_on: node::types::PathOrFileDescriptor Clone (Zig did a value copy of file.pathlike)"),
+            ..Default::default()
+        };
         let maybe = fs.read_file_with_options(
-            crate::node::fs::ReadFileArgs { path: file.pathlike.clone() },
+            &read_args,
             crate::node::fs::Flavor::Sync,
-            crate::node::fs::ReadFileEncoding::NullTerminated,
+            crate::node::fs::ReadFileStringType::NullTerminated,
         );
         let result = match maybe {
             bun_sys::Result::Ok(result) => result,
@@ -686,17 +693,20 @@ mod _gated_from_js {
         // `read_file_with_options(NullTerminated)` transfers ownership of the
         // returned buffer to the caller, so we can return it directly without
         // duplicating.
-        if result.null_terminated.is_empty() {
+        let crate::node::fs::ret::ReadFileWithOptions::NullTerminated(zbox) = result else {
+            unreachable!("ReadFileStringType::NullTerminated always yields the NullTerminated variant");
+        };
+        if zbox.is_empty() {
             return Err(ReadFromBlobError::EmptyFile);
         }
-        // TODO(port): result.null_terminated is already NUL-terminated owned bytes;
-        // wrap as CString without re-allocating.
-        Ok(result.null_terminated)
+        // SAFETY: `ZBox` guarantees a single trailing NUL; we hand the bytes
+        // (including the sentinel) to `CString` without re-allocating.
+        Ok(unsafe { CString::from_vec_with_nul_unchecked(zbox.into_vec_with_nul()) })
     }
 
     impl SSLConfig {
         pub fn from_js(
-            vm: &mut jsc::VirtualMachine,
+            vm: &mut VirtualMachine,
             global: &JSGlobalObject,
             value: JSValue,
         ) -> JsResult<Option<SSLConfig>> {
@@ -706,7 +716,7 @@ mod _gated_from_js {
         }
 
         pub fn from_generated(
-            vm: &mut jsc::VirtualMachine,
+            vm: &mut VirtualMachine,
             global: &JSGlobalObject,
             generated: &jsc::generated::SSLConfig,
         ) -> JsResult<Option<SSLConfig>> {

@@ -306,7 +306,7 @@ impl Expect {
         // → default signature header, non-empty label → user's label header.
         if custom_label.is_empty() {
             // TODO(port): comptime fmt-string concatenation with autoFormatLabel; reconstruct in Phase B
-            let _ = (chain, &matcher_name, &matcher_params, message_fmt);
+            let _ = (&chain, &matcher_name, &matcher_params, message_fmt);
             global_this.throw_pretty(
                 "<d>expect(<r><red>received<r><d>).<r>{}{}({})\n\n{}",
                 format_args!("{chain}{matcher_name}({matcher_params})\n\n{message_args}"),

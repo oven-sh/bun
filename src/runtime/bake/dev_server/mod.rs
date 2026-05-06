@@ -586,6 +586,13 @@ impl HotReloadEvent {
 }
 
 impl DevServer {
+    /// Spec DevServer.zig `onPluginsRejected` — plugin-load failure hook
+    /// called from `ServePlugins::handle_on_reject`. Full body (mark all
+    /// pending bundles failed, broadcast HMR error) lives in the gated draft.
+    pub fn on_plugins_rejected(&mut self) {
+        todo!("blocked_on: bake::DevServer::on_plugins_rejected body")
+    }
+
     /// Spec DevServer.zig `emitMemoryVisualizerMessageTimer` — periodic
     /// memory-visualizer push to connected HMR sockets. Called from the
     /// high-tier `EventLoopTimer` dispatch with the raw `*EventLoopTimer`

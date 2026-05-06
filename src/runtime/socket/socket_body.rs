@@ -2558,18 +2558,20 @@ impl<const SSL: bool> NewSocket<SSL> {
         };
         if !sc_js.is_empty() {
             let Some(sc) = SecureContext::from_js(sc_js) else {
-                return global.throw_invalid_argument_type_value(
+                return Err(global.throw_invalid_argument_type_value(
                     "secureContext",
                     "SecureContext",
                     sc_js,
-                );
+                ));
             };
-            *owned_ctx = Some(sc.borrow());
+            // SAFETY: `from_js` returns a live `*mut SecureContext`.
+            *owned_ctx = Some(unsafe { (*sc).borrow() } as *mut SSL_CTX);
             // servername / ALPN still come from the surrounding tls config.
             if let Some(t) = opts.get_truthy(global, "tls")? {
                 if !t.is_boolean() {
                     ssl_opts = SSLConfig::from_js(
-                        unsafe { &*VirtualMachine::get() },
+                        // SAFETY: per-thread VM singleton.
+                        unsafe { &mut *VirtualMachine::get() },
                         global,
                         t,
                     )?;
@@ -2578,7 +2580,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         } else if let Some(tls_js) = opts.get_truthy(global, "tls")? {
             if !tls_js.is_boolean() {
                 ssl_opts = SSLConfig::from_js(
-                        unsafe { &*VirtualMachine::get() },
+                    // SAFETY: per-thread VM singleton.
+                    unsafe { &mut *VirtualMachine::get() },
                     global,
                     tls_js,
                 )?;
@@ -2587,33 +2590,36 @@ impl<const SSL: bool> NewSocket<SSL> {
             }
             let cfg = ssl_opts
                 .as_mut()
-                .ok_or_else(|| global.throw_err("Expected \"tls\" option", ()))?;
-            let mut create_err = uws::create_bun_socket_error_t::None;
+                .ok_or_else(|| global.throw("Expected \"tls\" option"))?;
+            let mut create_err = uws::create_bun_socket_error_t::none;
             // Per-VM weak cache: `tls:true` and `{servername}`-only hit
             // the same CTX as `Bun.connect`; an inline CA dedupes across
             // every upgradeTLS that names it.
-            *owned_ctx = match VirtualMachine::get()
+            // SAFETY: per-thread VM singleton.
+            *owned_ctx = match unsafe { &mut *VirtualMachine::get() }
                 .rare_data()
                 .ssl_ctx_cache()
                 .get_or_create(cfg, &mut create_err)
             {
-                Some(c) => Some(c),
+                Some(c) => Some(c as *mut SSL_CTX),
                 None => {
                     // us_ssl_ctx_from_options only sets *err for the CA/cipher
                     // cases; bad cert/key/DH return NULL with err==.none and the
                     // detail is on the BoringSSL error queue.
-                    if create_err != uws::create_bun_socket_error_t::None {
-                        return global.throw_value(create_err.to_js(global));
+                    if create_err != uws::create_bun_socket_error_t::none {
+                        return Err(global.throw_value(
+                            crate::socket::uws_jsc::create_bun_socket_error_to_js(create_err, global),
+                        ));
                     }
-                    return global.throw_value(boringssl_err_to_js(
+                    return Err(global.throw_value(boringssl_err_to_js(
                         global,
                         // SAFETY: BoringSSL FFI.
                         unsafe { boringssl_sys::ERR_get_error() },
-                    ));
+                    )));
                 }
             };
         } else {
-            return global.throw("Expected \"tls\" option", ());
+            return Err(global.throw("Expected \"tls\" option"));
         }
         if global.has_exception() {
             return Err(jsc::JsError::Thrown);

@@ -1,18 +1,19 @@
 //! This type is a `GenericAllocator`; see `src/allocators.zig`.
+#![allow(unexpected_cfgs)] // `ci_assert` / `asan` feature gates are Phase-B placeholders.
 
 use core::cell::UnsafeCell;
 use core::ffi::{c_char, c_void};
 use core::marker::PhantomData;
 use core::ptr::{self, NonNull};
 
-use crate::mimalloc;
+use bun_alloc::mimalloc;
 // TODO(port): `std.mem.Allocator` is the Zig `{ ptr, vtable }` pair. This file
-// constructs it explicitly (it IS the bun_alloc crate). Phase B decides whether
-// this stays a `#[repr(C)] struct ZigAllocator { ptr, vtable }` or becomes a
+// constructs it explicitly. Phase B decides whether this stays a
+// `#[repr(C)] struct StdAllocator { ptr, vtable }` or becomes a
 // `&dyn Allocator` trait object. For now, reference the explicit pair type.
-use crate::{Alignment, AllocatorVTable, ZigAllocator};
+use bun_alloc::{Alignment, AllocatorVTable, StdAllocator as ZigAllocator};
 
-crate::declare_scope!(mimalloc, hidden);
+bun_output::declare_scope!(mimalloc, hidden);
 
 // `safety_checks = bun.Environment.ci_assert` — a comptime build flag.
 // TODO(port): confirm the exact cfg name for ci_assert in Phase B.

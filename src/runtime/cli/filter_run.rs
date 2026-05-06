@@ -215,7 +215,7 @@ struct State<'a> {
     // TODO(port): lifetime — LIFETIMES.tsv says BORROW_PARAM (`&'a`), but Zig field is
     // `*bun.DotEnv.Loader` and ProcessHandle::start mutates `env.map` (PATH swap). Needs `&mut`;
     // file a correction to LIFETIMES.tsv.
-    env: &'a mut bun_dotenv::Loader,
+    env: &'a mut bun_dotenv::Loader<'a>,
 }
 
 struct ElideResult<'b> {

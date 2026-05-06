@@ -3,8 +3,7 @@ use core::cell::Cell;
 use bun_jsc::{CallFrame, EnsureStillAlive, JSGlobalObject, JSValue, JsResult};
 use bun_jsc::Debugger;
 
-use super::{EventLoopTimer, Kind, TimerObjectInternals, ID};
-use super::event_loop_timer::Tag as EventLoopTimerTag;
+use super::{EventLoopTimer, EventLoopTimerTag, Kind, TimerObjectInternals, ID};
 
 // `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})` — intrusive single-thread refcount.
 // `ref`/`deref` are provided by `bun_ptr::IntrusiveRc<TimeoutObject>`; when the count hits

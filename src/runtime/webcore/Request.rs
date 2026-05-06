@@ -1517,7 +1517,7 @@ impl Request {
                 if let Some(stream) = js_gen::stream_get_cached(js_ref) {
                     let mut readable = ReadableStream::from_js(stream, global_this)?;
                     if let Some(r) = readable.as_mut() {
-                        break 'brk self.body.clone_with_readable_stream(global_this, r)?;
+                        break 'brk self.body.clone_with_readable_stream(global_this, Some(r))?;
                     }
                 }
             }

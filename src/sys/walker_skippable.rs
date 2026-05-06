@@ -26,7 +26,7 @@ pub struct Walker {
     skip_dirnames: Range<usize>,
     skip_all: Box<[u64]>,
     seed: u64,
-    resolve_unknown_entry_types: bool,
+    pub resolve_unknown_entry_types: bool,
 }
 
 pub struct WalkerEntry<'a> {

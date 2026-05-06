@@ -1661,10 +1661,8 @@ impl PackageManager {
     /// `bun_event_loop` exposes the package-manager loop handle.
     pub fn wake(&self) {}
 
-    /// Zig: `PackageManager.scopeForPackageName(name)`.
-    pub fn scope_for_package_name(&self, _name: &[u8]) -> &npm::registry::Scope {
-        &self.options.scope
-    }
+    // `scope_for_package_name` moved to PackageManager/PackageManagerResolution.rs
+    // (real port handles `@scope/` prefix lookup in `options.registries`).
 
     /// Port of `directories.updateLockfileIfNeeded`
     /// (src/install/PackageManager/PackageManagerDirectories.zig:671). Real

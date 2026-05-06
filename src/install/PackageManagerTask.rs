@@ -115,13 +115,20 @@ unsafe impl<'a> bun_threading::unbounded_queue::Node for Task<'a> {
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Id(u64);
 
+impl core::fmt::Display for Id {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        // Zig: `enum(u64)` — printed as its raw integer in `{}` debug logs.
+        self.0.fmt(f)
+    }
+}
+
 impl Id {
     #[inline]
     pub fn get(self) -> u64 {
         self.0
     }
 
-    pub fn for_npm_package(package_name: &[u8], package_version: &semver::Version) -> Id {
+    pub fn for_npm_package(package_name: &[u8], package_version: semver::Version) -> Id {
         let mut hasher = Wyhash11::init(0);
         hasher.update(b"npm-package:");
         hasher.update(package_name);
@@ -129,7 +136,7 @@ impl Id {
         // SAFETY: reading raw bytes of a POD value for hashing (matches Zig `std.mem.asBytes`)
         hasher.update(unsafe {
             core::slice::from_raw_parts(
-                (package_version as *const semver::Version).cast::<u8>(),
+                (&package_version as *const semver::Version).cast::<u8>(),
                 core::mem::size_of::<semver::Version>(),
             )
         });

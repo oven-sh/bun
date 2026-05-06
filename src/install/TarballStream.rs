@@ -296,6 +296,11 @@ impl TarballStream {
     unsafe fn drain(this: *mut Self) {
         Output::Source::configure_thread();
 
+        // SAFETY: see fn-level # Safety — `this` is live; raw-ptr field
+        // projection only. The HTTP thread touches mutex-guarded producer
+        // fields concurrently; everything else is drain-local. `finish` may
+        // free `*this`; each `return` after it touches nothing.
+        unsafe {
         loop {
             if (*this).fail.is_none() && (*this).phase != Phase::Done {
                 // Only pull bytes into `reading` while libarchive is still
@@ -384,6 +389,7 @@ impl TarballStream {
             }
             return;
         }
+        } // unsafe
     }
 
     /// Move any bytes still sitting in `pending` into `reading` so the read
@@ -399,6 +405,8 @@ impl TarballStream {
     /// synchronised by `mutex`; drain-side fields (`reading`/`read_pos`/
     /// `hasher`) are owned by the single active drain task.
     unsafe fn take_pending(this: *mut Self) -> bool {
+        // SAFETY: see fn-level # Safety — raw-ptr field projection only.
+        unsafe {
         (*this).mutex.lock();
 
         if (*this).pending.is_empty() {
@@ -435,6 +443,7 @@ impl TarballStream {
         }
         (*this).mutex.unlock();
         true
+        } // unsafe
     }
 
     /// Run libarchive until it needs more input (`Retry`) or hits a
@@ -752,7 +761,7 @@ impl TarballStream {
                     let size: usize = usize::try_from(entry.size().max(0)).unwrap();
                     if size > 1_000_000 {
                         let _ = bun_sys::preallocate_file(
-                            fd.cast(),
+                            fd.native(),
                             0,
                             i64::try_from(size).unwrap(),
                         );
@@ -847,6 +856,10 @@ impl TarballStream {
     /// `Box::from_raw` self-destruction (Zig spec: `this.deinit()` with a
     /// freely-aliasing `*TarballStream`).
     unsafe fn finish(this: *mut Self) {
+        // SAFETY: see fn-level # Safety — `this`/`task`/`network`/`manager`
+        // are live raw pointers; this fn is the sole owner. After
+        // `Box::from_raw(this)` nothing touches `this`.
+        unsafe {
         // Fields are already raw pointers (see struct PORT NOTE), so copying
         // them out before `Box::from_raw(this)` is just a pointer copy — no
         // reborrow of `&mut Task` is ever materialised from a stored `&mut`.
@@ -914,6 +927,7 @@ impl TarballStream {
         // long-lived `&mut PackageManager`.
         (*manager).resolve_tasks.push(task);
         (*manager).wake();
+        } // unsafe
     }
 
     /// # Safety
@@ -921,8 +935,10 @@ impl TarballStream {
     /// pointer (Zig: freely-aliasing `*Task`) so `tarball` (a borrow into
     /// `task.request`) can coexist with writes to `task.log`/`task.data`.
     unsafe fn populate_result(&mut self, task: *mut Task) {
-        // SAFETY: union field `extract` is the active variant for streaming
-        // tarballs (set by `enqueueExtractNPMPackage`).
+        // SAFETY: see fn-level # Safety — `task` is live and exclusively
+        // owned by this drain; union field `extract` is the active variant
+        // for streaming tarballs (set by `enqueueExtractNPMPackage`).
+        unsafe {
         let tarball = &(*task).request.extract.tarball;
         (*task).data = TaskData { extract: ManuallyDrop::new(Default::default()) };
 
@@ -1027,6 +1043,7 @@ impl TarballStream {
 
         (*task).data = TaskData { extract: ManuallyDrop::new(result) };
         (*task).status = TaskStatus::Success;
+        } // unsafe
     }
 
     /// Prepare this stream for another HTTP attempt after a failed request

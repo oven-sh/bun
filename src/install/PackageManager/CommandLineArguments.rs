@@ -1179,10 +1179,15 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
             let mut buf2 = PathBuffer::uninit();
             let final_path: &mut bun_str::ZStr;
             if !cwd_.is_empty() && cwd_[0] == b'.' {
-                let cwd = bun_sys::getcwd(&mut buf)?;
+                let cwd_len = bun_sys::getcwd(&mut buf[..])?;
+                let cwd = &buf[..cwd_len];
                 let parts: [&[u8]; 1] = [cwd_];
-                let path_ = Path::resolve_path::join_abs_string_buf::<Path::platform::Auto>(cwd, &mut buf2, &parts);
-                let len = path_.len();
+                let len = Path::resolve_path::join_abs_string_buf::<Path::platform::Auto>(
+                    cwd,
+                    &mut buf2[..],
+                    &parts,
+                )
+                .len();
                 buf2[len] = 0;
                 // SAFETY: buf2[len] == 0 written above
                 final_path = unsafe { bun_str::ZStr::from_raw_mut(buf2.as_mut_ptr(), len) };
@@ -1192,12 +1197,14 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
                 // SAFETY: buf[cwd_.len()] == 0 written above
                 final_path = unsafe { bun_str::ZStr::from_raw_mut(buf.as_mut_ptr(), cwd_.len()) };
             }
-            if let Err(err) = bun_sys::chdir(b"", final_path).into_result() {
-                Output::err_generic(format_args!(
+            if let Err(err) = bun_sys::chdir(final_path) {
+                Output::err_generic(
                     "failed to change directory to \"{}\": {}\n",
-                    bstr::BStr::new(final_path.as_bytes()),
-                    err.name()
-                ));
+                    (
+                        bstr::BStr::new(final_path.as_bytes()),
+                        bstr::BStr::new(err.name()),
+                    ),
+                );
                 Global::crash();
             }
         }
@@ -1233,27 +1240,27 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
         }
 
         if SUBCOMMAND == Subcommand::Patch && cli.positionals.len() < 2 {
-            Output::err_generic("Missing pkg to patch\n");
+            Output::err_generic("Missing pkg to patch\n", ());
             Global::crash();
         }
 
         if SUBCOMMAND == Subcommand::PatchCommit && cli.positionals.len() < 2 {
-            Output::err_generic("Missing pkg folder to patch\n");
+            Output::err_generic("Missing pkg folder to patch\n", ());
             Global::crash();
         }
 
         if cli.production && cli.trusted {
-            Output::err_generic("The '--production' and '--trust' flags together are not supported because the --trust flag potentially modifies the lockfile after installing packages\n");
+            Output::err_generic("The '--production' and '--trust' flags together are not supported because the --trust flag potentially modifies the lockfile after installing packages\n", ());
             Global::crash();
         }
 
         if cli.frozen_lockfile && cli.trusted {
-            Output::err_generic("The '--frozen-lockfile' and '--trust' flags together are not supported because the --trust flag potentially modifies the lockfile after installing packages\n");
+            Output::err_generic("The '--frozen-lockfile' and '--trust' flags together are not supported because the --trust flag potentially modifies the lockfile after installing packages\n", ());
             Global::crash();
         }
 
         if cli.analyze && cli.positionals.is_empty() {
-            Output::err_generic("Missing script(s) to analyze. Pass paths to scripts to analyze their dependencies and add any missing ones to the lockfile.\n");
+            Output::err_generic("Missing script(s) to analyze. Pass paths to scripts to analyze their dependencies and add any missing ones to the lockfile.\n", ());
             Global::crash();
         }
 
@@ -1286,10 +1293,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
                 cli.depth = Some(match strings::parse_int::<usize>(depth, 10) {
                     Ok(d) => d,
                     Err(_) => {
-                        Output::err_generic(format_args!(
+                        Output::err_generic(
                             "invalid depth value: '{}', must be a positive integer",
-                            bstr::BStr::new(depth)
-                        ));
+                            (bstr::BStr::new(depth),),
+                        );
                         Global::exit(1);
                     }
                 });

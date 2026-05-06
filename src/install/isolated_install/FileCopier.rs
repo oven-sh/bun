@@ -3,7 +3,7 @@ use core::ptr;
 use bun_alloc::AllocError;
 use bun_core::{err, fmt as bun_fmt, Error, Global, Output};
 use bun_paths::{self, OSPathChar, OSPathSlice};
-use bun_sys::{self as sys, walker_skippable::Walker, EntryKind, Fd, E};
+use bun_sys::{self as sys, walker_skippable, walker_skippable::Walker, Dir, EntryKind, Fd, E};
 
 // TODO(port): `bun.AbsPath(.{ .sep = .auto, .unit = .os })` / `bun.Path(...)` are
 // comptime-configured path-builder types. Phase B must pick the concrete Rust
@@ -28,7 +28,7 @@ impl FileCopier {
             src_path,
             dest_subpath,
             walker: {
-                let mut w = Walker::walk(
+                let mut w = walker_skippable::walk(
                     src_dir,
                     // bun.default_allocator → deleted (global mimalloc)
                     &[],
@@ -45,7 +45,7 @@ impl FileCopier {
 
     pub fn copy(&mut self) -> sys::Result<()> {
         let dest_dir = match bun_sys::make_path::make_open_path(
-            Fd::cwd().std_dir(),
+            Dir::cwd(),
             self.dest_subpath.slice_z(),
             Default::default(),
         ) {

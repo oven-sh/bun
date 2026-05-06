@@ -924,7 +924,7 @@ pub fn parse_args(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
         None => JSValue::UNDEFINED,
     };
 
-    let strict = validators::validate_boolean(global, config_strict, "strict", format_args!(""))?;
+    let strict = validators::validate_boolean(global, config_strict, "strict")?;
 
     if config_allow_positionals.is_undefined_or_null() {
         config_allow_positionals = JSValue::from(!strict);

@@ -212,10 +212,7 @@ pub struct ProcessExitVTable {
 #[derive(Clone, Copy)]
 pub struct ProcessExitHandler {
     pub owner: *mut (),
-    // PORT NOTE: stored by value (one fn ptr, `Copy`) instead of
-    // `&'static ProcessExitVTable` so the generic `ProcessExitOwner::exit_vtable`
-    // default can synthesise it without a per-type `static` item.
-    pub vtable: Option<ProcessExitVTable>,
+    pub vtable: Option<&'static ProcessExitVTable>,
 }
 
 impl Default for ProcessExitHandler {

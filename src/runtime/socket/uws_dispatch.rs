@@ -156,7 +156,7 @@ pub extern "C" fn us_dispatch_close(
     code: c_int,
     reason: *mut c_void,
 ) -> *mut us_socket_t {
-    if let Some(f) = vt(s).on_close { f(s, code, reason) } else { s }
+    if let Some(f) = vt(s).on_close { unsafe { f(s, code, reason) } } else { s }
 }
 
 #[unsafe(no_mangle)]

@@ -1145,7 +1145,7 @@ impl FFI {
         if let Some(val) = generate_symbols(
             global_this,
             &mut compile_c.symbols.map,
-            symbols_object.get_object().unwrap(),
+            unsafe { &*symbols_object.get_object().unwrap() },
         )? {
             if !val.is_empty() && !global_this.has_exception() {
                 return Err(global_this.throw_value(val));

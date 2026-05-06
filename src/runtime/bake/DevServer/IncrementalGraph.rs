@@ -10,11 +10,11 @@ use bun_str::strings;
 use crate::bake::{self as bake, Side};
 use crate::bake::dev_server::{
     self as DevServer, ChunkKind, EntryPointList, FileKind, GraphTraceState,
-    RouteBundle, SerializedFailure, SourceMapStore, TraceImportGoal,
+    TraceImportGoal,
 };
 use crate::bake::dev_server::incremental_graph as ig;
 use crate::bake::dev_server_body::CachedFileIndex;
-use super::serialized_failure_body::{Owner as FailureOwner, ArrayHashAdapter as FailureArrayHashAdapter};
+use super::serialized_failure_body::Owner as FailureOwner;
 use super::source_map_store_body::Entry as SourceMapStoreEntry;
 use crate::bake::dev_server::route_bundle::Index as RouteBundleIndex;
 use crate::bake::dev_server::source_map_store::Key as SourceMapStoreKey;

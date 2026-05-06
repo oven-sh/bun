@@ -4537,7 +4537,11 @@ impl<'a> BundleV2<'a> {
                     }
 
                     // For virtual files, use the path text as-is (no relative path computation needed).
-                    path_primary.pretty = self.allocator().alloc_slice_copy(&path_primary.text);
+                    // SAFETY: arena outlives the bundle pass; raw-pointer detour erases the
+                    // `&self` lifetime so the resulting `&'static [u8]` doesn't pin `self`
+                    // (otherwise `path_primary: Path<'static>` forces `&self: 'static`,
+                    // cascading borrow conflicts into every `&mut self` call below).
+                    path_primary.pretty = unsafe { &*(self.allocator().alloc_slice_copy(&path_primary.text) as *const [u8]) };
                     import_record.path = ir_path_from_fs(&path_primary);
                     let _ = path_primary.text; // key already interned by get_or_put
                     bun_core::scoped_log!(Bundle, "created ParseTask from FileMap: {}", bstr::BStr::new(&path_primary.text));

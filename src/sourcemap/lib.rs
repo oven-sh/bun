@@ -589,11 +589,13 @@ pub fn get_source_map_impl<P: SourceProvider + ?Sized>(
                             // calling `error.stack`. This message is only printed if
                             // the sourcemap has been found but is invalid, such as being
                             // invalid JSON text or corrupt mappings.
-                            bun_core::Output::warn(format_args!(
+                            bun_core::Output::warn(
                                 "Could not decode sourcemap in dev server runtime: {} - {}",
-                                ::bstr::BStr::new(source_filename),
-                                ::bstr::BStr::new(err.name()),
-                            ));
+                                (
+                                    ::bstr::BStr::new(source_filename),
+                                    ::bstr::BStr::new(err.name()),
+                                ),
+                            );
                             // Disable the "try using --sourcemap=external" hint
                             crate::SavedSourceMap::MissingSourceMapNoteInfo::set_seen_invalid(
                                 true,
@@ -619,11 +621,13 @@ pub fn get_source_map_impl<P: SourceProvider + ?Sized>(
                                 // calling `error.stack`. This message is only printed if
                                 // the sourcemap has been found but is invalid, such as being
                                 // invalid JSON text or corrupt mappings.
-                                bun_core::Output::warn(format_args!(
+                                bun_core::Output::warn(
                                     "Could not decode sourcemap in '{}': {}",
-                                    ::bstr::BStr::new(source_filename),
-                                    ::bstr::BStr::new(err.name()),
-                                ));
+                                    (
+                                        ::bstr::BStr::new(source_filename),
+                                        ::bstr::BStr::new(err.name()),
+                                    ),
+                                );
                                 // Disable the "try using --sourcemap=external" hint
                                 crate::SavedSourceMap::MissingSourceMapNoteInfo::set_seen_invalid(
                                     true,
@@ -665,11 +669,13 @@ pub fn get_source_map_impl<P: SourceProvider + ?Sized>(
                         // calling `error.stack`. This message is only printed if
                         // the sourcemap has been found but is invalid, such as being
                         // invalid JSON text or corrupt mappings.
-                        bun_core::Output::warn(format_args!(
+                        bun_core::Output::warn(
                             "Could not decode sourcemap in '{}': {}",
-                            ::bstr::BStr::new(source_filename),
-                            ::bstr::BStr::new(err.name()),
-                        ));
+                            (
+                                ::bstr::BStr::new(source_filename),
+                                ::bstr::BStr::new(err.name()),
+                            ),
+                        );
                         // Disable the "try using --sourcemap=external" hint
                         crate::SavedSourceMap::MissingSourceMapNoteInfo::set_seen_invalid(true);
                         return None;
@@ -679,11 +685,13 @@ pub fn get_source_map_impl<P: SourceProvider + ?Sized>(
         }
 
         if let Some(err) = inline_err {
-            bun_core::Output::warn(format_args!(
+            bun_core::Output::warn(
                 "Could not decode sourcemap in '{}': {}",
-                ::bstr::BStr::new(source_filename),
-                ::bstr::BStr::new(err.name()),
-            ));
+                (
+                    ::bstr::BStr::new(source_filename),
+                    ::bstr::BStr::new(err.name()),
+                ),
+            );
             // Disable the "try using --sourcemap=external" hint
             crate::SavedSourceMap::MissingSourceMapNoteInfo::set_seen_invalid(true);
             return None;

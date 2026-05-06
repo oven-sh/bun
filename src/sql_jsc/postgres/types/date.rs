@@ -36,8 +36,28 @@ pub fn from_js(global_object: &JSGlobalObject, value: JSValue) -> JsResult<i64> 
 }
 
 // Zig `toJS(value: anytype)` dispatches on `@TypeOf(value)` at comptime over a
-// closed set {i64, *Data}. Rust has no comptime type-switch; split into two fns.
-// TODO(port): if callers need uniform dispatch, introduce a `DateToJs` trait.
+// closed set {i64, *Data}. Rust has no comptime type-switch; modeled as a trait
+// with per-type impls so `tag_jsc::to_js_with_type` can dispatch uniformly. The
+// `else => @compileError(...)` arm is the natural "no impl" compile error.
+pub trait DateToJs {
+    fn date_to_js(self, global_object: &JSGlobalObject) -> JSValue;
+}
+
+impl DateToJs for i64 {
+    fn date_to_js(self, global_object: &JSGlobalObject) -> JSValue {
+        to_js_i64(global_object, self)
+    }
+}
+
+impl DateToJs for Data {
+    fn date_to_js(self, global_object: &JSGlobalObject) -> JSValue {
+        to_js_data(global_object, self)
+    }
+}
+
+pub fn to_js<T: DateToJs>(global_object: &JSGlobalObject, value: T) -> JSValue {
+    value.date_to_js(global_object)
+}
 
 pub fn to_js_i64(global_object: &JSGlobalObject, value: i64) -> JSValue {
     // Convert from Postgres timestamp (μs since 2000-01-01) to Unix timestamp (ms)

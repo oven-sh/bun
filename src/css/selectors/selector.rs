@@ -835,29 +835,24 @@ pub mod serialize {
                 css::css_values::ident::IdentFns::to_css(local_name, dest)?;
                 operator.to_css(dest)?;
 
-                // blocked_on: `css_parser::to_css::string` (gated on Printer::new
-                // arena-signature reshape). The minify-path picks the shorter of
-                // (serialized-as-ident, serialized-as-string); fall through to the
-                // non-minify branch until that helper un-gates.
-                
                 if dest.minify {
                     // PERF: should we put a scratch buffer in the printer
                     // Serialize as both an identifier and a string and choose the shorter one.
-                    // TODO(port): Zig used `std.Io.Writer.Allocating`; use a Vec<u8> here.
+                    // SAFETY: per the `CssString` invariant, the pointee borrows the parser
+                    // arena which outlives the `Printer` it is being written to.
+                    let value_bytes = unsafe { &**value };
                     let mut id: Vec<u8> = Vec::new();
-                    if css::serializer::serialize_identifier(&v.value, &mut id).is_err() {
+                    if css::serializer::serialize_identifier(value_bytes, &mut id).is_err() {
                         return dest.add_fmt_error();
                     }
 
-                    let s = css::to_css::string(
-                        dest.allocator,
-                        // TODO(port): generic type param `CSSString` was passed at comptime in Zig.
-                        &v.value,
-                        css::PrinterOptions::default(),
-                        dest.import_info,
-                        dest.local_names,
-                        dest.symbols,
-                    )?;
+                    // PORT NOTE: Zig routed through `css.to_css.string(CSSString, ...)`, which
+                    // dispatches to `CSSStringFns.toCss` → `serialize_string`. Inline that here
+                    // since `CssString` (`*const [u8]`) does not implement `generic::ToCss`.
+                    let mut s: Vec<u8> = Vec::new();
+                    if css::serializer::serialize_string(value_bytes, &mut s).is_err() {
+                        return dest.add_fmt_error();
+                    }
 
                     let id_items = &id[..];
                     if !id_items.is_empty() && id_items.len() < s.len() {
@@ -866,10 +861,8 @@ pub mod serialize {
                         dest.write_str(&s)?;
                     }
                 } else {
-                    CSSStringFns::to_css(&v.value, dest)?;
+                    CSSStringFns::to_css(value, dest)?;
                 }
-                #[cfg(any())]
-                CSSStringFns::to_css(value, dest)?;
 
                 match case_sensitivity {
                     parser::attrs::ParsedCaseSensitivity::CaseSensitive

@@ -51,7 +51,7 @@ use bun_js_parser::ast::Index;
 use bun_options_types::schema::api; // bun.schema.api
 use crate::webcore::Blob;
 use bun_collections::{StringHashMap, StringSet, StringMap, StringArrayHashMap};
-use bun_core::MutableString;
+use bun_string::MutableString;
 
 bun_output::declare_scope!(Transpiler, visible);
 
@@ -1637,10 +1637,8 @@ pub mod js_bundler {
         unsafe { (*resolve.bv2).on_resolve_async(resolve) };
     }
 
-    use bun_bundler::DeferredTask;
-
     pub struct Load<'a> {
-        pub bv2: *mut BundleV2,
+        pub bv2: *mut BundleV2<'static>,
 
         pub source_index: Index,
         pub default_loader: options::Loader,

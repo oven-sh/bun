@@ -192,30 +192,32 @@ impl DeferredDerefTask {
         unsafe {
             match tag {
                 Tag::HTTPServerRequestContext => {
-                    (*ctx.cast::<server::HTTPServer::RequestContext>()).deref_()
+                    (*ctx.cast::<HTTPServerRequestContext>()).deref()
                 }
                 Tag::HTTPSServerRequestContext => {
-                    (*ctx.cast::<server::HTTPSServer::RequestContext>()).deref_()
+                    (*ctx.cast::<HTTPSServerRequestContext>()).deref()
                 }
                 Tag::DebugHTTPServerRequestContext => {
-                    (*ctx.cast::<server::DebugHTTPServer::RequestContext>()).deref_()
+                    (*ctx.cast::<DebugHTTPServerRequestContext>()).deref()
                 }
                 Tag::DebugHTTPSServerRequestContext => {
-                    (*ctx.cast::<server::DebugHTTPSServer::RequestContext>()).deref_()
+                    (*ctx.cast::<DebugHTTPSServerRequestContext>()).deref()
                 }
                 Tag::BodyValueBufferer => {
                     // ValueBufferer is embedded by value inside HTMLRewriter's
                     // BufferOutputSink, with the owner pointer stored in .ctx.
                     // The pending-promise ref was taken on the owner, so we
                     // release it there.
-                    let bufferer = &*ctx.cast::<body::ValueBufferer>();
-                    (*bufferer.ctx.cast::<HTMLRewriter::BufferOutputSink>()).deref_();
+                    let bufferer = &*ctx.cast::<body::ValueBufferer<'_>>();
+                    html_rewriter::BufferOutputSink::deref(
+                        bufferer.ctx.cast::<html_rewriter::BufferOutputSink>(),
+                    );
                 }
                 Tag::HTTPSServerH3RequestContext => {
-                    (*ctx.cast::<server::HTTPSServer::H3RequestContext>()).deref_()
+                    (*ctx.cast::<HTTPSServerH3RequestContext>()).deref()
                 }
                 Tag::DebugHTTPSServerH3RequestContext => {
-                    (*ctx.cast::<server::DebugHTTPSServer::H3RequestContext>()).deref_()
+                    (*ctx.cast::<DebugHTTPSServerH3RequestContext>()).deref()
                 }
             }
         }

@@ -117,7 +117,7 @@ pub struct Subprocess<'a> {
     // ManuallyDrop so finalize() can release the strong ref at the same point as Zig's
     // `process.deref()` (before the intrusive ref_count hits zero).
     pub process: ManuallyDrop<Arc<Process>>,
-    pub stdin: Writable,
+    pub stdin: Writable<'a>,
     pub stdout: Readable,
     pub stderr: Readable,
     pub stdio_pipes: Vec<StdioPipeItem>,
@@ -896,7 +896,7 @@ impl Subprocess<'_> {
             // returns the sink.
             if core::ptr::eq(
                 pipe.signal.ptr() as *const c_void,
-                &self.stdin as *const Writable as *const c_void,
+                &self.stdin as *const Writable<'_> as *const c_void,
             ) {
                 pipe.signal.clear();
             }

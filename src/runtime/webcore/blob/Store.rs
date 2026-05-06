@@ -190,7 +190,7 @@ impl Store {
     /// breaks the `bun_jsc → bun_webcore` forward-dep cycle (same pattern as
     /// `Bun__Blob__sharedView`). `pathlike` is moved out of `*pathlike` by
     /// `ptr::read`; caller must `mem::forget` its local.
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub unsafe extern "C" fn Bun__Blob__Store__initFile(
         pathlike: *mut PathOrFileDescriptor,
         mime_type: *const MimeType,

@@ -278,14 +278,14 @@ pub fn run_tasks<C: RunTasksCallbacks>(
             NetworkTask::Callback::PackageManifest(manifest_req) => {
                 let name = manifest_req.name.clone();
                 if log_level.show_progress() {
-                    if !has_updated_this_run {
+                    if !*has_updated_this_run {
                         manager.set_node_name(
                             manager.downloads_node.as_ref().unwrap(),
                             name.slice(),
                             ProgressStrings::DOWNLOAD_EMOJI,
                             true,
                         );
-                        has_updated_this_run = true;
+                        *has_updated_this_run = true;
                     }
                 }
 
@@ -769,14 +769,14 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 }
 
                 if log_level.show_progress() {
-                    if !has_updated_this_run {
+                    if !*has_updated_this_run {
                         manager.set_node_name(
                             manager.downloads_node.as_ref().unwrap(),
                             extract.name.slice(),
                             ProgressStrings::EXTRACT_EMOJI,
                             true,
                         );
-                        has_updated_this_run = true;
+                        *has_updated_this_run = true;
                     }
                 }
 

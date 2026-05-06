@@ -1127,7 +1127,7 @@ impl ZigStringSlice {
                     // SAFETY: WTF ref held; latin1/utf8 bytes valid for `len`.
                     unsafe { core::slice::from_raw_parts(*ptr, *len).to_vec() }
                 };
-                // Paired with the ref taken by the constructor.
+                // SAFETY: paired with the ref taken in `to_latin1_slice` (wtf.rs); pointer is live until this deref.
                 unsafe { wtf::Bun__WTFStringImpl__deref(*string_impl) };
                 v
             }

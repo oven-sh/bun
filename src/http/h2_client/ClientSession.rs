@@ -835,16 +835,21 @@ impl ClientSession {
     /// Called from the HTTP thread's shutdown queue when a fetch on this
     /// session is aborted. RST_STREAMs that one request; siblings continue.
     pub fn abort_by_http_id(&mut self, async_http_id: u32) {
-        for (i, client) in self.pending_attach.iter().enumerate() {
-            // SAFETY: pending_attach entries are live back-refs.
-            let client = unsafe { &mut **client };
-            if client.async_http_id == async_http_id {
-                let _ = self.pending_attach.swap_remove(i);
-                client.h2_fail(err!(Aborted));
-                self.rearm_timeout();
-                self.maybe_release();
-                return;
-            }
+        // PORT NOTE: reshaped for borrowck — find index via raw-ptr field read
+        // first, then swap_remove, so no `&mut HTTPClient` is held across the
+        // Vec mutation and no `&mut` is materialised during iteration.
+        let found = self.pending_attach.iter().position(|&c| {
+            // SAFETY: pending_attach entries are live HTTPClient back-refs.
+            unsafe { (*c).async_http_id == async_http_id }
+        });
+        if let Some(i) = found {
+            let client = self.pending_attach.swap_remove(i);
+            // SAFETY: pending_attach entries are live HTTPClient back-refs;
+            // sole access at this point.
+            unsafe { (*client).h2_fail(err!(Aborted)) };
+            self.rearm_timeout();
+            self.maybe_release();
+            return;
         }
         // PORT NOTE: reshaped for borrowck — find target before detaching.
         let mut target: Option<*mut Stream> = None;
@@ -906,7 +911,14 @@ impl ClientSession {
             // the multiplexed connection. SAFETY: `self` is heap-owned and
             // outlives the pool entry (release_socket takes the strong ref).
             let self_ptr = unsafe { NonNull::new_unchecked(self as *mut ClientSession) };
-            // SAFETY: ctx back-ref is valid for the session's lifetime.
+            // SAFETY: ctx back-ref is valid for the session's lifetime. Unlike
+            // `unregister_h2_raw` above, this branch is *not* reachable on the
+            // re-entrant `connect()` → `adopt()` path: every adopt-side entry
+            // into `maybe_release` has `encoder_poisoned`, `!has_headroom()`
+            // (goaway/fatal/stream-id-exhausted), or `streams.count() > 0` —
+            // all of which short-circuit before reaching `can_pool()`. So no
+            // ancestor frame holds `&mut NewHTTPContext` here and forming one
+            // from the backref is sound.
             unsafe { &mut *self.ctx }.release_socket(
                 self.socket,
                 self.did_have_handshaking_error,

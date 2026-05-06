@@ -4911,7 +4911,8 @@ impl<'a> Resolver<'a> {
 
             if let Some(entries) = dir.get_entries(self.generation) {
                 // SAFETY: ARENA — slot in the BSSMap-backed EntriesOptionMap singleton; outlives the resolver.
-                let entries = unsafe { &mut *entries };
+                // Read-only `.get()` lookup — shared borrow only (no `&mut DirEntry` materialized).
+                let entries = unsafe { &*entries };
                 if let Some(query) = entries.get(path.name.filename()) {
                     let symlink_path = unsafe { &*query.entry }.symlink(self.rfs_ptr(), self.store_fd);
                     if !symlink_path.is_empty() {

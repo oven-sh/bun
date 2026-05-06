@@ -574,7 +574,11 @@ impl JSMySQLConnection {
             let socket = match result {
                 Ok(s) => s,
                 Err(e) => {
-                    this.deref();
+                    // SAFETY: `ptr` is the freshly-boxed allocation; sole owner.
+                    // Drop the `&mut` borrow (`this`) before freeing so no
+                    // reference outlives the `Box::from_raw` inside `deinit`.
+                    let _ = this;
+                    unsafe { Self::deref(ptr) };
                     return global_object.throw_error(e, "failed to connect to mysql");
                 }
             };

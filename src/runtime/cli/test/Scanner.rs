@@ -152,11 +152,16 @@ impl<'a> Scanner<'a> {
         // you typed "." and we already scanned it
         if !self.has_iterated {
             if let EntriesOption::Entries(entries) = root {
-                let mut iter = entries.data.iterator();
                 let fd = entries.fd;
                 debug_assert!(fd != Fd::INVALID);
-                while let Some(entry) = iter.next() {
-                    self.next(*entry.value_ptr, fd);
+                // PORT NOTE: reshaped for borrowck — collect raw `*mut Entry`
+                // values first so `self.next(&mut self, …)` doesn't overlap
+                // the `entries.data` borrow.
+                let entry_ptrs: Vec<*mut fs::Entry> = entries.data.values().copied().collect();
+                for entry_ptr in entry_ptrs {
+                    // SAFETY: `EntryMap` stores `*mut Entry` into the
+                    // process-static `EntryStore`; valid for `'static`.
+                    self.next(unsafe { &mut *entry_ptr }, fd);
                 }
             }
         }

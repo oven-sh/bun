@@ -281,7 +281,7 @@ pub fn write_sourcemap_to_disk(
     let mut key = Vec::with_capacity(6 + without_prefix.len());
     write!(&mut key, "bake:/{}", BStr::new(without_prefix)).unwrap();
     source_maps.put(
-        key.into_boxed_slice(),
+        &key,
         OutputFileIndex(u32::try_from(source_map_index).unwrap()),
     )?;
     Ok(())

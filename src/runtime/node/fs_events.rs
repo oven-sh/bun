@@ -805,7 +805,8 @@ impl FSEventsLoop {
         // PORT NOTE: reshaped for borrowck — enqueue after dropping the guard so we
         // can take &mut self twice. Zig held the lock through enqueueTaskConcurrent.
         // TODO(port): verify dropping mutex before enqueue is safe (it only signals CF loop)
-        self.enqueue_task_concurrent(Task::new(self, FSEventsLoop::_schedule));
+        let task = Task::new(self, FSEventsLoop::_schedule);
+        self.enqueue_task_concurrent(task);
     }
 
     fn unregister_watcher(&mut self, watcher: *mut FSEventsWatcher) {

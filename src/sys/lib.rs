@@ -782,6 +782,18 @@ mod nocancel {
         pub fn poll(fds: *mut libc::pollfd, nfds: libc::nfds_t, timeout: c_int) -> c_int;
         #[link_name = "ppoll$NOCANCEL"]
         pub fn ppoll(fds: *mut libc::pollfd, nfds: libc::nfds_t, ts: *const libc::timespec, sigmask: *const libc::sigset_t) -> c_int;
+        // darwin.zig:12-17 + fd.zig:273 — remaining `$NOCANCEL` variants Bun
+        // links against (close via Zig's std.c on Darwin).
+        #[link_name = "close$NOCANCEL"]
+        pub fn close(fd: c_int) -> c_int;
+        #[link_name = "fcntl$NOCANCEL"]
+        pub fn fcntl(fd: c_int, cmd: c_int, ...) -> c_int;
+        #[link_name = "connect$NOCANCEL"]
+        pub fn connect(sockfd: c_int, addr: *const libc::sockaddr, alen: libc::socklen_t) -> c_int;
+        #[link_name = "accept$NOCANCEL"]
+        pub fn accept(sockfd: c_int, addr: *mut libc::sockaddr, alen: *mut libc::socklen_t) -> c_int;
+        #[link_name = "accept4$NOCANCEL"]
+        pub fn accept4(sockfd: c_int, addr: *mut libc::sockaddr, alen: *mut libc::socklen_t, flags: libc::c_uint) -> c_int;
     }
 }
 
@@ -1410,8 +1422,9 @@ mod posix_impl {
         }
     }
     #[cfg(all(unix, not(target_os = "linux")))]
-    pub fn sendfile(_src: Fd, _dest: Fd, _len: usize) -> Maybe<usize> {
-        Err(Error::from_code_int(libc::ENOSYS, Tag::sendfile))
+    pub fn sendfile(src: Fd, _dest: Fd, _len: usize) -> Maybe<usize> {
+        // sys.zig:513 `errnoSysFd(rc, .sendfile, src)` — attach the *source* fd.
+        Err(Error::from_code_int(libc::ENOSYS, Tag::sendfile).with_fd(src))
     }
 }
 #[cfg(unix)]

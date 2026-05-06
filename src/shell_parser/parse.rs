@@ -3313,31 +3313,38 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         let start = self.strpool.len();
         if bunstr.is_utf16() {
             let utf16 = bunstr.utf16();
-            let additional =
-                bun_str::simdutf::utf8_length_from_utf16le(utf16.as_ptr(), utf16.len());
-            self.strpool.reserve(additional);
-            strings::convert_utf16_to_utf8_append(&mut self.strpool, bunstr.utf16())
-                .map_err(|_| LexerError::Utf8InvalidStartByte)?;
-            // TODO(port): Zig used `try` propagating its own error set; map properly.
+            // PORT NOTE: Zig calls simdutf for the exact length then
+            // `convertUTF16ToUTF8Append` directly into the bump-backed
+            // ArrayList. The Rust transcoding helpers in bun_core take
+            // `&mut Vec<u8>` (global allocator), so go through a scratch Vec
+            // and copy. PERF(port): re-unify once a bumpalo-aware transcoder
+            // lands in bun_string.
+            let mut scratch: Vec<u8> = Vec::with_capacity(utf16.len() * 3);
+            strings::convert_utf16_to_utf8_append(&mut scratch, utf16);
+            self.strpool.extend_from_slice(&scratch);
         } else if bunstr.is_utf8() {
             self.strpool.extend_from_slice(bunstr.byte_slice());
         } else if bunstr.is_8bit() {
-            if is_all_ascii(bunstr.byte_slice()) {
-                self.strpool.extend_from_slice(bunstr.byte_slice());
+            let bytes = bunstr.byte_slice();
+            if is_all_ascii(bytes) {
+                self.strpool.extend_from_slice(bytes);
             } else {
-                let bytes = bunstr.byte_slice();
-                let non_ascii_idx = strings::first_non_ascii(bytes).unwrap_or(0);
-
+                let non_ascii_idx = strings::first_non_ascii(bytes).unwrap_or(0) as usize;
                 if non_ascii_idx > 0 {
-                    self.strpool.extend_from_slice(&bytes[..non_ascii_idx as usize]);
+                    self.strpool.extend_from_slice(&bytes[..non_ascii_idx]);
                 }
-                // TODO(port): allocateLatin1IntoUTF8WithList — appends latin1→utf8 into the Vec
-                strings::allocate_latin1_into_utf8_with_list(
-                    &mut self.strpool,
-                    self.strpool.len(),
-                    &bytes[non_ascii_idx as usize..],
-                )
-                .map_err(|_| LexerError::OutOfMemory)?;
+                // PORT NOTE: `allocateLatin1IntoUTF8WithList` round-trips
+                // through a std Vec; encode directly here instead (same
+                // mapping: 0x00–0x7F passthrough, 0x80–0xFF → 2-byte UTF-8).
+                self.strpool.reserve((bytes.len() - non_ascii_idx) * 2);
+                for &b in &bytes[non_ascii_idx..] {
+                    if b < 0x80 {
+                        self.strpool.push(b);
+                    } else {
+                        self.strpool.push(0xC0 | (b >> 6));
+                        self.strpool.push(0x80 | (b & 0x3F));
+                    }
+                }
             }
         }
         let end = self.strpool.len();
@@ -3963,8 +3970,9 @@ fn is_valid_var_name_ascii(var_name: &[u8]) -> bool {
     true
 }
 
-static STDERR_MUTEX: bun_threading::Mutex = bun_threading::Mutex::new();
-// TODO(port): bun.Mutex{} — confirm crate path.
+// PORT NOTE: shell.zig declares a `stderr_mutex: bun.Mutex` here. It is only
+// used by the `Test` namespace's debug-dump path (gated to `bun_runtime`), so
+// the lower-tier parser crate omits it.
 
 pub fn has_eq_sign(str: &[u8]) -> Option<u32> {
     if is_all_ascii(str) {
@@ -4101,8 +4109,8 @@ pub fn escape_utf16<const ADD_QUOTES: bool>(
             }
         }
 
-        let len = strings::encode_wtf8_rune_t::<u32>(&mut cp_buf, char);
-        outbuf.extend_from_slice(&cp_buf[..len as usize]);
+        let len = strings::encode_wtf8_rune(&mut cp_buf, char);
+        outbuf.extend_from_slice(&cp_buf[..len]);
     }
     if ADD_QUOTES {
         outbuf.push(b'"');

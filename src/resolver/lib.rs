@@ -1458,7 +1458,8 @@ pub mod fs {
                     unsafe { &mut *entries_ptr },
                 );
 
-                let out = self.entries.put(cache_result.as_mut().unwrap(), result)?;
+                // SAFETY: `entries_mutex` is held; sole `&mut` to this slot.
+                let out = unsafe { self.entries.put(cache_result.as_mut().unwrap(), result) }?;
                 // SAFETY: BSSMap-owned slot; outlives caller (process-static singleton).
                 return Ok(unsafe { &mut *out });
             }
@@ -1473,7 +1474,8 @@ pub mod fs {
 
         /// Port of `RealFS.bustEntriesCache` in `fs.zig`.
         pub fn bust_entries_cache(&mut self, file_path: &[u8]) -> bool {
-            self.entries.remove(file_path)
+            // SAFETY: `&mut self` ensures no aliased `EntriesMap` access.
+            unsafe { self.entries.remove(file_path) }
         }
 
         /// Port of `RealFS.kind` in `fs.zig` — lstat + (if symlink) open + fstat +
@@ -1601,7 +1603,8 @@ pub mod fs {
         ) -> Option<&mut EntriesOption> {
             // PORT NOTE: erase to raw immediately so re-borrowing `&mut self` for
             // `open_dir`/`readdir`/`read_directory_error` doesn't conflict.
-            let result_ptr = self.entries.at_index(index)? as *mut EntriesOption;
+            // SAFETY: `entries_mutex` held by caller; sole `&mut` to this slot.
+            let result_ptr = unsafe { self.entries.at_index(index) }? as *mut EntriesOption;
             // SAFETY: BSSMap-owned slot; uniquely held under `entries_mutex`.
             if let EntriesOption::Entries(existing) = unsafe { &mut *result_ptr } {
                 if existing.generation < generation {
@@ -5754,7 +5757,8 @@ impl<'a> Resolver<'a> {
         // retags below don't pop its provenance. Re-borrow `&mut *rfs` per use.
         let rfs: *mut Fs::file_system::RealFS = unsafe { core::ptr::addr_of_mut!((*self.fs).fs) };
         macro_rules! rfs { () => { unsafe { &mut *rfs } } }
-        let mut cached_dir_entry_result = rfs!().entries.get_or_put(dir_path);
+        // SAFETY: resolver mutex held; no aliased `EntriesMap` access in this scope.
+        let mut cached_dir_entry_result = unsafe { rfs!().entries.get_or_put(dir_path) };
 
         let mut dir_entries_option: *mut Fs::file_system::real_fs::EntriesOption;
         let mut needs_iter = true;
@@ -5772,7 +5776,8 @@ impl<'a> Resolver<'a> {
             }
         };
 
-        if let Some(cached_entry) = rfs!().entries.at_index(cached_dir_entry_result.index) {
+        // SAFETY: resolver mutex held; sole `&mut` to this slot.
+        if let Some(cached_entry) = unsafe { rfs!().entries.at_index(cached_dir_entry_result.index) } {
             if let Fs::file_system::real_fs::EntriesOption::Entries(entries) = cached_entry {
                 if entries.generation >= self.generation {
                     dir_entries_option = cached_entry;
@@ -6415,7 +6420,8 @@ impl<'a> Resolver<'a> {
                 fd: FD::INVALID,
             };
 
-            if let Some(top_entry) = rfs!().entries.get(top) {
+            // SAFETY: resolver mutex held; sole `&mut` to this slot.
+            if let Some(top_entry) = unsafe { rfs!().entries.get(top) } {
                 match top_entry {
                     Fs::file_system::real_fs::EntriesOption::Entries(entries) => {
                         bufs!(dir_entry_paths_to_resolve)[usize::try_from(i).unwrap()].safe_path = entries.dir;
@@ -6448,7 +6454,8 @@ impl<'a> Resolver<'a> {
                     safe_path: b"",
                     fd: FD::INVALID,
                 };
-                if let Some(top_entry) = rfs!().entries.get(top) {
+                // SAFETY: resolver mutex held; sole `&mut` to this slot.
+                if let Some(top_entry) = unsafe { rfs!().entries.get(top) } {
                     match top_entry {
                         Fs::file_system::real_fs::EntriesOption::Entries(entries) => {
                             bufs!(dir_entry_paths_to_resolve)[usize::try_from(i).unwrap()].safe_path = entries.dir;

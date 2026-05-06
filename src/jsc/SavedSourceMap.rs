@@ -277,8 +277,6 @@ impl SavedSourceMap {
         source: &logger::Source,
         mappings: MutableString,
     ) -> Result<(), bun_core::Error> {
-        #[cfg(any())] // TODO(b2-blocked): bun_string::MutableString.list shape, bun_collections::HashMap::contains, bun_logger::Source.path
-        {
         // TODO(port): narrow error set
         // --hot can re-read a file mid-rewrite (truncate + write) and transpile
         // a comment-only prefix into a 0-mapping map. Overwriting a real map
@@ -286,14 +284,15 @@ impl SavedSourceMap {
         // transpile remap against nothing and leak transpiled coords. A map
         // with no mappings can never answer a lookup, so dropping it is never
         // worse than installing it.
-        if mappings.list.items().len() >= InternalSourceMap::HEADER_SIZE {
+        if mappings.list.len() >= SourceMap::internal_source_map::HEADER_SIZE {
             let incoming = InternalSourceMap {
-                data: mappings.list.items().as_ptr() as *mut u8,
+                data: mappings.list.as_ptr(),
             };
             if incoming.mapping_count() == 0 {
                 self.lock();
                 // SAFETY: `map` points at the live sibling HashTable on VirtualMachine.
-                let contains = unsafe { (*self.map).contains(hash(source.path.text())) };
+                let contains =
+                    unsafe { (*self.map).contains_key(&hash(source.path.text)) };
                 self.unlock();
                 if contains {
                     return Ok(());
@@ -303,11 +302,15 @@ impl SavedSourceMap {
             }
         }
 
-        let blob: Box<[u8]> = Box::<[u8]>::from(mappings.list.items());
+        // PORT NOTE: Zig `default_allocator.dupe(u8, mappings.list.items)` —
+        // `MutableString.list` is `Vec<u8>`; box a copy so the table owns the
+        // blob (the incoming `MutableString` may be backed by the printer's
+        // recycled buffer or a moved-in cache record).
+        let blob: Box<[u8]> = Box::<[u8]>::from(mappings.list.as_slice());
         let blob_ptr: *mut [u8] = Box::into_raw(blob);
         // errdefer: on error, reconstitute and drop the Box.
         match self.put_value(
-            source.path.text(),
+            source.path.text,
             Value::init(blob_ptr as *mut u8 as *mut InternalSourceMap),
         ) {
             Ok(()) => Ok(()),
@@ -317,9 +320,6 @@ impl SavedSourceMap {
                 Err(e)
             }
         }
-        } // end #[cfg(any())]
-        let _ = (source, mappings);
-        Ok(())
     }
 
     pub fn put_value(&mut self, path: &[u8], value: Value) -> Result<(), bun_core::Error> {

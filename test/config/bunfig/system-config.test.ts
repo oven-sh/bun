@@ -224,20 +224,33 @@ describe("system-wide bunfig.toml", () => {
     //
     // We verify the ordering by giving each tier a distinct `[install] cache`
     // directory and reading it back with `bun pm cache`, which prints the
-    // resolved cache path without hitting the network.
+    // resolved cache path without hitting the network. Cache dirs live
+    // inside the tempDir so they:
+    //   - are absolute on every platform (hardcoded `/tmp/...` would be
+    //     drive-relative on Windows and symlink-aliased on macOS)
+    //   - get cleaned up with the tempDir instead of polluting the host
     using dir = tempDir("system-bunfig-pkg-merge", {
       "package.json": `{"name": "test", "version": "1.0.0"}`,
-      "sys.toml": `[install]\ncache = "/tmp/sys-cache-28726"\n`,
-      "xdg/.bunfig.toml": `[install]\ncache = "/tmp/home-cache-28726"\n`,
     });
+    // `bun pm cache` prints the path of the opened fd (canonical / symlink-
+    // resolved), so compare against realpathSync of the directory we created.
+    // On macOS tempDir lives under /var → /private/var, on Windows the path
+    // uses backslashes — realpathSync.native handles both.
+    const sysCachePath = join(String(dir), "sys-cache");
+    const homeCachePath = join(String(dir), "home-cache");
+    await Bun.write(join(String(dir), "sys.toml"), `[install]\ncache = ${JSON.stringify(sysCachePath)}\n`);
+    await Bun.write(
+      join(String(dir), "xdg", ".bunfig.toml"),
+      `[install]\ncache = ${JSON.stringify(homeCachePath)}\n`,
+    );
 
     // System + home: home wins (matches documented "later overrides earlier").
     await using mergeProc = Bun.spawn({
       cmd: [bunExe(), "pm", "cache"],
       env: {
         ...bunEnv,
-        BUN_SYSTEM_CONFIG: `${dir}/sys.toml`,
-        XDG_CONFIG_HOME: `${dir}/xdg`,
+        BUN_SYSTEM_CONFIG: join(String(dir), "sys.toml"),
+        XDG_CONFIG_HOME: join(String(dir), "xdg"),
       },
       cwd: String(dir),
       stderr: "pipe",
@@ -247,8 +260,11 @@ describe("system-wide bunfig.toml", () => {
       mergeProc.stderr.text(),
       mergeProc.exited,
     ]);
+    // Basename is sufficient: if home config wasn't read, mergeOut would
+    // contain `sys-cache` (or the platform default like `.bun/install/cache`).
+    expect(mergeOut).toContain("home-cache");
+    expect(mergeOut).not.toContain("sys-cache");
     expect(mergeExit).toBe(0);
-    expect(mergeOut.trim()).toBe("/tmp/home-cache-28726");
 
     // System only (XDG points nowhere): system config applies, proving
     // loadSystemBunfig ran through the readGlobalConfig branch.
@@ -256,8 +272,8 @@ describe("system-wide bunfig.toml", () => {
       cmd: [bunExe(), "pm", "cache"],
       env: {
         ...bunEnv,
-        BUN_SYSTEM_CONFIG: `${dir}/sys.toml`,
-        XDG_CONFIG_HOME: `${dir}/nonexistent`,
+        BUN_SYSTEM_CONFIG: join(String(dir), "sys.toml"),
+        XDG_CONFIG_HOME: join(String(dir), "nonexistent"),
       },
       cwd: String(dir),
       stderr: "pipe",
@@ -267,7 +283,7 @@ describe("system-wide bunfig.toml", () => {
       sysOnlyProc.stderr.text(),
       sysOnlyProc.exited,
     ]);
+    expect(sysOut).toContain("sys-cache");
     expect(sysExit).toBe(0);
-    expect(sysOut.trim()).toBe("/tmp/sys-cache-28726");
   });
 });

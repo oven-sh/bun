@@ -551,9 +551,10 @@ impl UpgradeCommand {
 
     fn _exec(ctx: Command::Context) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
-        HTTP::HTTPThread::init(&Default::default());
+        HTTP::http_thread::init(&Default::default());
 
-        let filesystem = fs::FileSystem::init(None)?;
+        // SAFETY: FileSystem::init returns the process-global singleton; valid for 'static.
+        let filesystem = unsafe { &mut *fs::FileSystem::init(None)? };
         let mut env_loader: DotEnv::Loader = {
             let map = Box::new(DotEnv::Map::init());
             DotEnv::Loader::init(Box::leak(map))

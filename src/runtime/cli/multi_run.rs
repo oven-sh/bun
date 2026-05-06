@@ -610,8 +610,7 @@ fn add_script_configs(
     configs: &mut Vec<ScriptConfig>,
     group_infos: &mut Vec<GroupInfo>,
     raw_name: &[u8],
-    // TODO(port): value type — TSV says `String`; Zig is `[]const u8`
-    scripts_map: Option<&StringArrayHashMap<String>>,
+    scripts_map: Option<&ScriptsMap>,
     cwd: &[u8],
     path: &[u8],
     label_prefix: Option<&[u8]>,

@@ -42,11 +42,10 @@ impl SliceWithUnderlyingString {
                     !matches!(self.utf8, ZigStringSlice::WTF { .. }),
                     "WTF-backed slice should never reach the owned-transfer path",
                 );
-                let ZigStringSlice::Owned(bytes) =
-                    core::mem::replace(&mut self.utf8, ZigStringSlice::default())
-                else {
-                    unreachable!()
-                };
+                // E0509: ZigStringSlice has Drop, so destructuring-move is forbidden;
+                // `into_vec()` moves out the owned buffer (no copy for Owned).
+                let bytes =
+                    core::mem::replace(&mut self.utf8, ZigStringSlice::default()).into_vec();
                 if let Ok(Some(utf16)) = strings::to_utf16_alloc(&bytes, false, false) {
                     drop(bytes);
                     let utf16 = core::mem::ManuallyDrop::new(utf16);

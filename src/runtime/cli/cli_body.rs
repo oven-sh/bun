@@ -1063,11 +1063,11 @@ pub mod command {
 
     pub fn tag_params<const CMD: Tag>() -> &'static [arguments::ParamType] {
         match CMD {
-            Tag::AutoCommand => arguments::AUTO_PARAMS,
-            Tag::RunCommand | Tag::RunAsNodeCommand => arguments::RUN_PARAMS,
-            Tag::BuildCommand => arguments::BUILD_PARAMS,
-            Tag::TestCommand => arguments::TEST_PARAMS,
-            Tag::BunxCommand => arguments::RUN_PARAMS,
+            Tag::AutoCommand => &arguments::AUTO_PARAMS,
+            Tag::RunCommand | Tag::RunAsNodeCommand => &arguments::RUN_PARAMS,
+            Tag::BuildCommand => &arguments::BUILD_PARAMS,
+            Tag::TestCommand => &arguments::TEST_PARAMS,
+            Tag::BunxCommand => &arguments::RUN_PARAMS,
             // TODO(port): comptime concat of base_params_ ++ runtime_params_ ++ transpiler_params_
             _ => arguments::BASE_PARAMS_,
         }

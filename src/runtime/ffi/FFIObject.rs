@@ -300,63 +300,63 @@ pub mod reader {
         let addr = usize::try_from(raw_addr).unwrap() + usize::try_from(offset).unwrap();
         // SAFETY: JIT-validated address.
         let value = unsafe { (addr as *const u8).read_unaligned() };
-        JSValue::js_number(value)
+        JSValue::js_number(value as f64)
     }
     #[bun_jsc::host_call]
     pub extern fn u16_without_type_checks(_: *mut JSGlobalObject, _: *mut c_void, raw_addr: i64, offset: i32) -> JSValue {
         let addr = usize::try_from(raw_addr).unwrap() + usize::try_from(offset).unwrap();
         // SAFETY: JIT-validated address.
         let value = unsafe { (addr as *const u16).read_unaligned() };
-        JSValue::js_number(value)
+        JSValue::js_number(value as f64)
     }
     #[bun_jsc::host_call]
     pub extern fn u32_without_type_checks(_: *mut JSGlobalObject, _: *mut c_void, raw_addr: i64, offset: i32) -> JSValue {
         let addr = usize::try_from(raw_addr).unwrap() + usize::try_from(offset).unwrap();
         // SAFETY: JIT-validated address.
         let value = unsafe { (addr as *const u32).read_unaligned() };
-        JSValue::js_number(value)
+        JSValue::js_number(value as f64)
     }
     #[bun_jsc::host_call]
     pub extern fn ptr_without_type_checks(_: *mut JSGlobalObject, _: *mut c_void, raw_addr: i64, offset: i32) -> JSValue {
         let addr = usize::try_from(raw_addr).unwrap() + usize::try_from(offset).unwrap();
         // SAFETY: JIT-validated address.
         let value = unsafe { (addr as *const u64).read_unaligned() };
-        JSValue::js_number(value)
+        JSValue::js_number(value as f64)
     }
     #[bun_jsc::host_call]
     pub extern fn i8_without_type_checks(_: *mut JSGlobalObject, _: *mut c_void, raw_addr: i64, offset: i32) -> JSValue {
         let addr = usize::try_from(raw_addr).unwrap() + usize::try_from(offset).unwrap();
         // SAFETY: JIT-validated address.
         let value = unsafe { (addr as *const i8).read_unaligned() };
-        JSValue::js_number(value)
+        JSValue::js_number(value as f64)
     }
     #[bun_jsc::host_call]
     pub extern fn i16_without_type_checks(_: *mut JSGlobalObject, _: *mut c_void, raw_addr: i64, offset: i32) -> JSValue {
         let addr = usize::try_from(raw_addr).unwrap() + usize::try_from(offset).unwrap();
         // SAFETY: JIT-validated address.
         let value = unsafe { (addr as *const i16).read_unaligned() };
-        JSValue::js_number(value)
+        JSValue::js_number(value as f64)
     }
     #[bun_jsc::host_call]
     pub extern fn i32_without_type_checks(_: *mut JSGlobalObject, _: *mut c_void, raw_addr: i64, offset: i32) -> JSValue {
         let addr = usize::try_from(raw_addr).unwrap() + usize::try_from(offset).unwrap();
         // SAFETY: JIT-validated address.
         let value = unsafe { (addr as *const i32).read_unaligned() };
-        JSValue::js_number(value)
+        JSValue::js_number(value as f64)
     }
     #[bun_jsc::host_call]
     pub extern fn intptr_without_type_checks(_: *mut JSGlobalObject, _: *mut c_void, raw_addr: i64, offset: i32) -> JSValue {
         let addr = usize::try_from(raw_addr).unwrap() + usize::try_from(offset).unwrap();
         // SAFETY: JIT-validated address.
         let value = unsafe { (addr as *const i64).read_unaligned() };
-        JSValue::js_number(value)
+        JSValue::js_number(value as f64)
     }
     #[bun_jsc::host_call]
     pub extern fn f32_without_type_checks(_: *mut JSGlobalObject, _: *mut c_void, raw_addr: i64, offset: i32) -> JSValue {
         let addr = usize::try_from(raw_addr).unwrap() + usize::try_from(offset).unwrap();
         // SAFETY: JIT-validated address.
         let value = unsafe { (addr as *const f32).read_unaligned() };
-        JSValue::js_number(value)
+        JSValue::js_number(value as f64)
     }
     #[bun_jsc::host_call]
     pub extern fn f64_without_type_checks(_: *mut JSGlobalObject, _: *mut c_void, raw_addr: i64, offset: i32) -> JSValue {

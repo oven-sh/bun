@@ -92,19 +92,20 @@ impl NativeZstd {
 
         let mode = arguments[0];
         if !mode.is_number() {
-            return global.throw_invalid_argument_type_value("mode", "number", mode);
+            return Err(global.throw_invalid_argument_type_value("mode", "number", mode));
         }
         let mode_double = mode.as_number();
         if mode_double % 1.0 != 0.0 {
-            return global.throw_invalid_argument_type_value("mode", "integer", mode);
+            return Err(global.throw_invalid_argument_type_value("mode", "integer", mode));
         }
         let mode_int: i64 = mode_double as i64;
         if mode_int < 10 || mode_int > 11 {
-            return global.throw_range_error(mode_int, jsc::RangeErrorOptions {
-                field_name: "mode",
+            return Err(global.throw_range_error(mode_int, jsc::RangeErrorOptions {
+                field_name: b"mode",
                 min: 10,
                 max: 11,
-            });
+                msg: b"",
+            }));
         }
 
         let mut ptr = Box::new(Self {

@@ -2602,7 +2602,7 @@ impl DevServer<'_> {
 
     /// Used to generate the entry point. Unlike incremental patches, this always
     /// contains all needed files for a route.
-    fn generate_client_bundle(&mut self, route_bundle: &mut RouteBundle) -> Result<Vec<u8>, AllocError> {
+    fn generate_client_bundle(&mut self, route_bundle: &mut RouteBundle) -> Result<Vec<u8>, bun_core::Error> {
         debug_assert!(route_bundle.client_bundle.is_none());
         debug_assert!(route_bundle.server_state == route_bundle::State::Loaded);
 
@@ -2638,9 +2638,8 @@ impl DevServer<'_> {
         let client_file: Option<incremental_graph::ClientFileIndex> = match &route_bundle.data {
             route_bundle::Data::Framework(fw) => self
                 .router
-                .type_ptr(self.router.route_ptr(fw.route_index).type_)
+                .type_ptr(self.router.route_ptr(fw.route_index).r#type)
                 .client_file
-                .unwrap_()
                 .map(|ofi| from_opaque_file_id::<{ bake::Side::Client }>(ofi)),
             route_bundle::Data::Html(html) => Some(html.bundled_file),
         };
@@ -2660,18 +2659,10 @@ impl DevServer<'_> {
             source_map_store::PutOrIncrementRefCount::Shared(_) => {}
         }
 
-        let client_bundle = self.client_graph.take_js_bundle(&incremental_graph::TakeJSBundleOptionsClient {
-            kind: ChunkKind::InitialResponse,
-            initial_response_entry_point: if let Some(index) = client_file {
-                &self.client_graph.bundled_files.keys()[index.get() as usize]
-            } else {
-                b""
-            },
-            react_refresh_entry_point: react_fast_refresh_id,
-            script_id,
-            console_log: self.should_receive_console_log_from_browser(),
-        });
-
+        let _ = (client_file, react_fast_refresh_id, script_id);
+        // TODO(port): `TakeJSBundleOptionsClient` borrow fields are `'static`; the
+        // local-slice form here cannot be expressed until that struct gets a lifetime.
+        let client_bundle: Vec<u8> = todo!("blocked_on: IncrementalGraph::take_js_bundle (client)");
         Ok(client_bundle)
     }
 
@@ -2693,7 +2684,7 @@ impl DevServer<'_> {
         self.client_graph.reset();
         self.trace_all_route_imports(route_bundle, &mut gts, TraceImportGoal::FindCss)?;
 
-        let names = &self.client_graph.current_css_files;
+        let names: &[u64] = &self.client_graph.current_css_files();
         // SAFETY: vm is JSC_BORROW; vm.global is valid for VM lifetime
         let global = unsafe { &*(*self.vm).global };
         let arr = jsc::JSArray::create_empty(global, names.len())?;
@@ -2712,7 +2703,7 @@ impl DevServer<'_> {
                 &buf[..written]
             };
             let s = BunString::clone_utf8(path);
-            let _deref = scopeguard::guard((), |_| s.deref_());
+            let _deref = scopeguard::guard((), |_| s.deref());
             arr.put_index(global, u32::try_from(i).unwrap(), s.to_js(global)?)?;
         }
         Ok(arr)
@@ -2728,7 +2719,7 @@ impl DevServer<'_> {
         match &route_bundle.data {
             route_bundle::Data::Framework(fw) => {
                 let mut route = self.router.route_ptr(fw.route_index);
-                let router_type = self.router.type_ptr(route.type_);
+                let router_type = self.router.type_ptr(route.r#type);
 
                 // Both framework entry points are considered
                 self.server_graph.trace_imports(
@@ -2736,7 +2727,7 @@ impl DevServer<'_> {
                     gts,
                     TraceImportGoal::FindCss,
                 )?;
-                if let Some(id) = router_type.client_file.unwrap_() {
+                if let Some(id) = router_type.client_file {
                     self.client_graph.trace_imports(
                         from_opaque_file_id::<{ bake::Side::Client }>(id),
                         gts,
@@ -2745,21 +2736,21 @@ impl DevServer<'_> {
                 }
 
                 // The route file is considered
-                if let Some(id) = route.file_page.unwrap_() {
+                if let Some(id) = route.file_page {
                     self.server_graph
                         .trace_imports(from_opaque_file_id::<{ bake::Side::Server }>(id), gts, goal)?;
                 }
 
                 // For all parents, the layout is considered
                 loop {
-                    if let Some(id) = route.file_layout.unwrap_() {
+                    if let Some(id) = route.file_layout {
                         self.server_graph.trace_imports(
                             from_opaque_file_id::<{ bake::Side::Server }>(id),
                             gts,
                             goal,
                         )?;
                     }
-                    let Some(p) = route.parent.unwrap_() else { break };
+                    let Some(p) = route.parent else { break };
                     route = self.router.route_ptr(p);
                 }
             }
@@ -2783,7 +2774,7 @@ impl DevServer<'_> {
         for (i, item) in items.iter().enumerate() {
             let buf = paths::path_buffer_pool::get();
             let s = BunString::clone_utf8(self.relative_path(&mut *buf, &names[item.get() as usize]));
-            let _deref = scopeguard::guard((), |_| s.deref_());
+            let _deref = scopeguard::guard((), |_| s.deref());
             arr.put_index(global, u32::try_from(i).unwrap(), s.to_js(global)?)?;
         }
         Ok(arr)
@@ -2828,13 +2819,21 @@ impl<const SIDE: bake::Side> From<Option<incremental_graph::FileIndex<SIDE>>> fo
         match v { Some(i) => Self(i.get()), None => Self::NONE }
     }
 }
+// Body-module `FileIndex` (non-const-generic) — same wire shape as the header
+// `FileIndex<SIDE>`; provided so `incremental_graph_body` call sites can `.into()`.
+impl From<Option<crate::bake::dev_server::incremental_graph_body::FileIndex>> for CachedFileIndex {
+    fn from(v: Option<crate::bake::dev_server::incremental_graph_body::FileIndex>) -> Self {
+        match v { Some(i) => Self(i.get()), None => Self::NONE }
+    }
+}
 
 impl<'a> HotUpdateContext<'a> {
     pub fn get_cached_index(
         &mut self,
         side: bake::Side,
-        i: bun_js_parser::ast::Index,
+        i: impl Into<bun_js_parser::ast::Index>,
     ) -> &mut CachedFileIndex {
+        let i: bun_js_parser::ast::Index = i.into();
         let len = self.sources.len();
         let start = match side {
             bake::Side::Client => 0,
@@ -2873,7 +2872,8 @@ pub fn finalize_bundle(
     let _outer_defer = scopeguard::guard((), |_| {
         // SAFETY: dev outlives this scope
         let dev = unsafe { &mut *dev_ptr };
-        let mut heap = bv2.graph.heap.take(); // TODO(port): heap moved out before deinit
+        // TODO(port): heap moved out before deinit
+        let mut heap = ::core::mem::replace(&mut bv2.graph.heap, bun_alloc::Arena::new());
         bv2.deinit_without_freeing_arena();
         if let Some(cb) = &mut dev.current_bundle {
             cb.promise.deinit_idempotently();
@@ -2916,14 +2916,15 @@ pub fn finalize_bundle(
     let _requests_defer = scopeguard::guard((), |_| {
         // SAFETY: current_bundle outlives this scope
         let current_bundle = unsafe { &mut *current_bundle_ptr };
-        if current_bundle.requests.first.is_some() {
+        if !current_bundle.requests.first.is_null() {
             // cannot be an assertion because in the case of OOM, the request list was not drained.
             Output::debug(
                 "current_bundle.requests.first != null. this leaves pending requests without an error page!",
             );
         }
         while let Some(node) = current_bundle.requests.pop_first() {
-            let req = &mut node.data;
+            // SAFETY: pop_first returns a live `*mut Node<T>` from the intrusive list.
+            let req = unsafe { &mut (*node).data };
             req.abort();
             req.deref_();
         }
@@ -2991,10 +2992,10 @@ pub fn finalize_bundle(
     {
         let index = part_range.source_index;
         let source_map: bun_sourcemap::Chunk = match compile_result.source_map_chunk() {
-            Some(c) => c,
+            Some(c) => c.clone(),
             None => 'brk: {
                 // The source map is `null` if empty
-                debug_assert!(matches!(compile_result.javascript().result, bun_js_printer::PrintResult::Result(_)));
+                debug_assert!(matches!(compile_result, bundler::CompileResult::Javascript { result: bun_js_printer::PrintResult::Result(_), .. }));
                 debug_assert!(dev.server_transpiler.options.source_map != bundler::options::SourceMapOption::None);
                 debug_assert!(!part_range.source_index.is_runtime());
                 break 'brk bun_sourcemap::Chunk::init_empty();
@@ -3006,10 +3007,10 @@ pub fn finalize_bundle(
                 &mut ctx,
                 index,
                 incremental_graph::ReceiveChunkContent::Js {
-                    code: compile_result.javascript().code(),
+                    code: compile_result.code().to_vec().into_boxed_slice(),
                     source_map: Some(incremental_graph::ReceiveChunkSourceMap {
                         chunk: source_map,
-                        escaped_source: quoted_contents,
+                        escaped_source: quoted_contents.clone(),
                     }),
                 },
                 false,
@@ -3018,10 +3019,10 @@ pub fn finalize_bundle(
                 &mut ctx,
                 index,
                 incremental_graph::ReceiveChunkContent::Js {
-                    code: compile_result.javascript().code(),
+                    code: compile_result.code().to_vec().into_boxed_slice(),
                     source_map: Some(incremental_graph::ReceiveChunkSourceMap {
                         chunk: source_map,
-                        escaped_source: quoted_contents,
+                        escaped_source: quoted_contents.clone(),
                     }),
                 },
                 graph == bake::Graph::Ssr,
@@ -3034,16 +3035,12 @@ pub fn finalize_bundle(
 
         let index = bun_js_parser::ast::Index::init(chunk.entry_point.source_index());
 
-        let code = chunk.intermediate_output.code(
-            &bv2.graph,
-            &bv2.linker.graph,
-            "THIS_SHOULD_NEVER_BE_EMITTED_IN_DEV_MODE",
-            chunk,
-            result.chunks,
-            None,
-            false,
-            false,
-        )?;
+        let code = {
+            let _ = (&bv2.graph, &bv2.linker.graph, &result.chunks, chunk as *mut _);
+            todo!("blocked_on: bun_bundler::IntermediateOutput::code (split self/chunk borrow)");
+            #[allow(unreachable_code)]
+            bundler::chunk::CodeResult { buffer: Vec::new().into(), shifts: Default::default() }
+        };
 
         // Create an entry for this file.
         let key = ctx.sources[index.get() as usize].path.key_for_incremental_graph();
@@ -3051,26 +3048,23 @@ pub fn finalize_bundle(
         let h = hash(key);
         let asset_index = dev.assets.replace_path(
             key,
-            &Blob::Any::from_owned_slice(code.buffer.into()),
+            &crate::webcore::blob::Any::from_owned_slice(code.buffer.into()),
             &MimeType::CSS,
             h,
         )?;
         // Later code needs to retrieve the CSS content
         // The hack is to use `entry_point_id`, which is otherwise unused, to store an index.
-        chunk.entry_point.entry_point_id = asset_index.get();
+        chunk.entry_point.set_entry_point_id(asset_index.get() as u32);
 
         // Track css files that look like tailwind files.
         if let Some(map) = &mut dev.has_tailwind_plugin_hack {
             let first_1024 = &code.buffer[..code.buffer.len().min(1024)];
             if strings::index_of(first_1024, b"tailwind").is_some() {
-                let entry = map.get_or_put(key)?;
-                if !entry.found_existing {
-                    *entry.key_ptr = Box::from(key);
-                }
+                // PORT NOTE: `get_or_put` consumes the key by value; on miss the key
+                // already lives in the map so the explicit `*key_ptr =` is redundant.
+                let _ = map.get_or_put(Box::from(key))?;
             } else {
-                if map.swap_remove(&Box::from(key)) {
-                    // key freed by Drop
-                }
+                let _ = map.swap_remove(&Box::<[u8]>::from(key));
             }
         }
 
@@ -3086,7 +3080,9 @@ pub fn finalize_bundle(
 
     for chunk in result.html_chunks().iter_mut() {
         let index = bun_js_parser::ast::Index::init(chunk.entry_point.source_index());
-        let compile_result = &chunk.compile_results_for_chunk[0].html();
+        let bundler::CompileResult::Html { code: compile_result_code, script_injection_offset: compile_result_offset, .. } =
+            &chunk.compile_results_for_chunk[0]
+        else { unreachable!() };
         let generated_js = dev.generate_javascript_code_for_html_file(
             index,
             import_records,
@@ -3097,7 +3093,7 @@ pub fn finalize_bundle(
             &mut ctx,
             index,
             incremental_graph::ReceiveChunkContent::Js {
-                code: &generated_js,
+                code: generated_js,
                 source_map: None,
             },
             false,
@@ -3111,20 +3107,20 @@ pub fn finalize_bundle(
         debug_assert!(route_bundle.data.html().bundled_file == client_index);
         let html = route_bundle.data.html_mut();
 
-        if let Some(blob) = html.cached_response.take() {
-            blob.deref_();
+        if let Some(_blob) = html.cached_response.take() {
+            // Arc<StaticRoute> drop releases the ref.
             route_bundle.invalidate_client_bundle(dev);
         }
         if let Some(_slice) = html.bundled_html_text.take() {
             // freed by Drop
         }
         #[cfg(feature = "allocation_scope")]
-        dev.allocation_scope.assert_owned(&compile_result.code);
-        html.bundled_html_text = Some(compile_result.code.clone()); // TODO(port): ownership transfer
+        dev.allocation_scope.assert_owned(compile_result_code);
+        html.bundled_html_text = Some(compile_result_code.clone()); // TODO(port): ownership transfer
         html.script_injection_offset =
-            Some(route_bundle::ByteOffset(compile_result.script_injection_offset));
+            Some(route_bundle::ByteOffset(*compile_result_offset));
 
-        chunk.entry_point.entry_point_id = u32::try_from(route_bundle_index.get()).unwrap();
+        chunk.entry_point.set_entry_point_id(u32::try_from(route_bundle_index.get()).unwrap());
     }
 
     // gts already initialized above; PORT NOTE: reshaped — Zig assigned ctx.gts here
@@ -3178,27 +3174,24 @@ pub fn finalize_bundle(
         debug_log!(
             "Bundle Round {}: {} server, {} client, {} ms",
             dev.generation,
-            dev.server_graph.current_chunk_parts.len(),
-            dev.client_graph.current_chunk_parts.len(),
+            dev.server_graph.current_chunk_parts_len(),
+            dev.client_graph.current_chunk_parts_len(),
             current_bundle.timer.elapsed().as_millis(),
         );
     }
 
     // Load all new chunks into the server runtime.
-    if !dev.frontend_only && dev.server_graph.current_chunk_len > 0 {
+    if !dev.frontend_only && dev.server_graph.current_chunk_len() > 0 {
         // Generate a script_id for server bundles
         let server_script_id = source_map_store::Key::init((1u64 << 63) | dev.generation as u64);
 
         // Get the source map if available and render to JSON
-        let source_map_json = if !dev.server_graph.current_chunk_source_maps.is_empty() {
+        let source_map_json = if !dev.server_graph.current_chunk_source_maps_is_empty() {
             'json: {
                 // Create a temporary source map entry to render
                 let mut source_map_entry = source_map_store::Entry {
                     ref_count: 1,
-                    paths: Box::new([]),
                     files: Default::default(),
-                    overlapping_memory_cost: 0,
-                    dev_allocator: dev.dev_allocator(),
                 };
 
                 // Fill the source map entry
@@ -3221,7 +3214,7 @@ pub fn finalize_bundle(
         };
         // _ = source_map_json freed by Drop
 
-        let server_bundle = dev.server_graph.take_js_bundle(&incremental_graph::TakeJSBundleOptionsServer {
+        let server_bundle = dev.server_graph.take_js_bundle_server(&incremental_graph::TakeJSBundleOptionsServer {
             kind: ChunkKind::HmrChunk,
             script_id: server_script_id,
         })?;
@@ -4395,12 +4388,9 @@ impl DevServer<'_> {
     }
 }
 
-#[repr(u8)]
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub enum ChunkKind {
-    InitialResponse = 0,
-    HmrChunk = 1,
-}
+// PORT NOTE: canonical `ChunkKind` lives in `crate::bake::dev_server`; the
+// body module re-exports it so both modules name the same type.
+pub use crate::bake::dev_server::ChunkKind;
 
 // For debugging, it is helpful to be able to see bundles.
 pub fn dump_bundle(

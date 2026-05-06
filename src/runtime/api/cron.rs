@@ -1520,7 +1520,11 @@ impl CronJob {
                         Self::self_stop(this, vm);
                         return;
                     }
-                    let _ = vm.uncaught_exception(vm.global, err, false);
+                    // SAFETY: `vm.global` is the live per-VM global.
+                    let global_ref = unsafe { &*vm.global };
+                    // SAFETY: single JS thread; `&mut` derived for the call only.
+                    let _ = unsafe { &mut *(vm as *const VirtualMachine as *mut VirtualMachine) }
+                        .uncaught_exception(global_ref, err, false);
                 }
                 Self::schedule_next(this, vm);
                 return;

@@ -3472,7 +3472,8 @@ impl H2FrameParser {
                     // ok empty settings so default settings
                     let remote_settings = FullSettingsPayload::default();
                     self.remote_settings = Some(remote_settings);
-                    bun_output::scoped_log!(H2FrameParser, "remoteSettings.initialWindowSize: {} {} {}", remote_settings.initial_window_size, self.remote_used_window_size, self.remote_window_size);
+                    let _iws = remote_settings.initial_window_size;
+                    bun_output::scoped_log!(H2FrameParser, "remoteSettings.initialWindowSize: {} {} {}", _iws, self.remote_used_window_size, self.remote_window_size);
 
                     if remote_settings.initial_window_size as u64 >= self.remote_window_size {
                         for (_, item) in self.streams.iter() {
@@ -3507,13 +3508,15 @@ impl H2FrameParser {
                 let mut unit: SettingsPayloadUnit = unsafe { core::mem::zeroed() };
                 SettingsPayloadUnit::from::<true>(&mut unit, &payload[i..i + setting_byte_size], 0);
                 remote_settings.update_with(unit);
-                bun_output::scoped_log!(H2FrameParser, "remoteSettings: {} {} isServer: {}", unit.type_, unit.value, self.is_server);
+                let (_ut, _uv) = (unit.type_, unit.value);
+                bun_output::scoped_log!(H2FrameParser, "remoteSettings: {} {} isServer: {}", _ut, _uv, self.is_server);
                 i += setting_byte_size;
             }
             let end = content.end;
             self.read_buffer.reset();
             self.remote_settings = Some(remote_settings);
-            bun_output::scoped_log!(H2FrameParser, "remoteSettings.initialWindowSize: {} {} {}", remote_settings.initial_window_size, self.remote_used_window_size, self.remote_window_size);
+            let _iws = remote_settings.initial_window_size;
+            bun_output::scoped_log!(H2FrameParser, "remoteSettings.initialWindowSize: {} {} {}", _iws, self.remote_used_window_size, self.remote_window_size);
             if remote_settings.initial_window_size as u64 >= self.remote_window_size {
                 for (_, item) in self.streams.iter() {
                     // SAFETY: item is &*mut Stream from streams.iter(); the boxed Stream outlives the iteration
@@ -3565,7 +3568,7 @@ impl H2FrameParser {
             self.remote_settings.map(|s| s.initial_window_size).unwrap_or(DEFAULT_WINDOW_SIZE as u32),
             self.padding_strategy,
         )));
-        self.streams.put(stream_identifier, stream);
+        self.streams.insert(stream_identifier, stream);
 
         let Some(this_value) = self.strong_this.try_get() else { return Some(stream) };
         let Some(ctx_value) = JSH2FrameParser::Gc::context.get(this_value) else { return Some(stream) };
@@ -3573,7 +3576,7 @@ impl H2FrameParser {
 
         // SAFETY: handlers.global_object is JSC_BORROW (set at construction from &JSGlobalObject); outlives self, never null
         let global = unsafe { &*self.handlers.global_object };
-        if let Err(err) = callback.call(global, ctx_value, &[ctx_value, JSValue::js_number(stream_identifier)]) {
+        if let Err(err) = callback.call(global, ctx_value, &[ctx_value, JSValue::js_number(stream_identifier as f64)]) {
             global.report_active_exception_as_unhandled(err);
         }
         Some(stream)

@@ -66,18 +66,14 @@ pub fn throw_range_error(global_this: &JSGlobalObject, args: fmt::Arguments<'_>)
 #[inline]
 fn throw_invalid_argument_type_value(
     global_this: &JSGlobalObject,
-    name: &[u8],
-    expected: &[u8],
+    name: &str,
+    expected: &str,
     value: JSValue,
 ) -> JsError {
     let _ = value;
     throw_err_invalid_arg_type_with_message(
         global_this,
-        format_args!(
-            "The \"{}\" argument must be of type {}",
-            bstr::BStr::new(name),
-            bstr::BStr::new(expected),
-        ),
+        format_args!("The \"{}\" argument must be of type {}", name, expected),
     )
 }
 
@@ -85,14 +81,14 @@ fn throw_invalid_argument_type_value(
 fn throw_range_error_msg(
     global_this: &JSGlobalObject,
     value: f64,
-    name: &[u8],
+    name: &str,
     msg: &[u8],
 ) -> JsError {
     global_this.throw_range_error(
         value,
         jsc::RangeErrorOptions {
-            field_name: name,
-            msg: Some(msg),
+            field_name: name.as_bytes(),
+            msg,
             ..Default::default()
         },
     )
@@ -102,16 +98,16 @@ fn throw_range_error_msg(
 fn throw_range_error_min_max<V: bun_core::fmt::OutOfRangeValue>(
     global_this: &JSGlobalObject,
     value: V,
-    name: &[u8],
+    name: &str,
     min: i64,
     max: i64,
 ) -> JsError {
     global_this.throw_range_error(
         value,
         jsc::RangeErrorOptions {
-            field_name: name,
-            min: Some(min),
-            max: Some(max),
+            field_name: name.as_bytes(),
+            min,
+            max,
             ..Default::default()
         },
     )

@@ -11,6 +11,7 @@ use bun_semver as semver;
 use bun_str::strings;
 
 use crate::command;
+#[cfg(any())]
 use crate::package_manager_command::PackageManagerCommand;
 
 pub struct WhyCommand;
@@ -520,6 +521,7 @@ impl WhyCommand {
         }
 
         Ok(())
+        } // end #[cfg(any())]
     }
 }
 

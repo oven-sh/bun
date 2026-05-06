@@ -98,18 +98,18 @@ impl BunStringJson5Ext for BunString {
     }
     #[inline]
     fn substring_with_len(&self, start: usize, end: usize) -> BunString {
-        // PORT NOTE: shim for `bun_str::String::substring_with_len` — produces an
-        // owning copy via ZigString since the real WTF substring helper isn't
-        // wired yet. Only the `space.str` newline path hits this (clamped to ≤10
-        // code units), so the copy cost is negligible.
+        // PORT NOTE: shim for `bun_str::String::substring_with_len` — produces a
+        // borrowed `ZigString`-backed view into `self`'s storage since the real
+        // WTF substring helper isn't wired yet. Only the `space.str` newline path
+        // hits this (clamped to ≤10 code units) and `self` outlives the result.
         if self.is_utf16() {
             let s = self.utf16();
             let end = end.min(s.len());
-            BunString::init(ZigString::init_utf16(&s[start.min(end)..end]).to_slice_clone_zig())
+            BunString::borrow_utf16(&s[start.min(end)..end])
         } else {
             let s = self.latin1();
             let end = end.min(s.len());
-            BunString::init(ZigString::init(&s[start.min(end)..end]).to_slice_clone_zig())
+            BunString::ascii(&s[start.min(end)..end])
         }
     }
 }

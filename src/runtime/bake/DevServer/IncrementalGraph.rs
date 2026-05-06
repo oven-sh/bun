@@ -1994,11 +1994,10 @@ impl IncrementalGraph<Server> {
         self.owner().graph_safety_lock.assert_locked();
 
         debug_log!("Insert stale: {}", bstr::BStr::new(abs_path));
-        let gop = self.bundled_files.get_or_put(abs_path)?;
+        let gop = self.bundled_files.get_or_put(Box::<[u8]>::from(abs_path))?;
         let file_index = FileIndex::init(u32::try_from(gop.index).unwrap());
 
         if !gop.found_existing {
-            *gop.key_ptr = Box::<[u8]>::from(abs_path);
             self.first_dep.push(OptionalEdgeIndex::NONE);
             self.first_import.push(OptionalEdgeIndex::NONE);
         }

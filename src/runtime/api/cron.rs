@@ -879,8 +879,8 @@ pub struct CronRemoveJob {
     title: ZString,
 
     state: RemoveState,
-    // LIFETIMES.tsv: SHARED → Option<Arc<Process>>
-    process: Option<Arc<Process>>,
+    // LIFETIMES.tsv: SHARED — `Process` is intrusively refcounted (`*mut`).
+    process: Option<*mut Process>,
     stdout_reader: OutputReader,
     stderr_reader: OutputReader,
     remaining_fds: i8,

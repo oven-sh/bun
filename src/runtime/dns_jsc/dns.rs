@@ -185,7 +185,7 @@ pub mod lib_info {
         }
 
         // PERF(port): was StackFallbackAllocator(1024) — profile in Phase B
-        let name_z = bun_str::ZStr::from_bytes(query.name.as_ref());
+        let name_z = bun_str::ZBox::from_bytes(query.name.as_ref());
 
         let request = GetAddrInfoRequest::init(
             cache,

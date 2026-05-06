@@ -676,8 +676,11 @@ pub mod command {
     /// function or that stack space is used up forever.
     pub fn start(log: &mut logger::Log) -> Result<(), bun_core::Error> {
         if cfg!(debug_assertions) {
-            if !bun_core::env_var::MI_VERBOSE::get() {
-                bun_alloc::mimalloc::mi_option_set_enabled(bun_alloc::mimalloc::Option::Verbose, false);
+            if !bun_core::env_var::MI_VERBOSE::get().unwrap_or(false) {
+                // SAFETY: FFI call into mimalloc; option enum is #[repr(C)].
+                unsafe {
+                    bun_alloc::mimalloc::mi_option_set_enabled(bun_alloc::mimalloc::Option::verbose, false);
+                }
             }
         }
 

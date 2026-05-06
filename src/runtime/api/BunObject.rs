@@ -2129,15 +2129,21 @@ pub fn get_image_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSVa
 }
 
 pub fn get_s3_client_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    jsc::codegen::js::get_constructor::<crate::webcore::s3_client::S3Client>(global_this)
+    let _ = global_this;
+    todo!("blocked_on: bun_jsc::JsClass for crate::webcore::s3_client::S3Client")
 }
 
 pub fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    global_this.bun_vm().rare_data().s3_default_client(global_this)
+    // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
+    unsafe { (*global_this.bun_vm()).rare_data().s3_default_client(global_this) }
 }
 
 pub fn get_tls_default_ciphers(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    global_this.bun_vm().rare_data().tls_default_ciphers()
+    // PORT NOTE: Zig's `RareData.tlsDefaultCiphers()` already returns a
+    // `jsc.JSValue`; the un-gated `bun_jsc::rare_data::RareData::
+    // tls_default_ciphers()` currently returns `Option<&ZStr>`.
+    let _ = global_this;
+    todo!("blocked_on: bun_jsc::rare_data::RareData::tls_default_ciphers() -> JSValue")
 }
 
 pub fn set_tls_default_ciphers(
@@ -2145,40 +2151,23 @@ pub fn set_tls_default_ciphers(
     _: &JSObject,
     ciphers: JSValue,
 ) -> JSValue {
-    global_this.bun_vm().rare_data().set_tls_default_ciphers(ciphers);
-    JSValue::UNDEFINED
+    // PORT NOTE: Zig signature is `fn(..., ciphers: jsc.JSValue)`; the
+    // un-gated `bun_jsc::rare_data::RareData::set_tls_default_ciphers()`
+    // currently takes `&[u8]`.
+    let _ = (global_this, ciphers);
+    todo!("blocked_on: bun_jsc::rare_data::RareData::set_tls_default_ciphers(JSValue)")
 }
 
 pub fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    let valkey = match crate::api::Valkey::create_no_js_no_pubsub(global_this, &[JSValue::UNDEFINED])
-    {
-        Ok(v) => v,
-        Err(err) => {
-            if err != jsc::JsError::Thrown {
-                let _ = global_this.throw_error(err.into(), "Failed to create Redis client");
-            }
-            return JSValue::ZERO;
-        }
-    };
-
-    let as_js = valkey.to_js(global_this);
-
-    valkey.this_value = JsRef::init_weak(as_js);
-    valkey._subscription_ctx = match SubscriptionCtx::init(valkey) {
-        Ok(v) => v,
-        Err(err) => {
-            if err != jsc::JsError::Thrown {
-                let _ = global_this.throw_error(err.into(), "Failed to create Redis client");
-            }
-            return JSValue::ZERO;
-        }
-    };
-
-    as_js
+    // `JSValkeyClient::create_no_js_no_pubsub` / `to_js` / `SubscriptionCtx::init`
+    // live in the still-gated `valkey_jsc::js_valkey_body` (`.classes.ts`-driven).
+    let _ = global_this;
+    todo!("blocked_on: crate::valkey_jsc::JSValkeyClient::create_no_js_no_pubsub + SubscriptionCtx::init")
 }
 
 pub fn get_valkey_client_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    jsc::codegen::js::get_constructor::<crate::api::Valkey>(global_this)
+    let _ = global_this;
+    todo!("blocked_on: bun_jsc::JsClass for crate::valkey_jsc::JSValkeyClient")
 }
 
 pub fn get_terminal_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {

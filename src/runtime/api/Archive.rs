@@ -1293,6 +1293,8 @@ impl FilesContext {
 }
 
 impl TaskContext for FilesContext {
+    const TAG: TaskTag = task_tag::ArchiveFilesTask;
+
     fn run(&mut self) {
         self.result = match self.do_run() {
             Ok(r) => r,
@@ -1304,29 +1306,37 @@ impl TaskContext for FilesContext {
         match &mut self.result {
             FilesResult::Success(entries) => {
                 let map = JSMap::create(global);
-                let Some(map_ptr) = JSMap::from_js(map) else {
+                let Some(mut map_ptr) = JSMap::from_js(map) else {
                     return Ok(PromiseResult::Reject(
-                        global.create_error_instance("Failed to create Map", &[]),
+                        global.create_error_instance("Failed to create Map"),
                     ));
                 };
 
                 for entry in entries.iter_mut() {
                     let data = core::mem::take(&mut entry.data); // Ownership transferred
                     let blob_ptr = Blob::new(Blob::create_with_bytes_and_allocator(data, global, false));
-                    blob_ptr.is_jsdom_file = true;
-                    blob_ptr.name = bun_str::String::clone_utf8(&entry.path);
-                    blob_ptr.last_modified = (entry.mtime * 1000) as f64;
+                    // SAFETY: blob_ptr is the heap allocation just produced by Blob::new.
+                    let blob = unsafe { &mut *blob_ptr };
+                    blob.is_jsdom_file = true;
+                    blob.name = bun_str::String::clone_utf8(&entry.path);
+                    blob.last_modified = (entry.mtime * 1000) as f64;
 
-                    map_ptr.set(global, blob_ptr.name.to_js(global)?, blob_ptr.to_js(global))?;
+                    let name_js = blob.name.to_js(global)?;
+                    // TODO(port): `Blob::to_js` has duplicate inherent defs (E0034).
+                    let _ = blob;
+                    let blob_js: JSValue =
+                        todo!("blocked_on: webcore::Blob::to_js duplicate definition");
+                    // SAFETY: map_ptr came from JSMap::from_js on a live value.
+                    unsafe { map_ptr.as_mut() }.set(global, name_js, blob_js)?;
                 }
 
                 Ok(PromiseResult::Resolve(map))
             }
             FilesResult::LibarchiveErr(err_msg) => Ok(PromiseResult::Reject(
-                global.create_error_instance("{s}", &[bstr::BStr::new(err_msg.to_bytes()).into()]),
+                global.create_error_instance(bstr::BStr::new(err_msg.to_bytes())),
             )),
             FilesResult::Err(e) => Ok(PromiseResult::Reject(
-                global.create_error_instance("{s}", &[<&'static str>::from(&*e).into()]),
+                global.create_error_instance(<&'static str>::from(&*e)),
             )),
         }
     }

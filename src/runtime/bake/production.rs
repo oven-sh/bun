@@ -1093,36 +1093,36 @@ pub fn build_with_vm(
         route_source_files.put_index(
             global,
             u32::try_from(nav_index).unwrap(),
-            jsc::bun_string_jsc::transfer_to_js(&mut src_path, global)?,
-        )?;
+            jsc::bun_string_jsc::transfer_to_js(&mut src_path, global).map_err(js_err)?,
+        ).map_err(js_err)?;
 
-        route_nested_files.put_index(global, u32::try_from(nav_index).unwrap(), file_list)?;
+        route_nested_files.put_index(global, u32::try_from(nav_index).unwrap(), file_list).map_err(js_err)?;
         route_type_and_flags.put_index(
             global,
             u32::try_from(nav_index).unwrap(),
             JSValue::js_number_from_int32(
                 TypeAndFlags::new(route.r#type.get(), main_file.bake_extra.fully_static).bits(),
             ),
-        )?;
+        ).map_err(js_err)?;
 
         if !params_buf.is_empty() {
-            let param_info_array = JSValue::create_empty_array(global, params_buf.len())?;
+            let param_info_array = JSValue::create_empty_array(global, params_buf.len()).map_err(js_err)?;
             for (i, param) in params_buf.iter().enumerate() {
                 param_info_array.put_index(
                     global,
                     u32::try_from(params_buf.len() - i - 1).unwrap(),
-                    jsc::bun_string_jsc::create_utf8_for_js(global, param)?,
-                )?;
+                    jsc::bun_string_jsc::create_utf8_for_js(global, param).map_err(js_err)?,
+                ).map_err(js_err)?;
             }
             route_param_info.put_index(
                 global,
                 u32::try_from(nav_index).unwrap(),
                 param_info_array,
-            )?;
+            ).map_err(js_err)?;
         } else {
-            route_param_info.put_index(global, u32::try_from(nav_index).unwrap(), JSValue::NULL)?;
+            route_param_info.put_index(global, u32::try_from(nav_index).unwrap(), JSValue::NULL).map_err(js_err)?;
         }
-        route_style_references.put_index(global, u32::try_from(nav_index).unwrap(), styles)?;
+        route_style_references.put_index(global, u32::try_from(nav_index).unwrap(), styles).map_err(js_err)?;
     }
 
     // SAFETY: FFI; all JSValue args are stack-held; global is live.
@@ -1153,7 +1153,7 @@ pub fn build_with_vm(
             Output::flush();
         }
         Unwrapped::Rejected(err) => {
-            return Err(global.throw_value(err).into());
+            return Err(js_err(global.throw_value(err)));
         }
     }
     vm.wait_for_tasks();

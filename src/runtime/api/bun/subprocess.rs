@@ -614,45 +614,64 @@ impl Subprocess<'_> {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_stderr(this: &mut Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    pub fn get_stderr(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         // When terminal is used, stderr goes through the terminal
         if this.terminal.is_some() {
             return Ok(JSValue::NULL);
         }
+        // PORT NOTE: `host_fn(getter)` only hands us `&Self`, but the Zig getter
+        // mutates `observable_getters` and the Readable. Cast through raw — the
+        // wrapper holds the only live borrow on the JS mutator thread.
+        // SAFETY: single JS-thread access; no aliasing &mut exists.
+        let this = unsafe { &mut *(this as *const Self as *mut Self) };
         this.observable_getters.insert(ObservableGetter::Stderr);
-        this.stderr.to_js(global_this, this.has_exited())
+        let exited = this.has_exited();
+        this.stderr.to_js(global_this, exited)
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_stdin(this: &mut Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    pub fn get_stdin(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         // When terminal is used, stdin goes through the terminal
         if this.terminal.is_some() {
             return Ok(JSValue::NULL);
         }
-        this.observable_getters.insert(ObservableGetter::Stdin);
-        // PORT NOTE: reshaped for borrowck — Writable::to_js needs &mut self and *Subprocess.
-        let self_ptr = this as *mut Subprocess;
-        this.stdin.to_js(global_this, self_ptr)
+        // PORT NOTE: reshaped for borrowck — Writable::to_js needs &mut stdin and
+        // &mut Subprocess simultaneously (Zig passed two aliasing pointers). Go
+        // through raw for both projections.
+        let self_ptr = this as *const Self as *mut Self;
+        // SAFETY: single JS-thread access; see get_stderr note.
+        unsafe { (*self_ptr).observable_getters.insert(ObservableGetter::Stdin) };
+        // SAFETY: `stdin` and the whole `Subprocess` are accessed disjointly inside
+        // `Writable::to_js` (it only reads/writes non-stdin fields via `subprocess`).
+        let stdin = unsafe { &mut (*self_ptr).stdin };
+        let sub = unsafe { &mut *self_ptr };
+        Ok(stdin.to_js(global_this, sub))
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_stdout(this: &mut Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    pub fn get_stdout(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         // When terminal is used, stdout goes through the terminal
         if this.terminal.is_some() {
             return Ok(JSValue::NULL);
         }
+        // SAFETY: single JS-thread access; see get_stderr note.
+        let this = unsafe { &mut *(this as *const Self as *mut Self) };
         this.observable_getters.insert(ObservableGetter::Stdout);
         // NOTE: ownership of internal buffers is transferred to the JSValue, which
         // gets cached on JSSubprocess (created via bindgen). This makes it
         // re-accessable to JS code but not via `this.stdout`, which is now `.closed`.
-        this.stdout.to_js(global_this, this.has_exited())
+        let exited = this.has_exited();
+        this.stdout.to_js(global_this, exited)
     }
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_terminal(this: &Self, global_this: &JSGlobalObject) -> JSValue {
         if let Some(terminal) = this.terminal {
-            // SAFETY: terminal pointer is valid while subprocess is alive.
-            return unsafe { terminal.as_ref() }.to_js(global_this);
+            // `crate::api::bun::Terminal` is currently the gated stub
+            // (api.rs:227); the real `bun_terminal_body::js::to_js` isn't wired
+            // through it yet.
+            let _ = (terminal, global_this);
+            todo!("blocked_on: crate::api::bun::Terminal::to_js")
         }
         JSValue::UNDEFINED
     }

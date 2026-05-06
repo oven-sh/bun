@@ -4134,7 +4134,7 @@ pub mod sync {
         }
         // SAFETY: libc getppid
         if ppid > 1 && unsafe { libc::getppid() } != ppid {
-            Global::exit(ParentDeathWatchdog::EXIT_CODE);
+            Global::exit(ParentDeathWatchdog::EXIT_CODE as u32);
         }
         // Initial scan: `child` may have forked between `posix_spawn`
         // returning (in spawnPosix) and the NOTE_FORK registration above
@@ -4325,7 +4325,7 @@ pub mod sync {
         });
         // SAFETY: libc getppid
         if ppid > 1 && unsafe { libc::getppid() } != ppid {
-            Global::exit(ParentDeathWatchdog::EXIT_CODE);
+            Global::exit(ParentDeathWatchdog::EXIT_CODE as u32);
         }
 
         let need_ppid_fallback = ppid > 1 && ppid_fd == spawn_sys::INVALID_FD;

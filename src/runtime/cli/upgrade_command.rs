@@ -137,13 +137,17 @@ impl Version {
     const CURRENT_VERSION: &'static str =
         const_format::concatcp!("bun-v", Global::package_json_version);
 
-    pub const BUN__GITHUB_BASELINE_URL: &'static ZStr = ZStr::from_static(const_format::concatcp!(
-        "https://github.com/oven-sh/bun/releases/download/bun-v",
-        Global::package_json_version,
-        "/",
-        Version::BASELINE_ZIP_FILENAME,
-        "\0"
-    ));
+    pub const BUN__GITHUB_BASELINE_URL: &'static ZStr = {
+        const S: &str = const_format::concatcp!(
+            "https://github.com/oven-sh/bun/releases/download/bun-v",
+            Global::package_json_version,
+            "/",
+            Version::BASELINE_ZIP_FILENAME,
+            "\0"
+        );
+        // SAFETY: `S` ends with an embedded NUL; `len() - 1` excludes it.
+        unsafe { ZStr::from_raw(S.as_ptr(), S.len() - 1) }
+    };
 
     pub fn is_current(&self) -> bool {
         &*self.tag == Self::CURRENT_VERSION.as_bytes()

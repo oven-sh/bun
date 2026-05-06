@@ -4582,7 +4582,7 @@ impl NodeFS {
 
     pub fn uv_write(&mut self, args: &args::Write, rc: i64) -> Maybe<ret::Write> {
         if rc < 0 {
-            return Maybe::Err(sys::Error { errno: (-rc) as _, syscall: sys::Tag::write, fd: args.fd, from_libuv: true, ..Default::default() });
+            return Maybe::Err(sys::Error { errno: (-rc) as _, syscall: sys::Tag::write, fd: args.fd, #[cfg(windows)] from_libuv: true, ..Default::default() });
         }
         Maybe::Ok(ret::Write { bytes_written: rc as u64 })
     }

@@ -3063,7 +3063,7 @@ where
             && (!self.blob.is_detached()
                 || content_type.value.as_ptr() != bun_http_types::MimeType::OTHER.value.as_ptr())
         {
-            resp.write_header(b"content-type", content_type.value);
+            resp.write_header(b"content-type", &content_type.value);
         }
 
         // Advertise the QUIC endpoint on H1/H2 responses so browsers can

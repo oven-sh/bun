@@ -5183,7 +5183,7 @@ impl DevServer<'_> {
         &mut self,
         plugins: Option<*mut crate::api::js_bundler::Plugin>,
     ) -> Result<(), bun_core::Error> {
-        self.bundler_options.plugin = plugins;
+        self.bundler_options.plugin = plugins.and_then(|p| ::core::ptr::NonNull::new(p as *mut _));
         self.plugin_state = PluginState::Loaded;
         self.start_next_bundle_if_present();
         Ok(())
@@ -5192,10 +5192,13 @@ impl DevServer<'_> {
     pub fn on_plugins_rejected(&mut self) -> Result<(), bun_core::Error> {
         self.plugin_state = PluginState::Err;
         while let Some(item) = self.next_bundle.requests.pop_first() {
-            item.data.abort();
-            item.data.deref_();
+            // SAFETY: `pop_first` returns a valid `*mut Node<DeferredRequest>`.
+            unsafe {
+                (*item).data.abort();
+                (*item).data.deref_();
+            }
         }
-        self.next_bundle.route_queue.clear();
+        self.next_bundle.route_queue.clear_retaining_capacity();
         // TODO: allow recovery from this state
         Ok(())
     }
@@ -5230,7 +5233,7 @@ impl UnrefSourceMapRequest {
             body: uws::BodyReaderMixin::init(),
         });
         // SAFETY: dev outlives the request
-        unsafe { (*ctx.dev).server.as_ref().unwrap().on_pending_request() };
+        unsafe { (*ctx.dev).server.as_mut().unwrap().on_pending_request() };
         // TODO(port): ctx is leaked into the body reader; freed in finalize()
         let raw = Box::into_raw(ctx);
         uws::BodyReaderMixin::<Self>::read_body(raw, resp);
@@ -5240,7 +5243,7 @@ impl UnrefSourceMapRequest {
         // SAFETY: ctx was Box::into_raw'd in run()
         let ctx = unsafe { Box::from_raw(ctx) };
         // SAFETY: dev outlives the request
-        unsafe { (*ctx.dev).server.as_ref().unwrap().on_static_request_complete() };
+        unsafe { (*ctx.dev).server.as_mut().unwrap().on_static_request_complete() };
         drop(ctx);
     }
 
@@ -5261,8 +5264,8 @@ impl UnrefSourceMapRequest {
         let _ = unsafe { &mut *ctx.dev }
             .source_maps
             .remove_or_upgrade_weak_ref(source_map_key, source_map_store::RemoveOrUpgradeMode::Remove);
-        r.write_status("204 No Content");
-        r.end("", false);
+        r.write_status(b"204 No Content");
+        r.end(b"", false);
         Ok(())
     }
 }
@@ -5324,13 +5327,14 @@ struct PromiseEnsureRouteBundledCtx<'a> {
 
 impl<'a> PromiseEnsureRouteBundledCtx<'a> {
     fn ensure_promise(&mut self) -> jsc::JSPromiseStrong {
-        if let Some(p) = &self.promise {
-            return p.clone();
+        if self.promise.is_none() {
+            let strong = jsc::JSPromiseStrong::init(self.global);
+            // SAFETY: resolver-style accessor; only stored as raw ptr.
+            self.p = Some(unsafe { strong.get() } as *mut _);
+            self.promise = Some(strong);
         }
-        let strong = jsc::JSPromiseStrong::init(self.global);
-        self.promise = Some(strong.clone());
-        self.p = Some(strong.get());
-        strong
+        let _value = self.promise.as_ref().unwrap().value();
+        todo!("blocked_on: bun_jsc::JSPromiseStrong::from_value")
     }
 
     fn on_defer(&mut self, bundle_field: BundleQueueType) -> JsResult<()> {
@@ -5385,7 +5389,7 @@ impl<'a> PromiseEnsureRouteBundledCtx<'a> {
         // SAFETY: p was set by ensure_promise
         unsafe { &mut *self.p.unwrap() }.resolve(self.global, JSValue::TRUE)?;
         // SAFETY: dev.vm is JSC_BORROW — valid for DevServer lifetime
-        unsafe { &*self.dev.vm }.drain_microtasks();
+        unsafe { &mut *(self.dev.vm as *mut VirtualMachine) }.drain_microtasks();
         Ok(())
     }
 
@@ -5409,7 +5413,8 @@ impl<'a> PromiseEnsureRouteBundledCtx<'a> {
             failures,
             ErrorPageKind::Evaluation,
             None,
-        )
+        )?;
+        Ok(())
     }
 
     fn on_plugin_error(&mut self) -> JsResult<()> {
@@ -5418,7 +5423,7 @@ impl<'a> PromiseEnsureRouteBundledCtx<'a> {
         unsafe { &mut *self.p.unwrap() }
             .reject(self.global, BunString::static_("Plugin error").to_js(self.global))?;
         // SAFETY: dev.vm is JSC_BORROW — valid for DevServer lifetime
-        unsafe { &*self.dev.vm }.drain_microtasks();
+        unsafe { &mut *(self.dev.vm as *mut VirtualMachine) }.drain_microtasks();
         Ok(())
     }
 
@@ -5456,14 +5461,13 @@ impl<'a> EnsureRouteCtx for PromiseEnsureRouteBundledCtx<'a> {
     }
 }
 
-#[bun_jsc::host_fn]
 #[unsafe(no_mangle)]
-pub fn Bake__bundleNewRouteJSFunctionImpl(
+pub extern "C" fn Bake__bundleNewRouteJSFunctionImpl(
     global: &JSGlobalObject,
     request_ptr: *mut c_void,
     url: BunString,
 ) -> JSValue {
-    jsc::to_js_host_call(global, || bundle_new_route_js_function_impl(global, request_ptr, url))
+    jsc::to_js_host_call(global, bundle_new_route_js_function_impl(global, request_ptr, url))
 }
 
 fn bundle_new_route_js_function_impl(
@@ -5476,10 +5480,10 @@ fn bundle_new_route_js_function_impl(
     // SAFETY: request_ptr is a *bun.webcore.Request from C++
     let request: &mut WebRequest = unsafe { &mut *(request_ptr as *mut WebRequest) };
     let Some(dev) = request.request_context.dev_server() else {
-        return Err(global.throw("Request context does not belong to dev server", &[]));
+        return Err(global.throw("Request context does not belong to dev server"));
     };
     // Extract pathname from URL (remove protocol, host, query, hash)
-    let pathname = extract_pathname_from_url(url.byte_slice());
+    let pathname = extract_pathname_from_url(url.slice());
 
     if pathname.is_empty() || pathname[0] != b'/' {
         return Err(global.throw(
@@ -5487,7 +5491,6 @@ fn bundle_new_route_js_function_impl(
                 "Invalid path \"{}\" it should be non-empty and start with a slash",
                 bstr::BStr::new(pathname)
             ),
-            &[],
         ));
     }
 
@@ -5495,7 +5498,6 @@ fn bundle_new_route_js_function_impl(
     let Some(route_index) = dev.router.match_slow(pathname, &mut params) else {
         return Err(global.throw(
             format_args!("No route found for path: {}", bstr::BStr::new(pathname)),
-            &[],
         ));
     };
 

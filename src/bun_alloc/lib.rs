@@ -753,6 +753,16 @@ macro_rules! bss_map {
     };
 }
 
+// Compile-time smoke test for the declare-site macros (no runtime cost; the
+// statics live in BSS and the accessors are dead-stripped if unused).
+#[allow(dead_code)]
+mod __bss_macro_smoke {
+    crate::bss_list!        { _l  : u32, 4 }
+    crate::bss_string_list! { _sl : 4, 8 }
+    crate::bss_map_inner!   { _mi : u32, 4, true }
+    crate::bss_map!         { _m  : u32, 4, 8, false }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // heap_breakdown — macOS `malloc_zone_*` per-tag heaps (debug-only)
 //

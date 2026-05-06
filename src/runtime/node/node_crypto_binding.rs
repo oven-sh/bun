@@ -1,29 +1,36 @@
+//! `node:crypto` native binding — `pbkdf2`/`scrypt`/`random*`/`timingSafeEqual`
+//! plus the `ExternCryptoJob` / `CryptoJob<Ctx>` work-pool plumbing.
+//!
+//! ─── B-2 un-gate (compat layer): type defs are real ───────────────────────
+//! Struct/trait surface (`CryptoJob<Ctx>`, `CryptoJobCtx`, `Scrypt`,
+//! `random::JobCtx`, the per-name `Ctx`/`Job` pairs from `extern_crypto_job!`)
+//! compiles against the current `bun_jsc` stub surface. Method bodies that
+//! call JSC accessors / BoringSSL FFI not yet exported / `crate::crypto::PBKDF2`
+//! (still gated in `crypto/mod.rs`) stay `#[cfg(any())]` *inside* this file.
+
 use core::ffi::{c_char, c_void};
 use core::mem::offset_of;
 
 use bun_aio::KeepAlive;
 use bun_boringssl as boringssl;
 use bun_collections::CaseInsensitiveAsciiStringArrayHashMap;
-use bun_core::UUID;
 use bun_jsc::{
-    self as jsc, ArrayBuffer, CallFrame, ConcurrentTask, JSFunction, JSGlobalObject, JSValue,
-    JsResult, Strong, VirtualMachine,
+    self as jsc, ArrayBuffer, CallFrame, JSGlobalObject, JSValue, JsResult, StrongOptional,
+    VirtualMachineRef as VirtualMachine,
 };
-use bun_str::String as BunString;
-use bun_threading::{WorkPool, WorkPoolTask};
+use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 
-use super::util::validators;
-use crate::api::bun::Crypto;
 use crate::node::StringOrBuffer;
-
-type PBKDF2 = <Crypto as crate::api::bun::CryptoTypes>::EVP::PBKDF2;
-// TODO(port): the line above is a placeholder for `Crypto.EVP.PBKDF2` — Phase B should
-// resolve to the actual path (likely `crate::api::bun::crypto::evp::PBKDF2`).
 
 // ───────────────────────────────────────────────────────────────────────────
 // ExternCryptoJob — Zig `fn ExternCryptoJob(comptime name: []const u8) type`.
 // This does token-pasting to form C symbol names (`Bun__<name>Ctx__runTask`
 // etc.), so a `macro_rules!` is the correct port shape per PORTING.md.
+//
+// Type defs (`Ctx`, `Job`) are un-gated; the `extern "C"` decls, `impl Job`
+// bodies and `#[export_name]` shims stay gated until `bun_jsc` method surface
+// (`.bun_vm()`, `Strong::create`, `AnyTask::new`, `ConcurrentTask::create`)
+// and attribute-position `concat!` (or `paste!`) land.
 // ───────────────────────────────────────────────────────────────────────────
 macro_rules! extern_crypto_job {
     ($Name:ident, $name_str:literal) => {
@@ -37,150 +44,153 @@ macro_rules! extern_crypto_job {
                 _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
             }
 
-            // TODO(port): `#[link_name = concat!(..)]` is not accepted in stable Rust
-            // attribute position; Phase B should switch to `paste!` or a small proc-macro.
-            unsafe extern "C" {
-                #[link_name = concat!("Bun__", $name_str, "Ctx__runTask")]
-                fn ctx_run_task(ctx: *mut Ctx, global: *mut JSGlobalObject);
-                #[link_name = concat!("Bun__", $name_str, "Ctx__runFromJS")]
-                fn ctx_run_from_js(ctx: *mut Ctx, global: *mut JSGlobalObject, callback: JSValue);
-                #[link_name = concat!("Bun__", $name_str, "Ctx__deinit")]
-                fn ctx_deinit(ctx: *mut Ctx);
-            }
-
             #[repr(C)]
             pub struct Job {
                 vm: &'static VirtualMachine,
                 task: WorkPoolTask,
                 any_task: jsc::AnyTask,
                 poll: KeepAlive,
-                callback: Strong, // Strong.Optional
+                callback: StrongOptional, // Strong.Optional
                 ctx: *mut Ctx,
             }
 
-            impl Job {
-                pub extern "C" fn create(
+            // TODO(b2-blocked): `#[link_name = concat!(..)]` / `#[export_name = concat!(..)]`
+            // are rejected in attribute position — switch to `paste!` or a small proc-macro.
+            // Bodies also need `bun_jsc` method surface (`.bun_vm()`, `.enqueue_task_concurrent()`).
+            #[cfg(any())]
+            const _: () = {
+                unsafe extern "C" {
+                    #[link_name = concat!("Bun__", $name_str, "Ctx__runTask")]
+                    fn ctx_run_task(ctx: *mut Ctx, global: *mut JSGlobalObject);
+                    #[link_name = concat!("Bun__", $name_str, "Ctx__runFromJS")]
+                    fn ctx_run_from_js(ctx: *mut Ctx, global: *mut JSGlobalObject, callback: JSValue);
+                    #[link_name = concat!("Bun__", $name_str, "Ctx__deinit")]
+                    fn ctx_deinit(ctx: *mut Ctx);
+                }
+
+                impl Job {
+                    pub extern "C" fn create(
+                        global: &JSGlobalObject,
+                        ctx: *mut Ctx,
+                        callback: JSValue,
+                    ) -> *mut Job {
+                        let vm = global.bun_vm();
+                        let job = Box::into_raw(Box::new(Job {
+                            vm,
+                            task: WorkPoolTask { callback: Self::run_task },
+                            // SAFETY: any_task is overwritten immediately below before any use.
+                            any_task: unsafe { core::mem::zeroed() },
+                            poll: KeepAlive::default(),
+                            ctx,
+                            callback: StrongOptional::create(callback, global),
+                        }));
+                        // SAFETY: `job` was just allocated and is exclusively owned here.
+                        unsafe {
+                            (*job).any_task = jsc::AnyTask::new::<Job>(Self::run_from_js).init(job);
+                        }
+                        job
+                    }
+
+                    pub extern "C" fn create_and_schedule(
+                        global: &JSGlobalObject,
+                        ctx: *mut Ctx,
+                        callback: JSValue,
+                    ) {
+                        let job = Self::create(global, ctx, callback.with_async_context_if_needed(global));
+                        // SAFETY: `job` is a freshly-boxed live pointer.
+                        unsafe { (*job).schedule() };
+                    }
+
+                    pub fn run_task(task: *mut WorkPoolTask) {
+                        // SAFETY: `task` points to `Job.task`; recover parent via offset_of.
+                        let job: *mut Job = unsafe {
+                            (task as *mut u8).sub(offset_of!(Job, task)).cast::<Job>()
+                        };
+                        // SAFETY: job is live for the duration of the work-pool task.
+                        let job = unsafe { &mut *job };
+                        let vm = job.vm;
+                        // Mirror Zig `defer vm.enqueueTaskConcurrent(...)` — runs after the body.
+                        let _guard = scopeguard::guard((), |_| {
+                            vm.enqueue_task_concurrent(ConcurrentTask::create(job.any_task.task()));
+                        });
+                        // SAFETY: ctx is the FFI-owned opaque handle passed in `create`.
+                        unsafe { ctx_run_task(job.ctx, vm.global as *const _ as *mut _) };
+                    }
+
+                    pub fn run_from_js(this: *mut Job) {
+                        // SAFETY: `this` was boxed in `create`; we are on the JS thread.
+                        let this = unsafe { &mut *this };
+                        let _guard = scopeguard::guard((), |_| {
+                            // SAFETY: only call site; runs once.
+                            unsafe { Self::deinit(this) };
+                        });
+                        let vm = this.vm;
+
+                        if vm.is_shutting_down() {
+                            return;
+                        }
+
+                        let Some(callback) = this.callback.try_swap() else {
+                            return;
+                        };
+
+                        let res: JsResult<()> = jsc::from_js_host_call_generic(vm.global, || {
+                            // SAFETY: ctx is live until `deinit` below.
+                            unsafe { ctx_run_from_js(this.ctx, vm.global as *const _ as *mut _, callback) };
+                        });
+                        if let Err(err) = res {
+                            let _ = vm.global.report_uncaught_exception(
+                                vm.global
+                                    .take_exception(err)
+                                    .as_exception(vm.global.vm())
+                                    .expect("unreachable"),
+                            );
+                        }
+                    }
+
+                    unsafe fn deinit(this: *mut Job) {
+                        // SAFETY: caller guarantees `this` came from `Box::into_raw` in `create`.
+                        let mut this = unsafe { Box::from_raw(this) };
+                        // SAFETY: ctx is the FFI-owned opaque handle; C++ owns its destructor.
+                        unsafe { ctx_deinit(this.ctx) };
+                        this.poll.unref(this.vm);
+                        drop(this.callback.take()); // Strong: Drop deallocates the handle slot.
+                        // Box drop frees `this`.
+                    }
+
+                    pub extern "C" fn schedule(this: &mut Job) {
+                        this.poll.r#ref(this.vm);
+                        WorkPool::schedule(&mut this.task);
+                    }
+                }
+
+                // Zig `comptime { @export(...) }` — exported C symbols.
+                #[unsafe(no_mangle)]
+                #[export_name = concat!("Bun__", $name_str, "__create")]
+                pub extern "C" fn __create(
                     global: &JSGlobalObject,
                     ctx: *mut Ctx,
                     callback: JSValue,
                 ) -> *mut Job {
-                    let vm = global.bun_vm();
-                    let job = Box::into_raw(Box::new(Job {
-                        vm,
-                        task: WorkPoolTask { callback: Self::run_task },
-                        // SAFETY: any_task is overwritten immediately below before any use.
-                        any_task: unsafe { core::mem::zeroed() },
-                        poll: KeepAlive::default(),
-                        ctx,
-                        callback: Strong::create(callback, global),
-                    }));
-                    // SAFETY: `job` was just allocated and is exclusively owned here.
-                    unsafe {
-                        (*job).any_task = jsc::AnyTask::new::<Job>(Self::run_from_js).init(job);
-                    }
-                    job
+                    Job::create(global, ctx, callback)
                 }
 
-                pub extern "C" fn create_and_schedule(
+                #[unsafe(no_mangle)]
+                #[export_name = concat!("Bun__", $name_str, "__schedule")]
+                pub extern "C" fn __schedule(this: &mut Job) {
+                    Job::schedule(this)
+                }
+
+                #[unsafe(no_mangle)]
+                #[export_name = concat!("Bun__", $name_str, "__createAndSchedule")]
+                pub extern "C" fn __create_and_schedule(
                     global: &JSGlobalObject,
                     ctx: *mut Ctx,
                     callback: JSValue,
                 ) {
-                    let job = Self::create(global, ctx, callback.with_async_context_if_needed(global));
-                    // SAFETY: `job` is a freshly-boxed live pointer.
-                    unsafe { (*job).schedule() };
+                    Job::create_and_schedule(global, ctx, callback)
                 }
-
-                pub fn run_task(task: *mut WorkPoolTask) {
-                    // SAFETY: `task` points to `Job.task`; recover parent via offset_of.
-                    let job: *mut Job = unsafe {
-                        (task as *mut u8).sub(offset_of!(Job, task)).cast::<Job>()
-                    };
-                    // SAFETY: job is live for the duration of the work-pool task.
-                    let job = unsafe { &mut *job };
-                    let vm = job.vm;
-                    // Mirror Zig `defer vm.enqueueTaskConcurrent(...)` — runs after the body.
-                    let _guard = scopeguard::guard((), |_| {
-                        vm.enqueue_task_concurrent(ConcurrentTask::create(job.any_task.task()));
-                    });
-                    // SAFETY: ctx is the FFI-owned opaque handle passed in `create`.
-                    unsafe { ctx_run_task(job.ctx, vm.global as *const _ as *mut _) };
-                }
-
-                pub fn run_from_js(this: *mut Job) {
-                    // SAFETY: `this` was boxed in `create`; we are on the JS thread.
-                    let this = unsafe { &mut *this };
-                    let _guard = scopeguard::guard((), |_| {
-                        // SAFETY: only call site; runs once.
-                        unsafe { Self::deinit(this) };
-                    });
-                    let vm = this.vm;
-
-                    if vm.is_shutting_down() {
-                        return;
-                    }
-
-                    let Some(callback) = this.callback.try_swap() else {
-                        return;
-                    };
-
-                    let res: JsResult<()> = jsc::from_js_host_call_generic(vm.global, || {
-                        // SAFETY: ctx is live until `deinit` below.
-                        unsafe { ctx_run_from_js(this.ctx, vm.global as *const _ as *mut _, callback) };
-                    });
-                    if let Err(err) = res {
-                        let _ = vm.global.report_uncaught_exception(
-                            vm.global
-                                .take_exception(err)
-                                .as_exception(vm.global.vm())
-                                .expect("unreachable"),
-                        );
-                    }
-                }
-
-                unsafe fn deinit(this: *mut Job) {
-                    // SAFETY: caller guarantees `this` came from `Box::into_raw` in `create`.
-                    let mut this = unsafe { Box::from_raw(this) };
-                    // SAFETY: ctx is the FFI-owned opaque handle; C++ owns its destructor.
-                    unsafe { ctx_deinit(this.ctx) };
-                    this.poll.unref(this.vm);
-                    drop(this.callback.take()); // Strong: Drop deallocates the handle slot.
-                    // Box drop frees `this`.
-                }
-
-                pub extern "C" fn schedule(this: &mut Job) {
-                    this.poll.r#ref(this.vm);
-                    WorkPool::schedule(&mut this.task);
-                }
-            }
-
-            // Zig `comptime { @export(...) }` — exported C symbols.
-            // TODO(port): `#[export_name = concat!(..)]` needs Phase-B macro support (paste!).
-            #[unsafe(no_mangle)]
-            #[export_name = concat!("Bun__", $name_str, "__create")]
-            pub extern "C" fn __create(
-                global: &JSGlobalObject,
-                ctx: *mut Ctx,
-                callback: JSValue,
-            ) -> *mut Job {
-                Job::create(global, ctx, callback)
-            }
-
-            #[unsafe(no_mangle)]
-            #[export_name = concat!("Bun__", $name_str, "__schedule")]
-            pub extern "C" fn __schedule(this: &mut Job) {
-                Job::schedule(this)
-            }
-
-            #[unsafe(no_mangle)]
-            #[export_name = concat!("Bun__", $name_str, "__createAndSchedule")]
-            pub extern "C" fn __create_and_schedule(
-                global: &JSGlobalObject,
-                ctx: *mut Ctx,
-                callback: JSValue,
-            ) {
-                Job::create_and_schedule(global, ctx, callback)
-            }
+            };
         }
     };
 }
@@ -219,10 +229,14 @@ pub struct CryptoJob<Ctx: CryptoJobCtx> {
     task: WorkPoolTask,
     any_task: jsc::AnyTask,
     poll: KeepAlive,
-    callback: Strong, // Strong.Optional
+    callback: StrongOptional, // Strong.Optional
     ctx: Ctx,
 }
 
+// TODO(b2-blocked): bodies need `bun_jsc` method surface (`.bun_vm()`,
+// `.with_async_context_if_needed()`, `AnyTask::new`, `ConcurrentTask::create`,
+// `KeepAlive::{ref,unref}` over `&VirtualMachine`).
+#[cfg(any())]
 impl<Ctx: CryptoJobCtx> CryptoJob<Ctx> {
     pub fn init(global: &JSGlobalObject, callback: JSValue, ctx: &Ctx) -> JsResult<*mut Self>
     where
@@ -238,7 +252,7 @@ impl<Ctx: CryptoJobCtx> CryptoJob<Ctx> {
             any_task: unsafe { core::mem::zeroed() },
             poll: KeepAlive::default(),
             ctx: ctx.clone(),
-            callback: Strong::create(callback.with_async_context_if_needed(global), global),
+            callback: StrongOptional::create(callback.with_async_context_if_needed(global), global),
         }));
         // If `ctx.init` throws, we must release the callback `Strong` and any resources the
         // ctx already owns (e.g. `Scrypt` has already protected its password/salt buffers in
@@ -319,7 +333,7 @@ impl<Ctx: CryptoJobCtx> CryptoJob<Ctx> {
 // ───────────────────────────────────────────────────────────────────────────
 // random
 // ───────────────────────────────────────────────────────────────────────────
-mod random {
+pub mod random {
     use super::*;
 
     #[derive(Clone)]
@@ -331,6 +345,18 @@ mod random {
         pub result: (), // void
     }
 
+    pub type Job = CryptoJob<JobCtx>;
+
+    pub const MAX_POSSIBLE_LENGTH: usize = {
+        let a = ArrayBuffer::MAX_SIZE as usize;
+        let b = i32::MAX as usize;
+        if a < b { a } else { b }
+    };
+    pub const MAX_RANGE: i64 = 0xffff_ffff_ffff;
+
+    // TODO(b2-blocked): `JSValue::{protect,unprotect}` + `EventLoop::run_callback`
+    // not yet on the stub surface.
+    #[cfg(any())]
     impl CryptoJobCtx for JobCtx {
         fn init(&mut self, _: &JSGlobalObject) -> JsResult<()> {
             self.value.protect();
@@ -357,14 +383,11 @@ mod random {
         }
     }
 
-    pub type Job = CryptoJob<JobCtx>;
-
-    pub const MAX_POSSIBLE_LENGTH: usize = {
-        let a = ArrayBuffer::MAX_SIZE;
-        let b = i32::MAX as usize;
-        if a < b { a } else { b }
-    };
-    pub const MAX_RANGE: i64 = 0xffff_ffff_ffff;
+    // ─── host fns: gated on `bun_jsc` method surface + `validators` arity ──
+    #[cfg(any())]
+    mod _hostfns {
+    use super::*;
+    use crate::node::util::validators;
 
     #[bun_jsc::host_fn]
     pub fn random_int(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
@@ -649,146 +672,14 @@ mod random {
 
         Ok(JSValue::UNDEFINED)
     }
-}
-
-#[bun_jsc::host_fn]
-fn pbkdf2(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-    let data = PBKDF2::from_js(global_this, call_frame, true)?;
-
-    let job = PBKDF2::Job::create(VirtualMachine::get(), global_this, &data);
-    Ok(job.promise.value())
-}
-
-#[bun_jsc::host_fn]
-fn pbkdf2_sync(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-    let mut data = PBKDF2::from_js(global_this, call_frame, false)?;
-    // TODO(port): Zig had `defer data.deinit()` plus an extra `data.deinit()` on the
-    // OOM branch (double-deinit). Preserving the defer; the duplicate call is dropped
-    // since Rust scopeguard would also run on early return.
-    let _guard = scopeguard::guard((), |_| data.deinit());
-    let out_arraybuffer =
-        JSValue::create_buffer_from_length(global_this, u32::try_from(data.length).unwrap())?;
-
-    let Some(output) = out_arraybuffer.as_array_buffer(global_this) else {
-        return global_this.throw_out_of_memory();
-    };
-
-    if !data.run(output.slice()) {
-        let err = Crypto::create_crypto_error(global_this, boringssl::ERR_get_error());
-        boringssl::ERR_clear_error();
-        return global_this.throw_value(err);
-    }
-
-    Ok(out_arraybuffer)
-}
-
-#[bun_jsc::host_fn]
-pub fn timing_safe_equal(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-    let [l_value, r_value] = call_frame.arguments_as_array::<2>();
-
-    let Some(l_buf) = l_value.as_array_buffer(global) else {
-        return global
-            .err_invalid_arg_type(format_args!(
-                "The \"buf1\" argument must be an instance of ArrayBuffer, Buffer, TypedArray, or DataView."
-            ))
-            .throw();
-    };
-    let l = l_buf.byte_slice();
-
-    let Some(r_buf) = r_value.as_array_buffer(global) else {
-        return global
-            .err_invalid_arg_type(format_args!(
-                "The \"buf2\" argument must be an instance of ArrayBuffer, Buffer, TypedArray, or DataView."
-            ))
-            .throw();
-    };
-    let r = r_buf.byte_slice();
-
-    if l.len() != r.len() {
-        return global
-            .err_crypto_timing_safe_equal_length(format_args!(
-                "Input buffers must have the same byte length"
-            ))
-            .throw();
-    }
-
-    Ok(JSValue::from(
-        // SAFETY: l and r are valid slices of equal length; CRYPTO_memcmp reads exactly len bytes.
-        unsafe { boringssl::CRYPTO_memcmp(l.as_ptr().cast(), r.as_ptr().cast(), l.len()) } == 0,
-    ))
-}
-
-#[bun_jsc::host_fn]
-pub fn secure_heap_used(_: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
-    Ok(JSValue::UNDEFINED)
-}
-
-#[bun_jsc::host_fn]
-pub fn get_fips(_: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
-    Ok(JSValue::js_number(0))
-}
-
-#[bun_jsc::host_fn]
-pub fn set_fips(_: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
-    Ok(JSValue::UNDEFINED)
-}
-
-#[bun_jsc::host_fn]
-pub fn set_engine(global: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
-    global
-        .err_crypto_custom_engine_not_supported(format_args!(
-            "Custom engines not supported by BoringSSL"
-        ))
-        .throw()
-}
-
-extern "C" fn for_each_hash(
-    _: *const boringssl::EVP_MD,
-    maybe_from: *const c_char,
-    _: *const c_char,
-    ctx: *mut c_void,
-) {
-    if maybe_from.is_null() {
-        return;
-    }
-    // SAFETY: ctx was `&mut CaseInsensitiveAsciiStringArrayHashMap<()>` cast in `get_hashes`.
-    let hashes: &mut CaseInsensitiveAsciiStringArrayHashMap<()> =
-        unsafe { &mut *(ctx as *mut CaseInsensitiveAsciiStringArrayHashMap<()>) };
-    // SAFETY: `maybe_from` is non-null (checked above) and points to a NUL-terminated C string
-    // from BoringSSL's static tables.
-    let from_bytes = unsafe { core::ffi::CStr::from_ptr(maybe_from) }.to_bytes();
-    hashes.put(from_bytes, ());
-}
-
-#[bun_jsc::host_fn]
-fn get_hashes(global: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
-    let mut hashes: CaseInsensitiveAsciiStringArrayHashMap<()> =
-        CaseInsensitiveAsciiStringArrayHashMap::new();
-
-    // TODO(dylan-conway): cache the names
-    // SAFETY: `for_each_hash` matches the expected callback signature; `&mut hashes` is valid
-    // for the duration of the call.
-    unsafe {
-        boringssl::EVP_MD_do_all_sorted(
-            for_each_hash,
-            (&mut hashes) as *mut _ as *mut c_void,
-        );
-    }
-
-    let array = JSValue::create_empty_array(global, hashes.count())?;
-
-    for (i, hash) in hashes.keys().iter().enumerate() {
-        let str = BunString::create_utf8_for_js(global, hash)?;
-        array.put_index(global, u32::try_from(i).unwrap(), str)?;
-    }
-
-    Ok(array)
+    } // mod _hostfns
+    #[cfg(any())]
+    pub use _hostfns::*;
 }
 
 // ───────────────────────────────────────────────────────────────────────────
 // Scrypt
 // ───────────────────────────────────────────────────────────────────────────
-#[derive(Clone)]
 pub struct Scrypt {
     password: StringOrBuffer,
     salt: StringOrBuffer,
@@ -799,13 +690,34 @@ pub struct Scrypt {
     keylen: u32,
 
     // used in async mode
-    buf: Strong, // Strong.Optional, default .empty
+    buf: StrongOptional, // Strong.Optional, default .empty
     // TODO(port): lifetime — `result` borrows the ArrayBuffer backing held alive by `buf`.
     result: *mut [u8],
     err: Option<u32>,
 }
 
-type ScryptJob = CryptoJob<Scrypt>;
+pub type ScryptJob = CryptoJob<Scrypt>;
+
+// ─── gated impls / host fns ───────────────────────────────────────────────
+// Bodies need: `bun_jsc` method surface (`.throw_*`, `.get()`, `.as_array_buffer()`,
+// `ArrayBuffer::alloc`, `JSFunction::create`, `JSValue::create_*`),
+// `bun_boringssl::{EVP_PBE_scrypt,EVP_PBE_validate_scrypt_params,EVP_MD_do_all_sorted,
+// ERR_get_error,ERR_peek_last_error}` (not yet in boringssl_sys),
+// `crate::crypto::pbkdf2::{PBKDF2,Job}` (still `#[cfg(any())]` in crypto/mod.rs),
+// `StringOrBuffer::{from_js_maybe_async,deinit_and_unprotect}` (gated in types.rs).
+// TODO(b2-blocked): un-gate piecewise as the lower-tier surface lands.
+#[cfg(any())]
+mod _impl {
+use super::*;
+use bun_core::UUID;
+use bun_jsc::{ConcurrentTask, JSFunction, Strong};
+use bun_str::String as BunString;
+use crate::node::util::validators;
+
+// `Crypto.EVP.PBKDF2` — resolves through `crate::crypto::EVP` (module re-export
+// of `evp`) once `pbkdf2` is un-gated in `src/runtime/crypto/mod.rs`.
+use crate::crypto::pbkdf2::{PBKDF2, Job as PBKDF2Job};
+use crate::crypto::create_crypto_error;
 
 impl Scrypt {
     /// Zig: `fromJS(..., comptime is_async: bool) JSError!if (is_async) struct{@This(),JSValue} else @This()`.
@@ -956,7 +868,7 @@ impl Scrypt {
             p: p.unwrap(),
             maxmem: u64::try_from(maxmem.unwrap()).unwrap(),
             keylen: u32::try_from(keylen).unwrap(),
-            buf: Strong::empty(),
+            buf: StrongOptional::empty(),
             result: &mut [] as *mut [u8],
             err: None,
         };
@@ -1064,7 +976,7 @@ impl CryptoJobCtx for Scrypt {
 
         // to be filled in later
         self.result = bytes as *mut [u8];
-        self.buf = Strong::create(buf, global);
+        self.buf = StrongOptional::create(buf, global);
         Ok(())
     }
 
@@ -1116,6 +1028,140 @@ impl CryptoJobCtx for Scrypt {
 }
 
 #[bun_jsc::host_fn]
+fn pbkdf2(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    let data = PBKDF2::from_js(global_this, call_frame, true)?;
+
+    let job = PBKDF2Job::create(VirtualMachine::get(), global_this, &data);
+    Ok(job.promise.value())
+}
+
+#[bun_jsc::host_fn]
+fn pbkdf2_sync(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    let mut data = PBKDF2::from_js(global_this, call_frame, false)?;
+    // TODO(port): Zig had `defer data.deinit()` plus an extra `data.deinit()` on the
+    // OOM branch (double-deinit). Preserving the defer; the duplicate call is dropped
+    // since Rust scopeguard would also run on early return.
+    let _guard = scopeguard::guard((), |_| data.deinit());
+    let out_arraybuffer =
+        JSValue::create_buffer_from_length(global_this, u32::try_from(data.length).unwrap())?;
+
+    let Some(output) = out_arraybuffer.as_array_buffer(global_this) else {
+        return global_this.throw_out_of_memory();
+    };
+
+    if !data.run(output.slice()) {
+        let err = create_crypto_error(global_this, boringssl::ERR_get_error());
+        boringssl::ERR_clear_error();
+        return global_this.throw_value(err);
+    }
+
+    Ok(out_arraybuffer)
+}
+
+#[bun_jsc::host_fn]
+pub fn timing_safe_equal(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    let [l_value, r_value] = call_frame.arguments_as_array::<2>();
+
+    let Some(l_buf) = l_value.as_array_buffer(global) else {
+        return global
+            .err_invalid_arg_type(format_args!(
+                "The \"buf1\" argument must be an instance of ArrayBuffer, Buffer, TypedArray, or DataView."
+            ))
+            .throw();
+    };
+    let l = l_buf.byte_slice();
+
+    let Some(r_buf) = r_value.as_array_buffer(global) else {
+        return global
+            .err_invalid_arg_type(format_args!(
+                "The \"buf2\" argument must be an instance of ArrayBuffer, Buffer, TypedArray, or DataView."
+            ))
+            .throw();
+    };
+    let r = r_buf.byte_slice();
+
+    if l.len() != r.len() {
+        return global
+            .err_crypto_timing_safe_equal_length(format_args!(
+                "Input buffers must have the same byte length"
+            ))
+            .throw();
+    }
+
+    Ok(JSValue::from(
+        // SAFETY: l and r are valid slices of equal length; CRYPTO_memcmp reads exactly len bytes.
+        unsafe { boringssl::CRYPTO_memcmp(l.as_ptr().cast(), r.as_ptr().cast(), l.len()) } == 0,
+    ))
+}
+
+#[bun_jsc::host_fn]
+pub fn secure_heap_used(_: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+    Ok(JSValue::UNDEFINED)
+}
+
+#[bun_jsc::host_fn]
+pub fn get_fips(_: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+    Ok(JSValue::js_number(0))
+}
+
+#[bun_jsc::host_fn]
+pub fn set_fips(_: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+    Ok(JSValue::UNDEFINED)
+}
+
+#[bun_jsc::host_fn]
+pub fn set_engine(global: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+    global
+        .err_crypto_custom_engine_not_supported(format_args!(
+            "Custom engines not supported by BoringSSL"
+        ))
+        .throw()
+}
+
+extern "C" fn for_each_hash(
+    _: *const boringssl::EVP_MD,
+    maybe_from: *const c_char,
+    _: *const c_char,
+    ctx: *mut c_void,
+) {
+    if maybe_from.is_null() {
+        return;
+    }
+    // SAFETY: ctx was `&mut CaseInsensitiveAsciiStringArrayHashMap<()>` cast in `get_hashes`.
+    let hashes: &mut CaseInsensitiveAsciiStringArrayHashMap<()> =
+        unsafe { &mut *(ctx as *mut CaseInsensitiveAsciiStringArrayHashMap<()>) };
+    // SAFETY: `maybe_from` is non-null (checked above) and points to a NUL-terminated C string
+    // from BoringSSL's static tables.
+    let from_bytes = unsafe { core::ffi::CStr::from_ptr(maybe_from) }.to_bytes();
+    hashes.put(from_bytes, ());
+}
+
+#[bun_jsc::host_fn]
+fn get_hashes(global: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+    let mut hashes: CaseInsensitiveAsciiStringArrayHashMap<()> =
+        CaseInsensitiveAsciiStringArrayHashMap::new();
+
+    // TODO(dylan-conway): cache the names
+    // SAFETY: `for_each_hash` matches the expected callback signature; `&mut hashes` is valid
+    // for the duration of the call.
+    unsafe {
+        boringssl::EVP_MD_do_all_sorted(
+            for_each_hash,
+            (&mut hashes) as *mut _ as *mut c_void,
+        );
+    }
+
+    let array = JSValue::create_empty_array(global, hashes.count())?;
+
+    for (i, hash) in hashes.keys().iter().enumerate() {
+        let str = BunString::create_utf8_for_js(global, hash)?;
+        array.put_index(global, u32::try_from(i).unwrap(), str)?;
+    }
+
+    Ok(array)
+}
+
+#[bun_jsc::host_fn]
 fn scrypt(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
     let (ctx, callback) = Scrypt::from_js::<true>(global, call_frame)?;
     ScryptJob::init_and_schedule(global, callback, &ctx)?;
@@ -1155,6 +1201,7 @@ pub fn create_node_crypto_binding_zig(global: &JSGlobalObject) -> JSValue {
 
     crypto
 }
+} // mod _impl
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

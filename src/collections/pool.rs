@@ -53,7 +53,8 @@ impl<T> Node<T> {
     /// See [`Node::data_ref`] for safety requirements.
     #[inline]
     pub unsafe fn data_mut(&mut self) -> &mut T {
-        self.data.assume_init_mut()
+        // SAFETY: caller guarantees `data` is initialized.
+        unsafe { self.data.assume_init_mut() }
     }
 
     /// Insert a new node after the current one.

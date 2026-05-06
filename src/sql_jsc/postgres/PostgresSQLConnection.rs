@@ -125,12 +125,12 @@ impl PostgresSQLConnection {
     pub fn r#ref(&self) {
         self.ref_count.set(self.ref_count.get() + 1);
     }
-    pub fn deref(&self) {
+    pub fn deref(&mut self) {
         let n = self.ref_count.get() - 1;
         self.ref_count.set(n);
         if n == 0 {
-            // SAFETY: ref_count hit zero; we are the last owner of this Box-allocated struct.
-            unsafe { (*(self as *const Self as *mut Self)).deinit() };
+            // ref_count hit zero; we are the last owner of this Box-allocated struct.
+            self.deinit();
         }
     }
 

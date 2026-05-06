@@ -94,13 +94,10 @@ impl ReplCommand {
         b.options.install = ctx.install;
         b.resolver.opts.install = ctx.install;
         b.resolver.opts.global_cache = ctx.debug.global_cache;
-        // TODO(port): exact enum type for offline_mode_setting (Online/Offline/Latest)
         b.resolver.opts.prefer_offline_install =
-            ctx.debug.offline_mode_setting.unwrap_or(OfflineModeSetting::Online)
-                == OfflineModeSetting::Offline;
+            ctx.debug.offline_mode_setting.unwrap_or(OfflineMode::Online) == OfflineMode::Offline;
         b.resolver.opts.prefer_latest_install =
-            ctx.debug.offline_mode_setting.unwrap_or(OfflineModeSetting::Online)
-                == OfflineModeSetting::Latest;
+            ctx.debug.offline_mode_setting.unwrap_or(OfflineMode::Online) == OfflineMode::Latest;
         b.options.global_cache = b.resolver.opts.global_cache;
         b.options.prefer_offline_install = b.resolver.opts.prefer_offline_install;
         b.options.prefer_latest_install = b.resolver.opts.prefer_latest_install;

@@ -837,6 +837,18 @@ impl GetHostByAddrInfoRequest {
     }
 }
 
+impl c_ares::HostentHandler for GetHostByAddrInfoRequest {
+    fn on_hostent(
+        &mut self,
+        status: Option<c_ares::Error>,
+        timeouts: i32,
+        results: *mut c_ares::struct_hostent,
+    ) {
+        let result = if results.is_null() { None } else { Some(results) };
+        Self::on_cares_complete(self as *mut Self, status, timeouts, result);
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // CAresNameInfo
 // ──────────────────────────────────────────────────────────────────────────

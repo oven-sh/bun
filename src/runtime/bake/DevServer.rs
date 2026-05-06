@@ -777,7 +777,10 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
                 bun_core::self_exe_path().unwrap_or_else(|e| Output::panic(format_args!("unhandled {}", e))),
             )
             .unwrap_or_else(|e| Output::panic(format_args!("unhandled {}", e)));
-            bun_core::write_any_to_hasher(&mut h, &stat.mtime());
+            // PORT NOTE: `sys::Stat` is `libc::stat` (no `.mtime()` accessor);
+            // hash the raw `st_mtime` field directly — this is a debug-only
+            // configuration cache-bust key.
+            bun_core::write_any_to_hasher(&mut h, &(stat.st_mtime as i64));
             h.update(crate::bake::bake_body::get_hmr_runtime(bake::Side::Client).code);
             h.update(crate::bake::bake_body::get_hmr_runtime(bake::Side::Server).code);
         } else {

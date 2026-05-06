@@ -1821,10 +1821,13 @@ type SocketType<const SSL: bool> = uws::NewSocketHandler<SSL>;
 
 impl<const SSL: bool> SocketHandler<SSL> {
     fn _socket(s: SocketType<SSL>) -> Socket {
+        // PORT NOTE: `NewSocketHandler<SSL>` only differs by const generic; the
+        // `socket` field is identical. Re-wrap the inner `InternalSocket` into
+        // the right `AnySocket` variant.
         if SSL {
-            Socket::SocketTLS(s)
+            Socket::SocketTls(uws::SocketTLS { socket: s.socket })
         } else {
-            Socket::SocketTCP(s)
+            Socket::SocketTcp(uws::SocketTCP { socket: s.socket })
         }
     }
 
@@ -1861,8 +1864,9 @@ impl<const SSL: bool> SocketHandler<SSL> {
         );
         let handshake_success = success == 1;
         this.ref_();
-        let _d = scopeguard::guard((), |_| this.deref());
-        let _update = scopeguard::guard((), |_| this.update_poll_ref());
+        let this_ptr = this as *mut JSValkeyClient;
+        let _d = deref_guard(this_ptr);
+        let _update = scopeguard::guard(this_ptr, |p| unsafe { (*p).update_poll_ref() });
         let vm = this.client.vm;
         if handshake_success {
             if this.client.tls.reject_unauthorized(vm) {
@@ -1877,8 +1881,12 @@ impl<const SSL: bool> SocketHandler<SSL> {
                 // fall back to the host from the connection URL. Unix-domain
                 // sockets have no hostname to verify, so skip the identity check
                 // for redis+tls+unix:// / valkey+tls+unix:// connections.
-                let ssl_ptr: *mut boringssl::c::SSL =
-                    this.client.socket.get_native_handle().cast();
+                let ssl_ptr: *mut boringssl::c::SSL = this
+                    .client
+                    .socket
+                    .get_native_handle()
+                    .unwrap_or(core::ptr::null_mut())
+                    .cast();
                 // SAFETY: SSL_get_servername returns null or NUL-terminated.
                 let mut hostname: &[u8] = if let Some(servername) =
                     unsafe { boringssl::c::SSL_get_servername(ssl_ptr, 0).as_ref() }
@@ -1930,40 +1938,32 @@ impl<const SSL: bool> SocketHandler<SSL> {
 
     fn fail_handshake_with_verify_error(
         this: &mut JSValkeyClient,
-        vm: &VirtualMachine,
+        vm: *mut c_void,
         ssl_error: &uws::us_bun_verify_error_t,
     ) -> JsTerminatedResult<()> {
-        let ssl_js_value = match ssl_error.to_js(this.global_object) {
-            Ok(v) => v,
-            Err(err) => match err {
-                e if e == jsc::JsError::Terminated => return Err(jsc::JsError::Terminated),
-                e if e == bun_core::err!("OutOfMemory") => bun_core::out_of_memory(),
-                _ /* JSError */ => {
-                    // Clear any pending exception since we can't convert it to JS,
-                    // but still fail-close the connection so we never fall through
-                    // to the authenticated state after a rejected handshake.
-                    this.global_object.clear_exception();
-                    this.client.flags.is_authenticated = false;
-                    this.client.flags.is_manually_closed = true;
-                    this.client.close();
-                    return Ok(());
-                }
-            },
-        };
+        // TODO(b2-blocked): bun_uws::us_bun_verify_error_t::to_js — bridges to a
+        // JS Error object. Free fn shim once `verify_error_to_js` lands in
+        // src/runtime/socket; for now record the block and fail-close.
+        let _ = ssl_error;
+        let ssl_js_value: JSValue =
+            todo!("blocked_on: bun_uws::us_bun_verify_error_t::to_js");
+        #[allow(unreachable_code)]
         Self::fail_handshake(this, vm, ssl_js_value)
     }
 
     fn fail_handshake(
         this: &mut JSValkeyClient,
-        vm: &VirtualMachine,
+        _vm: *mut c_void,
         err_value: JSValue,
     ) -> JsTerminatedResult<()> {
         this.client.flags.is_authenticated = false;
-        let loop_ = vm.event_loop();
-        loop_.enter();
-        let _exit = scopeguard::guard((), |_| loop_.exit());
+        let loop_ = this.vm().event_loop();
+        // SAFETY: VM-owned; non-null on the JS thread.
+        unsafe { (*loop_).enter() };
+        let _exit = scopeguard::guard(loop_, |el| unsafe { (*el).exit() });
         this.client.flags.is_manually_closed = true;
-        let _close = scopeguard::guard((), |_| this.client.close());
+        let this_ptr = this as *mut JSValkeyClient;
+        let _close = scopeguard::guard(this_ptr, |p| unsafe { (*p).client.close() });
         this.client.fail_with_js_value(this.global_object, err_value)
     }
 

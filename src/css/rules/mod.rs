@@ -441,9 +441,6 @@ impl<R> CssRuleList<R> {
             if let CssRule::Import(import_rule) = rule
                 && dest.remove_imports
             {
-                // blocked_on: ImportDependency::new (gated in dependencies.rs
-                // on rules::import + css_modules::hash + to_css::string).
-                
                 let dep = if dest.dependencies.is_some() {
                     Some(css::dependencies::Dependency::Import(
                         css::dependencies::ImportDependency::new(
@@ -455,20 +452,6 @@ impl<R> CssRuleList<R> {
                         ),
                     ))
                 } else {
-                    None
-                };
-                #[cfg(any())]
-                let dep: Option<css::dependencies::Dependency> = if dest.dependencies.is_some() {
-                    // Spec rules.zig:482-489 unconditionally constructs and
-                    // appends `Dependency{.import = ImportDependency.new(...)}`
-                    // here before `continue`. Returning `None` would silently
-                    // drop the @import from BOTH the serialized output AND the
-                    // collected dependencies (PORTING.md §Forbidden: silent
-                    // no-op). Fail loudly until ImportDependency::new un-gates.
-                    let _ = import_rule;
-                    todo!("blocked_on: dependencies::ImportDependency::new")
-                } else {
-                    let _ = import_rule;
                     None
                 };
 

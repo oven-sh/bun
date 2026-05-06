@@ -5688,7 +5688,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                                 left: self.new_expr(
                                     E::Dot {
                                         target: Expr::init_identifier(namespace, name_loc),
-                                        name,
+                                        // SAFETY: Symbol.original_name is `*const [u8]` arena-owned for 'a.
+                                        name: unsafe { &*name },
                                         name_loc,
                                         ..Default::default()
                                     },
@@ -5714,12 +5715,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             )
         };
 
-        let func_args = allocator.alloc_slice_copy(&[G::Arg {
+        // PORT NOTE: `G::Arg` is not `Copy` (contains `BabyList<Decorator>`); use
+        // `alloc_slice_fill_iter` instead of `alloc_slice_copy`.
+        let func_args = allocator.alloc_slice_fill_iter([G::Arg {
             binding: self.b(B::Identifier { r#ref: arg_ref }, name_loc),
             ..Default::default()
         }]);
 
-        let args_list = allocator.alloc_slice_copy(&[arg_expr]);
+        let args_list = ExprNodeList::init_one(arg_expr).expect("oom");
 
         let target = 'target: {
             // "(() => { foo() })()" => "(() => foo())()"
@@ -5746,7 +5749,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         let call = self.new_expr(
             E::Call {
                 target,
-                args: ExprNodeList::from_owned_slice(args_list),
+                args: args_list,
                 // TODO: make these fully tree-shakable. this annotation
                 // as-is is incorrect.  This would be done by changing all
                 // enum wrappers into `var Enum = ...` instead of two

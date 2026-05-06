@@ -82,6 +82,112 @@ pub struct UNICODE_STRING {
     pub Buffer: *mut WCHAR,
 }
 
+/// `ACCESS_MASK` (`winnt.h`).
+pub type ACCESS_MASK = DWORD;
+
+/// `OBJECT_ATTRIBUTES` (`ntdef.h`) — passed to `NtCreateFile` / `NtOpenFile`.
+#[repr(C)]
+pub struct OBJECT_ATTRIBUTES {
+    pub Length: ULONG,
+    pub RootDirectory: HANDLE,
+    pub ObjectName: *mut UNICODE_STRING,
+    pub Attributes: ULONG,
+    pub SecurityDescriptor: *mut c_void,
+    pub SecurityQualityOfService: *mut c_void,
+}
+
+/// `IO_STATUS_BLOCK` (`wdm.h`) — output param of `Nt*` file calls.
+#[repr(C)]
+pub struct IO_STATUS_BLOCK {
+    /// Anonymous union of `NTSTATUS Status` / `PVOID Pointer`; pointer-sized.
+    pub Status: usize,
+    pub Information: usize,
+}
+
+// `std.os.windows` path-length constants.
+pub const MAX_PATH: usize = 260;
+pub const PATH_MAX_WIDE: usize = 32767;
+
+// `SetFilePointer` move methods.
+pub const FILE_BEGIN: DWORD = 0;
+pub const FILE_CURRENT: DWORD = 1;
+pub const FILE_END: DWORD = 2;
+
+// `DuplicateHandle` options.
+pub const DUPLICATE_SAME_ACCESS: DWORD = 0x0000_0002;
+
+// `NtCreateFile` ShareAccess (`winnt.h`).
+pub const FILE_SHARE_READ: ULONG = 0x0000_0001;
+pub const FILE_SHARE_WRITE: ULONG = 0x0000_0002;
+pub const FILE_SHARE_DELETE: ULONG = 0x0000_0004;
+
+// File attribute flags (`winnt.h`).
+pub const FILE_ATTRIBUTE_READONLY: DWORD = 0x0000_0001;
+pub const FILE_ATTRIBUTE_HIDDEN: DWORD = 0x0000_0002;
+pub const FILE_ATTRIBUTE_SYSTEM: DWORD = 0x0000_0004;
+pub const FILE_ATTRIBUTE_DIRECTORY: DWORD = 0x0000_0010;
+pub const FILE_ATTRIBUTE_ARCHIVE: DWORD = 0x0000_0020;
+pub const FILE_ATTRIBUTE_DEVICE: DWORD = 0x0000_0040;
+pub const FILE_ATTRIBUTE_NORMAL: DWORD = 0x0000_0080;
+pub const FILE_ATTRIBUTE_TEMPORARY: DWORD = 0x0000_0100;
+pub const FILE_ATTRIBUTE_SPARSE_FILE: DWORD = 0x0000_0200;
+pub const FILE_ATTRIBUTE_REPARSE_POINT: DWORD = 0x0000_0400;
+pub const FILE_ATTRIBUTE_COMPRESSED: DWORD = 0x0000_0800;
+pub const FILE_ATTRIBUTE_OFFLINE: DWORD = 0x0000_1000;
+pub const FILE_ATTRIBUTE_NOT_CONTENT_INDEXED: DWORD = 0x0000_2000;
+
+// `NtCreateFile` CreateDisposition (`ntifs.h`).
+pub const FILE_SUPERSEDE: ULONG = 0;
+pub const FILE_OPEN: ULONG = 1;
+pub const FILE_CREATE: ULONG = 2;
+pub const FILE_OPEN_IF: ULONG = 3;
+pub const FILE_OVERWRITE: ULONG = 4;
+pub const FILE_OVERWRITE_IF: ULONG = 5;
+
+// `NtCreateFile` CreateOptions (`ntifs.h`).
+pub const FILE_DIRECTORY_FILE: ULONG = 0x0000_0001;
+pub const FILE_WRITE_THROUGH: ULONG = 0x0000_0002;
+pub const FILE_SEQUENTIAL_ONLY: ULONG = 0x0000_0004;
+pub const FILE_SYNCHRONOUS_IO_NONALERT: ULONG = 0x0000_0020;
+pub const FILE_NON_DIRECTORY_FILE: ULONG = 0x0000_0040;
+pub const FILE_OPEN_REPARSE_POINT: ULONG = 0x0020_0000;
+
+// Standard access rights (`winnt.h`).
+pub const DELETE: ACCESS_MASK = 0x0001_0000;
+pub const SYNCHRONIZE: ACCESS_MASK = 0x0010_0000;
+pub const GENERIC_READ: ACCESS_MASK = 0x8000_0000;
+pub const GENERIC_WRITE: ACCESS_MASK = 0x4000_0000;
+
+// ──────────────────────────────────────────────────────────────────────────
+// ntdll namespace (subset). Zig: `pub const ntdll = std.os.windows.ntdll`
+// ──────────────────────────────────────────────────────────────────────────
+pub mod ntdll {
+    use super::*;
+
+    #[link(name = "ntdll")]
+    unsafe extern "system" {
+        pub fn NtCreateFile(
+            FileHandle: *mut HANDLE,
+            DesiredAccess: ACCESS_MASK,
+            ObjectAttributes: *mut OBJECT_ATTRIBUTES,
+            IoStatusBlock: *mut IO_STATUS_BLOCK,
+            AllocationSize: *mut LARGE_INTEGER,
+            FileAttributes: ULONG,
+            ShareAccess: ULONG,
+            CreateDisposition: ULONG,
+            CreateOptions: ULONG,
+            EaBuffer: *mut c_void,
+            EaLength: ULONG,
+        ) -> NTSTATUS;
+    }
+    pub use super::RtlNtStatusToDosError;
+}
+
+/// `std.os.windows.user32` (subset placeholder; Phase B fills as needed).
+pub mod user32 {}
+/// `std.os.windows.advapi32` (subset placeholder; Phase B fills as needed).
+pub mod advapi32 {}
+
 // ──────────────────────────────────────────────────────────────────────────
 // libuv re-export (tier-0 sibling). Zig: `pub const libuv = @import("../../libuv_sys/libuv.zig")`
 // ──────────────────────────────────────────────────────────────────────────

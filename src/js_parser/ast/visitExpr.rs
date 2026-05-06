@@ -738,9 +738,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         let record =
                             &p.import_records.items()[macro_ref_data.import_record_id as usize];
                         // We must visit it to convert inline_identifiers and record usage
-                        let macro_result = match p.options.macro_context.call(
+                        let macro_result = match macro_context_call(
+                            p.options.macro_context.as_deref_mut(),
                             record.path.text,
-                            p.source.path.source_dir(),
                             p.log,
                             p.source,
                             record.range,
@@ -2050,11 +2050,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 let record =
                     &p.import_records.items()[macro_ref_data.import_record_id as usize];
                 let copied = Expr { loc: expr.loc, data: expr.data };
-                let start_error_count = p.log.msgs.items().len();
+                let start_error_count = p.log.errors;
                 p.macro_call_count += 1;
-                let macro_result = match p.options.macro_context.call(
+                let macro_result = match macro_context_call(
+                    p.options.macro_context.as_deref_mut(),
                     record.path.text,
-                    p.source.path.source_dir(),
                     p.log,
                     p.source,
                     record.range,
@@ -2062,20 +2062,15 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     name,
                 ) {
                     Ok(r) => r,
-                    Err(err) => {
-                        if matches!(err, bun_core::Error::MacroFailed) {
-                            if p.log.msgs.items().len() == start_error_count {
-                                p.log
-                                    .add_error(Some(p.source), expr.loc, b"macro threw exception")
-                                    .expect("unreachable");
-                            }
-                        } else {
+                    Err(_err) => {
+                        // Zig distinguishes `error.MacroFailed` (silent if a
+                        // message was already logged) from other errors. The
+                        // cross-crate `MacroError` enum lives in `_jsc`; until
+                        // it's threaded through, treat every failure as
+                        // `MacroFailed` and log only if nothing was logged yet.
+                        if p.log.errors == start_error_count {
                             p.log
-                                .add_error_fmt(
-                                    Some(p.source),
-                                    expr.loc,
-                                    format_args!("{:?} error in macro", err),
-                                )
+                                .add_error(Some(p.source), expr.loc, b"macro threw exception")
                                 .expect("unreachable");
                         }
                         return expr;

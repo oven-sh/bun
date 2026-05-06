@@ -199,16 +199,17 @@ impl Default for Property {
 }
 
 impl Property {
-    // TODO(b2-ast-round): depends on Expr::deep_clone / ExprNodeList::deep_clone /
-    // BabyList<Stmt>::clone — wire after Expr/Stmt land.
-    
     pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> core::result::Result<Property, bun_alloc::AllocError> {
-        let mut class_static_block: Option<&'ast mut ClassStaticBlock> = None;
-        if let Some(csb) = &self.class_static_block {
-            class_static_block = Some(bump.alloc(ClassStaticBlock {
-                loc: csb.loc,
-                stmts: csb.stmts.clone(bump)?,
-            }));
+        let mut class_static_block: Option<core::ptr::NonNull<ClassStaticBlock>> = None;
+        if let Some(csb) = self.class_static_block {
+            // SAFETY: `class_static_block` is an arena-owned `*ClassStaticBlock` valid for
+            // the lifetime of the AST arena (Zig: `?*ClassStaticBlock`).
+            let csb_ref = unsafe { csb.as_ref() };
+            let new_block: &mut ClassStaticBlock = bump.alloc(ClassStaticBlock {
+                loc: csb_ref.loc,
+                stmts: csb_ref.stmts.clone()?,
+            });
+            class_static_block = Some(core::ptr::NonNull::from(new_block));
         }
         Ok(Property {
             initializer: match self.initializer {
@@ -218,7 +219,8 @@ impl Property {
             kind: self.kind,
             flags: self.flags,
             class_static_block,
-            ts_decorators: self.ts_decorators.deep_clone(bump)?,
+            // Zig: `try this.ts_decorators.deepClone(allocator)` — BabyList<Expr> per-element deep clone.
+            ts_decorators: self.ts_decorators.try_deep_clone_with(|e| e.deep_clone(bump))?,
             key: match self.key {
                 Some(key) => Some(key.deep_clone(bump)?),
                 None => None,
@@ -227,7 +229,7 @@ impl Property {
                 Some(value) => Some(value.deep_clone(bump)?),
                 None => None,
             },
-            ts_metadata: self.ts_metadata,
+            ts_metadata: self.ts_metadata.clone(),
         })
     }
 }
@@ -305,25 +307,26 @@ impl Default for Fn {
 }
 
 impl Fn {
-    // TODO(b2-ast-round): Arg::deep_clone — wire after Expr lands.
-    
     pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> core::result::Result<Fn, bun_alloc::AllocError> {
-        // PERF(port): Zig allocator.alloc + per-index assign; bumpalo equivalent
-        let args = bump.alloc_slice_fill_default::<Arg>(self.args.len());
+        // PERF(port): Zig allocator.alloc + per-index assign; bumpalo equivalent.
+        // SAFETY: `self.args` is an arena-owned `*mut [Arg]` valid for the AST arena lifetime
+        // (Zig: `[]Arg`).
+        let src_args: &[Arg] = unsafe { &*self.args };
+        let args: &mut [Arg] = bump.alloc_slice_fill_default::<Arg>(src_args.len());
         for i in 0..args.len() {
-            args[i] = self.args[i].deep_clone(bump)?;
+            args[i] = src_args[i].deep_clone(bump)?;
         }
         Ok(Fn {
             name: self.name,
             open_parens_loc: self.open_parens_loc,
-            args,
+            args: args as *mut [Arg],
             body: FnBody {
                 loc: self.body.loc,
                 stmts: self.body.stmts,
             },
             arguments_ref: self.arguments_ref,
             flags: self.flags,
-            return_ts_metadata: self.return_ts_metadata,
+            return_ts_metadata: self.return_ts_metadata.clone(),
         })
     }
 }
@@ -352,18 +355,17 @@ impl Default for Arg {
 }
 
 impl Arg {
-    // TODO(b2-ast-round): ExprNodeList/Expr deep_clone.
-    
     pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> core::result::Result<Arg, bun_alloc::AllocError> {
         Ok(Arg {
-            ts_decorators: self.ts_decorators.deep_clone(bump)?,
+            // Zig: `try this.ts_decorators.deepClone(allocator)` — BabyList<Expr> per-element deep clone.
+            ts_decorators: self.ts_decorators.try_deep_clone_with(|e| e.deep_clone(bump))?,
             binding: self.binding,
             default: match self.default {
                 Some(d) => Some(d.deep_clone(bump)?),
                 None => None,
             },
             is_typescript_ctor_field: self.is_typescript_ctor_field,
-            ts_metadata: self.ts_metadata,
+            ts_metadata: self.ts_metadata.clone(),
         })
     }
 }

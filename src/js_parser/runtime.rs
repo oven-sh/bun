@@ -41,7 +41,7 @@ impl Fallback {
         }
         #[cfg(not(feature = "codegen_embed"))]
         {
-            return bun_core::runtime_embed_file(bun_core::EmbedKind::Codegen, "bun-error/index.js");
+            return bun_core::runtime_embed_file!(bun_core::EmbedKind::Codegen, "bun-error/index.js").as_bytes();
         }
     }
 
@@ -53,7 +53,7 @@ impl Fallback {
         }
         #[cfg(not(feature = "codegen_embed"))]
         {
-            return bun_core::runtime_embed_file(bun_core::EmbedKind::Codegen, "bun-error/bun-error.css");
+            return bun_core::runtime_embed_file!(bun_core::EmbedKind::Codegen, "bun-error/bun-error.css").as_bytes();
         }
     }
 
@@ -65,12 +65,12 @@ impl Fallback {
         }
         #[cfg(not(feature = "codegen_embed"))]
         {
-            return bun_core::runtime_embed_file(bun_core::EmbedKind::Codegen, "fallback-decoder.js");
+            return bun_core::runtime_embed_file!(bun_core::EmbedKind::Codegen, "fallback-decoder.js").as_bytes();
         }
     }
 
-    // TODO(port): `@import("build_options").fallback_html_version` — wire via build.rs
-    pub const VERSION_HASH: &'static str = env!("BUN_FALLBACK_HTML_VERSION");
+    // Zig: `@import("build_options").fallback_html_version` — wired via build.rs.
+    pub const VERSION_HASH: &'static str = bun_core::build_options::FALLBACK_HTML_VERSION;
 
     pub fn version_hash() -> u32 {
         static CACHED: AtomicU32 = AtomicU32::new(0);
@@ -183,7 +183,7 @@ impl Runtime {
         }
         #[cfg(not(feature = "codegen_embed"))]
         {
-            return bun_core::runtime_embed_file(bun_core::EmbedKind::Codegen, "runtime.out.js");
+            return bun_core::runtime_embed_file!(bun_core::EmbedKind::Codegen, "runtime.out.js").as_bytes();
         }
     }
 

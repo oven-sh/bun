@@ -380,24 +380,41 @@ impl Response {
         // SAFETY: self is a live FFI handle; None clears the callback
         unsafe { c::uws_h3_res_on_timeout(self, None, ptr::null_mut()) }
     }
-    pub fn on_data<UD>(
-        &mut self,
-        handler: fn(&mut UD, &mut Response, &[u8], bool),
-        ud: *mut UD,
-    ) {
-        // TODO(port): comptime-fn trampoline — see note on `for_each_header`.
-        let _ = handler;
-        unsafe extern "C" fn cb<UD>(
-            _r: *mut Response,
-            _ptr: *const u8,
-            _len: usize,
-            _last: bool,
-            _p: *mut c_void,
-        ) {
-            unimplemented!("TODO(port): comptime handler trampoline");
+    pub fn on_data<UD, H>(&mut self, _handler: H, ud: *mut UD)
+    where
+        H: Fn(&mut UD, &mut Response, &[u8], bool) + Copy + 'static,
+    {
+        const { assert!(core::mem::size_of::<H>() == 0, "handler must be a fn item or capture-less closure") };
+        unsafe extern "C" fn cb<UD, H>(
+            r: *mut Response,
+            chunk_ptr: *const u8,
+            len: usize,
+            last: bool,
+            p: *mut c_void,
+        ) where
+            H: Fn(&mut UD, &mut Response, &[u8], bool) + Copy + 'static,
+        {
+            if p.is_null() {
+                // null should always be treated as a no-op, there's no case where it should have any effect.
+                return;
+            }
+            let chunk: &[u8] = if len > 0 {
+                // SAFETY: chunk_ptr/len come from uws and are valid for this call.
+                unsafe { core::slice::from_raw_parts(chunk_ptr, len) }
+            } else {
+                b""
+            };
+            // SAFETY: H is a ZST (asserted at compile time above).
+            let handler: H = unsafe { core::mem::zeroed() };
+            // SAFETY: `r` is a live H3 response for the duration of the callback.
+            let res = unsafe { &mut *r };
+            // SAFETY: `p` is the `ud` pointer we passed below; non-null checked above.
+            let ud = unsafe { &mut *p.cast::<UD>() };
+            // PERF(port): was @call(.always_inline)
+            handler(ud, res, chunk, last);
         }
         // SAFETY: self is a live FFI handle; trampoline is `extern "C"`; ud forwarded opaquely
-        unsafe { c::uws_h3_res_on_data(self, Some(cb::<UD>), ud.cast()) }
+        unsafe { c::uws_h3_res_on_data(self, Some(cb::<UD, H>), ud.cast()) }
     }
     pub fn clear_on_data(&mut self) {
         // SAFETY: self is a live FFI handle; None clears the callback

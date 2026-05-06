@@ -973,10 +973,15 @@ impl Expr {
 // Phase B. Kept gated; `Serializable` is its payload shape.
 
 impl Expr {
+    // PORT NOTE: Zig's `jsonStringify` fed `Serializable` to `std.json.stringify`.
+    // The Rust port emits the same shape directly (no serde dependency).
     pub fn json_stringify(self_: &Expr, writer: &mut impl fmt::Write) -> fmt::Result {
-        let _ = (self_, writer);
-        // writer.write(Serializable { type_: self_.data.tag(), object: b"expr", value: self_.data, loc: self_.loc })
-        todo!("jsonStringify")
+        let tag: &'static str = self_.data.tag().into();
+        write!(
+            writer,
+            "{{\"type\":\"{}\",\"object\":\"expr\",\"loc\":{}}}",
+            tag, self_.loc.start
+        )
     }
 }
 

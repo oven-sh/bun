@@ -1468,14 +1468,14 @@ impl BorderHandler {
             is_logical = true
         );
 
-        self.border_top.reset(context.allocator);
-        self.border_bottom.reset(context.allocator);
-        self.border_left.reset(context.allocator);
-        self.border_right.reset(context.allocator);
-        self.border_block_start.reset(context.allocator);
-        self.border_block_end.reset(context.allocator);
-        self.border_inline_start.reset(context.allocator);
-        self.border_inline_end.reset(context.allocator);
+        self.border_top.reset(allocator);
+        self.border_bottom.reset(allocator);
+        self.border_left.reset(allocator);
+        self.border_right.reset(allocator);
+        self.border_block_start.reset(allocator);
+        self.border_block_end.reset(allocator);
+        self.border_inline_start.reset(allocator);
+        self.border_inline_end.reset(allocator);
     }
 
     fn flush_unparsed(
@@ -1484,21 +1484,22 @@ impl BorderHandler {
         dest: &mut DeclarationList,
         context: &mut PropertyHandlerContext,
     ) {
+        let allocator = dest.bump();
         let logical_supported = !context.should_compile_logical(Feature::LogicalBorders);
         if logical_supported {
-            let mut up = unparsed.deep_clone(context.allocator);
+            let mut up = unparsed.deep_clone(allocator);
             context.add_unparsed_fallbacks(&mut up);
             self.flushed_properties
                 .insert(BorderProperty::try_from_property_id(up.property_id).unwrap());
-            dest.append(context.allocator, Property::Unparsed(up));
+            dest.push(Property::Unparsed(up));
             return;
         }
 
         macro_rules! prop {
             ($id:ident) => {{
-                let _ = dest; // autofix (matches Zig: `_ = d;`)
+                let _ = &dest; // autofix (matches Zig: `_ = d;`)
                 let mut upppppppppp =
-                    unparsed.with_property_id(context.allocator, PropertyId::$id);
+                    unparsed.with_property_id(allocator, PropertyId::$id);
                 context.add_unparsed_fallbacks(&mut upppppppppp);
                 self.flushed_properties
                     .insert(BorderProperty::try_from_property_id(PropertyIdTag::$id).unwrap());

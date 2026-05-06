@@ -105,7 +105,9 @@ impl Url {
         }
 
         let import_record = dest.import_record(self.import_record_idx)?;
-        let is_internal = import_record.tag.is_internal();
+        let is_internal = import_record
+            .flags
+            .contains(bun_options_types::import_record::Flags::IS_INTERNAL);
         let url = dest.get_import_record_url(self.import_record_idx)?;
         // SAFETY: `url` borrows arena-backed `import_info` data valid for the
         // printer's `'a`; detach so `dest` can be re-borrowed mutably below

@@ -2065,17 +2065,24 @@ mod windows_impl {
         access(path, 0).is_ok()
     }
     pub fn exists_at(dir: Fd, sub: &ZStr) -> bool {
-        // sys.zig:3718 — windows arm.
-        matches!(faccessat(dir, sub), Ok(true))
+        // sys.zig:3726-3731 — windows arm: `existsAtType(fd, subpath) == .file`.
+        // Directories yield `false` (resolver/install code uses `existsAt` to
+        // mean "a *file* exists here").
+        matches!(super::exists_at_type(dir, sub), Ok(super::ExistsAtType::File))
     }
     pub fn is_executable_file_path(path: &ZStr) -> bool {
-        // sys.zig:3767 — windows: extension match against PATHEXT defaults.
-        let p = path.as_bytes();
-        let ext_start = p.iter().rposition(|&b| b == b'.').map(|i| &p[i..]).unwrap_or(b"");
-        for e in [b".exe", b".cmd", b".bat", b".com"].iter() {
-            if ext_start.eq_ignore_ascii_case(*e) { return true; }
-        }
-        false
+        // sys.zig:3779-3784 — windows arm: convert to wide and call
+        // `bun.windows.SaferiIsExecutableFileType(path, FALSE)`. Honors the
+        // system security policy and recognizes `.js/.lnk/.pif/.pl/.shs/.url/
+        // .vbs/...` in addition to `.exe/.cmd/.bat/.com` (per the comment block
+        // at sys.zig:3744-3761). Do NOT hand-roll an extension whitelist —
+        // PORTING.md §Forbidden bars re-implementing linked OS API surface.
+        let mut wbuf = WPathBuffer::default();
+        let wpath = bun_str::strings::to_w_path(&mut wbuf, path.as_bytes());
+        // `bFromShellExecute = FALSE` so `.exe` files are included
+        // (https://learn.microsoft.com/en-us/windows/win32/api/winsafer/nf-winsafer-saferiisexecutablefiletype).
+        // SAFETY: FFI; wpath is NUL-terminated and valid for the call.
+        unsafe { w::SaferiIsExecutableFileType(wpath.as_ptr(), 0) != w::FALSE }
     }
     pub fn get_file_size(fd: Fd) -> Maybe<u64> {
         // sys.zig:4140 — GetFileSizeEx.
@@ -2118,9 +2125,11 @@ mod windows_impl {
         Ok(new)
     }
     pub fn chdir(path: &ZStr) -> Maybe<()> {
-        // sys.zig:465 — windows: SetCurrentDirectoryW.
+        // sys.zig:452-455 — windows: `SetCurrentDirectoryW(toWDirPath(..))`.
+        // `toWDirPath` appends a trailing backslash so e.g. `"C:"` is treated
+        // as the drive root, not the drive's saved cwd.
         let mut wbuf = WPathBuffer::default();
-        let wpath = bun_str::strings::to_kernel32_path(&mut wbuf, path.as_bytes());
+        let wpath = bun_str::strings::to_w_dir_path(&mut wbuf, path.as_bytes());
         if unsafe { w::SetCurrentDirectoryW(wpath.as_ptr()) } == 0 {
             return Err(Error::new(w::get_last_errno(), Tag::chdir).with_path(path.as_bytes()));
         }

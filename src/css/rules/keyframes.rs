@@ -60,7 +60,7 @@ impl KeyframesName {
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         use bun_string::strings;
         #[inline]
-        fn write_ident(dest: &mut Printer, v: &[u8], handle_css_module: bool) -> core::result::Result<(), PrintErr> {
+        fn write_ident<'a>(dest: &mut Printer<'a>, v: &'a [u8], handle_css_module: bool) -> core::result::Result<(), PrintErr> {
             dest.write_ident(v, handle_css_module)
         }
 

@@ -295,10 +295,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // Check if TemplateLiteral is unsupported. We don't care for this product.`
         // if ()
 
-        // TODO(port): `E::Template::parts` is `&'static [TemplatePart]` (arena-owned slice
-        // placeholder); Phase B threads `'a` through E.* — until then, erase the lifetime.
-        // SAFETY: the slice is bump-arena-allocated and outlives every AST node from this parse.
-        let parts: &'static [E::TemplatePart] = unsafe { core::mem::transmute(parts) };
         Ok(p.new_expr(
             E::Template {
                 tag: None,

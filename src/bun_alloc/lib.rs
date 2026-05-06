@@ -47,6 +47,12 @@ pub struct StdAllocator {
 /// Legacy alias — Phase-A drafts spell it `crate::VTable`.
 pub type VTable = AllocatorVTable;
 
+// SAFETY: `ptr` is an opaque tag/context handle (Zig: `*anyopaque`); the
+// vtable is `&'static`. Thread-safety of dispatch is the implementor's
+// concern (mimalloc is thread-safe; FixedBufferAllocator is not — same as Zig).
+unsafe impl Send for StdAllocator {}
+unsafe impl Sync for StdAllocator {}
+
 impl StdAllocator {
     /// Zig: `Allocator.rawAlloc`.
     #[inline]

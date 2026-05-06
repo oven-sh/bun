@@ -612,10 +612,28 @@ impl Task {
 
     /// Called from task thread
     fn run(&mut self) -> core::result::Result<Yield, bun_alloc::AllocError> {
-        // SAFETY: installer outlives all tasks (BACKREF)
-        let installer = unsafe { &mut *self.installer };
-        let manager = &mut *installer.manager;
-        let lockfile = &*installer.lockfile;
+        // SAFETY: installer outlives all tasks (BACKREF). `run()` executes on the
+        // thread pool concurrently across many `Task`s that all share the same
+        // `*mut Installer`, and `next_step()` re-derefs `self.installer` mid-loop —
+        // materializing `&mut Installer` here would alias both (Zig's `*Installer`
+        // is freely shared). Instead:
+        //   * `installer` is a shared `&Installer`; every Installer method called
+        //     below takes `&self`.
+        //   * `manager` / `lockfile` are reached by raw-reading their pointer
+        //     fields. They point to allocations *outside* `Installer`, so they do
+        //     not overlap `installer`. `manager` stays `&mut` to preserve the
+        //     existing call sites; its few cross-thread mutations are either
+        //     idempotent cache-init or guarded by `trusted_dependencies_mutex`.
+        //   * Never access `installer.manager.*` / mutate `installer.lockfile.*`
+        //     while these locals are live — that would reborrow through
+        //     `&Installer` and alias `manager` / `*lockfile_ptr`.
+        let installer_ptr = self.installer;
+        let manager: &mut PackageManager =
+            unsafe { &mut **core::ptr::addr_of_mut!((*installer_ptr).manager) };
+        let lockfile_ptr: *mut Lockfile =
+            unsafe { *core::ptr::addr_of!((*installer_ptr).lockfile).cast::<*mut Lockfile>() };
+        let lockfile: &Lockfile = unsafe { &*lockfile_ptr };
+        let installer = unsafe { &*installer_ptr };
 
         let pkgs = installer.lockfile.packages.slice();
         let pkg_names = pkgs.items().name;
@@ -934,7 +952,7 @@ impl Task {
                                 }
                                 #[cfg(target_os = "macos")]
                                 {
-                                    if installer.manager.options.log_level.is_verbose() {
+                                    if manager.options.log_level.is_verbose() {
                                         Output::pretty_errorln(format_args!(
                                             "Cloning {} to {}",
                                             bun_core::fmt::fmt_os_path(
@@ -1266,7 +1284,7 @@ impl Task {
 
                 Step::RunPreinstall => {
                     let current_step = Step::RunPreinstall;
-                    if !installer.manager.options.do_.run_scripts
+                    if !manager.options.do_.run_scripts
                         || self.entry_id == Store::Entry::Id::ROOT
                     {
                         step = self.next_step(current_step);
@@ -1368,15 +1386,18 @@ impl Task {
                                     installer.trusted_dependencies_mutex.unlock();
                                 });
 
-                                installer
-                                    .manager
+                                manager
                                     .trusted_deps_to_add_to_package_json
                                     .push(trusted_dep_to_add);
-                                if installer.lockfile.trusted_dependencies.is_none() {
-                                    installer.lockfile.trusted_dependencies = Some(Default::default());
+                                // SAFETY: `trusted_dependencies_mutex` is held; this is the
+                                // only writer to `lockfile.trusted_dependencies` across task
+                                // threads. The shared `lockfile` / `installer.lockfile`
+                                // borrows above are all dead (NLL) before this point.
+                                let lockfile_mut = unsafe { &mut *lockfile_ptr };
+                                if lockfile_mut.trusted_dependencies.is_none() {
+                                    lockfile_mut.trusted_dependencies = Some(Default::default());
                                 }
-                                installer
-                                    .lockfile
+                                lockfile_mut
                                     .trusted_dependencies
                                     .as_mut()
                                     .unwrap()
@@ -1466,7 +1487,7 @@ impl Task {
 
                     let mut bin_linker = Bin::Linker {
                         bin,
-                        global_bin_path: installer.manager.options.bin_path,
+                        global_bin_path: manager.options.bin_path,
                         package_name: strings::StringOrTinyString::init(dep_name),
                         target_package_name,
                         string_buf,
@@ -1493,7 +1514,7 @@ impl Task {
                         bin_linker.target_node_modules_path = &mut node_modules_path;
                         bin_linker.target_package_name = strings::StringOrTinyString::init(dep_name);
 
-                        if installer.manager.options.log_level.is_verbose() {
+                        if manager.options.log_level.is_verbose() {
                             Output::pretty_errorln(format_args!(
                                 "<d>[Bin Linker]<r> {} -> {} retrying without native bin link",
                                 bstr::BStr::new(dep_name),
@@ -1521,7 +1542,7 @@ impl Task {
 
                 Step::RunPostInstallAndPrePostPrepare => {
                     let current_step = Step::RunPostInstallAndPrePostPrepare;
-                    if !installer.manager.options.do_.run_scripts
+                    if !manager.options.do_.run_scripts
                         || self.entry_id == Store::Entry::Id::ROOT
                     {
                         step = self.next_step(current_step);
@@ -1532,7 +1553,10 @@ impl Task {
                         step = self.next_step(current_step);
                         continue;
                     };
-                    // SAFETY: list points into store-owned scripts allocation
+                    // SAFETY: single-owner — `entry_scripts[entry_id]` holds a `*mut List`
+                    // boxed per-entry (see `Step::RunPreinstall` above), and each Task is
+                    // the unique consumer of its own `entry_id`. No other `&`/`&mut` to
+                    // this allocation is live.
                     let list = unsafe { &mut *list };
 
                     if list.first_index == 0 {
@@ -1583,8 +1607,17 @@ impl Task {
             Err(_oom) => bun_core::out_of_memory(),
         };
 
-        // SAFETY: installer outlives all tasks (BACKREF)
-        let installer = unsafe { &mut *this.installer };
+        // SAFETY: installer outlives all tasks (BACKREF). `callback` runs on the
+        // thread pool concurrently across many `Task`s sharing the same
+        // `*mut Installer` — never materialize `&mut Installer`. `task_queue.push`
+        // takes `&self` (lock-free); `store.entries` columns are atomic / per-entry;
+        // both are reached through a shared `&Installer`. `manager.wake()` requires
+        // `&mut PackageManager`, so read that pointer field raw (separate
+        // allocation, does not overlap `&Installer`) and deref it fresh per call.
+        let installer_ptr = this.installer;
+        let installer = unsafe { &*installer_ptr };
+        let manager_ptr: *mut PackageManager =
+            unsafe { *core::ptr::addr_of!((*installer_ptr).manager).cast::<*mut PackageManager>() };
 
         match res {
             Yield::Yield => {}
@@ -1597,7 +1630,7 @@ impl Task {
                 }
                 this.result = Result::RunScripts(list);
                 installer.task_queue.push(this);
-                installer.manager.wake();
+                unsafe { &mut *manager_ptr }.wake();
             }
             Yield::Done => {
                 if Environment::CI_ASSERT {
@@ -1611,7 +1644,7 @@ impl Task {
                 }
                 this.result = Result::Done;
                 installer.task_queue.push(this);
-                installer.manager.wake();
+                unsafe { &mut *manager_ptr }.wake();
             }
             Yield::Blocked => {
                 if Environment::CI_ASSERT {
@@ -1625,7 +1658,7 @@ impl Task {
                 }
                 this.result = Result::Blocked;
                 installer.task_queue.push(this);
-                installer.manager.wake();
+                unsafe { &mut *manager_ptr }.wake();
             }
             Yield::Fail(err) => {
                 if Environment::CI_ASSERT {
@@ -1641,7 +1674,7 @@ impl Task {
                     .store(Step::Done, Ordering::Release);
                 this.result = Result::Err(err);
                 installer.task_queue.push(this);
-                installer.manager.wake();
+                unsafe { &mut *manager_ptr }.wake();
             }
         }
     }

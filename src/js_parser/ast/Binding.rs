@@ -129,26 +129,27 @@ impl Binding {
 // `wrapIdentifier` calls the comptime `func_type`.
 //
 // Rust cannot store `*mut P<'a, const ..>` in a non-generic field nor take a
-// fn item as a const generic, so the wrapper is type-erased: `context` is
-// `*mut c_void` and `wrap` is a plain fn pointer cast back to the concrete
-// `P` instantiation inside the trampoline (same pattern as the
-// `ImportTransposer` compat-shim in P.rs). The struct is `Copy` so the
-// recursive `to_expr` can pass it by value like Zig's `wrapper: anytype`.
+// fn item as a const generic, so the wrapper is type-erased: `wrap` is a plain
+// fn pointer that casts the erased `ctx` back to the concrete `P` instantiation.
+// Unlike Zig's struct, the `*ExprType` context is **not** stored — it is
+// supplied at call time (`Binding::to_expr(.., ctx, ..)`) so the raw pointer's
+// Stacked-Borrows tag is a child of the *live* `&mut P` at the call site rather
+// than a stale tag captured during `prepare_for_visit_pass` (which every later
+// `&mut self` retag would invalidate). The struct is `Copy` so the recursive
+// `to_expr` can pass it by value like Zig's `wrapper: anytype`.
 // ──────────────────────────────────────────────────────────────────────────
 
 #[derive(Copy, Clone)]
 pub struct ToExprWrapper {
-    context: *mut core::ffi::c_void,
     allocator: *const Arena,
     wrap: fn(*mut core::ffi::c_void, logger::Loc, Ref) -> Expr,
 }
 
 impl ToExprWrapper {
     /// Placeholder used in `P::init` before `prepare_for_visit_pass` wires the
-    /// real `*mut P` (mirrors `ImportTransposer::dangling()`).
+    /// allocator + trampoline.
     pub const fn dangling() -> Self {
         Self {
-            context: core::ptr::null_mut(),
             allocator: core::ptr::null(),
             wrap: |_, _, _| unreachable!("ToExprWrapper used before prepare_for_visit_pass"),
         }
@@ -159,19 +160,18 @@ impl ToExprWrapper {
     /// closure that casts back to `*mut P<..>` and dispatches to
     /// `P::wrap_identifier_{namespace,hoisting}`. Non-capturing closures
     /// coerce to fn pointers, so this stays zero-cost like Zig's comptime fn.
+    /// The `*mut P` itself is passed per-call via `Binding::to_expr`.
     #[inline]
     pub fn new(
-        context: *mut core::ffi::c_void,
         allocator: &Arena,
         wrap: fn(*mut core::ffi::c_void, logger::Loc, Ref) -> Expr,
     ) -> Self {
-        Self { context, allocator: allocator as *const Arena, wrap }
+        Self { allocator: allocator as *const Arena, wrap }
     }
 
     #[inline]
-    pub fn wrap_identifier(&self, loc: logger::Loc, ref_: Ref) -> Expr {
-        debug_assert!(!self.context.is_null(), "ToExprWrapper not wired (prepare_for_visit_pass)");
-        (self.wrap)(self.context, loc, ref_)
+    pub fn wrap_identifier(&self, ctx: *mut core::ffi::c_void, loc: logger::Loc, ref_: Ref) -> Expr {
+        (self.wrap)(ctx, loc, ref_)
     }
 
     #[inline]
@@ -192,25 +192,30 @@ pub type ToExpr = ToExprWrapper;
 impl Binding {
     /// Zig: `pub fn toExpr(binding: *const Binding, wrapper: anytype) Expr`.
     ///
+    /// `ctx` is the type-erased `*mut P<..>` derived from the *caller's live*
+    /// `&mut P` (e.g. `core::ptr::addr_of_mut!(*p) as *mut c_void`). Threading
+    /// it per-call keeps the raw pointer's provenance under the active Unique
+    /// borrow, avoiding the stale-tag UB of storing it long-term.
+    ///
     /// Accepts the wrapper by `Borrow` so both the by-value call-site in
     /// `visitStmt.rs` (`p.to_expr_wrapper_namespace`) and the `&mut` call-site
     /// in `maybe.rs` (`&mut p.to_expr_wrapper_hoisted`) type-check without
     /// edits — `T: Borrow<T>` and `&mut T: Borrow<T>` are both blanket impls.
-    pub fn to_expr<W>(binding: &Binding, wrapper: W) -> Expr
+    pub fn to_expr<W>(binding: &Binding, ctx: *mut core::ffi::c_void, wrapper: W) -> Expr
     where
         W: core::borrow::Borrow<ToExprWrapper>,
     {
-        Self::to_expr_inner(binding, *wrapper.borrow())
+        Self::to_expr_inner(binding, ctx, *wrapper.borrow())
     }
 
-    fn to_expr_inner(binding: &Binding, wrapper: ToExprWrapper) -> Expr {
+    fn to_expr_inner(binding: &Binding, ctx: *mut core::ffi::c_void, wrapper: ToExprWrapper) -> Expr {
         let loc = binding.loc;
         match binding.data {
             B::BMissing(_) => Expr { data: ExprData::EMissing(E::Missing {}), loc },
             B::BIdentifier(b) => {
                 // SAFETY: `b` is a bump-arena pointer valid for the parser's `'a`.
                 let b = unsafe { &*b };
-                wrapper.wrap_identifier(loc, b.r#ref)
+                wrapper.wrap_identifier(ctx, loc, b.r#ref)
             }
             B::BArray(b) => {
                 // SAFETY: arena-owned `b::Array` valid for `'a`; single-threaded parser.
@@ -222,7 +227,7 @@ impl Binding {
                 let mut i: usize = 0;
                 while i < len {
                     let item = &items[i];
-                    let expr = Self::to_expr_inner(&item.binding, wrapper);
+                    let expr = Self::to_expr_inner(&item.binding, ctx, wrapper);
                     let converted = if b.has_spread && i == len - 1 {
                         Expr::init(E::Spread { value: expr }, expr.loc)
                     } else if let Some(default) = item.default_value {
@@ -260,7 +265,7 @@ impl Binding {
                         } else {
                             G::PropertyKind::Normal
                         },
-                        value: Some(Self::to_expr_inner(&item.value, wrapper)),
+                        value: Some(Self::to_expr_inner(&item.value, ctx, wrapper)),
                         initializer: item.default_value,
                         ..Default::default()
                     });
@@ -322,7 +327,7 @@ pub trait BindingJsonWriter {
 //   source:     src/js_parser/ast/Binding.zig (171 lines)
 //   confidence: medium
 //   todos:      1
-//   notes:      ToExpr type-erased (ctx *mut c_void + fn ptr) mirroring ImportTransposer
-//               compat-shim; to_expr accepts Borrow<ToExprWrapper> for caller flexibility;
+//   notes:      ToExpr type-erased (fn ptr; *mut c_void ctx supplied per-call);
+//               to_expr accepts Borrow<ToExprWrapper> for caller flexibility;
 //               B variants raw *mut per Phase-A arena convention.
 // ──────────────────────────────────────────────────────────────────────────

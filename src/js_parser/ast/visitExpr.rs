@@ -780,16 +780,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             }
         }
 
-        // PORT NOTE: `Template.parts` is `&'static [TemplatePart]` (arena-owned slice masquerading
-        // as 'static — see E.rs TODO(port)). The Zig type is `[]E.TemplatePart` (mutable arena
-        // slice). Detach via raw ptr → `&mut` (actual lifetime is the AST arena).
+        // `Template.parts` is `*mut [TemplatePart]` (arena-owned, mutable provenance
+        // preserved end-to-end; Zig: `[]E.TemplatePart`).
         // SAFETY: arena-owned, no aliasing &mut outstanding for this node during the visit pass.
-        let parts: &mut [E::TemplatePart] = unsafe {
-            core::slice::from_raw_parts_mut(
-                e_.parts.as_ptr() as *mut E::TemplatePart,
-                e_.parts.len(),
-            )
-        };
+        let parts: &mut [E::TemplatePart] = unsafe { &mut *e_.parts };
         for part in parts.iter_mut() {
             part.value = p.visit_expr(part.value);
         }
@@ -1754,7 +1748,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
             p.should_fold_typescript_constant_expressions =
                 prev_should_fold_typescript_constant_expressions;
-            return p.import_transposer.maybe_transpose_if(e_.expr, state);
+            return p.maybe_transpose_if_import(e_.expr, &state);
         }
         p.should_fold_typescript_constant_expressions =
             prev_should_fold_typescript_constant_expressions;
@@ -1948,7 +1942,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     Data::EIf(..) => {
                         // require(FOO  ? '123' : '456') => FOO ? require('123') : require('456')
                         // This makes static analysis later easier
-                        return p.require_transposer.transpose_known_to_be_if(first, state);
+                        return p.transpose_known_to_be_if_require(first, &state);
                     }
                     _ => {}
                 }
@@ -2003,9 +1997,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         //  =>
                         // FOO ? require.resolve('123') : require.resolve('456')
                         // This makes static analysis later easier
-                        return p
-                            .require_resolve_transposer
-                            .transpose_known_to_be_if(first, e_.target);
+                        return p.transpose_known_to_be_if_require_resolve(first, e_.target);
                     }
                     _ => {}
                 }

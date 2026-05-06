@@ -4,7 +4,7 @@ use crate::mimalloc;
 // TODO(port): `Allocator`/`AllocatorVTable`/`Alignment` are the bun_alloc crate's
 // equivalents of `std.mem.Allocator`, its `VTable`, and `std.mem.Alignment`.
 // Phase B may reshape the vtable struct into `trait Allocator` impls instead.
-use crate::{Alignment, Allocator, AllocatorVTable};
+use crate::{Alignment, AllocatorVTable, StdAllocator};
 
 crate::declare_scope!(mimalloc, hidden);
 
@@ -15,7 +15,7 @@ fn mimalloc_free(_: *mut c_void, buf: &mut [u8], alignment: Alignment, _: usize)
     // but its good to have that assertion
     // let's only enable it in debug mode
     if cfg!(debug_assertions) {
-        if mimalloc::must_use_aligned_alloc(alignment) {
+        if mimalloc::must_use_aligned_alloc(alignment.to_byte_units()) {
             // SAFETY: buf.ptr was allocated by mimalloc with this alignment
             unsafe {
                 mimalloc::mi_free_size_aligned(
@@ -40,7 +40,7 @@ impl MimallocAllocator {
     fn aligned_alloc(len: usize, alignment: Alignment) -> *mut u8 {
         crate::scoped_log!(mimalloc, "mi_alloc({}, {})", len, alignment.to_byte_units());
 
-        let ptr: *mut c_void = if mimalloc::must_use_aligned_alloc(alignment) {
+        let ptr: *mut c_void = if mimalloc::must_use_aligned_alloc(alignment.to_byte_units()) {
             // SAFETY: mimalloc FFI; len/alignment are valid
             unsafe { mimalloc::mi_malloc_aligned(len, alignment.to_byte_units()) }
         } else {
@@ -105,7 +105,7 @@ impl MimallocAllocator {
     const FREE_WITH_DEFAULT_ALLOCATOR: fn(*mut c_void, &mut [u8], Alignment, usize) = mimalloc_free;
 }
 
-pub static C_ALLOCATOR: Allocator = Allocator {
+pub static C_ALLOCATOR: StdAllocator = StdAllocator {
     // This ptr can be anything. But since it's not nullable, we should set it to something.
     ptr: memory_allocator_tags::DEFAULT_ALLOCATOR_TAG_PTR,
     vtable: C_ALLOCATOR_VTABLE,
@@ -123,7 +123,7 @@ impl ZAllocator {
     fn aligned_alloc(len: usize, alignment: Alignment) -> *mut u8 {
         crate::scoped_log!(mimalloc, "ZAllocator.alignedAlloc: {}\n", len);
 
-        let ptr: *mut c_void = if mimalloc::must_use_aligned_alloc(alignment) {
+        let ptr: *mut c_void = if mimalloc::must_use_aligned_alloc(alignment.to_byte_units()) {
             // SAFETY: mimalloc FFI; len/alignment are valid
             unsafe { mimalloc::mi_zalloc_aligned(len, alignment.to_byte_units()) }
         } else {
@@ -191,14 +191,14 @@ pub(crate) mod memory_allocator_tags {
     pub const Z_ALLOCATOR_TAG_PTR: *mut c_void = Z_ALLOCATOR_TAG as *mut c_void;
 }
 
-pub static Z_ALLOCATOR: Allocator = Allocator {
+pub static Z_ALLOCATOR: StdAllocator = StdAllocator {
     ptr: memory_allocator_tags::Z_ALLOCATOR_TAG_PTR,
     vtable: &Z_ALLOCATOR_VTABLE,
 };
 static Z_ALLOCATOR_VTABLE: AllocatorVTable = AllocatorVTable {
     alloc: ZAllocator::alloc_with_z_allocator,
     resize: ZAllocator::resize_with_z_allocator,
-    remap: Allocator::no_remap,
+    remap: AllocatorVTable::NO_REMAP,
     free: ZAllocator::FREE_WITH_Z_ALLOCATOR,
 };
 

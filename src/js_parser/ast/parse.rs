@@ -285,7 +285,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     pub fn parse_template_parts(
         &mut self,
         include_raw: bool,
-    ) -> Result<(&'a [E::TemplatePart], logger::Loc), Error> {
+    ) -> Result<(*mut [E::TemplatePart], logger::Loc), Error> {
         let p = self;
         let mut parts = BumpVec::<E::TemplatePart>::with_capacity_in(1, p.allocator);
         // Allow "in" inside template literals
@@ -322,9 +322,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         p.allow_in = old_allow_in;
 
-        // SAFETY: bump slice lives for 'a (arena lifetime).
-        let slice: &'a [E::TemplatePart] =
-            unsafe { mem::transmute::<&[E::TemplatePart], &'a [E::TemplatePart]>(parts.into_bump_slice()) };
+        // `into_bump_slice_mut()` leaks into the arena and returns the unique
+        // `&'bump mut [T]`; decay to `*mut` for storage in `E::Template.parts`
+        // so mutable provenance is preserved for the visit pass.
+        let slice: *mut [E::TemplatePart] = parts.into_bump_slice_mut();
         Ok((slice, tail_loc))
     }
 

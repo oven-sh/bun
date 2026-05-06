@@ -12,130 +12,83 @@
 //! ```
 //!
 //! This type is a `GenericAllocator`; see `src/allocators.zig`.
-
-use core::ffi::c_void;
-
-// `bun.allocators.*` lives in this crate (bun_alloc).
-use crate::{Allocator, Borrowed as BorrowedAlloc, Nullable};
+//!
+//! PORT NOTE: Zig modelled this over `Nullable<A>` / `Borrowed<A>` allocator
+//! adaptors. With `#[global_allocator]`, "owned" reduces to "drop the box,
+//! borrowed = leak"; the generic allocator threading is dropped. The struct
+//! keeps the `Option<A>` shape so callers that pattern-match on
+//! `is_owned()` keep working.
 
 /// See module docs.
 pub struct MaybeOwned<A> {
-    _parent: Nullable<A>,
+    _parent: Option<A>,
 }
 
 // Zig: `pub const Borrowed = MaybeOwned(BorrowedParent);`
 // Rust has no stable inherent associated types, so expose as a free alias.
-// TODO(port): if inherent assoc types stabilize, move this onto `MaybeOwned<A>`.
-pub type MaybeOwnedBorrowed<A> = MaybeOwned<BorrowedAlloc<A>>;
+// `Borrowed<A>` collapsed to `()` — borrows carry no allocator state.
+pub type MaybeOwnedBorrowed = MaybeOwned<()>;
 
-impl<A> MaybeOwned<A> {
-    /// Same as `init_borrowed()`. This allocator cannot be used to allocate memory; a panic
-    /// will occur.
-    // TODO(port): requires `crate::init_nullable` to be a `const fn` for this to be a true `const`.
-    pub const BORROWED: Self = Self::init_borrowed();
-
+impl<A: Default> MaybeOwned<A> {
     /// Creates a `MaybeOwned` allocator that owns memory.
     ///
     /// Allocations are forwarded to a default-initialized `A`.
     pub fn init() -> Self {
         // Zig: `bun.memory.initDefault(Allocator)`
-        Self::init_owned(crate::memory::init_default::<A>())
+        Self::init_owned(A::default())
     }
+}
+
+impl<A> MaybeOwned<A> {
+    /// Same as `init_borrowed()`. This allocator cannot be used to allocate memory; a panic
+    /// will occur.
+    pub const BORROWED: Self = Self::init_borrowed();
 
     /// Creates a `MaybeOwned` allocator that owns memory, and forwards to a specific
     /// allocator.
     ///
     /// Allocations are forwarded to `parent_alloc`.
     pub fn init_owned(parent_alloc: A) -> Self {
-        Self::init_raw(Some(parent_alloc))
+        Self { _parent: Some(parent_alloc) }
     }
 
     /// Creates a `MaybeOwned` allocator that does not own any memory. This allocator cannot
     /// be used to allocate new memory (a panic will occur), and its implementation of `free`
     /// is a no-op.
     pub const fn init_borrowed() -> Self {
-        Self::init_raw(None)
+        Self { _parent: None }
     }
 
     pub fn is_owned(&self) -> bool {
-        self.raw_parent().is_some()
+        self._parent.is_some()
     }
 
-    pub fn allocator(&self) -> &dyn Allocator {
-        // TODO(port): Zig returned a by-value `std.mem.Allocator` (ptr+vtable). Rust uses
-        // `&dyn Allocator`; verify lifetimes once `crate::as_std` / trait shape is settled.
-        match self.raw_parent() {
-            Some(parent_alloc) => crate::as_std(parent_alloc),
-            None => &NULL_ALLOCATOR,
-        }
-    }
-
-    pub fn parent(&self) -> Option<BorrowedAlloc<A>> {
-        match self.raw_parent() {
-            Some(parent_alloc) => Some(crate::borrow(parent_alloc)),
-            None => None,
-        }
+    pub fn parent(&self) -> Option<&A> {
+        self._parent.as_ref()
     }
 
     pub fn into_parent(self) -> Option<A> {
         // Zig: `defer self.* = undefined; return self.rawParent();`
         // Taking `self` by value consumes it; no explicit invalidation needed.
-        crate::unpack_nullable::<A>(self._parent)
+        self._parent
     }
 
     /// Used by smart pointer types and allocator wrappers. See `crate::borrow`.
-    pub fn borrow(&self) -> MaybeOwnedBorrowed<A> {
-        MaybeOwned {
-            _parent: crate::init_nullable::<BorrowedAlloc<A>>(self.parent()),
-        }
-    }
-
-    const fn init_raw(parent_alloc: Option<A>) -> Self {
-        Self {
-            _parent: crate::init_nullable::<A>(parent_alloc),
-        }
-    }
-
-    fn raw_parent(&self) -> Option<&A> {
-        // TODO(port): Zig passed/returned `Allocator` by value here (copy semantics for
-        // zero-sized / pointer-sized allocators). Using `&A` to avoid requiring `A: Copy`;
-        // revisit once `Nullable<A>` API is fixed.
-        crate::unpack_nullable_ref::<A>(&self._parent)
+    pub fn borrow(&self) -> MaybeOwnedBorrowed {
+        // Borrowed view carries no allocator state — just the owned/borrowed bit.
+        MaybeOwned { _parent: if self.is_owned() { Some(()) } else { None } }
     }
 }
 
 // Zig `deinit` only forwarded to `bun.memory.deinit(parent_alloc)` on the owned field.
 // Per PORTING.md (Idiom map: `pub fn deinit`), that is exactly field drop glue on
-// `_parent: Nullable<A>`, so no explicit `Drop` impl — keeping one would also forbid
+// `_parent: Option<A>`, so no explicit `Drop` impl — keeping one would also forbid
 // moving `self._parent` out in `into_parent(self)`.
-
-// ──────────────────────────────────────────────────────────────────────────
-// Null allocator vtable (used when `MaybeOwned` is borrowed)
-// ──────────────────────────────────────────────────────────────────────────
-
-fn null_alloc(_ptr: *mut c_void, _len: usize, _alignment: crate::Alignment, _ret_addr: usize) -> Option<*mut u8> {
-    panic!("cannot allocate with a borrowed `MaybeOwned` allocator");
-}
-
-// TODO(port): Zig built a `std.mem.Allocator.VTable` literal with `noResize`/`noRemap`/`noFree`.
-// The Rust `bun_alloc::Allocator` trait shape will determine whether this is a static vtable
-// struct or a ZST implementing the trait. Modeled here as a ZST + trait impl.
-struct NullAllocator;
-
-static NULL_ALLOCATOR: NullAllocator = NullAllocator;
-
-impl Allocator for NullAllocator {
-    fn alloc(&self, len: usize, alignment: crate::Alignment, ret_addr: usize) -> Option<*mut u8> {
-        null_alloc(core::ptr::null_mut(), len, alignment, ret_addr)
-    }
-    // resize / remap / free intentionally use the trait's default no-op impls
-    // (Zig: `std.mem.Allocator.noResize` / `noRemap` / `noFree`).
-}
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/bun_alloc/maybe_owned.zig (112 lines)
 //   confidence: medium
-//   todos:      5
-//   notes:      Generic allocator wrapper; depends on unsettled crate::{Nullable, Borrowed, init_nullable, unpack_nullable, as_std, Allocator trait} and bun_memory::init_default. Associated `Borrowed` type alias hoisted to free `MaybeOwnedBorrowed<A>` (no stable inherent assoc types). Zig `deinit` dropped — pure field drop glue.
+//   todos:      0
+//   notes:      Nullable<A>/Borrowed<A> adaptors dropped (PORTING.md §Allocators — generic allocator threading collapses under #[global_allocator]); `allocator()` accessor dropped (no callers — would need `StdAllocator` plumbing). Associated `Borrowed` type alias hoisted to free `MaybeOwnedBorrowed`.
 // ──────────────────────────────────────────────────────────────────────────

@@ -303,7 +303,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             E::Template {
                 tag: Some(tag),
                 head: E::TemplateContents::Raw(head),
-                parts: &[],
+                parts: E::Template::empty_parts(),
             },
             loc,
         );

@@ -797,7 +797,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 }
                 js_ast::e::TemplateContents::Raw(_) => return Ok(b""), // shouldn't happen post-visit but be safe
             }
-            for part in tmpl.parts.iter() {
+            for part in tmpl.parts().iter() {
                 buf.push(0); // \x00 placeholder per interpolation
                 match &part.tail {
                     js_ast::e::TemplateContents::Cooked(tail) => {
@@ -2617,32 +2617,24 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
     pub fn prepare_for_visit_pass(&mut self) -> Result<(), bun_core::Error> {
         {
-            // Wire the transposer compat-shim self-pointer now that `self` is
-            // in its final location (Zig: `ImportTransposer.init(this)` etc. at
-            // the tail of `P.init`; Rust defers to here because `init` returns
-            // `Self` by value and would invalidate any earlier `*mut Self`).
-            // The shims take `self` by value (Copy), so no `&mut field` is held
-            // across the later `&mut P` reborrow. Prefer calling
-            // `P::maybe_transpose_if_*` directly — those need no raw pointer.
-            let self_ptr = core::ptr::addr_of_mut!(*self) as *mut core::ffi::c_void;
-            self.import_transposer.0 = self_ptr;
-            self.require_transposer.0 = self_ptr;
-            self.require_resolve_transposer.0 = self_ptr;
             // Zig: `Binding2ExprWrapper.{Namespace,Hoisted}.init(this)`.
-            // The trampolines cast the erased ctx back to this `P` instantiation
-            // and call the inherent wrap methods; non-capturing => fn-pointer.
+            // The wrapper stores only the allocator and a non-capturing
+            // fn-pointer trampoline; the `*mut P` context is supplied *at call
+            // time* (see `Binding::to_expr`) so the raw pointer's provenance is
+            // a child of the live `&mut P` at the call site rather than a stale
+            // tag captured here. The transposer shims need no wiring at all —
+            // call sites invoke `P::maybe_transpose_if_*` etc. directly.
             self.to_expr_wrapper_namespace = crate::ast::binding::ToExprWrapper::new(
-                self_ptr,
                 self.allocator,
                 |ctx, loc, ref_| {
-                    // SAFETY: `ctx` is `addr_of_mut!(*self)` for the live visit-pass `P`;
-                    // see `ImportTransposer::maybe_transpose_if` for the aliasing argument.
+                    // SAFETY: `ctx` was derived from the caller's live `&mut P`
+                    // immediately before `Binding::to_expr`; no other `&mut P`
+                    // borrow is active for the duration of this call.
                     let p = unsafe { &mut *(ctx as *mut P<'a, TYPESCRIPT, J, SCAN_ONLY>) };
                     p.wrap_identifier_namespace(loc, ref_)
                 },
             );
             self.to_expr_wrapper_hoisted = crate::ast::binding::ToExprWrapper::new(
-                self_ptr,
                 self.allocator,
                 |ctx, loc, ref_| {
                     // SAFETY: same as above.
@@ -2661,13 +2653,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     buf.push(*item_);
                 }
             }
-            // bumpalo's `into_bump_slice()` returns `&'a [T]`; the storage is
-            // freshly allocated and uniquely owned by `scope_order_to_visit`,
-            // so reborrowing it `&'a mut` is sound.
-            let slice = buf.into_bump_slice();
-            // SAFETY: see above — exclusive ownership of fresh bump allocation.
-            self.scope_order_to_visit =
-                unsafe { core::slice::from_raw_parts_mut(slice.as_ptr() as *mut ScopeOrder<'a>, slice.len()) };
+            // `into_bump_slice_mut()` leaks the BumpVec into the arena and
+            // returns the unique `&'a mut [T]` for that allocation — keeps
+            // mutable provenance intact (Zig: `p.allocator.alloc(ScopeOrder, n)`).
+            self.scope_order_to_visit = buf.into_bump_slice_mut();
         }
 
         self.is_file_considered_to_have_esm_exports = !self.top_level_await_keyword.is_empty()
@@ -5247,7 +5236,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             },
             js_ast::ExprData::ETemplate(templ) => {
                 if templ.tag.is_none() {
-                    for part in templ.parts.iter() {
+                    for part in templ.parts().iter() {
                         if !self.expr_can_be_removed_if_unused_without_dce_check(&part.value)
                             || part.value.data.known_primitive() == js_ast::KnownPrimitive::Unknown
                         {
@@ -7847,8 +7836,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             to_expr_wrapper_hoisted: crate::ast::binding::ToExprWrapper::dangling(),
             // Zig's ExpressionTransposer captures `*P`; in Rust the recursion
             // lives as inherent `P::maybe_transpose_if_*` methods (no aliased
-            // `&mut`). These compat-shim fields start dangling and are wired in
-            // `prepare_for_visit_pass` once `self` is at its final address.
+            // `&mut`). These ZST fields exist only to keep field-shape parity.
             import_transposer: ImportTransposer::dangling(),
             require_transposer: RequireTransposer::dangling(),
             require_resolve_transposer: RequireResolveTransposer::dangling(),

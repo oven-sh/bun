@@ -4,33 +4,25 @@
 
 use core::ffi::c_void;
 
-use crate::{Alignment, Allocator, FixedBufferAllocator};
-// TODO(port): `Allocator` here is the Zig-style fat-pointer `{ ptr: *mut c_void, vtable: &'static VTable }`
-// re-exported from `bun_alloc`. If Phase B models `bun_alloc::Allocator` as a trait instead,
-// replace `allocator()` + the four vtable fns below with `impl Allocator for BufferFallbackAllocator`.
+use crate::{Alignment, AllocatorVTable, FixedBufferAllocator, StdAllocator};
 
 pub struct BufferFallbackAllocator<'a> {
-    fallback_allocator: Allocator,
+    fallback_allocator: StdAllocator,
     fixed_buffer_allocator: FixedBufferAllocator<'a>,
 }
 
 impl<'a> BufferFallbackAllocator<'a> {
-    pub fn init(buffer: &'a mut [u8], fallback_allocator: Allocator) -> BufferFallbackAllocator<'a> {
+    pub fn init(buffer: &'a mut [u8], fallback_allocator: StdAllocator) -> BufferFallbackAllocator<'a> {
         BufferFallbackAllocator {
             fallback_allocator,
             fixed_buffer_allocator: FixedBufferAllocator::init(buffer),
         }
     }
 
-    pub fn allocator(&mut self) -> Allocator {
-        Allocator {
+    pub fn allocator(&mut self) -> StdAllocator {
+        StdAllocator {
             ptr: self as *mut Self as *mut c_void,
-            vtable: &crate::VTable {
-                alloc,
-                resize,
-                remap,
-                free,
-            },
+            vtable: &VTABLE,
         }
     }
 
@@ -39,14 +31,22 @@ impl<'a> BufferFallbackAllocator<'a> {
     }
 }
 
-fn alloc(ctx: *mut c_void, len: usize, alignment: Alignment, ra: usize) -> Option<*mut u8> {
+static VTABLE: AllocatorVTable = AllocatorVTable {
+    alloc,
+    resize,
+    remap,
+    free,
+};
+
+unsafe fn alloc(ctx: *mut c_void, len: usize, alignment: Alignment, ra: usize) -> *mut u8 {
     // SAFETY: ctx was set to `&mut BufferFallbackAllocator` in `allocator()`.
     let self_: &mut BufferFallbackAllocator = unsafe { &mut *ctx.cast::<BufferFallbackAllocator>() };
     FixedBufferAllocator::alloc(&mut self_.fixed_buffer_allocator, len, alignment, ra)
         .or_else(|| self_.fallback_allocator.raw_alloc(len, alignment, ra))
+        .unwrap_or(core::ptr::null_mut())
 }
 
-fn resize(ctx: *mut c_void, buf: &mut [u8], alignment: Alignment, new_len: usize, ra: usize) -> bool {
+unsafe fn resize(ctx: *mut c_void, buf: &mut [u8], alignment: Alignment, new_len: usize, ra: usize) -> bool {
     // SAFETY: ctx was set to `&mut BufferFallbackAllocator` in `allocator()`.
     let self_: &mut BufferFallbackAllocator = unsafe { &mut *ctx.cast::<BufferFallbackAllocator>() };
     if self_.fixed_buffer_allocator.owns_ptr(buf.as_ptr()) {
@@ -61,7 +61,7 @@ fn resize(ctx: *mut c_void, buf: &mut [u8], alignment: Alignment, new_len: usize
     self_.fallback_allocator.raw_resize(buf, alignment, new_len, ra)
 }
 
-fn remap(ctx: *mut c_void, memory: &mut [u8], alignment: Alignment, new_len: usize, ra: usize) -> Option<*mut u8> {
+unsafe fn remap(ctx: *mut c_void, memory: &mut [u8], alignment: Alignment, new_len: usize, ra: usize) -> *mut u8 {
     // SAFETY: ctx was set to `&mut BufferFallbackAllocator` in `allocator()`.
     let self_: &mut BufferFallbackAllocator = unsafe { &mut *ctx.cast::<BufferFallbackAllocator>() };
     if self_.fixed_buffer_allocator.owns_ptr(memory.as_ptr()) {
@@ -71,12 +71,16 @@ fn remap(ctx: *mut c_void, memory: &mut [u8], alignment: Alignment, new_len: usi
             alignment,
             new_len,
             ra,
-        );
+        )
+        .unwrap_or(core::ptr::null_mut());
     }
-    self_.fallback_allocator.raw_remap(memory, alignment, new_len, ra)
+    self_
+        .fallback_allocator
+        .raw_remap(memory, alignment, new_len, ra)
+        .unwrap_or(core::ptr::null_mut())
 }
 
-fn free(ctx: *mut c_void, buf: &mut [u8], alignment: Alignment, ra: usize) {
+unsafe fn free(ctx: *mut c_void, buf: &mut [u8], alignment: Alignment, ra: usize) {
     // SAFETY: ctx was set to `&mut BufferFallbackAllocator` in `allocator()`.
     let self_: &mut BufferFallbackAllocator = unsafe { &mut *ctx.cast::<BufferFallbackAllocator>() };
     if self_.fixed_buffer_allocator.owns_ptr(buf.as_ptr()) {
@@ -93,7 +97,7 @@ fn free(ctx: *mut c_void, buf: &mut [u8], alignment: Alignment, ra: usize) {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/bun_alloc/BufferFallbackAllocator.zig (85 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      Assumes bun_alloc::Allocator is a Zig-style {ptr, vtable} struct; if Phase B uses a trait, fold the four vtable fns into `impl Allocator`.
+//   confidence: high
+//   todos:      0
+//   notes:      Zig `Allocator` struct → `StdAllocator`; vtable hand-rolled.
 // ──────────────────────────────────────────────────────────────────────────

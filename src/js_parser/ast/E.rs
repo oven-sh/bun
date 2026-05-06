@@ -1723,9 +1723,39 @@ pub struct TemplatePart {
 
 pub struct Template {
     pub tag: Option<ExprNodeIndex>,
-    // TODO(port): arena-owned slice
-    pub parts: &'static [TemplatePart],
+    /// Arena-owned mutable slice (Zig: `[]TemplatePart`). Stored as a raw
+    /// `*mut` so writers (`substitute_single_use_symbol_in_expr`, the visit
+    /// pass, `foldStringAddition`) retain mutable provenance — a `&'static [T]`
+    /// here would force `*const→*mut` casts that violate Stacked Borrows. Use
+    /// `parts()` / `parts_mut()` for ergonomic access; never null.
+    pub parts: *mut [TemplatePart],
     pub head: TemplateContents,
+}
+
+impl Template {
+    /// Dangling well-aligned empty `*mut [TemplatePart]` for parts-less
+    /// templates (e.g. tagged no-substitution literals).
+    #[inline]
+    pub fn empty_parts() -> *mut [TemplatePart] {
+        core::ptr::slice_from_raw_parts_mut(
+            core::ptr::NonNull::<TemplatePart>::dangling().as_ptr(),
+            0,
+        )
+    }
+
+    #[inline]
+    pub fn parts(&self) -> &[TemplatePart] {
+        // SAFETY: `parts` is never null (arena-owned or `empty_parts()`); the
+        // caller's `&self` borrow establishes shared access for its duration.
+        unsafe { &*self.parts }
+    }
+
+    #[inline]
+    pub fn parts_mut(&mut self) -> &mut [TemplatePart] {
+        // SAFETY: `parts` is never null and was allocated with mutable
+        // provenance; `&mut self` establishes unique access for its duration.
+        unsafe { &mut *self.parts }
+    }
 }
 
 pub enum TemplateContents {
@@ -1783,14 +1813,14 @@ impl Template {
 
         debug_assert!(matches!(self.head, TemplateContents::Cooked(_)));
 
-        if self.parts.is_empty() {
+        if self.parts().is_empty() {
             return Expr::init(core::mem::take(self.head.cooked_mut()), loc);
         }
 
         let mut parts =
-            bumpalo::collections::Vec::<TemplatePart>::with_capacity_in(self.parts.len(), bump);
+            bumpalo::collections::Vec::<TemplatePart>::with_capacity_in(self.parts().len(), bump);
         let mut head = Expr::init(core::mem::take(self.head.cooked_mut()), loc);
-        for part_src in self.parts {
+        for part_src in self.parts() {
             // Zig `var part = part.*` — field-wise copy (TemplatePart is not `Copy` only
             // because `EString` does not derive it; all fields are structurally `Copy`).
             let mut part = TemplatePart {
@@ -1895,10 +1925,9 @@ impl Template {
             return head;
         }
 
-        // TODO(port): arena slice lifetime for `parts`
-        // SAFETY: arena-owned slice; lifetime erased to 'static pending Phase B StoreRef/Str.
-        let parts_slice: &'static [TemplatePart] =
-            unsafe { core::mem::transmute(parts.into_bump_slice()) };
+        // Arena-owned mutable slice; `into_bump_slice_mut()` preserves write
+        // provenance for downstream mutators (Zig: `parts.items`).
+        let parts_slice: *mut [TemplatePart] = parts.into_bump_slice_mut();
         Expr::init(
             Template {
                 tag: None,

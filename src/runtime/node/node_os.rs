@@ -528,7 +528,7 @@ pub fn homedir(global: &JSGlobalObject) -> Result<BunString, bun_core::Error> {
         let mut out = PathBuffer::uninit();
         let mut size: usize = out.len();
         // SAFETY: valid buffer + size out-param
-        if let Some(err) = unsafe { libuv::uv_os_homedir(out.as_mut_ptr(), &mut size) }.to_error(bun_sys::Syscall::uv_os_homedir) {
+        if let Some(err) = unsafe { libuv::uv_os_homedir(out.as_mut_ptr(), &mut size) }.to_error(bun_sys::Tag::uv_os_homedir) {
             return global.throw_value(err.to_js(global)?);
         }
         return Ok(BunString::clone_utf8(&out[0..size]));
@@ -593,7 +593,7 @@ pub fn homedir(global: &JSGlobalObject) -> Result<BunString, bun_core::Error> {
                 bun_sys::Error::from_code(
                     // SAFETY: ret is a valid errno value
                     unsafe { core::mem::transmute::<c_int, bun_sys::E>(ret) },
-                    bun_sys::Syscall::uv_os_homedir,
+                    bun_sys::Tag::uv_os_homedir,
                 )
                 .to_js(global)?,
             );
@@ -609,7 +609,7 @@ pub fn homedir(global: &JSGlobalObject) -> Result<BunString, bun_core::Error> {
             // in uv__getpwuid_r, null result throws UV_ENOENT.
             #[cfg(not(target_os = "android"))]
             return global.throw_value(
-                bun_sys::Error::from_code(bun_sys::E::NOENT, bun_sys::Syscall::uv_os_homedir).to_js(global)?,
+                bun_sys::Error::from_code(bun_sys::E::NOENT, bun_sys::Tag::uv_os_homedir).to_js(global)?,
             );
         }
 

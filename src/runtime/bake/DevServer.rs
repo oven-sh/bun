@@ -4304,7 +4304,7 @@ pub fn dump_bundle(
     let mut file_buffer = [0u8; 1024];
     let mut bufw = file.buffered_writer(&mut file_buffer);
 
-    if !strings::has_suffix(rel_path, b".map") {
+    if !strings::has_suffix_comptime(rel_path, b".map") {
         write!(
             bufw,
             "// {:?} bundled for {}\n",

@@ -535,14 +535,14 @@ impl Stdio {
             *out_stdio = Stdio::Fd(fd);
             return Ok(());
         } else if let Some(blob) = value.as_::<jsc::webcore::Blob>() {
-            return out_stdio.extract_blob(global, jsc::webcore::blob::Any::Blob(blob.dupe()), i);
+            return out_stdio.extract_blob(global, webcore::blob::Any::Blob(blob.dupe()), i);
         } else if let Some(req) = value.as_::<jsc::webcore::Request>() {
             return Self::extract_body_value(out_stdio, global, i, req.get_body_value(), is_sync);
         } else if let Some(res) = value.as_::<jsc::webcore::Response>() {
             return Self::extract_body_value(out_stdio, global, i, res.get_body_value(), is_sync);
         }
 
-        if let Some(stream_) = jsc::webcore::ReadableStream::from_js(value, global)? {
+        if let Some(stream_) = webcore::ReadableStream::from_js(value, global)? {
             let mut stream = stream_;
             if let Some(blob) = stream.to_any_blob(global) {
                 return out_stdio.extract_blob(global, blob, i);

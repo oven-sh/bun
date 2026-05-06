@@ -847,14 +847,13 @@ impl<'a> Repl<'a> {
             let _ = tty::set_mode(0, tty::Mode::Raw);
 
             // Restore default SIGINT handling
-            let act = bun_sys::posix::Sigaction {
-                handler: bun_sys::posix::SigHandler::Default,
-                mask: bun_sys::posix::sigemptyset(),
-                flags: 0,
-            };
-            // SAFETY: act is valid for the duration of the call
+            // SAFETY: zeroed `sigaction` is a valid empty mask + null restorer; SIG_DFL
+            // restores the default disposition. `act` is valid for the duration of the call.
             unsafe {
-                bun_sys::posix::sigaction(bun_sys::posix::SIG::INT, &act, core::ptr::null_mut());
+                let mut act: bun_sys::posix::Sigaction = core::mem::zeroed();
+                act.sa_sigaction = libc::SIG_DFL;
+                act.sa_flags = 0;
+                bun_sys::posix::sigaction(libc::SIGINT, &act, core::ptr::null_mut());
             }
         }
     }

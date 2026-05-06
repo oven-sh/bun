@@ -82,17 +82,17 @@ impl<'a> Context<'a> {
             if let Some(integrity) = maybe_integrity {
                 Output::prettyln(
                     "<b><blue>Integrity<r>: {}",
-                    format_args!("{}", bun_fmt::integrity(integrity, bun_fmt::IntegrityStyle::Short)),
+                    format_args!("{}", bun_fmt::integrity::<true>(*integrity)),
                 );
             }
             Output::prettyln(
                 "<b><blue>Unpacked size<r>: {}",
-                format_args!("{}", bun_fmt::size(stats.unpacked_size, bun_fmt::SizeOpts { space_between_number_and_unit: false })),
+                format_args!("{}", bun_fmt::size(stats.unpacked_size, bun_fmt::SizeFormatterOptions { space_between_number_and_unit: false })),
             );
             if stats.packed_size > 0 {
                 Output::pretty(
                     "<b><blue>Packed size<r>: {}\n",
-                    format_args!("{}", bun_fmt::size(stats.packed_size, bun_fmt::SizeOpts { space_between_number_and_unit: false })),
+                    format_args!("{}", bun_fmt::size(stats.packed_size, bun_fmt::SizeFormatterOptions { space_between_number_and_unit: false })),
                 );
             }
             if stats.bundled_deps > 0 {
@@ -3037,7 +3037,7 @@ fn print_archived_files_and_packages<const IS_DRY_RUN: bool>(
             concat!("\n", "<r><b><cyan>packed<r> {} {}"),
             format_args!(
                 "{} {}",
-                bun_fmt::size(usize::try_from(package_json_stat.size).unwrap(), bun_fmt::SizeOpts { space_between_number_and_unit: false }),
+                bun_fmt::size(usize::try_from(package_json_stat.size).unwrap(), bun_fmt::SizeFormatterOptions { space_between_number_and_unit: false }),
                 "package.json",
             ),
         );
@@ -3061,7 +3061,7 @@ fn print_archived_files_and_packages<const IS_DRY_RUN: bool>(
                 PACKED_FMT,
                 format_args!(
                     "{} {}",
-                    bun_fmt::size(usize::try_from(stat.size).unwrap(), bun_fmt::SizeOpts { space_between_number_and_unit: false }),
+                    bun_fmt::size(usize::try_from(stat.size).unwrap(), bun_fmt::SizeFormatterOptions { space_between_number_and_unit: false }),
                     bstr::BStr::new(item.path.as_bytes()),
                 ),
             );
@@ -3084,7 +3084,7 @@ fn print_archived_files_and_packages<const IS_DRY_RUN: bool>(
         concat!("\n", "<r><b><cyan>packed<r> {} {}"),
         format_args!(
             "{} {}",
-            bun_fmt::size(package_json_len, bun_fmt::SizeOpts { space_between_number_and_unit: false }),
+            bun_fmt::size(package_json_len, bun_fmt::SizeFormatterOptions { space_between_number_and_unit: false }),
             "package.json",
         ),
     );
@@ -3094,7 +3094,7 @@ fn print_archived_files_and_packages<const IS_DRY_RUN: bool>(
             PACKED_FMT,
             format_args!(
                 "{} {}",
-                bun_fmt::size(entry.size, bun_fmt::SizeOpts { space_between_number_and_unit: false }),
+                bun_fmt::size(entry.size, bun_fmt::SizeFormatterOptions { space_between_number_and_unit: false }),
                 bstr::BStr::new(entry.subpath.as_bytes()),
             ),
         );

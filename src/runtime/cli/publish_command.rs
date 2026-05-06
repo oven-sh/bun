@@ -1233,7 +1233,7 @@ impl PublishCommand {
                                 strings::without_prefix(&registry.url.href, b"https://"),
                             )),
                             bstr::BStr::new(package_name),
-                            Pack::fmt_tarball_filename(package_name, package_version, pack::TarballFilenameStyle::Raw),
+                            pack::fmt_tarball_filename(package_name, package_version, pack::TarballNameStyle::Raw),
                         )?;
                         v.into_boxed_slice()
                     },
@@ -1253,7 +1253,7 @@ impl PublishCommand {
 
         {
             let workspace_root = match bun_sys::open_a(
-                strings::without_suffix(&manager.original_package_json_path, b"package.json"),
+                strings::without_suffix_comptime(&manager.original_package_json_path, b"package.json"),
                 bun_sys::O::DIRECTORY,
                 0,
             )

@@ -445,7 +445,7 @@ impl TrustCommand {
 
         if pm.options.log_level.show_progress() {
             progress.root.end();
-            *progress = Progress::default();
+            *progress = Progress::Progress::default();
         }
 
         let package_json_contents = pm

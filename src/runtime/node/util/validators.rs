@@ -247,13 +247,13 @@ pub fn validate_uint32(
         return Err(throw_err_invalid_arg_type(global_this, name, "number", value));
     }
     if !value.is_any_int() {
-        let formatter = jsc::ConsoleObject::Formatter::new(global_this);
+        let mut formatter = jsc::ConsoleObject::Formatter::new(global_this);
         return Err(throw_range_error(
             global_this,
             format_args!(
                 "The value of \"{}\" is out of range. It must be an integer. Received {}",
                 name,
-                jsc::ConsoleObject::format_value(&formatter, value)
+                jsc::ConsoleObject::formatter::ZigFormatter::new(&mut formatter, value)
             ),
         ));
     }
@@ -261,7 +261,7 @@ pub fn validate_uint32(
     let min: i64 = if greater_than_zero { 1 } else { 0 };
     let max: i64 = i64::from(u32::MAX);
     if num < min || num > max {
-        let formatter = jsc::ConsoleObject::Formatter::new(global_this);
+        let mut formatter = jsc::ConsoleObject::Formatter::new(global_this);
         return Err(throw_range_error(
             global_this,
             format_args!(
@@ -269,7 +269,7 @@ pub fn validate_uint32(
                 name,
                 min,
                 max,
-                jsc::ConsoleObject::format_value(&formatter, value)
+                jsc::ConsoleObject::formatter::ZigFormatter::new(&mut formatter, value)
             ),
         ));
     }

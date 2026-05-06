@@ -234,12 +234,13 @@ impl FileSystemRouter {
         )
         .expect("unreachable");
 
+        let config_dir = router.config.dir.clone();
         if let Err(_) = router.load_routes(
             &mut log,
             root_dir_info,
             // TODO(port): `Resolver` passed as comptime type param + `&vm.transpiler.resolver` value.
             &mut vm.transpiler.resolver,
-            router.config.dir,
+            &config_dir,
         ) {
             // Build the JS error before arena teardown: `log` is backed by the arena allocator.
             // Declaration order (arena before log) guarantees `log` drops first on return.
@@ -376,12 +377,12 @@ impl FileSystemRouter {
 
         this.bust_dir_cache(global_this);
 
-        let root_dir_info = match vm.transpiler.resolver.read_dir_info(this.router.config.dir) {
+        let root_dir_info = match vm.transpiler.resolver.read_dir_info(&this.router.config.dir) {
             Ok(Some(info)) => info,
             Ok(None) => {
                 return global_this.throw(format_args!(
                     "Unable to find directory: {}",
-                    bstr::BStr::new(this.router.config.dir)
+                    bstr::BStr::new(&*this.router.config.dir)
                 ));
             }
             Err(_) => {

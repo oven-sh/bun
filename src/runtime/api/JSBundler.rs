@@ -1608,8 +1608,8 @@ pub mod js_bundler {
                 import_record: record,
                 value: ResolveValue::Pending,
                 // TODO(port): task/js_task were `undefined` in Zig
-                task: jsc::AnyTaskWithExtraContext::default(),
-                js_task: jsc::AnyTask::default(),
+                task: AnyTaskWithExtraContext::default(),
+                js_task: AnyTask::default(),
             }
         }
 
@@ -1727,8 +1727,8 @@ pub mod js_bundler {
                 parse_task: parse,
                 was_file: false,
                 called_defer: false,
-                task: jsc::AnyTaskWithExtraContext::default(),
-                js_task: jsc::AnyTask::default(),
+                task: AnyTaskWithExtraContext::default(),
+                js_task: AnyTask::default(),
             }
         }
 

@@ -468,7 +468,7 @@ impl SocketAddress {
         }
 
         // SAFETY: FFI call into C++ JSSocketAddressDTO__create
-        Ok(unsafe { JSSocketAddressDTO__create(global_object, BunString::create_utf8_for_js(global_object, addr_)?, port_, is_ipv6) })
+        Ok(unsafe { JSSocketAddressDTO__create(global_object, bun_jsc::bun_string_jsc::create_utf8_for_js(global_object, addr_)?, port_, is_ipv6) })
     }
 }
 

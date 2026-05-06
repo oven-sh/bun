@@ -199,10 +199,12 @@ pub extern "C" fn us_socket_buffered_js_write(
         if stream_buffer.is_not_empty() {
             let to_flush = stream_buffer.slice();
             let to_flush_len = to_flush.len();
-            let written: u32 = u32::try_from(socket.write(to_flush).max(0)).unwrap();
-            stream_buffer.wrote(written);
-            total_written = total_written.saturating_add(usize::from(written));
-            if usize::from(written) < to_flush_len {
+            // SAFETY: caller (JSNodeHTTPServerSocket.cpp) guarantees `socket` is live; borrow
+            // is dropped before any further JS execution that could re-enter this socket.
+            let written: u32 = u32::try_from(unsafe { (*socket).write(to_flush) }.max(0)).unwrap();
+            stream_buffer.wrote(written as usize);
+            total_written = total_written.saturating_add(written as usize);
+            if (written as usize) < to_flush_len {
                 if !data_slice.is_empty() {
                     stream_buffer.write(data_slice);
                 }
@@ -211,21 +213,28 @@ pub extern "C" fn us_socket_buffered_js_write(
         }
 
         if !data_slice.is_empty() {
-            let written: u32 = u32::try_from(socket.write(data_slice).max(0)).unwrap();
-            total_written = total_written.saturating_add(usize::from(written));
-            if usize::from(written) < data_slice.len() {
-                stream_buffer.write(&data_slice[usize::from(written)..]);
+            // SAFETY: see above — `socket` is live for the duration of this call.
+            let written: u32 =
+                u32::try_from(unsafe { (*socket).write(data_slice) }.max(0)).unwrap();
+            total_written = total_written.saturating_add(written as usize);
+            if (written as usize) < data_slice.len() {
+                stream_buffer.write(&data_slice[written as usize..]);
                 break 'body JSValue::FALSE;
             }
         }
         if ended {
-            socket.shutdown();
+            // SAFETY: `socket` is live (see above).
+            unsafe { (*socket).shutdown() };
         }
         JSValue::TRUE
     };
 
-    buffer.update(&stream_buffer);
-    buffer.wrote(total_written);
+    // SAFETY: caller guarantees `buffer` is valid for the call; no JS executes between here
+    // and return, so no re-entrancy aliasing.
+    unsafe {
+        (*buffer).update(stream_buffer);
+        (*buffer).wrote(total_written);
+    }
     result
 }
 

@@ -1285,8 +1285,9 @@ where
         }
 
         // Copy to stack memory to prevent aliasing issues in release builds
-        let blob = this.blob;
-        let bytes = blob.slice();
+        // PORT NOTE: AnyBlob is not Copy in Rust; reborrow through a raw ptr
+        // so the slice borrow doesn't conflict with `&mut self` below.
+        let bytes: &[u8] = unsafe { &*(this.blob.slice() as *const [u8]) };
 
         let _ = this.send_writable_bytes_for_blob(bytes, write_offset, resp);
         true

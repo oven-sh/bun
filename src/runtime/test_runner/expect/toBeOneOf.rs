@@ -91,12 +91,12 @@ pub fn to_be_one_of(
     }
 
     // handle failure
+    // PORT NOTE: Zig shares one `*Formatter` across both `toFmt` calls; in Rust the
+    // `ZigFormatter` adapter holds `&'a mut Formatter`, so two live adapters cannot alias
+    // the same backing formatter. Use a second formatter for the second value (matches toBe.rs).
     let mut formatter = super::make_formatter(global_this);
-    // TODO(port): Formatter has additional default fields in Zig; verify Default impl matches `.{}` init.
-    let value_fmt = list_value.to_fmt(&mut formatter);
-    let expected_fmt = expected.to_fmt(&mut formatter);
+    let mut formatter2 = super::make_formatter(global_this);
     if not {
-        let received_fmt = list_value.to_fmt(&mut formatter);
         // TODO(port): get_signature was `comptime` in Zig — ensure it is `const fn` so this stays compile-time.
         let signature = get_signature("toBeOneOf", "<green>expected<r>", true);
         // PORT NOTE: Zig `{f}` fmt specifier mapped to Rust `{}` (Display); `++` mapped to concat!.
@@ -108,8 +108,8 @@ pub fn to_be_one_of(
                     "\n\n",
                     "Expected to not be one of: <green>{}<r>\nReceived: <red>{}<r>\n",
                 ),
-                received_fmt,
-                expected_fmt,
+                list_value.to_fmt(&mut formatter),
+                expected.to_fmt(&mut formatter2),
             ),
         );
     }
@@ -124,8 +124,8 @@ pub fn to_be_one_of(
                 "Expected to be one of: <green>{}<r>\n",
                 "Received: <red>{}<r>\n",
             ),
-            value_fmt,
-            expected_fmt,
+            list_value.to_fmt(&mut formatter),
+            expected.to_fmt(&mut formatter2),
         ),
     );
 }

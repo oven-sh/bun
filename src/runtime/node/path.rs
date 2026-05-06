@@ -3211,7 +3211,7 @@ pub fn resolve_windows_t<'a, T: PathChar>(
         // Backed by tmpBuf or an anonymous buffer.
         let mut device_buf: [T; 2] = [T::default(); 2];
         // PORT NOTE: same raw-ptr trick as `path` — `device` may alias tmp_buf.
-        let mut device_ptr: *const T = core::ptr::NonNull::<T>::dangling().as_ptr();
+        let mut device_ptr: *const T = core::ptr::NonNull::<T>::dangling().as_ptr().cast_const();
         let mut device_len: usize = 0;
         let mut device_in_tmp = false;
         // Prefix with _ to avoid shadowing the identifier in the outer scope.

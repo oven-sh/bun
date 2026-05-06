@@ -1,6 +1,5 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 #[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
-use bun_jsc::console_object::Formatter as ConsoleFormatter;
 #[allow(unused_imports)] use bun_core::Output;
 
 use super::DiffFormatter;
@@ -38,16 +37,17 @@ pub fn to_have_returned_with(
     let calls_count = u32::try_from(returns.get_length(global)?).unwrap();
     let mut pass = false;
 
-    // PORTING.md §JSC types: heap-backed Vec<JSValue> is not stack-scanned by JSC's conservative GC.
-    // Use MarkedArgumentBuffer (registered with the VM as a root) so values pushed mid-loop survive
-    // the allocations triggered by get()/to_bun_string()/jest_deep_equals() below.
-    let mut successful_returns = bun_jsc::MarkedArgumentBuffer::new();
+    // Zig: std.array_list.Managed(JSValue) — heap-backed list of JSValue.
+    // PORTING.md §JSC types: heap-backed Vec<JSValue> is not stack-scanned by JSC's conservative GC;
+    // however every value pushed here is also reachable via the `returns` JSArray (kept live on the
+    // stack), so a plain Vec mirrors the Zig spec safely. SuccessfulReturnsFormatter expects &Vec.
+    let mut successful_returns: Vec<JSValue> = Vec::new();
 
     let mut has_errors = false;
 
     // Check for a pass and collect info for error messages
     for i in 0..calls_count {
-        let result = returns.get_index(global, i as u32);
+        let result = returns.get_direct_index(global, i);
 
         if result.is_object() {
             let result_type = result.get(global, "type")?.unwrap_or(JSValue::UNDEFINED);
@@ -81,12 +81,14 @@ pub fn to_have_returned_with(
     let signature: &str = Expect::get_signature("toHaveReturnedWith", "<green>expected<r>", false);
 
     if this.flags.not() {
-        let NOT_SIGNATURE: &str = Expect::get_signature("toHaveReturnedWith", "<green>expected<r>", true);
-        return this.throw_fmt(
+        let not_signature: &str = Expect::get_signature("toHaveReturnedWith", "<green>expected<r>", true);
+        return this.throw(
             global,
-            NOT_SIGNATURE,
-            concat!("\n\n", "Expected mock function not to have returned: <green>{}<r>\n"),
-            format_args!("{}", expected.to_fmt(&mut formatter)),
+            not_signature,
+            format_args!(
+                "\n\nExpected mock function not to have returned: <green>{}<r>\n",
+                expected.to_fmt(&mut formatter),
+            ),
         );
     }
 
@@ -95,37 +97,45 @@ pub fn to_have_returned_with(
 
     // Case: Only one successful return, no errors
     if calls_count == 1 && successful_returns_count == 1 {
-        let received = successful_returns.at(0);
+        let received = successful_returns[0];
         if expected.is_string() && received.is_string() {
             let diff_format = DiffFormatter {
-                expected,
-                received,
-                global,
+                expected: Some(expected),
+                received: Some(received),
+                expected_string: None,
+                received_string: None,
+                global_this: global,
                 not: false,
             };
-            return this.throw_fmt(global, signature, "\n\n{}\n", format_args!("{}", diff_format));
+            return this.throw(global, signature, format_args!("\n\n{}\n", diff_format));
         }
 
+        // PORT NOTE: Zig shares one `*Formatter` across both `toFmt` calls; in Rust the
+        // `ZigFormatter` adapter holds `&'a mut Formatter`, so two live adapters cannot alias
+        // the same backing formatter. Use a second formatter for the received value —
+        // `make_formatter` is a trivial struct init with no shared state between values.
+        let mut formatter2 = super::make_formatter(global);
         return this.throw(
             global,
             signature,
-            "\n\nExpected: <green>{}<r>\nReceived: <red>{}<r>",
-            // TODO(port): Expect::throw fmt-arg plumbing — Zig passes (template, .{arg1, arg2});
-            // Rust signature TBD. Placeholder concatenation below does NOT line up with template `{}`s.
             format_args!(
-                "{}{}",
+                "\n\nExpected: <green>{}<r>\nReceived: <red>{}<r>",
                 expected.to_fmt(&mut formatter),
-                received.to_fmt(&mut formatter),
+                received.to_fmt(&mut formatter2),
             ),
         );
     }
 
+    // PORT NOTE: list_formatter holds &mut Formatter via RefCell, so a separate formatter is
+    // required for the inline `expected.to_fmt` argument used alongside it in the same format_args!.
+    let mut list_fmt = super::make_formatter(global);
+
     if has_errors {
         // Case: Some calls errored
         let list_formatter = mock::AllCallsFormatter {
-            global,
+            global_this: global,
             returns,
-            formatter: &mut formatter,
+            formatter: core::cell::RefCell::new(&mut list_fmt),
         };
         // TODO(port): Output.prettyFmt comptime color dispatch — Zig branches on
         // `Output.enable_ansi_colors_stderr` to substitute/strip `<green>`/`<r>` tags at comptime.
@@ -145,9 +155,9 @@ pub fn to_have_returned_with(
     } else {
         // Case: No errors, but no match (and multiple returns)
         let list_formatter = mock::SuccessfulReturnsFormatter {
-            global,
-            successful_returns: successful_returns.slice(),
-            formatter: &mut formatter,
+            global_this: global,
+            successful_returns: &successful_returns,
+            formatter: core::cell::RefCell::new(&mut list_fmt),
         };
         // TODO(port): Output.prettyFmt comptime color dispatch — Zig branches on
         // `Output.enable_ansi_colors_stderr` to substitute/strip `<green>`/`<red>` tags at comptime.
@@ -170,6 +180,6 @@ pub fn to_have_returned_with(
 // PORT STATUS
 //   source:     src/test_runner/expect/toHaveReturnedWith.zig (159 lines)
 //   confidence: medium
-//   todos:      9
-//   notes:      Expect::throw takes (signature, fmt_template, args-tuple) in Zig; Rust signature TBD — current format_args! placeholders do not align with templates. Output.prettyFmt needs a const/macro form. scopeguard on post_match may fight borrowck.
+//   todos:      6
+//   notes:      Expect::throw takes (signature, fmt::Arguments). Second Formatter instances used to satisfy borrowck for dual to_fmt / RefCell list_formatter usage. Output.prettyFmt color-dispatch collapsed; throw_pretty handles tags at runtime.
 // ──────────────────────────────────────────────────────────────────────────

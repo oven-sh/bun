@@ -227,7 +227,7 @@ impl Collection {
 
     pub fn handle_uncaught_exception(
         &mut self,
-        _: RefDataValue,
+        _: &RefDataValue,
     ) -> HandleUncaughtExceptionResult {
         let _g = group::begin();
 

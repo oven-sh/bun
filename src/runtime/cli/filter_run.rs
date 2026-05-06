@@ -90,41 +90,42 @@ impl<'a> ProcessHandle<'a> {
         // TODO(port): Zig uses `[_:null]?[*:0]const u8` (null-terminated array of nullable C strings).
 
         handle.start_time = Some(Instant::now());
+        #[allow(unused_mut)]
         let mut spawned: spawn::SpawnProcessResult = 'brk: {
             // Get the envp with the PATH configured
             // There's probably a more optimal way to do this where you have a Vec shared
             // instead of creating a new one for each process
             // PERF(port): was arena bulk-free (std.heap.ArenaAllocator) — profile in Phase B
-            let original_path = state.env.map.get(b"PATH").unwrap_or(b"");
-            state.env.map.put(b"PATH", &handle.config.PATH);
+            let env_ptr = state.env;
+            // SAFETY: state.env is the process-lifetime DotEnv loader (Transpiler::env).
+            let env = unsafe { &mut *env_ptr };
+            // PORT NOTE: copy to owned — `original_path` borrows env.map which is
+            // mutated by put() below (Zig aliased freely).
+            let original_path: Box<[u8]> = env.map.get(b"PATH").unwrap_or(b"").into();
+            let _ = env.map.put(b"PATH", &handle.config.PATH);
             // Zig: `defer { ... env.map.put("PATH", original_path); }` — restores PATH
             // unconditionally at block exit (success OR error). Keep the guard armed for the
             // whole block so `?` early-returns also restore.
-            let _guard = scopeguard::guard((), |_| {
-                state.env.map.put(b"PATH", original_path);
+            let _guard = scopeguard::guard((), move |_| {
+                // SAFETY: env_ptr valid for the run loop lifetime (see above).
+                let _ = unsafe { (*env_ptr).map.put(b"PATH", &original_path) };
             });
-            // TODO(port): scopeguard closure captures &mut state.env across the calls below;
-            // borrowck will require reshaping in Phase B (raw ptr capture or split borrow).
-            let envp = state.env.map.create_null_delimited_env_map()?;
+            // SAFETY: see above; reborrow through raw ptr to avoid overlapping &mut with guard.
+            let envp = unsafe { (*env_ptr).map.create_null_delimited_env_map()? };
             break 'brk spawn::spawn_process(
                 &handle.options,
                 argv.as_ptr(),
                 envp.as_ptr() as *const *const c_char,
-            )?
-            .map_err(bun_core::Error::from)?;
+            )??;
             // `_guard` drops here (or on `?` above), restoring PATH — matches Zig `defer`.
         };
-        let stdout_fd = spawned.stdout;
-        let stderr_fd = spawned.stderr;
-        let process = spawned.to_process(
-            bun_event_loop::EventLoopHandle::init_mini(
-                state.event_loop as *const _ as *mut _,
-            ),
-            false,
-        );
+        #[cfg(unix)]
+        let (stdout_fd, stderr_fd) = (spawned.stdout, spawned.stderr);
+        let process = spawned.to_process(EventLoopHandle::init_mini(state.event_loop), false);
 
-        handle.stdout.set_parent(handle);
-        handle.stderr.set_parent(handle);
+        let handle_ptr = handle as *mut ProcessHandle<'a> as *mut c_void;
+        handle.stdout.set_parent(handle_ptr);
+        handle.stderr.set_parent(handle_ptr);
 
         #[cfg(windows)]
         {

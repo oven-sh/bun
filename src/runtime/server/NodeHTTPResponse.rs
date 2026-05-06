@@ -1244,8 +1244,9 @@ impl NodeHTTPResponse {
 
         if let Some(callback) = js::on_data_get_cached(this_value) {
             if !callback.is_undefined() {
-                let global_this = VirtualMachine::get().global();
-                let event_loop = global_this.bun_vm().event_loop();
+                let global_this = vm_get().global();
+                // SAFETY: event_loop() returns the live VM event-loop pointer.
+                let event_loop = unsafe { &mut *bun_vm_mut(global_this).event_loop() };
 
                 let bytes = self.get_bytes(global_this, chunk);
 
@@ -1256,7 +1257,7 @@ impl NodeHTTPResponse {
                     &[
                         bytes,
                         JSValue::from(last),
-                        JSValue::js_number(event as u8 as i32),
+                        JSValue::js_number_from_int32(event as u8 as i32),
                     ],
                 );
             }
@@ -1264,8 +1265,8 @@ impl NodeHTTPResponse {
 
         // Deferred tail:
         if last {
-            if self.body_read_ref.has() {
-                self.body_read_ref.unref(VirtualMachine::get());
+            if self.body_read_ref.has {
+                self.body_read_ref.unref(vm_get());
                 self.mark_request_as_done_if_necessary();
             }
             self.deref();

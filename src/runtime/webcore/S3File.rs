@@ -199,7 +199,10 @@ pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue
             }
             let blob = construct_s3_file_internal_store(global, path.path(), options)?;
 
-            let mut blob_internal = PathOrBlob::Blob(blob);
+            // PORT NOTE: `write_file_internal` currently takes the
+            // `webcore::node_types::PathOrBlob` stub; bridge until that module
+            // re-exports `crate::node::types::PathOrBlob` directly.
+            let mut blob_internal = crate::webcore::node_types::PathOrBlob::Blob(blob);
             blob::write_file_internal(
                 global,
                 &mut blob_internal,

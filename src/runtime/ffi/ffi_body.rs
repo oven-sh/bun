@@ -3161,21 +3161,21 @@ impl CompilerRT {
             ("JSCell__offsetOfType", offsets.js_cell_offset_of_type as i64),
             (
                 "JSTypeArrayBufferViewMin",
-                jsc::JSType::min_typed_array() as i64,
+                jsc::JSType::MIN_TYPED_ARRAY.0 as i64,
             ),
             (
                 "JSTypeArrayBufferViewMax",
-                jsc::JSType::max_typed_array() as i64,
+                jsc::JSType::MAX_TYPED_ARRAY.0 as i64,
             ),
         ]);
     }
 
     pub fn inject(state: &mut TCC::State) {
         state
-            .add_symbol(b"memset", Self::memset as *const c_void)
+            .add_symbol(zstr!(b"memset"), Self::memset as *const c_void)
             .expect("unreachable");
         state
-            .add_symbol(b"memcpy", Self::memcpy as *const c_void)
+            .add_symbol(zstr!(b"memcpy"), Self::memcpy as *const c_void)
             .expect("unreachable");
         // Re-declare the C++ NapiHandleScope hooks locally — the canonical
         // declarations live in `crate::napi::napi_body` which is private, and

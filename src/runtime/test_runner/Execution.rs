@@ -422,7 +422,7 @@ impl Execution {
                         continue;
                     }
                     let sequence_status =
-                        step_sequence(buntest_strong, global_this, group_ptr, next_idx, &mut now)?;
+                        step_sequence(&buntest_strong, global_this, group_ptr, next_idx, &mut now)?;
                     match sequence_status {
                         AdvanceSequenceStatus::Done => {
                             // SAFETY: see above
@@ -430,18 +430,16 @@ impl Execution {
                             continue;
                         }
                         AdvanceSequenceStatus::Execute { timeout } => {
-                            return Ok(StepResult::Waiting {
-                                timeout: Some(timeout),
-                            });
+                            return Ok(StepResult::Waiting { timeout });
                         }
                     }
                 }
                 // all sequences have started
                 // SAFETY: see above
                 if unsafe { group_ptr.as_ref() }.remaining_incomplete_entries == 0 {
-                    return step_group(buntest_strong, global_this, &mut now);
+                    return step_group(&buntest_strong, global_this, &mut now);
                 }
-                return Ok(StepResult::Waiting { timeout: None });
+                return Ok(StepResult::Waiting { timeout: Timespec::EPOCH });
             }
         }
     }

@@ -1807,7 +1807,7 @@ pub extern "C" fn napi_create_buffer_copy(
         Ok(b) => b,
         Err(_) => return NapiEnv::set_last_error(Some(env), NapiStatus::pending_exception),
     };
-    if let Some(array_buf) = buffer.as_array_buffer(env.to_js()) {
+    if let Some(mut array_buf) = buffer.as_array_buffer(env.to_js()) {
         if length > 0 {
             // SAFETY: caller guarantees `data` points to at least `length` bytes.
             let src = unsafe { core::slice::from_raw_parts(data, length) };

@@ -58,9 +58,8 @@ pub(crate) enum OsError {
     Any,
 }
 impl From<bun_jsc::JsError> for OsError {
-    fn from(_: bun_jsc::JsError) -> Self { Self::Js(_0_dropped()) }
+    fn from(e: bun_jsc::JsError) -> Self { Self::Js(e) }
 }
-#[inline(always)] fn _0_dropped() -> bun_jsc::JsError { bun_jsc::JsError::Thrown }
 impl From<bun_core::Error> for OsError {
     fn from(_: bun_core::Error) -> Self { Self::Any }
 }

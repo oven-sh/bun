@@ -172,9 +172,9 @@ pub fn render_to_ansi(
             // path is unreachable but handle it safely.
             return Err(global_this.throw_out_of_memory());
         }
-        Err(ParserError::OutOfMemory) => return global_this.throw_out_of_memory(),
+        Err(ParserError::OutOfMemory) => return Err(global_this.throw_out_of_memory()),
         Err(ParserError::StackOverflow) => return Err(global_this.throw_stack_overflow()),
-        Err(_) => return global_this.throw_out_of_memory(),
+        Err(_) => return Err(global_this.throw_out_of_memory()),
     };
 
     create_utf8_for_js(global_this, &result)
@@ -202,7 +202,7 @@ pub fn render_to_html(
 
     let result = match md::render_to_html_with_options(input, options) {
         Ok(r) => r,
-        Err(_) => return global_this.throw_out_of_memory(),
+        Err(_) => return Err(global_this.throw_out_of_memory()),
     };
 
     create_utf8_for_js(global_this, &result)
@@ -303,7 +303,7 @@ pub fn render(
     // Create JS callback renderer
     let mut js_renderer = match JsCallbackRenderer::init(global_this, input, options.heading_ids) {
         Ok(r) => r,
-        Err(_) => return global_this.throw_out_of_memory(),
+        Err(_) => return Err(global_this.throw_out_of_memory()),
     };
 
     // Extract callbacks from 2nd argument
@@ -314,8 +314,8 @@ pub fn render(
         return match err {
             ParserError::JSError => Err(bun_jsc::JsError::Thrown),
             ParserError::JSTerminated => Err(bun_jsc::JsError::Terminated),
-            ParserError::OutOfMemory => global_this.throw_out_of_memory(),
-            ParserError::StackOverflow => global_this.throw_stack_overflow(),
+            ParserError::OutOfMemory => Err(global_this.throw_out_of_memory()),
+            ParserError::StackOverflow => Err(global_this.throw_stack_overflow()),
         };
     }
 
@@ -398,7 +398,7 @@ fn render_ast(
 
     let mut renderer = match ParseRenderer::init(global_this, input, marked_args, options.heading_ids, react_version) {
         Ok(r) => r,
-        Err(_) => return global_this.throw_out_of_memory(),
+        Err(_) => return Err(global_this.throw_out_of_memory()),
     };
 
     // Extract component overrides from 2nd argument
@@ -408,8 +408,8 @@ fn render_ast(
         return match err {
             ParserError::JSError => Err(bun_jsc::JsError::Thrown),
             ParserError::JSTerminated => Err(bun_jsc::JsError::Terminated),
-            ParserError::OutOfMemory => global_this.throw_out_of_memory(),
-            ParserError::StackOverflow => global_this.throw_stack_overflow(),
+            ParserError::OutOfMemory => Err(global_this.throw_out_of_memory()),
+            ParserError::StackOverflow => Err(global_this.throw_stack_overflow()),
         };
     }
 

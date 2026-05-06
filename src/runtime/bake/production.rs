@@ -169,7 +169,13 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
             vm.transpiler.options.no_macros = true;
         }
         MacroOptions::Map(macros) => {
-            vm.transpiler.options.macro_remap = macros.clone();
+            // TODO(port): `ctx.debug.macros` carries
+            // `ArrayHashMap<Box<[u8]>, ArrayHashMap<Box<[u8]>, Box<[u8]>>>` while
+            // `Transpiler.options.macro_remap` is
+            // `StringArrayHashMap<StringArrayHashMap<&'static [u8]>>`. The two
+            // shapes diverge at the value lifetime; defer the conversion.
+            let _ = macros;
+            todo!("blocked_on: bun_bundler::options::MacroRemap conversion from ctx.debug.macros");
         }
         MacroOptions::Unspecified => {}
     }
@@ -183,7 +189,14 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
     jsc::virtual_machine::IS_MAIN_THREAD_VM.with(|c| c.set(true));
 
     // SAFETY: vm.jsc_vm is the live JSC::VM* set in init.
-    let api_lock = unsafe { (*vm.jsc_vm).get_api_lock() };
+    // PORT NOTE: Zig's `vm.jsc_vm.getAPILock()` returns an RAII lock guard; the
+    // Rust `bun_jsc::VM` only exposes the callback-style `hold_api_lock`, which
+    // can't span the rest of this function body. Stub as a unit guard.
+    // TODO(port): wire JSC API lock once `bun_jsc::VM::get_api_lock` lands.
+    let api_lock: () = {
+        let _ = unsafe { &*vm.jsc_vm };
+        todo!("blocked_on: bun_jsc::VM::get_api_lock");
+    };
     // defer api_lock.release() — handled by Lock's Drop
 
     let mut pt: PerThread = PerThread {

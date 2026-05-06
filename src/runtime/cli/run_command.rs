@@ -1301,10 +1301,11 @@ impl RunCommand {
             // SAFETY: `ctx.log` was set in `create_context_data` (single-threaded
             // CLI startup) and is process-lifetime.
             
-            // TODO(b2): `Log::print` wants `&mut impl fmt::Write`;
-            // `Output::error_writer()` is `*mut io::Writer`. Route through a
-            // shim once io::Writer implements fmt::Write.
-            let _ = unsafe { ctx.log() }.print(Output::error_writer());
+            // PORT NOTE: `Log::print` is generic over `IntoLogWrite`, which is
+            // implemented for `*mut io::Writer` (not `&mut`). `error_writer()`
+            // returns `&'static mut io::Writer`; cast to the raw pointer the
+            // trait expects.
+            let _ = unsafe { ctx.log() }.print(Output::error_writer() as *mut bun_core::io::Writer);
 
             pretty_errorln!(
                 "<r><red>error<r>: Failed to run <b>{}<r> due to error <b>{}<r>",
@@ -1558,7 +1559,7 @@ impl RunCommand {
                     which(&mut path_buf, path_for_which, top_level_dir, target_name)
                 {
                     let out = destination.as_bytes();
-                    let _stored = fs.dirname_store.append(out)?;
+                    let _stored = fs.dirname_store.append_slice(out)?;
                     let _ = (top_level_dir, target_name);
                     // TODO(b2-blocked): `run_binary_without_bunx_path` lives in
                     // `phase_a_draft` only (needs `bun_core::spawn_sync` wiring).

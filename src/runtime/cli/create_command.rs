@@ -15,7 +15,7 @@ use bun_interchange::json as JSON;
 use bun_js_printer as JSPrinter;
 use bun_http as HTTP;
 use bun_http::Headers;
-use bun_libarchive::Archiver;
+use bun_libarchive::{Archiver, archiver};
 use bun_dotenv as DotEnv;
 use bun_resolver::fs;
 use bun_zlib as Zlib;
@@ -46,8 +46,8 @@ pub fn initialize_store() {
         }
         INITIALIZED_STORE = true;
     }
-    js_ast::Expr::Data::Store::create();
-    js_ast::Stmt::Data::Store::create();
+    js_ast::expr::data::Store::create();
+    js_ast::stmt::data::Store::create();
 }
 
 // PORT NOTE: bun.OSPathLiteral — `bun_paths` does not (yet) export an

@@ -2,9 +2,11 @@
 //! `quantize.rs`. Dispatch lives in codecs.rs; this file is the codec body.
 
 use core::ffi::{c_int, c_void};
+use core::ptr::NonNull;
 
 use super::codecs;
 use super::quantize;
+use crate::encoded_wrap_free;
 
 // TODO(port): move to runtime_sys (or a dedicated spng_sys crate)
 #[repr(C)]
@@ -128,7 +130,7 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::
     if unsafe { spng_decoded_image_size(ctx, SPNG_FMT_RGBA8, &mut size) } != 0 {
         return Err(codecs::Error::DecodeFailed);
     }
-    let mut out = vec![0u8; size].into_boxed_slice();
+    let mut out = vec![0u8; size];
     // SAFETY: ctx is valid; out is a valid mutable buffer of `size` bytes.
     if unsafe { spng_decode_image(ctx, out.as_mut_ptr(), out.len(), SPNG_FMT_RGBA8, SPNG_DECODE_TRNS) } != 0 {
         return Err(codecs::Error::DecodeFailed);
@@ -145,14 +147,12 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::
     // SAFETY: all-zero is a valid Iccp (POD; null profile ptr is the "no profile" state).
     let mut iccp: Iccp = unsafe { core::mem::zeroed() };
     // SAFETY: ctx is valid; iccp is a valid out-ptr.
-    let icc: Option<Box<[u8]>> = if unsafe { spng_get_iccp(ctx, &mut iccp) } == 0
+    let icc: Option<Vec<u8>> = if unsafe { spng_get_iccp(ctx, &mut iccp) } == 0
         && iccp.profile_len > 0
         && !iccp.profile.is_null()
     {
         // SAFETY: libspng guarantees profile points to profile_len bytes owned by ctx.
-        Some(Box::<[u8]>::from(unsafe {
-            core::slice::from_raw_parts(iccp.profile, iccp.profile_len)
-        }))
+        Some(unsafe { core::slice::from_raw_parts(iccp.profile, iccp.profile_len) }.to_vec())
     } else {
         None
     };
@@ -189,7 +189,7 @@ fn embed_iccp(ctx: *mut spng_ctx, icc_profile: Option<&[u8]>) {
     let _ = unsafe { spng_set_iccp(ctx, &iccp) };
 }
 
-pub fn encode(rgba: &[u8], w: u32, h: u32, level: i8, icc_profile: Option<&[u8]>) -> Result<codecs::Encoded, codecs::Error> {
+pub fn encode(rgba: &[u8], w: u32, h: u32, level: i8, icc_profile: Option<NonNull<[u8]>>) -> Result<codecs::Encoded, codecs::Error> {
     // SAFETY: spng_ctx_new is safe to call; null return = OOM.
     let ctx = unsafe { spng_ctx_new(SPNG_CTX_ENCODER) };
     if ctx.is_null() {
@@ -217,7 +217,8 @@ pub fn encode(rgba: &[u8], w: u32, h: u32, level: i8, icc_profile: Option<&[u8]>
     if unsafe { spng_set_ihdr(ctx, &ihdr) } != 0 {
         return Err(codecs::Error::EncodeFailed);
     }
-    embed_iccp(ctx, icc_profile);
+    // SAFETY: caller guarantees `icc_profile` points to valid bytes for the duration of encode().
+    embed_iccp(ctx, icc_profile.map(|p| unsafe { p.as_ref() }));
     // SAFETY: ctx is valid; rgba is a valid readable buffer.
     if unsafe { spng_encode_image(ctx, rgba.as_ptr(), rgba.len(), SPNG_FMT_PNG, SPNG_ENCODE_FINALIZE) } != 0 {
         return Err(codecs::Error::EncodeFailed);

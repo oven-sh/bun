@@ -98,31 +98,31 @@ impl<'a> Context<'a> {
         log_level: LogLevel,
     ) {
         if log_level != LogLevel::Silent && log_level != LogLevel::Quiet {
-            Output::prettyln("\n<r><b><blue>Total files<r>: {}", format_args!("{}", stats.total_files));
+            Output::prettyln(format_args!("\n<r><b><blue>Total files<r>: {}", stats.total_files));
             if let Some(shasum) = maybe_shasum {
-                Output::prettyln(
+                Output::prettyln(format_args!(
                     "<b><blue>Shasum<r>: {}",
-                    format_args!("{}", bun_fmt::bytes_to_hex_lower(shasum)),
-                );
+                    bun_fmt::bytes_to_hex_lower_string(shasum),
+                ));
             }
             if let Some(integrity) = maybe_integrity {
-                Output::prettyln(
+                Output::prettyln(format_args!(
                     "<b><blue>Integrity<r>: {}",
-                    format_args!("{}", bun_fmt::integrity::<true>(*integrity)),
-                );
+                    bun_fmt::integrity::<true>(*integrity),
+                ));
             }
-            Output::prettyln(
+            Output::prettyln(format_args!(
                 "<b><blue>Unpacked size<r>: {}",
-                format_args!("{}", bun_fmt::size(stats.unpacked_size, bun_fmt::SizeFormatterOptions { space_between_number_and_unit: false })),
-            );
+                bun_fmt::size(stats.unpacked_size, bun_fmt::SizeFormatterOptions { space_between_number_and_unit: false }),
+            ));
             if stats.packed_size > 0 {
-                Output::pretty(
+                Output::pretty(format_args!(
                     "<b><blue>Packed size<r>: {}\n",
-                    format_args!("{}", bun_fmt::size(stats.packed_size, bun_fmt::SizeFormatterOptions { space_between_number_and_unit: false })),
-                );
+                    bun_fmt::size(stats.packed_size, bun_fmt::SizeFormatterOptions { space_between_number_and_unit: false }),
+                ));
             }
             if stats.bundled_deps > 0 {
-                Output::pretty("<b><blue>Bundled deps<r>: {}\n", format_args!("{}", stats.bundled_deps));
+                Output::pretty(format_args!("<b><blue>Bundled deps<r>: {}\n", stats.bundled_deps));
             }
         }
     }

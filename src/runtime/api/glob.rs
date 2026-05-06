@@ -339,18 +339,19 @@ impl Glob {
     // `<Glob>::constructor(..)`. The free-fn `host_fn` expansion can't name an
     // associated fn without a receiver.
     pub fn constructor(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<Box<Glob>> {
-        let arguments_ = callframe.arguments_old(1);
-        let mut arguments = ArgumentsSlice::init(global_this.bun_vm(), arguments_.slice());
+        let arguments_ = callframe.arguments_old::<1>();
+        // SAFETY: bun_vm() returns a non-null *mut to the live VirtualMachine for this global.
+        let mut arguments = ArgumentsSlice::init(unsafe { &*global_this.bun_vm() }, arguments_.slice());
         // `arguments` drops at scope exit (was `defer arguments.deinit()`).
         let Some(pat_arg) = arguments.next_eat() else {
-            return global_this.throw(format_args!("Glob.constructor: expected 1 arguments, got 0"));
+            return Err(global_this.throw(format_args!("Glob.constructor: expected 1 arguments, got 0")));
         };
 
         if !pat_arg.is_string() {
-            return global_this.throw(format_args!("Glob.constructor: first argument is not a string"));
+            return Err(global_this.throw(format_args!("Glob.constructor: first argument is not a string")));
         }
 
-        let pat_str: Box<[u8]> = pat_arg.to_slice_clone(global_this)?.into_boxed_slice();
+        let pat_str: Box<[u8]> = pat_arg.to_slice_clone(global_this)?.into_vec().into_boxed_slice();
         // TODO(port): `to_slice_clone` returned a ZigString.Slice in Zig; verify bun_jsc API shape.
 
         Ok(Box::new(Glob {

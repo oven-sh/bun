@@ -147,14 +147,15 @@ impl Assets {
                 // mutated `.key`/`.value` columns directly. Rust ArrayHashMap exposes keys_mut/values_mut.
                 let prev = self.files.values()[entry_index.get()];
                 // SAFETY: `prev` is a live intrusively-refcounted StaticRoute we hold one ref to.
-                unsafe { (*prev).deref() };
+                unsafe { StaticRoute::deref_(prev) };
 
                 self.files.keys_mut()[entry_index.get()] = content_hash;
                 self.files.values_mut()[entry_index.get()] = StaticRoute::init_from_any_blob(
                     contents,
-                    StaticRoute::InitOptions {
-                        mime_type,
-                        server: self.owner().server.expect("unreachable"),
+                    InitFromBytesOptions {
+                        mime_type: Some(mime_type),
+                        server: self.owner().server,
+                        ..Default::default()
                     },
                 );
                 // Zig: `comptime assert(@TypeOf(slice.items(.hash)[0]) == void);`

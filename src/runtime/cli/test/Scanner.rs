@@ -66,6 +66,25 @@ impl From<ScanError> for bun_core::Error {
         bun_core::Error::from_name(<&'static str>::from(&e))
     }
 }
+impl PartialEq<bun_core::Error> for ScanError {
+    fn eq(&self, other: &bun_core::Error) -> bool {
+        <&'static str>::from(self) == other.name()
+    }
+}
+
+/// Newtype around `*mut Scanner` so it can satisfy [`DirEntryIterator`]
+/// (whose `next` takes `&self`). Zig passed `*Scanner` directly and called
+/// `.next()` mutably; the raw pointer reproduces that aliasing.
+#[repr(transparent)]
+struct ScannerDirIter<'a>(*mut Scanner<'a>);
+impl<'a> DirEntryIterator for ScannerDirIter<'a> {
+    fn next(&self, entry: &mut fs::Entry, fd: Fd) {
+        // SAFETY: `self.0` is `&mut Scanner` for the duration of
+        // `read_directory_with_iterator`; no other live `&mut` alias exists
+        // while the resolver walks entries (Zig: `iterator.next(entry, fd)`).
+        unsafe { (*self.0).next(entry, fd) }
+    }
+}
 
 impl<'a> Scanner<'a> {
     pub fn init(
@@ -79,7 +98,9 @@ impl<'a> Scanner<'a> {
             path_ignore_patterns: &[],
             dirs_to_scan: Fifo::new(),
             options: &transpiler.options,
-            fs: transpiler.fs,
+            // SAFETY: `Transpiler.fs` is the process-singleton `*mut FileSystem`
+            // (Zig `*FileSystem`); it outlives the scanner.
+            fs: unsafe { &*transpiler.fs },
             test_files: results,
             open_dir_buf: PathBuffer::uninit(),
             scan_dir_buf: PathBuffer::uninit(),

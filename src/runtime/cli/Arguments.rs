@@ -954,7 +954,7 @@ pub fn load_config_path<const CMD: Command::Tag>(
     config_path: &ZStr,
     ctx: &mut Command::Context,
 ) -> Result<(), bun_core::Error> {
-    if const { CMD.read_global_config() } {
+    if CMD.read_global_config() {
         if let Err(err) = load_global_bunfig::<CMD>(ctx) {
             if auto_loaded {
                 return Ok(());

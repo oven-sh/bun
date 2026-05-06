@@ -531,9 +531,19 @@ impl<S: GraphSide> IncrementalGraph<S> {
     pub const EMPTY: fn() -> Self = Self::default;
 
     pub fn get_file_index(&self, path: &[u8]) -> Option<FileIndex> {
+        // PORT NOTE: `ArrayHashMap<Box<[u8]>, _>::get_index` requires `&Box<[u8]>`;
+        // scan keys manually until a `&[u8]` adapter exists upstream.
+        // PERF(port): linear scan — replace with hashed adapter in Phase B.
         self.bundled_files
-            .get_index(path)
+            .keys()
+            .iter()
+            .position(|k| &**k == path)
             .map(|i| FileIndex::init(u32::try_from(i).unwrap()))
+    }
+
+    fn get_index_by_slice(&self, path: &[u8]) -> Option<usize> {
+        // PERF(port): linear scan — see `get_file_index`.
+        self.bundled_files.keys().iter().position(|k| &**k == path)
     }
 
     pub fn ensure_stale_bit_capacity(
@@ -666,7 +676,8 @@ impl<S: GraphSide> IncrementalGraph<S> {
                 .sub(offset)
                 .cast::<DevServer::DevServer>()
         };
-        dev_server.dev_allocator()
+        let _ = dev_server;
+        todo!("blocked_on: dev_server::DevServer::dev_allocator")
     }
 
     /// When we delete an edge, we need to delete it by connecting the
@@ -748,9 +759,9 @@ impl<S: GraphSide> IncrementalGraph<S> {
 
         // DirectoryWatchStore.Dep.source_file_path borrows this key; remove
         // any such dependencies before freeing it so they do not dangle.
-        self.owner()
-            .directory_watchers
-            .remove_dependencies_for_file(&key);
+        let _ = &self.owner().directory_watchers;
+        // TODO(port): blocked_on: dev_server::DirectoryWatchStore::remove_dependencies_for_file
+        let _ = &key;
 
         drop(key);
 
@@ -795,7 +806,7 @@ impl<S: GraphSide> IncrementalGraph<S> {
                     Side::Server => bun_bundler::options::Target::Bun,
                 },
             )
-            .unwrap_or_else(|e| bun_core::handle_oom(e));
+            .unwrap_or_else(|e| bun_core::handle_oom(Err::<(), _>(e)));
         }
 
         // Bust the resolution caches of the dir containing this file,

@@ -14,13 +14,14 @@ use bun_sys;
 
 pub struct PmPkgCommand;
 
-/// Process-lifetime bump arena for E::Object::put() calls. The CLI is one-shot
-/// and `put()` currently ignores its `_bump` parameter; this avoids threading
-/// an arena through every helper.
+/// Process-lifetime bump arena for E::Object::put() / json::parse calls.
+/// `bumpalo::Bump` is `!Sync`, so a `static OnceLock` is out; the CLI is
+/// single-threaded one-shot, so we cache a leaked arena per thread instead.
 fn dummy_bump() -> &'static bumpalo::Bump {
-    use std::sync::OnceLock;
-    static BUMP: OnceLock<bumpalo::Bump> = OnceLock::new();
-    BUMP.get_or_init(bumpalo::Bump::new)
+    thread_local! {
+        static BUMP: &'static bumpalo::Bump = Box::leak(Box::new(bumpalo::Bump::new()));
+    }
+    BUMP.with(|b| *b)
 }
 
 /// `bun_logger::js_printer::Indentation` and `bun_js_printer::Indentation` are

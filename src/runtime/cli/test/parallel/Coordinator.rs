@@ -97,7 +97,8 @@ impl<'a> Coordinator<'a> {
             if abort_handler::SHOULD_ABORT.load(Ordering::Acquire) {
                 return self.abort_all();
             }
-            self.vm.event_loop().tick();
+            // SAFETY: vm.event_loop() returns a live *mut EventLoop for the VM lifetime.
+            unsafe { (*self.vm.event_loop()).tick() };
             self.maybe_scale_up();
             if self.is_done() {
                 break;
@@ -110,13 +111,17 @@ impl<'a> Coordinator<'a> {
                 const MS_PER_S: i64 = 1000;
                 const NS_PER_MS: i64 = 1_000_000;
                 // TODO(port): verify bun_sys::Timespec field names/types
-                let mut ts = bun_sys::Timespec {
+                let ts = bun_sys::Timespec {
                     sec: self.scale_up_after_ms / MS_PER_S,
                     nsec: (self.scale_up_after_ms % MS_PER_S) * NS_PER_MS,
                 };
-                self.vm.event_loop().usockets_loop().tick_with_timeout(&mut ts);
+                // SAFETY: event_loop()/usockets_loop() return live pointers for the VM lifetime.
+                unsafe {
+                    (*(*self.vm.event_loop()).usockets_loop()).tick_with_timeout(Some(&ts));
+                }
             } else {
-                self.vm.event_loop().auto_tick();
+                // SAFETY: vm.event_loop() returns a live *mut EventLoop for the VM lifetime.
+                unsafe { (*self.vm.event_loop()).auto_tick() };
             }
         }
     }
@@ -162,7 +167,7 @@ impl<'a> Coordinator<'a> {
         match w.start() {
             Ok(()) => {}
             Err(e) => {
-                Output::err(e, format_args!("failed to spawn test worker"));
+                Output::err(e, "failed to spawn test worker", ());
                 if self.live_workers == 0 {
                     Global::exit(1);
                 }

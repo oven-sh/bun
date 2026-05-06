@@ -742,8 +742,14 @@ impl InitCommand {
             let dev_dependencies = all_dependencies.dev_dependencies;
             let mut needed_dependencies = IntegerBitSet::<64>::init_empty();
             let mut needed_dev_dependencies = IntegerBitSet::<64>::init_empty();
-            needed_dependencies.set_range_value(0..dependencies.len(), true);
-            needed_dev_dependencies.set_range_value(0..dev_dependencies.len(), true);
+            needed_dependencies.set_range_value(
+                bun_collections::bit_set::Range { start: 0, end: dependencies.len() },
+                true,
+            );
+            needed_dev_dependencies.set_range_value(
+                bun_collections::bit_set::Range { start: 0, end: dev_dependencies.len() },
+                true,
+            );
 
             let needs_dependencies = 'brk: {
                 if let Some(deps) = object.get(b"dependencies") {

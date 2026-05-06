@@ -286,15 +286,22 @@ impl HotReloadEvent {
         // event was submitted to the DevServer thread.
         let timer = unsafe { first.timer.assume_init() };
 
-        let mut current: &mut HotReloadEvent = first;
+        // PORT NOTE: raw-ptr loop because `recycle_event_from_dev_server` traffics in
+        // the mod.rs keystone `HotReloadEvent` pointer type; cast across the duplicate
+        // definitions until they are unified.
+        let mut current: *mut HotReloadEvent = first as *mut HotReloadEvent;
         loop {
-            current.process_file_list(dev, &mut entry_points);
-            match dev.watcher_atomics.recycle_event_from_dev_server(current) {
+            // SAFETY: `current` always points at a live event owned by `dev.watcher_atomics`.
+            unsafe { (*current).process_file_list(dev, &mut entry_points) };
+            match dev
+                .watcher_atomics
+                .recycle_event_from_dev_server(current.cast::<super::HotReloadEvent>())
+            {
                 Some(next) => {
-                    current = next;
+                    current = next.cast::<HotReloadEvent>();
                     #[cfg(debug_assertions)]
                     {
-                        debug_assert!(current.debug_mutex.try_lock());
+                        debug_assert!(unsafe { (*current).debug_mutex.try_lock() });
                     }
                 }
                 None => break,
@@ -306,17 +313,17 @@ impl HotReloadEvent {
         }
 
         match &mut dev.testing_batch_events {
-            DevServer::TestingBatchEvents::Disabled => {}
-            DevServer::TestingBatchEvents::Enabled(ev) => {
-                ev.append(dev, &entry_points);
+            TestingBatchEvents::Disabled => {}
+            TestingBatchEvents::Enabled(ev) => {
+                ev.append(&entry_points);
                 dev.publish(
-                    MessageId::TestingWatchSynchronization,
+                    HmrTopic::TestingWatchSynchronization,
                     &[MessageId::TestingWatchSynchronization.char(), 1],
-                    bun_uws::Opcode::Binary,
+                    bun_uws::Opcode::BINARY,
                 );
                 return;
             }
-            DevServer::TestingBatchEvents::EnableAfterBundle => debug_assert!(false),
+            TestingBatchEvents::EnableAfterBundle => debug_assert!(false),
         }
 
         match dev.start_async_bundle(entry_points, true, timer) {

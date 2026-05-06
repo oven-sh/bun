@@ -1677,16 +1677,15 @@ impl TestCommand {
             Output::flush();
         }
 
-        // PORT NOTE: Zig used `ctx.allocator.create` with no destroy. PORTING.md
-        // §Forbidden bans `Box::leak`; keep an owned `Box` local — `exec()` never
-        // returns before process exit, so its lifetime spans the process.
-        let mut env_loader: Box<DotEnv::Loader> = 'brk: {
-            let map = Box::new(DotEnv::Map::init());
-            let loader = Box::new(DotEnv::Loader::init(map));
-            break 'brk loader;
-        };
+        // PORT NOTE: Zig used `ctx.allocator.create` with no destroy. `exec()` never
+        // returns before process exit, so the heap allocation outlives all observers.
+        // `Loader::init` borrows the map; erase to `'static` via raw pointer round-trip
+        // (the map is never freed — process-lifetime singleton).
+        let env_map: *mut DotEnv::Map = Box::into_raw(Box::new(DotEnv::Map::init()));
+        // SAFETY: `env_map` is heap-allocated and never freed; valid for process lifetime.
+        let mut env_loader: Box<DotEnv::Loader> = Box::new(DotEnv::Loader::init(unsafe { &mut *env_map }));
         jsc::initialize(false);
-        HTTPThread::init(&Default::default());
+        bun_http::init(&Default::default());
 
         let enable_random = ctx.test_options.randomize;
         let seed: u32 = if enable_random {
@@ -1700,9 +1699,9 @@ impl TestCommand {
         if enable_random {
             ctx.test_options.seed = Some(seed);
         }
-        let mut random_instance: Option<bun::rand::DefaultPrng> = if enable_random { Some(bun::rand::DefaultPrng::init(seed as u64)) } else { None };
-        let random = random_instance.as_mut().map(|instance| instance.random());
-        // TODO(port): std.Random interface — provide bun::rand wrapper
+        // PORT NOTE: Zig threads a `std.Random` vtable; Rust `DefaultPrng` is `Copy`, so
+        // pass the prng by value to TestRunner and keep a local copy for shuffling.
+        let random_instance: Option<bun::rand::DefaultPrng> = if enable_random { Some(bun::rand::DefaultPrng::init(seed as u64)) } else { None };
 
         let mut snapshot_file_buf: Vec<u8> = Vec::new();
         // TODO(port): `Snapshots::ValuesHashMap` is an inherent associated

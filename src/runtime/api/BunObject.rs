@@ -669,14 +669,14 @@ pub mod bun_object {
         BunObject_lazyPropCb_FileSystemRouter => super::get_file_system_router,
         BunObject_lazyPropCb_Glob => super::get_glob_constructor,
         BunObject_lazyPropCb_Image => super::get_image_constructor,
-        BunObject_lazyPropCb_MD4 => Crypto::MD4::getter,
-        BunObject_lazyPropCb_MD5 => Crypto::MD5::getter,
-        BunObject_lazyPropCb_SHA1 => Crypto::SHA1::getter,
-        BunObject_lazyPropCb_SHA224 => Crypto::SHA224::getter,
-        BunObject_lazyPropCb_SHA256 => Crypto::SHA256::getter,
-        BunObject_lazyPropCb_SHA384 => Crypto::SHA384::getter,
-        BunObject_lazyPropCb_SHA512 => Crypto::SHA512::getter,
-        BunObject_lazyPropCb_SHA512_256 => Crypto::SHA512_256::getter,
+        BunObject_lazyPropCb_MD4 => super::static_adapters::static_hasher_getter,
+        BunObject_lazyPropCb_MD5 => super::static_adapters::static_hasher_getter,
+        BunObject_lazyPropCb_SHA1 => super::static_adapters::static_hasher_getter,
+        BunObject_lazyPropCb_SHA224 => super::static_adapters::static_hasher_getter,
+        BunObject_lazyPropCb_SHA256 => super::static_adapters::static_hasher_getter,
+        BunObject_lazyPropCb_SHA384 => super::static_adapters::static_hasher_getter,
+        BunObject_lazyPropCb_SHA512 => super::static_adapters::static_hasher_getter,
+        BunObject_lazyPropCb_SHA512_256 => super::static_adapters::static_hasher_getter,
         BunObject_lazyPropCb_JSONC => super::get_jsonc_object,
         BunObject_lazyPropCb_markdown => super::get_markdown_object,
         BunObject_lazyPropCb_TOML => super::get_toml_object,
@@ -1327,7 +1327,7 @@ pub fn open_in_editor(global_this: &JSGlobalObject, callframe: &CallFrame) -> Js
         return global_this.throw("No file path specified", format_args!(""));
     }
 
-    if let Err(err) = editor.open(edit.path, path, line, column, &arguments.arena) {
+    if let Err(err) = editor.open(edit.path, path, line, column) {
         return global_this.throw(
             "Opening editor failed {s}",
             format_args!("{}", err.name()),

@@ -1309,19 +1309,22 @@ impl Framework {
                     let parsed = bun_bundler::defines::DefineData::parse(
                         drop_item, b"", true, true, log, arena,
                     )?;
-                    out.options.define.insert(arena, drop_item, parsed)?;
+                    out.options.define.insert(drop_item, parsed)?;
                 }
             }
         }
 
         if mode != Mode::Development {
             // Hide information about the source repository, at the cost of debugging quality.
-            out.options.entry_naming = b"_bun/[hash].[ext]";
-            out.options.chunk_naming = b"_bun/[hash].[ext]";
-            out.options.asset_naming = b"_bun/[hash].[ext]";
+            out.options.entry_naming = b"_bun/[hash].[ext]".as_slice().into();
+            out.options.chunk_naming = b"_bun/[hash].[ext]".as_slice().into();
+            out.options.asset_naming = b"_bun/[hash].[ext]".as_slice().into();
         }
 
-        out.resolver.opts = out.options.clone();
+        // TODO(port): `BundleOptions` has no `Clone`; Zig copied by value.
+        // todo!("blocked_on: bun_bundler::BundleOptions::clone")
+        // out.resolver.opts = out.options.clone();
+        let _ = arena;
         Ok(())
     }
 }
@@ -1382,10 +1385,13 @@ impl Default for ReactFastRefresh {
 
 #[inline]
 fn resolve_or_null(r: &mut bun_resolver::Resolver, path: &[u8]) -> Option<&'static [u8]> {
-    match r.resolve(r.fs.top_level_dir, path, bun_options_types::ImportKind::Stmt) {
-        Ok(res) => Some(res.path_const().unwrap().text),
+    // SAFETY: `Resolver.fs` / `Resolver.log` are `*mut` singletons live for
+    // the resolver's lifetime (LIFETIMES.tsv JSC_BORROW).
+    let top_level_dir = unsafe { &(*r.fs).top_level_dir };
+    match r.resolve(top_level_dir, path, bun_options_types::ImportKind::Stmt) {
+        Ok(res) => Some(arena_erase(res.path_const().unwrap().text)),
         Err(_) => {
-            r.log.reset();
+            unsafe { (*r.log).reset() };
             None
         }
     }

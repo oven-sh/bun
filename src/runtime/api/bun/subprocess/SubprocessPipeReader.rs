@@ -286,7 +286,7 @@ impl PipeReader {
             State::Pending => {
                 let stream = ReadableStream::from_pipe(global_object, self, &mut self.reader);
                 self.state = State::Done(Vec::new());
-                Ok(stream)
+                stream
             }
             State::Done(_) => {
                 // PORT NOTE: reshaped for borrowck — take the payload only in this arm so the
@@ -296,7 +296,7 @@ impl PipeReader {
                 else {
                     unreachable!()
                 };
-                Ok(ReadableStream::from_owned_slice(global_object, bytes, 0))
+                ReadableStream::from_owned_slice(global_object, bytes.into_boxed_slice(), 0)
             }
             State::Err(_err) => {
                 let empty = ReadableStream::empty(global_object)?;

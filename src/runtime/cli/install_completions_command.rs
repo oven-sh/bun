@@ -668,8 +668,9 @@ impl InstallCompletionsCommand {
 
             if needs_to_tell_them_to_add_completions_file {
                 pretty_errorln!(
-                    "<r>To enable completions, add this to your .zshrc:\n      <b>[ -s \"{0}\" ] && source \"{0}\"",
-                    bstr::BStr::new(completions_path),
+                    "<r>To enable completions, add this to your .zshrc:\n      <b>[ -s \"{}\" ] && source \"{}\"",
+                    bstr::BStr::new(&*completions_path),
+                    bstr::BStr::new(&*completions_path),
                 );
             }
         }

@@ -1,8 +1,7 @@
 //! `from_js`/`to_js` for `GetAddrInfo` and its nested option types, plus
 //! `address_to_js`/`addr_info_to_js_array`. The pure types stay in `src/dns/`.
 
-use bun_jsc::{ComptimeStringMapExt as _, JSGlobalObject, JSValue, JsError, JsResult};
-use bun_string::ZigString;
+use bun_jsc::{ComptimeStringMapExt as _, JSGlobalObject, JSValue, JsError, JsResult, StringJsc as _};
 
 use bun_dns::{addr_info_count, address_to_string};
 use bun_dns::{
@@ -121,7 +120,7 @@ pub fn socket_type_from_js(value: JSValue, global: &JSGlobalObject) -> Result<So
     }
 
     if value.is_number() {
-        return match value.to::<i32>() {
+        return match value.to_int32() {
             0 => Ok(SocketType::Unspecified),
             1 => Ok(SocketType::Stream),
             2 => Ok(SocketType::Dgram),
@@ -151,7 +150,7 @@ pub fn protocol_from_js(value: JSValue, global: &JSGlobalObject) -> Result<Proto
     }
 
     if value.is_number() {
-        return match value.to::<i32>() {
+        return match value.to_int32() {
             0 => Ok(Protocol::Unspecified),
             6 => Ok(Protocol::Tcp),
             17 => Ok(Protocol::Udp),
@@ -211,7 +210,7 @@ pub fn result_any_to_js(this: &ResultAny, global: &JSGlobalObject) -> JsResult<O
             Some(addr_info_to_js_array(unsafe { &*addrinfo }, global)?)
         }
         ResultAny::List(list) => 'brk: {
-            let array = JSValue::create_empty_array(global, list.len() as u32)?;
+            let array = JSValue::create_empty_array(global, list.len())?;
             let mut i: u32 = 0;
             let items: &[GaiResult] = list.as_slice();
             for item in items {

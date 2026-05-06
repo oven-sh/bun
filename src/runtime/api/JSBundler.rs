@@ -346,47 +346,47 @@ pub mod js_bundler {
             let guard = scopeguard::guard(&mut this, |s| s.deinit_and_unprotect());
 
             let Some(files_obj) = files_value.get_object() else {
-                return global_this.throw_invalid_arguments("Expected files to be an object", &[]);
+                return Err(global_this.throw_invalid_arguments("Expected files to be an object"));
             };
 
-            let mut files_iter = jsc::JSPropertyIterator::init(
-                global_this,
-                files_obj,
-                jsc::JSPropertyIteratorOptions {
-                    skip_empty_name: true,
-                    include_value: true,
-                },
-            )?;
+            const ITER_OPTS: jsc::JSPropertyIteratorOptions =
+                jsc::JSPropertyIteratorOptions::new(true, true);
+            let mut files_iter =
+                jsc::JSPropertyIterator::<ITER_OPTS>::init(global_this, files_obj)?;
 
             // PORT NOTE: reshaped for borrowck — extract len before mutating through guard
-            guard.map.reserve(usize::from(files_iter.len()));
+            guard.map.reserve(files_iter.len);
 
             while let Some(prop) = files_iter.next()? {
                 let property_value = files_iter.value;
 
                 // Parse the value as BlobOrStringOrBuffer using async mode for thread safety
-                let Some(blob_or_string) =
-                    jsc::node::BlobOrStringOrBuffer::from_js_async(global_this, property_value)?
-                else {
-                    return global_this.throw_invalid_arguments(
-                        "Expected file content to be a string, Blob, File, TypedArray, or ArrayBuffer",
-                        &[],
-                    );
+                let blob_or_string: jsc::node::BlobOrStringOrBuffer = {
+                    let _ = property_value;
+                    todo!("blocked_on: bun_jsc::Node::BlobOrStringOrBuffer::from_js_async")
                 };
+                #[allow(unreachable_code)]
+                if false {
+                    return Err(global_this.throw_invalid_arguments(
+                        "Expected file content to be a string, Blob, File, TypedArray, or ArrayBuffer",
+                    ));
+                }
                 // errdefer blob_or_string.deinitAndUnprotect() — handled below via scopeguard if needed
                 // TODO(port): errdefer for blob_or_string
 
                 // Clone the key since we need to own it
-                let mut key = prop.to_owned_slice()?;
+                let mut key = prop.to_owned_slice();
 
                 // Normalize backslashes to forward slashes for cross-platform consistency
                 // This ensures Windows paths like "C:\foo\bar.js" become "C:/foo/bar.js"
                 // Use dangerouslyConvertPathToPosixInPlace which always converts \ to /
                 // (uses sep_windows constant, not sep which varies by target)
-                bun_paths::resolve_path::dangerously_convert_path_to_posix_in_place::<u8>(&mut key);
+                bun_paths::resolve_path::dangerously_convert_path_to_posix_in_place::<u8>(
+                    key.as_mut_slice(),
+                );
 
                 // PERF(port): was assume_capacity
-                guard.map.insert(key, blob_or_string);
+                guard.map.insert(key.into_boxed_slice(), blob_or_string);
             }
 
             drop(files_iter);
@@ -455,7 +455,7 @@ pub mod js_bundler {
                 entry_points: StringSet::default(),
                 hot: false,
                 react_fast_refresh: false,
-                define: StringMap::new(false),
+                define: StringMap::init(false),
                 loaders: None,
                 dir: OwnedString::default(),
                 outdir: OwnedString::default(),
@@ -699,7 +699,7 @@ pub mod js_bundler {
             plugins: &mut Option<*mut Plugin>,
         ) -> JsResult<Config> {
             let mut this = Config {
-                define: StringMap::new(true),
+                define: StringMap::init(true),
                 ..Default::default()
             };
             // errdefer this.deinit(allocator) — handled by `impl Drop for Config` on `?` paths.

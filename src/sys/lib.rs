@@ -153,7 +153,8 @@ pub fn lstatat(fd: Fd, path: &ZStr) -> Result<Stat> {
         if rc == 0 {
             Ok(unsafe { st.assume_init() })
         } else {
-            Err(Error::from_code_int(last_errno(), Tag::lstat).with_path(path.as_bytes()))
+            // sys.zig:877 — `lstatat` tags as `.fstatat`.
+            Err(Error::from_code_int(last_errno(), Tag::fstatat).with_path(path.as_bytes()))
         }
     }
     #[cfg(windows)] {
@@ -306,6 +307,7 @@ impl Tag {
     pub const kevent: Tag = Tag(60);  pub const inotify: Tag = Tag(61);
     pub const ppoll: Tag = Tag(62);   pub const fallocate: Tag = Tag(63);
     pub const copy_file_range: Tag = Tag(64);
+    pub const pwritev: Tag = Tag(65);
     pub const TODO: Tag = Tag(0);
     /// Full tag enum (~200 variants) lives in `lib_draft_b1.rs`. This subset
     /// covers the un-gated posix surface; B-2 widens as syscalls land.
@@ -326,7 +328,8 @@ impl Tag {
             50 => "isatty", 51 => "sendfile", 52 => "clonefile", 53 => "copyfile",
             54 => "fcopyfile", 55 => "mmap", 56 => "munmap", 57 => "fchdir",
             58 => "epoll_ctl", 59 => "kqueue", 60 => "kevent", 61 => "inotify",
-            62 => "ppoll", 63 => "fallocate",
+            62 => "ppoll", 63 => "fallocate", 64 => "copy_file_range",
+            65 => "pwritev",
             _ => "unknown",
         }
     }
@@ -430,7 +433,8 @@ mod posix_impl {
         check_p!(unsafe { libc::mkdir(path.as_ptr(), mode) }, Tag::mkdir, path); Ok(())
     }
     pub fn mkdirat(dir: Fd, path: &ZStr, mode: Mode) -> Maybe<()> {
-        check_p!(unsafe { libc::mkdirat(dir.native(), path.as_ptr(), mode) }, Tag::mkdirat, path); Ok(())
+        // sys.zig:809 — `mkdiratZ` tags errors as `.mkdir` (not `.mkdirat`).
+        check_p!(unsafe { libc::mkdirat(dir.native(), path.as_ptr(), mode) }, Tag::mkdir, path); Ok(())
     }
     /// `bun.makePath` — `mkdirat` walking up parents on ENOENT, like `mkdir -p`.
     /// Port of std.fs.Dir.makePath (Zig std/fs/Dir.zig).
@@ -447,7 +451,10 @@ mod posix_impl {
         buf[end] = 0;
         // Stack of separator positions we NUL'd while peeling back, so each
         // can be restored before re-creating its component on the way up.
-        let mut nuls = [0u16; 256];
+        // Worst case: every other byte is a separator (`a/a/a/...`), so the
+        // stack can hold at most `MAX_PATH_BYTES / 2` entries — `sub_path` is
+        // bounds-checked against `MAX_PATH_BYTES` above so this never overflows.
+        let mut nuls = [0u16; bun_core::MAX_PATH_BYTES / 2];
         let mut nuls_len = 0usize;
         let mut peel = end;
         // Walk down: try mkdirat; on ENOENT, peel one component.
@@ -544,9 +551,10 @@ mod posix_impl {
         check_p!(unsafe { libc::link(src.as_ptr(), dest.as_ptr()) }, Tag::link, src); Ok(())
     }
     pub fn linkat(src_dir: Fd, src: &ZStr, dest_dir: Fd, dest: &ZStr) -> Maybe<()> {
+        // sys.zig:3963 — `linkatZ` tags as `.link`.
         check_p!(
             unsafe { libc::linkat(src_dir.native(), src.as_ptr(), dest_dir.native(), dest.as_ptr(), 0) },
-            Tag::linkat, src
+            Tag::link, src
         );
         Ok(())
     }
@@ -609,13 +617,14 @@ mod posix_impl {
         Ok(())
     }
     pub fn readlinkat(fd: Fd, path: &ZStr, buf: &mut [u8]) -> Maybe<usize> {
+        // sys.zig:2390 — tags as `.readlink`.
         let n = check_p!(
             unsafe { libc::readlinkat(fd.native(), path.as_ptr(), buf.as_mut_ptr().cast(), buf.len()) },
-            Tag::readlinkat, path
+            Tag::readlink, path
         );
         let n = n as usize;
         if n >= buf.len() {
-            return Err(Error::from_code_int(libc::ENAMETOOLONG, Tag::readlinkat).with_path(path.as_bytes()));
+            return Err(Error::from_code_int(libc::ENAMETOOLONG, Tag::readlink).with_path(path.as_bytes()));
         }
         buf[n] = 0;
         Ok(n)
@@ -1211,7 +1220,7 @@ pub fn pwritev(fd: Fd, vecs: &[PlatformIoVecConst], offset: i64) -> Maybe<usize>
             if rc < 0 {
                 let e = last_errno();
                 if e == libc::EINTR { continue; }
-                return Err(Error::from_code_int(e, Tag::pwrite));
+                return Err(Error::from_code_int(e, Tag::pwritev));
             }
             return Ok(rc as usize);
         }
@@ -1220,7 +1229,7 @@ pub fn pwritev(fd: Fd, vecs: &[PlatformIoVecConst], offset: i64) -> Maybe<usize>
     {
         // TODO(b2-windows): route through `uv_fs_write` with `uv_buf_t[]`.
         let _ = (fd, vecs, offset);
-        Err(Error::from_code_int(libc::ENOSYS, Tag::pwrite))
+        Err(Error::from_code_int(libc::ENOSYS, Tag::pwritev))
     }
 }
 

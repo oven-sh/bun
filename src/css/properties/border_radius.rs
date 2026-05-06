@@ -62,6 +62,7 @@ impl BorderRadius {
         ("bottom_left", true),
     ];
 
+    #[cfg(any())] // blocked_on: `LengthPercentage: values::protocol::Parse` impl (Rect::<LP>::parse bound)
     pub fn parse(input: &mut css::Parser) -> css::Result<BorderRadius> {
         let widths = Rect::<LengthPercentage>::parse(input)?;
         let heights = if input.try_parse(|i| i.expect_delim('/')).is_ok() {
@@ -79,6 +80,7 @@ impl BorderRadius {
         })
     }
 
+    #[cfg(any())] // blocked_on: `&LengthPercentage: values::protocol::ToCss` (Rect<&LP>::to_css bound)
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         let widths: Rect<&LengthPercentage> = Rect {
             top: &self.top_left.a,
@@ -132,14 +134,14 @@ macro_rules! maybe_flush {
         // If two vendor prefixes for the same property have different
         // values, we need to flush what we have immediately to preserve order.
         if let Some(existing) = &$self.$prop {
-            if existing.0 != *$val && !existing.1.contains($vp) {
+            if !Size2D::eql(&existing.0, $val) && !existing.1.contains($vp) {
                 $self.flush($d, $ctx);
             }
         }
 
         if $self.$prop.is_some()
             && $ctx.targets.browsers.is_some()
-            && !css::generic::is_compatible::<Size2D<LengthPercentage>>($val, $ctx.targets.browsers.unwrap())
+            && !$val.is_compatible($ctx.targets.browsers.unwrap())
         {
             $self.flush($d, $ctx);
         }
@@ -147,7 +149,7 @@ macro_rules! maybe_flush {
 }
 
 macro_rules! property_helper {
-    ($self:expr, $d:expr, $ctx:expr, $prop:ident, $val:expr, $vp:expr) => {{
+    ($self:expr, $d:expr, $ctx:expr, $bump:expr, $prop:ident, $val:expr, $vp:expr) => {{
         if $self.category != PropertyCategory::Physical {
             $self.flush($d, $ctx);
         }
@@ -156,9 +158,9 @@ macro_rules! property_helper {
 
         // Otherwise, update the value and add the prefix.
         if let Some(existing) = &mut $self.$prop {
-            *existing = ($val.clone(), $vp);
+            *existing = ($val.deep_clone($bump), $vp);
         } else {
-            $self.$prop = Some(($val.clone(), $vp));
+            $self.$prop = Some(($val.deep_clone($bump), $vp));
             $self.has_any = true;
         }
 
@@ -206,7 +208,7 @@ macro_rules! logical_property {
                     | Property::BorderEndEndRadius(radius)
                     | Property::BorderEndStartRadius(radius) => {
                         $ctx.add_logical_rule(
-                            Property::$ltr((radius.clone(), prefix)),
+                            Property::$ltr((radius.deep_clone($bump), prefix)),
                             Property::$rtl((radius, prefix)),
                         );
                     }
@@ -232,10 +234,10 @@ impl BorderRadiusHandler {
     ) -> bool {
         let bump = dest.bump();
         match property {
-            Property::BorderTopLeftRadius((val, vp)) => property_helper!(self, dest, context, top_left, val, *vp),
-            Property::BorderTopRightRadius((val, vp)) => property_helper!(self, dest, context, top_right, val, *vp),
-            Property::BorderBottomRightRadius((val, vp)) => property_helper!(self, dest, context, bottom_right, val, *vp),
-            Property::BorderBottomLeftRadius((val, vp)) => property_helper!(self, dest, context, bottom_left, val, *vp),
+            Property::BorderTopLeftRadius((val, vp)) => property_helper!(self, dest, context, bump, top_left, val, *vp),
+            Property::BorderTopRightRadius((val, vp)) => property_helper!(self, dest, context, bump, top_right, val, *vp),
+            Property::BorderBottomRightRadius((val, vp)) => property_helper!(self, dest, context, bump, bottom_right, val, *vp),
+            Property::BorderBottomLeftRadius((val, vp)) => property_helper!(self, dest, context, bump, bottom_left, val, *vp),
             Property::BorderStartStartRadius(_) => logical_property_helper!(self, dest, context, start_start, property.deep_clone(bump)),
             Property::BorderStartEndRadius(_) => logical_property_helper!(self, dest, context, start_end, property.deep_clone(bump)),
             Property::BorderEndEndRadius(_) => logical_property_helper!(self, dest, context, end_end, property.deep_clone(bump)),
@@ -251,10 +253,10 @@ impl BorderRadiusHandler {
                 maybe_flush!(self, dest, context, bottom_right, &val.bottom_right, *vp);
                 maybe_flush!(self, dest, context, bottom_left, &val.bottom_left, *vp);
 
-                property_helper!(self, dest, context, top_left, &val.top_left, *vp);
-                property_helper!(self, dest, context, top_right, &val.top_right, *vp);
-                property_helper!(self, dest, context, bottom_right, &val.bottom_right, *vp);
-                property_helper!(self, dest, context, bottom_left, &val.bottom_left, *vp);
+                property_helper!(self, dest, context, bump, top_left, &val.top_left, *vp);
+                property_helper!(self, dest, context, bump, top_right, &val.top_right, *vp);
+                property_helper!(self, dest, context, bump, bottom_right, &val.bottom_right, *vp);
+                property_helper!(self, dest, context, bump, bottom_left, &val.bottom_left, *vp);
             }
             Property::Unparsed(unparsed) => {
                 if is_border_radius_property(unparsed.property_id.tag()) {
@@ -318,12 +320,13 @@ impl BorderRadiusHandler {
                 let prefix = context
                     .targets
                     .prefixes(intersection, css::prefixes::Feature::BorderRadius);
+                let bump = dest.bump();
                 dest.push(Property::BorderRadius((
                     BorderRadius {
-                        top_left: tl.0.clone(),
-                        top_right: tr.0.clone(),
-                        bottom_right: br.0.clone(),
-                        bottom_left: bl.0.clone(),
+                        top_left: tl.0.deep_clone(bump),
+                        top_right: tr.0.deep_clone(bump),
+                        bottom_right: br.0.deep_clone(bump),
+                        bottom_left: bl.0.deep_clone(bump),
                     },
                     prefix,
                 )));

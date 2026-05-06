@@ -1523,25 +1523,74 @@ pub mod fs {
         /// Port of `RealFS.needToCloseFiles` in `fs.zig`.
         #[inline]
         pub fn need_to_close_files(&self) -> bool {
-            // Conservative: always close until rlimit-based quota tracking lands.
-            true
+            if !bun_core::feature_flags::STORE_FILE_DESCRIPTORS {
+                return true;
+            }
+
+            #[cfg(windows)]
+            {
+                // 'false' is okay here because windows gives you a seemingly unlimited number of
+                // open file handles, while posix has a lower limit. Handles are automatically
+                // closed when the process exits. See fs.zig `needToCloseFiles` for the full
+                // rationale (handle ordering on Windows is non-monotone, so MAX_FD tracking
+                // doesn't apply).
+                return false;
+            }
+
+            #[cfg(not(windows))]
+            {
+                // If we're not near the max amount of open files, don't worry about it.
+                !(self.file_limit > 254 && self.file_limit > (FileSystem::max_fd() as usize + 1) * 2)
+            }
         }
 
-        /// Port of `RealFS.entriesAt` in `fs.zig` — index-only fast path.
-        ///
-        /// The full Zig body re-reads the directory when `entries.generation < generation`
-        /// (open + readdir + cache replace). That path needs `bun_sys::open_dir_for_iteration`
-        /// + `RealFS::readdir`/`read_directory_error`, which remain in the gated `fs.rs`
-        /// Phase-A draft. This impl handles the cache-hit case and falls through on
-        /// stale-generation (returning the stale entry, matching pre-watch behaviour).
-        // TODO(b2-blocked): bun_sys::open_dir_for_iteration + RealFS::readdir — restore
-        // generation-check re-read once those land.
+        /// Port of `RealFS.entriesAt` in `fs.zig` — index lookup with generation-check
+        /// re-read (open + readdir + cache replace) when the cached listing is stale.
         pub fn entries_at(
             &mut self,
             index: bun_alloc::IndexType,
-            _generation: Generation,
+            generation: Generation,
         ) -> Option<&mut EntriesOption> {
-            self.entries.at_index(index)
+            // PORT NOTE: erase to raw immediately so re-borrowing `&mut self` for
+            // `open_dir`/`readdir`/`read_directory_error` doesn't conflict.
+            let result_ptr = self.entries.at_index(index)? as *mut EntriesOption;
+            // SAFETY: BSSMap-owned slot; uniquely held under `entries_mutex`.
+            if let EntriesOption::Entries(existing) = unsafe { &mut *result_ptr } {
+                if existing.generation < generation {
+                    let e_ptr: *mut DirEntry = *existing as *mut DirEntry;
+                    // SAFETY: BSSMap-owned `DirEntry` (boxed/leaked into `EntriesOption`); `entries_mutex` held.
+                    let dir = unsafe { (*e_ptr).dir };
+                    let handle = match self.open_dir(dir) {
+                        Ok(h) => h,
+                        Err(err) => {
+                            // SAFETY: see above.
+                            unsafe { (*e_ptr).data.clear() };
+                            return self.read_directory_error(dir, err).ok();
+                        }
+                    };
+                    // PORT NOTE: Zig `defer handle.close()` — runs on every exit.
+                    let _close_guard = scopeguard::guard(handle, |h| {
+                        let _ = bun_sys::close(h);
+                    });
+                    // SAFETY: see above — exclusive `&mut` on the prev map for the duration of `readdir`.
+                    let prev = Some(unsafe { &mut (*e_ptr).data });
+                    match self.readdir(false, prev, dir, generation, handle, ()) {
+                        Ok(new_entry) => {
+                            // SAFETY: see above.
+                            unsafe { (*e_ptr).data.clear() };
+                            // SAFETY: see above — slot is exclusively owned here.
+                            unsafe { *e_ptr = new_entry };
+                        }
+                        Err(err) => {
+                            // SAFETY: see above.
+                            unsafe { (*e_ptr).data.clear() };
+                            return self.read_directory_error(dir, err).ok();
+                        }
+                    }
+                }
+            }
+            // SAFETY: BSSMap-owned slot; outlives caller (process-static singleton).
+            Some(unsafe { &mut *result_ptr })
         }
 
         fn platform_temp_dir_compute() -> &'static [u8] {

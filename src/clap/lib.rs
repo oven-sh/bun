@@ -699,19 +699,22 @@ pub fn simple_help(params: &[Param<Help>]) {
         let spaces_after = vec![b' '; num_spaces_after];
 
         simple_print_param(param).expect("unreachable");
-        // Zig's `Output.pretty` (clap.zig:567) applies prettyFmt only to the *comptime*
-        // format string `"  {s}  {s}"` — `desc_text` is interpolated verbatim via `{s}`
-        // with no tag processing. Print it raw; only `simple_help_bun_top_level` feeds
-        // desc_text through the rewriter (clap.zig:604).
+        // Zig's `Output.pretty("  {s}  {s}", …)` (clap.zig:567) only runs prettyFmt
+        // over the comptime template, so `<tag>` markers inside `desc_text` leak
+        // through verbatim there. That is observably wrong (`bun run --help` prints
+        // literal `<d>$cwd<r>`); the Rust port routes `desc_text` through the runtime
+        // rewriter — same path `simple_help_bun_top_level` already takes — so `--help`
+        // output is tag-clean regardless of which helper a command uses.
+        let desc = Output::pretty_fmt_runtime(desc_text, Output::enable_ansi_colors_stdout());
         Output::pretty(format_args!(
             "  {}  {}",
             bstr::BStr::new(&spaces_after),
-            bstr::BStr::new(desc_text),
+            bstr::BStr::new(&desc),
         ));
     }
 }
 
-pub fn simple_help_bun_top_level(params: &'static [Param<Help>]) {
+pub fn simple_help_bun_top_level(params: &[Param<Help>]) {
     // TODO(port): Zig evaluates `computed_max_spacing` at `comptime` and emits
     // `@compileError` on overflow, plus uses `inline for` + comptime string
     // concat (`space_buf[..n] ++ desc_text`). None of that is const-evaluable

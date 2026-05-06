@@ -106,17 +106,13 @@ pub mod protocol {
     pub trait TryFromAngle: Sized {
         fn try_from_angle(angle: Angle) -> Option<Self>;
     }
-    /// Minimal `Parse` shape so `DimensionPercentage<D>::parse` can bound `D`.
-    /// Intentionally lifetime-free: the value-type parsers all take
-    /// `&mut Parser` (Phase-A `'static`-slice placeholder) and return owned
-    /// values. Phase B threads `'bump` and this aliases `generics::Parse`.
-    pub trait Parse: Sized {
-        fn parse(input: &mut css::Parser) -> css::CssResult<Self>;
-    }
-
-    // Re-export the un-gated shapes from `crate::generics` so
-    // `crate::values::protocol::*` is a one-stop bound set.
-    pub use crate::generics::{IsCompatible, PartialCmp, ToCss, TryMap, TryOp, TryOpTo, TrySign};
+    // `Parse`/`ToCss` and the numeric helpers now live in `crate::generics`;
+    // re-export so `values::protocol::*` stays a one-stop bound set.
+    pub use crate::generics::{
+        IsCompatible, Parse, ParseWithOptions, PartialCmp, ToCss, TryMap, TryOp, TryOpTo, TrySign,
+    };
+    #[allow(unused_imports)]
+    use {css as _, Angle as _};
 }
 
 // ──────────────────────────────────────────────────────────────────────────

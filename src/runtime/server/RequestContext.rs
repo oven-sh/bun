@@ -3617,25 +3617,35 @@ macro_rules! request_ctx_exports {
         #[bun_jsc::host_call]
         pub fn $on_resolve(g: *mut JSGlobalObject, f: *mut CallFrame) -> JSValue {
             // SAFETY: JSC passes live global/callframe to promise reaction host fns.
-            bun_jsc::to_js_host_fn(RequestContext::<$srv, $ssl, $dbg, $h3>::on_resolve)(g, f)
+            let (g, f) = unsafe { (&*g, &*f) };
+            bun_jsc::to_js_host_fn_result(g, RequestContext::<$srv, $ssl, $dbg, $h3>::on_resolve(g, f))
         }
         #[unsafe(no_mangle)]
         #[bun_jsc::host_call]
         pub fn $on_reject(g: *mut JSGlobalObject, f: *mut CallFrame) -> JSValue {
             // SAFETY: JSC passes live global/callframe to promise reaction host fns.
-            bun_jsc::to_js_host_fn(RequestContext::<$srv, $ssl, $dbg, $h3>::on_reject)(g, f)
+            let (g, f) = unsafe { (&*g, &*f) };
+            bun_jsc::to_js_host_fn_result(g, RequestContext::<$srv, $ssl, $dbg, $h3>::on_reject(g, f))
         }
         #[unsafe(no_mangle)]
         #[bun_jsc::host_call]
         pub fn $on_resolve_stream(g: *mut JSGlobalObject, f: *mut CallFrame) -> JSValue {
             // SAFETY: JSC passes live global/callframe to promise reaction host fns.
-            bun_jsc::to_js_host_fn(RequestContext::<$srv, $ssl, $dbg, $h3>::on_resolve_stream)(g, f)
+            let (g, f) = unsafe { (&*g, &*f) };
+            bun_jsc::to_js_host_fn_result(g, RequestContext::<$srv, $ssl, $dbg, $h3>::on_resolve_stream(g, f))
         }
         #[unsafe(no_mangle)]
         #[bun_jsc::host_call]
         pub fn $on_reject_stream(g: *mut JSGlobalObject, f: *mut CallFrame) -> JSValue {
             // SAFETY: JSC passes live global/callframe to promise reaction host fns.
-            bun_jsc::to_js_host_fn(RequestContext::<$srv, $ssl, $dbg, $h3>::on_reject_stream)(g, f)
+            let (g, f) = unsafe { (&*g, &*f) };
+            bun_jsc::to_js_host_fn_result(g, RequestContext::<$srv, $ssl, $dbg, $h3>::on_reject_stream(g, f))
+        }
+        impl RequestContextHostFns for RequestContext<$srv, $ssl, $dbg, $h3> {
+            const ON_RESOLVE: bun_jsc::JSHostFn = $on_resolve;
+            const ON_REJECT: bun_jsc::JSHostFn = $on_reject;
+            const ON_RESOLVE_STREAM: bun_jsc::JSHostFn = $on_resolve_stream;
+            const ON_REJECT_STREAM: bun_jsc::JSHostFn = $on_reject_stream;
         }
     )*};
 }

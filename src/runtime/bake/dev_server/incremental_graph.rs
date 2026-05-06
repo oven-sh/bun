@@ -1487,8 +1487,8 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
 
         // Rebuild all dependencies.
         let target = match SIDE {
-            Side::Client => bun_options_types::BundleEnums::Target::Browser,
-            Side::Server => bun_options_types::BundleEnums::Target::Bun,
+            Side::Client => bun_options_types::Target::Browser,
+            Side::Server => bun_options_types::Target::Bun,
         };
         let mut it = self.first_dep[index.get() as usize];
         while let Some(edge_index) = it {

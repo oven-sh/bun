@@ -1376,51 +1376,115 @@ pub fn get_argv(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     node::process::get_argv(global_this)
 }
 
+// PORT NOTE (layering): `RareData.editor_context` in `bun_jsc` is an opaque ZST
+// stub — the real `EditorContext` lives in this crate (`cli::open`) and depends
+// on `bun_dotenv` / `bun_spawn`, so it can't move down without dragging those
+// into `bun_jsc`'s graph. Zig stored it on `rareData()`; semantically it is
+// per-JS-thread state (one VM per thread), so a `thread_local` here is
+// equivalent and breaks the cycle without type erasure.
+thread_local! {
+    static EDITOR_CONTEXT: core::cell::RefCell<crate::cli::open::EditorContext> =
+        const { core::cell::RefCell::new(crate::cli::open::EditorContext {
+            editor: None,
+            name: b"",
+            path: b"",
+        }) };
+}
+
 #[bun_jsc::host_fn]
 pub fn open_in_editor(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    // `RareData::editor_context` is a `high_tier::EditorContext` opaque stub in
-    // `bun_jsc::rare_data`; the real `crate::cli::open::EditorContext` (with
-    // `name`/`path`/`editor` fields and `detect_editor`) cannot be reached
-    // through `RareData` until the cycle-break vtable lands. Parse args for
-    // side-effect validation, then bail.
     let args = callframe.arguments_old::<4>();
     // SAFETY: bun_vm() returns the live per-thread singleton.
     let vm = unsafe { &*global_this.bun_vm() };
     let mut arguments = ArgumentsSlice::init(vm, args.slice());
     let mut path = ZigStringSlice::EMPTY;
-    let mut _editor_choice: Option<Editor> = None;
-    let mut line = ZigStringSlice::EMPTY;
-    let mut column = ZigStringSlice::EMPTY;
+    let mut editor_choice: Option<Editor> = None;
+    let mut line: Option<ZigStringSlice> = None;
+    let mut column: Option<ZigStringSlice> = None;
 
     if let Some(file_path_) = arguments.next_eat() {
         path = file_path_.to_slice(global_this)?;
     }
 
-    if let Some(opts) = arguments.next_eat() {
-        if !opts.is_undefined_or_null() {
-            if let Some(editor_val) = opts.get_truthy(global_this, "editor")? {
-                let _sliced = editor_val.to_slice(global_this)?;
-                // TODO(port): edit.name/detect_editor — blocked on
-                // `bun_jsc::rare_data::EditorContext` being the real
-                // `crate::cli::open::EditorContext`.
-            }
+    EDITOR_CONTEXT.with(|cell| -> JsResult<JSValue> {
+        let mut edit = cell.borrow_mut();
+        // SAFETY: `transpiler.env` is the process-lifetime dotenv loader.
+        let env = unsafe { &mut *vm.transpiler.env };
 
-            if let Some(line_) = opts.get_truthy(global_this, "line")? {
-                line = line_.to_slice(global_this)?;
-            }
+        if let Some(opts) = arguments.next_eat() {
+            if !opts.is_undefined_or_null() {
+                if let Some(editor_val) = opts.get_truthy(global_this, "editor")? {
+                    let sliced = editor_val.to_slice(global_this)?;
+                    let prev_name = edit.name;
 
-            if let Some(column_) = opts.get_truthy(global_this, "column")? {
-                column = column_.to_slice(global_this)?;
+                    if !strings::eql_long(prev_name, sliced.slice(), true) {
+                        let prev = core::mem::take(&mut *edit);
+                        // PORT NOTE: Zig stashed the arena-backed slice
+                        // directly. Promote to a leaked `'static` here
+                        // (one-shot, user-supplied editor name) so the
+                        // `&'static [u8]` field type is upheld without an
+                        // arena. Editor switching is not hot-path.
+                        let leaked: &'static [u8] =
+                            Box::leak(sliced.slice().to_vec().into_boxed_slice());
+                        edit.name = leaked;
+                        edit.detect_editor(env);
+                        editor_choice = edit.editor;
+                        if editor_choice.is_none() {
+                            *edit = prev;
+                            return Err(global_this.throw(format_args!(
+                                "Could not find editor \"{}\"",
+                                bstr::BStr::new(sliced.slice()),
+                            )));
+                        } else if edit.name.as_ptr() == edit.path.as_ptr() {
+                            // detect_editor pointed `name` at `path`'s storage;
+                            // dupe `name` so a later `path` overwrite doesn't
+                            // dangling-alias it.
+                            edit.name = Box::leak(edit.path.to_vec().into_boxed_slice());
+                        }
+                    }
+                }
+
+                if let Some(line_) = opts.get_truthy(global_this, "line")? {
+                    line = Some(line_.to_slice(global_this)?);
+                }
+
+                if let Some(column_) = opts.get_truthy(global_this, "column")? {
+                    column = Some(column_.to_slice(global_this)?);
+                }
             }
         }
-    }
 
-    if path.slice().is_empty() {
-        return Err(global_this.throw("No file path specified"));
-    }
+        let editor = match editor_choice.or(edit.editor) {
+            Some(e) => e,
+            None => {
+                edit.auto_detect_editor(env);
+                match edit.editor {
+                    Some(e) => e,
+                    None => {
+                        return Err(global_this.throw("Failed to auto-detect editor"));
+                    }
+                }
+            }
+        };
 
-    let _ = (line, column);
-    todo!("blocked_on: bun_jsc::rare_data::EditorContext (high_tier opaque stub)")
+        if path.slice().is_empty() {
+            return Err(global_this.throw("No file path specified"));
+        }
+
+        if let Err(err) = editor.open(
+            edit.path,
+            path.slice(),
+            line.as_ref().map(|s| s.slice()),
+            column.as_ref().map(|s| s.slice()),
+        ) {
+            return Err(global_this.throw(format_args!(
+                "Opening editor failed {}",
+                err.name(),
+            )));
+        }
+
+        Ok(JSValue::UNDEFINED)
+    })
 }
 
 pub fn get_public_path(to: &[u8], origin: URL, writer: &mut (impl bun_io::Write + ?Sized)) {

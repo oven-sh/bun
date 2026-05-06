@@ -1425,6 +1425,31 @@ pub mod jsx {
         }
     }
 
+    // Reverse direction so callers can round-trip through
+    // `TSConfigJSON::merge_jsx` (which is typed on the resolver-side Pragma).
+    // Fields the resolver subset omits (`classic_import_source`/`parse`/
+    // `side_effects`) are dropped — `merge_jsx` never reads them.
+    impl From<Pragma> for bun_resolver::tsconfig_json::options::jsx::Pragma {
+        fn from(src: Pragma) -> Self {
+            use bun_resolver::tsconfig_json::options::jsx as r;
+            r::Pragma {
+                factory: src.factory.into_vec(),
+                fragment: src.fragment.into_vec(),
+                runtime: match src.runtime {
+                    Runtime::_None | Runtime::Automatic => r::Runtime::Automatic,
+                    Runtime::Classic => r::Runtime::Classic,
+                    Runtime::Solid => r::Runtime::Solid,
+                },
+                import_source: r::ImportSource {
+                    development: src.import_source.development,
+                    production: src.import_source.production,
+                },
+                package_name: src.package_name,
+                development: src.development,
+            }
+        }
+    }
+
     impl From<Pragma> for bun_js_parser::options::JSX::Pragma {
         fn from(src: Pragma) -> Self {
             // Structurally identical; see js_parser/parser.rs:49 CYCLEBREAK note.

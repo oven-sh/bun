@@ -1906,55 +1906,54 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
     let promise_val = promise.value();
 
-    #[cfg(debug_assertions)]
-    let initial_body_reference_count: usize = {
-        if let Some(store) = body.store() {
-            store.ref_count.load(core::sync::atomic::Ordering::Relaxed) as usize
-        } else {
-            0
-        }
-    };
-
-    // TODO(port): self-referential — `url`/`proxy` borrow `url_proxy_buffer`
-    // which is moved into `FetchOptions` here. Zig's struct copy is fine; Rust
-    // forbids it without `unsafe` lifetime erasure. FetchTasklet then re-parses
-    // `url` from the owned buffer, so the borrow is sound in practice.
-    let fetch_options: FetchOptions = {
-        let _ = (
-            method,
-            url,
-            headers.take(),
-            http_body,
-            disable_keepalive,
-            disable_timeout,
-            disable_decompression,
-            reject_unauthorized,
-            redirect_type,
-            verbose,
-            proxy.take(),
-            proxy_headers.take(),
-            core::mem::take(&mut url_proxy_buffer),
-            signal.take().map(|p| p.as_ptr()),
-            global_this,
-            ssl_config.take(),
-            hostname.take(),
-            upgraded_connection,
-            force_http2,
-            force_http3,
-            force_http1,
-            if check_server_identity.is_empty_or_undefined_or_null() {
-                jsc::strong::Optional::empty()
-            } else {
-                jsc::strong::Optional::create(check_server_identity, global_this)
-            },
-            core::mem::replace(&mut unix_socket_path, ZigStringSlice::empty()),
-        );
-        todo!("blocked_on: FetchOptions self-referential url/url_proxy_buffer (ZigURL<'static>)")
-    };
-    // SAFETY: `global_this` is the thread-local Bun global; it lives for the
-    // process. `FetchTasklet::queue` stores it as `&'static`.
+    // PORT NOTE: `FetchOptions.{url,proxy}` are `ZigURL<'static>` borrowing the
+    // `url_proxy_buffer: Box<[u8]>` stored alongside them — a self-referential
+    // struct. `FetchTasklet::get` re-parses these from the owned buffer it
+    // adopts, so detaching the borrow lifetime here is sound: the slices remain
+    // valid for the buffer's full lifetime, and the buffer outlives the URLs.
+    // SAFETY: `url`/`proxy` borrow `url_proxy_buffer`; we move all three into
+    // `FetchOptions` together, and `FetchTasklet` keeps the buffer alive for as
+    // long as the URLs are read.
+    let url_static: ZigURL<'static> =
+        unsafe { core::mem::transmute::<ZigURL<'_>, ZigURL<'static>>(url) };
+    let proxy_static: Option<ZigURL<'static>> = proxy
+        .take()
+        .map(|p| unsafe { core::mem::transmute::<ZigURL<'_>, ZigURL<'static>>(p) });
+    // SAFETY: `global_this` is the thread-local Bun global; it outlives the
+    // `FetchTasklet`. `FetchTasklet::queue` stores it as `&'static`.
     let global_static: &'static JSGlobalObject =
         unsafe { core::mem::transmute::<&JSGlobalObject, &'static JSGlobalObject>(global_this) };
+
+    let fetch_options = FetchOptions {
+        method,
+        url: url_static,
+        headers: headers.take().unwrap_or_default(),
+        body,
+        disable_keepalive,
+        disable_timeout,
+        disable_decompression,
+        reject_unauthorized,
+        redirect_type,
+        verbose,
+        proxy: proxy_static,
+        proxy_headers: proxy_headers.take(),
+        url_proxy_buffer: core::mem::take(&mut url_proxy_buffer).into_boxed_slice(),
+        signal: signal.take().map(|p| p.as_ptr()),
+        global_this: Some(global_static),
+        ssl_config: ssl_config.take(),
+        hostname: hostname.take().map(|z| z.into_bytes()),
+        upgraded_connection,
+        force_http2,
+        force_http3,
+        force_http1,
+        check_server_identity: if check_server_identity.is_empty_or_undefined_or_null() {
+            jsc::strong::Optional::empty()
+        } else {
+            jsc::strong::Optional::create(check_server_identity, global_this)
+        },
+        unix_socket_path: core::mem::replace(&mut unix_socket_path, ZigStringSlice::empty()),
+    };
+
     let _ = FetchTasklet::queue(
         global_static,
         fetch_options,
@@ -1965,28 +1964,11 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     );
     // PORT NOTE: `catch |err| bun.handleOom(err)` — FetchTasklet::queue aborts on OOM.
 
-    #[cfg(debug_assertions)]
-    {
-        if let Some(store) = body.store() {
-            if store.ref_count.load(core::sync::atomic::Ordering::Relaxed) as usize
-                == initial_body_reference_count
-            {
-                Output::panic(format_args!("Expected body ref count to have incremented in FetchTasklet"));
-            }
-        }
-    }
-
-    // These are now owned by FetchTasklet.
-    // PORT NOTE: in Zig these were re-assigned to empty so the `defer` block at the
-    // top would not double-free. In Rust we used `.take()` / `mem::take` above to
-    // move ownership into FetchTasklet::queue, so the locals are already empty.
-    // Reference count for the blob is incremented above.
-    if body.store().is_some() {
-        body.detach();
-    } else {
-        // These are single-use, and have effectively been moved to the FetchTasklet.
-        body = HTTPRequestBody::default();
-    }
+    // PORT NOTE: Zig followed with a debug ref-count assertion on `body.store()`
+    // and a `body.detach()` reset. With Rust move semantics `body` has been
+    // *moved* into `FetchOptions` (no shallow alias), so neither applies — the
+    // FetchTasklet now owns the single live reference.
+    let _ = is_error;
 
     Ok(promise_val)
 }

@@ -6922,7 +6922,7 @@ impl ReaddirEntry for BunString {
     fn append_entry_recursive(entries: &mut Vec<Self>, _utf8_name: &[u8], name_to_copy: &[u8], _dirent_path: &BunString, _kind: sys::FileKind, encoding: Encoding, apply_encoding: bool) {
         let bytes = without_nt_prefix::<u8>(name_to_copy);
         entries.push(if apply_encoding {
-            webcore::encoding::to_bun_string(bytes, encoding.into())
+            webcore::encoding::to_bun_string(bytes, encoding)
         } else {
             BunString::clone_utf8(bytes)
         });

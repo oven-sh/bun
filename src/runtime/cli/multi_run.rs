@@ -69,7 +69,7 @@ impl<'a> PipeReader<'a> {
 
     pub fn on_reader_error(&mut self, _err: bun_sys::Error) {}
 
-    pub fn event_loop(&self) -> &'static MiniEventLoop {
+    pub fn event_loop(&self) -> &'static MiniEventLoop<'static> {
         // SAFETY: backref; see on_read_chunk
         unsafe { (*(*self.handle).state).event_loop }
     }

@@ -1564,9 +1564,9 @@ impl<'a> Repl<'a> {
 
         if first.len() == text.len() {
             // No ANSI sequences - encode the original directly
-            let encoded = bun_base64::encode_alloc(text)?;
+            let encoded: Vec<u8> = bun_base64::encode_alloc(text);
             self.write(b"\x1b]52;c;");
-            self.write(encoded.slice());
+            self.write(&encoded);
             self.write(b"\x07");
         } else {
             // Has ANSI sequences - collect clean slices then encode
@@ -1577,9 +1577,9 @@ impl<'a> Repl<'a> {
                 // PERF(port): was assume_capacity
                 clean.extend_from_slice(slice);
             }
-            let encoded = bun_base64::encode_alloc(&clean)?;
+            let encoded: Vec<u8> = bun_base64::encode_alloc(&clean);
             self.write(b"\x1b]52;c;");
-            self.write(encoded.slice());
+            self.write(&encoded);
             self.write(b"\x07");
         }
         Ok(())

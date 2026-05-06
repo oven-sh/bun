@@ -611,18 +611,18 @@ impl SourceMapStore {
             }
         }
 
-        let expire = bun_core::timespec::ms_from_now(
-            bun_core::timespec::MockTime::AllowMockedTime,
+        let expire = bun_core::Timespec::ms_from_now(
+            bun_core::TimespecMockMode::AllowMockedTime,
             WEAK_REF_EXPIRY_SECONDS * 1000,
         );
         self.weak_refs
             .write_item(WeakRef::init(key, new_weak_ref_count, expire.sec))
             .expect("unreachable"); // space has been cleared above
 
-        if self.weak_ref_sweep_timer.state != EventLoopTimer::State::ACTIVE {
+        if self.weak_ref_sweep_timer.state != EventLoopTimerState::ACTIVE {
             map_log!("arming weak ref sweep timer");
-            self.owner().vm.timer.update(&mut self.weak_ref_sweep_timer, &expire);
-            // TODO(port): borrowck — same overlapping &mut as above.
+            let _ = &expire;
+            todo!("blocked_on: bun_jsc::VirtualMachine::timer.update");
         }
         map_log!("addWeakRef {:x}, ref_count: {}", key.get(), entry_ref_count);
     }

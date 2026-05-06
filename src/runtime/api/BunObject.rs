@@ -2118,7 +2118,8 @@ pub fn get_archive_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JS
 }
 
 pub fn get_glob_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    jsc::codegen::js::get_constructor::<crate::api::glob::Glob>(global_this)
+    let _ = global_this;
+    todo!("blocked_on: bun_jsc::JsClass for crate::api::glob::Glob")
 }
 
 pub fn get_image_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {

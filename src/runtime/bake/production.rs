@@ -1063,13 +1063,13 @@ pub fn build_with_vm(
             let parent = router.route_ptr(parent_index);
             if let Some(file) = parent.file_layout {
                 let file = OpaqueFileId::init(file.get());
-                file_list.put_index(global, file_count, pt.preload_bundled_module(file)?)?;
+                file_list.put_index(global, file_count, pt.preload_bundled_module(file).map_err(js_err)?).map_err(js_err)?;
                 for r#ref in pt.output_file(file).referenced_css_chunks.iter() {
                     styles.put_index(
                         global,
                         css_file_count,
                         css_chunk_js_strings[r#ref.0 as usize - css_chunks_first],
-                    )?;
+                    ).map_err(js_err)?;
                     css_file_count += 1;
                 }
                 file_count += 1;

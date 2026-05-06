@@ -675,9 +675,9 @@ impl CreateCommand {
                             node.end();
                             progress.refresh();
 
-                            Output::pretty_errorln(
+                            pretty_errorln!(
                                 "Error reading package.json: <r><red>{}",
-                                format_args!("{}", err.name()),
+                                bstr::BStr::new(err.name()),
                             );
                             break 'read_package_json;
                         }

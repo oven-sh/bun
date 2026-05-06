@@ -3025,7 +3025,7 @@ pub mod args {
                 if arg.is_number() { mode = arg.coerce::<i32>(ctx)?; }
             }
             Ok(Cp { src, dest, flags: CpFlags {
-                mode: constants::Copyfile::from_raw(mode as u8),
+                mode: constants::Copyfile::from_raw(mode),
                 recursive, error_on_exist, force, deinit_paths: true,
             } })
         }

@@ -817,16 +817,14 @@ impl CronRegisterJob {
             self.tmp_path.as_ref().unwrap(),
             sys::O::WRONLY | sys::O::CREAT | sys::O::EXCL,
             0o600,
-        )
-        .unwrap_result()
-        {
+        ) {
             Ok(f) => f,
             Err(_) => {
                 self.set_err(format_args!("Failed to create temp XML file"));
                 return Self::finish(self);
             }
         };
-        if file.write_all(&xml).unwrap_result().is_err() {
+        if file.write_all(&xml).is_err() {
             file.close();
             self.set_err(format_args!("Failed to write temp XML file"));
             return Self::finish(self);

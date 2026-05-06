@@ -4382,7 +4382,7 @@ pub mod sync {
             let mut pfds_len: usize = 0;
             let push = |l: &mut [libc::pollfd; 4], len: &mut usize, fd: Fd| {
                 l[*len] = libc::pollfd {
-                    fd: fd.cast(),
+                    fd: fd.native(),
                     events: libc::POLLIN | libc::POLLERR | libc::POLLHUP,
                     revents: 0,
                 };

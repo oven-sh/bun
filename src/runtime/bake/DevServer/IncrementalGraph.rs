@@ -1839,16 +1839,9 @@ impl<S: GraphSide> IncrementalGraph<S> {
                 }
 
                 if goal == TraceImportGoal::FindErrors && file.failed {
-                    let fail = g
-                        .owner()
-                        .bundling_failures
-                        .get_key_adapted(
-                            SerializedFailure::Owner::Client(file_index),
-                            SerializedFailure::ArrayHashAdapter {},
-                        )
-                        .expect("Failed to get bundling failure");
-                    g.owner().incremental_result.failures_added.push(fail);
-                    return Ok(());
+                    let _ = &g.owner().bundling_failures;
+                    // TODO(port): blocked_on: bun_collections::ArrayHashMap::get_key_adapted
+                    todo!("blocked_on: bun_collections::ArrayHashMap::get_key_adapted");
                 }
             }
         }

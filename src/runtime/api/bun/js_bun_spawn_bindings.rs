@@ -290,18 +290,21 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         {
             // Since the event loop is recursively called, we need to check if it's safe to recurse.
             if !StackCheck::init().is_safe_to_recurse() {
-                return global_this.throw_stack_overflow();
+                // TODO(port): bun_jsc has no `throw_stack_overflow` yet.
+                return Err(global_this.throw("Maximum call stack size exceeded."));
             }
         }
     }
 
     // PERF(port): was arena bulk-free — argv/env strings allocated per-iteration; profile in Phase B.
-    // TODO(port): lifetime — argv/env_array hold *const c_char into owned Box<ZStr>s; collect those
-    // into a backing `Vec<Box<ZStr>>` here that lives past spawn_process (Zig used a bump arena).
+    // TODO(port): lifetime — argv/env_array hold *const c_char into owned ZBoxes; collect those
+    // into a backing `Vec<ZBox>` here that lives past spawn_process (Zig used a bump arena).
 
     let mut override_env = false;
     let mut env_array: Vec<Option<*const c_char>> = Vec::new();
-    let jsc_vm = global_this.bun_vm();
+    // SAFETY: `bun_vm()` returns the live VirtualMachine for this thread; it
+    // outlives this call frame.
+    let jsc_vm: &mut jsc::VirtualMachineRef = unsafe { &mut *global_this.bun_vm() };
 
     let mut cwd: &[u8] = jsc_vm.transpiler.fs.top_level_dir;
 

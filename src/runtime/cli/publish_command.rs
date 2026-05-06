@@ -309,9 +309,9 @@ impl PublishCommand {
             return Err(PublishError::NeedAuth);
         }
 
-        let tolerate_republish = ctx.manager.options.publish_config.tolerate_republish;
+        let tolerate_republish = ctx.manager.options.publish_config.tolerate_republish();
         if tolerate_republish {
-            let version_without_build_tag = Dependency::without_build_tag(&ctx.package_version);
+            let version_without_build_tag = dependency::without_build_tag(&ctx.package_version);
             let package_exists = Self::check_package_version_exists(
                 &ctx.package_name,
                 version_without_build_tag,
@@ -330,21 +330,21 @@ impl PublishCommand {
         // continues from `printSummary`
         Output::pretty(format_args!(
             "<b><blue>Tag<r>: {}\n<b><blue>Access<r>: {}\n<b><blue>Registry<r>: {}\n",
-            bstr::BStr::new(if !ctx.manager.options.publish_config.tag.is_empty() {
-                &ctx.manager.options.publish_config.tag[..]
+            bstr::BStr::new(if !ctx.manager.options.publish_config.tag().is_empty() {
+                ctx.manager.options.publish_config.tag()
             } else {
                 b"latest"
             }),
-            if let Some(access) = ctx.manager.options.publish_config.access {
+            if let Some(access) = ctx.manager.options.publish_config.access() {
                 <&'static str>::from(access)
             } else {
                 "default"
             },
-            bstr::BStr::new(&registry.url.href),
+            bstr::BStr::new(registry.url.href),
         ));
 
         // dry-run stops here
-        if ctx.manager.options.dry_run {
+        if ctx.manager.options.dry_run() {
             return Ok(());
         }
 
@@ -356,8 +356,8 @@ impl PublishCommand {
             &mut print_buf,
             registry,
             Some(publish_req_body.len()),
-            if !ctx.manager.options.publish_config.otp.is_empty() {
-                Some(&ctx.manager.options.publish_config.otp[..])
+            if !ctx.manager.options.publish_config.otp().is_empty() {
+                Some(ctx.manager.options.publish_config.otp())
             } else {
                 None
             },
@@ -370,10 +370,12 @@ impl PublishCommand {
         write!(
             &mut print_buf,
             "{}/{}",
-            bstr::BStr::new(strings::without_trailing_slash(&registry.url.href)),
+            bstr::BStr::new(strings::without_trailing_slash(registry.url.href)),
             bun_fmt::dependency_url(&ctx.package_name),
-        )?;
-        let publish_url = URL::parse(Box::<[u8]>::from(&print_buf[..]));
+        ).map_err(|_| AllocError)?;
+        // PORT NOTE: `URL::parse` borrows; clone-and-leak so the URL outlives
+        // `print_buf.clear()` below (Zig's allocPrint owned its buffer).
+        let publish_url = URL::parse(Box::leak(Box::<[u8]>::from(&print_buf[..])));
         print_buf.clear();
 
         let mut req = http::AsyncHTTP::init_sync(
@@ -381,7 +383,7 @@ impl PublishCommand {
             publish_url,
             publish_headers.entries,
             // SAFETY: publish_headers.content was allocated by construct_publish_headers
-            unsafe { core::slice::from_raw_parts(publish_headers.content.ptr.unwrap(), publish_headers.content.len) },
+            unsafe { core::slice::from_raw_parts(publish_headers.content.ptr.unwrap().as_ptr(), publish_headers.content.len) },
             &mut response_buf,
             &publish_req_body,
             None,

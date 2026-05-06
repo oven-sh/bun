@@ -224,6 +224,7 @@ impl EntryPointList {
 // ──────────────────────────────────────────────────────────────────────────
 // TestingBatch
 // ──────────────────────────────────────────────────────────────────────────
+#[derive(Default)]
 pub struct TestingBatch {
     pub entry_points: EntryPointList,
 }

@@ -26,18 +26,11 @@ mod framework_router_body;
 #[path = "production.rs"]
 mod production_body;
 
-/// `bun_jsc` is currently not a dep (concurrent B-2 work). All bake JSC
-/// references go through this shim, mirroring `crate::webcore::jsc`.
-/// TODO(b2-blocked): bun_jsc::* — replace with `pub use bun_jsc as jsc;`.
+/// All bake JSC references go through this re-export of `bun_jsc`.
 pub(crate) mod jsc {
     pub use crate::jsc::*;
-    pub use crate::webcore::jsc::{strong, JsRef};
-    /// `jsc.Strong.Optional` — nullable GC root.
-    pub type StrongOptional = strong::Optional;
-    /// `jsc.JSPromise.Strong` — promise-typed GC root.
-    pub use crate::webcore::jsc::JSPromiseStrong;
-    pub use crate::jsc::virtual_machine::VirtualMachine;
-    pub use crate::jsc::debugger::DebuggerId;
+    pub use bun_jsc::virtual_machine::VirtualMachine;
+    pub use bun_jsc::debugger::DebuggerId;
     /// `jsc.API.JSBundler.Plugin` — opaque FFI handle (JSBundlerPlugin__create).
     pub type Plugin = core::ffi::c_void;
 }

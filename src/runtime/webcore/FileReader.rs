@@ -892,7 +892,6 @@ impl AllocatedSlice for Vec<u8> {
 // `webcore::FileReader` re-exports type-check. Full struct (with IOReader,
 // streams::Pending, Strong, etc.) lives in `_gated` above.
 // TODO(b2-blocked): replace with `pub use _gated::FileReader;` once un-gated.
-#[derive(Debug)]
 pub struct FileReader {
     pub fd: Fd,
     pub event_loop: EventLoopHandle,

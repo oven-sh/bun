@@ -43,6 +43,82 @@ impl Tag {
 pub static ICOUNT: AtomicUsize = AtomicUsize::new(0);
 
 // ──────────────────────────────────────────────────────────────────────────
+// Round-G2: `init` / `alloc` — Zig switched on `@TypeOf(t)` to pick the `B`
+// variant. Lifted out of the `_draft` block so `P::b()` can compile; the
+// remaining `to_expr`/`json_stringify` bodies stay gated below.
+// ──────────────────────────────────────────────────────────────────────────
+use bun_alloc::Arena;
+
+pub trait BindingInit {
+    fn into_b(self) -> B;
+}
+impl BindingInit for *mut crate::ast::b::Identifier {
+    #[inline]
+    fn into_b(self) -> B {
+        B::BIdentifier(self)
+    }
+}
+impl BindingInit for *mut crate::ast::b::Array {
+    #[inline]
+    fn into_b(self) -> B {
+        B::BArray(self)
+    }
+}
+impl BindingInit for *mut crate::ast::b::Object {
+    #[inline]
+    fn into_b(self) -> B {
+        B::BObject(self)
+    }
+}
+impl BindingInit for crate::ast::b::Missing {
+    #[inline]
+    fn into_b(self) -> B {
+        B::BMissing(self)
+    }
+}
+
+pub trait BindingAlloc: Sized {
+    fn alloc_into_b(self, bump: &Arena) -> B;
+}
+impl BindingAlloc for crate::ast::b::Identifier {
+    #[inline]
+    fn alloc_into_b(self, bump: &Arena) -> B {
+        B::BIdentifier(bump.alloc(self))
+    }
+}
+impl BindingAlloc for crate::ast::b::Array {
+    #[inline]
+    fn alloc_into_b(self, bump: &Arena) -> B {
+        B::BArray(bump.alloc(self))
+    }
+}
+impl BindingAlloc for crate::ast::b::Object {
+    #[inline]
+    fn alloc_into_b(self, bump: &Arena) -> B {
+        B::BObject(bump.alloc(self))
+    }
+}
+impl BindingAlloc for crate::ast::b::Missing {
+    #[inline]
+    fn alloc_into_b(self, _bump: &Arena) -> B {
+        B::BMissing(crate::ast::b::Missing {})
+    }
+}
+
+impl Binding {
+    #[inline]
+    pub fn init(t: impl BindingInit, loc: logger::Loc) -> Binding {
+        ICOUNT.fetch_add(1, Ordering::Relaxed);
+        Binding { loc, data: t.into_b() }
+    }
+    #[inline]
+    pub fn alloc(bump: &Arena, t: impl BindingAlloc, loc: logger::Loc) -> Binding {
+        ICOUNT.fetch_add(1, Ordering::Relaxed);
+        Binding { loc, data: t.alloc_into_b(bump) }
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // TODO(b2-ast-round): the rest of Binding.zig (ToExpr / to_expr / json_stringify
 // / BindingInit / BindingAlloc / init / alloc) depends on `E::*` payloads,
 // `Expr::{init,assign}`, `G::Property` field set, and arena lifetimes. The

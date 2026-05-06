@@ -583,12 +583,12 @@ pub static DEV_SERVER_VTABLE: bun_bundler::dispatch::DevServerVTable =
             })
         },
         dupe: |p, bytes| {
-            // `dev.allocator().dupe(u8, ..)` — under global mimalloc this is
-            // just `Box::leak(Box::from(bytes))`. The DevServer-owned arena
+            // `dev.allocator().dupe(u8, ..)` — under global mimalloc this is a
+            // plain `Box<[u8]>::from(bytes)`. The DevServer-owned arena
             // (`allocation_scope`) is debug-only; see PORTING.md §Allocators.
             // PERF(port): was AllocationScope-tracked dupe.
             let _ = p;
-            Box::leak(Box::<[u8]>::from(bytes))
+            Box::<[u8]>::from(bytes)
         },
         register_barrel_export: |p, barrel_path, alias| {
             // SAFETY: p is a live *mut DevServer per DevServerHandle invariant.

@@ -1,9 +1,9 @@
-use crate::open;
+use crate::cli::open;
 
 pub struct DiscordCommand;
 
 impl DiscordCommand {
-    const DISCORD_URL: &'static str = "https://bun.com/discord";
+    const DISCORD_URL: &'static [u8] = b"https://bun.com/discord";
 
     // TODO(port): narrow error set — body has no fallible calls; `!void` only matches CLI command signature
     pub fn exec() -> Result<(), bun_core::Error> {

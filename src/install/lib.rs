@@ -1,5 +1,51 @@
 #![allow(unused, nonstandard_style, ambiguous_glob_reexports)]
 
+// ──────────────────────────────────────────────────────────────────────────
+// Crate aliases — Phase-A drafts use the porting-doc crate names; map them
+// to the real workspace crates here so module bodies stay diff-minimal.
+// ──────────────────────────────────────────────────────────────────────────
+extern crate bun_string as bun_str;
+extern crate bun_sha_hmac as bun_sha;
+
+/// `bun_schema::api` → schema lives in `bun_options_types::schema::api`.
+pub(crate) mod bun_schema {
+    pub use bun_options_types::schema::api;
+}
+
+/// `bun_json` → JSON parser lives in `bun_interchange::json`; AST nodes
+/// (`Expr`, `ExprData`, `E*` variants) live in `bun_logger::js_ast`.
+pub(crate) mod bun_json {
+    pub use bun_interchange::json::*;
+    pub use bun_logger::js_ast::{Expr, ExprData, e as E};
+}
+
+/// `bun_fs` → resolver-tier `FileSystem` is shimmed under `bun_sys::fs`
+/// (see MOVE_DOWN(b0) note in src/sys/lib.rs).
+pub(crate) mod bun_fs {
+    pub use bun_sys::fs::*;
+}
+
+/// `bun_progress` → no real crate yet; opaque handle so PackageManager
+/// fields type-check. Real impl arrives with the CLI tier.
+pub(crate) mod bun_progress {
+    #[derive(Default)]
+    pub struct Progress;
+    #[derive(Default)]
+    pub struct Node;
+    impl Progress {
+        pub fn start(&mut self, _name: &str, _estimated: usize) -> &mut Node {
+            todo!("b2-blocked: bun_progress::Progress::start")
+        }
+        pub fn refresh(&mut self) {}
+    }
+}
+
+/// `bun_bunfig` → config-loading entrypoint; install only needs the
+/// `Arguments` shape for `Transpiler::init` plumbing (gated body).
+pub(crate) mod bun_bunfig {
+    pub use bun_options_types::Context as Arguments;
+}
+
 use core::cell::Cell;
 use core::fmt;
 
@@ -26,6 +72,9 @@ macro_rules! gated_mod {
 gated_mod!(pub mod extract_tarball = "extract_tarball.rs";);
 gated_mod!(pub mod network_task = "NetworkTask.rs";);
 gated_mod!(pub mod tarball_stream = "TarballStream.rs";);
+// TODO(b2-blocked): npm.rs has ~60 unresolved-import / type errors against the
+// current `bun_str`/`bun_io`/`bun_sys` surface. Re-gated to keep `bun_install`
+// (and transitively `bun_runtime`) green; un-gate once npm.rs is reconciled.
 gated_mod!(pub mod npm = "npm.rs";);
 gated_mod!(pub mod package_manager = "PackageManager.rs";);
 #[path = "PackageManifestMap.rs"]

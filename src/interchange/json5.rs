@@ -490,22 +490,6 @@ impl<'a> JSON5Parser<'a> {
         Ok(result)
     }
 
-    // TODO(b2-blocked): bun_logger::js_ast::{E, G, ExprNodeList}
-    //   parse_value/parse_object/parse_object_key/parse_array all construct
-    //   `E::String { data }` / `E::Number { value }` / `G::Property { key, .. }`
-    //   AST payloads; the T2 stub shapes are field-less `(())` newtypes, so
-    //   these bodies stay gated until the real `E`/`G` namespace lands in
-    //   `bun_logger::js_ast`. The non-gated `parse_value` below keeps the call
-    //   chain (`parse` → `parse_root` → `parse_value`) compiling.
-    #[cfg(not(any()))]
-    fn parse_value(&mut self) -> Result<Expr, ParseError> {
-        if !self.stack_check.is_safe_to_recurse() {
-            return Err(ParseError::StackOverflow);
-        }
-        todo!("b2-blocked: bun_logger::js_ast::E (parse_value)")
-    }
-
-    #[cfg(any())]
     fn parse_value(&mut self) -> Result<Expr, ParseError> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(ParseError::StackOverflow);
@@ -547,12 +531,11 @@ impl<'a> JSON5Parser<'a> {
         }
     }
 
-    #[cfg(any())]
     fn parse_object(&mut self) -> Result<Expr, ParseError> {
         let loc = self.token.loc;
         self.scan()?; // advance past '{'
 
-        let mut properties: BumpVec<'a, G::Property> = BumpVec::new_in(self.bump);
+        let mut properties: Vec<G::Property> = Vec::new();
 
         while !matches!(self.token.data, TokenData::RightBrace) {
             let key = self.parse_object_key()?;
@@ -587,15 +570,13 @@ impl<'a> JSON5Parser<'a> {
         self.scan()?; // advance past '}'
         Ok(Expr::init(
             E::Object {
-                // TODO(port): G.Property.List.moveFromList — verify exact API on bun_js_parser side
-                properties: G::Property::List::move_from_list(&mut properties),
+                properties: G::PropertyList::move_from_list(properties),
                 ..Default::default()
             },
             loc,
         ))
     }
 
-    #[cfg(any())]
     fn parse_object_key(&mut self) -> Result<Expr, ParseError> {
         let loc = self.token.loc;
         match self.token.data {
@@ -621,12 +602,11 @@ impl<'a> JSON5Parser<'a> {
         }
     }
 
-    #[cfg(any())]
     fn parse_array(&mut self) -> Result<Expr, ParseError> {
         let loc = self.token.loc;
         self.scan()?; // advance past '['
 
-        let mut items: BumpVec<'a, Expr> = BumpVec::new_in(self.bump);
+        let mut items: Vec<Expr> = Vec::new();
 
         while !matches!(self.token.data, TokenData::RightBracket) {
             let value = self.parse_value()?;
@@ -649,9 +629,7 @@ impl<'a> JSON5Parser<'a> {
         self.scan()?; // advance past ']'
         Ok(Expr::init(
             E::Array {
-                // TODO(port): ExprNodeList.moveFromList — verify exact API on js_ast side
-                // MOVE_DOWN(b0): bun_js_parser::ExprNodeList → bun_logger (T2)
-                items: bun_logger::ExprNodeList::move_from_list(&mut items),
+                items: bun_logger::js_ast::ExprNodeList::move_from_list(items),
                 ..Default::default()
             },
             loc,

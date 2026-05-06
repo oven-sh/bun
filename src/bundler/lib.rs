@@ -463,7 +463,10 @@ pub mod dispatch {
         pub is_file_cached:
             unsafe fn(*mut (), &[u8], super::bake_types::Side) -> Option<super::bake_types::CacheEntry>,
         /// `dev.allocator().dupe(u8, ..)` — DevServer-owned bump for barrel keys.
-        pub dupe: unsafe fn(*mut (), &[u8]) -> &'static [u8],
+        /// Returns an owned `Box<[u8]>` (caller stores it in the barrel map);
+        /// previously `&'static [u8]` via `Box::leak`, which leaked on every
+        /// incremental rebuild.
+        pub dupe: unsafe fn(*mut (), &[u8]) -> Box<[u8]>,
         /// `dev.barrel_needed_exports.getOrPut(path)` etc. Opaque body lives in
         /// bun_runtime; bundler only registers.
         pub register_barrel_export: unsafe fn(*mut (), &[u8], &[u8]),

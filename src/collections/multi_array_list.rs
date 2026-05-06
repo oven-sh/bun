@@ -33,7 +33,8 @@ use bun_alloc::AllocError;
 // The Zig also special-cases `union(enum)` by synthesizing an `Elem` struct
 // `{ tags: Tag, data: Bare }`. In Rust the derive emits that wrapper directly,
 // so the container itself only deals with the struct case.
-// TODO(port): proc-macro `#[derive(MultiArrayElement)]`.
+// The derive lives in `bun_collections_macros` and is re-exported from this
+// crate, so `#[derive(MultiArrayElement)]` resolves to both macro and trait.
 
 /// Trait providing the comptime field metadata that Zig obtained via
 /// `@typeInfo` / `meta.fields`. Implemented (typically via derive) for every
@@ -884,6 +885,43 @@ fn bun_collections_sort_unstable_context(
 // `MaybeUninit` is referenced in doc comments; keep import to avoid dead-code
 // churn in Phase B.
 const _: PhantomData<MaybeUninit<u8>> = PhantomData;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::MultiArrayElement; // derive
+
+    // Mirror of `multi_array_list.zig`'s `test "basic usage"` element type.
+    #[derive(MultiArrayElement, Clone, Copy, PartialEq, Debug)]
+    struct Foo {
+        a: u32,
+        b: u8,
+        c: u64,
+    }
+
+    #[test]
+    fn derive_metadata() {
+        assert_eq!(<Foo as super::MultiArrayElement>::FIELD_COUNT, 3);
+        // Sorted by alignment descending: c(u64=8), a(u32=4), b(u8=1).
+        assert_eq!(Foo::SIZES_BYTES, &[8, 4, 1]);
+        assert_eq!(Foo::SIZES_FIELDS, &[2, 0, 1]);
+        assert_eq!(Foo::field_index(FooField::b), 1);
+    }
+
+    #[test]
+    fn derive_roundtrip() {
+        let mut list = MultiArrayList::<Foo>::default();
+        for i in 0..10u32 {
+            list.append(Foo { a: i, b: i as u8, c: i as u64 * 100 }).unwrap();
+        }
+        let s = list.slice();
+        // Typed accessor from generated `FooSliceExt`.
+        use self::FooSliceExt;
+        assert_eq!(s.c()[7], 700);
+        assert_eq!(s.a()[3], 3);
+        assert_eq!(list.get(5), Foo { a: 5, b: 5, c: 500 });
+    }
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

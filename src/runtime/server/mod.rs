@@ -13,30 +13,13 @@ use bun_aio::KeepAlive;
 use bun_uws as uws;
 use bun_uws_sys as uws_sys;
 
-// ─── server-local jsc shim ───────────────────────────────────────────────────
-// Extends `crate::jsc` (lib.rs shim) with the additional opaque types server
-// drafts reference. `bun_jsc` is not yet a dep of `bun_runtime` (Cargo.toml has
-// it commented out under TODO(b2-blocked)); once it is, replace this whole
-// module with `pub use bun_jsc as jsc;` at the crate root and delete the
-// per-file `use crate::server::jsc;` aliases.
-// TODO(b2-blocked): bun_jsc::* — delete when `bun_jsc` is a dep.
+// ─── server-local jsc re-export ──────────────────────────────────────────────
+// `bun_jsc` is now a dep; forward to it. `AsyncTaskTracker` lives under
+// `bun_jsc::debugger`, surfaced flat here for the server drafts that import it.
 pub mod jsc {
     pub use crate::jsc::*;
-    pub use crate::webcore::jsc::{
-        strong, CommonAbortReason, EventLoopHandle, JsRef, SystemError, Task, VirtualMachine,
-    };
-    macro_rules! opaque {
-        ($($(#[$m:meta])* $name:ident),* $(,)?) => {
-            $($(#[$m])* #[repr(transparent)] #[derive(Debug, Clone, Copy, Default)]
-              pub struct $name(pub usize);)*
-        };
-    }
-    // Types referenced by server drafts that the lib.rs/webcore shims don't provide.
-    opaque!(
-        ZigString, ZigException, JSPropertyIterator, ArrayBuffer, JSPromiseStrong,
-        AnyTask, AsyncTaskTracker, JSBundler, BinaryType,
-    );
-    pub use crate::jsc::debugger::DebuggerId;
+    pub use bun_jsc::virtual_machine::VirtualMachine;
+    pub use bun_jsc::debugger::{AsyncTaskTracker, DebuggerId};
 }
 
 // ─── compiling submodules ────────────────────────────────────────────────────
@@ -174,7 +157,7 @@ pub enum ServePluginsState {
     // TODO(b2-blocked): `Pending(Vec<ServePluginsCallback>)` once JSBundler is real.
     Pending,
     Loaded(jsc::JSBundler),
-    Err(jsc::Strong<jsc::JSValue>),
+    Err(jsc::Strong),
 }
 
 pub enum PluginsResult<'a> {
@@ -220,7 +203,7 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
     pub h3_request_pool_allocator: *mut request_context::RequestContextStackAllocator<Self, SSL, DEBUG, true>,
     pub all_closed_promise: jsc::JSPromiseStrong,
 
-    pub listen_callback: jsc::AnyTask,
+    pub listen_callback: jsc::AnyTask::AnyTask,
     // allocator field dropped — global mimalloc per §Allocators
     pub poll_ref: KeepAlive,
 
@@ -234,7 +217,7 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
     /// times due to SNI, so we have to store them.
     pub user_routes: Vec<UserRoute<SSL, DEBUG>>,
 
-    pub on_clienterror: jsc::Strong<jsc::JSValue>,
+    pub on_clienterror: jsc::Strong,
 
     pub inspector_server_id: jsc::DebuggerId,
 }
@@ -618,7 +601,7 @@ impl AnyServer {
 
 // ─── SavedRequest ────────────────────────────────────────────────────────────
 pub struct SavedRequest {
-    pub js_request: jsc::Strong<jsc::JSValue>,
+    pub js_request: jsc::Strong,
     pub request: *mut crate::webcore::Request,
     pub ctx: AnyRequestContext,
     pub response: uws::AnyResponse,

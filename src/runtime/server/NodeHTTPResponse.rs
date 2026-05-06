@@ -29,7 +29,7 @@ pub struct NodeHTTPResponse {
 
     pub body_read_state: BodyReadState,
     pub body_read_ref: jsc::JsRef,
-    pub promise: Strong<JSValue>, // Strong.Optional
+    pub promise: Strong, // Strong.Optional
     pub server: AnyServer,
 
     /// When you call pause() on the node:http IncomingMessage

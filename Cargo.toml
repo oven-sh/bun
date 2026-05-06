@@ -33,6 +33,7 @@ members = [
   "src/watcher",
   "src/cares_sys",
   "src/clap",
+  "src/clap_macros",
   "src/crash_handler",
   "src/csrf",
   "src/css_jsc",
@@ -74,6 +75,7 @@ members = [
   "src/url",
   "src/windows_sys",
   "src/jsc",
+  "src/jsc_macros",
   "src/ptr",
   "src/boringssl",
   "src/brotli_sys",
@@ -86,6 +88,7 @@ members = [
   "src/wyhash",
   "src/boringssl_sys",
   "src/bun_core",
+  "src/bun_core_macros",
   "src/patch_jsc",
   "src/router",
   "src/shell_parser",
@@ -153,6 +156,7 @@ bun_valkey = { path = "src/valkey" }
 bun_watcher = { path = "src/watcher" }
 bun_cares_sys = { path = "src/cares_sys" }
 bun_clap = { path = "src/clap" }
+bun_clap_macros = { path = "src/clap_macros" }
 bun_crash_handler = { path = "src/crash_handler" }
 bun_csrf = { path = "src/csrf" }
 bun_css_jsc = { path = "src/css_jsc" }
@@ -194,6 +198,7 @@ bun_sourcemap_jsc = { path = "src/sourcemap_jsc" }
 bun_url = { path = "src/url" }
 bun_windows_sys = { path = "src/windows_sys" }
 bun_jsc = { path = "src/jsc" }
+bun_jsc_macros = { path = "src/jsc_macros" }
 bun_ptr = { path = "src/ptr" }
 bun_boringssl = { path = "src/boringssl" }
 bun_brotli_sys = { path = "src/brotli_sys" }
@@ -206,6 +211,7 @@ bun_uws = { path = "src/uws" }
 bun_wyhash = { path = "src/wyhash" }
 bun_boringssl_sys = { path = "src/boringssl_sys" }
 bun_core = { path = "src/bun_core" }
+bun_core_macros = { path = "src/bun_core_macros" }
 bun_patch_jsc = { path = "src/patch_jsc" }
 bun_router = { path = "src/router" }
 bun_shell_parser = { path = "src/shell_parser" }

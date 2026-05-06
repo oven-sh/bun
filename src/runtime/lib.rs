@@ -6,48 +6,11 @@
 // followed the guide compile without per-file edits.
 extern crate bun_string as bun_str;
 
-/// Crate-local shim for `bun_jsc` while that crate is under concurrent B-2
-/// work and does not compile. Draft modules import `crate::jsc::…` instead of
-/// `bun_jsc::…`; once `bun_jsc` is green, swap this for `pub use bun_jsc as jsc;`.
-// TODO(b2-blocked): bun_jsc::* — replace this shim with `pub use bun_jsc as jsc;`.
+/// `crate::jsc` is now a thin re-export of the real `bun_jsc` crate. Draft
+/// modules that imported `crate::jsc::…` (instead of `bun_jsc::…`) continue to
+/// resolve unchanged.
 pub mod jsc {
-    macro_rules! opaque {
-        ($($(#[$m:meta])* $name:ident),* $(,)?) => {
-            $($(#[$m])* #[repr(transparent)] #[derive(Debug, Clone, Copy, Default)]
-              pub struct $name(pub usize);)*
-        };
-    }
-    opaque!(
-        JSValue, JSGlobalObject, JSObject, JSCell, JSString, JSFunction, JSArray,
-        JSPromise, CallFrame, VM, ArrayBuffer, MarkedArrayBuffer, JSUint8Array,
-        Exception, ErrorCode, AnyPromise, AbortSignal, FetchHeaders,
-    );
-    pub type JsResult<T> = Result<T, JsError>;
-    #[derive(Debug, Clone, Copy, Default)]
-    pub struct JsError;
-    #[derive(Debug, Default)]
-    pub struct Strong<T>(core::marker::PhantomData<T>);
-    #[derive(Debug, Default)]
-    pub struct Weak<T>(core::marker::PhantomData<T>);
-    pub mod virtual_machine {
-        #[derive(Debug, Default)]
-        pub struct VirtualMachine {
-            pub active_tasks: u32,
-        }
-    }
-    pub use virtual_machine::VirtualMachine as VirtualMachineRef;
-    pub mod debugger {
-        /// `bun.jsc.Debugger.Id` — `enum(i32) { _ }` newtype.
-        #[repr(transparent)]
-        #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
-        pub struct DebuggerId(pub i32);
-        impl DebuggerId {
-            #[inline]
-            pub fn get(self) -> i32 {
-                self.0
-            }
-        }
-    }
+    pub use bun_jsc::*;
 }
 
 // ─── un-gated in B-2 (heavy submodules re-gated inside each file) ────────

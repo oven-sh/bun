@@ -3,6 +3,10 @@
 
 #![allow(unused, non_snake_case, clippy::all)]
 
+// Let `#[derive(MultiArrayElement)]` expansions name this crate as
+// `bun_collections::…` even from inside it (tests, internal element types).
+extern crate self as bun_collections;
+
 pub mod multi_array_list;
 pub mod baby_list;
 pub mod hive_array;
@@ -23,6 +27,7 @@ pub mod static_hash_map;
 pub use static_hash_map::StaticHashMap;
 
 pub use multi_array_list::{MultiArrayList, MultiArrayElement};
+pub use bun_collections_macros::MultiArrayElement;
 pub use baby_list::{BabyList, ByteList, OffsetByteList};
 pub use hive_array::HiveArray;
 pub use bounded_array::BoundedArray;

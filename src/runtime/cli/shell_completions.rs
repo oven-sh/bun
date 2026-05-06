@@ -1,6 +1,5 @@
 use bun_core::Output;
 use bun_paths;
-use bun_str::strings;
 
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Default)]
@@ -14,11 +13,11 @@ pub enum Shell {
 }
 
 impl Shell {
-    // TODO(port): @embedFile uses build-system module aliases ("completions-bash" etc.);
-    // Phase B must wire the real relative paths or a build.rs OUT_DIR include.
-    const BASH_COMPLETIONS: &'static [u8] = include_bytes!("completions-bash");
-    const ZSH_COMPLETIONS: &'static [u8] = include_bytes!("completions-zsh");
-    const FISH_COMPLETIONS: &'static [u8] = include_bytes!("completions-fish");
+    // PORT NOTE: Zig used `@embedFile("completions-bash")` etc. via build-system
+    // module aliases. The actual files live at `<repo>/completions/bun.{bash,zsh,fish}`.
+    const BASH_COMPLETIONS: &'static [u8] = include_bytes!("../../../completions/bun.bash");
+    const ZSH_COMPLETIONS: &'static [u8] = include_bytes!("../../../completions/bun.zsh");
+    const FISH_COMPLETIONS: &'static [u8] = include_bytes!("../../../completions/bun.fish");
 
     pub fn completions(self) -> &'static [u8] {
         match self {
@@ -61,7 +60,9 @@ pub struct ShellCompletions {
 impl ShellCompletions {
     pub fn print(&self) {
         let _flush = scopeguard::guard((), |_| Output::flush());
-        let writer = Output::writer();
+        // SAFETY: Output::writer() returns a process-lifetime *mut io::Writer
+        // (thread-local Source storage); the deref lives for this fn body only.
+        let writer = unsafe { &mut *Output::writer() };
 
         if self.commands.is_empty() {
             return;

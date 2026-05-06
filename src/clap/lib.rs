@@ -12,6 +12,50 @@ pub mod streaming;
 pub use comptime::ComptimeClap;
 pub use streaming::StreamingClap;
 
+// Proc-macro backend — do not call these directly; use `parse_param!` / `param!` /
+// `parse_params!` below, which inject `$crate` so the expansion resolves `Param`/
+// `Help`/`Names`/`Values` regardless of how `bun_clap` is aliased at the call site.
+#[doc(hidden)]
+pub use bun_clap_macros::{__parse_param_impl, __parse_params_impl};
+
+/// Parse a single param spec string (e.g. `"-h, --help  Display this help"`)
+/// into a const `Param<Help>` literal at compile time. This is the Rust
+/// equivalent of Zig's comptime `clap.parseParam(...) catch unreachable`.
+///
+/// The argument **must** be a string literal; parse errors surface as compile
+/// errors at the call site.
+#[macro_export]
+macro_rules! parse_param {
+    ($lit:literal $(,)?) => {
+        $crate::__parse_param_impl!($crate, $lit)
+    };
+}
+
+/// Alias for [`parse_param!`] matching the Zig call-site spelling
+/// (`clap.parseParam` → `clap::param!`).
+#[macro_export]
+macro_rules! param {
+    ($lit:literal $(,)?) => {
+        $crate::__parse_param_impl!($crate, $lit)
+    };
+}
+
+/// Parse a `;`-separated list of param spec strings into a
+/// `&'static [Param<Help>]` at compile time.
+///
+/// ```ignore
+/// static PARAMS: &[Param<Help>] = parse_params! {
+///     "-h, --help          Display this help";
+///     "-v, --version       Print the version";
+/// };
+/// ```
+#[macro_export]
+macro_rules! parse_params {
+    ($($lit:literal);* $(;)?) => {
+        $crate::__parse_params_impl!($crate, $($lit);*)
+    };
+}
+
 /// The names a `Param` can have.
 #[derive(Clone, Copy)]
 pub struct Names {
@@ -1054,6 +1098,81 @@ mod tests {
         assert!(matches!(parse_param(b"-ss Help"), Err(ParseParamError::InvalidShortParam)));
         assert!(matches!(parse_param(b"-ss <value> Help"), Err(ParseParamError::InvalidShortParam)));
         assert!(matches!(parse_param(b"- Help"), Err(ParseParamError::InvalidShortParam)));
+    }
+
+    // Compile-time check: the macro output is const-evaluable in a `static`.
+    static MACRO_PARAMS: &[Param<Help>] = &[
+        parse_param!("-s, --long <value> Help text"),
+        parse_param!("-c, --config <STR>?  Specify path to config"),
+        parse_param!("--test-name-pattern/--grep <STR>...  Filter tests"),
+        parse_param!("<POS> ...  positional"),
+        param!("-h, --help  Display this help"),
+    ];
+
+    static MACRO_PARAMS_SLICE: &[Param<Help>] = parse_params! {
+        "-h, --help          Display this help";
+        "-v, --version       Print the version";
+        "<POS> ...           ";
+    };
+
+    #[test]
+    fn parse_param_macro_matches_runtime() {
+        // Every macro-produced param must match the runtime parser exactly.
+        let cases: &[&'static [u8]] = &[
+            b"-s, --long <value> Help text",
+            b"-s, --long <value>... Help text",
+            b"--long <value> Help text",
+            b"-s <value> Help text",
+            b"-s, --long Help text",
+            b"-s Help text",
+            b"--long Help text",
+            b"--long <A | B> Help text",
+            b"<A> Help text",
+            b"<A>... Help text",
+            b"-c, --config <STR>?  Specify path to config",
+        ];
+        let macro_out: [Param<Help>; 11] = [
+            parse_param!("-s, --long <value> Help text"),
+            parse_param!("-s, --long <value>... Help text"),
+            parse_param!("--long <value> Help text"),
+            parse_param!("-s <value> Help text"),
+            parse_param!("-s, --long Help text"),
+            parse_param!("-s Help text"),
+            parse_param!("--long Help text"),
+            parse_param!("--long <A | B> Help text"),
+            parse_param!("<A> Help text"),
+            parse_param!("<A>... Help text"),
+            parse_param!("-c, --config <STR>?  Specify path to config"),
+        ];
+        for (line, m) in cases.iter().zip(macro_out.iter()) {
+            expect_param(parse_param(line).unwrap(), *m);
+        }
+
+        // Static-table sanity.
+        assert_eq!(MACRO_PARAMS[0].names.short, Some(b's'));
+        assert_eq!(MACRO_PARAMS[0].names.long, Some(b"long" as &[u8]));
+        assert_eq!(MACRO_PARAMS[0].id.value, b"value");
+        assert_eq!(MACRO_PARAMS[0].takes_value, Values::One);
+
+        assert_eq!(MACRO_PARAMS[1].takes_value, Values::OneOptional);
+        assert_eq!(MACRO_PARAMS[1].id.value, b"STR");
+
+        // Aliases — proc-macro restores the comptime alias array the runtime parser drops.
+        assert_eq!(MACRO_PARAMS[2].names.long, Some(b"test-name-pattern" as &[u8]));
+        assert_eq!(MACRO_PARAMS[2].names.long_aliases, &[b"grep" as &[u8]]);
+        assert_eq!(MACRO_PARAMS[2].takes_value, Values::Many);
+
+        // Positional.
+        assert_eq!(MACRO_PARAMS[3].names.short, None);
+        assert_eq!(MACRO_PARAMS[3].names.long, None);
+        assert_eq!(MACRO_PARAMS[3].id.value, b"POS");
+
+        // parse_params! slice form.
+        assert_eq!(MACRO_PARAMS_SLICE.len(), 3);
+        assert_eq!(MACRO_PARAMS_SLICE[0].names.short, Some(b'h'));
+        assert_eq!(MACRO_PARAMS_SLICE[0].names.long, Some(b"help" as &[u8]));
+        assert_eq!(MACRO_PARAMS_SLICE[1].names.long, Some(b"version" as &[u8]));
+        assert_eq!(MACRO_PARAMS_SLICE[2].takes_value, Values::One);
     }
 }
 

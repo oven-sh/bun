@@ -75,6 +75,36 @@ pub struct Array {
 #[derive(Default, Copy, Clone)]
 pub struct Missing {}
 
+// Round-G2: ergonomic slice accessors over the raw `*mut [..]` arena pointers
+// so P-helpers can `for item in arr.items()` without open-coding the unsafe
+// deref at every match arm. SAFETY contract: callers guarantee the backing
+// slice was bump-allocated for the parser's `'a` lifetime and is not
+// concurrently &mut-borrowed (single-threaded parser).
+impl Array {
+    #[inline]
+    pub fn items(&self) -> &[ArrayBinding] {
+        // SAFETY: arena-owned slice valid for self's lifetime; see module note.
+        unsafe { &*self.items }
+    }
+    #[inline]
+    pub fn items_mut(&mut self) -> &mut [ArrayBinding] {
+        // SAFETY: arena-owned slice valid for self's lifetime; exclusive via &mut self.
+        unsafe { &mut *self.items }
+    }
+}
+impl Object {
+    #[inline]
+    pub fn properties(&self) -> &[Property] {
+        // SAFETY: arena-owned slice valid for self's lifetime; see module note.
+        unsafe { &*self.properties }
+    }
+    #[inline]
+    pub fn properties_mut(&mut self) -> &mut [Property] {
+        // SAFETY: arena-owned slice valid for self's lifetime; exclusive via &mut self.
+        unsafe { &mut *self.properties }
+    }
+}
+
 impl B {
     pub fn tag(&self) -> super::binding::Tag {
         use super::binding::Tag;

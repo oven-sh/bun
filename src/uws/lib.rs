@@ -10,7 +10,7 @@ use bun_string::ZStr;
 // `bun_uws_sys` is now un-gated; pull the opaque FFI handles and module
 // namespaces straight through. Items that this crate *defines* itself
 // (SocketKind, SocketGroup, SocketContext, NewSocketHandler/SocketTCP/SocketTLS,
-// InternalSocket, AnySocket, AnyRequest, AnyResponse, SocketAddress,
+// InternalSocket, AnySocket, AnyRequest, SocketAddress,
 // WebSocketUpgradeContext) are NOT re-exported here — the local definitions
 // below remain the canonical `bun_uws::*` types until the sys-crate versions
 // are reconciled in a follow-up pass.
@@ -2273,20 +2273,21 @@ mod req_c {
     }
 }
 
-/// Opaque `uws::Response<SSL>` — bodies live in bun_uws_sys::Response (gated).
-#[repr(C)]
-pub struct Response<const SSL: bool> {
-    _p: [u8; 0],
-    _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
-}
+/// `uws::Response<SSL>` — re-exported from `bun_uws_sys` so callers get the full
+/// method surface (`write`/`end`/`try_end`/`on_aborted`/`on_writable`/...) without
+/// a separate local opaque. Both are `#[repr(C)]` zero-sized handles, so this is
+/// a pure namespace reconciliation.
+pub type Response<const SSL: bool> = bun_uws_sys::response::Response<SSL>;
 
-/// Transport-agnostic response handle.
-#[derive(Clone, Copy)]
-pub enum AnyResponse {
-    SSL(*mut Response<true>),
-    TCP(*mut Response<false>),
-    H3(*mut H3::Response),
-}
+/// Transport-agnostic response handle. Re-exported from `bun_uws_sys` — the
+/// sys-crate version already carries the full dispatch impl (`write`, `end`,
+/// `try_end`, `on_aborted`, `on_writable`, `corked`, `write_status`,
+/// `write_header`, `end_stream`, `clear_*`, `timeout`, `state`, `upgrade`, ...).
+/// Variants: `SSL(*mut Response<true>)`, `TCP(*mut Response<false>)`,
+/// `H3(*mut H3::Response)`.
+pub use bun_uws_sys::AnyResponse;
+
+pub use bun_uws_sys::response::WriteResult;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

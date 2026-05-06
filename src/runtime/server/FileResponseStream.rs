@@ -39,7 +39,7 @@ pub struct FileResponseStream {
     // FileResponseStream`) + generic/erased parent pointer set via `set_parent`.
     reader: BufferedReader,
     max_size: Option<u64>,
-    eof_task: Option<AnyTask>,
+    eof_task: Option<AnyTask::AnyTask>,
     sendfile: Sendfile,
 
     state: State,

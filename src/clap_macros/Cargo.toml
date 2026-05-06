@@ -1,0 +1,13 @@
+[package]
+name = "bun_clap_macros"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["full"] }

@@ -1,0 +1,13 @@
+[package]
+name = "bun_jsc_macros"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+proc-macro = true
+
+[dependencies]
+syn = { version = "2", features = ["full", "extra-traits"] }
+quote = "1"
+proc-macro2 = "1"

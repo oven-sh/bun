@@ -73,7 +73,7 @@ use crate::jsc::{JSGlobalObject, JSValue};
 
 // `bun_jsc::Strong` is unavailable; the crate-local shim is `Strong<T>`. The
 // socket structs store the non-generic `Strong.Optional` form.
-type Strong = crate::jsc::Strong<JSValue>;
+type Strong = crate::jsc::Strong;
 
 /// Unified socket mode replacing the old `is_server: bool` + TLSMode pair.
 #[repr(u8)]

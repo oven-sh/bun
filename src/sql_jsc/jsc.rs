@@ -448,3 +448,364 @@ impl ZigStringJsc for bun_string::ZigString {
         bun_string_jsc::zig_string_to_js(self, global)
     }
 }
+
+// ──────────────────────────────────────────────────────────────────────────
+// JsRef — weak/strong self-wrapper back-ref (mirrors src/jsc/JsRef.rs).
+// ──────────────────────────────────────────────────────────────────────────
+
+#[derive(Default)]
+pub struct JsRef {
+    value: JSValue,
+    _strong: Option<core::ptr::NonNull<()>>,
+}
+impl JsRef {
+    pub fn weak(value: JSValue) -> Self { Self { value, _strong: None } }
+    pub fn get(&self) -> JSValue { self.value }
+    pub fn try_get(&self) -> Option<JSValue> {
+        if self.value.is_empty_or_undefined_or_null() { None } else { Some(self.value) }
+    }
+    pub fn set_weak(&mut self, value: JSValue) { self.value = value; }
+    pub fn set_strong(&mut self, _global: &JSGlobalObject, value: JSValue) {
+        self.value = value;
+        unimplemented!("b2-blocked: bun_jsc::JsRef::set_strong")
+    }
+    pub fn finalize(&mut self) { self.value = JSValue::ZERO; }
+    pub fn deinit(&mut self) { self.value = JSValue::ZERO; }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// VirtualMachine extended surface (event_loop, timer, is_shutting_down, get).
+// ──────────────────────────────────────────────────────────────────────────
+
+impl VirtualMachine {
+    /// `bun_jsc::VirtualMachine::get()` — TLS-backed singleton accessor.
+    pub fn get() -> &'static mut VirtualMachine {
+        unimplemented!("b2-blocked: bun_jsc::VirtualMachine::get")
+    }
+    pub fn event_loop(&self) -> &EventLoop {
+        unimplemented!("b2-blocked: bun_jsc::VirtualMachine::event_loop")
+    }
+    pub fn is_shutting_down(&self) -> bool {
+        unimplemented!("b2-blocked: bun_jsc::VirtualMachine::is_shutting_down")
+    }
+    /// `vm.timer` — exposed as a method returning `&mut TimerHeap` so callers
+    /// can write `self.vm().timer().remove(..)`. The Zig field access
+    /// (`vm.timer.remove`) maps to this.
+    pub fn timer(&mut self) -> &mut TimerHeap {
+        unimplemented!("b2-blocked: bun_jsc::VirtualMachine::timer")
+    }
+}
+
+/// `bun_jsc::EventLoop` — opaque, always borrowed.
+#[repr(C)]
+pub struct EventLoop { _opaque: [u8; 0], _m: PhantomData<(*mut u8, core::marker::PhantomPinned)> }
+impl EventLoop {
+    pub fn enter(&self) { unimplemented!("b2-blocked: bun_jsc::EventLoop::enter") }
+    pub fn exit(&self) { unimplemented!("b2-blocked: bun_jsc::EventLoop::exit") }
+}
+
+/// `bun_jsc::api::Timer::All` — heap of `EventLoopTimer`. Stub surface for
+/// `vm.timer.insert/remove`.
+pub struct TimerHeap { _opaque: [u8; 0] }
+impl TimerHeap {
+    pub fn insert(&mut self, _t: &mut EventLoopTimer) {
+        unimplemented!("b2-blocked: bun_jsc::api::Timer::All::insert")
+    }
+    pub fn remove(&mut self, _t: &mut EventLoopTimer) {
+        unimplemented!("b2-blocked: bun_jsc::api::Timer::All::remove")
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// EventLoopTimer (mirrors bun_jsc::api::Timer::EventLoopTimer; Zig
+// `src/runtime/api/Timer/EventLoopTimer.zig`). Intrusive heap node.
+// ──────────────────────────────────────────────────────────────────────────
+
+pub struct EventLoopTimer {
+    pub next: bun_core::Timespec,
+    pub state: EventLoopTimerState,
+    pub tag: EventLoopTimerTag,
+    pub heap: [usize; 3], // intrusive heap node placeholder
+}
+impl Default for EventLoopTimer {
+    fn default() -> Self {
+        Self { next: bun_core::Timespec::EPOCH, state: Default::default(), tag: Default::default(), heap: [0; 3] }
+    }
+}
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub enum EventLoopTimerState { #[default] Pending, ACTIVE, FIRED, CANCELLED }
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub enum EventLoopTimerTag {
+    #[default] Unset,
+    PostgresSQLConnectionTimeout,
+    PostgresSQLConnectionMaxLifetime,
+    MySQLConnectionTimeout,
+    MySQLConnectionMaxLifetime,
+}
+// Namespace shim so callers can write `EventLoopTimer::State::ACTIVE` /
+// `EventLoopTimer::Tag::PostgresSQLConnectionTimeout` (Zig nested-type style).
+impl EventLoopTimer {
+    #[allow(non_upper_case_globals)]
+    pub const State: PhantomData<EventLoopTimerState> = PhantomData;
+    #[allow(non_upper_case_globals)]
+    pub const Tag: PhantomData<EventLoopTimerTag> = PhantomData;
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// AutoFlusher (mirrors bun_jsc::webcore::AutoFlusher; Zig
+// `src/runtime/webcore/AutoFlusher.zig`). Registers a deferred microtask that
+// calls `T::on_auto_flush(&mut T) -> bool` until it returns false.
+// ──────────────────────────────────────────────────────────────────────────
+
+#[derive(Default)]
+pub struct AutoFlusher {
+    pub registered: bool,
+}
+impl AutoFlusher {
+    pub fn register_deferred_microtask_with_type_unchecked<T>(_this: *mut T, _vm: &mut VirtualMachine) {
+        unimplemented!("b2-blocked: bun_jsc::webcore::AutoFlusher::register")
+    }
+    pub fn unregister_deferred_microtask_with_type<T>(_this: *mut T, _vm: &mut VirtualMachine) {
+        unimplemented!("b2-blocked: bun_jsc::webcore::AutoFlusher::unregister")
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// api::ServerConfig::SSLConfig — TLS option bag (mirrors
+// `src/runtime/api/server/ServerConfig.rs`). Only the fields the SQL
+// connection state machines name are surfaced.
+// ──────────────────────────────────────────────────────────────────────────
+
+pub mod api {
+    use super::*;
+    pub mod server_config {
+        use super::*;
+        #[derive(Default)]
+        pub struct SSLConfig {
+            pub server_name: *const core::ffi::c_char,
+            pub reject_unauthorized: i32,
+            pub request_cert: i32,
+        }
+        impl SSLConfig {
+            pub fn server_name(&self) -> *const core::ffi::c_char { self.server_name }
+            pub fn from_js(
+                _vm: &mut VirtualMachine,
+                _global: &JSGlobalObject,
+                _value: JSValue,
+            ) -> JsResult<Option<Self>> {
+                unimplemented!("b2-blocked: bun_jsc::api::ServerConfig::SSLConfig::from_js")
+            }
+            pub fn as_usockets_for_client_verification(&self) -> bun_uws::us_bun_socket_context_options_t {
+                unimplemented!("b2-blocked: SSLConfig::as_usockets_for_client_verification")
+            }
+        }
+        // Zig-style PascalCase alias.
+        pub use SSLConfig as SslConfig;
+    }
+    /// Zig: `jsc.API.ServerConfig.SSLConfig` — PascalCase namespace alias.
+    #[allow(non_snake_case)]
+    pub mod ServerConfig {
+        pub use super::server_config::SSLConfig;
+    }
+}
+
+pub mod webcore {
+    pub use super::AutoFlusher;
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// codegen::JS{Type} — per-JsClass cached-value getters/setters generated from
+// `.classes.ts`. Stub modules so `js::queries_get_cached` etc. resolve; bodies
+// unimplemented until the `.classes.ts` generator gains a `.rs` output mode.
+// ──────────────────────────────────────────────────────────────────────────
+
+pub mod codegen {
+    use super::{JSGlobalObject, JSValue};
+
+    macro_rules! cached_slot {
+        ($get:ident, $set:ident) => {
+            pub fn $get(_this_value: JSValue) -> Option<JSValue> {
+                unimplemented!(concat!("b2-blocked: codegen::", stringify!($get)))
+            }
+            pub fn $set(_this_value: JSValue, _global: &JSGlobalObject, _value: JSValue) {
+                unimplemented!(concat!("b2-blocked: codegen::", stringify!($set)))
+            }
+        };
+    }
+
+    #[allow(non_snake_case)]
+    pub mod JSPostgresSQLConnection {
+        use super::*;
+        cached_slot!(queries_get_cached, queries_set_cached);
+        cached_slot!(onconnect_get_cached, onconnect_set_cached);
+        cached_slot!(onclose_get_cached, onclose_set_cached);
+        pub fn to_js(_ptr: *mut crate::postgres::PostgresSQLConnection, _g: &JSGlobalObject) -> JSValue {
+            unimplemented!("b2-blocked: codegen::JSPostgresSQLConnection::to_js")
+        }
+        pub fn from_js(_v: JSValue) -> Option<*mut crate::postgres::PostgresSQLConnection> {
+            unimplemented!("b2-blocked: codegen::JSPostgresSQLConnection::from_js")
+        }
+        pub fn from_js_direct(_v: JSValue) -> Option<*mut crate::postgres::PostgresSQLConnection> {
+            unimplemented!("b2-blocked: codegen::JSPostgresSQLConnection::from_js_direct")
+        }
+    }
+
+    #[allow(non_snake_case)]
+    pub mod JSPostgresSQLQuery {
+        use super::*;
+        cached_slot!(binding_get_cached, binding_set_cached);
+        cached_slot!(columns_get_cached, columns_set_cached);
+        cached_slot!(pending_value_get_cached, pending_value_set_cached);
+        cached_slot!(target_get_cached, target_set_cached);
+        pub fn to_js(_ptr: *mut crate::postgres::PostgresSQLQuery, _g: &JSGlobalObject) -> JSValue {
+            unimplemented!("b2-blocked: codegen::JSPostgresSQLQuery::to_js")
+        }
+    }
+
+    pub mod js_mysql_connection {
+        use super::*;
+        cached_slot!(queries_get_cached, queries_set_cached);
+        cached_slot!(onconnect_get_cached, onconnect_set_cached);
+        cached_slot!(onclose_get_cached, onclose_set_cached);
+    }
+
+    pub mod js_mysql_query {
+        use super::*;
+        cached_slot!(binding_get_cached, binding_set_cached);
+        cached_slot!(columns_get_cached, columns_set_cached);
+        cached_slot!(pending_value_get_cached, pending_value_set_cached);
+        cached_slot!(target_get_cached, target_set_cached);
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// JSGlobalObject extended surface (microtask, throw helpers, exception take).
+// ──────────────────────────────────────────────────────────────────────────
+
+impl JSGlobalObject {
+    pub fn queue_microtask(&self, _callback: JSValue, _args: &[JSValue]) {
+        unimplemented!("b2-blocked: bun_jsc::JSGlobalObject::queue_microtask")
+    }
+    pub fn try_take_exception(&self) -> Option<JSValue> {
+        unimplemented!("b2-blocked: bun_jsc::JSGlobalObject::try_take_exception")
+    }
+    pub fn report_active_exception_as_unhandled(&self, _e: JsError) {
+        unimplemented!("b2-blocked: bun_jsc::JSGlobalObject::report_active_exception_as_unhandled")
+    }
+    pub fn throw_error<E: Into<bun_core::Error>>(&self, _err: E, _msg: &str) -> JsResult<JSValue> {
+        unimplemented!("b2-blocked: bun_jsc::JSGlobalObject::throw_error")
+    }
+    pub fn throw_invalid_arguments_fmt(&self, _args: core::fmt::Arguments<'_>) -> JsResult<JSValue> {
+        Err(JsError::Thrown)
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// JSValue extended surface (call, to_error, create_empty_array, coerce, etc.).
+// ──────────────────────────────────────────────────────────────────────────
+
+impl JSValue {
+    pub fn call(self, _global: &JSGlobalObject, _this: JSValue, _args: &[JSValue]) -> JsResult<JSValue> {
+        unimplemented!("b2-blocked: bun_jsc::JSValue::call")
+    }
+    pub fn to_error(self) -> Option<JSValue> {
+        unimplemented!("b2-blocked: bun_jsc::JSValue::to_error")
+    }
+    pub fn create_empty_array(_global: &JSGlobalObject, _len: usize) -> JsResult<JSValue> {
+        unimplemented!("b2-blocked: bun_jsc::JSValue::create_empty_array")
+    }
+    pub fn coerce<T>(self, _global: &JSGlobalObject) -> JsResult<T> {
+        unimplemented!("b2-blocked: bun_jsc::JSValue::coerce")
+    }
+    pub fn to_int32(self) -> i32 {
+        unimplemented!("b2-blocked: bun_jsc::JSValue::to_int32")
+    }
+    pub fn as_boolean(self) -> bool {
+        unimplemented!("b2-blocked: bun_jsc::JSValue::as_boolean")
+    }
+    pub fn is_object(self) -> bool {
+        self.is_cell() && self.js_type().is_object()
+    }
+}
+impl From<bool> for JSValue {
+    fn from(b: bool) -> Self { Self::js_boolean(b) }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// CallFrame extended surface.
+// ──────────────────────────────────────────────────────────────────────────
+
+impl CallFrame {
+    pub fn arguments(&self) -> &[JSValue] {
+        unimplemented!("b2-blocked: bun_jsc::CallFrame::arguments")
+    }
+    pub fn this(&self) -> JSValue {
+        unimplemented!("b2-blocked: bun_jsc::CallFrame::this")
+    }
+}
+pub mod call_frame {
+    use super::*;
+    pub struct ArgumentsSlice<'a> { _p: PhantomData<&'a ()> }
+    impl<'a> ArgumentsSlice<'a> {
+        pub fn init(_frame: &'a CallFrame, _: usize) -> Self {
+            unimplemented!("b2-blocked: bun_jsc::call_frame::ArgumentsSlice::init")
+        }
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// MarkedArgumentBuffer::run — C++-side trampoline (mirrors
+// `JSC::MarkedArgumentBuffer` stack-scoped buffer pattern).
+// ──────────────────────────────────────────────────────────────────────────
+
+impl MarkedArgumentBuffer {
+    pub fn run<Ctx>(_ctx: *mut core::ffi::c_void, _f: extern "C" fn(*mut Ctx, *mut MarkedArgumentBuffer)) {
+        unimplemented!("b2-blocked: bun_jsc::MarkedArgumentBuffer::run")
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// RareData extended surface (SQL socket-group accessors).
+// ──────────────────────────────────────────────────────────────────────────
+
+impl RareData {
+    pub fn postgres_group(&mut self, _vm: &VirtualMachine, _ssl: bool) -> *mut bun_uws::SocketGroup {
+        unimplemented!("b2-blocked: bun_jsc::RareData::postgres_group")
+    }
+    pub fn mysql_group(&mut self, _vm: &VirtualMachine, _ssl: bool) -> *mut bun_uws::SocketGroup {
+        unimplemented!("b2-blocked: bun_jsc::RareData::mysql_group")
+    }
+    pub fn ssl_ctx_cache(&mut self) -> &mut SslCtxCache {
+        unimplemented!("b2-blocked: bun_jsc::RareData::ssl_ctx_cache")
+    }
+}
+pub struct SslCtxCache { _opaque: [u8; 0] }
+impl SslCtxCache {
+    pub fn get_or_create_opts(
+        &mut self,
+        _opts: bun_uws::us_bun_socket_context_options_t,
+        _err: &mut bun_uws::create_bun_socket_error_t,
+    ) -> Option<*mut bun_uws::SslCtx> {
+        unimplemented!("b2-blocked: bun_jsc::SslCtxCache::get_or_create_opts")
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// KeepAlive — local stub matching bun_aio::KeepAlive shape but accepting
+// `&VirtualMachine` (the SQL callsites pass vm directly; bun_aio::KeepAlive
+// wants an `EventLoopCtx` which `VirtualMachine` will impl once bun_jsc is
+// green). TODO(b2-blocked): replace with `pub use bun_aio::KeepAlive` and
+// add `impl Into<EventLoopCtx> for &VirtualMachine`.
+// ──────────────────────────────────────────────────────────────────────────
+
+#[derive(Default)]
+pub struct KeepAlive { _active: bool }
+impl KeepAlive {
+    pub fn r#ref(&mut self, _vm: &VirtualMachine) {
+        unimplemented!("b2-blocked: bun_aio::KeepAlive::ref (needs EventLoopCtx)")
+    }
+    pub fn unref(&mut self, _vm: &VirtualMachine) {
+        unimplemented!("b2-blocked: bun_aio::KeepAlive::unref (needs EventLoopCtx)")
+    }
+    pub fn disable(&mut self) {}
+}

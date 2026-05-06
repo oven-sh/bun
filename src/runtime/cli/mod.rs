@@ -41,17 +41,61 @@ pub mod which_npm_client;
 pub mod add_completions;
 #[path = "colon_list_type.rs"]
 pub mod colon_list_type;
-// TODO(b2-blocked): shell_completions.rs needs `include_bytes!` paths fixed
-// (completions-{bash,zsh,fish} live elsewhere) and `Output::writer()` deref;
-// list-of-yarn-commands.rs has duplicate phf_set! keys; discord_command.rs
-// needs `crate::open` (open.rs not yet un-gated). All three are leaf modules
-// with no callers on the help path — next round.
-#[cfg(any())] #[path = "shell_completions.rs"]
+#[path = "shell_completions.rs"]
 pub mod shell_completions;
+// TODO(b2-blocked): list-of-yarn-commands.rs has duplicate phf_set! keys.
 #[cfg(any())] #[path = "list-of-yarn-commands.rs"]
 pub mod list_of_yarn_commands;
-#[cfg(any())] #[path = "discord_command.rs"]
+#[path = "discord_command.rs"]
 pub mod discord_command;
+
+// ─── open (minimal open_url; full Editor/EditorContext stays gated) ──────────
+// TODO(b2-blocked): full `open.rs` (Editor detection/spawn) needs
+// `bun_runtime::process::spawn_sync`, `bun_threading::spawn_detached`,
+// `bun_resolver::fs::FileSystem` — none of which are wired on this path yet.
+// `bun discord` only needs `open_url`, so provide a thin print-fallback impl
+// here until the heavy half compiles.
+#[cfg(any())] #[path = "open.rs"]
+mod open_full;
+pub mod open {
+    use bun_core::Output;
+
+    #[cfg(target_os = "macos")]
+    pub const OPENER: &[u8] = b"/usr/bin/open";
+    #[cfg(windows)]
+    pub const OPENER: &[u8] = b"start";
+    #[cfg(not(any(target_os = "macos", windows)))]
+    pub const OPENER: &[u8] = b"xdg-open";
+
+    fn fallback(url: &[u8]) {
+        Output::prettyln(format_args!("-> {}", bstr::BStr::new(url)));
+        Output::flush();
+    }
+
+    /// Minimal port of `open.openURL`. The Zig version spawns `OPENER url` and
+    /// only falls back to printing on spawn failure; that path needs
+    /// `bun.spawnSync` (gated). Until then, always take the fallback so
+    /// `bun discord` is usable in headless/CI environments.
+    pub fn open_url(url: &[u8]) {
+        // TODO(port): wire `bun.spawnSync({ argv: [OPENER, url] })` once the
+        // non-JSC spawn path is un-gated, then only fallback() on error.
+        let _ = OPENER;
+        fallback(url);
+    }
+}
+
+// ─── non-JSC subcommand bodies (heavy; re-gated inside or here) ──────────────
+// `init_command.rs` pulls bun_json/bun_js_parser/bun_js_printer/bun_bundler +
+// `crate::create_command::initialize_store`; `install_completions_command.rs`
+// and `package_manager_command.rs` need bun_install::PackageManager + a real
+// `Command::Context` (blocked on `create_context_data`). Help/print-only paths
+// are handled inline in `Command::start()` below; full bodies stay gated.
+#[cfg(any())] #[path = "init_command.rs"]
+pub mod init_command;
+#[cfg(any())] #[path = "install_completions_command.rs"]
+pub mod install_completions_command;
+#[cfg(any())] #[path = "package_manager_command.rs"]
+pub mod package_manager_command;
 
 // ─── B-2 round 2: newly un-gated (thin surface, heavy bodies re-gated inside) ─
 #[path = "Arguments.rs"]
@@ -525,6 +569,73 @@ pub mod command {
         match tag {
             Tag::HelpCommand => return HelpCommand::exec(),
             Tag::ReservedCommand => return ReservedCommand::exec(),
+            Tag::DiscordCommand => return super::discord_command::DiscordCommand::exec(),
+            Tag::InitCommand => {
+                // InitCommand parses its own argv (no Context); --help is handled
+                // inside `InitCommand::exec` in Zig. While the body is gated,
+                // surface --help here so `bun init --help` works.
+                for a in bun::argv().iter().skip(2) {
+                    if matches!(a, b"--help" | b"-h") {
+                        tag_print_help(Tag::InitCommand, true);
+                        Global::exit(0);
+                    }
+                }
+                #[cfg(any())]
+                {
+                    return super::init_command::InitCommand::exec(
+                        &bun::argv()[2.min(bun::argv().len())..],
+                    );
+                }
+                // TODO(b2-blocked): InitCommand::exec — needs bun_json /
+                // js_parser / js_printer / bundler::options + create_command.
+                todo!("Command::start dispatch for InitCommand (body gated; use --help)");
+            }
+            Tag::InstallCompletionsCommand => {
+                // Minimal port of the non-interactive path: detect $SHELL and
+                // dump the embedded completion script to stdout. Full install
+                // (bunx symlink, fpath/XDG dir search, profile patching) needs
+                // `install_completions_command.rs` un-gated.
+                for a in bun::argv().iter().skip(2) {
+                    if matches!(a, b"--help" | b"-h") {
+                        tag_print_help(Tag::InstallCompletionsCommand, true);
+                        Global::exit(0);
+                    }
+                }
+                let shell = bun_core::env_var::SHELL::platform_get()
+                    .map(super::shell_completions::Shell::from_env)
+                    .unwrap_or_default();
+                if matches!(shell, super::shell_completions::Shell::Unknown) {
+                    pretty_errorln!(
+                        "<r><red>error<r>: Unknown or unsupported shell. Please set $SHELL to one of zsh, fish, or bash."
+                    );
+                    Output::note("To manually output completions, run 'bun getcompletes'");
+                    Output::flush();
+                    Global::exit(1);
+                }
+                // SAFETY: process-lifetime *mut io::Writer (see Output::writer()).
+                let writer = unsafe { &mut *Output::writer() };
+                let _ = writer.write_all(shell.completions());
+                Output::flush();
+                // TODO(b2-blocked): tty path → write into shell completions dir
+                // (InstallCompletionsCommand::exec).
+                Global::exit(0);
+            }
+            Tag::PackageManagerCommand => {
+                for a in bun::argv().iter().skip(2) {
+                    if matches!(a, b"--help" | b"-h") {
+                        tag_print_help(Tag::PackageManagerCommand, true);
+                        Global::exit(0);
+                    }
+                }
+                #[cfg(any())]
+                {
+                    let ctx = init(Tag::PackageManagerCommand, log)?;
+                    return super::package_manager_command::PackageManagerCommand::exec(ctx);
+                }
+                // TODO(b2-blocked): `bun pm bin`/`cache` need PackageManager::init
+                // + Command::Context (both gated on options_types::Context::Default).
+                todo!("Command::start dispatch for PackageManagerCommand (body gated; use --help)");
+            }
             // TODO(b2-blocked): remaining arms — see cli_body.rs::command::start
             _ => todo!("Command::start dispatch for {:?}", tag),
         }
@@ -550,6 +661,53 @@ pub mod command {
             }
             Tag::RunCommand | Tag::RunAsNodeCommand => {
                 run_command::RunCommand::print_help(None);
+            }
+            Tag::InitCommand => {
+                pretty!(
+                    "<b>Usage<r>: <b><green>bun init<r> <cyan>[flags]<r> <blue>[\\<folder\\>]<r>\n\
+  Initialize a Bun project in the current directory.\n\
+  Creates a package.json, tsconfig.json, and bunfig.toml if they don't exist.\n\
+\n\
+<b>Flags<r>:\n\
+      <cyan>--help<r>             Print this menu\n\
+  <cyan>-y, --yes<r>              Accept all default options\n\
+  <cyan>-m, --minimal<r>          Only initialize type definitions\n\
+  <cyan>-r, --react<r>            Initialize a React project\n\
+      <cyan>--react=tailwind<r>   Initialize a React project with TailwindCSS\n\
+      <cyan>--react=shadcn<r>     Initialize a React project with @shadcn/ui and TailwindCSS\n\
+\n\
+<b>Examples:<r>\n\
+  <b><green>bun init<r>\n\
+  <b><green>bun init<r> <cyan>--yes<r>\n\
+  <b><green>bun init<r> <cyan>--react<r>\n\
+  <b><green>bun init<r> <cyan>--react=tailwind<r> <blue>my-app<r>\n"
+                );
+                Output::flush();
+            }
+            Tag::DiscordCommand => {
+                pretty!("<b>Usage<r>: <b><green>bun discord<r>\n  Open Bun's Discord server.\n");
+                Output::flush();
+            }
+            Tag::InstallCompletionsCommand => {
+                pretty!("<b>Usage<r>: <b><green>bun completions<r>\n");
+                Output::flush();
+            }
+            Tag::PackageManagerCommand => {
+                pretty!(
+                    "<b>Usage<r>: <b><green>bun pm<r> <cyan>[flags]<r> <blue>[\\<command\\>]<r>\n\
+  Run package manager utilities.\n\
+\n\
+<b>Commands:<r>\n\
+  <b><green>bun pm<r> <blue>bin<r>              print the path to bin folder\n\
+  <b><green>bun pm<r> <blue>ls<r>               list the dependency tree according to the current lockfile\n\
+  <b><green>bun pm<r> <blue>whoami<r>           print the current npm username\n\
+  <b><green>bun pm<r> <blue>hash<r>             generate & print the hash of the current lockfile\n\
+  <b><green>bun pm<r> <blue>cache<r>            print the path to the cache folder\n\
+  <b><green>bun pm<r> <blue>cache rm<r>         clear the cache\n\
+\n\
+Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>\n"
+                );
+                Output::flush();
             }
             // TODO(b2-blocked): per-subcommand help blocks — full text lives in
             // cli_body.rs::command::tag_print_help (1.2k lines of help strings).

@@ -1409,25 +1409,17 @@ impl<'a> Lexer<'a> {
         Ok(lex)
     }
 
-    // TODO(b2-blocked): bun_logger::js_ast::E::String — T2 stub is field-less `(())`.
-    #[cfg(any())]
     #[inline]
     pub fn to_string(&self, loc_: logger::Loc) -> js_ast::Expr {
         if self.string_literal_is_ascii {
             return js_ast::Expr::init(
-                js_ast::e::String {
-                    data: self.string_literal_slice,
-                    ..Default::default()
-                },
+                js_ast::E::String::init(self.string_literal_slice),
                 loc_,
             );
         }
 
         js_ast::Expr::init(
-            js_ast::e::String {
-                data: self.string_literal_slice,
-                ..Default::default()
-            },
+            js_ast::E::String::init(self.string_literal_slice),
             loc_,
         )
     }

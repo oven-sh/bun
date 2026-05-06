@@ -1,10 +1,10 @@
-use crate as css;
-use crate::css_values::angle::Angle;
-use crate::css_values::length::{Length, LengthValue};
-use crate::css_values::number::{CSSNumber, CSSNumberFns};
-use crate::css_values::percentage::{DimensionPercentage, Percentage};
-use crate::css_values::time::Time;
-use crate::{PrintErr, Printer, Result as CssResult};
+use crate::css_parser as css;
+use crate::css_parser::{CssResult, PrintErr, Printer};
+use crate::values::angle::Angle;
+use crate::values::length::{Length, LengthValue};
+use crate::values::number::{CSSNumber, CSSNumberFns};
+use crate::values::percentage::{DimensionPercentage, Percentage};
+use crate::values::time::Time;
 
 use core::cmp::Ordering;
 
@@ -127,11 +127,31 @@ pub enum Calc<V> {
     Function(Box<MathFunction<V>>),
 }
 
-// TODO(port): define a `CalcValue` trait collecting the methods Zig dispatches on V:
-//   mulF32, addInternal, intoCalc, toCss, trySign, isCompatible, tryFromAngle, tryMap,
-//   tryOp, tryOpTo, partialCmp, parse. The Zig used `switch (V)` / `@hasDecl` for this.
-//   For Phase A the generic methods below carry ad-hoc bounds and `// TODO(port)` at
-//   each comptime-type-switch site.
+// ───────────────────────────── CalcValue trait ─────────────────────────────
+// Replaces the Zig `switch (V)` / `@hasDecl(V, ...)` comptime-type dispatch.
+// Every type that can appear inside `Calc<V>` implements this. The free
+// `css::generic::*` wrappers were stubs that forwarded to per-type methods;
+// now that `CssResult<T>` is `core::result::Result`, the trait carries the
+// real signatures and `Calc<V>` is bounded on it directly.
+
+pub trait CalcValue: Sized + Clone {
+    fn mul_f32(self, rhs: f32) -> Self;
+    fn add_internal(self, rhs: Self) -> Self;
+    /// Wrap a value as a `Calc<Self>` (Zig: `intoCalc`).
+    fn into_calc(self) -> Calc<Self>;
+    /// Convert a `Calc<Self>` into `Self` if representable (Zig: `intoValue`).
+    fn from_calc(c: Calc<Self>, input: &mut css::Parser) -> CssResult<Self>;
+    fn try_sign(&self) -> Option<f32>;
+    fn try_map(&self, f: fn(f32) -> f32) -> Option<Self>;
+    fn try_op<C: Copy>(&self, rhs: &Self, ctx: C, f: fn(C, f32, f32) -> f32) -> Option<Self>;
+    fn try_op_to<R, C: Copy>(&self, rhs: &Self, ctx: C, f: fn(C, f32, f32) -> R) -> Option<R>;
+    fn partial_cmp_calc(&self, rhs: &Self) -> Option<Ordering>;
+    fn try_from_angle(angle: Angle) -> Option<Self>;
+    fn parse(input: &mut css::Parser) -> CssResult<Self>;
+    fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr>;
+    fn is_compatible(&self, browsers: css::targets::Browsers) -> bool;
+    fn eql(&self, other: &Self) -> bool;
+}
 
 impl<V: Clone> Clone for Calc<V> {
     fn clone(&self) -> Self {
@@ -163,16 +183,23 @@ impl<V> Calc<V> {
         }
     }
 
+    pub fn deep_clone_boxed(&self) -> Box<Self>
+    where
+        V: Clone,
+    {
+        Box::new(self.deep_clone())
+    }
+
     // Zig `deinit` only freed owned Box fields → handled by Drop on Box<V>/Box<Calc<V>>/
     // Box<MathFunction<V>>. No explicit Drop impl needed.
 
     pub fn eql(&self, other: &Self) -> bool
     where
-        V: PartialEq,
+        V: CalcValue,
     {
         match (self, other) {
-            (Calc::Value(a), Calc::Value(b)) => css::generic::eql(&**a, &**b),
-            (Calc::Number(a), Calc::Number(b)) => css::generic::eql(a, b),
+            (Calc::Value(a), Calc::Value(b)) => a.eql(b),
+            (Calc::Number(a), Calc::Number(b)) => *a == *b,
             (Calc::Sum { left: al, right: ar }, Calc::Sum { left: bl, right: br }) => {
                 al.eql(bl) && ar.eql(br)
             }
@@ -190,57 +217,50 @@ impl<V> Calc<V> {
             _ => false,
         }
     }
+}
 
+impl<V: CalcValue> PartialEq for Calc<V> {
+    fn eq(&self, other: &Self) -> bool {
+        self.eql(other)
+    }
+}
+
+impl<V: CalcValue> Calc<V> {
     fn mul_value_f32(lhs: V, rhs: f32) -> V {
-        // TODO(port): comptime type switch — Zig: `f32 => lhs * rhs, else => lhs.mulF32(...)`.
-        // Needs trait method `V::mul_f32(self, f32) -> V` with f32 specialization.
-        css::generic::mul_f32(lhs, rhs)
+        // Zig: `f32 => lhs * rhs, else => lhs.mulF32(...)` — folded into trait.
+        lhs.mul_f32(rhs)
     }
 
     // TODO: addValueOwned
     pub fn add_value(lhs: V, rhs: V) -> V {
-        // TODO(port): comptime type switch — Zig: `f32 => lhs + rhs, else => lhs.addInternal(...)`.
-        // Needs trait method `V::add_internal(self, V) -> V` with f32 specialization.
-        css::generic::add_internal(lhs, rhs)
+        // Zig: `f32 => lhs + rhs, else => lhs.addInternal(...)` — folded into trait.
+        lhs.add_internal(rhs)
     }
 
     // TODO: intoValueOwned
-    pub fn into_value(self) -> CssResult<V> {
-        // TODO(port): comptime type switch on V (Angle / CSSNumber / Length / Percentage /
-        // Time / DimensionPercentage<LengthValue> / DimensionPercentage<Angle>). This must
-        // become a trait method `V::from_calc(Calc<V>) -> CssResult<V>` implemented per-type.
-        // The Zig body is preserved here as a reference for Phase B:
-        //
-        //   Angle      => .value -> *v, else -> err "angle value"
-        //   CSSNumber  => .value -> *v, .number -> n, else -> err "number value"
-        //   Length     => Length { .calc = Box::new(self) }
-        //   Percentage => .value -> *v, else -> Percentage { v: NaN }
-        //   Time       => .value -> *v, else -> err "time value"
-        //   DimensionPercentage<LengthValue> => DimensionPercentage::Calc(Box::new(self))
-        //   DimensionPercentage<Angle>       => DimensionPercentage::Calc(Box::new(self))
-        //
-        css::generic::calc_into_value(self)
+    pub fn into_value(self, input: &mut css::Parser) -> CssResult<V> {
+        // Zig comptime type switch on V → trait method `V::from_calc`.
+        V::from_calc(self, input)
     }
 
     pub fn into_calc(val: V) -> Self {
-        // TODO(port): comptime type switch — Zig: `f32 => .{ .value = box(val) }, else => val.intoCalc()`.
-        // Needs trait method `V::into_calc(self) -> Calc<V>` with f32 specialization.
-        css::generic::into_calc(val)
+        // Zig: `f32 => .{ .value = box(val) }, else => val.intoCalc()` — folded into trait.
+        val.into_calc()
     }
 
     // TODO: change to addOwned()
-    pub fn add(self, rhs: Self) -> CssResult<Self> {
-        if let (Calc::Value(a), Calc::Value(b)) = (&self, &rhs) {
+    pub fn add(self, rhs: Self, input: &mut css::Parser) -> CssResult<Self> {
+        if let (Calc::Value(_), Calc::Value(_)) = (&self, &rhs) {
             // PERF: we can reuse the allocation here
             // PORT NOTE: reshaped for borrowck — clone out of boxes then drop originals.
             let (a, b) = match (self, rhs) {
                 (Calc::Value(a), Calc::Value(b)) => (*a, *b),
                 _ => unreachable!(),
             };
-            return CssResult::Ok(Self::into_calc(Self::add_value(a, b)));
+            return Ok(Self::into_calc(Self::add_value(a, b)));
         }
         if let (Calc::Number(a), Calc::Number(b)) = (&self, &rhs) {
-            return CssResult::Ok(Calc::Number(a + b));
+            return Ok(Calc::Number(a + b));
         }
         if matches!(self, Calc::Value(_)) {
             // PERF: we can reuse the allocation here
@@ -248,11 +268,8 @@ impl<V> Calc<V> {
                 Calc::Value(a) => *a,
                 _ => unreachable!(),
             };
-            let rhs_value = match rhs.into_value() {
-                CssResult::Ok(v) => v,
-                CssResult::Err(e) => return CssResult::Err(e),
-            };
-            return CssResult::Ok(Self::into_calc(Self::add_value(a, rhs_value)));
+            let rhs_value = rhs.into_value(input)?;
+            return Ok(Self::into_calc(Self::add_value(a, rhs_value)));
         }
         if matches!(rhs, Calc::Value(_)) {
             // PERF: we can reuse the allocation here
@@ -260,27 +277,18 @@ impl<V> Calc<V> {
                 Calc::Value(b) => *b,
                 _ => unreachable!(),
             };
-            let this_value = match self.into_value() {
-                CssResult::Ok(v) => v,
-                CssResult::Err(e) => return CssResult::Err(e),
-            };
-            return CssResult::Ok(Self::into_calc(Self::add_value(this_value, b)));
+            let this_value = self.into_value(input)?;
+            return Ok(Self::into_calc(Self::add_value(this_value, b)));
         }
         if matches!(self, Calc::Function(_)) || matches!(rhs, Calc::Function(_)) {
-            return CssResult::Ok(Calc::Sum {
+            return Ok(Calc::Sum {
                 left: Box::new(self),
                 right: Box::new(rhs),
             });
         }
-        let this_value = match self.into_value() {
-            CssResult::Ok(v) => v,
-            CssResult::Err(e) => return CssResult::Err(e),
-        };
-        let rhs_value = match rhs.into_value() {
-            CssResult::Ok(v) => v,
-            CssResult::Err(e) => return CssResult::Err(e),
-        };
-        CssResult::Ok(Self::into_calc(Self::add_value(this_value, rhs_value)))
+        let this_value = self.into_value(input)?;
+        let rhs_value = rhs.into_value(input)?;
+        Ok(Self::into_calc(Self::add_value(this_value, rhs_value)))
     }
 
     // TODO: users of this and `parseWith` don't need the pointer and often throwaway heap allocated values immediately
@@ -298,91 +306,59 @@ impl<V> Calc<V> {
         parse_ident: fn(C, &[u8]) -> Option<Self>,
     ) -> CssResult<Self> {
         let location = input.current_source_location();
-        let f = match input.expect_function() {
-            CssResult::Ok(v) => v,
-            CssResult::Err(e) => return CssResult::Err(e),
-        };
+        let f = input.expect_function()?;
 
         let Some(unit) = CalcUnit::get_any_case(f) else {
-            return CssResult::Err(location.new_unexpected_token_error(css::Token::Ident(f)));
+            return Err(location.new_unexpected_token_error(css::Token::Ident(f)));
         };
 
         // PORT NOTE: Zig used explicit `Closure` structs because Zig lacks closures.
         // Rust closures capture `ctx` + `parse_ident` directly.
         match unit {
             CalcUnit::Calc => {
-                let calc = match input
-                    .parse_nested_block(|i| Self::parse_sum(i, ctx, parse_ident))
-                {
-                    CssResult::Ok(vv) => vv,
-                    CssResult::Err(e) => return CssResult::Err(e),
-                };
+                let calc = input.parse_nested_block(|i| Self::parse_sum(i, ctx, parse_ident))?;
                 if matches!(calc, Calc::Value(_) | Calc::Number(_)) {
-                    return CssResult::Ok(calc);
+                    return Ok(calc);
                 }
-                CssResult::Ok(Calc::Function(Box::new(MathFunction::Calc(calc))))
+                Ok(Calc::Function(Box::new(MathFunction::Calc(calc))))
             }
             CalcUnit::Min => {
-                let mut reduced = match input.parse_nested_block(|i| {
+                let mut reduced = input.parse_nested_block(|i| {
                     i.parse_comma_separated_with_ctx(|i| Self::parse_sum(i, ctx, parse_ident))
-                }) {
-                    CssResult::Ok(vv) => vv,
-                    CssResult::Err(e) => return CssResult::Err(e),
-                };
+                })?;
                 // PERF(alloc): i don't like this additional allocation
                 // can we use stack fallback here if the common case is that there will be 1 argument?
                 Self::reduce_args(&mut reduced, Ordering::Less);
                 if reduced.len() == 1 {
-                    return CssResult::Ok(reduced.swap_remove(0));
+                    return Ok(reduced.swap_remove(0));
                 }
-                CssResult::Ok(Calc::Function(Box::new(MathFunction::Min(reduced))))
+                Ok(Calc::Function(Box::new(MathFunction::Min(reduced))))
             }
             CalcUnit::Max => {
-                let mut reduced = match input.parse_nested_block(|i| {
+                let mut reduced = input.parse_nested_block(|i| {
                     i.parse_comma_separated_with_ctx(|i| Self::parse_sum(i, ctx, parse_ident))
-                }) {
-                    CssResult::Ok(vv) => vv,
-                    CssResult::Err(e) => return CssResult::Err(e),
-                };
+                })?;
                 // PERF: i don't like this additional allocation
                 Self::reduce_args(&mut reduced, Ordering::Greater);
                 if reduced.len() == 1 {
-                    return CssResult::Ok(reduced.remove(0));
+                    return Ok(reduced.remove(0));
                 }
-                CssResult::Ok(Calc::Function(Box::new(MathFunction::Max(reduced))))
+                Ok(Calc::Function(Box::new(MathFunction::Max(reduced))))
             }
             CalcUnit::Clamp => {
-                let (mut min, mut center, mut max) = match input.parse_nested_block(|i| {
-                    let parse_ident_wrapper = |ident: &[u8]| parse_ident(ctx, ident);
-                    let _ = parse_ident_wrapper; // PORT NOTE: Zig wrapped ctx; Rust captures directly
-                    let min = match Self::parse_sum(i, ctx, parse_ident) {
-                        CssResult::Ok(vv) => vv,
-                        CssResult::Err(e) => return CssResult::Err(e),
-                    };
-                    if let Some(e) = i.expect_comma().as_err() {
-                        return CssResult::Err(e);
-                    }
-                    let center = match Self::parse_sum(i, ctx, parse_ident) {
-                        CssResult::Ok(vv) => vv,
-                        CssResult::Err(e) => return CssResult::Err(e),
-                    };
-                    if let Some(e) = i.expect_comma().as_err() {
-                        return CssResult::Err(e);
-                    }
-                    let max = match Self::parse_sum(i, ctx, parse_ident) {
-                        CssResult::Ok(vv) => vv,
-                        CssResult::Err(e) => return CssResult::Err(e),
-                    };
-                    CssResult::Ok((Some(min), center, Some(max)))
-                }) {
-                    CssResult::Ok(vv) => vv,
-                    CssResult::Err(e) => return CssResult::Err(e),
-                };
+                let (mut min, mut center, mut max) = input.parse_nested_block(|i| {
+                    let min = Self::parse_sum(i, ctx, parse_ident)?;
+                    i.expect_comma()?;
+                    let center = Self::parse_sum(i, ctx, parse_ident)?;
+                    i.expect_comma()?;
+                    let max = Self::parse_sum(i, ctx, parse_ident)?;
+                    Ok((Some(min), center, Some(max)))
+                })?;
 
                 // According to the spec, the minimum should "win" over the maximum if they are in the wrong order.
                 let cmp = if let (Some(mx), Calc::Value(cv)) = (&max, &center) {
                     if let Calc::Value(mv) = mx {
-                        css::generic::partial_cmp(&**cv, &**mv)
+                        cv.partial_cmp_calc(&**mv)
                     } else {
                         None
                     }
@@ -401,20 +377,13 @@ impl<V> Calc<V> {
                     }
                 }
 
-                let switch_val: u8 =
-                    ((min.is_some() as u8) << 1) | (min.is_some() as u8);
+                let switch_val: u8 = ((min.is_some() as u8) << 1) | (min.is_some() as u8);
                 // TODO(port): Zig original has a likely bug — both bits derive from `min != null`.
                 // Ported faithfully; Phase B should verify intended `(min, max)` packing.
-                CssResult::Ok(match switch_val {
+                Ok(match switch_val {
                     0b00 => center,
-                    0b10 => Calc::Function(Box::new(MathFunction::Max(arr2(
-                        min.unwrap(),
-                        center,
-                    )))),
-                    0b01 => Calc::Function(Box::new(MathFunction::Min(arr2(
-                        max.unwrap(),
-                        center,
-                    )))),
+                    0b10 => Calc::Function(Box::new(MathFunction::Max(arr2(min.unwrap(), center)))),
+                    0b01 => Calc::Function(Box::new(MathFunction::Min(arr2(max.unwrap(), center)))),
                     0b11 => Calc::Function(Box::new(MathFunction::Clamp {
                         min: min.unwrap(),
                         center,
@@ -424,10 +393,8 @@ impl<V> Calc<V> {
                 })
             }
             CalcUnit::Round => input.parse_nested_block(|i| {
-                let strategy = if let Some(s) = i.try_parse(RoundingStrategy::parse).as_value() {
-                    if let Some(e) = i.expect_comma().as_err() {
-                        return CssResult::Err(e);
-                    }
+                let strategy = if let Ok(s) = i.try_parse(RoundingStrategy::parse) {
+                    i.expect_comma()?;
                     s
                 } else {
                     RoundingStrategy::default()
@@ -488,93 +455,64 @@ impl<V> Calc<V> {
             CalcUnit::Acos => Self::parse_trig(input, TrigFnKind::Acos, true, ctx, parse_ident),
             CalcUnit::Atan => Self::parse_trig(input, TrigFnKind::Atan, true, ctx, parse_ident),
             CalcUnit::Atan2 => input.parse_nested_block(|i| {
-                let res = match Self::parse_atan2(i, ctx, parse_ident) {
-                    CssResult::Ok(v) => v,
-                    CssResult::Err(e) => return CssResult::Err(e),
-                };
-                if let Some(v) = css::generic::try_from_angle::<V>(res) {
-                    return CssResult::Ok(Calc::Value(Box::new(v)));
+                let res = Self::parse_atan2(i, ctx, parse_ident)?;
+                if let Some(v) = V::try_from_angle(res) {
+                    return Ok(Calc::Value(Box::new(v)));
                 }
-                CssResult::Err(i.new_custom_error(css::ParserError::InvalidValue))
+                Err(i.new_custom_error(css::ParserError::InvalidValue))
             }),
             CalcUnit::Pow => input.parse_nested_block(|i| {
-                let a = match Self::parse_numeric(i, ctx, parse_ident) {
-                    CssResult::Ok(vv) => vv,
-                    CssResult::Err(e) => return CssResult::Err(e),
-                };
-                if let Some(e) = i.expect_comma().as_err() {
-                    return CssResult::Err(e);
-                }
-                let b = match Self::parse_numeric(i, ctx, parse_ident) {
-                    CssResult::Ok(vv) => vv,
-                    CssResult::Err(e) => return CssResult::Err(e),
-                };
-                CssResult::Ok(Calc::Number(bun_core::powf(a, b)))
+                let a = Self::parse_numeric(i, ctx, parse_ident)?;
+                i.expect_comma()?;
+                let b = Self::parse_numeric(i, ctx, parse_ident)?;
+                Ok(Calc::Number(bun_core::powf(a, b)))
             }),
             CalcUnit::Log => input.parse_nested_block(|i| {
-                let value = match Self::parse_numeric(i, ctx, parse_ident) {
-                    CssResult::Ok(vv) => vv,
-                    CssResult::Err(e) => return CssResult::Err(e),
-                };
+                let value = Self::parse_numeric(i, ctx, parse_ident)?;
                 if i.try_parse(css::Parser::expect_comma).is_ok() {
-                    let base = match Self::parse_numeric(i, ctx, parse_ident) {
-                        CssResult::Ok(vv) => vv,
-                        CssResult::Err(e) => return CssResult::Err(e),
-                    };
-                    return CssResult::Ok(Calc::Number(value.log(base)));
+                    let base = Self::parse_numeric(i, ctx, parse_ident)?;
+                    return Ok(Calc::Number(value.log(base)));
                 }
-                CssResult::Ok(Calc::Number(value.ln()))
+                Ok(Calc::Number(value.ln()))
             }),
             CalcUnit::Sqrt => Self::parse_numeric_fn(input, NumericFnOp::Sqrt, ctx, parse_ident),
             CalcUnit::Exp => Self::parse_numeric_fn(input, NumericFnOp::Exp, ctx, parse_ident),
             CalcUnit::Hypot => input.parse_nested_block(|i| {
-                let mut args = match i
-                    .parse_comma_separated_with_ctx(|i| Self::parse_sum(i, ctx, parse_ident))
-                {
-                    CssResult::Ok(v) => v,
-                    CssResult::Err(e) => return CssResult::Err(e),
-                };
-                let val = match Self::parse_hypot(&mut args) {
-                    CssResult::Ok(vv) => vv,
-                    CssResult::Err(e) => return CssResult::Err(e),
-                };
+                let mut args =
+                    i.parse_comma_separated_with_ctx(|i| Self::parse_sum(i, ctx, parse_ident))?;
+                let val = Self::parse_hypot(&mut args)?;
                 if let Some(v) = val {
-                    return CssResult::Ok(v);
+                    return Ok(v);
                 }
-                CssResult::Ok(Calc::Function(Box::new(MathFunction::Hypot(args))))
+                Ok(Calc::Function(Box::new(MathFunction::Hypot(args))))
             }),
             CalcUnit::Abs => input.parse_nested_block(|i| {
-                let v = match Self::parse_sum(i, ctx, parse_ident) {
-                    CssResult::Ok(vv) => vv,
-                    CssResult::Err(e) => return CssResult::Err(e),
-                };
-                CssResult::Ok(if let Some(vv) = Self::apply_map(&v, absf) {
+                let v = Self::parse_sum(i, ctx, parse_ident)?;
+                Ok(if let Some(vv) = Self::apply_map(&v, absf) {
                     vv
                 } else {
                     Calc::Function(Box::new(MathFunction::Abs(v)))
                 })
             }),
             CalcUnit::Sign => input.parse_nested_block(|i| {
-                let v = match Self::parse_sum(i, ctx, parse_ident) {
-                    CssResult::Ok(vv) => vv,
-                    CssResult::Err(e) => return CssResult::Err(e),
-                };
+                let v = Self::parse_sum(i, ctx, parse_ident)?;
                 match &v {
-                    Calc::Number(n) => return CssResult::Ok(Calc::Number(std_math_sign(*n))),
+                    Calc::Number(n) => return Ok(Calc::Number(std_math_sign(*n))),
                     Calc::Value(v2) => {
                         // First map so we ignore percentages, which must be resolved to their
                         // computed value in order to determine the sign.
-                        if let Some(new_v) = css::generic::try_map(&**v2, std_math_sign) {
+                        if let Some(new_v) = v2.try_map(std_math_sign) {
                             // sign() alwasy resolves to a number.
-                            return CssResult::Ok(Calc::Number(
-                                css::generic::try_sign(&new_v)
+                            return Ok(Calc::Number(
+                                new_v
+                                    .try_sign()
                                     .unwrap_or_else(|| panic!("sign() always resolves to a number.")),
                             ));
                         }
                     }
                     _ => {}
                 }
-                CssResult::Ok(Calc::Function(Box::new(MathFunction::Sign(v))))
+                Ok(Calc::Function(Box::new(MathFunction::Sign(v))))
             }),
         }
     }
@@ -587,11 +525,8 @@ impl<V> Calc<V> {
     ) -> CssResult<Self> {
         // PERF(port): was comptime monomorphization on `op` — profile in Phase B.
         input.parse_nested_block(|i| {
-            let v = match Self::parse_numeric(i, ctx, parse_ident) {
-                CssResult::Ok(v) => v,
-                CssResult::Err(e) => return CssResult::Err(e),
-            };
-            CssResult::Ok(Calc::Number(match op {
+            let v = Self::parse_numeric(i, ctx, parse_ident)?;
+            Ok(Calc::Number(match op {
                 NumericFnOp::Sqrt => v.sqrt(),
                 NumericFnOp::Exp => v.exp(),
             }))
@@ -606,23 +541,14 @@ impl<V> Calc<V> {
         ctx_for_parse_ident: C,
         parse_ident: fn(C, &[u8]) -> Option<Self>,
     ) -> CssResult<Self> {
-        let a = match Self::parse_sum(input, ctx_for_parse_ident, parse_ident) {
-            CssResult::Ok(vv) => vv,
-            CssResult::Err(e) => return CssResult::Err(e),
-        };
-        if let Some(e) = input.expect_comma().as_err() {
-            return CssResult::Err(e);
-        }
-        let b = match Self::parse_sum(input, ctx_for_parse_ident, parse_ident) {
-            CssResult::Ok(vv) => vv,
-            CssResult::Err(e) => return CssResult::Err(e),
-        };
+        let a = Self::parse_sum(input, ctx_for_parse_ident, parse_ident)?;
+        input.expect_comma()?;
+        let b = Self::parse_sum(input, ctx_for_parse_ident, parse_ident)?;
 
-        let val = Self::apply_op(&a, &b, ctx_for_op_and_fallback, op).unwrap_or_else(|| {
-            Calc::Function(Box::new(fallback(ctx_for_op_and_fallback, a, b)))
-        });
+        let val = Self::apply_op(&a, &b, ctx_for_op_and_fallback, op)
+            .unwrap_or_else(|| Calc::Function(Box::new(fallback(ctx_for_op_and_fallback, a, b))));
 
-        CssResult::Ok(val)
+        Ok(val)
     }
 
     pub fn parse_sum<C: Copy>(
@@ -630,15 +556,12 @@ impl<V> Calc<V> {
         ctx: C,
         parse_ident: fn(C, &[u8]) -> Option<Self>,
     ) -> CssResult<Self> {
-        let mut cur = match Self::parse_product(input, ctx, parse_ident) {
-            CssResult::Ok(vv) => vv,
-            CssResult::Err(e) => return CssResult::Err(e),
-        };
+        let mut cur = Self::parse_product(input, ctx, parse_ident)?;
         loop {
             let start = input.state();
             let tok = match input.next_including_whitespace() {
-                CssResult::Ok(vv) => vv,
-                CssResult::Err(_) => {
+                Ok(vv) => vv,
+                Err(_) => {
                     input.reset(&start);
                     break;
                 }
@@ -648,31 +571,16 @@ impl<V> Calc<V> {
                 if input.is_exhausted() {
                     break; // allow trailing whitespace
                 }
-                let next_tok = match input.next() {
-                    CssResult::Ok(vv) => vv,
-                    CssResult::Err(e) => return CssResult::Err(e),
-                };
+                let next_tok = input.next()?.clone();
                 if matches!(next_tok, css::Token::Delim('+')) {
-                    let next = match Self::parse_product(input, ctx, parse_ident) {
-                        CssResult::Ok(vv) => vv,
-                        CssResult::Err(e) => return CssResult::Err(e),
-                    };
-                    cur = match cur.add(next) {
-                        CssResult::Ok(v) => v,
-                        CssResult::Err(e) => return CssResult::Err(e),
-                    };
+                    let next = Self::parse_product(input, ctx, parse_ident)?;
+                    cur = cur.add(next, input)?;
                 } else if matches!(next_tok, css::Token::Delim('-')) {
-                    let mut rhs = match Self::parse_product(input, ctx, parse_ident) {
-                        CssResult::Ok(vv) => vv,
-                        CssResult::Err(e) => return CssResult::Err(e),
-                    };
+                    let mut rhs = Self::parse_product(input, ctx, parse_ident)?;
                     rhs = rhs.mul_f32(-1.0);
-                    cur = match cur.add(rhs) {
-                        CssResult::Ok(v) => v,
-                        CssResult::Err(e) => return CssResult::Err(e),
-                    };
+                    cur = cur.add(rhs, input)?;
                 } else {
-                    return CssResult::Err(input.new_unexpected_token_error(next_tok.clone()));
+                    return Err(input.new_unexpected_token_error(next_tok));
                 }
                 continue;
             }
@@ -680,7 +588,7 @@ impl<V> Calc<V> {
             break;
         }
 
-        CssResult::Ok(cur)
+        Ok(cur)
     }
 
     pub fn parse_product<C: Copy>(
@@ -688,15 +596,12 @@ impl<V> Calc<V> {
         ctx: C,
         parse_ident: fn(C, &[u8]) -> Option<Self>,
     ) -> CssResult<Self> {
-        let mut node = match Self::parse_value(input, ctx, parse_ident) {
-            CssResult::Ok(vv) => vv,
-            CssResult::Err(e) => return CssResult::Err(e),
-        };
+        let mut node = Self::parse_value(input, ctx, parse_ident)?;
         loop {
             let start = input.state();
             let tok = match input.next() {
-                CssResult::Ok(vv) => vv,
-                CssResult::Err(_) => {
+                Ok(vv) => vv,
+                Err(_) => {
                     input.reset(&start);
                     break;
                 }
@@ -704,38 +609,30 @@ impl<V> Calc<V> {
 
             if matches!(tok, css::Token::Delim('*')) {
                 // At least one of the operands must be a number.
-                let rhs = match Self::parse_value(input, ctx, parse_ident) {
-                    CssResult::Ok(vv) => vv,
-                    CssResult::Err(e) => return CssResult::Err(e),
-                };
+                let rhs = Self::parse_value(input, ctx, parse_ident)?;
                 if let Calc::Number(n) = rhs {
                     node = node.mul_f32(n);
                 } else if let Calc::Number(val) = node {
                     node = rhs;
                     node = node.mul_f32(val);
                 } else {
-                    return CssResult::Err(
-                        input.new_unexpected_token_error(css::Token::Delim('*')),
-                    );
+                    return Err(input.new_unexpected_token_error(css::Token::Delim('*')));
                 }
             } else if matches!(tok, css::Token::Delim('/')) {
-                let rhs = match Self::parse_value(input, ctx, parse_ident) {
-                    CssResult::Ok(vv) => vv,
-                    CssResult::Err(e) => return CssResult::Err(e),
-                };
+                let rhs = Self::parse_value(input, ctx, parse_ident)?;
                 if let Calc::Number(val) = rhs {
                     if val != 0.0 {
                         node = node.mul_f32(1.0 / val);
                         continue;
                     }
                 }
-                return CssResult::Err(input.new_custom_error(css::ParserError::InvalidValue));
+                return Err(input.new_custom_error(css::ParserError::InvalidValue));
             } else {
                 input.reset(&start);
                 break;
             }
         }
-        CssResult::Ok(node)
+        Ok(node)
     }
 
     pub fn parse_value<C: Copy>(
@@ -744,15 +641,15 @@ impl<V> Calc<V> {
         parse_ident: fn(C, &[u8]) -> Option<Self>,
     ) -> CssResult<Self> {
         // Parse nested calc() and other math functions.
-        if let Some(calc) = input.try_parse(Self::parse).as_value() {
+        if let Ok(calc) = input.try_parse(Self::parse) {
             match calc {
                 Calc::Function(f) => {
                     return match *f {
-                        MathFunction::Calc(c) => CssResult::Ok(c),
-                        other => CssResult::Ok(Calc::Function(Box::new(other))),
+                        MathFunction::Calc(c) => Ok(c),
+                        other => Ok(Calc::Function(Box::new(other))),
                     };
                 }
-                other => return CssResult::Ok(other),
+                other => return Ok(other),
             }
         }
 
@@ -760,27 +657,24 @@ impl<V> Calc<V> {
             return input.parse_nested_block(|i| Self::parse_sum(i, ctx, parse_ident));
         }
 
-        if let Some(num) = input.try_parse(css::Parser::expect_number).as_value() {
-            return CssResult::Ok(Calc::Number(num));
+        if let Ok(num) = input.try_parse(css::Parser::expect_number) {
+            return Ok(Calc::Number(num));
         }
 
-        if let Some(constant) = input.try_parse(Constant::parse).as_value() {
-            return CssResult::Ok(Calc::Number(constant.into_f32()));
+        if let Ok(constant) = input.try_parse(Constant::parse) {
+            return Ok(Calc::Number(constant.into_f32()));
         }
 
         let location = input.current_source_location();
-        if let Some(ident) = input.try_parse(css::Parser::expect_ident).as_value() {
+        if let Ok(ident) = input.try_parse(css::Parser::expect_ident) {
             if let Some(c) = parse_ident(ctx, ident) {
-                return CssResult::Ok(c);
+                return Ok(c);
             }
-            return CssResult::Err(location.new_unexpected_token_error(css::Token::Ident(ident)));
+            return Err(location.new_unexpected_token_error(css::Token::Ident(ident)));
         }
 
-        let value = match input.try_parse(css::generic::parse_for::<V>) {
-            CssResult::Ok(vv) => vv,
-            CssResult::Err(e) => return CssResult::Err(e),
-        };
-        CssResult::Ok(Calc::Value(Box::new(value)))
+        let value = input.try_parse(V::parse)?;
+        Ok(Calc::Value(Box::new(value)))
     }
 
     pub fn parse_trig<C: Copy>(
@@ -815,10 +709,7 @@ impl<V> Calc<V> {
             };
             // TODO(port): Zig passed `&closure` (a *@This()) as ctx; here we use `()` and
             // capture `ctx` via the outer closure. Verify `Calc<Angle>::parse_sum` signature.
-            let v = match Calc::<Angle>::parse_sum(i, (), parse_ident_fn) {
-                CssResult::Ok(vv) => vv,
-                CssResult::Err(e) => return CssResult::Err(e),
-            };
+            let v = Calc::<Angle>::parse_sum(i, (), parse_ident_fn)?;
 
             let rad: f32 = 'rad: {
                 match &v {
@@ -830,16 +721,16 @@ impl<V> Calc<V> {
                     Calc::Number(n) => break 'rad trig_fn(*n),
                     _ => {}
                 }
-                return CssResult::Err(i.new_custom_error(css::ParserError::InvalidValue));
+                return Err(i.new_custom_error(css::ParserError::InvalidValue));
             };
 
             if to_angle && !rad.is_nan() {
-                if let Some(val) = css::generic::try_from_angle::<V>(Angle::Rad(rad)) {
-                    return CssResult::Ok(Calc::Value(Box::new(val)));
+                if let Some(val) = V::try_from_angle(Angle::Rad(rad)) {
+                    return Ok(Calc::Value(Box::new(val)));
                 }
-                return CssResult::Err(i.new_custom_error(css::ParserError::InvalidValue));
+                return Err(i.new_custom_error(css::ParserError::InvalidValue));
             } else {
-                return CssResult::Ok(Calc::Number(rad));
+                return Ok(Calc::Number(rad));
             }
         })
     }
@@ -856,17 +747,17 @@ impl<V> Calc<V> {
         // atan2 supports arguments of any <number>, <dimension>, or <percentage>, even ones that wouldn't
         // normally be supported by V. The only requirement is that the arguments be of the same type.
         // Try parsing with each type, and return the first one that parses successfully.
-        if let Some(v) = try_parse_atan2_args::<C, Length>(input, ctx).as_value() {
-            return CssResult::Ok(v);
+        if let Ok(v) = try_parse_atan2_args::<C, Length>(input, ctx) {
+            return Ok(v);
         }
-        if let Some(v) = try_parse_atan2_args::<C, Percentage>(input, ctx).as_value() {
-            return CssResult::Ok(v);
+        if let Ok(v) = try_parse_atan2_args::<C, Percentage>(input, ctx) {
+            return Ok(v);
         }
-        if let Some(v) = try_parse_atan2_args::<C, Angle>(input, ctx).as_value() {
-            return CssResult::Ok(v);
+        if let Ok(v) = try_parse_atan2_args::<C, Angle>(input, ctx) {
+            return Ok(v);
         }
-        if let Some(v) = try_parse_atan2_args::<C, Time>(input, ctx).as_value() {
-            return CssResult::Ok(v);
+        if let Ok(v) = try_parse_atan2_args::<C, Time>(input, ctx) {
+            return Ok(v);
         }
 
         let parse_ident_fn = move |c: C, ident: &[u8]| -> Option<Calc<CSSNumber>> {
@@ -886,33 +777,23 @@ impl<V> Calc<V> {
         ctx: C,
         parse_ident: fn(C, &[u8]) -> Option<Self>,
     ) -> CssResult<Angle> {
-        let a = match Self::parse_sum(input, ctx, parse_ident) {
-            CssResult::Ok(vv) => vv,
-            CssResult::Err(e) => return CssResult::Err(e),
-        };
-        if let Some(e) = input.expect_comma().as_err() {
-            return CssResult::Err(e);
-        }
-        let b = match Self::parse_sum(input, ctx, parse_ident) {
-            CssResult::Ok(vv) => vv,
-            CssResult::Err(e) => return CssResult::Err(e),
-        };
+        let a = Self::parse_sum(input, ctx, parse_ident)?;
+        input.expect_comma()?;
+        let b = Self::parse_sum(input, ctx, parse_ident)?;
 
         if let (Calc::Value(av), Calc::Value(bv)) = (&a, &b) {
-            if let Some(v) =
-                css::generic::try_op_to::<V, Angle>(&**av, &**bv, (), |_, x, y| Angle::Rad(x.atan2(y)))
-            {
-                return CssResult::Ok(v);
+            if let Some(v) = av.try_op_to(&**bv, (), |_, x, y| Angle::Rad(x.atan2(y))) {
+                return Ok(v);
             }
         } else if let (Calc::Number(an), Calc::Number(bn)) = (&a, &b) {
-            return CssResult::Ok(Angle::Rad(an.atan2(*bn)));
+            return Ok(Angle::Rad(an.atan2(*bn)));
         } else {
             // doo nothing
         }
 
         // We don't have a way to represent arguments that aren't angles, so just error.
         // This will fall back to an unparsed property, leaving the atan2() function intact.
-        CssResult::Err(input.new_custom_error(css::ParserError::InvalidValue))
+        Err(input.new_custom_error(css::ParserError::InvalidValue))
     }
 
     pub fn parse_numeric<C: Copy>(
@@ -929,32 +810,31 @@ impl<V> Calc<V> {
             }
         };
         // TODO(port): Zig threaded `&closure` here; same reshape as parse_trig/parse_atan2.
-        let v: Calc<CSSNumber> = match Calc::<CSSNumber>::parse_sum(input, ctx, parse_ident_fn) {
-            CssResult::Ok(v) => v,
-            CssResult::Err(e) => return CssResult::Err(e),
-        };
+        let v: Calc<CSSNumber> = Calc::<CSSNumber>::parse_sum(input, ctx, parse_ident_fn)?;
         let val = match v {
             Calc::Number(n) => n,
             Calc::Value(v) => *v,
-            _ => return CssResult::Err(input.new_custom_error(css::ParserError::InvalidValue)),
+            _ => return Err(input.new_custom_error(css::ParserError::InvalidValue)),
         };
-        CssResult::Ok(val)
+        Ok(val)
     }
 
     // PERF(port): `args` was arena bulk-free (ArrayList fed input.allocator()) — profile in Phase B
     pub fn parse_hypot(args: &mut Vec<Self>) -> CssResult<Option<Self>> {
         if args.len() == 1 {
             let v = core::mem::replace(&mut args[0], Calc::Number(0.0));
-            return CssResult::Ok(Some(v));
+            return Ok(Some(v));
         }
 
         if args.len() == 2 {
-            return CssResult::Ok(Self::apply_op(&args[0], &args[1], (), |_, a, b| hypot((), a, b)));
+            return Ok(Self::apply_op(&args[0], &args[1], (), |_, a, b| {
+                hypot((), a, b)
+            }));
         }
 
         let mut i: usize = 0;
         let Some(first) = Self::apply_map(&args[0], powi2) else {
-            return CssResult::Ok(None);
+            return Ok(None);
         };
         i += 1;
         let mut errored = false;
@@ -969,10 +849,10 @@ impl<V> Calc<V> {
         }
 
         if errored {
-            return CssResult::Ok(None);
+            return Ok(None);
         }
 
-        CssResult::Ok(Self::apply_map(&sum, sqrtf32))
+        Ok(Self::apply_map(&sum, sqrtf32))
     }
 
     pub fn apply_op<OC: Copy>(
@@ -982,7 +862,7 @@ impl<V> Calc<V> {
         op: fn(OC, f32, f32) -> f32,
     ) -> Option<Self> {
         if let (Calc::Value(av), Calc::Value(bv)) = (a, b) {
-            if let Some(v) = css::generic::try_op(&**av, &**bv, ctx, op) {
+            if let Some(v) = av.try_op(&**bv, ctx, op) {
                 return Some(Calc::Value(Box::new(v)));
             }
             return None;
@@ -999,7 +879,7 @@ impl<V> Calc<V> {
         match this {
             Calc::Number(n) => return Some(Calc::Number(op(*n))),
             Calc::Value(v) => {
-                if let Some(new_v) = css::generic::try_map(&**v, op) {
+                if let Some(new_v) = v.try_map(op) {
                     return Some(Calc::Value(Box::new(new_v)));
                 }
             }
@@ -1008,7 +888,7 @@ impl<V> Calc<V> {
         None
     }
 
-    pub fn to_css(&self, dest: &mut css::Printer) -> Result<(), css::PrintErr> {
+    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         let was_in_calc = dest.in_calc;
         dest.in_calc = true;
 
@@ -1018,12 +898,9 @@ impl<V> Calc<V> {
         res
     }
 
-    pub fn to_css_impl(&self, dest: &mut css::Printer) -> Result<(), css::PrintErr>
-    where
-        V: Clone,
-    {
+    pub fn to_css_impl(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
-            Calc::Value(v) => css::generic::to_css(&**v, dest),
+            Calc::Value(v) => v.to_css(dest),
             Calc::Number(n) => CSSNumberFns::to_css(n, dest),
             Calc::Sum { left: a, right: b } => {
                 a.to_css(dest)?;
@@ -1059,10 +936,7 @@ impl<V> Calc<V> {
 
     pub fn try_sign(&self) -> Option<f32> {
         match self {
-            Calc::Value(v) => {
-                // TODO(port): comptime type switch — Zig: `f32 => signF32(v), else => v.trySign()`.
-                css::generic::try_sign(&**v)
-            }
+            Calc::Value(v) => v.try_sign(),
             Calc::Number(n) => Some(css::signfns::sign_f32(*n)),
             _ => None,
         }
@@ -1101,9 +975,9 @@ impl<V> Calc<V> {
             }
             Calc::Function(f) => match *f {
                 // PERF: why not reuse the allocation here?
-                MathFunction::Calc(c) => Calc::Function(Box::new(MathFunction::Calc(
-                    c.mul_f32(other),
-                ))),
+                MathFunction::Calc(c) => {
+                    Calc::Function(Box::new(MathFunction::Calc(c.mul_f32(other))))
+                }
                 other_fn => Calc::Product {
                     number: other,
                     expression: Box::new(Calc::Function(Box::new(other_fn))),
@@ -1117,10 +991,7 @@ impl<V> Calc<V> {
     /// I am pretty sure we could do this reduction in place, or do it as the
     /// arguments are being parsed.
     // PERF(port): `args`/`reduced` were arena bulk-free (ArrayList fed input.allocator()) — profile in Phase B
-    fn reduce_args(args: &mut Vec<Self>, order: Ordering)
-    where
-        V: PartialOrd,
-    {
+    fn reduce_args(args: &mut Vec<Self>, order: Ordering) {
         // Reduces the arguments of a min() or max() expression, combining compatible values.
         // e.g. min(1px, 1em, 2px, 3in) => min(1px, 1em)
         let mut reduced: Vec<Self> = Vec::new();
@@ -1130,7 +1001,7 @@ impl<V> Calc<V> {
             if let Calc::Value(val) = &*arg {
                 for (idx, b) in reduced.iter().enumerate() {
                     if let Calc::Value(v) = b {
-                        let result = css::generic::partial_cmp(&**val, &**v);
+                        let result = val.partial_cmp_calc(&**v);
                         if result.is_some() {
                             if result == Some(order) {
                                 found = Some(Some(idx));
@@ -1170,19 +1041,19 @@ impl<V> Calc<V> {
             }
             Calc::Product { expression, .. } => expression.is_compatible(browsers),
             Calc::Function(f) => f.is_compatible(browsers),
-            Calc::Value(v) => css::generic::is_compatible(&**v, browsers),
+            Calc::Value(v) => v.is_compatible(browsers),
             Calc::Number(_) => true,
         }
     }
 }
 
 #[inline]
-fn try_parse_atan2_args<C: Copy, Value>(
+fn try_parse_atan2_args<C: Copy, Value: CalcValue>(
     input: &mut css::Parser,
     ctx: C,
 ) -> CssResult<Angle> {
     let func = Calc::<Value>::parse_ident_none::<C, Value>;
-    input.try_parse_impl(|i| Calc::<Value>::parse_atan2_args(i, ctx, func))
+    input.try_parse(|i| Calc::<Value>::parse_atan2_args(i, ctx, func))
 }
 
 #[derive(Copy, Clone)]
@@ -1227,15 +1098,9 @@ pub enum MathFunction<V> {
         interval: Calc<V>,
     },
     /// The `rem()` function.
-    Rem {
-        dividend: Calc<V>,
-        divisor: Calc<V>,
-    },
+    Rem { dividend: Calc<V>, divisor: Calc<V> },
     /// The `mod()` function.
-    Mod {
-        dividend: Calc<V>,
-        divisor: Calc<V>,
-    },
+    Mod { dividend: Calc<V>, divisor: Calc<V> },
     /// The `abs()` function.
     Abs(Calc<V>),
     /// The `sign()` function.
@@ -1245,15 +1110,27 @@ pub enum MathFunction<V> {
     Hypot(Vec<Calc<V>>),
 }
 
+fn eql_calc_list<V: CalcValue>(a: &[Calc<V>], b: &[Calc<V>]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    for (l, r) in a.iter().zip(b.iter()) {
+        if !l.eql(r) {
+            return false;
+        }
+    }
+    true
+}
+
 impl<V> MathFunction<V> {
     pub fn eql(&self, other: &Self) -> bool
     where
-        V: PartialEq,
+        V: CalcValue,
     {
         match (self, other) {
             (MathFunction::Calc(a), MathFunction::Calc(b)) => a.eql(b),
-            (MathFunction::Min(a), MathFunction::Min(b)) => css::generic::eql_list(a, b),
-            (MathFunction::Max(a), MathFunction::Max(b)) => css::generic::eql_list(a, b),
+            (MathFunction::Min(a), MathFunction::Min(b)) => eql_calc_list(a, b),
+            (MathFunction::Max(a), MathFunction::Max(b)) => eql_calc_list(a, b),
             (
                 MathFunction::Clamp { min: a0, center: a1, max: a2 },
                 MathFunction::Clamp { min: b0, center: b1, max: b2 },
@@ -1272,7 +1149,7 @@ impl<V> MathFunction<V> {
             ) => ad.eql(bd) && av.eql(bv),
             (MathFunction::Abs(a), MathFunction::Abs(b)) => a.eql(b),
             (MathFunction::Sign(a), MathFunction::Sign(b)) => a.eql(b),
-            (MathFunction::Hypot(a), MathFunction::Hypot(b)) => css::generic::eql_list(a, b),
+            (MathFunction::Hypot(a), MathFunction::Hypot(b)) => eql_calc_list(a, b),
             _ => false,
         }
     }
@@ -1283,8 +1160,8 @@ impl<V> MathFunction<V> {
     {
         match self {
             MathFunction::Calc(calc) => MathFunction::Calc(calc.deep_clone()),
-            MathFunction::Min(min) => MathFunction::Min(css::deep_clone(min)),
-            MathFunction::Max(max) => MathFunction::Max(css::deep_clone(max)),
+            MathFunction::Min(min) => MathFunction::Min(min.clone()),
+            MathFunction::Max(max) => MathFunction::Max(max.clone()),
             MathFunction::Clamp { min, center, max } => MathFunction::Clamp {
                 min: min.deep_clone(),
                 center: center.deep_clone(),
@@ -1305,13 +1182,16 @@ impl<V> MathFunction<V> {
             },
             MathFunction::Abs(abs) => MathFunction::Abs(abs.deep_clone()),
             MathFunction::Sign(sign) => MathFunction::Sign(sign.deep_clone()),
-            MathFunction::Hypot(hyp) => MathFunction::Hypot(css::deep_clone(hyp)),
+            MathFunction::Hypot(hyp) => MathFunction::Hypot(hyp.clone()),
         }
     }
 
     // Zig `deinit` only freed owned Vec/Calc fields → handled by Drop. No explicit impl.
 
-    pub fn to_css(&self, dest: &mut css::Printer) -> Result<(), css::PrintErr> {
+    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr>
+    where
+        V: CalcValue,
+    {
         match self {
             MathFunction::Calc(calc) => {
                 dest.write_str("calc(")?;
@@ -1404,7 +1284,10 @@ impl<V> MathFunction<V> {
         }
     }
 
-    pub fn is_compatible(&self, browsers: css::targets::Browsers) -> bool {
+    pub fn is_compatible(&self, browsers: css::targets::Browsers) -> bool
+    where
+        V: CalcValue,
+    {
         use css::compat::Feature as F;
         match self {
             MathFunction::Calc(c) => {
@@ -1578,10 +1461,210 @@ fn absf(a: f32) -> f32 {
     a.abs()
 }
 
+// ───────────────────────── CalcValue impls ─────────────────────────────────
+// One impl per concrete `V` that `Calc<V>` is instantiated with. These mirror
+// the bodies of the Zig `switch (V)` arms in `intoValue` / `addValue` /
+// `mulValueF32` / `intoCalc` and forward the rest to the type's own methods.
+
+impl CalcValue for CSSNumber {
+    #[inline] fn mul_f32(self, rhs: f32) -> Self { self * rhs }
+    #[inline] fn add_internal(self, rhs: Self) -> Self { self + rhs }
+    #[inline] fn into_calc(self) -> Calc<Self> { Calc::Value(Box::new(self)) }
+    fn from_calc(c: Calc<Self>, input: &mut css::Parser) -> CssResult<Self> {
+        match c {
+            Calc::Value(v) => Ok(*v),
+            Calc::Number(n) => Ok(n),
+            _ => Err(input.new_custom_error(css::ParserError::InvalidValue)),
+        }
+    }
+    #[inline] fn try_sign(&self) -> Option<f32> { Some(CSSNumberFns::sign(self)) }
+    #[inline] fn try_map(&self, f: fn(f32) -> f32) -> Option<Self> { Some(f(*self)) }
+    #[inline] fn try_op<C: Copy>(&self, rhs: &Self, ctx: C, f: fn(C, f32, f32) -> f32) -> Option<Self> {
+        Some(f(ctx, *self, *rhs))
+    }
+    #[inline] fn try_op_to<R, C: Copy>(&self, rhs: &Self, ctx: C, f: fn(C, f32, f32) -> R) -> Option<R> {
+        Some(f(ctx, *self, *rhs))
+    }
+    #[inline] fn partial_cmp_calc(&self, rhs: &Self) -> Option<Ordering> {
+        crate::generics::partial_cmp_f32(self, rhs)
+    }
+    #[inline] fn try_from_angle(_: Angle) -> Option<Self> { None }
+    #[inline] fn parse(input: &mut css::Parser) -> CssResult<Self> { CSSNumberFns::parse(input) }
+    #[inline] fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> { CSSNumberFns::to_css(self, dest) }
+    #[inline] fn is_compatible(&self, _: css::targets::Browsers) -> bool { true }
+    #[inline] fn eql(&self, other: &Self) -> bool { *self == *other }
+}
+
+impl CalcValue for Angle {
+    #[inline] fn mul_f32(self, rhs: f32) -> Self { Angle::mul_f32(self, rhs) }
+    #[inline] fn add_internal(self, rhs: Self) -> Self { Angle::add_internal(self, rhs) }
+    #[inline] fn into_calc(self) -> Calc<Self> { Calc::Value(Box::new(self)) }
+    fn from_calc(c: Calc<Self>, input: &mut css::Parser) -> CssResult<Self> {
+        match c {
+            Calc::Value(v) => Ok(*v),
+            _ => Err(input.new_custom_error(css::ParserError::InvalidValue)),
+        }
+    }
+    #[inline] fn try_sign(&self) -> Option<f32> { Some(self.sign()) }
+    #[inline] fn try_map(&self, f: fn(f32) -> f32) -> Option<Self> { Angle::try_map(self, f) }
+    #[inline] fn try_op<C: Copy>(&self, rhs: &Self, ctx: C, f: fn(C, f32, f32) -> f32) -> Option<Self> {
+        Angle::try_op(self, rhs, ctx, f)
+    }
+    #[inline] fn try_op_to<R, C: Copy>(&self, rhs: &Self, ctx: C, f: fn(C, f32, f32) -> R) -> Option<R> {
+        Angle::try_op_to(self, rhs, ctx, f)
+    }
+    #[inline] fn partial_cmp_calc(&self, rhs: &Self) -> Option<Ordering> { Angle::partial_cmp(self, rhs) }
+    #[inline] fn try_from_angle(angle: Angle) -> Option<Self> { Some(angle) }
+    #[inline] fn parse(input: &mut css::Parser) -> CssResult<Self> { Angle::parse(input) }
+    #[inline] fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> { Angle::to_css(self, dest) }
+    #[inline] fn is_compatible(&self, _: css::targets::Browsers) -> bool { true }
+    #[inline] fn eql(&self, other: &Self) -> bool { Angle::eql(self, other) }
+}
+
+impl CalcValue for Percentage {
+    #[inline] fn mul_f32(self, rhs: f32) -> Self { Percentage::mul_f32(self, rhs) }
+    #[inline] fn add_internal(self, rhs: Self) -> Self { Percentage::add_internal(self, rhs) }
+    #[inline] fn into_calc(self) -> Calc<Self> { Calc::Value(Box::new(self)) }
+    fn from_calc(c: Calc<Self>, _input: &mut css::Parser) -> CssResult<Self> {
+        match c {
+            Calc::Value(v) => Ok(*v),
+            // Zig: else → Percentage { v: NaN }
+            _ => Ok(Percentage { v: f32::NAN }),
+        }
+    }
+    #[inline] fn try_sign(&self) -> Option<f32> { Percentage::try_sign(self) }
+    #[inline] fn try_map(&self, f: fn(f32) -> f32) -> Option<Self> { Percentage::try_map(self, f) }
+    #[inline] fn try_op<C: Copy>(&self, rhs: &Self, ctx: C, f: fn(C, f32, f32) -> f32) -> Option<Self> {
+        Percentage::try_op(self, rhs, ctx, f)
+    }
+    #[inline] fn try_op_to<R, C: Copy>(&self, rhs: &Self, ctx: C, f: fn(C, f32, f32) -> R) -> Option<R> {
+        Some(self.op_to(rhs, ctx, f))
+    }
+    #[inline] fn partial_cmp_calc(&self, rhs: &Self) -> Option<Ordering> { Percentage::partial_cmp(self, rhs) }
+    #[inline] fn try_from_angle(_: Angle) -> Option<Self> { None }
+    #[inline] fn parse(input: &mut css::Parser) -> CssResult<Self> { Percentage::parse(input) }
+    #[inline] fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> { Percentage::to_css(self, dest) }
+    #[inline] fn is_compatible(&self, _: css::targets::Browsers) -> bool { true }
+    #[inline] fn eql(&self, other: &Self) -> bool { Percentage::eql(self, other) }
+}
+
+impl CalcValue for Time {
+    #[inline] fn mul_f32(self, rhs: f32) -> Self { Time::mul_f32(self, rhs) }
+    #[inline] fn add_internal(self, rhs: Self) -> Self { Time::add_internal(self, rhs) }
+    #[inline] fn into_calc(self) -> Calc<Self> { Calc::Value(Box::new(self)) }
+    fn from_calc(c: Calc<Self>, input: &mut css::Parser) -> CssResult<Self> {
+        match c {
+            Calc::Value(v) => Ok(*v),
+            _ => Err(input.new_custom_error(css::ParserError::InvalidValue)),
+        }
+    }
+    #[inline] fn try_sign(&self) -> Option<f32> { Some(self.sign()) }
+    #[inline] fn try_map(&self, f: fn(f32) -> f32) -> Option<Self> { Some(self.map(f)) }
+    #[inline] fn try_op<C: Copy>(&self, rhs: &Self, ctx: C, f: fn(C, f32, f32) -> f32) -> Option<Self> {
+        Some(self.op(rhs, move |a, b| f(ctx, a, b)))
+    }
+    #[inline] fn try_op_to<R, C: Copy>(&self, rhs: &Self, ctx: C, f: fn(C, f32, f32) -> R) -> Option<R> {
+        Some(self.op_to(rhs, move |a, b| f(ctx, a, b)))
+    }
+    #[inline] fn partial_cmp_calc(&self, rhs: &Self) -> Option<Ordering> { Time::partial_cmp(self, rhs) }
+    #[inline] fn try_from_angle(_: Angle) -> Option<Self> { None }
+    #[inline] fn parse(input: &mut css::Parser) -> CssResult<Self> { Time::parse(input) }
+    #[inline] fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> { Time::to_css(self, dest) }
+    #[inline] fn is_compatible(&self, _: css::targets::Browsers) -> bool { true }
+    #[inline] fn eql(&self, other: &Self) -> bool { Time::eql(self, other) }
+}
+
+impl CalcValue for Length {
+    #[inline] fn mul_f32(self, rhs: f32) -> Self { Length::mul_f32(self, rhs) }
+    #[inline] fn add_internal(self, rhs: Self) -> Self { Length::add_internal(self, rhs) }
+    #[inline] fn into_calc(self) -> Calc<Self> { Length::into_calc(self) }
+    fn from_calc(c: Calc<Self>, _input: &mut css::Parser) -> CssResult<Self> {
+        // Zig: Length { .calc = Box::new(self) }
+        Ok(Length::Calc(Box::new(c)))
+    }
+    #[inline] fn try_sign(&self) -> Option<f32> { Length::try_sign(self) }
+    #[inline] fn try_map(&self, f: fn(f32) -> f32) -> Option<Self> { Length::try_map(self, f) }
+    #[inline] fn try_op<C: Copy>(&self, rhs: &Self, ctx: C, f: fn(C, f32, f32) -> f32) -> Option<Self> {
+        Length::try_op(self, rhs, move |a, b| f(ctx, a, b))
+    }
+    #[inline] fn try_op_to<R, C: Copy>(&self, rhs: &Self, ctx: C, f: fn(C, f32, f32) -> R) -> Option<R> {
+        Length::try_op_to(self, rhs, move |a, b| f(ctx, a, b))
+    }
+    #[inline] fn partial_cmp_calc(&self, rhs: &Self) -> Option<Ordering> { Length::partial_cmp(self, rhs) }
+    #[inline] fn try_from_angle(_: Angle) -> Option<Self> { None }
+    #[inline] fn parse(input: &mut css::Parser) -> CssResult<Self> { Length::parse(input) }
+    #[inline] fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> { Length::to_css(self, dest) }
+    #[inline] fn is_compatible(&self, browsers: css::targets::Browsers) -> bool {
+        Length::is_compatible(self, browsers)
+    }
+    #[inline] fn eql(&self, other: &Self) -> bool { self == other }
+}
+
+impl CalcValue for DimensionPercentage<LengthValue> {
+    #[inline] fn mul_f32(self, rhs: f32) -> Self { DimensionPercentage::mul_f32(self, rhs) }
+    #[inline] fn add_internal(self, rhs: Self) -> Self { DimensionPercentage::add_internal(self, rhs) }
+    #[inline] fn into_calc(self) -> Calc<Self> { DimensionPercentage::into_calc(self) }
+    fn from_calc(c: Calc<Self>, _input: &mut css::Parser) -> CssResult<Self> {
+        // Zig: DimensionPercentage::Calc(Box::new(self))
+        Ok(DimensionPercentage::Calc(Box::new(c)))
+    }
+    #[inline] fn try_sign(&self) -> Option<f32> { DimensionPercentage::try_sign(self) }
+    #[inline] fn try_map(&self, f: fn(f32) -> f32) -> Option<Self> { DimensionPercentage::try_map(self, f) }
+    #[inline] fn try_op<C: Copy>(&self, rhs: &Self, ctx: C, f: fn(C, f32, f32) -> f32) -> Option<Self> {
+        DimensionPercentage::try_op(self, rhs, ctx, f)
+    }
+    #[inline] fn try_op_to<R, C: Copy>(&self, rhs: &Self, ctx: C, f: fn(C, f32, f32) -> R) -> Option<R> {
+        DimensionPercentage::try_op_to(self, rhs, ctx, f)
+    }
+    #[inline] fn partial_cmp_calc(&self, rhs: &Self) -> Option<Ordering> {
+        DimensionPercentage::partial_cmp(self, rhs)
+    }
+    #[inline] fn try_from_angle(_: Angle) -> Option<Self> { None }
+    #[inline] fn parse(input: &mut css::Parser) -> CssResult<Self> { DimensionPercentage::parse(input) }
+    #[inline] fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+        DimensionPercentage::to_css(self, dest)
+    }
+    #[inline] fn is_compatible(&self, browsers: css::targets::Browsers) -> bool {
+        DimensionPercentage::is_compatible(self, browsers)
+    }
+    #[inline] fn eql(&self, other: &Self) -> bool { DimensionPercentage::eql(self, other) }
+}
+
+impl CalcValue for DimensionPercentage<Angle> {
+    #[inline] fn mul_f32(self, rhs: f32) -> Self { DimensionPercentage::mul_f32(self, rhs) }
+    #[inline] fn add_internal(self, rhs: Self) -> Self { DimensionPercentage::add_internal(self, rhs) }
+    #[inline] fn into_calc(self) -> Calc<Self> { DimensionPercentage::into_calc(self) }
+    fn from_calc(c: Calc<Self>, _input: &mut css::Parser) -> CssResult<Self> {
+        Ok(DimensionPercentage::Calc(Box::new(c)))
+    }
+    #[inline] fn try_sign(&self) -> Option<f32> { DimensionPercentage::try_sign(self) }
+    #[inline] fn try_map(&self, f: fn(f32) -> f32) -> Option<Self> { DimensionPercentage::try_map(self, f) }
+    #[inline] fn try_op<C: Copy>(&self, rhs: &Self, ctx: C, f: fn(C, f32, f32) -> f32) -> Option<Self> {
+        DimensionPercentage::try_op(self, rhs, ctx, f)
+    }
+    #[inline] fn try_op_to<R, C: Copy>(&self, rhs: &Self, ctx: C, f: fn(C, f32, f32) -> R) -> Option<R> {
+        DimensionPercentage::try_op_to(self, rhs, ctx, f)
+    }
+    #[inline] fn partial_cmp_calc(&self, rhs: &Self) -> Option<Ordering> {
+        DimensionPercentage::partial_cmp(self, rhs)
+    }
+    #[inline] fn try_from_angle(angle: Angle) -> Option<Self> {
+        Some(DimensionPercentage::Dimension(angle))
+    }
+    #[inline] fn parse(input: &mut css::Parser) -> CssResult<Self> { DimensionPercentage::parse(input) }
+    #[inline] fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+        DimensionPercentage::to_css(self, dest)
+    }
+    #[inline] fn is_compatible(&self, browsers: css::targets::Browsers) -> bool {
+        DimensionPercentage::is_compatible(self, browsers)
+    }
+    #[inline] fn eql(&self, other: &Self) -> bool { DimensionPercentage::eql(self, other) }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/css/values/calc.zig (1892 lines)
 //   confidence: medium
-//   todos:      17
-//   notes:      comptime `switch (V)` dispatch (intoValue/addValue/mulValueF32/intoCalc/trySign) needs a `CalcValue` trait in Phase B; closure-struct → Rust-closure reshape changes parse_ident plumbing (fn-pointer vs captured-ctx) and won't typecheck as-is; LIFETIMES.tsv chose Box over arena so allocator params dropped — Vec sites that were arena-fed now carry PERF(port) markers for Phase B benchmarking; preserved likely Zig bug at clamp switch_val packing.
+//   todos:      11
+//   notes:      `CssResult<T>` is now `core::result::Result` — `.as_value()`/`.result()` callsites rewritten to `.ok()`/`?`. `switch (V)` comptime dispatch reified as `CalcValue` trait with per-type impls (CSSNumber/Angle/Percentage/Time/Length/DimensionPercentage<LengthValue|Angle>). closure-struct → Rust-closure reshape changes parse_ident plumbing. LIFETIMES.tsv chose Box over arena so allocator params dropped — Vec sites that were arena-fed now carry PERF(port) markers. Preserved likely Zig bug at clamp switch_val packing.
 // ──────────────────────────────────────────────────────────────────────────

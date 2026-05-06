@@ -16,7 +16,7 @@ use core::fmt;
 // `#[macro_export]` macros land at crate root; re-import so order-of-definition
 // inside this module doesn't matter for the early call sites.
 #[allow(unused_imports)]
-use crate::{pretty, prettyln, pretty_error, pretty_errorln, pretty_fmt, note, warn, err_generic, declare_scope, scoped_log};
+use crate::{pretty, prettyln, pretty_error, pretty_errorln, note, warn, err_generic, declare_scope, scoped_log};
 use core::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, Ordering};
 
 use crate::env_var;
@@ -1605,20 +1605,12 @@ pub fn prettyln(args: fmt::Arguments<'_>) {
 /// equivalent must be a proc-macro because it consumes a string literal and emits
 /// a new string literal usable as a `format_args!` template.
 ///
-// TODO(port): proc-macro — implement `pretty_fmt!("<red>{s}<r>", true)` → `"\x1b[31m{}\x1b[0m"`.
-// The reference algorithm is `pretty_fmt_runtime` below (kept 1:1 with the Zig body
-// so the proc-macro can be derived from it / tested against it).
-#[macro_export]
-macro_rules! pretty_fmt {
-    ($fmt:expr, true) => {
-        // TODO(port): proc-macro substitution — passthrough for now
-        $fmt
-    };
-    ($fmt:expr, false) => {
-        // TODO(port): proc-macro tag stripping — passthrough for now
-        $fmt
-    };
-}
+/// `pretty_fmt!("<red>{s}<r>", true)`  → `"\x1b[31m{}\x1b[0m"`
+/// `pretty_fmt!("<red>{s}<r>", false)` → `"{}"`
+///
+/// The reference algorithm is `pretty_fmt_runtime` below (kept 1:1 with the Zig
+/// body so the proc-macro can be tested against it).
+pub use bun_core_macros::pretty_fmt;
 
 /// Runtime `<tag>` → ANSI rewrite returning an owned buffer. Function-form
 /// counterpart of the `pretty_fmt!` macro for call sites that hold a runtime

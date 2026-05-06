@@ -16,6 +16,10 @@ pub mod fmt;
 #[path = "output.rs"]
 pub mod output;
 
+/// Compile-time `<tag>` → ANSI rewrite (proc-macro). Re-exported at crate root
+/// so `$crate::pretty_fmt!` resolves from the wrapper macros in `output.rs`.
+pub use bun_core_macros::pretty_fmt;
+
 /// Stand-in for Zig's `@import("build_options")`. Real values are emitted by
 /// `build.rs` via `env!()` in Phase C (link). Placeholder values let env.rs
 /// const-evaluate cleanly.

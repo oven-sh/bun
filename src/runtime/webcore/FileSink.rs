@@ -1041,7 +1041,6 @@ pub static Bun__FileSink__onRejectStream: bun_jsc::JSHostFn = on_reject_stream::
 // Minimal real type so `webcore::FileSink` re-export type-checks. Full struct
 // (with IOWriter, streams::Signal, JSSink ref, etc.) lives in `_gated` above.
 // TODO(b2-blocked): replace with `pub use _gated::FileSink;` once un-gated.
-#[derive(Debug)]
 pub struct FileSink {
     ref_count: Cell<u32>,
     pub fd: Fd,

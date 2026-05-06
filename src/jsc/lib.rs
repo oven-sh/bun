@@ -17,8 +17,20 @@
 #![allow(unexpected_cfgs)] // TODO(b2): ci_assert / asan features — wire up in Cargo.toml
 
 extern crate alloc;
+// Allow `::bun_jsc::…` paths emitted by the proc-macros to resolve when used
+// inside this crate (e.g. `#[JsClass]` on `BuildMessage`).
+extern crate self as bun_jsc;
 
 use core::ffi::{c_char, c_void};
+
+// ──────────────────────────────────────────────────────────────────────────
+// Proc-macro re-exports. `#[bun_jsc::host_fn]` / `#[bun_jsc::JsClass]` /
+// `#[bun_jsc::host_call]` are implemented in the `bun_jsc_macros` crate
+// (Rust forbids `proc-macro = true` crates from exporting non-macro items).
+// See docs/PORTING.md §JSC types and src/codegen/generate-classes.ts for the
+// symbol-naming contract the macros uphold.
+// ──────────────────────────────────────────────────────────────────────────
+pub use bun_jsc_macros::{host_call, host_fn, JsClass, JsClassDerive};
 
 /// The calling convention used for JavaScript functions <> Native.
 ///
@@ -875,6 +887,119 @@ pub use self::host_fn::{
 };
 
 // ──────────────────────────────────────────────────────────────────────────
+// `__macro_support` — runtime helpers invoked by `#[bun_jsc::host_fn]` /
+// `#[bun_jsc::JsClass]` expansions. Not part of the public API; the names are
+// load-bearing for the proc-macro crate only.
+// ──────────────────────────────────────────────────────────────────────────
+#[doc(hidden)]
+pub mod __macro_support {
+    use super::{JSGlobalObject, JSValue, JsError, JsResult};
+
+    /// Map a `JsResult<JSValue>` from a Rust host fn to the raw `JSValue` the
+    /// JSC ABI expects (`.ZERO` when an exception is/was thrown). Mirrors
+    /// `host_fn.zig:toJSHostFnResult`.
+    #[inline]
+    pub fn host_fn_result(global: &JSGlobalObject, r: JsResult<JSValue>) -> JSValue {
+        super::host_fn::to_js_host_call(global, r)
+    }
+
+    /// Setter result mapping: `JsResult<bool>` → `bool` (false on throw).
+    /// Matches generate-classes.ts setter ABI:
+    /// `extern bool ${T}Prototype__${name}(void*, JSGlobalObject*, EncodedJSValue)`.
+    #[inline]
+    pub fn host_fn_setter_result(global: &JSGlobalObject, r: JsResult<bool>) -> bool {
+        match r {
+            Ok(b) => b,
+            Err(JsError::OutOfMemory) => {
+                global.throw_out_of_memory_value();
+                false
+            }
+            Err(_) => {
+                debug_assert!(
+                    global.has_exception(),
+                    "host_fn(setter): JsError without pending exception"
+                );
+                false
+            }
+        }
+    }
+
+    /// Construct result mapping: `JsResult<*mut T>` → `*mut c_void` (null on
+    /// throw). Matches generate-classes.ts:
+    /// `extern void* ${T}Class__construct(JSGlobalObject*, CallFrame*)`.
+    #[inline]
+    pub fn host_fn_construct_result<T>(
+        global: &JSGlobalObject,
+        r: JsResult<*mut T>,
+    ) -> *mut ::core::ffi::c_void {
+        match r {
+            Ok(p) => p.cast(),
+            Err(JsError::OutOfMemory) => {
+                global.throw_out_of_memory_value();
+                ::core::ptr::null_mut()
+            }
+            Err(_) => {
+                debug_assert!(
+                    global.has_exception(),
+                    "JsClass construct: JsError without pending exception"
+                );
+                ::core::ptr::null_mut()
+            }
+        }
+    }
+}
+
+// Compile-time smoke test for the proc-macros (no runtime body — just asserts
+// the expansions type-check against the real `JSGlobalObject`/`CallFrame`/
+// `JSValue`/`JsResult` shapes and that the `JsClass` trait impl wires up).
+#[cfg(test)]
+mod __macro_smoke {
+    use super::{CallFrame, JSGlobalObject, JSValue, JsResult};
+
+    #[crate::host_fn(export = "SmokeFree__call")]
+    fn smoke_free(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+        Ok(JSValue::UNDEFINED)
+    }
+
+    #[crate::JsClass(no_construct)]
+    pub struct Smoke {
+        #[allow(dead_code)]
+        n: u32,
+    }
+    impl Smoke {
+        // Required by the `construct` hook when `no_construct` is omitted; kept
+        // here so a future flip exercises it.
+        #[allow(dead_code)]
+        pub fn constructor(
+            _g: &JSGlobalObject,
+            _f: &CallFrame,
+        ) -> JsResult<*mut Smoke> {
+            Err(super::JsError::Thrown)
+        }
+        #[crate::host_fn(getter)]
+        pub fn get_n(&self, _g: &JSGlobalObject) -> JsResult<JSValue> {
+            Ok(JSValue::js_number_from_int32(self.n as i32))
+        }
+        #[crate::host_fn(setter)]
+        pub fn set_n(&mut self, _g: &JSGlobalObject, _v: JSValue) -> JsResult<bool> {
+            Ok(true)
+        }
+        #[crate::host_fn(method)]
+        pub fn do_thing(
+            &mut self,
+            _g: &JSGlobalObject,
+            _f: &CallFrame,
+        ) -> JsResult<JSValue> {
+            Ok(JSValue::UNDEFINED)
+        }
+    }
+
+    // Assert the trait impl exists.
+    fn _assert_js_class<T: crate::JsClass>() {}
+    fn _wired() { _assert_js_class::<Smoke>(); }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // B-2 Track A — JSValue tag constants (from FFI.zig). Surfaced as `crate::ffi`
 // so leaf modules (DecodedJSValue.rs etc.) compile without un-gating FFI.rs.
 // ──────────────────────────────────────────────────────────────────────────
@@ -964,8 +1089,35 @@ stub_ty!(
     URL, VM,
     ResolvedSource, ZigStackTrace, ZigStackFrame,
     ZigException, RuntimeTranspilerCache,
-    FetchHeaders,
+    FetchHeaders, AbortSignal, BuiltinName, JSBundler,
 );
+
+/// `jsc.BinaryType` — how raw bytes surface to JS (`Buffer` | `Uint8Array` |
+/// `ArrayBuffer`). Mirrors `src/jsc/BinaryType.zig`.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BinaryType {
+    #[default]
+    Buffer,
+    Uint8Array,
+    ArrayBuffer,
+}
+
+/// RAII guard that keeps a `JSValue` reachable across an FFI call by emitting
+/// a use of the value at scope exit. Mirrors `JSC::EnsureStillAliveScope`.
+#[repr(transparent)]
+pub struct EnsureStillAlive(pub JSValue);
+impl Drop for EnsureStillAlive {
+    #[inline]
+    fn drop(&mut self) { self.0.ensure_still_alive(); }
+}
+
+/// `jsc.JSPromise.Strong` — a `Strong.Optional` typed to hold a `JSPromise`.
+pub use self::js_promise::Strong as JSPromiseStrong;
+
+/// Legacy alias used by runtime drafts: `VirtualMachineRef` is just the
+/// `VirtualMachine` struct itself (callers hold `*mut VirtualMachineRef`).
+pub use self::virtual_machine::VirtualMachine as VirtualMachineRef;
 
 /// `jsc.AnyPromise` — `JSPromise | JSInternalPromise` (AnyPromise.zig).
 #[derive(Debug, Clone, Copy)]

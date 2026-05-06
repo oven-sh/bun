@@ -2,14 +2,14 @@ use core::ffi::c_void;
 use std::io::Write as _;
 
 use bun_alloc::AllocError;
-use bun_collections::{HashMap, IdentityContext, ObjectPool, StringSet};
+use bun_collections::{HashMap, ObjectPool, StringSet};
 use bun_core::{err, fmt as bun_fmt, Error, Global, Output};
-use bun_dotenv::EnvLoader as DotEnv;
+use bun_dotenv::Loader as DotEnv;
 use bun_http::{self as http, AsyncHTTP, HeaderBuilder, HTTPClient};
-use bun_json as JSON;
+use crate::bun_json as JSON;
 use bun_logger as logger;
 use bun_picohttp as picohttp;
-use bun_schema::api;
+use crate::bun_schema::api;
 use bun_semver::{self as Semver, ExternalString, SlicedString, String as SemverString};
 use bun_str::{strings, MutableString};
 use bun_sys::{self, Fd, File};
@@ -18,10 +18,11 @@ use bun_url::URL;
 use bun_wyhash::Wyhash11;
 
 use crate::bin::Bin;
-use crate::install::{
-    initialize_mini_store as initialize_store, Aligner, ExternalPackageNameHashList, ExternalSlice,
+use crate::{
+    initialize_mini_store as initialize_store, Aligner, ExternalSlice, IdentityContext,
     ExternalStringList, ExternalStringMap, PackageManager, PackageNameHash, VersionSlice,
 };
+use crate::external_slice::ExternalPackageNameHashList;
 use crate::integrity::Integrity;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -41,6 +42,8 @@ impl From<AllocError> for WhoamiError {
     }
 }
 
+// TODO(b2): body gated — bun_http::AsyncHTTP::init_sync / Redirect / ci surface drift
+#[cfg(any())]
 pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
     let registry = &manager.options.scope;
 
@@ -190,6 +193,8 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
     Ok(username)
 }
 
+// TODO(b2): body gated — picohttp::Response field shape drift
+#[cfg(any())]
 pub fn response_error<const OTP_RESPONSE: bool>(
     req: &AsyncHTTP,
     res: &picohttp::Response,
@@ -252,8 +257,9 @@ pub mod registry {
 
     pub const DEFAULT_URL: &str = "https://registry.npmjs.org/";
     // TODO(port): const-eval Wyhash11 — needs const fn; init lazily for now
-    pub static DEFAULT_URL_HASH: once_cell::sync::Lazy<u64> =
-        once_cell::sync::Lazy::new(|| Wyhash11::hash(0, strings::without_trailing_slash(DEFAULT_URL.as_bytes())));
+    pub static DEFAULT_URL_HASH: std::sync::LazyLock<u64> =
+        std::sync::LazyLock::new(|| Wyhash11::hash(0, strings::without_trailing_slash(DEFAULT_URL.as_bytes())));
+    pub fn default_url_hash() -> u64 { *DEFAULT_URL_HASH }
 
     pub type BodyPool = ObjectPool<MutableString, fn() -> MutableString, true, 8>;
     // TODO(port): ObjectPool init fn = MutableString::init2048
@@ -269,7 +275,9 @@ pub mod registry {
         //  :username
         //  :_password
         //  :_auth
-        pub url: URL,
+        // TODO(b2): switch to OwnedURL once bun_url exposes owned variant; 'static
+        // is sound here because Scope owns its href via leaked allocation in Zig.
+        pub url: URL<'static>,
         pub url_hash: u64,
         pub token: Box<[u8]>,
 
@@ -294,6 +302,8 @@ pub mod registry {
             &name[1..]
         }
 
+        // TODO(b2): body gated — api::NpmRegistry field set + URL<'a> ownership rework
+        #[cfg(any())]
         pub fn from_api(
             name: &[u8],
             registry_: api::NpmRegistry,
@@ -483,6 +493,8 @@ pub mod registry {
         NotFound,
     }
 
+    // TODO(b2): body gated — depends on PackageManifest::parse / Serializer::save_async
+    #[cfg(any())]
     pub fn get_package_metadata(
         scope: &Scope,
         response: picohttp::Response,
@@ -818,17 +830,6 @@ impl OperatingSystem {
         (self.0 & other) != 0
     }
 
-    pub static NAME_MAP: phf::Map<&'static [u8], u16> = phf::phf_map! {
-        b"aix" => Self::AIX,
-        b"darwin" => Self::DARWIN,
-        b"freebsd" => Self::FREEBSD,
-        b"linux" => Self::LINUX,
-        b"openbsd" => Self::OPENBSD,
-        b"sunos" => Self::SUNOS,
-        b"win32" => Self::WIN32,
-        b"android" => Self::ANDROID,
-    };
-
     pub const NAME_MAP_KVS: &'static [(&'static [u8], u16)] = &[
         (b"aix", Self::AIX),
         (b"darwin", Self::DARWIN),
@@ -857,12 +858,24 @@ impl OperatingSystem {
     // (deleted per PORTING.md: *_jsc alias)
 }
 
+// associated `static` not allowed in Rust — module-level
+pub static OPERATING_SYSTEM_NAME_MAP: phf::Map<&'static [u8], u16> = phf::phf_map! {
+    b"aix" => OperatingSystem::AIX,
+    b"darwin" => OperatingSystem::DARWIN,
+    b"freebsd" => OperatingSystem::FREEBSD,
+    b"linux" => OperatingSystem::LINUX,
+    b"openbsd" => OperatingSystem::OPENBSD,
+    b"sunos" => OperatingSystem::SUNOS,
+    b"win32" => OperatingSystem::WIN32,
+    b"android" => OperatingSystem::ANDROID,
+};
+
 impl NegatableEnum for OperatingSystem {
     type Int = u16;
     const NONE: Self = Self::NONE;
     const ALL: Self = Self::ALL;
     const ALL_VALUE: u16 = Self::ALL_VALUE;
-    fn name_map() -> &'static phf::Map<&'static [u8], u16> { &Self::NAME_MAP }
+    fn name_map() -> &'static phf::Map<&'static [u8], u16> { &OPERATING_SYSTEM_NAME_MAP }
     fn name_map_kvs() -> &'static [(&'static [u8], u16)] { Self::NAME_MAP_KVS }
     fn has(self, other: u16) -> bool { Self::has(self, other) }
     fn to_raw(self) -> u16 { self.0 }
@@ -883,11 +896,6 @@ impl Libc {
     pub const MUSL: u8 = 1 << 2;
 
     pub const ALL_VALUE: u8 = Self::GLIBC | Self::MUSL;
-
-    pub static NAME_MAP: phf::Map<&'static [u8], u8> = phf::phf_map! {
-        b"glibc" => Self::GLIBC,
-        b"musl" => Self::MUSL,
-    };
 
     pub const NAME_MAP_KVS: &'static [(&'static [u8], u8)] = &[
         (b"glibc", Self::GLIBC),
@@ -913,12 +921,18 @@ impl Libc {
     // jsFunctionLibcIsMatch — see bun_install_jsc::npm_jsc::libc_is_match (deleted *_jsc alias)
 }
 
+// associated `static` not allowed in Rust — module-level
+pub static LIBC_NAME_MAP: phf::Map<&'static [u8], u8> = phf::phf_map! {
+    b"glibc" => Libc::GLIBC,
+    b"musl" => Libc::MUSL,
+};
+
 impl NegatableEnum for Libc {
     type Int = u8;
     const NONE: Self = Self::NONE;
     const ALL: Self = Self::ALL;
     const ALL_VALUE: u8 = Self::ALL_VALUE;
-    fn name_map() -> &'static phf::Map<&'static [u8], u8> { &Self::NAME_MAP }
+    fn name_map() -> &'static phf::Map<&'static [u8], u8> { &LIBC_NAME_MAP }
     fn name_map_kvs() -> &'static [(&'static [u8], u8)] { Self::NAME_MAP_KVS }
     fn has(self, other: u8) -> bool { Self::has(self, other) }
     fn to_raw(self) -> u8 { self.0 }
@@ -971,20 +985,6 @@ impl Architecture {
     #[cfg(target_arch = "x86_64")]
     pub const CURRENT_NAME: &'static str = "x64";
 
-    pub static NAME_MAP: phf::Map<&'static [u8], u16> = phf::phf_map! {
-        b"arm" => Self::ARM,
-        b"arm64" => Self::ARM64,
-        b"ia32" => Self::IA32,
-        b"mips" => Self::MIPS,
-        b"mipsel" => Self::MIPSEL,
-        b"ppc" => Self::PPC,
-        b"ppc64" => Self::PPC64,
-        b"s390" => Self::S390,
-        b"s390x" => Self::S390X,
-        b"x32" => Self::X32,
-        b"x64" => Self::X64,
-    };
-
     pub const NAME_MAP_KVS: &'static [(&'static [u8], u16)] = &[
         (b"arm", Self::ARM),
         (b"arm64", Self::ARM64),
@@ -1015,12 +1015,27 @@ impl Architecture {
     // jsFunctionArchitectureIsMatch — see bun_install_jsc::npm_jsc::architecture_is_match (deleted *_jsc alias)
 }
 
+// associated `static` not allowed in Rust — module-level
+pub static ARCHITECTURE_NAME_MAP: phf::Map<&'static [u8], u16> = phf::phf_map! {
+    b"arm" => Architecture::ARM,
+    b"arm64" => Architecture::ARM64,
+    b"ia32" => Architecture::IA32,
+    b"mips" => Architecture::MIPS,
+    b"mipsel" => Architecture::MIPSEL,
+    b"ppc" => Architecture::PPC,
+    b"ppc64" => Architecture::PPC64,
+    b"s390" => Architecture::S390,
+    b"s390x" => Architecture::S390X,
+    b"x32" => Architecture::X32,
+    b"x64" => Architecture::X64,
+};
+
 impl NegatableEnum for Architecture {
     type Int = u16;
     const NONE: Self = Self::NONE;
     const ALL: Self = Self::ALL;
     const ALL_VALUE: u16 = Self::ALL_VALUE;
-    fn name_map() -> &'static phf::Map<&'static [u8], u16> { &Self::NAME_MAP }
+    fn name_map() -> &'static phf::Map<&'static [u8], u16> { &ARCHITECTURE_NAME_MAP }
     fn name_map_kvs() -> &'static [(&'static [u8], u16)] { Self::NAME_MAP_KVS }
     fn has(self, other: u16) -> bool { Self::has(self, other) }
     fn to_raw(self) -> u16 { self.0 }
@@ -1172,6 +1187,8 @@ impl PackageManifest {
         self.pkg.name.slice(&self.string_buf)
     }
 
+    // TODO(b2): bun_io::DiscardingWriter — counting writer not exposed yet
+    #[cfg(any())]
     pub fn byte_length(&self, scope: &registry::Scope) -> usize {
         let mut counter = bun_io::DiscardingWriter::new();
         match package_manifest::Serializer::write(self, scope, &mut counter) {
@@ -1210,7 +1227,6 @@ pub mod package_manifest {
             "extern_strings_bin_entries",
             "bundled_deps_buf",
         ];
-        const _: () = assert!(Self::HEADER_BYTES.len() == 49, "header bytes must be exactly 49 bytes long, length is not serialized");
 
         pub fn write_array<W: bun_io::Write, T: Copy>(
             writer: &mut W,

@@ -46,9 +46,9 @@ pub struct ServerConfig {
     /// If HMR is not enabled, then this field is ignored.
     pub enable_chrome_devtools_automatic_workspace_folders: bool,
 
-    pub on_error: Option<Strong<JSValue>>,
-    pub on_request: Option<Strong<JSValue>>,
-    pub on_node_http_request: Option<Strong<JSValue>>,
+    pub on_error: Option<Strong>,
+    pub on_request: Option<Strong>,
+    pub on_node_http_request: Option<Strong>,
 
     pub websocket: Option<WebSocketServerContext>,
 
@@ -1439,7 +1439,7 @@ impl Default for FromJSOptions {
 
 pub struct UserRouteBuilder {
     pub route: RouteDeclaration,
-    pub callback: Strong<JSValue>, // jsc.Strong.Optional
+    pub callback: Strong, // jsc.Strong.Optional
 }
 
 // ──────────────────────────────────────────────────────────────────────────

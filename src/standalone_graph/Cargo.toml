@@ -23,6 +23,7 @@ bun_bundler = { workspace = true, default-features = false }
 bun_collections.workspace = true
 bun_dotenv.workspace = true
 bun_exe_format.workspace = true
+bun_interchange.workspace = true
 bun_io.workspace = true
 bun_js_parser.workspace = true
 bun_logger.workspace = true

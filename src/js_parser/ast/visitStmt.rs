@@ -1343,13 +1343,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 p.esm_export_keyword.loc = stmt.loc;
                                 p.esm_export_keyword.len = 5;
                                 p.had_commonjs_named_exports_this_visit = true;
-                                let clause_items = p.allocator.alloc_slice_copy(&[js_ast::ClauseItem {
+                                let clause_items = core::slice::from_mut(p.allocator.alloc(js_ast::ClauseItem {
                                     // We want the generated name to not conflict
                                     alias: key as *const [u8],
                                     alias_loc: bin.left.loc,
                                     name: js_ast::LocRef { ref_: Some(ref_), loc: last_loc },
                                     ..Default::default()
-                                }]);
+                                }));
                                 let local = p.s(
                                     S::Local {
                                         kind: S::Kind::KVar,
@@ -1420,7 +1420,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     .add_range_error(
                         Some(p.source),
                         where_,
-                        "Top-level return cannot be used inside an ECMAScript module".into(),
+                        b"Top-level return cannot be used inside an ECMAScript module",
                     )
                     .expect("unreachable");
             }
@@ -2038,7 +2038,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         E::Index {
                             target: Expr::init_identifier(data.arg, value.loc),
                             index: name_as_e_string.unwrap(),
-                            ..Default::default()
+                            optional_chain: None,
                         },
                         value.loc,
                     ),

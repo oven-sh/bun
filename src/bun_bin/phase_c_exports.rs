@@ -2,15 +2,16 @@
 //!
 //! Every symbol below has a real home (see the `// REAL:` path on each entry,
 //! which is the `.rs` sibling of the Zig `export fn`). Those homes live in
-//! `bun_jsc` / `bun_runtime` / `bun_http_jsc` / `bun_bundler_jsc`, none of
-//! which currently compile and therefore are **not** dependencies of this
-//! binary crate (see the commented-out deps in `Cargo.toml`). Until they are,
-//! a `#[no_mangle]` definition there is invisible to the linker.
+//! `bun_jsc` / `bun_runtime` / `bun_http_jsc` / `bun_bundler_jsc`. As of this
+//! revision `bun_runtime` (and transitively `bun_jsc`) is a real dependency of
+//! this binary crate, so any `#[no_mangle]` definition that compiles in either
+//! of those crates is now visible to the linker. Stubs that would collide have
+//! been removed; what remains is either (a) still inside a `#[cfg(any())]`
+//! gate upstream, or (b) defined only in C++ object files not yet in the
+//! Phase-C link set.
 //!
-//! This file satisfies `ld.lld` with ABI-correct stubs so `cargo build -p
-//! bun_bin` reaches 0 undefined references. As each upstream crate is added
-//! to `[dependencies]`, delete the matching block here — the linker will flag
-//! any you miss as a duplicate symbol.
+//! As each upstream gate is lifted, delete the matching block here — the
+//! linker will flag any you miss as a duplicate symbol.
 //!
 //! `__wrap_gettid` and `Bun__captureStackTrace` are NOT here — they live in
 //! `bun_core` (their proper, already-linked home).
@@ -41,10 +42,7 @@ type AbortSignal = c_void;
 type Timeout = c_void;
 type Blob = c_void;
 type BlockList = c_void;
-type ConsoleObject = c_void;
 type SSLConfig = c_void;
-type WebWorker = c_void;
-type WTFStringImpl = c_void;
 type EventLoopTaskNoContext = c_void;
 type ModuleInfoDeserialized = c_void;
 type UwsLoop = c_void;
@@ -105,29 +103,14 @@ pub extern "C" fn Bun__panic(msg: *const u8, len: usize) -> ! {
     bun_core::output::panic(format_args!("{}", String::from_utf8_lossy(bytes)));
 }
 
-// PHASE-C: C++ deallocator — Zig: `export fn MarkedArrayBuffer_deallocator(bytes, ctx) void`
-// REAL: src/jsc/array_buffer.rs (gated under `#[cfg(any())] mod _body`).
-// Body is identical to the real impl: mi_free the buffer.
-#[unsafe(no_mangle)]
-pub extern "C" fn MarkedArrayBuffer_deallocator(bytes: *mut c_void, _ctx: *mut c_void) {
-    // SAFETY: bytes was allocated by mimalloc (default_allocator); mi_free is null-safe.
-    unsafe { bun_mimalloc_sys::mimalloc::mi_free(bytes) };
-}
+// REAL: now provided by bun_jsc (src/jsc/array_buffer.rs).
+// MarkedArrayBuffer_deallocator
 
-// PHASE-C: C++ callback — Zig: `export fn ZigString__freeGlobal(ptr, len) void`
-// REAL: src/jsc/ZigString.rs
-// Frees a slice allocated via `bun.default_allocator` (= mimalloc). The
-// process allocator is mimalloc, so route straight to it.
-#[unsafe(no_mangle)]
-pub extern "C" fn ZigString__freeGlobal(ptr: *const u8, len: usize) {
-    let _ = len;
-    if !ptr.is_null() {
-        // SAFETY: contract is that `ptr` came from the global (mimalloc) allocator.
-        unsafe { bun_mimalloc_sys::mimalloc::mi_free(ptr as *mut c_void) };
-    }
-}
+// REAL: now provided by bun_jsc (src/jsc/ZigString.rs).
+// ZigString__freeGlobal
 
 // PHASE-C: C++ callback — Zig: `export fn Bun__NODE_NO_WARNINGS() bool`
+// REAL: src/runtime/node/node_process.rs (gated under `mod _impl`)
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__NODE_NO_WARNINGS() -> bool {
     // Real impl reads VirtualMachine env loader; until that's wired, honour
@@ -136,6 +119,7 @@ pub extern "C" fn Bun__NODE_NO_WARNINGS() -> bool {
 }
 
 // PHASE-C: C++ callback — Zig: `export fn Bun__getTLSRejectUnauthorizedValue() i32`
+// REAL: src/jsc/virtual_machine_exports.rs (gated under `mod _gated`)
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__getTLSRejectUnauthorizedValue() -> i32 {
     // Default = reject (1). Real impl consults VirtualMachine.get().
@@ -143,6 +127,7 @@ pub extern "C" fn Bun__getTLSRejectUnauthorizedValue() -> i32 {
 }
 
 // PHASE-C: C++ callback — Zig: `export fn Bun__isNoProxy(host_ptr, host_len, …) bool`
+// REAL: src/jsc/virtual_machine_exports.rs (gated under `mod _gated`)
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__isNoProxy(
     hostname_ptr: *const u8,
@@ -155,12 +140,14 @@ pub extern "C" fn Bun__isNoProxy(
 }
 
 // PHASE-C: C++ callback — Zig: `export fn napi_internal_suppress_crash_on_abort_if_desired() void`
+// REAL: src/runtime/napi/napi_body.rs (gated under `#[cfg(any())] mod napi_body`)
 #[unsafe(no_mangle)]
 pub extern "C" fn napi_internal_suppress_crash_on_abort_if_desired() {
     // No-op until crash_handler exposes the suppression hook.
 }
 
 // PHASE-C: C++ callback — Zig: `export fn bun_ssl_ctx_cache_on_free(...) void`
+// REAL: src/runtime/api/bun/SSLContextCache.rs (gated `#[cfg(any())] mod bun_ssl_context_cache`)
 // CRYPTO_EX_free signature; safe no-op until SSLContextCache is wired.
 #[unsafe(no_mangle)]
 pub extern "C" fn bun_ssl_ctx_cache_on_free(
@@ -198,9 +185,10 @@ macro_rules! phase_c_todo {
 }
 
 // ── VM bridge ───────────────────────────────────────────────────────────────
-// REAL: src/jsc/virtual_machine_exports.rs, src/jsc/VirtualMachine.rs,
-//       src/jsc/JSCScheduler.rs, src/runtime/api/BunObject.rs,
-//       src/runtime/timer/DateHeaderTimer.rs
+// REAL: src/jsc/virtual_machine_exports.rs, src/jsc/JSCScheduler.rs,
+//       src/runtime/api/BunObject.rs, src/runtime/timer/DateHeaderTimer.rs
+//       — all still inside `#[cfg(any())] mod _gated` in bun_jsc/lib.rs (or
+//       equivalent draft gates).
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__getVM() -> *mut VirtualMachine {
@@ -259,10 +247,8 @@ pub extern "C" fn Bun__readOriginTimerStart(vm: *mut VirtualMachine) -> f64 {
     phase_c_todo!("Bun__readOriginTimerStart")
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__reportError(global: *mut JSGlobalObject, err: JSValue) {
-    phase_c_todo!("Bun__reportError")
-}
+// REAL: now provided by bun_runtime (src/runtime/api/BunObject.rs).
+// Bun__reportError
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__reportUnhandledError(global: *mut JSGlobalObject, value: JSValue) -> JSValue {
@@ -296,22 +282,11 @@ pub extern "C" fn Bun__internal_ensureDateHeaderTimerIsEnabled(loop_: *mut UwsLo
 }
 
 // ── ConsoleObject ───────────────────────────────────────────────────────────
-// REAL: src/jsc/ConsoleObject.rs
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__ConsoleObject__messageWithTypeAndLevel(
-    console: *mut ConsoleObject,
-    message_type: u32,
-    level: u32,
-    global: *mut JSGlobalObject,
-    vals: *const JSValue,
-    len: usize,
-) {
-    phase_c_todo!("Bun__ConsoleObject__messageWithTypeAndLevel")
-}
+// REAL: now provided by bun_jsc (src/jsc/ConsoleObject.rs).
+// Bun__ConsoleObject__messageWithTypeAndLevel
 
 // ── CppTask ─────────────────────────────────────────────────────────────────
-// REAL: src/jsc/CppTask.rs
+// REAL: src/jsc/CppTask.rs (gated under `mod _gated` in bun_jsc/lib.rs)
 
 #[unsafe(no_mangle)]
 pub extern "C" fn ConcurrentCppTask__createAndRun(cpp_task: *mut EventLoopTaskNoContext) {
@@ -319,7 +294,7 @@ pub extern "C" fn ConcurrentCppTask__createAndRun(cpp_task: *mut EventLoopTaskNo
 }
 
 // ── AbortSignal.Timeout ─────────────────────────────────────────────────────
-// REAL: src/jsc/AbortSignal.rs
+// REAL: src/jsc/AbortSignal.rs (gated under `mod _gated` in bun_jsc/lib.rs)
 
 #[unsafe(no_mangle)]
 pub extern "C" fn AbortSignal__Timeout__create(
@@ -337,6 +312,8 @@ pub extern "C" fn AbortSignal__Timeout__deinit(this: *mut Timeout) {
 
 // ── Host fns: `(global, callframe) -> JSValue` ──────────────────────────────
 // REAL: src/runtime/webcore/{fetch,ObjectURLRegistry,prompt,FormData}.rs
+//       — all still inside `#[cfg(any())] mod _gated` in their files (or the
+//       containing webcore submod is gated in src/runtime/webcore.rs).
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__fetch(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
@@ -390,98 +367,24 @@ pub extern "C" fn Bun__WebSocket__freeSSLConfig(config: *mut SSLConfig) {
 }
 
 // ── WebWorker ───────────────────────────────────────────────────────────────
-// REAL: src/jsc/web_worker.rs
-
-#[unsafe(no_mangle)]
-pub extern "C" fn WebWorker__create(
-    cpp_worker: *mut c_void,
-    parent: *mut VirtualMachine,
-    name_str: BunString,
-    specifier_str: BunString,
-    error_message: *mut BunString,
-    parent_context_id: u32,
-    this_context_id: u32,
-    mini: bool,
-    default_unref: bool,
-    eval_mode: bool,
-    argv_ptr: *mut WTFStringImpl,
-    argv_len: usize,
-    inherit_exec_argv: bool,
-    exec_argv_ptr: *mut WTFStringImpl,
-    exec_argv_len: usize,
-    preload_modules_ptr: *mut BunString,
-    preload_modules_len: usize,
-) -> *mut WebWorker {
-    phase_c_todo!("WebWorker__create")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn WebWorker__destroy(this: *mut WebWorker) {
-    phase_c_todo!("WebWorker__destroy")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn WebWorker__notifyNeedTermination(this: *mut WebWorker) {
-    phase_c_todo!("WebWorker__notifyNeedTermination")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn WebWorker__setRef(this: *mut WebWorker, value: bool) {
-    phase_c_todo!("WebWorker__setRef")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn WebWorker__getParentWorker(vm: *mut VirtualMachine) -> *mut c_void {
-    core::ptr::null_mut()
-}
+// REAL: now provided by bun_jsc (src/jsc/web_worker.rs).
+// WebWorker__create
+// WebWorker__destroy
+// WebWorker__notifyNeedTermination
+// WebWorker__setRef
+// WebWorker__getParentWorker
 
 // ── encoding ────────────────────────────────────────────────────────────────
-// REAL: src/runtime/webcore/encoding.rs
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__encoding__writeLatin1(
-    input: *const u8,
-    len: usize,
-    to: *mut u8,
-    to_len: usize,
-    encoding: u8,
-) -> usize {
-    phase_c_todo!("Bun__encoding__writeLatin1")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__encoding__writeUTF16(
-    input: *const u16,
-    len: usize,
-    to: *mut u8,
-    to_len: usize,
-    encoding: u8,
-) -> usize {
-    phase_c_todo!("Bun__encoding__writeUTF16")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__encoding__byteLengthLatin1AsUTF8(input: *const u8, len: usize) -> usize {
-    phase_c_todo!("Bun__encoding__byteLengthLatin1AsUTF8")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__encoding__byteLengthUTF16AsUTF8(input: *const u16, len: usize) -> usize {
-    phase_c_todo!("Bun__encoding__byteLengthUTF16AsUTF8")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__encoding__toString(
-    input: *const u8,
-    len: usize,
-    global: *mut JSGlobalObject,
-    encoding: u8,
-) -> JSValue {
-    phase_c_todo!("Bun__encoding__toString")
-}
+// REAL: now provided by bun_runtime (src/runtime/webcore/encoding.rs).
+// Bun__encoding__writeLatin1
+// Bun__encoding__writeUTF16
+// Bun__encoding__byteLengthLatin1AsUTF8
+// Bun__encoding__byteLengthUTF16AsUTF8
+// Bun__encoding__toString
 
 // ── TextEncoder ─────────────────────────────────────────────────────────────
-// REAL: src/runtime/webcore/TextEncoder.rs
+// REAL: src/runtime/webcore/TextEncoder.rs (gated `#[cfg(any())] mod text_encoder`
+// in src/runtime/webcore.rs `_gated_submods`).
 
 #[unsafe(no_mangle)]
 pub extern "C" fn TextEncoder__encode8(
@@ -531,6 +434,7 @@ pub extern "C" fn TextEncoder__encodeInto8(
 
 // ── Blob ────────────────────────────────────────────────────────────────────
 // REAL: src/runtime/webcore/Blob.rs (+ generated .classes.ts hooks)
+//       C-export bodies still inside `#[cfg(any())] mod _jsc_gated` in Blob.rs.
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Blob__dupeFromJS(value: JSValue) -> *mut Blob {
@@ -634,7 +538,8 @@ pub extern "C" fn BlockList__onStructuredCloneDeserialize(
 }
 
 // ── WebView process control ─────────────────────────────────────────────────
-// REAL: src/runtime/webview/{ChromeProcess,HostProcess}.rs (gated)
+// REAL: src/runtime/webview/{ChromeProcess,HostProcess}.rs (`mod webview` not
+// declared in src/runtime/lib.rs yet).
 // No-op pre-runtime: there is no spawned browser/host process to kill.
 
 #[unsafe(no_mangle)]
@@ -644,7 +549,7 @@ pub extern "C" fn Bun__Chrome__kill() {}
 pub extern "C" fn Bun__WebViewHost__kill() {}
 
 // ── napi ────────────────────────────────────────────────────────────────────
-// REAL: src/runtime/napi/napi.rs
+// REAL: src/runtime/napi/napi_body.rs (gated `#[cfg(any())] mod napi_body`)
 
 type NapiEnv = *mut c_void;
 type NapiValue = *mut c_void;
@@ -691,7 +596,7 @@ pub extern "C" fn napi_internal_enqueue_finalizer(
 }
 
 // ── usockets dispatch ───────────────────────────────────────────────────────
-// REAL: src/runtime/socket/uws_dispatch.rs (already has #[no_mangle] exports)
+// REAL: src/runtime/socket/uws_dispatch.rs (gated `#[cfg(any())] pub mod uws_dispatch`)
 
 #[unsafe(no_mangle)]
 pub extern "C" fn us_dispatch_open(
@@ -767,7 +672,7 @@ pub extern "C" fn us_dispatch_ssl_raw_tap(
 }
 
 // ── DNS addrinfo (usockets → bun_runtime::dns_jsc) ──────────────────────────
-// REAL: src/runtime/dns_jsc/dns.rs (gated until bun_jsc compiles)
+// REAL: src/runtime/dns_jsc/dns.rs (gated `#[cfg(any())] mod dns_body`)
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__addrinfo_get(

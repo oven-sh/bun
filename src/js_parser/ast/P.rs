@@ -7182,7 +7182,16 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         }
         false
     }
+}
 
+// ═══════════════════════════════════════════════════════════════════════════
+// `P::init` — pulled out of the round-D gate above so `Parser::_parse` can
+// construct the parser. Body is a faithful port of `P.zig::init`; the
+// transposer / Binding2ExprWrapper back-pointers are Phase-B placeholders
+// (their type aliases are still `()` / `ExpressionTransposer<(), _>`).
+impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
+    P<'a, TYPESCRIPT, J, SCAN_ONLY>
+{
     pub fn init(
         allocator: &'a Bump,
         log: &'a mut logger::Log,
@@ -7193,7 +7202,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     ) -> Result<Self, bun_core::Error> {
         // PORT NOTE: out-param constructor reshaped to return Self.
         let mut scope_order = ScopeOrderList::with_capacity_in(1, allocator);
-        let scope = allocator.alloc(Scope {
+        let scope: *mut Scope = allocator.alloc(Scope {
             members: Default::default(),
             children: Default::default(),
             generated: Default::default(),
@@ -7203,8 +7212,17 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             ..Default::default()
         });
 
-        scope_order.push(Some(ScopeOrder { loc: loc_module_scope(), scope }));
+        scope_order.push(Some(ScopeOrder::new(loc_module_scope, scope)));
         // PERF(port): was assume_capacity
+
+        // Only enable during bundling, when not bundling CJS
+        let commonjs_named_exports_deoptimized =
+            if opts.bundle { opts.output_format == options::Format::Cjs } else { true };
+
+        // TODO(port): ExpressionTransposer in Zig captures `*P`; the Rust type
+        // alias currently has `Context = ()` (Phase B wires the real callback),
+        // so feed it an arena-owned unit + identity visitor for now.
+        let unit: &'a mut () = allocator.alloc(());
 
         let mut this = Self {
             legacy_cjs_import_stmts: BumpVec::new_in(allocator),
@@ -7223,27 +7241,33 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             log,
             stack_check: bun_core::StackCheck::init(),
             allocator,
-            options: opts,
-            then_catch_chain: ThenCatchChain { next_target: null_expr_data(), ..Default::default() },
-            to_expr_wrapper_namespace: Default::default(), // patched below
-            to_expr_wrapper_hoisted: Default::default(),   // patched below
-            import_transposer: Default::default(),         // patched below
-            require_transposer: Default::default(),        // patched below
-            require_resolve_transposer: Default::default(),// patched below
+            then_catch_chain: ThenCatchChain {
+                next_target: null_expr_data(),
+                has_multiple_args: false,
+                has_catch: false,
+            },
+            to_expr_wrapper_namespace: (), // Binding2ExprWrapper.Namespace — Phase-B placeholder
+            to_expr_wrapper_hoisted: (),   // Binding2ExprWrapper.Hoisted — Phase-B placeholder
+            // SAFETY: `unit` is arena-owned for `'a`; the three transposers each
+            // need a `&'a mut ()` and never actually dereference it (identity
+            // visitor). Reborrow via raw ptr to satisfy the three distinct
+            // `&'a mut ()` borrows from one allocation.
+            import_transposer: ExpressionTransposer::init(unsafe { &mut *(unit as *mut ()) }, |_, e, _| e),
+            require_transposer: ExpressionTransposer::init(unsafe { &mut *(unit as *mut ()) }, |_, e, _| e),
+            require_resolve_transposer: ExpressionTransposer::init(unsafe { &mut *(unit as *mut ()) }, |_, e, _| e),
             source,
-            macro_: MacroState::init(allocator),
+            // Zig: `MacroState.init(allocator)` leaves `prepend_stmts = undefined`;
+            // Rust cannot leave a `&'a mut Vec<Stmt>` uninitialized, so allocate
+            // an empty placeholder in the arena (real list is wired by the visit
+            // pass before any macro expansion runs).
+            macro_: MacroState::init(allocator.alloc(Vec::new())),
             current_scope: scope,
             module_scope: scope,
             scopes_in_order: scope_order,
-            needs_jsx_import: if SCAN_ONLY { false } else { false }, // void in non-scan; bool in scan
+            needs_jsx_import: false, // Zig: `if (scan_only) false else void` — NeedsJSXType collapsed to `bool`
             lexer,
 
-            // Only enable during bundling, when not bundling CJS
-            commonjs_named_exports_deoptimized: if opts.bundle {
-                opts.output_format == options::OutputFormat::Cjs
-            } else {
-                true
-            },
+            commonjs_named_exports_deoptimized,
 
             // ─── all remaining fields default ───
             allow_private_identifiers: false,
@@ -7292,7 +7316,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             commonjs_module_exports_assigned_deoptimized: false,
             commonjs_named_exports_needs_conversion: u32::MAX,
             had_commonjs_named_exports_this_visit: false,
-            commonjs_replacement_stmts: &mut [],
+            commonjs_replacement_stmts: core::ptr::slice_from_raw_parts_mut(
+                core::ptr::NonNull::<Stmt>::dangling().as_ptr(),
+                0,
+            ),
             parse_pass_symbol_uses: None,
             has_commonjs_export_names: false,
             should_fold_typescript_constant_expressions: false,
@@ -7300,7 +7327,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             is_exported_inside_namespace: Default::default(),
             local_type_names: StringBoolMap::default(),
             enclosing_namespace_arg_ref: None,
-            jsx_imports: JSXImport::Symbols::default(),
+            jsx_imports: crate::JSXImportSymbols::default(),
             react_refresh: ReactRefresh::default(),
             server_components_wrap_ref: Ref::NONE,
             jest: Jest::default(),

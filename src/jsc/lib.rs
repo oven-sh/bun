@@ -1510,19 +1510,19 @@ stub_ty!(TestScope);
 pub mod js_property_iterator {
     use super::*;
 
-    /// Const-generic wrapper over the C++ `JSPropertyIteratorImpl`. The bool
-    /// params mirror `JSPropertyIteratorOptions` (Zig comptime config).
-    pub struct JSPropertyIterator<
-        const SKIP_EMPTY_NAME: bool = false,
-        const INCLUDE_VALUE: bool = true,
-        const OWN_ONLY: bool = true,
-    > {
+    /// Runtime-configured wrapper over the C++ `JSPropertyIteratorImpl`.
+    /// In Zig the options are a `comptime` struct (`JSPropertyIteratorOptions`);
+    /// the Rust port carries them as runtime fields so call sites can pass
+    /// `PropertyIteratorOptions { .. }` directly without const-generic turbofish.
+    pub struct JSPropertyIterator {
         impl_: *mut core::ffi::c_void,
         object: *mut JSObject,
         global: *mut JSGlobalObject,
         i: usize,
         pub len: usize,
         pub value: JSValue,
+        skip_empty_name: bool,
+        include_value: bool,
     }
 
     unsafe extern "C" {
@@ -1548,19 +1548,17 @@ pub mod js_property_iterator {
         fn Bun__JSPropertyIterator__deinit(iter: *mut core::ffi::c_void);
     }
 
-    impl<const SKIP_EMPTY_NAME: bool, const INCLUDE_VALUE: bool, const OWN_ONLY: bool>
-        JSPropertyIterator<SKIP_EMPTY_NAME, INCLUDE_VALUE, OWN_ONLY>
-    {
+    impl JSPropertyIterator {
         pub fn init(
             global: &JSGlobalObject,
             object: impl super::IntoIterObject,
-            _options: super::PropertyIteratorOptions,
+            options: super::PropertyIteratorOptions,
         ) -> JsResult<Self> {
             let object = object.into_iter_object();
             let mut len: usize = 0;
             // SAFETY: `global` is live; `len` valid out-param.
             let impl_ = unsafe {
-                Bun__JSPropertyIterator__create(global.as_ptr(), object, &mut len, OWN_ONLY, false)
+                Bun__JSPropertyIterator__create(global.as_ptr(), object, &mut len, true, false)
             };
             if global.has_exception() { return Err(JsError::Thrown); }
             Ok(Self {
@@ -1570,6 +1568,8 @@ pub mod js_property_iterator {
                 i: 0,
                 len,
                 value: JSValue::ZERO,
+                skip_empty_name: options.skip_empty_name,
+                include_value: options.include_value,
             })
         }
         pub fn next(&mut self) -> JsResult<Option<bun_string::String>> {
@@ -1578,7 +1578,7 @@ pub mod js_property_iterator {
                 let i = self.i;
                 self.i += 1;
                 let mut name = bun_string::String::DEAD;
-                if INCLUDE_VALUE {
+                if self.include_value {
                     // SAFETY: `impl_`/`object` live for `self`'s lifetime.
                     let v = unsafe {
                         Bun__JSPropertyIterator__getNameAndValue(
@@ -1594,7 +1594,7 @@ pub mod js_property_iterator {
                     // SAFETY: `impl_` live for `self`'s lifetime.
                     unsafe { Bun__JSPropertyIterator__getName(self.impl_, &mut name, i) };
                 }
-                if SKIP_EMPTY_NAME && name.is_empty() { continue; }
+                if self.skip_empty_name && name.is_empty() { continue; }
                 return Ok(Some(name));
             }
         }
@@ -1606,7 +1606,7 @@ pub mod js_property_iterator {
             }
         }
     }
-    impl<const A: bool, const B: bool, const S: bool> Drop for JSPropertyIterator<A, B, S> {
+    impl Drop for JSPropertyIterator {
         fn drop(&mut self) { self.deinit(); }
     }
 

@@ -613,6 +613,29 @@ impl bun_io::Write for VisibleCharacterCounter<'_> {
 }
 
 impl<'a> TablePrinter<'a> {
+    /// Phase-C stub for the gated `print_table` body below — falls through to
+    /// the value formatter so `console.table()` prints *something* and the
+    /// build links. Real impl restored once `JSValue` iteration helpers land.
+    pub fn print_table<const ENABLE_ANSI_COLORS: bool>(
+        &mut self,
+        writer: &mut dyn bun_io::Write,
+    ) -> JsResult<()> {
+        let global = self.global_object;
+        let mut value_formatter = self.value_formatter.shallow_clone();
+        let tag = formatter::Tag::get(self.tabular_data, global)?;
+        value_formatter
+            .format::<ENABLE_ANSI_COLORS>(tag, writer, self.tabular_data, global)?;
+        let _ = writer.write_all(b"\n");
+        Ok(())
+    }
+}
+
+// TODO(phase-c): re-gated — body references unported `JSValue` iteration
+// surface (`is_iterable`, `for_each_with_context`, `to_object`, `get_own`,
+// `to_cell`) and `jsc::PropertyIteratorOptions` (~30 errs). Stub `print_table`
+// provided above; restore once the missing iterator helpers land.
+#[cfg(any())]
+impl<'a> TablePrinter<'a> {
     /// Compute how much horizontal space a `JSValue` will take when printed.
     fn get_width_for_value(&mut self, value: JSValue) -> JsResult<u32> {
         let mut width: usize = 0;

@@ -150,10 +150,18 @@ impl<'a> ConsoleFormatter for self::console_object::Formatter<'a> {
         value: JSValue,
         cell: JSType,
     ) -> JsResult<()> {
-        let _ = (tag, writer, value, cell);
-        // TODO(b2): full body — `Formatter::print_as` is gated behind the
-        // ConsoleObject body until JSValue.rs un-gates (see ConsoleObject.rs:2715).
-        Ok(())
+        // Downstream `write_format` hooks (Response/Request/S3Client/…) hold a
+        // `core::fmt::Write`; the formatter body is byte-oriented
+        // (`dyn bun_io::Write`). Bridge via `FmtAdapter`, then route through
+        // the runtime-tag dispatcher (`Formatter::format`) which fans out to
+        // the const-generic `print_as::<{ Tag::… }, …>` arms.
+        let mut sink = bun_io::FmtAdapter::new(writer);
+        let result = self::console_object::formatter::TagResult {
+            tag: tag.into(),
+            cell,
+        };
+        let global = self.global_this;
+        self.format::<ENABLE_ANSI_COLORS>(result, &mut sink, value, global)
     }
 }
 
@@ -197,6 +205,20 @@ pub use self::js_uint8_array::JSUint8Array;
 pub use self::marked_argument_buffer::MarkedArgumentBuffer;
 pub use self::js_cell::JSCell;
 pub use self::error_code::ErrorCode;
+
+// Node-compat error-code constants surfaced on `bun_jsc::ErrorCode` for callers
+// that dispatch via `JSGlobalObject::err(code, fmt)` (e.g. webcore TextDecoder).
+// Sentinel values until the full ErrorCode.ts codegen table lands; the C++ side
+// only compares for equality. `ErrorCode` is `#[repr(transparent)]` over `u16`,
+// so the transmute is layout-identical.
+impl ErrorCode {
+    pub const ERR_ENCODING_INVALID_ENCODED_DATA: ErrorCode =
+        // SAFETY: `ErrorCode` is `#[repr(transparent)]` around `u16`.
+        unsafe { core::mem::transmute::<u16, ErrorCode>(0xFFFC) };
+    pub const ERR_ENCODING_NOT_SUPPORTED: ErrorCode =
+        // SAFETY: `ErrorCode` is `#[repr(transparent)]` around `u16`.
+        unsafe { core::mem::transmute::<u16, ErrorCode>(0xFFFB) };
+}
 pub use self::zig_error_type::ZigErrorType;
 pub use self::errorable::Errorable;
 pub use self::zig_stack_frame_position::ZigStackFramePosition;
@@ -208,13 +230,10 @@ mod _gated {
     #[path = "host_fn.rs"] pub mod host_fn;
     #[path = "AnyPromise.rs"] pub mod any_promise;
     #[path = "CachedBytecode.rs"] pub mod cached_bytecode;
-    #[path = "CallFrame.rs"] pub mod call_frame;
     #[path = "DOMFormData.rs"] pub mod dom_form_data;
     #[path = "DeferredError.rs"] pub mod deferred_error;
     #[path = "JSArrayIterator.rs"] pub mod js_array_iterator;
     #[path = "JSGlobalObject.rs"] pub mod js_global_object;
-    #[path = "JSObject.rs"] pub mod js_object;
-    #[path = "JSString.rs"] pub mod js_string;
     #[path = "RefString.rs"] pub mod ref_string;
     #[path = "SystemError.rs"] pub mod system_error;
     #[path = "URL.rs"] pub mod url;
@@ -1235,10 +1254,9 @@ impl JSValue {
 
 // JSC Classes Bindings — opaque stubs (B-2: trimmed as real modules un-gate)
 stub_ty!(
-    CachedBytecode, CallFrame,
+    CachedBytecode,
     DOMFormData, DeferredError,
-    JSGlobalObject, JSObject,
-    JSString,
+    JSGlobalObject,
     URL, VM,
     ResolvedSource, ZigStackTrace, ZigStackFrame,
     ZigException, RuntimeTranspilerCache,
@@ -1728,182 +1746,16 @@ pub enum BunPluginTarget {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// B-2 Track A — JSObject surface (JSObject.zig).
+// B-2 Track A — JSObject (un-gated; real module in JSObject.rs).
 // ──────────────────────────────────────────────────────────────────────────
-unsafe extern "C" {
-    static JSC__JSObject__maxInlineCapacity: core::ffi::c_uint;
-    fn JSC__JSObject__getIndex(this: JSValue, global: *const JSGlobalObject, i: u32) -> JSValue;
-    fn JSC__createStructure(
-        global: *const JSGlobalObject,
-        owner: *const JSCell,
-        length: u32,
-        names: *mut ExternColumnIdentifier,
-    ) -> JSValue;
-}
-
-impl JSObject {
-    #[inline]
-    pub fn max_inline_capacity() -> core::ffi::c_uint {
-        // SAFETY: extern static; read-only.
-        unsafe { JSC__JSObject__maxInlineCapacity }
-    }
-    pub fn get_index(this: JSValue, global: &JSGlobalObject, i: u32) -> JsResult<JSValue> {
-        // SAFETY: `global` is live; `this` is a JS object (caller-checked).
-        let v = unsafe { JSC__JSObject__getIndex(this, global, i) };
-        if global.has_exception() { Err(JsError::Thrown) } else { Ok(v) }
-    }
-    /// Create a JSObject from a Rust struct's fields (Zig: anytype → reflection).
-    pub fn create<T>(_pojo: T, _global: &JSGlobalObject) -> JsResult<*mut JSObject> {
-        // TODO(b2): putAllFromStruct via reflection — needs proc-macro.
-        todo!("JSObject::create")
-    }
-    pub fn create_structure(
-        global: &JSGlobalObject,
-        owner: JSValue,
-        length: u32,
-        names: *mut ExternColumnIdentifier,
-    ) -> JSValue {
-        debug_assert!(owner.is_cell());
-        // JSObject.zig:118 — passes `owner.asCell()`. A cell-tagged JSValue's
-        // payload IS the JSCell* (NotCellMask bits are zero), so the raw usize
-        // is the pointer. SAFETY: caller guarantees `owner.is_cell()`.
-        let owner_cell = owner.0 as *const JSCell;
-        // SAFETY: `global` is live; `names[0..length]` valid.
-        unsafe { JSC__createStructure(global, owner_cell, length, names) }
-    }
-}
-
-/// `JSObject.ExternColumnIdentifier` (extern struct in JSObject.zig).
-#[repr(C)]
-pub struct ExternColumnIdentifier {
-    pub tag: u8,
-    pub value: ExternColumnIdentifierValue,
-}
-#[repr(C)]
-pub union ExternColumnIdentifierValue {
-    pub index: u32,
-    pub name: core::mem::ManuallyDrop<bun_string::String>,
-}
-impl ExternColumnIdentifier {
-    /// JSObject.zig:111 — `deinit()` derefs `name` only when `tag == 2`.
-    pub fn deinit(&mut self) {
-        if self.tag == 2 {
-            // SAFETY: `tag == 2` ⇔ `value.name` is the active union field.
-            unsafe { core::mem::ManuallyDrop::drop(&mut self.value.name) }
-        }
-    }
-}
-pub mod js_object {
-    pub use super::ExternColumnIdentifier;
-}
+#[path = "JSObject.rs"] pub mod js_object;
+pub use self::js_object::{JSObject, ExternColumnIdentifier, ExternColumnIdentifierValue};
 
 // ──────────────────────────────────────────────────────────────────────────
-// B-2 Track A — CallFrame / ArgumentsSlice surface (CallFrame.zig).
+// B-2 Track A — CallFrame / ArgumentsSlice (un-gated; real module in CallFrame.rs).
 // ──────────────────────────────────────────────────────────────────────────
-pub mod call_frame {
-    use super::*;
-    /// See CallFrame.zig:212. Advanced iterator used by Node.fs argument parsing.
-    pub struct ArgumentsSlice<'a> {
-        pub remaining: &'a [JSValue],
-        pub vm: &'a virtual_machine::VirtualMachine,
-        pub all: &'a [JSValue],
-        pub threw: bool,
-        pub will_be_async: bool,
-    }
-    impl<'a> ArgumentsSlice<'a> {
-        pub fn init(vm: &'a virtual_machine::VirtualMachine, slice: &'a [JSValue]) -> Self {
-            Self { remaining: slice, vm, all: slice, threw: false, will_be_async: false }
-        }
-        pub fn next(&self) -> Option<JSValue> {
-            self.remaining.first().copied()
-        }
-        pub fn eat(&mut self) {
-            if !self.remaining.is_empty() {
-                self.remaining = &self.remaining[1..];
-            }
-        }
-        pub fn next_eat(&mut self) -> Option<JSValue> {
-            let v = self.next()?;
-            self.eat();
-            Some(v)
-        }
-    }
-
-    pub struct Arguments<const MAX: usize> {
-        pub ptr: [JSValue; MAX],
-        pub len: usize,
-    }
-    impl<const MAX: usize> Arguments<MAX> {
-        #[inline]
-        pub fn slice(&self) -> &[JSValue] { &self.ptr[..self.len] }
-    }
-}
-pub use self::call_frame::ArgumentsSlice;
-
-impl CallFrame {
-    // JSC::CallFrameSlot constants (JavaScriptCore/interpreter/CallFrame.h).
-    const OFFSET_CODE_BLOCK: usize = 2;
-    const OFFSET_CALLEE: usize = Self::OFFSET_CODE_BLOCK + 1;
-    const OFFSET_ARG_COUNT_INCL_THIS: usize = Self::OFFSET_CALLEE + 1;
-    const OFFSET_THIS_ARGUMENT: usize = Self::OFFSET_ARG_COUNT_INCL_THIS + 1;
-    const OFFSET_FIRST_ARGUMENT: usize = Self::OFFSET_THIS_ARGUMENT + 1;
-
-    #[inline]
-    fn as_register_ptr(&self) -> *const JSValue {
-        // CallFrame is opaque; `self` is the register array base. Registers are
-        // 8-byte unions (`EncodedJSValue` payload). SAFETY: caller-provided
-        // CallFrame* came from JSC and is register-aligned.
-        (self as *const Self).cast::<JSValue>()
-    }
-    #[inline]
-    fn argument_count_including_this(&self) -> u32 {
-        // SAFETY: register slot at `OFFSET_ARG_COUNT_INCL_THIS` holds the encoded
-        // value; the low 32 bits (`asBits.payload`) are the count.
-        let raw = unsafe { *self.as_register_ptr().add(Self::OFFSET_ARG_COUNT_INCL_THIS) };
-        (raw.0 & 0xffff_ffff) as u32
-    }
-    pub fn arguments(&self) -> &[JSValue] {
-        let count = self.arguments_count() as usize;
-        // SAFETY: registers `[first_argument..first_argument+count]` are live JSValues
-        // for the lifetime of `&self` (the call is on-stack).
-        unsafe {
-            core::slice::from_raw_parts(
-                self.as_register_ptr().add(Self::OFFSET_FIRST_ARGUMENT),
-                count,
-            )
-        }
-    }
-    pub fn argument(&self, i: usize) -> JSValue {
-        self.arguments().get(i).copied().unwrap_or(JSValue::UNDEFINED)
-    }
-    #[inline]
-    pub fn arguments_count(&self) -> u32 {
-        self.argument_count_including_this().saturating_sub(1)
-    }
-    pub fn this(&self) -> JSValue {
-        // SAFETY: register slot at `OFFSET_THIS_ARGUMENT` holds `thisValue`.
-        unsafe { *self.as_register_ptr().add(Self::OFFSET_THIS_ARGUMENT) }
-    }
-    pub fn callee(&self) -> JSValue {
-        // SAFETY: register slot at `OFFSET_CALLEE` holds the callee JSFunction.
-        unsafe { *self.as_register_ptr().add(Self::OFFSET_CALLEE) }
-    }
-    pub fn arguments_as_array<const N: usize>(&self) -> [JSValue; N] {
-        let args = self.arguments();
-        let mut out = [JSValue::UNDEFINED; N];
-        for (i, slot) in out.iter_mut().enumerate() {
-            if let Some(v) = args.get(i) { *slot = *v; }
-        }
-        out
-    }
-    pub fn arguments_old<const MAX: usize>(&self) -> call_frame::Arguments<MAX> {
-        let args = self.arguments();
-        let len = args.len().min(MAX);
-        let mut ptr = [JSValue::ZERO; MAX];
-        ptr[..len].copy_from_slice(&args[..len]);
-        call_frame::Arguments { ptr, len }
-    }
-}
+#[path = "CallFrame.rs"] pub mod call_frame;
+pub use self::call_frame::{CallFrame, ArgumentsSlice};
 
 // ──────────────────────────────────────────────────────────────────────────
 // B-2 Track A — JSArrayIterator (real struct; was stub_ty before).
@@ -2032,26 +1884,9 @@ impl URL {
     }
 }
 
-unsafe extern "C" {
-    fn JSC__JSString__length(this: *const JSString) -> usize;
-    fn JSC__JSString__toZigString(this: *const JSString, global: *const JSGlobalObject, out: *mut bun_string::ZigString);
-}
-impl JSString {
-    #[inline]
-    pub fn length(&self) -> usize {
-        // SAFETY: `self` is a live JSString.
-        unsafe { JSC__JSString__length(self) }
-    }
-    pub fn get_zig_string(&self, global: &JSGlobalObject) -> bun_string::ZigString {
-        let mut out = bun_string::ZigString::EMPTY;
-        // SAFETY: `self` and `global` are live; `out` is a valid out-param.
-        unsafe { JSC__JSString__toZigString(self, global, &mut out) };
-        out
-    }
-    pub fn to_slice(&self, global: &JSGlobalObject) -> bun_string::ZigStringSlice {
-        self.get_zig_string(global).to_slice()
-    }
-}
+// B-2 Track A — JSString (un-gated; real module in JSString.rs).
+#[path = "JSString.rs"] pub mod js_string;
+pub use self::js_string::JSString;
 
 pub mod ref_string {}
 pub use self::ref_string as RefString;
@@ -2650,6 +2485,20 @@ pub trait JsClass: Sized {
     fn to_js(self, global: &JSGlobalObject) -> JSValue;
     fn from_js(value: JSValue) -> Option<*mut Self>;
     fn from_js_direct(value: JSValue) -> Option<*mut Self>;
+
+    /// Dynamic heap footprint reported to JSC's GC via
+    /// `reportExtraMemoryAllocated` / `reportExtraMemoryVisited`
+    /// (generate-classes.ts:1656-1660, 1913-1916). Mirrors the Zig
+    /// `${typeName}.estimatedSize(thisValue)` contract: types that own large
+    /// out-of-line buffers (Blob/Request/Response bodies) override this so the
+    /// collector sees real memory pressure, not just `size_of::<Self>()`.
+    ///
+    /// Override with an inherent `fn estimated_size(&self) -> usize` on the
+    /// concrete type — the `#[JsClass(estimated_size)]` hook resolves via
+    /// method syntax, so an inherent impl shadows this default.
+    fn estimated_size(&self) -> usize {
+        core::mem::size_of::<Self>()
+    }
 }
 
 /// Track whether an object should keep the event loop alive

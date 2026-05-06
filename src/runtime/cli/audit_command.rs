@@ -4,16 +4,19 @@ use std::io::Write as _;
 use bun_collections::StringHashMap;
 use bun_core::{Global, Output};
 use bun_http::{self as http, HeaderBuilder};
-use bun_install::package_manager::command_line_arguments::AuditLevel;
+use bun_install::package_manager_real::command_line_arguments::{AuditLevel, CommandLineArguments};
+use bun_install::package_manager_real::Subcommand as PmSubcommand;
 use bun_install::resolution::Tag as ResolutionTag;
-use bun_install::PackageManager;
+use bun_install::{PackageManager, Subcommand};
 use bun_interchange::json as bun_json;
 use bun_libdeflate_sys::libdeflate;
 use bun_logger as logger;
 use bun_logger::js_ast::{Expr, ExprData};
+use bun_paths::PathBuffer;
 use bun_str::{strings, MutableString};
 use bun_url::URL;
 
+use crate::cli::package_manager_command::PackageManagerCommand;
 use crate::cli::Command;
 
 // TODO(port): in Zig these `[]const u8` fields borrow from the JSON parse arena (and a few are

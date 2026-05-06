@@ -1,11 +1,11 @@
 export const meta = {
   name: "phase-e-proper-port",
   description:
-    "PROPER port: per-file, real .zig bodies, NO todo!/gate/stub, mandatory 2-vote verify with reject→report, idiomatic Rust.",
+    "PROPER port: fix LAYERING first, real .zig bodies, NO todo!/gate/stub, mandatory 2-vote verify with reject→re-port.",
   phases: [
-    { title: "Survey", detail: "find files with slop (todo!/unimplemented!/gate/draft-mod) OR compile errors" },
-    { title: "Port", detail: "one agent per file: REAL bodies from .zig, port upstream transitively" },
-    { title: "Verify", detail: "2 adversarial reviewers vs .zig spec — reject if any todo!/divergence" },
+    { title: "Survey", detail: "find files with slop OR compile errors" },
+    { title: "Port", detail: "LAYERING fix first, then real bodies from .zig" },
+    { title: "Verify", detail: "2 reviewers reject layering-workarounds + slop + spec-divergence" },
     { title: "Report", detail: "if rejected, redo with reviewer feedback" },
   ],
 };
@@ -86,35 +86,37 @@ const VERIFY_S = {
 };
 
 const LAYERING = `
-**LAYERING IS THE ROOT FIX (do this FIRST, not last):**
-Most \`todo!("blocked_on: X")\` exist because crate A needs symbol X from crate B but B depends on A. The fix is NOT a stub — it's MOVING X (or its type) to a crate both depend on.
+**LAYERING IS THE ROOT FIX (do this FIRST):**
+Most \`todo!("blocked_on: X")\` exist because crate A needs symbol X from crate B but B depends on A (cycle). The fix is NOT a stub — it's MOVING X (or its type) to a crate both depend on.
 
-Step 0 (before porting any fn body): identify WHY the symbol is unreachable.
-- **Symbol exists in higher-tier crate** (e.g. runtime/ needs jsc/ symbol but jsc/ depends on runtime/): MOVE the type/fn to a shared lower crate. Common targets: bun_core, bun_jsc (if no runtime dep), or a new bun_<feature>_types crate. Update both crates' imports. This is the WORK.
-- **Symbol exists in same-tier sibling** (e.g. http_jsc needs sql_jsc type): both should depend on the type via a lower crate, OR pass it as a parameter/vtable.
-- **Symbol genuinely doesn't exist yet** (.zig has it, .rs doesn't): PORT it to where the .zig version lives.
-- **Type is used opaquely** (only as \`*mut T\`, never deref'd): use \`*mut c_void\` + a typed-pointer newtype in the lower crate.
+Step 0 (before porting fn bodies): for each blocked symbol, identify WHY it's unreachable.
+- **Symbol in higher-tier crate** (cycle): MOVE the type/fn to a shared lower crate. Common targets: bun_core, bun_jsc_types, bun_<feature>_types (create if needed). Update both crates' imports. THIS IS THE WORK.
+- **Symbol in same-tier sibling**: extract shared type to lower crate, OR pass as parameter/generic/vtable.
+- **Symbol genuinely doesn't exist** (.zig has it, .rs doesn't): PORT it where the .zig version lives.
+- **Type used opaquely** (only \`*mut T\`, never deref'd): forward-declare via \`extern type\` or use the lower crate's typed-ptr newtype.
 
-NEVER: local extern "C" shim that re-declares the symbol, opaque ZST stub structs ("opaque_default!"), trait-with-unimplemented-default. These are all layering workarounds.
+**LAYERING WORKAROUNDS (BANNED — verify rejects):**
+- Local \`extern "C" { fn X }\` re-declaring a Rust symbol instead of importing it
+- Opaque ZST stub structs (\`opaque_default!\`, \`stub_ty!\`, \`struct X { _opaque: () }\`) standing in for real types
+- Trait-with-\`unimplemented!()\`-default to "satisfy" a missing impl
+- vtable with null fn-ptrs
 `;
 
 const BANS = `${LAYERING}
-**BANNED (will be rejected by verify):**
-- \`todo!()\` / \`unimplemented!()\` / \`unreachable!("stub")\` — ZERO tolerance. Port the real body.
-- \`#[cfg(any())]\` / \`#![cfg(any())]\` / \`mod _gated\` / \`mod phase_a_draft\` — ZERO tolerance.
+**ALSO BANNED:**
+- \`todo!()\` / \`unimplemented!()\` / \`unreachable!("stub")\` — ZERO. Port the real body.
+- \`#[cfg(any())]\` / \`mod _gated\` / \`mod phase_a_draft\` — ZERO.
 - \`&self as *const _ as *mut _\` → \`&mut\` casts (UB). Use \`*mut Self\` receiver or \`&mut self\`.
 - \`Box::leak\` / \`mem::forget\` for \`&'static\`. Use proper ownership.
-- \`let _ = result;\` swallowing errors. Propagate or handle per .zig spec.
-- Transliterated Zig (\`@intCast\`-style casts everywhere). Write idiomatic Rust.
+- \`let _ = result;\` swallowing errors. Propagate per .zig spec.
+- Transliterated Zig. Write idiomatic Rust (ownership, ?-prop, iterators).
 
 **REQUIRED:**
-- Match .zig semantics: control flow, error paths, side effects, allocation/free pairing.
-- Missing upstream symbol → port it in its file (from its .zig). Transitively. Do NOT defer.
-- Dep cycle → move type to lower crate (per docs/PORTING.md).
-- Use docs/PORTING.md conventions (bun.* APIs, Maybe<T>, etc).
+- Match .zig semantics exactly: control flow, error paths, side effects, alloc/free pairing.
+- Use docs/PORTING.md conventions.
 `;
 
-const HARD = `**HARD RULES:** ${BANS}\nNever git reset/checkout/stash/rebase/pull. Never edit .zig. Commit only: \`git -c core.hooksPath=/dev/null add -A 'src/' && git -c core.hooksPath=/dev/null commit -q -m "phase-e(port): <file>"\`. NO push.`;
+const HARD = `**HARD RULES:**${BANS}\nNever git reset/checkout/stash/rebase/pull. Never edit .zig. Commit only: \`git -c core.hooksPath=/dev/null add -A 'src/' && git -c core.hooksPath=/dev/null commit -q -m "phase-e(port): <file>"\`. NO push.`;
 
 let history = [];
 for (let round = 1; round <= MAX_ROUNDS; round++) {
@@ -122,9 +124,9 @@ for (let round = 1; round <= MAX_ROUNDS; round++) {
   const survey = await agent(
     `Survey: find ALL files with slop OR compile errors. Repo /root/bun-5. Shard ${SHARD}/${NSHARDS} round ${round}.
 
-1. Slop scan: \`grep -rln 'todo!(\\|unimplemented!(\\|#\\[cfg(any())\\]\\|#!\\[cfg(any())\\]\\|mod phase_a_draft\\|mod _phase_a_draft\\|mod _jsc_gated\\|mod _gated' src/ --include='*.rs'\` → for each file, count each pattern. EXCLUDE build/debug/codegen/ (those are generated).
+1. Slop scan: \`grep -rln 'todo!(\\|unimplemented!(\\|#\\[cfg(any())\\]\\|#!\\[cfg(any())\\]\\|mod phase_a_draft\\|mod _phase_a_draft\\|mod _jsc_gated\\|mod _gated\\|opaque_default!\\|stub_ty!' src/ --include='*.rs'\` → for each file count each pattern.
 2. Compile errors: \`cargo check --workspace --keep-going > /tmp/pp-s${SHARD}-r${round}.log 2>&1\`; per-file: \`grep -oP '\\-\\-> \\Ksrc/[^:]+\\.rs' | sort | uniq -c\`
-3. total_slop = sum of (todos+unimpls+gates+has_draft). total_errs = grep -c '^error'.
+3. total_slop = sum(todos+unimpls+gates+has_draft). total_errs = grep -c '^error'.
 
 Return {files:[{file,todos,unimpls,gates,has_draft,compile_errs}], total_slop, total_errs}. DO NOT edit src/.`,
     { label: `survey-s${SHARD}-r${round}`, phase: "Survey", schema: SURVEY_S },
@@ -135,7 +137,6 @@ Return {files:[{file,todos,unimpls,gates,has_draft,compile_errs}], total_slop, t
   }
   if (survey.total_slop === 0 && survey.total_errs === 0) return { rounds: round, done: true, history };
 
-  // Prioritize: compile_errs first (cascade), then slop count
   const sorted = survey.files
     .filter(f => (f.todos || 0) + (f.unimpls || 0) + (f.gates || 0) + (f.compile_errs || 0) > 0 || f.has_draft)
     .sort(
@@ -154,20 +155,49 @@ Return {files:[{file,todos,unimpls,gates,has_draft,compile_errs}], total_slop, t
 
   await pipeline(
     mine,
-    // Stage 1: Port
     f =>
       agent(
-        `Port **${f.file}** PROPERLY by FIXING LAYERING. Repo /root/bun-5 @ HEAD.\n\nState: ${f.compile_errs || 0} compile errors, ${f.todos || 0} todo!(), ${f.unimpls || 0} unimplemented!(), ${f.gates || 0} gates${f.has_draft ? ", has phase_a_draft mod" : ""}.\n\n**Process:**\n0. **LAYERING DIAGNOSIS FIRST:** For each todo!/unimplemented!/compile-error, identify: is this a dep-cycle (symbol in wrong crate)? If yes, the fix is MOVING the type/fn, not stubbing. Read docs/PORTING.md §Layering. Record each move in layering_moves.\n1. Read ${f.file} + .zig spec at same path.\n2. ${f.has_draft ? "**Dissolve phase_a_draft mod**: replace top-level stubs with draft impls, delete wrapper, dedup." : ""}\n3. For EVERY \`todo!()\`/\`unimplemented!()\`: if blocked on dep-cycle → MOVE the blocking type/fn to a lower crate (do the move, update imports in both crates). Then port the FULL body from .zig.\n4. Missing upstream symbol (no cycle) → port it in its .rs file from its .zig. Transitively.\n5. Fix compile errors by REAL fixes. Never opaque-stub a type to break a cycle — MOVE it.\n6. After: \`grep -c 'todo!(\\|unimplemented!(\\|#\\[cfg(any())\\]\\|phase_a_draft\\|opaque_default!\\|stub_ty!' ${f.file}\` → MUST be 0.\n7. \`cargo check -p <crate>\` → 0 errors in your file.\n8. Commit.\n\n${HARD}\n\nReturn {file:"${f.file}", ported_fns:[...], upstream_added:[...], layering_moves:[{what,from,to,why}], draft_dissolved:bool, slop_after:N, notes}.`,
+        `Port **${f.file}** by FIXING LAYERING. Repo /root/bun-5 @ HEAD.
+
+State: ${f.compile_errs || 0} compile errors, ${f.todos || 0} todo!(), ${f.unimpls || 0} unimplemented!(), ${f.gates || 0} gates${f.has_draft ? ", has phase_a_draft mod" : ""}.
+
+**Process:**
+0. **LAYERING DIAGNOSIS:** For each todo!/unimplemented!/error, ask: is this a dep-cycle (symbol in wrong crate)? If yes, MOVE the type/fn to a lower crate. Record in layering_moves.
+1. Read ${f.file} + .zig spec at same path.
+2. ${f.has_draft ? "**Dissolve phase_a_draft mod**: replace top-level stubs with draft impls, delete wrapper, dedup." : ""}
+3. For EVERY \`todo!()\`/\`unimplemented!()\`: if blocked on cycle → DO THE MOVE first. Then port the FULL body from .zig.
+4. Missing upstream symbol (no cycle) → port it in its .rs file from its .zig. Transitively.
+5. Fix compile errors with REAL fixes. Never opaque-stub a type — MOVE it.
+6. After: \`grep -c 'todo!(\\|unimplemented!(\\|#\\[cfg(any())\\]\\|phase_a_draft\\|opaque_default!\\|stub_ty!' ${f.file}\` → MUST be 0.
+7. \`cargo check -p <crate>\` → 0 errors in your file.
+8. Commit.
+
+${HARD}
+
+Return {file:"${f.file}", ported_fns:[...], upstream_added:[...], layering_moves:[{what,from,to,why}], draft_dissolved:bool, slop_after:N, notes}.`,
         { label: `port:${f.file.replace("src/", "")}`, phase: "Port", schema: PORT_S },
       ),
-    // Stage 2: 2-vote Verify
     (port, f) =>
       port
         ? parallel(
             [0, 1].map(
               i => () =>
                 agent(
-                  `Adversarially verify **${f.file}** against .zig spec. Repo /root/bun-5 @ HEAD.\n\nPorter claims: ${(port.ported_fns || []).length} fns ported, slop_after=${port.slop_after}.\n\n**Check:**\n1. \`grep -n 'todo!(\\|unimplemented!(\\|#\\[cfg(any())\\]\\|phase_a_draft' ${f.file}\` — if ANY → REJECT (accept:false, slop_found:N).\n2. For each fn in ported_fns: read .rs body + .zig body. Find: spec divergences, wrong error handling, missed match arms, off-by-ones, alloc/free mismatch, swallowed errors, UB casts, missing side effects.\n3. Is it idiomatic Rust (proper ownership, ?-propagation, iterators) or transliterated Zig?\n\n**accept:true** ONLY if slop_found==0 AND no severity:"logic-bug" findings. Else accept:false.\n\nDEFAULT to accept:true if genuinely clean. DO NOT edit. DO NOT run cargo.\n\nReturn {file:"${f.file}", accept:bool, bugs:[{fn,what,fix,severity}], slop_found:N}.`,
+                  `Adversarially verify **${f.file}** vs .zig spec + LAYERING. Repo /root/bun-5 @ HEAD.
+
+Porter claims: ${(port.ported_fns || []).length} fns, ${(port.layering_moves || []).length} layering moves, slop_after=${port.slop_after}.
+
+**REJECT (accept:false) if ANY:**
+1. \`grep -n 'todo!(\\|unimplemented!(\\|#\\[cfg(any())\\]\\|phase_a_draft\\|opaque_default!\\|stub_ty!' ${f.file}\` >0.
+2. **Layering workaround**: local \`extern "C"\` re-decl of Rust symbol, opaque ZST stub struct for a real type, trait-default-unimplemented, vtable-null-fn-ptrs. severity:"layering-workaround".
+3. Spec divergence/wrong error handling/missed arm/alloc-free mismatch/swallowed error/UB cast. severity:"logic-bug".
+4. Transliterated Zig. severity:"non-idiomatic".
+
+For each layering_move: verify the type actually MOVED (check both files).
+
+**accept:true** ONLY if slop_found==0 AND no layering-workaround AND no logic-bug. DO NOT edit/cargo.
+
+Return {file:"${f.file}", accept:bool, bugs:[{fn,what,fix,severity}], slop_found:N}.`,
                   { label: `verify${i}:${f.file.replace("src/", "")}`, phase: "Verify", schema: VERIFY_S },
                 ),
             ),
@@ -186,11 +216,20 @@ Return {files:[{file,todos,unimpls,gates,has_draft,compile_errs}], total_slop, t
             return { file: f.file, port, accepted, bugs, slop };
           })
         : null,
-    // Stage 3: Re-port if rejected
     (vr, f) =>
       vr && !vr.accepted
         ? agent(
-            `RE-PORT **${f.file}** — verify REJECTED. Repo /root/bun-5 @ HEAD.\n\n**Reviewer findings (${vr.bugs.length} bugs, slop_found=${vr.slop}):**\n${vr.bugs.map((b, i) => `${i + 1}. **${b.fn}** [${b.severity || "bug"}]: ${b.what}\n   FIX: ${b.fix}`).join("\n")}\n${vr.slop > 0 ? `\n${vr.slop} todo!/unimplemented!/gate STILL PRESENT — port them.` : ""}\n\nApply each fix. Re-port any remaining slop. Commit.\n\n${HARD}\n\nReturn {file:"${f.file}", ported_fns:[...], upstream_added:[...], slop_after:N, notes}.`,
+            `RE-PORT **${f.file}** — verify REJECTED. Repo /root/bun-5 @ HEAD.
+
+**Reviewer findings (${vr.bugs.length} bugs, slop_found=${vr.slop}):**
+${vr.bugs.map((b, i) => `${i + 1}. **${b.fn}** [${b.severity || "bug"}]: ${b.what}\n   FIX: ${b.fix}`).join("\n")}
+${vr.slop > 0 ? `\n${vr.slop} slop STILL PRESENT — port them.` : ""}
+
+Apply each fix. If "layering-workaround" → DO THE MOVE. Re-port remaining slop. Commit.
+
+${HARD}
+
+Return {file:"${f.file}", ported_fns:[...], upstream_added:[...], layering_moves:[...], slop_after:N, notes}.`,
             { label: `report:${f.file.replace("src/", "")}`, phase: "Report", schema: PORT_S },
           )
         : vr,

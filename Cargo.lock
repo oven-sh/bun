@@ -1718,6 +1718,7 @@ dependencies = [
  "bun_boringssl_sys",
  "bun_brotli",
  "bun_bundler",
+ "bun_bundler_jsc",
  "bun_cares_sys",
  "bun_clap",
  "bun_collections",

@@ -294,7 +294,7 @@ impl SocketAddress {
                 port: port_.to_be(),
                 flowinfo: 0,
                 addr: [0u8; 16],
-                scope_id: 0,
+                scope_id,
                 ..unsafe { mem::zeroed() } // SAFETY: sockaddr_in6 is #[repr(C)] POD
             };
             if !pton_noerr(inet::AF_INET6, inner, (&mut sin6.addr) as *mut _ as *mut c_void) {

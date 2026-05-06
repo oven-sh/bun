@@ -772,6 +772,17 @@ pub mod lockfile {
         ) {
             todo!("blocked_on: lockfile_real un-gate (reconciler-6) — stub Lockfile::save_to_disk")
         }
+        /// Port of `Lockfile.Printer.Yarn.print` plumbing for the stub
+        /// `Lockfile`. Real body constructs `lockfile_real::Printer { lockfile,
+        /// options, .. }` and delegates to `printer::Yarn::print`; blocked on
+        /// stub/real `Lockfile` type unification.
+        pub fn print_yarn<W: bun_io::Write>(
+            &mut self,
+            _options: &crate::package_manager_real::Options,
+            _writer: &mut W,
+        ) -> Result<(), bun_core::Error> {
+            todo!("blocked_on: lockfile_real un-gate (reconciler-6) — Printer<'_> borrows real Lockfile, stub/real types not yet unified")
+        }
         /// Port of `Lockfile.eql` (src/install/lockfile.zig). Compares the
         /// post-clean lockfile against `before` for `--frozen-lockfile`.
         pub fn eql(&self, _before: &Self, _packages_len: usize) -> Result<bool, bun_core::Error> {

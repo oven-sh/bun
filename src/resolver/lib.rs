@@ -241,6 +241,7 @@ pub mod fs {
             unsafe {
                 (*(&raw mut INSTANCE)).write(FileSystem {
                     top_level_dir: cwd,
+                    top_level_dir_buf: bun_paths::PathBuffer::uninit(),
                     fs: Implementation::init(cwd),
                     dirname_store: DirnameStore::instance(),
                     filename_store: FilenameStore::instance(),

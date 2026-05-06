@@ -976,6 +976,7 @@ impl Listener {
 
         #[cfg(windows)]
         {
+            use crate::socket::windows_named_pipe_context::{SocketType as PipeSocketType, socket_from_named_pipe};
             let mut buf = PathBuffer::uninit();
             let mut pipe_name: Option<&[u8]> = None;
             let is_named_pipe = match &mut connection {
@@ -984,14 +985,187 @@ impl Listener {
                     pipe_name = normalize_pipe_name(slice, buf.as_mut_slice());
                     pipe_name.is_some()
                 }
-                UnixOrHost::Fd(_fd) => {
-                    todo!("blocked_on: uv::uv_guess_handle / Windows named-pipe fd detection")
+                UnixOrHost::Fd(fd) => 'brk: {
+                    let uvfd = fd.uv();
+                    // SAFETY: FFI — uv_guess_handle has no preconditions.
+                    let fd_type = unsafe { uv::uv_guess_handle(uvfd) };
+                    if fd_type == uv::Handle::Type::named_pipe {
+                        break 'brk true;
+                    }
+                    if fd_type == uv::Handle::Type::unknown {
+                        // is not a libuv fd, check if it's a named pipe
+                        let osfd: uv::uv_os_fd_t = uvfd as usize as uv::uv_os_fd_t;
+                        if bun_sys::windows::GetFileType(osfd) == bun_sys::windows::FILE_TYPE_PIPE {
+                            // yay its a named pipe lets make it a libuv fd
+                            *fd = Fd::from_native(osfd)
+                                .make_libuv_owned()
+                                .unwrap_or_else(|_| panic!("failed to allocate file descriptor"));
+                            break 'brk true;
+                        }
+                    }
+                    false
                 }
                 _ => false,
             };
             if is_named_pipe {
-                let _ = (default_data, prev_maybe_tcp, prev_maybe_tls, pipe_name);
-                todo!("blocked_on: WindowsNamedPipeContext::connect/open — Windows named-pipe connect path");
+                default_data.ensure_still_alive();
+
+                // PORT NOTE: by-value move of Handlers — see the non-Windows arm for rationale.
+                // SAFETY: socket_config.handlers is valid; we forget socket_config below.
+                let handlers_moved: Handlers = unsafe { core::ptr::read(&socket_config.handlers) };
+                let mut ssl_taken = socket_config.ssl.take();
+                core::mem::forget(socket_config);
+
+                let mut handlers_box = Box::new(handlers_moved);
+                handlers_box.mode = SocketMode::Client;
+                let handlers_ptr: *mut Handlers = Box::into_raw(handlers_box);
+
+                let promise = jsc::JSPromise::create(global);
+                let promise_value = promise.to_js();
+                // SAFETY: handlers_ptr was just Box::into_raw'd above; exclusive access.
+                unsafe { (*handlers_ptr).promise.set(global, promise_value) };
+
+                // Transfer the borrowed CTX into the pipe's SSLWrapper. From here it owns
+                // the ref on every path (initWithCTX adopts on success, initTLSWrapper frees
+                // on failure), so disarm the errdefer before the call.
+                let owned_ssl_ctx = scopeguard::ScopeGuard::into_inner(ssl_ctx_guard);
+
+                if ssl_enabled {
+                    let tls: *mut TLSSocket = if let Some(prev_ptr) = prev_maybe_tls {
+                        // SAFETY: caller passes a live TLSSocket; this_value populated by node:net.
+                        let prev = unsafe { &mut *prev_ptr };
+                        debug_assert!(prev.this_value.is_not_empty());
+                        if let Some(prev_handlers) = prev.handlers {
+                            // SAFETY: prev_handlers was Box::into_raw'd by an earlier connect.
+                            unsafe { drop(Box::from_raw(prev_handlers.as_ptr())) };
+                        }
+                        prev.handlers = NonNull::new(handlers_ptr);
+                        // Free old resources before reassignment to prevent memory leaks
+                        // when sockets are reused for reconnection (common with MongoDB driver)
+                        prev.connection = Some(connection.clone());
+                        if prev.flags.contains(SocketFlags::OWNED_PROTOS) {
+                            prev.protos = None;
+                        }
+                        prev.protos = ssl_taken.as_mut().and_then(|s| s.take_protos());
+                        prev.server_name = ssl_taken.as_mut().and_then(|s| s.take_server_name());
+                        prev_ptr
+                    } else {
+                        TLSSocket::new(NewSocket::<true> {
+                            ref_count: bun_ptr::RefCount::init(),
+                            handlers: NonNull::new(handlers_ptr),
+                            socket: uws::NewSocketHandler::<true>::DETACHED,
+                            connection: Some(connection.clone()),
+                            protos: ssl_taken.as_mut().and_then(|s| s.take_protos()),
+                            server_name: ssl_taken.as_mut().and_then(|s| s.take_server_name()),
+                            owned_ssl_ctx: None,
+                            flags: SocketFlags::default(),
+                            this_value: jsc::JsRef::empty(),
+                            poll_ref: KeepAlive::init(),
+                            ref_pollref_on_connect: true,
+                            buffered_data_for_node_net: Default::default(),
+                            bytes_written: 0,
+                            native_callback: crate::socket::NativeCallbacks::None,
+                            twin: None,
+                        })
+                    };
+                    // SAFETY: tls is a valid heap pointer.
+                    let tls_ref = unsafe { &mut *tls };
+                    TLSSocket::data_set_cached(tls_ref.get_this_value(global), global, default_data);
+                    tls_ref.poll_ref.ref_(vm_event_loop_ctx());
+                    tls_ref.ref_();
+
+                    let ctx_for_pipe = owned_ssl_ctx.map(|p| p.as_ptr());
+                    let named_pipe = match &connection {
+                        UnixOrHost::Unix(_) => WindowsNamedPipeContext::connect(
+                            global,
+                            pipe_name.expect("unreachable"),
+                            ssl_taken.take(),
+                            ctx_for_pipe,
+                            PipeSocketType::Tls(tls),
+                        ),
+                        UnixOrHost::Fd(fd) => WindowsNamedPipeContext::open(
+                            global,
+                            *fd,
+                            ssl_taken.take(),
+                            ctx_for_pipe,
+                            PipeSocketType::Tls(tls),
+                        ),
+                        _ => unreachable!(),
+                    };
+                    match named_pipe {
+                        Ok(np) => {
+                            // SAFETY: np is a live heap field inside the WindowsNamedPipeContext.
+                            tls_ref.socket = socket_from_named_pipe::<true>(unsafe { &mut *np });
+                        }
+                        Err(_) => return Ok(promise_value),
+                    }
+                } else {
+                    let tcp: *mut TCPSocket = if let Some(prev_ptr) = prev_maybe_tcp {
+                        // SAFETY: caller passes a live TCPSocket; this_value populated by node:net.
+                        let prev = unsafe { &mut *prev_ptr };
+                        debug_assert!(prev.this_value.is_not_empty());
+                        if let Some(prev_handlers) = prev.handlers {
+                            // SAFETY: prev_handlers was Box::into_raw'd by an earlier connect.
+                            unsafe { drop(Box::from_raw(prev_handlers.as_ptr())) };
+                        }
+                        prev.handlers = NonNull::new(handlers_ptr);
+                        // Adopt `connection` (heap-owned for .unix) so the socket's deinit
+                        // frees it; matches the TLS arm above and the non-pipe arm below.
+                        prev.connection = Some(connection.clone());
+                        debug_assert!(prev.protos.is_none());
+                        debug_assert!(prev.server_name.is_none());
+                        prev_ptr
+                    } else {
+                        TCPSocket::new(NewSocket::<false> {
+                            ref_count: bun_ptr::RefCount::init(),
+                            handlers: NonNull::new(handlers_ptr),
+                            socket: uws::NewSocketHandler::<false>::DETACHED,
+                            connection: Some(connection.clone()),
+                            protos: None,
+                            server_name: None,
+                            owned_ssl_ctx: None,
+                            flags: SocketFlags::default(),
+                            this_value: jsc::JsRef::empty(),
+                            poll_ref: KeepAlive::init(),
+                            ref_pollref_on_connect: true,
+                            buffered_data_for_node_net: Default::default(),
+                            bytes_written: 0,
+                            native_callback: crate::socket::NativeCallbacks::None,
+                            twin: None,
+                        })
+                    };
+                    // SAFETY: tcp is a valid heap pointer.
+                    let tcp_ref = unsafe { &mut *tcp };
+                    tcp_ref.ref_();
+                    TCPSocket::data_set_cached(tcp_ref.get_this_value(global), global, default_data);
+                    tcp_ref.poll_ref.ref_(vm_event_loop_ctx());
+
+                    let named_pipe = match &connection {
+                        UnixOrHost::Unix(_) => WindowsNamedPipeContext::connect(
+                            global,
+                            pipe_name.expect("unreachable"),
+                            None,
+                            None,
+                            PipeSocketType::Tcp(tcp),
+                        ),
+                        UnixOrHost::Fd(fd) => WindowsNamedPipeContext::open(
+                            global,
+                            *fd,
+                            None,
+                            None,
+                            PipeSocketType::Tcp(tcp),
+                        ),
+                        _ => unreachable!(),
+                    };
+                    match named_pipe {
+                        Ok(np) => {
+                            // SAFETY: np is a live heap field inside the WindowsNamedPipeContext.
+                            tcp_ref.socket = socket_from_named_pipe::<false>(unsafe { &mut *np });
+                        }
+                        Err(_) => return Ok(promise_value),
+                    }
+                }
+                return Ok(promise_value);
             }
         }
 

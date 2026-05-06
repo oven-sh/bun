@@ -1588,15 +1588,30 @@ pub fn generate_network_task_for_tarball(
     };
     let pkg_name = this.lockfile.str(&package.name);
     let scope = this.scope_for_package_name(pkg_name);
+    let cache_dir = this.get_cache_directory();
+    let temp_dir = this.get_temporary_directory().handle;
+    // Backref address only — stored, not dereffed in this function. The tag is
+    // immediately popped by the next `this` use; that's fine for a stored
+    // back-pointer (TODO(port): lifetime — BACKREF).
+    let this_backref: *mut PackageManager = this;
+
+    // Take the pool slot as a raw pointer so borrowck releases `this` for the
+    // streaming-setup tail. Reborrowed `&mut` per-statement below.
+    let net_ptr: *mut NetworkTask = this.get_network_task();
+    // SAFETY: `net_ptr` is the unique handle to a freshly-vended pool slot; no
+    // other alias exists until we return it. All writes below go through this
+    // pointer exclusively.
+    let network_task = unsafe { &mut *net_ptr };
+
     let extract_tarball = ExtractTarball {
-        package_manager: this_ptr, // TODO(port): lifetime — BACKREF
+        package_manager: this_backref, // TODO(port): lifetime — BACKREF
         name: strings::StringOrTinyString::init_append_if_needed(
             pkg_name,
             FileSystem::FilenameStore::instance(),
         ),
         resolution: package.resolution,
-        cache_dir: this.get_cache_directory(),
-        temp_dir: this.get_temporary_directory().handle,
+        cache_dir,
+        temp_dir,
         dependency_id,
         integrity: package.meta.integrity,
         url: strings::StringOrTinyString::init_append_if_needed(

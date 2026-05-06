@@ -850,18 +850,26 @@ fn configure_env_for_scripts_run(
     // to do that, we re-use the code from bun run
     // this is expensive, it traverses the entire directory tree going up to the root
     // so we really only want to do it when strictly necessary
-    // TODO(port): `var this_transpiler: Transpiler = undefined` — Zig leaves it uninit and
+    // PORT NOTE: `var this_transpiler: Transpiler = undefined` — Zig leaves it uninit and
     // RunCommand.configureEnvForRun fully initializes via out-param. Transpiler is NOT
     // all-zero-valid POD, so `zeroed()` is wrong; use MaybeUninit and assume_init after fill.
     let mut this_transpiler_slot = core::mem::MaybeUninit::<transpiler::Transpiler>::uninit();
+    // Zig spec PackageManager.zig:322 passes `this.env` (a `*DotEnv.Loader`).
+    // `self.env` is `Option<NonNull<Loader>>` here; pass the raw pointer so the
+    // shim's `Transpiler::init` reuses the manager's loader instead of
+    // allocating a fresh singleton.
+    let env_ptr: Option<*mut dot_env::Loader<'static>> = this.env.map(|p| p.as_ptr());
     let _ = RunCommand::configure_env_for_run(
         ctx,
         &mut this_transpiler_slot,
-        this.env_mut(),
+        env_ptr,
         log_level != Options::LogLevel::Silent,
         false,
     )?;
-    // SAFETY: configure_env_for_run returned Ok, so the slot is fully initialized
+    // SAFETY: the install-tier `RunCommand::configure_env_for_run` shim
+    // (lib.rs) `.write()`s the slot via `Transpiler::init` before returning
+    // `Ok` — same contract as the runtime impl (run_command.rs:628) and the
+    // Zig spec (run_command.zig:780 `this_transpiler.* = try Transpiler.init(...)`).
     let mut this_transpiler = unsafe { this_transpiler_slot.assume_init() };
 
     let init_cwd_entry = this.env_mut().map.get_or_put_without_value("INIT_CWD")?;

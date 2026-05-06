@@ -1635,8 +1635,8 @@ pub struct FetchOptions {
     // Custom Hostname
     pub hostname: Option<Box<[u8]>>,
     pub check_server_identity: Strong,
-    pub unix_socket_path: ZigString::Slice,
-    pub ssl_config: Option<SSLConfig::SharedPtr>,
+    pub unix_socket_path: ZigStringSlice,
+    pub ssl_config: Option<SSLConfigSharedPtr>,
     pub upgraded_connection: bool,
     pub force_http2: bool,
     pub force_http3: bool,

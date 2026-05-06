@@ -466,21 +466,13 @@ impl ValueError {
 
     pub fn dupe(&self, global_object: &JSGlobalObject) -> Self {
         match self {
-            ValueError::SystemError(e) => {
-                let mut v = e.clone();
-                v.ref_();
-                ValueError::SystemError(v)
-            }
-            ValueError::Message(m) => {
-                let mut v = m.clone();
-                v.ref_();
-                ValueError::Message(v)
-            }
-            ValueError::TypeError(m) => {
-                let mut v = m.clone();
-                v.ref_();
-                ValueError::TypeError(v)
-            }
+            // `.clone()` on BunString/SystemError already bumps the refcount (paired
+            // with their Drop deref). Zig did `var v = this.*; v.ref();` (bitwise copy
+            // + one bump) — `.clone()` alone is the Rust equivalent. An extra `.ref_()`
+            // here would leak +1 per dupe.
+            ValueError::SystemError(e) => ValueError::SystemError(e.clone()),
+            ValueError::Message(m) => ValueError::Message(m.clone()),
+            ValueError::TypeError(m) => ValueError::TypeError(m.clone()),
             ValueError::JSValue(js_ref) => {
                 if let Some(js_value) = js_ref.get() {
                     return ValueError::JSValue(jsc::strong::Optional::create(
@@ -1375,7 +1367,12 @@ pub trait BodyMixin: BodyOwnerJs + Sized {
 
     /// Default: None. Override to enable the `@hasDecl(Type, "getBodyReadableStream")` paths.
     /// TODO(port): Zig used `@hasDecl` to gate this at comptime; here it's a default method.
-    fn get_body_readable_stream(&self, _global_object: &JSGlobalObject) -> Option<ReadableStream> {
+    /// Takes `&mut self` so Response/Request (whose inherent impls mutate `js_ref`/body
+    /// state) can override it; the trait-default callers below all hold `&mut self`.
+    fn get_body_readable_stream(
+        &mut self,
+        _global_object: &JSGlobalObject,
+    ) -> Option<ReadableStream> {
         None
     }
 
@@ -1855,11 +1852,11 @@ impl<'a> ValueBufferer<'a> {
             }
             Value::Error(err) => {
                 bun_core::scoped_log!(BodyValueBufferer, "Error");
-                // Zig passes `err` by bitwise value copy with no ref bump; mirror exactly.
-                // SAFETY: ValueError is plain data in Zig (no Drop on the copy); callback owns
-                // neither original nor copy refcount-wise — matches Zig 1:1.
-                // TODO(port): callback ownership — verify no double-free once ValueError gains Drop.
-                let err_copy = unsafe { core::ptr::read(err) };
+                // Zig passed the union by bitwise value (no destructors). In Rust the
+                // payload (BunString / Strong) owns refs and has Drop, so a `ptr::read`
+                // bitwise copy would manufacture a second owner → double-deref when both
+                // sides drop. Produce a properly ref-bumped duplicate instead.
+                let err_copy = err.dupe(self.global);
                 (self.on_finished_buffering)(self.ctx, b"", Some(err_copy), false);
                 return Ok(());
             }
@@ -1966,17 +1963,12 @@ impl<'a> ValueBufferer<'a> {
             wrapper.sink.destroy();
         }
         // Zig: `var ref = ...; defer ref.deinit(); sink.onFinishedBuffering(..., .{ .JSValue = ref }, ...);`
-        // — passes a bitwise copy into the callback and *always* deinits the local afterward.
-        let ref_ = scopeguard::guard(
-            jsc::strong::Optional::create(err, self.global),
-            |mut r| r.deinit(),
-        );
-        // SAFETY: bitwise copy of Strong.Optional matches Zig's by-value struct pass; the
-        // scopeguard above deinits the original exactly as Zig's `defer ref.deinit()` does.
-        // TODO(port): callback ownership — Zig's pattern relies on callback not retaining the
-        // Strong past this call; verify in Phase B.
-        let ref_copy = unsafe { core::ptr::read(&*ref_) };
-        (self.on_finished_buffering)(self.ctx, b"", Some(ValueError::JSValue(ref_copy)), is_async);
+        // — Zig's bitwise pass + `defer deinit` is only safe because Zig has no Drop. In
+        // Rust `jsc::strong::Optional` owns a GC root; `ptr::read`-duplicating it would
+        // double-deinit. Transfer the single owner directly to the callback; the callback
+        // (or its returned `ValueError`'s Drop) is responsible for releasing it.
+        let ref_ = jsc::strong::Optional::create(err, self.global);
+        (self.on_finished_buffering)(self.ctx, b"", Some(ValueError::JSValue(ref_)), is_async);
     }
 
     fn handle_resolve_stream(&mut self, is_async: bool) {
@@ -2163,10 +2155,9 @@ impl<'a> ValueBufferer<'a> {
         match value {
             Value::Error(err) => {
                 bun_core::scoped_log!(BodyValueBufferer, "onReceiveValue Error");
-                // Zig passes `err` by bitwise value copy with no ref bump; mirror exactly.
-                // SAFETY: matches Zig's struct-by-value pass; see run() above.
-                // TODO(port): callback ownership — verify no double-free once ValueError gains Drop.
-                let err_copy = unsafe { core::ptr::read(err) };
+                // See run(): produce a ref-bumped duplicate instead of `ptr::read`ing a
+                // non-Copy owned value (would double-deref on drop).
+                let err_copy = err.dupe(sink.global);
                 (sink.on_finished_buffering)(sink.ctx, b"", Some(err_copy), true);
             }
             _ => {

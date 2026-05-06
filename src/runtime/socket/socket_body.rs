@@ -592,8 +592,12 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // the handlers must be kept alive for the duration of the function call
         // that way if we need to call the error handler, we can
-        let mut scope = handlers.enter();
-        let scope_guard = scopeguard::guard((self as *mut Self, scope), |(p, mut sc)| {
+        let scope = handlers.enter();
+        // PORT NOTE: `let _ = guard` would drop *immediately* (end of
+        // statement, not end of scope) and run `scope.exit()` before the
+        // user's onConnectError callback. Bind to a named `_`-prefixed
+        // local so it lives to end of scope like Zig's `defer`.
+        let _scope_guard = scopeguard::guard((self as *mut Self, scope), |(p, mut sc)| {
             if sc.exit() {
                 // Connection never opened (`is_active == false`), so the
                 // scope's decrement is what brings client handlers to zero
@@ -603,7 +607,6 @@ impl<const SSL: bool> NewSocket<SSL> {
                 unsafe { (*p).handlers = None };
             }
         });
-        let _ = scope_guard; // disarmed by drop at end of scope
 
         if callback.is_empty() {
             // Connection failed before open; allow the wrapper to be GC'd
@@ -621,7 +624,6 @@ impl<const SSL: bool> NewSocket<SSL> {
                 js_promise.reject(global, err_value)?;
             }
 
-            drop(cleanup);
             return Ok(());
         }
 
@@ -640,7 +642,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         if let Some(err_val) = result.to_error() {
             // TODO: properly propagate exception upwards
             if handlers.reject_promise(err_val).unwrap_or(true) {
-                drop(cleanup);
                 return Ok(());
             }
             let _ = handlers.call_error_handler(this_value, &[this_value, err_val]);
@@ -652,7 +653,8 @@ impl<const SSL: bool> NewSocket<SSL> {
             promise.reject_as_handled(global, err_)?;
         }
 
-        drop(cleanup);
+        // `_scope_guard` (declared after `cleanup`) drops first → scope.exit();
+        // then `cleanup` → needs_deref/markInactive/deref. Matches Zig defer LIFO.
         Ok(())
     }
 
@@ -991,7 +993,17 @@ impl<const SSL: bool> NewSocket<SSL> {
             let authorization_error: JSValue = if ssl_error.error_no == 0 {
                 JSValue::NULL
             } else {
-                ssl_error.to_js(global)?
+                match ssl_error.to_js(global) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        // `Scope` has no Drop — balance event_loop().enter() and
+                        // active_connections before propagating (Zig: `defer if (scope.exit()) ...`).
+                        if scope.exit() {
+                            self.handlers = None;
+                        }
+                        return Err(e);
+                    }
+                }
             };
 
             result = match callback.call(
@@ -1031,10 +1043,13 @@ impl<const SSL: bool> NewSocket<SSL> {
         // gets its own dispatch — fire its (pre-upgrade) close handler
         // here, then retire it. `raw.twin == None` so this doesn't
         // recurse, and `onClose` derefs the +1 we took at creation.
-        if let Some(mut raw) = self.twin.take() {
+        if let Some(raw) = self.twin.take() {
             // SAFETY: twin holds a +1 intrusive ref; uniquely accessed here.
-            unsafe { raw.as_mut().on_close(socket, err, reason).ok() };
-            drop(raw);
+            // `on_close` itself runs `this.deref()` (via the cleanup guard),
+            // which releases that +1 — so hand it the raw pointer instead of
+            // letting `IntrusiveRc::drop` release a *second* time.
+            let raw = IntrusiveRc::into_raw(raw);
+            unsafe { (*raw).on_close(socket, err, reason).ok() };
         }
         // PORT NOTE: reshaped for borrowck — `defer this.deref()` + `defer markInactive()`.
         let cleanup = scopeguard::guard(self as *mut Self, |p| {
@@ -1073,7 +1088,18 @@ impl<const SSL: bool> NewSocket<SSL> {
         let mut js_error: JSValue = JSValue::UNDEFINED;
         if err != 0 {
             // errors here are always a read error
-            js_error = sys::Error::from_code_int(err, sys::Tag::Read).to_js(global)?;
+            js_error = match sys::Error::from_code_int(err, sys::Tag::Read).to_js(global) {
+                Ok(v) => v,
+                Err(e) => {
+                    // `Scope` has no Drop — balance event_loop().enter() and
+                    // active_connections before propagating (Zig: `defer if (scope.exit()) ...`).
+                    if scope.exit() {
+                        self.handlers = None;
+                    }
+                    drop(cleanup);
+                    return Err(e);
+                }
+            };
         }
 
         if let Err(e) = callback.call(global, this_value, &[this_value, js_error]) {

@@ -91,6 +91,44 @@ impl Request {
 // get_json/get_array_buffer/get_blob/get_form_data/get_blob_without_call_frame).
 impl BodyMixin for Request {}
 
+// Wire the cached `body` JS slot accessor so `PendingValue::is_disturbed` can
+// short-circuit on a JS-side stream that was already read (Zig:
+// `T.js.bodyGetCached(this_value)`).
+// TODO(b2-blocked): bun_jsc::* — JSValue, generated `js::body_get_cached`.
+#[cfg(any())]
+impl crate::webcore::body::BodyOwnerJs for Request {
+    fn body_get_cached(this_value: JSValue) -> Option<JSValue> {
+        js::body_get_cached(this_value)
+    }
+}
+
+// Override `get_body_readable_stream` so the BodyMixin default methods
+// (get_text/get_json/etc.) actually see the cached stream. The trait default
+// returns `None`; without this override the `@hasDecl(Type, "getBodyReadableStream")`
+// paths in Body.zig are silently dead.
+// TODO(b2-blocked): merge with the stub `impl BodyMixin for Request {}` above
+// once the gated `BodyMixin` trait replaces the stub.
+#[cfg(any())]
+impl BodyMixin for Request {
+    fn get_body_value(&mut self) -> &mut BodyValue {
+        Request::get_body_value(self)
+    }
+    fn get_fetch_headers(&self) -> Option<&FetchHeaders> {
+        Request::get_fetch_headers(self)
+    }
+    fn get_form_data_encoding(
+        &mut self,
+    ) -> JsResult<Option<Box<bun_core::form_data::AsyncFormData>>> {
+        Request::get_form_data_encoding(self)
+    }
+    fn get_body_readable_stream(
+        &mut self,
+        global_object: &JSGlobalObject,
+    ) -> Option<ReadableStream> {
+        Request::get_body_readable_stream(self, global_object)
+    }
+}
+
 // TODO(b2-blocked): bun_jsc::* — every block below until `Flags`-adjacent
 // `init`/accessors depends on JSC method surface (JSValue::is_number/to/call,
 // Strong::create/get, request_context methods, JsRef::try_get, codegen
@@ -1512,17 +1550,27 @@ impl Request {
 
     pub fn clone(&mut self, global_this: &JSGlobalObject) -> JsResult<Box<Request>> {
         // allocator param dropped (global mimalloc)
-        // TODO(port): Zig does `Request.new(undefined)` then clone_into writes the whole struct.
-        // Rust cannot construct an `undefined` Request safely; use MaybeUninit and write in place.
-        let mut req: Box<core::mem::MaybeUninit<Request>> = Box::new_uninit();
-        // errdefer bun.destroy(req) → Box drops on error path automatically
-        // SAFETY: clone_into fully initializes *req via `*req = Request { ... }` before reading
-        // any field. We pass &mut to a zeroed/uninit slot; on error the Box<MaybeUninit> drops
-        // without running Request's Drop.
-        let req_mut = unsafe { &mut *req.as_mut_ptr() };
-        self.clone_into(req_mut, global_this, false)?;
-        // SAFETY: clone_into succeeded → req is fully initialized
-        Ok(unsafe { req.assume_init() })
+        // Zig does `Request.new(undefined)` then clone_into overwrites the whole struct.
+        // In Rust, `*req = Request { ... }` inside clone_into runs drop glue on the old
+        // value, which would be UB on uninitialized memory (garbage Arc/BunString/Box
+        // derefs). Seed the box with a cheap fully-initialized sentinel instead so the
+        // overwrite drops a valid (empty) value.
+        let mut req = Box::new(Request {
+            url: BunString::empty(),
+            headers: None,
+            signal: None,
+            body: Box::new(BodyValue::Null),
+            js_ref: JsRef::empty(),
+            method: Method::GET,
+            flags: Flags::default(),
+            request_context: AnyRequestContext::NULL,
+            weak_ptr_data: WeakPtrData::empty(),
+            reported_estimated_size: 0,
+            internal_event_callback: InternalJSEventCallback::default(),
+        });
+        // errdefer bun.destroy(req) → Box<Request> drops on error path automatically
+        self.clone_into(&mut req, global_this, false)?;
+        Ok(req)
     }
 
     pub fn set_timeout(&mut self, seconds: c_uint) {

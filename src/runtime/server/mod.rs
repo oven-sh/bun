@@ -415,13 +415,21 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
     pub fn on_listen(&mut self, socket: Option<*mut uws_sys::app::ListenSocket<SSL>>) {
         if socket.is_none() {
-            return;
-        }
-        if self.config.is_development() {
-            // TODO(b2-blocked): bun_analytics::Features::dev_server += 1;
+            return self.on_listen_failed();
         }
         self.listener = socket;
-        // TODO(b2-blocked): vm.event_loop().enqueue_task(self.listen_callback).
+        // TODO(b2-blocked): vm.event_loop_handle = Async::Loop::get();
+        // TODO(b2-blocked): if !SSL { vm.add_listening_socket_for_watch_mode(socket.fd()) }
+    }
+
+    /// Full body in `server_body.rs::on_listen_failed()` — drains BoringSSL
+    /// error stack, formats the bind/listen failure, and `globalThis.throwValue`s
+    /// it. Gated on `bun_jsc`; until then this stub records the failure so
+    /// `on_listen` is not a silent no-op (server.zig:1955-1957).
+    #[cold]
+    pub fn on_listen_failed(&mut self) {
+        self.listener = None;
+        // TODO(b2-blocked): globalThis.throwValue(error_instance) — see server_body.rs.
     }
 
     pub fn on_h3_listen(&mut self, socket: Option<*mut uws_sys::h3::ListenSocket>) {

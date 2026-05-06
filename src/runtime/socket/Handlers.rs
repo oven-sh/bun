@@ -120,10 +120,16 @@ impl Handlers {
                     // PORT NOTE: Zig `strong_self.deinit()` → Strong::clear()/drop; field stays valid
                 }
             } else {
-                // TODO(port): client-mode Handlers is Box-allocated; Zig does
-                // `this.deinit(); vm.allocator.destroy(this);` here. In Rust,
-                // dropping through `&mut self` is UB — caller must drop the
-                // `Box<Handlers>` when this returns true. Drop impl runs unprotect().
+                // Client-mode Handlers is heap-allocated per-connection
+                // (Listener::connect_inner via `Box::into_raw`). Zig does
+                // `this.deinit(); vm.allocator.destroy(this);` here — match
+                // that: free in place so callers that only hold a `*mut`
+                // (and thus can't `drop(Box)`) don't leak the allocation or
+                // its `protect()`ed JSValues. Caller must still null its
+                // field when this returns true.
+                // SAFETY: client-mode `self` is always the `Box::into_raw`
+                // allocation; no other live `&`/`&mut` outlives this call.
+                unsafe { drop(Box::from_raw(self as *mut Handlers)) };
                 return true;
             }
         }

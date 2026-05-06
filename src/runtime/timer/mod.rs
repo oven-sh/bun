@@ -341,13 +341,33 @@ impl All {
         timer_ref.next.sec = time.sec;
         timer_ref.next.nsec = time.nsec;
 
-        if let Some(epoch_slot) = timer_ref.js_timer_epoch() {
+        // Spec Timer.zig:117-120: bump the global epoch and write it back into
+        // the per-timer flags so equal-deadline JS timers fire in refresh
+        // order. `js_timer_epoch()` is read-only (returns `Option<u32>`), so
+        // do the `@fieldParentPtr` dispatch here — `TimeoutObject` /
+        // `ImmediateObject` are this-crate types.
+        // SAFETY: tag invariant — when `tag == TimeoutObject`/`ImmediateObject`,
+        // `timer` is the `event_loop_timer` field of the named container.
+        let flags_slot: Option<*mut TimerFlags> = match timer_ref.tag {
+            EventLoopTimerTag::TimeoutObject => unsafe {
+                let parent = (timer as *mut u8)
+                    .sub(offset_of!(TimeoutObject, event_loop_timer))
+                    .cast::<TimeoutObject>();
+                Some(core::ptr::addr_of_mut!((*parent).internals.flags))
+            },
+            EventLoopTimerTag::ImmediateObject => unsafe {
+                let parent = (timer as *mut u8)
+                    .sub(offset_of!(ImmediateObject, event_loop_timer))
+                    .cast::<ImmediateObject>();
+                Some(core::ptr::addr_of_mut!((*parent).internals.flags))
+            },
+            _ => None,
+        };
+        if let Some(flags) = flags_slot {
             // Zig: `epoch: u25` with `+%= 1`.
             self.epoch = self.epoch.wrapping_add(1) & ((1u32 << 25) - 1);
-            // TODO(b2-blocked): write back via JS_TIMER_EPOCH hook setter once
-            // `bun_runtime::dispatch` is wired (Timer.rs draft writes
-            // `flags.epoch = self.epoch` directly via @fieldParentPtr).
-            let _ = epoch_slot;
+            // SAFETY: `flags` points into the live container computed above.
+            unsafe { (*flags).set_epoch(self.epoch) };
         }
 
         self.insert_lock_held(timer);

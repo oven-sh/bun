@@ -82,6 +82,44 @@ pub type WeakRef = bun_ptr::WeakPtr<Response>;
 // codegen wires the JS getters to the trait methods.
 impl BodyMixin for Response {}
 
+// Wire the cached `body` JS slot accessor so `PendingValue::is_disturbed` can
+// short-circuit on a JS-side stream that was already read (Zig:
+// `T.js.bodyGetCached(this_value)`).
+// TODO(b2-blocked): bun_jsc::* — JSValue, generated `js::body_get_cached`.
+#[cfg(any())]
+impl crate::webcore::body::BodyOwnerJs for Response {
+    fn body_get_cached(this_value: JSValue) -> Option<JSValue> {
+        js::body_get_cached(this_value)
+    }
+}
+
+// Override `get_body_readable_stream` so the BodyMixin default methods
+// (get_text/get_json/etc.) actually see the cached stream. The trait default
+// returns `None`; without this override the `@hasDecl(Type, "getBodyReadableStream")`
+// paths in Body.zig are silently dead.
+// TODO(b2-blocked): merge with the stub `impl BodyMixin for Response {}` above
+// once the gated `BodyMixin` trait replaces the stub.
+#[cfg(any())]
+impl BodyMixin for Response {
+    fn get_body_value(&mut self) -> &mut BodyValue {
+        Response::get_body_value(self)
+    }
+    fn get_fetch_headers(&self) -> Option<&FetchHeaders> {
+        Response::get_fetch_headers(self)
+    }
+    fn get_form_data_encoding(
+        &mut self,
+    ) -> JsResult<Option<Box<bun_core::form_data::AsyncFormData>>> {
+        Response::get_form_data_encoding(self)
+    }
+    fn get_body_readable_stream(
+        &mut self,
+        global_object: &JSGlobalObject,
+    ) -> Option<ReadableStream> {
+        Response::get_body_readable_stream(self, global_object)
+    }
+}
+
 impl Response {
     pub fn init(response_init: Init, body: Body, url: BunString, redirected: bool) -> Response {
         Response {
@@ -372,6 +410,14 @@ impl Response {
 
         {
             formatter.indent_mut().add(1);
+            // Zig: `defer formatter.indent -|= 1;` — must run on every exit incl. `?` error paths.
+            // SAFETY: `formatter` outlives `_indent_guard` (same scope, guard dropped first);
+            // the raw pointer is only dereferenced in the closure at scope exit, at which point
+            // no other borrow of `formatter` is live.
+            let _indent_guard = scopeguard::guard(
+                formatter.indent_mut() as *mut _,
+                |p| unsafe { *p = (*p).saturating_sub(1) },
+            );
 
             formatter.write_indent(writer)?;
             writer.write_str(Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>ok<d>:<r> "))?;
@@ -412,9 +458,7 @@ impl Response {
 
             formatter.reset_line();
             self.body.write_format::<F, W, ENABLE_ANSI_COLORS>(formatter, writer)?;
-
-            // PORT NOTE: reshaped for borrowck — `defer formatter.indent -|= 1` applied here
-            *formatter.indent_mut() = formatter.indent().saturating_sub(1);
+            // indent restored by `_indent_guard` on scope exit (incl. error returns)
         }
         writer.write_str("\n")?;
         formatter.write_indent(writer)?;
@@ -564,7 +608,12 @@ impl Response {
             // WeakRef derefs (RequestContext.response_weakref). WeakRef.get() returns
             // null from here on.
             if (*this).weak_ptr_data.on_finalize() {
-                drop(Box::from_raw(this));
+                // Do NOT use Box::from_raw here — that would run auto-generated drop
+                // glue and re-drop init/body/url/js_ref (double-deref of BunStrings,
+                // double Rc drop of headers, double-free of body payload). Zig's
+                // bun.destroy() only frees the allocation. Match that: dealloc raw.
+                let layout = std::alloc::Layout::new::<Response>();
+                std::alloc::dealloc(this as *mut u8, layout);
             }
         }
     }
@@ -663,8 +712,11 @@ impl Response {
                         was_string: true,
                     });
                 } else {
+                    // Zig moves the WTFStringImpl pointer bitwise (no ref/deref).
+                    // `.clone()` already bumps the impl refcount (+1); letting `str`
+                    // drop normally at end of scope balances it (-1). Net 0 — no leak.
+                    // (Previously paired `.clone()` with `mem::forget(str)`, leaking +1.)
                     response.body.value = BodyValue::WTFStringImpl(str.value.wtf_string_impl().clone());
-                    mem::forget(str); // ownership transferred to body.value
                 }
             }
         }
@@ -878,6 +930,12 @@ impl Response {
     }
 }
 
+// PORT NOTE: Zig had an explicit `Init.deinit()` (Response.zig:880-889) which deref'd
+// `headers` and `status_text`. In Rust those fields (`Rc<FetchHeaders>`, `BunString`)
+// each implement `Drop`, so auto-generated drop glue on `Init` performs the same
+// cleanup. No manual `impl Drop for Init` is required; callers that partially-move
+// fields out (e.g. Request::construct_into reading `response_init.headers`) still get
+// the remaining fields (`status_text`) dropped at scope end.
 pub struct Init {
     pub headers: Option<Rc<FetchHeaders>>,
     pub status_code: u16,

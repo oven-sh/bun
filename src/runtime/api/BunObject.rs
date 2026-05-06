@@ -1998,11 +1998,11 @@ pub fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResul
 }
 
 pub fn get_transpiler_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    jsc::api::JSTranspiler::js::get_constructor(global_this)
+    jsc::codegen::js::get_constructor::<crate::api::js_transpiler::JSTranspiler>(global_this)
 }
 
 pub fn get_file_system_router(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    jsc::api::FileSystemRouter::js::get_constructor(global_this)
+    jsc::codegen::js::get_constructor::<crate::api::filesystem_router::FileSystemRouter>(global_this)
 }
 
 pub fn get_hash_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {

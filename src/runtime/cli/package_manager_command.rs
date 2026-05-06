@@ -582,6 +582,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             }
 
             Global::exit(0);
+            } // end #[cfg(any())]
         } else if subcommand == b"migrate" {
             if !pm.options.enable.force_save_lockfile {
                 if bun_sys::exists_z(ZStr::from_literal(b"bun.lock\0")) {

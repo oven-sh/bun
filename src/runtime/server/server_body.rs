@@ -91,7 +91,39 @@ pub type ServerPreparedRequest<'a, const SSL: bool, const DEBUG: bool> =
     PreparedRequestFor<'a, ServerRequestContext<SSL, DEBUG>>;
 
 // `TypeList` impl for `AnyServer`'s `TaggedPtrUnion` (Zig comptime reflection).
-bun_ptr::impl_tagged_ptr_union!(HTTPServer, HTTPSServer, DebugHTTPServer, DebugHTTPSServer);
+// PORT NOTE: local marker struct so `TypeList`/`UnionMember` impls satisfy
+// orphan rules — `bun_ptr::impl_tagged_ptr_union!` would impl on a tuple,
+// which is foreign even when every element is local.
+pub struct AnyServerTypes;
+impl bun_ptr::tagged_pointer::TypeList for AnyServerTypes {
+    const LEN: usize = 4;
+    const MIN_TAG: bun_ptr::tagged_pointer::TagType = 1024 - 3;
+    fn type_name_from_tag(tag: bun_ptr::tagged_pointer::TagType) -> Option<&'static str> {
+        match tag {
+            1024 => Some("HTTPServer"),
+            1023 => Some("HTTPSServer"),
+            1022 => Some("DebugHTTPServer"),
+            1021 => Some("DebugHTTPSServer"),
+            _ => None,
+        }
+    }
+}
+impl bun_ptr::tagged_pointer::UnionMember<AnyServerTypes> for HTTPServer {
+    const TAG: bun_ptr::tagged_pointer::TagType = 1024;
+    const NAME: &'static str = "HTTPServer";
+}
+impl bun_ptr::tagged_pointer::UnionMember<AnyServerTypes> for HTTPSServer {
+    const TAG: bun_ptr::tagged_pointer::TagType = 1023;
+    const NAME: &'static str = "HTTPSServer";
+}
+impl bun_ptr::tagged_pointer::UnionMember<AnyServerTypes> for DebugHTTPServer {
+    const TAG: bun_ptr::tagged_pointer::TagType = 1022;
+    const NAME: &'static str = "DebugHTTPServer";
+}
+impl bun_ptr::tagged_pointer::UnionMember<AnyServerTypes> for DebugHTTPSServer {
+    const TAG: bun_ptr::tagged_pointer::TagType = 1021;
+    const NAME: &'static str = "DebugHTTPSServer";
+}
 
 // ─── BunInfo (CYCLEBREAK move-in from bun_core::Global) ──────────────────────
 // Spec: src/bun_core/Global.zig:195-210. `generate()` builds the struct and

@@ -1276,11 +1276,13 @@ pub extern "C" fn napi_get_dataview_info(
     if let Some(arraybuffer) = unsafe { maybe_arraybuffer.as_mut() } {
         arraybuffer.set(
             env,
-            JSValue::c(jsc::c_api::JSObjectGetTypedArrayBuffer(
-                env.to_js().ref_(),
-                dataview.as_object_ref(),
-                ptr::null_mut(),
-            )),
+            JSValue::c(unsafe {
+                JSObjectGetTypedArrayBuffer(
+                    env.to_js().as_ptr(),
+                    dataview.as_object_ref(),
+                    ptr::null_mut(),
+                )
+            }),
         );
     }
     if let Some(byte_offset) = unsafe { maybe_byte_offset.as_mut() } {

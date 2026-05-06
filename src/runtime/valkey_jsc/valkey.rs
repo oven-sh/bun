@@ -323,9 +323,21 @@ impl DeferredFailure {
 
     pub fn enqueue(self: Box<Self>) {
         debug!("enqueueing deferred failure");
-        // TODO(port): jsc.ManagedTask.New(DeferredFailure, run).init(this) — exact API TBD.
-        let managed_task = bun_jsc::ManagedTask::new(self, DeferredFailure::run);
-        VirtualMachine::get().event_loop().enqueue_task(managed_task);
+        // PORT NOTE: Zig `jsc.ManagedTask.New(DeferredFailure, run).init(this)` collapses to
+        // `ManagedTask::new(ptr, cb)` per src/event_loop/ManagedTask.rs. The Box is leaked into
+        // a raw pointer here and reconstituted inside the trampoline (mirrors Zig's
+        // `default_allocator.create`/`destroy` pair).
+        fn run_raw(ptr: *mut DeferredFailure) -> JsResult<()> {
+            // SAFETY: `ptr` was produced by `Box::into_raw` below; we are the sole owner.
+            let this = unsafe { Box::from_raw(ptr) };
+            DeferredFailure::run(this)
+        }
+        let managed_task =
+            bun_jsc::ManagedTask::ManagedTask::new(Box::into_raw(self), run_raw);
+        // SAFETY: `VirtualMachine::get()` returns the live thread-local VM; `event_loop()` is a
+        // self-pointer set at init. Short-lived `&mut *p` formed at the use site per
+        // VirtualMachine.rs guidance.
+        unsafe { (*(*VirtualMachine::get()).event_loop()).enqueue_task(managed_task) };
     }
 }
 

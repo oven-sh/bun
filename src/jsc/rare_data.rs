@@ -709,16 +709,10 @@ type TCPSocket = api::TCPSocket;
 type TLSSocket = api::TLSSocket;
 type Listener = api::Listener;
 
-// TODO(port): `TaggedPtrUnion<(T0..Tn)>` requires `(T0..Tn): TypeList`, which
-// `bun_collections` only impls up to a fixed arity for *known* types. The
-// real payload list lives in `bun_runtime::api`; until then, store the raw
-// `(tag, ptr)` pair per §Dispatch.
-#[derive(Copy, Clone)]
-pub struct HotMapEntry {
-    pub tag: u8,
-    pub ptr: *mut (),
-}
-
+// PORT NOTE: the un-gated outer `HotMapEntry` is the erased `(tag, ptr)`
+// stand-in; this gated body keeps the real `TaggedPtrUnion` shape so the
+// typed `get<T>`/`insert<T>` below type-check once the high-tier `api::*`
+// payload list lands.
 pub type HotMapEntry = TaggedPtrUnion<(
     HTTPServer,
     HTTPSServer,

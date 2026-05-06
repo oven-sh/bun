@@ -356,7 +356,7 @@ impl EncodedPattern {
         }
     }
 
-    pub fn part_at(&self, byte_offset: usize) -> Option<Part> {
+    pub fn part_at(&self, byte_offset: usize) -> Option<Part<'_>> {
         EncodedPatternIterator {
             pattern: self.data(),
             offset: byte_offset,

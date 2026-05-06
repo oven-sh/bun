@@ -1157,22 +1157,22 @@ impl CronRemoveJob {
 pub fn cron_remove(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let args = frame.arguments_as_array::<1>();
         if !args[0].is_string() {
-            return global.throw_invalid_arguments(format_args!(
+            return Err(global.throw_invalid_arguments(format_args!(
                 "Bun.cron.remove() expects a string title"
-            ));
+            )));
         }
 
         let title_str = args[0].to_bun_string(global)?;
         let title_slice = title_str.to_utf8();
 
         if !validate_title(title_slice.slice()) {
-            return global.throw_invalid_arguments(format_args!(
+            return Err(global.throw_invalid_arguments(format_args!(
                 "Cron title must contain only alphanumeric characters, hyphens, and underscores"
-            ));
+            )));
         }
 
         let job = Box::into_raw(Box::new(CronRemoveJob {
-            promise: JSPromise::Strong::init(global),
+            promise: jsc::JSPromiseStrong::init(global),
             // SAFETY: global outlives the job; JSC_BORROW per LIFETIMES.tsv.
             global: unsafe { core::mem::transmute::<&JSGlobalObject, &'static JSGlobalObject>(global) },
             poll: KeepAlive::default(),

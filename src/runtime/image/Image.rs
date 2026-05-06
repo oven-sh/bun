@@ -391,26 +391,26 @@ fn source_from_js(global: &JSGlobalObject, value: JSValue, this_value: JSValue) 
         // for image bytes.
         if s.starts_with(b"data:") {
             let Some(comma) = strings::strings::index_of_char(s, b',') else {
-                return global
-                    .throw_invalid_arguments("Image(): malformed data: URL (no comma)");
+                return Err(global
+                    .throw_invalid_arguments("Image(): malformed data: URL (no comma)"));
             };
             let meta = &s[5..comma as usize];
             let payload = &s[comma as usize + 1..];
             if strings::strings::index_of(meta, b";base64").is_none() {
-                return global.throw_invalid_arguments(
+                return Err(global.throw_invalid_arguments(
                     "Image(): only base64 data: URLs are supported",
-                );
+                ));
             }
             let mut out = vec![0u8; base64::decode_len(payload)];
             let r = base64::decode(&mut out, payload);
-            if !r.is_successful() {
-                return global
-                    .throw_invalid_arguments("Image(): invalid base64 in data: URL");
+            if r.fail {
+                return Err(global
+                    .throw_invalid_arguments("Image(): invalid base64 in data: URL"));
             }
-            out.truncate(r.count);
+            out.truncate(r.written);
             return Ok(Source::Owned(out));
         }
-        return Ok(Source::Path(bun_str::ZStr::from_bytes(s)));
+        return Ok(Source::Path(ZBox::from_bytes(s)));
     }
     if let Some(ab) = value.as_array_buffer(global) {
         // A resizable/growable buffer can shrink or reallocate underneath any

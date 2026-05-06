@@ -1391,6 +1391,21 @@ pub struct InputFile {
     pub side: bake::Side,
 }
 
+// `ArrayHashMap`'s `AutoContext` requires `Hash + Eq` on the key. Mirror the
+// custom Zig `InputFile.ArrayHashContext` (hash over abs_path bytes + side).
+impl core::hash::Hash for InputFile {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        state.write(self.abs_path());
+        state.write_u8(self.side as u8);
+    }
+}
+impl PartialEq for InputFile {
+    fn eq(&self, other: &Self) -> bool {
+        self.side == other.side && self.abs_path() == other.abs_path()
+    }
+}
+impl Eq for InputFile {}
+
 impl InputFile {
     pub fn init(abs_path: &[u8], side: bake::Side) -> InputFile {
         InputFile {

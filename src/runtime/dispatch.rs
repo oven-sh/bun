@@ -934,22 +934,32 @@ unsafe fn fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, vm: *mut ()
             // — bumps the Rc refcount around the callback so the timer can
             // safely re-enter `BunTest::run`.
             let container = container_of!(BunTest<'_>, timer);
-            // SAFETY: container is the payload of a live `Rc<BunTest>`; the
+            // SAFETY: container is the payload of a live `Rc<BunTestCell>`; the
             // strong count is ≥1 (held by `Jest.active_file`).
+            // `BunTestCell` is a `UnsafeCell<BunTest<'static>>` newtype — same
+            // layout as `BunTest`, so the raw `*mut BunTest` recovered above is
+            // also the `Rc` payload pointer.
             let strong: BunTestPtr = unsafe {
-                let rc = std::rc::Rc::from_raw(container as *const BunTest<'_>);
+                let rc = std::rc::Rc::from_raw(
+                    container as *const crate::test_runner::bun_test::BunTestCell,
+                );
                 let cloned = rc.clone();
                 // Don't drop the original ref — it's borrowed, not owned here.
                 let _ = std::rc::Rc::into_raw(rc);
                 cloned
             };
-            // SAFETY: per fn contract.
-            BunTest::bun_test_timeout_callback(strong, unsafe { &*now }, unsafe { &*vm });
+            // SAFETY: per fn contract. `bun_test_timeout_callback` takes a
+            // `&bun_core::Timespec`; the low-tier `EventLoopTimer::Timespec` is
+            // a layout-identical local stub (see EventLoopTimer.rs TODO(b1)).
+            let now_core = unsafe { bun_core::Timespec { sec: (*now).sec, nsec: (*now).nsec } };
+            BunTest::bun_test_timeout_callback(strong, &now_core, unsafe { &*vm });
         }
         EventLoopTimerTag::CronJob => {
-            let container = container_of!(CronJob, event_loop_timer);
-            // SAFETY: per fn contract; `on_timer_fire` may free `container`.
-            CronJob::on_timer_fire(container, unsafe { &*vm });
+            // `crate::api::cron::CronJob` is currently an opaque `struct CronJob(())`
+            // (real type lives in `_jsc_gated`); no `event_loop_timer` field /
+            // `on_timer_fire` to recover yet.
+            let _: &CronJob;
+            todo!("blocked_on: crate::api::cron::CronJob::on_timer_fire");
         }
     }
 }

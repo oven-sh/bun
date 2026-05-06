@@ -107,7 +107,7 @@ pub fn new_cstring(
         ValueOrError::Slice(ptr, len) => {
             // SAFETY: ptr/len point to FFI-owned memory whose lifetime the caller guarantees.
             let bytes = unsafe { core::slice::from_raw_parts(ptr, len) };
-            bun_str::String::create_utf8_for_js(global_this, bytes)
+            jsc::bun_string_jsc::create_utf8_for_js(global_this, bytes)
         }
     }
 }

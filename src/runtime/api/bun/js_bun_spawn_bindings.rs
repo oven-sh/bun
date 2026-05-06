@@ -417,10 +417,9 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             // Reject terminal option on spawnSync
             if IS_SYNC {
                 if args.get_truthy(global_this, "terminal")?.is_some() {
-                    return global_this.throw_invalid_arguments(
+                    return Err(global_this.throw_invalid_arguments(
                         "terminal option is only supported for Bun.spawn, not Bun.spawnSync",
-                        format_args!(""),
-                    );
+                    ));
                 }
             }
 

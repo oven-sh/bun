@@ -843,14 +843,14 @@ impl CreateCommand {
                 if let Some(q) = package_json_expr.as_property(b"dependencies") {
                     let property = q.expr;
 
-                    if property.data.is_e_object() && property.data.e_object().properties.len() > 0 {
+                    if property.data.is_e_object() && property.data.e_object().unwrap().properties.len > 0 {
                         // unsupported_packages.update(property);
                         // has_react_scripts = has_react_scripts or property.hasAnyPropertyNamed(&.{"react-scripts"});
                         // has_relay = has_relay or property.hasAnyPropertyNamed(&.{ "react-relay", "relay-runtime", "babel-plugin-relay" });
                         // property.data.e_object.properties = js_ast.G.Property.List.fromBorrowedSliceDangerous(Prune.prune(property.data.e_object.properties.slice()));
-                        if property.data.e_object().properties.len() > 0 {
+                        if property.data.e_object().unwrap().properties.len > 0 {
                             has_dependencies = true;
-                            dependencies = Some(q.expr);
+                            dependencies = Some(q.expr.into());
 
                             // if (property.asProperty("next")) |next_q| {
                             //     is_nextjs = true;

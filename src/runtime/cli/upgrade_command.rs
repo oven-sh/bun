@@ -222,15 +222,18 @@ impl UpgradeCommand {
             }
         }
 
-        // PORT NOTE: reshaped for borrowck — write into a local Vec instead of static buf
-        let mut url_buf = Vec::new();
+        // PORT NOTE: reshaped for borrowck — write into a local Vec instead of static buf.
+        // `AsyncHTTP::init_sync` wants `URL<'static>` / `&'static [u8]`, so the
+        // backing buffers are leaked (matches the Zig original which used
+        // module-level static buffers).
+        let url_buf: &'static mut Vec<u8> = Box::leak(Box::new(Vec::new()));
         write!(
-            &mut url_buf,
+            url_buf,
             "https://{}/repos/Jarred-Sumner/bun-releases-for-updater/releases/latest",
             bstr::BStr::new(github_api_domain),
         )
         .expect("oom");
-        let api_url = URL::parse(&url_buf);
+        let api_url = URL::parse(&url_buf[..]);
 
         if let Some(access_token) = env_loader
             .map

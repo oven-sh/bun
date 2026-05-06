@@ -809,11 +809,14 @@ pub mod command {
             }
         }
 
-        bun_output::scoped_log!(
-            CLI,
-            "argv: [{}]",
-            bun_core::fmt::fmt_slice(bun::argv(), ", ")
-        );
+        {
+            let argv_dbg: Vec<&'static [u8]> = bun::argv().iter().collect();
+            bun_output::scoped_log!(
+                CLI,
+                "argv: [{}]",
+                bun_core::fmt::fmt_slice(&argv_dbg, ", ")
+            );
+        }
 
         let tag = which();
 

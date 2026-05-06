@@ -257,13 +257,22 @@ fn send_audit_request(
     body: &[u8],
 ) -> Result<Box<[u8]>, bun_alloc::AllocError> {
     libdeflate::load();
-    let mut compressor = libdeflate::Compressor::alloc(6).ok_or(bun_alloc::AllocError)?;
+    let compressor_ptr = libdeflate::Compressor::alloc(6);
+    if compressor_ptr.is_null() {
+        return Err(bun_alloc::AllocError);
+    }
+    // SAFETY: non-null checked above; libdeflate hands back a heap-allocated
+    // compressor that lives until `deinit` (Zig: `*Compressor`).
+    let compressor = unsafe { &mut *compressor_ptr };
 
     let max_compressed_size = compressor.max_bytes_needed(body, libdeflate::Encoding::Gzip);
     let mut compressed_body = vec![0u8; max_compressed_size];
 
     let compression_result = compressor.gzip(body, &mut compressed_body);
-    let final_compressed_body = &compressed_body[..compression_result.written];
+    compressed_body.truncate(compression_result.written);
+    // PORT NOTE: AsyncHTTP::init_sync wants `&'static [u8]` (Zig had no
+    // lifetimes). Leak the request body — single-shot CLI, freed at exit.
+    let final_compressed_body: &'static [u8] = Box::leak(compressed_body.into_boxed_slice());
 
     let mut headers = HeaderBuilder::default();
     headers.count(b"accept", b"application/json");

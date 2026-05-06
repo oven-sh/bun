@@ -498,6 +498,7 @@ trait ZigStringToJs {
     fn to_js(&self, global: &JSGlobalObject) -> JSValue;
     fn to_atomic_value(&self, global: &JSGlobalObject) -> JSValue;
     fn to_external_value(&self, global: &JSGlobalObject) -> JSValue;
+    fn with_encoding(self) -> Self;
 }
 impl ZigStringToJs for ZigString {
     #[inline]

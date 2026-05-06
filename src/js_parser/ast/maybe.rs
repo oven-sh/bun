@@ -83,13 +83,743 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         identifier_opts: IdentifierOpts,
     ) -> Option<Expr> {
         let p = self;
-        let _ = (loc, target, name, name_loc, identifier_opts);
-        // blocked_on: P::{ignore_usage, ignore_usage_of_identifier_in_dot_chain, wrap_inlined_enum,
-        //   handle_identifier, record_usage, value_for_import_meta_main} live in the gated
-        //   `#[cfg(any())] impl P` block (P.rs:625); ImportItemForNamespaceMap::get_or_put_value;
-        //   p.ts_namespace (RecentlyVisitedTSNamespace) field shape.
-        todo!("b2-ast-E: maybe_rewrite_property_access body");
-        #[cfg(any())]
+        // TODO(port): E::Dot.name is `&'static [u8]` pending 'bump threading.
+        // SAFETY: `name` is arena-owned ('a) and outlives every Expr.
+        let name_static: &'static [u8] =
+            unsafe { core::mem::transmute::<&'a [u8], &'static [u8]>(name) };
+
+        // Zig labeled switch with `continue :sw` → loop + match with mutable scrutinee.
+        let mut sw_data = target.data;
+        'sw: loop {
+            match sw_data {
+                js_ast::ExprData::EIdentifier(id) => {
+                    // Rewrite property accesses on explicit namespace imports as an identifier.
+                    // This lets us replace them easily in the printer to rebind them to
+                    // something else without paying the cost of a whole-tree traversal during
+                    // module linking just to rewrite these EDot expressions.
+                    if p.options.bundle {
+                        if p.import_items_for_namespace.contains_key(&id.ref_) {
+                            // PORT NOTE: reshaped for borrowck — Zig held `*ImportItemForNamespaceMap`
+                            // across `p.newSymbol`; split into lookup → (maybe new_symbol) → re-borrow.
+                            let existing = p
+                                .import_items_for_namespace
+                                .get(&id.ref_)
+                                .unwrap()
+                                .get(name)
+                                .copied();
+                            let ref_ = match existing {
+                                Some(loc_ref) => loc_ref.ref_.unwrap(),
+                                None => {
+                                    // Generate a new import item symbol in the module scope
+                                    let new_ref = p
+                                        .new_symbol(js_ast::symbol::Kind::Import, name)
+                                        .expect("unreachable");
+                                    let new_item = LocRef { loc: name_loc, ref_: Some(new_ref) };
+                                    // SAFETY: module_scope is arena-owned and valid for the parser lifetime.
+                                    unsafe { &mut *p.module_scope }
+                                        .generated
+                                        .append(new_ref)
+                                        .expect("unreachable");
+
+                                    p.import_items_for_namespace
+                                        .get_mut(&id.ref_)
+                                        .unwrap()
+                                        .put(name, new_item)
+                                        .expect("unreachable");
+                                    p.is_import_item.insert(new_ref, ());
+
+                                    let symbol = &mut p.symbols[new_ref.inner_index() as usize];
+
+                                    // Mark this as generated in case it's missing. We don't want to
+                                    // generate errors for missing import items that are automatically
+                                    // generated.
+                                    symbol.import_item_status = crate::ImportItemStatus::Generated;
+
+                                    new_ref
+                                }
+                            };
+
+                            // Undo the usage count for the namespace itself. This is used later
+                            // to detect whether the namespace symbol has ever been "captured"
+                            // or whether it has just been used to read properties off of.
+                            //
+                            // The benefit of doing this is that if both this module and the
+                            // imported module end up in the same module group and the namespace
+                            // symbol has never been captured, then we don't need to generate
+                            // any code for the namespace at all.
+                            p.ignore_usage(id.ref_);
+
+                            // Track how many times we've referenced this symbol
+                            p.record_usage(ref_);
+
+                            return Some(p.handle_identifier(
+                                name_loc,
+                                E::Identifier { ref_, ..Default::default() },
+                                Some(name),
+                                IdentifierOpts::new()
+                                    .with_assign_target(identifier_opts.assign_target())
+                                    .with_is_call_target(identifier_opts.is_call_target())
+                                    .with_is_delete_target(identifier_opts.is_delete_target())
+                                    // If this expression is used as the target of a call expression, make
+                                    // sure the value of "this" is preserved.
+                                    .with_was_originally_identifier(false),
+                            ));
+                        }
+                    }
+
+                    if !p.is_control_flow_dead && id.ref_.eql(p.module_ref) {
+                        // Rewrite "module.require()" to "require()" for Webpack compatibility.
+                        // See https://github.com/webpack/webpack/pull/7750 for more info.
+                        // This also makes correctness a little easier.
+                        if identifier_opts.is_call_target() && name == b"require" {
+                            p.ignore_usage(p.module_ref);
+                            return Some(p.value_for_require(name_loc));
+                        } else if !p.commonjs_named_exports_deoptimized && name == b"exports" {
+                            if identifier_opts.assign_target() != js_ast::AssignTarget::None {
+                                p.commonjs_module_exports_assigned_deoptimized = true;
+                            }
+
+                            // Detect if we are doing
+                            //
+                            //  module.exports = {
+                            //    foo: "bar"
+                            //  }
+                            //
+                            //  Note that it cannot be any of these:
+                            //
+                            //  module.exports += { };
+                            //  delete module.exports = {};
+                            //  module.exports()
+                            if !(identifier_opts.is_call_target() || identifier_opts.is_delete_target())
+                                && identifier_opts.assign_target() == js_ast::AssignTarget::Replace
+                                && matches!(p.stmt_expr_value, js_ast::ExprData::EBinary(_))
+                                && p.stmt_expr_value.e_binary().unwrap().op == js_ast::OpCode::BinAssign
+                            {
+                                let stmt_bin = p.stmt_expr_value.e_binary().unwrap();
+                                let deopt =
+                                    // if it's not top-level, don't do this
+                                    !core::ptr::eq(p.module_scope, p.current_scope)
+                                    // if you do
+                                    //
+                                    // exports.foo = 123;
+                                    // module.exports = {};
+                                    //
+                                    // that's a de-opt.
+                                    || p.commonjs_named_exports.count() > 0
+                                    // anything which is not module.exports = {} is a de-opt.
+                                    || !matches!(stmt_bin.right.data, js_ast::ExprData::EObject(_))
+                                    || !matches!(stmt_bin.left.data, js_ast::ExprData::EDot(_))
+                                    || stmt_bin.left.data.e_dot().unwrap().name != b"exports"
+                                    || !matches!(
+                                        stmt_bin.left.data.e_dot().unwrap().target.data,
+                                        js_ast::ExprData::EIdentifier(_)
+                                    )
+                                    || !stmt_bin
+                                        .left
+                                        .data
+                                        .e_dot()
+                                        .unwrap()
+                                        .target
+                                        .data
+                                        .e_identifier()
+                                        .unwrap()
+                                        .ref_
+                                        .eql(p.module_ref);
+                                if deopt {
+                                    p.deoptimize_common_js_named_exports();
+                                    return None;
+                                }
+
+                                let props: &[G::Property] =
+                                    stmt_bin.right.data.e_object().unwrap().properties.slice();
+                                for prop in props {
+                                    // if it's not a trivial object literal, de-opt
+                                    if prop.kind != G::PropertyKind::Normal
+                                        || prop.key.is_none()
+                                        || !matches!(prop.key.unwrap().data, js_ast::ExprData::EString(_))
+                                        || prop.flags.contains(Flags::Property::IsMethod)
+                                        || prop.flags.contains(Flags::Property::IsComputed)
+                                        || prop.flags.contains(Flags::Property::IsSpread)
+                                        || prop.flags.contains(Flags::Property::IsStatic)
+                                        // If it creates a new scope, we can't do this optimization right now
+                                        // Our scope order verification stuff will get mad
+                                        // But we should let you do module.exports = { bar: foo(), baz: 123 }
+                                        // just not module.exports = { bar: function() {}  }
+                                        // just not module.exports = { bar() {}  }
+                                        || match prop.value.unwrap().data {
+                                            js_ast::ExprData::ECommonjsExportIdentifier(_)
+                                            | js_ast::ExprData::EImportIdentifier(_)
+                                            | js_ast::ExprData::EIdentifier(_) => false,
+                                            js_ast::ExprData::ECall(call) => match call.target.data {
+                                                js_ast::ExprData::ECommonjsExportIdentifier(_)
+                                                | js_ast::ExprData::EImportIdentifier(_)
+                                                | js_ast::ExprData::EIdentifier(_) => false,
+                                                call_target => {
+                                                    !js_ast::expr::Tag::is_primitive_literal(
+                                                        call_target.tag(),
+                                                    )
+                                                }
+                                            },
+                                            _ => !Expr::is_primitive_literal(&prop.value.unwrap()),
+                                        }
+                                    {
+                                        p.deoptimize_common_js_named_exports();
+                                        return None;
+                                    }
+                                }
+                                // Zig: `for (props) |prop| { ... } else { deopt; return null }`
+                                // — the loop body has no `break`, so the `else` arm runs on
+                                // every normal completion (including empty `props`). The
+                                // entire stmts/decls/clause_items rewriting block below is
+                                // therefore unreachable in Zig too; preserved (gated) for
+                                // 1:1 source fidelity.
+                                {
+                                    // empty object de-opts because otherwise the statement becomes
+                                    // <empty space> = {};
+                                    p.deoptimize_common_js_named_exports();
+                                    return None;
+                                }
+
+                                #[cfg(any())] // dead in Zig (for-else above always returns)
+                                {
+                                let mut stmts = bumpalo::collections::Vec::with_capacity_in(
+                                    props.len() * 2,
+                                    p.allocator,
+                                );
+                                // PERF(port): arena bulk-alloc — profile in Phase B
+                                let mut decls: &mut [Decl] =
+                                    p.allocator.alloc_slice_fill_default(props.len());
+                                let mut clause_items: &mut [js_ast::ClauseItem] =
+                                    p.allocator.alloc_slice_fill_default(props.len());
+
+                                for prop in props {
+                                    let key = prop.key.unwrap().data.e_string().unwrap().string(p.allocator).expect("unreachable");
+                                    let visited_value = p.visit_expr(prop.value.unwrap());
+                                    let value = SideEffects::simplify_unused_expr(p, visited_value)
+                                        .unwrap_or(visited_value);
+
+                                    // We are doing `module.exports = { ... }`
+                                    // lets rewrite it to a series of what will become export assignments
+                                    let named_export_entry =
+                                        p.commonjs_named_exports.get_or_put(key).expect("unreachable");
+                                    if !named_export_entry.found_existing {
+                                        let new_ref = p
+                                            .new_symbol(
+                                                js_ast::symbol::Kind::Other,
+                                                p.allocator.alloc_slice_copy(
+                                                    format!(
+                                                        "${}",
+                                                        bun_core::fmt::fmt_identifier(key)
+                                                    )
+                                                    .as_bytes(),
+                                                ),
+                                            )
+                                            .expect("unreachable");
+                                        unsafe { &mut *p.module_scope }
+                                            .generated
+                                            .append(new_ref)
+                                            .expect("unreachable");
+                                        *named_export_entry.value_ptr = CommonJSNamedExport {
+                                            loc_ref: LocRef { loc: name_loc, ref_: Some(new_ref) },
+                                            needs_decl: false,
+                                        };
+                                    }
+                                    let ref_ = named_export_entry.value_ptr.loc_ref.ref_.unwrap();
+                                    // module.exports = {
+                                    //   foo: "bar",
+                                    //   baz: "qux",
+                                    // }
+                                    // ->
+                                    // exports.foo = "bar", exports.baz = "qux"
+                                    // Which will become
+                                    // $foo = "bar";
+                                    // $baz = "qux";
+                                    // export { $foo as foo, $baz as baz }
+
+                                    decls[0] = Decl {
+                                        binding: p.b(B::Identifier { ref_ }, prop.key.unwrap().loc),
+                                        value: Some(value),
+                                    };
+                                    // we have to ensure these are known to be top-level
+                                    p.declared_symbols
+                                        .push(js_ast::DeclaredSymbol { ref_, is_top_level: true });
+                                    p.had_commonjs_named_exports_this_visit = true;
+                                    clause_items[0] = js_ast::ClauseItem {
+                                        // We want the generated name to not conflict
+                                        alias: key,
+                                        alias_loc: prop.key.unwrap().loc,
+                                        name: named_export_entry.value_ptr.loc_ref,
+                                        ..Default::default()
+                                    };
+
+                                    stmts.extend_from_slice(&[
+                                        p.s(
+                                            S::Local {
+                                                kind: S::Local::Kind::KVar,
+                                                is_export: false,
+                                                was_commonjs_export: true,
+                                                decls: G::Decl::List::init(&decls[0..1]),
+                                                ..Default::default()
+                                            },
+                                            prop.key.unwrap().loc,
+                                        ),
+                                        p.s(
+                                            S::ExportClause {
+                                                items: &clause_items[0..1],
+                                                is_single_line: true,
+                                                ..Default::default()
+                                            },
+                                            prop.key.unwrap().loc,
+                                        ),
+                                    ]);
+                                    // PORT NOTE: reshaped for borrowck — Zig reslices `decls = decls[1..]`
+                                    decls = &mut decls[1..];
+                                    clause_items = &mut clause_items[1..];
+                                }
+
+                                p.ignore_usage(p.module_ref);
+                                p.commonjs_replacement_stmts = stmts.into_bump_slice();
+                                return Some(p.new_expr(E::Missing {}, name_loc));
+                                } // end #[cfg(any())] (dead in Zig)
+                            }
+
+                            // Deoptimizations:
+                            //      delete module.exports
+                            //      module.exports();
+                            if identifier_opts.is_call_target()
+                                || identifier_opts.is_delete_target()
+                                || identifier_opts.assign_target() != js_ast::AssignTarget::None
+                            {
+                                p.deoptimize_common_js_named_exports();
+                                return None;
+                            }
+
+                            // rewrite `module.exports` to `exports`
+                            return Some(Expr {
+                                data: js_ast::ExprData::ESpecial(E::Special::ModuleExports),
+                                loc: name_loc,
+                            });
+                        } else if p.options.bundle
+                            && name == b"id"
+                            && identifier_opts.assign_target() == js_ast::AssignTarget::None
+                        {
+                            // inline module.id
+                            p.ignore_usage(p.module_ref);
+                            // TODO(port): Zig `p.source.path.pretty`; logger::fs::Path is the
+                            // Phase-A stub (text only). Swap to `.pretty` once bun_paths' full
+                            // Path lands.
+                            return Some(p.new_expr(E::EString::init(p.source.path.text), name_loc));
+                        } else if p.options.bundle
+                            && name == b"filename"
+                            && identifier_opts.assign_target() == js_ast::AssignTarget::None
+                        {
+                            // inline module.filename
+                            p.ignore_usage(p.module_ref);
+                            return Some(
+                                p.new_expr(E::EString::init(p.source.path.name.filename), name_loc),
+                            );
+                        } else if p.options.bundle
+                            && name == b"path"
+                            && identifier_opts.assign_target() == js_ast::AssignTarget::None
+                        {
+                            // inline module.path
+                            p.ignore_usage(p.module_ref);
+                            // TODO(port): Zig `p.source.path.pretty`; see above.
+                            return Some(p.new_expr(E::EString::init(p.source.path.text), name_loc));
+                        }
+                    }
+
+                    if p.should_unwrap_common_js_to_esm() {
+                        if !p.is_control_flow_dead && id.ref_.eql(p.exports_ref) {
+                            if !p.commonjs_named_exports_deoptimized {
+                                if identifier_opts.is_delete_target() {
+                                    p.deoptimize_common_js_named_exports();
+                                    return None;
+                                }
+
+                                // PORT NOTE: reshaped for borrowck — Zig held the
+                                // `getOrPut` entry across `p.newSymbol`.
+                                let ref_ = if let Some(existing) =
+                                    p.commonjs_named_exports.get(name)
+                                {
+                                    existing.loc_ref.ref_.unwrap()
+                                } else {
+                                    let sym_name: &'a [u8] = p.allocator.alloc_slice_copy(
+                                        format!("${}", bun_core::fmt::fmt_identifier(name))
+                                            .as_bytes(),
+                                    );
+                                    let new_ref = p
+                                        .new_symbol(js_ast::symbol::Kind::Other, sym_name)
+                                        .expect("unreachable");
+                                    // SAFETY: module_scope is arena-owned and valid for 'a.
+                                    unsafe { &mut *p.module_scope }
+                                        .generated
+                                        .append(new_ref)
+                                        .expect("unreachable");
+                                    p.commonjs_named_exports
+                                        .put(
+                                            name,
+                                            CommonJSNamedExport {
+                                                loc_ref: LocRef {
+                                                    loc: name_loc,
+                                                    ref_: Some(new_ref),
+                                                },
+                                                needs_decl: true,
+                                            },
+                                        )
+                                        .expect("unreachable");
+                                    if p.commonjs_named_exports_needs_conversion == u32::MAX {
+                                        p.commonjs_named_exports_needs_conversion =
+                                            (p.commonjs_named_exports.count() - 1) as u32;
+                                    }
+                                    new_ref
+                                };
+
+                                p.ignore_usage(id.ref_);
+                                p.record_usage(ref_);
+
+                                return Some(p.new_expr(
+                                    E::CommonJSExportIdentifier { ref_, ..Default::default() },
+                                    name_loc,
+                                ));
+                            } else if p.options.features.commonjs_at_runtime
+                                && identifier_opts.assign_target() != js_ast::AssignTarget::None
+                            {
+                                p.has_commonjs_export_names = true;
+                            }
+                        }
+                    }
+
+                    // Handle references to namespaces or namespace members
+                    if matches!(p.ts_namespace.expr, js_ast::ExprData::EIdentifier(e) if id.ref_.eql(e.ref_))
+                        && identifier_opts.assign_target() == js_ast::AssignTarget::None
+                        && !identifier_opts.is_delete_target()
+                    {
+                        return Self::maybe_rewrite_property_access_for_namespace(
+                            p, name, &target, loc, name_loc,
+                        );
+                    }
+                }
+                js_ast::ExprData::EString(str_) => {
+                    if p.options.features.minify_syntax {
+                        // minify "long-string".length to 11
+                        if name == b"length" {
+                            if let Some(len) = str_.javascript_length() {
+                                return Some(p.new_expr(E::Number { value: len as f64 }, loc));
+                            }
+                        }
+                    }
+                }
+                js_ast::ExprData::EInlinedEnum(ie) => {
+                    sw_data = ie.value.data;
+                    continue 'sw;
+                }
+                js_ast::ExprData::EObject(obj) => {
+                    if FeatureFlags::INLINE_PROPERTIES_IN_TRANSPILER {
+                        if p.options.features.minify_syntax {
+                            // Rewrite a property access like this:
+                            //   { f: () => {} }.f
+                            // To:
+                            //   () => {}
+                            //
+                            // To avoid thinking too much about edgecases, only do this for:
+                            //   1) Objects with a single property
+                            //   2) Not a method, not a computed property
+                            if obj.properties.len == 1
+                                && !identifier_opts.is_delete_target()
+                                && identifier_opts.assign_target() == js_ast::AssignTarget::None
+                                && !identifier_opts.is_call_target()
+                            {
+                                let prop: &G::Property = &obj.properties.slice()[0];
+                                if prop.value.is_some()
+                                    && prop.flags.len() == 0
+                                    && prop.key.is_some()
+                                    && matches!(prop.key.unwrap().data, js_ast::ExprData::EString(_))
+                                    && prop.key.unwrap().data.e_string().unwrap().eql_bytes(name)
+                                    && name != b"__proto__"
+                                {
+                                    return Some(prop.value.unwrap());
+                                }
+                            }
+                        }
+                    }
+                }
+                js_ast::ExprData::EImportMeta(_) => {
+                    if name == b"main" {
+                        return Some(p.value_for_import_meta_main(false, target.loc));
+                    }
+
+                    if name == b"hot" {
+                        return Some(Expr {
+                            data: js_ast::ExprData::ESpecial(
+                                if p.options.features.hot_module_reloading {
+                                    E::Special::HotEnabled
+                                } else {
+                                    E::Special::HotDisabled
+                                },
+                            ),
+                            loc,
+                        });
+                    }
+
+                    // Inline import.meta properties for Bake
+                    if p.options.framework.is_some()
+                        || (p.options.bundle
+                            && p.options.output_format == js_parser::options::Format::Cjs)
+                    {
+                        if name == b"dir" || name == b"dirname" {
+                            // Inline import.meta.dir
+                            return Some(
+                                p.new_expr(E::EString::init(p.source.path.name.dir), name_loc),
+                            );
+                        } else if name == b"file" {
+                            // Inline import.meta.file (filename only)
+                            return Some(
+                                p.new_expr(E::EString::init(p.source.path.name.filename), name_loc),
+                            );
+                        } else if name == b"path" {
+                            // Inline import.meta.path (full path)
+                            return Some(p.new_expr(E::EString::init(p.source.path.text), name_loc));
+                        } else if name == b"url" {
+                            // Inline import.meta.url as file:// URL
+                            // blocked_on: jsc::URL::file_url_from_string FFI (MOVE_DOWN
+                            // bun_jsc::URL → bun_url; see http/lib.rs:1225). The Zig
+                            // formatter writes a `file://` URL via WTF::URL.
+                            #[cfg(any())]
+                            {
+                                let bunstr = bun_string::String::from_bytes(p.source.path.text);
+                                let url = p.allocator.alloc_slice_copy(
+                                    format!("{}", bun_url::file_url_from_string(&bunstr)).as_bytes(),
+                                );
+                                drop(bunstr);
+                                return Some(p.new_expr(E::EString::init(url), name_loc));
+                            }
+                            todo!(
+                                "maybe_rewrite_property_access: import.meta.url → file:// URL \
+                                 (blocked_on bun_url::file_url_from_string)"
+                            );
+                        }
+                    }
+
+                    // Make all property accesses on `import.meta.url` side effect free.
+                    return Some(p.new_expr(
+                        E::Dot {
+                            target,
+                            name: name_static,
+                            name_loc,
+                            can_be_removed_if_unused: true,
+                            ..Default::default()
+                        },
+                        target.loc,
+                    ));
+                }
+                js_ast::ExprData::ERequireCallTarget => {
+                    if name == b"main" {
+                        return Some(Expr { loc, data: js_ast::ExprData::ERequireMain });
+                    }
+                }
+                js_ast::ExprData::EImportIdentifier(id) => {
+                    // Symbol uses due to a property access off of an imported symbol are tracked
+                    // specially. This lets us do tree shaking for cross-file TypeScript enums.
+                    if p.options.bundle && !p.is_control_flow_dead {
+                        let use_ = p.symbol_uses.get_mut(&id.ref_).unwrap();
+                        use_.count_estimate = use_.count_estimate.saturating_sub(1);
+                        // note: this use is not removed as we assume it exists later
+
+                        // Add a special symbol use instead
+                        let gop = p
+                            .import_symbol_property_uses
+                            .get_or_put_value(id.ref_, Default::default())
+                            .expect("unreachable");
+                        let inner_use = gop
+                            .value_ptr
+                            .get_or_put_value(name, Default::default())
+                            .expect("unreachable");
+                        inner_use.count_estimate += 1;
+                    }
+                }
+                // Zig: `inline .e_dot, .e_index => |data, tag|` — expanded per arm
+                js_ast::ExprData::EDot(data) => {
+                    if matches!(p.ts_namespace.expr, js_ast::ExprData::EDot(ns_data) if data.as_ptr() == ns_data.as_ptr())
+                        && identifier_opts.assign_target() == js_ast::AssignTarget::None
+                        && !identifier_opts.is_delete_target()
+                    {
+                        return Self::maybe_rewrite_property_access_for_namespace(
+                            p, name, &target, loc, name_loc,
+                        );
+                    }
+                }
+                js_ast::ExprData::EIndex(data) => {
+                    if matches!(p.ts_namespace.expr, js_ast::ExprData::EIndex(ns_data) if data.as_ptr() == ns_data.as_ptr())
+                        && identifier_opts.assign_target() == js_ast::AssignTarget::None
+                        && !identifier_opts.is_delete_target()
+                    {
+                        return Self::maybe_rewrite_property_access_for_namespace(
+                            p, name, &target, loc, name_loc,
+                        );
+                    }
+                }
+                js_ast::ExprData::ESpecial(special) => match special {
+                    E::Special::ModuleExports => {
+                        if p.should_unwrap_common_js_to_esm() {
+                            if !p.is_control_flow_dead {
+                                if !p.commonjs_named_exports_deoptimized {
+                                    if identifier_opts.is_delete_target() {
+                                        p.deoptimize_common_js_named_exports();
+                                        return None;
+                                    }
+
+                                    // PORT NOTE: reshaped for borrowck — see exports_ref arm above.
+                                    let ref_ = if let Some(existing) =
+                                        p.commonjs_named_exports.get(name)
+                                    {
+                                        existing.loc_ref.ref_.unwrap()
+                                    } else {
+                                        let sym_name: &'a [u8] = p.allocator.alloc_slice_copy(
+                                            format!("${}", bun_core::fmt::fmt_identifier(name))
+                                                .as_bytes(),
+                                        );
+                                        let new_ref = p
+                                            .new_symbol(js_ast::symbol::Kind::Other, sym_name)
+                                            .expect("unreachable");
+                                        // SAFETY: module_scope is arena-owned and valid for 'a.
+                                        unsafe { &mut *p.module_scope }
+                                            .generated
+                                            .append(new_ref)
+                                            .expect("unreachable");
+                                        p.commonjs_named_exports
+                                            .put(
+                                                name,
+                                                CommonJSNamedExport {
+                                                    loc_ref: LocRef {
+                                                        loc: name_loc,
+                                                        ref_: Some(new_ref),
+                                                    },
+                                                    needs_decl: true,
+                                                },
+                                            )
+                                            .expect("unreachable");
+                                        if p.commonjs_named_exports_needs_conversion == u32::MAX {
+                                            p.commonjs_named_exports_needs_conversion =
+                                                (p.commonjs_named_exports.count() - 1) as u32;
+                                        }
+                                        new_ref
+                                    };
+
+                                    p.record_usage(ref_);
+
+                                    return Some(p.new_expr(
+                                        E::CommonJSExportIdentifier {
+                                            ref_,
+                                            // Record this as from module.exports
+                                            base: E::CommonJSExportIdentifierBase::ModuleDotExports,
+                                        },
+                                        name_loc,
+                                    ));
+                                } else if p.options.features.commonjs_at_runtime
+                                    && identifier_opts.assign_target() != js_ast::AssignTarget::None
+                                {
+                                    p.has_commonjs_export_names = true;
+                                }
+                            }
+                        }
+                    }
+                    E::Special::HotEnabled | E::Special::HotDisabled => {
+                        let enabled = p.options.features.hot_module_reloading;
+                        if name == b"data" {
+                            return Some(if enabled {
+                                Expr {
+                                    data: js_ast::ExprData::ESpecial(E::Special::HotData),
+                                    loc,
+                                }
+                            } else {
+                                Expr::init(E::Object::default(), loc)
+                            });
+                        }
+                        if name == b"accept" {
+                            if !enabled {
+                                p.method_call_must_be_replaced_with_undefined = true;
+                                return Some(Expr {
+                                    data: js_ast::ExprData::EUndefined(E::Undefined),
+                                    loc,
+                                });
+                            }
+                            return Some(Expr {
+                                data: js_ast::ExprData::ESpecial(E::Special::HotAccept),
+                                loc,
+                            });
+                        }
+                        // Zig: `bun.ComptimeStringMap(void, ...)` over 7 fixed keys.
+                        let in_lookup_table = matches!(
+                            name,
+                            b"decline"
+                                | b"dispose"
+                                | b"prune"
+                                | b"invalidate"
+                                | b"on"
+                                | b"off"
+                                | b"send"
+                        );
+                        if in_lookup_table {
+                            if enabled {
+                                return Some(Expr::init(
+                                    E::Dot {
+                                        target: Expr::init_identifier(p.hmr_api_ref, target.loc),
+                                        name: name_static,
+                                        name_loc,
+                                        ..Default::default()
+                                    },
+                                    loc,
+                                ));
+                            } else {
+                                p.method_call_must_be_replaced_with_undefined = true;
+                                return Some(Expr {
+                                    data: js_ast::ExprData::EUndefined(E::Undefined),
+                                    loc,
+                                });
+                            }
+                        } else {
+                            // This error is a bit out of place since the HMR
+                            // API is validated in the parser instead of at
+                            // runtime. When the API is not validated in this
+                            // way, the developer may unintentionally read or
+                            // write internal fields of HMRModule.
+                            p.log
+                                .add_error_fmt(
+                                    Some(p.source),
+                                    loc,
+                                    format_args!(
+                                        "import.meta.hot.{} does not exist",
+                                        bstr::BStr::new(name)
+                                    ),
+                                )
+                                .expect("unreachable");
+                            return Some(Expr {
+                                data: js_ast::ExprData::EUndefined(E::Undefined),
+                                loc,
+                            });
+                        }
+                    }
+                    _ => {}
+                },
+                _ => {}
+            }
+            break 'sw;
+        }
+
+        None
+    }
+
+    #[cfg(any())] // round-D draft body; superseded by the un-gated body above.
+    fn _maybe_rewrite_property_access_draft(
+        &mut self,
+        loc: logger::Loc,
+        target: js_ast::Expr,
+        name: &'a [u8],
+        name_loc: logger::Loc,
+        identifier_opts: IdentifierOpts,
+    ) -> Option<Expr> {
+        let p = self;
         {
         // Zig labeled switch with `continue :sw` → loop + match with mutable scrutinee.
         let mut sw_data = target.data;

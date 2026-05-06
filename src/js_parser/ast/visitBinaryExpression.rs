@@ -1,9 +1,11 @@
 #![allow(unused_imports, unused_variables, dead_code, unused_mut)]
 use core::cmp::Ordering;
 
-use crate::ast::{self as js_ast, E, Expr, ExprData, ExprTag, Op, Symbol};
+use crate::ast::fold_string_addition::{fold_string_addition, FoldStringAdditionKind};
 use crate::ast::p::P;
-use crate::parser::{float_to_int32, prefill, ExprIn, JsxT, SideEffects};
+use crate::ast::side_effects::SideEffects;
+use crate::ast::{self as js_ast, expr::Equality, E, Expr, ExprData, ExprTag, Op, StoreRef, Symbol};
+use crate::parser::{float_to_int32, prefill, ExprIn, JsxT};
 use bun_logger as logger;
 
 // PORT NOTE: The Zig `CreateBinaryExpressionVisitor(comptime ts, comptime jsx, comptime scan_only) type`
@@ -63,6 +65,23 @@ fn try_optimize_typeof_undefined<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN
     ))
 }
 
+// PORT NOTE: `Expr.Data.eql(left, right, p, .{loose,strict})` — the canonical
+// implementation lives in `Expr.rs` as `Data::eql<P, K: EqlKindT>` but is
+// `#[cfg(any())]`-gated on `ParserLike` + `EString::eql` (track-A). Until that
+// un-gates, this local shim returns `Equality::UNKNOWN` so callers fall through
+// to the non-folding path (matches Zig when `equality.ok == false`). Swap to
+// `ExprData::eql::<_, K>(left, right, p)` once Expr.rs:2883 lands.
+#[inline]
+fn data_eql<'a, const STRICT: bool, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>(
+    left: &ExprData,
+    right: &ExprData,
+    p: &mut P<'a, TYPESCRIPT, J, SCAN_ONLY>,
+) -> Equality {
+    let _ = (left, right, p);
+    // blocked_on: ExprData::eql<P, K: EqlKindT> (#[cfg(any())] in Expr.rs:2883)
+    Equality::UNKNOWN
+}
+
 pub struct BinaryExpressionVisitor<'arena> {
     pub e: &'arena mut E::Binary,
     pub loc: logger::Loc,
@@ -81,17 +100,16 @@ impl<'arena> BinaryExpressionVisitor<'arena> {
         v: &mut Self,
         p: &mut P<'a, TYPESCRIPT, J, SCAN_ONLY>,
     ) -> Expr {
-        let _ = (v, p);
-        todo!("b2-ast-E: visit_right_and_finish body");
-        #[cfg(any())]
-        // blocked_on: fold_string_addition (StringAdditionKind, gated mod); P::{expr_can_be_removed_if_unused,
-        //   maybe_mangle_if_expr} gated (P.rs:640 impl block); SideEffects::{to_boolean,to_number,simplify_boolean}
-        //   bodies are todo!() stubs; Expr::extract_numeric_values returns Option<[f64;2]> not (f64,f64);
-        //   prefill::Data::{ZERO,ONE,NEG_ONE} consts; fmod extern "C" decl.
-        {
-        let e_ = &mut *v.e;
-        // PORT NOTE: reshaped for borrowck — Zig compared `e_ == p.call_target.e_binary` (ptr eq).
-        let is_call_target = matches!(p.call_target, ExprData::EBinary(ptr) if core::ptr::eq(ptr, e_));
+        // PORT NOTE: reshaped for borrowck — `e_` reborrows the arena slot. We need a raw
+        // pointer to (a) compare against `p.call_target` by address and (b) re-wrap into
+        // `ExprData::EBinary(StoreRef)` at the tail without overlapping the `e_` borrow.
+        let e_ptr: *mut E::Binary = &mut *v.e;
+        // SAFETY: `v.e` points into the AST arena which outlives this call; same contract
+        // as Zig's `*E.Binary`. Detaching to a raw deref keeps the borrow disjoint from `v`.
+        let e_ = unsafe { &mut *e_ptr };
+
+        let is_call_target =
+            matches!(p.call_target, ExprData::EBinary(ptr) if core::ptr::eq(ptr.as_ptr(), e_ptr));
         // const is_stmt_expr = @as(Expr.Tag, p.stmt_expr_value) == .e_binary and expr.data.e_binary == p.stmt_expr_value.e_binary;
         let was_anonymous_named_expr = e_.right.is_anonymous_named();
         let prev_decorator_class_name = p.decorator_class_name;
@@ -100,8 +118,8 @@ impl<'arena> BinaryExpressionVisitor<'arena> {
         if e_.op == Op::Code::BinAssign && was_anonymous_named_expr {
             if let ExprData::EClass(class) = &e_.right.data {
                 if class.should_lower_standard_decorators {
-                    if let ExprData::EIdentifier(ident) = &e_.left.data {
-                        p.decorator_class_name = p.load_name_from_ref(ident.ref_);
+                    if let ExprData::EIdentifier(ident) = e_.left.data {
+                        p.decorator_class_name = Some(p.load_name_from_ref(ident.ref_));
                     }
                 }
             }
@@ -188,7 +206,7 @@ impl<'arena> BinaryExpressionVisitor<'arena> {
                         // the comma operator semantics when used as a call target
                         if is_call_target && e_.right.has_value_for_this_in_call() {
                             // Keep the comma expression to strip "this" binding
-                            e_.left = Expr { data: Prefill::Data::ZERO, loc: e_.left.loc };
+                            e_.left = Expr { data: prefill::data::ZERO, loc: e_.left.loc };
                         } else {
                             return e_.right;
                         }
@@ -196,7 +214,7 @@ impl<'arena> BinaryExpressionVisitor<'arena> {
                 }
             }
             Op::Code::BinLooseEq => {
-                let equality = e_.left.data.eql(&e_.right.data, p, js_ast::EqlMode::Loose);
+                let equality = data_eql::<false, TYPESCRIPT, J, SCAN_ONLY>(&e_.left.data, &e_.right.data, p);
                 if equality.ok {
                     if equality.is_require_main_and_module {
                         p.ignore_usage_of_runtime_require();
@@ -228,7 +246,7 @@ impl<'arena> BinaryExpressionVisitor<'arena> {
                 // TODO: warn about typeof string
             }
             Op::Code::BinStrictEq => {
-                let equality = e_.left.data.eql(&e_.right.data, p, js_ast::EqlMode::Strict);
+                let equality = data_eql::<true, TYPESCRIPT, J, SCAN_ONLY>(&e_.left.data, &e_.right.data, p);
                 if equality.ok {
                     if equality.is_require_main_and_module {
                         p.ignore_usage(p.module_ref);
@@ -253,7 +271,7 @@ impl<'arena> BinaryExpressionVisitor<'arena> {
                 // TODO: warn about typeof string
             }
             Op::Code::BinLooseNe => {
-                let equality = e_.left.data.eql(&e_.right.data, p, js_ast::EqlMode::Loose);
+                let equality = data_eql::<false, TYPESCRIPT, J, SCAN_ONLY>(&e_.left.data, &e_.right.data, p);
                 if equality.ok {
                     if equality.is_require_main_and_module {
                         p.ignore_usage(p.module_ref);
@@ -282,7 +300,7 @@ impl<'arena> BinaryExpressionVisitor<'arena> {
                 }
             }
             Op::Code::BinStrictNe => {
-                let equality = e_.left.data.eql(&e_.right.data, p, js_ast::EqlMode::Strict);
+                let equality = data_eql::<true, TYPESCRIPT, J, SCAN_ONLY>(&e_.left.data, &e_.right.data, p);
                 if equality.ok {
                     if equality.is_require_main_and_module {
                         p.ignore_usage(p.module_ref);
@@ -318,7 +336,6 @@ impl<'arena> BinaryExpressionVisitor<'arena> {
                                     loc: e_.left.loc,
                                 },
                                 e_.right,
-                                p.allocator,
                             );
                         }
 
@@ -336,9 +353,8 @@ impl<'arena> BinaryExpressionVisitor<'arena> {
                     // "(0 || this.fn)()" => "(0, this.fn)()"
                     if is_call_target && e_.right.has_value_for_this_in_call() {
                         return Expr::join_with_comma(
-                            Expr { data: Prefill::Data::ZERO, loc: e_.left.loc },
+                            Expr { data: prefill::data::ZERO, loc: e_.left.loc },
                             e_.right,
-                            p.allocator,
                         );
                     }
 
@@ -356,9 +372,8 @@ impl<'arena> BinaryExpressionVisitor<'arena> {
                         // "(1 && this.fn)()" => "(0, this.fn)()"
                         if is_call_target && e_.right.has_value_for_this_in_call() {
                             return Expr::join_with_comma(
-                                Expr { data: Prefill::Data::ZERO, loc: e_.left.loc },
+                                Expr { data: prefill::data::ZERO, loc: e_.left.loc },
                                 e_.right,
-                                p.allocator,
                             );
                         }
 
@@ -377,19 +392,19 @@ impl<'arena> BinaryExpressionVisitor<'arena> {
                         e_.left,
                         e_.right,
                         p.allocator,
-                        StringAdditionKind::Normal,
+                        FoldStringAdditionKind::Normal,
                     ) {
                         return res;
                     }
 
                     // "(x + 'abc') + 'xyz'" => "'abcxyz'"
-                    if let Some(left) = e_.left.data.as_e_binary() {
+                    if let Some(left) = e_.left.data.e_binary() {
                         if left.op == Op::Code::BinAdd {
                             if let Some(result) = fold_string_addition(
                                 left.right,
                                 e_.right,
                                 p.allocator,
-                                StringAdditionKind::NestedLeft,
+                                FoldStringAdditionKind::NestedLeft,
                             ) {
                                 return p.new_expr(
                                     E::Binary {
@@ -460,9 +475,8 @@ impl<'arena> BinaryExpressionVisitor<'arena> {
                 if p.should_fold_typescript_constant_expressions {
                     if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data) {
                         let left = float_to_int32(vals[0]);
-                        let right: u8 =
-                            u8::try_from((float_to_int32(vals[1]) as u32) % 32).unwrap();
-                        let result: i32 = left.wrapping_shl(right as u32);
+                        let right: u32 = (float_to_int32(vals[1]) as u32) % 32;
+                        let result: i32 = left.wrapping_shl(right);
                         return p.new_expr(E::Number { value: result as f64 }, v.loc);
                     }
                 }
@@ -471,10 +485,9 @@ impl<'arena> BinaryExpressionVisitor<'arena> {
                 if p.should_fold_typescript_constant_expressions {
                     if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data) {
                         let left = float_to_int32(vals[0]);
-                        let right: u8 =
-                            u8::try_from((float_to_int32(vals[1]) as u32) % 32).unwrap();
+                        let right: u32 = (float_to_int32(vals[1]) as u32) % 32;
                         // std.math.shr on i32 is arithmetic shift right
-                        let result: i32 = left.wrapping_shr(right as u32);
+                        let result: i32 = left.wrapping_shr(right);
                         return p.new_expr(E::Number { value: result as f64 }, v.loc);
                     }
                 }
@@ -483,9 +496,8 @@ impl<'arena> BinaryExpressionVisitor<'arena> {
                 if p.should_fold_typescript_constant_expressions {
                     if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data) {
                         let left: u32 = float_to_int32(vals[0]) as u32;
-                        let right: u8 =
-                            u8::try_from((float_to_int32(vals[1]) as u32) % 32).unwrap();
-                        let result: u32 = left.wrapping_shr(right as u32);
+                        let right: u32 = (float_to_int32(vals[1]) as u32) % 32;
+                        let result: u32 = left.wrapping_shr(right);
                         return p.new_expr(E::Number { value: result as f64 }, v.loc);
                     }
                 }
@@ -537,8 +549,10 @@ impl<'arena> BinaryExpressionVisitor<'arena> {
                     if let Some(vals) =
                         Expr::extract_string_values(&e_.left.data, &e_.right.data, p.allocator)
                     {
+                        // SAFETY: extract_string_values returns live arena pointers (rope-resolved).
+                        let ord = unsafe { (*vals[0]).order(&*vals[1]) };
                         return p.new_expr(
-                            E::Boolean { value: vals[0].order(&vals[1]) == Ordering::Less },
+                            E::Boolean { value: ord == Ordering::Less },
                             v.loc,
                         );
                     }
@@ -554,8 +568,10 @@ impl<'arena> BinaryExpressionVisitor<'arena> {
                     if let Some(vals) =
                         Expr::extract_string_values(&e_.left.data, &e_.right.data, p.allocator)
                     {
+                        // SAFETY: see BinLt.
+                        let ord = unsafe { (*vals[0]).order(&*vals[1]) };
                         return p.new_expr(
-                            E::Boolean { value: vals[0].order(&vals[1]) == Ordering::Greater },
+                            E::Boolean { value: ord == Ordering::Greater },
                             v.loc,
                         );
                     }
@@ -571,12 +587,11 @@ impl<'arena> BinaryExpressionVisitor<'arena> {
                     if let Some(vals) =
                         Expr::extract_string_values(&e_.left.data, &e_.right.data, p.allocator)
                     {
+                        // SAFETY: see BinLt.
+                        let ord = unsafe { (*vals[0]).order(&*vals[1]) };
                         return p.new_expr(
                             E::Boolean {
-                                value: match vals[0].order(&vals[1]) {
-                                    Ordering::Equal | Ordering::Less => true,
-                                    Ordering::Greater => false,
-                                },
+                                value: matches!(ord, Ordering::Equal | Ordering::Less),
                             },
                             v.loc,
                         );
@@ -593,12 +608,11 @@ impl<'arena> BinaryExpressionVisitor<'arena> {
                     if let Some(vals) =
                         Expr::extract_string_values(&e_.left.data, &e_.right.data, p.allocator)
                     {
+                        // SAFETY: see BinLt.
+                        let ord = unsafe { (*vals[0]).order(&*vals[1]) };
                         return p.new_expr(
                             E::Boolean {
-                                value: match vals[0].order(&vals[1]) {
-                                    Ordering::Equal | Ordering::Greater => true,
-                                    Ordering::Less => false,
-                                },
+                                value: matches!(ord, Ordering::Equal | Ordering::Greater),
                             },
                             v.loc,
                         );
@@ -609,12 +623,15 @@ impl<'arena> BinaryExpressionVisitor<'arena> {
             // ---------------------------------------------------------------------------------------------------
             Op::Code::BinAssign => {
                 // Optionally preserve the name
-                if let ExprData::EIdentifier(ident) = &e_.left.data {
-                    let ref_ = ident.ref_;
-                    // PORT NOTE: reshaped for borrowck — captured ref_ before borrowing p.symbols.
+                if let ExprData::EIdentifier(ident) = e_.left.data {
+                    // PORT NOTE: reshaped for borrowck — copy the raw original_name pointer out of
+                    // `p.symbols` before taking `&mut self` for `maybe_keep_expr_symbol_name`.
+                    let name_ptr =
+                        p.symbols[ident.ref_.inner_index() as usize].original_name;
                     e_.right = p.maybe_keep_expr_symbol_name(
                         e_.right,
-                        &p.symbols[ref_.inner_index()].original_name,
+                        // SAFETY: `original_name` points into the source/arena (`'a`-lived).
+                        unsafe { &*name_ptr },
                         was_anonymous_named_expr,
                     );
                 }
@@ -623,9 +640,9 @@ impl<'arena> BinaryExpressionVisitor<'arena> {
                 // Special case `{}.field ??= value` to minify to `value`
                 // This optimization is specifically to target this pattern in HMR:
                 //    `import.meta.hot.data.etc ??= init()`
-                if let Some(dot) = e_.left.data.as_e_dot() {
-                    if let Some(obj) = dot.target.data.as_e_object() {
-                        if obj.properties.len() == 0 {
+                if let Some(dot) = e_.left.data.e_dot() {
+                    if let Some(obj) = dot.target.data.e_object() {
+                        if obj.properties.len == 0 {
                             if dot.name != b"__proto__" {
                                 return e_.right;
                             }
@@ -636,8 +653,14 @@ impl<'arena> BinaryExpressionVisitor<'arena> {
             _ => {}
         }
 
-        Expr { loc: v.loc, data: ExprData::EBinary(e_) }
-        } // end #[cfg(any())]
+        Expr {
+            loc: v.loc,
+            data: ExprData::EBinary(StoreRef::from_non_null(
+                // SAFETY: `e_ptr` is derived from `v.e: &'arena mut E::Binary` which is non-null
+                // and arena-backed (same slot Zig threads as `*E.Binary`).
+                unsafe { core::ptr::NonNull::new_unchecked(e_ptr) },
+            )),
+        }
     }
 
     pub fn check_and_prepare<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>(
@@ -683,7 +706,7 @@ impl<'arena> BinaryExpressionVisitor<'arena> {
                     // returned Expr aliases the same arena slot.
                     return Some(Expr {
                         loc: v.loc,
-                        data: ExprData::EBinary(js_ast::StoreRef::from_non_null(
+                        data: ExprData::EBinary(StoreRef::from_non_null(
                             core::ptr::NonNull::from(&mut *v.e),
                         )),
                     });
@@ -708,6 +731,10 @@ impl<'arena> BinaryExpressionVisitor<'arena> {
 // PORT STATUS
 //   source:     src/js_parser/ast/visitBinaryExpression.zig (598 lines)
 //   confidence: medium
-//   todos:      1
-//   notes:      Outer CreateBinaryExpressionVisitor wrapper flattened into const-generic struct; ExprData variant accessors (as_e_binary/as_e_dot/as_e_object), EqlMode, StringAdditionKind, Prefill::Data::ZERO, and Op::Code path assumed — Phase B fixes imports. `in` field renamed `in_`. Returning ExprData::EBinary(e_) re-borrows the arena ref; verify lifetime in Phase B.
+//   todos:      0
+//   notes:      Outer CreateBinaryExpressionVisitor wrapper flattened into const-generic struct;
+//               `in` field renamed `in_`. `Data::eql` shimmed locally (returns UNKNOWN) until
+//               Expr.rs:2883 un-gates — equality folding is a no-op until then. `join_with_comma`
+//               dropped its allocator arg (Rust port uses the global Store). Tail return re-wraps
+//               the arena `*E.Binary` as `StoreRef` (verified same slot as Zig).
 // ──────────────────────────────────────────────────────────────────────────

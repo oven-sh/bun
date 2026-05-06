@@ -7870,6 +7870,10 @@ impl LowerUsingDeclarationsContext {
                     // If any of these are exported, turn it into a "var" and add export clauses
                     if local.is_export {
                         local.is_export = false;
+                        // PORT NOTE: Zig wrote `local.kind = .k_var` inside the
+                        // decls loop; borrowck rejects that aliasing through
+                        // StoreRef DerefMut. Hoist the kind write below.
+                        let mut any_ident = false;
                         for decl in local.decls.slice() {
                             if let js_ast::b::B::BIdentifier(identifier) = decl.binding.data {
                                 // SAFETY: arena-owned `*mut B::Identifier` valid for 'a; no aliasing &mut.
@@ -7880,8 +7884,11 @@ impl LowerUsingDeclarationsContext {
                                     alias_loc: decl.binding.loc,
                                     ..Default::default()
                                 });
-                                local.kind = js_ast::s::Kind::KVar;
+                                any_ident = true;
                             }
+                        }
+                        if any_ident {
+                            local.kind = js_ast::s::Kind::KVar;
                         }
                     }
                 }
@@ -7964,16 +7971,11 @@ impl LowerUsingDeclarationsContext {
             //   var promise = __callDispose(stack, error, hasError);
             //   promise && await promise;
             //
-            let stmt1 = p.s(
-                S::SExpr {
-                    value: p.new_expr(
-                        E::Binary { op: js_ast::op::Code::BinLogicalAnd, left: promise_ref_expr, right: await_expr },
-                        loc,
-                    ),
-                    ..Default::default()
-                },
+            let cond_await = p.new_expr(
+                E::Binary { op: js_ast::op::Code::BinLogicalAnd, left: promise_ref_expr, right: await_expr },
                 loc,
             );
+            let stmt1 = p.s(S::SExpr { value: cond_await, ..Default::default() }, loc);
 
             p.allocator.alloc_slice_copy(&[stmt0, stmt1])
         } else {

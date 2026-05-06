@@ -457,8 +457,6 @@ impl<R> SupportsRule<R> {
     }
 }
 
-// blocked_on: CssRuleList::to_css (gated in rules/mod.rs).
-#[cfg(any())]
 impl<R> SupportsRule<R> {
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         // #[cfg(feature = "sourcemap")]
@@ -476,7 +474,11 @@ impl<R> SupportsRule<R> {
         dest.write_char(b'}')?;
         Ok(())
     }
+}
 
+// blocked_on: generics::DeepClone derive for SupportsRule<R> (Phase B).
+#[cfg(any())]
+impl<R> SupportsRule<R> {
     pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         // TODO(port): css.implementDeepClone is comptime-reflection — replace with derive/trait in Phase B
         css::implement_deep_clone(self, bump)

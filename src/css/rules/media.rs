@@ -1,6 +1,4 @@
-use crate as css;
-use crate::css_rules::{CssRuleList, Location, MinifyContext};
-use crate::error::MinifyErr;
+use crate::css_rules::{CssRuleList, Location};
 use crate::media_query::MediaList;
 use crate::{PrintErr, Printer};
 
@@ -15,17 +13,11 @@ pub struct MediaRule<R> {
 }
 
 // ─── behavior bodies ──────────────────────────────────────────────────────
-// blocked_on: CssRuleList::{minify,to_css} (gated in rules/mod.rs until leaf
-// rules un-gate) and MediaList::{always_matches,never_matches,to_css} (gated
-// in media_query.rs until the values/ calc lattice un-gates).
-#[cfg(any())]
+// PORT NOTE: `minify` lives in `rules/mod.rs` (hoisted next to `CssRuleList::
+// minify` so the dispatch can call it without re-exporting `MinifyContext`
+// here). `to_css` un-gated this round — `MediaList::{always_matches,to_css}`
+// and `CssRuleList::to_css` are both real now.
 impl<R> MediaRule<R> {
-    pub fn minify(&mut self, context: &mut MinifyContext, parent_is_unused: bool) -> Result<bool, MinifyErr> {
-        self.rules.minify(context, parent_is_unused)?;
-
-        Ok(self.rules.v.len() == 0 || self.query.never_matches())
-    }
-
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         if dest.minify && self.query.always_matches() {
             self.rules.to_css(dest)?;
@@ -37,19 +29,23 @@ impl<R> MediaRule<R> {
         dest.write_str("@media ")?;
         self.query.to_css(dest)?;
         dest.whitespace()?;
-        dest.write_char('{')?;
+        dest.write_char(b'{')?;
         dest.indent();
         dest.newline()?;
         self.rules.to_css(dest)?;
         dest.dedent();
         dest.newline()?;
-        dest.write_char('}')
+        dest.write_char(b'}')
     }
+}
 
+// blocked_on: generics::DeepClone derive for MediaRule<R> (Phase B).
+#[cfg(any())]
+impl<R> MediaRule<R> {
     pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         // TODO(port): css.implementDeepClone uses @typeInfo field reflection — replace with
         // a DeepClone trait/derive in Phase B.
-        css::implement_deep_clone(self, bump)
+        crate::implement_deep_clone(self, bump)
     }
 }
 
@@ -58,5 +54,5 @@ impl<R> MediaRule<R> {
 //   source:     src/css/rules/media.zig (51 lines)
 //   confidence: high
 //   todos:      1
-//   notes:      struct un-gated; minify/to_css/deep_clone bodies gated on CssRuleList + MediaList behavior; rules.v assumed Vec-like (.len()).
+//   notes:      struct + to_css un-gated; minify lives in rules/mod.rs; deep_clone gated on DeepClone derive.
 // ──────────────────────────────────────────────────────────────────────────

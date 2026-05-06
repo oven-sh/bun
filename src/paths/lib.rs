@@ -634,6 +634,16 @@ pub mod fs {
     }
 
     impl<'a> Path<'a> {
+        // Zig: `pub const empty = Fs.Path.init("");`
+        pub const EMPTY: Path<'static> = Path {
+            pretty: b"",
+            text: b"",
+            namespace: b"file",
+            name: PathName { base: b"", dir: b"", ext: b"", filename: b"" },
+            is_disabled: false,
+            is_symlink: false,
+        };
+
         /// Zig: `Path.init(text)` — sets `text`/`pretty` to the same slice, parses `name`,
         /// namespace defaults to `"file"`.
         pub fn init(text: &'a [u8]) -> Self {
@@ -647,15 +657,90 @@ pub mod fs {
             }
         }
 
+        /// Zig: `Path.initWithPretty`.
+        pub fn init_with_pretty(text: &'a [u8], pretty: &'a [u8]) -> Self {
+            Self {
+                pretty,
+                text,
+                namespace: b"file",
+                name: PathName::init(text),
+                is_disabled: false,
+                is_symlink: false,
+            }
+        }
+
+        /// Zig: `Path.initWithNamespace`.
+        pub fn init_with_namespace(text: &'a [u8], namespace: &'a [u8]) -> Self {
+            Self {
+                pretty: text,
+                text,
+                namespace,
+                name: PathName::init(text),
+                is_disabled: false,
+                is_symlink: false,
+            }
+        }
+
+        #[inline] pub fn empty() -> Path<'static> { Path::EMPTY }
+        #[inline] pub fn text(&self) -> &'a [u8] { self.text }
+        #[inline] pub fn pretty(&self) -> &'a [u8] { self.pretty }
+        #[inline] pub fn namespace(&self) -> &'a [u8] { self.namespace }
+
         #[inline]
         pub fn is_file(&self) -> bool {
             self.namespace.is_empty() || self.namespace == b"file"
         }
 
+        #[inline]
+        pub fn is_data_url(&self) -> bool { self.namespace == b"dataurl" }
+
+        #[inline]
+        pub fn is_bun(&self) -> bool { self.namespace == b"bun" }
+
+        #[inline]
+        pub fn is_macro(&self) -> bool { self.namespace == b"macro" }
+
         /// Zig: `pub inline fn sourceDir(this: *const Path) string`
         #[inline]
         pub fn source_dir(&self) -> &'a [u8] {
             self.name.dir_with_trailing_slash()
+        }
+
+        /// Zig: `pub inline fn prettyDir(this: *const Path) string`
+        #[inline]
+        pub fn pretty_dir(&self) -> &'a [u8] {
+            self.name.dir_with_trailing_slash()
+        }
+
+        /// Zig: `Path.isNodeModule` — checks for `<sep>node_modules<sep>` in the
+        /// parsed dir component (`name.dir`, NOT `text`).
+        pub fn is_node_module(&self) -> bool {
+            use bstr::ByteSlice;
+            const NEEDLE: &[u8] =
+                const_format::concatcp!(crate::SEP_STR, "node_modules", crate::SEP_STR).as_bytes();
+            self.name.dir.rfind(NEEDLE).is_some()
+        }
+
+        /// Zig: `Path.isJSXFile`.
+        #[inline]
+        pub fn is_jsx_file(&self) -> bool {
+            let f = self.name.filename;
+            f.ends_with(b".jsx") || f.ends_with(b".tsx")
+        }
+
+        /// Zig: `Path.keyForIncrementalGraph`.
+        #[inline]
+        pub fn key_for_incremental_graph(&self) -> &'a [u8] {
+            if self.is_file() { self.text } else { self.pretty }
+        }
+
+        /// Zig: `Path.setRealpath`.
+        pub fn set_realpath(&mut self, to: &'a [u8]) {
+            let old_path = self.text;
+            self.text = to;
+            self.name = PathName::init(to);
+            self.pretty = old_path;
+            self.is_symlink = true;
         }
     }
 

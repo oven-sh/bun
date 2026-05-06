@@ -90,6 +90,541 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         Output::flush();
     }
 
+    const SHELLS_TO_SEARCH: &'static [&'static [u8]] = &[b"bash", b"sh", b"zsh"];
+
+    const BUN_BIN_NAME: &'static str = if cfg!(debug_assertions) { "bun-debug" } else { "bun" };
+    const BUN_RUN: &'static str = const_format::concatcp!(RunCommand::BUN_BIN_NAME, " run");
+
+    /// `findShell` — locate a POSIX shell on `$PATH`, falling back to a
+    /// hardcoded list. Returns a NUL-terminated path borrowed from the
+    /// process-lifetime cache populated by `find_shell`.
+    fn find_shell_impl(path: &[u8], cwd: &[u8], path_buf: &mut PathBuffer) -> Option<usize> {
+        #[cfg(windows)]
+        {
+            let _ = (path, cwd, path_buf);
+            const WIN: &[u8] = b"C:\\Windows\\System32\\cmd.exe";
+            path_buf[..WIN.len()].copy_from_slice(WIN);
+            return Some(WIN.len());
+        }
+
+        #[cfg(not(windows))]
+        {
+            for shell in Self::SHELLS_TO_SEARCH {
+                if let Some(shell_) = which(path_buf, path, cwd, shell) {
+                    return Some(shell_.len());
+                }
+            }
+
+            const HARDCODED_POPULAR_ONES: &[&[u8]] = &[
+                b"/bin/bash",
+                b"/usr/bin/bash",
+                b"/usr/local/bin/bash", // don't think this is a real one
+                b"/bin/sh",
+                b"/usr/bin/sh", // don't think this is a real one
+                b"/usr/bin/zsh",
+                b"/usr/local/bin/zsh",
+                b"/system/bin/sh", // Android
+            ];
+            for shell in HARDCODED_POPULAR_ONES {
+                path_buf[..shell.len()].copy_from_slice(shell);
+                path_buf[shell.len()] = 0;
+                // SAFETY: NUL-terminated above.
+                let z = unsafe { ZStr::from_raw(path_buf.as_ptr(), shell.len()) };
+                if bun_sys::is_executable_file_path(z) {
+                    return Some(shell.len());
+                }
+            }
+
+            None
+        }
+    }
+
+    /// Find the "best" shell to use. Cached to only run once.
+    pub fn find_shell(path: &[u8], cwd: &[u8]) -> Option<&'static ZStr> {
+        // PORT NOTE: Zig used `bun.once` over a module-level `var shell_buf`
+        // (run_command.zig:73). Process-lifetime; written exactly once on the
+        // CLI thread.
+        static SHELL_BUF: ::core::cell::SyncUnsafeCell<PathBuffer> =
+            ::core::cell::SyncUnsafeCell::new(PathBuffer::ZEROED);
+        static ONCE: bun_core::Once<Option<&'static ZStr>> = bun_core::Once::new();
+        ONCE.call(|| {
+            // SAFETY: single-writer (Once), process-lifetime storage.
+            let buf = unsafe { &mut *SHELL_BUF.get() };
+            let len = Self::find_shell_impl(path, cwd, buf)?;
+            buf[len] = 0;
+            // SAFETY: `buf[len] == 0` written above; SHELL_BUF is `'static`.
+            Some(unsafe { ZStr::from_raw(buf.as_ptr(), len) })
+        })
+    }
+
+    // Look for invocations of any:
+    // - yarn run
+    // - yarn $cmdName
+    // - pnpm run
+    // - npm run
+    // Replace them with "bun run"
+    pub fn replace_package_manager_run(
+        copy_script: &mut Vec<u8>,
+        script: &[u8],
+    ) -> Result<(), bun_core::Error> {
+        let mut entry_i: usize = 0;
+        let mut delimiter: u8 = b' ';
+
+        while entry_i < script.len() {
+            let start = entry_i;
+
+            match script[entry_i] {
+                b'y' => {
+                    if delimiter > 0 {
+                        let remainder = &script[start..];
+                        if remainder.starts_with(b"yarn ") {
+                            let next = &remainder[b"yarn ".len()..];
+                            // We have yarn
+                            // Find the next space
+                            if let Some(space) = strings::index_of_char(next, b' ') {
+                                let yarn_cmd = &next[..space as usize];
+                                if yarn_cmd == b"run" {
+                                    copy_script.extend_from_slice(Self::BUN_RUN.as_bytes());
+                                    entry_i += b"yarn run".len();
+                                    continue;
+                                }
+
+                                // yarn npm is a yarn 2 subcommand
+                                if yarn_cmd == b"npm" {
+                                    entry_i += b"yarn npm ".len();
+                                    copy_script.extend_from_slice(b"yarn npm ");
+                                    continue;
+                                }
+
+                                if yarn_cmd.starts_with(b"-") {
+                                    // Skip the rest of the command
+                                    entry_i += b"yarn ".len() + yarn_cmd.len();
+                                    copy_script.extend_from_slice(b"yarn ");
+                                    copy_script.extend_from_slice(yarn_cmd);
+                                    continue;
+                                }
+
+                                // implicit yarn commands
+                                // TODO(b2-blocked): `crate::cli::list_of_yarn_commands`
+                                // is `#[cfg(any())]`-gated (duplicate phf_set! keys).
+                                // Until it un-gates, fall through (don't rewrite the
+                                // bare-subcommand form) so we never misclassify an
+                                // actual yarn builtin as a script.
+                                #[cfg(any())]
+                                if !crate::cli::list_of_yarn_commands::ALL_YARN_COMMANDS
+                                    .contains(yarn_cmd)
+                                {
+                                    copy_script.extend_from_slice(Self::BUN_RUN.as_bytes());
+                                    copy_script.push(b' ');
+                                    copy_script.extend_from_slice(yarn_cmd);
+                                    entry_i += b"yarn ".len() + yarn_cmd.len();
+                                    delimiter = 0;
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+
+                    delimiter = 0;
+                }
+
+                b' ' => delimiter = b' ',
+                b'"' => delimiter = b'"',
+                b'\'' => delimiter = b'\'',
+
+                b'n' => {
+                    if delimiter > 0 {
+                        if script[start..].starts_with(b"npm run ") {
+                            copy_script.extend_from_slice(
+                                const_format::concatcp!(RunCommand::BUN_RUN, " ").as_bytes(),
+                            );
+                            entry_i += b"npm run ".len();
+                            delimiter = 0;
+                            continue;
+                        }
+
+                        if script[start..].starts_with(b"npx ") {
+                            copy_script.extend_from_slice(
+                                const_format::concatcp!(RunCommand::BUN_BIN_NAME, " x ").as_bytes(),
+                            );
+                            entry_i += b"npx ".len();
+                            delimiter = 0;
+                            continue;
+                        }
+                    }
+
+                    delimiter = 0;
+                }
+                b'p' => {
+                    if delimiter > 0 {
+                        if script[start..].starts_with(b"pnpm run ") {
+                            copy_script.extend_from_slice(
+                                const_format::concatcp!(RunCommand::BUN_RUN, " ").as_bytes(),
+                            );
+                            entry_i += b"pnpm run ".len();
+                            delimiter = 0;
+                            continue;
+                        }
+                        if script[start..].starts_with(b"pnpm dlx ") {
+                            copy_script.extend_from_slice(
+                                const_format::concatcp!(RunCommand::BUN_BIN_NAME, " x ").as_bytes(),
+                            );
+                            entry_i += b"pnpm dlx ".len();
+                            delimiter = 0;
+                            continue;
+                        }
+                        if script[start..].starts_with(b"pnpx ") {
+                            copy_script.extend_from_slice(
+                                const_format::concatcp!(RunCommand::BUN_BIN_NAME, " x ").as_bytes(),
+                            );
+                            entry_i += b"pnpx ".len();
+                            delimiter = 0;
+                            continue;
+                        }
+                    }
+
+                    delimiter = 0;
+                }
+                _ => delimiter = 0,
+            }
+
+            copy_script.push(script[entry_i]);
+            entry_i += 1;
+        }
+        Ok(())
+    }
+
+    /// Port of `runPackageScriptForeground` (run_command.zig:209). Spawns the
+    /// script body via the bun-shell or system shell and exits on non-zero.
+    ///
+    /// PORT NOTE: `allocator` parameter dropped (PORTING.md §Allocators —
+    /// always global mimalloc); `passthrough` is `&[Box<[u8]>]` to match
+    /// `ctx.passthrough` directly (Zig was `[]const string`).
+    pub fn run_package_script_foreground(
+        ctx: &mut ContextData,
+        original_script: &[u8],
+        name: &[u8],
+        cwd: &[u8],
+        env: &mut DotEnv::Loader<'_>,
+        passthrough: &[Box<[u8]>],
+        silent: bool,
+        use_system_shell: bool,
+    ) -> Result<(), bun_core::Error> {
+        let shell_bin = Self::find_shell(env.get(b"PATH").unwrap_or(b""), cwd)
+            .ok_or(bun_core::err!("MissingShell"))?;
+        env.map.put(b"npm_lifecycle_event", name).expect("unreachable");
+        env.map.put(b"npm_lifecycle_script", original_script).expect("unreachable");
+
+        let mut copy_script_capacity: usize = original_script.len();
+        for part in passthrough {
+            copy_script_capacity += 1 + part.len();
+        }
+        let mut copy_script: Vec<u8> = Vec::with_capacity(copy_script_capacity);
+
+        // We're going to do this slowly.
+        // Find exact matches of yarn, pnpm, npm
+
+        Self::replace_package_manager_run(&mut copy_script, original_script)?;
+
+        for part in passthrough {
+            copy_script.push(b' ');
+            // TODO(b2-blocked): `crate::shell::needs_escape_utf8_ascii_latin1` /
+            // `escape_8bit` live in `shell_body.rs`, which is `#[cfg(any())]`.
+            // Fall back to raw append (matches Zig's no-escape-needed arm) until
+            // the shell-escape surface re-exports.
+            #[cfg(any())]
+            if crate::shell::needs_escape_utf8_ascii_latin1(part) {
+                crate::shell::escape_8bit(part, &mut copy_script, true)?;
+                continue;
+            }
+            copy_script.extend_from_slice(part);
+        }
+
+        bun_core::scoped_log!(RUN, "Script: \"{}\"", bstr::BStr::new(&copy_script));
+
+        if !silent {
+            Output::command(Output::CommandArgv::Single(&copy_script));
+            Output::flush();
+        }
+
+        if !use_system_shell {
+            // TODO(b2-blocked): `crate::shell::Interpreter::init_and_run_from_source`
+            // — interpreter.rs has the struct but not this entrypoint yet.
+            #[cfg(any())]
+            {
+                let mini =
+                    bun_event_loop::MiniEventLoop::init_global(Some(unsafe { &mut *(env as *mut _) }), Some(cwd));
+                let code = match crate::shell::Interpreter::init_and_run_from_source(
+                    ctx, mini, name, &copy_script, Some(cwd),
+                ) {
+                    Ok(c) => c,
+                    Err(err) => {
+                        if !silent {
+                            pretty_errorln!(
+                                "<r><red>error<r>: Failed to run script <b>{}<r> due to error <b>{}<r>",
+                                bstr::BStr::new(name),
+                                bstr::BStr::new(err.name()),
+                            );
+                        }
+                        Global::exit(1);
+                    }
+                };
+
+                if code > 0 {
+                    if code != 2 && !silent {
+                        pretty_errorln!(
+                            "<r><red>error<r><d>:<r> script <b>\"{}\"<r> exited with code {}<r>",
+                            bstr::BStr::new(name),
+                            code,
+                        );
+                        Output::flush();
+                    }
+                    Global::exit(code);
+                }
+                return Ok(());
+            }
+            let _ = ctx;
+            todo!(
+                "RunCommand::run_package_script_foreground: bun-shell path — \
+                 Interpreter::init_and_run_from_source gated"
+            );
+        }
+
+        let argv: [&[u8]; 3] = [
+            shell_bin.as_bytes(),
+            if cfg!(windows) { b"/c" } else { b"-c" },
+            &copy_script,
+        ];
+
+        // TODO(b2-blocked): full `bun.spawnSync` (`SpawnSyncOptions { argv0,
+        // envp, cwd, stdio, ipc, windows.loop }` + `SpawnStatus::{Exited,
+        // Signaled, Err}`) — bun_core only exposes `spawn_sync_inherit` and a
+        // flat `SpawnStatus { code }` so far. Preserved verbatim in
+        // `phase_a_draft::run_package_script_foreground`.
+        #[cfg(any())]
+        {
+            let ipc_fd: Option<bun_sys::Fd> = if !cfg!(windows) {
+                bun_core::env_var::NODE_CHANNEL_FD.get().and_then(|s| {
+                    ::core::str::from_utf8(s).ok()?.parse::<u32>().ok().and_then(|fd| {
+                        i32::try_from(fd).ok().map(bun_sys::Fd::from_native)
+                    })
+                })
+            } else {
+                None // TODO: implement on Windows
+            };
+
+            let spawn_result = match bun_core::spawn_sync(&bun_core::SpawnSyncOptions {
+                argv: &argv,
+                argv0: Some(shell_bin.as_ptr()),
+                envp: env.map.create_null_delimited_env_map()?,
+                cwd: Some(cwd),
+                stderr: bun_core::Stdio::Inherit,
+                stdout: bun_core::Stdio::Inherit,
+                stdin: bun_core::Stdio::Inherit,
+                ipc: ipc_fd,
+                ..Default::default()
+            }) {
+                Err(err) => {
+                    if !silent {
+                        pretty_errorln!(
+                            "<r><red>error<r>: Failed to run script <b>{}<r> due to error <b>{}<r>",
+                            bstr::BStr::new(name),
+                            bstr::BStr::new(err.name()),
+                        );
+                    }
+                    Output::flush();
+                    return Ok(());
+                }
+                Ok(r) => r,
+            };
+            // … exited / signaled / err handling — see phase_a_draft.
+        }
+        let _ = argv;
+        todo!(
+            "RunCommand::run_package_script_foreground: system-shell spawn — \
+             bun_core::spawn_sync full options gated"
+        );
+    }
+
+    /// Port of `configureEnvForRun` (run_command.zig:772). Allocates a
+    /// process-lifetime `Transpiler`, primes its resolver/env, reads the
+    /// top-level `DirInfo`, and seeds the `npm_*` env vars.
+    ///
+    /// Returns a raw `*mut DirInfo` borrowed from the resolver's directory
+    /// cache (process-lifetime; Zig returned `*DirInfo`).
+    pub fn configure_env_for_run(
+        ctx: &mut ContextData,
+        this_transpiler: &mut Transpiler<'static>,
+        env: Option<*mut DotEnv::Loader<'static>>,
+        log_errors: bool,
+        store_root_fd: bool,
+    ) -> Result<*mut DirInfo, bun_core::Error> {
+        let args = ctx.args.clone();
+        let env_is_none = env.is_none();
+        // PORT NOTE: process-lifetime arena for the runner's transpiler — same
+        // pattern as `jsc_hooks::init_runtime_state` (transpiler_arena). Zig
+        // passed `ctx.allocator` (== `bun.default_allocator`); the Rust port
+        // threads an `&'static Arena` per PORTING.md §AST crates.
+        // TODO(port): allocator — collapse once Transpiler::init drops the arena arg.
+        let arena: &'static bun_alloc::Arena =
+            Box::leak(Box::new(bun_alloc::Arena::new()));
+        *this_transpiler = Transpiler::init(arena, ctx.log, args, env)?;
+        this_transpiler.options.env.behavior = api::DotEnvBehavior::LoadAll;
+        // SAFETY: `Transpiler::init` always sets `env` (singleton or leaked).
+        let env_loader = unsafe { &mut *this_transpiler.env };
+        env_loader.quiet = true;
+        this_transpiler.options.env.prefix = Box::default();
+
+        this_transpiler.resolver.care_about_bin_folder = true;
+        this_transpiler.resolver.care_about_scripts = true;
+        this_transpiler.resolver.store_fd = store_root_fd;
+
+        this_transpiler.resolver.opts.load_tsconfig_json = true;
+        this_transpiler.options.load_tsconfig_json = true;
+
+        // TODO(b2-blocked): `Transpiler::configure_linker` lives in the gated
+        // `__phase_a_draft` impl (transpiler.rs:1313).
+        #[cfg(any())]
+        this_transpiler.configure_linker();
+
+        // SAFETY: `Transpiler::init` always sets `fs` to the process singleton.
+        let top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir };
+        let root_dir_info: *mut DirInfo =
+            match this_transpiler.resolver.read_dir_info(top_level_dir) {
+                Err(err) => {
+                    if !log_errors {
+                        return Err(bun_core::err!("CouldntReadCurrentDirectory"));
+                    }
+                    // TODO(b2): `Log::print` wants `fmt::Write`; route through
+                    // `Output::error_writer()` once a shim lands. See
+                    // `_boot_and_handle_error` for the same wart.
+                    pretty_errorln!(
+                        "<r><red>error<r><d>:<r> <b>{}<r> loading directory {}",
+                        bstr::BStr::new(err.name()),
+                        bun_core::fmt::QuotedFormatter { text: top_level_dir },
+                    );
+                    Output::flush();
+                    return Err(err);
+                }
+                Ok(None) => {
+                    pretty_errorln!("error loading current directory");
+                    Output::flush();
+                    return Err(bun_core::err!("CouldntReadCurrentDirectory"));
+                }
+                Ok(Some(info)) => info,
+            };
+
+        this_transpiler.resolver.store_fd = false;
+
+        // SAFETY: re-derive — borrowck won't let `env_loader` straddle the
+        // `&mut this_transpiler.resolver` above.
+        let env_loader = unsafe { &mut *this_transpiler.env };
+
+        if env_is_none {
+            env_loader.load_process()?;
+
+            if let Some(node_env) = env_loader.get(b"NODE_ENV") {
+                if node_env == b"production" {
+                    this_transpiler.options.production = true;
+                }
+            }
+
+            // Always skip default .env files for package.json script runner
+            // (see comment in env_loader.zig:542-548 - the script's own bun instance loads .env)
+            // TODO(b2-blocked): `Transpiler::run_env_loader` is in the gated
+            // `__phase_a_draft` impl (transpiler.rs:1317).
+            #[cfg(any())]
+            let _ = this_transpiler.run_env_loader(true);
+        }
+
+        env_loader.map.put_default(b"npm_config_local_prefix", top_level_dir).expect("unreachable");
+
+        // Propagate --no-orphans / [run] noOrphans to the script's env so any
+        // Bun process the script spawns enables its own watchdog. The env
+        // loader snapshots `environ` before flag parsing runs, so the
+        // `setenv()` in `enable()` isn't reflected here.
+        // TODO(b2-blocked): `bun_core::ParentDeathWatchdog` not yet ported.
+        #[cfg(any())]
+        if bun_core::ParentDeathWatchdog::is_enabled() {
+            env_loader.map.put(b"BUN_FEATURE_FLAG_NO_ORPHANS", b"1").expect("unreachable");
+        }
+
+        // we have no way of knowing what version they're expecting without running the node executable
+        // running the node executable is too slow
+        // so we will just hardcode it to LTS
+        env_loader
+            .map
+            .put_default(
+                b"npm_config_user_agent",
+                // the use of npm/? is copying yarn
+                // e.g.
+                // > "yarn/1.22.4 npm/? node/v12.16.3 darwin x64",
+                const_format::concatcp!(
+                    "bun/",
+                    Global::package_json_version,
+                    " npm/? node/v",
+                    Environment::REPORTED_NODEJS_VERSION,
+                    " ",
+                    Global::os_name,
+                    " ",
+                    Global::arch_name
+                )
+                .as_bytes(),
+            )
+            .expect("unreachable");
+
+        if env_loader.get(b"npm_execpath").is_none() {
+            // we don't care if this fails
+            if let Ok(self_exe_path) = bun_core::self_exe_path() {
+                env_loader
+                    .map
+                    .put_default(b"npm_execpath", self_exe_path.as_bytes())
+                    .expect("unreachable");
+            }
+        }
+
+        // SAFETY: `read_dir_info` returned `Some(ptr)`; entry lives in the
+        // resolver's `DirInfoCache` for the process lifetime.
+        let root_dir = unsafe { &*root_dir_info };
+        if let Some(package_json) = root_dir.enclosing_package_json {
+            if !package_json.name.is_empty() {
+                if env_loader.map.get(NpmArgs::PACKAGE_NAME).is_none() {
+                    env_loader
+                        .map
+                        .put(NpmArgs::PACKAGE_NAME, &package_json.name)
+                        .expect("unreachable");
+                }
+            }
+
+            env_loader
+                .map
+                .put_default(b"npm_package_json", package_json.source.path.text)
+                .expect("unreachable");
+
+            if !package_json.version.is_empty() {
+                if env_loader.map.get(NpmArgs::PACKAGE_VERSION).is_none() {
+                    env_loader
+                        .map
+                        .put(NpmArgs::PACKAGE_VERSION, &package_json.version)
+                        .expect("unreachable");
+                }
+            }
+
+            if let Some(config) = &package_json.config {
+                env_loader.map.ensure_unused_capacity(config.count())?;
+                for (k, v) in config.keys().iter().zip(config.values()) {
+                    let key = strings::concat(&[b"npm_package_config_", k])?;
+                    // PERF(port): was assume_capacity — `key` is `Box<[u8]>`
+                    // here vs the `&[u8]` `put_assume_capacity` wants; reuse
+                    // the dup'd box via `put` for now.
+                    env_loader.map.put(&key, v).expect("unreachable");
+                }
+            }
+        }
+
+        Ok(root_dir_info)
+    }
+
     /// Best-effort default-loader lookup by file extension. Mirrors
     /// `options.defaultLoaders.get(ext)` (the *file-extension*→Loader map at
     /// options.zig:1041 — NOT `Loader::NAMES`, which is the *loader-name*

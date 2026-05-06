@@ -257,12 +257,8 @@ macro_rules! to_css_shim {
 }
 
 // generic leaf rules whose own `to_css` body is still gated
-use media::MediaRule;
 use style::StyleRule;
-use supports::SupportsRule;
 to_css_shim!(generic:
-    MediaRule,
-    SupportsRule,
     StyleRule,
 );
 

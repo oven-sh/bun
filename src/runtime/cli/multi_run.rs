@@ -177,12 +177,12 @@ impl<'a> ProcessHandle<'a> {
 
         self.stdout_reader.handle = self as *const _;
         self.stderr_reader.handle = self as *const _;
-        self.stdout_reader
-            .reader
-            .set_parent(&mut self.stdout_reader as *mut PipeReader as *mut c_void);
-        self.stderr_reader
-            .reader
-            .set_parent(&mut self.stderr_reader as *mut PipeReader as *mut c_void);
+        // PORT NOTE: compute parent ptrs before calling `set_parent` to avoid
+        // borrowck seeing two simultaneous &mut borrows of the same field.
+        let stdout_parent = &mut self.stdout_reader as *mut PipeReader as *mut c_void;
+        self.stdout_reader.reader.set_parent(stdout_parent);
+        let stderr_parent = &mut self.stderr_reader as *mut PipeReader as *mut c_void;
+        self.stderr_reader.reader.set_parent(stderr_parent);
 
         #[cfg(windows)]
         {
@@ -359,7 +359,7 @@ impl<'a> State<'a> {
     }
 
     // TODO(port): narrow error set — was `std.Io.Writer.Error!void`
-    fn process_exit(&mut self, handle: &mut ProcessHandle) -> Result<(), Error> {
+    fn process_exit(&mut self, handle: &mut ProcessHandle<'a>) -> Result<(), Error> {
         self.remaining_scripts -= 1;
 
         // Flush remaining buffers (stdout first, then stderr)

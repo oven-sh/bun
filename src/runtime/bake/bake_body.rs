@@ -1165,13 +1165,13 @@ impl Framework {
         )
     }
 
-    pub fn init_transpiler_with_options(
+    pub fn init_transpiler_with_options<'a>(
         &mut self,
-        arena: &Arena,
+        arena: &'a Arena,
         log: &mut logger::Log,
         mode: Mode,
         renderer: Graph,
-        out: &mut core::mem::MaybeUninit<bun_bundler::Transpiler>,
+        out: &mut core::mem::MaybeUninit<bun_bundler::Transpiler<'a>>,
         bundler_options: &BuildConfigSubset,
         source_map: bun_bundler::options::SourceMapOption,
         minify_whitespace: Option<bool>,

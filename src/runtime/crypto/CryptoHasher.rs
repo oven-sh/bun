@@ -6,7 +6,7 @@ use bun_jsc::{ArrayBuffer, CallFrame, ErrorCode, JSGlobalObject, JSObject, JSVal
 use bun_str::ZigString;
 
 use crate::crypto::{create_crypto_error, evp, HMAC};
-use crate::crypto::evp::EVP;
+use crate::crypto::evp::{AlgorithmExt as _, EVP};
 use crate::node::{BlobOrStringOrBuffer, Encoding, StringOrBuffer};
 // TODO(port): `Hashers` = src/sha_hmac/sha.zig — confirm crate path in Phase B
 use bun_sha_hmac::sha as hashers;
@@ -77,7 +77,7 @@ impl CryptoHasher {
             return Some(CryptoHasher::new(CryptoHasher::Zig(inner)));
         }
 
-        let Some(&algorithm) = evp::Algorithm::MAP.get(name) else {
+        let Some(&algorithm) = evp::MAP.get(name) else {
             return None;
         };
 

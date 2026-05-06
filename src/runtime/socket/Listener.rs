@@ -465,9 +465,9 @@ impl Listener {
         if let uws::InternalSocket::Connected(s) = socket.socket {
             // SAFETY: s is a live us_socket_t* from the accept callback.
             unsafe { &mut *s }.set_kind(if SSL {
-                uws::SocketKind::BunSocketTls
+                uws_sys::SocketKind::BunSocketTls
             } else {
-                uws::SocketKind::BunSocketTcp
+                uws_sys::SocketKind::BunSocketTcp
             });
         }
         socket.set_timeout(120);
@@ -531,13 +531,10 @@ impl Listener {
         if !ok {
             // Old entry was already removed; failing silently would leave the
             // hostname with no SNI mapping at all. Surface it.
-            return Err(global.throw_value(global.create_error_instance(
-                "{}",
-                format_args!(
-                    "Failed to register SNI for '{}'",
-                    bstr::BStr::new(server_name_bytes)
-                ),
-            )));
+            return Err(global.throw_value(global.create_error_instance(format_args!(
+                "Failed to register SNI for '{}'",
+                bstr::BStr::new(server_name_bytes)
+            ))));
             // TODO(port): Zig used `global.ERR_BORINGSSL(...)` for the error code path.
         }
 
@@ -1061,7 +1058,7 @@ pub fn js_add_server_name(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
         // SAFETY: from_js returned a non-null *mut Listener; the JS wrapper holds it.
         return Listener::add_server_name(unsafe { &mut *this }, global, arguments.ptr[1], arguments.ptr[2]);
     }
-    Err(global.throw("{}", format_args!("Expected a Listener instance")))
+    Err(global.throw(format_args!("Expected a Listener instance")))
 }
 
 fn is_valid_pipe_name(pipe_name: &[u8]) -> bool {

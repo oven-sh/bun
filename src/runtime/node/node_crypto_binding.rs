@@ -232,12 +232,14 @@ macro_rules! extern_crypto_job {
                     }
 
                     pub fn run_from_js(this: *mut Job) {
-                        // SAFETY: `this` was boxed in `create`; we are on the JS thread.
-                        let this = unsafe { &mut *this };
-                        let _guard = scopeguard::guard((), |_| {
+                        // Guard captures the raw pointer (Copy) so the `&mut *this` reborrow
+                        // below doesn't conflict with the deferred `deinit` closure.
+                        let _guard = scopeguard::guard(this, |this| {
                             // SAFETY: only call site; runs once.
                             unsafe { Self::deinit(this) };
                         });
+                        // SAFETY: `this` was boxed in `create`; we are on the JS thread.
+                        let this = unsafe { &mut *this };
                         let vm = this.vm;
                         // SAFETY: `vm` is the singleton JS VM, live for process lifetime.
                         let global: &JSGlobalObject = unsafe { &*(*vm).global };
@@ -251,10 +253,11 @@ macro_rules! extern_crypto_job {
                             return;
                         };
 
+                        let ctx = this.ctx;
                         let res: JsResult<()> = jsc::from_js_host_call_generic(global, || {
                             // SAFETY: ctx is live until `deinit` below; `vm.global` is the VM's
                             // `*mut JSGlobalObject` field (mut provenance) — no const→mut cast needed.
-                            unsafe { ctx_run_from_js(this.ctx, (*vm).global, callback) };
+                            unsafe { ctx_run_from_js(ctx, (*vm).global, callback) };
                         });
                         if let Err(err) = res {
                             global.report_active_exception_as_unhandled(err);

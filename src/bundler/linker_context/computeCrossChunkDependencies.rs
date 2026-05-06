@@ -44,27 +44,64 @@ pub fn compute_cross_chunk_dependencies(
     {
         // PORT NOTE: Zig heap-allocated this via c.allocator().create() and destroyed it at
         // scope end; in Rust we construct on the stack and let it drop.
+        //
+        // PORT NOTE: reshaped for borrowck — Zig's `c.graph.ast.items(.field)` returns
+        // independent column slices; in Rust the typed `items_*()` accessors all borrow
+        // `&c.graph.ast` (and `_mut()` borrows `&mut`). Snapshot the SoA `Slice` value and
+        // pull raw column pointers via `items_raw` (the documented escape hatch in
+        // `bun_collections::multi_array_list::Slice`), matching `scanImportsAndExports.rs`.
+        // `ctx` / `symbols` / `chunks` are likewise stored as raw pointers so the struct
+        // does not hold a borrow on `c` or `chunks` across the `each_ptr` call.
+        let ast = c.graph.ast.slice();
+        let meta = c.graph.meta.slice();
+        let files = c.graph.files.slice();
+        let (ast_len, meta_len, files_len) = (ast.len(), meta.len(), files.len());
+
+        macro_rules! col {
+            ($slice:ident, $len:ident, $fenum:ident :: $field:ident, $ty:ty) => {
+                // SAFETY: `$ty` is exactly the column type for `$field` (derive-guaranteed
+                // pairing); SoA columns are disjoint and the backing buffer is never
+                // reallocated during `walk`.
+                unsafe {
+                    core::slice::from_raw_parts::<'_, $ty>(
+                        $slice.items_raw::<$ty>($fenum::$field),
+                        $len,
+                    )
+                }
+            };
+        }
+        macro_rules! col_mut {
+            ($slice:ident, $len:ident, $fenum:ident :: $field:ident, $ty:ty) => {
+                // SAFETY: see `col!`; exclusive access to this column for the scope.
+                unsafe {
+                    core::slice::from_raw_parts_mut::<'_, $ty>(
+                        $slice.items_raw::<$ty>($fenum::$field),
+                        $len,
+                    )
+                }
+            };
+        }
+
         let mut cross_chunk_dependencies = CrossChunkDependencies {
-            chunks,
+            chunks: chunks as *const [Chunk],
             chunk_meta: &mut chunk_metas,
-            parts: c.graph.ast.items_parts(),
-            import_records: c.graph.ast.items_import_records_mut(),
-            flags: c.graph.meta.items_flags(),
-            entry_point_chunk_indices: c.graph.files.items_entry_point_chunk_index(),
-            imports_to_bind: c.graph.meta.items_imports_to_bind(),
-            wrapper_refs: c.graph.ast.items_wrapper_ref(),
-            exports_refs: c.graph.ast.items_exports_ref(),
-            sorted_and_filtered_export_aliases: c
-                .graph
-                .meta
-                .items_sorted_and_filtered_export_aliases(),
-            resolved_exports: c.graph.meta.items_resolved_exports(),
-            ctx: c,
-            symbols: &mut c.graph.symbols,
+            parts: col!(ast, ast_len, AstField::parts, BabyList<Part>),
+            import_records: col_mut!(ast, ast_len, AstField::import_records, BabyList<ImportRecord>),
+            flags: col!(meta, meta_len, JSMetaField::flags, js_meta::Flags),
+            entry_point_chunk_indices: col!(files, files_len, FileField::entry_point_chunk_index, IndexInt),
+            imports_to_bind: col!(meta, meta_len, JSMetaField::imports_to_bind, RefImportData),
+            wrapper_refs: col!(ast, ast_len, AstField::wrapper_ref, Ref),
+            exports_refs: col!(ast, ast_len, AstField::exports_ref, Ref),
+            sorted_and_filtered_export_aliases: col!(
+                meta,
+                meta_len,
+                JSMetaField::sorted_and_filtered_export_aliases,
+                Box<[Box<[u8]>]>
+            ),
+            resolved_exports: col!(meta, meta_len, JSMetaField::resolved_exports, ResolvedExports),
+            ctx: c as *const LinkerContext<'_>,
+            symbols: &mut c.graph.symbols as *mut js_ast::ast::symbol::Map,
         };
-        // TODO(port): the field initializers above borrow `c` immutably (via .items_*()) and
-        // mutably (ctx, symbols) at the same time; Phase B will need to restructure (e.g.
-        // split-borrow `c.graph` first, or pass raw column pointers as Zig does).
 
         // SAFETY: `parse_graph` backref valid for the link pass.
         unsafe {

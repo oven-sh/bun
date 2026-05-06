@@ -73,12 +73,12 @@ pub fn post_process_js_chunk(
     let runtime_scope: &mut Scope =
         &mut c.graph.ast.items_module_scope_mut()[runtime_input_file];
     let runtime_members = &mut runtime_scope.members;
-    let to_common_js_ref = c.graph.symbols.follow(runtime_members.get(b"__toCommonJS").unwrap().ref_);
-    let to_esm_ref = c.graph.symbols.follow(runtime_members.get(b"__toESM").unwrap().ref_);
+    let to_common_js_ref = c.graph.symbols.follow(runtime_members.get(&b"__toCommonJS"[..]).unwrap().ref_);
+    let to_esm_ref = c.graph.symbols.follow(runtime_members.get(&b"__toESM"[..]).unwrap().ref_);
     let runtime_require_ref = if c.options.output_format == options::OutputFormat::Cjs {
         None
     } else {
-        Some(c.graph.symbols.follow(runtime_members.get(b"__require").unwrap().ref_))
+        Some(c.graph.symbols.follow(runtime_members.get(&b"__require"[..]).unwrap().ref_))
     };
 
     // Create ModuleInfo for ESM bytecode in --compile builds

@@ -48,7 +48,10 @@ impl GenericAllocator for StdAllocator {
 pub trait BumpAllocatorExt {
     fn allocator(&self) -> &Self;
 }
-impl<const MIN_ALIGN: usize> BumpAllocatorExt for bumpalo::Bump<MIN_ALIGN> {
+// `bumpalo` is not a direct dep of `bun_runtime`; `bun_alloc::Arena` re-exports
+// `bumpalo::Bump` (default MIN_ALIGN). All in-tree arena callers go through that
+// alias, so impl on the alias rather than the const-generic `Bump<MIN_ALIGN>`.
+impl BumpAllocatorExt for bun_alloc::Arena {
     #[inline]
     fn allocator(&self) -> &Self { self }
 }

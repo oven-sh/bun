@@ -38,11 +38,15 @@ pub type WeakRef = bun_ptr::WeakPtr<Request>;
 // not yet wired for Request). Mirrors the Blob.rs pattern — bind the
 // generated C++ shims by link-name and wrap.
 const _: () = {
+    // Request is #[repr(C)] but holds Option<Arc<_>> (niche-opt, not formally
+    // FFI-safe). C++ only ever sees *mut Request as an opaque pointer, so
+    // suppress the field-level lint here.
+    #[allow(improper_ctypes)]
     unsafe extern "C" {
         #[link_name = "Request__fromJS"]
-        fn __from_js(value: bun_jsc::JSValue) -> *mut Request;
+        fn __from_js(value: bun_jsc::JSValue) -> Option<core::ptr::NonNull<Request>>;
         #[link_name = "Request__fromJSDirect"]
-        fn __from_js_direct(value: bun_jsc::JSValue) -> *mut Request;
+        fn __from_js_direct(value: bun_jsc::JSValue) -> Option<core::ptr::NonNull<Request>>;
         #[link_name = "Request__create"]
         fn __create(global: *const bun_jsc::JSGlobalObject, ptr: *mut Request) -> bun_jsc::JSValue;
         #[link_name = "Request__getConstructor"]
@@ -52,13 +56,11 @@ const _: () = {
     impl bun_jsc::JsClass for Request {
         fn from_js(value: bun_jsc::JSValue) -> Option<*mut Self> {
             // SAFETY: pure FFI downcast; returns null on type mismatch.
-            let p = unsafe { __from_js(value) };
-            if p.is_null() { None } else { Some(p) }
+            unsafe { __from_js(value) }.map(|p| p.as_ptr())
         }
         fn from_js_direct(value: bun_jsc::JSValue) -> Option<*mut Self> {
             // SAFETY: pure FFI downcast (exact-structure check); null on miss.
-            let p = unsafe { __from_js_direct(value) };
-            if p.is_null() { None } else { Some(p) }
+            unsafe { __from_js_direct(value) }.map(|p| p.as_ptr())
         }
         fn to_js(self, global: &bun_jsc::JSGlobalObject) -> bun_jsc::JSValue {
             let ptr = Box::into_raw(Box::new(self));
@@ -527,6 +529,8 @@ impl Request {
 }
 
 // TODO(port): move to runtime_sys
+// Request is opaque on the C++ side; see note on the JsClass extern block above.
+#[allow(improper_ctypes)]
 unsafe extern "C" {
     #[link_name = "Bun__JSRequest__createForBake"]
     fn Bun__JSRequest__createForBake(

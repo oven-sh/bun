@@ -240,9 +240,10 @@ impl<'a> Scanner<'a> {
         // through `*mut` everywhere else (see `Transpiler.fs: *mut FileSystem`);
         // cast away `&` to match the Zig calling convention. Serialised by
         // `RealFS.entries_mutex` inside the callee.
-        let real_fs = &self.fs.fs as *const fs::RealFS as *mut fs::RealFS;
+        let real_fs = core::ptr::from_ref(&self.fs.fs) as *mut fs::RealFS;
         let iter = ScannerDirIter(self as *mut Scanner<'a>);
         // SAFETY: see PORT NOTE above — `real_fs` aliases the singleton.
+        #[allow(invalid_reference_casting)]
         unsafe { &mut *real_fs }
             .read_directory_with_iterator(name, handle.map(|d| d.fd), 0, true, iter)
     }

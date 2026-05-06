@@ -2894,11 +2894,8 @@ pub mod args {
             if bv.is_string() && !bv.is_string_literal() {
                 return Err(ctx.throw_invalid_argument_type_value("buffer", "string or TypedArray", bv));
             }
-            let mut args = Write {
-                fd, buffer,
-                encoding: if matches!(buffer, StringOrBuffer::Buffer(_)) { Encoding::Buffer } else { Encoding::Utf8 },
-                ..Default::default()
-            };
+            let encoding = if matches!(buffer, StringOrBuffer::Buffer(_)) { Encoding::Buffer } else { Encoding::Utf8 };
+            let mut args = Write { fd, buffer, encoding, ..Default::default() };
             arguments.eat();
             'parse: {
                 let Some(mut current) = arguments.next() else { break 'parse };
@@ -3137,7 +3134,7 @@ pub mod args {
         pub fn to_thread_safe(&mut self) { self.file.to_thread_safe(); self.data.to_thread_safe(); }
         pub fn deinit_and_unprotect(&mut self) {
             self.file.deinit_and_unprotect();
-            self.data.deinit_and_unprotect();
+            core::mem::take(&mut self.data).deinit_and_unprotect();
             if let Some(signal) = self.signal { signal.pending_activity_unref(); signal.unref(); }
         }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<WriteFile> {
@@ -4558,7 +4555,7 @@ impl NodeFS {
 
     pub fn uv_readv(&mut self, args: &args::Readv, rc: i64) -> Maybe<ret::Readv> {
         if rc < 0 {
-            return Maybe::Err(sys::Error { errno: (-rc) as _, syscall: sys::Tag::readv, fd: args.fd, from_libuv: true, ..Default::default() });
+            return Maybe::Err(sys::Error { errno: (-rc) as _, syscall: sys::Tag::readv, fd: args.fd, #[cfg(windows)] from_libuv: true, ..Default::default() });
         }
         Maybe::Ok(ret::Readv { bytes_read: rc as u64 })
     }

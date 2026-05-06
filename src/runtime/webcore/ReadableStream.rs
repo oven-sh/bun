@@ -925,7 +925,7 @@ pub mod js_readable_stream_source {
         match this.on_start_from_js() {
             streams::Start::Empty => Ok(JSValue::js_number(0.0)),
             streams::Start::Ready => Ok(JSValue::js_number(16384.0)),
-            streams::Start::ChunkSize(size) => Ok(JSValue::js_number(*size as f64)),
+            streams::Start::ChunkSize(size) => Ok(JSValue::js_number(size as f64)),
             streams::Start::Err(err) => Err(global_this.throw_value(err.to_js(global_this))),
             rc => rc.to_js(global_this),
         }

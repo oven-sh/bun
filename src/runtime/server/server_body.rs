@@ -1588,11 +1588,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // `&mut FetchHeaders` access via `Request::get_fetch_headers` (which
         // currently returns `&FetchHeaders`). The full body is preserved in
         // server.zig; defer until those trait surfaces are widened.
-        let _ = (request, optional);
-        let _ = (
-            &mut sec_websocket_protocol_owned as *mut ZigStringSlice,
-            &mut sec_websocket_extensions_owned as *mut ZigStringSlice,
-        );
+        let _ = request;
         todo!("blocked_on: bun_runtime::server::any_request_context::CtxKind for ServerRequestContext<SSL,DEBUG>")
     }
 

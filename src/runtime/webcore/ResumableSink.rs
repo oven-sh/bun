@@ -217,9 +217,11 @@ impl<'a, Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<'a, J
                     let _ = Self::on_write(this_ref.context, bytes.slice());
                 }
                 this_ref.status = Status::Piped;
-                // TODO(port): jsc.WebCore.Pipe.Wrap(@This(), onStreamPipe).init(this) — Pipe
-                // stores an erased ctx ptr + fn ptr. Phase B: implement Pipe::wrap<T>(ctx, fn).
-                byte_stream.pipe = Pipe::wrap::<Self>(this, Self::on_stream_pipe);
+                // PORT NOTE: jsc.WebCore.Pipe.Wrap(@This(), onStreamPipe).init(this) — the
+                // Zig comptime fn-ptr param is reshaped as a `PipeHandler` impl on `Self`
+                // (see `impl PipeHandler` below); `Wrap::<Self>::init` erases `this` into
+                // the Pipe's ctx ptr.
+                byte_stream.pipe = Wrap::<Self>::init(this_ref);
                 this_ref.ref_(); // one ref for the pipe
 
                 // we only need the stream, we dont need to touch JS side yet

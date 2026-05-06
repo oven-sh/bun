@@ -2881,7 +2881,7 @@ impl<'a> BundleV2<'a> {
             });
         }
 
-        let output_files = this.linker.generate_chunks_in_parallel(chunks, false)?;
+        let output_files = crate::linker_context_mod::generate_chunks_in_parallel::<false>(&mut this.linker, chunks)?;
 
         // Generate metafile if requested (CLI writes files in build_command.zig)
         let metafile: Option<Box<[u8]>> = if this.linker.options.metafile {
@@ -3010,7 +3010,7 @@ impl<'a> BundleV2<'a> {
             return Ok(Vec::new());
         }
 
-        this.linker.generate_chunks_in_parallel(chunks, false)
+        crate::linker_context_mod::generate_chunks_in_parallel::<false>(&mut this.linker, chunks)
     }
 
     pub fn add_server_component_boundaries_as_extra_entry_points(&mut self) -> Result<(), Error> {
@@ -3555,7 +3555,7 @@ impl<'a> BundleV2<'a> {
             return Err(bun_core::err!("BuildFailed"));
         }
 
-        let mut output_files = self.linker.generate_chunks_in_parallel(chunks, false)?;
+        let mut output_files = crate::linker_context_mod::generate_chunks_in_parallel::<false>(&mut self.linker, chunks)?;
 
         // Generate metafile if requested
         let metafile: Option<Box<[u8]>> = if self.linker.options.metafile {
@@ -3909,7 +3909,7 @@ impl<'a> BundleV2<'a> {
 
         /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
-        self.linker.generate_chunks_in_parallel(chunks, true)?;
+        crate::linker_context_mod::generate_chunks_in_parallel::<true>(&mut self.linker, chunks)?;
         // TODO(port): errdefer { bun.outOfMemory() } — caller cannot recover
 
         /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */

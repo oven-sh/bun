@@ -2,11 +2,13 @@ use core::mem::offset_of;
 
 use bun_alloc::Arena as Bump;
 use bun_collections::BabyList;
-use crate::bun_css::{
-    self as css, BundlerCssRule, BundlerCssRuleList, BundlerLayerBlockRule, BundlerMediaRule,
-    BundlerStyleSheet, BundlerSupportsRule, ImportConditions, ImportInfo, ImportRule,
-    LayerName, LayerStatementRule, Location, ParserOptions, PrinterOptions, SmallList, Targets,
+use crate::bun_css::{self as css, BundlerStyleSheet, ImportConditions, PrinterOptions, Targets};
+use bun_css::css_parser::{
+    BundlerCssRule, BundlerCssRuleList, BundlerLayerBlockRule, BundlerMediaRule,
+    BundlerSupportsRule, ImportRule, LayerName, LayerStatementRule, Location, ParserOptions,
+    SmallList,
 };
+use bun_css::css_parser::ImportInfo;
 use crate::bun_fs::Path;
 use bun_logger::{Loc, Range};
 use bun_options_types::{
@@ -29,10 +31,10 @@ use crate::{BundleV2, Chunk, LinkerContext};
 // `linker` retains write provenance over the whole bundle, and (b) multiple
 // tasks may hold pointers to the same `LinkerContext` concurrently without
 // materializing aliased Rust references.
-pub struct PrepareCssAstTask<'a> {
+pub struct PrepareCssAstTask {
     pub task: ThreadPoolLib::Task,
     pub chunk: *mut Chunk,
-    pub linker: *mut LinkerContext<'a>,
+    pub linker: *mut LinkerContext<'static>,
 }
 
 pub fn prepare_css_asts_for_chunk(task: *mut ThreadPoolLib::Task) {

@@ -1088,10 +1088,9 @@ impl Run {
                         // SAFETY: `event_loop` is a self-pointer into this VM;
                         // uniquely accessed here.
                         unsafe { (*vm.event_loop()).tick() };
-                        // SAFETY: as above.
-                        // TODO(b2-cycle): EventLoop::tick_possibly_forever is gated.
-                        let _ = vm.event_loop();
-                        todo!("blocked_on: bun_jsc::event_loop::EventLoop::tick_possibly_forever");
+                        // SAFETY: as above — `event_loop` is a self-pointer into
+                        // this VM; uniquely accessed here.
+                        unsafe { (*vm.event_loop()).tick_possibly_forever() };
                     } else {
                         vm.exit_handler.exit_code = 1;
                         Run::on_exit(vm);

@@ -201,6 +201,19 @@ pub struct LoaderHooks {
         is_a_file_path: bool,
         is_user_require_resolve: bool,
     ) -> bool,
+    /// `Bun__transpileVirtualModule` body (spec ModuleLoader.zig:1234-1304) —
+    /// transpiles plugin-provided source through the per-thread `BufferPrinter`
+    /// (a `bun_runtime` thread-local). Writes `*ret` (always — `.ok` or `.err`)
+    /// and returns `true` (the only `false` return in Zig is unreachable here
+    /// because the C++ caller already proved `plugin_runner != null`).
+    pub transpile_virtual_module: unsafe fn(
+        global: *mut JSGlobalObject,
+        specifier: *const bun_string::String,
+        referrer: *const bun_string::String,
+        source_code: *mut bun_string::ZigString,
+        loader: bun_options_types::schema::api::Loader,
+        ret: *mut ErrorableResolvedSource,
+    ) -> bool,
     /// `Bun__transpileFile` body — needs `options.getLoaderAndVirtualSource`,
     /// `node_module_module`, `webcore.Blob`, the concurrent-transpiler queue.
     /// Returns the in-flight promise when `allow_promise && async`, else null

@@ -253,34 +253,28 @@ mod generic_registrations {
         align::PlaceContent,
         align::PlaceItems,
         align::PlaceSelf,
-        // border_image
-        border_image::BorderImageRepeat,
-        // css_modules
-        css_modules::Composes,
-        // overflow
-        overflow::Overflow,
-        // position
-        position::Position,
-        // PropertyId (used as `SmallList<PropertyId, 1>` for `transition-property`)
-        properties_generated::PropertyId,
-    );
-
-    // ── leaves whose inherent `parse`/`to_css` are still `#[cfg(any())]`-gated.
-    //    The trait impls compile (so `Property::{parse,value_to_css}` are real
-    //    functions); calling them panics with the gated-type name. Move a type
-    //    up to the block above when its inherent body un-gates.
-    impl_generic_parse_tocss!(@stub
+        // background
         background::Background,
         background::BackgroundPosition,
         background::BackgroundRepeat,
         background::BackgroundSize,
+        // border_image
         border_image::BorderImage,
+        border_image::BorderImageRepeat,
         border_image::BorderImageSlice,
         border_image::BorderImageSideWidth,
+        // border_radius
         border_radius::BorderRadius,
+        // box_shadow
+        box_shadow::BoxShadow,
+        // css_modules
+        css_modules::Composes,
+        // display
         display::Display,
+        // flex
         flex::Flex,
         flex::FlexFlow,
+        // font
         font::Font,
         font::FontFamily,
         font::FontSize,
@@ -288,48 +282,32 @@ mod generic_registrations {
         font::FontStyle,
         font::FontWeight,
         font::LineHeight,
+        // masking
         masking::Mask,
         masking::MaskBorder,
+        // overflow
+        overflow::Overflow,
+        // position
+        position::Position,
+        // size
         size::AspectRatio,
         size::BoxSizing,
         size::MaxSize,
         size::Size,
+        // text
         text::TextShadow,
+        // transform
         transform::Rotate,
         transform::Scale,
         transform::TransformList,
         transform::Translate,
+        // transition
         transition::Transition,
+        // ui
         ui::ColorScheme,
+        // PropertyId (used as `SmallList<PropertyId, 1>` for `transition-property`)
+        properties_generated::PropertyId,
     );
-
-    // `BoxShadow`: inherent `to_css` is real (box_shadow.rs) but `parse` is
-    // still `#[cfg(any())]`-gated. Split the registration so trait dispatch
-    // forwards to the working serializer instead of the `@stub` `todo!()`.
-    impl crate::generics::ToCss for box_shadow::BoxShadow {
-        #[inline]
-        fn to_css(
-            &self,
-            dest: &mut crate::printer::Printer,
-        ) -> ::core::result::Result<(), crate::PrintErr> {
-            box_shadow::BoxShadow::to_css(self, dest)
-        }
-    }
-    impl crate::generics::Parse for box_shadow::BoxShadow {
-        #[inline]
-        fn parse(_input: &mut crate::css_parser::Parser) -> crate::css_parser::CssResult<Self> {
-            todo!("blocked_on: BoxShadow::parse — inherent body still #[cfg(any())]-gated")
-        }
-    }
-    impl crate::generics::ParseWithOptions for box_shadow::BoxShadow {
-        #[inline]
-        fn parse_with_options(
-            _input: &mut crate::css_parser::Parser,
-            _o: &crate::css_parser::ParserOptions,
-        ) -> crate::css_parser::CssResult<Self> {
-            todo!("blocked_on: BoxShadow::parse — inherent body still #[cfg(any())]-gated")
-        }
-    }
 
     // `GenericBorder<S, P>` covers Border / BorderTop / … / Outline. The
     // inherent impl block bounds `S` on the protocol traits; mirror here.

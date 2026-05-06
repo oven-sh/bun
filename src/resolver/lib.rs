@@ -7290,8 +7290,9 @@ impl<'a> Resolver<'a> {
         }
 
         if self.care_about_browser_field {
-            // SAFETY: resolver mutex held; sole `&mut DirInfo` for this index.
-            if let Some(browser_scope) = unsafe { dir_info.get_enclosing_browser_scope() } {
+            // SAFETY: ARENA — DirInfo ptr is a BSSMap slot; narrow re-borrow ends
+            // before `browser_scope` (which may alias `dir_info`) is held.
+            if let Some(browser_scope) = unsafe { (*dir_info).get_enclosing_browser_scope() } {
                 const FIELD_REL_PATH: &[u8] = b"index";
 
                 if let Some(browser_json) = browser_scope.package_json {
@@ -7324,8 +7325,7 @@ impl<'a> Resolver<'a> {
 
                         // Is it a directory with an index?
                         if let Ok(Some(new_dir)) = self.dir_info_cached(remapped_abs) {
-                            // SAFETY: ARENA — DirInfo ptr is a BSSMap slot; uniquely re-borrowed mutably (see LIFETIMES.tsv).
-                            if let Some(absolute) = self.load_as_index(unsafe { &mut *new_dir }, extension_order) {
+                            if let Some(absolute) = self.load_as_index(new_dir, extension_order) {
                                 return Some(absolute);
                             }
                         }
@@ -7392,7 +7392,11 @@ impl<'a> Resolver<'a> {
             }};
         }
 
-        let dir_info_ptr = match self.dir_info_cached(path) {
+        // PORT NOTE: keep `dir_info` as raw `*mut` (matching spec resolver.zig:3674
+        // raw `*DirInfo`) and re-borrow narrowly. The callees fetch
+        // `get_enclosing_browser_scope()` which can resolve back to this same
+        // BSSMap slot — holding a long-lived `&mut` here would alias.
+        let dir_info: *mut DirInfo::DirInfo = match self.dir_info_cached(path) {
             Ok(Some(d)) => d,
             Ok(None) => dec_ret!(None),
             Err(err) => {
@@ -7401,12 +7405,11 @@ impl<'a> Resolver<'a> {
                 dec_ret!(None);
             }
         };
-        // SAFETY: ARENA — DirInfo ptr is a BSSMap slot; uniquely re-borrowed mutably (see LIFETIMES.tsv).
-        let dir_info = unsafe { &mut *dir_info_ptr };
         let mut package_json: Option<*const PackageJSON> = None;
 
         // Try using the main field(s) from "package.json"
-        if let Some(pkg_json) = dir_info.package_json {
+        // SAFETY: ARENA — DirInfo ptr is a BSSMap slot and outlives the resolver (see LIFETIMES.tsv).
+        if let Some(pkg_json) = unsafe { &*dir_info }.package_json {
             package_json = Some(pkg_json as *const _);
             if pkg_json.main_fields.count() > 0 {
                 let main_field_values = &pkg_json.main_fields;

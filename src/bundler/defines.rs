@@ -426,7 +426,6 @@ impl DefineDataExt for DefineData {
                 ),
             });
         }
-        let _log = log;
         let source = logger::Source {
             // SAFETY: `Source.contents` is typed `&'static [u8]` as a Phase-A
             // stand-in (see logger/lib.rs `Str` note). The borrow does not
@@ -437,7 +436,7 @@ impl DefineDataExt for DefineData {
             path: defines_path(),
             ..Default::default()
         };
-        let expr = bun_interchange::json_parser::parse_env_json(&source, _log, bump)?;
+        let expr = bun_interchange::json_parser::parse_env_json(&source, log, bump)?;
         // T2 interchange `Expr` → T4 parser `ExprData` (`From` impl deep-walks
         // and interns into the AST store), then `deep_clone` into the
         // long-lived arena to detach from `source.contents`.

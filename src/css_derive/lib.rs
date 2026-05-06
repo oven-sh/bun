@@ -532,7 +532,7 @@ fn expand_deep_clone(input: DeriveInput) -> syn::Result<TokenStream2> {
                         quote! {
                             Self::#vname( #(#binds),* ) =>
                                 Self::#vname( #(
-                                    #binds.deep_clone(__bump)
+                                    ::bun_css::generics::DeepClone::deep_clone(#binds, __bump)
                                 ),* ),
                         }
                     }
@@ -542,7 +542,7 @@ fn expand_deep_clone(input: DeriveInput) -> syn::Result<TokenStream2> {
                         quote! {
                             Self::#vname { #(#names),* } =>
                                 Self::#vname { #(
-                                    #names: #names.deep_clone(__bump)
+                                    #names: ::bun_css::generics::DeepClone::deep_clone(#names, __bump)
                                 ),* },
                         }
                     }
@@ -563,8 +563,6 @@ fn expand_deep_clone(input: DeriveInput) -> syn::Result<TokenStream2> {
         impl #impl_g ::bun_css::generics::DeepClone<#bump_lt> for #name #ty_g #where_g {
             #[inline]
             fn deep_clone(&self, __bump: & #bump_lt ::bun_alloc::Arena) -> Self {
-                #[allow(unused_imports)]
-                use ::bun_css::generics::DeepClone as _;
                 let _ = __bump;
                 #body
             }
@@ -1228,7 +1226,7 @@ fn clone_fields(fields: &Fields, ctor: TokenStream2) -> TokenStream2 {
             let idx = (0..fs.unnamed.len()).map(syn::Index::from);
             quote! {
                 #ctor( #(
-                    self.#idx.deep_clone(__bump)
+                    ::bun_css::generics::DeepClone::deep_clone(&self.#idx, __bump)
                 ),* )
             }
         }
@@ -1236,7 +1234,7 @@ fn clone_fields(fields: &Fields, ctor: TokenStream2) -> TokenStream2 {
             let names: Vec<_> = fs.named.iter().map(|f| f.ident.clone().unwrap()).collect();
             quote! {
                 #ctor { #(
-                    #names: self.#names.deep_clone(__bump)
+                    #names: ::bun_css::generics::DeepClone::deep_clone(&self.#names, __bump)
                 ),* }
             }
         }

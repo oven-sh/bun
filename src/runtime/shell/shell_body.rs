@@ -210,6 +210,10 @@ pub enum ShellError {
     Spawn,
 }
 
+#[cfg(any())]
+mod __phase_a_draft_parse_error {
+    // Phase-A draft preserved; canonical defs now in bun_shell_parser::parse.
+    use super::*;
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr, Clone, Copy, PartialEq, Eq)]
 pub enum ParseError {
     #[error("Unsupported")]
@@ -223,6 +227,7 @@ pub enum ParseError {
     #[error("Lex")]
     Lex,
 }
+} // mod __phase_a_draft_parse_error
 
 // TODO(port): move to <area>_sys
 unsafe extern "C" {
@@ -420,6 +425,10 @@ impl<'a> GlobalMini<'a> {
     }
 }
 
+#[cfg(any())]
+mod __phase_a_draft_lex_parse {
+    // Phase-A draft preserved; canonical defs now in bun_shell_parser::parse.
+    use super::*;
 // ───────────────────────────── AST ─────────────────────────────
 
 pub mod ast {
@@ -4346,6 +4355,7 @@ pub fn has_eq_sign(str: &[u8]) -> Option<u32> {
 fn is_all_ascii(s: &[u8]) -> bool {
     strings::is_all_ascii(s)
 }
+} // mod __phase_a_draft_lex_parse
 
 // ───────────────────────────── CmdEnvIter ─────────────────────────────
 
@@ -4862,6 +4872,10 @@ impl<'a> ShellSrcBuilder<'a> {
     }
 }
 
+#[cfg(any())]
+mod __phase_a_draft_escaping {
+    // Phase-A draft preserved; canonical defs now in bun_shell_parser::parse.
+    use super::*;
 // ───────────────────────────── escaping ─────────────────────────────
 
 /// Characters that need to be escaped
@@ -5005,7 +5019,12 @@ pub fn needs_escape_utf8_ascii_latin1(str: &[u8]) -> bool {
     }
     false
 }
+} // mod __phase_a_draft_escaping
 
+#[cfg(any())]
+mod __phase_a_draft_smollist {
+    // Phase-A draft preserved; canonical defs now in bun_shell_parser::parse.
+    use super::*;
 // ───────────────────────────── SmolList ─────────────────────────────
 
 /// A list that can store its items inlined, and promote itself to a heap allocated BabyList<T>
@@ -5364,6 +5383,7 @@ impl<T: fmt::Debug, const N: usize> fmt::Display for SmolList<T, N> {
         write!(f, "{:?}", self.slice())
     }
 }
+} // mod __phase_a_draft_smollist
 
 // ───────────────────────────── TestingAPIs ─────────────────────────────
 

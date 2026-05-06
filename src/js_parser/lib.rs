@@ -1619,9 +1619,13 @@ pub mod defines_full_draft {
     #[derive(Clone)]
     pub struct DefineData {
         pub value: expr::Data<'static>,
-        // Not using a slice here shrinks the size from 48 bytes to 40 bytes.
-        pub original_name_ptr: Option<*const u8>,
-        pub original_name_len: u32,
+        // Zig stored `original_name_ptr: ?[*]const u8` + `original_name_len: u32`
+        // borrowing into caller-owned strings (defines.zig:24-25 — the 48→40-byte
+        // packing trick). The Rust port owns the `RawDefines` value bytes
+        // (`Box<[u8]>`), so borrowing would be a use-after-free once the
+        // `RawDefines` map is dropped after `Define::init`. Own the bytes here
+        // instead — these are tiny startup-time copies.
+        pub original_name: Option<Box<[u8]>>,
         pub flags: DefineDataFlags,
     }
 
@@ -1629,8 +1633,7 @@ pub mod defines_full_draft {
         fn default() -> Self {
             Self {
                 value: expr::Data::EUndefined(E::Undefined {}),
-                original_name_ptr: None,
-                original_name_len: 0,
+                original_name: None,
                 flags: DefineDataFlags::empty(),
             }
         }
@@ -1639,14 +1642,9 @@ pub mod defines_full_draft {
     impl DefineData {
         #[inline]
         pub fn original_name(&self) -> Option<&[u8]> {
-            if self.original_name_len > 0 {
-                // SAFETY: ptr/len were set together from a borrowed slice; the
-                // owning string outlives the Define (caller contract).
-                Some(unsafe {
-                    core::slice::from_raw_parts(self.original_name_ptr.unwrap(), self.original_name_len as usize)
-                })
-            } else {
-                None
+            match &self.original_name {
+                Some(name) if !name.is_empty() => Some(name.as_ref()),
+                _ => None,
             }
         }
 
@@ -1717,8 +1715,7 @@ pub mod defines_full_draft {
             DefineData {
                 value: b.value.clone(),
                 flags,
-                original_name_ptr: b.original_name_ptr,
-                original_name_len: b.original_name_len,
+                original_name: b.original_name.clone(),
             }
         }
 
@@ -1787,8 +1784,7 @@ pub mod defines_full_draft {
                 flags |= DefineDataFlags::CAN_BE_REMOVED_IF_UNUSED;
                 return Ok(DefineData {
                     value,
-                    original_name_ptr: if value_str.is_empty() { None } else { Some(value_str.as_ptr()) },
-                    original_name_len: value_str.len() as u32,
+                    original_name: if value_str.is_empty() { None } else { Some(Box::<[u8]>::from(value_str)) },
                     flags,
                 });
             }
@@ -1807,8 +1803,7 @@ pub mod defines_full_draft {
             }
             Ok(DefineData {
                 value: cloned,
-                original_name_ptr: if value_str.is_empty() { None } else { Some(value_str.as_ptr()) },
-                original_name_len: value_str.len() as u32,
+                original_name: if value_str.is_empty() { None } else { Some(Box::<[u8]>::from(value_str)) },
                 flags,
             })
         }

@@ -937,7 +937,11 @@ pub fn constructor(
         log: logger::Log::init(),
         ..Default::default()
     };
-    let arena = Arena::new();
+    let arena = Box::new(Arena::new());
+    // SAFETY: `arena` is heap-allocated and moved (as a Box) into `Box<JSTranspiler>` below;
+    // its address is stable for the lifetime of the JSTranspiler. `Transpiler<'static>` forces
+    // the borrow to 'static, so launder through a raw ptr.
+    let arena_ref: &'static Arena = unsafe { &*(arena.as_ref() as *const Arena) };
 
     // errdefer { ... } — on any `?` below, stack `config`/`arena` drop and run Drop, which
     // covers config.log, config.tsconfig, arena. ref_count.clearWithoutDestructor is a
@@ -964,7 +968,7 @@ pub fn constructor(
     // SAFETY: VirtualMachine::get() returns the live singleton on the JS thread.
     let vm = unsafe { &mut *VirtualMachine::get() };
     let transpiler = match Transpiler::Transpiler::init(
-        &arena,
+        arena_ref,
         &mut config.log,
         config.transform.clone(),
         Some(vm.transpiler.env),

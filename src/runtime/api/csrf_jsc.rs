@@ -95,10 +95,10 @@ pub fn csrf__generate(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
         let js_secret = args[0];
         // Extract the secret (required)
         if js_secret.is_empty_or_undefined_or_null() {
-            return global.throw_invalid_arguments(format_args!("Secret is required"));
+            return Err(global.throw_invalid_arguments(format_args!("Secret is required")));
         }
         if !js_secret.is_string() || js_secret.get_length(global)? == 0 {
-            return global.throw_invalid_arguments(format_args!("Secret must be a non-empty string"));
+            return Err(global.throw_invalid_arguments(format_args!("Secret must be a non-empty string")));
         }
         secret = Some(js_secret.to_slice(global)?);
     }
@@ -106,7 +106,7 @@ pub fn csrf__generate(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
 
     // Default values
     let mut expires_in: u64 = csrf::DEFAULT_EXPIRATION_MS;
-    let mut encoding: csrf::TokenFormat = csrf::TokenFormat::Base64url;
+    let mut encoding: csrf::TokenFormat = csrf::TokenFormat::Base64Url;
     let mut algorithm: EvpAlgorithm = csrf::DEFAULT_ALGORITHM;
 
     // Check if we have options object
@@ -114,7 +114,7 @@ pub fn csrf__generate(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
         let options_value = args[1];
 
         // Extract expiresIn (optional)
-        if let Some(expires_in_js) = options_value.get_optional_int::<u64>(global, "expiresIn")? {
+        if let Some(expires_in_js) = get_optional_int_u64(options_value, global, "expiresIn")? {
             expires_in = expires_in_js;
         }
 

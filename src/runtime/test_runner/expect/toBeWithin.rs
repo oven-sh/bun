@@ -67,11 +67,16 @@ impl Expect {
         }
 
         // Zig: .{ .globalThis = globalThis, .quote_strings = true } — make_formatter sets quote_strings.
+        // PORT NOTE: Zig aliased one `*Formatter` for all three fmt adapters; Rust `to_fmt`
+        // takes `&mut Formatter` so three live adapters need three formatters (matches
+        // toBeLessThan.rs / toContainEqual.rs).
         let mut formatter = super::make_formatter(global);
+        let mut formatter2 = super::make_formatter(global);
+        let mut formatter3 = super::make_formatter(global);
         // defer formatter.deinit(); — handled by Drop
         let start_fmt = start_value.to_fmt(&mut formatter);
-        let end_fmt = end_value.to_fmt(&mut formatter);
-        let received_fmt = value.to_fmt(&mut formatter);
+        let end_fmt = end_value.to_fmt(&mut formatter2);
+        let received_fmt = value.to_fmt(&mut formatter3);
 
         if not {
             let signature = Expect::get_signature(

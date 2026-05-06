@@ -41,7 +41,7 @@ pub fn to_throw(
         if value.is_object() {
             if ExpectAny::from_js_direct(value).is_some() {
                 if let Some(inner_constructor_value) =
-                    ExpectAny::js::constructor_value_get_cached(value)
+                    expect_any_js::constructor_value_get_cached(value)
                 {
                     break 'brk inner_constructor_value;
                 }
@@ -49,7 +49,8 @@ pub fn to_throw(
         } else if value.is_string() {
             // `.toThrow("")` behaves the same as `.toThrow()`
             let s = value.to_js_string(global)?;
-            if s.length() == 0 {
+            // SAFETY: to_js_string returns a non-null *mut JSString on Ok
+            if unsafe { (*s).length() } == 0 {
                 break 'brk JSValue::ZERO;
             }
         }
@@ -193,7 +194,7 @@ pub fn to_throw(
             );
         }
 
-        if !result.is_instance_of(global, expected_value) {
+        if !result.is_instance_of(global, expected_value)? {
             return Ok(JSValue::UNDEFINED);
         }
 
@@ -363,7 +364,7 @@ pub fn to_throw(
             );
         }
 
-        if result.is_instance_of(global, expected_value) {
+        if result.is_instance_of(global, expected_value)? {
             return Ok(JSValue::UNDEFINED);
         }
 

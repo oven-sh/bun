@@ -1170,6 +1170,8 @@ impl Request {
                 }
 
                 if let Some(response) = value.as_direct::<Response>() {
+                    // SAFETY: `as_direct` returned a live `*mut Response` owned by the JS wrapper.
+                    let response = unsafe { &mut *response };
                     if !fields.contains(Fields::Method) {
                         req.method = response.get_method();
                         fields.insert(Fields::Method);
@@ -1665,11 +1667,6 @@ impl Request {
             reported_estimated_size: 0,
             internal_event_callback: InternalJSEventCallback::default(),
         }
-    }
-
-    #[inline]
-    pub fn get_body_value(&mut self) -> &mut BodyValue {
-        &mut self.body
     }
 
     #[inline]

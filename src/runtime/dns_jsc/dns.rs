@@ -920,15 +920,15 @@ pub mod get_addr_info_request {
         fn default() -> Self { Self { file_poll: None, machport: 0 } }
     }
 
-    impl BackendLibInfo {
-        // TODO(port): move to <area>_sys
-        unsafe extern "C" {
-            fn getaddrinfo_send_reply(
-                port: mach_port,
-                reply: lib_info::GetaddrinfoAsyncHandleReply,
-            ) -> bool;
-        }
+    // TODO(port): move to <area>_sys
+    unsafe extern "C" {
+        fn getaddrinfo_send_reply(
+            port: mach_port,
+            reply: lib_info::GetaddrinfoAsyncHandleReply,
+        ) -> bool;
+    }
 
+    impl BackendLibInfo {
         pub fn on_machport_change(this: *mut GetAddrInfoRequest) {
             #[cfg(not(target_os = "macos"))]
             { unreachable!(); }
@@ -1696,15 +1696,15 @@ pub mod internal {
         fn default() -> Self { Self { file_poll: None, machport: 0 } }
     }
 
-    impl MacAsyncDNS {
-        // TODO(port): move to <area>_sys
-        unsafe extern "C" {
-            fn getaddrinfo_send_reply(
-                port: mach_port,
-                reply: lib_info::GetaddrinfoAsyncHandleReply,
-            ) -> bool;
-        }
+    // TODO(port): move to <area>_sys
+    unsafe extern "C" {
+        fn getaddrinfo_send_reply(
+            port: mach_port,
+            reply: lib_info::GetaddrinfoAsyncHandleReply,
+        ) -> bool;
+    }
 
+    impl MacAsyncDNS {
         pub fn on_machport_change(this: *mut Request) {
             // SAFETY: `this` is the heap-allocated Request the FilePoll was registered with.
             unsafe {
@@ -2754,24 +2754,24 @@ pub enum Order {
     Ipv6first = 6,
 }
 
+pub static ORDER_MAP: phf::Map<&'static [u8], Order> = phf::phf_map! {
+    b"verbatim" => Order::Verbatim,
+    b"ipv4first" => Order::Ipv4first,
+    b"ipv6first" => Order::Ipv6first,
+    b"0" => Order::Verbatim,
+    b"4" => Order::Ipv4first,
+    b"6" => Order::Ipv6first,
+};
+
 impl Order {
     pub const DEFAULT: Self = Order::Verbatim;
-
-    pub static MAP: phf::Map<&'static [u8], Order> = phf::phf_map! {
-        b"verbatim" => Order::Verbatim,
-        b"ipv4first" => Order::Ipv4first,
-        b"ipv6first" => Order::Ipv6first,
-        b"0" => Order::Verbatim,
-        b"4" => Order::Ipv4first,
-        b"6" => Order::Ipv6first,
-    };
 
     pub fn to_js(self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         ZigString::init(<&'static str>::from(self).as_bytes()).to_js(global_this)
     }
 
     pub fn from_string(order: &[u8]) -> Option<Order> {
-        Self::MAP.get(order).copied()
+        ORDER_MAP.get(order).copied()
     }
 
     pub fn from_string_or_die(order: &[u8]) -> Order {

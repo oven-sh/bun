@@ -1250,7 +1250,7 @@ impl CreateCommand {
                     break 'process_package_json;
                 }
                 let written = package_json_writer.ctx.get_written();
-                if let Err(err) = bun_sys::File { handle: file }.write_all(written).unwrap_result() {
+                if let Err(err) = (bun_sys::File { handle: file }).write_all(written).unwrap_result() {
                     Output::pretty_errorln(
                         "package.json failed to write due to error {}",
                         format_args!("{}", err.name()),
@@ -1856,23 +1856,24 @@ pub enum ExampleTag {
     JslikeFile,
 }
 
-impl ExampleTag {
-    static EXTENSION_TAG_MAP: phf::Map<&'static [u8], ExampleTag> = phf::phf_map! {
-        b".tsx" => ExampleTag::JslikeFile,
-        b".jsx" => ExampleTag::JslikeFile,
-    };
+static EXTENSION_TAG_MAP: phf::Map<&'static [u8], ExampleTag> = phf::phf_map! {
+    b".tsx" => ExampleTag::JslikeFile,
+    b".jsx" => ExampleTag::JslikeFile,
+};
 
+impl ExampleTag {
     pub fn from_file_extension(extension: &[u8]) -> Option<ExampleTag> {
-        Self::EXTENSION_TAG_MAP.get(extension).copied()
+        EXTENSION_TAG_MAP.get(extension).copied()
     }
 }
 
+// TODO(port): mutable static URL — single-threaded CLI usage
+static mut URL_: URL = URL::ZEROED;
+static mut APP_NAME_BUF: [u8; 512] = [0u8; 512];
+static mut GITHUB_REPOSITORY_URL_BUF: [u8; 1024] = [0u8; 1024];
+
 impl Example {
     const EXAMPLES_URL: &'static [u8] = b"https://registry.npmjs.org/bun-examples-all/latest";
-    // TODO(port): mutable static URL — single-threaded CLI usage
-    static mut URL_: URL = URL::ZEROED;
-
-    static mut APP_NAME_BUF: [u8; 512] = [0u8; 512];
 
     pub fn print(examples: &[Example], default_app_name: Option<&[u8]>) {
         for example in examples {
@@ -2004,8 +2005,6 @@ impl Example {
 
         Ok(examples)
     }
-
-    static mut GITHUB_REPOSITORY_URL_BUF: [u8; 1024] = [0u8; 1024];
 
     pub fn fetch_from_github(
         ctx: &Command::Context,
@@ -2491,13 +2490,13 @@ impl CreateListExamplesCommand {
 
 struct GitHandler;
 
-impl GitHandler {
-    // TODO(port): mutable static atomic + thread handle — single use per process
-    static SUCCESS: AtomicU32 = AtomicU32::new(0);
-    static mut THREAD: Option<bun_threading::Thread> = None;
+// TODO(port): mutable static atomic + thread handle — single use per process
+static SUCCESS: AtomicU32 = AtomicU32::new(0);
+static mut THREAD: Option<bun_threading::Thread> = None;
 
+impl GitHandler {
     pub fn spawn(destination: &[u8], path: &[u8], verbose: bool) {
-        Self::SUCCESS.store(0, Ordering::Relaxed);
+        SUCCESS.store(0, Ordering::Relaxed);
 
         // TODO(port): std.Thread.spawn — destination/path borrowed across thread; Zig relied on
         // them being long-lived (filesystem dirname_store / env). Phase B: ensure 'static or own.
@@ -2524,16 +2523,16 @@ impl GitHandler {
             Self::run::<false>(destination, path).unwrap_or(false)
         };
 
-        Self::SUCCESS.store(if outcome { 1 } else { 2 }, Ordering::Release);
-        Futex::wake(&Self::SUCCESS, 1);
+        SUCCESS.store(if outcome { 1 } else { 2 }, Ordering::Release);
+        Futex::wake(&SUCCESS, 1);
     }
 
     pub fn wait() -> bool {
-        while Self::SUCCESS.load(Ordering::Acquire) == 0 {
-            let _ = Futex::wait(&Self::SUCCESS, 0, 1000);
+        while SUCCESS.load(Ordering::Acquire) == 0 {
+            let _ = Futex::wait(&SUCCESS, 0, 1000);
         }
 
-        let outcome = Self::SUCCESS.load(Ordering::Acquire) == 1;
+        let outcome = SUCCESS.load(Ordering::Acquire) == 1;
         // SAFETY: THREAD set in spawn() on this same thread before wait() called
         unsafe { THREAD.take() }.unwrap().join();
         outcome

@@ -85,13 +85,8 @@ pub fn write_output_files_to_disk(
     // match (init/reset/deinit). DynAlloc is currently `()` so the allocator
     // handles below are placeholders; allocation routes through global mimalloc.
     let mut max_heap_allocator = MaxHeapAllocator::init();
-    let _code_allocator = &max_heap_allocator;
-
-    let mut max_heap_allocator_source_map = MaxHeapAllocator::init();
-    let _source_map_allocator = &max_heap_allocator_source_map;
-
-    let mut max_heap_allocator_inline_source_map = MaxHeapAllocator::init();
-    let _code_with_inline_source_map_allocator = &max_heap_allocator_inline_source_map;
+    let mut _max_heap_allocator_source_map = MaxHeapAllocator::init();
+    let mut _max_heap_allocator_inline_source_map = MaxHeapAllocator::init();
 
     let mut pathbuf = PathBuffer::uninit();
     // SAFETY: c points to LinkerContext which is the `linker` field of BundleV2.
@@ -168,11 +163,13 @@ pub fn write_output_files_to_disk(
             }
         }
         let mut display_size: usize = 0;
+        // SAFETY: `c.resolver` is set during LinkerContext init and lives for the build.
+        let resolver_opts = unsafe { &(*c.resolver).opts };
         let public_path: &[u8] =
             if chunk.flags.contains(ChunkFlags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD) {
                 &bv2.transpiler_for_target(options::Target::Browser).options.public_path
             } else {
-                &c.resolver.opts.public_path
+                &resolver_opts.public_path
             };
 
         // PORT NOTE: see aliasing note above — take intermediate_output by value
@@ -182,11 +179,13 @@ pub fn write_output_files_to_disk(
         // bounded by this function.
         let chunks_alias: &mut [Chunk] =
             unsafe { core::slice::from_raw_parts_mut(chunks_ptr, chunks_len) };
+        // SAFETY: parse_graph set during init; outlives this call.
+        let parse_graph = unsafe { &*c.parse_graph };
 
         let mut code_result = if let Some(scc) = standalone_chunk_contents {
             match intermediate_output.code_standalone(
                 None,
-                c.parse_graph,
+                parse_graph,
                 &c.graph,
                 public_path,
                 chunk,
@@ -204,13 +203,13 @@ pub fn write_output_files_to_disk(
         } else {
             match intermediate_output.code(
                 None,
-                c.parse_graph,
+                parse_graph,
                 &c.graph,
                 public_path,
                 chunk,
                 chunks_alias,
                 Some(&mut display_size),
-                c.resolver.opts.compile
+                resolver_opts.compile
                     && !chunk.flags.contains(ChunkFlags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD),
                 chunk.content.sourcemap(c.options.source_maps) != SourceMapOption::None,
             ) {
@@ -225,12 +224,11 @@ pub fn write_output_files_to_disk(
         let mut source_map_output_file: Option<OutputFile> = None;
 
         let input_path: Box<[u8]> = Box::from(if chunk.entry_point.is_entry_point() {
-            c.parse_graph
+            parse_graph
                 .input_files
                 .items_source()[chunk.entry_point.source_index() as usize]
                 .path
                 .text
-                .as_ref()
         } else {
             chunk.final_rel_path
         });
@@ -328,7 +326,6 @@ pub fn write_output_files_to_disk(
                 let total_len = code_result.buffer.len() + source_map_start.len() + encode_len + 1;
                 // PERF(port): Zig used `code_with_inline_source_map_allocator` (MaxHeapAllocator)
                 // for this Vec to reuse across iterations.
-                let _ = &max_heap_allocator_inline_source_map;
                 let mut buf: Vec<u8> = Vec::with_capacity(total_len);
 
                 // PERF(port): was appendSliceAssumeCapacity
@@ -349,7 +346,7 @@ pub fn write_output_files_to_disk(
         let bytecode_output_file: Option<OutputFile> = 'brk: {
             if c.options.generate_bytecode_cache {
                 let loader: Loader = if chunk.entry_point.is_entry_point() {
-                    c.parse_graph.input_files.items_loader()
+                    parse_graph.input_files.items_loader()
                         [chunk.entry_point.source_index() as usize]
                 } else {
                     Loader::Js
@@ -515,7 +512,7 @@ pub fn write_output_files_to_disk(
             output_path: Box::<[u8]>::from(chunk.final_rel_path),
             input_path,
             input_loader: if chunk.entry_point.is_entry_point() {
-                c.parse_graph.input_files.items_loader()
+                parse_graph.input_files.items_loader()
                     [chunk.entry_point.source_index() as usize]
             } else {
                 Loader::Js
@@ -578,17 +575,20 @@ pub fn write_output_files_to_disk(
     }
 
     {
-        // PORT NOTE: reshaped for borrowck — capture len before zip iteration.
+        // PORT NOTE: reshaped for borrowck — compute len before mut borrow,
+        // bump `total_insertions`, then take the slice.
         let additional_start = output_files.additional_output_files_start as usize;
+        let additional_len = output_files.output_files.len() - additional_start;
+        output_files.total_insertions += u32::try_from(additional_len).unwrap();
         let additional_output_files =
             &mut output_files.output_files[additional_start..];
-        output_files.total_insertions += u32::try_from(additional_output_files.len()).unwrap();
+        // SAFETY: parse_graph set during init; outlives this call.
+        let parse_graph = unsafe { &mut *c.parse_graph };
         debug_assert_eq!(
-            c.parse_graph.additional_output_files.len(),
+            parse_graph.additional_output_files.len(),
             additional_output_files.len()
         );
-        for (src, dest) in c
-            .parse_graph
+        for (src, dest) in parse_graph
             .additional_output_files
             .iter_mut()
             .zip(additional_output_files.iter_mut())

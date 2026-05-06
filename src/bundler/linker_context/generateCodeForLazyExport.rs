@@ -1,16 +1,17 @@
 use std::io::Write as _;
 
 use bun_alloc::{AllocError, Arena};
-use bun_collections::{ArrayHashMap, BabyList, DynamicBitSet};
+use bun_collections::{ArrayHashMap, BabyList, DynamicBitSetUnmanaged};
 use bun_core::fmt as bun_fmt;
-use bun_css::{self, BundlerStyleSheet, CssRef};
-use bun_js_parser::ast::{self as js_ast, B, Binding, E, Expr, G, Part, S, Stmt, Symbol};
-use bun_js_parser::js_lexer;
+use bun_js_parser::ast::{self as js_ast, B, Binding, E, Expr, ExprData, G, Part, S, Stmt, StmtData, Symbol};
+use bun_js_parser::{js_lexer, Ref};
 use bun_logger::{Loc, Log, Source};
 
-use bun_bundler::{Index, LinkerContext, Ref};
+use crate::bun_css::{self, BundlerStyleSheet, CssRef};
+use crate::{Index, LinkerContext};
 
-type BitSet = DynamicBitSet;
+type BitSet = DynamicBitSetUnmanaged;
+type SymbolList = BabyList<Symbol>;
 
 pub fn generate_code_for_lazy_export(
     this: &mut LinkerContext,
@@ -44,8 +45,7 @@ pub fn generate_code_for_lazy_export(
     // now instead of earlier because we need the whole bundle to be present.
     if let Some(css_ast) = maybe_css_ast {
         let stmt: Stmt = part.stmts[0];
-        if !matches!(stmt.data, js_ast::Stmt::Data::SLazyExport(_)) {
-            // TODO(port): exact tag check shape for Stmt.data
+        if !matches!(stmt.data, StmtData::SLazyExport(_)) {
             panic!("Internal error: expected top-level lazy export statement");
         }
         'out: {
@@ -54,7 +54,7 @@ pub fn generate_code_for_lazy_export(
             }
             let mut exports = E::Object::default();
 
-            let symbols: &Symbol::List = &this.graph.ast.items().symbols[source_index as usize];
+            let symbols: &SymbolList = &this.graph.ast.items().symbols[source_index as usize];
             let all_import_records: &[BabyList<bun_css::ImportRecord>] =
                 this.graph.ast.items().import_records;
 
@@ -70,7 +70,7 @@ pub fn generate_code_for_lazy_export(
                 break 'size size + 1;
             };
 
-            let mut inner_visited = BitSet::init_empty(size as usize);
+            let mut inner_visited = BitSet::init_empty(size as usize)?;
             // `defer inner_visited.deinit(...)` — handled by Drop.
             let mut composes_visited: ArrayHashMap<Ref, ()> = ArrayHashMap::new();
             // `defer composes_visited.deinit()` — handled by Drop.
@@ -84,7 +84,7 @@ pub fn generate_code_for_lazy_export(
                 // TODO(port): lifetime — slice of optional refs into graph.ast SoA storage.
                 all_css_asts: &'a [Option<&'a BundlerStyleSheet>],
                 all_sources: &'a [Source],
-                all_symbols: &'a [Symbol::List],
+                all_symbols: &'a [SymbolList],
                 source_index: Index::Int,
                 log: &'a mut Log,
                 loc: Loc,
@@ -123,7 +123,7 @@ pub fn generate_code_for_lazy_export(
                             },
                             self.loc,
                         ),
-                        tail: E::TemplatePart::Tail::Cooked(E::String::init(b" ")),
+                        tail: E::TemplateContents::Cooked(E::String::init(b" ")),
                         tail_loc: self.loc,
                     });
 
@@ -143,15 +143,15 @@ pub fn generate_code_for_lazy_export(
                 ) {
                     let ref_ = css_ref.to_real_ref(idx);
                     let _ = ref_;
-                    let syms: &Symbol::List = &self.all_symbols[css_ref.source_index(idx) as usize];
+                    let _ = self.allocator;
+                    let syms: &SymbolList = &self.all_symbols[css_ref.source_index(idx) as usize];
                     let name = &syms.at(css_ref.inner_index() as usize).original_name;
                     let loc = ast.local_scope.get(name).unwrap().loc;
 
                     // PERF(port): was `catch |err| bun.handleOom(err)`.
-                    self.log.add_range_error_fmt_with_note(
-                        &self.all_sources[idx as usize],
+                    let _ = self.log.add_range_error_fmt_with_note(
+                        Some(&self.all_sources[idx as usize]),
                         bun_logger::Range { loc: compose_loc, ..Default::default() },
-                        self.allocator,
                         format_args!(
                             "The composes property cannot be used with {}, because it is not a single class name.",
                             bun_fmt::quote(name),
@@ -197,10 +197,9 @@ pub fn generate_code_for_lazy_export(
                                         let Some(other_file) =
                                             self.all_css_asts[import_record.source_index.get() as usize]
                                         else {
-                                            self.log.add_error_fmt(
+                                            let _ = self.log.add_error_fmt(
                                                 &self.all_sources[idx as usize],
                                                 compose.loc,
-                                                self.allocator,
                                                 format_args!(
                                                     "Cannot use the \"composes\" property with the {} file (it is not a CSS file)",
                                                     bun_fmt::quote(
@@ -250,7 +249,7 @@ pub fn generate_code_for_lazy_export(
                                                 E::String::init(&name.v),
                                                 self.loc,
                                             ),
-                                            tail: E::TemplatePart::Tail::Cooked(
+                                            tail: E::TemplateContents::Cooked(
                                                 E::String::init(b" "),
                                             ),
                                             tail_loc: self.loc,
@@ -261,10 +260,9 @@ pub fn generate_code_for_lazy_export(
                                 // it is from the current file
                                 for name in compose.names.slice() {
                                     let Some(name_entry) = ast.local_scope.get(&name.v) else {
-                                        self.log.add_error_fmt(
+                                        let _ = self.log.add_error_fmt(
                                             &self.all_sources[idx as usize],
                                             compose.loc,
-                                            self.allocator,
                                             format_args!(
                                                 "The name {} never appears in {} as a CSS modules locally scoped class name. Note that \"composes\" only works with single class selectors.",
                                                 bun_fmt::quote(&name.v),
@@ -332,13 +330,17 @@ pub fn generate_code_for_lazy_export(
                     template_parts.push(E::TemplatePart {
                         value,
                         tail_loc: stmt.loc,
-                        tail: E::TemplatePart::Tail::Cooked(E::String::init(b"")),
+                        tail: E::TemplateContents::Cooked(E::String::init(b"")),
                     });
+                    // PORT NOTE: Zig used arena-backed ArrayList; leak the boxed slice
+                    // (arena-lifetime semantics — freed when the linker arena drops).
+                    let parts_slice: *mut [E::TemplatePart] =
+                        Box::leak(template_parts.into_boxed_slice());
                     value = Expr::init(
                         E::Template {
-                            // TODO(port): `template_parts.items` — arena slice vs Vec ownership.
-                            parts: template_parts.into(),
-                            head: E::Template::Head::Cooked(E::String::init(b"")),
+                            tag: None,
+                            parts: parts_slice,
+                            head: E::TemplateContents::Cooked(E::String::init(b"")),
                         },
                         stmt.loc,
                     );
@@ -348,22 +350,20 @@ pub fn generate_code_for_lazy_export(
                 exports.put(this.allocator(), key, value)?;
             }
 
-            // TODO(port): `part.stmts[0].data.s_lazy_export.* = ...` — exact union assignment shape.
-            if let js_ast::Stmt::Data::SLazyExport(slot) = &mut part.stmts[0].data {
+            if let StmtData::SLazyExport(slot) = &mut part.stmts[0].data {
                 **slot = Expr::init(exports, stmt.loc).data;
             }
         }
     }
 
     let stmt: Stmt = part.stmts[0];
-    if !matches!(stmt.data, js_ast::Stmt::Data::SLazyExport(_)) {
+    if !matches!(stmt.data, StmtData::SLazyExport(_)) {
         panic!("Internal error: expected top-level lazy export statement");
     }
 
     let expr = Expr {
-        // TODO(port): `stmt.data.s_lazy_export.*` deref — exact union payload shape.
         data: match &stmt.data {
-            js_ast::Stmt::Data::SLazyExport(d) => **d,
+            StmtData::SLazyExport(d) => **d,
             _ => unreachable!(),
         },
         loc: stmt.loc,
@@ -392,10 +392,10 @@ pub fn generate_code_for_lazy_export(
             )?;
 
             // If this is a .napi addon and it's not node, we need to generate a require() call to the runtime
-            if matches!(expr.data, js_ast::Expr::Data::ECall(ref c)
-                if matches!(c.target.data, js_ast::Expr::Data::ERequireCallTarget(_)))
+            if matches!(expr.data, ExprData::ECall(ref c)
+                if matches!(c.target.data, ExprData::ERequireCallTarget))
                 // if it's commonjs, use require()
-                && this.options.output_format != bun_bundler::options::OutputFormat::Cjs
+                && this.options.output_format != crate::options::OutputFormat::Cjs
             {
                 this.graph.generate_runtime_symbol_import_and_use(
                     source_index,

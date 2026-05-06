@@ -46,8 +46,77 @@ use crate::transpiler::Transpiler;
 declare_scope!(ParseTask, hidden);
 
 /// `bun.jsc.EventLoopTask` (ParseTask.zig:Result.task). T6 type erased here.
+#[allow(non_snake_case)]
 mod EventLoop {
     pub type Task = bun_event_loop::ConcurrentTask::ConcurrentTask;
+}
+
+// PORT NOTE: arena-lifetime erasure helper. Slices borrowed from the per-file
+// parse arena (or `Source.contents: Cow<'static,[u8]>`) outlive the link step;
+// see TODO(port): arena lifetime notes throughout. Centralized so the unsafe
+// transmute is auditable.
+#[inline(always)]
+fn leak_static(s: &[u8]) -> &'static [u8] {
+    // SAFETY: ARENA — caller guarantees `s` borrows storage that outlives all
+    // reads through the returned slice (parse arena / interned source bytes).
+    unsafe { core::mem::transmute::<&[u8], &'static [u8]>(s) }
+}
+
+// CYCLEBREAK FORWARD_DECL bridges: `JSBundlerPlugin` / `FileMap` are opaque
+// `[u8; 0]` in `bundle_v2.rs`; the real bodies live in T6 (`jsc::api::JSBundler`).
+// These impls forward to the C++ entry points via FFI so ParseTask can call
+// them without naming the gated `__phase_a_draft::api` module.
+extern "C" {
+    fn JSBundlerPlugin__hasOnBeforeParsePlugins(this: *const bundler::JSBundlerPlugin) -> i32;
+    fn JSBundlerPlugin__callOnBeforeParsePlugins(
+        this: *const bundler::JSBundlerPlugin,
+        ctx: *mut c_void,
+        namespace: *const bun_string::String,
+        path: *const bun_string::String,
+        args: *mut c_void,
+        result: *mut c_void,
+        should_continue_running: *mut i32,
+    ) -> i32;
+}
+impl bundler::JSBundlerPlugin {
+    #[inline]
+    pub(crate) fn has_on_before_parse_plugins(&self) -> bool {
+        // SAFETY: `self` is a live opaque C++ BunPlugin; FFI signature matches.
+        unsafe { JSBundlerPlugin__hasOnBeforeParsePlugins(self) != 0 }
+    }
+    #[inline]
+    pub(crate) fn call_on_before_parse_plugins(
+        &self,
+        ctx: *mut c_void,
+        namespace: &bun_string::String,
+        path: &bun_string::String,
+        args: *mut parse_worker::OnBeforeParseArguments,
+        result: *mut parse_worker::OnBeforeParseResult,
+        should_continue_running: *mut i32,
+    ) -> i32 {
+        // SAFETY: `self` is a live opaque C++ BunPlugin; FFI signature matches.
+        unsafe {
+            JSBundlerPlugin__callOnBeforeParsePlugins(
+                self,
+                ctx,
+                namespace,
+                path,
+                args.cast(),
+                result.cast(),
+                should_continue_running,
+            )
+        }
+    }
+}
+impl bundler::FileMap {
+    /// CYCLEBREAK FORWARD_DECL: the real map (`StringHashMap<Box<[u8]>>`) lives
+    /// in T6 `jsc::api::JSBundler::FileMap`. The bundler-side opaque carries no
+    /// storage, so a lookup through it is always a miss until T6 wires the
+    /// concrete type through `BundleV2.file_map`.
+    #[inline]
+    pub(crate) fn get(&self, _specifier: &[u8]) -> Option<&'static [u8]> {
+        None
+    }
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -243,7 +312,11 @@ impl ParseTask {
                 file: resolve_result.file_fd,
             },
             side_effects: resolve_result.primary_side_effects_data,
-            jsx: resolve_result.jsx.clone(),
+            // TODO(port): TYPE_ONLY divergence — `_resolver::Result.jsx` is
+            // `bun_resolver::options::jsx::Pragma`, distinct from
+            // `crate::options::jsx::Pragma`. Collapses to `.clone()` once the
+            // mirrors unify (see blocked_on note above).
+            jsx: Default::default(),
             source_index,
             module_type: resolve_result.module_type,
             emit_decorator_metadata: resolve_result.flags.emit_decorator_metadata(),
@@ -269,6 +342,46 @@ impl ParseTask {
             // TODO(port): Zig struct-field defaults; Rust has no per-field
             // default syntax. Consider impl Default for ParseTask in Phase B
             // and use `..Default::default()` here.
+        }
+    }
+
+    /// Re-export of `parse_worker::get_runtime_source` as an associated fn so
+    /// callers can spell it `ParseTask::get_runtime_source` (matches Zig).
+    #[inline]
+    pub fn get_runtime_source(target: options::Target) -> RuntimeSource {
+        parse_worker::get_runtime_source(target)
+    }
+}
+
+impl Default for ParseTask {
+    fn default() -> Self {
+        ParseTask {
+            ctx: core::ptr::null_mut(),
+            path: Fs::Path::init(b""),
+            secondary_path_for_commonjs_interop: None,
+            contents_or_fd: ContentsOrFd::Contents(b""),
+            external_free_function: ExternalFreeFunction::NONE,
+            side_effects: _resolver::SideEffects::HasSideEffects,
+            loader: None,
+            jsx: Default::default(),
+            source_index: Index::INVALID,
+            task: ThreadPoolLib::Task {
+                node: ThreadPoolLib::Node::default(),
+                callback: task_callback,
+            },
+            io_task: ThreadPoolLib::Task {
+                node: ThreadPoolLib::Node::default(),
+                callback: io_task_callback,
+            },
+            stage: ParseTaskStage::NeedsSourceCode,
+            tree_shaking: false,
+            known_target: options::Target::default(),
+            module_type: options::ModuleType::Unknown,
+            emit_decorator_metadata: false,
+            experimental_decorators: false,
+            package_version: b"",
+            package_name: b"",
+            is_entry_point: false,
         }
     }
 }
@@ -498,7 +611,7 @@ fn get_runtime_source_comptime(target: options::Target) -> RuntimeSource {
             is_disabled: false,
             is_symlink: false,
         },
-        contents: runtime_code.as_bytes(),
+        contents: std::borrow::Cow::Borrowed(runtime_code.as_bytes()),
         // PORT NOTE: `Source.index` is `bun_logger::Index` (newtype `u32`),
         // distinct from `bun_options_types::Index`. Runtime source is index 0.
         index: bun_logger::Index(Index::RUNTIME.get()),
@@ -531,31 +644,23 @@ fn get_empty_css_ast(
 ) -> core::result::Result<JSAst, AnyError> {
     let root = Expr::init(E::Object::default(), Loc { start: 0 });
     let mut ast = JSAst::init(
-        js_parser::new_lazy_export_ast(bump, &transpiler.options.define, opts, log, root, source, b"")?
+        js_parser::new_lazy_export_ast(bump, &mut transpiler.options.define, opts, log, root, source, b"")?
             .unwrap(),
     );
-    ast.css = Some(bump.alloc(bun_css::BundlerStyleSheet::empty(bump)));
+    ast.css = Some(bump.alloc(bun_css::BundlerStyleSheet::empty(bump)) as *mut _ as *mut c_void);
     Ok(ast)
 }
 
-// blocked_on: `js_parser::new_lazy_export_ast` body (parser.rs round-D gate);
-// `Expr::init(RootType)` requires `IntoExprData` bound that doesn't yet cover
-// `E::Undefined`/`E::Object`/`E::String` defaults uniformly.
-
-fn get_empty_ast<RootType: Default>(
+fn get_empty_ast<RootType: Default + ast::expr::IntoExprData>(
     log: &mut Log,
     transpiler: &mut Transpiler,
     opts: ParserOptions,
     bump: &Bump,
     source: &Source,
-) -> core::result::Result<JSAst, AnyError>
-where
-    // TODO(port): Expr::init needs to accept RootType; bound is a placeholder.
-    RootType: Into<ast::ExprData>,
-{
+) -> core::result::Result<JSAst, AnyError> {
     let root = Expr::init(RootType::default(), Loc::EMPTY);
     Ok(JSAst::init(
-        js_parser::new_lazy_export_ast(bump, &transpiler.options.define, opts, log, root, source, b"")?
+        js_parser::new_lazy_export_ast(bump, &mut transpiler.options.define, opts, log, root, source, b"")?
             .unwrap(),
     ))
 }

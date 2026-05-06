@@ -16,7 +16,7 @@ use bun_js_parser::ast as js_ast;
 use bun_js_parser::ast::{Binding, Expr, Ref, Stmt, B, E, G, S};
 use bun_js_parser::ast::binding::ToExprWrapper;
 use bun_js_parser::lexer as js_lexer;
-use bun_js_parser::StoreRef;
+use bun_js_parser::ast::StoreRef;
 
 use super::convert_stmts_for_chunk::convert_stmts_for_chunk;
 use super::convert_stmts_for_chunk_for_dev_server::convert_stmts_for_chunk_for_dev_server;
@@ -173,10 +173,10 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
             // TODO: there is a weird edge case where the pretty path is not computed
             // it does not reproduce when debugging.
-            let mut source = *c.get_source(source_index);
+            let mut source = c.get_source(source_index).clone();
             if core::ptr::eq(source.path.text.as_ptr(), source.path.pretty.as_ptr()) {
-                // SAFETY: `c.resolver` is set by BundleV2 before linking begins.
-                let top_level_dir = unsafe { (*c.resolver).fs.top_level_dir };
+                // SAFETY: `c.resolver` is set by BundleV2 before linking begins and outlives `c`.
+                let top_level_dir: &[u8] = unsafe { (*c.resolver).fs.top_level_dir };
                 source.path = bun_core::handle_oom(generic_path_with_pretty_initialized(
                     source.path,
                     c.options.target,
@@ -347,8 +347,8 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 panic!("expected Lazy default export to be an export default statement");
             };
 
-            let mut default_expr = match default_export.value {
-                js_ast::StmtOrExpr::Expr(e) => e,
+            let mut default_expr = match &default_export.value {
+                js_ast::StmtOrExpr::Expr(e) => *e,
                 js_ast::StmtOrExpr::Stmt(_) => {
                     panic!("expected Lazy default export value to be an expression")
                 }
@@ -702,7 +702,8 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                         unsafe { (*inner_stmts)[end] = transformed };
                         end += 1;
                     }
-                    inner_stmts = core::ptr::addr_of_mut!(unsafe { &mut *inner_stmts }[..end]);
+                    // SAFETY: inner_stmts aliases stmts.all_stmts.items which was not resized.
+                    inner_stmts = unsafe { &mut (*inner_stmts)[..end] } as *mut [Stmt];
                 }
 
                 if !hoist.decls.is_empty() {
@@ -854,6 +855,9 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
         dc.collect_from_stmts(out_stmts, &mut r, c);
     }
 
+    // PORT NOTE: split borrow — `print_code_for_file_in_chunk_js` takes `&mut self`,
+    // so grab the source pointer first.
+    let source: *const _ = c.get_source(source_index);
     c.print_code_for_file_in_chunk_js(
         r,
         allocator,
@@ -865,7 +869,8 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
         to_common_js_ref,
         runtime_require_ref,
         part_range.source_index,
-        c.get_source(source_index),
+        // SAFETY: source is borrowed from `c.parse_graph` which outlives this call.
+        unsafe { &*source },
     )
 }
 

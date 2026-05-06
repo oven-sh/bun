@@ -332,9 +332,10 @@ impl<'a> LinkerContext<'a> {
         self.resolver = &mut transpiler.resolver;
         self.cycle_detector = Vec::new();
 
-        // PORT NOTE: `reachable_files` is `BabyList<Index>`; the caller owns
-        // the backing storage (`reachable`), so borrow it as a BabyList view.
-        self.graph.reachable_files = BabyList::from_slice_borrowed(reachable);
+        // PORT NOTE: `reachable_files` is `BabyList<Index>`; clone the
+        // caller-owned slice into the linker arena. PERF(port): Zig pointed at
+        // the slice in-place; revisit once BabyList grows a borrowed-view ctor.
+        self.graph.reachable_files = BabyList::from_slice(reachable).map_err(BunError::from)?;
 
         // SAFETY: parse_graph is valid backref just assigned above
         let sources: &[Source] = unsafe { (*self.parse_graph).input_files.items_source() };
@@ -401,9 +402,14 @@ impl<'a> LinkerContext<'a> {
         self.source_maps.line_offset_wait_group = WaitGroup::init_with_count(reachable.len());
         self.source_maps.quoted_contents_wait_group = WaitGroup::init_with_count(reachable.len());
         // TODO(port): arena alloc of task arrays
-        self.source_maps.line_offset_tasks = vec![SourceMapDataTask::default(); reachable.len()].into_boxed_slice();
-        self.source_maps.quoted_contents_tasks = vec![SourceMapDataTask::default(); reachable.len()].into_boxed_slice();
+        // PORT NOTE: `SourceMapDataTask` is not `Clone` (embeds an intrusive
+        // `ThreadPoolLib::Task` node); build via iterator instead of `vec![x;n]`.
+        self.source_maps.line_offset_tasks =
+            (0..reachable.len()).map(|_| SourceMapDataTask::default()).collect::<Vec<_>>().into_boxed_slice();
+        self.source_maps.quoted_contents_tasks =
+            (0..reachable.len()).map(|_| SourceMapDataTask::default()).collect::<Vec<_>>().into_boxed_slice();
 
+        let ctx: *mut LinkerContext = self;
         let mut batch = ThreadPoolLib::Batch::default();
         let mut second_batch = ThreadPoolLib::Batch::default();
         debug_assert_eq!(reachable.len(), self.source_maps.line_offset_tasks.len());
@@ -414,14 +420,20 @@ impl<'a> LinkerContext<'a> {
             .zip(self.source_maps.quoted_contents_tasks.iter_mut())
         {
             *line_offset = SourceMapDataTask {
-                ctx: self,
+                ctx,
                 source_index: *source_index,
-                thread_task: ThreadPoolLib::Task { callback: SourceMapDataTask::run_line_offset },
+                thread_task: ThreadPoolLib::Task {
+                    node: ThreadPoolLib::Node::default(),
+                    callback: SourceMapDataTask::run_line_offset,
+                },
             };
             *quoted = SourceMapDataTask {
-                ctx: self,
+                ctx,
                 source_index: *source_index,
-                thread_task: ThreadPoolLib::Task { callback: SourceMapDataTask::run_quoted_source_contents },
+                thread_task: ThreadPoolLib::Task {
+                    node: ThreadPoolLib::Node::default(),
+                    callback: SourceMapDataTask::run_quoted_source_contents,
+                },
             };
             batch.push(ThreadPoolLib::Batch::from(&mut line_offset.thread_task));
             second_batch.push(ThreadPoolLib::Batch::from(&mut quoted.thread_task));
@@ -435,52 +447,72 @@ impl<'a> LinkerContext<'a> {
 
     pub fn schedule_tasks(&self, batch: ThreadPoolLib::Batch) {
         let _ = self.pending_task_count.fetch_add(u32::try_from(batch.len).unwrap(), Ordering::Relaxed);
-        // SAFETY: parse_graph backref valid for self lifetime
-        unsafe { (*self.parse_graph).pool.worker_pool.schedule(batch) };
+        // SAFETY: parse_graph backref valid for self lifetime; `pool` is a
+        // `NonNull<ThreadPool>` whose `worker_pool` is the live worker-pool
+        // backref (initialized by `ThreadPool::start`).
+        unsafe { (*(*self.parse_graph).pool.as_ref().worker_pool).schedule(batch) };
     }
+
     fn process_html_import_files(&mut self) {
         // SAFETY: `parse_graph` is a backref to `BundleV2.graph`, a sibling
         // field of `BundleV2.linker` (= `*self`). The two are disjoint, and no
         // other `&`/`&mut` to `BundleV2.graph` is live for this scope —
-        // `self.graph` below is `LinkerGraph`, a distinct allocation, and
-        // `self.allocator()` reads `self.graph`, not `*parse_graph`.
-        let parse_graph = unsafe { &mut *self.parse_graph };
-        let server_source_indices = &parse_graph.html_imports.server_source_indices;
-        let html_source_indices = &mut parse_graph.html_imports.html_source_indices;
-        if server_source_indices.len > 0 {
-            let input_files: &[Source] = parse_graph.input_files.items_source();
-            let map = parse_graph.path_to_source_index_map(Target::Browser);
-            let parts: &[BabyList<js_ast::Part>] = self.graph.ast.items_parts();
+        // `self.graph` below is `LinkerGraph`, a distinct allocation.
+        // PORT NOTE: reshaped for borrowck — Zig held overlapping `&`/`&mut`
+        // into `parse_graph.html_imports` and `parse_graph.input_files`; here
+        // we go through raw pointers and reborrow per use.
+        let parse_graph: *mut Graph = self.parse_graph;
+        // SAFETY: see above; sole accessor of `html_imports` for this scope.
+        let server_len = unsafe { (*parse_graph).html_imports.server_source_indices.len };
+        if server_len > 0 {
             let actual_ref = self.graph.runtime_function(b"__jsonParse");
 
-            for &html_import in server_source_indices.slice() {
-                let source = &input_files[html_import as usize];
-                let source_index = map.get(&source.path.text).unwrap_or_else(|| {
-                    panic!("Assertion failed: HTML import file not found in pathToSourceIndexMap");
-                });
+            for i in 0..server_len as usize {
+                // SAFETY: `server_source_indices` is a stable BabyList; index
+                // bounded by `server_len`.
+                let html_import: u32 =
+                    unsafe { (*parse_graph).html_imports.server_source_indices.slice()[i] };
+                // SAFETY: `input_files` SoA is append-only; read-only here.
+                let path_text =
+                    unsafe { &(*parse_graph).input_files.items_source()[html_import as usize].path.text };
+                // SAFETY: sole `&mut` into the per-target map for this lookup.
+                let source_index: u32 = *unsafe { (*parse_graph).path_to_source_index_map(Target::Browser) }
+                    .get(path_text)
+                    .unwrap_or_else(|| {
+                        panic!("Assertion failed: HTML import file not found in pathToSourceIndexMap");
+                    });
 
-                html_source_indices.append(self.allocator(), *source_index).expect("OOM");
+                // SAFETY: sole `&mut` into `html_source_indices` for this push.
+                unsafe { (*parse_graph).html_imports.html_source_indices.append(source_index) }.expect("OOM");
 
                 // S.LazyExport is a call to __jsonParse.
-                // TODO(port): this deep field-chain pattern matching may need restructuring
-                let original_ref = parts[html_import as usize]
-                    .at(1)
-                    .stmts[0]
-                    .data
-                    .s_lazy_export()
-                    .e_call()
-                    .target
-                    .data
-                    .e_import_identifier()
-                    .r#ref;
+                // SAFETY: `Part.stmts` is a raw `*mut [Stmt]` arena pointer;
+                // valid for the link step. Each accessor returns `Option`;
+                // `.unwrap()` mirrors Zig's untagged-union field reads (panic
+                // on shape mismatch).
+                let original_ref = unsafe {
+                    (*self.graph.ast.items_parts()[html_import as usize].at(1).stmts)[0]
+                        .data
+                        .s_lazy_export()
+                        .unwrap()
+                        .e_call()
+                        .unwrap()
+                        .target
+                        .data
+                        .e_import_identifier()
+                        .unwrap()
+                        .ref_
+                };
 
                 // Make the __jsonParse in that file point to the __jsonParse in the runtime chunk.
-                self.graph.symbols.get_mut(original_ref).unwrap().link = actual_ref;
+                // SAFETY: `symbols.get` returns a stable `*mut Symbol` into the
+                // SoA symbol table; sole writer here.
+                unsafe { (*self.graph.symbols.get(original_ref).unwrap()).link = actual_ref };
 
                 // When --splitting is enabled, we have to make sure we import the __jsonParse function.
                 self.graph.generate_symbol_import_and_use(
                     html_import,
-                    Index::part(1).get(),
+                    Index::part(1u32).get(),
                     actual_ref,
                     1,
                     Index::RUNTIME,
@@ -525,7 +557,7 @@ impl<'a> LinkerContext<'a> {
             let tla_checks = parse_graph.ast.items_tla_check_mut();
             let input_files = parse_graph.input_files.items_source();
             let flags: &mut [crate::ungate_support::js_meta::Flags] = self.graph.meta.items_flags_mut();
-            let css_asts: &[Option<*mut css::BundlerStyleSheet>] = self.graph.ast.items_css();
+            let css_asts: &[Option<*mut core::ffi::c_void>] = self.graph.ast.items_css();
 
             // Process all files in source index order, like esbuild does
             let mut source_index: u32 = 0;
@@ -1708,7 +1740,7 @@ impl<'a> LinkerContext<'a> {
             return;
         }
 
-        let all_css_asts: &[Option<*mut css::BundlerStyleSheet>] = self.graph.ast.items_css();
+        let all_css_asts: &[Option<*mut core::ffi::c_void>] = self.graph.ast.items_css();
         let all_symbols: &[BabyList<Symbol>] = self.graph.ast.items_symbols();
         // SAFETY: parse_graph backref
         let all_sources: &[Source] = unsafe { (*self.parse_graph).input_files.items_source() };
@@ -1904,7 +1936,7 @@ impl<'a> LinkerContext<'a> {
         parts: &[BabyList<Part>],
         import_records: &[BabyList<ImportRecord>],
         file_entry_bits: &mut [AutoBitSet],
-        css_reprs: &[Option<*mut css::BundlerStyleSheet>],
+        css_reprs: &[Option<*mut core::ffi::c_void>],
     ) {
         if !self.graph.files_live.is_set(source_index as usize) {
             return;
@@ -1998,7 +2030,7 @@ impl<'a> LinkerContext<'a> {
         parts: &mut [BabyList<Part>],
         import_records: &[BabyList<ImportRecord>],
         entry_point_kinds: &[EntryPoint::Kind],
-        css_reprs: &[Option<*mut css::BundlerStyleSheet>],
+        css_reprs: &[Option<*mut core::ffi::c_void>],
     ) {
         #[cfg(debug_assertions)]
         {
@@ -2150,7 +2182,7 @@ impl<'a> LinkerContext<'a> {
         parts: &mut [BabyList<Part>],
         import_records: &[BabyList<ImportRecord>],
         entry_point_kinds: &[EntryPoint::Kind],
-        css_reprs: &[Option<*mut css::BundlerStyleSheet>],
+        css_reprs: &[Option<*mut core::ffi::c_void>],
     ) {
         let part: &mut Part = &mut parts[source_index as usize].slice_mut()[part_index as usize];
 

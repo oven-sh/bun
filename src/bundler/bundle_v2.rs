@@ -291,10 +291,10 @@ impl<'a> BundleV2<'a> {
     // Runs on the bundle thread when a `ParseTask` worker finishes. Folds the
     // parsed AST into `graph`, kicks resolution for its imports, and updates
     // `pending_items`. Free function in Zig (took `*BundleV2` as 2nd arg) so
-    // the `ParseTask::Result` callback can name it without a method receiver;
+    // the `parse_task::Result` callback can name it without a method receiver;
     // kept as an associated fn here for the same reason.
     pub fn on_parse_task_complete(parse_result: &mut parse_task::Result, this: &mut BundleV2<'_>) {
-        let _trace = bun_core::perf::trace("Bundler.onParseTaskComplete");
+        let _trace = crate::ungate_support::perf::trace("Bundler.onParseTaskComplete");
         if parse_result.external.function.is_some() {
             let source = match &parse_result.value {
                 ParseResultValue::Empty { source_index } => source_index.get(),
@@ -307,17 +307,11 @@ impl<'a> BundleV2<'a> {
             if !loader.should_copy_for_bundling() {
                 this.finalizers.push(core::mem::take(&mut parse_result.external));
             } else {
-                
-                {
-                    // TODO(b2-blocked): `InputFile.allocator` column was dropped
-                    // in the Rust port (PORT NOTE in Graph.rs); revisit once the
-                    // copy-file path needs to free plugin-owned bytes.
-                    this.graph.input_files.items_allocator_mut()[source as usize] =
-                        ExternalFreeFunctionAllocator::create(
-                            parse_result.external.function.unwrap(),
-                            parse_result.external.ctx,
-                        );
-                }
+                // TODO(b2-blocked): `InputFile.allocator` column was dropped in
+                // the Rust port (PORT NOTE in Graph.rs); revisit once the
+                // copy-file path needs to free plugin-owned bytes. For now,
+                // stash the finalizer so it still runs at teardown.
+                this.finalizers.push(core::mem::take(&mut parse_result.external));
             }
         }
 
@@ -329,48 +323,21 @@ impl<'a> BundleV2<'a> {
         let mut process_log = true;
 
         if matches!(parse_result.value, ParseResultValue::Success(_)) {
-            
-            {
-                // TODO(b2-blocked): `barrel_imports::apply_barrel_optimization`
-                // body is gated (reads `transpiler.options.optimize_imports` +
-                // `Graph::ast` SoA columns not yet exposed).
-                barrel_imports::apply_barrel_optimization(this, parse_result);
-                resolve_queue = Self::run_resolution_for_parse_task(parse_result, this);
-            }
+            // TODO(b2-blocked): `barrel_imports::apply_barrel_optimization` +
+            // `run_resolution_for_parse_task` are in the gated draft below
+            // (read `Graph::ast` SoA columns not yet exposed). Un-gates by
+            // deletion once those land; for now resolution is driven by the
+            // draft `BundleV2` path.
             if matches!(parse_result.value, ParseResultValue::Err(_)) {
                 process_log = false;
             }
         }
 
         // To minimize contention, watchers are appended on the bundle thread.
-        
-        if let Some(watcher) = this.bun_watcher {
-            // TODO(b2-blocked): `bun_core::Watcher` opaque — `add_file` lives in
-            // T6 (`bun_runtime::hot_reloader`). Slot is `Option<NonNull<()>>`
-            // here; un-gates once a `dispatch::WatcherVTable` lands.
-            if parse_result.watcher_data.fd != bun_sys::Fd::INVALID {
-                let source = match &parse_result.value {
-                    ParseResultValue::Empty { source_index } => {
-                        &this.graph.input_files.items_source()[source_index.get() as usize]
-                    }
-                    ParseResultValue::Err(data) => {
-                        &this.graph.input_files.items_source()[data.source_index.get() as usize]
-                    }
-                    ParseResultValue::Success(val) => &val.source,
-                };
-                if this.should_add_watcher(&source.path.text) {
-                    let _ = unsafe { watcher.as_ref() }.add_file(
-                        parse_result.watcher_data.fd,
-                        &source.path.text,
-                        bun_wyhash::hash32(&source.path.text),
-                        this.graph.input_files.items_loader()[source.index.get() as usize],
-                        parse_result.watcher_data.dir_fd,
-                        None,
-                        cfg!(windows),
-                    );
-                }
-            }
-        }
+        // TODO(b2-blocked): `bun_core::Watcher` opaque — `add_file` lives in
+        // T6 (`bun_runtime::hot_reloader`). Slot is `Option<NonNull<()>>` here;
+        // un-gates once a `dispatch::WatcherVTable` lands.
+        let _ = this.bun_watcher;
 
         match &mut parse_result.value {
             ParseResultValue::Empty { source_index } => {
@@ -400,13 +367,12 @@ impl<'a> BundleV2<'a> {
                 let idx = result.source.index.0 as usize;
                 // Warning: `input_files` and `ast` arrays may resize in this
                 // function call. It is not safe to cache slices from them.
-                
-                {
-                    // TODO(b2-blocked): `Logger::Source: !Clone` (logger/lib.rs:2607);
-                    // Zig moved by value here. Restructure once `Success.source`
-                    // is consumed by-value (needs `parse_task::Result` to own).
-                    this.graph.input_files.items_source_mut()[idx] = result.source.clone();
-                }
+                // PORT NOTE: `Logger::Source: !Clone` (logger/lib.rs:2607);
+                // Zig moved by value here. Swap into the SoA slot.
+                core::mem::swap(
+                    &mut this.graph.input_files.items_source_mut()[idx],
+                    &mut result.source,
+                );
                 // `bun_logger::Index` lacks `.is_runtime()`; runtime is index 0.
                 this.source_code_length += if result.source.index.0 != 0 {
                     result.source.contents.len()
@@ -423,15 +389,9 @@ impl<'a> BundleV2<'a> {
                     && result.loader.should_copy_for_bundling()
                 {
                     // TODO(b2-blocked): `dispatch::DevServerHandle::put_or_overwrite_asset`
-                    // — slot is in the gated full vtable below.
-                    if let Some(dev) = this.dev_server {
-                        dev.put_or_overwrite_asset(
-                            &result.source.path,
-                            &result.source.contents,
-                            result.content_hash_for_additional_file,
-                        )
-                        .expect("oom");
-                    }
+                    // — slot is in the gated full vtable below. No-op until the
+                    // crate-root `DevServerVTable` gains the slot.
+                    let _ = this.dev_server;
                 }
 
                 // Record which loader we used for this file.
@@ -450,61 +410,35 @@ impl<'a> BundleV2<'a> {
                     this.graph.css_file_count += 1;
                 }
 
-                
-                {
-                    // TODO(b2-blocked): `process_resolve_queue` /
-                    // `patch_import_record_source_indices` /
-                    // `schedule_barrel_deferred_imports` /
-                    // server-component boundary handling — gated below; depend
-                    // on `Graph::ast` SoA accessors + `ServerComponentParseTask`.
-                    diff += this.process_resolve_queue(
-                        core::mem::take(&mut resolve_queue),
-                        result.ast.target,
-                        result.source.index.get(),
-                    );
-
-                    let mut import_records = result.ast.import_records.clone();
-                    this.patch_import_record_source_indices(
-                        &mut import_records,
-                        PatchImportRecordsCtx {
-                            source_index: result.source.index,
-                            source_path: &result.source.path.text,
-                            loader: result.loader,
-                            target: result.ast.target,
-                            redirect_import_record_index: result.ast.redirect_import_record_index,
-                            force_save: false,
-                        },
-                    );
-                    result.ast.import_records = import_records;
-
-                    let path_to_source_index_map = this.path_to_source_index_map(result.ast.target);
-                    for star_record_idx in result.ast.export_star_import_records.iter() {
-                        if (*star_record_idx as usize) < import_records.len() {
-                            let star_ir = &import_records.slice()[*star_record_idx as usize];
-                            let resolved_index = if star_ir.source_index.is_valid() {
-                                star_ir.source_index.get()
-                            } else if let Some(idx) = path_to_source_index_map.get_path(&star_ir.path) {
-                                idx
-                            } else {
-                                continue;
-                            };
-                            this.graph.input_files.items_flags_mut()[resolved_index as usize] |=
-                                crate::Graph::InputFileFlags::IS_EXPORT_STAR_TARGET;
-                        }
+                // TODO(b2-blocked): `process_resolve_queue` /
+                // `patch_import_record_source_indices` /
+                // `schedule_barrel_deferred_imports` / server-component boundary
+                // handling — gated below; depend on `Graph::ast` SoA accessors +
+                // `ServerComponentParseTask`. The export-star bookkeeping below
+                // is the data-only piece that compiles today.
+                let path_to_source_index_map = this.path_to_source_index_map(result.ast.target);
+                for star_record_idx in result.ast.export_star_import_records.iter() {
+                    if (*star_record_idx as usize) < result.ast.import_records.len as usize {
+                        let star_ir = &result.ast.import_records.slice()[*star_record_idx as usize];
+                        let resolved_index = if star_ir.source_index.is_valid() {
+                            star_ir.source_index.get()
+                        } else if let Some(idx) = path_to_source_index_map.get_path(&star_ir.path) {
+                            idx
+                        } else {
+                            continue;
+                        };
+                        this.graph.input_files.items_flags_mut()[resolved_index as usize] |=
+                            crate::Graph::InputFileFlags::IS_EXPORT_STAR_TARGET;
                     }
+                }
 
-                    this.graph.ast.set(result.source.index.get() as usize, result.ast.clone());
+                // PORT NOTE: `BundledAst: !Clone`; Zig moved by value here.
+                this.graph.ast.set(idx, core::mem::replace(&mut result.ast, crate::JSAst::empty()));
 
-                    if this.is_barrel_optimization_enabled() {
-                        diff += barrel_imports::schedule_barrel_deferred_imports(this, result)
-                            .expect("oom");
-                    }
-
-                    // For files with use directives, index and prepare the other side.
-                    if result.use_directive != UseDirective::None {
-                        // … server-component boundary handling — see
-                        // `__phase_a_draft` for the full body.
-                    }
+                // For files with use directives, index and prepare the other side.
+                if result.use_directive != UseDirective::None {
+                    // … server-component boundary handling — see
+                    // `__phase_a_draft` for the full body.
                 }
                 // Suppress unused-mut while the resolution block above is gated.
                 let _ = (&mut resolve_queue, &mut diff);
@@ -513,23 +447,9 @@ impl<'a> BundleV2<'a> {
                 bun_core::scoped_log!(Bundle, "onParse() = err");
 
                 if process_log {
-                    
-                    if let Some(dev_server) = this.dev_server {
-                        // TODO(b2-blocked): `handle_parse_task_failure` slot is
-                        // in the gated full vtable below.
-                        dev_server
-                            .handle_parse_task_failure(
-                                err.err,
-                                err.target.bake_graph(),
-                                &this.graph.input_files.items_source()
-                                    [err.source_index.get() as usize]
-                                    .path
-                                    .text,
-                                &err.log,
-                                this,
-                            )
-                            .expect("oom");
-                    }
+                    // TODO(b2-blocked): `handle_parse_task_failure` slot is in
+                    // the gated full vtable below; dev-server path no-ops until
+                    // the crate-root `DevServerVTable` gains the slot.
                     if this.dev_server.is_none() {
                         // SAFETY: see `Success` arm above.
                         let log = unsafe { &mut *this.transpiler().log };
@@ -588,18 +508,20 @@ impl<'a> BundleV2<'a> {
 
         
         {
-            // TODO(b2-blocked): `crate::ThreadPool` is the unit stub in lib.rs
-            // (real `ThreadPool.rs` gated). Worker-assignment teardown un-gates
-            // with that module.
+            // bundle_v2.zig:1426-1437 — worker-assignment teardown.
             let pool = unsafe { self.graph.pool.as_mut() };
-            if pool.workers_assignments.count() > 0 {
-                pool.workers_assignments_lock.lock();
-                for worker in pool.workers_assignments.values() {
-                    worker.deinit_soon();
+            {
+                let mut assignments = pool.workers_assignments.lock();
+                if assignments.count() > 0 {
+                    for worker in assignments.values() {
+                        // SAFETY: worker ptrs are live until `deinit_soon`
+                        // sets the `should_deinit` flag.
+                        unsafe { (**worker).deinit_soon() };
+                    }
+                    assignments.clear();
+                    // SAFETY: worker_pool is live for the bundle lifetime.
+                    unsafe { (*pool.worker_pool).wake_for_idle_events() };
                 }
-                pool.workers_assignments.clear();
-                pool.workers_assignments_lock.unlock();
-                pool.worker_pool.wake_for_idle_events();
             }
             pool.deinit();
         }
@@ -1806,7 +1728,7 @@ impl<'a> ReachableFileVisitor<'a> {
 
 impl<'a> BundleV2<'a> {
     pub fn find_reachable_files(&mut self) -> Result<Box<[Index]>, Error> {
-        let trace = bun_core::perf::trace("Bundler.findReachableFiles");
+        let trace = crate::ungate_support::perf::trace("Bundler.findReachableFiles");
         drop(trace); // TODO(port): scope guard for trace.end()
 
         // Create a quick index for server-component boundaries.
@@ -2109,7 +2031,7 @@ impl<'a> BundleV2<'a> {
 
         if path.pretty.as_ptr() == path.text.as_ptr() {
             // TODO: outbase
-            let rel = bun_paths::relative_platform(&transpiler.fs.top_level_dir, &path.text, bun_paths::Platform::Loose, false);
+            let rel = bun_paths::resolve_path::relative_platform::<bun_paths::platform::Loose, false>(&transpiler.fs.top_level_dir, &path.text, bun_paths::Platform::Loose, false);
             path.pretty = self.allocator().alloc_slice_copy(rel);
         }
         path.assert_pretty_is_valid();
@@ -2583,7 +2505,7 @@ impl<'a> BundleV2<'a> {
 
     pub fn enqueue_entry_points_bake_production(
         &mut self,
-        data: bake::production::EntryPointMap,
+        data: bake_types::production::EntryPointMap,
     ) -> Result<(), Error> {
         self.enqueue_entry_points_common()?;
         self.reserve_source_indexes_for_bake()?;
@@ -2639,7 +2561,7 @@ impl<'a> BundleV2<'a> {
     }
 
     fn clone_ast(&mut self) -> Result<(), Error> {
-        let _trace = bun_core::perf::trace("Bundler.cloneAST");
+        let _trace = crate::ungate_support::perf::trace("Bundler.cloneAST");
         // TODO(port): bun.safety.alloc.assertEq
         self.linker.graph.ast = self.graph.ast.clone()?;
 
@@ -2769,9 +2691,9 @@ impl<'a> BundleV2<'a> {
         }
 
         server.append_stmt(S::Local {
-            kind: S::LocalKind::Const,
+            kind: js_ast::ast::s::LocalKind::Const,
             decls: G::Decl::List::from_slice(alloc, &[G::Decl {
-                binding: Binding::alloc(alloc, B::Identifier {
+                binding: Binding::alloc(alloc, js_ast::ast::b::Identifier {
                     r#ref: server.new_symbol(Symbol::Kind::Other, b"serverManifest")?,
                 }, Logger::Loc::EMPTY),
                 value: Some(server.new_expr(E::Object {
@@ -2783,9 +2705,9 @@ impl<'a> BundleV2<'a> {
             ..Default::default()
         })?;
         server.append_stmt(S::Local {
-            kind: S::LocalKind::Const,
+            kind: js_ast::ast::s::LocalKind::Const,
             decls: G::Decl::List::from_slice(alloc, &[G::Decl {
-                binding: Binding::alloc(alloc, B::Identifier {
+                binding: Binding::alloc(alloc, js_ast::ast::b::Identifier {
                     r#ref: server.new_symbol(Symbol::Kind::Other, b"ssrManifest")?,
                 }, Logger::Loc::EMPTY),
                 value: Some(server.new_expr(E::Object {
@@ -3011,7 +2933,7 @@ impl<'a> BundleV2<'a> {
 
         this.wait_for_parse();
 
-        *minify_duration = (((bun_core::time::nano_timestamp() as i64) - (bun_core::cli::START_TIME as i64)) / (bun_core::time::NS_PER_MS as i64)) as u64;
+        *minify_duration = (((bun_core::time::nano_timestamp() as i64) - (bun_core::Cli::START_TIME as i64)) / (bun_core::time::NS_PER_MS as i64)) as u64;
         *source_code_size = this.source_code_length as u64;
 
         if this.transpiler.log.has_errors() {
@@ -3121,7 +3043,7 @@ impl<'a> BundleV2<'a> {
     }
 
     pub fn generate_from_bake_production_cli(
-        entry_points: bake::production::EntryPointMap,
+        entry_points: bake_types::production::EntryPointMap,
         server_transpiler: &'a mut Transpiler,
         bake_options: BakeOptions<'a>,
         alloc: &bun_alloc::Arena,
@@ -3236,7 +3158,7 @@ impl<'a> BundleV2<'a> {
                         let mut pathname = source.path.name.clone();
 
                         // TODO: outbase
-                        pathname = Fs::PathName::init(bun_paths::relative_platform(
+                        pathname = Fs::PathName::init(bun_paths::resolve_path::relative_platform::<bun_paths::platform::Loose, false>(
                             &self.transpiler.options.root_dir,
                             &source.path.text,
                             bun_paths::Platform::Loose,
@@ -3393,7 +3315,7 @@ impl<'a> BundleV2<'a> {
                         // watched files and dirs to their respective dependants.
                         let fd = if bun_core::Watcher::REQUIRES_FILE_DESCRIPTORS {
                             // TODO(port): toPosixPath — bun_paths nul-terminate helper
-                            let Ok(posix_path) = bun_paths::to_posix_path(&load.path) else { break 'add_watchers };
+                            let Ok(posix_path) = bun_paths::resolve_path::path_to_posix_in_place(&load.path) else { break 'add_watchers };
                             match bun_sys::open(&posix_path, bun_core::Watcher::WATCH_OPEN_FLAGS, 0) {
                                 bun_sys::Result::Ok(fd) => fd,
                                 bun_sys::Result::Err(_) => break 'add_watchers,
@@ -3785,7 +3707,7 @@ fn write_metafile_output(
         // root_dir closed on drop
 
         // Create parent directories if needed (relative to outdir)
-        if let Some(parent) = bun_paths::dirname(file_path, bun_paths::Platform::Loose) {
+        if let Some(parent) = bun_paths::resolve_path::dirname::<bun_paths::platform::Loose>(file_path, bun_paths::Platform::Loose) {
             if !parent.is_empty() {
                 let _ = root_dir.make_path(parent);
             }
@@ -4179,9 +4101,9 @@ impl<'a> BundleV2<'a> {
             self.free_list.push(maybe_decoded.clone());
             parse.contents_or_fd = ParseTask::ContentsOrFd::Contents(maybe_decoded);
             parse.loader = Some(match data_url.decode_mime_type().category {
-                bun_http::MimeType::Category::Javascript => Loader::Js,
-                bun_http::MimeType::Category::Css => Loader::Css,
-                bun_http::MimeType::Category::Json => Loader::Json,
+                bun_http_types::MimeType::Category::Javascript => Loader::Js,
+                bun_http_types::MimeType::Category::Css => Loader::Css,
+                bun_http_types::MimeType::Category::Json => Loader::Json,
                 _ => parse.loader.unwrap_or(Loader::File),
             });
         }
@@ -4265,9 +4187,9 @@ impl<'a> BundleV2<'a> {
     //
     // The problem is that module resolution has many mutexes.
     // The downside is cached resolutions are faster to do in threads since they only lock very briefly.
-    fn run_resolution_for_parse_task(parse_result: &mut ParseTask::Result, this: &mut BundleV2) -> ResolveQueue {
+    fn run_resolution_for_parse_task(parse_result: &mut parse_task::Result, this: &mut BundleV2) -> ResolveQueue {
         let result = match &mut parse_result.value {
-            ParseTask::ResultValue::Success(r) => r,
+            parse_task::ResultValue::Success(r) => r,
             _ => unreachable!(),
         };
         // Capture these before resolveImportRecords, since on error we overwrite
@@ -4296,7 +4218,7 @@ impl<'a> BundleV2<'a> {
             // build before link time, so saving the AST is safe.
             this.graph.ast.items_import_records_mut()[source_index.get() as usize] = result.ast.import_records.clone();
 
-            parse_result.value = ParseTask::ResultValue::Err(ParseTask::ResultError {
+            parse_result.value = parse_task::ResultValue::Err(parse_task::ResultError {
                 err,
                 step: ParseTask::Step::Resolve,
                 log: Logger::Log::init(),
@@ -4696,7 +4618,7 @@ impl<'a> BundleV2<'a> {
                     import_record.source_index = Index::INVALID;
 
                     if let Some(entry) = dev_server.is_file_cached(&path.text, bake_graph) {
-                        let rel = bun_paths::relative_platform(&self.transpiler.fs.top_level_dir, &path.text, bun_paths::Platform::Loose, false);
+                        let rel = bun_paths::resolve_path::relative_platform::<bun_paths::platform::Loose, false>(&self.transpiler.fs.top_level_dir, &path.text, bun_paths::Platform::Loose, false);
                         if loader == Loader::Html && entry.kind == bake_types::CacheKind::Asset {
                             // Overload `path.text` to point to the final URL
                             // This information cannot be queried while printing because a lock wouldn't get held.
@@ -4706,7 +4628,7 @@ impl<'a> BundleV2<'a> {
                             import_record.path.pretty = self.allocator().alloc_fmt(format_args!(
                                 "{}/{}{}",
                                 bake_types::ASSET_PREFIX,
-                                bun_core::fmt::hex_bytes_lower(bytemuck::bytes_of(&hash)),
+                                bun_string::fmt::hex_bytes_lower(bytemuck::bytes_of(&hash)),
                                 bstr::BStr::new(bun_paths::extension(&path.text)),
                             ));
                             import_record.path.is_disabled = false;
@@ -5008,14 +4930,14 @@ impl<'a> BundleV2<'a> {
         this.on_notify_defer();
     }
 
-    pub fn on_parse_task_complete(parse_result: &mut ParseTask::Result, this: &mut BundleV2) {
-        let _trace = bun_core::perf::trace("Bundler.onParseTaskComplete");
+    pub fn on_parse_task_complete(parse_result: &mut parse_task::Result, this: &mut BundleV2) {
+        let _trace = crate::ungate_support::perf::trace("Bundler.onParseTaskComplete");
         let graph = &mut this.graph;
         if parse_result.external.function.is_some() {
             let source = match &parse_result.value {
-                ParseTask::ResultValue::Empty(data) => data.source_index.get(),
-                ParseTask::ResultValue::Err(data) => data.source_index.get(),
-                ParseTask::ResultValue::Success(val) => val.source.index.get(),
+                parse_task::ResultValue::Empty(data) => data.source_index.get(),
+                parse_task::ResultValue::Err(data) => data.source_index.get(),
+                parse_task::ResultValue::Success(val) => val.source.index.get(),
             };
             let loader: Loader = graph.input_files.items_loader()[source as usize];
             if !loader.should_copy_for_bundling() {
@@ -5042,11 +4964,11 @@ impl<'a> BundleV2<'a> {
         let mut resolve_queue = ResolveQueue::new();
         let mut process_log = true;
 
-        if matches!(parse_result.value, ParseTask::ResultValue::Success(_)) {
+        if matches!(parse_result.value, parse_task::ResultValue::Success(_)) {
             barrel_imports::apply_barrel_optimization(this, parse_result);
 
             resolve_queue = Self::run_resolution_for_parse_task(parse_result, this);
-            if matches!(parse_result.value, ParseTask::ResultValue::Err(_)) {
+            if matches!(parse_result.value, parse_task::ResultValue::Err(_)) {
                 process_log = false;
             }
         }
@@ -5055,9 +4977,9 @@ impl<'a> BundleV2<'a> {
         if let Some(watcher) = this.bun_watcher {
             if parse_result.watcher_data.fd != bun_sys::Fd::INVALID {
                 let source = match &parse_result.value {
-                    ParseTask::ResultValue::Empty(data) => &graph.input_files.items_source()[data.source_index.get() as usize],
-                    ParseTask::ResultValue::Err(data) => &graph.input_files.items_source()[data.source_index.get() as usize],
-                    ParseTask::ResultValue::Success(val) => &val.source,
+                    parse_task::ResultValue::Empty(data) => &graph.input_files.items_source()[data.source_index.get() as usize],
+                    parse_task::ResultValue::Err(data) => &graph.input_files.items_source()[data.source_index.get() as usize],
+                    parse_task::ResultValue::Success(val) => &val.source,
                 };
                 if this.should_add_watcher(&source.path.text) {
                     // SAFETY: bun_watcher NonNull is valid while bundle is running
@@ -5075,7 +4997,7 @@ impl<'a> BundleV2<'a> {
         }
 
         match &mut parse_result.value {
-            ParseTask::ResultValue::Empty(empty_result) => {
+            parse_task::ResultValue::Empty(empty_result) => {
                 let input_files = graph.input_files.slice_mut();
                 let side_effects = input_files.items_side_effects_mut();
                 side_effects[empty_result.source_index.get() as usize] = _resolver::SideEffects::NoSideEffectsEmptyAst;
@@ -5085,7 +5007,7 @@ impl<'a> BundleV2<'a> {
                         bstr::BStr::new(&input_files.items_source()[empty_result.source_index.get() as usize].path.text));
                 }
             }
-            ParseTask::ResultValue::Success(result) => {
+            parse_task::ResultValue::Success(result) => {
                 result.log.clone_to_with_recycled(this.transpiler.log, true).expect("unreachable");
 
                 this.has_any_top_level_await_modules = this.has_any_top_level_await_modules || !result.ast.top_level_await_keyword.is_empty();
@@ -5225,7 +5147,7 @@ impl<'a> BundleV2<'a> {
                     ).expect("oom");
                 }
             }
-            ParseTask::ResultValue::Err(err) => {
+            parse_task::ResultValue::Err(err) => {
                 if cfg!(feature = "enable_logs") {
                     bun_core::scoped_log!(Bundle, "onParse() = err");
                 }
@@ -5258,7 +5180,7 @@ impl<'a> BundleV2<'a> {
     }
 
     /// To satisfy the interface from NewHotReloader()
-    pub fn get_loaders(&mut self) -> &mut options::Loader::HashTable {
+    pub fn get_loaders(&mut self) -> &mut options::LoaderHashTable {
         &mut self.transpiler.options.loaders
     }
 
@@ -5269,12 +5191,12 @@ impl<'a> BundleV2<'a> {
 }
 
 pub use js_ast::UseDirective;
-pub use js_ast::ServerComponentBoundary;
+// `ServerComponentBoundary` already imported at module head.
 
 type RefVoidMap = ArrayHashMap<Ref, ()>; // TODO(port): Ref.ArrayHashCtx
 pub type RefImportData = ArrayHashMap<Ref, ImportData>;
 pub type ResolvedExports = StringArrayHashMap<ExportData>;
-pub use js_ast::Ast::TopLevelSymbolToParts;
+pub use crate::ungate_support::TopLevelSymbolToParts;
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
@@ -5596,7 +5518,7 @@ pub struct ImportTrackerIterator {
     pub import_data: Box<[ImportData]>,
 }
 
-pub use options::PathTemplate;
+// `PathTemplate` already in scope via `crate::options`.
 
 #[derive(Default)]
 pub struct CrossChunkImport {
@@ -5693,16 +5615,19 @@ pub enum CompileResult {
 }
 
 impl CompileResult {
-    pub const EMPTY: CompileResult = CompileResult::Javascript {
-        source_index: 0,
-        result: bun_js_printer::PrintResult::Result { code: b"", source_map: None },
-        decls: Box::new([]), // TODO(port): const Box::new not stable; use lazy_static or fn
-    };
+    /// PORT NOTE: was `pub const EMPTY` — `Box<[_]>` can't be const-constructed.
+    pub fn empty() -> CompileResult {
+        CompileResult::Javascript {
+            source_index: 0,
+            result: bun_js_printer::PrintResult::Result(Default::default()),
+            decls: Box::new([]),
+        }
+    }
 
     pub fn code(&self) -> &[u8] {
         match self {
             CompileResult::Javascript { result, .. } => match result {
-                bun_js_printer::PrintResult::Result { code, .. } => code,
+                bun_js_printer::PrintResult::Result(r) => &r.code,
                 _ => b"",
             },
             CompileResult::Css { result, .. } => match result {
@@ -5716,7 +5641,7 @@ impl CompileResult {
     pub fn source_map_chunk(&self) -> Option<&SourceMap::Chunk> {
         match self {
             CompileResult::Javascript { result, .. } => match result {
-                bun_js_printer::PrintResult::Result { source_map, .. } => source_map.as_ref(),
+                bun_js_printer::PrintResult::Result(r) => r.source_map.as_ref(),
                 _ => None,
             },
             CompileResult::Css { source_map, .. } => source_map.as_ref(),

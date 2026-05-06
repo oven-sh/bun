@@ -250,7 +250,7 @@ impl ParseTask {
             experimental_decorators: resolve_result.flags.experimental_decorators(),
             package_version,
             package_name,
-            known_target: ctx.transpiler().options.target,
+            known_target,
             // defaults:
             secondary_path_for_commonjs_interop: None,
             external_free_function: ExternalFreeFunction::NONE,
@@ -458,7 +458,7 @@ fn get_runtime_source_comptime(target: options::Target) -> RuntimeSource {
 
     let parse_task = ParseTask {
         // TODO(port): Zig used `undefined` for ctx; using null ptr.
-        ctx: core::ptr::null(),
+        ctx: core::ptr::null_mut(),
         path: Fs::Path::init_with_namespace(b"runtime", b"bun:runtime"),
         side_effects: _resolver::SideEffects::NoSideEffectsPureData,
         jsx: options::jsx::Pragma { parse: false, ..Default::default() },

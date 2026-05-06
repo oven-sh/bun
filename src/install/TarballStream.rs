@@ -147,7 +147,7 @@ pub struct TarballStream {
     /// thread. Populated by `finish()` and pushed onto `resolve_tasks` there.
     extract_task: *mut Task,
     network_task: *mut NetworkTask,
-    package_manager: *const PackageManager,
+    package_manager: *mut PackageManager,
 }
 
 /// Minimum Content-Length for which the streaming path is used. Below
@@ -162,7 +162,7 @@ impl TarballStream {
     pub fn init(
         extract_task: *mut Task,
         network_task: *mut NetworkTask,
-        manager: *const PackageManager,
+        manager: *mut PackageManager,
     ) -> *mut TarballStream {
         // SAFETY: caller guarantees `extract_task` is live for the lifetime
         // of this stream (it is published back to the main thread only in

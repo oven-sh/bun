@@ -116,6 +116,9 @@ unsafe extern "C" fn on_stream_open(s: *mut quic::Stream, is_client: c_int) {
         return;
     }
     let Some(qs) = s.socket() else { return };
+    // SAFETY: parent connection outlives this stream callback; single-threaded
+    // event loop, no other &mut Socket live across this reborrow.
+    let qs = unsafe { &mut *qs.as_ptr() };
     let Some(session) = *qs.ext::<ClientSession>() else {
         s.close();
         return;

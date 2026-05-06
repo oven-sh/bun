@@ -20,7 +20,6 @@ use crate::source::Source;
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
 
-#[allow(non_upper_case_globals)]
 bun_core::declare_scope!(PipeReader, hidden);
 macro_rules! log {
     ($($args:tt)*) => { bun_core::scoped_log!(PipeReader, $($args)*) };

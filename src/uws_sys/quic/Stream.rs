@@ -27,9 +27,14 @@ unsafe extern "C" {
 }
 
 impl Stream {
-    pub fn socket(&mut self) -> Option<&mut Socket> {
-        // SAFETY: self is a valid us_quic_stream_t; returned socket lives at least as long as the stream.
-        unsafe { us_quic_stream_socket(self).as_mut() }
+    pub fn socket(&mut self) -> Option<NonNull<Socket>> {
+        // SAFETY: self is a valid us_quic_stream_t. Returned as a raw pointer (not
+        // &mut) because the Socket is the *parent connection shared by every stream
+        // on it* — two live &mut Stream on the same conn calling .socket() (or a
+        // conn-level callback already holding &mut Socket) would otherwise yield
+        // aliasing &mut Socket, which is UB. Mirrors Zig's `?*Socket`; callers
+        // reborrow locally under their own SAFETY proof.
+        unsafe { NonNull::new(us_quic_stream_socket(self)) }
     }
 
     pub fn shutdown(&mut self) {

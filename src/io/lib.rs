@@ -76,7 +76,6 @@ use bun_sys::{self as sys, Fd, FdExt, E};
 
 // TODO(port): Zig scope name was `.loop`, which is a Rust keyword. Using `io_loop` here;
 // Phase B should ensure `BUN_DEBUG_loop=1` still maps to this scope.
-#[allow(non_upper_case_globals)]
 bun_core::declare_scope!(io_loop, visible);
 macro_rules! log {
     ($($args:tt)*) => { bun_core::scoped_log!(io_loop, $($args)*) };

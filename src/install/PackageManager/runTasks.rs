@@ -892,11 +892,12 @@ pub fn run_tasks<C: RunTasksCallbacks>(
             }
             Task::Tag::Extract | Task::Tag::LocalTarball => {
                 // Zig: `defer { switch (task.tag) { .extract => preallocated_network_tasks.put(...), else => {} } }`
-                let _put_net = scopeguard::guard((), |()| {
-                    // SAFETY: see `_put_task` above — same iteration-scoped raw ptrs.
+                let _put_net = scopeguard::guard((), move |()| {
+                    // SAFETY: see `_put_task` above — same iteration-scoped raw ptrs
+                    // (`mgr_iter_ptr`/`task_ptr` are children of the live shadows).
                     unsafe {
                         if (*task_ptr).tag == Task::Tag::Extract {
-                            (*manager_ptr)
+                            (*mgr_iter_ptr)
                                 .preallocated_network_tasks
                                 .put((*task_ptr).request.extract_mut().network);
                         }

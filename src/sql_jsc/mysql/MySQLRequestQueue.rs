@@ -168,11 +168,17 @@ impl MySQLRequestQueue {
                 }
 
                 // SAFETY: no `&mut *this` is live here (only the raw `this`
-                // and `req`, a disjoint heap alloc), so `&mut *connection`
-                // (which spans the queue bytes) does not alias a live unique
-                // borrow. `run()`/`on_error()` never touch the queue.
+                // and `req`, a disjoint heap alloc). `&mut *connection` spans
+                // the queue bytes and `run()` *does* read queue scalars
+                // (`can_execute_query`/`can_pipeline`/`can_prepare_query`),
+                // but only through this reborrow; because `this` was projected
+                // from the same `connection` raw via `addr_of_mut!`, the
+                // reborrow is a child tag that is popped when the `&mut` ends
+                // — the next `(*this)` access below remains valid.
                 if let Err(err) = req.run(unsafe { &mut *connection }) {
                     debug!("run failed");
+                    // SAFETY: same as above — fresh `&mut *connection`
+                    // reborrow, no `(*this)` access overlaps its lifetime.
                     unsafe { (*connection).on_error(Some(req), err) };
                     if offset == 0 {
                         unsafe { (*this).requests.discard(1) };

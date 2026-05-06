@@ -1056,15 +1056,24 @@ impl<const SSL: bool> SocketHandler<SSL> {
 
     pub fn on_data(this: &mut JSMySQLConnection, _: NewSocketHandler<SSL>, data: &[u8]) {
         this.ref_();
-        let _ref_guard = scopeguard::guard((), |_| this.deref());
+        // Zig `defer this.deref();` + `defer { resetConnectionTimeout(); ... }`.
+        // Both guards re-enter via raw pointer so neither captures a `&mut`
+        // alias and no reference is live across the potential free. Guard drop
+        // order is LIFO, so `_ref_guard` (deref) runs last — matches Zig.
+        let p: *mut JSMySQLConnection = this;
+        // SAFETY: `p` from live `&mut this`; paired with `ref_()` above.
+        let _ref_guard = scopeguard::guard((), move |_| unsafe { JSMySQLConnection::deref(p) });
         let vm = this.vm;
 
-        // TODO(port): errdefer — guard captures &mut this; Phase B may need reshape
-        let _tail_guard = scopeguard::guard((), |_| {
-            // reset the connection timeout after we're done processing the data
-            this.reset_connection_timeout();
-            this.update_reference_type();
-            this.register_auto_flusher();
+        let _tail_guard = scopeguard::guard((), move |_| {
+            // SAFETY: `p` valid — `_ref_guard` has not yet dropped, so the
+            // matching `ref_()` keeps `*p` alive through this block.
+            unsafe {
+                // reset the connection timeout after we're done processing the data
+                (*p).reset_connection_timeout();
+                (*p).update_reference_type();
+                (*p).register_auto_flusher();
+            }
         });
         if this.vm.is_shutting_down() {
             // we are shutting down lets not process the data

@@ -423,12 +423,12 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         let combined_script: &mut ZStr =
             unsafe { ZStr::from_raw_mut(copy_script.as_mut_ptr(), copy_script.len() - 1) };
 
-        if self.foreground && self.manager.options.log_level != PackageManager::Options::LogLevel::Silent {
+        if (*this).foreground && (*this).manager.options.log_level != PackageManager::Options::LogLevel::Silent {
             Output::command(combined_script.as_bytes());
         } else if let Some(scripts_node) = manager.scripts_node.as_ref() {
             manager.set_node_name(
                 scripts_node,
-                self.package_name,
+                (*this).package_name,
                 PackageManager::ProgressStrings::SCRIPT_EMOJI,
                 true,
             );

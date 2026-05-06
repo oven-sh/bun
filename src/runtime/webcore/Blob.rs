@@ -3118,21 +3118,10 @@ unsafe extern "C" fn on_file_stream_reject_request_stream_shim(
     bun_jsc::host_fn::to_js_host_fn_result(global, on_file_stream_reject_request_stream(global, callframe))
 }
 
-// Local shim for `bun_jsc::AnyPromise::result` (not yet on the upstream enum).
-trait AnyPromiseResultExt {
-    fn result(self, vm: &jsc::VM) -> JSValue;
-}
-impl AnyPromiseResultExt for jsc::AnyPromise {
-    #[inline]
-    fn result(self, vm: &jsc::VM) -> JSValue {
-        match self {
-            // SAFETY: variants hold a live JSC heap cell created via `as_any_promise`.
-            jsc::AnyPromise::Normal(p) => unsafe { (*p).result(vm) },
-            // `JSInternalPromise` is now a transparent alias for `JSPromise`.
-            jsc::AnyPromise::Internal(p) => unsafe { (*p).result(vm) },
-        }
-    }
-}
+// PORT NOTE: the local `AnyPromiseResultExt` shim was removed —
+// `bun_jsc::AnyPromise::result` is an inherent method (and `JSInternalPromise`
+// is a transparent alias for `JSPromise`), so the `.result(vm)` call below
+// resolves directly upstream.
 
 // TODO(port): @export of jsc::to_js_host_fn wrappers under
 // "Bun__FileStreamWrapper__onResolveRequestStream" / "...Reject..." names.

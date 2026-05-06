@@ -304,18 +304,23 @@ impl JSMySQLConnection {
 
     /// Intrusive-refcount destroy callback. Not `Drop` — this type is a
     /// `.classes.ts` `m_ctx` payload; teardown is driven by `finalize()` → `deref()`.
-    /// Private: only `IntrusiveRefCounted::destroy` calls this.
-    fn deinit(&mut self) {
-        self.stop_timers();
-        self.poll_ref.unref(self.vm);
-        self.unregister_auto_flusher();
+    /// Private: only `deref()` calls this when the count hits 0.
+    ///
+    /// SAFETY: `this` was originally allocated via `Box::new` and leaked via
+    /// `Box::into_raw` in `create_instance`; the caller is the unique owner.
+    /// No `&Self` / `&mut Self` may outlive the `Box::from_raw` drop below —
+    /// that is why this (and `deref`) are raw-pointer-shaped, mirroring Zig's
+    /// `fn deinit(this: *@This())` which has no reference-validity invariant.
+    unsafe fn deinit(this: *mut Self) {
+        (*this).stop_timers();
+        (*this).poll_ref.unref((*this).vm);
+        (*this).unregister_auto_flusher();
 
-        self.connection.cleanup();
+        (*this).connection.cleanup();
         // bun.destroy(this): reclaim the `Box::into_raw` from `create_instance`.
-        // SAFETY: only reachable from `deref()` when ref_count hits 0; `self`
-        // was originally allocated via `Box::new` and leaked via `Box::into_raw`.
-        // No further access to `*self` after this line.
-        drop(unsafe { Box::from_raw(self as *mut Self) });
+        // SAFETY: see fn-level contract. No further access to `*this` after
+        // this line; no `&`/`&mut Self` is live in any caller frame.
+        drop(Box::from_raw(this));
     }
 
     fn ensure_js_value_is_alive(&self) {

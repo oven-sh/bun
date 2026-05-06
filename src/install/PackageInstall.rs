@@ -390,15 +390,17 @@ static mut HARDLINK_QUEUE: core::mem::MaybeUninit<HardLinkQueue> = core::mem::Ma
 
 #[cfg(windows)]
 impl HardLinkWindowsInstallTask {
-    pub fn init_queue() -> &'static mut HardLinkQueue {
+    pub fn init_queue() -> &'static HardLinkQueue {
         // SAFETY: called once per install batch on the main thread before any push().
+        // Returns a shared ref so worker threads in run_from_thread_pool() may safely
+        // alias it via HARDLINK_QUEUE.assume_init_ref(); all queue methods take &self.
         unsafe {
             HARDLINK_QUEUE.write(HardLinkQueue {
                 thread_pool: &PackageManager::get().thread_pool,
                 errored_task: AtomicPtr::new(core::ptr::null_mut()),
                 wait_group: WaitGroup::init(),
             });
-            HARDLINK_QUEUE.assume_init_mut()
+            HARDLINK_QUEUE.assume_init_ref()
         }
     }
 

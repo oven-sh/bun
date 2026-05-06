@@ -237,29 +237,41 @@ impl PosixLoop {
 
     // TODO(port): same trampoline-synthesis limitation as `next_tick` — callers pass the
     // C-ABI callback directly. The returned `Handler` stores it for later removal.
-    pub fn add_post_handler(
-        &mut self,
+    //
+    // Takes `this: *mut Self` (not `&mut self`) so the stored `Handler.loop_` inherits the
+    // long-lived raw-pointer provenance from `us_create_loop`/`uws_get_loop`. Routing through
+    // a `&mut self` reborrow would bound the stored pointer's provenance to this call, and any
+    // subsequent `&mut`/`&` to the C-owned singleton would invalidate it under Stacked Borrows,
+    // making the later FFI write in `Handler::remove_*` UB. Mirrors Zig's `this: *PosixLoop`.
+    /// # Safety
+    /// `this` must be the live C-allocated loop pointer returned by
+    /// `us_create_loop`/`uws_get_loop` (not derived from a `&mut` reborrow).
+    pub unsafe fn add_post_handler(
+        this: *mut Self,
         ctx: *mut c_void,
         callback: unsafe extern "C" fn(*mut c_void, *mut Loop),
     ) -> Handler {
-        // SAFETY: self is a valid loop pointer
-        unsafe { c::uws_loop_addPostHandler(self, ctx, callback) };
+        // SAFETY: `this` is the live C-allocated loop pointer per fn contract.
+        unsafe { c::uws_loop_addPostHandler(this, ctx, callback) };
         Handler {
-            loop_: self,
+            loop_: this,
             ctx,
             callback,
         }
     }
 
-    pub fn add_pre_handler(
-        &mut self,
+    /// # Safety
+    /// `this` must be the live C-allocated loop pointer returned by
+    /// `us_create_loop`/`uws_get_loop` (not derived from a `&mut` reborrow).
+    pub unsafe fn add_pre_handler(
+        this: *mut Self,
         ctx: *mut c_void,
         callback: unsafe extern "C" fn(*mut c_void, *mut Loop),
     ) -> Handler {
-        // SAFETY: self is a valid loop pointer
-        unsafe { c::uws_loop_addPreHandler(self, ctx, callback) };
+        // SAFETY: `this` is the live C-allocated loop pointer per fn contract.
+        unsafe { c::uws_loop_addPreHandler(this, ctx, callback) };
         Handler {
-            loop_: self,
+            loop_: this,
             ctx,
             callback,
         }
@@ -301,16 +313,18 @@ pub struct Handler {
 
 impl Handler {
     pub fn remove_post(&self) {
-        // SAFETY: loop_ was obtained from `&mut Loop` in add_*_handler and the
-        // C-allocated loop outlives this Handler; callback was previously registered.
+        // SAFETY: `loop_` is the original C-allocated raw pointer (from
+        // `us_create_loop`/`uws_get_loop`) stored by `add_*_handler`, with provenance
+        // that outlives this Handler and permits mutation; callback was previously registered.
         unsafe { c::uws_loop_removePostHandler(self.loop_, self.ctx, self.callback) };
     }
 
     pub fn remove_pre(&self) {
         // PORT NOTE: Zig also called `uws_loop_removePostHandler` here (likely a bug
         // upstream); preserving behavior verbatim.
-        // SAFETY: loop_ was obtained from `&mut Loop` in add_*_handler and the
-        // C-allocated loop outlives this Handler; callback was previously registered.
+        // SAFETY: `loop_` is the original C-allocated raw pointer (from
+        // `us_create_loop`/`uws_get_loop`) stored by `add_*_handler`, with provenance
+        // that outlives this Handler and permits mutation; callback was previously registered.
         unsafe { c::uws_loop_removePostHandler(self.loop_, self.ctx, self.callback) };
     }
 }

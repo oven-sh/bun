@@ -2206,7 +2206,7 @@ pub fn install_isolated_packages(
 
                     let ctx = install::TaskCallbackContext::IsolatedPackageInstallContext(entry_id);
 
-                    let dep = &lockfile.buffers.dependencies[dep_id as usize];
+                    let dep = &lockfile_ro.buffers.dependencies[dep_id as usize];
 
                     match pkg_res_tag {
                         ResolutionTag::Npm => {

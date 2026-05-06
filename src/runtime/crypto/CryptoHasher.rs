@@ -230,11 +230,7 @@ impl CryptoHasher {
         _: JSValue,
         _: JSValue,
     ) -> JsResult<JSValue> {
-        let _ = global;
-        // `evp::Algorithm::names()` is `EnumMap<Algorithm, bun_str::String>`;
-        // `to_js_array` lives in the file-based `bun_string_jsc` mod which is
-        // not re-exported at `bun_jsc::` top level yet.
-        todo!("blocked_on: bun_jsc::bun_string_jsc::to_js_array")
+        bun_jsc::bun_string_jsc::to_js_array(global, evp::Algorithm::names())
     }
 
     fn hash_to_encoding(

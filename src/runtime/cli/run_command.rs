@@ -63,6 +63,17 @@ impl<T, E> UnwrapOrOom for ::core::result::Result<T, E> {
     }
 }
 
+/// Port of `bun.pathLiteral` — picks the POSIX or Windows literal at compile
+/// time. Local because `bun_paths` does not export a macro form yet.
+macro_rules! path_literal {
+    ($posix:literal, $win:literal) => {{
+        #[cfg(windows)]
+        { $win }
+        #[cfg(not(windows))]
+        { $posix }
+    }};
+}
+
 /// Process-lifetime arena for the runner's `Transpiler`. Zig passed
 /// `ctx.allocator` (== `bun.default_allocator`); the Rust port threads an
 /// `&'static Arena` per PORTING.md §AST crates. `bun_alloc::Arena` (=

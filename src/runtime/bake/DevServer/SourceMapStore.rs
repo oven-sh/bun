@@ -584,7 +584,7 @@ impl SourceMapStore {
             .expect("unreachable"); // space has been cleared above
 
         if self.weak_ref_sweep_timer.state != EventLoopTimer::State::ACTIVE {
-            bun_output::scoped_log!(map_log, "arming weak ref sweep timer");
+            map_log!("arming weak ref sweep timer");
             self.owner().vm.timer.update(&mut self.weak_ref_sweep_timer, &expire);
             // TODO(port): borrowck — same overlapping &mut as above.
         }

@@ -156,8 +156,7 @@ unsafe extern "C" {
 
 static TITLE_MUTEX: bun_threading::Mutex = bun_threading::Mutex::default();
 
-#[unsafe(no_mangle)]
-#[export_name = "Bun__Process__getTitle"]
+#[unsafe(export_name = "Bun__Process__getTitle")]
 pub extern "C" fn get_title(_global: *const JSGlobalObject, title: *mut BunString) {
     TITLE_MUTEX.lock();
     let _guard = scopeguard::guard((), |()| TITLE_MUTEX.unlock());

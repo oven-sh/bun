@@ -73,9 +73,10 @@ use crate::node::util::validators;
 // `.classes.ts`-backed: the C++ JSCell wrapper (JSNativeBrotli) is generated;
 // this struct is the `m_ctx` payload. Codegen provides toJS/fromJS/fromJSDirect.
 #[bun_jsc::JsClass]
-pub struct NativeBrotli<'a> {
+pub struct NativeBrotli {
     pub ref_count: Cell<u32>,
-    pub global_this: &'a JSGlobalObject,
+    // TODO(port): lifetime — JSC_BORROW backref; global outlives this m_ctx payload.
+    pub global_this: *mut JSGlobalObject,
     pub stream: Context,
     /// Points into a JS `Uint32Array` (`this._writeState`). Kept alive because
     /// the JS object is tied to the native handle as `_handle[owner_symbol]`.

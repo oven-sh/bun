@@ -812,7 +812,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     Ok(dev)
 }
 
-impl Drop for DevServer {
+impl Drop for DevServer<'_> {
     fn drop(&mut self) {
         debug_log!("deinit");
         DEV_SERVER_DEINIT_COUNT_FOR_TESTING
@@ -915,7 +915,7 @@ impl Drop for DevServer {
 pub type AllocationScope = bun_alloc::AllocationScope;
 pub type DevAllocator = bun_alloc::AllocationScopeBorrowed;
 
-impl DevServer {
+impl DevServer<'_> {
     pub fn allocator(&self) -> &dyn bun_alloc::Allocator {
         self.allocation_scope.allocator()
     }
@@ -927,7 +927,7 @@ impl DevServer {
 
 // re-exports from memory_cost module already declared at top
 
-impl DevServer {
+impl DevServer<'_> {
     fn init_server_runtime(&mut self) {
         let runtime = BunString::static_(bake::get_hmr_runtime(bake::Side::Server).code);
 
@@ -1482,7 +1482,7 @@ impl ReqOrSaved {
     }
 }
 
-impl DevServer {
+impl DevServer<'_> {
     fn defer_request(
         &mut self,
         requests_array: &mut deferred_request::List,
@@ -1620,7 +1620,7 @@ fn check_route_failures(
     }
 }
 
-impl DevServer {
+impl DevServer<'_> {
     fn append_route_entry_points_if_not_stale(
         &mut self,
         entry_points: &mut EntryPointList,
@@ -1705,7 +1705,7 @@ struct FrameworkRequestArgs {
     set_async_local_storage: JSValue,
 }
 
-impl DevServer {
+impl DevServer<'_> {
     fn compute_arguments_for_framework_request(
         &mut self,
         route_bundle_index: route_bundle::Index,
@@ -1949,7 +1949,7 @@ const SCRIPT_UNREF_PAYLOAD: &str = concat!(
     "</script>",
 );
 
-impl DevServer {
+impl DevServer<'_> {
     fn generate_html_payload(
         &mut self,
         route_bundle_index: route_bundle::Index,
@@ -2290,7 +2290,7 @@ pub struct ResponseAndMethod {
     pub method: Method,
 }
 
-impl DevServer {
+impl DevServer<'_> {
     pub fn start_async_bundle(
         &mut self,
         entry_points: EntryPointList,
@@ -3612,7 +3612,7 @@ pub fn finalize_bundle(
     Ok(())
 }
 
-impl DevServer {
+impl DevServer<'_> {
     fn start_next_bundle_if_present(&mut self) {
         debug_assert!(self.magic == Magic::Valid);
         // Clear the current bundle
@@ -3743,7 +3743,7 @@ pub struct CacheEntry {
     pub kind: FileKind,
 }
 
-impl DevServer {
+impl DevServer<'_> {
     pub fn is_file_cached(&mut self, path: &[u8], side: bake::Graph) -> Option<CacheEntry> {
         // Barrel files with deferred records must always be re-parsed.
         if self.barrel_files_with_deferrals.contains_key(path) {
@@ -3847,7 +3847,7 @@ where
     send_built_in_not_found(resp);
 }
 
-impl DevServer {
+impl DevServer<'_> {
     // TODO: path params
     pub fn handle_render_redirect(
         &mut self,
@@ -3880,7 +3880,7 @@ impl DevServer {
 
     pub fn respond_for_html_bundle(
         &mut self,
-        html: &mut HTMLBundle::HTMLBundleRoute,
+        html: &mut HTMLBundleRoute,
         req: &mut Request,
         resp: AnyResponse,
     ) -> Result<(), AllocError> {
@@ -3945,7 +3945,7 @@ impl DevServer {
                     file.html_route_bundle_index = Some(bundle_index);
                     *packed_file = file.pack();
                     break 'brk route_bundle::Data::Html(route_bundle::HTML {
-                        html_bundle: HTMLBundle::HTMLBundleRoute::Ref::init_ref(html),
+                        html_bundle: HTMLBundleRoute::Ref::init_ref(html),
                         bundled_file: incremental_graph_index,
                         script_injection_offset: route_bundle::ScriptOffset::NONE,
                         cached_response: None,
@@ -3965,7 +3965,7 @@ impl DevServer {
 
     fn register_catch_all_html_route(
         &mut self,
-        html: &mut HTMLBundle::HTMLBundleRoute,
+        html: &mut HTMLBundleRoute,
     ) -> Result<(), bun_core::Error> {
         let bundle_index = self.get_or_put_route_bundle(route_bundle::UnresolvedIndex::Html(html))?;
         self.html_router.fallback = bundle_index.to_optional();
@@ -3986,7 +3986,7 @@ enum ErrorPageKind {
     Runtime,
 }
 
-impl DevServer {
+impl DevServer<'_> {
     fn encode_serialized_failures(
         &self,
         failures: &[SerializedFailure],
@@ -4140,7 +4140,7 @@ fn send_built_in_not_found<R: uws::ResponseLike>(resp: R) {
     resp.end(message, true);
 }
 
-impl DevServer {
+impl DevServer<'_> {
     fn print_memory_line(&self) {
         if !AllocationScope::ENABLED {
             return;
@@ -4262,7 +4262,7 @@ pub enum TraceImportGoal {
     FindErrors,
 }
 
-impl DevServer {
+impl DevServer<'_> {
     /// `extra_client_bits` is specified if it is possible that the client graph may
     /// increase in size while the bits are being used.
     fn init_graph_trace_state(
@@ -4373,7 +4373,7 @@ pub fn dump_bundle_for_chunk(
     }
 }
 
-impl DevServer {
+impl DevServer<'_> {
     pub fn emit_visualizer_message_if_needed(&mut self) {
         #[cfg(not(feature = "bake_debugging_features"))]
         return;
@@ -4667,7 +4667,7 @@ bitflags::bitflags! {
     }
 }
 
-impl DevServer {
+impl DevServer<'_> {
     pub fn route_to_bundle_index_slow(&mut self, pattern: &[u8]) -> Option<route_bundle::Index> {
         let mut params: framework_router::MatchedParams = Default::default();
         if let Some(route_index) = self.router.match_slow(pattern, &mut params) {
@@ -4761,7 +4761,7 @@ fn mark_all_route_children(
     }
 }
 
-impl DevServer {
+impl DevServer<'_> {
     fn mark_all_route_children_failed(&mut self, route_index: framework_router::RouteIndex) {
         let mut next = self.router.route_ptr(route_index).first_child.unwrap_();
         while let Some(child_index) = next {
@@ -4920,7 +4920,7 @@ impl SafeFileId {
     }
 }
 
-impl DevServer {
+impl DevServer<'_> {
     /// Interface function for FrameworkRouter
     pub fn get_file_id_for_router(
         &mut self,
@@ -4996,7 +4996,7 @@ fn from_opaque_file_id<const SIDE: bake::Side>(id: OpaqueFileId) -> incremental_
     incremental_graph::FileIndex::init(u32::try_from(id.get()).unwrap())
 }
 
-impl DevServer {
+impl DevServer<'_> {
     /// Returns posix style path, suitible for URLs and reproducible hashes.
     /// The caller must provide a PathBuffer from the pool.
     pub fn relative_path<'a>(&self, relative_path_buf: &'a mut PathBuffer, path: &'a [u8]) -> &'a [u8] {
@@ -5154,22 +5154,22 @@ impl EntryPointList {
 /// This structure does not increment the reference count of its contents, as
 /// the lifetime of them are all tied to the underling Bun.serve instance.
 pub struct HTMLRouter<'a> {
-    pub map: StringHashMap<&'a HTMLBundle::HTMLBundleRoute>,
+    pub map: StringHashMap<&'a HTMLBundleRoute>,
     /// If a catch-all route exists, it is not stored in map, but here.
-    pub fallback: Option<&'a HTMLBundle::HTMLBundleRoute>,
+    pub fallback: Option<&'a HTMLBundleRoute>,
 }
 
 impl<'a> HTMLRouter<'a> {
     pub const EMPTY: HTMLRouter<'a> = HTMLRouter { map: StringHashMap::new(), fallback: None };
 
-    pub fn get(&self, path: &[u8]) -> Option<&'a HTMLBundle::HTMLBundleRoute> {
+    pub fn get(&self, path: &[u8]) -> Option<&'a HTMLBundleRoute> {
         self.map.get(path).copied().or(self.fallback)
     }
 
     pub fn put(
         &mut self,
         path: &[u8],
-        route: &'a HTMLBundle::HTMLBundleRoute,
+        route: &'a HTMLBundleRoute,
     ) -> Result<(), bun_core::Error> {
         if path == b"/*" {
             self.fallback = Some(route);
@@ -5187,7 +5187,7 @@ impl<'a> HTMLRouter<'a> {
 
 // HTMLRouter::deinit → Drop on map
 
-impl DevServer {
+impl DevServer<'_> {
     pub fn put_or_overwrite_asset(
         &mut self,
         path: &bun_fs::Path,

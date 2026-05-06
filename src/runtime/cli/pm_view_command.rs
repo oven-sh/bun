@@ -1,7 +1,7 @@
 use bun_core::{Global, Output};
 use bun_core::fmt as bun_fmt;
 use bun_http as http;
-use bun_install::install::PackageManager;
+use bun_install::PackageManager;
 use bun_install::npm::{self, PackageManifest};
 use bun_install::Dependency;
 use bun_json as JSON;

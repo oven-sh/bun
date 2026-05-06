@@ -153,10 +153,15 @@ impl UTF8Fallback {
             if input.is_done() {
                 write_fn(
                     ctx,
-                    streams::Result::OwnedAndDone(ByteList::from_owned_slice(slice)),
+                    streams::Result::OwnedAndDone(ByteList::from_owned_slice(
+                        slice.into_boxed_slice(),
+                    )),
                 )
             } else {
-                write_fn(ctx, streams::Result::Owned(ByteList::from_owned_slice(slice)))
+                write_fn(
+                    ctx,
+                    streams::Result::Owned(ByteList::from_owned_slice(slice.into_boxed_slice())),
+                )
             }
         }
     }

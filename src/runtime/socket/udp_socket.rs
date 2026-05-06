@@ -1413,7 +1413,9 @@ impl UDPSocket {
         drop(unsafe { Box::from_raw(this) });
     }
 
-    #[bun_jsc::host_fn]
+    // TODO(port): #[bun_jsc::host_fn] Free-kind shim emits a bare `js_connect(..)`
+    // call which fails to resolve inside an `impl` block. Re-attach once the
+    // proc-macro grows a `static`/associated variant or codegen wires this.
     pub fn js_connect(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let args = call_frame.arguments_old(2);
 

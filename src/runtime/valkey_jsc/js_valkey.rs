@@ -291,7 +291,8 @@ impl SubscriptionCtx {
             debug_assert!(callbacks.is_array());
         }
 
-        let vm = VirtualMachine::get();
+        // SAFETY: callback runs on the JS thread; VM is alive for the duration.
+        let vm = unsafe { &mut *VirtualMachine::get() };
         let event_loop = vm.event_loop();
         event_loop.enter();
         let _exit = scopeguard::guard((), |_| event_loop.exit());

@@ -125,7 +125,7 @@ impl WindowsNamedPipeContext {
                 tls.on_data(socket, decoded_data);
             }
             SocketType::Tcp(tcp) => {
-                let socket = TCPSocket::Socket::from_named_pipe(&mut self.named_pipe);
+                let socket = socket_from_named_pipe::<false>(&mut self.named_pipe);
                 tcp.on_data(socket, decoded_data);
             }
             SocketType::None => {}
@@ -139,7 +139,7 @@ impl WindowsNamedPipeContext {
                 let _ = tls.on_handshake(socket, success as i32, ssl_error);
             }
             SocketType::Tcp(tcp) => {
-                let socket = TCPSocket::Socket::from_named_pipe(&mut self.named_pipe);
+                let socket = socket_from_named_pipe::<false>(&mut self.named_pipe);
                 let _ = tcp.on_handshake(socket, success as i32, ssl_error);
             }
             SocketType::None => {}
@@ -153,7 +153,7 @@ impl WindowsNamedPipeContext {
                 tls.on_end(socket);
             }
             SocketType::Tcp(tcp) => {
-                let socket = TCPSocket::Socket::from_named_pipe(&mut self.named_pipe);
+                let socket = socket_from_named_pipe::<false>(&mut self.named_pipe);
                 tcp.on_end(socket);
             }
             SocketType::None => {}
@@ -167,7 +167,7 @@ impl WindowsNamedPipeContext {
                 tls.on_writable(socket);
             }
             SocketType::Tcp(tcp) => {
-                let socket = TCPSocket::Socket::from_named_pipe(&mut self.named_pipe);
+                let socket = socket_from_named_pipe::<false>(&mut self.named_pipe);
                 tcp.on_writable(socket);
             }
             SocketType::None => {}
@@ -207,7 +207,7 @@ impl WindowsNamedPipeContext {
                 tls.on_timeout(socket);
             }
             SocketType::Tcp(tcp) => {
-                let socket = TCPSocket::Socket::from_named_pipe(&mut self.named_pipe);
+                let socket = socket_from_named_pipe::<false>(&mut self.named_pipe);
                 tcp.on_timeout(socket);
             }
             SocketType::None => {}

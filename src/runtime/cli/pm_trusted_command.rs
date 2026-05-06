@@ -157,6 +157,7 @@ impl UntrustedCommand {
         ));
 
         Ok(())
+        } // end #[cfg(any())]
     }
 
     fn print_zero_untrusted_dependencies_found() {

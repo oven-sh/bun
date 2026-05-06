@@ -369,17 +369,10 @@ pub use form_data::{FormData, AsyncFormData};
 #[path = "webcore/ScriptExecutionContext.rs"]
 pub mod script_execution_context;
 
-/// `bun.webcore.ResumableSinkBackpressure` — re-declared here (not re-exported
-/// from `resumable_sink`) because that module is still gated on
-/// `bun_jsc::codegen::JSResumable*Sink`. The enum itself is dependency-free and
-/// is consumed by `s3::multipart::MultiPartUpload::write*`.
-// TODO(b2-blocked): swap to `pub use resumable_sink::ResumableSinkBackpressure;` once un-gated.
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub enum ResumableSinkBackpressure {
-    WantMore,
-    Backpressure,
-    Done,
-}
+/// `bun.webcore.ResumableSinkBackpressure` — re-exported from `resumable_sink`
+/// now that the module is un-gated. Consumed by `s3::multipart::MultiPartUpload::write*`
+/// and the `ResumableSinkContext` trait, so they must be the same type.
+pub use resumable_sink::ResumableSinkBackpressure;
 
 #[doc(hidden)]
 #[path = "webcore/s3/multipart_options.rs"]

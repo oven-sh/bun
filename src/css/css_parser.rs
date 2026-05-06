@@ -1598,7 +1598,7 @@ impl<'a, T: CustomAtRuleParser> AtRuleParser for NestedRuleParser<'a, T> {
             // TODO(port): Zig `ComptimeEnumMap(PreludeEnum)` ASCII-CI dispatch.
             // Phase B: replace these chained if-eql with `match_ignore_ascii_case!`.
             if strings::eql_case_insensitive_ascii::<true>(name, b"media") {
-                break 'brk AtRulePrelude::Media(parse_media_list(input)?);
+                break 'brk AtRulePrelude::Media(parse_media_list(input, this.options)?);
             }
             if strings::eql_case_insensitive_ascii::<true>(name, b"supports") {
                 break 'brk AtRulePrelude::Supports(SupportsCondition::parse(input)?);

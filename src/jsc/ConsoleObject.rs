@@ -2065,6 +2065,10 @@ pub mod formatter {
         J, // j
     }
 
+    // TODO(phase-c): re-gated — `write_with_formatting` body references
+    // unported `JSValue`/`ZigString` surface (~5 errs). Restore once the
+    // missing methods land.
+    #[cfg(any())]
     impl<'a> Formatter<'a> {
         // TODO(port): Zig parameterizes over `Slice` (`[]const u8` or `[]const u16`)
         // via `comptime Slice: type`. Phase A handles only the `&[u8]` path; the
@@ -2364,6 +2368,8 @@ pub mod formatter {
         pub estimated_line_length: &'w mut usize,
     }
 
+    // TODO(phase-c): re-gated — body references unported helpers.
+    #[cfg(any())]
     impl<'w> WrappedWriter<'w> {
         pub const IS_WRAPPED_WRITER: bool = true;
 
@@ -2479,6 +2485,7 @@ pub mod formatter {
         pub count: usize,
     }
 
+    #[cfg(any())] // TODO(phase-c): re-gated — calls gated `Formatter::format`.
     impl<'a, 'b, const C: bool, const IS_ITERATOR: bool, const SINGLE_LINE: bool>
         MapIteratorCtx<'a, 'b, C, IS_ITERATOR, SINGLE_LINE>
     {
@@ -2545,6 +2552,7 @@ pub mod formatter {
         pub is_first: bool,
     }
 
+    #[cfg(any())] // TODO(phase-c): re-gated — calls gated `Formatter::format`.
     impl<'a, 'b, const C: bool, const SINGLE_LINE: bool> SetIteratorCtx<'a, 'b, C, SINGLE_LINE> {
         pub extern "C" fn for_each(
             _: *mut jsc::VM,
@@ -2591,6 +2599,7 @@ pub mod formatter {
         pub parent: JSValue,
     }
 
+    #[cfg(any())] // TODO(phase-c): re-gated — body references unported `JSValue` surface.
     impl<'a, 'b, const C: bool> PropertyIteratorCtx<'a, 'b, C> {
         pub fn handle_first_property(
             &mut self,
@@ -2783,15 +2792,20 @@ pub mod formatter {
     }
 
     fn get_object_name(
-        global_this: &JSGlobalObject,
-        value: JSValue,
+        _global_this: &JSGlobalObject,
+        _value: JSValue,
     ) -> JsResult<Option<ZigString>> {
-        let mut name_str = ZigString::init(b"");
-        value.get_class_name(global_this, &mut name_str)?;
-        if !name_str.eql_comptime(b"Object") {
-            return Ok(Some(name_str));
-        } else if value.get_prototype(global_this).eql_value(JSValue::NULL) {
-            return Ok(Some(*ZigString::static_("[Object: null prototype]")));
+        // TODO(phase-c): body re-gated — `JSValue::get_class_name` /
+        // `get_prototype` not yet ported.
+        #[cfg(any())]
+        {
+            let mut name_str = ZigString::init(b"");
+            value.get_class_name(global_this, &mut name_str)?;
+            if !name_str.eql_comptime(b"Object") {
+                return Ok(Some(name_str));
+            } else if value.get_prototype(global_this).eql_value(JSValue::NULL) {
+                return Ok(Some(*ZigString::static_("[Object: null prototype]")));
+            }
         }
         Ok(None)
     }
@@ -2812,6 +2826,10 @@ pub mod formatter {
     // print_as — the big tag-dispatched printer
     // ───────────────────────────────────────────────────────────────────────
 
+    // TODO(phase-c): re-gated — `print_as` body (~700L) references ~22
+    // unported `JSValue`/`ZigString`/`VirtualMachine` methods. Stub provided
+    // below; restore arm-by-arm as the missing surface lands.
+    #[cfg(any())]
     impl<'a> Formatter<'a> {
         pub fn print_as<const FORMAT: Tag, const ENABLE_ANSI_COLORS: bool>(
             &mut self,
@@ -3529,6 +3547,10 @@ pub mod formatter {
     // `self.estimated_line_length`. Logic and ordering are preserved 1:1.
     // ───────────────────────────────────────────────────────────────────────
 
+    // TODO(phase-c): re-gated — `print_array`/`print_object`/… bodies (~1200L)
+    // reference ~40 unported `JSValue` methods. `format` dispatcher stubbed
+    // below; restore once `print_as` un-gates.
+    #[cfg(any())]
     impl<'a> Formatter<'a> {
         fn tag_opts(&self) -> TagOptions {
             let mut opts = TagOptions::HIDE_GLOBAL;
@@ -4752,6 +4774,53 @@ pub mod formatter {
                 SetIterator, Set, BigInt, Symbol, GlobalObject, Private, Promise, JSON,
                 ToJSON, NativeCode, JSX, Event, GetterSetter, CustomGetterSetter, Proxy,
                 RevokedProxy,
+            )
+        }
+    }
+
+    // ───────────────────────────────────────────────────────────────────────
+    // Phase-C stubs for the gated impls above. Keep the public signatures so
+    // `ConsoleFormatter` (lib.rs), `format2`, `TablePrinter`, and `ZigFormatter`
+    // continue to type-check; bodies are no-ops until the real `print_as`
+    // un-gates.
+    // ───────────────────────────────────────────────────────────────────────
+    impl<'a> Formatter<'a> {
+        /// Stubbed runtime-tag dispatcher. Real body lives in the
+        /// `#[cfg(any())]`-gated impl above (calls `print_as::<{Tag::…}, C>`
+        /// per arm). Phase-C: fall through to a single debug-format write so
+        /// callers see *something* and the build links.
+        pub fn format<const ENABLE_ANSI_COLORS: bool>(
+            &mut self,
+            _result: TagResult,
+            writer: &mut dyn bun_io::Write,
+            value: JSValue,
+            global_this: &'a JSGlobalObject,
+        ) -> JsResult<()> {
+            self.global_this = global_this;
+            // Best-effort placeholder — mirrors `{value:?}` shape without
+            // pulling in the unported tag machinery.
+            let _ = writer.write_all(b"[object ");
+            let _ = write!(bun_io::FmtAdapter::new(writer), "{:?}", value);
+            let _ = writer.write_all(b"]");
+            let _ = ENABLE_ANSI_COLORS;
+            Ok(())
+        }
+
+        /// Stubbed const-generic printer. Real body is the ~700L gated impl
+        /// above; this keeps the `ConsoleFormatter::print_as` trait method
+        /// (lib.rs) satisfied.
+        pub fn print_as<const FORMAT: Tag, const ENABLE_ANSI_COLORS: bool>(
+            &mut self,
+            writer_: &mut dyn bun_io::Write,
+            value: JSValue,
+            _js_type: jsc::JSType,
+        ) -> JsResult<()> {
+            let global = self.global_this;
+            self.format::<ENABLE_ANSI_COLORS>(
+                TagResult::default(),
+                writer_,
+                value,
+                global,
             )
         }
     }

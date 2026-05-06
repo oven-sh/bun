@@ -38,9 +38,9 @@ use bun_sys::Fd;
 pub enum Encoding { Ascii, Utf8, Latin1, Utf16 }
 
 /// Minimal byte-sink trait used by the string-escape helpers and `StdWriterAdapter`.
-/// Zig's `anytype` writer interface is the analogue; `bun_io` does not (yet) expose a
-/// `Write` trait, so the printer defines its own and adapts callers via `WriterTrait`.
-// TODO(b2-blocked): bun_io::Write — replace once the io crate grows a public sink trait.
+/// Zig's `anytype` writer interface is the analogue. This now bridges to
+/// `bun_io::Write` via a blanket impl so external callers (e.g. ConsoleObject)
+/// can pass `&mut dyn bun_io::Write` directly into `write_json_string`.
 pub trait Write {
     fn write_all(&mut self, bytes: &[u8]) -> Result<(), bun_core::Error>;
 }
@@ -50,10 +50,13 @@ impl Write for MutableString {
         Ok(())
     }
 }
-impl Write for Vec<u8> {
+/// Blanket bridge: any `bun_io::Write` (incl. `Vec<u8>`, `&mut dyn bun_io::Write`)
+/// satisfies the printer's local `Write`. This replaces the former explicit
+/// `impl Write for Vec<u8>` to avoid overlap.
+impl<T: bun_io::Write + ?Sized> Write for T {
+    #[inline]
     fn write_all(&mut self, bytes: &[u8]) -> Result<(), bun_core::Error> {
-        self.extend_from_slice(bytes);
-        Ok(())
+        bun_io::Write::write_all(self, bytes)
     }
 }
 
@@ -856,7 +859,7 @@ pub fn write_pre_quoted_string<W, const QUOTE_CHAR: u8, const ASCII_ONLY: bool, 
     writer: &mut W,
 ) -> Result<(), bun_core::Error>
 where
-    W: Write,
+    W: Write + ?Sized,
 {
     // TODO(port): for ENCODING == Utf16, Zig reinterprets `text_in` as []const u16 via bytesAsSlice.
     // In Rust we keep `text_in: &[u8]` and index by code-unit width below.
@@ -1031,7 +1034,7 @@ pub fn quote_for_json(text: &[u8], bytes: &mut MutableString, ascii_only: bool) 
     Ok(())
 }
 
-pub fn write_json_string<W: Write, const ENCODING: Encoding>(input: &[u8], writer: &mut W) -> Result<(), bun_core::Error> {
+pub fn write_json_string<W: Write + ?Sized, const ENCODING: Encoding>(input: &[u8], writer: &mut W) -> Result<(), bun_core::Error> {
     writer.write_all(b"\"")?;
     write_pre_quoted_string::<_, b'"', false, true, ENCODING>(input, writer)?;
     writer.write_all(b"\"")?;

@@ -535,6 +535,9 @@ unsafe fn expand_nested(
     out_key_counter: &mut u16,
     start: u32,
 ) -> Result<(), ExpandError> {
+    // SAFETY: see fn doc comment — raw-pointer derefs mirror Zig pointer semantics;
+    // bump-owned Groups outlive this call, no overlapping `&mut` borrows are held.
+    unsafe {
     if let ast::GroupAtoms::Single(_) = (*root).atoms {
         if start > 0 {
             if !(*root).bubble_up.is_null() {
@@ -640,6 +643,7 @@ unsafe fn expand_nested(
         return expand_nested(bubble_up, out, out_key, out_key_counter, u32::from(next));
     }
     Ok(())
+    } // unsafe
 }
 
 /// This function is fast but does not work for nested brace expansions

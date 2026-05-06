@@ -314,9 +314,11 @@ pub fn terminate_all_and_wait(timeout_ms: u64) {
                 // SAFETY: vm published under vm_lock; non-null here.
                 let vm = unsafe { &*w.vm };
                 // SAFETY: jsc_vm is a valid JSC::VM*; notify_need_termination
-                // is documented thread-safe (VMTraps).
-                unsafe { (*vm.jsc_vm).notify_need_termination() };
-                vm.event_loop().wakeup();
+                // is documented thread-safe (VMTraps). Cast through the real
+                // opaque `crate::vm::VM` (the `crate::VM` stub is layout-only).
+                unsafe { (*(vm.jsc_vm as *const crate::vm::VM)).notify_need_termination() };
+                // SAFETY: event_loop() returns the live `*mut EventLoop` self-ptr.
+                unsafe { (*vm.event_loop()).wakeup() };
             }
             w.vm_lock.unlock();
         }
@@ -367,7 +369,7 @@ impl WebWorker {
     /// `bun_clap::parse_ex` / `RareData::ProxyEnvStorage` — dispatched through
     /// `RuntimeHooks` by the high tier. Preserved verbatim under
     /// `__phase_a_body` below.
-    #[export_name = "WebWorker__create"]
+    #[unsafe(export_name = "WebWorker__create")]
     pub extern "C" fn create(
         cpp_worker: *mut c_void,
         parent: *mut VirtualMachine,
@@ -416,7 +418,7 @@ impl WebWorker {
     /// `WebCore::Worker::~Worker()` (or from `create()` on spawn failure). The
     /// allocator is mimalloc (thread-safe), so the caller's thread doesn't
     /// matter.
-    #[export_name = "WebWorker__destroy"]
+    #[unsafe(export_name = "WebWorker__destroy")]
     pub extern "C" fn destroy(this: *mut WebWorker) {
         // SAFETY: this was Box::into_raw'd in create(); C++ owns it and calls
         // destroy exactly once.
@@ -438,7 +440,7 @@ impl WebWorker {
     /// Takes `*mut` (not `&mut`) because the worker thread concurrently
     /// dereferences this struct; materialising `&mut WebWorker` here would be
     /// aliased-&mut UB.
-    #[export_name = "WebWorker__setRef"]
+    #[unsafe(export_name = "WebWorker__setRef")]
     pub extern "C" fn set_ref(this: *mut WebWorker, value: bool) {
         // TODO(b2): `KeepAlive::ref_/unref` take `bun_aio::EventLoopCtx`;
         // `VirtualMachine → EventLoopCtx` conversion lives in the high tier
@@ -457,7 +459,7 @@ impl WebWorker {
     /// dereferences this struct (polling `requested_terminate`, holding
     /// `vm_lock`, reading `vm`); materialising `&mut WebWorker` on the parent
     /// thread while the worker holds any reference is aliased-&mut UB.
-    #[export_name = "WebWorker__notifyNeedTermination"]
+    #[unsafe(export_name = "WebWorker__notifyNeedTermination")]
     pub extern "C" fn notify_need_termination(this: *mut WebWorker) {
         // SAFETY: `this` is a valid heap allocation owned by C++ `WebCore::Worker`
         // (alive while JSWorker holds its Ref). Only atomic / lock-guarded
@@ -475,9 +477,11 @@ impl WebWorker {
             // SAFETY: vm published under vm_lock; non-null here.
             let vm = unsafe { &*this.vm };
             // SAFETY: jsc_vm is a valid JSC::VM*; notify_need_termination is
-            // documented thread-safe (VMTraps).
-            unsafe { (*vm.jsc_vm).notify_need_termination() };
-            vm.event_loop().wakeup();
+            // documented thread-safe (VMTraps). Cast through the real opaque
+            // `crate::vm::VM` (the `crate::VM` stub is layout-only).
+            unsafe { (*(vm.jsc_vm as *const crate::vm::VM)).notify_need_termination() };
+            // SAFETY: event_loop() returns the live `*mut EventLoop` self-ptr.
+            unsafe { (*vm.event_loop()).wakeup() };
         }
         this.vm_lock.unlock();
     }
@@ -488,7 +492,7 @@ impl WebWorker {
     /// Takes `*mut` for consistency with the other parent-thread FFI exports
     /// (the worker thread has exited by the time this runs, so `&mut` would be
     /// sound here, but matching signatures avoids surprises).
-    #[export_name = "WebWorker__releaseParentPollRef"]
+    #[unsafe(export_name = "WebWorker__releaseParentPollRef")]
     pub extern "C" fn release_parent_poll_ref(this: *mut WebWorker) {
         // TODO(b2): `KeepAlive::unref(EventLoopCtx)` — see `set_ref`.
         let _ = this;
@@ -512,7 +516,8 @@ impl WebWorker {
         if !self.vm.is_null() {
             // SAFETY: vm non-null; jsc_vm is a valid JSC::VM*;
             // notify_need_termination is documented thread-safe (VMTraps).
-            unsafe { (*(*self.vm).jsc_vm).notify_need_termination() };
+            // Cast through the real opaque `crate::vm::VM`.
+            unsafe { (*((*self.vm).jsc_vm as *const crate::vm::VM)).notify_need_termination() };
         }
     }
 

@@ -145,11 +145,13 @@ pub fn init_global(
     // and store the raw pointer in the thread-local — same as Zig
     // `bun.default_allocator.create` + `threadlocal var global: *MiniEventLoop`.
     let global_ptr: *mut MiniEventLoop<'static> = Box::into_raw(Box::new(loop_));
-    GLOBAL.with(|g| g.set(global_ptr));
     // SAFETY: `global_ptr` was just allocated via `Box::into_raw`; this thread
-    // holds the only reference for the duration of first-init (GLOBAL_INITIALIZED
-    // is still false, so no other path hands it out). The `&mut` is scoped to
-    // this function body — NOT `'static` — and ends before we return the raw ptr.
+    // holds the only reference for the duration of first-init. The `GLOBAL`
+    // thread-local is NOT yet published (set below, after this `&mut` is dropped),
+    // so neither `MiniKind::get_vm()` nor a re-entrant `init_global()` can observe
+    // the pointer while this exclusive borrow is live. The `&mut` is scoped to
+    // this function body — NOT `'static` — and ends before we publish/return the
+    // raw ptr.
     let global = unsafe { &mut *global_ptr };
 
     // PORT NOTE: `InternalLoopData::set_parent_event_loop` (typed) lives in a
@@ -195,6 +197,13 @@ pub fn init_global(
         }
     }
 
+    // Publish the thread-local pointer only AFTER the scoped `&mut *global_ptr`
+    // above is no longer used — `MiniKind::get_vm()` reads `GLOBAL` without
+    // checking `GLOBAL_INITIALIZED`, so publishing earlier would let a callee
+    // re-derive a `&mut` aliasing `global` (UB). Nothing between the `&mut`
+    // borrow and here reads `GLOBAL` (`EventLoopHandle::init_mini`/`into_tag_ptr`
+    // only copy the pointer value).
+    GLOBAL.with(|g| g.set(global_ptr));
     GLOBAL_INITIALIZED.with(|g| g.set(true));
     global_ptr
 }
@@ -235,6 +244,34 @@ impl<'a> MiniEventLoop<'a> {
             self.file_polls_ = Some(Box::new(FilePollStore::init()));
         }
         self.file_polls_.as_mut().unwrap()
+    }
+
+    /// Raw-pointer variant of [`file_polls`] for re-entrant callers.
+    ///
+    /// The `mini_ctx` vtable shims (`file_polls`/`alloc_file_poll`) are reached
+    /// via `EventLoopCtx` from inside FilePoll callbacks fired by
+    /// `UwsLoop::tick()`, which is itself invoked from
+    /// `tick`/`tick_once`/`tick_without_idle` while those methods hold
+    /// `&mut self`. Re-deriving a second `&mut MiniEventLoop` from the stored
+    /// `owner` raw ptr there is aliased-`&mut` UB under Stacked Borrows. This
+    /// accessor lazy-inits the store via `addr_of_mut!` on the field only,
+    /// never materializing a `&mut Self`.
+    ///
+    /// SAFETY: `this` must point to a live `MiniEventLoop`. Caller must not
+    /// hold a live `&mut` to `file_polls_` itself across this call.
+    pub unsafe fn file_polls_raw(this: *mut Self) -> *mut FilePollStore {
+        unsafe {
+            let slot = core::ptr::addr_of_mut!((*this).file_polls_);
+            if (*slot).is_none() {
+                slot.write(Some(Box::new(FilePollStore::init())));
+            }
+            // SAFETY: ensured `Some` just above; `Box` deref yields a stable
+            // heap address independent of `*this`.
+            match &mut *slot {
+                Some(b) => &mut **b as *mut FilePollStore,
+                None => core::hint::unreachable_unchecked(),
+            }
+        }
     }
 
     pub fn init() -> MiniEventLoop<'a> {
@@ -500,10 +537,16 @@ mod mini_ctx {
         unsafe { (*cast(owner)).loop_ }
     }
     unsafe fn file_polls(owner: *mut ()) -> *mut FilePollStore {
-        unsafe { (*cast(owner)).file_polls() as *mut _ }
+        // SAFETY: see `MiniEventLoop::file_polls_raw` — avoids aliased
+        // `&mut MiniEventLoop` while `tick*` holds `&mut self` across the
+        // re-entrant `UwsLoop::tick()` that reaches this shim.
+        unsafe { MiniEventLoop::file_polls_raw(cast(owner)) }
     }
     unsafe fn alloc_file_poll(owner: *mut ()) -> *mut FilePoll {
-        unsafe { (*cast(owner)).file_polls().get() }
+        // SAFETY: as above; the returned `*mut FilePollStore` is a stable Box
+        // heap address, so the brief `&mut FilePollStore` for `.get()` does not
+        // overlap any borrow held by the outer `tick*` frame.
+        unsafe { (*MiniEventLoop::file_polls_raw(cast(owner))).get() }
     }
     unsafe fn is_js(_: *mut ()) -> bool {
         false

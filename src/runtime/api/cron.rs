@@ -34,9 +34,16 @@ use bun_jsc::{
     JSPromise, JSValue, JsRef, JsResult, VirtualMachine,
 };
 use bun_paths::{self as path, PathBuffer};
-use crate::api::bun::spawn::{self, Process, Rusage, SpawnOptions, Status};
-use crate::api::timer::EventLoopTimer;
-use bun_str::{self as strings, ZStr, ZString};
+// `Process`/`Rusage`/`SpawnOptions`/`Status`/`spawn_process` live in
+// `api::bun::process` (re-exported under `api::bun::spawn::posix_spawn`, but
+// not at the `spawn` module root). Alias `process` as `spawn` so the
+// `spawn::spawn_process(...)` call site below resolves.
+use crate::api::bun::process::{self as spawn, Process, Rusage, SpawnOptions, Status};
+use crate::timer::EventLoopTimer;
+use bun_str::{self as strings, ZStr};
+// Owned NUL-terminated string (Zig `[:0]u8` allocation) — `bun_str` exposes the
+// borrowed `ZStr` only; the heap-backed counterpart is `bun_core::ZBox`.
+use bun_core::ZBox as ZString;
 use bun_sys::{self as sys, Fd, File};
 
 // ============================================================================

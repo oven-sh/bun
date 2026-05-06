@@ -392,7 +392,7 @@ impl Terminal {
         // `bun.new(Terminal, .{...})` → Box::into_raw; the intrusive ref_count
         // field starts at 1 (JS side's ref). Wrapped as IntrusiveRc on success.
         let terminal: *mut Terminal = Box::into_raw(Box::new(Terminal {
-            ref_count: Cell::new(1),
+            ref_count: bun_ptr::RefCount::init(),
             master_fd: pty_result.master,
             read_fd: pty_result.read_fd,
             write_fd: pty_result.write_fd,

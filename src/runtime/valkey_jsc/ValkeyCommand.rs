@@ -223,9 +223,12 @@ pub struct PromisePair {
     pub promise: Promise,
 }
 
-impl PromisePair {
-    pub type Queue = LinearFifo<PromisePair>; // TODO(port): bun.LinearFifo(.Dynamic) mapping
+// Zig: `pub const Queue = bun.LinearFifo(PromisePair, .Dynamic);` — see `entry` note above.
+pub mod promise_pair {
+    pub type Queue = super::LinearFifo<super::PromisePair, super::DynamicBuffer<super::PromisePair>>;
+}
 
+impl PromisePair {
     pub fn reject_command(
         &mut self,
         global_object: &JSGlobalObject,

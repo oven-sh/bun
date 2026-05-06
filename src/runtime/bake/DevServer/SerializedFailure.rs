@@ -10,11 +10,9 @@
 
 use bun_logger as logger;
 
-use super::incremental_graph::IncrementalGraph;
+use super::incremental_graph::{ClientFileIndex, ServerFileIndex};
 use super::route_bundle::RouteBundle;
 use super::DevServer;
-// TODO(port): `Side` is the comptime enum param to IncrementalGraph (.client/.server) — confirm exact path
-use super::Side;
 
 pub struct SerializedFailure {
     /// Serialized data is always owned by `dev.allocator()`

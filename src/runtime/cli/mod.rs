@@ -152,6 +152,61 @@ pub use bunfig::Bunfig;
 #[path = "run_command.rs"]
 pub mod run_command;
 
+// ─── per-subcommand bodies (un-gated for `Command::start` dispatch) ──────────
+// Each maps 1:1 to a `*_command.zig`. Heavy bodies inside re-gate on whatever
+// lower-tier crate surface they still need; the dispatch arm just calls
+// `<Mod>Command::exec(ctx)`.
+#[path = "build_command.rs"]
+pub mod build_command;
+#[path = "bunx_command.rs"]
+pub mod bunx_command;
+#[path = "create_command.rs"]
+pub mod create_command;
+#[path = "exec_command.rs"]
+pub mod exec_command;
+#[path = "repl_command.rs"]
+pub mod repl_command;
+#[path = "upgrade_command.rs"]
+pub mod upgrade_command;
+#[path = "fuzzilli_command.rs"]
+pub mod fuzzilli_command;
+#[path = "install_command.rs"]
+pub mod install_command;
+#[path = "add_command.rs"]
+pub mod add_command;
+#[path = "remove_command.rs"]
+pub mod remove_command;
+#[path = "update_command.rs"]
+pub mod update_command;
+#[path = "update_interactive_command.rs"]
+pub mod update_interactive_command;
+#[path = "link_command.rs"]
+pub mod link_command;
+#[path = "unlink_command.rs"]
+pub mod unlink_command;
+#[path = "patch_command.rs"]
+pub mod patch_command;
+#[path = "patch_commit_command.rs"]
+pub mod patch_commit_command;
+#[path = "outdated_command.rs"]
+pub mod outdated_command;
+#[path = "publish_command.rs"]
+pub mod publish_command;
+#[path = "audit_command.rs"]
+pub mod audit_command;
+#[path = "why_command.rs"]
+pub mod why_command;
+#[path = "pm_view_command.rs"]
+pub mod pm_view_command;
+#[path = "filter_arg.rs"]
+pub mod filter_arg;
+#[path = "filter_run.rs"]
+pub mod filter_run;
+pub use filter_run as FilterRun;
+#[path = "multi_run.rs"]
+pub mod multi_run;
+pub use multi_run as MultiRun;
+
 // ─── crate-local helper for param-table concatenation ────────────────────────
 // `bun_clap::parse_param!` is now a real proc-macro (const `Param<Help>`
 // literal), so leaf param tables in `Arguments.rs` are `&'static [ParamType]`.

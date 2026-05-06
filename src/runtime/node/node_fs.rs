@@ -78,17 +78,16 @@ mod node {
     pub use super::super::time_like::from_js as time_like_from_js;
     pub use super::super::{gid_t, uid_t};
 
-    /// `node::mode_from_js` — the real impl lives in `super::types::mode_from_js`
-    /// but is currently ``-gated by a sibling agent. Forward to it
-    /// when ungated; until then this is a typed stub so the dozens of call
-    /// sites in `args::*::from_js` keep their signatures.
+    /// `node::mode_from_js` — forwards to the real impl in
+    /// `super::types::mode_from_js` (now un-gated). Kept as a thin alias so
+    /// the dozens of call sites in `args::*::from_js` keep spelling
+    /// `node::mode_from_js` like the .zig source.
     #[inline]
     pub fn mode_from_js(
         ctx: &bun_jsc::JSGlobalObject,
         value: bun_jsc::JSValue,
     ) -> bun_jsc::JsResult<Option<bun_sys::Mode>> {
-        let _ = (ctx, value);
-        todo!("blocked_on: bun_runtime::node::types::mode_from_js")
+        super::super::types::mode_from_js(ctx, value)
     }
 }
 

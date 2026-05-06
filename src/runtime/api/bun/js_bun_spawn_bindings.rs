@@ -1233,14 +1233,19 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     }
 
     if matches!(subprocess.stdin, Writable::Pipe(_)) && promise_for_stream == JSValue::ZERO {
-        if let Writable::Pipe(pipe) = &mut subprocess.stdin {
-            pipe.signal = WebCore::streams::Signal::init(&mut subprocess.stdin);
-            // TODO(port): borrowck — Zig passes `&subprocess.stdin` while holding `.pipe`.
-        }
+        // TODO(port): borrowck — Zig passes `&subprocess.stdin` while holding
+        // `.pipe`. `streams::Signal::init` requires `T: SignalHandler`; that
+        // impl for `Writable<'_>` is gated. Leave the FileSink's signal unset
+        // until the trait impl lands.
+        // todo!("blocked_on: webcore::streams::SignalHandler for Writable<'_>")
     }
 
     let out = if !IS_SYNC {
-        subprocess.to_js(global_this)
+        // SAFETY: `__create` (JsClass::to_js) takes ownership of a *new* Box; we
+        // already boxed via `Box::into_raw` above. Route through the raw ptr
+        // path instead so the existing allocation is wrapped (Zig's
+        // `subprocess.toJS(globalThis)` did not re-allocate).
+        todo!("blocked_on: bun_jsc::JsClass::to_js_ptr for pre-boxed Subprocess")
     } else {
         JSValue::ZERO
     };

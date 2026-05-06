@@ -3142,8 +3142,9 @@ where
 
     pub fn render_bytes(&mut self) {
         // copy it to stack memory to prevent aliasing issues in release builds
-        let blob = self.blob;
-        let bytes = blob.slice();
+        // PORT NOTE: AnyBlob is not Copy in Rust; reborrow through a raw ptr
+        // so the slice borrow doesn't conflict with `&mut self` below.
+        let bytes: &[u8] = unsafe { &*(self.blob.slice() as *const [u8]) };
         if let Some(resp) = self.resp {
             // SAFETY: FFI handle
             if unsafe { !resp.try_end(bytes, bytes.len(), self.should_close_connection()) } {

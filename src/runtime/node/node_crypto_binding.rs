@@ -209,10 +209,10 @@ macro_rules! extern_crypto_job {
                     ) {
                         let job = Self::create(global, ctx, callback.with_async_context_if_needed(global));
                         // SAFETY: `job` is a freshly-boxed live pointer.
-                        unsafe { (*job).schedule() };
+                        unsafe { Self::schedule(&mut *job) };
                     }
 
-                    pub fn run_task(task: *mut WorkPoolTask) {
+                    pub unsafe fn run_task(task: *mut WorkPoolTask) {
                         // SAFETY: `task` points to `Job.task`; recover parent via offset_of.
                         let job: *mut Job = unsafe {
                             (task as *mut u8).sub(offset_of!(Job, task)).cast::<Job>()
@@ -220,14 +220,15 @@ macro_rules! extern_crypto_job {
                         // SAFETY: job is live for the duration of the work-pool task.
                         let job = unsafe { &mut *job };
                         let vm = job.vm;
-                        // Mirror Zig `defer vm.enqueueTaskConcurrent(...)` — runs after the body.
-                        let _guard = scopeguard::guard((), |_| {
-                            vm.enqueue_task_concurrent(ConcurrentTask::create(job.any_task.task()));
-                        });
                         // SAFETY: ctx is the FFI-owned opaque handle passed in `create`;
                         // `vm.global` is the VM's `*mut JSGlobalObject` field (mut provenance,
                         // live for the VM lifetime) — no const→mut cast needed.
-                        unsafe { ctx_run_task(job.ctx, vm.global) };
+                        unsafe { ctx_run_task(job.ctx, (*vm).global) };
+                        // Mirror Zig `defer vm.enqueueTaskConcurrent(...)` — runs after the body.
+                        // SAFETY: `vm` is the singleton JS VM; mutably borrowed only here.
+                        unsafe {
+                            (*vm).enqueue_task_concurrent(ConcurrentTask::create(job.any_task.task()));
+                        }
                     }
 
                     pub fn run_from_js(this: *mut Job) {

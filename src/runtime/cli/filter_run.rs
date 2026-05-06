@@ -137,17 +137,17 @@ impl<'a> ProcessHandle<'a> {
         {
             if let Some(stdout) = stdout_fd {
                 let _ = sys::set_nonblocking(stdout);
-                handle.stdout.start(stdout, true).unwrap()?;
+                handle.stdout.start(stdout, true)?;
             }
             if let Some(stderr) = stderr_fd {
                 let _ = sys::set_nonblocking(stderr);
-                handle.stderr.start(stderr, true).unwrap()?;
+                handle.stderr.start(stderr, true)?;
             }
         }
         #[cfg(not(unix))]
         {
-            handle.stdout.start_with_current_pipe().unwrap()?;
-            handle.stderr.start_with_current_pipe().unwrap()?;
+            handle.stdout.start_with_current_pipe()?;
+            handle.stderr.start_with_current_pipe()?;
         }
 
         handle.process = Some(ProcessInfo { ptr: process, status: Status::Running });

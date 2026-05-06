@@ -810,7 +810,7 @@ impl Encoding {
             Self::Base64url => {
                 let mut buf = vec![0u8; bun_base64::simdutf_encode_len_url_safe(MAX_SIZE * 4)];
                 let encoded = bun_base64::simdutf_encode_url_safe(&mut buf, input);
-                Ok(ZigString::init(&buf[..encoded]).to_js(global_object))
+                Ok(jsc::zig_string::ZigString::init(&buf[..encoded]).to_js(global_object))
             }
             Self::Hex => {
                 let mut buf = vec![0u8; MAX_SIZE * 4];
@@ -821,11 +821,11 @@ impl Encoding {
                 }
                 let written = MAX_SIZE * 4 - cursor.len();
                 let out = &buf[..written];
-                Ok(ZigString::init(out).to_js(global_object))
+                Ok(jsc::zig_string::ZigString::init(out).to_js(global_object))
             }
             Self::Buffer => jsc::ArrayBuffer::create_buffer(global_object, input),
             // PERF(port): was comptime monomorphization (`inline else`) — profile in Phase B
-            enc => crate::webcore::encoding::to_string(input, global_object, enc),
+            enc => crate::webcore::encoding::to_string(input, global_object, enc.into()),
         }
     }
 

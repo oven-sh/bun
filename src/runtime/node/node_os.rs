@@ -419,7 +419,7 @@ fn cpus_impl_freebsd(global_this: &JSGlobalObject) -> Result<JSValue, OsError> {
     let ticks: i64 = unsafe { bun_sysconf__SC_CLK_TCK() } as i64;
     let mult: u64 = if ticks > 0 { 1000 / u64::try_from(ticks).unwrap() } else { 1 };
 
-    let values = JSValue::create_empty_array(global_this, u32::try_from(ncpu).unwrap())?;
+    let values = JSValue::create_empty_array(global_this, ncpu as usize)?;
     let mut i: u32 = 0;
     while i < ncpu {
         let off = i as usize * CPU_STATES;

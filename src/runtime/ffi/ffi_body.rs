@@ -3186,28 +3186,28 @@ impl CompilerRT {
         }
         state
             .add_symbol(
-                b"NapiHandleScope__open",
+                zstr!(b"NapiHandleScope__open"),
                 NapiHandleScope__open as *const c_void,
             )
             .expect("unreachable");
         state
             .add_symbol(
-                b"NapiHandleScope__close",
+                zstr!(b"NapiHandleScope__close"),
                 NapiHandleScope__close as *const c_void,
             )
             .expect("unreachable");
 
         state
-            .add_symbol(b"JSVALUE_TO_INT64_SLOW", WORKAROUND.jsvalue_to_int64 as *const c_void)
+            .add_symbol(zstr!(b"JSVALUE_TO_INT64_SLOW"), WORKAROUND.jsvalue_to_int64 as *const c_void)
             .expect("unreachable");
         state
-            .add_symbol(b"JSVALUE_TO_UINT64_SLOW", WORKAROUND.jsvalue_to_uint64 as *const c_void)
+            .add_symbol(zstr!(b"JSVALUE_TO_UINT64_SLOW"), WORKAROUND.jsvalue_to_uint64 as *const c_void)
             .expect("unreachable");
         state
-            .add_symbol(b"INT64_TO_JSVALUE_SLOW", WORKAROUND.int64_to_jsvalue as *const c_void)
+            .add_symbol(zstr!(b"INT64_TO_JSVALUE_SLOW"), WORKAROUND.int64_to_jsvalue as *const c_void)
             .expect("unreachable");
         state
-            .add_symbol(b"UINT64_TO_JSVALUE_SLOW", WORKAROUND.uint64_to_jsvalue as *const c_void)
+            .add_symbol(zstr!(b"UINT64_TO_JSVALUE_SLOW"), WORKAROUND.uint64_to_jsvalue as *const c_void)
             .expect("unreachable");
     }
 }

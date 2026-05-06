@@ -855,6 +855,7 @@ impl WindowsNamedPipe {
         bun_output::scoped_log!(WindowsNamedPipe, "deinit");
         // clear the timer
         self.set_timeout(0);
+        #[cfg(windows)]
         if let Some(stream) = self.writer.get_stream() {
             let _ = stream.read_stop();
         }

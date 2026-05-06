@@ -483,15 +483,15 @@ impl Entry {
                 }
                 Encoding::LATIN1 => {
                     let len = self.metadata.output_byte_length as usize;
-                    let (latin1, bytes_ptr) = BunString::create_uninitialized_latin1(len);
-                    if bytes_ptr.is_null() {
+                    let (latin1, bytes) = BunString::create_uninitialized_latin1(len);
+                    // `create_uninitialized_latin1` returns `(dead, &mut [])` on
+                    // WTF allocation failure; `len > 0` here (handled above), so
+                    // an empty slice means OOM.
+                    if bytes.is_empty() {
                         return Err(bun_core::err!(OutOfMemory));
                     }
                     // errdefer latin1.deref() — BunString is `Copy`, so guard explicitly.
                     let errdefer = scopeguard::guard(latin1, |s| s.deref());
-                    // SAFETY: `bytes_ptr` points to `len` writable bytes inside the
-                    // freshly-allocated WTFStringImpl.
-                    let bytes = unsafe { core::slice::from_raw_parts_mut(bytes_ptr, len) };
                     let read_bytes =
                         file.pread_all(bytes, self.metadata.output_byte_offset)?;
 
@@ -510,17 +510,22 @@ impl Entry {
                 }
                 Encoding::UTF16 => {
                     let char_len = (self.metadata.output_byte_length / 2) as usize;
-                    let (string, chars_ptr) = BunString::create_uninitialized_utf16(char_len);
-                    if chars_ptr.is_null() {
+                    let (string, chars) = BunString::create_uninitialized_utf16(char_len);
+                    // See LATIN1 branch above — empty slice for nonzero `char_len`
+                    // signals WTF allocation failure.
+                    if chars.is_empty() {
                         return Err(bun_core::err!(OutOfMemory));
                     }
                     let errdefer = scopeguard::guard(string, |s| s.deref());
 
-                    // SAFETY: chars_ptr is &mut [u16; char_len] backed by contiguous
+                    // SAFETY: `chars` is &mut [u16; char_len] backed by contiguous
                     // WTFString storage; reinterpreting as bytes for pread is sound
                     // (alignment of u8 ≤ u16).
                     let chars_bytes = unsafe {
-                        core::slice::from_raw_parts_mut(chars_ptr.cast::<u8>(), char_len * 2)
+                        core::slice::from_raw_parts_mut(
+                            chars.as_mut_ptr().cast::<u8>(),
+                            char_len * 2,
+                        )
                     };
                     let read_bytes =
                         file.pread_all(chars_bytes, self.metadata.output_byte_offset)?;
@@ -925,7 +930,7 @@ impl RuntimeTranspilerCache {
             return false;
         }
 
-        let input_hash = self.input_hash.unwrap_or_else(|| hash(source.contents));
+        let input_hash = self.input_hash.unwrap_or_else(|| hash(&source.contents));
         self.input_hash = Some(input_hash);
         self.input_byte_length = Some(source.contents.len() as u64);
 

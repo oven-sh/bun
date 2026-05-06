@@ -2530,18 +2530,30 @@ pub mod formatter {
 
     const INDENTATION_BUF: [u8; 64] = [b' '; 64];
 
+    /// Free-function indent writer for callsites where a `WrappedWriter`
+    /// already holds `&mut self.estimated_line_length`, which would otherwise
+    /// conflict with the `&self` borrow `Formatter::write_indent` takes.
+    /// `self.indent` is a disjoint field read, so passing it by value here
+    /// keeps the borrow checker happy.
+    pub(super) fn write_indent_n(
+        indent: u32,
+        writer: &mut dyn bun_io::Write,
+    ) -> bun_io::Result<()> {
+        let mut total_remain: u32 = indent;
+        while total_remain > 0 {
+            let written: u8 = total_remain.min(32) as u8;
+            writer.write_all(&INDENTATION_BUF[0..(written as usize) * 2])?;
+            total_remain = total_remain.saturating_sub(u32::from(written));
+        }
+        Ok(())
+    }
+
     impl Formatter<'_> {
         pub fn write_indent(
             &self,
             writer: &mut dyn bun_io::Write,
         ) -> bun_io::Result<()> {
-            let mut total_remain: u32 = self.indent;
-            while total_remain > 0 {
-                let written: u8 = total_remain.min(32) as u8;
-                writer.write_all(&INDENTATION_BUF[0..(written as usize) * 2])?;
-                total_remain = total_remain.saturating_sub(u32::from(written));
-            }
-            Ok(())
+            write_indent_n(self.indent, writer)
         }
 
         pub fn print_comma<const ENABLE_ANSI_COLORS: bool>(
@@ -4544,14 +4556,7 @@ pub mod formatter {
                                 )
                             {
                                 writer.write_all(b"\n");
-                                // Reseat `writer` so `write_indent(&self)` can borrow
-                                // disjointly from `estimated_line_length`.
-                                drop(writer);
-                                self.write_indent(writer_).expect("unreachable");
-                                writer = WrappedWriter {
-                                    ctx: writer_, failed: false,
-                                    estimated_line_length: &mut self.estimated_line_length,
-                                };
+                                write_indent_n(self.indent, writer.ctx).expect("unreachable");
                             } else if props_i + 1 < count_without_children {
                                 writer.space();
                             }
@@ -4581,18 +4586,18 @@ pub mod formatter {
                                         } else {
                                             self.indent += 1;
                                             writer.write_all(b"\n");
-                                            self.write_indent(writer.ctx).expect("unreachable");
+                                            write_indent_n(self.indent, writer.ctx).expect("unreachable");
                                             self.indent = self.indent.saturating_sub(1);
                                             writer.write_string(&children_string);
                                             writer.write_all(b"\n");
-                                            self.write_indent(writer.ctx).expect("unreachable");
+                                            write_indent_n(self.indent, writer.ctx).expect("unreachable");
                                         }
                                     }
                                     Tag::JSX => {
                                         writer.write_all(b">\n");
                                         {
                                             self.indent += 1;
-                                            self.write_indent(writer.ctx).expect("unreachable");
+                                            write_indent_n(self.indent, writer.ctx).expect("unreachable");
                                             let _ind = defer_decrement!(self.indent);
                                             drop(writer);
                                             self.format::<C>(
@@ -4605,7 +4610,7 @@ pub mod formatter {
                                             };
                                         }
                                         writer.write_all(b"\n");
-                                        self.write_indent(writer.ctx).expect("unreachable");
+                                        write_indent_n(self.indent, writer.ctx).expect("unreachable");
                                     }
                                     Tag::Array => {
                                         let length = children.get_length(self.global_this)?;
@@ -4613,7 +4618,7 @@ pub mod formatter {
                                         writer.write_all(b">\n");
                                         {
                                             self.indent += 1;
-                                            self.write_indent(writer.ctx).expect("unreachable");
+                                            write_indent_n(self.indent, writer.ctx).expect("unreachable");
                                             let _prev_quote_strings = self.quote_strings;
                                             self.quote_strings = false;
                                             let _qs2 = defer_restore!(self.quote_strings, _prev_quote_strings);
@@ -4633,13 +4638,13 @@ pub mod formatter {
                                                 };
                                                 if (j as u64) + 1 < length {
                                                     writer.write_all(b"\n");
-                                                    self.write_indent(writer.ctx).expect("unreachable");
+                                                    write_indent_n(self.indent, writer.ctx).expect("unreachable");
                                                 }
                                                 j += 1;
                                             }
                                         }
                                         writer.write_all(b"\n");
-                                        self.write_indent(writer.ctx).expect("unreachable");
+                                        write_indent_n(self.indent, writer.ctx).expect("unreachable");
                                     }
                                     _ => unreachable!(),
                                 }

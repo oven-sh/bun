@@ -73,8 +73,10 @@ unsafe extern "C" {
         value: JSValue,
     );
     /// `.classes.ts` `toJS` — boxes `*mut FFI` into a freshly-allocated JSCell.
+    /// Declared `*mut c_void` (not `*mut FFI`) — C++ stores it as opaque
+    /// `void* m_ctx`, and `FFI` is intentionally not `#[repr(C)]`.
     #[link_name = "FFI__create"]
-    fn FFI__create(global: *const JSGlobalObject, ptr: *mut FFI) -> JSValue;
+    fn FFI__create(global: *const JSGlobalObject, ptr: *mut c_void) -> JSValue;
 }
 
 // Plain C ABI — `Bun__CreateFFIFunctionValue` (src/jsc/host_fn.zig) and

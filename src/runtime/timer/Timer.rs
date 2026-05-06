@@ -36,7 +36,7 @@ unsafe extern "C" {
     );
     fn JSGlobalObject__clearExceptionExceptTermination(global: *const JSGlobalObject) -> bool;
     fn AsyncContextFrame__withAsyncContextIfNeeded(
-        global: *mut JSGlobalObject,
+        global: *const JSGlobalObject,
         callback: JSValue,
     ) -> JSValue;
 }

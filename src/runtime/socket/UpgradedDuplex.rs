@@ -30,8 +30,10 @@ pub struct UpgradedDuplex<'a> {
     // JSC_BORROW per LIFETIMES.tsv — rust_type verbatim.
     pub global: Option<&'a JSGlobalObject>,
     pub ssl_error: CertError,
-    // JSC_BORROW per LIFETIMES.tsv — rust_type verbatim.
-    pub vm: &'a VirtualMachine,
+    // JSC_BORROW per LIFETIMES.tsv — rust_type verbatim. `Option` so the struct
+    // is zero-initializable (socket_body.rs `DuplexUpgradeContext` two-phase init
+    // builds this field as `zeroed()` before overwriting via `from()`).
+    pub vm: Option<&'a VirtualMachine>,
     pub handlers: Handlers,
     pub on_data_callback: StrongOptional,
     pub on_end_callback: StrongOptional,

@@ -4584,30 +4584,45 @@ impl Resolver {
             let r = unsafe { c_ares::ares_set_servers_ports(channel, ptr::null_mut()) };
             if r != c_ares::ARES_SUCCESS {
                 let err = c_ares::Error::get(r).unwrap();
-                return global_this.throw_value(global_this.create_error_instance(
+                return Err(global_this.throw_value(global_this.create_error_instance(
                     format_args!("ares_set_servers_ports error: {}", err.label()),
-                ));
+                )));
             }
             return Ok(JSValue::UNDEFINED);
         }
 
+        // PORT NOTE: `struct_ares_addr_port_node.addr` is private upstream — mirror
+        // the `#[repr(C)]` layout locally so `ares_inet_pton` can write into it.
+        #[repr(C)]
+        struct AddrPortNodeShadow {
+            next: *mut c_void,
+            family: c_int,
+            addr: [u32; 4],
+            udp_port: c_int,
+            tcp_port: c_int,
+        }
+        debug_assert_eq!(
+            core::mem::size_of::<AddrPortNodeShadow>(),
+            core::mem::size_of::<c_ares::struct_ares_addr_port_node>(),
+        );
+
         let mut entries: Vec<c_ares::struct_ares_addr_port_node> =
             Vec::with_capacity(triples_iterator.len as usize);
 
-        while let Some(triple) = triples_iterator.next(global_this)? {
+        while let Some(triple) = triples_iterator.next()? {
             if !triple.is_array() {
-                return global_this.throw_invalid_argument_type("setServers", "triple", "array");
+                return Err(global_this.throw_invalid_argument_type("setServers", "triple", "array"));
             }
 
-            let family = triple.get_index(global_this, 0)?.coerce_to_int32(global_this)?;
-            let port = triple.get_index(global_this, 2)?.coerce_to_int32(global_this)?;
+            let family = triple.get_index(global_this, 0)?.coerce_to_i32(global_this)?;
+            let port = triple.get_index(global_this, 2)?.coerce_to_i32(global_this)?;
 
             if family != 4 && family != 6 {
-                return global_this.throw_invalid_arguments("Invalid address family", &[]);
+                return Err(global_this.throw_invalid_arguments("Invalid address family"));
             }
 
             let address_string = triple.get_index(global_this, 1)?.to_bun_string(global_this)?;
-            let address_slice = address_string.to_owned_slice()?;
+            let address_slice = address_string.to_owned_slice();
 
             let mut address_buffer = vec![0u8; address_slice.len() + 1];
             let _ = strings::copy(&mut address_buffer, &address_slice);
@@ -4615,21 +4630,28 @@ impl Resolver {
 
             let af: c_int = if family == 4 { libc::AF_INET } else { libc::AF_INET6 };
 
-            let mut node = c_ares::struct_ares_addr_port_node {
-                next: ptr::null_mut(),
-                family: af,
-                // SAFETY: all-zero is a valid `ares_addr` (POD union of in_addr/in6_addr).
-                addr: unsafe { core::mem::zeroed() },
-                udp_port: port,
-                tcp_port: port,
-            };
+            // SAFETY: all-zero is a valid `struct_ares_addr_port_node` (POD: ptr, ints,
+            // and the in_addr/in6_addr union). Public fields written below; the private
+            // `addr` union stays zeroed until `ares_inet_pton` fills it.
+            let mut node: c_ares::struct_ares_addr_port_node = unsafe { core::mem::zeroed() };
+            node.next = ptr::null_mut();
+            node.family = af;
+            node.udp_port = port;
+            node.tcp_port = port;
 
-            // SAFETY: FFI; `address_buffer` is NUL-terminated above; `node.addr` has space
-            // for in6_addr. `dst` is `&mut node.addr as *mut _ as *mut c_void` — a
-            // `*mut → *mut` type-erasure cast with write provenance from the `&mut`
-            // borrow of the local `node`. No `*const → *mut` cast here.
-            if unsafe { c_ares::ares_inet_pton(af, address_buffer.as_ptr() as *const c_char, &mut node.addr as *mut _ as *mut c_void) } != 1 {
-                return jsc::Error::INVALID_IP_ADDRESS.throw(global_this, format_args!("Invalid IP address: \"{}\"", bstr::BStr::new(&address_slice)));
+            // SAFETY: FFI; `address_buffer` is NUL-terminated above; the shadow `addr`
+            // field has space for in6_addr. `dst` is `addr_of_mut!` over the local
+            // `node` cast through the layout-shadow — `*mut → *mut` type-erasure with
+            // write provenance from `&mut node`. No `*const → *mut` cast here.
+            let addr_dst: *mut c_void = unsafe {
+                ptr::addr_of_mut!((*(&mut node as *mut _ as *mut AddrPortNodeShadow)).addr)
+            }
+            .cast();
+            if unsafe { c_ares::ares_inet_pton(af, address_buffer.as_ptr() as *const c_char, addr_dst) } != 1 {
+                return Err(jsc::Error::INVALID_IP_ADDRESS.throw(
+                    global_this,
+                    format_args!("Invalid IP address: \"{}\"", bstr::BStr::new(&address_slice)),
+                ));
             }
 
             entries.push(node);

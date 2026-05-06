@@ -5,9 +5,10 @@
 //! `set_enable_keeping_event_loop_alive`/`run`) un-gated for the
 //! `RUN_IMMEDIATE_HOOK` dispatch path. `fire()` + `reschedule()`/
 //! `should_reschedule_timer()`/`convert_to_interval()` un-gated for the
-//! `FIRE_TIMER` dispatch path (Timeout/Immediate arms). `init()`/`cancel()`/
-//! `do_ref`/`do_unref`/`do_refresh`/`to_primitive` stay in the gated draft
-//! (`TimerObjectInternals.rs`).
+//! `FIRE_TIMER` dispatch path (Timeout/Immediate arms). `init()` un-gated for
+//! the `TimeoutObject::init` / `ImmediateObject::init` constructors.
+//! `cancel()`/`do_ref`/`do_unref`/`do_refresh`/`to_primitive` stay in the
+//! gated draft (`TimerObjectInternals.rs`).
 
 use core::mem::offset_of;
 

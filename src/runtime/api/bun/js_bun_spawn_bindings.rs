@@ -1502,10 +1502,10 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                 None
             }) {
                 TickState::Completed => {
-                    now = bun_core::timespec::now(bun_core::timespec::Mode::AllowMockedTime);
+                    now = Timespec::now(TimespecMockMode::AllowMockedTime);
                 }
                 TickState::Timeout => {
-                    now = bun_core::timespec::now(bun_core::timespec::Mode::AllowMockedTime);
+                    now = Timespec::now(TimespecMockMode::AllowMockedTime);
                     let did_user_timeout = has_user_timespec
                         && (absolute_timespec.eql(&user_timespec)
                             || user_timespec.order(&now) == core::cmp::Ordering::Less);

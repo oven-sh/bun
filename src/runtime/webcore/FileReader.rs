@@ -535,7 +535,7 @@ impl FileReader {
             FileReader,
             "onReadChunk() = {} ({}) - read_inside_on_pull: {}",
             buf.len(),
-            <&'static str>::from(state),
+            read_state_tag(state),
             <&'static str>::from(&self.read_inside_on_pull)
         );
 

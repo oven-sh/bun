@@ -281,7 +281,10 @@ impl WindowsNamedPipeContext {
     }
 
     pub fn create(global_this: &JSGlobalObject, socket: SocketType) -> *mut WindowsNamedPipeContext {
-        // SAFETY: `bun_vm()` returns the process-global VM which outlives this context.
+        // SAFETY: JSC_BORROW — the global object / VM are process-global singletons
+        // that outlive every `WindowsNamedPipeContext`; extend the borrow to `'static`
+        // so they can be stored in the heap-allocated struct.
+        let global_this: &'static JSGlobalObject = unsafe { &*(global_this as *const JSGlobalObject) };
         let vm: &'static VirtualMachine = unsafe { &*global_this.bun_vm() };
         // TODO(port): in-place init — `named_pipe`/`task` capture `this` (self-referential), so
         // allocate uninit, derive the stable pointer, build the fields, then ptr::write the whole

@@ -2253,12 +2253,10 @@ where
                 jsc::PromiseResult::Pending => {
                     ctx.ref_();
                     let cell = NativePromiseContext::create(this.global_this(), ctx);
-                    let _ = response_value.then_with_value(
-                        this.global_this(),
-                        cell,
-                        Self::on_resolve,
-                        Self::on_reject,
-                    ); // TODO: properly propagate exception upwards
+                    // TODO(port): Zig `then_with_value(global, cell, on_resolve, on_reject)`
+                    let _ = (response_value, cell, this.global_this());
+                    let _: () = todo!("blocked_on: bun_jsc::JSValue::then_with_value");
+                    #[allow(unreachable_code)]
                     return;
                 }
                 jsc::PromiseResult::Fulfilled(fulfilled_value) => {
@@ -2901,12 +2899,9 @@ where
                 ctx.flags.set_is_error_promise_pending(true);
                 ctx.ref_();
                 let cell = NativePromiseContext::create(server.global_this(), ctx);
-                let _ = promise_js.then_with_value(
-                    server.global_this(),
-                    cell,
-                    Self::on_resolve,
-                    Self::on_reject,
-                ); // TODO: properly propagate exception upwards
+                // TODO(port): Zig `then_with_value(global, cell, on_resolve, on_reject)`
+                let _ = (promise_js, cell, server.global_this());
+                let _: () = todo!("blocked_on: bun_jsc::JSValue::then_with_value");
             }
             jsc::PromiseResult::Fulfilled(fulfilled_value) => {
                 // if you return a Response object or a Promise<Response>

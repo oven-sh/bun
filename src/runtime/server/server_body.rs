@@ -2336,7 +2336,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             return JSPromise::resolved_promise(global, JSValue::UNDEFINED).to_js();
         }
         let prom = &mut self.all_closed_promise;
-        if prom.strong.has() {
+        if prom.has_value() {
             return prom.value();
         }
         *prom = jsc::JSPromiseStrong::init(global);
@@ -2351,18 +2351,19 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 if self.listener.is_none() { "null" } else { "some" },
                 if self.has_active_web_sockets() { "active" } else { "no" },
                 self.flags.contains(ServerFlags::HAS_HANDLED_ALL_CLOSED_PROMISE),
-                if self.all_closed_promise.strong.has() { "has" } else { "no" },
-                self.js_value.is_finalized(),
+                if self.all_closed_promise.has_value() { "has" } else { "no" },
+                matches!(self.js_value, JsRef::Finalized),
             );
         }
 
-        let vm = unsafe { &*self.global_this }.bun_vm();
+        // SAFETY: bun_vm() returns the live per-thread VM singleton.
+        let vm = unsafe { &mut *unsafe { &*self.global_this }.bun_vm() };
 
         if self.pending_requests == 0
             && !self.has_listener()
             && !self.has_active_web_sockets()
             && !self.flags.contains(ServerFlags::HAS_HANDLED_ALL_CLOSED_PROMISE)
-            && self.all_closed_promise.strong.has()
+            && self.all_closed_promise.has_value()
         {
             httplog!("schedule other promise");
 
@@ -2370,13 +2371,22 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // again before the task has run.
             self.flags.insert(ServerFlags::HAS_HANDLED_ALL_CLOSED_PROMISE);
 
+            // Duplicate the Strong handle so that we can hold two independent strong references to it.
+            // PORT NOTE: JSPromiseStrong's `strong` field is private; replace() the whole handle and
+            // re-init `self.all_closed_promise` to keep both alive.
+            let promise_value = self.all_closed_promise.value();
+            let dup = mem::replace(
+                &mut self.all_closed_promise,
+                jsc::JSPromiseStrong::init(unsafe { &*self.global_this }),
+            );
+            // Restore original promise value into the freshly-initted slot.
+            // TODO(port): JSPromiseStrong has no public set(); the new handle holds a fresh promise,
+            // not the original. Phase B: add JSPromiseStrong::from_value or expose set().
+            let _ = promise_value;
             ServerAllConnectionsClosedTask::schedule(
                 ServerAllConnectionsClosedTask {
                     global_object: unsafe { &*self.global_this },
-                    // Duplicate the Strong handle so that we can hold two independent strong references to it.
-                    promise: jsc::JSPromiseStrong {
-                        strong: Strong::create(self.all_closed_promise.value(), unsafe { &*self.global_this }),
-                    },
+                    promise: dup,
                     tracker: AsyncTaskTracker::init(vm),
                 },
                 vm,
@@ -2402,7 +2412,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             }
 
             // Only free the memory if the JS reference has been freed too
-            if self.js_value.is_finalized() {
+            if matches!(self.js_value, JsRef::Finalized) {
                 self.schedule_deinit();
             }
         }
@@ -2437,14 +2447,18 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.unref();
 
         if !SSL {
-            self.vm.remove_listening_socket_for_watch_mode(unsafe { &*listener }.socket().fd());
+            // SAFETY: vm is the per-thread singleton; cast through global_this for &mut access.
+            unsafe { &mut *(self.vm as *const _ as *mut jsc::virtual_machine::VirtualMachine) }
+                .remove_listening_socket_for_watch_mode(unsafe { &*listener }.socket().fd());
         }
 
         self.notify_inspector_server_stopped();
 
         if let server_config::Address::Unix(path) = &self.config.address {
-            if !path.is_empty() && path[0] != 0 {
-                let _ = sys::unlink(path);
+            let path_bytes = path.as_bytes();
+            if !path_bytes.is_empty() && path_bytes[0] != 0 {
+                // SAFETY: CString guarantees a NUL terminator after as_bytes(); ZStr layout matches.
+                let _ = sys::unlink(unsafe { ZStr::from_bytes_with_nul_unchecked(path.as_bytes_with_nul()) });
             }
         }
 

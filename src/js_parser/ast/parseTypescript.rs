@@ -136,7 +136,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 return Err(err!("SyntaxError"));
             }
 
-            let name = p.lexer.identifier;
+            // SAFETY: lexer.identifier is arena-owned for 'a; E::Dot.name is the
+            // Phase-A `Str = &'static [u8]` placeholder (E.rs:28).
+            let name: &'static [u8] =
+                unsafe { core::mem::transmute::<&'a [u8], &'static [u8]>(p.lexer.identifier) };
             let name_loc = p.lexer.loc();
             p.lexer.next()?;
 

@@ -886,7 +886,7 @@ impl FileReader {
         if !self.buffered.is_empty() {
             let out = ByteList::move_from_list(mem::take(&mut self.buffered));
             if cfg!(debug_assertions) {
-                debug_assert!(self.reader().buffer().as_ptr() != out.ptr);
+                debug_assert!(self.reader().buffer().as_ptr() != out.ptr.as_ptr());
             }
             return out;
         }

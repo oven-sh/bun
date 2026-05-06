@@ -2423,7 +2423,8 @@ pub fn jsdom_file_construct_(
                         }
                         blob.content_type_was_set = true;
 
-                        if let Some(mime) = global_this.bun_vm().mime_type(slice) {
+                        // SAFETY: bun_vm() returns the live VM pointer for this global.
+                        if let Some(mime) = unsafe { (*global_this.bun_vm()).mime_type(slice) } {
                             blob.content_type = mime.value as *const [u8];
                             break 'inner;
                         }
@@ -2437,7 +2438,7 @@ pub fn jsdom_file_construct_(
 
             if let Some(last_modified) = options.get_truthy(global_this, "lastModified")? {
                 set_last_modified = true;
-                blob.last_modified = last_modified.coerce::<f64>(global_this)?;
+                blob.last_modified = last_modified.to_number(global_this)?;
             }
         }
     }

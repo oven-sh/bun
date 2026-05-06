@@ -1306,7 +1306,7 @@ impl ErrorCode {
     #[inline]
     pub fn from(code: bun_core::Error) -> ErrorCode {
         // Zig: @as(ErrorCode, @enumFromInt(@intFromError(code)))
-        ErrorCode(code.errno as ErrorCodeInt)
+        ErrorCode(code.as_u16() as ErrorCodeInt)
     }
 
     #[inline]

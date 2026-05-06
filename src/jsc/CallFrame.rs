@@ -221,6 +221,7 @@ union Register {
 }
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 union EncodedValueDescriptor {
     ptr: JSValue, // JSCell*
     as_bits: AsBits,

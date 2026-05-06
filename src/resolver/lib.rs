@@ -2699,7 +2699,12 @@ pub mod allocators {
 // TODO(b0-genuine): bun_bundler::options::{BundleOptions, Packages} — MOVE_DOWN
 // to bun_options_types. Until then, `BundleOptions` is FORWARD_DECL'd here with
 // exactly the fields the resolver reads.
-mod options {
+// PORT NOTE: `pub` so `bun_bundler::transpiler::Transpiler::init` can build the
+// `BundleOptions` subset to hand to `Resolver::init1` (the canonical
+// `bun_bundler::options::BundleOptions` is a higher-tier nominal type; until
+// MOVE_DOWN to `bun_options_types` lands the bundler projects its fields into
+// this FORWARD_DECL subset at the call site).
+pub mod options {
     pub use bun_options_types::BundleEnums::{Loader, LoaderHashTable, ModuleType, Target};
     pub use crate::tsconfig_json::options::jsx;
 
@@ -2751,6 +2756,15 @@ mod options {
         pub use super::ForceNodeEnv;
         pub mod defaults {
             pub const CSS_EXTENSION_ORDER: &[&[u8]] = &[b".css"];
+            // Mirrors `bun_bundler::options::bundle_options_defaults::EXTENSION_ORDER`
+            // / `MODULE_EXTENSION_ORDER` — duplicated so `Default for BundleOptions`
+            // below is self-contained (resolver sits below bundler in the dep graph).
+            pub const EXTENSION_ORDER: &[&[u8]] = &[
+                b".tsx", b".ts", b".jsx", b".cts", b".cjs", b".js", b".mjs", b".mts", b".json",
+            ];
+            pub const MODULE_EXTENSION_ORDER: &[&[u8]] = &[
+                b".tsx", b".jsx", b".mts", b".ts", b".mjs", b".js", b".cts", b".cjs", b".json",
+            ];
         }
     }
 
@@ -2791,6 +2805,44 @@ mod options {
         pub tsconfig_override: Option<Box<[u8]>>,
         pub production: bool,
         pub force_node_env: ForceNodeEnv,
+    }
+
+    impl Default for BundleOptions {
+        /// Spec: `options.zig` field-init defaults. Only the fields the resolver
+        /// reads — `bun_bundler::Transpiler::init` overlays the per-field
+        /// projections it can map (target/packages/jsx/bools/global_cache/…)
+        /// before handing this to `Resolver::init1`.
+        fn default() -> Self {
+            BundleOptions {
+                target: Target::default(),
+                packages: Packages::default(),
+                jsx: jsx::Pragma::default(),
+                extension_order: ExtensionOrder {
+                    default: ExtensionOrderGroup {
+                        default: bundle_options::defaults::EXTENSION_ORDER,
+                        esm: bundle_options::defaults::MODULE_EXTENSION_ORDER,
+                    },
+                },
+                conditions: Conditions::default(),
+                external: ExternalModules::default(),
+                extra_cjs_extensions: Vec::new(),
+                framework: None,
+                global_cache: Default::default(),
+                install: core::ptr::null_mut(),
+                load_package_json: true,
+                load_tsconfig_json: true,
+                main_field_extension_order: bundle_options::defaults::EXTENSION_ORDER,
+                main_fields: DEFAULT_MAIN_FIELDS.get(Target::default()),
+                mark_builtins_as_external: false,
+                polyfill_node_globals: false,
+                prefer_offline_install: false,
+                preserve_symlinks: false,
+                rewrite_jest_for_tests: false,
+                tsconfig_override: None,
+                production: false,
+                force_node_env: ForceNodeEnv::default(),
+            }
+        }
     }
 
     impl BundleOptions {

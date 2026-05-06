@@ -642,13 +642,11 @@ impl<'a> Transpiler<'a> {
     /// Port of `transpiler.zig:Transpiler.init`.
     ///
     /// Un-gated B-2 so [`init_runtime_state`](../runtime/jsc_hooks.rs)
-    /// (spec `VirtualMachine.zig:1241`) can write `vm.transpiler`. The
-    /// Store-create / `FileSystem::init` / dotenv-singleton prelude is live;
-    /// the struct-literal tail is sub-gated on the two lower-tier
-    /// constructors that are still `#[cfg(any())]`:
+    /// (spec `VirtualMachine.zig:1241`) can write `vm.transpiler`. Both
+    /// lower-tier constructors are now live:
     ///   * [`options::BundleOptions::from_api`] — `bun_bundler::options`
-    ///   * [`Resolver::init1`] — `bun_resolver` (private `mod options`
-    ///     prevents inline construction from this crate)
+    ///   * [`Resolver::init1`] — `bun_resolver` (its `mod options` is now
+    ///     `pub` so this crate can build the FORWARD_DECL subset)
     ///
     /// PORT NOTE: `log` / `env_loader_` are raw pointers (not `&'a mut`) to
     /// match the un-gated struct field types — Zig aliased the same `*Log`

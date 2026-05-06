@@ -579,16 +579,15 @@ impl<'a> TablePrinter<'a> {
             // non-iterable so the property-iterator path is taken.
             is_iterable: { let _ = global_object; false },
             jstype: tabular_data.js_type(),
-            value_formatter: Formatter {
-                remaining_values: &[],
-                global_this: global_object,
-                ordered_properties: false,
-                quote_strings: false,
-                single_line: true,
-                max_depth: 5,
-                can_throw_stack_overflow: true,
-                stack_check: StackCheck::init(),
-                ..Formatter::new(global_object)
+            value_formatter: {
+                // PORT NOTE: `Formatter` has a `Drop` impl, so struct-update
+                // from a temporary is rejected (E0509).
+                let mut f = Formatter::new(global_object);
+                f.single_line = true;
+                f.max_depth = 5;
+                f.can_throw_stack_overflow = true;
+                f.stack_check = StackCheck::init();
+                f
             },
             values_col_width: None,
             values_col_idx: usize::MAX,
@@ -1453,6 +1452,7 @@ pub mod formatter {
     /// on `self` for the body of the scope. Zig `defer` reads at scope-exit
     /// time and never aliases, so we capture a raw `*mut` to the field and
     /// write through it on drop. This lets the body freely take `&mut self`.
+    #[allow(unused_macros)] // only used by gated `print_as` body
     macro_rules! defer_restore {
         ($place:expr, $prev:expr) => {{
             let __p: *mut _ = core::ptr::addr_of_mut!($place);
@@ -1462,6 +1462,7 @@ pub mod formatter {
     }
 
     /// Mirror Zig's `defer this.field -|= 1;` without holding a live borrow.
+    #[allow(unused_macros)] // only used by gated `print_as` body
     macro_rules! defer_decrement {
         ($place:expr) => {{
             let __p: *mut _ = core::ptr::addr_of_mut!($place);
@@ -5066,7 +5067,7 @@ pub extern "C" fn Bun__ConsoleObject__timeEnd(
     }) else {
         return;
     };
-    let Some(mut value) = prev else { return };
+    let Some(value) = prev else { return };
     // get the duration in microseconds, then display it in milliseconds
     Output::print_elapsed(
         (value.read() / bun_core::time::NS_PER_US) as f64 / bun_core::time::US_PER_MS as f64,
@@ -5096,7 +5097,7 @@ pub extern "C" fn Bun__ConsoleObject__timeLog(
     // SAFETY: caller passes a valid (ptr, len) pair.
     let slice = unsafe { core::slice::from_raw_parts(chars, len) };
     let id = bun_wyhash::hash(slice);
-    let Some(Some(mut value)) = PENDING_TIME_LOGS.with_borrow(|m| m.get(&id).copied()) else {
+    let Some(Some(value)) = PENDING_TIME_LOGS.with_borrow(|m| m.get(&id).copied()) else {
         return;
     };
     // get the duration in microseconds, then display it in milliseconds
@@ -5110,18 +5111,14 @@ pub extern "C" fn Bun__ConsoleObject__timeLog(
     Output::flush();
 
     // print the arguments
-    let mut fmt = Formatter {
-        remaining_values: &[],
-        global_this: global,
-        ordered_properties: false,
-        quote_strings: false,
-        // TODO(port-cycle): `CLI::get().runtime_options.console_depth` — see
-        // the matching note in `message_with_type_and_level_`.
-        max_depth: DEFAULT_CONSOLE_LOG_DEPTH,
-        stack_check: StackCheck::init(),
-        can_throw_stack_overflow: true,
-        ..Formatter::new(global)
-    };
+    // PORT NOTE: `Formatter` has a `Drop` impl, so struct-update from a
+    // temporary is rejected (E0509). Construct via `new()` then mutate.
+    let mut fmt = Formatter::new(global);
+    // TODO(port-cycle): `CLI::get().runtime_options.console_depth` — see
+    // the matching note in `message_with_type_and_level_`.
+    fmt.max_depth = DEFAULT_CONSOLE_LOG_DEPTH;
+    fmt.stack_check = StackCheck::init();
+    fmt.can_throw_stack_overflow = true;
     // SAFETY: see `vm_console` — single short-lived `&mut` for this entry point.
     let console = unsafe { &mut *vm_console(global) };
     let mut writer = IoWriterAdapter(console.error_writer());

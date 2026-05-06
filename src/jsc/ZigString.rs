@@ -383,7 +383,7 @@ impl ZigString {
         let mut list = if self.is_16bit() {
             strings::to_utf8_list_with_type(list, self.utf16_slice_aligned())?
         } else {
-            strings::allocate_latin1_into_utf8_with_list(list, 0, self.slice())?
+            strings::allocate_latin1_into_utf8_with_list(list, 0, self.slice())
         };
 
         if list.capacity() > list.len() {
@@ -409,7 +409,7 @@ impl ZigString {
         let mut list = if self.is_16bit() {
             strings::to_utf8_list_with_type(list, self.utf16_slice_aligned())?
         } else {
-            strings::allocate_latin1_into_utf8_with_list(list, 0, self.slice())?
+            strings::allocate_latin1_into_utf8_with_list(list, 0, self.slice())
         };
 
         list.push(0);

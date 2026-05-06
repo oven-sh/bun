@@ -34,7 +34,8 @@ impl Counters {
 // trampoline. Until the macro crate exists, expose the Zig-shape signature
 // directly; the trampoline is wired by codegen.
 pub fn create_counters_object(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-    global.bun_vm().counters.to_js(global)
+    // SAFETY: bun_vm() returns the per-thread VirtualMachine singleton; caller is on the JS thread.
+    unsafe { &*global.bun_vm() }.counters.to_js(global)
 }
 
 // Zig: `const Field = std.meta.FieldEnum(Counters);`

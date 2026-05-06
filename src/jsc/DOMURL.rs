@@ -44,7 +44,8 @@ impl DOMURL {
     }
 
     pub fn cast<'a>(value: JSValue) -> Option<&'a mut DOMURL> {
-        Self::cast_(value, crate::virtual_machine::VirtualMachine::get().global().vm())
+        // SAFETY: VirtualMachine::get() returns the per-thread singleton; caller is on the JS thread.
+        Self::cast_(value, unsafe { &*crate::virtual_machine::VirtualMachine::get() }.global().vm())
     }
 
     pub fn href_(&mut self, out: &mut ZigString) {

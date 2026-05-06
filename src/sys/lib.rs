@@ -3476,13 +3476,6 @@ pub fn mkdirat_z(dir: Fd, path: &ZStr, mode: Mode) -> Maybe<()> {
 pub fn open_dir_at(dir: Fd, path: &[u8]) -> Maybe<Fd> {
     openat_a(dir, path, O::DIRECTORY | O::CLOEXEC | O::RDONLY, 0)
 }
-/// bun.zig:850 `openDir` — `dir.openDirZ(path, .{ .iterate = true })`.
-/// Returns a `Dir` wrapper so callers can `.close()` / iterate.
-pub fn open_dir(dir: Dir, path: &ZStr) -> core::result::Result<Dir, bun_core::Error> {
-    openat(dir.fd, path, O::DIRECTORY | O::CLOEXEC | O::RDONLY, 0)
-        .map(Dir::from_fd)
-        .map_err(Into::into)
-}
 /// bun.zig:890 `openDirAbsolute`. PORT NOTE: returns `Fd`, not `std.fs.Dir`.
 pub fn open_dir_absolute(path: &[u8]) -> Maybe<Fd> {
     open_a(path, O::DIRECTORY | O::CLOEXEC | O::RDONLY, 0)
@@ -4811,19 +4804,17 @@ pub mod make_path {
 pub struct WindowsSymlinkOptions {
     pub directory: bool,
 }
-impl WindowsSymlinkOptions {
-    /// Zig: `pub var has_failed_to_create_symlink = false;` (sys.zig:2669).
-    pub static HAS_FAILED_TO_CREATE_SYMLINK: core::sync::atomic::AtomicBool =
-        core::sync::atomic::AtomicBool::new(false);
-}
+/// Zig: `pub var has_failed_to_create_symlink = false;` (sys.zig:2669).
+pub static WINDOWS_SYMLINK_HAS_FAILED: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
 impl WindowsSymlinkOptions {
     #[inline]
     pub fn set_has_failed_to_create_symlink(v: bool) {
-        Self::HAS_FAILED_TO_CREATE_SYMLINK.store(v, core::sync::atomic::Ordering::Relaxed);
+        WINDOWS_SYMLINK_HAS_FAILED.store(v, core::sync::atomic::Ordering::Relaxed);
     }
     #[inline]
     pub fn has_failed_to_create_symlink() -> bool {
-        Self::HAS_FAILED_TO_CREATE_SYMLINK.load(core::sync::atomic::Ordering::Relaxed)
+        WINDOWS_SYMLINK_HAS_FAILED.load(core::sync::atomic::Ordering::Relaxed)
     }
 }
 

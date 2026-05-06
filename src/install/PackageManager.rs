@@ -401,7 +401,7 @@ pub struct PackageManager {
     pub task_queue: TaskDependencyQueue,
 
     pub manifests: PackageManifestMap,
-    pub folders: crate::resolvers::folder_resolver::Map,
+    pub folders: FolderResolutionMap,
     pub git_repositories: RepositoryMap,
 
     pub network_dedupe_map: crate::network_task::DedupeMap,

@@ -177,7 +177,9 @@ pub fn fail_session(session: *mut ClientSession, err: bun_core::Error) {
         let cl = unsafe { (*stream).client };
         s.detach(stream);
         if let Some(cl_) = cl {
-            cl_.fail_from_h2(err);
+            // SAFETY: stream.client was a live HTTPClient while attached; detach() does
+            // not free it (ownership stays with the caller's request lifecycle).
+            unsafe { (*cl_.as_ptr()).fail_from_h2(err) };
         }
     }
     // Zig .monotonic == LLVM monotonic == Rust Relaxed

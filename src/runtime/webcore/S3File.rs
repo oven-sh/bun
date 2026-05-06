@@ -660,7 +660,10 @@ pub fn get_bucket_name(this: &Blob) -> Option<&[u8]> {
     Some(bucket)
 }
 
-#[bun_jsc::host_fn(getter)]
+// PORT NOTE: `#[bun_jsc::host_fn(getter|method)]` requires `Self` (impl-block
+// context). These are free fns on `*Blob` exported manually as `JSS3File__*`
+// (see `@export` block below) and called as `s3_file::get_*` from `Blob::get_*`,
+// so the proc-macro shim is not used here — the raw ABI shim is hand-wired.
 pub fn get_bucket(this: &Blob, global: &JSGlobalObject) -> JsResult<JSValue> {
     if let Some(name) = get_bucket_name(this) {
         return bun_str::String::create_utf8_for_js(global, name);
@@ -668,13 +671,11 @@ pub fn get_bucket(this: &Blob, global: &JSGlobalObject) -> JsResult<JSValue> {
     Ok(JSValue::UNDEFINED)
 }
 
-#[bun_jsc::host_fn(method)]
 pub fn get_presign_url(this: &mut Blob, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let args = callframe.arguments_old(1);
     get_presign_url_from(this, global, if args.len() > 0 { Some(args.ptr[0]) } else { None })
 }
 
-#[bun_jsc::host_fn(method)]
 pub fn get_stat(this: &mut Blob, global: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<JSValue> {
     S3BlobStatTask::stat(global, this)
 }

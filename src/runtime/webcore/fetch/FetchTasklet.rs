@@ -452,17 +452,19 @@ impl FetchTasklet {
             response.set_size_hint(size_hint);
             if let Some(readable) = response.get_body_readable_stream(global_this) {
                 bun_output::scoped_log!(FetchTasklet, "onBodyReceived CurrentResponse BodyReadableStream");
-                if let readable_stream::Ptr::Bytes(bytes) = &readable.ptr {
+                if let readable_stream::Source::Bytes(bytes) = readable.ptr {
+                    // SAFETY: ptr came from ReadableStreamTag__tagged; valid while stream alive.
+                    let bytes = unsafe { &mut *bytes };
                     let chunk = self.scheduled_response_buffer.list.as_slice();
 
                     if self.result.has_more {
-                        bytes.on_data(readable_stream::StreamResult::Temporary(
+                        bytes.on_data(StreamResult::Temporary(
                             bun_collections::ByteList::from_borrowed_slice_dangerous(chunk),
                         ))?;
                     } else {
                         readable.value.ensure_still_alive();
                         response.detach_readable_stream(global_this);
-                        bytes.on_data(readable_stream::StreamResult::TemporaryAndDone(
+                        bytes.on_data(StreamResult::TemporaryAndDone(
                             bun_collections::ByteList::from_borrowed_slice_dangerous(chunk),
                         ))?;
                     }

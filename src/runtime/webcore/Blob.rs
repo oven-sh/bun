@@ -1333,7 +1333,7 @@ fn write_file_with_empty_source_to_destination(
             // TODO: make this async
             let node_fs = ctx.bun_vm().node_fs();
             let mut result = node_fs.truncate(
-                node::fs::TruncateArgs {
+                node::fs::args::Truncate {
                     path: file.pathlike.clone(),
                     len: 0,
                     flags: bun_sys::O::CREAT,

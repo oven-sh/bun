@@ -122,7 +122,19 @@ impl Drop for HeadersRef {
 // In Rust the C++ JSCell wrapper stays generated; this module re-exports the
 // generated bindings (toJSUnchecked, fromJS, fromJSDirect, gc.stream slot,
 // bodySetCached). Phase B wires this to the codegen output.
-pub use crate::webcore::jsc::codegen::JSResponse as js;
+//
+// PORT NOTE: the `crate::webcore::jsc::codegen::JSResponse` stub provides
+// `from_js` / `from_js_direct` / `to_js_unchecked`; the cached-accessor pairs
+// (`body_*_cached`, `stream_*_cached`) come from the real
+// `bun_jsc::generated::JSResponse` (emitted by `codegen_cached_accessors!`).
+// Zig's `js.gc.stream.{get,set,clear}` flatten to `stream_{get,set}_cached`;
+// `clear` is `set(.., .zero)` (see ZigGeneratedClasses.zig `gc.clear`).
+pub mod js {
+    pub use crate::webcore::jsc::codegen::JSResponse::*;
+    pub use bun_jsc::generated::JSResponse::{
+        body_get_cached, body_set_cached, stream_get_cached, stream_set_cached,
+    };
+}
 // NOTE: toJS is overridden
 pub use js::from_js;
 pub use js::from_js_direct;

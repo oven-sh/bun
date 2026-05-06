@@ -1358,7 +1358,8 @@ impl Drop for BufferedOutput {
 
 pub struct CapturedWriter {
     pub dead: bool,
-    pub writer: Arc<IOWriter>,
+    /// `None` iff `dead == true` (Zig leaves the field undefined when dead).
+    pub writer: Option<Arc<IOWriter>>,
     pub written: usize,
     pub err: Option<SystemError>,
 }
@@ -1367,9 +1368,7 @@ impl Default for CapturedWriter {
     fn default() -> Self {
         CapturedWriter {
             dead: true,
-            // TODO(port): Zig leaves `writer` undefined when dead=true; Arc has no
-            // "undefined" state. Phase B should make this Option<Arc<IOWriter>>.
-            writer: Arc::new(IOWriter::placeholder()),
+            writer: None,
             written: 0,
             err: None,
         }
@@ -1389,7 +1388,9 @@ impl CapturedWriter {
             chunk.len(),
             self.parent().buffered_output.len()
         );
-        self.writer.enqueue(self, None, chunk).run();
+        // `dead == false` ⇒ writer.is_some() (set in PipeReader::create).
+        let writer = self.writer.clone().expect("CapturedWriter live without writer");
+        writer.enqueue(self, None, chunk).run();
     }
 
     pub fn get_buffer(&self) -> &[u8] {
@@ -1563,7 +1564,7 @@ impl PipeReader {
         );
 
         if let Some(cap) = capture {
-            this.captured_writer.writer = cap; // dupeRef → Arc clone already happened on pass-in
+            this.captured_writer.writer = Some(cap); // dupeRef → Arc clone already happened on pass-in
             this.captured_writer.dead = false;
         }
 

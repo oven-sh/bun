@@ -1137,7 +1137,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 if p.lexer.is_contextual_keyword(b"as") {
                     // "export * as ns from 'path'"
                     p.lexer.next()?;
-                    let name = p.parse_clause_alias("export")?;
+                    let name = p.parse_clause_alias(b"export")?;
                     namespace_ref = p.store_name_in_ref(name)?;
                     alias = Some(G::ExportStarAlias {
                         loc: p.lexer.loc(),

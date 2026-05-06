@@ -2527,7 +2527,6 @@ impl<AtRule> StyleSheet<AtRule> {
         // (rules/mod.rs), PropertyHandlerContext::new unused_symbols arg type
         // (`&HashSet<String>` vs `&ArrayHashMap<Box<[u8]>,()>`), CustomMediaRule::deep_clone
         // arena arg.
-         {
         let ctx = PropertyHandlerContext::new(options.targets, &options.unused_symbols);
         let mut handler = DeclarationHandler::default();
         let mut important_handler = DeclarationHandler::default();

@@ -126,7 +126,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             // The alias may be a keyword;
             let is_identifier = p.lexer.token == T::TIdentifier;
             let alias_loc = p.lexer.loc();
-            let alias = p.parse_clause_alias("import")?;
+            let alias = p.parse_clause_alias(b"import")?;
             let mut name = LocRef {
                 loc: alias_loc,
                 ref_: Some(p.store_name_in_ref(alias)?),
@@ -211,7 +211,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     // "import { type xx as yy } from 'mod'"
                     // "import { type if as yy } from 'mod'"
                     // "import { type 'xx' as yy } from 'mod'"
-                    let _ = p.parse_clause_alias("import")?;
+                    let _ = p.parse_clause_alias(b"import")?;
                     p.lexer.next()?;
 
                     if p.lexer.is_contextual_keyword(b"as") {
@@ -301,7 +301,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let mut had_type_only_exports = false;
 
         while p.lexer.token != T::TCloseBrace {
-            let mut alias = p.parse_clause_alias("export")?;
+            let mut alias = p.parse_clause_alias(b"export")?;
             let mut alias_loc = p.lexer.loc();
 
             let name = LocRef {
@@ -334,7 +334,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         p.lexer.next()?;
 
                         if p.lexer.is_contextual_keyword(b"as") {
-                            alias = p.parse_clause_alias("export")?;
+                            alias = p.parse_clause_alias(b"export")?;
                             alias_loc = p.lexer.loc();
                             p.lexer.next()?;
 
@@ -342,7 +342,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 // "export { type as as as }"
                                 // "export { type as as foo }"
                                 // "export { type as as 'foo' }"
-                                let _ = p.parse_clause_alias("export").unwrap_or(b"");
+                                let _ = p.parse_clause_alias(b"export").unwrap_or(b"");
                                 had_type_only_exports = true;
                                 p.lexer.next()?;
                             } else {
@@ -359,7 +359,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         {
                             // "export { type as xxx }"
                             // "export { type as 'xxx' }"
-                            alias = p.parse_clause_alias("export")?;
+                            alias = p.parse_clause_alias(b"export")?;
                             alias_loc = p.lexer.loc();
                             p.lexer.next()?;
 
@@ -394,12 +394,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         // "export { type default as if } from 'path'"
                         // "export { type xx as 'yy' }"
                         // "export { type 'xx' } from 'mod'"
-                        let _ = p.parse_clause_alias("export").unwrap_or(b"");
+                        let _ = p.parse_clause_alias(b"export").unwrap_or(b"");
                         p.lexer.next()?;
 
                         if p.lexer.is_contextual_keyword(b"as") {
                             p.lexer.next()?;
-                            let _ = p.parse_clause_alias("export").unwrap_or(b"");
+                            let _ = p.parse_clause_alias(b"export").unwrap_or(b"");
                             p.lexer.next()?;
                         }
 
@@ -408,7 +408,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 } else {
                     if p.lexer.is_contextual_keyword(b"as") {
                         p.lexer.next()?;
-                        alias = p.parse_clause_alias("export")?;
+                        alias = p.parse_clause_alias(b"export")?;
                         alias_loc = p.lexer.loc();
 
                         p.lexer.next()?;
@@ -424,7 +424,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             } else {
                 if p.lexer.is_contextual_keyword(b"as") {
                     p.lexer.next()?;
-                    alias = p.parse_clause_alias("export")?;
+                    alias = p.parse_clause_alias(b"export")?;
                     alias_loc = p.lexer.loc();
 
                     p.lexer.next()?;

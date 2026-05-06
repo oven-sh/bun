@@ -1206,7 +1206,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     if self.lexer.is_contextual_keyword(b"as") {
                         // "export type * as ns from 'path'"
                         self.lexer.next()?;
-                        let _ = self.parse_clause_alias("export")?;
+                        let _ = self.parse_clause_alias(b"export")?;
                         self.lexer.next()?;
                     }
                     self.lexer.expect_contextual_keyword(b"from")?;

@@ -307,6 +307,30 @@ impl<K, V, C> ArrayHashMap<K, V, C> {
         self.ensure_total_capacity(n)
     }
 
+    /// Zig `putAssumeCapacityContext`: insert/replace using an externally-supplied
+    /// hash/eql context instead of the stored `C`. Used when `C = AutoContext`
+    /// can't satisfy `K: Hash` (e.g. `bun_semver::String`, whose hash needs the
+    /// owning `arg_buf`/`existing_buf`).
+    pub fn put_assume_capacity_context<Ctx: ArrayHashAdapter<K, K>>(
+        &mut self,
+        key: K,
+        value: V,
+        ctx: &Ctx,
+    ) {
+        let h = ctx.hash(&key);
+        for (i, kh) in self.hashes.iter().enumerate() {
+            if *kh == h && ctx.eql(&key, &self.keys[i], i) {
+                self.keys[i] = key;
+                self.values[i] = value;
+                return;
+            }
+        }
+        // PERF(port): was assume_capacity — Vec::push is amortized O(1) regardless.
+        self.keys.push(key);
+        self.values.push(value);
+        self.hashes.push(h);
+    }
+
     pub fn ensure_unused_capacity(&mut self, additional: usize) -> Result<(), AllocError> {
         self.keys.reserve(additional);
         self.values.reserve(additional);

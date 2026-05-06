@@ -326,6 +326,51 @@ impl<const SSL: bool> HTTPContext<SSL> {
         unsafe { h2::ClientSession::deref(session) };
     }
 
+    /// Raw-pointer variant of [`Self::unregister_h2`] for re-entrant call
+    /// paths (`connect` → `adopt` → `maybe_release` / `fail_all` → `on_close`)
+    /// where an ancestor stack frame already holds `&mut HTTPContext<SSL>`.
+    /// Upgrading the session's `ctx` backref to a second `&mut Self` there
+    /// would alias; this entry point instead projects `active_h2_sessions`
+    /// through a raw place expression so no intermediate `&mut Self` is
+    /// formed.
+    ///
+    /// # Safety
+    /// `ctx` must point to a live `HTTPContext<SSL>`; an ancestor frame may
+    /// hold a `&mut` to it but must not be mid-iteration over
+    /// `active_h2_sessions` (this swap_removes from that Vec). `session` must
+    /// be live for the duration of the call and carry write provenance to its
+    /// Box allocation (it is `deref()`ed on exit).
+    pub unsafe fn unregister_h2_raw(ctx: *mut Self, session: *const h2::ClientSession) {
+        if !SSL {
+            return;
+        }
+        // SAFETY: caller guarantees `session` is live for this call.
+        let idx = unsafe { (*session).registry_index() };
+        if idx == u32::MAX {
+            return;
+        }
+        // SAFETY: same as above — `session` is live; set_registry_index writes a Cell<u32>.
+        unsafe { (*session).set_registry_index(u32::MAX) };
+        // SAFETY: `ctx` is live per caller contract. Project the field via raw
+        // place expression — no intermediate `&mut Self` is formed, so we do
+        // not alias an ancestor frame's `&mut HTTPContext`.
+        let list = unsafe { &mut (*ctx).active_h2_sessions };
+        debug_assert!(
+            (idx as usize) < list.len()
+                && core::ptr::eq(list[idx as usize].cast_const(), session)
+        );
+        let _ = list.swap_remove(idx as usize);
+        if (idx as usize) < list.len() {
+            // SAFETY: list entries are live ClientSession pointers; the swapped
+            // entry is a distinct allocation from `session` (the entry at `idx`
+            // was just removed). `set_registry_index` only touches a `Cell<u32>`.
+            unsafe { (*list[idx as usize]).set_registry_index(idx) };
+        }
+        // Releases the strong ref taken in register_h2.
+        // SAFETY: `session` carries write provenance from the original Box.
+        unsafe { h2::ClientSession::deref(session) };
+    }
+
     pub fn tag_as_h2(socket: HTTPSocket<SSL>, session: *const h2::ClientSession) {
         if let Some(ctx) = socket.ext::<*mut c_void>() {
             // SAFETY: ext slot stores the ActiveSocket tagged-pointer word.

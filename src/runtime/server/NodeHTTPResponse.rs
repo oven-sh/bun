@@ -1732,12 +1732,14 @@ impl NodeHTTPResponse {
     }
 
     #[inline]
-    pub fn deref(&self) {
+    pub fn deref(&mut self) {
+        // PORT NOTE: takes `&mut self` (Zig's `*@This()`) so the zero-count `deinit`
+        // path writes through a pointer with mutable provenance instead of laundering
+        // `&self as *const _ as *mut _` (UB). Every call site already holds `&mut`.
         let n = self.ref_count.get() - 1;
         self.ref_count.set(n);
         if n == 0 {
-            // SAFETY: refcount reached zero; we have exclusive access.
-            unsafe { (*(self as *const Self as *mut Self)).deinit() };
+            self.deinit();
         }
     }
 }

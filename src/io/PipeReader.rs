@@ -1092,25 +1092,28 @@ impl WindowsBufferedReader {
     }
 
     pub fn init<T: BufferedReaderParent>() -> WindowsBufferedReader {
+        // Raw-pointer passthroughs — see `BufferedReaderParent` aliasing
+        // contract. No `&mut T` is materialized here because the reader (a
+        // field of T) holds a live `&mut` on the caller's stack.
         fn on_read_chunk<T: BufferedReaderParent>(
             this: *mut c_void,
             chunk: &[u8],
             has_more: ReadState,
         ) -> bool {
-            // SAFETY: parent set via set_parent with *mut T.
-            unsafe { &mut *(this as *mut T) }.on_read_chunk(chunk, has_more)
+            // SAFETY: parent set via set_parent with *mut T; raw-ptr passthrough.
+            unsafe { T::on_read_chunk(this as *mut T, chunk, has_more) }
         }
         fn on_reader_done<T: BufferedReaderParent>(this: *mut c_void) {
-            // SAFETY: parent set via set_parent with *mut T.
-            unsafe { &mut *(this as *mut T) }.on_reader_done()
+            // SAFETY: parent set via set_parent with *mut T; raw-ptr passthrough.
+            unsafe { T::on_reader_done(this as *mut T) }
         }
         fn on_reader_error<T: BufferedReaderParent>(this: *mut c_void, err: sys::Error) {
-            // SAFETY: parent set via set_parent with *mut T.
-            unsafe { &mut *(this as *mut T) }.on_reader_error(err)
+            // SAFETY: parent set via set_parent with *mut T; raw-ptr passthrough.
+            unsafe { T::on_reader_error(this as *mut T, err) }
         }
         fn loop_<T: BufferedReaderParent>(this: *mut c_void) -> *mut Loop {
-            // SAFETY: parent set via set_parent with *mut T.
-            unsafe { &mut *(this as *mut T) }.loop_()
+            // SAFETY: parent set via set_parent with *mut T; raw-ptr passthrough.
+            unsafe { T::loop_(this as *mut T) }
         }
 
         WindowsBufferedReader {
@@ -1330,7 +1333,10 @@ impl WindowsBufferedReader {
         suggested_size: usize,
         buf: *mut uv::uv_buf_t,
     ) {
-        // SAFETY: handle.data was set to *mut WindowsBufferedReader in set_data.
+        // SAFETY: libuv alloc_cb — `handle.data` was set to `*mut Self` in
+        // `set_data`/`start_with_current_pipe`. libuv invokes this from the
+        // event loop with no other Rust borrow of the reader live, so this is
+        // the sole `&mut` to the allocation (single-owner).
         let this = unsafe { &mut *((*handle).data as *mut WindowsBufferedReader) };
         let result = this.get_read_buffer_with_stable_memory_address(suggested_size);
         // SAFETY: buf is a valid out-pointer from libuv.

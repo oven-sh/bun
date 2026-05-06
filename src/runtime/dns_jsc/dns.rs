@@ -3940,6 +3940,10 @@ impl Resolver {
             }
 
             let owner = Async::Owner::new(Async::poll_tag::DNS_RESOLVER, self as *mut Self as *mut ());
+            // SAFETY: `event_loop_handle` is set once VM is initialized; live for VM lifetime.
+            // Hoisted above `poll_entry` so the `&self` borrow ends before `self.polls`
+            // is borrowed mutably.
+            let loop_ = unsafe { &mut *self.vm().event_loop_handle.unwrap() };
             let poll_entry = self.polls.get_or_put(fd).expect("unreachable");
 
             if !poll_entry.found_existing {
@@ -3954,8 +3958,6 @@ impl Resolver {
             // both directions on one poll (epoll: combined mask via CTL_MOD;
             // kqueue: two filters on the same ident, both EV_DELETEd on
             // unregister).
-            // SAFETY: `event_loop_handle` is set once VM is initialized; live for VM lifetime.
-            let loop_ = unsafe { &mut *self.vm().event_loop_handle.unwrap() };
             let have_readable = poll.flags.contains(Async::PollFlag::PollReadable);
             let have_writable = poll.flags.contains(Async::PollFlag::PollWritable);
 

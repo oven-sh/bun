@@ -1640,10 +1640,10 @@ impl NodeHTTPResponse {
     #[bun_jsc::host_fn(setter)]
     pub fn set_on_data(
         &mut self,
-        this_value: JSValue,
         global_object: &JSGlobalObject,
         value: JSValue,
-    ) {
+    ) -> JsResult<bool> {
+        let this_value = self.get_this_value();
         // Only `.pending` accepts a callback. `.done` means either uSockets delivered last=true or JS
         // previously cleared `ondata` (which already called clearOnData()); either way, there is no
         // more body to read, so don't re-register with uSockets or churn refs.

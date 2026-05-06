@@ -29,6 +29,17 @@ impl SliceWithUnderlyingString {
     pub fn slice(&self) -> &[u8] { self.utf8.slice() }
     pub fn deinit(&self) {}
     pub fn to_thread_safe(&mut self) {}
+
+    /// `SliceWithUnderlyingString.dupeRef` — bump the underlying refcount and
+    /// return a shallow copy that shares the same backing storage. The utf8
+    /// view is left empty (callers in node_fs only use this on the path that
+    /// re-derives the slice from `underlying`).
+    pub fn dupe_ref(&self) -> SliceWithUnderlyingString {
+        SliceWithUnderlyingString {
+            utf8: ZigStringSlice::default(),
+            underlying: self.underlying.dupe_ref(),
+        }
+    }
     /// `SliceWithUnderlyingString.reportExtraMemory` — tell JSC about the
     /// owned-bytes allocation so the GC heuristic can account for it.
     #[inline]

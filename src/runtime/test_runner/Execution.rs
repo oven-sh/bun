@@ -746,15 +746,15 @@ impl Execution {
                 // remove entries that were added in the execution phase
                 while let Some(next) = entry.next {
                     // SAFETY: arena-owned entry
-                    if unsafe { next.as_ref() }.added_in_phase != Phase::Execution {
+                    if unsafe { (*next).added_in_phase } != AddedInPhase::Execution {
                         break;
                     }
                     // SAFETY: arena-owned entry, alive for lifetime of BunTest
-                    entry.next = unsafe { next.as_ref() }.next;
+                    entry.next = unsafe { (*next).next };
                     // can't deinit the removed entry because it may still be referenced in a RefDataValue
                 }
                 entry.timespec = Timespec::EPOCH;
-                current_entry = entry.next;
+                current_entry = nn(entry.next);
             }
         }
 

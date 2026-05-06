@@ -3404,7 +3404,8 @@ pub mod formatter {
                     }
                 }
                 Tag::GetterSetter => {
-                    let cell = value.as_cell();
+                    // SAFETY: `Tag::GetterSetter` is only produced for cell values.
+                    let cell = unsafe { &*value.to_cell().expect("GetterSetter is a cell") };
                     let getter_setter = cell.get_getter_setter();
                     let has_getter = !getter_setter.is_getter_null();
                     let has_setter = !getter_setter.is_setter_null();
@@ -3417,7 +3418,8 @@ pub mod formatter {
                     }
                 }
                 Tag::CustomGetterSetter => {
-                    let cell = value.as_cell();
+                    // SAFETY: `Tag::CustomGetterSetter` is only produced for cell values.
+                    let cell = unsafe { &*value.to_cell().expect("CustomGetterSetter is a cell") };
                     let getter_setter = cell.get_custom_getter_setter();
                     let has_getter = !getter_setter.is_getter_null();
                     let has_setter = !getter_setter.is_setter_null();

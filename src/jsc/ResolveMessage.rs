@@ -261,12 +261,12 @@ impl ResolveMessage {
     ) -> JsResult<JSValue> {
         let object = JSValue::create_empty_object(global, 7);
         object.put(global, b"name", bun_string::String::static_str(b"ResolveMessage").to_js(global)?);
-        object.put(global, b"position", this.get_position(global)?);
-        object.put(global, b"message", this.get_message(global)?);
-        object.put(global, b"level", this.get_level(global)?);
-        object.put(global, b"specifier", this.get_specifier(global)?);
-        object.put(global, b"importKind", this.get_import_kind(global)?);
-        object.put(global, b"referrer", this.get_referrer(global)?);
+        object.put(global, b"position", Self::get_position(this, global)?);
+        object.put(global, b"message", Self::get_message(this, global)?);
+        object.put(global, b"level", Self::get_level(this, global)?);
+        object.put(global, b"specifier", Self::get_specifier(this, global)?);
+        object.put(global, b"importKind", Self::get_import_kind(this, global)?);
+        object.put(global, b"referrer", Self::get_referrer(this, global)?);
         Ok(object)
     }
 

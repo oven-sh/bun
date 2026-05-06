@@ -277,6 +277,7 @@ pub enum DeclInfoKind {
     Declared,
     Lexical,
 }
+#[derive(Clone)]
 pub struct DeclInfo {
     pub name: Box<[u8]>,
     pub kind: DeclInfoKind,
@@ -338,6 +339,45 @@ impl CompileResult {
             },
             CompileResult::Css { source_map, .. } => source_map.as_ref(),
             CompileResult::Html { .. } => None,
+        }
+    }
+}
+
+// PORT NOTE: manual `Clone` because `bun_js_printer::PrintResult` doesn't
+// derive it (its fields are all `Clone`-able, so destructure and rebuild).
+// `vec![CompileResult::default(); n]` in `generateChunksInParallel.rs` needs
+// this to pre-size the per-chunk result buffers — Zig used `allocator.alloc`
+// (uninit), Rust fills with defaults.
+impl Clone for CompileResult {
+    fn clone(&self) -> Self {
+        match self {
+            CompileResult::Javascript { source_index, result, decls } => {
+                CompileResult::Javascript {
+                    source_index: *source_index,
+                    result: match result {
+                        bun_js_printer::PrintResult::Result(r) => bun_js_printer::PrintResult::Result(
+                            bun_js_printer::PrintResultSuccess {
+                                code: r.code.clone(),
+                                source_map: r.source_map.clone(),
+                            },
+                        ),
+                        bun_js_printer::PrintResult::Err(e) => bun_js_printer::PrintResult::Err(*e),
+                    },
+                    decls: decls.clone(),
+                }
+            }
+            CompileResult::Css { result, source_index, source_map } => CompileResult::Css {
+                result: result.clone(),
+                source_index: *source_index,
+                source_map: source_map.clone(),
+            },
+            CompileResult::Html { source_index, code, script_injection_offset } => {
+                CompileResult::Html {
+                    source_index: *source_index,
+                    code: code.clone(),
+                    script_injection_offset: *script_injection_offset,
+                }
+            }
         }
     }
 }

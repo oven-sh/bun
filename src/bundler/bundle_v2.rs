@@ -4743,21 +4743,31 @@ impl<'a> BundleV2<'a> {
         // 1. Create the ast right here
         // 2. Create a separate "virutal" module that becomes the manifest later on.
         // 3. Add it to the graph
-        let graph = &mut self.graph;
+        // PORT NOTE: Zig aliased `graph = &this.graph;` — re-borrow `self.graph`
+        // at each use so the `self.*` method calls below don't conflict.
         let empty_html_file_source = Logger::Source {
             path: logger_path_from_fs(path),
-            index: bun_logger::Index(graph.input_files.len() as u32),
+            index: bun_logger::Index(self.graph.input_files.len() as u32),
             contents: std::borrow::Cow::Borrowed(&b""[..]),
             ..Default::default()
         };
         let mut js_parser_options = bun_js_parser::ast::ParserOptions::init(self.transpiler_for_target(target).options.jsx.clone().into(), Loader::Html);
         js_parser_options.bundle = true;
 
-        let unique_key = self.allocator().alloc_str(&format!(
-            "{:x}H{:08}",
-            self.unique_key,
-            graph.html_imports.server_source_indices.len,
-        ));
+        // SAFETY: `alloc_str` returns a `&mut str` into the bundler arena, which
+        // outlives this AST. `E::EString.data` is `&'static [u8]` per the Phase-A
+        // arena-erasure convention (see `js_parser/ast/E.rs:Str`).
+        let unique_key: &'static [u8] = unsafe {
+            core::mem::transmute::<&[u8], &'static [u8]>(
+                self.allocator()
+                    .alloc_str(&format!(
+                        "{:x}H{:08}",
+                        self.unique_key,
+                        self.graph.html_imports.server_source_indices.len,
+                    ))
+                    .as_bytes(),
+            )
+        };
 
         let transpiler = self.transpiler_for_target(target);
 
@@ -4766,7 +4776,7 @@ impl<'a> BundleV2<'a> {
             &mut *transpiler.options.define,
             js_parser_options,
             unsafe { &mut *transpiler.log },
-            Expr::init(E::EString { data: unique_key.as_bytes(), ..Default::default() }, Logger::Loc::EMPTY),
+            Expr::init(E::EString { data: unique_key, ..Default::default() }, Logger::Loc::EMPTY),
             &empty_html_file_source,
             // We replace this runtime API call's ref later via .link on the Symbol.
             b"__jsonParse",

@@ -228,7 +228,11 @@ impl<'a> Transpiler<'a> {
                     // ignore this error, we will print the original error
                 }
 
-                // SAFETY: `self.log` is never null after `init` (see field comment).
+                // SAFETY: `self.log` is non-null after `init` and outlives
+                // `Transpiler<'a>`. The aliased raw copies in
+                // `self.{resolver,linker,options}.log` are not dereferenced in
+                // this scope, so this `&mut` is the sole live reference to the
+                // `Log` allocation for the duration of the `add_error_fmt` call.
                 let log = unsafe { &mut *self.log };
                 bun_core::handle_oom(log.add_error_fmt(
                     None,
@@ -1178,8 +1182,13 @@ impl<'a> Transpiler<'a> {
         let file_hash = this_parse.file_hash;
         let path = this_parse.path;
         let loader = this_parse.loader;
-        // SAFETY: `self.log` is a non-null `*mut Log` aliasing the same Log as
-        // `self.resolver.log` / `self.linker.log` (see header PORT NOTE).
+        // SAFETY: `self.log` is non-null after `init` and outlives `self`. The
+        // same allocation is aliased by `self.{resolver,linker,options}.log`
+        // (see header PORT NOTE), but those raw `*mut` copies are never
+        // dereferenced for the lifetime of this `&mut` — every `Log` access in
+        // this function body goes through the `log` binding below (the resolver
+        // fs/js caches reached via `self.resolver.caches.*` do not touch
+        // `resolver.log`). Hence this is the unique live `&mut Log`.
         let log: &mut logger::Log = unsafe { &mut *self.log };
 
         let mut input_fd: Option<FD> = None;

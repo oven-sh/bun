@@ -696,7 +696,10 @@ impl PackageManager {
 
     pub fn crash(&mut self) -> ! {
         if self.options.log_level != Options::LogLevel::Silent {
-            // SAFETY: log is always valid for the lifetime of the singleton
+            // SAFETY: `self.log` points to a separate `logger::Log` allocation (borrowed from
+            // `ctx.log`) that outlives the singleton. `&mut self` only covers the pointer field,
+            // not the pointee, and no other `&mut logger::Log` is live here — `crash()` is the
+            // sole accessor on this path and never returns.
             let _ = unsafe { &mut *self.log }.print(Output::error_writer());
         }
         Global::crash();

@@ -291,8 +291,13 @@ impl HashMapExt for HashMap {
     fn put(&mut self, result: &mut crate::__phase_a_body::allocators::Result, value: DirInfo) -> core::result::Result<*mut DirInfo, bun_core::Error> {
         // Spec bun_alloc.zig:615 `put(self: *Self, result: *Result, value) !*ValueType` —
         // `result.index` is written back, so `&mut`. Inherent returns `&mut DirInfo`;
-        // erase to `*mut` so callers can hold it across later `&mut HashMap` re-borrows
-        // without Stacked-Borrows invalidation.
+        // erase to `*mut` so callers can stash it past borrowck. NOTE (Stacked Borrows):
+        // this erasure does NOT make the pointer survive a sibling `&mut HashMap` Unique
+        // retag of the same `BSSMapInner` allocation — `backing_buf` is inline, so a fresh
+        // `&mut *dir_cache()` pops every tag derived here. Callers MUST derive all slot
+        // pointers from a single bound `&mut HashMap` (see resolver.rs `dir_info_cached_*`).
+        // TODO(port): derive via `addr_of_mut!` from the raw singleton (SharedReadWrite
+        // provenance) so slot pointers survive sibling retags outright.
         self.put(result, value).map(|v| v as *mut DirInfo).map_err(Into::into)
     }
     #[inline]

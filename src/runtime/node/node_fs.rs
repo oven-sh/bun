@@ -1073,8 +1073,8 @@ impl<R, A: FsArgument, const F: NodeFSFunctionEnum> AsyncFSTask<R, A, F> {
 
         if Self::HAVE_ABORT_SIGNAL {
             if let Some(signal) = self.args.signal() {
-                if let Some(reason) = signal.reason_if_aborted(global_object) {
-                    return promise.reject(global_object, reason.to_js(global_object));
+                if let Some(reason) = signal.reason_if_aborted_js(global_object) {
+                    return promise.reject(global_object, Ok(reason));
                 }
             }
         }

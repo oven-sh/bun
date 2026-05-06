@@ -2280,6 +2280,14 @@ impl<'a> ValueBufferer<'a> {
     }
 }
 
+// PORT NOTE: Zig's `Pipe.Wrap(Type, fn)` took a comptime fn pointer; the Rust
+// `webcore::Wrap<T>` reshape requires `T: PipeHandler`.
+impl<'a> crate::webcore::PipeHandler for ValueBufferer<'a> {
+    fn on_pipe(&mut self, stream: streams::Result) {
+        self.on_stream_pipe(stream)
+    }
+}
+
 // comptime { @export(...) } → no_mangle extern "C" exports.
 // TODO(port): // TODO(b2-blocked): #[bun_jsc::host_fn] on on_resolve_stream/on_reject_stream emits the JSC ABI shim;
 // these no_mangle re-exports point at those shims under the C names the C++ side expects.

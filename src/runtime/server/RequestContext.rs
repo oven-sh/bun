@@ -1552,8 +1552,8 @@ where
                     let mut crbuf = [0u8; 64];
                     self.do_write_status(416);
                     if let Some(response) = self.response_weakref.get() {
-                        if let Some(headers_) = response.swap_init_headers() {
-                            self.do_write_headers(&headers_);
+                        if let Some(mut headers_) = response.swap_init_headers() {
+                            self.do_write_headers(&mut headers_);
                             headers_.deref();
                         }
                     }

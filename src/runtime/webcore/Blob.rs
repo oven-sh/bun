@@ -3080,7 +3080,7 @@ impl Blob {
                 if is_stdout_or_stderr {
                     // SAFETY: sink is live; sole owner here.
                     if let bun_sys::Result::Err(err) = unsafe { (*sink).writer.start_sync(fd, false) } {
-                        unsafe { (*sink).deref() };
+                        unsafe { webcore::FileSink::deref(sink) };
                         return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                             global_this,
                             err.to_js(global_this)?,
@@ -3089,7 +3089,7 @@ impl Blob {
                 } else {
                     // SAFETY: sink is live; sole owner here.
                     if let bun_sys::Result::Err(err) = unsafe { (*sink).writer.start(fd, true) } {
-                        unsafe { (*sink).deref() };
+                        unsafe { webcore::FileSink::deref(sink) };
                         return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                             global_this,
                             err.to_js(global_this)?,
@@ -3123,7 +3123,7 @@ impl Blob {
 
                 // SAFETY: `init` returns a freshly-allocated +1 *mut FileSink.
                 if let bun_sys::Result::Err(err) = unsafe { (*sink).start(stream_start) } {
-                    unsafe { (*sink).deref() };
+                    unsafe { webcore::FileSink::deref(sink) };
                     return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                         global_this,
                         err.to_js(global_this)?,

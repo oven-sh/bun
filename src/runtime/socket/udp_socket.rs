@@ -1256,7 +1256,10 @@ impl UDPSocket {
         };
 
         let str = address_val.to_bun_string(global_this)?;
-        let mut address_slice = str.to_owned_slice_z()?;
+        // Owned NUL-terminated copy as a mutable Vec so we can write a NUL at
+        // the `%` position for scope-id parsing.
+        let mut address_slice: Vec<u8> = str.to_owned_slice_z().into_vec_with_nul();
+        let bytes_len = address_slice.len() - 1; // exclude trailing NUL
 
         // SAFETY: storage is large enough to hold sockaddr_in.
         let addr4 = unsafe { &mut *(storage as *mut _ as *mut sockaddr_in) };
@@ -1277,16 +1280,14 @@ impl UDPSocket {
             let addr6 = unsafe { &mut *(storage as *mut _ as *mut sockaddr_in6) };
             addr6.scope_id = 0;
 
-            if let Some(percent) = str.index_of_ascii_char(b'%') {
-                if percent + 1 < str.length() {
+            if let Some(percent) = address_slice[..bytes_len].iter().position(|&b| b == b'%') {
+                if percent + 1 < bytes_len {
                     let iface_id: u32 = 'blk: {
                         #[cfg(windows)]
                         {
-                            if let Some(signed) = str.substring(percent + 1).to_int32() {
-                                if let Ok(id) = u32::try_from(signed) {
-                                    break 'blk id;
-                                }
-                            }
+                            // TODO(port): bun_str::String::substring(..).to_int32() — windows-only
+                            // numeric-scope path. Fall through to the default-0 below until wired.
+                            let _ = percent;
                         }
                         #[cfg(not(windows))]
                         {
@@ -1307,7 +1308,7 @@ impl UDPSocket {
                         break 'blk 0;
                     };
 
-                    address_slice[percent] = b'\0';
+                    address_slice[percent] = 0;
                     addr6.scope_id = iface_id;
                 }
             }

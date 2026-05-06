@@ -69,6 +69,9 @@ pub fn generate_code_for_lazy_export(
     source_index: IndexInt,
 ) -> Result<(), AllocError> {
     let exports_kind = this.graph.ast.items_exports_kind()[source_index as usize];
+    // PORT NOTE: reshaped for borrowck — take `parts` as a raw pointer *before* the
+    // long-lived immutable `items_css()` borrow below; re-borrowed again later as needed.
+    let parts: *mut [Part] = this.graph.ast.items_parts_mut()[source_index as usize].slice_mut();
     #[cfg(feature = "css")]
     let all_sources = unsafe { &(*this.parse_graph).input_files }.items_source();
     #[cfg(feature = "css")]
@@ -77,8 +80,6 @@ pub fn generate_code_for_lazy_export(
     // SAFETY: `css` SoA column is type-erased `*mut BundlerStyleSheet` (BundledAst.rs).
     let maybe_css_ast: Option<&BundlerStyleSheet> =
         all_css_asts[source_index as usize].map(|p| unsafe { &*(p as *const BundlerStyleSheet) });
-    // PORT NOTE: reshaped for borrowck — `parts` re-borrowed below after other graph borrows drop.
-    let parts: *mut [Part] = this.graph.ast.items_parts_mut()[source_index as usize].slice_mut();
 
     // SAFETY: `parts` is a stable SoA column slice valid for the link pass.
     if unsafe { (&*parts).len() } < 1 {
@@ -365,6 +366,10 @@ pub fn generate_code_for_lazy_export(
             // TODO(port): `parts: undefined` — Rust forbids uninit refs; rebound per-iteration below.
             // PORT NOTE: reshaped for borrowck — Visitor constructed inside the loop with fresh `parts` borrow.
             let all_symbols = this.graph.ast.items_symbols();
+            // SAFETY: `LinkerContext::allocator()` returns a stable `&Arena` valid for the
+            // link pass; detach via raw-pointer round-trip so it doesn't hold a `&self`
+            // borrow across the `this.log` reborrow inside the Visitor below.
+            let allocator: &Arena = unsafe { &*(this.allocator() as *const Arena) };
 
             for entry in values {
                 let ref_ = entry.ref_;
@@ -390,7 +395,7 @@ pub fn generate_code_for_lazy_export(
                     loc: stmt.loc,
                     log: this.log,
                     all_sources,
-                    allocator: this.allocator(),
+                    allocator,
                     all_symbols,
                 };
                 visitor.clear_all();
@@ -422,7 +427,7 @@ pub fn generate_code_for_lazy_export(
                 // SAFETY: `Symbol.original_name: *const [u8]` is arena-owned for the link pass.
                 let key: &[u8] =
                     unsafe { &*symbols.at(ref_.inner_index() as usize).original_name };
-                exports.put(this.allocator(), key, value)?;
+                exports.put(allocator, key, value)?;
             }
 
             // SAFETY: `part.stmts` non-empty (checked above).

@@ -1441,18 +1441,15 @@ impl<'a> Transpiler<'a> {
         // *does* affect the EsmAscii/bun-runtime path (js_printer/lib.rs:6872
         // gates the `var {require}=import.meta;` hoist on `target == Bun`;
         // regression of oven-sh/bun#15738 if left at the `Browser` default).
-        //
-        // TODO(b2-blocked): `runtime_transpiler_cache` — `Options` wants
-        // `Option<RuntimeTranspilerCacheRef>` (erased `(owner, &'static
-        // vtable)`), but `crate::cache::RuntimeTranspilerCache` exposes no
-        // `put` yet to build the vtable from. Forward once `cache.rs` grows
-        // the `RUNTIME_TRANSPILER_CACHE_VTABLE` static. Spec: zig:601/627/662.
-        // TODO(b2-blocked): `module_info` — `js_printer` defines its own
-        // inline `analyze_transpiled_module::ModuleInfo` (lib.rs:109); the
-        // bundler's `crate::analyze_transpiled_module::ModuleInfo` is a
-        // sibling, not the same type. Unify in Phase B (move js_printer's
-        // inline mod to a `pub use bun_bundler::analyze_transpiled_module`).
-        // Spec: zig:663 — EsmAscii arm only.
+        // `runtime_transpiler_cache` is now forwarded — erased through
+        // `cache::RUNTIME_TRANSPILER_CACHE_VTABLE` so js_printer can call
+        // `put` without naming `crate::cache`. Spec: zig:601/627/662.
+        // `module_info` is now forwarded — this fn's parameter is the
+        // printer-crate `analyze_transpiled_module::ModuleInfo` (see the `use`
+        // above), so the seam is gone. Spec: zig:663 — EsmAscii arm only.
+
+        let runtime_transpiler_cache =
+            runtime_transpiler_cache.map(RuntimeTranspilerCache::as_printer_ref);
 
         let require_ref = ast.require_ref;
         let import_meta_ref = ast.import_meta_ref;
@@ -1481,6 +1478,7 @@ impl<'a> Transpiler<'a> {
                     minify_identifiers: self.options.minify_identifiers,
                     transform_only: self.options.transform_only,
                     print_dce_annotations: self.options.emit_dce_annotations,
+                    runtime_transpiler_cache,
                     hmr_ref: wrapper_ref,
                     mangled_props: None,
                     ..Default::default()
@@ -1500,6 +1498,7 @@ impl<'a> Transpiler<'a> {
                     transform_only: self.options.transform_only,
                     import_meta_ref,
                     print_dce_annotations: self.options.emit_dce_annotations,
+                    runtime_transpiler_cache,
                     hmr_ref: wrapper_ref,
                     mangled_props: None,
                     ..Default::default()
@@ -1542,16 +1541,17 @@ impl<'a> Transpiler<'a> {
         source: &logger::Source,
         source_map_context: Option<js_printer::SourceMapHandler<'_>>,
         exports_kind: js_ast::ExportsKind,
-        runtime_transpiler_cache: Option<core::ptr::NonNull<RuntimeTranspilerCache>>,
+        runtime_transpiler_cache: Option<js_printer::RuntimeTranspilerCacheRef>,
         module_info: Option<*mut analyze_transpiled_module::ModuleInfo>,
     ) -> Result<usize, bun_core::Error>
     where
         W: js_printer::WriterTrait,
     {
-        // TODO(b2-blocked): set on `Options` once the type seam unifies — see
-        // the block comment in `print_with_source_map_maybe`. Spec
-        // transpiler.zig:662-663 sets both on this (EsmAscii) arm only.
-        let _ = (runtime_transpiler_cache, module_info);
+        // Spec transpiler.zig:662-663 — both set on this (EsmAscii) arm only.
+        // SAFETY: `module_info` is `ModuleInfo::create`'s `Box::into_raw` (or
+        // null); it is exclusively owned by this print call until T6 reclaims
+        // it after `print_with_source_map` returns.
+        let module_info = module_info.map(|p| unsafe { &mut *p });
         let opts = js_printer::Options {
             bundling: false,
             runtime_imports: ast.runtime_imports.clone(),
@@ -1574,6 +1574,8 @@ impl<'a> Transpiler<'a> {
             inline_require_and_import_errors: false,
             import_meta_ref: ast.import_meta_ref,
             print_dce_annotations: self.options.emit_dce_annotations,
+            runtime_transpiler_cache,
+            module_info,
             hmr_ref: ast.wrapper_ref,
             mangled_props: None,
             // Spec transpiler.zig:664. The printer reads `opts.target` at

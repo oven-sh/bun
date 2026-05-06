@@ -197,11 +197,14 @@ pub enum CSSWideKeyword {
 mod generic_registrations {
     use super::*;
     use crate::css_values;
-    use crate::impl_generic_parse_tocss;
     use crate::properties::border::GenericBorder;
+    use crate::{impl_generic_parse_tocss, impl_parse_tocss_via_inherent};
 
     // ── crate::values::* leaves ──
-    impl_generic_parse_tocss!(
+    // None of these derive `Parse`/`ToCss`/`DefineEnumProperty`; they have
+    // hand-written inherent `parse`/`to_css`, so forward via the inherent
+    // shim macro (the plain `impl_generic_parse_tocss!` arm is now a no-op).
+    impl_parse_tocss_via_inherent!(
         css_values::alpha::AlphaValue,
         css_values::image::Image,
         css_values::length::LengthPercentageOrAuto,

@@ -2222,6 +2222,112 @@ impl<'a> LinkerContext<'a> {
     }
 } // end un-gated tree-shaking impl (B-2 second pass)
 
+// ══════════════════════════════════════════════════════════════════════════
+// Forward-decl shims for `scanImportsAndExports.rs` callees.
+//
+// `linker_context/scanImportsAndExports.rs` is un-gated (B-2) and calls these
+// `LinkerContext` methods inherently. The real bodies live either in the
+// `#[cfg(any())]` impl block immediately below (match_imports_with_exports_for_file,
+// create_wrapper_for_file) or in the still-gated `linker_context/` submodules
+// (do_step5, generate_code_for_lazy_export). The trivial delegations
+// (runtime_function, top_level_symbols_to_parts) are real here — `LinkerGraph`
+// already exposes the underlying accessors un-gated.
+//
+// As each gated body lands, replace the corresponding `todo!()` shim with the
+// real port and drop the duplicate from the `#[cfg(any())]` block.
+// ══════════════════════════════════════════════════════════════════════════
+impl<'a> LinkerContext<'a> {
+    /// Spec: `LinkerContext.zig:1298 runtimeFunction`.
+    #[inline]
+    pub fn runtime_function(&self, name: &[u8]) -> Ref {
+        self.graph.runtime_function(name)
+    }
+
+    /// Spec: `LinkerContext.zig:2150 topLevelSymbolsToParts`.
+    #[inline]
+    pub fn top_level_symbols_to_parts(&self, id: u32, r#ref: Ref) -> &[u32] {
+        self.graph.top_level_symbol_to_parts(id, r#ref)
+    }
+
+    /// Spec: `LinkerContext.zig:2154 topLevelSymbolsToPartsForRuntime`.
+    #[inline]
+    pub fn top_level_symbols_to_parts_for_runtime(&self, r#ref: Ref) -> &[u32] {
+        self.top_level_symbols_to_parts(Index::runtime().get(), r#ref)
+    }
+
+    /// Spec: `LinkerContext.zig:496 scanCSSImports`.
+    ///
+    /// PORT NOTE: signature reshaped vs. the gated draft above — the un-gated
+    /// caller (`scanImportsAndExports.rs`) holds raw SoA column pointers and
+    /// passes the `css_asts` column as an opaque `*mut [Option<&c_void>]`
+    /// (the `bun_css::BundlerStyleSheet` element type is still gated). `log`
+    /// is borrowed through `&mut self` instead of as a separate parameter.
+    #[allow(unused_variables)]
+    pub fn scan_css_imports(
+        &mut self,
+        file_source_index: u32,
+        file_import_records: &mut [ImportRecord],
+        css_asts: *mut [Option<&'static core::ffi::c_void>],
+        sources: &[Source],
+        loaders: &[Loader],
+    ) -> ScanCssImportsResult {
+        // TODO(b2-blocked): real body gated above — depends on `self.allocator()`
+        // (gated) and the full `Loader` variant set. Un-gates with the impl
+        // block at the top of this file.
+        todo!("LinkerContext::scan_css_imports — body gated on bun_css + allocator()")
+    }
+
+    /// Spec: `LinkerContext.zig:2158 createWrapperForFile`.
+    #[allow(unused_variables)]
+    pub fn create_wrapper_for_file(
+        &mut self,
+        wrap: WrapKind,
+        wrapper_ref: Ref,
+        wrapper_part_index: &mut Index,
+        source_index: crate::IndexInt,
+    ) {
+        // TODO(b2-blocked): real body in the `#[cfg(any())]` impl block below
+        // — depends on `LinkerGraph::add_part_to_file` and runtime-part
+        // dependency wiring that reaches into gated SoA mutators.
+        todo!("LinkerContext::create_wrapper_for_file — body gated below")
+    }
+
+    /// Spec: `LinkerContext.zig:2471 matchImportsWithExportsForFile`.
+    #[allow(unused_variables)]
+    pub fn match_imports_with_exports_for_file(
+        &mut self,
+        named_imports: &mut bun_js_parser::ast::bundled_ast::NamedImports,
+        imports_to_bind: &mut crate::RefImportData,
+        source_index: crate::IndexInt,
+    ) {
+        // TODO(b2-blocked): real body in the `#[cfg(any())]` impl block below
+        // — depends on `match_import_with_export` / `advance_import_tracker`.
+        todo!("LinkerContext::match_imports_with_exports_for_file — body gated below")
+    }
+
+    /// Spec: `linker_context/doStep5.zig`.
+    /// Forward decl for `worker_pool.each(this, LinkerContext::do_step5, &reachable)`.
+    #[allow(unused_variables)]
+    pub fn do_step5(&mut self, source_index: Index, _i: usize) {
+        // TODO(b2-blocked): real body lives in `linker_context/doStep5.rs`
+        // (module gated in `lib.rs::linker_context`). Un-gates with that
+        // submodule; this shim keeps `scanImportsAndExports` resolvable.
+        todo!("LinkerContext::do_step5 — gated in linker_context/doStep5.rs")
+    }
+
+    /// Spec: `linker_context/generateCodeForLazyExport.zig`.
+    #[allow(unused_variables)]
+    pub fn generate_code_for_lazy_export(
+        &mut self,
+        source_index: crate::IndexInt,
+    ) -> Result<(), AllocError> {
+        // TODO(b2-blocked): real body lives in
+        // `linker_context/generateCodeForLazyExport.rs` (module gated in
+        // `lib.rs::linker_context`); depends on `bun_css::BundlerStyleSheet`.
+        todo!("LinkerContext::generate_code_for_lazy_export — gated in linker_context/generateCodeForLazyExport.rs")
+    }
+}
+
 // TODO(b2-blocked): remaining link-phase methods (match_import_with_export,
 // advance_import_tracker, create_wrapper_for_file, …) — these reach into
 // `LinkerGraph` SoA fields plus `bun_resolve_builtins` / `css::css_modules`

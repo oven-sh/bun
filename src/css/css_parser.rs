@@ -570,6 +570,11 @@ fn parse_until_before<T, C>(
         let result = parser.parse_entirely(closure, parse_fn);
         if matches!(error_behavior, ParseUntilErrorBehavior::Stop) && result.is_err() {
             parser.stop_before = saved_stop_before;
+            // Match Zig: the delimited parser *moved* `at_start_of` out of the
+            // outer parser (`parser.at_start_of = null;`). Since we reuse the
+            // same Parser, explicitly clear it so the caller doesn't observe a
+            // stale block-start left behind by the failing inner parse.
+            parser.at_start_of = None;
             return result;
         }
         if let Some(block_type) = parser.at_start_of.take() {
@@ -2088,10 +2093,14 @@ impl<'a, T: CustomAtRuleParser> QualifiedRuleParser for NestedRuleParser<'a, T> 
         input: &mut Parser,
     ) -> CssResult<()> {
         let loc = this.get_loc(start);
-        // PORT NOTE: Zig `defer this.composes_refs.clearRetainingCapacity();` —
-        // hoisted to the (single) success-return below; error paths drop the
-        // whole `NestedRuleParser` so the deferred clear is observable only on
-        // the Ok path.
+        // PORT NOTE: Zig `defer this.composes_refs.clearRetainingCapacity();`.
+        // `composes_refs` is `&mut SmallList<..>` borrowed from the parent
+        // `TopLevelRuleParser`, so dropping `NestedRuleParser` on an error path
+        // does NOT clear the underlying storage. Clear at *entry* so each
+        // invocation starts fresh regardless of how the previous one exited —
+        // observably equivalent to the Zig `defer` (nothing reads the list
+        // between two calls to `parse_block`).
+        this.composes_refs.clear_retaining_capacity();
         // allow composes if:
         // - NOT in nested style rules
         // - AND there is only one class selector
@@ -2176,7 +2185,6 @@ impl<'a, T: CustomAtRuleParser> QualifiedRuleParser for NestedRuleParser<'a, T> 
             loc,
         }));
 
-        this.composes_refs.clear_retaining_capacity();
         Ok(())
     }
 }

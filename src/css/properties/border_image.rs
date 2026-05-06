@@ -1,12 +1,13 @@
 #![allow(dead_code, unused_imports)]
 use crate as css;
 
+use crate::Result;
 use css::SmallList;
 use css::Printer;
 use css::PrintErr;
 
 use css::css_values::length::LengthPercentage;
-use css::css_values::number::CSSNumber;
+use css::css_values::number::{CSSNumber, CSSNumberFns};
 use css::css_values::length::LengthOrNumber;
 use css::css_values::image::Image;
 use css::css_values::rect::Rect;
@@ -43,19 +44,17 @@ impl BorderImage {
     //   repeat -> PropertyIdTag::BorderImageRepeat
     // VendorPrefixMap: all fields = true
 
-    #[cfg(any())] // blocked_on: BorderImageSideWidth/LengthOrNumber/NumberOrPercentage: values::protocol::Parse + ParserError::InvalidDeclaration
-    pub fn parse(input: &mut css::Parser) -> css::Result<BorderImage> {
+    pub fn parse(input: &mut css::Parser) -> Result<BorderImage> {
         // PORT NOTE: Zig passed `{}` ctx + a no-op callback struct; collapsed to a closure.
         Self::parse_with_callback(input, |_: &mut css::Parser| false)
     }
 
     // PORT NOTE: Zig signature was (input, ctx: anytype, comptime callback: anytype)
     // where callback(ctx, input) -> bool. Collapsed ctx into the closure capture.
-    #[cfg(any())] // blocked_on: same as `parse`
     pub fn parse_with_callback(
         input: &mut css::Parser,
         mut callback: impl FnMut(&mut css::Parser) -> bool,
-    ) -> css::Result<BorderImage> {
+    ) -> Result<BorderImage> {
         let mut source: Option<Image> = None;
         let mut slice: Option<BorderImageSlice> = None;
         let mut width: Option<Rect<BorderImageSideWidth>> = None;
@@ -64,20 +63,20 @@ impl BorderImage {
 
         loop {
             if slice.is_none() {
-                if let Some(value) = input.try_parse(BorderImageSlice::parse).ok() {
+                if let Ok(value) = input.try_parse(BorderImageSlice::parse) {
                     slice = Some(value);
                     // Parse border image width and outset, if applicable.
                     let maybe_width_outset = input.try_parse(
-                        |i: &mut css::Parser| -> css::Result<(Option<Rect<BorderImageSideWidth>>, Option<Rect<LengthOrNumber>>)> {
-                            if let Some(e) = i.expect_delim(b'/').err() {
+                        |i: &mut css::Parser| -> Result<(Option<Rect<BorderImageSideWidth>>, Option<Rect<LengthOrNumber>>)> {
+                            if let Err(e) = i.expect_delim(b'/') {
                                 return Err(e);
                             }
 
                             let w = i.try_parse(Rect::<BorderImageSideWidth>::parse).ok();
 
                             let o = i
-                                .try_parse(|in_: &mut css::Parser| -> css::Result<Rect<LengthOrNumber>> {
-                                    if let Some(e) = in_.expect_delim(b'/').err() {
+                                .try_parse(|in_: &mut css::Parser| -> Result<Rect<LengthOrNumber>> {
+                                    if let Err(e) = in_.expect_delim(b'/') {
                                         return Err(e);
                                     }
                                     Rect::<LengthOrNumber>::parse(in_)
@@ -85,13 +84,13 @@ impl BorderImage {
                                 .ok();
 
                             if w.is_none() && o.is_none() {
-                                return Err(i.new_custom_error(css::ParserError::InvalidDeclaration));
+                                return Err(i.new_custom_error(css::ParserError::invalid_declaration));
                             }
                             Ok((w, o))
                         },
                     );
 
-                    if let Some(val) = maybe_width_outset.ok() {
+                    if let Ok(val) = maybe_width_outset {
                         width = val.0;
                         outset = val.1;
                     }
@@ -100,14 +99,14 @@ impl BorderImage {
             }
 
             if source.is_none() {
-                if let Some(value) = input.try_parse(Image::parse).ok() {
+                if let Ok(value) = input.try_parse(Image::parse) {
                     source = Some(value);
                     continue;
                 }
             }
 
             if repeat.is_none() {
-                if let Some(value) = input.try_parse(BorderImageRepeat::parse).ok() {
+                if let Ok(value) = input.try_parse(BorderImageRepeat::parse) {
                     repeat = Some(value);
                     continue;
                 }
@@ -122,22 +121,20 @@ impl BorderImage {
 
         if source.is_some() || slice.is_some() || width.is_some() || outset.is_some() || repeat.is_some() {
             return Ok(BorderImage {
-                source: source.unwrap_or_else(Image::default),
+                source: source.unwrap_or_default(),
                 slice: slice.unwrap_or_else(BorderImageSlice::default),
                 width: width.unwrap_or_else(|| Rect::<BorderImageSideWidth>::all(BorderImageSideWidth::default())),
                 outset: outset.unwrap_or_else(|| Rect::<LengthOrNumber>::all(LengthOrNumber::default())),
                 repeat: repeat.unwrap_or_else(BorderImageRepeat::default),
             });
         }
-        Err(input.new_custom_error(css::ParserError::InvalidDeclaration))
+        Err(input.new_custom_error(css::ParserError::invalid_declaration))
     }
 
-    #[cfg(any())] // blocked_on: Rect<BorderImageSideWidth>/Rect<LengthOrNumber>: values::protocol::ToCss + Printer::delim(char,_)
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         Self::to_css_internal(&self.source, &self.slice, &self.width, &self.outset, &self.repeat, dest)
     }
 
-    #[cfg(any())] // blocked_on: same as `to_css`
     pub fn to_css_internal(
         source: &Image,
         slice: &BorderImageSlice,
@@ -145,7 +142,7 @@ impl BorderImage {
         outset: &Rect<LengthOrNumber>,
         repeat: &BorderImageRepeat,
         dest: &mut Printer,
-    ) -> Result<(), PrintErr> {
+    ) -> core::result::Result<(), PrintErr> {
         if !source.eql(&Image::default()) {
             source.to_css(dest)?;
         }
@@ -179,11 +176,13 @@ impl BorderImage {
     pub fn get_fallbacks(&mut self, allocator: &Arena, targets: css::targets::Targets) -> SmallList<BorderImage, 6> {
         let fallbacks = self.source.get_fallbacks(allocator, targets);
         // PORT NOTE: `defer fallbacks.deinit(allocator)` dropped — SmallList drops at scope exit.
-        // SmallList has no `drain()`; consume via `to_owned_slice()` (moves elements out).
         let mut res = SmallList::<BorderImage, 6>::init_capacity(fallbacks.len());
-        for fallback in fallbacks.to_owned_slice().into_vec() {
+        for fallback in fallbacks.slice() {
+            // TODO(port): Zig moved `fallback` by value; SmallList lacks
+            // by-value drain in Rust port — deep_clone the source image
+            // until SmallList grows IntoIterator.
             let mut clone = self.deep_clone(allocator);
-            clone.source = fallback;
+            clone.source = fallback.deep_clone(allocator);
             res.append(clone);
         }
         res
@@ -229,7 +228,7 @@ pub struct BorderImageRepeat {
 }
 
 impl BorderImageRepeat {
-    pub fn parse(input: &mut css::Parser) -> css::Result<BorderImageRepeat> {
+    pub fn parse(input: &mut css::Parser) -> Result<BorderImageRepeat> {
         let horizontal = match BorderImageRepeatKeyword::parse(input) {
             Ok(v) => v,
             Err(e) => return Err(e),
@@ -241,7 +240,7 @@ impl BorderImageRepeat {
         })
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         self.horizontal.to_css(dest)?;
         if self.horizontal != self.vertical {
             dest.write_str(" ")?;
@@ -282,16 +281,26 @@ pub enum BorderImageSideWidth {
 }
 
 impl BorderImageSideWidth {
-    // TODO(port): `css.DeriveParse(@This()).parse` / `css.DeriveToCss(@This()).toCss`
-    // were comptime-reflected derives. Replace with `#[derive(Parse, ToCss)]` proc-macros
-    // (or hand-written impls) in Phase B.
-    #[cfg(any())] // blocked_on: #[derive(Parse)] proc-macro
-    pub fn parse(input: &mut css::Parser) -> css::Result<Self> {
-        css::derive_parse(input)
+    // PORT NOTE: `css.DeriveParse(@This()).parse` / `css.DeriveToCss(@This()).toCss`
+    // were comptime-reflected derives. Hand-expanded — declaration order matches
+    // Zig (Number → LengthPercentage → keyword `auto`).
+    pub fn parse(input: &mut css::Parser) -> Result<Self> {
+        if let Ok(n) = input.try_parse(CSSNumberFns::parse) {
+            return Ok(BorderImageSideWidth::Number(n));
+        }
+        if let Ok(lp) = input.try_parse(LengthPercentage::parse) {
+            return Ok(BorderImageSideWidth::LengthPercentage(lp));
+        }
+        input.expect_ident_matching(b"auto")?;
+        Ok(BorderImageSideWidth::Auto)
     }
-    #[cfg(any())] // blocked_on: #[derive(ToCss)] proc-macro
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        css::derive_to_css(self, dest)
+
+    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+        match self {
+            BorderImageSideWidth::Number(n) => CSSNumberFns::to_css(n, dest),
+            BorderImageSideWidth::LengthPercentage(lp) => lp.to_css(dest),
+            BorderImageSideWidth::Auto => dest.write_str("auto"),
+        }
     }
 
     pub fn default() -> BorderImageSideWidth {
@@ -311,6 +320,24 @@ impl BorderImageSideWidth {
             BorderImageSideWidth::LengthPercentage(l) => l.is_compatible(browsers),
             _ => true,
         }
+    }
+}
+
+impl crate::generics::IsCompatible for BorderImageSideWidth {
+    #[inline]
+    fn is_compatible(&self, browsers: css::targets::Browsers) -> bool {
+        Self::is_compatible(self, browsers)
+    }
+}
+
+// PORT NOTE: `Rect<LengthOrNumber>::is_compatible` requires `T: IsCompatible`.
+// `LengthOrNumber` only has the inherent method (`values/length.rs`) — supply
+// the trait impl here so `border-image-outset` flushing compiles. Move next to
+// the type once Phase B sweeps protocol-trait impls.
+impl crate::generics::IsCompatible for LengthOrNumber {
+    #[inline]
+    fn is_compatible(&self, browsers: css::targets::Browsers) -> bool {
+        LengthOrNumber::is_compatible(self, browsers)
     }
 }
 
@@ -350,27 +377,19 @@ pub struct BorderImageSlice {
 }
 
 impl BorderImageSlice {
-    #[cfg(any())] // blocked_on: NumberOrPercentage: values::protocol::Parse + expect_ident_matching(&[u8])
-    pub fn parse(input: &mut css::Parser) -> css::Result<BorderImageSlice> {
-        let mut fill = match input.expect_ident_matching(b"fill") {
-            Err(_) => false,
-            Ok(_) => true,
-        };
+    pub fn parse(input: &mut css::Parser) -> Result<BorderImageSlice> {
+        let mut fill = input.try_parse(|i| i.expect_ident_matching(b"fill")).is_ok();
         let offsets = match Rect::<NumberOrPercentage>::parse(input) {
             Err(e) => return Err(e),
             Ok(v) => v,
         };
         if !fill {
-            fill = match input.expect_ident_matching(b"fill") {
-                Err(_) => false,
-                Ok(_) => true,
-            };
+            fill = input.try_parse(|i| i.expect_ident_matching(b"fill")).is_ok();
         }
         Ok(BorderImageSlice { offsets, fill })
     }
 
-    #[cfg(any())] // blocked_on: NumberOrPercentage: values::protocol::ToCss
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         self.offsets.to_css(dest)?;
         if self.fill {
             dest.write_str(" fill")?;
@@ -450,30 +469,6 @@ pub struct BorderImageHandler {
     pub has_any: bool,
 }
 
-// PORT NOTE: `Rect::is_compatible` is bounded on `T: values::protocol::IsCompatible`,
-// which `BorderImageSideWidth` / `LengthOrNumber` don't yet impl. Hand-roll the
-// per-side check via the inherent methods so `flush_helper!` stays uniform.
-#[inline]
-fn rect_side_width_is_compatible(
-    r: &Rect<BorderImageSideWidth>,
-    browsers: css::targets::Browsers,
-) -> bool {
-    r.top.is_compatible(browsers)
-        && r.right.is_compatible(browsers)
-        && r.bottom.is_compatible(browsers)
-        && r.left.is_compatible(browsers)
-}
-#[inline]
-fn rect_length_or_number_is_compatible(
-    r: &Rect<LengthOrNumber>,
-    browsers: css::targets::Browsers,
-) -> bool {
-    r.top.is_compatible(browsers)
-        && r.right.is_compatible(browsers)
-        && r.bottom.is_compatible(browsers)
-        && r.left.is_compatible(browsers)
-}
-
 impl BorderImageHandler {
     pub fn handle_property(
         &mut self,
@@ -487,11 +482,11 @@ impl BorderImageHandler {
         // using @field for comptime field access. Ported as macro_rules! to keep the
         // per-field name dispatch without reflection.
         macro_rules! flush_helper {
-            ($self:expr, $d:expr, $ctx:expr, $name:ident, $val:expr, $is_compat:expr) => {
+            ($self:expr, $d:expr, $ctx:expr, $name:ident, $val:expr) => {
                 if $self.$name.is_some()
                     && !$self.$name.as_ref().unwrap().eql($val)
                     && $ctx.targets.browsers.is_some()
-                    && $is_compat($val, $ctx.targets.browsers.unwrap())
+                    && $val.is_compatible($ctx.targets.browsers.unwrap())
                 {
                     $self.flush($d, $ctx);
                 }
@@ -499,12 +494,12 @@ impl BorderImageHandler {
         }
 
         macro_rules! property_helper {
-            ($self:expr, $field:ident, $val:expr, $d:expr, $ctx:expr, $is_compat:expr) => {{
+            ($self:expr, $field:ident, $val:expr, $d:expr, $ctx:expr) => {{
                 if $self.vendor_prefix != VendorPrefix::NONE {
                     $self.flush($d, $ctx);
                 }
 
-                flush_helper!($self, $d, $ctx, $field, $val, $is_compat);
+                flush_helper!($self, $d, $ctx, $field, $val);
 
                 $self.vendor_prefix = VendorPrefix::NONE;
                 $self.$field = Some($val.deep_clone(allocator));
@@ -513,20 +508,20 @@ impl BorderImageHandler {
         }
 
         match property {
-            Property::BorderImageSource(val) => property_helper!(self, source, val, dest, context, Image::is_compatible),
-            Property::BorderImageSlice(val) => property_helper!(self, slice, val, dest, context, BorderImageSlice::is_compatible),
-            Property::BorderImageWidth(val) => property_helper!(self, width, val, dest, context, rect_side_width_is_compatible),
-            Property::BorderImageOutset(val) => property_helper!(self, outset, val, dest, context, rect_length_or_number_is_compatible),
-            Property::BorderImageRepeat(val) => property_helper!(self, repeat, val, dest, context, BorderImageRepeat::is_compatible),
+            Property::BorderImageSource(val) => property_helper!(self, source, val, dest, context),
+            Property::BorderImageSlice(val) => property_helper!(self, slice, val, dest, context),
+            Property::BorderImageWidth(val) => property_helper!(self, width, val, dest, context),
+            Property::BorderImageOutset(val) => property_helper!(self, outset, val, dest, context),
+            Property::BorderImageRepeat(val) => property_helper!(self, repeat, val, dest, context),
             Property::BorderImage(_val) => {
                 let val = &_val.0;
                 let vp = _val.1;
 
-                flush_helper!(self, dest, context, source, &val.source, Image::is_compatible);
-                flush_helper!(self, dest, context, slice, &val.slice, BorderImageSlice::is_compatible);
-                flush_helper!(self, dest, context, width, &val.width, rect_side_width_is_compatible);
-                flush_helper!(self, dest, context, outset, &val.outset, rect_length_or_number_is_compatible);
-                flush_helper!(self, dest, context, repeat, &val.repeat, BorderImageRepeat::is_compatible);
+                flush_helper!(self, dest, context, source, &val.source);
+                flush_helper!(self, dest, context, slice, &val.slice);
+                flush_helper!(self, dest, context, width, &val.width);
+                flush_helper!(self, dest, context, outset, &val.outset);
+                flush_helper!(self, dest, context, repeat, &val.repeat);
 
                 self.source = Some(val.source.deep_clone(allocator));
                 self.slice = Some(val.slice.deep_clone(allocator));
@@ -548,11 +543,7 @@ impl BorderImageHandler {
                         unparsed.deep_clone(allocator)
                     };
 
-                    // TODO(port): re-enable once `PropertyHandlerContext::add_unparsed_fallbacks`
-                    // un-gates (blocked on `SupportsCondition::eql` in context.rs).
-                    #[cfg(any())]
                     context.add_unparsed_fallbacks(&mut unparsed_clone);
-                    let _ = &mut unparsed_clone;
                     self.flushed_properties.insert(
                         BorderImageProperty::try_from_property_id(unparsed_clone.property_id.tag()).unwrap(),
                     );
@@ -621,7 +612,7 @@ impl BorderImageHandler {
                 prefix = context.targets.prefixes(self.vendor_prefix, css::prefixes::Feature::BorderImage);
                 if self.flushed_properties.is_empty() {
                     let fallbacks = border_image.get_fallbacks(allocator, context.targets);
-                    for fallback in fallbacks.to_owned_slice().into_vec() {
+                    for fallback in fallbacks.slice() {
                         // Match prefix of fallback. e.g. -webkit-linear-gradient
                         // can only be used in -webkit-border-image, not -moz-border-image.
                         // However, if border-image is unprefixed, gradients can still be.
@@ -629,7 +620,9 @@ impl BorderImageHandler {
                         if p.is_empty() {
                             p = prefix;
                         }
-                        dest.push(Property::BorderImage((fallback, p)));
+                        // TODO(port): Zig moved `fallback` by value; SmallList has no
+                        // by-value drain yet — deep_clone until IntoIterator lands.
+                        dest.push(Property::BorderImage((fallback.deep_clone(allocator), p)));
                     }
                 }
             }
@@ -644,8 +637,10 @@ impl BorderImageHandler {
         } else {
             if let Some(mut_source) = &mut source {
                 if !self.flushed_properties.contains(BorderImageProperty::BORDER_IMAGE_SOURCE) {
-                    for fallback in mut_source.get_fallbacks(allocator, context.targets).to_owned_slice().into_vec() {
-                        dest.push(Property::BorderImageSource(fallback));
+                    let img_fallbacks = mut_source.get_fallbacks(allocator, context.targets);
+                    for fallback in img_fallbacks.slice() {
+                        // TODO(port): same by-value move note as above.
+                        dest.push(Property::BorderImageSource(fallback.deep_clone(allocator)));
                     }
                 }
 
@@ -697,9 +692,9 @@ pub fn is_border_image_property(property_id: PropertyIdTag) -> bool {
 //   source:     src/css/properties/border_image.zig (637 lines)
 //   confidence: medium
 //   todos:      4
-//   notes:      module + BorderImageHandler un-gated; parse/to_css for BorderImage/
-//               BorderImageSlice/BorderImageSideWidth remain internally gated on
-//               values::protocol::{Parse,ToCss} bounds for NumberOrPercentage/
-//               LengthOrNumber/BorderImageSideWidth + DeriveParse/DeriveToCss
-//               proc-macros. SmallList iteration moves vs clones reviewed (drain).
+//   notes:      Module fully un-gated. DeriveParse/DeriveToCss for
+//               BorderImageSideWidth hand-expanded; SmallList by-value drain
+//               replaced with slice()+deep_clone until IntoIterator lands;
+//               IsCompatible bridged for LengthOrNumber here (move to
+//               values/length.rs in Phase B).
 // ──────────────────────────────────────────────────────────────────────────

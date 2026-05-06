@@ -2392,18 +2392,17 @@ fn add_archive_entry(
     let pathname_len = PACKAGE_PREFIX.len() + filename.as_bytes().len();
     // SAFETY: print_buf[pathname_len] == 0 written above
     let pathname = unsafe { ZStr::from_raw(print_buf.as_ptr(), pathname_len) };
-    #[cfg(windows)]
+    // PORT NOTE: libarchive port only exposes the UTF-8 setter; Zig used the
+    // non-UTF8 variant on POSIX but the UTF-8 path is correct for both.
     entry.set_pathname_utf8(pathname);
-    #[cfg(not(windows))]
-    entry.set_pathname(pathname);
     print_buf.clear();
 
-    entry.set_size(i64::try_from(stat.size).unwrap());
+    entry.set_size(i64::try_from(stat.st_size).unwrap());
 
     // https://github.com/libarchive/libarchive/blob/898dc8319355b7e985f68a9819f182aaed61b53a/libarchive/archive_entry.h#L185
     entry.set_filetype(0o100000);
 
-    let mut perm: bun_sys::Mode = bun_sys::Mode::try_from(stat.mode).unwrap();
+    let mut perm: bun_sys::Mode = bun_sys::Mode::try_from(stat.st_mode).unwrap();
     // https://github.com/npm/cli/blob/ec105f400281a5bfd17885de1ea3d54d0c231b27/node_modules/pacote/lib/util/tar-create-options.js#L20
     if is_package_bin(bins, filename.as_bytes()) {
         perm |= 0o111;

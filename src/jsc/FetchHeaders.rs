@@ -359,8 +359,9 @@ impl FetchHeaders {
     pub fn clone_this(&mut self, global: &JSGlobalObject) -> JsResult<Option<NonNull<FetchHeaders>>> {
         // TODO(port): bun.jsc.fromJSHostCallGeneric — wraps the FFI call and converts a pending VM exception into JsError
         host_fn::from_js_host_call_generic(global, || {
-            // SAFETY: self/global are valid for the duration of the call
-            let p = unsafe { WebCore__FetchHeaders__cloneThis(self, global as *const _ as *mut _) };
+            // SAFETY: self/global are valid for the duration of the call; `global` is an opaque
+            // ZST handle passed by address only.
+            let p = unsafe { WebCore__FetchHeaders__cloneThis(self, global) };
             NonNull::new(p)
         })
     }

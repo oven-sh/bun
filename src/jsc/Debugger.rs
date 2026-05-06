@@ -564,11 +564,13 @@ impl TestReporterHandle {
         item_type: TestType,
         parent_id: i32,
     ) {
-        // SAFETY: self is a live C++ handle
+        // SAFETY: `self` is a live C++ handle; `call_frame` is an opaque JSC
+        // register-file pointer (ZST on the Rust side) that C++ only reads to
+        // extract source-location info — no Rust-visible bytes are mutated.
         unsafe {
             Bun__TestReporterAgentReportTestFound(
                 self,
-                call_frame as *const _ as *mut _,
+                call_frame,
                 test_id,
                 name,
                 item_type,

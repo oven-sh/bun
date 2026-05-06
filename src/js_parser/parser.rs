@@ -2132,9 +2132,10 @@ impl DeferredErrors {
     };
 }
 
-#[derive(Default)]
 pub struct ImportClause<'a> {
-    pub items: &'a [js_ast::ClauseItem],
+    /// Arena-owned. `&mut` (not `&`) so callers can hand it to AST nodes
+    /// (`S::Import.items: *mut [ClauseItem]`) without a const→mut cast.
+    pub items: &'a mut [js_ast::ClauseItem],
     pub is_single_line: bool,
     pub had_type_only_imports: bool,
 }
@@ -2233,9 +2234,10 @@ pub struct FindSymbolResult {
     pub is_inside_with_scope: bool,
 }
 
-#[derive(Default)]
 pub struct ExportClauseResult<'a> {
-    pub clauses: &'a [js_ast::ClauseItem],
+    /// Arena-owned. `&mut` (not `&`) so callers can hand it to AST nodes
+    /// (`S::Export{From,Clause}.items: *mut [ClauseItem]`) without a const→mut cast.
+    pub clauses: &'a mut [js_ast::ClauseItem],
     pub is_single_line: bool,
     pub had_type_only_exports: bool,
 }

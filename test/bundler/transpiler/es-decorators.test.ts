@@ -622,6 +622,34 @@ describe("ES Decorators", () => {
   // them into a single binding, so an earlier class's constructor would
   // end up running the last class's initializers.
   describe.concurrent("symbol names stay unique across classes", () => {
+    async function runBundled(
+      dir: string,
+      extraBuildArgs: string[],
+      entry: string,
+    ): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
+      await using build = Bun.spawn({
+        cmd: [bunExe(), "build", ...extraBuildArgs, "--outfile=out.js", entry],
+        env: bunEnv,
+        cwd: dir,
+        stderr: "pipe",
+      });
+      const [buildStderr, buildExit] = await Promise.all([build.stderr.text(), build.exited]);
+      // Assert on stderr BEFORE exit so a compiler diagnostic shows up in
+      // the failure message instead of just "expected 0, received 1".
+      expect(filterStderr(buildStderr)).toBe("");
+      expect(buildExit).toBe(0);
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "out.js"],
+        env: bunEnv,
+        cwd: dir,
+        stderr: "pipe",
+      });
+      const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(filterStderr(rawStderr)).toBe("");
+      return { stdout, stderr: filterStderr(rawStderr), exitCode };
+    }
+
     test("accessor init callbacks fire on the correct class (browser bundle)", async () => {
       using dir = tempDir("es-dec-init-unique-bundle", {
         "entry.ts": `
@@ -638,22 +666,7 @@ describe("ES Decorators", () => {
         `,
       });
 
-      await using build = Bun.spawn({
-        cmd: [bunExe(), "build", "--target=browser", "--format=esm", "--outfile=out.js", "entry.ts"],
-        env: bunEnv,
-        cwd: String(dir),
-        stderr: "pipe",
-      });
-      expect(await build.exited).toBe(0);
-
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "out.js"],
-        env: bunEnv,
-        cwd: String(dir),
-        stderr: "pipe",
-      });
-      const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(filterStderr(rawStderr)).toBe("");
+      const { stdout, exitCode } = await runBundled(String(dir), ["--target=browser", "--format=esm"], "entry.ts");
       expect(stdout).toBe("foo:X|bar:Y\n");
       expect(exitCode).toBe(0);
     });
@@ -674,22 +687,7 @@ describe("ES Decorators", () => {
         `,
       });
 
-      await using build = Bun.spawn({
-        cmd: [bunExe(), "build", "--no-bundle", "--outfile=out.js", "entry.ts"],
-        env: bunEnv,
-        cwd: String(dir),
-        stderr: "pipe",
-      });
-      expect(await build.exited).toBe(0);
-
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "out.js"],
-        env: bunEnv,
-        cwd: String(dir),
-        stderr: "pipe",
-      });
-      const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(filterStderr(rawStderr)).toBe("");
+      const { stdout, exitCode } = await runBundled(String(dir), ["--no-bundle"], "entry.ts");
       expect(stdout).toBe("A:a:a|B:b:b\n");
       expect(exitCode).toBe(0);
     });
@@ -712,33 +710,19 @@ describe("ES Decorators", () => {
         `,
       });
 
-      await using build = Bun.spawn({
-        cmd: [bunExe(), "build", "--target=browser", "--format=esm", "--outfile=out.js", "entry.ts"],
-        env: bunEnv,
-        cwd: String(dir),
-        stderr: "pipe",
-      });
-      expect(await build.exited).toBe(0);
-
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "out.js"],
-        env: bunEnv,
-        cwd: String(dir),
-        stderr: "pipe",
-      });
-      const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(filterStderr(rawStderr)).toBe("");
+      const { stdout, exitCode } = await runBundled(String(dir), ["--target=browser", "--format=esm"], "entry.ts");
       expect(stdout).toBe("A=1,B=2,C=3\n");
       expect(exitCode).toBe(0);
     });
 
     test("class decorator addInitializer + accessor initializer in same class", async () => {
-      // Class decorators alone don't exhibit the collision (their
-      // decoration runs at module-top between the `var _init = …`
-      // lines). But a class decorator whose addInitializer fires at
-      // construction time, *plus* a per-instance accessor initializer,
-      // both consult `_init` inside the constructor — the second class
-      // must see its own `_init`, not the last file-level one.
+      // Class decorators alone don't exhibit the collision: their
+      // `__decorateElement` / `__runInitializers(_init, 1, …)` emit at
+      // module top between the two `var _init = …` lines, so each one
+      // binds to the right `_init` at execution time. Adding a per-
+      // instance accessor forces a reference to `_init` from *inside*
+      // the constructor — which runs after both `var _init` have been
+      // reassigned. That's the code path the collision breaks.
       using dir = tempDir("es-dec-mixed", {
         "entry.ts": `
           const log: string[] = [];
@@ -760,24 +744,10 @@ describe("ES Decorators", () => {
         `,
       });
 
-      await using build = Bun.spawn({
-        cmd: [bunExe(), "build", "--target=browser", "--format=esm", "--outfile=out.js", "entry.ts"],
-        env: bunEnv,
-        cwd: String(dir),
-        stderr: "pipe",
-      });
-      expect(await build.exited).toBe(0);
-
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "out.js"],
-        env: bunEnv,
-        cwd: String(dir),
-        stderr: "pipe",
-      });
-      const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(filterStderr(rawStderr)).toBe("");
-      // Both @mark initializers fire during top-level decoration (in
-      // declaration order), then @acc's init fires per-construction.
+      const { stdout, exitCode } = await runBundled(String(dir), ["--target=browser", "--format=esm"], "entry.ts");
+      // @mark's class-level initializers both fire at definition time
+      // (in declaration order), then @acc's per-instance init fires
+      // when each class is constructed.
       expect(stdout).toBe("cls:Foo|cls:Bar|acc:Foo:1|acc:Bar:2\n");
       expect(exitCode).toBe(0);
     });
@@ -811,22 +781,7 @@ describe("ES Decorators", () => {
         `,
       });
 
-      await using build = Bun.spawn({
-        cmd: [bunExe(), "build", "--target=browser", "--format=esm", "--outfile=out.js", "entry.ts"],
-        env: bunEnv,
-        cwd: String(dir),
-        stderr: "pipe",
-      });
-      expect(await build.exited).toBe(0);
-
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "out.js"],
-        env: bunEnv,
-        cwd: String(dir),
-        stderr: "pipe",
-      });
-      const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(filterStderr(rawStderr)).toBe("");
+      const { stdout, exitCode } = await runBundled(String(dir), ["--target=browser", "--format=esm"], "entry.ts");
       expect(stdout).toBe(
         "Parent.foo:foo=parent_foo|Parent.shared:shared=parent_shared|Child.foo:foo=child_foo|Child.childOnly:childOnly=child_childOnly\n",
       );
@@ -849,22 +804,7 @@ describe("ES Decorators", () => {
         `,
       });
 
-      await using build = Bun.spawn({
-        cmd: [bunExe(), "build", "--target=browser", "--format=esm", "--outfile=out.js", "entry.js"],
-        env: bunEnv,
-        cwd: String(dir),
-        stderr: "pipe",
-      });
-      expect(await build.exited).toBe(0);
-
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "out.js"],
-        env: bunEnv,
-        cwd: String(dir),
-        stderr: "pipe",
-      });
-      const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(filterStderr(rawStderr)).toBe("");
+      const { stdout, exitCode } = await runBundled(String(dir), ["--target=browser", "--format=esm"], "entry.js");
       expect(stdout).toBe("B\nA\n");
       expect(exitCode).toBe(0);
     });

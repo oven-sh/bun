@@ -776,7 +776,12 @@ pub mod command {
             }
             Tag::RunAsNodeCommand => {
                 // SAFETY: `init` writes the process-global `CONTEXT_DATA` once
-                // during single-threaded startup; we are that startup thread.
+                // during single-threaded startup and returns its raw address;
+                // we are that startup thread and this is the sole live `&mut`
+                // to it (Zig: `Context = *ContextData`, freely aliased — here
+                // the borrow is threaded down via the `ctx` parameter instead
+                // of re-derived). All other `init(...)` arms below share this
+                // invariant.
                 let ctx = unsafe { &mut *init(tag, log)? };
                 return run_command::RunCommand::exec_as_if_node(ctx);
             }

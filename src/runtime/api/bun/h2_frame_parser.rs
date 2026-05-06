@@ -2300,11 +2300,19 @@ impl H2FrameParser {
     }
 
     fn uncork(&mut self) {
-        if let Some(corked) = CORKED_H2.with(|c| c.get()) {
-            // SAFETY: CORKED_H2 holds a ref()'d *mut H2FrameParser; valid until matching deref() below
-            let corked = unsafe { &mut *corked };
+        if let Some(corked_ptr) = CORKED_H2.with(|c| c.get()) {
+            // SAFETY: CORKED_H2 holds a ref()'d *mut H2FrameParser, valid until the matching
+            // deref() below. The corked parser may be `self` (Zig's `uncork(_: *H2FrameParser)`
+            // ignores its receiver entirely); if so, reuse the existing exclusive borrow instead
+            // of materializing a second aliasing &mut. Otherwise it points to a distinct heap
+            // allocation and the fresh &mut is the unique live borrow of that parser.
+            let corked: &mut H2FrameParser = if core::ptr::eq(corked_ptr, self) {
+                self
+            } else {
+                unsafe { &mut *corked_ptr }
+            };
             corked.unregister_auto_flush();
-            bun_output::scoped_log!(H2FrameParser, "uncork {:p}", corked);
+            bun_output::scoped_log!(H2FrameParser, "uncork {:p}", corked_ptr);
 
             let off = CORK_OFFSET.with(|c| c.get()) as usize;
             CORK_OFFSET.with(|c| c.set(0));

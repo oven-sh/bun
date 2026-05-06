@@ -163,12 +163,10 @@ pub fn compute_chunks(
                     entry_bits: entry_point_chunk_bits,
                     content: chunk::Content::Css(chunk::CssChunk {
                         imports_in_chunk_in_order: order,
-                        asts: bun_core::handle_oom(
-                            (0..order_len)
-                                .map(|_| bun_css::BundlerStyleSheet::empty())
-                                .collect::<Vec<_>>()
-                                .into_boxed_slice(),
-                        ),
+                        asts: (0..order_len)
+                            .map(|_| bun_css::BundlerStyleSheet::empty(allocator))
+                            .collect::<Vec<_>>()
+                            .into_boxed_slice(),
                     }),
                     output_source_map: SourceMapPieces::init(),
                     flags: make_flags(
@@ -251,12 +249,10 @@ pub fn compute_chunks(
                         entry_bits: entry_bits.clone()?,
                         content: chunk::Content::Css(chunk::CssChunk {
                             imports_in_chunk_in_order: order,
-                            asts: bun_core::handle_oom(
-                                (0..order_len)
-                                    .map(|_| bun_css::BundlerStyleSheet::empty())
-                                    .collect::<Vec<_>>()
-                                    .into_boxed_slice(),
-                            ),
+                            asts: (0..order_len)
+                                .map(|_| bun_css::BundlerStyleSheet::empty(allocator))
+                                .collect::<Vec<_>>()
+                                .into_boxed_slice(),
                         }),
                         files_with_parts_in_chunk: css_files_with_parts_in_chunk,
                         output_source_map: SourceMapPieces::init(),

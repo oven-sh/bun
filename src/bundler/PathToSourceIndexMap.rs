@@ -1,7 +1,27 @@
 use bun_collections::StringHashMap;
-use bun_paths::fs::Path as FsPath;
 
 use crate::IndexStringMap::IndexInt;
+
+/// Abstracts over the two structurally-identical `Path` ports (`bun_paths::fs::Path`
+/// and `bun_resolver::fs::Path`) so the bundler can key the map with either while
+/// the crates converge. Both expose `.text: &[u8]`, which is all we need.
+pub trait PathLike {
+    fn path_text(&self) -> &[u8];
+}
+
+impl PathLike for bun_paths::fs::Path<'_> {
+    #[inline]
+    fn path_text(&self) -> &[u8] {
+        self.text
+    }
+}
+
+impl PathLike for bun_resolver::fs::Path<'_> {
+    #[inline]
+    fn path_text(&self) -> &[u8] {
+        self.text
+    }
+}
 
 /// The lifetime of the keys are not owned by this map.
 ///

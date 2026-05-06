@@ -471,8 +471,12 @@ where
         self.response_buf_owned = Vec::new();
         self.response_weakref.deref();
 
-        if let Some(body) = self.request_body.take() {
-            drop(body); // unref
+        if let Some(mut body) = self.request_body.take() {
+            // SAFETY: pointee is the pooled HiveRef slot allocated by
+            // `init_request_body_value`; it remains live until the final unref
+            // returns it to the hive. `drop(NonNull)` is a Copy no-op, so we
+            // must call the intrusive refcount decrement explicitly.
+            unsafe { let _ = body.as_mut().unref(); }
         }
 
         if let Some(cb) = self.additional_on_abort.take() {
@@ -712,22 +716,19 @@ where
     pub fn end(&mut self, data: &[u8], close_connection: bool) {
         ctx_log!("end");
         if let Some(resp) = self.resp {
-            // SAFETY: self outlives the guard; deref runs on the same thread before pool put
-            let _guard = scopeguard::guard(self as *mut Self, |s| unsafe { (*s).deref() });
-
             self.detach_response();
             self.end_request_streaming_and_drain();
             // SAFETY: FFI handle
             unsafe { resp.end(data, close_connection) };
+            // No early returns above; explicit deref instead of a scopeguard
+            // that would alias `&mut self` through a captured raw pointer.
+            self.deref();
         }
     }
 
     pub fn end_stream(&mut self, close_connection: bool) {
         ctx_log!("endStream");
         if let Some(resp) = self.resp {
-            // SAFETY: self outlives the guard; deref runs on the same thread before pool put
-            let _guard = scopeguard::guard(self as *mut Self, |s| unsafe { (*s).deref() });
-
             self.detach_response();
             self.end_request_streaming_and_drain();
             // This will send a terminating 0\r\n\r\n chunk to the client
@@ -739,30 +740,34 @@ where
                     resp.end_stream(close_connection);
                 }
             }
+            // No early returns above; explicit deref instead of a scopeguard
+            // that would alias `&mut self` through a captured raw pointer.
+            self.deref();
         }
     }
 
     pub fn end_without_body(&mut self, close_connection: bool) {
         ctx_log!("endWithoutBody");
         if let Some(resp) = self.resp {
-            // SAFETY: self outlives the guard; deref runs on the same thread before pool put
-            let _guard = scopeguard::guard(self as *mut Self, |s| unsafe { (*s).deref() });
-
             self.detach_response();
             self.end_request_streaming_and_drain();
             // SAFETY: FFI handle
             unsafe { resp.end_without_body(close_connection) };
+            // No early returns above; explicit deref instead of a scopeguard
+            // that would alias `&mut self` through a captured raw pointer.
+            self.deref();
         }
     }
 
     pub fn force_close(&mut self) {
         if let Some(resp) = self.resp {
-            // SAFETY: self outlives the guard; deref runs on the same thread before pool put
-            let _guard = scopeguard::guard(self as *mut Self, |s| unsafe { (*s).deref() });
             self.detach_response();
             self.end_request_streaming_and_drain();
             // SAFETY: FFI handle
             unsafe { resp.force_close() };
+            // No early returns above; explicit deref instead of a scopeguard
+            // that would alias `&mut self` through a captured raw pointer.
+            self.deref();
         }
     }
 
@@ -806,10 +811,7 @@ where
             return false;
         }
 
-        // PORT NOTE: reshaped for borrowck — pass raw ptr to slice to avoid overlapping &mut
-        let items = this.response_buf_owned.as_slice() as *const [u8];
-        // SAFETY: response_buf_owned not mutated until after the call
-        this.send_writable_bytes_for_complete_response_buffer(unsafe { &*items }, write_offset, resp)
+        this.send_writable_bytes_for_complete_response_buffer(write_offset, resp)
     }
 
     pub fn on_writable_complete_response_buffer(
@@ -824,9 +826,7 @@ where
         if this.is_aborted_or_ended() {
             return false;
         }
-        let items = this.response_buf_owned.as_slice() as *const [u8];
-        // SAFETY: response_buf_owned not mutated until after the call
-        this.send_writable_bytes_for_complete_response_buffer(unsafe { &*items }, write_offset, resp)
+        this.send_writable_bytes_for_complete_response_buffer(write_offset, resp)
     }
 
     #[inline]
@@ -1018,10 +1018,17 @@ where
         }
 
         // if have sink, call onAborted on sink
+        // TODO(b2-blocked): `wrapper.sink.abort()` once
+        // `webcore::streams::HTTPServerWritable<SSL,H3>` is real (currently
+        // aliased to c_void; see ResponseStreamJSSink note at top of file).
+        // Until then, no path populates `sink` (the only writer is the gated
+        // `_gated_do_render_stream`); enforce that assumption so we don't
+        // silently skip the abort if another path starts setting it.
+        debug_assert!(
+            this.sink.is_none(),
+            "ResponseStreamJSSink populated but abort() is still stubbed"
+        );
         if this.sink.is_some() {
-            // TODO(b2-blocked): `wrapper.sink.abort()` once
-            // `webcore::streams::HTTPServerWritable<SSL,H3>` is real (currently
-            // aliased to c_void; see ResponseStreamJSSink note at top of file).
             return;
         }
 
@@ -1182,16 +1189,23 @@ where
 
     pub fn send_writable_bytes_for_complete_response_buffer(
         &mut self,
-        bytes_: &[u8],
         write_offset_: u64,
         resp: uws::AnyResponse,
     ) -> bool {
         let write_offset: usize = write_offset_ as usize;
         debug_assert!(self.resp.is_some());
 
-        let bytes = &bytes_[bytes_.len().min(write_offset)..];
+        // The bytes always come from `self.response_buf_owned`; reading them
+        // through `&mut self` here (instead of taking a `&[u8]` parameter that
+        // aliases the same Vec) avoids holding a live shared borrow of the
+        // buffer across the `clear()` below — which would be UB under
+        // Stacked Borrows even though the slice is not read after the clear.
+        let close_connection = self.should_close_connection();
+        let total_len = self.response_buf_owned.len();
+        let bytes = &self.response_buf_owned[total_len.min(write_offset)..];
         // SAFETY: FFI handle
-        if unsafe { resp.try_end(bytes, bytes_.len(), self.should_close_connection()) } {
+        let done = unsafe { resp.try_end(bytes, total_len, close_connection) };
+        if done {
             self.response_buf_owned.clear();
             self.detach_response();
             self.end_request_streaming_and_drain();
@@ -1477,10 +1491,17 @@ where
             return;
         }
         // Until the writable-stream sink type is real we cannot pipe; cancel
-        // the readable and fall back to renderMissing so the request completes.
+        // the readable. We still honor the Response's status/headers via
+        // render_metadata() + end_stream() rather than substituting a 204
+        // (renderMissing) — see PORTING.md §Forbidden re: silent behavioural
+        // stubs. The body itself is dropped; full piping is preserved gated
+        // in `_gated_do_render_stream` below.
         pair.stream.cancel(global_this);
         this.response_body_readable_stream_ref.deinit();
-        this.render_missing();
+        if !this.flags.has_written_status() {
+            this.render_metadata();
+        }
+        this.end_stream(this.should_close_connection());
     }
 
     #[cfg(any())]
@@ -1827,8 +1848,6 @@ where
     }
 
     pub fn on_s3_size_resolved(result: S3::S3StatResult, this: &mut Self) {
-        // SAFETY: this outlives the guard; deref runs on the same thread before pool put
-        let _guard = scopeguard::guard(this as *mut Self, |t| unsafe { (*t).deref() });
         if let Some(resp) = this.resp {
             let size = match result {
                 S3::S3StatResult::Failure(_) | S3::S3StatResult::NotFound => 0,
@@ -1843,6 +1862,9 @@ where
                 )
             };
         }
+        // No early returns above; explicit deref instead of a scopeguard that
+        // would alias `&mut Self` through a captured raw pointer.
+        this.deref();
     }
 
     fn do_render_head_response(
@@ -2134,13 +2156,20 @@ where
         stream_log!("handleResolveStream");
 
         let wrote_anything = false;
-        if let Some(_wrapper) = req.sink.take() {
-            // TODO(b2-blocked): once `ResponseStreamJSSink` is real:
-            //   req.flags.set_aborted(req.flags.aborted() || wrapper.sink.aborted);
-            //   wrote_anything = wrapper.sink.wrote > 0;
-            //   wrapper.sink.finalize();
-            //   wrapper.detach(wrapper.sink.global_this);
-        }
+        // TODO(b2-blocked): once `ResponseStreamJSSink` is real:
+        //   req.flags.set_aborted(req.flags.aborted() || wrapper.sink.aborted);
+        //   wrote_anything = wrapper.sink.wrote > 0;
+        //   wrapper.sink.finalize();
+        //   wrapper.detach(wrapper.sink.global_this);
+        // The aborted-flag propagation is load-bearing for the
+        // `is_aborted_or_ended()` check below. Until the sink type is real,
+        // no path populates `sink`; enforce that so we don't silently leak
+        // the wrapper or skip the aborted propagation.
+        debug_assert!(
+            req.sink.is_none(),
+            "ResponseStreamJSSink populated but finalize/detach is still stubbed"
+        );
+        req.sink = None;
 
         if let Some(resp) = req.response_weakref.get() {
             debug_assert!(req.server.is_some());
@@ -2197,14 +2226,19 @@ where
     pub fn handle_reject_stream(req: &mut Self, global_this: &JSGlobalObject, err: JSValue) {
         stream_log!("handleRejectStream");
 
-        if let Some(_wrapper) = req.sink.take() {
-            // TODO(b2-blocked): once `ResponseStreamJSSink` is real:
-            //   if let Some(prom) = wrapper.sink.pending_flush.take() { prom.to_js().unprotect(); }
-            //   wrapper.sink.done = true;
-            //   req.flags.set_aborted(req.flags.aborted() || wrapper.sink.aborted);
-            //   wrapper.sink.finalize();
-            //   wrapper.detach(wrapper.sink.global_this);
-        }
+        // TODO(b2-blocked): once `ResponseStreamJSSink` is real:
+        //   if let Some(prom) = wrapper.sink.pending_flush.take() { prom.to_js().unprotect(); }
+        //   wrapper.sink.done = true;
+        //   req.flags.set_aborted(req.flags.aborted() || wrapper.sink.aborted);
+        //   wrapper.sink.finalize();
+        //   wrapper.detach(wrapper.sink.global_this);
+        // Until the sink type is real, no path populates `sink`; enforce that
+        // so we don't silently leak the wrapper or skip aborted propagation.
+        debug_assert!(
+            req.sink.is_none(),
+            "ResponseStreamJSSink populated but finalize/detach is still stubbed"
+        );
+        req.sink = None;
 
         if let Some(resp) = req.response_weakref.get() {
             let body_value = resp.get_body_value();
@@ -3023,8 +3057,10 @@ where
             } else {
                 let mut strong = core::mem::take(&mut this.request_body_readable_stream_ref);
                 let _strong_guard = scopeguard::guard((), |_| strong.deinit());
-                if let Some(request_body) = this.request_body.take() {
-                    drop(request_body); // unref
+                if let Some(mut request_body) = this.request_body.take() {
+                    // SAFETY: pointee is the pooled HiveRef slot; live until this
+                    // unref drops the last count. `drop(NonNull)` is a Copy no-op.
+                    unsafe { let _ = request_body.as_mut().unref(); }
                 }
 
                 readable.value.ensure_still_alive();

@@ -57,6 +57,7 @@ bun_options_types.workspace = true
 bun_paths.workspace = true
 bun_picohttp.workspace = true
 bun_ptr.workspace = true
+bun_resolve_builtins.workspace = true
 bun_resolver.workspace = true
 bun_router.workspace = true
 bun_s3_signing.workspace = true

@@ -1,14 +1,13 @@
 //! The Subprocess object is returned by `Bun.spawn`. This file also holds the
 //! code for `Bun.spawnSync`
 
-use core::cell::Cell;
 use core::ffi::{c_int, c_void};
 use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
 use std::sync::atomic::AtomicU32;
 use std::sync::Arc;
 
-use bun_ptr::{IntrusiveRc, IntrusiveRefCounted};
+use bun_ptr::{RefCount, RefCounted, RefPtr};
 
 use bun_aio::{FilePoll, KeepAlive};
 use bun_collections::CowString;
@@ -17,16 +16,22 @@ use bun_jsc::{
     self as jsc, ArrayBuffer, CallFrame, JSGlobalObject, JSPromise, JSValue, JsRef, JsResult,
     VirtualMachine, ZigString,
 };
-use bun_runtime::api::bun::Terminal;
-use bun_runtime::api::Timer::EventLoopTimer;
-use bun_runtime::node::node_cluster_binding;
-use bun_runtime::webcore::{self, AbortSignal, Blob, FileSink};
-use bun_spawn::{self, PosixSpawnResult, Process, Rusage, Status, WindowsSpawnResult};
 use bun_sys::{self, Fd, SignalCode};
 use enumset::{EnumSet, EnumSetType};
 
-use crate::api::bun::js_bun_spawn_bindings;
+// Process / spawn machinery lives in this crate (api/bun/process.rs), not in an
+// external `bun_spawn` crate. The `bun_spawn` workspace crate only carries the
+// platform-thin `Stdio`/`Status` shims used by `bun.spawnSync` callers.
+use crate::api::bun_process::{
+    self as spawn_process, ExtraPipe, PosixSpawnResult, Process, Rusage, Status,
+    WindowsSpawnResult, WindowsStdioResult,
+};
+use crate::api::bun::Terminal;
+use crate::api::js_bun_spawn_bindings;
 use crate::jsc::ipc as IPC;
+use crate::node::node_cluster_binding;
+use crate::timer::EventLoopTimer;
+use crate::webcore::{self, AbortSignal, Blob, FileSink};
 
 pub mod resource_usage;
 pub use resource_usage::ResourceUsage;
@@ -58,14 +63,14 @@ pub mod js {
 
 /// Platform-dependent stdio result type.
 #[cfg(windows)]
-pub type StdioResult = WindowsSpawnResult::StdioResult;
+pub type StdioResult = WindowsStdioResult;
 #[cfg(not(windows))]
 pub type StdioResult = Option<Fd>;
 
 #[cfg(windows)]
 type StdioPipeItem = StdioResult;
 #[cfg(not(windows))]
-type StdioPipeItem = PosixSpawnResult::ExtraPipe;
+type StdioPipeItem = ExtraPipe;
 
 pub type StaticPipeWriter<'a> = NewStaticPipeWriter<Subprocess<'a>>;
 
@@ -103,7 +108,7 @@ impl StdioKind {
 
 #[bun_jsc::JsClass]
 pub struct Subprocess<'a> {
-    pub ref_count: Cell<u32>,
+    pub ref_count: RefCount<Subprocess<'a>>,
     // ManuallyDrop so finalize() can release the strong ref at the same point as Zig's
     // `process.deref()` (before the intrusive ref_count hits zero).
     pub process: ManuallyDrop<Arc<Process>>,
@@ -139,13 +144,35 @@ pub struct Subprocess<'a> {
 }
 
 // Intrusive ref-count: bun.ptr.RefCount(@This(), "ref_count", deinit, .{})
-// `IntrusiveRc<Subprocess>` provides ref/deref and frees the Box when ref_count → 0.
-impl IntrusiveRefCounted for Subprocess<'_> {
-    fn ref_count(&self) -> &Cell<u32> {
-        &self.ref_count
+// `RefPtr<Subprocess>` provides ref/deref and frees the Box when ref_count → 0.
+impl<'a> RefCounted for Subprocess<'a> {
+    type DestructorCtx = ();
+    unsafe fn get_ref_count(this: *mut Self) -> *mut RefCount<Self> {
+        // SAFETY: caller contract — `this` points to a live Subprocess.
+        unsafe { core::ptr::addr_of_mut!((*this).ref_count) }
+    }
+    unsafe fn destructor(this: *mut Self, _: ()) {
+        // SAFETY: refcount hit 0; allocation came from Box::into_raw in spawn_maybe_sync.
+        unsafe { drop(Box::from_raw(this)) };
     }
 }
-pub type SubprocessRc<'a> = IntrusiveRc<Subprocess<'a>>;
+pub type SubprocessRc<'a> = RefPtr<Subprocess<'a>>;
+
+impl<'a> Subprocess<'a> {
+    /// Intrusive `ref()` — Zig's `pub const ref = ref_count.ref`.
+    #[inline]
+    pub fn ref_(&mut self) {
+        // SAFETY: &mut self → live *mut Self.
+        unsafe { RefCount::<Self>::ref_(self as *mut Self) }
+    }
+    /// Intrusive `deref()` — Zig's `pub const deref = ref_count.deref`.
+    /// May free `self`; do not use `self` after calling.
+    #[inline]
+    pub fn deref(&mut self) {
+        // SAFETY: &mut self → live *mut Self; destructor handles the Box.
+        unsafe { RefCount::<Self>::deref(self as *mut Self) }
+    }
+}
 
 bitflags::bitflags! {
     #[repr(transparent)]
@@ -229,9 +256,9 @@ impl Subprocess<'_> {
 
             #[cfg(windows)]
             {
-                if matches!(self.process.poller, bun_spawn::Poller::Uv(_)) {
+                if matches!(self.process.poller, spawn_process::Poller::Uv(_)) {
                     self.pid_rusage =
-                        Some(bun_spawn::process::uv_getrusage(self.process.poller.uv()));
+                        Some(spawn_process::uv_getrusage(self.process.poller.uv()));
                     break 'brk self.pid_rusage.as_ref().unwrap();
                 }
             }
@@ -669,11 +696,10 @@ impl Subprocess<'_> {
             #[cfg(not(windows))]
             {
                 match item {
-                    PosixSpawnResult::ExtraPipe::OwnedFd(fd)
-                    | PosixSpawnResult::ExtraPipe::UnownedFd(fd) => {
+                    ExtraPipe::OwnedFd(fd) | ExtraPipe::UnownedFd(fd) => {
                         array.push(global, JSValue::js_number(fd.cast()))?;
                     }
-                    PosixSpawnResult::ExtraPipe::Unavailable => {
+                    ExtraPipe::Unavailable => {
                         array.push(global, JSValue::NULL)?;
                     }
                 }

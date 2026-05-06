@@ -493,7 +493,10 @@ impl Drop for HTTPClient {
         // be None by the time the result callback's deinit path runs.
         debug_assert!(self.h2.is_none());
         // tls_props: Option<SharedPtr> — Drop releases strong ref.
-        // custom_ssl_ctx: Option<NonNull> — manual deref in to_result/fail.
+        if let Some(ctx) = self.custom_ssl_ctx.take() {
+            // SAFETY: we hold one strong ref taken in set_custom_ssl_ctx.
+            unsafe { (*ctx.as_ptr()).deref() };
+        }
         self.unix_socket_path = ZigStringSlice::EMPTY;
     }
 }
@@ -542,17 +545,49 @@ use crate::internal_state::{HTTPStage, RequestStage, ResponseStage, Stage};
 
 bun_core::declare_scope!(fetch, visible);
 
-// PORT NOTE: Zig used `<&'static str>::from(method)` (strum); Method here
-// doesn't expose a string converter, so map locally.
+// PORT NOTE: Zig used `@tagName(this.method)`; Method here doesn't expose a
+// string converter, so map locally. Exhaustive — no `_` arm; silently falling
+// back to GET would send the wrong verb on the wire.
 #[inline]
 fn method_http_name(m: Method) -> &'static [u8] {
     use Method::*;
     match m {
-        GET => b"GET", HEAD => b"HEAD", POST => b"POST", PUT => b"PUT",
-        DELETE => b"DELETE", CONNECT => b"CONNECT", OPTIONS => b"OPTIONS",
-        TRACE => b"TRACE", PATCH => b"PATCH",
-        // TODO(port): exhaustive match — fallback for less-common variants.
-        _ => b"GET",
+        ACL => b"ACL",
+        BIND => b"BIND",
+        CHECKOUT => b"CHECKOUT",
+        CONNECT => b"CONNECT",
+        COPY => b"COPY",
+        DELETE => b"DELETE",
+        GET => b"GET",
+        HEAD => b"HEAD",
+        LINK => b"LINK",
+        LOCK => b"LOCK",
+        M_SEARCH => b"M-SEARCH",
+        MERGE => b"MERGE",
+        MKACTIVITY => b"MKACTIVITY",
+        MKADDRESSBOOK => b"MKADDRESSBOOK",
+        MKCALENDAR => b"MKCALENDAR",
+        MKCOL => b"MKCOL",
+        MOVE => b"MOVE",
+        NOTIFY => b"NOTIFY",
+        OPTIONS => b"OPTIONS",
+        PATCH => b"PATCH",
+        POST => b"POST",
+        PROPFIND => b"PROPFIND",
+        PROPPATCH => b"PROPPATCH",
+        PURGE => b"PURGE",
+        PUT => b"PUT",
+        QUERY => b"QUERY",
+        REBIND => b"REBIND",
+        REPORT => b"REPORT",
+        SEARCH => b"SEARCH",
+        SOURCE => b"SOURCE",
+        SUBSCRIBE => b"SUBSCRIBE",
+        TRACE => b"TRACE",
+        UNBIND => b"UNBIND",
+        UNLINK => b"UNLINK",
+        UNLOCK => b"UNLOCK",
+        UNSUBSCRIBE => b"UNSUBSCRIBE",
     }
 }
 
@@ -2031,17 +2066,11 @@ impl HTTPClient {
         }
         if in_progress {
             if self.state.is_chunked_encoding() {
-                // PORT NOTE: Zig matched `decoder._state` against the trailer
-                // states; picohttp's `phr_decode_chunked_is_in_data` returns 0
-                // once the body bytes are done (i.e. trailer phase or finished),
-                // which is the same predicate.
-                // SAFETY: chunked_decoder is a #[repr(C)] field; pointer is valid for FFI read.
-                let in_data = unsafe {
-                    picohttp::phr_decode_chunked_is_in_data(
-                        &mut self.state.chunked_decoder as *mut _,
-                    )
-                };
-                if in_data == 0 {
+                // Match the spec exactly: only the two trailer states mean
+                // "all chunks consumed"; CHUNKED_IN_CHUNK_SIZE/EXT/CRLF mean
+                // the body was truncated mid-stream and must fail.
+                // 4 = CHUNKED_IN_TRAILERS_LINE_HEAD, 5 = CHUNKED_IN_TRAILERS_LINE_MIDDLE
+                if matches!(self.state.chunked_decoder._state, 4 | 5) {
                     // ignore failure if we are in the middle of trailer headers, since we processed all the chunks and trailers are ignored
                     self.state.flags.received_last_chunk = true;
                     let ctx = self.get_ssl_ctx::<IS_SSL>();
@@ -2230,7 +2259,10 @@ impl HTTPClient {
     }
 
     pub fn set_custom_ssl_ctx(&mut self, ctx: NonNull<HttpsContext>) {
-        // PORT NOTE: intrusive-refcounted; caller already bumped the ref.
+        // Intrusive-refcounted: this fn takes ownership of one strong ref by
+        // bumping it here (matches http.zig:821-825). Callers do NOT pre-bump.
+        // SAFETY: ctx points at a live HttpsContext.
+        unsafe { (*ctx.as_ptr()).ref_() };
         if let Some(old) = self.custom_ssl_ctx.replace(ctx) {
             // SAFETY: old points at a live HttpsContext we held a ref on.
             unsafe { (*old.as_ptr()).deref() };
@@ -3297,8 +3329,10 @@ impl HTTPClient {
             break;
         }
         // SAFETY: pending_response was set above; transmute is the same widen.
+        // NOTE: copy (Response is Copy), do NOT .take() — clone_metadata() below
+        // requires pending_response to remain Some.
         let mut response: picohttp::Response<'static> =
-            unsafe { core::mem::transmute(self.state.pending_response.take().unwrap()) };
+            unsafe { core::mem::transmute(self.state.pending_response.unwrap()) };
         let should_continue = match self.handle_response_metadata(&mut response) {
             Ok(s) => s,
             Err(err) => {
@@ -3306,6 +3340,10 @@ impl HTTPClient {
                 return;
             }
         };
+        // handle_response_metadata may mutate `response`; mirror it back so
+        // clone_metadata() sees the up-to-date headers regardless of the
+        // content-encoding branch below.
+        self.state.pending_response = Some(response);
 
         if (self.state.content_encoding_i as usize) < response.headers.list.len()
             && !self.state.flags.did_set_content_encoding
@@ -4073,16 +4111,16 @@ impl HTTPClient {
         &mut self,
         incoming_data: &[u8],
     ) -> Result<bool, bun_core::Error> {
-        // PORT NOTE: reshaped for borrowck — hold both as raw ptrs.
+        // PORT NOTE: reshaped for borrowck — hold both as raw ptrs and operate
+        // on the body buffer in place. The Zig `var buffer = buffer_ptr.*` was a
+        // shallow struct copy that aliased the same allocation; deep-cloning
+        // here would diverge (mutations from process_body_buffer would be lost).
         let decoder: *mut picohttp::phr_chunked_decoder = &mut self.state.chunked_decoder;
         // SAFETY: get_body_buffer returns a ref into self.state; raw-ptr to
         // avoid pinning &mut self.state for the whole fn.
         let buffer_ptr: *mut MutableString = self.state.get_body_buffer();
-        let buffer_ptr = unsafe { &mut *buffer_ptr };
-        // TODO(port): Zig copies the MutableString by value into `buffer` then writes back
-        // PORT NOTE: MutableString::clone() returns Result; OOM is unrecoverable here.
-        let mut buffer = buffer_ptr.clone().expect("OOM");
-        buffer.append_slice(incoming_data)?;
+        // SAFETY: buffer_ptr is the unique body buffer; no other live borrow exists.
+        unsafe { (*buffer_ptr).append_slice(incoming_data)? };
 
         // set consume_trailer to 1 to discard the trailing header
         // using content-encoding per chunk is not supported
@@ -4091,31 +4129,29 @@ impl HTTPClient {
 
         let mut bytes_decoded = incoming_data.len();
         // phr_decode_chunked mutates in-place
-        // SAFETY: buffer.list is initialized for [0..len()) and uniquely borrowed here;
+        // SAFETY: (*buffer_ptr).list is initialized for [0..len()) and uniquely borrowed here;
         // the offset is len() - incoming_data.len() (the just-appended tail), which is in bounds.
         let pret = unsafe {
+            let list = &mut (*buffer_ptr).list;
             picohttp::phr_decode_chunked(
                 &mut *decoder,
-                buffer
-                    .list
-                    .as_mut_ptr()
-                    .add(buffer.list.len().saturating_sub(incoming_data.len())),
+                list.as_mut_ptr()
+                    .add(list.len().saturating_sub(incoming_data.len())),
                 &mut bytes_decoded,
             )
         };
-        let new_len = buffer
-            .list
-            .len()
-            .saturating_sub(incoming_data.len() - bytes_decoded);
-        buffer.list.truncate(new_len);
+        // SAFETY: buffer_ptr is the unique body buffer.
+        unsafe {
+            let list = &mut (*buffer_ptr).list;
+            let new_len = list.len().saturating_sub(incoming_data.len() - bytes_decoded);
+            list.truncate(new_len);
+        }
         self.state.total_body_received += bytes_decoded;
         bun_core::scoped_log!(
             fetch,
             "handleResponseBodyChunkedEncodingFromMultiplePackets {}",
             self.state.total_body_received
         );
-
-        *buffer_ptr = buffer.clone().expect("OOM");
 
         match pret {
             // Invalid HTTP response body
@@ -4124,15 +4160,18 @@ impl HTTPClient {
             -2 => {
                 if let Some(progress) = self.progress_node_mut() {
                     progress.activate();
-                    progress.set_completed_items(buffer.list.len());
+                    // SAFETY: buffer_ptr is live; reading len() does not alias `progress`.
+                    progress.set_completed_items(unsafe { (*buffer_ptr).list.len() });
                     // SAFETY: progress.context is a non-null backref to its owning Progress
-            unsafe { (*progress.context).maybe_refresh() };
+                    unsafe { (*progress.context).maybe_refresh() };
                 }
                 // streaming chunks
                 if self.signals.get(signals::Field::ResponseBodyStreaming) {
                     // If we're streaming, we cannot use the libdeflate fast path
                     self.state.flags.is_libdeflate_fast_path_disabled = true;
-                    return self.state.process_body_buffer(&mut buffer, false);
+                    // SAFETY: buffer_ptr points into self.state; process_body_buffer
+                    // only reads `buffer.list` and writes to a disjoint output buffer.
+                    return self.state.process_body_buffer(unsafe { &*buffer_ptr }, false);
                 }
 
                 return Ok(false);
@@ -4140,13 +4179,16 @@ impl HTTPClient {
             // Done
             _ => {
                 self.state.flags.received_last_chunk = true;
-                let _ = self.state.process_body_buffer(&mut buffer, true)?;
+                // SAFETY: buffer_ptr points into self.state; process_body_buffer
+                // only reads `buffer.list` and writes to a disjoint output buffer.
+                let _ = self.state.process_body_buffer(unsafe { &*buffer_ptr }, true)?;
 
                 if let Some(progress) = self.progress_node_mut() {
                     progress.activate();
-                    progress.set_completed_items(buffer.list.len());
+                    // SAFETY: buffer_ptr is live; reading len() does not alias `progress`.
+                    progress.set_completed_items(unsafe { (*buffer_ptr).list.len() });
                     // SAFETY: progress.context is a non-null backref to its owning Progress
-            unsafe { (*progress.context).maybe_refresh() };
+                    unsafe { (*progress.context).maybe_refresh() };
                 }
 
                 return Ok(true);

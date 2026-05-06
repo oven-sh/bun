@@ -817,7 +817,7 @@ pub mod fs {
         pub fn get(&mut self, _key: &[u8]) -> Option<&mut EntriesOption> {
             unimplemented!("BSSMap::get (Phase B)")
         }
-        pub fn get_or_put(&mut self, _key: &[u8]) -> crate::__phase_a_body::allocators::Result {
+        pub fn get_or_put(&mut self, _key: &[u8]) -> core::result::Result<crate::__phase_a_body::allocators::Result, bun_core::Error> {
             unimplemented!("BSSMap::get_or_put (Phase B)")
         }
         pub fn at_index(&mut self, index: bun_alloc::IndexType) -> Option<&mut EntriesOption> {
@@ -1923,7 +1923,6 @@ impl DebugMeta {
     }
 }
 
-#[derive(Clone)]
 pub struct DirEntryResolveQueueItem {
     pub result: allocators::Result,
     pub unsafe_path: &'static [u8], // TODO(port): lifetime — points into threadlocal buf
@@ -1934,7 +1933,11 @@ pub struct DirEntryResolveQueueItem {
 impl Default for DirEntryResolveQueueItem {
     fn default() -> Self {
         Self {
-            result: allocators::Result::default(),
+            result: allocators::Result {
+                hash: 0,
+                index: allocators::NOT_FOUND,
+                status: allocators::Status::Unknown,
+            },
             unsafe_path: b"",
             safe_path: b"",
             fd: FD::INVALID,

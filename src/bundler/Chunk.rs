@@ -13,6 +13,7 @@ use crate::analyze_transpiled_module;
 use crate::bun_css;
 use crate::bun_fs;
 use crate::bun_renamer;
+#[cfg(any())]
 use crate::html_import_manifest as HTMLImportManifest;
 use crate::options::{self, Loader};
 use crate::Graph::{Graph, InputFileListExt as _};
@@ -493,6 +494,7 @@ impl IntermediateOutput {
                                 QueryKind::Scb => {
                                     chunks[entry_point_chunks_for_scb[index] as usize].final_rel_path
                                 }
+                                #[cfg(any())]
                                 QueryKind::HtmlImport => {
                                     // TODO(port): std.fmt.count → counting writer; assuming bun_core::fmt::count
                                     count += bun_core::fmt::count(format_args!(
@@ -505,6 +507,13 @@ impl IntermediateOutput {
                                         )
                                     ));
                                     continue;
+                                }
+                                #[cfg(not(any()))]
+                                // TODO(b2-blocked): `HTMLImportManifest` is gated; no
+                                // un-gated producer constructs `QueryKind::HtmlImport`
+                                // pieces, so this arm is unreachable until it un-gates.
+                                QueryKind::HtmlImport => {
+                                    unreachable!("b2-blocked: HTMLImportManifest gated")
                                 }
                                 QueryKind::None => unreachable!(),
                             };
@@ -655,6 +664,7 @@ impl IntermediateOutput {
 
                                     break 'brk piece_chunk.final_rel_path;
                                 }
+                                #[cfg(any())]
                                 QueryKind::HtmlImport => {
                                     // TODO(port): std.io.fixedBufferStream → write into &mut [u8]
                                     let mut cursor: &mut [u8] = remain;
@@ -676,6 +686,11 @@ impl IntermediateOutput {
                                         shifts.push(shift);
                                     }
                                     continue;
+                                }
+                                #[cfg(not(any()))]
+                                // TODO(b2-blocked): see counting-pass arm above.
+                                QueryKind::HtmlImport => {
+                                    unreachable!("b2-blocked: HTMLImportManifest gated")
                                 }
                                 _ => unreachable!(),
                             };

@@ -238,8 +238,8 @@ pub mod bun_spawn {
             // sets directly on this struct BEFORE calling set(). Preserve
             // that value when the flag bit isn't available.
             // TODO(port): Zig used `@hasDecl(bun.c, "POSIX_SPAWN_SETSID")`; approximated
-            // here as not-freebsd. Phase B should use a build-time cfg from bindgen.
-            #[cfg(not(target_os = "freebsd"))]
+            // here as unix-not-freebsd. Phase B should use a build-time cfg from bindgen.
+            #[cfg(all(unix, not(target_os = "freebsd")))]
             {
                 self.detached = (flags & system::POSIX_SPAWN_SETSID as u16) != 0;
             }

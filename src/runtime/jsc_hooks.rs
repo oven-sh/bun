@@ -33,6 +33,7 @@ use bun_jsc::{ErrorableResolvedSource, JSGlobalObject, JSInternalPromise, JSValu
 
 use bun_bundler::entry_points::ServerEntryPoint;
 use bun_bundler::options::{self, Loader, ModuleType};
+use bun_resolve_builtins::Module as HardcodedModule;
 use bun_resolver::fs as Fs;
 use bun_resolver::node_fallbacks;
 
@@ -233,13 +234,10 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
         return;
     }
 
-    // TODO(b2-blocked): `bun_uws::Loop::{is_active, tick_with_timeout,
-    // tick_without_idle}` — not yet exposed on the Rust uws Loop. Spec
-    // event_loop.zig:398-403 calls `ctx.timer.getTimeout(..)` ONLY inside
+    // Spec event_loop.zig:398-403 calls `ctx.timer.getTimeout(..)` ONLY inside
     // `if (loop.isActive())` — `get_timeout` has side effects (pops + fires
-    // due `WTFTimer` heap entries), so it must stay gated alongside
-    // `is_active()` rather than running unconditionally.
-    #[cfg(any())]
+    // due `WTFTimer` heap entries), so it must stay guarded by `is_active()`
+    // rather than running unconditionally.
     {
         // SAFETY: `el` is live; field read only.
         let has_pending_immediate = !unsafe { &*el }.immediate_tasks.is_empty();
@@ -250,21 +248,30 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
             if ild.quic_head.is_null() { None } else { Some(ild.quic_next_tick_us) }
         };
         let mut timespec = bun_core::Timespec { sec: 0, nsec: 0 };
+        // SAFETY: `loop_` is the live per-thread uws loop.
         if unsafe { (*loop_).is_active() } {
+            // SAFETY: `el` is the live per-thread event loop.
             unsafe { (*el).process_gc_timer() };
             // SAFETY: `state` is the live per-thread `RuntimeState`; re-entry
             // into `runtime_state()` from a fired `WTFTimer` callback yields a
             // fresh raw ptr, not an aliased `&mut`.
             let have_timeout = unsafe { &mut (*state).timer }
                 .get_timeout(&mut timespec, has_pending_immediate, quic_next_tick_us, vm.cast());
+            // PORT NOTE: `bun_core::Timespec` and `bun_uws::Timespec` are
+            // distinct nominal types but layout-identical (`#[repr(C)]
+            // {sec: i64, nsec: i64}`, both mirroring `bun.timespec`). The C
+            // ABI only sees `*const timespec`, so re-express the value for
+            // `tick_with_timeout`. Same shape as SpawnSyncEventLoop.
+            let uws_ts = bun_uws::Timespec { sec: timespec.sec, nsec: timespec.nsec };
+            // SAFETY: `loop_` is the live per-thread uws loop.
             unsafe {
-                (*loop_).tick_with_timeout(if have_timeout { Some(&timespec) } else { None })
+                (*loop_).tick_with_timeout(if have_timeout { Some(&uws_ts) } else { None })
             };
         } else {
+            // SAFETY: `loop_` is the live per-thread uws loop.
             unsafe { (*loop_).tick_without_idle() };
         }
     }
-    let _ = loop_;
 
     #[cfg(unix)]
     {
@@ -330,28 +337,212 @@ unsafe fn transpile_source_code(
     false
 }
 
+/// `ModuleLoader.zig` `jsSyntheticModule(tag, specifier)` — produce a
+/// `ResolvedSource` whose `tag` indexes into the C++ `InternalModuleRegistry`
+/// (the embedded JS modules from `src/js/`). No source text — C++ dispatches
+/// on `.tag` alone.
+///
+/// PORT NOTE: `name` is the canonical specifier string (e.g. `b"node:fs"`).
+/// Zig threads `ResolvedSource.Tag.@"node:fs"` (a generated `u32` enum); the
+/// Rust enum is gated, so we carry the string and resolve to the numeric tag
+/// inside the `#[cfg(any())]` block until `resolved_source_tag` un-gates.
+#[inline]
+fn js_synthetic_module(name: &'static [u8], specifier: &bun_string::String) -> ResolvedSource {
+    let _ = (name, specifier);
+    #[cfg(any())]
+    // TODO(b2-cycle): `ResolvedSource` is `stub_ty!` in `bun_jsc::lib`; the
+    // real `#[repr(C)]` struct + generated `resolved_source_tag::Tag` are
+    // gated. Once un-gated, this body is exact.
+    {
+        use bun_jsc::resolved_source::Tag;
+        return ResolvedSource {
+            allocator: core::ptr::null_mut(),
+            source_code: bun_string::String::empty(),
+            specifier: *specifier,
+            source_url: bun_string::String::static_(name),
+            tag: Tag::from_name(name),
+            source_code_needs_deref: false,
+            ..ResolvedSource::default()
+        };
+    }
+    #[allow(unreachable_code)]
+    ResolvedSource::default()
+}
+
+/// `ModuleLoader.zig` `getHardcodedModule(jsc_vm, specifier, hardcoded)` —
+/// the per-variant body of the builtin-module fast path. Returns `None` when
+/// the variant is recognised but not currently servable (e.g. `bun:main`
+/// before `ServerEntryPoint::generate` has run, or `bun:internal-for-testing`
+/// without the opt-in flag).
+fn get_hardcoded_module(
+    _jsc_vm: *mut VirtualMachine,
+    specifier: &bun_string::String,
+    hardcoded: HardcodedModule,
+) -> Option<ResolvedSource> {
+    // TODO(b2-cycle): `bun_analytics::Features::builtin_modules.insert(hardcoded)`
+    // — the `EnumSet<HardcodedModule>` static lives in T5 (`bun_resolve_builtins`)
+    // per CYCLEBREAK.md and is not yet wired into `bun_analytics`.
+
+    match hardcoded {
+        HardcodedModule::BunMain => {
+            // Synthetic `bun:main` wrapper — pulls source from this thread's
+            // `RuntimeState.entry_point` (the high-tier home for what Zig
+            // stores as `vm.entry_point`).
+            let state = runtime_state();
+            if state.is_null() {
+                return None;
+            }
+            // SAFETY: `state` is the live per-thread `RuntimeState` boxed in
+            // `init_runtime_state`; no other `&mut` to `entry_point` is held.
+            let ep = unsafe { &(*state).entry_point };
+            if !ep.generated {
+                return None;
+            }
+            #[cfg(any())]
+            // TODO(b2-cycle): real `ResolvedSource` ctor — gated alongside the
+            // `#[repr(C)]` struct in `bun_jsc`.
+            {
+                use bun_jsc::resolved_source::Tag;
+                return Some(ResolvedSource {
+                    allocator: core::ptr::null_mut(),
+                    source_code: bun_string::String::clone_utf8(&ep.contents),
+                    specifier: *specifier,
+                    source_url: *specifier,
+                    tag: Tag::Esm,
+                    source_code_needs_deref: true,
+                    ..ResolvedSource::default()
+                });
+            }
+            let _ = ep;
+            Some(ResolvedSource::default())
+        }
+        HardcodedModule::BunInternalForTesting => {
+            // Gated behind `--expose-internals` (release) / always-on (debug).
+            if !cfg!(debug_assertions) {
+                // SAFETY: plain `static mut` matching Zig's mutable global;
+                // only written during init on the JS thread (see
+                // `module_loader::set_is_allowed_to_use_internal_testing_apis`).
+                let allowed = unsafe {
+                    bun_jsc::module_loader::IS_ALLOWED_TO_USE_INTERNAL_TESTING_APIS
+                };
+                if !allowed {
+                    return None;
+                }
+            }
+            Some(js_synthetic_module(b"bun:internal-for-testing", specifier))
+        }
+        HardcodedModule::BunWrap => {
+            // `Runtime.Runtime.sourceCode()` — the bundler's CJS-interop
+            // shim, embedded as a static string in `bun_js_parser::runtime`.
+            #[cfg(any())]
+            // TODO(b2-cycle): `Runtime::source_code()` + real `ResolvedSource`
+            // ctor — both gated.
+            {
+                return Some(ResolvedSource {
+                    allocator: core::ptr::null_mut(),
+                    source_code: bun_string::String::init(
+                        bun_js_parser::runtime::Runtime::source_code(),
+                    ),
+                    specifier: *specifier,
+                    source_url: *specifier,
+                    ..ResolvedSource::default()
+                });
+            }
+            Some(ResolvedSource::default())
+        }
+        // Zig: `inline else => |tag| jsSyntheticModule(@field(ResolvedSource.Tag, @tagName(tag)), specifier)`
+        // — every other `HardcodedModule` is served straight out of the
+        // InternalModuleRegistry by tag, with no Rust-side source text.
+        other => {
+            let name: &'static str = other.into();
+            Some(js_synthetic_module(name.as_bytes(), specifier))
+        }
+    }
+}
+
 /// `ModuleLoader.fetchBuiltinModule(jsc_vm, specifier)` — `HardcodedModule`
-/// lookup + standalone-module-graph probe.
+/// lookup + macro-namespace + standalone-module-graph probe. Port of
+/// `src/jsc/ModuleLoader.zig:1173` `fetchBuiltinModule` and the
+/// `Bun__fetchBuiltinModule` export wrapper at :850.
 ///
 /// # Safety
 /// `jsc_vm` is the live per-thread VM; `out` is a valid out-param.
 unsafe fn fetch_builtin_module(
-    _jsc_vm: *mut VirtualMachine,
+    jsc_vm: *mut VirtualMachine,
     _global: *mut JSGlobalObject,
     specifier: &bun_string::String,
     _referrer: &bun_string::String,
-    _out: *mut ErrorableResolvedSource,
+    out: *mut ErrorableResolvedSource,
 ) -> FetchBuiltinResult {
-    // HardcodedModule fast path — bytes-only PHF lookup.
-    // TODO(b2-blocked): `bun_resolve_builtins` is not yet in `bun_runtime`'s
-    // dep graph (Cargo.toml). Once added, this becomes:
-    //   let spec = specifier.to_owned_slice();
-    //   if let Some(m) = bun_resolve_builtins::HardcodedModule::MAP.get(&*spec) {
-    //       /* populate `*out` from `bun_js::generated_module(m)` */
-    //       return FetchBuiltinResult::Found;
-    //   }
-    // and the `vm.standalone_module_graph` probe (spec ModuleLoader.zig:861-876).
-    let _ = specifier;
+    // PORT NOTE: Zig's `getWithEql(specifier, bun.String.eqlComptime)` walks
+    // the comptime map comparing each key against the (possibly UTF-16)
+    // `bun.String`. The PHF map keys on `&[u8]`, so transcode once up-front;
+    // builtin specifiers are short ASCII so `to_utf8()` is borrow-only in
+    // the common case (`ZigStringSlice` drops without freeing).
+    let spec_utf8 = specifier.to_utf8();
+    let spec = spec_utf8.slice();
+
+    // ── HardcodedModule fast path ───────────────────────────────────────
+    if let Some(&hardcoded) = HardcodedModule::MAP.get(spec) {
+        return match get_hardcoded_module(jsc_vm, specifier, hardcoded) {
+            Some(resolved) => {
+                // SAFETY: per fn contract — `out` is a valid out-param.
+                unsafe { *out = ErrorableResolvedSource::ok(resolved) };
+                FetchBuiltinResult::Found
+            }
+            // Recognised builtin but not servable right now → fall through
+            // to filesystem resolution (matches Zig `orelse return false`).
+            None => FetchBuiltinResult::NotFound,
+        };
+    }
+
+    // ── `macro:` namespace ──────────────────────────────────────────────
+    // Spec ModuleLoader.zig:1178-1186. `vm.macro_entry_points` values are
+    // `*mut MacroEntryPoint` (gated `bun_bundler::entry_points` type); the
+    // map itself is keyed by `i32` hash of the specifier.
+    if spec.starts_with(b"macro:") {
+        #[cfg(any())]
+        // TODO(b2-cycle): `MacroEntryPoint::generate_id_from_specifier` +
+        // `(*entry).source.contents` — `MacroEntryPoint` is gated and the
+        // VM field stores `*mut c_void`.
+        {
+            use bun_bundler::entry_points::MacroEntryPoint;
+            let id = MacroEntryPoint::generate_id_from_specifier(spec);
+            // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+            if let Some(&entry) = unsafe { (*jsc_vm).macro_entry_points.get(&id) } {
+                let entry = entry.cast::<MacroEntryPoint>();
+                unsafe {
+                    *out = ErrorableResolvedSource::ok(ResolvedSource {
+                        allocator: core::ptr::null_mut(),
+                        source_code: bun_string::String::clone_utf8(&(*entry).source.contents),
+                        specifier: *specifier,
+                        source_url: specifier.dupe_ref(),
+                        ..ResolvedSource::default()
+                    });
+                }
+                return FetchBuiltinResult::Found;
+            }
+        }
+        return FetchBuiltinResult::NotFound;
+    }
+
+    // ── Standalone-module-graph probe ───────────────────────────────────
+    // Spec ModuleLoader.zig:1187-1221. `vm.standalone_module_graph` is
+    // `Option<NonNull<c_void>>` until `bun_bundler::StandaloneModuleGraph`
+    // un-gates; the per-file fields (`loader`, `bytecode`, `module_info`,
+    // `module_format`, `toWTFString`) are all on that gated type.
+    #[cfg(any())]
+    // TODO(b2-cycle): `StandaloneModuleGraph` + `ResolvedSource` field ctor.
+    {
+        // SAFETY: per fn contract.
+        if let Some(graph) = unsafe { (*jsc_vm).standalone_module_graph } {
+            let graph = graph.as_ptr().cast::<bun_bundler::StandaloneModuleGraph>();
+            if let Some(file) = unsafe { (*graph).files.get_ptr(spec) } {
+                // … sqlite synthetic-import wrapper / bytecode-cache fields …
+            }
+        }
+    }
+
     FetchBuiltinResult::NotFound
 }
 

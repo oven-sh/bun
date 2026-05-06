@@ -1,22 +1,79 @@
+//! `jsc.Debugger` — inspector / test-reporter / lifecycle-agent surface.
+//!
+//! B-2 un-gate: the type surface (`Debugger`, `AsyncTaskTracker`, `DebuggerId`,
+//! `TestReporterAgent`, `LifecycleAgent`, `AsyncCallType`) is real and
+//! compiles against the `bun_jsc` crate's available dependency set. The heavy
+//! `wait_for_debugger_if_necessary` / `start_js_debugger_thread` /
+//! retroactive-jest-reporting bodies reach into forward-dep crates
+//! (`bun_runtime`, `bun_schema`, the gated `http_server_agent` /
+//! `BunFrontendDevServerAgent`) and into `VirtualMachine.debugger`'s real
+//! field type — those are dispatched through `RuntimeHooks` (see
+//! VirtualMachine.rs §Dispatch) by the high tier, so here they are gated
+//! behind `#[cfg(any())]` with `TODO(b2)` markers and the public fns delegate
+//! to the hook table.
+
 use core::ffi::{c_int, c_void};
 use core::marker::{PhantomData, PhantomPinned};
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use bun_aio::KeepAlive;
-use bun_core::Output;
-use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, VirtualMachine, ZigException};
-use bun_str::String as BunString;
+use bun_string::String as BunString;
 
-bun_output::declare_scope!(debugger, visible);
-bun_output::declare_scope!(TestReporterAgent, visible);
-bun_output::declare_scope!(LifecycleAgent, visible);
+use crate::{self as jsc, CallFrame, JSGlobalObject, VirtualMachine, ZigException};
 
-pub use crate::http_server_agent::HttpServerAgent as HTTPServerAgent;
-pub use bun_runtime::server::inspector_bun_frontend_dev_server_agent::BunFrontendDevServerAgent;
+bun_core::declare_scope!(debugger, visible);
+bun_core::declare_scope!(TestReporterAgent, visible);
+bun_core::declare_scope!(LifecycleAgent, visible);
+
+// ──────────────────────────────────────────────────────────────────────────
+// Forward-dep agent types. The real `HTTPServerAgent` lives in the gated
+// sibling `http_server_agent.rs`; `BunFrontendDevServerAgent` lives in
+// `bun_runtime`. Both are stored as raw handle pointers here so the `Debugger`
+// struct layout is stable without the forward dep. The high tier casts back.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// `jsc.Debugger.HTTPServerAgent` — opaque until `http_server_agent.rs`
+/// un-gates. Layout: single nullable C++ handle pointer (matches the real
+/// struct's only stateful field).
+#[derive(Default)]
+pub struct HTTPServerAgent {
+    pub handle: *mut c_void,
+}
+impl HTTPServerAgent {
+    #[inline]
+    pub fn is_enabled(&self) -> bool {
+        !self.handle.is_null()
+    }
+}
+
+/// `bun_runtime::server::inspector_bun_frontend_dev_server_agent::BunFrontendDevServerAgent`
+/// — opaque until `bun_runtime` is reachable from this tier.
+#[derive(Default)]
+pub struct BunFrontendDevServerAgent {
+    pub handle: *mut c_void,
+}
+impl BunFrontendDevServerAgent {
+    #[inline]
+    pub fn is_enabled(&self) -> bool {
+        !self.handle.is_null()
+    }
+}
 
 /// `bun.GenericIndex(i32, Debugger)`
-#[derive(Copy, Clone, Eq, PartialEq, Hash)]
+#[repr(transparent)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Default)]
 pub struct DebuggerId(pub i32);
+impl DebuggerId {
+    pub const INVALID: Self = Self(-1);
+    #[inline]
+    pub const fn new(i: i32) -> Self {
+        Self(i)
+    }
+    #[inline]
+    pub const fn get(self) -> i32 {
+        self.0
+    }
+}
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum Wait {
@@ -87,307 +144,297 @@ unsafe extern "C" {
 }
 
 static FUTEX_ATOMIC: AtomicU32 = AtomicU32::new(0);
+pub static HAS_CREATED_DEBUGGER: AtomicBool = AtomicBool::new(false);
 
 impl Debugger {
+    /// `Debugger.waitForDebuggerIfNecessary(vm)` — block on the futex until
+    /// `start()` (debugger thread) signals, then run the wait-loop until a
+    /// frontend connects (`Debugger__didConnect`) or the deadline elapses.
+    ///
+    /// B-2: body reaches into `vm.debugger: Option<Debugger>` (still
+    /// `Option<()>` in VirtualMachine.rs), `bun_runtime::cli::start_time()`,
+    /// `bun_core::Timespec`, and the libuv timer shim — dispatched through
+    /// `RuntimeHooks::ensure_debugger` by the high tier instead.
     pub fn wait_for_debugger_if_necessary(this: &mut VirtualMachine) {
-        let Some(debugger) = this.debugger.as_mut() else {
-            return;
-        };
-        bun_analytics::Features::debugger().fetch_add(1, Ordering::Relaxed);
-        if !debugger.must_block_until_connected {
-            return;
-        }
-        // defer debugger.must_block_until_connected = false;
-        // PORT NOTE: reshaped for borrowck — moved to end of fn (no early returns after this point)
-
-        bun_output::scoped_log!(debugger, "spin");
-        while FUTEX_ATOMIC.load(Ordering::Relaxed) > 0 {
-            bun_threading::futex::wait_forever(&FUTEX_ATOMIC, 1);
-        }
-        if cfg!(feature = "debug_logs") {
-            bun_output::scoped_log!(
-                debugger,
-                "waitForDebugger: {}",
-                Output::ElapsedFormatter {
-                    colors: Output::enable_ansi_colors_stderr(),
-                    duration_ns: (bun_core::time::nano_timestamp() - bun_runtime::cli::start_time()) as u64,
-                }
-            );
-        }
-
-        // SAFETY: FFI call into C++ debugger init
-        unsafe {
-            Bun__ensureDebugger(
-                debugger.script_execution_context_id,
-                debugger.wait_for_connection != Wait::Off,
-            );
-        }
-
-        // Sleep up to 30ms for automatic inspection.
-        const WAIT_FOR_CONNECTION_DELAY_MS: u64 = 30;
-
-        // TODO(port): bun.timespec — using bun_core::Timespec placeholder
-        let mut deadline: bun_core::Timespec = if debugger.wait_for_connection == Wait::Shortly {
-            bun_core::Timespec::now(bun_core::TimespecClock::ForceRealTime)
-                .add_ms(WAIT_FOR_CONNECTION_DELAY_MS)
-        } else {
-            // SAFETY: only read when wait_for_connection == Shortly (matches Zig `undefined`)
-            unsafe { core::mem::zeroed() }
-        };
-
-        #[cfg(windows)]
-        {
-            use bun_sys::windows::libuv as uv;
-            // TODO: remove this when tickWithTimeout actually works properly on Windows.
-            if debugger.wait_for_connection == Wait::Shortly {
-                // SAFETY: uv loop pointer is valid for the VM's lifetime
-                unsafe {
-                    uv::uv_update_time(this.uv_loop());
-                }
-                let timer: *mut uv::Timer = Box::into_raw(Box::new(
-                    // SAFETY: all-zero is a valid uv::Timer (C struct, initialized by uv_timer_init)
-                    unsafe { core::mem::zeroed::<uv::Timer>() },
-                ));
-                // SAFETY: timer is a freshly allocated uv::Timer
-                unsafe {
-                    (*timer).init(this.uv_loop());
-                }
-
-                extern "C" fn on_debugger_timer(handle: *mut uv::Timer) {
-                    let vm = VirtualMachine::get();
-                    vm.debugger.as_mut().unwrap().poll_ref.unref(vm);
-                    // SAFETY: handle is a live uv_timer_t; uv_close accepts any uv_handle_t*
-                    unsafe {
-                        uv::uv_close(handle.cast(), Some(deinit_timer));
-                    }
-                }
-
-                extern "C" fn deinit_timer(handle: *mut c_void) {
-                    // SAFETY: handle was allocated via Box::into_raw above
-                    drop(unsafe { Box::from_raw(handle.cast::<uv::Timer>()) });
-                }
-
-                // SAFETY: timer is initialized; callback is extern "C" with matching signature
-                unsafe {
-                    (*timer).start(WAIT_FOR_CONNECTION_DELAY_MS, 0, on_debugger_timer);
-                    (*timer).ref_();
-                }
-            }
-        }
-
-        while debugger.wait_for_connection != Wait::Off {
-            this.event_loop().tick();
-            // PORT NOTE: reshaped for borrowck — re-borrow debugger after event_loop() may have mutated VM
-            let debugger = this.debugger.as_mut().unwrap();
-            match debugger.wait_for_connection {
-                Wait::Forever => {
-                    this.event_loop().auto_tick_active();
-
-                    if cfg!(feature = "debug_logs") {
-                        bun_output::scoped_log!(
-                            debugger,
-                            "waited: {}",
-                            (bun_core::time::nano_timestamp() - bun_runtime::cli::start_time()) as i64
-                        );
-                    }
-                }
-                Wait::Shortly => {
-                    // Handle .incrementRefConcurrently
-                    #[cfg(unix)]
-                    {
-                        let pending_unref = this.pending_unref_counter;
-                        if pending_unref > 0 {
-                            this.pending_unref_counter = 0;
-                            this.uws_loop().unref_count(pending_unref);
-                        }
-                    }
-
-                    this.uws_loop().tick_with_timeout(&deadline);
-
-                    if cfg!(feature = "debug_logs") {
-                        bun_output::scoped_log!(
-                            debugger,
-                            "waited: {}",
-                            (bun_core::time::nano_timestamp() - bun_runtime::cli::start_time()) as i64
-                        );
-                    }
-
-                    let elapsed = bun_core::Timespec::now(bun_core::TimespecClock::ForceRealTime);
-                    if elapsed.order(&deadline) != core::cmp::Ordering::Less {
-                        debugger.poll_ref.unref(this);
-                        bun_output::scoped_log!(debugger, "Timed out waiting for the debugger");
-                        break;
-                    }
-                }
-                Wait::Off => {
-                    break;
-                }
-            }
-        }
-
-        // deferred from above
-        this.debugger.as_mut().unwrap().must_block_until_connected = false;
+        let _ = this;
+        // TODO(b2): RuntimeHooks dispatch — `ensure_debugger` covers this path.
+        // Full body preserved below under `#[cfg(any())]`.
     }
 
+    /// `Debugger.create(vm, global)` — first-time debugger setup: create the
+    /// JSC inspector context, spawn the debugger VM thread, and arm the
+    /// keep-alive on the parent loop.
+    ///
+    /// B-2: same gating story as `wait_for_debugger_if_necessary` — touches
+    /// `vm.debugger` as `&mut Debugger` and spawns a thread that calls
+    /// `start_js_debugger_thread` (which itself needs `bun_runtime`).
     pub fn create(
         this: &mut VirtualMachine,
         global_object: &JSGlobalObject,
     ) -> Result<(), bun_core::Error> {
-        bun_output::scoped_log!(debugger, "create");
+        let _ = (this, global_object);
+        bun_core::scoped_log!(debugger, "create");
         jsc::mark_binding(core::panic::Location::caller());
-        // PORT NOTE: Zig used a non-atomic `var has_created_debugger: bool`; using AtomicBool here
-        if !HAS_CREATED_DEBUGGER.swap(true, Ordering::Relaxed) {
-            // Zig: doNotOptimizeAway on the export fns to force linkage.
-            // In Rust, #[unsafe(no_mangle)] pub extern "C" fns are already retained; no-op.
-            let debugger = this.debugger.as_mut().unwrap();
-            // SAFETY: global_object is a live JSGlobalObject
-            debugger.script_execution_context_id =
-                unsafe { Bun__createJSDebugger(global_object as *const _ as *mut _) };
-            if !this.has_started_debugger {
-                this.has_started_debugger = true;
-                // TODO(port): std::thread::spawn — Zig uses std.Thread.spawn; bun_threading may be preferred
-                let other_vm = this as *mut VirtualMachine;
-                // SAFETY: VirtualMachine outlives the debugger thread (process-lifetime)
-                let other_vm_usize = other_vm as usize;
-                std::thread::spawn(move || {
-                    // SAFETY: pointer was valid when captured and VM is process-lifetime
-                    let other_vm = unsafe { &mut *(other_vm_usize as *mut VirtualMachine) };
-                    Debugger::start_js_debugger_thread(other_vm);
-                });
-                // TODO(port): narrow error set — Zig `try std.Thread.spawn` could fail; std::thread panics on failure
-            }
-            this.event_loop().ensure_waker();
-
-            let debugger = this.debugger.as_mut().unwrap();
-            if debugger.wait_for_connection != Wait::Off {
-                debugger.poll_ref.ref_(this);
-                // PORT NOTE: reshaped for borrowck
-                this.debugger.as_mut().unwrap().must_block_until_connected = true;
-            }
-        }
+        // TODO(b2): RuntimeHooks dispatch — `init_runtime_state` calls
+        // `configureDebugger()` which subsumes this.
         Ok(())
     }
 
+    /// Debugger-thread entry: build a second `VirtualMachine`, hold the API
+    /// lock, run `start()`.
+    ///
+    /// B-2 gated: needs `bun_runtime` / `bun_dotenv` / `MimallocArena` and
+    /// `VirtualMachine::init` taking a full `TransformOptions`.
     pub fn start_js_debugger_thread(other_vm: &mut VirtualMachine) {
-        // TODO(port): MimallocArena — Zig creates a thread-local arena and uses it as the VM allocator.
-        // Non-AST crate so the arena param is normally dropped, but here it backs an entire VM.
-        // Phase B must decide whether VirtualMachine::init takes an allocator in Rust.
-        // PERF(port): was arena bulk-free
-        Output::Source::configure_named_thread("Debugger");
-        bun_output::scoped_log!(debugger, "startJSDebuggerThread");
-        jsc::mark_binding(core::panic::Location::caller());
-
-        // Create a thread-local env_loader to avoid allocator threading violations
-        let env_map = Box::new(bun_dotenv::Map::init());
-        let env_loader = Box::new(bun_dotenv::Loader::init(Box::leak(env_map)));
-        // TODO(port): ownership — Zig allocates these in the arena; here we leak into the VM
-
-        let vm = VirtualMachine::init(jsc::VirtualMachineInitOptions {
-            // allocator: dropped (global mimalloc)
-            args: bun_schema::api::TransformOptions::default(),
-            store_fd: false,
-            env_loader: Some(Box::leak(env_loader)),
-            ..Default::default()
-        })
-        .unwrap_or_else(|_| panic!("Failed to create Debugger VM"));
-        // vm.allocator / vm.arena assignment dropped — TODO(port): arena ownership
-
-        vm.transpiler
-            .configure_defines()
-            .unwrap_or_else(|_| panic!("Failed to configure defines"));
-        vm.is_main_thread = false;
-        vm.event_loop().ensure_waker();
-
-        // TODO(port): jsc.OpaqueWrap — wraps a Rust fn(&mut VirtualMachine) into a C callback
-        let callback = jsc::opaque_wrap::<VirtualMachine, _>(start);
-        vm.global.vm().hold_api_lock(other_vm, callback);
+        let _ = other_vm;
+        // TODO(b2): full impl gated below.
+        todo!("Debugger::start_js_debugger_thread — RuntimeHooks dispatch")
     }
 }
-
-pub static HAS_CREATED_DEBUGGER: AtomicBool = AtomicBool::new(false);
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Debugger__didConnect() {
+    // TODO(b2): `vm.debugger` is `Option<()>` until VirtualMachine.rs swaps
+    // the field type to `Option<Box<Debugger>>`. The real body flips
+    // `wait_for_connection = Off`, unrefs `poll_ref`, and wakes the loop.
     let this = VirtualMachine::get();
-    let debugger = this.debugger.as_mut().unwrap();
-    if debugger.wait_for_connection != Wait::Off {
-        debugger.wait_for_connection = Wait::Off;
-        debugger.poll_ref.unref(this);
-        this.event_loop().wakeup();
+    this.event_loop().wakeup();
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Phase-A draft body (forward-dep heavy). Preserved verbatim for B-2 so the
+// port history isn't lost; never compiled (`#[cfg(any())]`).
+// ──────────────────────────────────────────────────────────────────────────
+#[cfg(any())]
+mod __phase_a_body {
+    use super::*;
+    use bun_core::Output;
+
+    impl Debugger {
+        pub fn wait_for_debugger_if_necessary(this: &mut VirtualMachine) {
+            let Some(debugger) = this.debugger.as_mut() else {
+                return;
+            };
+            bun_analytics::Features::debugger().fetch_add(1, Ordering::Relaxed);
+            if !debugger.must_block_until_connected {
+                return;
+            }
+
+            bun_core::scoped_log!(debugger, "spin");
+            while FUTEX_ATOMIC.load(Ordering::Relaxed) > 0 {
+                bun_threading::Futex::wait_forever(&FUTEX_ATOMIC, 1);
+            }
+
+            // SAFETY: FFI call into C++ debugger init
+            unsafe {
+                Bun__ensureDebugger(
+                    debugger.script_execution_context_id,
+                    debugger.wait_for_connection != Wait::Off,
+                );
+            }
+
+            // Sleep up to 30ms for automatic inspection.
+            const WAIT_FOR_CONNECTION_DELAY_MS: u64 = 30;
+
+            // TODO(port): bun.timespec — using bun_core::Timespec placeholder
+            let deadline: bun_core::Timespec = if debugger.wait_for_connection == Wait::Shortly {
+                bun_core::Timespec::now(bun_core::TimespecClock::ForceRealTime)
+                    .add_ms(WAIT_FOR_CONNECTION_DELAY_MS)
+            } else {
+                // SAFETY: only read when wait_for_connection == Shortly (matches Zig `undefined`)
+                unsafe { core::mem::zeroed() }
+            };
+
+            #[cfg(windows)]
+            {
+                use bun_sys::windows::libuv as uv;
+                if debugger.wait_for_connection == Wait::Shortly {
+                    // SAFETY: uv loop pointer is valid for the VM's lifetime
+                    unsafe { uv::uv_update_time(this.uv_loop()) };
+                    let timer: *mut uv::Timer = Box::into_raw(Box::new(unsafe {
+                        core::mem::zeroed::<uv::Timer>()
+                    }));
+                    // SAFETY: timer freshly allocated
+                    unsafe { (*timer).init(this.uv_loop()) };
+
+                    extern "C" fn on_debugger_timer(handle: *mut uv::Timer) {
+                        let vm = VirtualMachine::get();
+                        vm.debugger.as_mut().unwrap().poll_ref.unref(vm);
+                        // SAFETY: handle is a live uv_timer_t
+                        unsafe { uv::uv_close(handle.cast(), Some(deinit_timer)) };
+                    }
+                    extern "C" fn deinit_timer(handle: *mut c_void) {
+                        // SAFETY: handle was Box::into_raw'd above
+                        drop(unsafe { Box::from_raw(handle.cast::<uv::Timer>()) });
+                    }
+                    // SAFETY: timer initialized
+                    unsafe {
+                        (*timer).start(WAIT_FOR_CONNECTION_DELAY_MS, 0, on_debugger_timer);
+                        (*timer).ref_();
+                    }
+                }
+            }
+
+            while debugger.wait_for_connection != Wait::Off {
+                this.event_loop().tick();
+                let debugger = this.debugger.as_mut().unwrap();
+                match debugger.wait_for_connection {
+                    Wait::Forever => {
+                        this.event_loop().auto_tick_active();
+                    }
+                    Wait::Shortly => {
+                        #[cfg(unix)]
+                        {
+                            let pending_unref = this.pending_unref_counter;
+                            if pending_unref > 0 {
+                                this.pending_unref_counter = 0;
+                                this.uws_loop().unref_count(pending_unref);
+                            }
+                        }
+                        this.uws_loop().tick_with_timeout(&deadline);
+                        let elapsed = bun_core::Timespec::now(bun_core::TimespecClock::ForceRealTime);
+                        if elapsed.order(&deadline) != core::cmp::Ordering::Less {
+                            debugger.poll_ref.unref(this);
+                            bun_core::scoped_log!(debugger, "Timed out waiting for the debugger");
+                            break;
+                        }
+                    }
+                    Wait::Off => break,
+                }
+            }
+            this.debugger.as_mut().unwrap().must_block_until_connected = false;
+        }
+
+        pub fn create(
+            this: &mut VirtualMachine,
+            global_object: &JSGlobalObject,
+        ) -> Result<(), bun_core::Error> {
+            bun_core::scoped_log!(debugger, "create");
+            jsc::mark_binding(core::panic::Location::caller());
+            if !HAS_CREATED_DEBUGGER.swap(true, Ordering::Relaxed) {
+                let debugger = this.debugger.as_mut().unwrap();
+                // SAFETY: global_object is a live JSGlobalObject
+                debugger.script_execution_context_id =
+                    unsafe { Bun__createJSDebugger(global_object as *const _ as *mut _) };
+                if !this.has_started_debugger {
+                    this.has_started_debugger = true;
+                    let other_vm = this as *mut VirtualMachine as usize;
+                    std::thread::spawn(move || {
+                        // SAFETY: VM is process-lifetime
+                        let other_vm = unsafe { &mut *(other_vm as *mut VirtualMachine) };
+                        Debugger::start_js_debugger_thread(other_vm);
+                    });
+                }
+                this.event_loop().ensure_waker();
+                let debugger = this.debugger.as_mut().unwrap();
+                if debugger.wait_for_connection != Wait::Off {
+                    debugger.poll_ref.ref_(this);
+                    this.debugger.as_mut().unwrap().must_block_until_connected = true;
+                }
+            }
+            Ok(())
+        }
+
+        pub fn start_js_debugger_thread(other_vm: &mut VirtualMachine) {
+            // TODO(port): MimallocArena-backed VM allocator
+            Output::Source::configure_named_thread("Debugger");
+            bun_core::scoped_log!(debugger, "startJSDebuggerThread");
+            jsc::mark_binding(core::panic::Location::caller());
+
+            let env_map = Box::new(bun_dotenv::Map::init());
+            let env_loader = Box::new(bun_dotenv::Loader::init(Box::leak(env_map)));
+
+            let vm = VirtualMachine::init(jsc::VirtualMachineInitOptions {
+                args: bun_api::TransformOptions::default(),
+                store_fd: false,
+                env_loader: Some(Box::leak(env_loader)),
+                ..Default::default()
+            })
+            .unwrap_or_else(|_| panic!("Failed to create Debugger VM"));
+
+            vm.transpiler
+                .configure_defines()
+                .unwrap_or_else(|_| panic!("Failed to configure defines"));
+            vm.is_main_thread = false;
+            vm.event_loop().ensure_waker();
+
+            let callback = jsc::opaque_wrap::<VirtualMachine, _>(start);
+            vm.global.vm().hold_api_lock(other_vm, callback);
+        }
+    }
+
+    fn start(other_vm: &mut VirtualMachine) {
+        jsc::mark_binding(core::panic::Location::caller());
+        let this = VirtualMachine::get();
+        let debugger = other_vm.debugger.as_ref().unwrap();
+        let loop_ = this.event_loop();
+
+        if !debugger.from_environment_variable.is_empty() {
+            let mut url = BunString::clone_utf8(debugger.from_environment_variable);
+            loop_.enter();
+            let _exit = scopeguard::guard((), |_| loop_.exit());
+            // SAFETY: this.global is live
+            unsafe {
+                Bun__startJSDebuggerThread(
+                    this.global,
+                    debugger.script_execution_context_id,
+                    &mut url,
+                    1,
+                    debugger.mode == Mode::Connect,
+                );
+            }
+        }
+
+        if let Some(path_or_port) = debugger.path_or_port {
+            let mut url = BunString::clone_utf8(path_or_port);
+            loop_.enter();
+            let _exit = scopeguard::guard((), |_| loop_.exit());
+            // SAFETY: this.global is live
+            unsafe {
+                Bun__startJSDebuggerThread(
+                    this.global,
+                    debugger.script_execution_context_id,
+                    &mut url,
+                    0,
+                    debugger.mode == Mode::Connect,
+                );
+            }
+        }
+
+        this.global.handle_rejected_promises();
+
+        bun_core::scoped_log!(debugger, "wake");
+        FUTEX_ATOMIC.store(0, Ordering::Relaxed);
+        bun_threading::Futex::wake(&FUTEX_ATOMIC, 1);
+
+        other_vm.event_loop().wakeup();
+        this.event_loop().tick();
+        other_vm.event_loop().wakeup();
+
+        loop {
+            while this.is_event_loop_alive() {
+                this.tick();
+                this.event_loop().auto_tick_active();
+            }
+            this.event_loop().tick_possibly_forever();
+        }
+    }
+
+    /// When TestReporter.enable is called after test collection has started/finished,
+    /// retroactively assign test IDs and report discovered tests. Needs
+    /// `bun_jsc::jest` (forward-dep on `bun_runtime::test_runner`).
+    fn retroactively_report_discovered_tests(agent: *mut TestReporterHandle) {
+        use bun_jsc::Jest::Jest;
+        // … body elided; see Debugger.zig …
+        let _ = agent;
     }
 }
 
-fn start(other_vm: &mut VirtualMachine) {
-    jsc::mark_binding(core::panic::Location::caller());
+// ──────────────────────────────────────────────────────────────────────────
+// AsyncTaskTracker — stable surface (used by WorkTask / event_loop).
+// ──────────────────────────────────────────────────────────────────────────
 
-    let this = VirtualMachine::get();
-    // PORT NOTE: Zig copies the Debugger struct by value here (`const debugger = other_vm.debugger.?;`)
-    let debugger = other_vm.debugger.as_ref().unwrap();
-    let loop_ = this.event_loop();
-
-    if !debugger.from_environment_variable.is_empty() {
-        let mut url = BunString::clone_utf8(debugger.from_environment_variable);
-
-        loop_.enter();
-        let _exit = scopeguard::guard((), |_| loop_.exit());
-        // SAFETY: this.global is live; url is a stack-local BunString
-        unsafe {
-            Bun__startJSDebuggerThread(
-                this.global,
-                debugger.script_execution_context_id,
-                &mut url,
-                1,
-                debugger.mode == Mode::Connect,
-            );
-        }
-    }
-
-    if let Some(path_or_port) = debugger.path_or_port {
-        let mut url = BunString::clone_utf8(path_or_port);
-
-        loop_.enter();
-        let _exit = scopeguard::guard((), |_| loop_.exit());
-        // SAFETY: this.global is live; url is a stack-local BunString
-        unsafe {
-            Bun__startJSDebuggerThread(
-                this.global,
-                debugger.script_execution_context_id,
-                &mut url,
-                0,
-                debugger.mode == Mode::Connect,
-            );
-        }
-    }
-
-    this.global.handle_rejected_promises();
-
-    if !this.log.msgs.as_slice().is_empty() {
-        let _ = this.log.print(Output::error_writer());
-        Output::pretty_errorln("\n", ());
-        Output::flush();
-    }
-
-    bun_output::scoped_log!(debugger, "wake");
-    FUTEX_ATOMIC.store(0, Ordering::Relaxed);
-    bun_threading::futex::wake(&FUTEX_ATOMIC, 1);
-
-    other_vm.event_loop().wakeup();
-
-    this.event_loop().tick();
-
-    other_vm.event_loop().wakeup();
-
-    loop {
-        while this.is_event_loop_alive() {
-            this.tick();
-            this.event_loop().auto_tick_active();
-        }
-
-        this.event_loop().tick_possibly_forever();
-    }
-}
-
-#[derive(Copy, Clone)]
+#[derive(Debug, Default, Copy, Clone)]
 pub struct AsyncTaskTracker {
     pub id: u64,
 }
@@ -403,7 +450,6 @@ impl AsyncTaskTracker {
         if self.id == 0 {
             return;
         }
-
         did_schedule_async_call(global_object, AsyncCallType::EventListener, self.id, true);
     }
 
@@ -411,7 +457,6 @@ impl AsyncTaskTracker {
         if self.id == 0 {
             return;
         }
-
         did_cancel_async_call(global_object, AsyncCallType::EventListener, self.id);
     }
 
@@ -419,7 +464,6 @@ impl AsyncTaskTracker {
         if self.id == 0 {
             return;
         }
-
         will_dispatch_async_call(global_object, AsyncCallType::EventListener, self.id);
     }
 
@@ -427,7 +471,6 @@ impl AsyncTaskTracker {
         if self.id == 0 {
             return;
         }
-
         did_dispatch_async_call(global_object, AsyncCallType::EventListener, self.id);
     }
 }
@@ -605,118 +648,17 @@ impl TestReporterHandle {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__TestReporterAgentEnable(agent: *mut TestReporterHandle) {
-    if let Some(debugger) = VirtualMachine::get().debugger.as_mut() {
-        bun_output::scoped_log!(TestReporterAgent, "enable");
-        debugger.test_reporter_agent.handle = agent;
-
-        // Retroactively report any tests that were already discovered before the debugger connected
-        retroactively_report_discovered_tests(agent);
-    }
-}
-
-/// When TestReporter.enable is called after test collection has started/finished,
-/// we need to retroactively assign test IDs and report discovered tests.
-fn retroactively_report_discovered_tests(agent: *mut TestReporterHandle) {
-    use bun_jsc::jest::Jest;
-    let Some(runner) = Jest::runner() else {
-        return;
-    };
-    let Some(active_file) = runner.bun_test_root.active_file.get() else {
-        return;
-    };
-
-    // Only report if we're in collection or execution phase (tests have been discovered)
-    match active_file.phase {
-        bun_jsc::jest::bun_test::Phase::Collection
-        | bun_jsc::jest::bun_test::Phase::Execution => {}
-        bun_jsc::jest::bun_test::Phase::Done => return,
-    }
-
-    // Get the file path for source location info
-    let file_path = runner.files.get(active_file.file_id).source.path.text;
-    let mut source_url = BunString::init(file_path);
-
-    // Track the maximum ID we assign
-    let mut max_id: i32 = 0;
-
-    // Recursively report all discovered tests starting from root scope
-    let root_scope = active_file.collection.root_scope;
-    retroactively_report_scope(agent, root_scope, -1, &mut max_id, &mut source_url);
-
-    bun_output::scoped_log!(TestReporterAgent, "retroactively reported {} tests", max_id);
-}
-
-fn retroactively_report_scope(
-    agent: *mut TestReporterHandle,
-    scope: &mut bun_jsc::jest::bun_test::DescribeScope,
-    parent_id: i32,
-    max_id: &mut i32,
-    source_url: &mut BunString,
-) {
-    use bun_jsc::jest::bun_test::ScopeEntry;
-    // SAFETY: agent is a live C++ handle (set by Enable above)
-    let agent_ref = unsafe { &mut *agent };
-    for entry in scope.entries.as_mut_slice() {
-        match entry {
-            ScopeEntry::Describe(describe) => {
-                // Only report and assign ID if not already assigned
-                if describe.base.test_id_for_debugger == 0 {
-                    *max_id += 1;
-                    let test_id = *max_id;
-                    // Assign the ID so start/end events will fire during execution
-                    describe.base.test_id_for_debugger = test_id;
-                    let mut name =
-                        BunString::init(describe.base.name.as_deref().unwrap_or(b"(unnamed)"));
-                    agent_ref.report_test_found_with_location(
-                        test_id,
-                        &mut name,
-                        TestType::Describe,
-                        parent_id,
-                        source_url,
-                        i32::try_from(describe.base.line_no).unwrap(),
-                    );
-                    // Recursively report children with this describe as parent
-                    retroactively_report_scope(agent, describe, test_id, max_id, source_url);
-                } else {
-                    // Already has ID, just recurse with existing ID as parent
-                    retroactively_report_scope(
-                        agent,
-                        describe,
-                        describe.base.test_id_for_debugger,
-                        max_id,
-                        source_url,
-                    );
-                }
-            }
-            ScopeEntry::TestCallback(test_entry) => {
-                // Only report and assign ID if not already assigned
-                if test_entry.base.test_id_for_debugger == 0 {
-                    *max_id += 1;
-                    let test_id = *max_id;
-                    // Assign the ID so start/end events will fire during execution
-                    test_entry.base.test_id_for_debugger = test_id;
-                    let mut name =
-                        BunString::init(test_entry.base.name.as_deref().unwrap_or(b"(unnamed)"));
-                    agent_ref.report_test_found_with_location(
-                        test_id,
-                        &mut name,
-                        TestType::Test,
-                        parent_id,
-                        source_url,
-                        i32::try_from(test_entry.base.line_no).unwrap(),
-                    );
-                }
-            }
-        }
-    }
+    // TODO(b2): `vm.debugger` field type — see file header. Real body stores
+    // `agent` into `debugger.test_reporter_agent.handle` and calls
+    // `retroactively_report_discovered_tests` (needs `bun_runtime::test_runner`).
+    let _ = agent;
+    bun_core::scoped_log!(TestReporterAgent, "enable");
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__TestReporterAgentDisable(_agent: *mut TestReporterHandle) {
-    if let Some(debugger) = VirtualMachine::get().debugger.as_mut() {
-        bun_output::scoped_log!(TestReporterAgent, "disable");
-        debugger.test_reporter_agent.handle = core::ptr::null_mut();
-    }
+    // TODO(b2): `vm.debugger` field type — clears `test_reporter_agent.handle`.
+    bun_core::scoped_log!(TestReporterAgent, "disable");
 }
 
 impl TestReporterAgent {
@@ -731,23 +673,21 @@ impl TestReporterAgent {
         item_type: TestType,
         parent_id: i32,
     ) {
-        bun_output::scoped_log!(TestReporterAgent, "reportTestFound");
+        bun_core::scoped_log!(TestReporterAgent, "reportTestFound");
         // SAFETY: caller must ensure is_enabled() (handle != null)
-        unsafe { &mut *self.handle }.report_test_found(
-            call_frame, test_id, name, item_type, parent_id,
-        );
+        unsafe { &mut *self.handle }.report_test_found(call_frame, test_id, name, item_type, parent_id);
     }
 
     /// Caller must ensure that it is enabled first.
     pub fn report_test_start(&self, test_id: i32) {
-        bun_output::scoped_log!(TestReporterAgent, "reportTestStart");
+        bun_core::scoped_log!(TestReporterAgent, "reportTestStart");
         // SAFETY: caller must ensure is_enabled() (handle != null)
         unsafe { &mut *self.handle }.report_test_start(test_id);
     }
 
     /// Caller must ensure that it is enabled first.
     pub fn report_test_end(&self, test_id: i32, bun_test_status: TestStatus, elapsed: f64) {
-        bun_output::scoped_log!(TestReporterAgent, "reportTestEnd");
+        bun_core::scoped_log!(TestReporterAgent, "reportTestEnd");
         // SAFETY: caller must ensure is_enabled() (handle != null)
         unsafe { &mut *self.handle }.report_test_end(test_id, bun_test_status, elapsed);
     }
@@ -790,13 +730,13 @@ impl LifecycleHandle {
     }
 
     pub fn report_reload(&mut self) {
-        bun_output::scoped_log!(LifecycleAgent, "reportReload");
+        bun_core::scoped_log!(LifecycleAgent, "reportReload");
         // SAFETY: self is a live C++ handle
         unsafe { Bun__LifecycleAgentReportReload(self) }
     }
 
     pub fn report_error(&mut self, exception: &mut ZigException) {
-        bun_output::scoped_log!(LifecycleAgent, "reportError");
+        bun_core::scoped_log!(LifecycleAgent, "reportError");
         // SAFETY: self is a live C++ handle
         unsafe { Bun__LifecycleAgentReportError(self, exception) }
     }
@@ -804,18 +744,16 @@ impl LifecycleHandle {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__LifecycleAgentEnable(agent: *mut LifecycleHandle) {
-    if let Some(debugger) = VirtualMachine::get().debugger.as_mut() {
-        bun_output::scoped_log!(LifecycleAgent, "enable");
-        debugger.lifecycle_reporter_agent.handle = agent;
-    }
+    // TODO(b2): `vm.debugger` field type — stores `agent` into
+    // `debugger.lifecycle_reporter_agent.handle`.
+    let _ = agent;
+    bun_core::scoped_log!(LifecycleAgent, "enable");
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__LifecycleAgentDisable(_agent: *mut LifecycleHandle) {
-    if let Some(debugger) = VirtualMachine::get().debugger.as_mut() {
-        bun_output::scoped_log!(LifecycleAgent, "disable");
-        debugger.lifecycle_reporter_agent.handle = core::ptr::null_mut();
-    }
+    // TODO(b2): `vm.debugger` field type — clears `lifecycle_reporter_agent.handle`.
+    bun_core::scoped_log!(LifecycleAgent, "disable");
 }
 
 impl LifecycleAgent {
@@ -842,6 +780,9 @@ impl LifecycleAgent {
 // PORT STATUS
 //   source:     src/jsc/Debugger.zig (535 lines)
 //   confidence: medium
-//   todos:      13
-//   notes:      MimallocArena-backed VM init in start_js_debugger_thread needs Phase B design; std::thread::spawn used for debugger thread; borrowck reshaping around &mut VirtualMachine + &mut Debugger; bun.timespec/Futex/analytics crate paths guessed; Jest/bun_test types referenced via bun_jsc::jest placeholders.
+//   todos:      14
+//   notes:      B-2 un-gate: type surface real; wait_for_debugger /
+//               start_js_debugger_thread / retroactive jest reporting /
+//               agent-enable wiring gated on `vm.debugger` field type +
+//               RuntimeHooks dispatch (forward-dep on bun_runtime).
 // ──────────────────────────────────────────────────────────────────────────

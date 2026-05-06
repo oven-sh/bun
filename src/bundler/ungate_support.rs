@@ -9,8 +9,9 @@
 #![allow(unused)]
 
 use bun_collections::BabyList;
-use bun_js_parser::Ref;
 use bun_string::strings;
+// `Ref` is re-exported (pub use) below for `crate::Ref`; the local `use` here
+// is intentionally folded into that to avoid duplicate-import errors.
 
 use crate::{options, Index, IndexInt};
 
@@ -226,15 +227,14 @@ pub struct CompileResultForSourceMap {
     pub source_index: u32,
 }
 
-/// `bundle_v2.zig:ContentHasher` — Zig uses xxhash64; `bun_wyhash` here as a
-/// stand-in until `xxhash_rust` is added to workspace deps. (PERF(port):
-/// xxhash64 outperforms wyhash above ~1KB.)
+/// `bundle_v2.zig:ContentHasher` — `std.hash.XxHash64` (seed 0). xxhash64
+/// outperforms wyhash above ~1KB.
 pub struct ContentHasher {
-    pub hasher: bun_wyhash::Wyhash11,
+    pub hasher: xxhash_rust::xxh64::Xxh64,
 }
 impl Default for ContentHasher {
     fn default() -> Self {
-        Self { hasher: bun_wyhash::Wyhash11::init(0) }
+        Self { hasher: xxhash_rust::xxh64::Xxh64::new(0) }
     }
 }
 impl ContentHasher {
@@ -247,8 +247,16 @@ impl ContentHasher {
         h.write(bytes);
         h.digest()
     }
-    pub fn digest(&mut self) -> u64 {
-        self.hasher.final_()
+    /// `bundle_v2.zig:ContentHasher.writeInts` — `std.mem.sliceAsBytes(i)`.
+    pub fn write_ints(&mut self, i: &[u32]) {
+        // SAFETY: [u32] is POD; reinterpret as bytes (std.mem.sliceAsBytes).
+        let bytes = unsafe {
+            core::slice::from_raw_parts(i.as_ptr().cast::<u8>(), core::mem::size_of_val(i))
+        };
+        self.hasher.update(bytes);
+    }
+    pub fn digest(&self) -> u64 {
+        self.hasher.digest()
     }
 }
 
@@ -304,6 +312,10 @@ pub mod bun_renamer {
 
 /// `HTMLImportManifest` — gated module; minimal callable surface so
 /// `Chunk.rs::IntermediateOutput::code` typechecks.
+// TODO(b2-blocked): real `HTMLImportManifest.rs` is gated. Call sites in
+// `Chunk.rs::code_with_source_map_shifts` are likewise `#[cfg(any())]`-gated
+// (PORTING.md §Forbidden: no `unimplemented!()` in live code).
+#[cfg(any())]
 pub mod html_import_manifest {
     use crate::Graph::Graph;
     use crate::{chunk::Chunk, LinkerGraph};

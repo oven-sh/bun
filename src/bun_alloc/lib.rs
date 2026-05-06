@@ -762,13 +762,16 @@ pub mod heap_breakdown {
     #[allow(clippy::assertions_on_constants)]
     pub fn get_zone(name: &[u8]) -> &'static Zone {
         debug_assert!(ENABLED, "heap_breakdown::get_zone called with ENABLED=false");
+        // Map key = `name` (no NUL) so lookups match inserts. The NUL-terminated
+        // label handed to `malloc_set_zone_name` is stored as the map *value*
+        // (alongside the zone) to keep its allocation alive for 'static.
         static ZONES: std::sync::OnceLock<
-            parking_lot::Mutex<std::collections::HashMap<Vec<u8>, &'static Zone>>,
+            parking_lot::Mutex<std::collections::HashMap<Vec<u8>, (Vec<u8>, &'static Zone)>>,
         > = std::sync::OnceLock::new();
         let map = ZONES.get_or_init(Default::default);
         let mut map = map.lock();
-        if let Some(&z) = map.get(name) {
-            return z;
+        if let Some((_, z)) = map.get(name) {
+            return *z;
         }
         // Zone names live forever (zones are never destroyed); allocate the
         // NUL-terminated label once and hand its pointer to the OS.
@@ -776,17 +779,16 @@ pub mod heap_breakdown {
         owned.extend_from_slice(name);
         owned.push(0);
         let raw = owned.as_ptr();
-        // Keep `owned` alive for 'static by storing it in the map key alongside
-        // the zone (the map itself is 'static). No `Box::leak` needed.
         // SAFETY: `owned` ends in NUL and contains no interior NUL (type-name input).
         let cstr = unsafe { core::ffi::CStr::from_ptr(raw as *const c_char) };
         // SAFETY: the bytes backing `cstr` are owned by `owned`, which is moved
-        // into the 'static map below before this fn returns, so the pointer the
-        // OS stores via `malloc_set_zone_name` remains valid for process lifetime.
+        // into the 'static map below before this fn returns and is never removed
+        // or replaced (insert only on cache miss), so the pointer the OS stores
+        // via `malloc_set_zone_name` remains valid for process lifetime.
         let cstr_static: &'static core::ffi::CStr =
             unsafe { &*(cstr as *const core::ffi::CStr) };
         let zone = Zone::init(cstr_static);
-        map.insert(owned, zone);
+        map.insert(name.to_vec(), (owned, zone));
         zone
     }
 
@@ -1047,6 +1049,13 @@ pub struct BSSList<ValueType, const COUNT: usize /* = _COUNT * 2 */> {
 
 const BSS_LIST_CHUNK_SIZE: usize = 256;
 
+/// Fixed overflow-block capacity for `BSSStringList` / `BSSMapInner`.
+/// Zig uses `count / 4`; stable Rust cannot express const-generic arithmetic
+/// (`generic_const_exprs`), so use a nonzero stand-in until Phase B threads the
+/// per-instantiation value through. A value of 0 here would make
+/// `OverflowListBlock::is_full` always true and `at_index`'s `idx % COUNT` panic.
+pub const BSS_OVERFLOW_BLOCK_SIZE: usize = 64;
+
 pub struct BSSListOverflowBlock<ValueType> {
     pub used: AtomicU16,
     pub data: [ValueType; BSS_LIST_CHUNK_SIZE],
@@ -1123,8 +1132,8 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
     {
         self.used += 1;
         // SAFETY: head is always non-null after init() (points at self.tail or heap block).
-        let head = unsafe { self.head.unwrap().as_mut() };
-        match head.append(value.clone()) {
+        let head_ptr = self.head.unwrap();
+        match unsafe { (*head_ptr.as_ptr()).append(value.clone()) } {
             Ok(v) => Ok(v),
             Err(_) => {
                 let mut new_block: Box<core::mem::MaybeUninit<BSSListOverflowBlock<ValueType>>> =
@@ -1132,10 +1141,17 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
                 // SAFETY: zero() initializes `used` and `prev`; `data` stays uninit by design.
                 unsafe { (*new_block.as_mut_ptr()).zero() };
                 let mut new_block = unsafe { new_block.assume_init() };
-                // TODO(port): `prev` wants Box ownership of the *current* head, but current head
-                // may be `&self.tail` (not Boxed). Dual-semantics — Phase B must split into
-                // `enum { Inline, Heap(Box<..>) }` or always heap-allocate the first block.
-                new_block.prev = None; // placeholder
+                // Preserve the chain (Zig: `new_block.prev = self.head`). The inline `self.tail`
+                // is not Boxed, so represent it as `prev = None`; heap heads were
+                // `Box::into_raw`'d by an earlier call here and are reclaimed as `Box`.
+                let tail_ptr: *const BSSListOverflowBlock<ValueType> = core::ptr::addr_of!(self.tail);
+                new_block.prev = if core::ptr::eq(head_ptr.as_ptr() as *const _, tail_ptr) {
+                    None
+                } else {
+                    // SAFETY: the previous head was `Box::into_raw`'d by an earlier
+                    // `append_overflow` and is exclusively owned via `self.head`.
+                    Some(unsafe { Box::from_raw(head_ptr.as_ptr()) })
+                };
                 let raw = Box::into_raw(new_block);
                 // SAFETY: raw came from Box::into_raw on the line above; non-null and exclusively owned.
                 self.head = Some(unsafe { NonNull::new_unchecked(raw) });
@@ -1175,9 +1191,20 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
 
 impl<ValueType, const COUNT: usize> Drop for BSSList<ValueType, COUNT> {
     fn drop(&mut self) {
-        // TODO(port): walk `self.head` chain and Box::from_raw each heap block whose address
-        // != `&self.tail`. The inline `tail` block must NOT be Box-dropped. Singleton
-        // `loaded = false` reset belongs to the Phase-B static wrapper, not here.
+        // Zig `deinit`: `self.head.deinit()` walks `prev` and frees each heap block.
+        // The inline `self.tail` is not Boxed and must not be Box-dropped; the
+        // `prev: Option<Box<..>>` chain stops at `None` before reaching it
+        // (see `append_overflow`). Singleton `loaded = false` reset belongs to the
+        // Phase-B static wrapper, not here.
+        if let Some(head) = self.head.take() {
+            let tail_ptr: *const BSSListOverflowBlock<ValueType> = core::ptr::addr_of!(self.tail);
+            if !core::ptr::eq(head.as_ptr() as *const _, tail_ptr) {
+                // SAFETY: `head` was `Box::into_raw`'d by `append_overflow` and is
+                // exclusively owned by this struct. Dropping the Box recursively
+                // drops `prev`, freeing the whole heap chain.
+                drop(unsafe { Box::from_raw(head.as_ptr()) });
+            }
+        }
     }
 }
 
@@ -1200,7 +1227,8 @@ pub struct BSSStringList<const COUNT: usize /* = _COUNT * 2 */, const ITEM_LENGT
     pub backing_buf: Box<[u8]>, // logically [u8; COUNT * ITEM_LENGTH]
     pub backing_buf_used: u64,
     // TODO(port): Overflow = OverflowList<&'static [u8], COUNT / 4> (generic_const_exprs).
-    pub overflow_list: OverflowList<&'static [u8], 0>, // placeholder COUNT/4
+    // Fixed nonzero block size until generic_const_exprs lands; 0 would div-by-zero in at_index.
+    pub overflow_list: OverflowList<&'static [u8], BSS_OVERFLOW_BLOCK_SIZE>,
     pub slice_buf: Box<[&'static [u8]]>, // logically [&[u8]; COUNT]
     pub slice_buf_used: u16,
     pub mutex: Mutex,
@@ -1310,7 +1338,9 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
         value: &[u8],
     ) -> core::result::Result<&[u8], AllocError> {
         self.mutex.lock();
-        // TODO(port): RAII mutex guard (see `append`).
+        let mutex = core::ptr::addr_of!(self.mutex);
+        // SAFETY: `mutex` points into `*self`, which outlives `_guard` (drops at end of fn).
+        let _guard = scopeguard::guard((), move |_| unsafe { (*mutex).unlock() });
 
         thread_local! {
             static LOWERCASE_BUF: core::cell::RefCell<crate::stubs::PathBuffer> =
@@ -1350,13 +1380,17 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
 
             out = &mut self.backing_buf[start..end - 1];
         } else {
-            // Zig: self.allocator.alloc(u8, value_len) — global mimalloc in Rust.
-            let mut value_buf = vec![0u8; value_len].into_boxed_slice();
+            // Zig: self.allocator.alloc(u8, value_len) — route through mimalloc directly
+            // (PORTING.md forbids `Box::leak`). BSSStringList never frees overflow
+            // allocations (matches Zig); the singleton lives for process lifetime.
+            // SAFETY: FFI — mi_malloc returns null on OOM or a writable region of ≥value_len bytes.
+            let ptr = unsafe { mimalloc::mi_malloc(value_len) } as *mut u8;
+            assert!(!ptr.is_null(), "OOM");
+            // SAFETY: `ptr` is a fresh allocation of `value_len` bytes with no other alias.
+            let value_buf = unsafe { core::slice::from_raw_parts_mut(ptr, value_len) };
             value.copy_into(&mut value_buf[..value_len - 1]);
             value_buf[value_len - 1] = 0;
-            // Leak: BSSStringList never frees overflow allocations (matches Zig).
-            let leaked: &'static mut [u8] = Box::leak(value_buf);
-            out = &mut leaked[..value_len - 1];
+            out = &mut value_buf[..value_len - 1];
         }
 
         let mut result = IndexType::new(u32::MAX >> 1, self.slice_buf_used as usize > Self::MAX_INDEX);
@@ -1400,7 +1434,8 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
 pub struct BSSMapInner<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool> {
     pub index: IndexMap,
     // TODO(port): Overflow = OverflowList<ValueType, COUNT / 4> (generic_const_exprs).
-    pub overflow_list: OverflowList<ValueType, 0>, // placeholder COUNT/4
+    // Fixed nonzero block size until generic_const_exprs lands; 0 would div-by-zero in at_index.
+    pub overflow_list: OverflowList<ValueType, BSS_OVERFLOW_BLOCK_SIZE>,
     pub mutex: Mutex,
     pub backing_buf: [ValueType; COUNT],
     pub backing_buf_used: u16,
@@ -1506,7 +1541,9 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
         value: ValueType,
     ) -> core::result::Result<&mut ValueType, AllocError> {
         self.mutex.lock();
-        // TODO(port): RAII mutex guard.
+        let mutex = core::ptr::addr_of!(self.mutex);
+        // SAFETY: `mutex` points into `*self`, which outlives `_guard` (drops at end of fn).
+        let _guard = scopeguard::guard((), move |_| unsafe { (*mutex).unlock() });
 
         if result.index.index() == NOT_FOUND.index() || result.index.index() == UNASSIGNED.index() {
             result
@@ -1535,7 +1572,6 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
             self.backing_buf[idx] = value;
             &mut self.backing_buf[idx]
         };
-        // TODO(port): unlock before return via RAII guard.
         Ok(ret)
     }
 
@@ -1648,7 +1684,9 @@ impl<ValueType, const COUNT: usize, const ESTIMATED_KEY_LENGTH: usize, const REM
     // 2. Making the key accessible at the index.
     pub fn put_key(&mut self, key: &[u8], result: &mut Result) -> core::result::Result<(), AllocError> {
         self.map.mutex.lock();
-        // TODO(port): RAII mutex guard.
+        let mutex = core::ptr::addr_of!(self.map.mutex);
+        // SAFETY: `mutex` points into `*self.map`, which outlives `_guard` (drops at end of fn).
+        let _guard = scopeguard::guard((), move |_| unsafe { (*mutex).unlock() });
 
         let slice: &'static [u8];
 
@@ -1664,7 +1702,17 @@ impl<ValueType, const COUNT: usize, const ESTIMATED_KEY_LENGTH: usize, const REM
             // SAFETY: points into self.key_list_buffer (singleton-static lifetime).
             slice = unsafe { core::slice::from_raw_parts(dst.as_ptr(), dst.len()) };
         } else {
-            slice = Box::leak(Box::<[u8]>::from(key));
+            // Zig: allocator.dupe(u8, key). Route through mimalloc directly (PORTING.md
+            // forbids `Box::leak`) so the size-agnostic `mi_free` below stays valid even
+            // after `trim_right` shortens the stored slice.
+            // SAFETY: FFI — mi_malloc returns null on OOM or a writable region of ≥key.len() bytes.
+            let ptr = unsafe { mimalloc::mi_malloc(key.len().max(1)) } as *mut u8;
+            assert!(!ptr.is_null(), "OOM");
+            // SAFETY: `ptr` is a fresh allocation of `key.len()` bytes with no other alias.
+            unsafe { core::ptr::copy_nonoverlapping(key.as_ptr(), ptr, key.len()) };
+            // SAFETY: allocation is owned by this singleton for process lifetime (or until
+            // freed below on overwrite).
+            slice = unsafe { core::slice::from_raw_parts(ptr, key.len()) };
         }
 
         let slice = if REMOVE_TRAILING_SLASHES {
@@ -1681,15 +1729,11 @@ impl<ValueType, const COUNT: usize, const ESTIMATED_KEY_LENGTH: usize, const REM
             if self.key_list_overflow.len() > idx {
                 let existing_slice = self.key_list_overflow[idx];
                 if !self.is_key_statically_allocated(existing_slice) {
-                    // Zig: self.map.allocator.free(existing_slice).
-                    // We Box::leak'd above; reconstruct and drop.
-                    // SAFETY: existing_slice was Box::leak'd by a prior put_key call.
-                    unsafe {
-                        drop(Box::from_raw(core::slice::from_raw_parts_mut(
-                            existing_slice.as_ptr() as *mut u8,
-                            existing_slice.len(),
-                        )));
-                    }
+                    // Zig: self.map.allocator.free(existing_slice). `mi_free` is
+                    // size-agnostic, so a trimmed (shorter) stored slice is fine.
+                    // SAFETY: existing_slice was `mi_malloc`'d by a prior put_key call
+                    // (the only non-static-buffer source above) and not yet freed.
+                    unsafe { mimalloc::mi_free(existing_slice.as_ptr() as *mut core::ffi::c_void) };
                 }
                 self.key_list_overflow[idx] = slice;
             } else {
@@ -1697,7 +1741,6 @@ impl<ValueType, const COUNT: usize, const ESTIMATED_KEY_LENGTH: usize, const REM
             }
         }
 
-        self.map.mutex.unlock();
         Ok(())
     }
 

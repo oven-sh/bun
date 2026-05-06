@@ -63,6 +63,20 @@ pub struct LinkerGraph {
 }
 
 impl LinkerGraph {
+    /// `&Arena` accessor — `bump` is a raw backref into `BundleV2`.
+    #[inline]
+    pub fn allocator(&self) -> &Arena {
+        // SAFETY: `bump` is a backref into `BundleV2.graph.allocator`, valid for
+        // the lifetime of the link step that constructed this LinkerGraph.
+        unsafe { &*self.bump }
+    }
+}
+
+// TODO(b2-blocked): `init` constructs the SoA columns; gated alongside the
+// rest of the impl so the un-gated surface is purely the struct shape +
+// `allocator()` (what `LinkerContext.rs` actually reaches today).
+#[cfg(any())]
+impl LinkerGraph {
     pub fn init(bump: &Arena, file_count: usize) -> Result<Self, bun_core::Error> {
         // TODO(port): narrow error set
         Ok(LinkerGraph {
@@ -70,7 +84,7 @@ impl LinkerGraph {
             files_live: BitSet::init_empty(file_count)?,
             entry_points: entry_point::List::default(),
             symbols: symbol::Map::default(),
-            bump,
+            bump: bump as *const Arena,
             code_splitting: false,
             ast: MultiArrayList::default(),
             meta: MultiArrayList::default(),
@@ -79,14 +93,6 @@ impl LinkerGraph {
             is_scb_bitset: BitSet::default(),
             ts_enums: js_ast::ast::ast::TsEnumsMap::default(),
         })
-    }
-
-    /// `&Arena` accessor — `bump` is a raw backref into `BundleV2`.
-    #[inline]
-    pub fn allocator(&self) -> &Arena {
-        // SAFETY: `bump` is a backref into `BundleV2.graph.allocator`, valid for
-        // the lifetime of the link step that constructed this LinkerGraph.
-        unsafe { &*self.bump }
     }
 }
 
@@ -773,7 +779,7 @@ impl Default for File {
             // an empty static-arm bitset here; Phase B: confirm zero-init is
             // acceptable (load() overwrites before any read).
             entry_bits: AutoBitSet::init_empty(0).expect("static AutoBitSet"),
-            input_file: Index::source(0),
+            input_file: Index::source(0u32),
             distance_from_entry_point: u32::MAX,
             entry_point_kind: EntryPoint::Kind::None,
             entry_point_chunk_index: u32::MAX,

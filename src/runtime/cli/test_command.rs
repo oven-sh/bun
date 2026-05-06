@@ -1,15 +1,14 @@
 use bun_io::Write as _;
 
-use crate::cli::cli::Command;
+use crate::cli::Command;
 use crate::cli::test::changed_files_filter as ChangedFilesFilter;
 use crate::cli::test::parallel_runner as ParallelRunner;
-use crate::cli::test::scanner::Scanner;
+use crate::cli::test::scanner::{self, Scanner};
 use bun_collections::{ArrayHashMap, BoundedArray, StringHashMap};
 use bun_core::{self as bun, env_var, fmt as bun_fmt, Global, Output, PathString};
 use bun_dotenv as DotEnv;
 use bun_http::HTTPThread;
 use bun_jsc::{self as jsc, VirtualMachine, ZigString};
-use bun_jsc::jest::{self, bun_test, Snapshots, TestRunner};
 use bun_js_parser as js_ast;
 use bun_options_types::code_coverage_options::{CodeCoverageOptions, Reporter, Reporters};
 use bun_paths::{self as bun_path, PathBuffer};
@@ -17,8 +16,35 @@ use bun_resolver::fs::FileSystem;
 use bun_sourcemap::coverage::{self, ByteRangeMapping, CodeCoverageReport, Fraction};
 use bun_str::strings;
 use bun_sys::{self, Fd, File};
-use crate::test_runner::bun_test as bun_test_mod;
 use bun_uws as uws;
+
+// ─── un-gate: map Phase-A draft paths onto the now-real test_runner crate ────
+// The Phase-A body was written against `bun_jsc::jest::{bun_test, Snapshots,
+// TestRunner}` before `crate::test_runner` existed. Those types now live under
+// `crate::test_runner::*`; the façade below adapts the body's nested-path
+// usage (`bun_test::Execution::Result`, `bun_test::BasicResult`, …) without a
+// 2k-line body rewrite.
+use crate::test_runner::jest::{self, FileId, Summary, TestRunner};
+use crate::test_runner::snapshot::{self, InlineSnapshotToWrite, Snapshots};
+use crate::test_runner::bun_test as bun_test_mod;
+
+/// Re-export for `bunfig.rs` (`crate::test_command::CoverageReporters { .. }`).
+pub use bun_options_types::code_coverage_options::Reporters as CoverageReporters;
+
+#[allow(non_snake_case)]
+mod bun_test {
+    //! Façade over `crate::test_runner` that preserves the Zig-shaped paths
+    //! the body uses (`bun_test::Execution::Result`, `bun_test::BasicResult`,
+    //! `bun_test::DescribeScope`, …). Drop once the body is normalised.
+    pub use crate::test_runner::bun_test::*;
+    pub use crate::test_runner::execution::{
+        Basic as BasicResult, ExpectAssertions, PendingIs as PendingMode,
+    };
+    #[allow(non_snake_case)]
+    pub mod Execution {
+        pub use crate::test_runner::execution::*;
+    }
+}
 
 // TODO(port): module-level static `var path_buf: bun.PathBuffer = undefined;` — these are
 // process-wide mutable buffers. Use thread_local in Phase B if needed across threads.
@@ -84,13 +110,14 @@ fn fmt_status_text_line(status: bun_test::Execution::Result, emoji_or_color: boo
     }
 }
 
-pub fn write_test_status_line<const STATUS: bun_test::Execution::Result>(writer: &mut impl bun_io::Write) {
-    // TODO(port): bun_test::Execution::Result likely cannot be a const-generic param without
-    // ConstParamTy; Phase B may demote to runtime arg.
+pub fn write_test_status_line(status: bun_test::Execution::Result, writer: &mut impl bun_io::Write) {
+    // PORT NOTE: was `comptime status` in Zig; `Execution::Result` lacks
+    // `ConstParamTy`, so this is a runtime arg.
+    // PERF(port): was comptime monomorphization — profile in Phase B.
     if Output::enable_ansi_colors_stderr() {
-        let _ = writer.write_all(fmt_status_text_line(STATUS, true));
+        let _ = writer.write_all(fmt_status_text_line(status, true));
     } else {
-        let _ = writer.write_all(fmt_status_text_line(STATUS, false));
+        let _ = writer.write_all(fmt_status_text_line(status, false));
     }
 }
 
@@ -623,7 +650,11 @@ impl JunitReporter {
 }
 
 pub struct CommandLineReporter {
-    pub jest: TestRunner,
+    // TODO(port): `TestRunner<'a>` borrows `TestOptions`/regex from the CLI
+    // ctx; the reporter is `Box::leak`ed for the process lifetime in
+    // `TestCommand::exec`, so `'static` is sound here. Revisit if the
+    // reporter ever becomes scoped.
+    pub jest: TestRunner<'static>,
     pub last_dot: u32,
     pub prev_file: u64,
     pub repeat_count: u32,
@@ -654,9 +685,12 @@ pub struct ReportersConfig {
 // type DotColorMap = enum_map::EnumMap<TestRunner::Test::Status, Option<&'static [u8]>>;
 
 impl CommandLineReporter {
-    pub fn handle_update_count(_: &mut TestRunner::Callback, _: u32, _: u32) {}
+    // TODO(port): Zig `TestRunner.Callback` was a vtable struct; not yet
+    // ported. These hooks are no-ops in the Zig source too — keep the
+    // signature shape but take `&mut Self` until the callback type lands.
+    pub fn handle_update_count(_: &mut Self, _: u32, _: u32) {}
 
-    pub fn handle_test_start(_: &mut TestRunner::Callback, _: TestRunner::Test::ID) {}
+    pub fn handle_test_start(_: &mut Self, _: /* TestRunner.Test.ID */ u32) {}
 
     fn print_test_line<const DIM: bool>(
         status: bun_test::Execution::Result,
@@ -967,7 +1001,7 @@ impl CommandLineReporter {
     }
 
     #[inline]
-    pub fn summary(&mut self) -> &mut TestRunner::Summary {
+    pub fn summary(&mut self) -> &mut Summary {
         &mut self.jest.summary
     }
 
@@ -1487,7 +1521,7 @@ pub extern "C" fn BunTest__shouldGenerateCodeCoverage(test_name_str: bun_str::St
     if let Some(runner) = jest::Jest::runner() {
         if runner.test_options.coverage.skip_test_files {
             let name_without_extension = &slice[0..slice.len() - ext.len()];
-            for suffix in Scanner::TEST_NAME_SUFFIXES {
+            for suffix in scanner::TEST_NAME_SUFFIXES {
                 if strings::ends_with(name_without_extension, suffix) {
                     return false;
                 }
@@ -1556,9 +1590,14 @@ impl TestCommand {
         // TODO(port): std.Random interface — provide bun::rand wrapper
 
         let mut snapshot_file_buf: Vec<u8> = Vec::new();
-        let mut snapshot_values = Snapshots::ValuesHashMap::new();
+        // TODO(port): `Snapshots::ValuesHashMap` is an inherent associated
+        // type alias (unstable); spell out the underlying map until that
+        // stabilises or the alias is hoisted to module scope.
+        let mut snapshot_values: bun_collections::HashMap<u64, Box<[u8]>> =
+            bun_collections::HashMap::new();
         let mut snapshot_counts: StringHashMap<usize> = StringHashMap::new();
-        let mut inline_snapshots_to_write: ArrayHashMap<TestRunner::File::ID, Vec<Snapshots::InlineSnapshotToWrite>> = ArrayHashMap::new();
+        let mut inline_snapshots_to_write: ArrayHashMap<FileId, Vec<InlineSnapshotToWrite>> =
+            ArrayHashMap::new();
         VirtualMachine::set_is_bun_test(true);
 
         let reporter = Box::leak(Box::new(CommandLineReporter {
@@ -1598,7 +1637,12 @@ impl TestCommand {
         // TODO(port): `defer { if (reporter.reporters.junit) |fr| fr.deinit() }` — handled by Drop;
         // reporter itself is leaked (was ctx.allocator.create with no destroy in Zig).
         reporter.repeat_count = ctx.test_options.repeat_count.max(1);
-        jest::Jest::set_runner(&mut reporter.jest);
+        // SAFETY: single-threaded CLI startup; `reporter` is `Box::leak`ed so
+        // `&mut reporter.jest` is valid for `'static`.
+        unsafe {
+            jest::Jest::RUNNER =
+                Some(core::ptr::NonNull::from(&mut reporter.jest));
+        }
         reporter.jest.test_options = &ctx.test_options;
 
         if ctx.test_options.reporters.junit {

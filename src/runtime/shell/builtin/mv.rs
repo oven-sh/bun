@@ -1,48 +1,488 @@
-use crate::shell::builtin::Builtin;
-use crate::shell::interpreter::{Interpreter, NodeId};
+use core::ffi::CStr;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+use crate::shell::builtin::{Builtin, IoKind, Kind};
+use crate::shell::interpreter::{EventLoopHandle, Interpreter, NodeId, ShellTask};
+use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
+use crate::shell::ExitCode;
 
 #[derive(Default)]
 pub struct Mv {
+    pub opts: Opts,
+    pub args: MvArgs,
     pub state: MvState,
+}
+
+#[derive(Default)]
+pub struct MvArgs {
+    /// Index into argv where source paths start.
+    pub sources_start: usize,
+    /// argv[sources_start..target_idx] are sources; argv[target_idx] is dest.
+    pub target_idx: usize,
+    pub target_fd: Option<bun_sys::Fd>,
 }
 
 #[derive(Default)]
 pub enum MvState {
     #[default]
     Idle,
-    CheckTarget,
-    Moving { idx: usize },
-    WaitingIo,
+    CheckTarget(Box<ShellMvCheckTargetTask>),
+    Executing {
+        task_count: usize,
+        tasks_done: usize,
+        error_signal: AtomicBool,
+        tasks: Vec<Box<ShellMvBatchedTask>>,
+        err: Option<bun_sys::Error>,
+    },
     Done,
+    WaitingWriteErr { exit_code: ExitCode },
+    Err,
+}
+
+/// Spec: mv.zig `Opts.ParseError` — mv uses its own simpler parser.
+pub enum MvParseError {
+    IllegalOption(&'static [u8]),
+    ShowUsage,
 }
 
 impl Mv {
     pub fn start(interp: &mut Interpreter, cmd: NodeId) -> Yield {
-        // Full body (~550 lines): parse -f/-n/-i, stat target, then for each
-        // source either renameat() or fall back to copy+unlink across devices,
-        // dispatching to a WorkPool task. Gated until bun_sys::renameat,
-        // ShellTask, and IOWriter::enqueue are wired.
-        #[cfg(any())]
-        {
-            include!("mv_body_gated.rs");
+        Self::next(interp, cmd)
+    }
+
+    /// Spec: mv.zig `writeFailingError`.
+    fn write_failing_error(
+        interp: &mut Interpreter,
+        cmd: NodeId,
+        buf: &[u8],
+        exit_code: ExitCode,
+    ) -> Yield {
+        if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
+            Self::state_mut(interp, cmd).state = MvState::WaitingWriteErr { exit_code };
+            let child = ChildPtr { node: cmd, tag: WriterTag::Builtin };
+            return Builtin::of_mut(interp, cmd)
+                .stderr
+                .enqueue(child, buf, safeguard);
         }
-        Builtin::done(interp, cmd, 0)
+        Builtin::write_no_io(interp, cmd, IoKind::Stderr, buf);
+        Builtin::done(interp, cmd, exit_code)
+    }
+
+    /// Spec: mv.zig `next`.
+    pub fn next(interp: &mut Interpreter, cmd: NodeId) -> Yield {
+        loop {
+            // PORT NOTE: reshaped for borrowck — read tag, drop borrow, act.
+            enum Tag { Idle, CheckTarget, Executing, WaitingWriteErr, Done, Err }
+            let tag = match Self::state_mut(interp, cmd).state {
+                MvState::Idle => Tag::Idle,
+                MvState::CheckTarget(_) => Tag::CheckTarget,
+                MvState::Executing { .. } => Tag::Executing,
+                MvState::WaitingWriteErr { .. } => Tag::WaitingWriteErr,
+                MvState::Done => Tag::Done,
+                MvState::Err => Tag::Err,
+            };
+            match tag {
+                Tag::Idle => {
+                    if let Err(e) = Self::parse_opts(interp, cmd) {
+                        let buf: Vec<u8> = match e {
+                            MvParseError::IllegalOption(s) => Builtin::fmt_error_arena(
+                                interp,
+                                cmd,
+                                Some(Kind::Mv),
+                                format_args!("illegal option -- {}\n", bstr::BStr::new(s)),
+                            )
+                            .to_vec(),
+                            MvParseError::ShowUsage => Kind::Mv.usage_string().to_vec(),
+                        };
+                        return Self::write_failing_error(interp, cmd, &buf, 1);
+                    }
+                    let cwd = Builtin::cwd(interp, cmd);
+                    let target_idx = Self::state_mut(interp, cmd).args.target_idx;
+                    let p = Builtin::of(interp, cmd).args_slice()[target_idx];
+                    // SAFETY: argv entries are NUL-terminated.
+                    let target = unsafe { CStr::from_ptr(p) }.to_bytes().to_vec();
+                    let evtloop = Builtin::event_loop(interp, cmd);
+                    let mut task = Box::new(ShellMvCheckTargetTask {
+                        cmd,
+                        cwd,
+                        target,
+                        result: None,
+                        done: false,
+                        task: ShellTask::new(evtloop),
+                    });
+                    task.task.schedule();
+                    Self::state_mut(interp, cmd).state = MvState::CheckTarget(task);
+                    return Yield::suspended();
+                }
+                Tag::CheckTarget => {
+                    let (done, result) = match &Self::state_mut(interp, cmd).state {
+                        MvState::CheckTarget(t) => (t.done, t.result),
+                        _ => unreachable!(),
+                    };
+                    if !done {
+                        return Yield::suspended();
+                    }
+                    debug_assert!(result.is_some());
+                    let maybe_fd: Option<bun_sys::Fd> = match result.unwrap() {
+                        Ok(fd) => fd,
+                        Err(e) => {
+                            // TODO(b2-blocked): bun_sys::Error::get_errno —
+                            // distinguish ENOENT (rename to new path: ok if
+                            // exactly one source) from other errors.
+                            let n_sources = {
+                                let me = Self::state_mut(interp, cmd);
+                                me.args.target_idx - me.args.sources_start
+                            };
+                            if n_sources == 1 {
+                                None
+                            } else {
+                                let target = match &Self::state_mut(interp, cmd).state {
+                                    MvState::CheckTarget(t) => t.target.clone(),
+                                    _ => unreachable!(),
+                                };
+                                let _ = e;
+                                let buf = Builtin::fmt_error_arena(
+                                    interp,
+                                    cmd,
+                                    Some(Kind::Mv),
+                                    format_args!(
+                                        "{}: No such file or directory\n",
+                                        bstr::BStr::new(&target)
+                                    ),
+                                )
+                                .to_vec();
+                                return Self::write_failing_error(interp, cmd, &buf, 1);
+                            }
+                        }
+                    };
+
+                    let n_sources = {
+                        let me = Self::state_mut(interp, cmd);
+                        me.args.target_fd = maybe_fd;
+                        me.args.target_idx - me.args.sources_start
+                    };
+                    // Trying to move multiple files into a non-directory.
+                    if maybe_fd.is_none() && n_sources > 1 {
+                        let target = match &Self::state_mut(interp, cmd).state {
+                            MvState::CheckTarget(t) => t.target.clone(),
+                            _ => unreachable!(),
+                        };
+                        let buf = Builtin::fmt_error_arena(
+                            interp,
+                            cmd,
+                            Some(Kind::Mv),
+                            format_args!("{} is not a directory\n", bstr::BStr::new(&target)),
+                        )
+                        .to_vec();
+                        return Self::write_failing_error(interp, cmd, &buf, 1);
+                    }
+
+                    const BATCH: usize = ShellMvBatchedTask::BATCH_SIZE;
+                    let task_count = n_sources.div_ceil(BATCH);
+                    let cwd = Builtin::cwd(interp, cmd);
+                    let evtloop = Builtin::event_loop(interp, cmd);
+                    let (sources_start, target_idx) = {
+                        let me = Self::state_mut(interp, cmd);
+                        (me.args.sources_start, me.args.target_idx)
+                    };
+                    let tgt_ptr = Builtin::of(interp, cmd).args_slice()[target_idx];
+                    // SAFETY: argv entries are NUL-terminated.
+                    let target = unsafe { CStr::from_ptr(tgt_ptr) }.to_bytes().to_vec();
+
+                    let mut tasks: Vec<Box<ShellMvBatchedTask>> =
+                        Vec::with_capacity(task_count);
+                    for i in 0..task_count {
+                        let start = sources_start + i * BATCH;
+                        let end = (start + BATCH).min(target_idx);
+                        let mut srcs = Vec::with_capacity(end - start);
+                        for j in start..end {
+                            let p = Builtin::of(interp, cmd).args_slice()[j];
+                            // SAFETY: argv entries are NUL-terminated.
+                            srcs.push(unsafe { CStr::from_ptr(p) }.to_bytes().to_vec());
+                        }
+                        tasks.push(Box::new(ShellMvBatchedTask {
+                            cmd,
+                            sources: srcs,
+                            target: target.clone(),
+                            target_fd: maybe_fd,
+                            cwd,
+                            error_signal: core::ptr::null(),
+                            err: None,
+                            task: ShellTask::new(evtloop),
+                        }));
+                    }
+
+                    Self::state_mut(interp, cmd).state = MvState::Executing {
+                        task_count,
+                        tasks_done: 0,
+                        error_signal: AtomicBool::new(false),
+                        tasks,
+                        err: None,
+                    };
+                    // Now that the AtomicBool has its final address, point
+                    // every task at it and schedule.
+                    if let MvState::Executing { error_signal, tasks, .. } =
+                        &mut Self::state_mut(interp, cmd).state
+                    {
+                        let sig = error_signal as *const AtomicBool;
+                        for t in tasks.iter_mut() {
+                            t.error_signal = sig;
+                            t.task.schedule();
+                        }
+                    }
+                    return Yield::suspended();
+                }
+                Tag::Executing => {
+                    // Shouldn't happen — driven by batchedMoveTaskDone.
+                    return Yield::suspended();
+                }
+                Tag::WaitingWriteErr => return Yield::failed(),
+                Tag::Done => return Builtin::done(interp, cmd, 0),
+                Tag::Err => return Builtin::done(interp, cmd, 1),
+            }
+        }
     }
 
     pub fn on_io_writer_chunk(
         interp: &mut Interpreter,
         cmd: NodeId,
         _: usize,
-        _err: Option<bun_sys::SystemError>,
+        e: Option<bun_sys::SystemError>,
     ) -> Yield {
-        Builtin::done(interp, cmd, 1)
+        match Self::state_mut(interp, cmd).state {
+            MvState::WaitingWriteErr { exit_code } => {
+                if e.is_some() {
+                    Self::state_mut(interp, cmd).state = MvState::Err;
+                    return Self::next(interp, cmd);
+                }
+                Builtin::done(interp, cmd, exit_code)
+            }
+            _ => panic!("Invalid state"),
+        }
+    }
+
+    /// Spec: mv.zig `checkTargetTaskDone`.
+    pub fn check_target_task_done(interp: &mut Interpreter, cmd: NodeId) {
+        if let MvState::CheckTarget(t) = &mut Self::state_mut(interp, cmd).state {
+            t.done = true;
+        }
+        Self::next(interp, cmd).run(interp);
+    }
+
+    /// Spec: mv.zig `batchedMoveTaskDone`.
+    pub fn batched_move_task_done(
+        interp: &mut Interpreter,
+        cmd: NodeId,
+        task_idx: usize,
+    ) {
+        let (all_done, had_err) = {
+            let MvState::Executing { task_count, tasks_done, error_signal, tasks, err } =
+                &mut Self::state_mut(interp, cmd).state
+            else {
+                unreachable!()
+            };
+            if let Some(e) = tasks[task_idx].err.take() {
+                error_signal.store(true, Ordering::SeqCst);
+                if err.is_none() {
+                    *err = Some(e);
+                }
+            }
+            *tasks_done += 1;
+            (*tasks_done >= *task_count, err.is_some())
+        };
+        if all_done {
+            if had_err {
+                let e = match &mut Self::state_mut(interp, cmd).state {
+                    MvState::Executing { err, .. } => err.take().unwrap(),
+                    _ => unreachable!(),
+                };
+                let buf = Builtin::task_error_to_string(interp, cmd, Kind::Mv, &e).to_vec();
+                Self::write_failing_error(interp, cmd, &buf, 1).run(interp);
+                return;
+            }
+            Self::state_mut(interp, cmd).state = MvState::Done;
+            Self::next(interp, cmd).run(interp);
+        }
+    }
+
+    /// Spec: mv.zig `parseOpts` + `parseFlags`.
+    fn parse_opts(interp: &mut Interpreter, cmd: NodeId) -> Result<(), MvParseError> {
+        let argc = Builtin::of(interp, cmd).args_slice().len();
+        if argc == 0 {
+            return Err(MvParseError::ShowUsage);
+        }
+        let mut idx = 0usize;
+        while idx < argc {
+            let p = Builtin::of(interp, cmd).args_slice()[idx];
+            // SAFETY: argv entries are NUL-terminated.
+            let flag = unsafe { CStr::from_ptr(p) }.to_bytes();
+            match Self::parse_flag(&mut Self::state_mut(interp, cmd).opts, flag) {
+                MvFlag::Done => {
+                    let filepath_args = argc - idx;
+                    if filepath_args < 2 {
+                        return Err(MvParseError::ShowUsage);
+                    }
+                    let me = Self::state_mut(interp, cmd);
+                    me.args.sources_start = idx;
+                    me.args.target_idx = argc - 1;
+                    return Ok(());
+                }
+                MvFlag::ContinueParsing => {}
+                MvFlag::IllegalOption(s) => return Err(MvParseError::IllegalOption(s)),
+            }
+            idx += 1;
+        }
+        Err(MvParseError::ShowUsage)
+    }
+
+    fn parse_flag(opts: &mut Opts, flag: &[u8]) -> MvFlag {
+        if flag.is_empty() || flag[0] != b'-' {
+            return MvFlag::Done;
+        }
+        for &ch in &flag[1..] {
+            match ch {
+                b'f' => {
+                    opts.force_overwrite = true;
+                    opts.interactive_mode = false;
+                    opts.no_overwrite = false;
+                }
+                b'h' => opts.no_dereference = true,
+                b'i' => {
+                    opts.interactive_mode = true;
+                    opts.force_overwrite = false;
+                    opts.no_overwrite = false;
+                }
+                b'n' => {
+                    opts.no_overwrite = true;
+                    opts.force_overwrite = false;
+                    opts.interactive_mode = false;
+                }
+                b'v' => opts.verbose_output = true,
+                _ => return MvFlag::IllegalOption(b"-"),
+            }
+        }
+        MvFlag::ContinueParsing
+    }
+
+    #[inline]
+    fn state_mut(interp: &mut Interpreter, cmd: NodeId) -> &mut Mv {
+        match &mut Builtin::of_mut(interp, cmd).impl_ {
+            crate::shell::builtin::Impl::Mv(m) => &mut **m,
+            _ => unreachable!(),
+        }
     }
 }
 
+enum MvFlag {
+    ContinueParsing,
+    Done,
+    IllegalOption(&'static [u8]),
+}
+
+/// Spec: mv.zig `ShellMvCheckTargetTask`. `openat(target, O_RDONLY|O_DIRECTORY)`
+/// on a worker thread to learn whether the destination is a directory.
+pub struct ShellMvCheckTargetTask {
+    pub cmd: NodeId,
+    pub cwd: bun_sys::Fd,
+    pub target: Vec<u8>,
+    /// `Ok(Some(fd))` → directory; `Ok(None)` → not a directory; `Err(e)` →
+    /// open error (e.g. ENOENT).
+    pub result: Option<Result<Option<bun_sys::Fd>, bun_sys::Error>>,
+    pub done: bool,
+    pub task: ShellTask,
+}
+
+impl ShellMvCheckTargetTask {
+    pub fn run_from_thread_pool(this: *mut ShellMvCheckTargetTask) {
+        // SAFETY: `this` is a live boxed task.
+        let this = unsafe { &mut *this };
+        // TODO(b2-blocked): ShellSyscall::openat(cwd, target,
+        // O_RDONLY|O_DIRECTORY). On ENOTDIR → Ok(None); on success → Ok(fd);
+        // else → Err(e).
+        let _ = (&this.cwd, &this.target);
+        this.result = Some(Ok(None));
+        this.task.on_finish();
+    }
+
+    pub fn run_from_main_thread(this: *mut ShellMvCheckTargetTask, interp: &mut Interpreter) {
+        // SAFETY: `this` is a live boxed task.
+        let cmd = unsafe { (*this).cmd };
+        Mv::check_target_task_done(interp, cmd);
+    }
+}
+
+/// Spec: mv.zig `ShellMvBatchedTask`. renameat() each source into the target.
+pub struct ShellMvBatchedTask {
+    pub cmd: NodeId,
+    pub sources: Vec<Vec<u8>>,
+    pub target: Vec<u8>,
+    pub target_fd: Option<bun_sys::Fd>,
+    pub cwd: bun_sys::Fd,
+    /// Points at `MvState::Executing::error_signal`.
+    pub error_signal: *const AtomicBool,
+    pub err: Option<bun_sys::Error>,
+    pub task: ShellTask,
+}
+
+impl ShellMvBatchedTask {
+    pub const BATCH_SIZE: usize = 5;
+
+    pub fn run_from_thread_pool(this: *mut ShellMvBatchedTask) {
+        // SAFETY: `this` is a live boxed task.
+        let this = unsafe { &mut *this };
+        // TODO(b2-blocked): bun_sys::renameat + bun_paths::normalizeBuf/
+        // basename/joinZ. Spec mv.zig:
+        //   - 1 src, target_fd is None  → renameat(cwd, src, cwd, target)
+        //   - target_fd is Some(dir)    → for each src: renameat(cwd, src, dir, basename(src))
+        // On EXDEV, fall back to cp+rm (also TODO in Zig).
+        for src in &this.sources {
+            // SAFETY: error_signal points into MvState which outlives the
+            // task; null only before scheduling.
+            if !this.error_signal.is_null()
+                && unsafe { &*this.error_signal }.load(Ordering::SeqCst)
+            {
+                return;
+            }
+            let _ = (src, &this.target, this.target_fd, this.cwd);
+        }
+        this.task.on_finish();
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct Opts {
+    /// `-f` — do not prompt before overwriting (default).
+    pub force_overwrite: bool,
+    /// `-h` — if target is a symlink to a directory, do not follow it.
+    pub no_dereference: bool,
+    /// `-i` — prompt before overwriting.
+    pub interactive_mode: bool,
+    /// `-n` — do not overwrite an existing file.
+    pub no_overwrite: bool,
+    /// `-v` — verbose.
+    pub verbose_output: bool,
+}
+
+impl Default for Opts {
+    fn default() -> Self {
+        Self {
+            force_overwrite: true,
+            no_dereference: false,
+            interactive_mode: false,
+            no_overwrite: false,
+            verbose_output: false,
+        }
+    }
+}
+
+#[allow(dead_code)]
+fn _evtloop(_: EventLoopHandle) {}
+
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
-//   source:     src/shell/builtin/mv.zig (567 lines)
-//   confidence: low (NodeId scaffolding only; body gated)
-//   blocked_on: bun_sys::renameat, ShellTask/WorkPool, IOWriter::enqueue
+//   source:     src/shell/builtin/mv.zig (526 lines)
+//   confidence: medium (NodeId style; full state machine; renameat/openat stubbed)
+//   blocked_on: bun_sys::{renameat,openat}, bun_paths helpers, WorkPool,
+//               IOWriter::enqueue body
 // ──────────────────────────────────────────────────────────────────────────

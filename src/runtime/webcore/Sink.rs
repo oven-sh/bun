@@ -1,5 +1,4 @@
 use core::ffi::c_void;
-use core::marker::PhantomData;
 
 use bun_collections::TaggedPtrUnion;
 use crate::webcore::streams::{self, Signal};
@@ -276,7 +275,7 @@ impl VTable {
 impl<'a> Sink<'a> {
     pub fn end(&mut self, err: Option<SysError>) -> sys::Result<()> {
         if self.status == Status::Closed {
-            return sys::Result::success();
+            return Ok(());
         }
 
         self.status = Status::Closed;

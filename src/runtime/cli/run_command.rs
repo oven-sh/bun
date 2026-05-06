@@ -1,21 +1,47 @@
 //! Port of `src/runtime/cli/run_command.zig`.
 //!
-//! B-2 round 2: thin un-gate. `RunCommand::print_help` is real (called from
-//! the `bun run --help` path). `exec()` and the file-detection / spawn path
-//! stay gated — they need `bun_jsc`, `bun_bundler::Transpiler`, `bun_md`,
-//! `bun_resolver::dir_info`, and the not-yet-un-gated `filter_run`/`multi_run`
-//! siblings.
+//! B-2 round 3: dispatch un-gate. `RunCommand::exec` / `exec_as_if_node` are
+//! now real — they classify the positional as a file path vs. a package.json
+//! script and, for the file-path arm, boot the JS VM directly via the now-real
+//! `bun_jsc::VirtualMachine::{init, load_entry_point}` hooks.
+//!
+//! The heavy bits — `configure_env_for_run` (Transpiler/DotEnv/PATH stitching),
+//! package.json `scripts` lookup + spawn, `node_modules/.bin` `which()`
+//! fallback, the markdown renderer, and the full `Run::start` run-loop
+//! (`hold_api_lock` + `globalExit`) — stay re-gated inside `exec()` with
+//! `#[cfg(any())]` blocks; their bodies are preserved verbatim in
+//! `phase_a_draft` below.
 
 use bun_core::{self as core, Global, Output};
-use bun_core::{pretty, prettyln};
+use bun_core::{pretty, pretty_errorln, prettyln};
+use bun_jsc::virtual_machine::{InitOptions as VmInitOptions, VirtualMachine};
+use bun_options_types::BundleEnums::Loader;
+use bun_paths::{self as paths, MAX_PATH_BYTES, PathBuffer};
 
+use crate::cli::arguments;
 use crate::cli::command::{ContextData, Tag as CommandTag};
+
+bun_core::declare_scope!(RUN, visible);
 
 pub struct NpmArgs;
 impl NpmArgs {
     // https://github.com/npm/rfcs/blob/main/implemented/0021-reduce-lifecycle-script-environment.md#detailed-explanation
     pub const PACKAGE_NAME: &'static [u8] = b"npm_package_name";
     pub const PACKAGE_VERSION: &'static [u8] = b"npm_package_version";
+}
+
+/// Runtime knobs `Command::start` passes through; mirrors the Zig
+/// `comptime`-tuple that selected the per-tag exec body.
+pub struct ExecCfg {
+    pub bin_dirs_only: bool,
+    pub log_errors: bool,
+    pub allow_fast_run_for_extensions: bool,
+}
+
+impl Default for ExecCfg {
+    fn default() -> Self {
+        Self { bin_dirs_only: false, log_errors: true, allow_fast_run_for_extensions: true }
+    }
 }
 
 pub struct RunCommand;
@@ -53,16 +79,434 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         Output::flush();
     }
 
-    pub fn exec(_ctx: &mut ContextData, _bin_dirs_only: bool) -> Result<bool, bun_core::Error> {
-        // TODO(b2-blocked): bun_jsc + Transpiler + spawn path. ~2.6k-line body
-        // preserved in phase_a_draft below.
-        todo!("RunCommand::exec — see phase_a_draft")
+    /// Best-effort default-loader lookup by file extension. Mirrors
+    /// `options.defaultLoaders.get(ext)`; routed through the lower-tier
+    /// `BundleEnums::Loader` so this file does not name `bun_bundler`'s
+    /// (duplicate, soon-to-collapse) `options::Loader`.
+    #[inline]
+    fn default_loader_for(target: &[u8]) -> Option<Loader> {
+        let ext = paths::extension(target);
+        if ext.is_empty() {
+            return None;
+        }
+        // `Loader::NAMES` keys are dot-stripped; `paths::extension` includes the
+        // leading dot, so trim it before lookup.
+        let key = if ext[0] == b'.' { &ext[1..] } else { ext };
+        Loader::NAMES.get(key).copied()
     }
 
-    pub fn exec_as_if_node(_ctx: &mut ContextData) -> Result<(), bun_core::Error> {
-        todo!("RunCommand::exec_as_if_node — see phase_a_draft")
+    /// Minimal port of `bun_js.Run.boot` — wire the now-real
+    /// `VirtualMachine::init` + `load_entry_point` so `bun run ./file.ts`
+    /// reaches the module loader. The full `Run::boot` (transpiler option
+    /// mapping, `--preload`, `hold_api_lock`, `Run::start` run-loop,
+    /// `globalExit`) lives in `src/bun.js.rs` (a higher-tier crate that
+    /// depends on `bun_runtime`); until the CLI dispatch path is inverted to
+    /// call into that crate, this inlines the load-bearing steps.
+    fn boot(
+        ctx: &mut ContextData,
+        entry_path: &'static [u8],
+        loader: Option<Loader>,
+    ) -> Result<(), bun_core::Error> {
+        let _ = loader;
+        // PORT NOTE: `jsc::initialize(false)` + `Expr/Stmt::Store::create()` +
+        // `MimallocArena::init()` precede VM init in Zig. `bun_jsc::initialize`
+        // is still `todo!()` (gated on `bun_analytics::Features` + `environ`);
+        // the dispatch hooks (`jsc_hooks::install_jsc_hooks`) are installed by
+        // `main.rs` before `Cli::start`, so `VirtualMachine::init` already sees
+        // a populated `RuntimeHooks` table.
+        // TODO(b2-blocked): `bun_jsc::initialize(false)` once un-gated.
+        // TODO(b2-blocked): `js_ast::{Expr,Stmt}::Data::Store::create()` once
+        // `bun_js_parser` exposes the store ctors at this tier.
+
+        let vm = VirtualMachine::init(VmInitOptions {
+            smol: ctx.runtime_options.smol,
+            eval_mode: !ctx.runtime_options.eval.script.is_empty(),
+            is_main_thread: true,
+            ..Default::default()
+        })?;
+        // SAFETY: `init` returns the unique freshly-boxed VM on this thread.
+        let vm = unsafe { &mut *vm };
+
+        // PORT NOTE: `vm.preload`/`vm.argv` are `Vec<Box<[u8]>>` on both sides;
+        // hand the CLI's vectors over wholesale (process-lifetime, never freed).
+        vm.preload = core::mem::take(&mut ctx.preloads);
+        vm.argv = core::mem::take(&mut ctx.passthrough);
+        vm.is_main_thread = true;
+        vm.main = entry_path;
+
+        // TODO(b2-blocked): full transpiler/resolver option mapping
+        // (`Run.boot` in src/bun.js.rs lines 110-170 — install/global_cache/
+        // minify/macros/serve_plugins) — needs `vm.transpiler` populated by
+        // `init_runtime_state`, which is still a no-op for those fields.
+        #[cfg(any())]
+        {
+            let b = &mut vm.transpiler;
+            b.options.install = ctx.install.as_deref();
+            b.resolver.opts.global_cache = ctx.debug.global_cache;
+            // … see phase_a_draft / src/bun.js.rs for the full list.
+        }
+
+        // `loadEntryPoint` runs preloads, generates `bun:main`, kicks off
+        // module evaluation, and spins until the top-level promise settles.
+        let promise = vm.load_entry_point(entry_path)?;
+
+        // TODO(b2-blocked): `Run::start` run-loop — `hold_api_lock` wrapper,
+        // `eventLoop().tick()` until `vm.isEventLoopAlive()` is false, then
+        // `vm.onExit()` + `vm.globalExit()`. Those are in the gated
+        // `VirtualMachine` impl block; until they un-gate, drain once and let
+        // the caller fall through to `Global::exit`.
+        vm.drain_queues_if_needed();
+        let _ = promise;
+
+        Ok(())
+    }
+
+    /// `_bootAndHandleError` — duplicate `path` to a process-lifetime buffer,
+    /// boot the VM, and on failure print the formatted error + `exit(1)`.
+    fn _boot_and_handle_error(
+        ctx: &mut ContextData,
+        path: &[u8],
+        loader: Option<Loader>,
+    ) -> bool {
+        // TODO(b2-blocked): `Loader::Md` → `render_markdown_file_and_exit`
+        // (needs bun_md + bun_http remote-image prefetch). See phase_a_draft.
+        #[cfg(any())]
+        if matches!(
+            loader.or_else(|| Self::default_loader_for(path)),
+            Some(Loader::Md)
+        ) {
+            Self::render_markdown_file_and_exit(path);
+        }
+
+        Global::configure_allocator(core::Global::AllocatorConfiguration {
+            long_running: true,
+            ..Default::default()
+        });
+
+        // `entry_path` must outlive the VM (it's stored in `vm.main`); leak the
+        // owned copy to `'static`. Process exits via `globalExit`/`exit(1)` so
+        // this is never freed (matches Zig's `allocator.dupe` + no-free).
+        let owned: &'static [u8] = Box::leak(path.to_vec().into_boxed_slice());
+
+        if let Err(err) = Self::boot(ctx, owned, loader) {
+            // SAFETY: `ctx.log` was set in `create_context_data` (single-threaded
+            // CLI startup) and is process-lifetime.
+            #[cfg(any())]
+            // TODO(b2): `Log::print` wants `&mut impl fmt::Write`;
+            // `Output::error_writer()` is `*mut io::Writer`. Route through a
+            // shim once io::Writer implements fmt::Write.
+            let _ = unsafe { ctx.log() }.print(Output::error_writer());
+
+            pretty_errorln!(
+                "<r><red>error<r>: Failed to run <b>{}<r> due to error <b>{}<r>",
+                bstr::BStr::new(paths::basename(path)),
+                err,
+            );
+            Global::exit(1);
+        }
+        true
+    }
+
+    /// Dispatch `bun run <target>`: classify as file path vs. package.json
+    /// script, then either boot the VM or spawn the script.
+    ///
+    /// Legacy two-arg form preserved for `Command::start`; callers wanting
+    /// the full `ExecCfg` go through `exec_with_cfg`.
+    pub fn exec(ctx: &mut ContextData, bin_dirs_only: bool) -> Result<bool, bun_core::Error> {
+        Self::exec_with_cfg(
+            ctx,
+            ExecCfg { bin_dirs_only, log_errors: true, allow_fast_run_for_extensions: true },
+        )
+    }
+
+    pub fn exec_with_cfg(ctx: &mut ContextData, cfg: ExecCfg) -> Result<bool, bun_core::Error> {
+        let _bin_dirs_only = cfg.bin_dirs_only;
+        let log_errors = cfg.log_errors;
+
+        // ── find what to run ────────────────────────────────────────────────
+        let mut positionals: &[Box<[u8]>] = &ctx.positionals[..];
+        if !positionals.is_empty() && positionals[0].as_ref() == b"run" {
+            positionals = &positionals[1..];
+        }
+
+        // PORT NOTE: `target_name` borrows `ctx.positionals`, but the boot path
+        // mutates `ctx` (takes `preloads`/`passthrough`). Dupe up-front to
+        // dodge the borrowck split; the string is short and `exec` is cold.
+        let target_name: Box<[u8]> = if !positionals.is_empty() {
+            positionals[0].clone()
+        } else {
+            Box::default()
+        };
+        let target_name: &[u8] = &target_name;
+        // unclear why passthrough is an escaped string, it should probably be
+        // []const []const u8 and allow its users to escape it.
+
+        let mut try_fast_run = false;
+        let mut skip_script_check = false;
+        if !target_name.is_empty() && target_name[0] == b'.' {
+            try_fast_run = true;
+            skip_script_check = true;
+        } else if paths::is_absolute(target_name) {
+            try_fast_run = true;
+            skip_script_check = true;
+        } else if cfg.allow_fast_run_for_extensions {
+            if let Some(l) = Self::default_loader_for(target_name) {
+                if l.can_be_run_by_bun() || l == Loader::Md {
+                    try_fast_run = true;
+                }
+            }
+        }
+
+        if !ctx.debug.loaded_bunfig {
+            // TODO(b2-blocked): `Arguments::load_config_path` body is `todo!()`;
+            // calling it would panic. Un-gate once bunfig parsing is real.
+            #[cfg(any())]
+            let _ = arguments::load_config_path(true, b"bunfig.toml", ctx, CommandTag::RunCommand);
+        }
+
+        // ── try fast run (file exists & not a dir → boot VM) ────────────────
+        if try_fast_run && Self::maybe_open_with_bun_js(ctx, target_name) {
+            return Ok(true);
+        }
+
+        // ── empty command → print help ──────────────────────────────────────
+        if target_name.is_empty() {
+            // TODO(b2-blocked): `root_dir_info.enclosing_package_json` —
+            // needs `configure_env_for_run` (Transpiler + DirInfo). For now
+            // print the generic help.
+            Self::print_help(None);
+            Output::flush();
+            return Ok(true);
+        }
+
+        // ── stdin (`bun run -`) ─────────────────────────────────────────────
+        if target_name.len() == 1 && target_name[0] == b'-' {
+            return Self::exec_stdin(ctx);
+        }
+
+        // ── package.json script lookup ──────────────────────────────────────
+        if !skip_script_check {
+            // TODO(b2-blocked): full body needs `configure_env_for_run` →
+            // `Transpiler` + `DirInfo` + `PackageJSON.scripts` lookup +
+            // `run_package_script_foreground` (spawn). All gated; preserved
+            // verbatim in phase_a_draft. Until then, fall through to module
+            // resolution so `bun run foo` at least tries `./foo`.
+            #[cfg(any())]
+            {
+                let mut this_transpiler: Transpiler = unsafe { core::mem::zeroed() };
+                let root_dir_info = Self::configure_env_for_run(
+                    ctx, &mut this_transpiler, None, log_errors, false,
+                )?;
+                if let Some(package_json) = root_dir_info.enclosing_package_json {
+                    if let Some(scripts) = &package_json.scripts {
+                        if let Some(script_content) = scripts.get(target_name) {
+                            // pre/post hooks + run_package_script_foreground …
+                            return Ok(true);
+                        }
+                    }
+                }
+            }
+            let _ = skip_script_check;
+        }
+
+        // ── module resolution fallback ──────────────────────────────────────
+        // TODO(b2-blocked): `this_transpiler.resolver.resolve(top_level_dir,
+        // target_name, EntryPointRun)` — needs Transpiler + bun_resolver wired
+        // via `configure_env_for_run`. Until then, attempt the on-disk
+        // `./target_name` path directly (covers `bun run script.ts`).
+        if Self::maybe_open_with_bun_js(ctx, target_name) {
+            return Ok(true);
+        }
+
+        // ── node_modules/.bin / system $PATH fallback ───────────────────────
+        // TODO(b2-blocked): `which()` over the stitched PATH +
+        // `run_binary_without_bunx_path` — needs Transpiler.env. See
+        // phase_a_draft `BunXFastPath` + `path_for_which` block.
+        #[cfg(any())]
+        {
+            let path_for_which = /* … */ b"";
+            if let Some(dest) = which(&mut path_buf, path_for_which, top_level_dir, target_name) {
+                Self::run_binary_without_bunx_path(/* … */)?;
+            }
+        }
+
+        // ── failure ─────────────────────────────────────────────────────────
+        if ctx.runtime_options.if_present {
+            return Ok(true);
+        }
+
+        if log_errors {
+            let default_loader = Self::default_loader_for(target_name);
+            if default_loader.map(Loader::is_javascript_like_or_json).unwrap_or(false)
+                || (!target_name.is_empty()
+                    && (target_name[0] == b'.'
+                        || target_name[0] == b'/'
+                        || paths::is_absolute(target_name)))
+            {
+                pretty_errorln!(
+                    "<r><red>error<r><d>:<r> <b>Module not found \"<b>{}<r>\"",
+                    bstr::BStr::new(target_name),
+                );
+            } else if !paths::extension(target_name).is_empty() {
+                pretty_errorln!(
+                    "<r><red>error<r><d>:<r> <b>File not found \"<b>{}<r>\"",
+                    bstr::BStr::new(target_name),
+                );
+            } else {
+                pretty_errorln!(
+                    "<r><red>error<r><d>:<r> <b>Script not found \"<b>{}<r>\"",
+                    bstr::BStr::new(target_name),
+                );
+            }
+            Global::exit(1);
+        }
+
+        Ok(false)
+    }
+
+    /// Fast-path file probe: if `target` resolves to an existing regular file,
+    /// duplicate its absolute path and boot the VM. Returns `false` if the
+    /// path does not exist / is a directory, so the caller can fall through to
+    /// script lookup.
+    ///
+    /// PORT NOTE: the Zig version reads `ctx.args.entry_points[0]`; this tier
+    /// has not wired `Arguments::parse` to populate `entry_points` yet, so we
+    /// take the target slice explicitly.
+    fn maybe_open_with_bun_js(ctx: &mut ContextData, target: &[u8]) -> bool {
+        if target.is_empty() {
+            return false;
+        }
+
+        let mut buf = PathBuffer::uninit();
+        // Build absolute, NUL-terminated path into `buf`.
+        let abs_len: usize = if paths::is_absolute(target) {
+            if target.len() >= MAX_PATH_BYTES {
+                return false;
+            }
+            buf[..target.len()].copy_from_slice(target);
+            target.len()
+        } else {
+            // join cwd + SEP + target into `buf`
+            let mut cwd_buf = PathBuffer::uninit();
+            let Ok(cwd) = bun_core::getcwd(&mut cwd_buf) else { return false };
+            let cwd_bytes = cwd.as_bytes();
+            // TODO(port): `resolve_path::join_abs_string_buf` for `..`/`.`
+            // normalisation. Do the trivial `cwd + SEP + target` join inline
+            // (covers `bun run ./x`); full normalisation happens in the
+            // resolver once `configure_env_for_run` un-gates.
+            let cwd_len = cwd_bytes.len();
+            if cwd_len + 1 + target.len() >= MAX_PATH_BYTES {
+                return false;
+            }
+            buf[..cwd_len].copy_from_slice(cwd_bytes);
+            buf[cwd_len] = paths::SEP;
+            buf[cwd_len + 1..cwd_len + 1 + target.len()].copy_from_slice(target);
+            cwd_len + 1 + target.len()
+        };
+        buf[abs_len] = 0;
+        // SAFETY: `buf[abs_len] == 0` written above; `buf[..abs_len]` is init.
+        let abs_z = unsafe { bun_core::ZStr::from_raw(buf.as_ptr(), abs_len) };
+
+        // Probe: must exist and not be a directory. directories cannot be run.
+        // if only there was a faster way to check this
+        match bun_sys::stat(abs_z) {
+            Ok(st) => {
+                if bun_sys::S::ISDIR(st.st_mode as _) {
+                    return false;
+                }
+            }
+            Err(_) => return false,
+        }
+
+        Global::configure_allocator(core::Global::AllocatorConfiguration {
+            long_running: true,
+            ..Default::default()
+        });
+
+        // TODO(port): Zig re-derives the absolute path via `bun.getFdPath` on
+        // the opened fd (canonicalises symlinks). We pass the joined path
+        // directly until `bun_core::get_fd_path` is on this tier's surface.
+        Self::_boot_and_handle_error(ctx, abs_z.as_bytes(), None)
+    }
+
+    /// `bun run -` — read script from stdin into `ctx.runtime_options.eval`
+    /// and boot the VM with the synthetic `[stdin]` path.
+    fn exec_stdin(ctx: &mut ContextData) -> Result<bool, bun_core::Error> {
+        // TODO(b2-blocked): `bun_sys::File::stdin().read_to_end` — File API
+        // shape not yet on the Rust `bun_sys` surface at this tier. Preserved
+        // in phase_a_draft.
+        #[cfg(any())]
+        {
+            let mut list: Vec<u8> = Vec::new();
+            if bun_sys::File::stdin().read_to_end(&mut list).is_err() {
+                return Ok(false);
+            }
+            ctx.runtime_options.eval.script = list.into_boxed_slice();
+        }
+        let _ = ctx;
+        todo!("RunCommand::exec stdin path — bun_sys::File::stdin gated")
+    }
+
+    /// `node` argv0 emulation. Port of `execAsIfNode`.
+    pub fn exec_as_if_node(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
+        // SAFETY: single-threaded CLI startup; `PRETEND_TO_BE_NODE` is set in
+        // `Command::which()` before dispatch.
+        debug_assert!(unsafe { crate::cli::PRETEND_TO_BE_NODE });
+
+        if !ctx.runtime_options.eval.script.is_empty() {
+            // synthetic `[eval]` path under cwd
+            let mut entry_point_buf = [0u8; MAX_PATH_BYTES + EVAL_TRIGGER.len()];
+            let mut cwd_buf = PathBuffer::uninit();
+            let cwd = bun_core::getcwd(&mut cwd_buf)?;
+            let cwd_bytes = cwd.as_bytes();
+            let cwd_len = cwd_bytes.len();
+            entry_point_buf[..cwd_len].copy_from_slice(cwd_bytes);
+            entry_point_buf[cwd_len..cwd_len + EVAL_TRIGGER.len()].copy_from_slice(EVAL_TRIGGER);
+            let entry: &'static [u8] =
+                Box::leak(entry_point_buf[..cwd_len + EVAL_TRIGGER.len()].to_vec().into_boxed_slice());
+            return Self::boot(ctx, entry, None);
+        }
+
+        if ctx.positionals.is_empty() {
+            pretty_errorln!(
+                "<r><red>error<r>: Missing script to execute. Bun's provided 'node' cli wrapper does not support a repl."
+            );
+            Global::exit(1);
+        }
+
+        // PORT NOTE: borrowck — `_boot_and_handle_error` takes `&mut ctx`, so
+        // dupe the positional out before the call.
+        let filename: Box<[u8]> = ctx.positionals[0].clone();
+
+        let normalized: Box<[u8]> = if paths::is_absolute(&filename) {
+            filename
+        } else {
+            let mut cwd_buf = PathBuffer::uninit();
+            let cwd = bun_core::getcwd(&mut cwd_buf)?;
+            let cwd_bytes = cwd.as_bytes();
+            let mut joined = Vec::with_capacity(cwd_bytes.len() + 1 + filename.len());
+            joined.extend_from_slice(cwd_bytes);
+            joined.push(paths::SEP);
+            joined.extend_from_slice(&filename);
+            // TODO(port): `resolve_path::join_abs_string_buf` for `..`/`.`
+            // normalisation (loose style). Phase B once the free fn is
+            // re-exported at `bun_paths::` root.
+            joined.into_boxed_slice()
+        };
+
+        if !Self::_boot_and_handle_error(ctx, &normalized, None) {
+            // unreachable in practice — `_boot_and_handle_error` exits on error
+        }
+        Ok(())
     }
 }
+
+// Zig: `bun.pathLiteral("/[eval]")` — `pathLiteral` swaps `/` → platform SEP
+// at comptime. Only the leading separator matters here.
+#[cfg(windows)]
+const EVAL_TRIGGER: &[u8] = b"\\[eval]";
+#[cfg(not(windows))]
+const EVAL_TRIGGER: &[u8] = b"/[eval]";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Filter { Script, Bin, BunJs, All, AllPlusBunJs, ScriptExclude, ScriptAndDescriptions }

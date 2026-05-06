@@ -1,22 +1,37 @@
 use std::io::Write as _;
 
-use bun_bundler::bundle_v2::BundleV2;
+use bun_bundler::bundle_v2::{self, BundleV2};
 use bun_bundler::linker_context::metafile_builder as MetafileBuilder;
 use bun_bundler::options;
 use bun_bundler::transpiler;
 use crate::cli::Command;
 use bun_core::{fmt as bun_fmt, Global, Output};
 use bun_js_parser::runtime::Runtime;
+use bun_options_types::CompileTarget::{self, OperatingSystem};
+use bun_options_types::Context::MacroOptions;
 use bun_paths::{self as resolve_path, PathBuffer};
 use bun_str::strings;
 use bun_sys::{self, Fd};
+
+// TODO(b2-blocked): `bun_standalone_graph` is not yet a `bun_runtime` dep —
+// add `bun_standalone_graph.workspace = true` when un-gating Cargo.toml.
+extern crate bun_standalone_graph as bun_standalone_module_graph;
+
+/// `bun.cli.start_time` accessor — Zig had a mutable global; Rust keeps it as
+/// `crate::cli::START_TIME` (written once in `Cli::start`).
+#[inline]
+fn cli_start_time() -> i128 {
+    // SAFETY: `START_TIME` is written exactly once during single-threaded
+    // CLI startup before any command body runs; read-only thereafter.
+    unsafe { crate::cli::START_TIME }
+}
 
 pub struct BuildCommand;
 
 impl BuildCommand {
     pub fn exec(
-        ctx: &mut Command::Context,
-        fetcher: Option<&mut BundleV2::DependenciesScanner>,
+        ctx: Command::Context,
+        fetcher: Option<&mut bundle_v2::DependenciesScanner>,
     ) -> Result<(), bun_core::Error> {
         Global::configure_allocator(Global::AllocatorConfig { long_running: true });
         // PERF(port): allocator param dropped — global mimalloc
@@ -343,13 +358,13 @@ impl BuildCommand {
         }
 
         match &ctx.debug.macros {
-            Command::MacroOptions::Disable => {
+            MacroOptions::Disable => {
                 this_transpiler.options.no_macros = true;
             }
-            Command::MacroOptions::Map(macros) => {
+            MacroOptions::Map(macros) => {
                 this_transpiler.options.macro_remap = macros.clone();
             }
-            Command::MacroOptions::Unspecified => {}
+            MacroOptions::Unspecified => {}
         }
 
         // TODO(port): client_transpiler is left uninitialized in Zig until needed; using Option here
@@ -695,7 +710,7 @@ impl BuildCommand {
 
                 // TODO(port): outfile may need owned storage when reassigned to allocated buffer below
                 let mut outfile_owned: Vec<u8>;
-                if compile_target.os == crate::cli::CompileTarget::Os::Windows
+                if compile_target.os == OperatingSystem::Windows
                     && !strings::has_suffix(outfile, b".exe")
                 {
                     outfile_owned = Vec::new();
@@ -781,7 +796,7 @@ impl BuildCommand {
                             } else {
                                 let exe_base = bun_paths::basename(outfile);
                                 map_basename_owned = Vec::new();
-                                if compile_target.os == crate::cli::CompileTarget::Os::Windows
+                                if compile_target.os == OperatingSystem::Windows
                                     && !strings::has_suffix(exe_base, b".exe")
                                 {
                                     write!(
@@ -805,22 +820,22 @@ impl BuildCommand {
                             // so use map_basename (not a path with directory components)
                             // to avoid writing to a doubled directory path.
                             let mut pathbuf = PathBuffer::uninit();
-                            match bun_runtime::node::fs::NodeFS::write_file_with_path_buffer(
+                            match crate::node::fs::NodeFS::write_file_with_path_buffer(
                                 &mut pathbuf,
-                                bun_runtime::node::fs::WriteFileArgs {
-                                    data: bun_runtime::node::fs::WriteFileData::Buffer(
-                                        bun_runtime::node::Buffer {
-                                            buffer: bun_runtime::node::ArrayBuffer {
+                                crate::node::fs::WriteFileArgs {
+                                    data: crate::node::fs::WriteFileData::Buffer(
+                                        crate::node::Buffer {
+                                            buffer: crate::node::ArrayBuffer {
                                                 ptr: sourcemap_bytes.as_ptr() as *mut u8,
                                                 len: sourcemap_bytes.len() as u32,
                                                 byte_len: sourcemap_bytes.len() as u32,
                                             },
                                         },
                                     ),
-                                    encoding: bun_runtime::node::Encoding::Buffer,
+                                    encoding: crate::node::Encoding::Buffer,
                                     dirfd: Fd::from_std_dir(root_dir),
-                                    file: bun_runtime::node::fs::PathOrFileDescriptor::Path(
-                                        bun_runtime::node::PathLike {
+                                    file: crate::node::fs::PathOrFileDescriptor::Path(
+                                        crate::node::PathLike {
                                             string: bun_str::PathString::init(map_basename),
                                         },
                                     ),
@@ -862,7 +877,7 @@ impl BuildCommand {
                     format_args!(
                         "{}{}",
                         bstr::BStr::new(outfile),
-                        if compile_target.os == crate::cli::CompileTarget::Os::Windows
+                        if compile_target.os == OperatingSystem::Windows
                             && !strings::has_suffix(outfile, b".exe")
                         {
                             ".exe"
@@ -888,7 +903,7 @@ impl BuildCommand {
                         "<green>Transpiled file in {}ms<r>",
                         format_args!(
                             "{}",
-                            (bun_core::time::nano_timestamp() - crate::cli::start_time())
+                            (bun_core::time::nano_timestamp() - cli_start_time())
                                 / (bun_core::time::NS_PER_MS as i128)
                         ),
                     );
@@ -899,7 +914,7 @@ impl BuildCommand {
                             "{} {} {}",
                             reachable_file_count,
                             if reachable_file_count == 1 { "" } else { "s" },
-                            (bun_core::time::nano_timestamp() - crate::cli::start_time())
+                            (bun_core::time::nano_timestamp() - cli_start_time())
                                 / (bun_core::time::NS_PER_MS as i128)
                         ),
                     );
@@ -1032,7 +1047,7 @@ fn print_summary(
     let padding_buf = [b' '; 16];
 
     let bundle_until_now =
-        ((bundled_end - crate::cli::start_time()) as i64) / (bun_core::time::NS_PER_MS as i64);
+        ((bundled_end - cli_start_time()) as i64) / (bun_core::time::NS_PER_MS as i64);
 
     let bundle_elapsed = if minified {
         bundle_until_now - i64::try_from((minify_duration as u64) & ((1u64 << 63) - 1)).unwrap()
@@ -1119,5 +1134,5 @@ fn print_summary(
 //   source:     src/cli/build_command.zig (813 lines)
 //   confidence: medium
 //   todos:      6
-//   notes:      Output::pretty* fmt-string + format_args! shape is a guess; output_files lifetime from labeled block needs restructuring; NodeFS::write_file_with_path_buffer arg struct shape guessed; std.fs.cwd()/makeOpenPath mapped to bun_sys::Dir; bun.cli.start_time mapped to crate::cli::start_time().
+//   notes:      Output::pretty* fmt-string + format_args! shape is a guess; output_files lifetime from labeled block needs restructuring; NodeFS::write_file_with_path_buffer arg struct shape guessed; std.fs.cwd()/makeOpenPath mapped to bun_sys::Dir; bun.cli.start_time mapped to cli_start_time().
 // ──────────────────────────────────────────────────────────────────────────

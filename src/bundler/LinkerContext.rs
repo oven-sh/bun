@@ -941,7 +941,14 @@ impl From<LinkError> for BunError {
     fn from(e: LinkError) -> Self { BunError::from_name(<&'static str>::from(e)) }
 }
 
-unsafe fn noop_task_callback(_: *mut ThreadPoolLib::Task) {}
+unsafe fn noop_task_callback(_: *mut ThreadPoolLib::Task) {
+    // PORTING.md §Forbidden: silent no-op. Spec `LinkerContext.zig:101` defaults
+    // the task callback to `&runLineOffset`; the real bodies are gated below
+    // (`SourceMapDataTask::run_line_offset` / `run_quoted_source_contents`).
+    // Fail loudly so a scheduled-but-unwired task can't deadlock the wait-group
+    // by silently doing nothing and never calling `finish()`.
+    unreachable!("b2-blocked: SourceMapData task callback (run_line_offset / run_quoted_source_contents are gated with ThreadPool::Worker)")
+}
 
 pub struct LinkerOptions {
     pub generate_bytecode_cache: bool,
@@ -3139,9 +3146,6 @@ pub struct InsideWrapperPrefix {
     pub has_async_dependency: bool,
 }
 
-// TODO(b2-blocked): `Expr`/`Stmt` builder helpers (`E::Call`, `S::SExpr` etc.)
-// — bun_js_parser AST builder surface not yet stable.
-#[cfg(any())]
 impl InsideWrapperPrefix {
     pub fn init() -> Self {
         Self { stmts: Vec::new(), sync_dependencies_end: 0, has_async_dependency: false }
@@ -3154,7 +3158,12 @@ impl InsideWrapperPrefix {
         self.sync_dependencies_end = 0;
         self.has_async_dependency = false;
     }
+}
 
+// TODO(b2-blocked): `Expr`/`Stmt` builder helpers (`E::Call`, `S::SExpr` etc.)
+// — bun_js_parser AST builder surface not yet stable.
+#[cfg(any())]
+impl InsideWrapperPrefix {
     pub fn append_non_dependency(&mut self, stmt: Stmt) -> Result<(), AllocError> {
         self.stmts.push(stmt);
         Ok(())

@@ -69,7 +69,7 @@ gated_value!(image);
 // into_lab matrix chains; ident.rs IdentOrRef) un-gate with the calc lattice.
 gated_value!(color, { pub use crate::values_stub::color::*; });
 pub mod ident;
-gated_value!(url,   { pub use crate::values_stub::url::*; });
+pub mod url;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

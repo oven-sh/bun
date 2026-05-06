@@ -56,7 +56,7 @@ pub mod bundle_v2;
 /// `LinkerGraph` SoA accessors land. Declared inline (no `mod.rs`) so paths
 /// stay 1:1 with the Zig directory.
 pub mod linker_context {
-    #[path = "scanImportsAndExports.rs"]
+    #[path = "linker_context/scanImportsAndExports.rs"]
     pub mod scan_imports_and_exports;
 }
 

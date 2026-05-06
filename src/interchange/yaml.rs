@@ -3515,6 +3515,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
     fn scan_plain_scalar(&mut self, opts: ScanOptions) -> Result<Token<Enc>, ParseError> {
         let parser: *mut Parser<'i, Enc> = self;
+        // SAFETY: single provenance chain — once the raw pointer is derived,
+        // route ALL parser access through it; never touch `self` directly again
+        // (Stacked Borrows: reborrowing `self` would invalidate `parser`).
+        macro_rules! parser { () => { unsafe { &mut *parser } }; }
         // SAFETY: ctx outlived by &mut self in scan_plain_scalar; no other
         // borrow of *self exists across these unsafe derefs.
         let mut ctx = ScalarResolverCtx::<Enc> {
@@ -3524,14 +3528,14 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             tag: opts.tag,
             parser,
             resolved_scalar_len: 0,
-            start: self.pos,
-            line: self.line,
-            line_indent: self.line_indent,
+            start: parser!().pos,
+            line: parser!().line,
+            line_indent: parser!().line_indent,
             multiline: false,
         };
 
         // PORT NOTE: labeled-switch loop
-        let mut __c = Enc::wide(self.next());
+        let mut __c = Enc::wide(parser!().next());
         loop {
             match __c {
                 0 => {
@@ -3539,66 +3543,66 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 }
 
                 0x2D /* '-' */ => {
-                    if self.line_indent == Indent::NONE
-                        && self.remain_starts_with(Enc::literal(b"---"))
-                        && self.is_any_or_eof_at(Enc::literal(b" \t\n\r"), 3)
+                    if parser!().line_indent == Indent::NONE
+                        && parser!().remain_starts_with(Enc::literal(b"---"))
+                        && parser!().is_any_or_eof_at(Enc::literal(b" \t\n\r"), 3)
                     {
                         return Ok(ctx.done());
                     }
 
                     if !ctx.resolved && ctx.str_builder.len() == 0 {
-                        ctx.append_source(Enc::ch(b'-'), self.pos)?;
-                        self.inc(1);
+                        ctx.append_source(Enc::ch(b'-'), parser!().pos)?;
+                        parser!().inc(1);
                         ctx.try_resolve_number(FirstChar::Negative)?;
-                        __c = Enc::wide(self.next());
+                        __c = Enc::wide(parser!().next());
                         continue;
                     }
 
-                    ctx.append_source(Enc::ch(b'-'), self.pos)?;
-                    self.inc(1);
-                    __c = Enc::wide(self.next());
+                    ctx.append_source(Enc::ch(b'-'), parser!().pos)?;
+                    parser!().inc(1);
+                    __c = Enc::wide(parser!().next());
                     continue;
                 }
 
                 0x2E /* '.' */ => {
-                    if self.line_indent == Indent::NONE
-                        && self.remain_starts_with(Enc::literal(b"..."))
-                        && self.is_any_or_eof_at(Enc::literal(b" \t\n\r"), 3)
+                    if parser!().line_indent == Indent::NONE
+                        && parser!().remain_starts_with(Enc::literal(b"..."))
+                        && parser!().is_any_or_eof_at(Enc::literal(b" \t\n\r"), 3)
                     {
                         return Ok(ctx.done());
                     }
 
                     if !ctx.resolved && ctx.str_builder.len() == 0 {
-                        match Enc::wide(self.peek(1)) {
+                        match Enc::wide(parser!().peek(1)) {
                             0x6E | 0x4E | 0x69 | 0x49 /* 'n' 'N' 'i' 'I' */ => {
-                                ctx.append_source(Enc::ch(b'.'), self.pos)?;
-                                self.inc(1);
+                                ctx.append_source(Enc::ch(b'.'), parser!().pos)?;
+                                parser!().inc(1);
                                 ctx.try_resolve_number(FirstChar::Dot)?;
-                                __c = Enc::wide(self.next());
+                                __c = Enc::wide(parser!().next());
                                 continue;
                             }
                             _ => {
                                 ctx.try_resolve_number(FirstChar::Other)?;
-                                __c = Enc::wide(self.next());
+                                __c = Enc::wide(parser!().next());
                                 continue;
                             }
                         }
                     }
 
-                    ctx.append_source(Enc::ch(b'.'), self.pos)?;
-                    self.inc(1);
-                    __c = Enc::wide(self.next());
+                    ctx.append_source(Enc::ch(b'.'), parser!().pos)?;
+                    parser!().inc(1);
+                    __c = Enc::wide(parser!().next());
                     continue;
                 }
 
                 0x3A /* ':' */ => {
-                    if self.is_s_white_or_b_char_or_eof_at(1) {
+                    if parser!().is_s_white_or_b_char_or_eof_at(1) {
                         return Ok(ctx.done());
                     }
 
-                    match self.context.get() {
+                    match parser!().context.get() {
                         Context::BlockOut | Context::BlockIn | Context::FlowIn => {}
-                        Context::FlowKey => match Enc::wide(self.peek(1)) {
+                        Context::FlowKey => match Enc::wide(parser!().peek(1)) {
                             0x2C | 0x5B | 0x5D | 0x7B | 0x7D /* , [ ] { } */ => {
                                 return Ok(ctx.done());
                             }
@@ -3606,65 +3610,65 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         },
                     }
 
-                    ctx.append_source(Enc::ch(b':'), self.pos)?;
-                    self.inc(1);
-                    __c = Enc::wide(self.next());
+                    ctx.append_source(Enc::ch(b':'), parser!().pos)?;
+                    parser!().inc(1);
+                    __c = Enc::wide(parser!().next());
                     continue;
                 }
 
                 0x23 /* '#' */ => {
-                    let prev = self.input[self.pos.sub(1).cast()];
-                    if self.pos == Pos::ZERO
+                    let prev = parser!().input[parser!().pos.sub(1).cast()];
+                    if parser!().pos == Pos::ZERO
                         || matches!(Enc::wide(prev), 0x20 | 0x09 | 0x0D | 0x0A)
                     {
                         return Ok(ctx.done());
                     }
 
-                    ctx.append_source(Enc::ch(b'#'), self.pos)?;
-                    self.inc(1);
-                    __c = Enc::wide(self.next());
+                    ctx.append_source(Enc::ch(b'#'), parser!().pos)?;
+                    parser!().inc(1);
+                    __c = Enc::wide(parser!().next());
                     continue;
                 }
 
                 0x2C | 0x5B | 0x5D | 0x7B | 0x7D /* , [ ] { } */ => {
-                    match self.context.get() {
+                    match parser!().context.get() {
                         Context::BlockIn | Context::BlockOut => {}
                         Context::FlowIn | Context::FlowKey => {
                             return Ok(ctx.done());
                         }
                     }
 
-                    let c = self.next();
-                    ctx.append_source(c, self.pos)?;
-                    self.inc(1);
-                    __c = Enc::wide(self.next());
+                    let c = parser!().next();
+                    ctx.append_source(c, parser!().pos)?;
+                    parser!().inc(1);
+                    __c = Enc::wide(parser!().next());
                     continue;
                 }
 
                 0x20 | 0x09 /* ' ' '\t' */ => {
-                    let c = self.next();
-                    ctx.append_source_whitespace(c, self.pos)?;
-                    self.inc(1);
-                    __c = Enc::wide(self.next());
+                    let c = parser!().next();
+                    ctx.append_source_whitespace(c, parser!().pos)?;
+                    parser!().inc(1);
+                    __c = Enc::wide(parser!().next());
                     continue;
                 }
 
                 0x0D /* '\r' */ => {
-                    if Enc::wide(self.peek(1)) == 0x0A {
-                        self.inc(1);
+                    if Enc::wide(parser!().peek(1)) == 0x0A {
+                        parser!().inc(1);
                     }
                     __c = 0x0A;
                     continue;
                 }
 
                 0x0A /* '\n' */ => {
-                    self.newline();
-                    self.inc(1);
+                    parser!().newline();
+                    parser!().inc(1);
 
-                    let lines = self.fold_lines();
+                    let lines = parser!().fold_lines();
 
-                    if let Some(block_indent) = self.block_indents.get() {
-                        match self.line_indent.cmp(block_indent) {
+                    if let Some(block_indent) = parser!().block_indents.get() {
+                        match parser!().line_indent.cmp(block_indent) {
                             Ordering::Greater => {
                                 // continue (whitespace already stripped)
                             }
@@ -3676,26 +3680,26 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     }
 
                     // clear the leading whitespace before the newline.
-                    // SAFETY: ctx.parser == self; whitespace_buf not borrowed.
-                    unsafe { (*ctx.parser).whitespace_buf.clear(); }
+                    // clear via the single raw-pointer provenance chain.
+                    parser!().whitespace_buf.clear();
 
-                    if lines == 0 && !self.is_eof() {
+                    if lines == 0 && !parser!().is_eof() {
                         ctx.append_whitespace(Enc::ch(b' '))?;
                     }
 
                     ctx.append_whitespace_n_times(Enc::ch(b'\n'), lines)?;
 
-                    __c = Enc::wide(self.next());
+                    __c = Enc::wide(parser!().next());
                     continue;
                 }
 
                 _ => {
-                    let c = self.next();
+                    let c = parser!().next();
                     if ctx.resolved || ctx.str_builder.len() != 0 {
-                        let start = self.pos;
-                        self.inc(1);
+                        let start = parser!().pos;
+                        parser!().inc(1);
                         ctx.append_source(c, start)?;
-                        __c = Enc::wide(self.next());
+                        __c = Enc::wide(parser!().next());
                         continue;
                     }
 
@@ -3704,153 +3708,153 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     // TODO: make more better
                     match __c {
                         0x6E /* 'n' */ => {
-                            let n_start = self.pos;
-                            self.inc(1);
-                            if self.remain_starts_with(Enc::literal(b"ull")) {
+                            let n_start = parser!().pos;
+                            parser!().inc(1);
+                            if parser!().remain_starts_with(Enc::literal(b"ull")) {
                                 ctx.resolve(NodeScalar::Null, n_start, Enc::literal(b"null"))?;
-                                self.inc(3);
-                                __c = Enc::wide(self.next());
+                                parser!().inc(3);
+                                __c = Enc::wide(parser!().next());
                                 continue;
                             }
                             ctx.append_source(c, n_start)?;
-                            __c = Enc::wide(self.next());
+                            __c = Enc::wide(parser!().next());
                             continue;
                         }
                         0x4E /* 'N' */ => {
-                            let n_start = self.pos;
-                            self.inc(1);
-                            if self.remain_starts_with(Enc::literal(b"ull")) {
+                            let n_start = parser!().pos;
+                            parser!().inc(1);
+                            if parser!().remain_starts_with(Enc::literal(b"ull")) {
                                 ctx.resolve(NodeScalar::Null, n_start, Enc::literal(b"Null"))?;
-                                self.inc(3);
-                                __c = Enc::wide(self.next());
+                                parser!().inc(3);
+                                __c = Enc::wide(parser!().next());
                                 continue;
                             }
-                            if self.remain_starts_with(Enc::literal(b"ULL")) {
+                            if parser!().remain_starts_with(Enc::literal(b"ULL")) {
                                 ctx.resolve(NodeScalar::Null, n_start, Enc::literal(b"NULL"))?;
-                                self.inc(3);
-                                __c = Enc::wide(self.next());
+                                parser!().inc(3);
+                                __c = Enc::wide(parser!().next());
                                 continue;
                             }
                             ctx.append_source(c, n_start)?;
-                            __c = Enc::wide(self.next());
+                            __c = Enc::wide(parser!().next());
                             continue;
                         }
                         0x7E /* '~' */ => {
-                            let start = self.pos;
-                            self.inc(1);
+                            let start = parser!().pos;
+                            parser!().inc(1);
                             ctx.resolve(NodeScalar::Null, start, Enc::literal(b"~"))?;
-                            __c = Enc::wide(self.next());
+                            __c = Enc::wide(parser!().next());
                             continue;
                         }
                         0x74 /* 't' */ => {
-                            let t_start = self.pos;
-                            self.inc(1);
-                            if self.remain_starts_with(Enc::literal(b"rue")) {
+                            let t_start = parser!().pos;
+                            parser!().inc(1);
+                            if parser!().remain_starts_with(Enc::literal(b"rue")) {
                                 ctx.resolve(NodeScalar::Boolean(true), t_start, Enc::literal(b"true"))?;
-                                self.inc(3);
-                                __c = Enc::wide(self.next());
+                                parser!().inc(3);
+                                __c = Enc::wide(parser!().next());
                                 continue;
                             }
                             ctx.append_source(c, t_start)?;
-                            __c = Enc::wide(self.next());
+                            __c = Enc::wide(parser!().next());
                             continue;
                         }
                         0x54 /* 'T' */ => {
-                            let t_start = self.pos;
-                            self.inc(1);
-                            if self.remain_starts_with(Enc::literal(b"rue")) {
+                            let t_start = parser!().pos;
+                            parser!().inc(1);
+                            if parser!().remain_starts_with(Enc::literal(b"rue")) {
                                 ctx.resolve(NodeScalar::Boolean(true), t_start, Enc::literal(b"True"))?;
-                                self.inc(3);
-                                __c = Enc::wide(self.next());
+                                parser!().inc(3);
+                                __c = Enc::wide(parser!().next());
                                 continue;
                             }
-                            if self.remain_starts_with(Enc::literal(b"RUE")) {
+                            if parser!().remain_starts_with(Enc::literal(b"RUE")) {
                                 ctx.resolve(NodeScalar::Boolean(true), t_start, Enc::literal(b"TRUE"))?;
-                                self.inc(3);
-                                __c = Enc::wide(self.next());
+                                parser!().inc(3);
+                                __c = Enc::wide(parser!().next());
                                 continue;
                             }
                             ctx.append_source(c, t_start)?;
-                            __c = Enc::wide(self.next());
+                            __c = Enc::wide(parser!().next());
                             continue;
                         }
                         0x66 /* 'f' */ => {
-                            let f_start = self.pos;
-                            self.inc(1);
-                            if self.remain_starts_with(Enc::literal(b"alse")) {
+                            let f_start = parser!().pos;
+                            parser!().inc(1);
+                            if parser!().remain_starts_with(Enc::literal(b"alse")) {
                                 ctx.resolve(NodeScalar::Boolean(false), f_start, Enc::literal(b"false"))?;
-                                self.inc(4);
-                                __c = Enc::wide(self.next());
+                                parser!().inc(4);
+                                __c = Enc::wide(parser!().next());
                                 continue;
                             }
                             ctx.append_source(c, f_start)?;
-                            __c = Enc::wide(self.next());
+                            __c = Enc::wide(parser!().next());
                             continue;
                         }
                         0x46 /* 'F' */ => {
-                            let f_start = self.pos;
-                            self.inc(1);
-                            if self.remain_starts_with(Enc::literal(b"alse")) {
+                            let f_start = parser!().pos;
+                            parser!().inc(1);
+                            if parser!().remain_starts_with(Enc::literal(b"alse")) {
                                 ctx.resolve(NodeScalar::Boolean(false), f_start, Enc::literal(b"False"))?;
-                                self.inc(4);
-                                __c = Enc::wide(self.next());
+                                parser!().inc(4);
+                                __c = Enc::wide(parser!().next());
                                 continue;
                             }
-                            if self.remain_starts_with(Enc::literal(b"ALSE")) {
+                            if parser!().remain_starts_with(Enc::literal(b"ALSE")) {
                                 ctx.resolve(NodeScalar::Boolean(false), f_start, Enc::literal(b"FALSE"))?;
-                                self.inc(4);
-                                __c = Enc::wide(self.next());
+                                parser!().inc(4);
+                                __c = Enc::wide(parser!().next());
                                 continue;
                             }
                             ctx.append_source(c, f_start)?;
-                            __c = Enc::wide(self.next());
+                            __c = Enc::wide(parser!().next());
                             continue;
                         }
 
                         0x2D /* '-' */ => {
-                            ctx.append_source(Enc::ch(b'-'), self.pos)?;
-                            self.inc(1);
+                            ctx.append_source(Enc::ch(b'-'), parser!().pos)?;
+                            parser!().inc(1);
                             ctx.try_resolve_number(FirstChar::Negative)?;
-                            __c = Enc::wide(self.next());
+                            __c = Enc::wide(parser!().next());
                             continue;
                         }
 
                         0x2B /* '+' */ => {
-                            ctx.append_source(Enc::ch(b'+'), self.pos)?;
-                            self.inc(1);
+                            ctx.append_source(Enc::ch(b'+'), parser!().pos)?;
+                            parser!().inc(1);
                             ctx.try_resolve_number(FirstChar::Positive)?;
-                            __c = Enc::wide(self.next());
+                            __c = Enc::wide(parser!().next());
                             continue;
                         }
 
                         0x30..=0x39 /* '0'..'9' */ => {
                             ctx.try_resolve_number(FirstChar::Other)?;
-                            __c = Enc::wide(self.next());
+                            __c = Enc::wide(parser!().next());
                             continue;
                         }
 
                         0x2E /* '.' */ => {
-                            match Enc::wide(self.peek(1)) {
+                            match Enc::wide(parser!().peek(1)) {
                                 0x6E | 0x4E | 0x69 | 0x49 /* 'n' 'N' 'i' 'I' */ => {
-                                    ctx.append_source(Enc::ch(b'.'), self.pos)?;
-                                    self.inc(1);
+                                    ctx.append_source(Enc::ch(b'.'), parser!().pos)?;
+                                    parser!().inc(1);
                                     ctx.try_resolve_number(FirstChar::Dot)?;
-                                    __c = Enc::wide(self.next());
+                                    __c = Enc::wide(parser!().next());
                                     continue;
                                 }
                                 _ => {
                                     ctx.try_resolve_number(FirstChar::Other)?;
-                                    __c = Enc::wide(self.next());
+                                    __c = Enc::wide(parser!().next());
                                     continue;
                                 }
                             }
                         }
 
                         _ => {
-                            let start = self.pos;
-                            self.inc(1);
+                            let start = parser!().pos;
+                            parser!().inc(1);
                             ctx.append_source(c, start)?;
-                            __c = Enc::wide(self.next());
+                            __c = Enc::wide(parser!().next());
                             continue;
                         }
                     }

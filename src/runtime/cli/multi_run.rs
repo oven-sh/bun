@@ -761,8 +761,7 @@ pub fn run(ctx: &mut Command::Context) -> Result<core::convert::Infallible, Erro
     // --no-orphans: register the macOS kqueue parent watch on this MiniEventLoop
     // (the VirtualMachine.init path is never reached for --parallel). Linux is
     // already covered by prctl in enable() + linux_pdeathsig on each spawn.
-    // TODO(port): crate path for ParentDeathWatchdog
-    bun::ParentDeathWatchdog::install_on_event_loop(EventLoopHandle::init(event_loop));
+    bun_aio::ParentDeathWatchdog::install_on_event_loop(EventLoopHandle::init(event_loop));
     // TODO(port): shell_bin must be NUL-terminated ([:0]const u8) for argv use
     let shell_bin: Box<[u8]> = if cfg!(unix) {
         RunCommand::find_shell(this_transpiler.env.get(b"PATH").unwrap_or(b""), cwd)

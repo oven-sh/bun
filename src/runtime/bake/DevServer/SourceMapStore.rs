@@ -154,11 +154,12 @@ impl Entry {
         j.push_static(br#"{"version":3,"sources":["bun://Bun/Bun HMR Runtime""#);
 
         // This buffer is temporary, holding the quoted source paths, joined with commas.
-        let mut source_map_strings: bumpalo::collections::Vec<'_, u8> =
-            bumpalo::collections::Vec::new_in(arena);
-        // PERF(port): was arena-backed ArrayList; bumpalo Vec drops with arena reset.
+        // PERF(port): was arena-backed ArrayList; using global Vec since
+        // `percent_encode_write` takes `&mut Vec<u8>`.
+        let mut source_map_strings: Vec<u8> = Vec::new();
 
-        let buf = bun_paths::path_buffer_pool().get();
+        #[allow(unused_variables)]
+        let buf = bun_paths::path_buffer_pool::get();
 
         for native_file_path in paths.iter() {
             source_map_strings.extend_from_slice(b",");

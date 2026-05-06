@@ -569,17 +569,18 @@ impl InitCommand {
                 }
 
                 // Find any source file
-                // TODO(port): std.fs.cwd().openDir(".", .{ .iterate = true })
-                let Ok(dir) = bun_sys::Dir::open_iterable(Fd::cwd(), b".") else {
+                // Zig: std.fs.cwd().openDir(".", .{ .iterate = true })
+                let Ok(dir) = bun_sys::open_dir_at(Fd::cwd(), b".") else {
                     break 'infer;
                 };
-                let _close = scopeguard::guard(&dir, |d| d.close());
-                let mut it = bun_sys::DirIterator::iterate(dir.fd(), bun_sys::DirIterator::Encoding::U8);
-                while let Some(file) = it.next().unwrap_result()? {
+                let _close = scopeguard::guard(dir, |d| { let _ = bun_sys::close(d); });
+                // Zig: bun.DirIterator.iterate(.fromStdDir(dir), .u8)
+                let mut it = bun_sys::iterate_dir(dir);
+                while let Some(file) = it.next().map_err(bun_core::Error::from)? {
                     if file.kind != bun_sys::FileKind::File {
                         continue;
                     }
-                    let ext = bun_paths::extension(file.name.slice());
+                    let ext = bun_paths::extension(file.name.slice_u8());
                     let Some(loader) = options::Loader::from_string(ext) else {
                         continue;
                     };

@@ -374,7 +374,7 @@ pub mod reserved_command {
         );
         // TODO(port): Output::pretty_error positional substitution (3× same arg)
         Output::flush();
-        bun_core::process::exit(1);
+        Global::exit(1);
     }
 }
 pub use reserved_command as ReservedCommand;

@@ -1801,7 +1801,7 @@ impl TestCommand {
         let node_env_entry = env_loader.map.get_or_put_without_value(b"NODE_ENV")?;
         if !node_env_entry.found_existing {
             *node_env_entry.key_ptr = Box::<[u8]>::from(&**node_env_entry.key_ptr);
-            *node_env_entry.value_ptr = DotEnv::MapEntry {
+            *node_env_entry.value_ptr = DotEnv::HashTableValue {
                 value: Box::<[u8]>::from(b"test" as &[u8]),
                 conditional: false,
             };
@@ -1921,7 +1921,7 @@ impl TestCommand {
             let dir_to_scan_owned: Vec<u8>;
             let dir_to_scan: &[u8] = 'brk: {
                 if !ctx.debug.test_directory.is_empty() {
-                    dir_to_scan_owned = bun_path::join_abs(scanner.fs.top_level_dir, bun_path::Style::Auto, &ctx.debug.test_directory).into();
+                    dir_to_scan_owned = resolve_path::join_abs::<bun_path::platform::Auto>(scanner.fs.top_level_dir, &ctx.debug.test_directory).into();
                     break 'brk &dir_to_scan_owned;
                 }
 

@@ -433,6 +433,12 @@ impl<'a> Sink<'a> {
 // TODO(b2-blocked): replace with `js_sink!` instantiation once bun_jsc method
 // surface (host_fn proc-macro, JSValue::js_number, ErrorCode, EnsureStillAlive)
 // is green.
+// `repr(transparent)`: the Zig `ThisSink = struct { sink: SinkType }` is
+// allocated as the JSSink wrapper but freed via `this.sink.destroy()` (the
+// inner address). With `transparent` the inner and outer share Layout, so
+// `Box::from_raw` on the inner pointer (e.g. `HTTPServerWritable::destroy`)
+// is sound for an allocation that was `Box::into_raw`'d as `Box<JSSink<T>>`.
+#[repr(transparent)]
 pub struct JSSink<T> {
     pub sink: T,
 }

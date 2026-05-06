@@ -1471,7 +1471,7 @@ impl<'a> PackageInstall<'a> {
                                 // (and the copyfile fallback in `install()`) actually fire.
                                 match err.get_errno() {
                                     sys::E::EEXIST => {
-                                        let _ = sys::unlinkat(destination_dir.fd(), entry.path, 0);
+                                        let _ = sys::unlinkat(destination_dir.fd(), entry.path);
                                         sys::linkat(
                                             entry.dir,
                                             entry.basename,
@@ -1663,7 +1663,7 @@ impl<'a> PackageInstall<'a> {
                                     return Err(err.into());
                                 }
 
-                                let _ = sys::unlinkat(destination_dir.fd(), entry.path, 0);
+                                let _ = sys::unlinkat(destination_dir.fd(), entry.path);
                                 sys::symlinkat(entry.basename, destination_dir.fd(), entry.path)?;
                             }
 

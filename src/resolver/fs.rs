@@ -1526,7 +1526,7 @@ impl TmpfilePosix {
             if self.dir_fd == Fd::INVALID {
                 return;
             }
-            let _ = bun_sys::unlinkat(self.dir_fd, name, 0);
+            let _ = bun_sys::unlinkat(self.dir_fd, name);
         }
         #[cfg(target_os = "linux")]
         {

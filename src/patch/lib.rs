@@ -104,7 +104,7 @@ impl<'a> PatchFile<'a> {
                 PatchFilePart::FileDeletion(file_deletion) => {
                     let pathz = ZBox::from_vec_with_nul(file_deletion.path.to_vec());
 
-                    if let sys::Result::Err(e) = sys::unlinkat(patch_dir, &pathz, 0) {
+                    if let sys::Result::Err(e) = sys::unlinkat(patch_dir, &pathz) {
                         return Some(e.without_path());
                     }
                 }

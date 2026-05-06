@@ -892,7 +892,7 @@ pub mod npm {
                 }
 
                 // delete the outdated/invalid manifest
-                let _ = bun_sys::unlinkat(cache_dir, file_name, 0);
+                let _ = bun_sys::unlinkat(cache_dir, file_name);
                 Ok(None)
             }
 

@@ -309,8 +309,30 @@ impl JSPromise {
             crate::to_js_host_call(g, (this.f.take().unwrap())(g))
         }
 
-        // TODO(port): @src() source-location plumbing for TopExceptionScope.
-        let mut scope = TopExceptionScope::init(global);
+        // TODO(port): @src() source-location plumbing — provide a `src!()` macro in Phase B.
+        // Zig: `var scope: jsc.TopExceptionScope = undefined; scope.init(global, @src()); defer scope.deinit();`
+        // `TopExceptionScope::init` is in-place (placement-constructs into `bytes`), so we
+        // stack-allocate via `MaybeUninit` and must not move it after `init`.
+        let mut scope = core::mem::MaybeUninit::<TopExceptionScope>::uninit();
+        // SAFETY: `init` writes into `bytes` via FFI without reading prior contents; the
+        // `ci_assert`-gated `location` field is set inside `init` itself, so calling `init`
+        // on uninit storage is sound (matches the Zig `= undefined; .init()` pattern).
+        let scope: &mut TopExceptionScope = unsafe {
+            (*scope.as_mut_ptr()).init(
+                global,
+                SourceLocation {
+                    fn_name: c"JSPromise::wrap".as_ptr(),
+                    file: c"src/jsc/JSPromise.rs".as_ptr(),
+                    line: line!(),
+                },
+            );
+            scope.assume_init_mut()
+        };
+        let _scope_guard = scopeguard::guard(scope as *mut TopExceptionScope, |s| {
+            // SAFETY: `s` was initialized by `init()` above and has not been destroyed.
+            unsafe { TopExceptionScope::destroy(s) }
+        });
+
         let mut ctx = Wrapper { f: Some(f) };
         // SAFETY: `ctx` outlives the synchronous FFI call; `call::<F>` matches the
         // expected `extern "C" fn(*mut c_void, *mut JSGlobalObject) -> JSValue` signature.

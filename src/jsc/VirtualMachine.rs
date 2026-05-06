@@ -1430,14 +1430,17 @@ impl VirtualMachine {
 
         // pending_internal_promise can change if hot module reloading is enabled
         if self.is_watcher_enabled() {
-            self.event_loop().perform_gc();
+            // SAFETY: `event_loop` is a self-pointer into this VM; uniquely
+            // accessed here (no overlapping `&mut EventLoop`).
+            unsafe { (*self.event_loop()).perform_gc() };
             loop {
                 let Some(p) = self.pending_internal_promise else { break };
                 // SAFETY: `p` is a live JSC heap cell tracked by the VM.
                 if unsafe { (*p).status() } != crate::js_promise::Status::Pending {
                     break;
                 }
-                self.event_loop().tick();
+                // SAFETY: see above re: `event_loop`.
+                unsafe { (*self.event_loop()).tick() };
                 let Some(p) = self.pending_internal_promise else { break };
                 // SAFETY: see above.
                 if unsafe { (*p).status() } == crate::js_promise::Status::Pending {
@@ -1449,7 +1452,8 @@ impl VirtualMachine {
             if unsafe { (*promise).status() } == crate::js_promise::Status::Rejected {
                 return Ok(promise);
             }
-            self.event_loop().perform_gc();
+            // SAFETY: `event_loop` is a self-pointer into this VM.
+            unsafe { (*self.event_loop()).perform_gc() };
             self.wait_for_promise(jsc::AnyPromise::Internal(promise));
         }
 
@@ -1461,11 +1465,15 @@ impl VirtualMachine {
     /// the `bun -e` path (Zig open-codes `eventLoop().tick()` +
     /// `drainMicrotasks()` at each call site).
     pub fn drain_queues_if_needed(&mut self) {
-        if self.event_loop().entered_event_loop_count > 0 {
+        // SAFETY: `event_loop` is a self-pointer into this VM; uniquely
+        // accessed here (no overlapping `&mut EventLoop`).
+        if unsafe { (*self.event_loop()).entered_event_loop_count } > 0 {
             return;
         }
-        self.event_loop().tick();
-        let _ = self.event_loop().drain_microtasks();
+        // SAFETY: see above.
+        unsafe { (*self.event_loop()).tick() };
+        // SAFETY: see above.
+        let _ = unsafe { (*self.event_loop()).drain_microtasks() };
         // SAFETY: global is valid for VM lifetime.
         unsafe { (*self.global).handle_rejected_promises() };
     }

@@ -708,9 +708,67 @@ pub struct PackageManagerTmpDirStub {
 #[derive(Default)] pub struct PackageInstall;
 #[derive(Default)] pub struct Store;
 #[derive(Default)] pub struct FileCopier;
-#[derive(Default)] pub struct PatchTask;
+#[derive(Default)] pub struct PatchTask {
+    pub callback: PatchTaskCallbackStub,
+}
+#[derive(Default)] pub struct PatchTaskCallbackStub {
+    pub apply: PatchTaskApplyStub,
+}
+#[derive(Default)] pub struct PatchTaskApplyStub {
+    pub logger: bun_logger::Log,
+}
+impl PatchTask {
+    /// Stub for `PatchTask.apply` (src/install/patch_install.zig). Real body
+    /// lives in the gated `patch_install.rs`.
+    pub fn apply(&mut self) {}
+}
+
+/// `crate::ci_info` — install-tier shim for `bun_runtime::cli::ci_info`
+/// (`src/runtime/cli/ci_info.rs`). Only `detect_ci_name` is exposed; the
+/// CI-probe table itself is generated at build time in `bun_runtime` and is
+/// not reachable from this tier, so the shim returns the `CI` env var name
+/// when set (the same fallback `npm-registry-fetch` uses) and `None` otherwise.
+pub mod ci_info {
+    pub fn detect_ci_name() -> Option<&'static [u8]> {
+        // Port of the trailing fallback in `ci_info.zig:detectCiName` —
+        // the per-vendor probes live in `bun_runtime` (T6) and are wired in
+        // there; install only needs *some* answer for the user-agent string.
+        if std::env::var_os("CI").is_some() {
+            return Some(b"ci");
+        }
+        None
+    }
+}
+
+/// Process-lifetime singleton — Zig: `var instance: PackageManager = undefined;`
+/// (src/install/PackageManager.zig). Allocated at `PackageManager.init()`.
+static mut PACKAGE_MANAGER_INSTANCE: *mut PackageManager = core::ptr::null_mut();
+
 impl PackageManager {
     pub fn verbose_install() -> bool { false }
+
+    /// Zig: `PackageManager.get()` — returns the process-global instance.
+    /// SAFETY: callers must ensure `init()` has run (mirrors Zig's
+    /// `&instance` which is undefined before init).
+    pub fn get() -> &'static mut PackageManager {
+        // SAFETY: process-lifetime singleton; mirrors Zig `&instance`.
+        unsafe {
+            if PACKAGE_MANAGER_INSTANCE.is_null() {
+                PACKAGE_MANAGER_INSTANCE = Box::into_raw(Box::<PackageManager>::default());
+            }
+            &mut *PACKAGE_MANAGER_INSTANCE
+        }
+    }
+
+    /// Zig: `PackageManager.wake()` — nudges the event loop to drain
+    /// `resolve_tasks`. Real impl posts to `uws.Loop`; stubbed until
+    /// `bun_event_loop` exposes the package-manager loop handle.
+    pub fn wake(&self) {}
+
+    /// Zig: `PackageManager.scopeForPackageName(name)`.
+    pub fn scope_for_package_name(&self, _name: &[u8]) -> &npm::registry::Scope {
+        &self.options.scope
+    }
 
     /// Port of `directories.getCacheDirectory`
     /// (src/install/PackageManager/PackageManagerDirectories.zig:1).

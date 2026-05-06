@@ -60,7 +60,8 @@ pub struct AutoContext;
 impl<K: Hash + Eq + ?Sized> ArrayHashContext<K> for AutoContext {
     #[inline]
     fn hash(&self, key: &K) -> u32 {
-        let mut h = bun_wyhash::Wyhash11::init(0);
+        // Zig: std.array_hash_map.getAutoHashFn → std.hash.Wyhash (NOT Wyhash11).
+        let mut h = bun_wyhash::Wyhash::init(0);
         key.hash(&mut h);
         h.finish() as u32 // @truncate
     }
@@ -93,9 +94,9 @@ pub struct CaseInsensitiveAsciiStringContext;
 impl CaseInsensitiveAsciiStringContext {
     fn hash_bytes(mut s: &[u8]) -> u32 {
         // Mirrors the Zig: lowercase into a 1024-byte scratch buffer in chunks
-        // and feed wyhash incrementally.
+        // and feed wyhash incrementally. Zig uses std.hash.Wyhash (NOT Wyhash11).
         let mut buf = [0u8; 1024];
-        let mut h = bun_wyhash::Wyhash11::init(0);
+        let mut h = bun_wyhash::Wyhash::init(0);
         while !s.is_empty() {
             let n = s.len().min(buf.len());
             for (dst, &src) in buf[..n].iter_mut().zip(&s[..n]) {

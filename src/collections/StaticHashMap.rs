@@ -33,10 +33,9 @@ impl<K> Default for AutoContext<K> {
 impl<K: core::hash::Hash + Eq> HashContext<K> for AutoContext<K> {
     #[inline]
     fn hash(&self, key: &K) -> u64 {
-        // TODO(port): Zig's AutoContext uses std.hash.autoHash (Wyhash-based).
-        // Confirm bun_wyhash matches std.hash_map.getAutoHashFn output for the K's
-        // actually used with this map (currently only `usize` in tests).
-        let mut h = bun_wyhash::Wyhash11::init(0);
+        // Zig's AutoContext (std.hash_map.getAutoHashFn) uses std.hash.Wyhash,
+        // NOT Wyhash11 — see vendor/zig/lib/std/hash_map.zig.
+        let mut h = bun_wyhash::Wyhash::init(0);
         core::hash::Hash::hash(key, &mut h);
         core::hash::Hasher::finish(&h)
     }

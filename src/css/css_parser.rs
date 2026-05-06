@@ -3063,11 +3063,12 @@ impl StyleSheet<BundlerAtRule> {
         // *and* the inner `Parser` (css_parser.zig:3245), and aliased `&options`
         // into the at-rule parser while also passing `options` by value (struct
         // copy) to `parseWith`. Rust forbids both overlaps directly:
-        // - `import_records`: derive a raw `*mut` once; the at-rule parser
-        //   stores the raw pointer (see field doc) while a fresh `&mut` derived
-        //   from the same raw pointer flows into `parse_with` → `Parser::new`,
-        //   so `add_import_record` / `state()` / `reset()` see the shared list
-        //   exactly as in the spec.
+        // - `import_records`: derive a single raw `NonNull` from the unique
+        //   borrow; both the at-rule parser and `Parser::new` store copies of
+        //   that raw pointer (matching Zig's `?*BabyList`). Neither holds a
+        //   long-lived `&mut`, so interleaved writes from `on_import_rule` and
+        //   `add_import_record`/`state`/`reset` each create a fresh short-lived
+        //   `&mut` from the shared SharedRW provenance — sound under SB.
         // - `options`: bitwise-duplicate via `ptr::read` (mirroring Zig's
         //   by-value struct copy) and wrap the original in `ManuallyDrop` so
         //   only the moved copy drops — `ParserOptions` transitively owns a
@@ -3076,24 +3077,21 @@ impl StyleSheet<BundlerAtRule> {
         let options = core::mem::ManuallyDrop::new(options);
         // SAFETY: original is `ManuallyDrop`; only `options_for_parse` drops.
         let options_for_parse = unsafe { core::ptr::read(&*options) };
-        let import_records_ptr: *mut BabyList<ImportRecord> = import_records;
+        let import_records_ptr = core::ptr::NonNull::from(import_records);
         let mut at_rule_parser = BundlerAtRuleParser {
             allocator,
-            import_records: import_records_ptr,
+            import_records: import_records_ptr.as_ptr(),
             options: &options,
             layer_names: BabyList::default(),
             anon_layer_count: 0,
             enclosing_layer: LayerName::default(),
         };
-        // SAFETY: see `import_records` note above — the raw pointer is the
-        // common parent of both this `&mut` and the at-rule parser's view.
-        let import_records_mut = unsafe { &mut *import_records_ptr };
         Self::parse_with(
             allocator,
             code,
             options_for_parse,
             &mut at_rule_parser,
-            Some(import_records_mut),
+            Some(import_records_ptr),
             source_index,
         )
     }

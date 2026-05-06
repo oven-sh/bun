@@ -69,13 +69,21 @@ impl MaxBuf {
 
     pub fn remove_from_subprocess(ptr: &mut Option<NonNull<MaxBuf>>) {
         let Some(this_nn) = *ptr else { return };
-        // SAFETY: `ptr` came from `create_for_subprocess`; allocation is live until `destroy`.
-        let this = unsafe { &mut *this_nn.as_ptr() };
-        debug_assert!(this.owned_by_subprocess.is_some());
-        this.owned_by_subprocess = None;
+        let p = this_nn.as_ptr();
+        // SAFETY: `this_nn` came from `create_for_subprocess` (Box::into_raw); allocation is
+        // live until `destroy`. Raw-pointer field access only — this fn is reachable from the
+        // `on_overflow` vtable while `on_read_bytes` still holds `&mut self` for the same
+        // allocation, so materializing a second `&mut MaxBuf` here would alias (Zig's `*T`
+        // permits that; Rust does not).
+        unsafe {
+            debug_assert!((*p).owned_by_subprocess.is_some());
+            (*p).owned_by_subprocess = None;
+        }
         *ptr = None;
-        if this.disowned() {
-            // SAFETY: just established `disowned()`; allocation originated from Box::into_raw.
+        // SAFETY: same live allocation; `owned_by_subprocess` was just cleared, so disowned()
+        // reduces to `!owned_by_reader`. Read via raw place to avoid forming a reference.
+        if unsafe { !(*p).owned_by_reader } {
+            // SAFETY: both owners cleared ⇒ disowned(); paired with Box::into_raw.
             unsafe { MaxBuf::destroy(this_nn) };
         }
     }

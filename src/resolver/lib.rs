@@ -4939,10 +4939,16 @@ impl<'a> Resolver<'a> {
         let root_path = &path[0..1];
         Self::assert_valid_cache_key(root_path);
 
-        let rfs = &mut self.fs.fs;
+        // PORT NOTE: hold RealFS as a raw `*mut` so the entries-mutex/close-dirs
+        // scopeguards can capture it by Copy without keeping a `&mut self.fs.fs`
+        // borrow live across the loop body (which calls `&mut self` methods).
+        // SAFETY: ARENA — `self.fs.fs` is the process-global RealFS singleton.
+        let rfs: *mut Fs::file_system::RealFS = &mut self.fs.fs;
+        macro_rules! rfs { () => { unsafe { &mut *rfs } } }
 
-        rfs.entries_mutex.lock();
-        let _entries_unlock = scopeguard::guard((), |_| rfs.entries_mutex.unlock());
+        rfs!().entries_mutex.lock();
+        // SAFETY: `rfs` points at process-global storage; outlives this guard.
+        let _entries_unlock = scopeguard::guard((), move |_| unsafe { (*rfs).entries_mutex.unlock() });
 
         while top.len() > root_path.len() {
             debug_assert!(top.as_ptr() == root_path.as_ptr());
@@ -5069,12 +5075,13 @@ impl<'a> Resolver<'a> {
                     // This saves us N copies of .toPosixPath
                     // which was likely the perf gain from resolving directories relative to the parent directory, anyway.
                     let prev_char = path[queue_top.unsafe_path.len()..].first().copied().unwrap_or(0);
-                    // SAFETY: path is &mut into the threadlocal buffer
-                    unsafe { *path.as_mut_ptr().add(queue_top.unsafe_path.len()) = 0 };
                     // SAFETY: path is &mut into the threadlocal buffer; index in-bounds (≤ input_path.len()).
-                    let restore = scopeguard::guard((), |_| unsafe {
-                        *path.as_mut_ptr().add(queue_top.unsafe_path.len()) = prev_char;
-                    });
+                    // Snapshot the raw byte pointer so the `restore` guard captures only
+                    // a Copy `*mut u8` and `path` stays reborrowable below.
+                    let restore_at: *mut u8 = unsafe { path.as_mut_ptr().add(queue_top.unsafe_path.len()) };
+                    // SAFETY: `restore_at` is in-bounds of the threadlocal path buffer.
+                    unsafe { *restore_at = 0 };
+                    let restore = scopeguard::guard((), move |_| unsafe { *restore_at = prev_char });
                     // SAFETY: NUL written above
                     let sentinel = unsafe { bun_core::ZStr::from_raw(path.as_ptr(), queue_top.unsafe_path.len()) };
 

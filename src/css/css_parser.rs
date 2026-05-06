@@ -2293,12 +2293,12 @@ pub fn fill_property_bit_set(
 
 // ───────────────────────────── StyleSheet ─────────────────────────────
 //
-// blocked_on: rules/ (CssRuleList, CssRule, MinifyContext) + declaration
-// (DeclarationBlock impl) + context (PropertyHandlerContext). The StyleSheet
-// surface (parse/minify/to_css) is the orchestration layer over the gated
-// rule-parser hub above; un-gate together.
-#[cfg(any())]
-mod stylesheet_impl { use super::*;
+// B-2 round 5: struct un-gated. `CssRuleList`/`LayerName`/`ParserOptions` are
+// real. The behavior surface (`parse`/`minify`/`to_css`/`pluck_imports`) stays
+// gated below — it bottoms out on `rule_parsers` impl bodies (gated),
+// `CssRuleList::{minify,to_css}` (gated in rules/mod.rs),
+// `DeclarationHandler` per-property fields (gated), and `Printer::new`
+// signature reshape.
 
 pub struct StyleSheet<AtRule> {
     /// A list of top-level rules within the style sheet.
@@ -2338,7 +2338,16 @@ impl<AtRule> StyleSheet<AtRule> {
             composes: ComposesMap::default(),
         }
     }
+}
 
+// ── StyleSheet behavior (parse/minify/to_css) ────────────────────────────────
+// blocked_on: rule_parsers impl bodies (TopLevelRuleParser as AtRuleParser/
+// QualifiedRuleParser), CssRuleList::{minify,to_css}, DeclarationHandler
+// per-property fields, MinifyContext full field set, Printer::new signature.
+#[cfg(any())]
+mod stylesheet_impl { use super::*;
+
+impl<AtRule> StyleSheet<AtRule> {
     /// Minify and transform the style sheet for the provided browser targets.
     pub fn minify(
         &mut self,
@@ -2716,13 +2725,6 @@ impl<AtRule> StyleSheet<AtRule> {
             }
         }
     }
-}
-
-// ───────────────────────────── StyleAttribute ─────────────────────────────
-
-pub struct StyleAttribute {
-    pub declarations: DeclarationBlock,
-    pub sources: Vec<Box<[u8]>>,
 }
 
 impl StyleAttribute {

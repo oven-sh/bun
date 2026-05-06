@@ -123,9 +123,137 @@ pub mod node_types {
 
 pub use crate::jsc::AbortSignal;
 
-// `bun.jsc.WebCore.AutoFlusher` — opaque handle until `bun_event_loop::auto_flusher` is wired.
+// ─── AutoFlusher (webcore tier) ──────────────────────────────────────────────
+// `bun.jsc.WebCore.AutoFlusher` — port of `src/event_loop/AutoFlusher.zig`.
+//
+// The lower-tier `bun_event_loop::auto_flusher` takes a `&mut DeferredTaskQueue`
+// directly to avoid an event_loop→jsc upward dependency. This tier restores the
+// original Zig signature (`vm: *jsc.VirtualMachine`) and reaches the queue via
+// `vm.event_loop().deferred_tasks`, so call sites in `FileSink` /
+// `HTTPServerWritable` keep their Zig shape.
+pub use bun_event_loop::auto_flusher;
+use bun_event_loop::deferred_task_queue::DeferredRepeatingTask;
+
 #[derive(Debug, Default)]
-pub struct AutoFlusher;
+pub struct AutoFlusher {
+    pub registered: bool,
+}
+
+/// Zig duck-types on `this.auto_flusher` + `Type.onAutoFlush`; modeled as a
+/// trait. Implemented below for `FileSink` and `HTTPServerWritable<_, _>`.
+pub trait HasAutoFlusher: Sized {
+    fn auto_flusher(&mut self) -> &mut AutoFlusher;
+    /// `Type.onAutoFlush` — `DeferredRepeatingTask` ABI after `@ptrCast`
+    /// erasure: `fn(*anyopaque) bool`.
+    fn on_auto_flush(this: *mut Self) -> bool;
+}
+
+impl AutoFlusher {
+    #[inline]
+    fn erased_ctx<T>(this: &mut T) -> Option<NonNull<core::ffi::c_void>> {
+        NonNull::new(this as *mut T as *mut core::ffi::c_void)
+    }
+
+    #[inline]
+    fn erased_cb<T: HasAutoFlusher>() -> DeferredRepeatingTask {
+        // SAFETY: Zig `@ptrCast(&Type.onAutoFlush)` — `fn(*mut T) -> bool` and
+        // `fn(*mut c_void) -> bool` have identical ABI (one pointer arg, bool
+        // return). `DeferredTaskQueue::run` feeds back exactly the `*mut T` we
+        // registered.
+        unsafe {
+            core::mem::transmute::<fn(*mut T) -> bool, DeferredRepeatingTask>(
+                <T as HasAutoFlusher>::on_auto_flush as fn(*mut T) -> bool,
+            )
+        }
+    }
+
+    #[inline]
+    pub fn register_deferred_microtask_with_type<T: HasAutoFlusher>(
+        this: &mut T,
+        vm: &jsc::VirtualMachine,
+    ) {
+        if this.auto_flusher().registered {
+            return;
+        }
+        Self::register_deferred_microtask_with_type_unchecked(this, vm);
+    }
+
+    #[inline]
+    pub fn unregister_deferred_microtask_with_type<T: HasAutoFlusher>(
+        this: &mut T,
+        vm: &jsc::VirtualMachine,
+    ) {
+        if !this.auto_flusher().registered {
+            return;
+        }
+        Self::unregister_deferred_microtask_with_type_unchecked(this, vm);
+    }
+
+    #[inline]
+    pub fn unregister_deferred_microtask_with_type_unchecked<T: HasAutoFlusher>(
+        this: &mut T,
+        vm: &jsc::VirtualMachine,
+    ) {
+        debug_assert!(this.auto_flusher().registered);
+        // PORT NOTE: Zig `bun.assert(expr)` evaluates `expr` unconditionally;
+        // only the *check* is debug-gated. Do not wrap the side-effecting call
+        // in `debug_assert!`.
+        let removed = vm
+            .event_loop()
+            .deferred_tasks
+            .unregister_task(Self::erased_ctx(this));
+        debug_assert!(removed);
+        this.auto_flusher().registered = false;
+    }
+
+    #[inline]
+    pub fn register_deferred_microtask_with_type_unchecked<T: HasAutoFlusher>(
+        this: &mut T,
+        vm: &jsc::VirtualMachine,
+    ) {
+        debug_assert!(!this.auto_flusher().registered);
+        this.auto_flusher().registered = true;
+        let found_existing = vm
+            .event_loop()
+            .deferred_tasks
+            .post_task(Self::erased_ctx(this), Self::erased_cb::<T>());
+        debug_assert!(!found_existing);
+    }
+}
+
+// ─── HasAutoFlusher impls ────────────────────────────────────────────────────
+// Both types expose `pub auto_flusher: AutoFlusher` and an inherent
+// `pub fn on_auto_flush(&mut self) -> bool`; the trait impl is just a thunk.
+
+impl HasAutoFlusher for file_sink::FileSink {
+    #[inline]
+    fn auto_flusher(&mut self) -> &mut AutoFlusher {
+        &mut self.auto_flusher
+    }
+    fn on_auto_flush(this: *mut Self) -> bool {
+        // SAFETY: `this` was registered as `&mut FileSink` cast to `*mut c_void`;
+        // `DeferredTaskQueue::run` is single-threaded (drained on the JS thread
+        // after microtasks), so no aliasing across the call.
+        unsafe { (*this).on_auto_flush() }
+    }
+}
+
+// Gated alongside the `HTTPServerWritable` method bodies (see
+// `webcore/streams.rs` `#[cfg(any())] impl<...> HTTPServerWritable` block) —
+// the inherent `on_auto_flush` lives there. Un-gate together.
+#[cfg(any())]
+impl<const SSL: bool, const HTTP3: bool> HasAutoFlusher
+    for streams::HTTPServerWritable<SSL, HTTP3>
+{
+    #[inline]
+    fn auto_flusher(&mut self) -> &mut AutoFlusher {
+        &mut self.auto_flusher
+    }
+    fn on_auto_flush(this: *mut Self) -> bool {
+        // SAFETY: see FileSink impl above.
+        unsafe { (*this).on_auto_flush() }
+    }
+}
 
 // TODO(b2-blocked): cookie_map gated; opaque placeholder for Request field.
 #[derive(Debug, Default)]

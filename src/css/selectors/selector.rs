@@ -818,6 +818,11 @@ pub mod serialize {
                 css::css_values::ident::IdentFns::to_css(&v.local_name, dest)?;
                 v.operator.to_css(dest)?;
 
+                // blocked_on: `css_parser::to_css::string` (gated on Printer::new
+                // arena-signature reshape). The minify-path picks the shorter of
+                // (serialized-as-ident, serialized-as-string); fall through to the
+                // non-minify branch until that helper un-gates.
+                #[cfg(any())]
                 if dest.minify {
                     // PERF: should we put a scratch buffer in the printer
                     // Serialize as both an identifier and a string and choose the shorter one.
@@ -846,6 +851,8 @@ pub mod serialize {
                 } else {
                     CSSStringFns::to_css(&v.value, dest)?;
                 }
+                #[cfg(not(any()))]
+                CSSStringFns::to_css(&v.value, dest)?;
 
                 match v.case_sensitivity {
                     parser::attrs::ParsedCaseSensitivity::CaseSensitive

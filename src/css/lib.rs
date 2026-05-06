@@ -97,7 +97,7 @@ pub use selectors::selector;
 // selector/property/media_query bodies via `css::*`.
 pub use css_parser::{
     enum_property_util, nth, parse_utility, signfns, void_wrap, CssRef, CssRefTag,
-    CssResult as Result, Delimiters, EnumProperty, Maybe, ParserState,
+    CssResult as Result, Delimiters, EnumProperty, IntoParserError, Maybe, ParserState,
 };
 
 // ─── selectors/ crate-root surface ────────────────────────────────────────

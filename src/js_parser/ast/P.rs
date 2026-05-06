@@ -1244,28 +1244,33 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         Binding::alloc(self.allocator, t, loc)
     }
 
-    #[cfg(any())] // blocked_on: B::Array/Object payload deref (*mut [..] iteration)
     pub fn record_exported_binding(&mut self, binding: Binding) {
         match binding.data {
-            Binding::Data::BMissing(_) => {}
-            Binding::Data::BIdentifier(ident) => {
-                let name = self.symbols[ident.r#ref.inner_index() as usize].original_name;
+            js_ast::b::B::BMissing(_) => {}
+            js_ast::b::B::BIdentifier(ident) => {
+                // SAFETY: arena-owned `*mut Identifier` valid for parser 'a; no aliasing &mut.
+                let ident = unsafe { &*ident };
+                // SAFETY: Symbol.original_name is `*const [u8]` arena-owned for 'a.
+                let name: &'a [u8] = unsafe { &*self.symbols[ident.r#ref.inner_index() as usize].original_name };
                 self.record_export(binding.loc, name, ident.r#ref).expect("unreachable");
             }
-            Binding::Data::BArray(array) => {
-                for prop in array.items.iter() {
+            js_ast::b::B::BArray(array) => {
+                // SAFETY: arena-owned `*mut Array` / `*mut [ArrayBinding]` valid for parser 'a.
+                let array = unsafe { &*array };
+                for prop in unsafe { &*array.items } {
                     self.record_exported_binding(prop.binding);
                 }
             }
-            Binding::Data::BObject(obj) => {
-                for prop in obj.properties.iter() {
+            js_ast::b::B::BObject(obj) => {
+                // SAFETY: arena-owned `*mut Object` / `*mut [Property]` valid for parser 'a.
+                let obj = unsafe { &*obj };
+                for prop in unsafe { &*obj.properties } {
                     self.record_exported_binding(prop.value);
                 }
             }
         }
     }
 
-    #[cfg(any())] // blocked_on: named_exports key type (StringHashMap put arg); logger::Data field set
     pub fn record_export(
         &mut self,
         loc: logger::Loc,
@@ -1275,22 +1280,19 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // TODO(port): narrow error set
         if let Some(name) = self.named_exports.get(alias) {
             // Duplicate exports are an error
-            let notes = self.allocator.alloc_slice_copy(&[logger::Data {
-                text: {
-                    let mut v = BumpVec::new_in(self.allocator);
-                    let _ = write!(&mut v, "\"{}\" was originally exported here", bstr::BStr::new(alias));
-                    v.into_bump_slice()
-                },
+            let notes: Box<[logger::Data]> = Box::new([logger::Data {
+                text: std::borrow::Cow::Owned(
+                    format!("\"{}\" was originally exported here", bstr::BStr::new(alias)).into_bytes(),
+                ),
                 location: logger::Location::init_or_null(
-                    self.source,
+                    Some(self.source),
                     js_lexer::range_of_identifier(self.source, name.alias_loc),
                 ),
                 ..Default::default()
             }]);
             self.log.add_range_error_fmt_with_notes(
-                self.source,
+                Some(self.source),
                 js_lexer::range_of_identifier(self.source, loc),
-                self.allocator,
                 notes,
                 format_args!(
                     "Multiple exports with the same name \"{}\"",
@@ -1299,7 +1301,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             )?;
         } else if !self.is_deoptimized_common_js() {
             self.named_exports
-                .put(self.allocator, alias, js_ast::NamedExport { alias_loc: loc, r#ref })?;
+                .put(alias, js_ast::NamedExport { alias_loc: loc, ref_: r#ref })?;
         }
         Ok(())
     }

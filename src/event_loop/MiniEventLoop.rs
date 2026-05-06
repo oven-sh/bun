@@ -152,11 +152,12 @@ pub fn init_global(
     }
 
     // PORT NOTE: Zig `bun.DotEnv.instance` is a `?*Loader` global. The Rust
-    // port stores it as `OnceLock<usize>` (erased `*mut Loader<'static>`).
+    // port stores it as `AtomicPtr<Loader<'static>>`.
     global.env = env.map(NonNull::from).or_else(|| {
-        dotenv::INSTANCE
-            .get()
-            .and_then(|p| NonNull::new(*p as *mut DotEnvLoader<'static>))
+        NonNull::new(
+            dotenv::INSTANCE.load(core::sync::atomic::Ordering::Acquire)
+                as *mut DotEnvLoader<'static>,
+        )
     });
     if global.env.is_none() {
         // Thread-lifetime singletons (matches Zig `bun.default_allocator.create`).

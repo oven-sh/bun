@@ -1530,15 +1530,16 @@ impl CreateCommand {
     }
 
     pub fn extract_info(
-        ctx: &Command::Context,
+        ctx: Command::Context,
     ) -> Result<ExtractedInfo, bun_core::Error> {
         let mut example_tag = ExampleTag::Unknown;
-        let filesystem = fs::FileSystem::init(None)?;
+        // SAFETY: process-lifetime singleton; init returns *mut.
+        let filesystem = unsafe { &*fs::FileSystem::init(None)? };
 
-        let create_options = CreateOptions::parse(ctx)?;
+        let create_options = CreateOptions::parse(&ctx)?;
         let positionals = &create_options.positionals;
         if positionals.is_empty() {
-            crate::Command::Tag::print_help(crate::Command::Tag::CreateCommand, false);
+            crate::cli::command::tag_print_help(crate::Command::Tag::CreateCommand, false);
             Global::crash();
         }
 
@@ -1566,7 +1567,7 @@ impl CreateCommand {
                     break 'outer;
                 }
 
-                if let Some(exists_at_type) = bun_sys::Fd::cwd().exists_at_type(outdir_path_).as_value() {
+                if let Ok(exists_at_type) = bun_sys::exists_at_type(bun_sys::Fd::cwd(), outdir_path_) {
                     if exists_at_type == bun_sys::ExistsAtType::File {
                         let extension = bun_paths::extension(positional);
                         if let Some(tag) = ExampleTag::from_file_extension(extension) {
@@ -1578,7 +1579,6 @@ impl CreateCommand {
                         else if !extension.is_empty() && extension != b".js" {
                             Output::warn(
                                 "bun create [local file] only supports .jsx and .tsx files currently",
-                                format_args!(""),
                             );
                         }
                     }

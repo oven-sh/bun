@@ -1151,30 +1151,30 @@ impl ServerWebSocket {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args = callframe.arguments_old(2);
+        let args = callframe.arguments_old::<2>();
 
-        if args.len() < 1 {
+        if args.len < 1 {
             bun_output::scoped_log!(WebSocketServer, "sendBinary()");
-            return global_this.throw("sendBinary requires at least 1 argument");
+            return Err(global_this.throw("sendBinary requires at least 1 argument"));
         }
 
         if self.is_closed() {
             bun_output::scoped_log!(WebSocketServer, "sendBinary() closed");
-            return Ok(JSValue::js_number(0));
+            return Ok(JSValue::js_number(0.0));
         }
 
-        let message_value = args.ptr(0);
-        let compress_value = args.ptr(1);
+        let message_value = args.ptr[0];
+        let compress_value = args.ptr[1];
 
         if !compress_value.is_boolean() && !compress_value.is_undefined() && !compress_value.is_empty()
         {
-            return global_this.throw("sendBinary expects compress to be a boolean");
+            return Err(global_this.throw("sendBinary expects compress to be a boolean"));
         }
 
-        let compress = args.len() > 1 && compress_value.to_boolean();
+        let compress = args.len > 1 && compress_value.to_boolean();
 
         let Some(buffer) = message_value.as_array_buffer(global_this) else {
-            return global_this.throw("sendBinary requires an ArrayBufferView");
+            return Err(global_this.throw("sendBinary requires an ArrayBufferView"));
         };
 
         Ok(match self
@@ -1182,16 +1182,16 @@ impl ServerWebSocket {
             .send(buffer.slice(), Opcode::Binary, compress, true)
         {
             SendStatus::Backpressure => {
-                bun_output::scoped_log!(WebSocketServer, "sendBinary() backpressure ({} bytes)", buffer.len());
-                JSValue::js_number(-1)
+                bun_output::scoped_log!(WebSocketServer, "sendBinary() backpressure ({} bytes)", buffer.len);
+                JSValue::js_number(-1.0)
             }
             SendStatus::Success => {
-                bun_output::scoped_log!(WebSocketServer, "sendBinary() success ({} bytes)", buffer.len());
-                JSValue::js_number(buffer.slice().len())
+                bun_output::scoped_log!(WebSocketServer, "sendBinary() success ({} bytes)", buffer.len);
+                JSValue::js_number(buffer.slice().len() as f64)
             }
             SendStatus::Dropped => {
-                bun_output::scoped_log!(WebSocketServer, "sendBinary() dropped ({} bytes)", buffer.len());
-                JSValue::js_number(0)
+                bun_output::scoped_log!(WebSocketServer, "sendBinary() dropped ({} bytes)", buffer.len);
+                JSValue::js_number(0.0)
             }
         })
     }

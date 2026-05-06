@@ -1630,10 +1630,10 @@ impl<const SSL: bool> NewSocket<SSL> {
             return Ok(JSValue::FALSE);
         }
 
-        let args = callframe.arguments_undef(2);
+        let args = callframe.arguments_undef::<2>();
 
         Ok(
-            match this.write_or_end_buffered::<false>(global, args.ptr()[0], args.ptr()[1]) {
+            match this.write_or_end_buffered::<false>(global, args.ptr[0], args.ptr[1]) {
                 WriteResult::Fail => JSValue::ZERO,
                 WriteResult::Success { wrote, total } => {
                     if usize::try_from(wrote.max(0)).unwrap() == total {

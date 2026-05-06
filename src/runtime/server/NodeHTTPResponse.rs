@@ -1051,7 +1051,7 @@ impl NodeHTTPResponse {
         }
         scoped_log!(NodeHTTPResponse, "onRequestComplete");
         self.flags.insert(Flags::REQUEST_HAS_COMPLETED);
-        self.poll_ref.unref(VirtualMachine::get());
+        self.poll_ref.unref(vm_get());
 
         self.mark_request_as_done_if_necessary();
     }

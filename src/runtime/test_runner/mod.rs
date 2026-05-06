@@ -145,6 +145,14 @@ pub mod expect {
         fn string_includes(self, global: &JSGlobalObject, needle: JSValue) -> JsResult<bool>;
         fn to_match(self, global: &JSGlobalObject, value: JSValue) -> JsResult<bool>;
         fn to_u32(self) -> u32;
+        fn bind(
+            self,
+            global: &JSGlobalObject,
+            bind_this: JSValue,
+            name: &bun_str::String,
+            length: f64,
+            args: &[JSValue],
+        ) -> JsResult<JSValue>;
     }
     impl JSValueTestExt for JSValue {
         #[inline]

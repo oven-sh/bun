@@ -646,10 +646,11 @@ fn vm_report_extra_memory(global: &JSGlobalObject, size: usize) {
 
 impl Encoding {
     pub fn from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<Option<Encoding>> {
-        // TODO(port): ComptimeStringMap::fromJSCaseInsensitive — needs case-insensitive lookup
+        // TODO(port): ComptimeStringMap::fromJSCaseInsensitive — emulated via
+        // to_owned_slice + ASCII-lowercase phf lookup.
         let str = bun_str::String::from_js(value, global)?;
         // str.deref() on Drop
-        Ok(str.in_map_case_insensitive(&ENCODING_MAP))
+        Ok(Self::from(str.to_utf8().slice()))
     }
 
     pub fn assert(value: JSValue, global_object: &JSGlobalObject, default: Encoding) -> JsResult<Encoding> {

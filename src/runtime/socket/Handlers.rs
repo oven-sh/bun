@@ -208,7 +208,9 @@ impl Handlers {
                 GeneratedBinaryType::Buffer => BinaryType::Buffer,
                 GeneratedBinaryType::Uint8array => BinaryType::Uint8Array,
             },
-            vm: global_object.bun_vm(),
+            // SAFETY: `bun_vm()` never returns null for a Bun-owned global; the
+            // VM outlives every `Handlers` (process-lifetime singleton).
+            vm: unsafe { &*global_object.bun_vm() },
             global_object,
             active_connections: 0,
             mode: if is_server { SocketMode::Server } else { SocketMode::Client },

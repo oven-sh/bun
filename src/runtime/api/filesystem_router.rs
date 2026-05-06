@@ -424,17 +424,11 @@ impl FileSystemRouter {
             }
 
             if argument.is_cell() {
-                if let Some(req) = argument.as_::<Request>() {
-                    // SAFETY: `as_` returns a live `m_ctx` pointer for the JS wrapper.
-                    let req = unsafe { &mut *req };
-                    req.ensure_url().expect("unreachable");
-                    break 'brk req.url.to_utf8();
-                }
-
-                if let Some(resp) = argument.as_::<Response>() {
-                    // SAFETY: see above.
-                    break 'brk unsafe { &*resp }.get_utf8_url();
-                }
+                // TODO(b2-blocked): `Request`/`Response` do not yet impl
+                // `bun_jsc::JsClass`, so the typed `JSValue::as_::<T>()` downcast
+                // is unavailable.
+                let _: (Option<*mut Request>, Option<*mut Response>) = (None, None);
+                todo!("blocked_on: bun_jsc::JsClass for webcore::Request / webcore::Response");
             }
 
             return Err(global_this.throw_invalid_arguments("Expected string, Request or Response"));

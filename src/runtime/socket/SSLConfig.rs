@@ -833,21 +833,20 @@ mod _gated_from_js {
     fn handle_path(
         global: &JSGlobalObject,
         field: &'static str,
-        string: WTFStringImpl,
+        string: &bun_str::String,
     ) -> JsResult<CString> {
         let name = string.to_owned_slice_z();
         // TODO(port): bun_sys::access wrapper; Zig called std.posix.system.access.
-        // SAFETY: `name` is a valid NUL-terminated CString; access(2) only reads it.
+        // SAFETY: `name` is a valid NUL-terminated buffer; access(2) only reads it.
         if unsafe { libc::access(name.as_ptr(), libc::F_OK) } != 0 {
             // errdefer: free_sensitive(name) — scopeguard not needed; name drops on
             // return, but we need zeroing:
-            free_sensitive_bytes(name.into_bytes_with_nul());
+            free_sensitive_bytes(name.into_vec_with_nul());
             return Err(global.throw_invalid_arguments(
                 format_args!("Unable to access {} path", field),
-                (),
             ));
         }
-        Ok(name)
+        Ok(zbox_into_cstring(name))
     }
 
     fn handle_file_for_field(

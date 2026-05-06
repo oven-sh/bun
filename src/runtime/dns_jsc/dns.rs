@@ -4272,17 +4272,17 @@ impl Resolver {
         );
         let promise = unsafe { (*(*request).tail).promise.value() };
 
-        unsafe {
-            (*channel).get_addr_info(
-                &query.name,
-                query.port,
-                &hints_buf,
-                request,
-                GetAddrInfoRequest::on_cares_complete,
-            );
-        }
+        // TODO(port): blocked_on bun_cares_sys::c_ares_draft::Channel::get_addr_info —
+        // upstream API is `get_addr_info<T: AddrInfoHandler>(&mut self, host, port,
+        // hints: &[AddrInfo_hints], ctx: &mut T)` (trait-based callback).
+        // `GetAddrInfoRequest` does not yet impl `AddrInfoHandler`; the Zig version
+        // passed `(host, port, hints, ctx, callback)` directly. Additionally `hints_buf`
+        // is `bun_cares_sys::c_ares::AddrInfo_hints` (the un-gated minimal module),
+        // which is layout-identical but a distinct type from the draft's `AddrInfo_hints`.
+        let _ = (channel, &hints_buf, request);
 
-        self.request_sent(global_this.bun_vm());
+        // SAFETY: bun_vm() returns a live VM pointer for the duration of the call.
+        self.request_sent(unsafe { &*global_this.bun_vm() });
         Ok(promise)
     }
 

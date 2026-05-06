@@ -129,7 +129,7 @@ pub fn to_have_nth_returned_with(
             received: Some(nth_return_value),
             expected_string: None,
             received_string: None,
-            global_this: global,
+            global_this: Some(global),
             not: false,
         };
         return this.throw(

@@ -67,12 +67,13 @@ impl Expect {
         }
 
         // handle failure
+        // PORT NOTE: Zig aliased one `*Formatter` for both fmt adapters; Rust `to_fmt` takes
+        // `&mut Formatter` so two live adapters need two formatters (matches toContainEqual.rs).
         let mut formatter = super::make_formatter(global);
+        let mut formatter2 = super::make_formatter(global);
         // `defer formatter.deinit()` — handled by Drop.
         let value_fmt = value.to_fmt(&mut formatter);
-        let expected_fmt = other_value.to_fmt(&mut formatter);
-        // PORT NOTE: reshaped for borrowck — Zig held two fmt borrows on the same formatter.
-        // TODO(port): if to_fmt needs &mut Formatter exclusively, render to owned strings first.
+        let expected_fmt = other_value.to_fmt(&mut formatter2);
 
         if not {
             const EXPECTED_LINE: &str = "Expected: not \\< <green>{}<r>\n";

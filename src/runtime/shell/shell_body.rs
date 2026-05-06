@@ -5673,28 +5673,32 @@ pub mod testing_apis {
             marked_argument_buffer,
         )?;
 
-        let mut out_lex_err: Option<Box<[u8]>> = None;
-        let mut out_parse_err: Option<Box<[u8]>> = None;
-        let _ = &mut jsstrings; // PORT NOTE: spec passed jsstrings; current `parse` ignores it.
+        let mut out_parser: Option<bun_shell_parser::Parser<'_>> = None;
+        let mut out_lex_result: Option<bun_shell_parser::LexResult<'_>> = None;
 
         let script_ast = match interpret::Interpreter::parse(
             &arena,
             &script[..],
-            &jsobjs[..],
-            &mut out_lex_err,
-            &mut out_parse_err,
+            &mut jsobjs[..],
+            &mut jsstrings[..],
+            &mut out_parser,
+            &mut out_lex_result,
         ) {
             Ok(a) => a,
             Err(err) => {
-                if let Some(str) = out_lex_err {
+                // Spec: shell.zig TestingAPIs.shellParse — `if (err == ParseError.Lex)`
+                // ⇔ out_lex_result was populated by `parse()`.
+                if let Some(lex) = out_lex_result.as_ref() {
+                    let str = lex.combine_errors(&arena);
                     return Err(
-                        global.throw_pretty("{}", format_args!("{}", bstr::BStr::new(&str))),
+                        global.throw_pretty("{}", format_args!("{}", bstr::BStr::new(str))),
                     );
                 }
 
-                if let Some(errstr) = out_parse_err {
+                if let Some(p) = out_parser.as_mut() {
+                    let errstr = p.combine_errors();
                     return Err(
-                        global.throw_pretty("{}", format_args!("{}", bstr::BStr::new(&errstr))),
+                        global.throw_pretty("{}", format_args!("{}", bstr::BStr::new(errstr))),
                     );
                 }
 

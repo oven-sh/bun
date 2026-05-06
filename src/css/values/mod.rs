@@ -88,9 +88,25 @@ pub mod size;
 pub mod rect;
 pub mod easing;
 pub mod syntax;
-gated_value!(gradient);
-gated_value!(image);
-gated_value!(color, { pub use crate::values_stub::color::*; });
+// ─── B-2 round 6: cross-module hubs un-gated ─────────────────────────────
+// color/gradient/image now compile as real `pub mod`s. `color.rs` exposes
+// the full data-type surface (CssColor / RGBA / colorspaces / LABColor /
+// PredefinedColor / FloatColor / ColorFallbackKind) with real `is_compatible`
+// / `eql` / `deep_clone`; the heavy parse/to_css/conversion bodies stay
+// inside `color::gated_full_impl` (`#[cfg(any())]`) until
+// `color_generated.rs` (color_via.ts → Rust) lands. `gradient.rs` types are
+// real (Gradient / Linear/Radial/Conic / WebKitGradient / GradientItem /
+// ColorStop / LineDirection / EndingShape / ShapeExtent); parse paths that
+// need the not-yet-threaded `'bump` arena lifetime on `Parser` are
+// internally gated. `image.rs` types are real (Image / ImageSet /
+// ImageSetOption); `Image::parse`/`to_css` await the DeriveParse/DeriveToCss
+// proc-macro.
+pub mod color;
+pub mod gradient;
+pub mod image;
+// `gated_value!` retained for any future leaf that re-gates during a bisect.
+#[allow(unused_macros)]
+macro_rules! _gated_value_retired { () => {}; }
 // `color_generated.rs` is the codegen'd named-color tables (47KB). Its parent
 // in Zig was `color.zig`'s `pub usingnamespace`; here it's a sibling module
 // re-exported through `color::*` so the stub-set re-export at crate root

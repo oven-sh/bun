@@ -39,7 +39,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         // Fragments don't have props
         // Fragments of the form "React.Fragment" are not parsed as fragments.
-        if let Some(t) = tag.data.as_tag() {
+        if let Some(t) = tag.data.as_expr() {
             start_tag = Some(t);
             can_be_inlined = p.options.features.jsx_optimization_inline;
 
@@ -188,7 +188,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             //  <div foo="foo" />
                             // note: template literals are not supported, operations on strings are not supported either
                             T::TStringLiteral => {
-                                let key = p.new_expr(p.lexer.to_e_string()?, p.lexer.loc());
+                                let key_loc = p.lexer.loc();
+                                let key_str = p.lexer.to_e_string()?;
+                                let key = p.new_expr(key_str, key_loc);
                                 p.lexer.next()?;
                                 props.push(G::Property {
                                     value: Some(key),

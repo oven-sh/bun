@@ -213,6 +213,77 @@ pub struct ImmediateObject {
     pub internals: TimerObjectInternals,
 }
 
+// ─── intrusive refcount (Zig: `bun.ptr.RefCount(@This(), "ref_count", deinit)`) ──
+// PORT NOTE: hand-rolled over `Cell<u32>` instead of `bun_ptr::RefCount<Self>`
+// so the existing field shape (and the `@fieldParentPtr` arithmetic in
+// `All::update`/`TimerObjectInternals`) stays put. Swap to `RefCount<Self>` +
+// `RefCounted` impl once the codegen'd JS wrapper (`.classes.ts`) emits the
+// matching `from_js`/`finalize` pair.
+macro_rules! impl_timer_refcount {
+    ($T:ident) => {
+        impl $T {
+            /// `RefCount.ref` — increment the intrusive refcount.
+            ///
+            /// # Safety
+            /// `this` must point at a live, `bun.new`-allocated `$T`.
+            #[inline]
+            pub unsafe fn ref_(this: *mut Self) {
+                // SAFETY: per fn contract — `ref_count` is a `Cell` field of a
+                // live allocation; single-threaded JS heap.
+                let rc = unsafe { &(*this).ref_count };
+                rc.set(rc.get() + 1);
+            }
+
+            /// `RefCount.deref` — decrement; on 0, run `deinit` and free.
+            ///
+            /// # Safety
+            /// `this` must point at a live, `bun.new`-allocated `$T`. After
+            /// this returns the pointer may be dangling.
+            #[inline]
+            pub unsafe fn deref(this: *mut Self) {
+                // SAFETY: per fn contract.
+                let rc = unsafe { &(*this).ref_count };
+                let n = rc.get();
+                debug_assert!(n > 0, concat!(stringify!($T), " refcount underflow"));
+                rc.set(n - 1);
+                if n == 1 {
+                    // Zig `deinit`: `self.internals.deinit(); bun.destroy(self)`.
+                    // TODO(b2-blocked): `TimerObjectInternals::deinit` (map
+                    // removal) is in the gated draft; `JsRef` cleanup happens
+                    // via field `Drop` when the Box is reclaimed below.
+                    // SAFETY: refcount hit 0 ⇒ unique ownership; `bun.new` ↔
+                    // `Box::into_raw`, so `Box::from_raw` is the paired free.
+                    drop(unsafe { Box::from_raw(this) });
+                }
+            }
+        }
+    };
+}
+impl_timer_refcount!(TimeoutObject);
+impl_timer_refcount!(ImmediateObject);
+
+impl ImmediateObject {
+    /// Spec ImmediateObject.zig `runImmediateTask` — thin forwarder to
+    /// `internals.run_immediate_task`. Registered into
+    /// `bun_jsc::event_loop::RUN_IMMEDIATE_HOOK` by
+    /// [`crate::dispatch::install_dispatch_hooks`].
+    ///
+    /// Returns `true` if an exception was thrown.
+    ///
+    /// # Safety
+    /// `this` was produced by `enqueue_immediate_task` from a live
+    /// heap-allocated `ImmediateObject`; `vm` is the live per-thread VM.
+    #[inline]
+    pub unsafe fn run_immediate_task(
+        this: *mut Self,
+        vm: *mut crate::jsc::VirtualMachine,
+    ) -> bool {
+        // SAFETY: per fn contract — `this` is live; `internals` is an embedded
+        // field. Do NOT form `&mut *this` (the body may `deref()` and free).
+        unsafe { (*this).internals.run_immediate_task(vm) }
+    }
+}
+
 /// A timer created by WTF code and invoked by Bun's event loop.
 // Opaque until `bun_jsc::VirtualMachine` is reachable (NonNull<VirtualMachine>
 // backref in the real struct); only ever heap-allocated and reached via

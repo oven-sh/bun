@@ -1,23 +1,29 @@
 #![allow(unused_imports, unused_variables, dead_code, unused_mut)]
+use core::ptr::NonNull;
+
+use bun_collections::BabyList;
 use bun_core::{self, err};
 use bun_logger as logger;
 use bun_string::strings;
 
+use crate::ast as js_ast;
+use crate::ast::p::P;
+use crate::ast::scope::Kind as ScopeKind;
+use crate::ast::op::Level;
+use crate::ast::typescript::Metadata as TsMetadata;
+use crate::flags;
+use crate::lexer as js_lexer;
+use crate::lexer_tables::PropertyModifierKeyword;
 use crate::parser::{
     AwaitOrYield, DeferredErrors, FnOrArrowDataParse, JsxT, ParseStatementOptions, PropertyOpts,
-    TypeScript,
+    SkipTypeParameterResult, TypeParameterFlag,
 };
-use crate::ast as js_ast;
 use js_ast::{
-    E, Expr, ExprNodeList, Flags, Stmt, Symbol,
-    G::{self, Property},
+    E, Expr, ExprNodeList, Stmt,
+    G::{self, Property, PropertyKind},
+    symbol,
 };
-use crate::ast::p::P;
-use crate::lexer as js_lexer;
 use js_lexer::T;
-
-use js_ast::scope::Kind as ScopeKind;
-use js_ast::op::Level;
 
 // Zig: `fn ParseProperty(comptime ts, comptime jsx, comptime scan_only) type { return struct { ... } }`
 // — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
@@ -26,23 +32,14 @@ use js_ast::op::Level;
 impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
     fn parse_method_expression(
         &mut self,
-        kind: G::PropertyKind,
+        kind: PropertyKind,
         opts: &mut PropertyOpts,
         is_computed: bool,
         key: &mut Expr,
         key_range: logger::Range,
     ) -> Result<Option<G::Property>, bun_core::Error> {
         let p = self;
-        let _ = (kind, opts, is_computed, key, key_range);
-        todo!("b2-ast-E: parse_method_expression body");
-        #[cfg(any())]
-        // blocked_on: P::{push_scope_for_parse_pass, pop_scope, declare_symbol,
-        //   pop_and_discard_scope, validate_function_name} gated (P.rs:640 impl block);
-        //   G::Property full struct-init (kind/flags/key/value/initializer/ts_decorators/
-        //   class_static_block — no Default); Flags::PropertySet (EnumSet) construction
-        //   (Property::IsComputed | Property::IsMethod, not struct-init).
-        {
-        if p.lexer.token == T::TOpenParen && kind != Property::Kind::Get && kind != Property::Kind::Set {
+        if p.lexer.token == T::TOpenParen && kind != PropertyKind::Get && kind != PropertyKind::Set {
             // markSyntaxFeature object extensions
         }
 
@@ -55,28 +52,28 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // Forbid the names "constructor" and "prototype" in some cases
         if opts.is_class && !is_computed {
             match &key.data {
-                Expr::Data::EString(str_) => {
+                js_ast::ExprData::EString(str_) => {
                     if !opts.is_static && str_.eql_comptime(b"constructor") {
-                        if kind == Property::Kind::Get {
-                            p.log.add_range_error(p.source, key_range, "Class constructor cannot be a getter").expect("unreachable");
-                        } else if kind == Property::Kind::Set {
-                            p.log.add_range_error(p.source, key_range, "Class constructor cannot be a setter").expect("unreachable");
+                        if kind == PropertyKind::Get {
+                            p.log.add_range_error(Some(p.source), key_range, b"Class constructor cannot be a getter").expect("unreachable");
+                        } else if kind == PropertyKind::Set {
+                            p.log.add_range_error(Some(p.source), key_range, b"Class constructor cannot be a setter").expect("unreachable");
                         } else if opts.is_async {
-                            p.log.add_range_error(p.source, key_range, "Class constructor cannot be an async function").expect("unreachable");
+                            p.log.add_range_error(Some(p.source), key_range, b"Class constructor cannot be an async function").expect("unreachable");
                         } else if opts.is_generator {
-                            p.log.add_range_error(p.source, key_range, "Class constructor cannot be a generator function").expect("unreachable");
+                            p.log.add_range_error(Some(p.source), key_range, b"Class constructor cannot be a generator function").expect("unreachable");
                         } else {
                             is_constructor = true;
                         }
                     } else if opts.is_static && str_.eql_comptime(b"prototype") {
-                        p.log.add_range_error(p.source, key_range, "Invalid static method name \"prototype\"").expect("unreachable");
+                        p.log.add_range_error(Some(p.source), key_range, b"Invalid static method name \"prototype\"").expect("unreachable");
                     }
                 }
                 _ => {}
             }
         }
 
-        let mut func = p.parse_fn(
+        let func = p.parse_fn(
             None,
             FnOrArrowDataParse {
                 async_range: opts.async_range,
@@ -100,49 +97,55 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         p.fn_or_arrow_data_parse.has_argument_decorators = false;
 
         // "class Foo { foo(): void; foo(): void {} }"
-        if func.flags.contains(Flags::Function::IS_FORWARD_DECLARATION) {
+        if func.flags.contains(flags::Function::IsForwardDeclaration) {
             // Skip this property entirely
             p.pop_and_discard_scope(scope_index);
             return Ok(None);
         }
 
         p.pop_scope();
-        func.flags.insert(Flags::Function::IS_UNIQUE_FORMAL_PARAMETERS);
+        // PORT NOTE: G::Fn is not Copy (FnBody/TS-metadata aren't), so mutate in place via the
+        // E::Function payload after boxing rather than copying `func`.
+        let mut func = func;
+        func.flags.insert(flags::Function::IsUniqueFormalParameters);
+        // SAFETY: G::Fn.args is an arena-owned slice valid for 'a.
+        let args = unsafe { &*func.args };
         let value = p.new_expr(E::Function { func }, loc);
 
         // Enforce argument rules for accessors
         match kind {
-            Property::Kind::Get => {
-                if func.args.len() > 0 {
-                    let r = js_lexer::range_of_identifier(p.source, func.args[0].binding.loc);
+            PropertyKind::Get => {
+                if args.len() > 0 {
+                    let r = js_lexer::range_of_identifier(p.source, args[0].binding.loc);
+                    // TODO(port): Zig used p.keyNameForError(key) inline; borrowck reshape — pre-compute name.
+                    let key_name = p.key_name_for_error(key);
                     p.log
                         .add_range_error_fmt(
-                            p.source,
+                            Some(p.source),
                             r,
-                            p.allocator,
-                            format_args!("Getter {} must have zero arguments", p.key_name_for_error(key)),
+                            format_args!("Getter {} must have zero arguments", bstr::BStr::new(key_name)),
                         )
                         .expect("unreachable");
                 }
             }
-            Property::Kind::Set => {
-                if func.args.len() != 1 {
+            PropertyKind::Set => {
+                if args.len() != 1 {
                     let mut r = js_lexer::range_of_identifier(
                         p.source,
-                        if func.args.len() > 0 { func.args[0].binding.loc } else { loc },
+                        if args.len() > 0 { args[0].binding.loc } else { loc },
                     );
-                    if func.args.len() > 1 {
-                        r = js_lexer::range_of_identifier(p.source, func.args[1].binding.loc);
+                    if args.len() > 1 {
+                        r = js_lexer::range_of_identifier(p.source, args[1].binding.loc);
                     }
+                    let key_name = p.key_name_for_error(key);
                     p.log
                         .add_range_error_fmt(
-                            p.source,
+                            Some(p.source),
                             r,
-                            p.allocator,
                             format_args!(
                                 "Setter {} must have exactly 1 argument (there are {})",
-                                p.key_name_for_error(key),
-                                func.args.len()
+                                bstr::BStr::new(key_name),
+                                args.len()
                             ),
                         )
                         .expect("unreachable");
@@ -153,85 +156,74 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         // Special-case private identifiers
         match &mut key.data {
-            Expr::Data::EPrivateIdentifier(private) => {
-                let declare: Symbol::Kind = match kind {
-                    Property::Kind::Get => {
+            js_ast::ExprData::EPrivateIdentifier(private) => {
+                let declare: symbol::Kind = match kind {
+                    PropertyKind::Get => {
                         if opts.is_static {
-                            Symbol::Kind::PrivateStaticGet
+                            symbol::Kind::PrivateStaticGet
                         } else {
-                            Symbol::Kind::PrivateGet
+                            symbol::Kind::PrivateGet
                         }
                     }
-                    Property::Kind::Set => {
+                    PropertyKind::Set => {
                         if opts.is_static {
-                            Symbol::Kind::PrivateStaticSet
+                            symbol::Kind::PrivateStaticSet
                         } else {
-                            Symbol::Kind::PrivateSet
+                            symbol::Kind::PrivateSet
                         }
                     }
                     _ => {
                         if opts.is_static {
-                            Symbol::Kind::PrivateStaticMethod
+                            symbol::Kind::PrivateStaticMethod
                         } else {
-                            Symbol::Kind::PrivateMethod
+                            symbol::Kind::PrivateMethod
                         }
                     }
                 };
 
                 let name = p.load_name_from_ref(private.ref_);
                 if name == b"#constructor" {
-                    p.log.add_range_error(p.source, key_range, "Invalid method name \"#constructor\"").expect("unreachable");
+                    p.log.add_range_error(Some(p.source), key_range, b"Invalid method name \"#constructor\"").expect("unreachable");
                 }
                 private.ref_ = p.declare_symbol(declare, key.loc, name).expect("unreachable");
             }
             _ => {}
         }
 
+        let mut prop_flags = flags::PropertySet::empty();
+        if is_computed {
+            prop_flags.insert(flags::Property::IsComputed);
+        }
+        prop_flags.insert(flags::Property::IsMethod);
+        if opts.is_static {
+            prop_flags.insert(flags::Property::IsStatic);
+        }
+
         Ok(Some(G::Property {
-            ts_decorators: ExprNodeList::from_slice(p.allocator, opts.ts_decorators)?,
+            ts_decorators: ExprNodeList::from_slice(opts.ts_decorators)?,
             kind,
-            flags: {
-                let mut f = Flags::Property::empty();
-                if is_computed {
-                    f.insert(Flags::Property::IS_COMPUTED);
-                }
-                f.insert(Flags::Property::IS_METHOD);
-                if opts.is_static {
-                    f.insert(Flags::Property::IS_STATIC);
-                }
-                f
-            },
+            flags: prop_flags,
             key: Some(*key),
             value: Some(value),
-            ts_metadata: TypeScript::Metadata::MFunction,
+            ts_metadata: TsMetadata::MFunction,
             ..Default::default()
         }))
-        } // end #[cfg(any())]
     }
 
     pub fn parse_property(
         &mut self,
-        kind_: G::PropertyKind,
+        kind_: PropertyKind,
         opts: &mut PropertyOpts,
         errors_: Option<&mut DeferredErrors>,
     ) -> Result<Option<G::Property>, bun_core::Error> {
         let p = self;
-        let _ = (kind_, opts, errors_);
-        todo!("b2-ast-E: parse_property body");
-        #[cfg(any())]
-        // blocked_on: P::{push_scope_for_parse_pass, pop_scope, store_name_in_ref, declare_symbol,
-        //   pop_and_discard_scope, log_expr_errors} gated (P.rs:640 impl block);
-        //   PropertyModifierKeyword enum (TypeScript.rs); G::Property full struct-init;
-        //   Flags::PropertySet (EnumSet) — `Property::IsComputed | ...` not struct-init;
-        //   PropertyOpts.{is_class, is_static, ts_decorators} field set; ~540-line body, >30 errors.
-        {
         let mut kind = kind_;
         let mut errors = errors_;
         // This while loop exists to conserve stack space by reducing (but not completely eliminating) recursion.
         'restart: loop {
             let mut key: Expr = Expr {
                 loc: logger::Loc::EMPTY,
-                data: Expr::Data::EMissing(E::Missing {}),
+                data: js_ast::ExprData::EMissing(E::Missing {}),
             };
             let key_range = p.lexer.range();
             let mut is_computed = false;
@@ -246,7 +238,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     key = p.parse_string_literal()?;
                 }
                 T::TBigIntegerLiteral => {
-                    key = p.new_expr(E::BigInt { value: p.lexer.identifier }, p.lexer.loc());
+                    // PORT NOTE: E::BigInt.value is `&'static [u8]` (arena-erased); transmute via init helper pattern.
+                    let value: &'static [u8] = unsafe { core::mem::transmute(p.lexer.identifier) };
+                    key = p.new_expr(E::BigInt { value }, p.lexer.loc());
                     // markSyntaxFeature
                     p.lexer.next()?;
                 }
@@ -255,12 +249,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         p.lexer.expected(T::TIdentifier)?;
                     }
 
-                    key = p.new_expr(
-                        E::PrivateIdentifier {
-                            ref_: p.store_name_in_ref(p.lexer.identifier).expect("unreachable"),
-                        },
-                        p.lexer.loc(),
-                    );
+                    let ident = p.lexer.identifier;
+                    let ref_ = p.store_name_in_ref(ident).expect("unreachable");
+                    key = p.new_expr(E::PrivateIdentifier { ref_ }, p.lexer.loc());
                     p.lexer.next()?;
                 }
                 T::TOpenBracket => {
@@ -274,12 +265,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         // Handle index signatures
                         if p.lexer.token == T::TColon && was_identifier && opts.is_class {
                             match expr.data {
-                                Expr::Data::EIdentifier(_) => {
+                                js_ast::ExprData::EIdentifier(_) => {
                                     p.lexer.next()?;
-                                    p.skip_typescript_type(Level::Lowest)?;
+                                    p.skip_type_script_type(Level::Lowest)?;
                                     p.lexer.expect(T::TCloseBracket)?;
                                     p.lexer.expect(T::TColon)?;
-                                    p.skip_typescript_type(Level::Lowest)?;
+                                    p.skip_type_script_type(Level::Lowest)?;
                                     p.lexer.expect_or_insert_semicolon()?;
 
                                     // Skip this property entirely
@@ -294,14 +285,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     key = expr;
                 }
                 T::TAsterisk => {
-                    if kind != Property::Kind::Normal || opts.is_generator {
+                    if kind != PropertyKind::Normal || opts.is_generator {
                         p.lexer.unexpected()?;
                         return Err(err!("SyntaxError"));
                     }
 
                     p.lexer.next()?;
                     opts.is_generator = true;
-                    kind = Property::Kind::Normal;
+                    kind = PropertyKind::Normal;
                     continue 'restart;
                 }
 
@@ -317,7 +308,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     p.lexer.next()?;
 
                     // Support contextual keywords
-                    if kind == Property::Kind::Normal && !opts.is_generator {
+                    if kind == PropertyKind::Normal && !opts.is_generator {
                         // Does the following token look like a key?
                         let could_be_modifier_keyword = p.lexer.is_identifier_or_keyword()
                             || matches!(
@@ -342,7 +333,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                                 .unwrap_or(PropertyModifierKeyword::PStatic)
                                                 == PropertyModifierKeyword::PGet
                                         {
-                                            kind = Property::Kind::Get;
+                                            kind = PropertyKind::Get;
                                             errors = None;
                                             continue 'restart;
                                         }
@@ -357,7 +348,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                                 == PropertyModifierKeyword::PSet
                                         {
                                             // p.markSyntaxFeature(ObjectAccessors, name_range)
-                                            kind = Property::Kind::Set;
+                                            kind = PropertyKind::Set;
                                             errors = None;
                                             continue 'restart;
                                         }
@@ -391,7 +382,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                                 == PropertyModifierKeyword::PStatic
                                         {
                                             opts.is_static = true;
-                                            kind = Property::Kind::Normal;
+                                            kind = PropertyKind::Normal;
                                             errors = None;
                                             continue 'restart;
                                         }
@@ -403,11 +394,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                             let scope_index = p.scopes_in_order.len();
                                             if let Some(_prop) = p.parse_property(kind, opts, None)? {
                                                 let mut prop = _prop;
-                                                if prop.kind == Property::Kind::Normal
+                                                if prop.kind == PropertyKind::Normal
                                                     && prop.value.is_none()
                                                     && opts.ts_decorators.len() > 0
                                                 {
-                                                    prop.kind = Property::Kind::Declare;
+                                                    prop.kind = PropertyKind::Declare;
                                                     return Ok(Some(prop));
                                                 }
                                             }
@@ -425,12 +416,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                             opts.is_ts_abstract = true;
                                             let scope_index = p.scopes_in_order.len();
                                             if let Some(prop) = p.parse_property(kind, opts, None)? {
-                                                if prop.kind == Property::Kind::Normal
+                                                if prop.kind == PropertyKind::Normal
                                                     && prop.value.is_none()
                                                     && opts.ts_decorators.len() > 0
                                                 {
                                                     let mut prop_ = prop;
-                                                    prop_.kind = Property::Kind::Abstract;
+                                                    prop_.kind = PropertyKind::Abstract;
                                                     return Ok(Some(prop_));
                                                 }
                                             }
@@ -448,7 +439,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                                 .unwrap_or(PropertyModifierKeyword::PStatic)
                                                 == PropertyModifierKeyword::PAccessor
                                         {
-                                            kind = Property::Kind::AutoAccessor;
+                                            kind = PropertyKind::AutoAccessor;
                                             errors = None;
                                             continue 'restart;
                                         }
@@ -477,7 +468,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             let loc = p.lexer.loc();
                             p.lexer.next()?;
 
-                            let old_fn_or_arrow_data_parse = p.fn_or_arrow_data_parse;
+                            let old_fn_or_arrow_data_parse = p.fn_or_arrow_data_parse.clone();
                             p.fn_or_arrow_data_parse = FnOrArrowDataParse {
                                 is_return_disallowed: true,
                                 allow_super_property: true,
@@ -494,15 +485,18 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             p.fn_or_arrow_data_parse = old_fn_or_arrow_data_parse;
                             p.lexer.expect(T::TCloseBrace)?;
 
-                            // PERF(port): was arena allocator.create — bump.alloc returns &'bump mut T
+                            // PERF(port): was arena allocator.create — bump.alloc returns &'a mut T;
+                            // BabyList::from_slice copies the bump-backed StmtList into a heap-backed list
+                            // (Phase B: route ClassStaticBlock.stmts through arena slice directly).
+                            let stmt_list = BabyList::<Stmt>::from_slice(stmts.as_slice())?;
                             let block = p.allocator.alloc(G::ClassStaticBlock {
-                                stmts: js_ast::BabyList::<Stmt>::from_owned_slice(stmts),
+                                stmts: stmt_list,
                                 loc,
                             });
 
                             return Ok(Some(G::Property {
-                                kind: Property::Kind::ClassStaticBlock,
-                                class_static_block: Some(block),
+                                kind: PropertyKind::ClassStaticBlock,
+                                class_static_block: Some(NonNull::from(block)),
                                 ..Default::default()
                             }));
                         }
@@ -513,26 +507,25 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     if p.lexer.token == T::TSyntaxError {
                         p.log
                             .add_range_error_fmt(
-                                p.source,
+                                Some(p.source),
                                 name_range,
-                                p.allocator,
                                 format_args!("Unexpected {}", bun_core::fmt::quote(name)),
                             )
                             .expect("unreachable");
                         return Err(err!("SyntaxError"));
                     }
 
-                    key = p.new_expr(E::String { data: name }, name_range.loc);
+                    key = p.new_expr(E::EString::init(name), name_range.loc);
 
                     // Parse a shorthand property
                     let is_shorthand_property = !opts.is_class
-                        && kind == Property::Kind::Normal
+                        && kind == PropertyKind::Normal
                         && p.lexer.token != T::TColon
                         && p.lexer.token != T::TOpenParen
                         && p.lexer.token != T::TLessThan
                         && !opts.is_generator
                         && !opts.is_async
-                        && !js_lexer::Keywords::has(name);
+                        && !js_lexer::Keywords.contains_key(name);
 
                     if is_shorthand_property {
                         if (p.fn_or_arrow_data_parse.allow_await != AwaitOrYield::AllowIdent
@@ -541,14 +534,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 && name == b"yield")
                         {
                             if name == b"await" {
-                                p.log.add_range_error(p.source, name_range, "Cannot use \"await\" here").expect("unreachable");
+                                p.log.add_range_error(Some(p.source), name_range, b"Cannot use \"await\" here").expect("unreachable");
                             } else {
-                                p.log.add_range_error(p.source, name_range, "Cannot use \"yield\" here").expect("unreachable");
+                                p.log.add_range_error(Some(p.source), name_range, b"Cannot use \"yield\" here").expect("unreachable");
                             }
                         }
 
                         let ref_ = p.store_name_in_ref(name).expect("unreachable");
-                        let value = p.new_expr(E::Identifier { ref_ }, key.loc);
+                        let value = p.new_expr(E::Identifier::init(ref_), key.loc);
 
                         // Destructuring patterns have an optional default value
                         let mut initializer: Option<Expr> = None;
@@ -563,11 +556,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             key: Some(key),
                             value: Some(value),
                             initializer,
-                            flags: {
-                                let mut f = Flags::Property::empty();
-                                f.insert(Flags::Property::WAS_SHORTHAND);
-                                f
-                            },
+                            flags: flags::Property::WasShorthand.into(),
                             ..Default::default()
                         }));
                     }
@@ -585,7 +574,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         p.lexer.next()?;
                     } else if p.lexer.token == T::TExclamation
                         && !p.lexer.has_newline_before
-                        && (kind == Property::Kind::Normal || kind == Property::Kind::AutoAccessor)
+                        && (kind == PropertyKind::Normal || kind == PropertyKind::AutoAccessor)
                         && !opts.is_async
                         && !opts.is_generator
                     {
@@ -598,19 +587,15 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 // "class X { foo?<T>(): T }"
                 // "const x = { foo<T>(): T {} }"
                 if !has_definite_assignment_assertion_operator {
-                    // TODO(port): SkipTypeParameterOptions struct name/shape
-                    has_type_parameters = p.skip_typescript_type_parameters(
-                        js_parser::SkipTypeParameterOptions {
-                            allow_const_modifier: true,
-                            ..Default::default()
-                        },
-                    )? != js_parser::SkipTypeParameterResult::DidNotSkipAnything;
+                    has_type_parameters = p.skip_type_script_type_parameters(
+                        TypeParameterFlag::ALLOW_CONST_MODIFIER,
+                    )? != SkipTypeParameterResult::DidNotSkipAnything;
                 }
             }
 
             // Parse a class field with an optional initial value
             if opts.is_class
-                && (kind == Property::Kind::Normal || kind == Property::Kind::AutoAccessor)
+                && (kind == PropertyKind::Normal || kind == PropertyKind::AutoAccessor)
                 && !opts.is_async
                 && !opts.is_generator
                 && p.lexer.token != T::TOpenParen
@@ -618,17 +603,17 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 && (p.lexer.token != T::TOpenParen || has_definite_assignment_assertion_operator)
             {
                 let mut initializer: Option<Expr> = None;
-                let mut ts_metadata = TypeScript::Metadata::default();
+                let mut ts_metadata = TsMetadata::default();
 
                 // Forbid the names "constructor" and "prototype" in some cases
                 if !is_computed {
                     match &key.data {
-                        Expr::Data::EString(str_) => {
+                        js_ast::ExprData::EString(str_) => {
                             if str_.eql_comptime(b"constructor")
                                 || (opts.is_static && str_.eql_comptime(b"prototype"))
                             {
                                 // TODO: fmt error message to include string value.
-                                p.log.add_range_error(p.source, key_range, "Invalid field name").expect("unreachable");
+                                p.log.add_range_error(Some(p.source), key_range, b"Invalid field name").expect("unreachable");
                             }
                         }
                         _ => {}
@@ -643,9 +628,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             && opts.is_class
                             && opts.ts_decorators.len() > 0
                         {
-                            ts_metadata = p.skip_typescript_type_with_metadata(Level::Lowest)?;
+                            ts_metadata = p.skip_type_script_type_with_metadata(Level::Lowest)?;
                         } else {
-                            p.skip_typescript_type(Level::Lowest)?;
+                            p.skip_type_script_type(Level::Lowest)?;
                         }
                     }
                 }
@@ -654,9 +639,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     if Self::IS_TYPESCRIPT_ENABLED {
                         if !opts.declare_range.is_empty() {
                             p.log.add_range_error(
-                                p.source,
+                                Some(p.source),
                                 p.lexer.range(),
-                                "Class fields that use \"declare\" cannot be initialized",
+                                b"Class fields that use \"declare\" cannot be initialized",
                             )?;
                         }
                     }
@@ -677,16 +662,16 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                 // Special-case private identifiers
                 match &mut key.data {
-                    Expr::Data::EPrivateIdentifier(private) => {
+                    js_ast::ExprData::EPrivateIdentifier(private) => {
                         let name = p.load_name_from_ref(private.ref_);
                         if name == b"#constructor" {
-                            p.log.add_range_error(p.source, key_range, "Invalid field name \"#constructor\"").expect("unreachable");
+                            p.log.add_range_error(Some(p.source), key_range, b"Invalid field name \"#constructor\"").expect("unreachable");
                         }
 
-                        let declare: js_ast::Symbol::Kind = if opts.is_static {
-                            Symbol::Kind::PrivateStaticField
+                        let declare: symbol::Kind = if opts.is_static {
+                            symbol::Kind::PrivateStaticField
                         } else {
-                            Symbol::Kind::PrivateField
+                            symbol::Kind::PrivateField
                         };
 
                         private.ref_ = p.declare_symbol(declare, key.loc, name).expect("unreachable");
@@ -696,19 +681,18 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                 p.lexer.expect_or_insert_semicolon()?;
 
+                let mut prop_flags = flags::PropertySet::empty();
+                if is_computed {
+                    prop_flags.insert(flags::Property::IsComputed);
+                }
+                if opts.is_static {
+                    prop_flags.insert(flags::Property::IsStatic);
+                }
+
                 return Ok(Some(G::Property {
-                    ts_decorators: ExprNodeList::from_slice(p.allocator, opts.ts_decorators)?,
+                    ts_decorators: ExprNodeList::from_slice(opts.ts_decorators)?,
                     kind,
-                    flags: {
-                        let mut f = Flags::Property::empty();
-                        if is_computed {
-                            f.insert(Flags::Property::IS_COMPUTED);
-                        }
-                        if opts.is_static {
-                            f.insert(Flags::Property::IS_STATIC);
-                        }
-                        f
-                    },
+                    flags: prop_flags,
                     key: Some(key),
                     initializer,
                     ts_metadata,
@@ -717,16 +701,16 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             }
 
             // Auto-accessor fields cannot be methods
-            if kind == Property::Kind::AutoAccessor && p.lexer.token == T::TOpenParen {
+            if kind == PropertyKind::AutoAccessor && p.lexer.token == T::TOpenParen {
                 p.log
-                    .add_range_error(p.source, key_range, "auto-accessor properties cannot have a method body")
+                    .add_range_error(Some(p.source), key_range, b"auto-accessor properties cannot have a method body")
                     .expect("unreachable");
                 return Err(err!("SyntaxError"));
             }
 
             // Parse a method expression
             if p.lexer.token == T::TOpenParen
-                || kind != Property::Kind::Normal
+                || kind != PropertyKind::Normal
                 || opts.is_class
                 || opts.is_async
                 || opts.is_generator
@@ -736,18 +720,16 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
             // Parse an object key/value pair
             p.lexer.expect(T::TColon)?;
+            let mut prop_flags = flags::PropertySet::empty();
+            if is_computed {
+                prop_flags.insert(flags::Property::IsComputed);
+            }
             let mut property = G::Property {
                 kind,
-                flags: {
-                    let mut f = Flags::Property::empty();
-                    if is_computed {
-                        f.insert(Flags::Property::IS_COMPUTED);
-                    }
-                    f
-                },
+                flags: prop_flags,
                 key: Some(key),
                 value: Some(Expr {
-                    data: Expr::Data::EMissing(E::Missing {}),
+                    data: js_ast::ExprData::EMissing(E::Missing {}),
                     loc: logger::Loc::default(),
                 }),
                 ..Default::default()
@@ -761,7 +743,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             )?;
             return Ok(Some(property));
         }
-        } // end #[cfg(any())]
     }
 }
 
@@ -769,6 +750,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 // PORT STATUS
 //   source:     src/js_parser/ast/parseProperty.zig (591 lines)
 //   confidence: medium
-//   todos:      2
-//   notes:      Zig type-returning fn → inherent impl on NewParser_<const TS, JSX, SCAN_ONLY>; Flags::Property assumed bitflags; ScopeKind/Level/SkipTypeParameter* import paths need Phase B fixup
+//   todos:      1
+//   notes:      Zig type-returning fn → inherent impl on P<const TS, J, SCAN_ONLY>; flags::Property as EnumSet (init via .insert/.into); FnOrArrowDataParse is Clone-only (saved via .clone()); G::Fn.args raw *mut [Arg] derefed under unsafe; ClassStaticBlock.stmts copies StmtList → BabyList (Phase B: arena-backed).
 // ──────────────────────────────────────────────────────────────────────────

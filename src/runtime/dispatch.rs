@@ -349,6 +349,28 @@ pub unsafe fn run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
 // Hook installation
 // ════════════════════════════════════════════════════════════════════════════
 
+/// `RUN_IMMEDIATE_HOOK` body — cast the opaque low-tier
+/// `bun_jsc::event_loop::ImmediateObject` to the real
+/// `crate::timer::ImmediateObject` and run the task.
+///
+/// # Safety
+/// `task` was produced by `enqueue_immediate_task` from a live
+/// `timer::ImmediateObject`; `vm` is the live per-thread VM.
+unsafe fn run_immediate_task_hook(
+    task: *mut bun_jsc::event_loop::ImmediateObject,
+    vm: *mut bun_jsc::VirtualMachine,
+) -> bool {
+    // SAFETY: per fn contract — the low-tier `ImmediateObject` is an opaque
+    // forward-decl; the only producer (`TimerObjectInternals::init`) stores a
+    // `*mut crate::timer::ImmediateObject`, so the cast is the identity.
+    unsafe {
+        crate::timer::ImmediateObject::run_immediate_task(
+            task.cast::<crate::timer::ImmediateObject>(),
+            vm,
+        )
+    }
+}
+
 /// Wire the high-tier dispatchers into the low-tier hooks. Called once from
 /// `main.rs` before the first event-loop tick.
 pub fn install_dispatch_hooks() {
@@ -357,6 +379,9 @@ pub fn install_dispatch_hooks() {
         run_file_poll as unsafe fn(*mut FilePoll, i64) as *mut (),
         Ordering::Release,
     );
+
+    // EventLoop::tick_immediate_tasks → ImmediateObject::run_immediate_task.
+    bun_jsc::event_loop::set_run_immediate_hook(run_immediate_task_hook);
 
     // bun_jsc::RUN_TASK_HOOK / TICK_QUEUE_HOOK → tick_queue_with_count.
     // Gated: `bun_jsc` is not yet a dep of `bun_runtime` (Cargo.toml comments

@@ -72,7 +72,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         &mut self,
         loc: logger::Loc,
         target: js_ast::Expr,
-        name: &[u8],
+        name: &'a [u8],
         name_loc: logger::Loc,
         identifier_opts: IdentifierOpts,
     ) -> Option<Expr> {

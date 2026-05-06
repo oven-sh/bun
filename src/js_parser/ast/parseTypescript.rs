@@ -1,16 +1,35 @@
-#![allow(unused_imports, unused_variables, dead_code)]
+#![allow(unused_imports, unused_variables, dead_code, unused_mut)]
+use core::ptr::NonNull;
+
 use bun_core::{err, Error};
 use crate::ast::{
     self as js_ast, B, E, EnumValue, Expr, ExprNodeIndex, ExprNodeList, G, LocRef, S, Stmt,
-    TSNamespaceMember,
+    StmtData, TSNamespaceMember, TSNamespaceMemberMap,
 };
 use crate::ast::p::P;
+use crate::ast::scope::Kind as ScopeKind;
+use crate::ast::symbol::Kind as SymbolKind;
+use crate::ast::ts::Data as TSNamespaceMemberData;
+use crate::flags;
 use crate::lexer::{self as js_lexer, T};
 use crate::parser::{JsxT, ParseStatementOptions, Ref, ScopeOrder};
 use crate::ast::op::Level;
 use bun_logger as logger;
 use bun_string::strings;
 use bumpalo::collections::Vec as BumpVec;
+
+// `ts::Data` carries only Copy payloads but lacks a `derive(Clone)` upstream;
+// local helper so we can re-insert values fetched from `ref_to_ts_namespace_member`.
+#[inline]
+fn clone_ts_member_data(d: &TSNamespaceMemberData) -> TSNamespaceMemberData {
+    match d {
+        TSNamespaceMemberData::Property => TSNamespaceMemberData::Property,
+        TSNamespaceMemberData::Namespace(m) => TSNamespaceMemberData::Namespace(*m),
+        TSNamespaceMemberData::EnumNumber(n) => TSNamespaceMemberData::EnumNumber(*n),
+        TSNamespaceMemberData::EnumString(s) => TSNamespaceMemberData::EnumString(*s),
+        TSNamespaceMemberData::EnumProperty => TSNamespaceMemberData::EnumProperty,
+    }
+}
 
 // Zig: `pub fn ParseTypescript(comptime ...) type { return struct { ... } }`
 // — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
@@ -168,13 +187,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         loc: logger::Loc,
         opts: &mut ParseStatementOptions,
     ) -> Result<Stmt, Error> {
-        let _ = (loc, opts);
-        #[cfg(any())]
-        // blocked_on: P::{push_scope_for_parse_pass, pop_scope, declare_symbol, new_symbol,
-        //   get_or_create_exported_namespace_members, declare_binding, parse_stmts_up_to,
-        //   pop_and_discard_scope} all gated (P.rs:640 impl block);
-        //   TSNamespaceScope.exported_members is *mut TSNamespaceMemberMap (raw deref).
-        {
         let p = self;
         // "namespace foo {}";
         let name_loc = p.lexer.loc();

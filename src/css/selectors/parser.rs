@@ -1102,19 +1102,27 @@ impl<'a> SelectorParser<'a> {
         raw: Str,
         loc: usize,
     ) -> <impl_::Selectors as SelectorImpl>::LocalIdentifier {
-        if input.flags.css_modules {
+        // blocked_on: `Parser::add_symbol_for_name` (gated in css_parser.rs on
+        // ArrayHashMap::entry + SymbolList::push). The CSS-modules branch
+        // returns the symbol-table ref; until that un-gates, fall through to
+        // the ident arm so non-modules parsing is correct.
+        #[cfg(any())]
+        if input.flags.css_modules() {
             return <impl_::Selectors as SelectorImpl>::LocalIdentifier::from_ref(
                 input.add_symbol_for_name(raw, tag, bun_logger::Loc { start: i32::try_from(loc).unwrap() }),
                 #[cfg(debug_assertions)]
-                (raw, ()),
+                (raw, input.allocator()),
             );
         }
-        <impl_::Selectors as SelectorImpl>::LocalIdentifier::from_ident(Ident { v: raw })
+        let _ = (input, tag, loc);
+        <impl_::Selectors as SelectorImpl>::LocalIdentifier::from_ident(Ident { v: raw as *const [u8] })
     }
 
     pub fn namespace_for_prefix(&mut self, prefix: Ident) -> Option<Str> {
         let _ = self;
-        Some(prefix.v)
+        // SAFETY: `Ident.v` borrows the parser arena which outlives the parse
+        // session (Phase-A `'static` placeholder).
+        Some(unsafe { &*prefix.v })
     }
 
     pub fn parse_functional_pseudo_element(
@@ -1300,7 +1308,7 @@ impl<'a> SelectorParser<'a> {
     }
 
     pub fn deep_combinator_enabled(&self) -> bool {
-        self.options.flags.deep_selector_combinator
+        self.options.flags.contains(css::ParserFlags::DEEP_SELECTOR_COMBINATOR)
     }
 
     pub fn default_namespace(&self) -> Option<<impl_::Selectors as SelectorImpl>::NamespaceUrl> {
@@ -1485,10 +1493,15 @@ fn lookup_pseudo_element(name: &[u8]) -> Option<PseudoElement> {
 // GenericSelectorList
 // ─────────────────────────────────────────────────────────────────────────────
 
-#[derive(Clone, Default)]
 pub struct GenericSelectorList<Impl: SelectorImpl> {
     // PERF: make this equivalent to SmallVec<[Selector; 1]>
     pub v: SmallList<GenericSelector<Impl>, 1>,
+}
+
+impl<Impl: SelectorImpl> Default for GenericSelectorList<Impl> {
+    fn default() -> Self {
+        Self { v: SmallList::default() }
+    }
 }
 
 /// `DebugFmt` wrapper — implements `Display` over a borrowed list (debug builds only).
@@ -1608,7 +1621,7 @@ impl<Impl: BunSelectorImpl> GenericSelectorList<Impl> {
             let was_ok = selector.is_ok();
             match selector {
                 Ok(sel) => {
-                    values.push(sel);
+                    values.append(sel);
                     // PERF(port): was arena append — profile in Phase B
                 }
                 Err(e) => match recovery {
@@ -1662,7 +1675,7 @@ impl<Impl: BunSelectorImpl> GenericSelectorList<Impl> {
             let was_ok = selector.is_ok();
             match selector {
                 Ok(sel) => {
-                    values.push(sel);
+                    values.append(sel);
                 }
                 Err(e) => match recovery {
                     ParseErrorRecovery::DiscardList => return Err(e),
@@ -1685,16 +1698,16 @@ impl<Impl: BunSelectorImpl> GenericSelectorList<Impl> {
 
     pub fn from_selector(selector: GenericSelector<Impl>) -> Self {
         let mut result = Self::default();
-        result.v.push(selector);
+        result.v.append(selector);
         result
     }
 
     pub fn deep_clone(&self) -> Self {
-        Self { v: self.v.deep_clone() }
+        protocol_shims::implement_deep_clone(self)
     }
 
     pub fn eql(&self, rhs: &Self) -> bool {
-        self.v.eql(&rhs.v)
+        protocol_shims::implement_eql(self, rhs)
     }
 
     pub fn hash(&self, hasher: &mut Wyhash) {
@@ -1735,18 +1748,11 @@ impl<'a, Impl: SelectorImpl> fmt::Display for SelectorDebugFmt<'a, Impl> {
         if !cfg!(debug_assertions) {
             return Ok(());
         }
-        write!(f, "Selector(")?;
         // TODO(port): the Zig builds a fresh `Printer` and calls
         // `tocss_servo::to_css_selector` into a buffer, then writes the buffer.
-        // Phase B should mirror once `Printer::new` is ported.
-        let mut buf: Vec<u8> = Vec::new();
-        let symbols = bun_logger::symbol::Map::default();
-        let mut printer = Printer::new_buffered(&mut buf, css::PrinterOptions::default(), None, None, &symbols);
-        // TODO(port): `Printer::in_debug_fmt` is a thread-local/static flag in Zig.
-        match css::selector::tocss_servo::to_css_selector(self.0, &mut printer) {
-            Ok(()) => write!(f, "{}", bstr::BStr::new(&buf)),
-            Err(e) => write!(f, "<error writing selector: {}>\n", <&'static str>::from(e)),
-        }
+        // blocked_on: `Printer::new_buffered` + `SymbolMap::default` (debug-
+        // only path; serialization body lives in `selector::tocss_servo`).
+        write!(f, "Selector(<{} components>)", self.0.components.len())
     }
 }
 

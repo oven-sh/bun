@@ -832,12 +832,13 @@ impl<FeatureId: FeatureIdTrait> MediaFeatureName<FeatureId> {
             MediaFeatureName::Standard(v) => v.to_css(dest),
             // PORT NOTE: Zig routed through DashedIdentFns.toCss → dest.writeDashedIdent
             // (handles css-module name rewriting). Printer::write_dashed_ident is
-            // currently `#[cfg(any())]`-gated; emit the raw ident verbatim until
-            // that lands. Custom-media names are not subject to css-module
-            // rewriting in any test fixture today.
+            // currently `#[cfg(any())]`-gated; emit the ident via the raw
+            // serializer until that lands. Custom-media names are not subject
+            // to css-module rewriting in any test fixture today.
             MediaFeatureName::Custom(d) => {
                 // SAFETY: arena-owned slice valid for the MediaList lifetime.
-                dest.write_ident(unsafe { &*d.v }, false)
+                css::serializer::serialize_identifier(unsafe { &*d.v }, dest)
+                    .map_err(|_| dest.add_fmt_error())
             }
             MediaFeatureName::Unknown(v) => v.to_css(dest),
         }
@@ -853,7 +854,8 @@ impl<FeatureId: FeatureIdTrait> MediaFeatureName<FeatureId> {
             MediaFeatureName::Custom(d) => {
                 dest.write_str(prefix)?;
                 // SAFETY: arena-owned slice valid for the MediaList lifetime.
-                dest.write_ident(unsafe { &*d.v }, false)
+                css::serializer::serialize_identifier(unsafe { &*d.v }, dest)
+                    .map_err(|_| dest.add_fmt_error())
             }
             MediaFeatureName::Unknown(v) => {
                 dest.write_str(prefix)?;
@@ -916,7 +918,11 @@ impl MediaFeatureValue {
                 todo!("MediaFeatureValue::Ratio to_css — gated on values::ratio::Ratio")
             }
             MediaFeatureValue::Ident(id) => id.to_css(dest),
-            MediaFeatureValue::Env(env) => env.to_css(dest, false),
+            MediaFeatureValue::Env(_env) => {
+                // blocked_on: properties::custom::EnvironmentVariable real body
+                // (currently a data-only stub via `gated_prop!`).
+                todo!("MediaFeatureValue::Env to_css — gated on properties::custom un-gate")
+            }
         }
     }
 

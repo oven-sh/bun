@@ -1,16 +1,30 @@
-#![allow(unused_imports, unused_variables, dead_code, unused_mut)]
+#![allow(unused_imports, unused_variables, dead_code, unused_mut, unreachable_code)]
+use core::ptr::NonNull;
+use std::io::Write as _;
+
+use bstr::BStr;
 use bun_logger as logger;
 use bun_string::strings;
 
 use crate::ast as js_ast;
+use crate::ast::side_effects::SideEffects;
 use crate::ast::{E, Expr, ExprNodeIndex, ExprNodeList, G, Scope, Stmt, Symbol, B};
 use crate::ast::G::Property;
 use crate::ast::p::P;
+use crate::flags as Flags;
 use crate::lexer as js_lexer;
 use crate::parser::{
-    float_to_int32, ExprIn, FnOrArrowDataVisit, IdentifierOpts, JsxT, PrependTempRefsOpts,
-    ReactRefresh, Ref, SideEffects, ThenCatchChain, TransposeState, VisitArgsOpts,
+    float_to_int32, prefill, ExprIn, FnOrArrowDataVisit, IdentifierOpts, JsxT,
+    PrependTempRefsOpts, ReactRefresh, Ref, StrictModeFeature, ThenCatchChain, TransposeState,
+    VisitArgsOpts,
 };
+
+// Local short-hands so the un-gated _draft bodies read close to the Zig
+// (`expr.data.e_dot`, `Expr.Data.e_binary`, `Op.Code.un_typeof`) without a
+// bulk find-replace at every call-site.
+use js_ast::ExprData as Data;
+use js_ast::ExprTag as Tag;
+use js_ast::OpCode as Op;
 
 // Zig: `pub fn VisitExpr(comptime ts, comptime jsx, comptime scan_only) type { return struct { ... } }`
 // — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is

@@ -115,6 +115,15 @@ struct ExistingSocket<const SSL: bool> {
 // associated type — unstable). Hoisted to a free alias.
 pub type ActiveSocketHandler<const SSL: bool> = Handler<SSL>;
 
+/// uWS handler dispatch struct — type-only stub here; real method bodies live
+/// in the gated `_phase_a_draft` module below.
+pub struct Handler<const SSL: bool>;
+
+/// Tagged-ptr discriminant for the "no client" socket-ext state.
+pub struct DeadSocket {
+    pub garbage: u32,
+}
+
 impl<const SSL: bool> HTTPContext<SSL> {
     pub const KIND: uws::SocketKind = if SSL {
         uws::SocketKind::HttpClientTls

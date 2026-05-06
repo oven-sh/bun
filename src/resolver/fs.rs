@@ -1316,21 +1316,13 @@ impl TmpfileWindows {
 impl RealFS {
     pub fn open_dir(&self, unsafe_dir_string: &[u8]) -> Result<bun_sys::Dir, bun_core::Error> {
         #[cfg(windows)]
-        let dirfd = bun_sys::open_dir_at_windows_a(
-            Fd::INVALID,
-            unsafe_dir_string,
-            bun_sys::OpenDirOptions {
-                iterable: true,
-                no_follow: false,
-                read_only: true,
-                ..Default::default()
-            },
-        );
+        // TODO(b2-windows): bun_sys::open_dir_at_windows_a + OpenDirOptions{iterable, read_only}
+        let dirfd = bun_sys::open_a(unsafe_dir_string, bun_sys::O::DIRECTORY, 0);
         #[cfg(not(windows))]
         let dirfd = bun_sys::open_a(unsafe_dir_string, bun_sys::O::DIRECTORY, 0);
 
-        let fd = dirfd.unwrap()?;
-        Ok(fd.std_dir())
+        let fd = dirfd?;
+        Ok(bun_sys::Dir::from_fd(fd))
     }
 
     fn readdir<I: DirEntryIterator>(
@@ -1342,17 +1334,18 @@ impl RealFS {
         handle: bun_sys::Dir,
         iterator: I,
     ) -> Result<DirEntry, bun_core::Error> {
-        let mut iter = bun_sys::iterate_dir(Fd::from_std_dir(handle));
+        let handle_fd = handle.fd();
+        let mut iter = bun_sys::iterate_dir(handle_fd);
         let mut dir = DirEntry::init(dir_, generation);
         // errdefer dir.deinit() — DirEntry: Drop frees data on `?`
         let mut prev_map = prev_map;
 
         if store_fd {
-            FileSystem::set_max_fd(handle.fd());
-            dir.fd = Fd::from_std_dir(handle);
+            FileSystem::set_max_fd(handle_fd.native());
+            dir.fd = handle_fd;
         }
 
-        while let Some(entry_) = iter.next().unwrap()? {
+        while let Some(entry_) = iter.next()? {
             debug!("readdir entry {}", BStr::new(entry_.name.slice()));
 
             dir.add_entry(prev_map.as_deref_mut(), &entry_, &iterator)?;
@@ -1360,7 +1353,7 @@ impl RealFS {
 
         debug!(
             "readdir({}, {}) = {}",
-            print_handle(handle.fd()),
+            print_handle(handle_fd),
             BStr::new(dir_),
             dir.data.count()
         );
@@ -1442,13 +1435,15 @@ impl RealFS {
         if FeatureFlags::ENABLE_ENTRY_CACHE {
             self.entries_mutex.lock();
         }
-        // PORT NOTE: defer entries_mutex.unlock() — using scopeguard
-        let _unlock_guard = scopeguard::guard((), |_| {
+        // PORT NOTE: defer entries_mutex.unlock() — using scopeguard via raw-ptr so the
+        // guard doesn't borrow `&self` (Zig: `defer self.entries_mutex.unlock()`).
+        let mutex_ptr = core::ptr::addr_of!(self.entries_mutex);
+        let _unlock_guard = scopeguard::guard((), move |_| {
             if FeatureFlags::ENABLE_ENTRY_CACHE {
-                self.entries_mutex.unlock();
+                // SAFETY: `mutex_ptr` points into `*self`, which outlives this guard.
+                unsafe { (*mutex_ptr).unlock() };
             }
         });
-        // TODO(port): borrowck — guard captures &self.entries_mutex while we mutate other fields below
 
         let mut in_place: Option<*mut DirEntry> = None;
 
@@ -1467,7 +1462,7 @@ impl RealFS {
                             in_place = Some(&mut **e as *mut DirEntry);
                         }
                     }
-                } else if cr.status == allocators::ResultStatus::NotFound && generation == 0 {
+                } else if cr.status == allocators::ItemStatus::NotFound && generation == 0 {
                     return Ok(TEMP_ENTRIES_OPTION.with_borrow_mut(|slot| {
                         slot.write(EntriesOption::Err(dir_entry::Err {
                             original_err: bun_core::err!("ENOENT"),
@@ -1480,6 +1475,7 @@ impl RealFS {
             }
         }
 
+        let had_handle = maybe_handle.is_some();
         let handle = match maybe_handle {
             Some(h) => h,
             None => match self.open_dir(dir) {
@@ -1488,12 +1484,11 @@ impl RealFS {
             },
         };
 
-        let should_close_handle =
-            maybe_handle.is_none() && (!store_fd || self.need_to_close_files());
+        let should_close_handle = !had_handle && (!store_fd || self.need_to_close_files());
         // PORT NOTE: defer handle.close() under condition — handled at function exit points below
 
         // if we get this far, it's a real directory, so we can just store the dir name.
-        let dir: &'static [u8] = if maybe_handle.is_none() {
+        let dir: &'static [u8] = if !had_handle {
             if let Some(existing) = in_place {
                 // SAFETY: in_place points to BSSMap-owned DirEntry
                 unsafe { (*existing).dir }
@@ -1516,7 +1511,7 @@ impl RealFS {
             Err(err) => {
                 if let Some(existing) = in_place {
                     // SAFETY: see above
-                    unsafe { (*existing).data.clear_and_free() };
+                    unsafe { (*existing).data.clear() };
                 }
                 if should_close_handle {
                     handle.close();
@@ -1529,14 +1524,14 @@ impl RealFS {
             let entries_ptr: *mut DirEntry = match in_place {
                 Some(p) => {
                     // SAFETY: see above
-                    unsafe { (*p).data.clear_and_free() };
+                    unsafe { (*p).data.clear() };
                     p
                 }
                 None => Box::into_raw(Box::new(DirEntry::init(dir, generation))),
                 // PORT NOTE: Zig used bun.default_allocator.create(DirEntry); EntriesOption owns Box<DirEntry>
             };
             if store_fd && !entries.fd.is_valid() {
-                entries.fd = Fd::from_std_dir(handle);
+                entries.fd = handle.fd();
             }
 
             // SAFETY: entries_ptr is either in_place (BSSMap-owned) or fresh Box

@@ -1,16 +1,20 @@
 use core::ffi::{c_int, c_void};
 use core::mem::size_of;
+use core::sync::atomic::{AtomicPtr, Ordering};
 
 use bun_aio::KeepAlive;
 use bun_collections::ByteList;
 use bun_core::Output;
+use bun_event_loop::ManagedTask::ManagedTask;
 use bun_io::StreamBuffer;
 use crate as jsc;
+use crate::json_line_buffer::JSONLineBuffer;
 use crate::{
-    CallFrame, JSGlobalObject, JSValue, JsError, JsResult, ManagedTask, Task,
+    CallFrame, JSGlobalObject, JSValue, JsError, JsResult, SerializedFlags, Task,
     VirtualMachine, ZigString,
 };
 use bun_string::{strings, String as BunString};
+use bun_sys::FdExt as _;
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
 use bun_sys::Fd;
@@ -18,31 +22,64 @@ use bun_uws;
 
 // ──────────────────────────────────────────────────────────────────────────
 // High-tier shims (§Dispatch / cycle-break).
-// `Subprocess` and `node_cluster_binding` live in `bun_runtime` (tier-6);
-// `JSONLineBuffer` is a sibling still gated. Replaced with opaque locals so
-// the IPC channel struct/protocol code compiles; the JS-callback dispatch
-// arms that touch real `Subprocess` fields are gated below.
-// TODO(port): swap shims for real types when `bun_runtime` cycle lands.
+// `Subprocess` and `node_cluster_binding::InternalMsgHolder` live in
+// `bun_runtime` (tier-6). `bun_jsc` cannot depend on `bun_runtime`, so the
+// owner-side dispatch is routed through a vtable (`SendQueueOwner`) that
+// `bun_runtime` populates when constructing a SendQueue, and the JS host
+// entry points (`emit_handle_ipc_message`, Listener fd extraction) are
+// routed through `IPC_HOOKS` registered at startup.
 // ──────────────────────────────────────────────────────────────────────────
 mod high_tier {
-    #[derive(Default)] pub struct Subprocess { _opaque: () }
-    pub mod node_cluster_binding {
-        use crate::{JSGlobalObject, JSValue, JsResult};
-        pub fn handle_internal_message_child(_g: &JSGlobalObject, _m: JSValue) -> JsResult<bool> {
-            // TODO(port): bun_runtime::node::node_cluster_binding — must NOT
-            // silently return false (would mis-route internal cluster messages
-            // as user `message` events). Crash loudly until wired.
-            todo!("node_cluster_binding::handle_internal_message_child shim")
-        }
-        pub fn handle_internal_message_primary(
-            _g: &JSGlobalObject, _sub: *mut super::Subprocess, _m: JSValue,
-        ) -> JsResult<bool> {
-            todo!("node_cluster_binding::handle_internal_message_primary shim")
-        }
+    /// Stand-in for `bun_runtime::node::node_cluster_binding::InternalMsgHolder`.
+    /// SendQueue stores one inline; only `Default`/`Drop` are needed at this
+    /// tier — the fields are touched exclusively from `bun_runtime` via the
+    /// `*mut SendQueue` it holds.
+    // TODO(port): once `bun_runtime` lands its cycle-break re-export, replace
+    // this with the real struct (layout must match for the inline storage).
+    #[derive(Default)]
+    pub struct InternalMsgHolder {
+        _opaque: [usize; 6],
     }
-    #[derive(Default)] pub struct JSONLineBuffer { _opaque: () }
 }
-use high_tier::{Subprocess, node_cluster_binding, JSONLineBuffer};
+pub use high_tier::InternalMsgHolder;
+
+/// Hooks into `bun_runtime` (tier-6) that own the concrete Subprocess /
+/// IPCInstance / Listener types. Registered once at startup via
+/// `set_ipc_hooks`; until then the panicking defaults make a missing
+/// registration impossible to ignore.
+pub struct IPCHooks {
+    /// `Subprocess::from_js_direct(target)?.handle_ipc_message(msg, handle)` /
+    /// `vm.get_ipc_instance()?.handle_ipc_message(msg, handle)` — invoked
+    /// from the `emitHandleIPCMessage` JS host function. `target == NULL`
+    /// selects the VM-side IPCInstance.
+    pub emit_handle_ipc_message:
+        fn(global: &JSGlobalObject, target: JSValue, message: DecodedIPCMessage, handle: JSValue),
+    /// `bun.jsc.API.Listener::from_js(handle)` → fd. Returns `None` when the
+    /// JS value is not a Listener or the listener kind has no transferable fd.
+    pub listener_fd_from_js: fn(handle: JSValue) -> Option<Fd>,
+    /// `VirtualMachine::process_emit_error_event(global, ex)`.
+    pub process_emit_error_event: fn(global: &JSGlobalObject, ex: JSValue),
+}
+
+static IPC_HOOKS: AtomicPtr<IPCHooks> = AtomicPtr::new(core::ptr::null_mut());
+
+/// Register the `bun_runtime` cycle-break vtable. Must be called once at
+/// startup (from `bun_runtime::init`) with a `&'static IPCHooks`.
+pub fn set_ipc_hooks(hooks: &'static IPCHooks) {
+    IPC_HOOKS.store(hooks as *const IPCHooks as *mut IPCHooks, Ordering::Release);
+}
+
+#[inline]
+fn ipc_hooks() -> &'static IPCHooks {
+    let p = IPC_HOOKS.load(Ordering::Acquire);
+    assert!(
+        !p.is_null(),
+        "IPC_HOOKS unset — bun_runtime must call ipc::set_ipc_hooks() at startup",
+    );
+    // SAFETY: set_ipc_hooks stores a `&'static IPCHooks`; once non-null it is
+    // never cleared and points to immutable static data.
+    unsafe { &*p }
+}
 
 bun_core::declare_scope!(IPC, visible);
 
@@ -174,33 +211,11 @@ pub enum IPCSerializationError {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// phase-b2+: `JSValue` / `JSGlobalObject` surface has landed (~83 methods).
-// RESOLVED blockers (now real, no longer gating this body):
-//   ✓ `JSValue::{is_callable, get_own, fast_get, get_own_truthy}`
-//   ✓ `JSGlobalObject::{err, emit_warning, throw_missing_arguments_value,
-//      throw_invalid_argument_type_value_one_of}`
-//   ✓ `BuiltinName::{cmd, data, message}` (lowercase variants)
-//   ✓ `#[crate::host_fn]` proc-macro
-//
-// STILL GATED — remaining hard blockers (all OUTSIDE this file):
-//   - `crate::ManagedTask` is a *module*, body uses it as a type (4×)
-//   - `JSValue::{call_next_tick, serialize, deserialize, to_js}` — missing
-//     (`call_next_tick_{1,2}` exist; needs variadic shim or call-site rewrite)
-//   - `VirtualMachine::{process_emit_error_event, get_ipc_instance}`
-//   - `jsc::SerializeOptions`, `jsc::virtual_machine::IPCInstance` — missing types
-//   - `ErrorCode::IPC_CHANNEL_CLOSED` — codegen'd ErrorCode not yet emitted
-//   - `bun_event_loop::Task::as_<T>()` downcast
-//   - `bun_string::String::{to_js, to_js_by_parse_json, transfer_to_js}`
-//   - `bun_uws::NewSocketHandler::write_fd` / SocketHandler<false> surface
-//   - `bun_core::Fd::{close, to_js}`
-//   - `JSONLineBuffer` real impl (sibling, shimmed above)
-//   - `Subprocess`/`node_cluster_binding::InternalMsgHolder` (bun_runtime cycle)
-//   - `uv` crate path on non-windows (cfg leak, 3×)
-// Re-attempt once `ManagedTask`-as-type + `Subprocess` cycle-break land.
+// Body un-gated: ManagedTask (type) + JSONLineBuffer (real sibling) +
+// Subprocess/IPCInstance dispatch routed through `SendQueueOwner` vtable +
+// `IPC_HOOKS`. Remaining `bun_runtime` touch-points are cycle-broken via
+// function-pointer registration; no direct dependency on tier-6.
 // ──────────────────────────────────────────────────────────────────────────
-#[cfg(any())]
-mod _body {
-use super::*;
 
 mod advanced {
     use super::*;
@@ -318,23 +333,28 @@ mod advanced {
         global: &JSGlobalObject,
         value: JSValue,
         is_internal: IsInternal,
-    ) -> Result<usize, bun_core::Error> {
-        // TODO(port): narrow error set
-        let serialized = value.serialize(
-            global,
-            jsc::SerializeOptions {
-                // IPC sends across process.
-                for_cross_process_transfer: true,
-                for_storage: false,
-            },
-        )?;
+    ) -> Result<usize, IPCSerializationError> {
+        let serialized = value
+            .serialize(
+                global,
+                SerializedFlags {
+                    // IPC sends across process.
+                    for_cross_process_transfer: true,
+                    for_storage: false,
+                },
+            )
+            .map_err(|e| match e {
+                JsError::Thrown => IPCSerializationError::JSError,
+                JsError::Terminated => IPCSerializationError::JSTerminated,
+                JsError::OutOfMemory => IPCSerializationError::OutOfMemory,
+            })?;
         // `serialized` Drops at scope exit (defer serialized.deinit()).
 
         let size: u32 = u32::try_from(serialized.data().len()).unwrap();
 
         let payload_length: usize = size_of::<IPCMessageType>() + size_of::<u32>() + size as usize;
 
-        writer.ensure_unused_capacity(payload_length)?;
+        let _ = writer.ensure_unused_capacity(payload_length);
 
         // PERF(port): was assume_capacity
         writer.write_type_as_bytes_assume_capacity(match is_internal {

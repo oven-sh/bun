@@ -2,12 +2,13 @@ use core::ffi::c_int;
 use core::sync::atomic::{AtomicPtr, Ordering};
 
 use bun_collections::{ArrayHashMap, DynamicBitSet};
-use bun_core::{Global, MutableString, Output, Progress};
+use bun_core::{Global, Output};
+use bun_core::Progress::Progress;
 use bun_logger as logger;
 use bun_paths::{self as path, OSPathChar, OSPathSlice, PathBuffer, WPathBuffer, MAX_PATH_BYTES, SEP, SEP_STR};
 use bun_semver::String as SemverString;
-use bun_str::{strings, ZStr};
-use bun_sys::{self as sys, Dir, Fd};
+use bun_str::{strings, MutableString, ZStr};
+use bun_sys::{self as sys, walker_skippable, Dir, EntryKind, Fd, OpenDirOptions};
 use bun_threading::{ThreadPool, WaitGroup, WorkPoolTask};
 
 use crate::{
@@ -226,7 +227,8 @@ pub static mut SUPPORTED_METHOD: Method = if cfg!(target_os = "macos") {
 
 struct InstallDirState {
     cached_package_dir: Dir,
-    walker: Walker,
+    // PORT NOTE: `Walker` has no `Default`; Zig used `undefined`. Wrap in Option.
+    walker: Option<Walker>,
     subdir: Dir,
     #[cfg(windows)]
     buf: WPathBuffer,
@@ -238,16 +240,24 @@ struct InstallDirState {
     to_copy_buf2: *mut [u16], // slice into `buf2`
 }
 
+impl InstallDirState {
+    #[inline]
+    fn walker(&mut self) -> &mut Walker {
+        // SAFETY: `init_install_dir` always populates `walker` before any backend calls `copy()`.
+        self.walker.as_mut().unwrap()
+    }
+}
+
 impl Default for InstallDirState {
     fn default() -> Self {
         // TODO(port): Zig used `undefined` for most fields; we need a sentinel.
         Self {
-            cached_package_dir: Dir::invalid(),
-            walker: Walker::default(),
+            cached_package_dir: Dir::from_fd(Fd::INVALID),
+            walker: None,
             #[cfg(not(windows))]
-            subdir: Dir::invalid(),
+            subdir: Dir::from_fd(Fd::INVALID),
             #[cfg(windows)]
-            subdir: Dir::from_raw(bun_sys::windows::INVALID_HANDLE_VALUE),
+            subdir: Dir::from_fd(Fd::INVALID),
             #[cfg(windows)]
             buf: WPathBuffer::uninit(),
             #[cfg(windows)]
@@ -264,25 +274,56 @@ impl Drop for InstallDirState {
     fn drop(&mut self) {
         #[cfg(not(windows))]
         {
-            self.subdir.close();
+            if self.subdir.fd().is_valid() {
+                self.subdir.close();
+            }
         }
         // walker dropped automatically
-        self.cached_package_dir.close();
+        if self.cached_package_dir.fd().is_valid() {
+            self.cached_package_dir.close();
+        }
     }
 }
 
-// ───────────────────────────── thread-local NodeFS ─────────────────────────────
+// ───────────────────────────── helpers ─────────────────────────────
 
-// TODO(port): `bun.ThreadlocalBuffers(struct { fs: NodeFS })` — using thread_local! directly.
-// MOVE_DOWN(b0): node::fs::NodeFS → bun_sys (path-buffer mkdir/cp helpers; no JS dependency).
-thread_local! {
-    static NODE_FS_BUFS: core::cell::RefCell<bun_sys::node_fs::NodeFS> =
-        const { core::cell::RefCell::new(bun_sys::node_fs::NodeFS::new()) };
+/// Zig: `node_fs_for_package_installer().mkdirRecursiveOSPathImpl(void, {}, fullpath, 0, false)`.
+/// The only NodeFS surface used here is recursive mkdir on a wide path; route to
+/// `bun_sys::make_path_w` so this file does not pull in the runtime-tier NodeFS.
+#[cfg(windows)]
+#[inline]
+fn mkdir_recursive_os_path(fullpath: &bun_str::WStr) -> sys::Maybe<()> {
+    bun_sys::make_path_w(Fd::cwd(), fullpath.as_slice())
 }
 
+/// Zig: `bun.openDir(dir, subpath)` — open a directory handle relative to `dir`.
 #[inline]
-fn node_fs_for_package_installer<R>(f: impl FnOnce(&mut bun_sys::node_fs::NodeFS) -> R) -> R {
-    NODE_FS_BUFS.with_borrow_mut(f)
+fn open_dir(dir: Dir, subpath: &ZStr) -> Result<Dir, bun_core::Error> {
+    sys::open_dir_at(dir.fd(), subpath.as_bytes())
+        .map(Dir::from_fd)
+        .map_err(Into::into)
+}
+
+/// Zig: `bun.openDirA(dir, subpath)` — non-Z-terminated variant.
+#[inline]
+fn open_dir_a(dir: Dir, subpath: &[u8]) -> Result<Dir, bun_core::Error> {
+    sys::open_dir_at(dir.fd(), subpath)
+        .map(Dir::from_fd)
+        .map_err(Into::into)
+}
+
+// macOS clonefileat(2) — declared raw because the Zig source matches on the
+// numeric return + thread-local errno (the bun_sys wrapper collapses both into
+// Maybe<()>). Linked from libSystem.
+#[cfg(target_os = "macos")]
+unsafe extern "C" {
+    fn clonefileat(
+        src_dirfd: c_int,
+        src: *const core::ffi::c_char,
+        dst_dirfd: c_int,
+        dst: *const core::ffi::c_char,
+        flags: u32,
+    ) -> c_int;
 }
 
 // ───────────────────────────── NewTaskQueue ─────────────────────────────

@@ -154,6 +154,10 @@ impl ReadableStream {
         Ok(())
     }
 
+    // TODO(b2-blocked): ByteBlobLoader/ByteStream method bodies (`to_any_blob`,
+    // `parent`) gated until those modules are un-stubbed. FileReader path
+    // additionally needs `Blob::init_with_store`.
+    #[cfg(any())]
     pub fn to_any_blob(&mut self, global_this: &JSGlobalObject) -> Option<webcore::blob::Any> {
         if self.is_disturbed(global_this) {
             return None;
@@ -206,8 +210,11 @@ impl ReadableStream {
         // this will resolve any pending promises to done: true
         match self.ptr {
             // SAFETY: ptrs came from ReadableStreamTag__tagged; valid while stream alive.
+            // TODO(b2-blocked): ByteBlobLoader/ByteStream are stubbed; un-gate once `parent()` lands.
+            #[cfg(any())]
             Source::Blob(source) => unsafe { (*source).parent().cancel() },
-            Source::File(source) => unsafe { (*source).parent().cancel() },
+            Source::File(source) => unsafe { (*(*source).parent()).cancel() },
+            #[cfg(any())]
             Source::Bytes(source) => unsafe { (*source).parent().cancel() },
             _ => {}
         }
@@ -300,6 +307,11 @@ impl ReadableStream {
         })
     }
 
+    // TODO(b2-blocked): FileReader/ByteBlobLoader construction — `from_blob_copy_ref`
+    // and the helpers below build a `NewSource<FileReader>` with field-level inits
+    // (`event_loop`, `lazy`, `reader.from`) and reach into `blob::StoreData::S3`.
+    // FileReader's body is still being ported; un-gate together.
+    #[cfg(any())]
     pub fn from_owned_slice(
         global_this: &JSGlobalObject,
         bytes: Box<[u8]>,
@@ -310,6 +322,7 @@ impl ReadableStream {
         Self::from_blob_copy_ref(global_this, &blob, recommended_chunk_size)
     }
 
+    #[cfg(any())]
     pub fn from_blob_copy_ref(
         global_this: &JSGlobalObject,
         blob: &Blob,
@@ -361,6 +374,7 @@ impl ReadableStream {
         }
     }
 
+    #[cfg(any())]
     pub fn from_file_blob_with_offset(
         global_this: &JSGlobalObject,
         blob: &Blob,
@@ -388,6 +402,7 @@ impl ReadableStream {
         }
     }
 
+    #[cfg(any())]
     pub fn from_pipe<P, R>(
         global_this: &JSGlobalObject,
         _parent: P,
@@ -486,13 +501,6 @@ pub enum Source {
 // Rust: the comptime fn-pointer bundle becomes a trait `SourceContext` that
 // each `Context` type implements; `NewSource<C>` is the generic struct.
 
-// TODO(b2-blocked): bun_jsc::* — NewSource<C> JSC methods (start/on_pull/to_js/
-// updateRef/finalize/etc.) and streams::{Start,BufferActionTag}. The trait +
-// struct fields reference `&JSGlobalObject` lifetime and codegen accessors.
-#[cfg(any())]
-mod _new_source_gated {
-use super::*;
-
 /// Trait capturing the comptime fn params of Zig's `NewSource(...)`.
 pub trait SourceContext: Sized {
     /// `name_` — used to look up `jsc.Codegen.JS{NAME}InternalReadableStreamSource`.
@@ -538,7 +546,7 @@ pub trait SourceContext: Sized {
     fn set_flowing(&mut self, _flag: bool) {}
 }
 
-// TODO(port): // TODO(b2-blocked): #[bun_jsc::JsClass] — codegen name is "JS{C::NAME}InternalReadableStreamSource".
+// TODO(port): #[bun_jsc::JsClass] — codegen name is "JS{C::NAME}InternalReadableStreamSource".
 // The Zig `js = @field(jsc.Codegen, ...)` + toJS/fromJS/fromJSDirect aliases are wired by the
 // derive; cached-property accessors (pendingPromiseSetCached, onDrainCallback{Get,Set}Cached)
 // are emitted by the .classes.ts generator.
@@ -550,15 +558,61 @@ pub struct NewSource<C: SourceContext> {
     pub close_handler: Option<fn(Option<*mut c_void>)>,
     // TODO(port): lifetime — TSV class UNKNOWN
     pub close_ctx: Option<NonNull<c_void>>,
-    pub close_jsvalue: bun_jsc::Strong,
+    pub close_jsvalue: bun_jsc::strong::Optional,
     pub cancel_handler: Option<fn(Option<*mut c_void>)>,
     pub cancel_ctx: Option<*mut c_void>,
-    // TODO(port): TSV says JSC_BORROW (&JSGlobalObject); heap m_ctx field reassigned in start() — Phase B decide &'static vs raw.
-    pub global_this: &JSGlobalObject,
+    // PORT NOTE: JSC_BORROW. Stored raw because it's a heap m_ctx field reassigned in
+    // `start()` from a fresh `&JSGlobalObject` argument; a `'static` borrow would be a
+    // lie and a lifetime parameter would propagate into FFI codegen.
+    pub global_this: *const JSGlobalObject,
     // SAFETY: this is the self-wrapper JSValue (points at the JSCell that owns this m_ctx).
     // Kept alive by the wrapper itself; zeroed in finalize() before sweep.
     pub this_jsvalue: JSValue,
     pub is_closed: bool,
+}
+
+impl<C: SourceContext + Default> Default for NewSource<C> {
+    fn default() -> Self {
+        Self {
+            context: C::default(),
+            cancelled: false,
+            ref_count: 1,
+            pending_err: None,
+            close_handler: None,
+            close_ctx: None,
+            close_jsvalue: bun_jsc::strong::Optional::empty(),
+            cancel_handler: None,
+            cancel_ctx: None,
+            global_this: core::ptr::null(),
+            this_jsvalue: JSValue::ZERO,
+            is_closed: false,
+        }
+    }
+}
+
+// ─── per-type codegen accessors ──────────────────────────────────────────────
+// Zig: `js = @field(jsc.Codegen, "JS" ++ name ++ "InternalReadableStreamSource")`
+// resolves to a *per-type* generated module; in Rust there is no inherent
+// associated-module syntax, so each `SourceContext` impl carries the codegen
+// accessors as trait fns. The `.classes.ts` → `.rs` generator (when re-run with
+// Rust output) is expected to emit `impl NewSourceCodegen for NewSource<Foo>`
+// blocks; until then the blanket impl below is the no-op stub.
+pub trait NewSourceCodegen {
+    fn to_js(&mut self, global_this: &JSGlobalObject) -> JSValue;
+    fn pending_promise_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
+    fn on_drain_callback_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
+    fn on_drain_callback_get_cached(this: JSValue) -> Option<JSValue>;
+}
+
+// TODO(port): codegen — replace with generated `impl NewSourceCodegen for NewSource<X>` blocks
+// (one per `.classes.ts` entry: Blob/File/Bytes). Blanket stub for now.
+impl<C: SourceContext> NewSourceCodegen for NewSource<C> {
+    fn to_js(&mut self, _global_this: &JSGlobalObject) -> JSValue {
+        unimplemented!("provided by JsClass codegen for JS{}InternalReadableStreamSource", C::NAME)
+    }
+    fn pending_promise_set_cached(_this: JSValue, _global: &JSGlobalObject, _value: JSValue) {}
+    fn on_drain_callback_set_cached(_this: JSValue, _global: &JSGlobalObject, _value: JSValue) {}
+    fn on_drain_callback_get_cached(_this: JSValue) -> Option<JSValue> { None }
 }
 
 impl<C: SourceContext> NewSource<C> {

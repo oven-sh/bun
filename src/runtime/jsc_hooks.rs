@@ -123,11 +123,47 @@ unsafe fn init_runtime_state(
     }));
     RUNTIME_STATE.with(|c| c.set(state));
 
+    // ── vm.transpiler — spec VirtualMachine.zig:1241-1246:
+    //   `Transpiler.init(allocator, log, configureTransformOptionsForBunVM(opts.args), opts.env_loader)`
+    // The low-tier `VirtualMachine::init` left this field as zeroed bytes
+    // (see the `alloc_zeroed` note); reading it before this write is
+    // validity-invariant UB, so write via `ptr::write` (NOT assignment — the
+    // zeroed bytes are not a valid `Transpiler` to drop).
+    //
+    // PORT NOTE: `InitOptions` is the minimal-surface stub (no `args:
+    // api::TransformOptions` yet), so pass `Default` through
+    // `configure_transform_options_for_bun_vm`. Once the full `Options<'a>`
+    // un-gates, swap `Default::default()` for `opts.args`.
+    {
+        // SAFETY: `vm.log` was set to a fresh leaked `Box<Log>` by
+        // `VirtualMachine::init` immediately before this hook fires.
+        let log: *mut bun_logger::Log =
+            unsafe { (*vm).log }.map(|p| p.as_ptr()).unwrap_or(ptr::null_mut());
+        let args = bun_jsc::config::configure_transform_options_for_bun_vm(Default::default())
+            .unwrap_or_default();
+        match bun_bundler::Transpiler::init(log, args, None) {
+            Ok(transpiler) => {
+                // SAFETY: `vm` is the unique freshly-boxed VM; `transpiler`
+                // field is zero-init'd uninhabited memory (never dropped).
+                unsafe { ptr::write(ptr::addr_of_mut!((*vm).transpiler), transpiler) };
+            }
+            Err(e) => {
+                // Spec: `try Transpiler.init(...)` bubbles the error out of
+                // `VirtualMachine.init`. The hook signature has no error
+                // channel, so log + leave the field zeroed (validity-UB on
+                // first read — same failure mode as before this hook existed).
+                // TODO(b2): widen `init_runtime_state` return to `Result<_, Error>`.
+                bun_core::Output::err(
+                    "Transpiler",
+                    format_args!("init failed: {e:?}"),
+                );
+            }
+        }
+    }
+
     // TODO(b2-cycle): `webcore::Body::Value::HiveAllocator::init()` — gated.
     // TODO(b2-cycle): `Debugger::configure(vm, opts.debugger)` — `Debugger.rs`
     // gated; spec VirtualMachine.zig:1321 `vm.configureDebugger(opts.debugger)`.
-    // TODO(b2-cycle): `Transpiler::configureTransformOptionsForBunVM` — bundler
-    // option mapping (spec VirtualMachine.zig:1266+).
 
     state.cast()
 }

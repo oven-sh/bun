@@ -2225,29 +2225,47 @@ pub fn spawn_process_posix(
                 extra_fds.push(ExtraPipe::Unavailable);
             }
             PosixStdio::Ignore => {
-                actions.open_z(fileno, b"/dev/null\0", bun_sys::O::RDWR, 0o664)?;
+                actions.open_z(
+                    fileno,
+                    // SAFETY: literal is NUL-terminated with no interior NUL.
+                    unsafe { CStr::from_bytes_with_nul_unchecked(b"/dev/null\0") },
+                    bun_sys::O::RDWR as u32,
+                    0o664,
+                )?;
                 extra_fds.push(ExtraPipe::Unavailable);
             }
             PosixStdio::Path(path) => {
-                actions.open(fileno, path, bun_sys::O::RDWR | bun_sys::O::CREAT, 0o664)?;
+                actions.open(fileno, path, (bun_sys::O::RDWR | bun_sys::O::CREAT) as u32, 0o664)?;
                 extra_fds.push(ExtraPipe::Unavailable);
             }
             PosixStdio::Ipc | PosixStdio::Buffer => {
                 let is_ipc = matches!(ipc, PosixStdio::Ipc);
-                let fds: [Fd; 2] = bun_sys::socketpair(
+                let fds: [Fd; 2] = match spawn_sys::socketpair(
                     libc::AF_UNIX,
                     libc::SOCK_STREAM,
                     0,
                     if is_ipc {
-                        bun_sys::SocketpairMode::Nonblocking
+                        spawn_sys::SocketpairMode::Nonblocking
                     } else {
-                        bun_sys::SocketpairMode::Blocking
+                        spawn_sys::SocketpairMode::Blocking
                     },
-                )
-                .unwrap()?;
+                ) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        for fd in to_close_on_error.iter() { fd.close(); }
+                        for fd in to_set_cloexec.iter() { let _ = spawn_sys::set_close_on_exec(*fd); }
+                        for fd in to_close_at_end.iter() { fd.close(); }
+                        return Ok(Err(e));
+                    }
+                };
 
                 if !options.sync && !is_ipc {
-                    bun_sys::set_nonblocking(fds[0]).unwrap()?;
+                    if let Err(e) = bun_sys::set_nonblocking(fds[0]) {
+                        for fd in to_close_on_error.iter() { fd.close(); }
+                        for fd in to_set_cloexec.iter() { let _ = spawn_sys::set_close_on_exec(*fd); }
+                        for fd in to_close_at_end.iter() { fd.close(); }
+                        return Ok(Err(e));
+                    }
                 }
 
                 to_close_at_end.push(fds[1]);
@@ -2271,34 +2289,24 @@ pub fn spawn_process_posix(
 
     // SAFETY: argv is null-terminated, argv[0] is non-null
     let argv0 = options.argv0.unwrap_or_else(|| unsafe { *argv });
-    let spawn_result = posix_spawn::spawn_z(argv0, &actions, &attr, argv, envp);
-    let mut failed_after_spawn = false;
-    let _failed_guard = scopeguard::guard((), |_| {
-        if failed_after_spawn {
-            for fd in to_close_on_error.iter() {
-                fd.close();
-            }
-        }
-    });
-    // TODO(port): errdefer — scopeguard captures `failed_after_spawn` by value;
-    // Phase B: hoist into a struct or run cleanup inline at each return site.
+    // SAFETY: argv0 is a valid NUL-terminated C string (caller contract).
+    let argv0_cstr = unsafe { CStr::from_ptr(argv0) };
+    let spawn_result = posix_spawn::spawn_z(argv0_cstr, Some(&actions), Some(&attr), argv, envp);
 
     match spawn_result {
-        Maybe::Err(err) => {
-            failed_after_spawn = true;
-            // manual cleanup (scopeguard limitation noted above)
+        Err(err) => {
             for fd in to_close_on_error.iter() {
                 fd.close();
             }
             for fd in to_set_cloexec.iter() {
-                let _ = bun_sys::set_close_on_exec(*fd);
+                let _ = spawn_sys::set_close_on_exec(*fd);
             }
             for fd in to_close_at_end.iter() {
                 fd.close();
             }
-            return Ok(Maybe::Err(err));
+            return Ok(Err(err));
         }
-        Maybe::Result(pid) => {
+        Ok(pid) => {
             spawned.pid = pid;
             spawned.extra_pipes = extra_fds;
 
@@ -2310,27 +2318,26 @@ pub fn spawn_process_posix(
                     // Get a pidfd, which is a file descriptor that represents a process.
                     // This lets us avoid a separate thread to wait on the process.
                     match spawned.pifd_from_pid() {
-                        Maybe::Result(pidfd) => {
+                        Ok(pidfd) => {
                             spawned.pidfd = Some(pidfd);
                         }
-                        Maybe::Err(err) => {
+                        Err(err) => {
                             // we intentionally do not clean up any of the file descriptors in this case
                             // you could have data sitting in stdout, just waiting.
-                            if err.get_errno() == bun_sys::E::SRCH {
+                            if err.get_errno() == bun_sys::E::ESRCH {
                                 spawned.has_exited = true;
                                 // a real error occurred. one we should not assume means pidfd_open is blocked.
                             } else if !WaiterThread::should_use_waiter_thread() {
-                                failed_after_spawn = true;
                                 for fd in to_close_on_error.iter() {
                                     fd.close();
                                 }
                                 for fd in to_set_cloexec.iter() {
-                                    let _ = bun_sys::set_close_on_exec(*fd);
+                                    let _ = spawn_sys::set_close_on_exec(*fd);
                                 }
                                 for fd in to_close_at_end.iter() {
                                     fd.close();
                                 }
-                                return Ok(Maybe::Err(err));
+                                return Ok(Err(err));
                             }
                         }
                     }
@@ -2339,12 +2346,12 @@ pub fn spawn_process_posix(
 
             // success-path defer cleanup
             for fd in to_set_cloexec.iter() {
-                let _ = bun_sys::set_close_on_exec(*fd);
+                let _ = spawn_sys::set_close_on_exec(*fd);
             }
             for fd in to_close_at_end.iter() {
                 fd.close();
             }
-            return Ok(Maybe::Result(spawned));
+            return Ok(Ok(spawned));
         }
     }
 }
@@ -2691,6 +2698,11 @@ fn cleanup_uv_files(files: &[uv::uv_file], loop_: *mut uv::uv_loop_t) {
     }
 }
 
+// TODO(b2-blocked): `sync` runner depends on bun_str::StringBuilder,
+// bun_crash_handler::reset_on_posix, ParentDeathWatchdog::push_sync_pgid,
+// posix_spawn::wait4 shape, and the JobControl tcsetpgrp dance — un-gate
+// alongside `bun.spawnSync` callers.
+#[cfg(any())]
 pub mod sync {
     use super::*;
 
@@ -4047,6 +4059,14 @@ pub mod sync {
     }
 }
 } // mod spawn_process_body
+
+pub use spawn_process_body::spawn_process;
+#[cfg(unix)]
+pub use spawn_process_body::spawn_process_posix;
+#[cfg(windows)]
+pub use spawn_process_body::spawn_process_windows;
+#[cfg(any())]
+pub use spawn_process_body::sync;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

@@ -161,6 +161,7 @@ pub use server_component_boundary::ServerComponentBoundary;
 pub mod known_global;
 #[path = "TypeScript.rs"]
 pub mod typescript_full;
+pub use typescript_full as typescript;
 #[path = "parseImportExport.rs"]
 pub mod parse_import_export;
 #[path = "parseFn.rs"]

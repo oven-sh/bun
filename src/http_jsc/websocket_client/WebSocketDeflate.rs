@@ -4,9 +4,9 @@ use core::cell::Cell;
 use core::ffi::c_int;
 
 use bun_core::feature_flag;
-use bun_jsc::RareData as JscRareData;
+use bun_jsc::rare_data::RareData as JscRareData;
+use bun_libdeflate_sys::libdeflate as libdeflate_sys;
 use bun_zlib as zlib;
-use libdeflate_sys;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -77,7 +77,7 @@ impl RareData {
         match self.libdeflate_compressor.get() {
             Some(c) => c,
             None => {
-                let c = libdeflate_sys::Compressor::alloc();
+                let c = libdeflate_sys::Compressor::alloc(Z_DEFAULT_COMPRESSION);
                 self.libdeflate_compressor.set(Some(c));
                 c
             }
@@ -89,21 +89,34 @@ impl Drop for RareData {
     fn drop(&mut self) {
         if let Some(c) = self.libdeflate_compressor.get() {
             // SAFETY: allocated by libdeflate_alloc_compressor, freed exactly once here.
-            unsafe { libdeflate_sys::Compressor::deinit(c) };
+            unsafe { libdeflate_sys::Compressor::destroy(c) };
         }
         if let Some(d) = self.libdeflate_decompressor.get() {
             // SAFETY: allocated by libdeflate_alloc_decompressor, freed exactly once here.
-            unsafe { libdeflate_sys::Decompressor::deinit(d) };
+            unsafe { libdeflate_sys::Decompressor::destroy(d) };
         }
         // Zig: bun.destroy(this) — handled by Box<RareData> drop at the owner.
     }
 }
 
-pub struct PerMessageDeflate<'a> {
+/// Parent module references this type as `WebSocketDeflate`.
+pub type WebSocketDeflate = PerMessageDeflate;
+/// Parent module matches `websocket_deflate::Error::*` against `decompress()`'s
+/// error type.
+pub type Error = DecompressError;
+
+pub struct PerMessageDeflate {
     pub compress_stream: zlib::z_stream,
     pub decompress_stream: zlib::z_stream,
     pub params: Params,
-    pub rare_data: &'a RareData,
+    // PORT NOTE: Zig borrowed `&RareData` from VM `bun_jsc::RareData` (pooled
+    // libdeflate handles, shared across connections). `bun_jsc::RareData::
+    // websocket_deflate()` currently returns an opaque placeholder (the real
+    // type is *this* `RareData`, which would be a dep cycle), so own a
+    // per-connection instance instead.
+    // PERF(port): per-connection libdeflate alloc — restore VM-pooled instance
+    // once `bun_jsc::rare_data::WebSocketDeflateRareData` is wired to this type.
+    pub rare_data: RareData,
 }
 
 // Constants from zlib.h
@@ -151,8 +164,8 @@ impl From<CompressError> for bun_core::Error {
     }
 }
 
-impl<'a> PerMessageDeflate<'a> {
-    pub fn init(params: Params, rare_data: &'a JscRareData) -> Result<Box<Self>, bun_core::Error> {
+impl PerMessageDeflate {
+    pub fn init(params: Params, rare_data: &mut JscRareData) -> Result<Box<Self>, bun_core::Error> {
         // TODO(port): narrow error set
         let mut self_ = Box::new(Self {
             params,
@@ -160,7 +173,17 @@ impl<'a> PerMessageDeflate<'a> {
             compress_stream: unsafe { core::mem::zeroed::<zlib::z_stream>() },
             // SAFETY: z_stream is #[repr(C)] POD; all-zero is the documented init state.
             decompress_stream: unsafe { core::mem::zeroed::<zlib::z_stream>() },
-            rare_data: rare_data.websocket_deflate(),
+            rare_data: {
+                #[cfg(any())]
+                // TODO(b2-blocked): bun_jsc::rare_data::WebSocketDeflateRareData
+                // is an opaque `{ _opaque: () }` placeholder; the real type is
+                // `self::RareData` (this module), which bun_jsc cannot import
+                // without a dep cycle. Until a re-export shim lands, fall back
+                // to a fresh per-connection instance.
+                { rare_data.websocket_deflate() }
+                #[cfg(not(any()))]
+                { let _ = rare_data; RareData::default() }
+            },
         });
 
         // Initialize compressor (deflate)
@@ -175,7 +198,7 @@ impl<'a> PerMessageDeflate<'a> {
                 -(self_.params.client_max_window_bits as c_int), // windowBits
                 Z_DEFAULT_MEM_LEVEL,                            // memLevel
                 Z_DEFAULT_STRATEGY,                             // strategy
-                zlib::zlibVersion(),
+                zlib::zlibVersion() as *const u8,
                 c_int::try_from(core::mem::size_of::<zlib::z_stream>()).unwrap(),
             )
         };
@@ -192,7 +215,7 @@ impl<'a> PerMessageDeflate<'a> {
             zlib::inflateInit2_(
                 &mut self_.decompress_stream,
                 -(self_.params.server_max_window_bits as c_int), // windowBits
-                zlib::zlibVersion(),
+                zlib::zlibVersion() as *const u8,
                 c_int::try_from(core::mem::size_of::<zlib::z_stream>()).unwrap(),
             )
         };
@@ -219,13 +242,15 @@ impl<'a> PerMessageDeflate<'a> {
         // First we try with libdeflate, which is both faster and doesn't need the trailing deflate bytes
         if Self::can_use_libdeflate(in_buf.len()) {
             let spare = out.spare_capacity_mut();
-            // SAFETY: libdeflate writes into the uninit spare region; we only advance len by `written`.
+            // SAFETY: libdeflate writes into the uninit spare region; we only
+            // advance len by `result.written`. `decompressor()` returns a live
+            // *mut Decompressor allocated on first use and freed in Drop.
             let result = unsafe {
-                libdeflate_sys::Decompressor::deflate(
-                    self.rare_data.decompressor(),
-                    in_buf,
-                    spare,
-                )
+                let spare_init: &mut [u8] = core::slice::from_raw_parts_mut(
+                    spare.as_mut_ptr().cast::<u8>(),
+                    spare.len(),
+                );
+                (*self.rare_data.decompressor()).deflate(in_buf, spare_init)
             };
             if result.status == libdeflate_sys::Status::Success {
                 // SAFETY: libdeflate reported `written` bytes initialized in spare capacity.
@@ -333,7 +358,7 @@ impl<'a> PerMessageDeflate<'a> {
     }
 }
 
-impl<'a> Drop for PerMessageDeflate<'a> {
+impl Drop for PerMessageDeflate {
     fn drop(&mut self) {
         // SAFETY: streams were initialized by deflateInit2_/inflateInit2_ in init()
         // (or are zeroed on the init() error path, in which case *End is a defined

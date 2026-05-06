@@ -675,15 +675,44 @@ impl VirtualMachine {
 
     /// `runWithAPILock(comptime Context, ctx, comptime fn)` — acquires the JSC
     /// API lock around `f(ctx)`. Rust collapses the comptime params into a closure.
+    ///
+    /// Spec VirtualMachine.zig:2629-2631: `this.global.vm().holdAPILock(ctx, callback)`.
+    /// Routes `f` through `JSC__VM__holdAPILock` via an `OpaqueWrap`-style C
+    /// trampoline so the JSC API lock is held for the full duration of `f()`.
     pub fn run_with_api_lock<R>(&self, f: impl FnOnce() -> R) -> R {
-        let _ = f;
-        // Spec VirtualMachine.zig:2629-2631: `this.global.vm().holdAPILock(ctx, ...)`.
-        // Running `f()` without the lock is the entire bug this fn exists to
-        // prevent (data races / heap corruption from non-JS threads). Fail
-        // loudly until the FFI trampoline is wired.
-        // TODO(b2): route `f` through `JSC__VM__holdAPILock(self.jsc_vm, ctx, cb)`
-        // via an `OpaqueWrap`-style trampoline.
-        todo!("VirtualMachine::run_with_api_lock — JSC__VM__holdAPILock FFI not bound")
+        use core::mem::{ManuallyDrop, MaybeUninit};
+
+        // PORT NOTE: Zig's `OpaqueWrap(Context, function)` synthesizes a
+        // `fn(*anyopaque) void` that casts back and calls the body. The Rust
+        // closure carries its own context, so the trampoline state is just
+        // `{ closure, out-slot }`. `ManuallyDrop` lets us move the `FnOnce`
+        // out by value inside the `extern "C"` body without `Option::take`.
+        struct Trampoline<F, R> {
+            f: ManuallyDrop<F>,
+            result: MaybeUninit<R>,
+        }
+
+        extern "C" fn call<F: FnOnce() -> R, R>(ctx: *mut c_void) {
+            // SAFETY: `ctx` is `&mut Trampoline<F, R>` on the caller's stack;
+            // `JSC__VM__holdAPILock` invokes us exactly once with that pointer.
+            let t = unsafe { &mut *ctx.cast::<Trampoline<F, R>>() };
+            // SAFETY: single-shot — `f` is taken exactly once.
+            let f = unsafe { ManuallyDrop::take(&mut t.f) };
+            t.result.write(f());
+        }
+
+        let mut t = Trampoline::<_, R> {
+            f: ManuallyDrop::new(f),
+            result: MaybeUninit::uninit(),
+        };
+        // SAFETY: `self.jsc_vm` is the live JSC VM for this thread; `t` lives
+        // on this stack frame for the duration of the FFI call, which invokes
+        // `call` exactly once before returning.
+        unsafe {
+            JSC__VM__holdAPILock(self.jsc_vm, (&raw mut t).cast(), call::<_, R>);
+        }
+        // SAFETY: `call` wrote `t.result` exactly once above.
+        unsafe { t.result.assume_init() }
     }
 
     pub fn run_error_handler(&mut self, result: JSValue, exception_list: Option<&mut ExceptionList>) {
@@ -790,6 +819,7 @@ unsafe extern "C" {
     ) -> *mut JSGlobalObject;
     fn Bun__loadHTMLEntryPoint(global: *mut JSGlobalObject) -> *mut JSInternalPromise;
     fn JSC__VM__executionForbidden(vm: *mut VM) -> bool;
+    fn JSC__VM__holdAPILock(vm: *mut VM, ctx: *mut c_void, callback: extern "C" fn(ctx: *mut c_void));
     fn NodeModuleModule__callOverriddenRunMain(global: *mut JSGlobalObject, argv1: JSValue) -> JSValue;
     fn JSC__JSInternalPromise__resolvedPromise(global: *mut JSGlobalObject, value: JSValue) -> *mut JSInternalPromise;
 }

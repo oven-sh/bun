@@ -550,7 +550,7 @@ impl IOWriter {
                 amt
             }
             bun_io::WriteResult::Pending(_) => {
-                bun_core::unreachable_panic!(
+                unreachable!(
                     "drainBufferedData returning .pending in IOWriter.doFileWrite should not happen"
                 );
             }
@@ -569,7 +569,7 @@ impl IOWriter {
         if !s.writers[idx].wrote_everything() {
             // The only case where we get partial writes is when an error is
             // encountered, which returns above.
-            bun_core::unreachable_panic!(
+            unreachable!(
                 "IOWriter.doFileWrite: child.wroteEverything() is false. This is unexpected behavior and indicates a bug in Bun. Please file a GitHub issue."
             );
         }

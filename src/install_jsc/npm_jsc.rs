@@ -192,37 +192,30 @@ impl ManifestBindings {
 
         // TODO: we can add more information. for now just versions is fine
 
-        // TODO(b2-blocked): bun_install::npm::PackageManifest — stub exposes only
-        // `pkg: NpmPackage`; needs `name()`, `versions`, `string_buf` (gated `npm.rs`).
-        #[cfg(any())]
-        {
-            write!(
-                &mut buf,
-                "{{\"name\":\"{}\",\"versions\":[",
-                BStr::new(package_manifest.name()),
-            )
-            .map_err(|_| JsError::OutOfMemory)?;
+        write!(
+            &mut buf,
+            "{{\"name\":\"{}\",\"versions\":[",
+            BStr::new(package_manifest.name()),
+        )
+        .map_err(|_| JsError::OutOfMemory)?;
 
-            for (i, version) in package_manifest.versions.iter().enumerate() {
-                if i == package_manifest.versions.len() - 1 {
-                    write!(
-                        &mut buf,
-                        "\"{}\"]}}",
-                        version.fmt(&package_manifest.string_buf),
-                    )
-                    .map_err(|_| JsError::OutOfMemory)?;
-                } else {
-                    write!(
-                        &mut buf,
-                        "\"{}\",",
-                        version.fmt(&package_manifest.string_buf),
-                    )
-                    .map_err(|_| JsError::OutOfMemory)?;
-                }
+        for (i, version) in package_manifest.versions.iter().enumerate() {
+            if i == package_manifest.versions.len() - 1 {
+                write!(
+                    &mut buf,
+                    "\"{}\"]}}",
+                    version.fmt(&package_manifest.string_buf),
+                )
+                .map_err(|_| JsError::OutOfMemory)?;
+            } else {
+                write!(
+                    &mut buf,
+                    "\"{}\",",
+                    version.fmt(&package_manifest.string_buf),
+                )
+                .map_err(|_| JsError::OutOfMemory)?;
             }
         }
-        #[cfg(not(any()))]
-        let _ = (&package_manifest, JsError::OutOfMemory);
 
         let mut result = BunString::borrow_utf8(&buf);
         bun_jsc::bun_string_jsc::to_js_by_parse_json(&mut result, global)

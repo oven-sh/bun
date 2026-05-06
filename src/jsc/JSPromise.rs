@@ -239,6 +239,17 @@ impl Strong {
         }
     }
 
+    /// Wrap an existing promise `JSValue` in a fresh Strong handle.
+    /// PORT NOTE: Zig copies `JSPromise.Strong` by value (HandleSlot ptr is
+    /// shared); Rust `Strong` owns its slot, so a literal copy would
+    /// double-free. Callers that need a second owner of the same promise
+    /// (e.g. `bake::DevServer::PromiseEnsureRouteBundledCtx::ensurePromise`)
+    /// allocate a second slot here instead.
+    pub fn from_value(value: JSValue, global: &JSGlobalObject) -> Self {
+        debug_assert!(value.as_promise().is_some());
+        Self { strong: JscStrong::create(value, global) }
+    }
+
     /// SAFETY: returns `&mut JSPromise` derived from a GC-owned cell pointer;
     /// two calls alias the same object. Caller must not hold another live
     /// `&mut JSPromise` to it (resolver-style accessor).

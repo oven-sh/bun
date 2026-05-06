@@ -1384,14 +1384,14 @@ impl JSTranspiler {
             break 'brk None;
         };
 
-        let _task = TransformTask::create(
-            self,
-            code,
-            global,
-            loader.unwrap_or(self.config.default_loader),
-        );
-        // TODO(port): ConcurrentPromiseTask is a stub — `schedule()` / `.promise` not yet wired.
-        todo!("blocked_on: bun_jsc::ConcurrentPromiseTask::schedule")
+        let default_loader = self.config.default_loader;
+        let mut task = TransformTask::create(self, code, global, loader.unwrap_or(default_loader));
+        let promise = task.promise.value();
+        task.schedule();
+        // Ownership passes to the work pool / event loop; freed via
+        // `ConcurrentPromiseTask::destroy` on the `.manual_deinit` path.
+        let _ = Box::into_raw(task);
+        Ok(promise)
     }
 
     #[bun_jsc::host_fn(method)]
@@ -1682,32 +1682,61 @@ impl JSTranspiler {
         // TODO(port): errdefer — restore log/allocator on every exit; Phase B scopeguard.
 
         let source = logger::Source::init_path_string(loader.stdin_name(), code);
-        // TODO(port): `merge_jsx` Pragma type mismatch — see TransformTask::run.
-        let _ = &self.config.tsconfig;
-        let _ = source;
-        let _ = prev_allocator;
+        let jsx = match self.config.tsconfig.as_deref() {
+            Some(ts) => ts.merge_jsx(self.transpiler.options.jsx.clone().into()).into(),
+            None => self.transpiler.options.jsx.clone(),
+        };
 
-        // TODO(port): `bun_resolver::cache::JavaScript::scan` and
-        // `bun_js_parser::Parser::Options::init` are not yet wired in Phase A.
-        let _ = (&mut self.scan_pass_result, &mut log);
-        todo!("blocked_on: bun_resolver::cache::JavaScript::scan");
+        let mut opts = bun_js_parser::ast::ParserOptions::init(jsx.into(), loader);
+        if self.transpiler.macro_context.is_none() {
+            self.transpiler.macro_context =
+                Some(JSAst::Macro::MacroContext::init(&mut self.transpiler));
+        }
+        opts.macro_context = self.transpiler.macro_context.as_mut();
 
-        #[allow(unreachable_code)]
-        {
+        // SAFETY: `options.define` is `Box<Define>` owned by the long-lived
+        // `Transpiler`; the parser borrows it for the arena lifetime. Erase to
+        // satisfy `JavaScript::scan`'s `&'a Define` param (Zig held `*const Define`).
+        let define = unsafe {
+            &*(&*self.transpiler.options.define as *const bun_bundler::defines::Define)
+        };
+
+        // PORT NOTE: spec calls `transpiler.resolver.caches.js.scan`. The
+        // resolver-side `cache::JavaScript` is a fieldless CYCLEBREAK shell with
+        // no `scan` body; the real `scan` lives on `bun_bundler::cache::JavaScript`.
+        // Both are stateless unit structs, so calling the bundler-crate one
+        // directly is equivalent.
+        let scan_result = bun_bundler::cache::JavaScript::init().scan(
+            &arena,
+            &mut self.scan_pass_result,
+            opts,
+            define,
+            &mut log,
+            &source,
+        );
+
+        if let Err(err) = scan_result {
+            self.scan_pass_result.reset();
             if (log.warnings + log.errors) > 0 {
                 return Err(global.throw_value(log.to_js(global, "Failed to scan imports")?));
             }
-
-            let named_imports_value = named_imports_to_js(
-                global,
-                self.scan_pass_result.import_records.as_slice(),
-                self.config.trim_unused_imports.unwrap_or(false),
-            )?;
-            self.scan_pass_result.reset();
-            self.transpiler.set_log(&mut self.config.log);
-            self.transpiler.allocator = prev_allocator;
-            Ok(named_imports_value)
+            return Err(global.throw_error(err, "Failed to scan imports"));
         }
+
+        if (log.warnings + log.errors) > 0 {
+            self.scan_pass_result.reset();
+            return Err(global.throw_value(log.to_js(global, "Failed to scan imports")?));
+        }
+
+        let named_imports_value = named_imports_to_js(
+            global,
+            self.scan_pass_result.import_records.as_slice(),
+            self.config.trim_unused_imports.unwrap_or(false),
+        )?;
+        self.scan_pass_result.reset();
+        self.transpiler.set_log(&mut self.config.log);
+        self.transpiler.allocator = prev_allocator;
+        Ok(named_imports_value)
     }
 }
 

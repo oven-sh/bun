@@ -360,8 +360,10 @@ pub fn Bun__setSyntheticAllocationLimitForTesting(
 ) -> JsResult<JSValue> {
     let args = frame.arguments_old::<1>();
     if args.len < 1 {
-        return Err(global.throw_invalid_arguments(
-            "setSyntheticAllocationLimitForTesting expects 1 argument",
+        return Err(global.throw_not_enough_arguments(
+            "setSyntheticAllocationLimitForTesting",
+            1,
+            args.len,
         ));
     }
 
@@ -371,11 +373,17 @@ pub fn Bun__setSyntheticAllocationLimitForTesting(
         ));
     }
 
-    let _limit: usize =
+    let limit: usize =
         usize::try_from(args.ptr[0].coerce_to_int64(global)?.max(1024 * 1024)).unwrap();
-    // TODO(port): `synthetic_allocation_limit` / `string_allocation_limit` are mutable
-    // namespace-level vars in Zig; model as `static AtomicUsize` on VirtualMachine in Phase B.
-    Ok(JSValue::js_number_from_int32(0))
+    // SAFETY: `static mut` written only from the JS thread (testing hook); all
+    // readers are also JS-thread.
+    let prev = unsafe {
+        let p = crate::virtual_machine::SYNTHETIC_ALLOCATION_LIMIT;
+        crate::virtual_machine::SYNTHETIC_ALLOCATION_LIMIT = limit;
+        crate::virtual_machine::STRING_ALLOCATION_LIMIT = limit;
+        p
+    };
+    Ok(JSValue::js_number(prev as f64))
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -525,6 +533,5 @@ pub extern "C" fn Bun__RareData__mysqlGroup(vm: *mut c_void, ssl: bool) -> *mut 
 // PORT STATUS
 //   source:     src/jsc/virtual_machine_exports.zig (244 lines)
 //   confidence: high
-//   todos:      2
-//   notes:      plugin_runner sets discriminant only (PluginRunner real body lives in bundler_jsc — cycle); verbose_fetch stored as u8 per Phase-B field type.
+//   todos:      0
 // ──────────────────────────────────────────────────────────────────────────

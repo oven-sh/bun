@@ -673,6 +673,16 @@ impl<T: AnyRefCounted> RefPtr<T> {
         self.leak()
     }
 
+    /// Borrow the inner `*mut T` without affecting the refcount (analogous to
+    /// `Arc::as_ptr`). The pointer carries the original `Box::into_raw`
+    /// provenance, so it is sound to thread it back through APIs that may
+    /// eventually `Box::from_raw` it (e.g. allocator-vtable `free`), provided
+    /// the caller still holds a ref for the duration.
+    #[inline]
+    pub fn as_ptr(&self) -> *mut T {
+        self.data.as_ptr()
+    }
+
     /// Wrap a raw pointer whose ref is being transferred to this RefPtr
     /// WITHOUT incrementing the refcount. The caller gives up their ref;
     /// this RefPtr now owns it. Unlike `adopt_ref`, this does not assert

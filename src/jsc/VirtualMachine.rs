@@ -2099,6 +2099,25 @@ thread_local! {
         const { Cell::new(None) };
 }
 
+/// Spec VirtualMachine.zig:1712 `normalizeSpecifierForResolution`.
+fn normalize_specifier_for_resolution<'a>(
+    specifier_: &'a [u8],
+    query_string: &mut &'a [u8],
+) -> &'a [u8] {
+    if let Some(i) = bun_string::strings::index_of_char(specifier_, b'?') {
+        *query_string = &specifier_[i..];
+        &specifier_[..i]
+    } else {
+        specifier_
+    }
+}
+
+thread_local! {
+    /// Spec VirtualMachine.zig:1722 `specifier_cache_resolver_bufs`.
+    static SPECIFIER_CACHE_RESOLVER_BUF: core::cell::UnsafeCell<bun_paths::PathBuffer> =
+        const { core::cell::UnsafeCell::new(bun_paths::PathBuffer::ZEROED) };
+}
+
 fn ensure_source_code_printer() {
     if SOURCE_CODE_PRINTER.get().is_none() {
         let writer = bun_js_printer::BufferWriter::init();
@@ -2935,9 +2954,6 @@ impl VirtualMachine {
     // `FetchFlags` would need `ConstParamTy` (unstable derive on the enum's
     // owning module) to stay a const generic; the only branches are cheap
     // equality tests so the runtime form is fine. PERF(port): revisit.
-    #[allow(unreachable_code)] // TODO(b2-cycle): tail is dead behind the
-                               // `VmLoaderCtx` `todo!()` below; drop once the
-                               // runtime registers the vtable.
     pub fn fetch_without_on_load_plugins(
         jsc_vm: &mut VirtualMachine,
         global_object: &JSGlobalObject,
@@ -2980,14 +2996,15 @@ impl VirtualMachine {
                 }
             }
         }
-        // TODO(b2-cycle): `get_loader_and_virtual_source` takes a `&VmLoaderCtx`
-        // (erased VM + vtable); nothing registers the `VmLoaderVTable` yet
-        // (see runtime/jsc_hooks.rs). Restored once the runtime wires it.
+        // `get_loader_and_virtual_source` takes a `&VmLoaderCtx` (erased VM +
+        // vtable); the vtable's fn pointers reach into `Blob` /
+        // `ObjectURLRegistry` (`bun_runtime::webcore`), so the high tier
+        // supplies it via [`RuntimeHooks::vm_loader_vtable`].
         let loader_ctx = bun_bundler::options::VmLoaderCtx {
             vm: (jsc_vm as *const VirtualMachine).cast::<()>(),
-            vtable: todo!(
-                "blocked_on: bun_runtime::jsc_hooks VmLoaderVTable registration"
-            ),
+            vtable: runtime_hooks()
+                .expect("fetch_without_on_load_plugins: bun_runtime hooks not installed")
+                .vm_loader_vtable,
         };
         let mut blob_to_deinit = BlobDeinit(None, loader_ctx.vtable.blob_deinit);
         let lr = match bun_bundler::options::get_loader_and_virtual_source(
@@ -3075,7 +3092,6 @@ impl VirtualMachine {
     ///
     /// PORT NOTE: Zig has `comptime is_a_file_path: bool`; folded to a runtime
     /// arg here to avoid duplicating the body for both monomorphizations.
-    #[allow(unused_variables)]
     pub fn _resolve(
         &mut self,
         ret: &mut ResolveFunctionResult,
@@ -3084,7 +3100,191 @@ impl VirtualMachine {
         is_esm: bool,
         is_a_file_path: bool,
     ) -> Result<(), bun_core::Error> {
-        todo!("blocked_on: VirtualMachine._resolve (resolver/transpiler integration, b2-cycle)")
+        use bun_js_parser::Macro;
+        use bun_resolver::{node_fallbacks, ResultUnion};
+
+        // SAFETY: PORT — `specifier`/`source` borrow argv / resolver-arena
+        // bytes that outlive `ResolveFunctionResult` (`'static` per the
+        // struct's TODO(port) lifetime note). Erase to `'static` to seat the
+        // result paths without threading a lifetime parameter through the VM.
+        let specifier: &'static [u8] = unsafe { &*(specifier as *const [u8]) };
+
+        // `Runtime.Runtime.Imports.{alt_name, Name}` are both `"bun:wrap"`
+        // (see js_parser/runtime.rs).
+        if bun_paths::basename(specifier) == b"bun:wrap" {
+            ret.path = b"bun:wrap";
+            return Ok(());
+        }
+        if specifier == MAIN_FILE_NAME && self.entry_point.generated {
+            ret.result = None;
+            ret.path = MAIN_FILE_NAME;
+            return Ok(());
+        }
+        if specifier.starts_with(Macro::NAMESPACE_WITH_COLON) {
+            ret.result = None;
+            ret.path = bun_core::handle_oom(bun_core::default_allocator::dupe(specifier));
+            return Ok(());
+        }
+        if specifier.starts_with(node_fallbacks::IMPORT_PATH) {
+            ret.result = None;
+            ret.path = bun_core::handle_oom(bun_core::default_allocator::dupe(specifier));
+            return Ok(());
+        }
+        if let Some(result) = ModuleLoader::HardcodedModule::Alias::get(
+            specifier,
+            bun_options_types::Target::Bun,
+            Default::default(),
+        ) {
+            ret.result = None;
+            ret.path = result.path.as_bytes();
+            return Ok(());
+        }
+        if self.module_loader.eval_source.is_some()
+            && (specifier.ends_with(bun_paths::path_literal!("/[eval]"))
+                || specifier.ends_with(bun_paths::path_literal!("/[stdin]")))
+        {
+            ret.result = None;
+            ret.path = bun_core::handle_oom(bun_core::default_allocator::dupe(specifier));
+            return Ok(());
+        }
+        if let Some(blob_id) = specifier.strip_prefix(b"blob:".as_slice()) {
+            ret.result = None;
+            // `WebCore.ObjectURLRegistry` lives in `bun_runtime`; routed
+            // through [`RuntimeHooks::has_blob_url`].
+            let has = runtime_hooks()
+                // SAFETY: hook contract — `blob_id` borrows `specifier`.
+                .map(|h| unsafe { (h.has_blob_url)(blob_id) })
+                .unwrap_or(false);
+            if has {
+                ret.path = bun_core::handle_oom(bun_core::default_allocator::dupe(specifier));
+                return Ok(());
+            }
+            return Err(bun_core::err!("ModuleNotFound"));
+        }
+
+        let is_special_source =
+            source == MAIN_FILE_NAME || Macro::is_macro_path(source);
+        let mut query_string: &[u8] = b"";
+        let normalized_specifier =
+            normalize_specifier_for_resolution(specifier, &mut query_string);
+        // SAFETY: `transpiler.fs` is set during init and live for VM lifetime.
+        let top_level_dir = unsafe { (*self.transpiler.fs).top_level_dir };
+        let source_to_use: &[u8] = if !is_special_source {
+            if is_a_file_path {
+                // SAFETY: PORT — `dir_with_trailing_slash()` returns a
+                // re-slice of `source`, which the caller guarantees outlives
+                // the resolve call (and the resolver only borrows it for the
+                // synchronous `resolve_and_auto_install`).
+                unsafe {
+                    &*(bun_resolver::fs::PathName::init(source).dir_with_trailing_slash()
+                        as *const [u8])
+                }
+            } else {
+                // SAFETY: see `specifier` lifetime erasure note above.
+                unsafe { &*(source as *const [u8]) }
+            }
+        } else {
+            top_level_dir
+        };
+
+        // PORT NOTE: Zig modeled this as a labeled `while (true)` with
+        // `continue` after a successful cache bust. Expressed as a `loop`
+        // returning the resolver result; `retry_on_not_found` is consumed on
+        // the first miss.
+        let mut retry_on_not_found = bun_paths::is_absolute(source_to_use);
+        let result: bun_resolver::Result = loop {
+            let import_kind = if is_esm {
+                bun_options_types::ImportKind::Stmt
+            } else {
+                bun_options_types::ImportKind::Require
+            };
+            let global_cache = self.transpiler.resolver.opts.global_cache;
+            match self.transpiler.resolver.resolve_and_auto_install(
+                source_to_use,
+                normalized_specifier,
+                import_kind,
+                global_cache,
+            ) {
+                ResultUnion::Success(r) => break r,
+                ResultUnion::Failure(e) => return Err(e),
+                ResultUnion::Pending(_) | ResultUnion::NotFound => {
+                    if !retry_on_not_found {
+                        return Err(bun_core::err!("ModuleNotFound"));
+                    }
+                    retry_on_not_found = false;
+
+                    // SAFETY: thread-local; sole `&mut` on the JS thread for
+                    // the duration of the bust below.
+                    let buf = SPECIFIER_CACHE_RESOLVER_BUF
+                        .with(|b| unsafe { &mut *b.get() })
+                        .as_mut_slice();
+                    let buster_name: &[u8] = if bun_paths::is_absolute(normalized_specifier) {
+                        if let Some(dir) = bun_paths::Path::dirname(normalized_specifier) {
+                            if dir.len() > buf.len() {
+                                return Err(bun_core::err!("ModuleNotFound"));
+                            }
+                            // Normalized without trailing slash.
+                            bun_string::strings::paths::normalize_slashes_only(
+                                buf,
+                                dir,
+                                bun_paths::SEP,
+                            )
+                        } else {
+                            // Absolute but root — fall through to join.
+                            &b""[..]
+                        }
+                    } else {
+                        &b""[..]
+                    };
+                    let buster_name: &[u8] = if !buster_name.is_empty() {
+                        buster_name
+                    } else {
+                        // If the specifier is too long to join, it can't name
+                        // a real directory — skip the cache bust and fail.
+                        if source_to_use.len() + normalized_specifier.len() + 4 >= buf.len() {
+                            return Err(bun_core::err!("ModuleNotFound"));
+                        }
+                        let parts: [&[u8]; 3] = [
+                            source_to_use,
+                            normalized_specifier,
+                            bun_paths::path_literal!(".."),
+                        ];
+                        bun_paths::resolve_path::join_abs_string_buf_z::<
+                            bun_paths::resolve_path::platform::Auto,
+                        >(top_level_dir, buf, &parts)
+                        .as_bytes()
+                    };
+
+                    // Only re-query if we previously had something cached.
+                    if self.transpiler.resolver.bust_dir_cache(
+                        bun_string::strings::paths::without_trailing_slash_windows_path(
+                            buster_name,
+                        ),
+                    ) {
+                        continue;
+                    }
+                    return Err(bun_core::err!("ModuleNotFound"));
+                }
+            }
+        };
+
+        if !self.macro_mode {
+            self.has_any_macro_remappings = self.has_any_macro_remappings
+                || self.transpiler.options.macro_remap.count() > 0;
+        }
+        // SAFETY: PORT — `query_string` re-slices `specifier` (caller-owned;
+        // see lifetime erasure note above).
+        ret.query_string = unsafe { &*(query_string as *const [u8]) };
+        let result_path = result
+            .path_const()
+            .ok_or_else(|| bun_core::err!("ModuleNotFound"))?;
+        // SAFETY: `result_path.text` borrows the resolver's arena, which
+        // outlives `ResolveFunctionResult` (see field TODO(port) lifetime).
+        ret.path = unsafe { &*(result_path.text as *const [u8]) };
+        ret.result = Some(result);
+        self.resolved_count += 1;
+
+        Ok(())
     }
 
     /// Spec VirtualMachine.zig:1854 `resolve`.

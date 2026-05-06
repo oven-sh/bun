@@ -2130,6 +2130,14 @@ impl RootPackageId {
     pub trusted_deps_to_add_to_package_json: Vec<Box<[u8]>>,
     /// Zig: `global_link_dir_path: stringZ = ""` (src/install/PackageManager.zig).
     pub global_link_dir_path: Box<[u8]>,
+    /// Zig: `global_dir: ?std.fs.Dir = null` (src/install/PackageManager.zig).
+    /// Populated by `Options.openGlobalDir` in `link`/`unlink`; the stub keeps
+    /// it so CLI commands can write through before `setup_global_dir` reads it
+    /// once the stub/real `PackageManager` unify.
+    pub global_dir: Option<bun_sys::Dir>,
+    /// Zig: `original_package_json_path: stringZ` (src/install/PackageManager.zig).
+    /// Set once by `init()` to the cwd-anchored `package.json` path.
+    pub original_package_json_path: bun_core::ZBox,
     /// Zig: `async_network_task_queue: AsyncNetworkTaskQueue` -- see stub type below.
     pub async_network_task_queue: AsyncNetworkTaskQueueStub,
     /// Zig: `preallocated_resolve_tasks: PreallocatedTaskStore` (HiveArray.Fallback) -- see stub.
@@ -2685,6 +2693,21 @@ impl CommandLineArguments {
 
 impl PackageManager {
     pub fn verbose_install() -> bool { false }
+
+    /// Port of `PackageManager.populateManifestCache`
+    /// (src/install/PackageManager/PopulateManifestCache.zig). Real body lives
+    /// in `package_manager_real::populate_manifest_cache`; the stub
+    /// `PackageManager` lacks the network/task plumbing so this defers until
+    /// the stub/real types unify (reconciler-6). Surfaced so
+    /// `bun_runtime::cli::outdated_command` can drive the manifest pre-fetch
+    /// path against the stub.
+    pub fn populate_manifest_cache(
+        &mut self,
+        _opts: package_manager::ManifestCacheOptions<'_>,
+    ) -> Result<(), bun_core::Error> {
+        // TODO(port): blocked_on package_manager_real::populate_manifest_cache un-gate (reconciler-6)
+        Ok(())
+    }
 
     /// Port of `PackageManager.init` (src/install/PackageManager.zig:568).
     /// Real body in `package_manager_real::init`; that impl returns

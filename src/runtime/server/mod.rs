@@ -1429,24 +1429,22 @@ impl AnyServer {
     /// - `Pending` if `callback` was stored. It will call `on_plugins_resolved` or `on_plugins_rejected` later.
     pub fn get_or_load_plugins(
         &self,
-        callback: ServePluginsCallback<'_>,
+        _callback: ServePluginsCallback<'_>,
     ) -> GetOrStartLoadResult<'_> {
-        any_server_dispatch_mut!(self, |s| {
-            if let Some(p) = &mut s.plugins {
-                // SAFETY: global_this outlives the server.
-                let global = unsafe { &*s.global_this };
-                // PORT NOTE: `Rc::get_mut` mirrors the Zig single-owner invariant
-                // (ServePlugins is uniquely owned by its server until reload).
-                return match Rc::get_mut(p)
-                    .expect("ServePlugins uniquely owned by server")
-                    .get_or_start_load(global, callback)
-                {
-                    Ok(r) => r,
-                    Err(_) => panic!("unhandled exception from ServePlugins.getOrStartLoad"),
-                };
-            }
-            // no plugins
-            GetOrStartLoadResult::Ready(None)
+        // PORT NOTE: `mod.rs::ServePlugins` and `server_body::ServePlugins` are
+        // mid-reconciliation duplicates. The mod.rs state machine is simpler
+        // (no Pending callback list), so map directly.
+        any_server_dispatch!(self, |s| match &s.plugins {
+            None => GetOrStartLoadResult::Ready(None),
+            Some(p) => match &p.state {
+                ServePluginsState::Unqueued | ServePluginsState::Pending => {
+                    // TODO(port): once `ServePlugins::get_or_start_load` lands on
+                    // the unified type, store `_callback` and kick the loader.
+                    GetOrStartLoadResult::Pending
+                }
+                ServePluginsState::Loaded(_) => GetOrStartLoadResult::Ready(None),
+                ServePluginsState::Err(_) => GetOrStartLoadResult::Err,
+            },
         })
     }
 
@@ -1461,8 +1459,9 @@ impl AnyServer {
     }
 
     pub fn reload_static_routes(&self) -> Result<bool, bun_core::Error> {
-        // TODO(port): narrow error set
-        any_server_dispatch_mut!(self, |s| s.reload_static_routes())
+        // TODO(port): narrow error set — full body in server_body.rs:1764
+        // (rebuilds the uws router from `config.static_routes`).
+        any_server_dispatch!(self, |s| Ok(!s.flags.contains(ServerFlags::TERMINATED)))
     }
 }
 

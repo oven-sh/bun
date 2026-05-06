@@ -2912,13 +2912,48 @@ fn edit_root_package_json(
                                     }
                                 };
 
-                                // find the current workspace version and append to package spec without `workspace:`
-                                let _ = (maybe_lockfile, c, dependency_name);
-                                let _ = Semver::string::Builder::string_hash;
-                                todo!("blocked_on: bun_install::Lockfile::workspace_versions");
-                                // (Zig: lockfile.workspace_versions.get(string_hash(name)) →
-                                //  rewrite dependency.value to "<prefix><version>"; on miss
-                                //  fall through to err_generic + crash.)
+                                let resolved = 'failed_to_resolve: {
+                                    // find the current workspace version and append to package spec without `workspace:`
+                                    let Some(lockfile) = maybe_lockfile else { break 'failed_to_resolve false };
+                                    let Some(workspace_version) = lockfile
+                                        .workspace_versions
+                                        .get(&Semver::string::Builder::string_hash(dependency_name))
+                                    else {
+                                        break 'failed_to_resolve false;
+                                    };
+                                    let prefix: &[u8] = match c {
+                                        b'^' => b"^",
+                                        b'~' => b"~",
+                                        b'*' => b"",
+                                        _ => unreachable!(),
+                                    };
+                                    let data: Box<[u8]> = format!(
+                                        "{}{}",
+                                        bstr::BStr::new(prefix),
+                                        workspace_version.fmt(lockfile.buffers.string_bytes.as_slice()),
+                                    )
+                                    .into_bytes()
+                                    .into_boxed_slice();
+                                    dependency.value = Some(Expr::init(
+                                        E::EString::init(Box::leak(data)),
+                                        Default::default(),
+                                    ));
+                                    true
+                                };
+                                if resolved {
+                                    continue;
+                                }
+
+                                // only produce this error only when we need to get the workspace version
+                                Output::err_generic(
+                                    "Failed to resolve workspace version for \"{}\" in `{}`. Run <cyan>`bun install`<r> and try again.",
+                                    format_args!(
+                                        "{} {}",
+                                        bstr::BStr::new(dependency_name),
+                                        bstr::BStr::new(dependency_group),
+                                    ),
+                                );
+                                Global::crash();
                             }
                         }
 
@@ -2931,7 +2966,7 @@ fn edit_root_package_json(
                     {
                         let dep_name_str = dependency.key.as_ref().unwrap().as_utf8_string_literal().unwrap();
 
-                        let _lockfile = match maybe_lockfile {
+                        let lockfile = match maybe_lockfile {
                             Some(l) => l,
                             None => {
                                 Output::err_generic(
@@ -2942,11 +2977,53 @@ fn edit_root_package_json(
                             }
                         };
 
-                        let _catalog_name = Semver::String::init(catalog_name_str, catalog_name_str);
-                        let _ = Semver::string::ArrayHashContext { arg_buf: dep_name_str, existing_buf: b"" };
-                        todo!("blocked_on: bun_install::Lockfile::catalogs");
-                        // (Zig: lockfile.catalogs.get_group(...) → catalog.get_context(...) →
-                        //  rewrite dependency.value to dep.version.literal.)
+                        let catalog_name = Semver::String::init(catalog_name_str, catalog_name_str);
+                        let map_buf: &[u8] = lockfile.buffers.string_bytes.as_slice();
+
+                        // PORT NOTE: `CatalogMap::get_group` takes `&mut self`
+                        // (returns `&mut Map`) but `pack` only needs read
+                        // access via `&Lockfile`; inline an immutable lookup.
+                        let catalog = if catalog_name.is_empty() {
+                            Some(&lockfile.catalogs.default)
+                        } else {
+                            let ctx = Semver::string::ArrayHashContext {
+                                arg_buf: catalog_name_str,
+                                existing_buf: map_buf,
+                            };
+                            let h = ctx.hash(catalog_name);
+                            lockfile.catalogs.groups.get_index_adapted_raw(h, |k, i| ctx.eql(catalog_name, *k, i))
+                                .map(|i| &lockfile.catalogs.groups.values()[i])
+                        };
+                        let Some(catalog) = catalog else {
+                            Output::err_generic(
+                                "Failed to resolve catalog version for \"{}\" in `{}` (no matching catalog).",
+                                format_args!("{} {}", bstr::BStr::new(dep_name_str), bstr::BStr::new(dependency_group)),
+                            );
+                            Global::crash();
+                        };
+
+                        let dep_name = Semver::String::init(dep_name_str, dep_name_str);
+                        let dep_ctx = Semver::string::ArrayHashContext {
+                            arg_buf: dep_name_str,
+                            existing_buf: map_buf,
+                        };
+                        let dep_h = dep_ctx.hash(dep_name);
+                        let Some(dep_idx) =
+                            catalog.get_index_adapted_raw(dep_h, |k, i| dep_ctx.eql(dep_name, *k, i))
+                        else {
+                            Output::err_generic(
+                                "Failed to resolve catalog version for \"{}\" in `{}` (no matching catalog dependency).",
+                                format_args!("{} {}", bstr::BStr::new(dep_name_str), bstr::BStr::new(dependency_group)),
+                            );
+                            Global::crash();
+                        };
+                        let dep: &Dependency = &catalog.values()[dep_idx];
+
+                        let literal: Box<[u8]> = Box::from(dep.version.literal.slice(map_buf));
+                        dependency.value = Some(Expr::init(
+                            E::EString::init(Box::leak(literal)),
+                            Default::default(),
+                        ));
                     }
                 }
             }

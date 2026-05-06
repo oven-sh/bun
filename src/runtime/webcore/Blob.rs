@@ -33,108 +33,9 @@ pub use store::{Store, StoreRef};
 // name in the Phase-A draft. Alias the module form so `Store::Data` resolves.
 pub use store as Store_;
 
-// blob/{read_file,write_file}.rs un-gated (heavy bodies re-gated inside each
-// file). copy_file.rs remains gated — depends on `ConstParamTy` adt const
-// generics + node_fs/NodeFS surface not yet wired.
 #[path = "blob/read_file.rs"]  pub mod read_file;
 #[path = "blob/write_file.rs"] pub mod write_file;
- #[path = "blob/copy_file.rs"]  pub mod copy_file;
-
-// deps), which cfg's out the `mod` *item itself* — so `read_file::` is an
-// unresolved path everywhere. Body.rs / Image.rs / this file only need the
-// public result types, so re-declare a thin module with those until the real
-// `#[path]`-decl above win and this becomes a duplicate to delete).
-#[allow(dead_code)]
-pub mod read_file {
-    use super::SizeType;
-    use bun_jsc::SystemError;
-
-    /// Zig: `ReadFile.Read` payload handed to the on-read callback.
-    pub struct ReadFileRead {
-        // TODO(port): Zig `[]u8` owned-if-`is_temporary`; modeled as Vec for
-        // uniform ownership on the Rust side.
-        pub buf: Vec<u8>,
-        pub is_temporary: bool,
-        pub total_size: SizeType,
-    }
-
-    /// Zig: `SystemError.Maybe(ReadFileRead)`
-    pub enum ReadFileResultType {
-        Result(ReadFileRead),
-        Err(SystemError),
-    }
-}
-
-// + WorkTask deps), which cfg's out the `mod` *item itself* — so
-// `super::write_file` resolves to the *function* `write_file` below instead of
-// the module. `_jsc_gated` only needs the public façade types
-// (`WriteFilePromise`, `WriteFileWaitFromLockedValueTask`, `WriteFile{,Task}`),
-// so re-declare a thin module with `todo!()` bodies until the real body
-#[allow(dead_code, unused_variables)]
-pub mod write_file {
-    use super::{jsc, Blob, JSGlobalObject, SizeType};
-    use core::ffi::c_void;
-
-    /// Zig: `SystemError.Maybe(SizeType)`
-    pub enum WriteFileResultType {
-        Result(SizeType),
-        Err(bun_jsc::SystemError),
-    }
-
-    pub type WriteFileOnWriteFileCallback<C> =
-        fn(ctx: *mut C, count: WriteFileResultType) -> Result<(), bun_jsc::JsTerminated>;
-
-    pub struct WriteFilePromise<'a> {
-        pub promise: jsc::JSPromiseStrong,
-        pub global_this: &'a JSGlobalObject,
-    }
-    impl<'a> WriteFilePromise<'a> {
-        pub fn run(
-            _handler: *mut Self,
-            _count: WriteFileResultType,
-        ) -> Result<(), bun_jsc::JsTerminated> {
-            todo!("blocked_on: write_file::WriteFilePromise::run")
-        }
-    }
-
-    pub struct WriteFileWaitFromLockedValueTask<'a> {
-        pub file_blob: Blob,
-        pub global_this: &'a JSGlobalObject,
-        pub promise: jsc::JSPromiseStrong,
-        pub mkdirp_if_not_exists: bool,
-    }
-    impl<'a> WriteFileWaitFromLockedValueTask<'a> {
-        pub fn then_wrap(_this: *mut c_void, _value: &mut crate::webcore::body::Value) {
-            todo!("blocked_on: write_file::WriteFileWaitFromLockedValueTask::then_wrap")
-        }
-    }
-
-    pub struct WriteFile;
-    impl WriteFile {
-        pub fn create<C>(
-            _dest: Blob,
-            _src: Blob,
-            _ctx: *mut C,
-            _cb: WriteFileOnWriteFileCallback<C>,
-            _mkdirp: bool,
-        ) -> Result<Box<WriteFile>, bun_core::Error> {
-            todo!("blocked_on: write_file::WriteFile::create")
-        }
-    }
-
-    pub struct WriteFileTask;
-    impl WriteFileTask {
-        pub fn create_on_js_thread(
-            _global: &JSGlobalObject,
-            _wf: Box<WriteFile>,
-        ) -> Box<WriteFileTask> {
-            todo!("blocked_on: write_file::WriteFileTask::create_on_js_thread")
-        }
-        pub fn schedule(&self) {
-            todo!("blocked_on: write_file::WriteFileTask::schedule")
-        }
-    }
-}
+#[path = "blob/copy_file.rs"]  pub mod copy_file;
 
 /// Deallocator for `ArrayBuffer`s backed by a `Blob::Store` ref. Passed as a C
 /// callback to `ArrayBuffer::to_js_with_context`; the `ctx` is a raw `Store*`
@@ -722,39 +623,41 @@ impl Blob {
         Image::from_blob_js(global, cf.this(), cf.argument(0))
     }
 
-    pub fn do_read_file_internal<H>(
+    pub fn do_read_file_internal<H, F>(
         &mut self,
-        ctx: H,
-        function: fn(H, read_file::ReadFileResultType),
+        ctx: *mut H,
         global: &JSGlobalObject,
-    ) {
-        let _ = (ctx, function, global);
-        todo!("blocked_on: read_file::ReadFile / ReadFileTask / ReadFileUV (gated in blob/read_file.rs)");
-        {
+    )
+    where
+        F: InternalReadFileFn<H>,
+    {
         #[cfg(windows)]
         {
-            return read_file::ReadFileUV::start(
-                global.bun_vm().event_loop(),
+            // SAFETY: `bun_vm()` returns the live per-global VM pointer.
+            let vm = unsafe { &*global.bun_vm() };
+            read_file::ReadFileUV::start(
+                vm.event_loop(),
                 self.store.as_ref().unwrap().clone(),
                 self.offset,
                 self.size,
-                // TODO(port): NewInternalReadFileHandler<H, function>
-                ctx,
+                ctx.cast::<c_void>(),
+                NewInternalReadFileHandler::<H, F>::run,
             );
         }
         #[cfg(not(windows))]
         {
-            let file_read = read_file::ReadFile::create_with_ctx(
+            let file_read = bun_core::handle_oom(read_file::ReadFile::create_with_ctx(
                 self.store.as_ref().unwrap().clone(),
-                ctx,
-                function,
+                ctx.cast::<c_void>(),
+                NewInternalReadFileHandler::<H, F>::run,
                 self.offset,
                 self.size,
-            );
-            let read_file_task = read_file::ReadFileTask::create_on_js_thread(global, file_read);
-            read_file_task.schedule();
+            ));
+            let read_file_task =
+                read_file::ReadFileTask::create_on_js_thread(global, Box::into_raw(file_read));
+            // SAFETY: `read_file_task` was Box::into_raw'd by `create_on_js_thread`.
+            unsafe { read_file::ReadFileTask::schedule(read_file_task) };
         }
-        } // end cfg(any())
     }
 }
 

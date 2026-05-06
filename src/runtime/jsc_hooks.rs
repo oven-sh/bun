@@ -551,8 +551,7 @@ unsafe fn ensure_debugger(vm: *mut VirtualMachine, block_until_connected: bool) 
     }
 }
 
-/// `eventLoop().autoTick()` — port of the `_auto_tick_body` preserved in
-/// `bun_jsc::event_loop` (the gated `` block). Needs
+/// `eventLoop().autoTick()` — spec event_loop.zig:364-420. Needs
 /// `timer::All` for the poll-timeout calculation, hence dispatched here.
 ///
 /// PERF(port): was inline switch — Zig calls `vm.timer.getTimeout` directly;

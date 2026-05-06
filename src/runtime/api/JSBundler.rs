@@ -176,8 +176,7 @@ pub mod js_bundler {
             #[cfg(not(windows))]
             {
                 let entry = self.map.get(specifier)?;
-                let _ = entry;
-                return Some(todo!("blocked_on: bun_jsc::Node::BlobOrStringOrBuffer::slice"));
+                Some(entry.slice())
             }
 
             #[cfg(windows)]

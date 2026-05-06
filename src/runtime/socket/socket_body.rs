@@ -1204,9 +1204,11 @@ impl<const SSL: bool> NewSocket<SSL> {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_listener(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        let Some(handlers) = this.handlers.as_deref() else {
+        let Some(cell) = this.handlers.as_deref() else {
             return JSValue::UNDEFINED;
         };
+        // SAFETY: read-only field access; see `get_handlers` for the aliasing contract.
+        let handlers = unsafe { &*cell.get() };
 
         if handlers.mode != SocketMode::Server || this.socket.is_detached() {
             return JSValue::UNDEFINED;
@@ -2138,11 +2140,19 @@ impl<const SSL: bool> NewSocket<SSL> {
             global.throw_err("Expected \"socket\" option", ())
         })?;
 
-        // TODO(port): mutation through Rc<Handlers>. In Zig `this_handlers.* = handlers`
-        // overwrites the pointee so listener + all sockets observe the new
-        // callbacks. Phase B: change field to `*mut Handlers` / `IntrusiveRc<UnsafeCell<_>>`.
-        let rc = this.handlers.as_ref().expect("No handlers set on Socket");
-        let prev_mode = rc.mode;
+        // In Zig `this_handlers.* = handlers` overwrites the pointee so the
+        // listener + all sockets observe the new callbacks. The Rc payload is
+        // `UnsafeCell<Handlers>`, so `UnsafeCell::get` yields a write-capable
+        // `*mut Handlers` with valid provenance — no `*const → *mut` cast.
+        let p: *mut Handlers = this
+            .handlers
+            .as_ref()
+            .expect("No handlers set on Socket")
+            .get();
+        // SAFETY: `p` is the `UnsafeCell` payload of a live `Rc`; no `&Handlers`
+        // borrow is live across the read/writes below (single-threaded event
+        // loop, and `from_js` cannot reenter this socket's handlers).
+        let prev_mode = unsafe { (*p).mode };
         let handlers = Handlers::from_js(global, socket_obj, prev_mode == SocketMode::Server)?;
         // Preserve runtime state across the struct assignment. `Handlers.fromJS` returns a
         // fresh struct with `active_connections = 0` and `mode` limited to `.server`/`.client`,
@@ -2151,17 +2161,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         // `.duplex_server`. Losing the counter causes the next `markInactive` to either free
         // the heap-allocated client `Handlers` while the socket still points at it, or
         // underflow on the server path.
-        let active_connections = rc.active_connections;
-        // Raw-ptr-only access: derive *mut from the Rc's stored allocation
-        // pointer, NOT from a live `&Handlers` — `&T as *const T as *mut T`
-        // followed by a write is UB (frozen tag). No `&Handlers` borrow is
-        // live across the writes below (NLL ends `rc`'s Deref temporaries).
-        let p = Rc::as_ptr(rc) as *mut Handlers;
-        // SAFETY: `p` points into the `Rc<Handlers>` heap payload. The Zig
-        // spec mutates `*Handlers` in place; `Rc<T>`'s payload is not
-        // `UnsafeCell`-wrapped so this remains a known soundness gap pending
-        // the Phase-B field-type change (see PORT STATUS at end of file).
+        // SAFETY: see above — raw-pointer-only access through `UnsafeCell::get`.
         unsafe {
+            let active_connections = (*p).active_connections;
             core::ptr::drop_in_place(p); // Zig: this_handlers.deinit()
             core::ptr::write(p, handlers);
             (*p).mode = prev_mode;

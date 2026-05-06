@@ -158,10 +158,15 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         {
             let mut total_count: usize = 0;
             debug_assert_eq!(chunks.len(), chunk_contexts.len());
+            // PORT NOTE: `GenerateChunkCtx` fields are raw pointers; capture them
+            // before the `iter_mut()` borrow so the same `*mut [Chunk]` can be
+            // stored in every ctx (Zig stores `[]Chunk` by value).
+            let c_ptr: *mut LinkerContext = c as *mut LinkerContext;
+            let chunks_ptr: *mut [Chunk] = chunks as *mut [Chunk];
             for (chunk, chunk_ctx) in chunks.iter_mut().zip(chunk_contexts.iter_mut()) {
+                *chunk_ctx = GenerateChunkCtx { c: c_ptr, chunks: chunks_ptr, chunk: chunk as *mut Chunk };
                 match &mut chunk.content {
                     crate::chunk::Content::Javascript(js) => {
-                        *chunk_ctx = GenerateChunkCtx { c, chunks, chunk };
                         total_count += js.parts_in_chunk_in_order.len();
                         chunk.compile_results_for_chunk =
                             vec![CompileResult::default(); js.parts_in_chunk_in_order.len()].into_boxed_slice();
@@ -169,7 +174,6 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     }
                     crate::chunk::Content::Css(css) => {
                         has_css_chunk = true;
-                        *chunk_ctx = GenerateChunkCtx { c, chunks, chunk };
                         total_count += css.imports_in_chunk_in_order.len as usize;
                         chunk.compile_results_for_chunk =
                             vec![CompileResult::default(); css.imports_in_chunk_in_order.len as usize].into_boxed_slice();
@@ -177,7 +181,6 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     crate::chunk::Content::Html => {
                         has_html_chunk = true;
                         // HTML gets only one chunk.
-                        *chunk_ctx = GenerateChunkCtx { c, chunks, chunk };
                         total_count += 1;
                         chunk.compile_results_for_chunk =
                             vec![CompileResult::default(); 1].into_boxed_slice();
@@ -219,7 +222,12 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                                     node: ThreadPoolLib::Node::default(),
                                     callback: generate_compile_result_for_js_chunk,
                                 },
-                                ctx: &*chunk_ctx,
+                                // SAFETY: `PendingPartRange.ctx` is `&'a GenerateChunkCtx<'a>`
+                            // (Zig: `*GenerateChunkCtx`), conflating the borrow with
+                            // LinkerContext's `'a`. Launder via raw ptr so borrowck
+                            // doesn't pin `chunk_contexts` for `'a`; tasks complete
+                            // before `chunk_contexts` drops (we `wait_for_all` below).
+                            ctx: unsafe { &*(chunk_ctx as *const GenerateChunkCtx) },
                             };
                             batch.push(ThreadPoolLib::Batch::from(&mut remaining_part_ranges[0].task));
 
@@ -236,7 +244,12 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                                     node: ThreadPoolLib::Node::default(),
                                     callback: generate_compile_result_for_css_chunk,
                                 },
-                                ctx: &*chunk_ctx,
+                                // SAFETY: `PendingPartRange.ctx` is `&'a GenerateChunkCtx<'a>`
+                            // (Zig: `*GenerateChunkCtx`), conflating the borrow with
+                            // LinkerContext's `'a`. Launder via raw ptr so borrowck
+                            // doesn't pin `chunk_contexts` for `'a`; tasks complete
+                            // before `chunk_contexts` drops (we `wait_for_all` below).
+                            ctx: unsafe { &*(chunk_ctx as *const GenerateChunkCtx) },
                             };
                             batch.push(ThreadPoolLib::Batch::from(&mut remaining_part_ranges[0].task));
 
@@ -251,7 +264,12 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                                 node: ThreadPoolLib::Node::default(),
                                 callback: generate_compile_result_for_html_chunk,
                             },
-                            ctx: &*chunk_ctx,
+                            // SAFETY: `PendingPartRange.ctx` is `&'a GenerateChunkCtx<'a>`
+                            // (Zig: `*GenerateChunkCtx`), conflating the borrow with
+                            // LinkerContext's `'a`. Launder via raw ptr so borrowck
+                            // doesn't pin `chunk_contexts` for `'a`; tasks complete
+                            // before `chunk_contexts` drops (we `wait_for_all` below).
+                            ctx: unsafe { &*(chunk_ctx as *const GenerateChunkCtx) },
                         };
 
                         batch.push(ThreadPoolLib::Batch::from(&mut remaining_part_ranges[0].task));

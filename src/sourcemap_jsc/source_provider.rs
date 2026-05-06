@@ -63,23 +63,24 @@ impl BakeSourceProvider {
     // TODO(port): returned slice borrows from `PerThread.bundled_outputs`; lifetime
     // is not expressible against `&self`. Phase B: thread `'pt` or return owned.
     pub fn get_external_data(&self, source_filename: &[u8]) -> Option<&'static [u8]> {
-        let global = bun_jsc::virtual_machine::VirtualMachine::get().global;
+        // SAFETY: `VirtualMachine::get()` returns the live per-thread VM pointer;
+        // we only read its `global` field.
+        let global = unsafe { (*bun_jsc::virtual_machine::VirtualMachine::get()).global };
         // SAFETY: `global` is the live JSGlobalObject for this VM thread.
         if !unsafe { BakeGlobalObject__isBakeGlobalObject(global) } {
             return None;
         }
-        
-        {
-            // TODO(b2-blocked): bun_runtime::bake::production::PerThread — stub
-            // `PerThread(())` has no `source_maps` / `bundled_outputs` fields,
-            // and `bun_runtime` is a higher-tier crate (would create a cycle).
-            // SAFETY: checked above that this is a Bake global; C++ guarantees non-null.
-            let pt: &bun_runtime::bake::production::PerThread =
-                unsafe { &*BakeGlobalObject__getPerThreadData(global).cast() };
-            if let Some(value) = pt.source_maps.get(source_filename) {
-                return Some(pt.bundled_outputs[value.get()].value.as_slice());
-            }
-        }
+
+        // TODO(b2-blocked): bun_runtime::bake::production::PerThread — `bun_runtime`
+        // is a higher-tier crate (depending on it here creates a cycle; see
+        // Cargo.toml). The Zig body is:
+        //     const pt = BakeGlobalObject__getPerThreadData(global);
+        //     if (pt.source_maps.get(source_filename)) |value|
+        //         return pt.bundled_outputs[value.get()].value.asSlice();
+        //     return "";
+        // Until `PerThread` is reachable from this tier, fall through to the
+        // empty-slice sentinel (caller treats it as "no external map").
+        let _ = BakeGlobalObject__getPerThreadData;
         let _ = source_filename;
         Some(b"")
     }

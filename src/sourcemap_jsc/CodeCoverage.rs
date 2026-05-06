@@ -81,7 +81,7 @@ impl Report {
         byte_range_mapping: &mut ByteRangeMapping,
         ignore_sourcemap_: bool,
     ) -> Option<Report> {
-        bun_jsc::mark_binding(core::panic::Location::caller());
+        bun_jsc::mark_binding();
         // Use the raw `*mut VM` accessor instead of narrowing through `&VM` and
         // casting back to `*mut` — C++ mutates the VM (controlFlowProfiler /
         // functionHasExecutedCache), so we must preserve write provenance.
@@ -135,9 +135,9 @@ pub mod text {
     ) -> bun_io::Result<()> {
         if ENABLE_COLORS {
             if failed {
-                writer.write_all(&pretty_fmt("<r><b><red>", true))?;
+                writer.write_all(&pretty_fmt::<true>("<r><b><red>"))?;
             } else {
-                writer.write_all(&pretty_fmt("<r><b><green>", true))?;
+                writer.write_all(&pretty_fmt::<true>("<r><b><green>"))?;
             }
         }
 
@@ -150,13 +150,13 @@ pub mod text {
             b' ',
             max_filename_length - filename.len() + usize::from(!indent_name),
         )?;
-        writer.write_all(&pretty_fmt("<r><d> | <r>", ENABLE_COLORS))?;
+        writer.write_all(&pretty_fmt::<ENABLE_COLORS>("<r><d> | <r>"))?;
 
         if ENABLE_COLORS {
             if vals.functions < failing.functions {
-                writer.write_all(&pretty_fmt("<b><red>", true))?;
+                writer.write_all(&pretty_fmt::<true>("<b><red>"))?;
             } else {
-                writer.write_all(&pretty_fmt("<b><green>", true))?;
+                writer.write_all(&pretty_fmt::<true>("<b><green>"))?;
             }
         }
 
@@ -170,13 +170,13 @@ pub mod text {
         //     // }
         // }
         // write!(writer, "{:>8.2}", vals.stmts * 100.0)?;
-        writer.write_all(&pretty_fmt("<r><d> | <r>", ENABLE_COLORS))?;
+        writer.write_all(&pretty_fmt::<ENABLE_COLORS>("<r><d> | <r>"))?;
 
         if ENABLE_COLORS {
             if vals.lines < failing.lines {
-                writer.write_all(&pretty_fmt("<b><red>", true))?;
+                writer.write_all(&pretty_fmt::<true>("<b><red>"))?;
             } else {
-                writer.write_all(&pretty_fmt("<b><green>", true))?;
+                writer.write_all(&pretty_fmt::<true>("<b><green>"))?;
             }
         }
 
@@ -217,7 +217,7 @@ pub mod text {
             true,
         )?;
 
-        writer.write_all(&pretty_fmt("<r><d> | <r>", ENABLE_COLORS))?;
+        writer.write_all(&pretty_fmt::<ENABLE_COLORS>("<r><d> | <r>"))?;
 
         let mut executable_lines_that_havent_been_executed = report
             .lines_which_have_executed
@@ -236,8 +236,8 @@ pub mod text {
         // PORT NOTE: `concat!(pretty_fmt!(..), "{}")` requires a literal; split into a
         // prefix `write_all` + plain `write!` so the const-generic `ENABLE_COLORS` can
         // route through the runtime rewriter.
-        let red = pretty_fmt("<red>", ENABLE_COLORS);
-        let comma = pretty_fmt("<r><d>,<r>", ENABLE_COLORS);
+        let red = pretty_fmt::<ENABLE_COLORS>("<red>");
+        let comma = pretty_fmt::<ENABLE_COLORS>("<r><d>,<r>");
 
         while let Some(next_line) = iter.next() {
             if next_line == (prev_line + 1) {
@@ -497,7 +497,9 @@ impl ByteRangeMapping {
         // PORT NOTE: `SavedSourceMap::get` returns `Option<*mut ParsedSourceMap>` with a
         // +1 intrusive ref (Zig: `defer if (parsed_mappings_) |p| p.deref()`).
         let parsed_mappings_: Option<*mut ParsedSourceMap> =
-            bun_jsc::VirtualMachine::VirtualMachine::get()
+            // SAFETY: `VirtualMachine::get()` returns the live singleton `*mut VirtualMachine`
+            // with full write provenance; dereference to call the `&mut self` accessor.
+            unsafe { &mut *bun_jsc::VirtualMachine::VirtualMachine::get() }
                 .source_mappings()
                 .get(source_url.slice());
         // TODO(port): `ParsedSourceMap` is intrusively refcounted (`ref_count: AtomicU32`)
@@ -660,17 +662,18 @@ impl ByteRangeMapping {
                     }
                     let column_position = byte_offset.saturating_sub(line_start_byte_offset as usize);
 
-                    let found = if let Some(c) = cur_.as_mut() {
-                        c.move_to(
-                            Ordinal::from_zero_based(i32::try_from(new_line_index).unwrap()),
-                            Ordinal::from_zero_based(i32::try_from(column_position).unwrap()),
-                        )
-                    } else {
-                        parsed_mapping.find_mapping(
-                            Ordinal::from_zero_based(i32::try_from(new_line_index).unwrap()),
-                            Ordinal::from_zero_based(i32::try_from(column_position).unwrap()),
-                        )
-                    };
+                    let found: Option<bun_sourcemap::Mapping> =
+                        if let Some(c) = cur_.as_mut() {
+                            c.move_to(
+                                Ordinal::from_zero_based(i32::try_from(new_line_index).unwrap()),
+                                Ordinal::from_zero_based(i32::try_from(column_position).unwrap()),
+                            )
+                        } else {
+                            parsed_mapping.find_mapping(
+                                Ordinal::from_zero_based(i32::try_from(new_line_index).unwrap()),
+                                Ordinal::from_zero_based(i32::try_from(column_position).unwrap()),
+                            )
+                        };
                     if let Some(point) = found.as_ref() {
                         if point.original.lines.zero_based() < 0 {
                             continue;
@@ -722,17 +725,18 @@ impl ByteRangeMapping {
 
                     let column_position = byte_offset.saturating_sub(line_start_byte_offset as usize);
 
-                    let found = if let Some(c) = cur_.as_mut() {
-                        c.move_to(
-                            Ordinal::from_zero_based(i32::try_from(new_line_index).unwrap()),
-                            Ordinal::from_zero_based(i32::try_from(column_position).unwrap()),
-                        )
-                    } else {
-                        parsed_mapping.find_mapping(
-                            Ordinal::from_zero_based(i32::try_from(new_line_index).unwrap()),
-                            Ordinal::from_zero_based(i32::try_from(column_position).unwrap()),
-                        )
-                    };
+                    let found: Option<bun_sourcemap::Mapping> =
+                        if let Some(c) = cur_.as_mut() {
+                            c.move_to(
+                                Ordinal::from_zero_based(i32::try_from(new_line_index).unwrap()),
+                                Ordinal::from_zero_based(i32::try_from(column_position).unwrap()),
+                            )
+                        } else {
+                            parsed_mapping.find_mapping(
+                                Ordinal::from_zero_based(i32::try_from(new_line_index).unwrap()),
+                                Ordinal::from_zero_based(i32::try_from(column_position).unwrap()),
+                            )
+                        };
                     if let Some(point) = found {
                         if point.original.lines.zero_based() < 0 {
                             continue;

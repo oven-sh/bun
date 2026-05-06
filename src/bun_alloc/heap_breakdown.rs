@@ -81,15 +81,15 @@ macro_rules! get_zone {
         static ZONE: ::std::sync::OnceLock<&'static $crate::heap_breakdown::Zone> =
             ::std::sync::OnceLock::new();
         *ZONE.get_or_init(|| {
-            // SAFETY: concat!($name, "\0") is a valid NUL-terminated C string literal.
+            // SAFETY: concat!($name, "\0") is a NUL-terminated string literal in
+            // static memory — valid for process lifetime.
             // NOTE: no "Bun__" prefix here — Zig `getZone(name)` passes `name` verbatim;
             // only `namedAllocator` prepends the prefix.
-            let cstr = unsafe {
-                ::core::ffi::CStr::from_bytes_with_nul_unchecked(
-                    concat!($name, "\0").as_bytes(),
+            unsafe {
+                $crate::heap_breakdown::Zone::init(
+                    concat!($name, "\0").as_ptr() as *const ::core::ffi::c_char,
                 )
-            };
-            $crate::heap_breakdown::Zone::init(cstr)
+            }
         })
     }};
 }
@@ -249,20 +249,11 @@ impl Zone {
     }
 }
 
-// TODO(port): the `crate::Allocator` trait shape is defined elsewhere in bun_alloc;
-// this impl mirrors the Zig vtable { alloc, resize, remap=noRemap, free }.
-impl crate::Allocator for Zone {
-    fn alloc(&self, len: usize, alignment: usize, ret_addr: usize) -> Option<*mut u8> {
-        Zone::raw_alloc(self as *const Zone as *mut c_void, len, alignment, ret_addr)
-    }
-    fn resize(&self, buf: &mut [u8], alignment: usize, new_len: usize, ret_addr: usize) -> bool {
-        Zone::resize(self as *const Zone as *mut c_void, buf, alignment, new_len, ret_addr)
-    }
-    fn free(&self, buf: &mut [u8], alignment: usize, ret_addr: usize) {
-        Zone::raw_free(self as *const Zone as *mut c_void, buf, alignment, ret_addr)
-    }
-    // remap = noRemap (default: return None / unsupported)
-}
+// `crate::Allocator` is a marker trait carrying `type_id()`; the Zig vtable
+// methods (`alloc`/`resize`/`free`) are inherent on `Zone` above (`raw_alloc`,
+// `resize`, `raw_free`). This impl makes `Zone` usable as `&dyn Allocator`
+// for `is_instance` identity checks.
+impl crate::Allocator for Zone {}
 
 // TODO(port): move to bun_alloc_sys (or keep here gated `#[cfg(target_os = "macos")]`
 // since these are macOS-only libc symbols).

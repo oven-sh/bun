@@ -1525,7 +1525,11 @@ pub fn initialize_mini_store() {
             }
             instance.set(Some(mini_store));
         } else {
-            // SAFETY: set above on this thread, never freed
+            // SAFETY: pointer was Box::into_raw'd on this thread in the branch above and is
+            // never freed; INSTANCE is thread-local and `Cell::get` copies the raw pointer
+            // out (no borrow of the Cell is held), so this `&mut` is the sole live reference
+            // to the allocation for its entire scope — no aliasing. Mirrors Zig's
+            // `threadlocal var instance: ?*MiniStore` single-owner deref.
             let mini_store = unsafe { &mut *instance.get().unwrap() };
             // PORT NOTE: Zig checked `stack_allocator.fixed_buffer_allocator.end_index >=
             // buffer.len() - 1` to decide whether to recycle the heap arena. The Rust

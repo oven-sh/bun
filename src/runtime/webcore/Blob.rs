@@ -3123,7 +3123,7 @@ impl Blob {
 
         if let Some(err) = assignment_result.to_error() {
             // SAFETY: release our +1 ref on the sink.
-            unsafe { (*file_sink).deref() };
+            unsafe { webcore::FileSink::deref(file_sink) };
             return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                 global_this, err,
             ));
@@ -3154,13 +3154,13 @@ impl Blob {
                     }
                     jsc::PromiseStatus::Fulfilled => {
                         // SAFETY: release our +1 ref on the sink.
-                        unsafe { (*file_sink).deref() };
+                        unsafe { webcore::FileSink::deref(file_sink) };
                         readable_stream.done(global_this);
                         return Ok(JSPromise::resolved_promise_value(global_this, JSValue::js_number(0)));
                     }
                     jsc::PromiseStatus::Rejected => {
                         // SAFETY: release our +1 ref on the sink.
-                        unsafe { (*file_sink).deref() };
+                        unsafe { webcore::FileSink::deref(file_sink) };
                         readable_stream.cancel(global_this);
                         return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                             global_this,
@@ -3170,7 +3170,7 @@ impl Blob {
                 }
             } else {
                 // SAFETY: release our +1 ref on the sink.
-                unsafe { (*file_sink).deref() };
+                unsafe { webcore::FileSink::deref(file_sink) };
                 readable_stream.cancel(global_this);
                 return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                     global_this, assignment_result,
@@ -3178,7 +3178,7 @@ impl Blob {
             }
         }
         // SAFETY: release our +1 ref on the sink.
-        unsafe { (*file_sink).deref() };
+        unsafe { webcore::FileSink::deref(file_sink) };
 
         Ok(JSPromise::resolved_promise_value(global_this, JSValue::js_number(0)))
     }

@@ -11,9 +11,10 @@ pub fn to_have_length(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    // PORT NOTE: Zig `defer this.postMatch(globalThis)` — scopeguard captures `this`;
-    // reshaped for borrowck may be needed in Phase B.
-    scopeguard::defer! { this.post_match(global); }
+    // PORT NOTE: Zig `defer this.postMatch(globalThis)` — scopeguard owns the `&mut Expect`
+    // borrow and DerefMut's back to it, so post_match runs on every exit path without an
+    // overlapping borrow.
+    let mut this = scopeguard::guard(this, |this| this.post_match(global));
 
     let this_value = frame.this();
     let arguments_ = frame.arguments_old::<1>();

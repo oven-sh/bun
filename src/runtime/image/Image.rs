@@ -1160,8 +1160,9 @@ impl Image {
                 return Err(global.throw("Image: source ArrayBuffer was detached"));
             }
         };
-        let _release = scopeguard::guard((), |_| input.release());
-        // TODO(port): `input.release()` needs `&mut`/ownership; reshape guard in Phase B.
+        // PORT NOTE: Zig `defer input.release()` is hoisted below — `input`
+        // moves into `task`, and `run()` is sync with no early returns, so we
+        // release via `task.input` after the result is extracted.
         // PORT NOTE: Zig never calls `PipelineTask.deinit()` on this stack
         // temporary (only `then()` does — Image.zig:1092). `Drop` here would
         // underflow `pending_tasks` and downgrade `this_ref`, so suppress it.
@@ -1180,6 +1181,8 @@ impl Image {
         // PORT NOTE: reshaped for borrowck — move `result` out via `replace`
         // since `task` is behind `ManuallyDrop` deref.
         let result = mem::replace(&mut task.result, TaskResult::Err(codecs::Error::DecodeFailed));
+        // Zig `defer input.release()` (see PORT NOTE above).
+        mem::take(&mut task.input).release();
         match result {
             TaskResult::Encoded { out, format, w, h } => {
                 self.last_width = i32::try_from(w).unwrap();

@@ -709,8 +709,11 @@ impl<'a> ParseRenderer<'a> {
         let tag_index = get_block_type_tag(block_type, entry.data);
 
         // For headings, compute slug before counting props
-        let slug: Option<&[u8]> = if block_type == md::BlockType::H {
-            self_.heading_tracker.leave_heading()
+        // PORT NOTE: own the slug bytes — leave_heading() borrows the tracker mutably,
+        // and we need self_ again below for get_block_component(). Mirrors the Zig
+        // path which allocator-allocated the slug.
+        let slug: Option<Vec<u8>> = if block_type == md::BlockType::H {
+            self_.heading_tracker.leave_heading().map(|s| s.to_vec())
         } else {
             None
         };
@@ -758,7 +761,7 @@ impl<'a> ParseRenderer<'a> {
         match block_type {
             md::BlockType::H => {
                 if let Some(s) = slug {
-                    props.put(g, b"id", create_utf8_for_js(g, s)?);
+                    props.put(g, b"id", create_utf8_for_js(g, &s)?);
                 }
             }
             md::BlockType::Ol => {
@@ -1432,7 +1435,7 @@ impl<'a> JsCallbackRenderer<'a> {
         None
     }
 
-    fn create_block_meta(&self, block_type: md::BlockType, data: u32, flags: u32) -> JsResult<Option<JSValue>> {
+    fn create_block_meta(&mut self, block_type: md::BlockType, data: u32, flags: u32) -> JsResult<Option<JSValue>> {
         let g = self.global_object;
         match block_type {
             md::BlockType::H => {

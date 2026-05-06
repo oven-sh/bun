@@ -1060,7 +1060,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     match &expr.data {
                         js_ast::ExprData::EIdentifier(_) => {
                             let mut stmt_opts = ParseStatementOptions {
-                                ts_decorators: opts.ts_decorators,
+                                ts_decorators: opts.ts_decorators.take(),
                                 is_name_optional: true,
                                 ..Default::default()
                             };
@@ -1114,9 +1114,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                 // Use the expression name if present, since it's a better name
                 p.has_export_default = true;
+                let default_name = p.default_name_for_expr(expr, default_loc);
                 Ok(p.s(
                     S::ExportDefault {
-                        default_name: p.default_name_for_expr(expr, default_loc),
+                        default_name,
                         value: js_ast::StmtOrExpr::Expr(expr),
                     },
                     loc,

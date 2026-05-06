@@ -8,9 +8,8 @@
 //! (`bun_runtime`, `bun_schema`, the gated `http_server_agent` /
 //! `BunFrontendDevServerAgent`) and into `VirtualMachine.debugger`'s real
 //! field type — those are dispatched through `RuntimeHooks` (see
-//! VirtualMachine.rs §Dispatch) by the high tier, so here they are gated
-//! behind `` with `TODO(b2)` markers and the public fns delegate
-//! to the hook table.
+//! VirtualMachine.rs §Dispatch) by the high tier, so the public fns here
+//! delegate to the hook table with `TODO(b2)` markers.
 
 use core::ffi::{c_int, c_void};
 use core::marker::{PhantomData, PhantomPinned};
@@ -64,17 +63,24 @@ impl BunFrontendDevServerAgent {
 }
 
 /// `bun.GenericIndex(i32, Debugger)`
+///
+/// PORT NOTE: `bun_core::GenericIndex<I, M>` only bounds `I: GenericIndexInt`
+/// for unsigned ints, so we hand-roll the `i32` flavor here. The null sentinel
+/// is `std.math.maxInt(i32)` (bun.zig:3514), NOT `-1`. `Default` is
+/// intentionally NOT derived: `0` is a valid index in spec.
 #[repr(transparent)]
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Default)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub struct DebuggerId(pub i32);
 impl DebuggerId {
-    pub const INVALID: Self = Self(-1);
+    pub const INVALID: Self = Self(i32::MAX);
     #[inline]
     pub const fn new(i: i32) -> Self {
+        debug_assert!(i != i32::MAX, "DebuggerId::new: maxInt is reserved for Optional::none");
         Self(i)
     }
     #[inline]
     pub const fn get(self) -> i32 {
+        debug_assert!(self.0 != i32::MAX, "DebuggerId::get: corrupted (== none sentinel)");
         self.0
     }
 }

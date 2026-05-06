@@ -3450,7 +3450,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     pub fn process_import_statement(
         &mut self,
         stmt_: S::Import,
-        path: ParsedPath,
+        path: ParsedPath<'a>,
         loc: logger::Loc,
         was_originally_bare_import: bool,
     ) -> Result<Stmt, bun_core::Error> {

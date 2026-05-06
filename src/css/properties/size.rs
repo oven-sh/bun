@@ -32,9 +32,9 @@ impl BoxSizing {
     pub fn parse(input: &mut css::Parser) -> css::Result<BoxSizing> {
         let location = input.current_source_location();
         let ident = input.expect_ident()?;
-        if bun_string::strings::eql_case_insensitive_ascii::<true>(ident, b"content-box") {
+        if bun_string::strings::eql_case_insensitive_ascii(ident, b"content-box", true) {
             Ok(BoxSizing::ContentBox)
-        } else if bun_string::strings::eql_case_insensitive_ascii::<true>(ident, b"border-box") {
+        } else if bun_string::strings::eql_case_insensitive_ascii(ident, b"border-box", true) {
             Ok(BoxSizing::BorderBox)
         } else {
             Err(location.new_unexpected_token_error(css::Token::Ident(unsafe {
@@ -83,7 +83,7 @@ pub enum Size {
 macro_rules! size_ident_match {
     ($ident:expr, { $($lit:literal => $val:expr,)+ } else $err:expr) => {{
         let __ident: &[u8] = $ident;
-        $(if bun_string::strings::eql_case_insensitive_ascii::<true>(__ident, $lit) {
+        $(if bun_string::strings::eql_case_insensitive_ascii(__ident, $lit, true) {
             Ok($val)
         } else)+ { $err }
     }};

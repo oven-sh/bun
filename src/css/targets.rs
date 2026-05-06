@@ -57,7 +57,7 @@ impl Targets {
         if val.is_empty() {
             return None;
         }
-        if strings::eql_case_insensitive_ascii::<true>(val, b"null") {
+        if strings::eql_case_insensitive_ascii(val, b"null", true) {
             return None;
         }
 

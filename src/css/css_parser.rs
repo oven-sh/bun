@@ -1221,7 +1221,7 @@ where
                 self.any_rule_so_far = true;
 
                 if first_stylesheet_rule
-                    && strings::eql_case_insensitive_ascii::<true>(name, b"charset")
+                    && strings::eql_case_insensitive_ascii(name, b"charset", true)
                 {
                     let delimiters = Delimiters::SEMICOLON | Delimiters::CLOSE_CURLY_BRACKET;
                     let _ = self.input.parse_until_after(delimiters, |p| Parser::parse_empty(p));
@@ -1289,7 +1289,7 @@ impl<'a, AtRuleParserT: CustomAtRuleParser> AtRuleParser for TopLevelRuleParser<
         // phf-style dispatch on at-rule name (case-insensitive).
         // TODO(port): Zig used `bun.ComptimeEnumMap(PreludeEnum)`; Phase B
         // wires `phf::Map` or `match_ignore_ascii_case!`.
-        if strings::eql_case_insensitive_ascii::<true>(name, b"import") {
+        if strings::eql_case_insensitive_ascii(name, b"import", true) {
             if (this.state as u8) > (TopLevelState::Imports as u8) {
                 return Err(input.new_custom_error(ParserError::unexpected_import_rule));
             }
@@ -1324,7 +1324,7 @@ impl<'a, AtRuleParserT: CustomAtRuleParser> AtRuleParser for TopLevelRuleParser<
 
             return Ok(AtRulePrelude::Import { url: url_str, media, supports, layer });
         }
-        if strings::eql_case_insensitive_ascii::<true>(name, b"namespace") {
+        if strings::eql_case_insensitive_ascii(name, b"namespace", true) {
             if (this.state as u8) > (TopLevelState::Namespaces as u8) {
                 return Err(input.new_custom_error(ParserError::unexpected_namespace_rule));
             }
@@ -1338,7 +1338,7 @@ impl<'a, AtRuleParserT: CustomAtRuleParser> AtRuleParser for TopLevelRuleParser<
                 unsafe { &*(input.expect_url_or_string()? as *const [u8]) };
             return Ok(AtRulePrelude::Namespace { prefix, url: namespace });
         }
-        if strings::eql_case_insensitive_ascii::<true>(name, b"charset") {
+        if strings::eql_case_insensitive_ascii(name, b"charset", true) {
             // @charset is removed by rust-cssparser if it's the first rule in
             // the stylesheet. Anything left is technically invalid, however,
             // users often concatenate CSS files together, so we are more
@@ -1346,12 +1346,12 @@ impl<'a, AtRuleParserT: CustomAtRuleParser> AtRuleParser for TopLevelRuleParser<
             input.expect_string()?;
             return Ok(AtRulePrelude::Charset);
         }
-        if strings::eql_case_insensitive_ascii::<true>(name, b"custom-media") {
+        if strings::eql_case_insensitive_ascii(name, b"custom-media", true) {
             let custom_media_name = DashedIdentFns::parse(input)?;
             let media = parse_media_list(input, this.options)?;
             return Ok(AtRulePrelude::CustomMedia { name: custom_media_name, media });
         }
-        if strings::eql_case_insensitive_ascii::<true>(name, b"property") {
+        if strings::eql_case_insensitive_ascii(name, b"property", true) {
             let property_name = DashedIdentFns::parse(input)?;
             return Ok(AtRulePrelude::Property { name: property_name });
         }
@@ -1623,23 +1623,23 @@ impl<'a, T: CustomAtRuleParser> AtRuleParser for NestedRuleParser<'a, T> {
         let result: Self::Prelude = 'brk: {
             // TODO(port): Zig `ComptimeEnumMap(PreludeEnum)` ASCII-CI dispatch.
             // Phase B: replace these chained if-eql with `match_ignore_ascii_case!`.
-            if strings::eql_case_insensitive_ascii::<true>(name, b"media") {
+            if strings::eql_case_insensitive_ascii(name, b"media", true) {
                 break 'brk AtRulePrelude::Media(parse_media_list(input, this.options)?);
             }
-            if strings::eql_case_insensitive_ascii::<true>(name, b"supports") {
+            if strings::eql_case_insensitive_ascii(name, b"supports", true) {
                 break 'brk AtRulePrelude::Supports(SupportsCondition::parse(input)?);
             }
-            if strings::eql_case_insensitive_ascii::<true>(name, b"font-face") {
+            if strings::eql_case_insensitive_ascii(name, b"font-face", true) {
                 break 'brk AtRulePrelude::FontFace;
             }
-            if strings::eql_case_insensitive_ascii::<true>(name, b"font-palette-values") {
+            if strings::eql_case_insensitive_ascii(name, b"font-palette-values", true) {
                 break 'brk AtRulePrelude::FontPaletteValues(DashedIdentFns::parse(input)?);
             }
-            if strings::eql_case_insensitive_ascii::<true>(name, b"counter-style") {
+            if strings::eql_case_insensitive_ascii(name, b"counter-style", true) {
                 break 'brk AtRulePrelude::CounterStyle(CustomIdentFns::parse(input)?);
             }
-            if strings::eql_case_insensitive_ascii::<true>(name, b"viewport")
-                || strings::eql_case_insensitive_ascii::<true>(name, b"-ms-viewport")
+            if strings::eql_case_insensitive_ascii(name, b"viewport", true)
+                || strings::eql_case_insensitive_ascii(name, b"-ms-viewport", true)
             {
                 let prefix = if strings::starts_with_case_insensitive_ascii(name, b"-ms") {
                     VendorPrefix::MS
@@ -1648,11 +1648,11 @@ impl<'a, T: CustomAtRuleParser> AtRuleParser for NestedRuleParser<'a, T> {
                 };
                 break 'brk AtRulePrelude::Viewport(prefix);
             }
-            if strings::eql_case_insensitive_ascii::<true>(name, b"keyframes")
-                || strings::eql_case_insensitive_ascii::<true>(name, b"-webkit-keyframes")
-                || strings::eql_case_insensitive_ascii::<true>(name, b"-moz-keyframes")
-                || strings::eql_case_insensitive_ascii::<true>(name, b"-o-keyframes")
-                || strings::eql_case_insensitive_ascii::<true>(name, b"-ms-keyframes")
+            if strings::eql_case_insensitive_ascii(name, b"keyframes", true)
+                || strings::eql_case_insensitive_ascii(name, b"-webkit-keyframes", true)
+                || strings::eql_case_insensitive_ascii(name, b"-moz-keyframes", true)
+                || strings::eql_case_insensitive_ascii(name, b"-o-keyframes", true)
+                || strings::eql_case_insensitive_ascii(name, b"-ms-keyframes", true)
             {
                 let prefix = if strings::starts_with_case_insensitive_ascii(name, b"-webkit") {
                     VendorPrefix::WEBKIT
@@ -1669,7 +1669,7 @@ impl<'a, T: CustomAtRuleParser> AtRuleParser for NestedRuleParser<'a, T> {
                     input.try_parse(css_rules::keyframes::KeyframesName::parse)?;
                 break 'brk AtRulePrelude::Keyframes { name: keyframes_name, prefix };
             }
-            if strings::eql_case_insensitive_ascii::<true>(name, b"page") {
+            if strings::eql_case_insensitive_ascii(name, b"page", true) {
                 // Zig: tryParse(parseCommaSeparated(PageSelector.parse)) → on
                 // .err returns empty list. EOF inside `PageSelector::parse`
                 // (e.g. `@page foo` with nothing after) propagates here and is
@@ -1681,7 +1681,7 @@ impl<'a, T: CustomAtRuleParser> AtRuleParser for NestedRuleParser<'a, T> {
                     .unwrap_or_default();
                 break 'brk AtRulePrelude::Page(selectors);
             }
-            if strings::eql_case_insensitive_ascii::<true>(name, b"-moz-document") {
+            if strings::eql_case_insensitive_ascii(name, b"-moz-document", true) {
                 // Firefox only supports the url-prefix() function with no
                 // arguments as a legacy CSS hack.
                 input.expect_function_matching(b"url-prefix")?;
@@ -1698,7 +1698,7 @@ impl<'a, T: CustomAtRuleParser> AtRuleParser for NestedRuleParser<'a, T> {
                 })?;
                 break 'brk AtRulePrelude::MozDocument;
             }
-            if strings::eql_case_insensitive_ascii::<true>(name, b"layer") {
+            if strings::eql_case_insensitive_ascii(name, b"layer", true) {
                 let names: SmallList<LayerName, 1> =
                     match input.parse_comma_separated(LayerName::parse) {
                         Ok(vv) => SmallList::<LayerName, 1>::from_list(vv),
@@ -1715,17 +1715,17 @@ impl<'a, T: CustomAtRuleParser> AtRuleParser for NestedRuleParser<'a, T> {
                     };
                 break 'brk AtRulePrelude::Layer(names);
             }
-            if strings::eql_case_insensitive_ascii::<true>(name, b"container") {
+            if strings::eql_case_insensitive_ascii(name, b"container", true) {
                 let container_name: Option<ContainerName> =
                     input.try_parse(css_rules::container::ContainerName::parse).ok();
                 let condition: ContainerCondition =
                     css_rules::container::ContainerCondition::parse(input)?;
                 break 'brk AtRulePrelude::Container { name: container_name, condition };
             }
-            if strings::eql_case_insensitive_ascii::<true>(name, b"starting-style") {
+            if strings::eql_case_insensitive_ascii(name, b"starting-style", true) {
                 break 'brk AtRulePrelude::StartingStyle;
             }
-            if strings::eql_case_insensitive_ascii::<true>(name, b"scope") {
+            if strings::eql_case_insensitive_ascii(name, b"scope", true) {
                 let mut selector_parser = selector_parser::SelectorParser {
                     is_nesting_allowed: true,
                     options: this.options,
@@ -1757,7 +1757,7 @@ impl<'a, T: CustomAtRuleParser> AtRuleParser for NestedRuleParser<'a, T> {
                 };
                 break 'brk AtRulePrelude::Scope { scope_start, scope_end };
             }
-            if strings::eql_case_insensitive_ascii::<true>(name, b"nest") {
+            if strings::eql_case_insensitive_ascii(name, b"nest", true) {
                 if this.is_in_style_rule {
                     this.options.warn(input.new_custom_error(ParserError::deprecated_nest_rule));
                     let mut selector_parser = selector_parser::SelectorParser {

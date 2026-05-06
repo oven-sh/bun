@@ -331,16 +331,38 @@ impl Default for PackQueueItem {
     }
 }
 
-// TODO(port): std.PriorityQueue with strings.order comparator → min-heap by path.
-// Using bun_collections::PriorityQueue<PackQueueItem> with a custom comparator.
-type PackQueue = PriorityQueue<PackQueueItem, fn(&PackQueueItem, &PackQueueItem) -> core::cmp::Ordering>;
+// `std.PriorityQueue(PackQueueItem, void, PackQueueContext.lessThan)` — min-heap by path.
+// `bun_collections` has no `PriorityQueue`; wrap `BinaryHeap` with a reversed `Ord`
+// (BinaryHeap is a max-heap, so invert `strings::order` to pop smallest first).
+impl Ord for PackQueueItem {
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+        // reversed: smaller path == greater priority
+        strings::order(other.path.as_bytes(), self.path.as_bytes())
+    }
+}
+impl PartialOrd for PackQueueItem {
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> { Some(self.cmp(other)) }
+}
+impl Eq for PackQueueItem {}
+impl PartialEq for PackQueueItem {
+    fn eq(&self, other: &Self) -> bool { self.path.as_bytes() == other.path.as_bytes() }
+}
 
-fn pack_queue_less_than(a: &PackQueueItem, b: &PackQueueItem) -> core::cmp::Ordering {
-    strings::order(a.path.as_bytes(), b.path.as_bytes())
+#[derive(Default)]
+pub struct PackQueue {
+    heap: std::collections::BinaryHeap<PackQueueItem>,
+}
+impl PackQueue {
+    pub fn add(&mut self, item: PackQueueItem) -> Result<(), AllocError> {
+        self.heap.push(item);
+        Ok(())
+    }
+    pub fn count(&self) -> usize { self.heap.len() }
+    pub fn remove_or_null(&mut self) -> Option<PackQueueItem> { self.heap.pop() }
 }
 
 fn new_pack_queue() -> PackQueue {
-    PriorityQueue::new(pack_queue_less_than)
+    PackQueue::default()
 }
 
 /// (dir, dir_subpath, dir_depth)
@@ -1401,8 +1423,8 @@ fn is_excluded<'a>(
     }
 }
 
-// TODO(port): bun.deprecated.BufferedReader(512KiB, File.Reader)
-type BufferedFileReader = bun_io::BufferedReader<{ 1024 * 512 }, bun_sys::FileReader>;
+// `bun.deprecated.BufferedReader(1024 * 512, File.Reader)`
+type BufferedFileReader = bun_core::deprecated::BufferedReader<{ 1024 * 512 }, bun_sys::File>;
 
 // ───────────────────────────────────────────────────────────────────────────
 // pack()

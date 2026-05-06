@@ -4555,7 +4555,7 @@ struct ResolvedUnrunnable {
     loader: options::Loader,
 }
 
-type DoneChannel = Channel<u32, 256>;
+type DoneChannel = Channel<u32, bun_collections::linear_fifo::StaticBuffer<u32, 256>>;
 // TODO(port): Channel generic shape — Zig was Channel(u32, .{ .Static = 256 })
 
 /// One pending remote-image download. Lives on the heap so its

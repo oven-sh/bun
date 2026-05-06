@@ -15,12 +15,13 @@
 
 use bun_core::Timespec;
 use bun_jsc::VirtualMachine;
-use bun_jsc::api::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 use bun_uws::Loop;
+
+use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 
 bun_output::declare_scope!(DateHeaderTimer, visible);
 
-const MS_PER_S: u64 = 1000;
+const MS_PER_S: i64 = 1000;
 
 pub struct DateHeaderTimer {
     pub event_loop_timer: EventLoopTimer,
@@ -29,11 +30,7 @@ pub struct DateHeaderTimer {
 impl Default for DateHeaderTimer {
     fn default() -> Self {
         Self {
-            event_loop_timer: EventLoopTimer {
-                tag: EventLoopTimerTag::DateHeaderTimer,
-                next: Timespec::EPOCH,
-                ..Default::default()
-            },
+            event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::DateHeaderTimer),
         }
     }
 }

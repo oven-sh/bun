@@ -37,8 +37,12 @@ impl JSValueHashExt for JSValue {
     }
     #[inline]
     fn from_uint64_no_truncate(global: &JSGlobalObject, i: u64) -> JSValue {
-        // SAFETY: FFI — `global` is live for the call.
-        unsafe { JSC__JSValue__fromUInt64NoTruncate(global, i) }
+        // SAFETY: FFI — `global` is live for the call; the C++ side does not
+        // mutate through the pointer, but the canonical extern signature in
+        // ffi_body.rs uses `*mut`, so cast to match.
+        unsafe {
+            JSC__JSValue__fromUInt64NoTruncate(global as *const JSGlobalObject as *mut JSGlobalObject, i)
+        }
     }
 }
 

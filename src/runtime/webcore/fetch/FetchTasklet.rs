@@ -1387,8 +1387,8 @@ impl FetchTasklet {
                     // doesn't tie `url`'s lifetime to the `fetch_tasklet` stack binding,
                     // which is moved into `Box::into_raw` below.
                     let buf_ptr: *const [u8] = &*fetch_tasklet.url_proxy_buffer;
-                    url = ZigURL::parse(unsafe { &(*buf_ptr)[0..old_url_len] });
-                    proxy = Some(ZigURL::parse(unsafe { &(*buf_ptr)[old_url_len..] }));
+                    url = ZigURL::parse(unsafe { &(&*buf_ptr)[0..old_url_len] });
+                    proxy = Some(ZigURL::parse(unsafe { &(&*buf_ptr)[old_url_len..] }));
                     // TODO(port): self-referential borrow into url_proxy_buffer; Phase B needs raw ptr or owned URL
                 } else {
                     proxy = Some(env_proxy);

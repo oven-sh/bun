@@ -1565,19 +1565,19 @@ where
 
         // SAFETY: BACKREF
         let server = unsafe { &*self.server.unwrap() };
-        FileResponseStream::start(FileResponseStream::Options {
+        FileResponseStream::start(file_response_stream::StartOptions {
             fd,
             auto_close,
             resp,
-            vm: server.vm(),
+            vm: server.vm() as *const VirtualMachine,
             file_type,
             pollable,
-            offset: self.sendfile.offset,
+            offset: self.sendfile.offset as u64,
             length: if is_regular { Some(self.sendfile.remain as u64) } else { None },
             idle_timeout: server.config().idle_timeout,
             ctx: self as *mut Self as *mut c_void,
             on_complete: Self::on_file_stream_complete,
-            on_abort: Self::on_file_stream_abort,
+            on_abort: Some(Self::on_file_stream_abort),
             on_error: Self::on_file_stream_error,
         });
     }

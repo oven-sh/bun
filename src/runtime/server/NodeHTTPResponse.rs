@@ -1382,11 +1382,11 @@ impl NodeHTTPResponse {
 
             if arguments.len() > 2 && !arguments[2].is_undefined() {
                 if !arguments[2].is_callable() {
-                    return global_object.throw_invalid_argument_type_value(
+                    return Err(global_object.throw_invalid_argument_type_value(
                         "callback",
                         "function",
                         arguments[2],
-                    );
+                    ));
                 }
                 break 'brk arguments[2];
             }

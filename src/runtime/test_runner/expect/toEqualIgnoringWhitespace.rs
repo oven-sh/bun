@@ -100,10 +100,14 @@ pub fn to_equal_ignoring_whitespace(
     }
 
     // handle failure
+    // PORT NOTE: `to_fmt` returns a `ZigFormatter<'a, 'b>` that mutably borrows the
+    // backing formatter. Use a second formatter for the received value — `make_formatter` is
+    // cheap (no alloc) and this matches sibling matchers (toContainEqual, toBeCloseTo).
     let mut formatter = super::make_formatter(global);
+    let mut formatter2 = super::make_formatter(global);
     // `defer formatter.deinit()` deleted — Drop handles it.
     let expected_fmt = expected.to_fmt(&mut formatter);
-    let value_fmt = value.to_fmt(&mut formatter);
+    let value_fmt = value.to_fmt(&mut formatter2);
 
     if not {
         // TODO(port): get_signature must be `const fn` (was `comptime` in Zig).

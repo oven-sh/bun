@@ -108,7 +108,7 @@ pub fn to_have_property(
             let diff_format = DiffFormatter {
                 received: received_property,
                 expected: expected_property.unwrap(),
-                global_this: global,
+                global_this: Some(global),
                 ..Default::default()
             };
 

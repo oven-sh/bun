@@ -471,7 +471,7 @@ fn cpus_impl_darwin(global_this: &JSGlobalObject) -> Result<JSValue, OsError> {
 
     // Ensure we got the amount of data we expected to guard against buffer overruns
     if info_size != c::PROCESSOR_CPU_LOAD_INFO_COUNT * num_cpus {
-        return Err(bun_core::err!("broken_process_info"));
+        return Err(OsError::Any);
     }
 
     // Get CPU model name

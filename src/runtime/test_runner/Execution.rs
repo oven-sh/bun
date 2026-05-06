@@ -137,7 +137,11 @@ impl ConcurrentGroup {
         true
     }
 
-    pub fn sequences<'a>(&self, execution: &'a mut Execution) -> &'a mut [ExecutionSequence] {
+    pub fn sequences<'a>(&self, execution: &'a Execution) -> &'a [ExecutionSequence] {
+        &execution.sequences[self.sequence_start..self.sequence_end]
+    }
+
+    pub fn sequences_mut<'a>(&self, execution: &'a mut Execution) -> &'a mut [ExecutionSequence] {
         &mut execution.sequences[self.sequence_start..self.sequence_end]
     }
 

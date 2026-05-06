@@ -5649,7 +5649,7 @@ pub mod testing_apis {
 
         let arena = Bump::new();
 
-        let template_args_js = match arguments.next_eat() {
+        let template_args_js: JSValue = match arguments.next_eat() {
             Some(s) => s,
             None => {
                 return Err(global.throw(format_args!("shell: expected 2 arguments, got 0")));

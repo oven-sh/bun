@@ -582,11 +582,14 @@ impl HashJob {
             };
         }
         // this.ref = .{} — handled by mem::take above
-        this_ref.event_loop.enqueue_task_concurrent(
-            // SAFETY: `result` is a valid Box::into_raw allocation; ownership transfers to
-            // the event loop here. `task` is an intrusive field at a stable address.
-            ConcurrentTask::create_from(unsafe { core::ptr::addr_of_mut!((*result).task) }),
-        );
+        // SAFETY: `event_loop` was stored from the JS-thread VM and outlives the job;
+        // `result` is a valid Box::into_raw allocation, ownership transfers to the
+        // event loop here. `task` is an intrusive field at a stable address.
+        unsafe {
+            (*this_ref.event_loop).enqueue_task_concurrent(ConcurrentTask::create_from(
+                core::ptr::addr_of_mut!((*result).task),
+            ));
+        }
         // SAFETY: `this` came from Box::into_raw in `HashJob::new`; `this_ref` is no longer
         // used after this point. Drop runs secure_zero on the password.
         unsafe { drop(Box::from_raw(this)) };

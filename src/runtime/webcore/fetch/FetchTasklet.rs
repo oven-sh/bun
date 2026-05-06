@@ -1601,18 +1601,18 @@ impl FetchTasklet {
 
     pub fn queue(
         global: &'static JSGlobalObject,
-        fetch_options: &FetchOptions,
+        fetch_options: FetchOptions,
         promise: jsc::JSPromiseStrong,
     ) -> Result<*mut FetchTasklet, BunError> {
         // TODO(port): narrow error set
-        http::HTTPThread::init(&http::http_thread::InitOpts::default());
+        http::http_thread::init(&http::http_thread::InitOpts::default());
         let node = Self::get(global, fetch_options, promise)?;
 
         // SAFETY: node freshly allocated, exclusive access
         let node_ref = unsafe { &mut *node };
-        let mut batch = ThreadPool::Batch::default();
+        let mut batch = bun_threading::thread_pool::Batch::default();
         node_ref.http.as_mut().unwrap().schedule(&mut batch);
-        node_ref.poll_ref.ref_(global.bun_vm());
+        node_ref.poll_ref.ref_(vm_ctx());
 
         // increment ref so we can keep it alive until the http client is done
         node_ref.ref_();
@@ -1622,7 +1622,7 @@ impl FetchTasklet {
     }
 
     /// Called from HTTP thread. Handles HTTP events received from socket.
-    pub fn callback(task: *mut FetchTasklet, async_http: &mut AsyncHTTP, result: HTTPClientResult) {
+    pub fn callback(task: *mut FetchTasklet, async_http: *mut AsyncHTTP, result: HTTPClientResult) {
         // at this point only this thread is accessing result to is no race condition
         let is_done = !result.has_more;
         // SAFETY: task ref held by HTTP thread callback registration

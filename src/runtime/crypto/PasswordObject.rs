@@ -70,23 +70,23 @@ impl AlgorithmValue {
         if value.is_object() {
             if let Some(algorithm_value) = value.get_truthy(global_object, "algorithm")? {
                 if !algorithm_value.is_string() {
-                    return global_object.throw_invalid_argument_type("hash", "algorithm", "string");
+                    return Err(global_object.throw_invalid_argument_type(
+                        "hash",
+                        "algorithm",
+                        "string",
+                    ));
                 }
 
                 let algorithm_string = algorithm_value.get_zig_string(global_object)?;
 
-                // TODO(port): ComptimeStringMap.getWithEql(ZigString, ZigString.eqlComptime) —
-                // ZigString may be UTF-16; phf keys are &[u8]. Phase B: transcode or use
-                // ZigString::eql_bytes helper.
-                let Some(algo) = Algorithm::LABEL
-                    .get(algorithm_string.as_bytes())
-                    .copied()
-                else {
-                    return global_object.throw_invalid_argument_type(
+                // Zig: ComptimeStringMap.getWithEql(ZigString, ZigString.eqlComptime) —
+                // ZigString may be UTF-16; compare each label via `eql_comptime`.
+                let Some(algo) = algorithm_from_zig_string(&algorithm_string) else {
+                    return Err(global_object.throw_invalid_argument_type(
                         "hash",
                         "algorithm",
                         UNKNOWN_PASSWORD_ALGORITHM_MESSAGE,
-                    );
+                    ));
                 };
 
                 match algo {

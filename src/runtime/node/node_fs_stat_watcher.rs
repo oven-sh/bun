@@ -754,19 +754,24 @@ impl Arguments {
 }
 
 pub struct InitialStatTask {
-    watcher: Arc<StatWatcher>, // per LIFETIMES.tsv (SHARED) — watcher.ref() held across task lifetime
-    // TODO(port): TSV says Arc; underlying type is intrusively ref-counted (m_ctx payload). Phase B: reconcile with IntrusiveArc.
+    // Zig: `watcher: *StatWatcher`. StatWatcher is intrusively ref-counted (ThreadSafeRefCount
+    // m_ctx payload), NOT Arc-allocated. Storing `Arc<StatWatcher>` here and casting
+    // `Arc::as_ptr()` (a *const) to *mut for mutation is UB. We hold the strong ref via
+    // `ref_()`/`deref()` and keep the raw *mut, mirroring Zig's `*StatWatcher` aliasing intent.
+    // TODO(port): LIFETIMES.tsv says SHARED — Phase B: wrap in IntrusiveArc<StatWatcher> once
+    // it exposes a sound *mut accessor.
+    watcher: *mut StatWatcher,
     task: WorkPoolTask,
 }
 
 impl InitialStatTask {
     pub fn create_and_schedule(watcher: *mut StatWatcher) {
-        // SAFETY: watcher is alive; we bump its refcount below
+        // SAFETY: watcher is alive; we bump its intrusive refcount, held across task lifetime
+        // (balanced by deref() in work_pool_callback's closed path or by the main-thread
+        // initial_stat_*_on_main_thread callbacks).
         unsafe { &*watcher }.ref_();
-        // TODO(port): Arc::from_raw here would assume Arc layout; Phase B switch to IntrusiveArc::from_raw
         let task = Box::new(InitialStatTask {
-            // SAFETY: ref_() bumped intrusive count above; held across task lifetime per LIFETIMES.tsv SHARED — see TODO for Phase B IntrusiveArc reconciliation
-            watcher: unsafe { Arc::from_raw(watcher) },
+            watcher,
             task: WorkPoolTask {
                 callback: Self::work_pool_callback,
             },
@@ -783,20 +788,18 @@ impl InitialStatTask {
                 .sub(core::mem::offset_of!(InitialStatTask, task))
                 .cast::<InitialStatTask>()
         };
-        // SAFETY: matches bun.destroy(initial_stat_task) — reclaim Box, drop at end of scope
+        // SAFETY: matches bun.destroy(initial_stat_task) — reclaim Box, drop at end of scope.
+        // `watcher` is a raw *mut (Copy), so dropping the Box does not touch the refcount.
         let initial_stat_task = unsafe { Box::from_raw(initial_stat_task) };
-        // TODO(port): Arc<StatWatcher> Drop will decrement; Zig manually calls deref() on closed path
-        // and otherwise relies on the main-thread callbacks to deref. Phase B: verify ref-count pairing.
-        let this: *mut StatWatcher =
-            Arc::as_ptr(&initial_stat_task.watcher) as *mut StatWatcher;
-        // SAFETY: ref held by initial_stat_task.watcher
+        let this: *mut StatWatcher = initial_stat_task.watcher;
+        // SAFETY: `this` is kept alive by the intrusive ref taken in create_and_schedule. We are
+        // the sole mutator on the work-pool thread for this task; Zig's `*StatWatcher` freely
+        // aliases and mutates here (closed check, setLastStat, enqueueTaskConcurrent).
         let this_ref = unsafe { &mut *this };
 
         if this_ref.closed {
             // SAFETY: balance the ref() from createAndSchedule(); raw ptr (not `&self`).
             unsafe { StatWatcher::deref(this) };
-            // TODO(port): with Arc field this would double-deref on Drop. Phase B: IntrusiveArc.
-            core::mem::forget(initial_stat_task.watcher);
             return;
         }
 
@@ -821,8 +824,8 @@ impl InitialStatTask {
                 ));
             }
         }
-        // TODO(port): prevent Arc Drop from decrementing — ownership transferred to main-thread callback
-        core::mem::forget(initial_stat_task.watcher);
+        // ref ownership transferred to main-thread callback (initial_stat_*_on_main_thread
+        // calls deref()). Nothing to forget — `watcher` is a raw pointer.
     }
 }
 

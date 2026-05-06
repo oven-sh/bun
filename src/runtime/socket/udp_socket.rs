@@ -538,10 +538,10 @@ impl UDPSocket {
         // link_name to avoid a clashing_extern_declarations diagnostic.
         unsafe extern "C" {
             #[link_name = "UDPSocket__create"]
-            fn udp_socket_create(global: *mut JSGlobalObject, ptr: *mut UDPSocket) -> JSValue;
+            fn udp_socket_create(global: *mut JSGlobalObject, ptr: *mut ()) -> JSValue;
         }
         // SAFETY: `global_this` is live; `this_ptr` ownership transfers to the C++ wrapper.
-        let this_value = unsafe { udp_socket_create(global_this.as_mut_ptr(), this_ptr) };
+        let this_value = unsafe { udp_socket_create(global_this.as_mut_ptr(), this_ptr.cast()) };
         this_value.ensure_still_alive();
         this.this_value.set_strong(this_value, global_this);
 

@@ -88,6 +88,49 @@ pub struct HttpThread {
     pub lazy_request_body_buffer: Option<Box<HeapRequestBodyBuffer>>,
 }
 
+impl HttpThread {
+    /// Mirror of Zig `initOnce`'s `bun.http.http_thread = .{ ... }` field-init
+    /// list (HTTPThread.zig:195-206). `loop_`/`uws_loop` are filled in by
+    /// `on_start` on the spawned thread; `timer` is started on the calling
+    /// thread per spec.
+    fn new() -> Self {
+        Self {
+            loop_: core::ptr::null(),
+            uws_loop: core::ptr::null_mut(),
+            http_context: NewHttpContext::<false> {
+                ref_count: Cell::new(1),
+                pending_sockets: bun_collections::HiveArray::init(),
+                group: uws::SocketGroup::default(),
+                secure: None,
+                active_h2_sessions: Vec::new(),
+                pending_h2_connects: Vec::new(),
+            },
+            https_context: NewHttpContext::<true> {
+                ref_count: Cell::new(1),
+                pending_sockets: bun_collections::HiveArray::init(),
+                group: uws::SocketGroup::default(),
+                secure: None,
+                active_h2_sessions: Vec::new(),
+                pending_h2_connects: Vec::new(),
+            },
+            queued_tasks: Queue::new(),
+            deferred_tasks: Vec::new(),
+            has_pending_queued_abort: false,
+            queued_shutdowns: Vec::new(),
+            queued_writes: Vec::new(),
+            queued_response_body_drains: Vec::new(),
+            queued_shutdowns_lock: Mutex::new(),
+            queued_writes_lock: Mutex::new(),
+            queued_response_body_drains_lock: Mutex::new(),
+            queued_threadlocal_proxy_derefs: Vec::new(),
+            has_awoken: AtomicBool::new(false),
+            timer: Instant::now(),
+            lazy_libdeflater: None,
+            lazy_request_body_buffer: None,
+        }
+    }
+}
+
 pub struct HeapRequestBodyBuffer {
     pub buffer: [u8; 512 * 1024],
     // TODO(port): was `std.heap.FixedBufferAllocator` borrowing `buffer` —

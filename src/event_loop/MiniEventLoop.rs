@@ -124,29 +124,39 @@ thread_local! {
     pub static GLOBAL: Cell<*mut MiniEventLoop<'static>> = const { Cell::new(core::ptr::null_mut()) };
 }
 
+/// Returns the thread-local `*mut MiniEventLoop` (Zig: `*MiniEventLoop`).
+///
+/// PORT NOTE (aliasing): Zig's `*T` aliases freely; returning `&'static mut`
+/// here would let two calls (or `init_global` + `MiniKind::get_vm`) hold
+/// overlapping `&mut` to the same allocation — UB. Return the raw pointer;
+/// callers reborrow `&mut` for the scope they need.
 pub fn init_global(
     env: Option<&'static mut DotEnvLoader<'static>>,
     cwd: Option<&[u8]>,
-) -> &'static mut MiniEventLoop<'static> {
+) -> *mut MiniEventLoop<'static> {
     if GLOBAL_INITIALIZED.with(|g| g.get()) {
-        // SAFETY: GLOBAL was set on a previous call (GLOBAL_INITIALIZED gate).
-        return unsafe { &mut *GLOBAL.with(|g| g.get()) };
+        // Already initialized: hand back the stored raw pointer. No `&mut` is
+        // materialized here (see fn doc — avoids aliased `&'static mut` UB).
+        return GLOBAL.with(|g| g.get());
     }
     let loop_ = MiniEventLoop::init();
     // PORT NOTE: §Forbidden bans `Box::leak` for `&'static`; this is a
     // thread-lifetime singleton, so use `Box::into_raw` (intrusive ownership)
     // and store the raw pointer in the thread-local — same as Zig
     // `bun.default_allocator.create` + `threadlocal var global: *MiniEventLoop`.
-    let global: *mut MiniEventLoop<'static> = Box::into_raw(Box::new(loop_));
-    GLOBAL.with(|g| g.set(global));
-    // SAFETY: just allocated above; exclusive on this thread.
-    let global = unsafe { &mut *global };
+    let global_ptr: *mut MiniEventLoop<'static> = Box::into_raw(Box::new(loop_));
+    GLOBAL.with(|g| g.set(global_ptr));
+    // SAFETY: `global_ptr` was just allocated via `Box::into_raw`; this thread
+    // holds the only reference for the duration of first-init (GLOBAL_INITIALIZED
+    // is still false, so no other path hands it out). The `&mut` is scoped to
+    // this function body — NOT `'static` — and ends before we return the raw ptr.
+    let global = unsafe { &mut *global_ptr };
 
     // PORT NOTE: `InternalLoopData::set_parent_event_loop` (typed) lives in a
     // higher tier; the sys-level API is `set_parent_raw(tag, ptr)`. Tag 1 = JS,
     // tag 2 = mini (matches Zig `EventLoopHandle` discriminant + 1).
     {
-        let (tag, ptr) = EventLoopHandle::init_mini(global).into_tag_ptr();
+        let (tag, ptr) = EventLoopHandle::init_mini(global_ptr).into_tag_ptr();
         // SAFETY: `loop_` is the live C-owned uws loop set in `MiniEventLoop::init`.
         unsafe { (*global.loop_).internal_loop_data.set_parent_raw(tag, ptr) };
     }

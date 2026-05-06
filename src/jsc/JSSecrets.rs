@@ -71,8 +71,9 @@ impl SecretsJob {
         // PORT NOTE: reshaped for borrowck — Zig used `defer vm.enqueueTaskConcurrent(...)`;
         // moved after the FFI call since there is no early return between them.
         // SAFETY: ctx is a valid C++ SecretsJobOptions* held alive until Drop.
+        // vm.global is already *mut JSGlobalObject (Zig `*JSGlobalObject` freely aliases).
         unsafe {
-            Bun__SecretsJobOptions__runTask(job.ctx, vm.global as *const _ as *mut _);
+            Bun__SecretsJobOptions__runTask(job.ctx, vm.global);
         }
         vm.enqueue_task_concurrent(ConcurrentTask::create(job.any_task.task()));
     }
@@ -93,8 +94,9 @@ impl SecretsJob {
         }
 
         // SAFETY: ctx is a valid C++ SecretsJobOptions* held alive until Drop.
+        // vm.global is already *mut JSGlobalObject (Zig `*JSGlobalObject` freely aliases).
         unsafe {
-            Bun__SecretsJobOptions__runFromJS(this.ctx, vm.global as *const _ as *mut _, promise);
+            Bun__SecretsJobOptions__runFromJS(this.ctx, vm.global, promise);
         }
     }
 

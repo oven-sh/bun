@@ -371,7 +371,7 @@ impl Blob {
         // an owning dupe so the handler outliving the source can't dangle.
         let handler = Box::into_raw(Box::new(Handler::<F> {
             context: self.dupe(),
-            global_this: global as *const _ as *mut _,
+            global_this: global,
             ..Default::default()
         }));
 
@@ -980,7 +980,7 @@ impl Blob {
     ) -> Blob {
         let mut converter = URLSearchParamsConverter {
             buf: Vec::new(),
-            global_this: global_this as *const _ as *mut _,
+            global_this: global_this,
         };
         search_params.to_string(&mut converter, URLSearchParamsConverter::convert);
         let store = Store::init(converter.buf);
@@ -1012,7 +1012,7 @@ impl Blob {
             joiner: bun_core::StringJoiner::default(),
             boundary: boundary as *const [u8],
             failed: false,
-            global_this: global_this as *const _ as *mut _,
+            global_this: global_this,
         };
 
         form_data.for_each(&mut context, FormDataContext::on_entry);
@@ -1477,7 +1477,7 @@ fn write_file_with_empty_source_to_destination(
                 Box::into_raw(Box::new(Wrapper {
                     promise,
                     store: destination_store.clone(),
-                    global: ctx as *const _ as *mut _,
+                    global: ctx,
                 })) as *mut c_void,
             )?;
             return Ok(promise_value);
@@ -1517,7 +1517,7 @@ pub fn write_file_with_source_destination(
 
     if destination_type == Store::DataTag::File && source_type == Store::DataTag::Bytes {
         let write_file_promise = Box::into_raw(Box::new(WriteFilePromise {
-            global_this: ctx as *const _ as *mut _,
+            global_this: ctx,
             ..Default::default()
         }));
 
@@ -1700,7 +1700,7 @@ pub fn write_file_with_source_destination(
                         Box::into_raw(Box::new(Wrapper {
                             store: source_store.clone(),
                             promise,
-                            global: ctx as *const _ as *mut _,
+                            global: ctx,
                         })) as *mut c_void,
                     )?;
                     return Ok(promise_value);
@@ -1891,7 +1891,7 @@ pub fn write_file_internal(
                             .throw_invalid_arguments("ReadableStream has already been used");
                     }
                     let task = Box::into_raw(Box::new(WriteFileWaitFromLockedValueTask {
-                        global_this: global_this as *const _ as *mut _,
+                        global_this: global_this,
                         file_blob: destination_blob,
                         promise: jsc::JSPromiseStrong::init(global_this),
                         mkdirp_if_not_exists: options.mkdirp_if_not_exists.unwrap_or(true),
@@ -1929,7 +1929,7 @@ pub fn write_file_internal(
                             .throw_invalid_arguments("ReadableStream has already been used");
                     }
                     let task = Box::into_raw(Box::new(WriteFileWaitFromLockedValueTask {
-                        global_this: global_this as *const _ as *mut _,
+                        global_this: global_this,
                         file_blob: destination_blob,
                         promise: jsc::JSPromiseStrong::init(global_this),
                         mkdirp_if_not_exists: options.mkdirp_if_not_exists.unwrap_or(true),
@@ -2723,7 +2723,7 @@ impl S3BlobDownloadTask {
         // source JS Blob and freed on finalize(). Take an owning dupe so the task
         // outliving the source can't dangle.
         let this = Box::into_raw(Box::new(S3BlobDownloadTask {
-            global_this: global_this as *const _ as *mut _,
+            global_this: global_this,
             blob: blob.dupe(),
             promise: jsc::JSPromiseStrong::init(global_this),
             poll_ref: bun_aio::KeepAlive::default(),
@@ -3849,7 +3849,7 @@ impl Blob {
             size: len as SizeType,
             store,
             content_type: b"" as &'static [u8] as *const [u8],
-            global_this: global_this as *const _ as *mut _,
+            global_this: global_this,
             charset: strings::AsciiStatus::from_bool(is_all_ascii),
             ..Default::default()
         }
@@ -3862,7 +3862,7 @@ impl Blob {
             size: len as SizeType,
             store: if len > 0 { Some(Store::init(bytes)) } else { None },
             content_type: b"" as &'static [u8] as *const [u8],
-            global_this: global_this as *const _ as *mut _,
+            global_this: global_this,
             ..Default::default()
         }
     }
@@ -3881,7 +3881,7 @@ impl Blob {
             } else {
                 b"" as &'static [u8] as *const [u8]
             },
-            global_this: global_this as *const _ as *mut _,
+            global_this: global_this,
             ..Default::default()
         }
     }
@@ -3927,7 +3927,7 @@ impl Blob {
             size,
             store: Some(store),
             content_type,
-            global_this: global_this as *const _ as *mut _,
+            global_this: global_this,
             ..Default::default()
         }
     }
@@ -3937,7 +3937,7 @@ impl Blob {
             size: 0,
             store: None,
             content_type: b"" as &'static [u8] as *const [u8],
-            global_this: global_this as *const _ as *mut _,
+            global_this: global_this,
             ..Default::default()
         }
     }
@@ -4482,7 +4482,7 @@ impl Blob {
     ) -> JsResult<Blob> {
         let mut current = arg;
         if current.is_undefined_or_null() {
-            return Ok(Blob { global_this: global as *const _ as *mut _, ..Default::default() });
+            return Ok(Blob { global_this: global, ..Default::default() });
         }
 
         let mut top_value = current;
@@ -4495,7 +4495,7 @@ impl Blob {
                 let mut top_iter = jsc::JSArrayIterator::init(current, global)?;
                 might_only_be_one_thing = top_iter.len == 1;
                 if top_iter.len == 0 {
-                    return Ok(Blob { global_this: global as *const _ as *mut _, ..Default::default() });
+                    return Ok(Blob { global_this: global, ..Default::default() });
                 }
                 if might_only_be_one_thing {
                     top_value = top_iter.next()?.unwrap();
@@ -4765,7 +4765,7 @@ impl Blob {
             size,
             store: Some(store),
             content_type,
-            global_this: global_this as *const _ as *mut _,
+            global_this: global_this,
             ..Default::default()
         }
     }
@@ -4775,7 +4775,7 @@ impl Blob {
             size: 0,
             store: None,
             content_type: b"" as &'static [u8] as *const [u8],
-            global_this: global_this as *const _ as *mut _,
+            global_this: global_this,
             ..Default::default()
         }
     }
@@ -5216,7 +5216,7 @@ impl Any {
             }
             streams::BufferActionTag::Blob => {
                 let result = Blob::new(self.to_blob(global_this));
-                unsafe { (*result).global_this = global_this as *const _ as *mut _ };
+                unsafe { (*result).global_this = global_this };
                 Ok(unsafe { (*result).to_js(global_this) })
             }
             streams::BufferActionTag::ArrayBuffer => {

@@ -5254,7 +5254,7 @@ impl<'a> Resolver<'a> {
                 // SAFETY: resolver mutex held; raw ptr re-borrowed narrowly below.
                 if let Some(import_dir_info) = unsafe { import_dir_info_outer.get_enclosing_browser_scope() } {
                     // SAFETY: ARENA — DirInfo ptr is a BSSMap slot and outlives the resolver.
-                    let pkg = unsafe { &*import_dir_info }.package_json.unwrap();
+                    let pkg = unsafe { &*import_dir_info }.package_json().unwrap();
                     if let Some(remap) = self.check_browser_map::<{ BrowserMapPathKind::AbsolutePath }>(unsafe { &*import_dir_info }, abs_path) {
                         // Is the path disabled?
                         if remap.is_empty() {
@@ -5370,7 +5370,7 @@ impl<'a> Resolver<'a> {
             // SAFETY: resolver mutex held; raw ptr re-borrowed narrowly below.
             if let Some(browser_scope) = unsafe { (*source_dir_info).get_enclosing_browser_scope() } {
                 // SAFETY: ARENA — DirInfo ptr is a BSSMap slot and outlives the resolver.
-                if let Some(package_json) = unsafe { &*browser_scope }.package_json {
+                if let Some(package_json) = unsafe { &*browser_scope }.package_json() {
                     if let Some(remapped) = self.check_browser_map::<{ BrowserMapPathKind::PackagePath }>(unsafe { &*browser_scope }, import_path) {
                         if remapped.is_empty() {
                             // "browser": {"module": false}
@@ -5496,7 +5496,7 @@ impl<'a> Resolver<'a> {
         loop {
             // SAFETY: ARENA — DirInfo ptr is a BSSMap slot and outlives the resolver (see LIFETIMES.tsv).
             let di = unsafe { &*dir_info };
-            if let Some(pkg) = di.package_json {
+            if let Some(pkg) = di.package_json() {
                 // if it doesn't have a name, assume it's something just for adjusting the main fields (react-bootstrap does this)
                 // In that case, we really would like the top-level package that you download from NPM
                 // so we ignore any unnamed packages
@@ -5560,7 +5560,7 @@ impl<'a> Resolver<'a> {
             let di = unsafe { &*dir_info };
             Some(RootPathPair {
                 base_path: slice,
-                package_json: di.package_json? as *const _,
+                package_json: di.package_json()? as *const _,
             })
         }
     }
@@ -5712,7 +5712,7 @@ impl<'a> Resolver<'a> {
         // Check for subpath imports: https://nodejs.org/api/packages.html#subpath-imports
         if let Some(_dir_info_package_json) = dir_info_package_json {
             // SAFETY: see function-wide note above.
-            let package_json = unsafe { &*_dir_info_package_json }.package_json.unwrap();
+            let package_json = unsafe { &*_dir_info_package_json }.package_json().unwrap();
 
             if import_path.starts_with(b"#") && !forbid_imports && package_json.imports.is_some() {
                 let r = self.load_package_imports(import_path, _dir_info_package_json, kind, global_cache);
@@ -5793,7 +5793,7 @@ impl<'a> Resolver<'a> {
                             _ => self.opts.extension_order.kind(kind, true),
                         };
 
-                        if let Some(package_json) = pkg_dir_info.package_json {
+                        if let Some(package_json) = pkg_dir_info.package_json() {
                             if let Some(exports_map) = package_json.exports.as_ref() {
                                 // The condition set is determined by the kind of import
                                 let mut module_type = package_json.module_type;
@@ -6158,7 +6158,7 @@ impl<'a> Resolver<'a> {
                             let pkg_dir_info = unsafe { &*pkg_dir_info_ptr };
                             let abs_package_path = pkg_dir_info.abs_path;
                             let mut module_type = options::ModuleType::Unknown;
-                            if let Some(package_json) = pkg_dir_info.package_json {
+                            if let Some(package_json) = pkg_dir_info.package_json() {
                                 if let Some(exports_map) = package_json.exports.as_ref() {
                                     // The condition set is determined by the kind of import
                                     // PORT NOTE: reshaped for borrowck — see identical note above.
@@ -6666,7 +6666,7 @@ impl<'a> Resolver<'a> {
                     }
                     unsafe { &mut *entry_query.entry }.abs_path.slice()
                 };
-                let module_type = if let Some(pkg) = resolved_dir_info.package_json {
+                let module_type = if let Some(pkg) = resolved_dir_info.package_json() {
                     pkg.module_type
                 } else {
                     options::ModuleType::Unknown
@@ -6679,7 +6679,7 @@ impl<'a> Resolver<'a> {
                     dir_info: Some(resolved_dir_info as *const _),
                     diff_case: entry_query.diff_case,
                     is_node_module: true,
-                    package_json: Some(resolved_dir_info.package_json.map(|p| p as *const _).unwrap_or(package_json as *const _)),
+                    package_json: Some(resolved_dir_info.package_json().map(|p| p as *const _).unwrap_or(package_json as *const _)),
                     module_type,
                     ..Default::default()
                 })
@@ -7478,7 +7478,7 @@ impl<'a> Resolver<'a> {
         global_cache: GlobalCache,
     ) -> MatchResultUnion {
         // SAFETY: ARENA — DirInfo ptr is a BSSMap slot and outlives the resolver (see LIFETIMES.tsv).
-        let package_json = unsafe { &*dir_info }.package_json.unwrap();
+        let package_json = unsafe { &*dir_info }.package_json().unwrap();
         if let Some(debug) = self.debug_logs.as_mut() {
             debug.add_note_fmt(format_args!(
                 "Looking for {} in \"imports\" map in {}",
@@ -7555,7 +7555,7 @@ impl<'a> Resolver<'a> {
         dir_info: &DirInfo::DirInfo,
         input_path_: &[u8],
     ) -> Option<&'static [u8]> {
-        let package_json = dir_info.package_json?;
+        let package_json = dir_info.package_json()?;
         let browser_map = &package_json.browser_map;
 
         if browser_map.count() == 0 {
@@ -7677,7 +7677,7 @@ impl<'a> Resolver<'a> {
             // before `browser_scope` (which may alias `dir_info`) is held.
             if let Some(browser_scope) = unsafe { (*dir_info).get_enclosing_browser_scope() } {
                 // SAFETY: ARENA — DirInfo ptr is a BSSMap slot and outlives the resolver.
-                if let Some(browser_json) = unsafe { &*browser_scope }.package_json {
+                if let Some(browser_json) = unsafe { &*browser_scope }.package_json() {
                     if let Some(remap) = self.check_browser_map::<{ BrowserMapPathKind::AbsolutePath }>(unsafe { &*browser_scope }, field_rel_path) {
                         // Is the path disabled?
                         if remap.is_empty() {
@@ -7703,7 +7703,7 @@ impl<'a> Resolver<'a> {
         // Is this a file?
         if let Some(result) = self.load_as_file(field_abs_path, extension_order) {
             // SAFETY: ARENA — DirInfo ptr is a BSSMap slot (see LIFETIMES.tsv).
-            if let Some(package_json) = unsafe { &*dir_info }.package_json {
+            if let Some(package_json) = unsafe { &*dir_info }.package_json() {
                 dec_ret!(Some(MatchResult {
                     path_pair: PathPair { primary: Fs::Path::init(result.path), secondary: None },
                     package_json: Some(package_json as *const _),
@@ -7794,7 +7794,7 @@ impl<'a> Resolver<'a> {
                         debug.add_note_fmt(format_args!("Found file: \"{}\"", bstr::BStr::new(out_buf)));
                     }
 
-                    if let Some(package_json) = dir_info.package_json {
+                    if let Some(package_json) = dir_info.package_json() {
                         return Some(MatchResult {
                             path_pair: PathPair { primary: Path::init(out_buf), secondary: None },
                             diff_case: lookup.diff_case,
@@ -7852,7 +7852,7 @@ impl<'a> Resolver<'a> {
                 const FIELD_REL_PATH: &[u8] = b"index";
 
                 // SAFETY: ARENA — DirInfo ptr is a BSSMap slot and outlives the resolver.
-                if let Some(browser_json) = unsafe { &*browser_scope }.package_json {
+                if let Some(browser_json) = unsafe { &*browser_scope }.package_json() {
                     if let Some(remap) = self.check_browser_map::<{ BrowserMapPathKind::AbsolutePath }>(unsafe { &*browser_scope }, FIELD_REL_PATH) {
                         // Is the path disabled?
                         if remap.is_empty() {
@@ -7909,7 +7909,7 @@ impl<'a> Resolver<'a> {
                 if let Some(package_name_length) = strings::index_of_char(&file.path[node_modules_folder_offset..], SEP) {
                     if let Ok(Some(package_dir_info_ptr)) = self.dir_info_cached(&file.path[0..node_modules_folder_offset + package_name_length as usize]) {
                         // SAFETY: ARENA — DirInfo ptr is a BSSMap slot and outlives the resolver (see LIFETIMES.tsv).
-                        if let Some(package_json) = unsafe { &*package_dir_info_ptr }.package_json {
+                        if let Some(package_json) = unsafe { &*package_dir_info_ptr }.package_json() {
                             return Some(MatchResult {
                                 path_pair: PathPair { primary: Path::init(file.path), secondary: None },
                                 diff_case: file.diff_case,
@@ -7966,7 +7966,7 @@ impl<'a> Resolver<'a> {
 
         // Try using the main field(s) from "package.json"
         // SAFETY: ARENA — DirInfo ptr is a BSSMap slot and outlives the resolver (see LIFETIMES.tsv).
-        if let Some(pkg_json) = unsafe { &*dir_info }.package_json {
+        if let Some(pkg_json) = unsafe { &*dir_info }.package_json() {
             package_json = Some(pkg_json as *const _);
             if pkg_json.main_fields.count() > 0 {
                 let main_field_values = &pkg_json.main_fields;
@@ -8500,7 +8500,7 @@ impl<'a> Resolver<'a> {
             info.package_json_for_browser_field = parent_.package_json_for_browser_field;
             info.enclosing_tsconfig_json = parent_.enclosing_tsconfig_json;
 
-            if let Some(parent_package_json) = parent_.package_json {
+            if let Some(parent_package_json) = parent_.package_json() {
                 // https://github.com/oven-sh/bun/issues/229
                 if !parent_package_json.name.is_empty() || self.care_about_bin_folder {
                     info.enclosing_package_json = Some(parent_package_json);
@@ -8579,7 +8579,7 @@ impl<'a> Resolver<'a> {
                         self.parse_package_json::<false>(path, if FeatureFlags::STORE_FILE_DESCRIPTORS { fd } else { FD::INVALID }, None).ok().flatten()
                     };
 
-                    if let Some(pkg) = info.package_json {
+                    if let Some(pkg) = info.package_json() {
                         if pkg.browser_map.count() > 0 {
                             info.enclosing_browser_scope = result.index;
                             info.package_json_for_browser_field = Some(pkg);

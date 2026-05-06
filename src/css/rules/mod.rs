@@ -7,14 +7,11 @@ use css::error::MinifyErr;
 // ─── B-2 round 6 status ────────────────────────────────────────────────────
 // Hub un-gated. `CssRule` / `CssRuleList` / `MinifyContext` are real and
 // `CssRuleList::{to_css,minify}` now compile so `StyleSheet::{minify,to_css}`
-// can call through. Leaf-rule `to_css` impls remain individually
-// `#[cfg(any())]`-gated in their own files (blocked on `DeclarationBlock`,
-// `properties_generated`, `enum_property_util`, …); until each un-gates, the
-// dispatch in `CssRule::to_css` lands on the `to_css_shim!` no-ops below —
-// removing a shim is the un-gate signal (duplicate-method error). The heavy
-// `.style` minify arm and `merge_style_rules` body stay `#[cfg(any())]`
-// internally on `StyleRule::{minify,is_compatible,update_prefix,hash_key,
-// is_duplicate}` + selector helpers.
+// can call through. All leaf-rule `to_css` impls are now real — the
+// `to_css_shim!` ladder is gone. The heavy `.style` minify arm and
+// `merge_style_rules` body stay `#[cfg(any())]` internally on
+// `StyleRule::{minify,is_compatible,update_prefix,hash_key,is_duplicate}` +
+// selector helpers.
 
 macro_rules! gated_rule {
     ($name:ident) => {
@@ -153,44 +150,14 @@ impl<R> Default for CssRuleList<R> {
 }
 
 // ─── leaf-rule to_css shims ────────────────────────────────────────────────
-// Each leaf module owns its real `to_css` body but keeps it `#[cfg(any())]`-
-// gated on its own blockers (DeclarationBlock::to_css_block, enum_property
-// derive, properties::{font,custom} payloads, …). Until those un-gate one by
-// one, the dispatch in `CssRule::to_css` needs *some* inherent method to call.
-// The shim panics rather than returning `Ok(())` because emitting zero bytes
-// and reporting success is a silent no-op (PORTING.md §Forbidden) — the rule
-// would round-trip to an empty string while `CssRuleList::to_css` still emits
-// inter-rule newlines around it. When a leaf file drops its `#[cfg(any())]`,
-// the compiler reports a duplicate `to_css` here; delete that line.
-macro_rules! to_css_shim {
-    ($( $(#[$m:meta])* $ty:ty ),* $(,)?) => {$(
-        $(#[$m])*
-        impl $ty {
-            #[allow(clippy::unused_self)]
-            pub fn to_css(&self, _dest: &mut Printer) -> Result<(), PrintErr> {
-                todo!(concat!("blocked_on: ", stringify!($ty), "::to_css — leaf module gated"))
-            }
-        }
-    )*};
-    (generic: $( $(#[$m:meta])* $ty:ident ),* $(,)?) => {$(
-        $(#[$m])*
-        impl<R> $ty<R> {
-            #[allow(clippy::unused_self)]
-            pub fn to_css(&self, _dest: &mut Printer) -> Result<(), PrintErr> {
-                todo!(concat!("blocked_on: ", stringify!($ty), "::to_css — leaf module gated"))
-            }
-        }
-    )*};
-}
-
-// generic leaf rules whose own `to_css` body is still gated
+// All leaf modules now own a real, un-gated `to_css` body; `CssRule::to_css`
+// dispatches straight through. (Shim macro deleted — last entry was
+// `StyleRule`, dropped once DeclarationBlock::to_css + selector serialize
+// landed.)
 use style::StyleRule;
-to_css_shim!(generic:
-    StyleRule,
-);
 
 // ─── leaf-rule deep_clone shims ────────────────────────────────────────────
-// Same protocol as `to_css_shim!` above: each leaf module owns its real
+// Same protocol as the (now-removed) `to_css_shim!`: each leaf module owns its real
 // `deep_clone` body but the `gated_rule!` data-only stubs in this file don't.
 // `CssRule::deep_clone` needs *some* inherent method to dispatch to until each
 // stub un-gates and the real `rules/<leaf>.rs` impl takes over (compiler then

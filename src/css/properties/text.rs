@@ -1,3 +1,4 @@
+#![allow(unused_imports, dead_code)]
 use crate as css;
 use crate::Printer;
 use crate::PrintErr;
@@ -169,6 +170,7 @@ pub struct TextShadow {
 }
 
 impl TextShadow {
+    #[cfg(any())] // blocked_on: Length::parse / CssColor::parse / Parser::try_parse closure ergonomics
     pub fn parse(input: &mut css::Parser) -> css::Result<Self> {
         let mut color: Option<CssColor> = None;
         type Lengths = (Length, Length, Length, Length);
@@ -218,6 +220,7 @@ impl TextShadow {
         })
     }
 
+    #[cfg(any())] // blocked_on: LengthValue::{to_css,zero} / CssColor::to_css surface
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         self.x_offset.to_css(dest)?;
         dest.write_char(' ')?;
@@ -241,6 +244,7 @@ impl TextShadow {
         Ok(())
     }
 
+    #[cfg(any())] // blocked_on: LengthValue::is_compatible / CssColor::is_compatible
     pub fn is_compatible(&self, browsers: css::targets::Browsers) -> bool {
         self.color.is_compatible(browsers)
             && self.x_offset.is_compatible(browsers)
@@ -273,9 +277,7 @@ pub enum TextSizeAdjust {
 
 /// A value for the [direction](https://drafts.csswg.org/css-writing-modes-3/#direction) property.
 // Zig wires eql/hash/parse/toCss/deepClone via `css.DefineEnumProperty(@This())`.
-// In Rust these come from a derive; Phase B wires `#[derive(css::EnumProperty)]`.
-// TODO(port): add `#[derive(css::EnumProperty)]` once the derive macro exists.
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, crate::DefineEnumProperty)]
 pub enum Direction {
     /// This value sets inline base direction (bidi directionality) to line-left-to-line-right.
     Ltr,

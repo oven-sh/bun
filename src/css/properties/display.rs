@@ -1,8 +1,10 @@
+#![allow(unused_imports, dead_code)]
 use crate as css;
 use crate::{Parser, Printer, PrintErr, VendorPrefix};
 
 /// A value for the [display](https://drafts.csswg.org/css-display-3/#the-display-properties) property.
-#[derive(Clone, PartialEq, Eq, Hash, css::Parse, css::ToCss)]
+#[derive(Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(any(), derive(css::Parse, css::ToCss))] // blocked_on: DisplayPair::parse phf case-insensitive lookup
 pub enum Display {
     /// A display keyword.
     Keyword(DisplayKeyword),
@@ -57,6 +59,7 @@ pub struct DisplayPair {
     pub is_list_item: bool,
 }
 
+#[cfg(any())] // blocked_on: phf::Map<&[u8],T> requires const-eval-able values; expect_ident_matching takes &[u8]; Parser::try_parse single-arg
 impl DisplayPair {
     pub fn parse(input: &mut Parser) -> css::Result<Self> {
         let mut list_item = false;
@@ -216,6 +219,7 @@ pub enum DisplayInside {
     Ruby,
 }
 
+#[cfg(any())] // blocked_on: phf::Map<&[u8],DisplayInside> values not const-evaluable (VendorPrefix bitflags)
 impl DisplayInside {
     pub fn parse(input: &mut Parser) -> css::Result<Self> {
         // TODO(port): phf custom hasher — Zig used getASCIIICaseInsensitive; see note above.

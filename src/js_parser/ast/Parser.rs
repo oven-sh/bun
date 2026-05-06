@@ -1318,7 +1318,7 @@ impl<'a> Parser<'a> {
             //    export const foo = 123
             //    export * as ns from './foo'
             //
-            if true /* TODO(b2-blocked): feature_flag */ {
+            if false /* TODO(b2-blocked): feature_flag — Zig gates with comptime FeatureFlags.export_star_redirect (false) */ {
                 // If the file only contains "export * from './blah'
                 // we pretend the file never existed in the first place.
                 // the semantic difference here is in export default statements

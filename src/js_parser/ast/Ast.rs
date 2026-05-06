@@ -6,8 +6,12 @@ use crate::ast::{
     CharFreq, ExportsKind, Expr, InlinedEnumValue, LocRef, NamedExport, NamedImport, Part, Ref,
     Scope, SlotCounts, Symbol,
 };
-// `crate::runtime` is gated; use the round-B opaque stand-in.
-use crate::ast::runtime_stub as runtime;
+// PORT NOTE: round-G — `Ast.runtime_imports` now uses the real
+// `parser::Runtime::Imports` (25-slot helper-ref table) so `P::to_ast` can
+// move `p.runtime_imports` straight into the result, matching Zig
+// `.runtime_imports = p.runtime_imports`. The former `ast::runtime_stub`
+// zero-sized stand-in is kept only for back-compat re-export sites.
+use crate::parser::Runtime as runtime;
 
 use crate::ast::part::List as PartList;
 use crate::ast::symbol::List as SymbolList;

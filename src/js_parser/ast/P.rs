@@ -132,6 +132,34 @@ impl<'a> ImportRecordList<'a> {
             Self::Borrowed(v) => v.len(),
         }
     }
+
+    /// Zig: `ImportRecord.List.moveFromList(&p.import_records)` — transfer the
+    /// backing storage into a `BabyList<ImportRecord>` and leave `self` empty
+    /// (so the parser can be dropped without aliasing the records the linker /
+    /// printer now own).
+    ///
+    /// Round-G fix: previously `to_ast` reached through `items_mut()` and
+    /// wrapped the *live* BumpVec slice, leaving `self` non-empty; the BumpVec's
+    /// Drop then ran element destructors on records the returned `Ast` still
+    /// pointed at. This adapter restores Zig's move-and-zero semantics for both
+    /// the bump-backed and externally-borrowed variants.
+    pub fn move_to_baby_list(&mut self, allocator: &'a Bump) -> BabyList<ImportRecord> {
+        match core::mem::replace(self, Self::Owned(BumpVec::new_in(allocator))) {
+            Self::Owned(v) => {
+                // `into_bump_slice_mut` leaks the BumpVec into the arena (no
+                // element Drop) and yields the `'a`-lived storage.
+                let leaked: &'a mut [ImportRecord] = v.into_bump_slice_mut();
+                // SAFETY: arena storage outlives every consumer of the returned
+                // Ast; Borrowed origin → BabyList::drop is a no-op.
+                unsafe { BabyList::from_bump_slice(leaked) }
+            }
+            Self::Borrowed(v) => {
+                // Scan-only callers own the Vec; take it and hand ownership to
+                // the BabyList (Origin::Owned, freed by global allocator).
+                BabyList::move_from_list(core::mem::take(v))
+            }
+        }
+    }
 }
 
 pub enum NamedImportsType<'a> {
@@ -5792,7 +5820,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         if self.options.features.emit_decorator_metadata {
                             // TODO(port): full design:type / design:paramtypes / design:returntype
                             // metadata emission ported below in condensed form.
-                            #[cfg(any())] // blocked_on: emit_decorator_metadata_for_prop (gated below)
                             self.emit_decorator_metadata_for_prop(prop, &mut array, loc);
                         }
 
@@ -5977,7 +6004,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 if unsafe { (*class).ts_decorators.len } > 0 {
                     let mut array: Vec<Expr> = unsafe { &mut (*class).ts_decorators }.move_to_list_managed();
 
-                    #[cfg(any())] // blocked_on: serialize_metadata (gated below — TypeScript::Metadata variant set)
                     if self.options.features.emit_decorator_metadata {
                         if let Some(cf) = constructor_function {
                             // design:paramtypes
@@ -6219,10 +6245,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 let dot_identifier = unsafe { *current_expr };
                 let mut current_dot = dots;
 
+                let right0 = self.check_if_defined_helper(current_dot)?;
                 let mut maybe_defined_dots = self.new_expr(
                     E::Binary {
                         op: js_ast::OpCode::BinLogicalOr,
-                        right: self.check_if_defined_helper(current_dot)?,
+                        right: right0,
                         left: Expr::default(), // patched below
                     },
                     logger::Loc::EMPTY,
@@ -6234,12 +6261,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 current_expr = &mut maybe_defined_dots.data.e_binary_mut().unwrap().left;
 
                 while i < refs.len() - 2 {
+                    let right_n = self.check_if_defined_helper(current_dot)?;
                     // SAFETY: arena-owned pointer valid for 'a; no aliasing &mut outstanding.
                     unsafe {
                         *current_expr = self.new_expr(
                             E::Binary {
                                 op: js_ast::OpCode::BinLogicalOr,
-                                right: self.check_if_defined_helper(current_dot)?,
+                                right: right_n,
                                 left: Expr::default(),
                             },
                             logger::Loc::EMPTY,

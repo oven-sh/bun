@@ -17,6 +17,7 @@ pub use crate::flags::FunctionSet as FnFlagsSet;
 // the lib.rs file-doc and S.rs convention). 'ast/'bump threaded crate-wide in
 // Phase B in one pass.
 
+#[derive(Clone, Copy)]
 pub struct Decl {
     pub binding: BindingNodeIndex,
     pub value: Option<ExprNodeIndex>,

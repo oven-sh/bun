@@ -19,9 +19,12 @@ use crate::flags;
 use crate::lexer as js_lexer;
 use crate::parser::{
     is_eval_or_arguments, ExprIn, FnOnlyDataVisit, FnOrArrowDataVisit, ImportItemForNamespaceMap,
-    JsxT, PrependTempRefsOpts, Ref, RelocateVarsMode, RuntimeFeatures, ScopeOrder, SideEffects,
-    StmtsKind, StrictModeFeature, StringVoidMap, TempRef, VisitArgsOpts,
+    JsxT, PrependTempRefsOpts, Ref, RelocateVarsMode, RuntimeFeatures, ScopeOrder, StmtsKind,
+    StrictModeFeature, StringVoidMap, TempRef, VisitArgsOpts,
 };
+// PORT NOTE: `parser::SideEffects` is a stub enum without the assoc fns; the real
+// `should_keep_stmt_in_dead_control_flow` lives on `ast::side_effects::SideEffects`.
+use crate::ast::side_effects::SideEffects;
 use bun_collections::HashMap;
 use core::ptr::NonNull;
 use crate::StrictModeKind;
@@ -1426,10 +1429,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 continue;
                             }
                             if !local.is_export && !local.was_commonjs_export {
-                                let decls: &mut [Decl] = local.decls.slice_mut();
-                                let mut end: usize = 0;
                                 let mut any_decl_in_const_values =
                                     local.kind == LocalKind::KConst;
+                                let decls: &mut [Decl] = local.decls.slice_mut();
+                                let mut end: usize = 0;
                                 for idx in 0..decls.len() {
                                     if let BData::BIdentifier(id_ptr) = decls[idx].binding.data {
                                         // SAFETY: arena-owned `*mut B::Identifier` valid for 'a.
@@ -1599,10 +1602,17 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         let prev_stmt = &mut output[prev_idx];
                         if let StmtData::SLocal(mut prev_local) = prev_stmt.data {
                             if local.can_merge_with(&prev_local) {
-                                prev_local
-                                    .decls
-                                    .append_slice(local.decls.slice())
-                                    .expect("oom");
+                                // PORT NOTE: `BabyList::append_slice` requires `T: Clone`
+                                // but `G::Decl` lacks the derive (its fields are all
+                                // `Copy`). Per-element bitwise copy matches Zig
+                                // `appendSlice` semantics.
+                                for d in local.decls.slice() {
+                                    // SAFETY: Decl is field-wise Copy (Binding, Option<Expr>).
+                                    prev_local
+                                        .decls
+                                        .append(unsafe { core::ptr::read(d) })
+                                        .expect("oom");
+                                }
                                 continue;
                             }
                         }
@@ -3307,10 +3317,10 @@ impl<
                                 continue;
                             }
                             if !local.is_export && !local.was_commonjs_export {
-                                let decls: &mut [Decl] = local.decls.slice_mut();
-                                let mut end: usize = 0;
                                 let mut any_decl_in_const_values =
                                     local.kind == LocalKind::KConst;
+                                let decls: &mut [Decl] = local.decls.slice_mut();
+                                let mut end: usize = 0;
                                 for idx in 0..decls.len() {
                                     let decl = decls[idx];
                                     if let BindingData::BIdentifier(id) = &decl.binding.data {

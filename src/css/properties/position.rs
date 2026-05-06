@@ -1,5 +1,7 @@
+#![allow(unused_imports, dead_code)]
 use crate as css;
 use crate::{Parser, Printer, PrintErr, VendorPrefix, Token};
+use bun_string::strings;
 
 /// A value for the [position](https://www.w3.org/TR/css-position-3/#position-property) property.
 #[derive(Debug, Clone, PartialEq)]
@@ -26,14 +28,18 @@ enum PositionKeyword {
     WebkitSticky,
 }
 
-static KEYWORD_MAP: phf::Map<&'static [u8], PositionKeyword> = phf::phf_map! {
-    b"static" => PositionKeyword::Static,
-    b"relative" => PositionKeyword::Relative,
-    b"absolute" => PositionKeyword::Absolute,
-    b"fixed" => PositionKeyword::Fixed,
-    b"sticky" => PositionKeyword::Sticky,
-    b"-webkit-sticky" => PositionKeyword::WebkitSticky,
-};
+fn lookup_keyword(ident: &[u8]) -> Option<PositionKeyword> {
+    // ≤8 entries → plain match per PORTING.md (Zig: `bun.ComptimeEnumMap` +
+    // `getASCIIICaseInsensitive`).
+    use bun_string::strings::eql_case_insensitive_ascii_check_length as eq;
+    Some(if eq(ident, b"static") { PositionKeyword::Static }
+        else if eq(ident, b"relative") { PositionKeyword::Relative }
+        else if eq(ident, b"absolute") { PositionKeyword::Absolute }
+        else if eq(ident, b"fixed") { PositionKeyword::Fixed }
+        else if eq(ident, b"sticky") { PositionKeyword::Sticky }
+        else if eq(ident, b"-webkit-sticky") { PositionKeyword::WebkitSticky }
+        else { return None })
+}
 
 impl Position {
     pub fn parse(input: &mut Parser) -> css::Result<Position> {
@@ -43,7 +49,7 @@ impl Position {
             Ok(v) => v,
         };
 
-        let Some(keyword) = KEYWORD_MAP.get(ident).copied() else {
+        let Some(keyword) = lookup_keyword(ident) else {
             return Err(location.new_unexpected_token_error(Token::Ident(ident)));
         };
 

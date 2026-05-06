@@ -226,8 +226,7 @@ pub use crate::renamer;
 #[derive(Copy, Clone, Default)]
 pub struct KnownGlobal;
 pub use crate::ast::parser_entry::{Parser, Options as ParserOptions};
-#[derive(Copy, Clone, PartialEq, Eq, Default)]
-pub enum SideEffects { #[default] CouldHaveSideEffects, NoSideEffects }
+pub use crate::ast::side_effects::SideEffects;
 pub fn fold_string_addition(_l: Expr, _r: Expr) -> Option<Expr> { None /* round-E */ }
 pub use bun_paths::is_package_path;
 

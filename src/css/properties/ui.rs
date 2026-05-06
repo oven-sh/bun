@@ -1,4 +1,5 @@
-use crate::css_parser as css;
+#![allow(unused_imports, dead_code)]
+use crate as css;
 
 use css::{Printer, PrintErr, SmallList};
 
@@ -29,6 +30,7 @@ impl ColorScheme {
         a == b
     }
 
+    #[cfg(any())] // blocked_on: Parser::try_parse(expect_ident, ()) two-arg form; ParserError::InvalidValue path
     pub fn parse(input: &mut css::Parser) -> css::Result<ColorScheme> {
         let mut res = ColorScheme::empty();
         let ident = match input.expect_ident() {
@@ -91,8 +93,9 @@ impl ColorScheme {
         Ok(())
     }
 
-    pub fn deep_clone(&self, allocator: &Arena) -> Self {
-        css::implement_deep_clone(self, allocator)
+    pub fn deep_clone(&self, _allocator: &Arena) -> Self {
+        // PORT NOTE: bitflags is Copy.
+        *self
     }
 }
 
@@ -187,9 +190,11 @@ pub enum Appearance {
     NonStandard(*const [u8]),
 }
 
+#[derive(Default)]
 pub struct ColorSchemeHandler;
 
 impl ColorSchemeHandler {
+    #[cfg(any())] // blocked_on: Property::ColorScheme variant match + Property::deep_clone + PropertyHandlerContext::{allocator,add_dark_rule,targets}
     pub fn handle_property(
         &mut self,
         property: &css::Property,
@@ -250,9 +255,23 @@ impl ColorSchemeHandler {
         }
     }
 
-    pub fn finalize(&mut self, _: &mut css::DeclarationList, _: &mut css::PropertyHandlerContext) {}
+    // No-op stub bodies until the gated `handle_property` above lands; keeps
+    // `DeclarationHandler` compiling against the real type.
+    #[cfg(not(any()))]
+    #[inline]
+    pub fn handle_property(
+        &mut self,
+        _property: &crate::properties::Property,
+        _dest: &mut css::DeclarationList<'_>,
+        _context: &mut css::PropertyHandlerContext<'_>,
+    ) -> bool {
+        false
+    }
+
+    pub fn finalize(&mut self, _: &mut css::DeclarationList<'_>, _: &mut css::PropertyHandlerContext<'_>) {}
 }
 
+#[cfg(any())] // blocked_on: TokenList { v: BumpVec } shape + DashedIdent { v } field + CustomProperty fields
 fn define_var(allocator: &Arena, name: &'static [u8], value: css::Token) -> css::Property {
     // PORT NOTE: `name` is `&'static [u8]` because all call sites pass byte-string literals.
     css::Property::Custom(css::css_properties::custom::CustomProperty {

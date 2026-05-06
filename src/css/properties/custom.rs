@@ -1166,37 +1166,7 @@ pub enum TokenOrValue {
 }
 
 impl TokenOrValue {
-    #[cfg(any())] // blocked_on: generics::CssEql/CssHash blanket impls
-    pub fn eql(&self, rhs: &TokenOrValue) -> bool {
-        css::implement_eql(self, rhs)
-    }
-    #[cfg(any())]
-    pub fn hash(&self, hasher: &mut Wyhash) {
-        css::implement_hash(self, hasher)
-    }
-
-    #[cfg(any())]
-    // blocked_on: Url: Clone, UnresolvedColor/Variable/EnvironmentVariable/
-    // Function::deep_clone, AnimationName: Clone (stub already derives Clone).
-    pub fn deep_clone(&self) -> TokenOrValue {
-        match self {
-            TokenOrValue::Token(t) => TokenOrValue::Token(t.clone()),
-            TokenOrValue::Color(color) => TokenOrValue::Color(color.clone()),
-            TokenOrValue::UnresolvedColor(color) => {
-                TokenOrValue::UnresolvedColor(color.deep_clone())
-            }
-            TokenOrValue::Url(u) => TokenOrValue::Url(u.clone()),
-            TokenOrValue::Var(var) => TokenOrValue::Var(var.deep_clone()),
-            TokenOrValue::Env(env) => TokenOrValue::Env(env.deep_clone()),
-            TokenOrValue::Function(f) => TokenOrValue::Function(f.deep_clone()),
-            TokenOrValue::Length(v) => TokenOrValue::Length(*v),
-            TokenOrValue::Angle(v) => TokenOrValue::Angle(*v),
-            TokenOrValue::Time(v) => TokenOrValue::Time(*v),
-            TokenOrValue::Resolution(v) => TokenOrValue::Resolution(*v),
-            TokenOrValue::DashedIdent(v) => TokenOrValue::DashedIdent(*v),
-            TokenOrValue::AnimationName(v) => TokenOrValue::AnimationName(v.clone()),
-        }
-    }
+    // eql / hash / deep_clone — provided by `#[derive(CssEql, CssHash, DeepClone)]`.
 
     // deinit(): all arms only freed owned fields — handled by `Drop`.
 
@@ -1340,14 +1310,15 @@ impl UnparsedProperty {
         }
     }
 
-    #[cfg(any())] // blocked_on: generics::DeepClone for UnparsedProperty
-    pub fn deep_clone(&self) -> Self {
-        css::implement_deep_clone(self)
+    pub fn deep_clone(&self, bump: &Arena) -> Self {
+        UnparsedProperty {
+            property_id: self.property_id.deep_clone(bump),
+            value: self.value.deep_clone(bump),
+        }
     }
 
-    #[cfg(any())] // blocked_on: generics::CssEql
     pub fn eql(&self, rhs: &Self) -> bool {
-        css::implement_eql(self, rhs)
+        self.property_id.eql(&rhs.property_id) && self.value.eql(&rhs.value)
     }
 }
 
@@ -1373,19 +1344,20 @@ impl CustomProperty {
         Ok(CustomProperty { name, value })
     }
 
-    #[cfg(any())] // blocked_on: generics::DeepClone
-    pub fn deep_clone(&self) -> Self {
-        css::implement_deep_clone(self)
+    pub fn deep_clone(&self, bump: &Arena) -> Self {
+        CustomProperty {
+            name: self.name.deep_clone(bump),
+            value: self.value.deep_clone(bump),
+        }
     }
 
-    #[cfg(any())] // blocked_on: generics::CssEql
     pub fn eql(&self, rhs: &Self) -> bool {
-        css::implement_eql(self, rhs)
+        self.name.eql(&rhs.name) && self.value.eql(&rhs.value)
     }
 }
 
 /// A CSS custom property name.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, CssEql, CssHash, DeepClone)]
 pub enum CustomPropertyName {
     /// An author-defined CSS custom property.
     Custom(DashedIdent),
@@ -1454,15 +1426,7 @@ impl CustomPropertyName {
         unsafe { &*self.as_ptr() }
     }
 
-    #[cfg(any())] // blocked_on: generics::DeepClone
-    pub fn deep_clone(&self) -> Self {
-        css::implement_deep_clone(self)
-    }
-
-    #[cfg(any())] // blocked_on: generics::CssEql (use `PartialEq` above instead)
-    pub fn eql(&self, rhs: &Self) -> bool {
-        css::implement_eql(self, rhs)
-    }
+    // deep_clone / eql — provided by `#[derive(DeepClone, CssEql)]`.
 }
 
 pub fn try_parse_color_token(

@@ -41,7 +41,7 @@ mod bun_test {
         Basic as BasicResult, ExpectAssertions, PendingIs as PendingMode,
     };
     /// Zig nests `FirstLast` under `BunTestRoot`; the Rust port hoisted it to
-    /// module scope. Alias here so `bun_test::BunTestRoot::FirstLast` paths in
+    /// module scope. Alias here so `bun_test::FirstLast` paths in
     /// the body resolve without a 2k-line rewrite. Phase B may collapse the
     /// alias back into an inherent associated type once the body is normalised.
     pub use crate::test_runner::bun_test::FirstLast as BunTestRootFirstLast;
@@ -1634,7 +1634,7 @@ impl TestCommand {
                     counts: &mut snapshot_counts,
                     inline_snapshots_to_write: &mut inline_snapshots_to_write,
                 },
-                bun_test_root: bun_test::BunTestRoot::new(),
+                bun_test_root: bun_test::BunTestRoot::init(),
                 ..Default::default()
             },
             last_dot: 0,
@@ -2294,7 +2294,7 @@ impl TestCommand {
 
                 if files.len() > 1 {
                     for (i, file_name) in files[0..files.len() - 1].iter().enumerate() {
-                        if let Err(err) = TestCommand::run(reporter, vm, file_name.slice(), bun_test::BunTestRoot::FirstLast {
+                        if let Err(err) = TestCommand::run(reporter, vm, file_name.slice(), bun_test::FirstLast {
                             first: isolate || i == 0,
                             last: isolate,
                         }) {
@@ -2309,7 +2309,7 @@ impl TestCommand {
                     }
                 }
 
-                if let Err(err) = TestCommand::run(reporter, vm, files[files.len() - 1].slice(), bun_test::BunTestRoot::FirstLast {
+                if let Err(err) = TestCommand::run(reporter, vm, files[files.len() - 1].slice(), bun_test::FirstLast {
                     first: isolate || files.len() == 1,
                     last: true,
                 }) {
@@ -2333,7 +2333,7 @@ impl TestCommand {
         reporter: &mut CommandLineReporter,
         vm: &mut VirtualMachine,
         file_name: &[u8],
-        first_last: bun_test::BunTestRoot::FirstLast,
+        first_last: bun_test::FirstLast,
     ) -> Result<(), bun_core::Error> {
         let _defer = scopeguard::guard((), |_| {
             js_ast::Expr::Data::Store::reset();

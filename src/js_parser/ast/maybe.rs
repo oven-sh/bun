@@ -405,10 +405,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         {
                             // inline module.id
                             p.ignore_usage(p.module_ref);
-                            // TODO(port): Zig `p.source.path.pretty`; logger::fs::Path is the
-                            // Phase-A stub (text only). Swap to `.pretty` once bun_paths' full
-                            // Path lands.
-                            return Some(p.new_expr(E::EString::init(p.source.path.text), name_loc));
+                            return Some(p.new_expr(E::EString::init(p.source.path.pretty), name_loc));
                         } else if p.options.bundle
                             && name == b"filename"
                             && identifier_opts.assign_target() == js_ast::AssignTarget::None
@@ -424,8 +421,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         {
                             // inline module.path
                             p.ignore_usage(p.module_ref);
-                            // TODO(port): Zig `p.source.path.pretty`; see above.
-                            return Some(p.new_expr(E::EString::init(p.source.path.text), name_loc));
+                            return Some(p.new_expr(E::EString::init(p.source.path.pretty), name_loc));
                         }
                     }
 

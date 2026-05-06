@@ -291,6 +291,55 @@ impl CssColor {
 
     #[inline]
     pub fn eql(&self, other: &CssColor) -> bool { self == other }
+
+    pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash11) {
+        // PORT NOTE: Zig `css.implementHash` — variant-tag prefix + payload bytes.
+        // The full impl lives in `gated_full_impl`; this stub mirrors its shape
+        // for the un-gated variant set so `#[derive(CssHash)]` on TokenOrValue
+        // (which carries a `CssColor` arm) resolves.
+        match self {
+            CssColor::CurrentColor => hasher.update(&0u32.to_ne_bytes()),
+            CssColor::Rgba(rgba) => {
+                hasher.update(&1u32.to_ne_bytes());
+                hasher.update(&[rgba.red, rgba.green, rgba.blue, rgba.alpha]);
+            }
+            CssColor::Lab(lab) => {
+                hasher.update(&2u32.to_ne_bytes());
+                // SAFETY: LABColor is `repr(Rust)` POD (4×f32 + tag); hashing the
+                // raw bytes matches Zig's `bun.writeAnyToHasher`.
+                hasher.update(unsafe {
+                    core::slice::from_raw_parts(
+                        (&**lab) as *const _ as *const u8,
+                        core::mem::size_of::<LABColor>(),
+                    )
+                });
+            }
+            CssColor::Predefined(p) => {
+                hasher.update(&3u32.to_ne_bytes());
+                hasher.update(unsafe {
+                    core::slice::from_raw_parts(
+                        (&**p) as *const _ as *const u8,
+                        core::mem::size_of::<PredefinedColor>(),
+                    )
+                });
+            }
+            CssColor::Float(fl) => {
+                hasher.update(&4u32.to_ne_bytes());
+                hasher.update(unsafe {
+                    core::slice::from_raw_parts(
+                        (&**fl) as *const _ as *const u8,
+                        core::mem::size_of::<FloatColor>(),
+                    )
+                });
+            }
+            CssColor::LightDark { light, dark } => {
+                hasher.update(&5u32.to_ne_bytes());
+                light.hash(hasher);
+                dark.hash(hasher);
+            }
+            CssColor::System(_) => hasher.update(&6u32.to_ne_bytes()),
+        }
+    }
 }
 
 // ──────────────────────────── ColorFallbackKind ──────────────────────────

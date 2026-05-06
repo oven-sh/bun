@@ -1106,17 +1106,692 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         stmts: &mut ListManaged<'a, Stmt>,
         kind: StmtsKind,
     ) -> Result<(), bun_core::Error> {
-        // blocked_on: visitStmt — `visit_and_append_stmt` body + the heavy P helpers it calls
-        //   (substitute_single_use_symbol_in_stmt, should_lower_using_declarations,
-        //   maybe_relocate_vars_to_top_level, SideEffects::should_keep_stmt_in_dead_control_flow,
-        //   scopes_in_order_for_enum) are mid-port. Full body preserved in `_draft::visit_stmts`.
-        let _ = (stmts, kind);
+        // Zig: `if (only_scan_imports_and_do_not_visit) @compileError(...)`
         debug_assert!(
             !SCAN_ONLY,
             "only_scan_imports_and_do_not_visit must not run this."
         );
-        todo!("b2-ast-E: visit_stmts — blocked on visitStmt.rs")
+
+        let p = self;
+
+        #[cfg(debug_assertions)]
+        let initial_scope: *mut js_ast::Scope = p.current_scope;
+
+        {
+            // Save the current control-flow liveness. This represents if we are
+            // currently inside an "if (false) { ... }" block.
+            let old_is_control_flow_dead = p.is_control_flow_dead;
+            // PORT NOTE: Zig `defer` — manually restored at block end. The error
+            // path (`?`) skips restore; acceptable because callers `.expect()` or
+            // propagate fatally (parse abort) — no resumption after error.
+
+            let mut before: ListManaged<'a, Stmt> = ListManaged::new_in(p.allocator);
+            let mut after: ListManaged<'a, Stmt> = ListManaged::new_in(p.allocator);
+
+            // Preprocess TypeScript enums to improve code generation. Otherwise
+            // uses of an enum before that enum has been declared won't be inlined:
+            //
+            //   console.log(Foo.FOO) // We want "FOO" to be inlined here
+            //   const enum Foo { FOO = 0 }
+            //
+            // The TypeScript compiler itself contains code with this pattern, so
+            // it's important to implement this optimization.
+            let mut preprocessed_enums: ListManaged<'a, &'a [Stmt]> =
+                ListManaged::new_in(p.allocator);
+            if p.scopes_in_order_for_enum.count() > 0 {
+                for stmt in stmts.iter_mut() {
+                    if matches!(stmt.data, StmtData::SEnum(_)) {
+                        // PORT NOTE: `scope_order_to_visit: &'a mut [ScopeOrder<'a>]` —
+                        // save/restore via raw ptr+len (Zig used a slice copy).
+                        let old_ptr = p.scope_order_to_visit.as_mut_ptr();
+                        let old_len = p.scope_order_to_visit.len();
+
+                        // SAFETY: arena-owned `&'a mut [ScopeOrder<'a>]`; we reborrow
+                        // the same buffer the map stored at parse time. `Loc` lacks
+                        // `Hash` (logger crate) so `ArrayHashMap::get` is unavailable;
+                        // linear scan over `keys()`/`values()` (enums are rare).
+                        // TODO(port): switch to `.get(&stmt.loc)` once `Loc: Hash`.
+                        p.scope_order_to_visit = unsafe {
+                            scopes_for_enum_at(&p.scopes_in_order_for_enum, stmt.loc)
+                        };
+
+                        let mut temp = ListManaged::new_in(p.allocator);
+                        let res = p.visit_and_append_stmt(&mut temp, stmt);
+                        // SAFETY: `old_ptr/old_len` describe the same arena slice we
+                        // saved above; `defer p.scope_order_to_visit = old_scopes_in_order`.
+                        p.scope_order_to_visit =
+                            unsafe { core::slice::from_raw_parts_mut(old_ptr, old_len) };
+                        res?;
+                        preprocessed_enums.push(temp.into_bump_slice());
+                    }
+                }
+            }
+
+            if core::ptr::eq(p.current_scope, p.module_scope) {
+                // TODO(port): `MacroState::prepend_stmts` is `&'a mut Vec<Stmt>` but
+                // `before` is a `BumpVec<'a, Stmt>` — type-shape divergence in
+                // parser.rs. Zig: `p.macro.prepend_stmts = &before;`. The macro
+                // expansion path is gated; this BACKREF is restored when MacroState
+                // switches to `BumpVec` / `NonNull`.
+                let _ = &mut before;
+            }
+
+            // visit all statements first
+            let mut visited: ListManaged<'a, Stmt> =
+                ListManaged::with_capacity_in(stmts.len(), p.allocator);
+
+            let prev_nearest_stmt_list = p.nearest_stmt_list;
+            // PORT NOTE: BACKREF — `before` outlives this block; raw NonNull avoids
+            // the `&'a mut` borrow conflict.
+            p.nearest_stmt_list = Some(NonNull::from(&mut before));
+
+            let mut preprocessed_enum_i: usize = 0;
+
+            for stmt in stmts.iter_mut() {
+                let list: &mut ListManaged<'a, Stmt> = 'list_getter: {
+                    match stmt.data {
+                        StmtData::SExportEquals(_) => {
+                            // TypeScript "export = value;" becomes "module.exports = value;". This
+                            // must happen at the end after everything is parsed because TypeScript
+                            // moves this statement to the end when it generates code.
+                            break 'list_getter &mut after;
+                        }
+                        StmtData::SFunction(data) => {
+                            // Manually hoist block-level function declarations to preserve semantics.
+                            // This is only done for function declarations that are not generators
+                            // or async functions, since this is a backwards-compatibility hack from
+                            // Annex B of the JavaScript standard.
+                            // SAFETY: current_scope is a valid arena ptr for the parse.
+                            if !unsafe { &*p.current_scope }.kind_stops_hoisting()
+                                && p.symbols
+                                    [data.func.name.unwrap().ref_.unwrap().inner_index() as usize]
+                                .kind
+                                    == SymbolKind::HoistedFunction
+                            {
+                                break 'list_getter &mut before;
+                            }
+                        }
+                        StmtData::SEnum(_) => {
+                            let enum_stmts = preprocessed_enums[preprocessed_enum_i];
+                            preprocessed_enum_i += 1;
+                            visited.extend_from_slice(enum_stmts);
+
+                            // SAFETY: see scopes_for_enum_at note above.
+                            let enum_scope_count = unsafe {
+                                scopes_for_enum_at(&p.scopes_in_order_for_enum, stmt.loc).len()
+                            };
+                            // Zig: `p.scope_order_to_visit = p.scope_order_to_visit[enum_scope_count..]`
+                            let taken = core::mem::take(&mut p.scope_order_to_visit);
+                            p.scope_order_to_visit = &mut taken[enum_scope_count..];
+                            continue;
+                        }
+                        _ => {}
+                    }
+                    break 'list_getter &mut visited;
+                };
+                p.visit_and_append_stmt(list, stmt)?;
+            }
+
+            // Transform block-level function declarations into variable declarations
+            if before.len() > 0 {
+                let mut let_decls: ListManaged<'a, G::Decl> = ListManaged::new_in(p.allocator);
+                let mut var_decls: ListManaged<'a, G::Decl> = ListManaged::new_in(p.allocator);
+                let mut non_fn_stmts: ListManaged<'a, Stmt> = ListManaged::new_in(p.allocator);
+                let mut fn_stmts: HashMap<Ref, u32> = HashMap::default();
+
+                for stmt in before.iter().copied() {
+                    match stmt.data {
+                        StmtData::SFunction(mut data) => {
+                            // This transformation of function declarations in nested scopes is
+                            // intended to preserve the hoisting semantics of the original code. In
+                            // JavaScript, function hoisting works differently in strict mode vs.
+                            // sloppy mode code. We want the code we generate to use the semantics of
+                            // the original environment, not the generated environment. However, if
+                            // direct "eval" is present then it's not possible to preserve the
+                            // semantics because we need two identifiers to do that and direct "eval"
+                            // means neither identifier can be renamed to something else. So in that
+                            // case we give up and do not preserve the semantics of the original code.
+                            let name = data.func.name.unwrap();
+                            let name_ref = name.ref_.unwrap();
+                            // SAFETY: current_scope is a valid arena ptr for the parse.
+                            if unsafe { &*p.current_scope }.contains_direct_eval {
+                                if let Some(hoisted_ref) =
+                                    p.hoisted_ref_for_sloppy_mode_block_fn.get(&name_ref)
+                                {
+                                    // Merge the two identifiers back into a single one
+                                    p.symbols[hoisted_ref.inner_index() as usize].link = name_ref;
+                                }
+                                non_fn_stmts.push(stmt);
+                                continue;
+                            }
+
+                            let gpe = fn_stmts.get_or_put(name_ref).expect("oom");
+                            let mut index = *gpe.value_ptr;
+                            if !gpe.found_existing {
+                                index = u32::try_from(let_decls.len()).unwrap();
+                                *gpe.value_ptr = index;
+                                let_decls.push(G::Decl {
+                                    binding: p.b(B::Identifier { r#ref: name_ref }, name.loc),
+                                    value: None,
+                                });
+
+                                // Also write the function to the hoisted sibling symbol if applicable
+                                if let Some(&hoisted_ref) =
+                                    p.hoisted_ref_for_sloppy_mode_block_fn.get(&name_ref)
+                                {
+                                    p.record_usage(name_ref);
+                                    let value = p.new_expr(
+                                        E::Identifier { ref_: name_ref, ..Default::default() },
+                                        name.loc,
+                                    );
+                                    var_decls.push(G::Decl {
+                                        binding: p
+                                            .b(B::Identifier { r#ref: hoisted_ref }, name.loc),
+                                        value: Some(value),
+                                    });
+                                }
+                            }
+
+                            // The last function statement for a given symbol wins
+                            data.func.name = None;
+                            // SAFETY: `G::Fn`'s fields are POD (`*mut [T]`, ints, flags) but
+                            // lacks `derive(Copy)`; bitwise read matches Zig struct copy.
+                            let func = unsafe { core::ptr::read(&data.func) };
+                            let_decls[index as usize].value =
+                                Some(p.new_expr(E::Function { func }, stmt.loc));
+                        }
+                        _ => {
+                            non_fn_stmts.push(stmt);
+                        }
+                    }
+                }
+                before.clear();
+
+                before.reserve(
+                    usize::from(let_decls.len() > 0)
+                        + usize::from(var_decls.len() > 0)
+                        + non_fn_stmts.len(),
+                );
+
+                if let_decls.len() > 0 {
+                    // SAFETY: BumpVec → BabyList. `into_bump_slice_mut` leaks into the arena;
+                    // BabyList::Borrowed origin makes Drop a no-op.
+                    let decls =
+                        unsafe { G::DeclList::from_bump_slice(let_decls.into_bump_slice_mut()) };
+                    let loc = decls.at(0).value.unwrap().loc;
+                    before.push(p.s(
+                        S::Local { kind: LocalKind::KLet, decls, ..Default::default() },
+                        loc,
+                    ));
+                }
+
+                if var_decls.len() > 0 {
+                    let relocated = p
+                        .maybe_relocate_vars_to_top_level(&var_decls, RelocateVarsMode::Normal);
+                    if relocated.ok {
+                        if let Some(new) = relocated.stmt {
+                            before.push(new);
+                        }
+                    } else {
+                        // SAFETY: see let_decls note above.
+                        let decls = unsafe {
+                            G::DeclList::from_bump_slice(var_decls.into_bump_slice_mut())
+                        };
+                        let loc = decls.at(0).value.unwrap().loc;
+                        before.push(p.s(
+                            S::Local { kind: LocalKind::KVar, decls, ..Default::default() },
+                            loc,
+                        ));
+                    }
+                }
+
+                before.extend_from_slice(&non_fn_stmts);
+            }
+
+            let mut visited_count = visited.len();
+            if p.is_control_flow_dead && p.options.features.dead_code_elimination {
+                let mut end: usize = 0;
+                for idx in 0..visited.len() {
+                    let item = visited[idx];
+                    if !SideEffects::should_keep_stmt_in_dead_control_flow(item, p.allocator) {
+                        continue;
+                    }
+
+                    visited[end] = item;
+                    end += 1;
+                }
+                visited_count = end;
+            }
+
+            // PORT NOTE: reshaped — Zig `resize`+slice-walk; `Stmt: Copy` so the
+            // simpler clear+extend is equivalent and avoids a `Stmt::default()`
+            // filler value.
+            stmts.clear();
+            stmts.reserve(visited_count + before.len() + after.len());
+            stmts.extend_from_slice(&before);
+            stmts.extend_from_slice(&visited[..visited_count]);
+            stmts.extend_from_slice(&after);
+
+            // manual restore for the block-level `defer`s
+            p.nearest_stmt_list = prev_nearest_stmt_list;
+            p.is_control_flow_dead = old_is_control_flow_dead;
+        }
+
+        // Lower using declarations
+        if kind != StmtsKind::SwitchStmt && p.should_lower_using_declarations(stmts.as_slice()) {
+            let mut ctx = LowerUsingDeclarationsContext::init(p)?;
+            ctx.scan_stmts(p, stmts.as_mut_slice());
+            // SAFETY: BumpVec buffer lives in the 'a arena; `finalize` reads `Copy`
+            // elements and the old buffer is leaked into the arena (no double free).
+            let raw =
+                unsafe { core::slice::from_raw_parts_mut(stmts.as_mut_ptr(), stmts.len()) };
+            // SAFETY: current_scope is a valid arena ptr for the parse.
+            let parent_is_none = unsafe { &*p.current_scope }.parent.is_none();
+            *stmts = ctx.finalize(p, raw, parent_is_none);
+        }
+
+        #[cfg(debug_assertions)]
+        // if this fails it means that scope pushing/popping is not balanced
+        debug_assert!(core::ptr::eq(p.current_scope, initial_scope));
+
+        if !p.options.features.minify_syntax || !p.options.features.dead_code_elimination {
+            return Ok(());
+        }
+
+        // SAFETY: current_scope is a valid arena ptr for the parse.
+        if unsafe { &*p.current_scope }.parent.is_some()
+            && !unsafe { &*p.current_scope }.contains_direct_eval
+        {
+            // Remove inlined constants now that we know whether any of these statements
+            // contained a direct eval() or not. This can't be done earlier when we
+            // encounter the constant because we haven't encountered the eval() yet.
+            // Inlined constants are not removed if they are in a top-level scope or
+            // if they are exported (which could be in a nested TypeScript namespace).
+            if p.const_values.count() > 0 {
+                let items: &mut [Stmt] = stmts.as_mut_slice();
+                for stmt in items.iter_mut() {
+                    match stmt.data {
+                        StmtData::SEmpty(_)
+                        | StmtData::SComment(_)
+                        | StmtData::SDirective(_)
+                        | StmtData::SDebugger(_)
+                        | StmtData::STypeScript(_) => continue,
+                        StmtData::SLocal(mut local) => {
+                            // "using" / "await using" declarations have disposal
+                            // side-effects on scope exit. Their refs can end up in
+                            // `const_values` via the macro path in `visitDecl`
+                            // (`could_be_macro`), so skip them here to avoid
+                            // silently dropping the declaration.
+                            if local.kind.is_using() {
+                                continue;
+                            }
+                            if !local.is_export && !local.was_commonjs_export {
+                                let decls: &mut [Decl] = local.decls.slice_mut();
+                                let mut end: usize = 0;
+                                let mut any_decl_in_const_values =
+                                    local.kind == LocalKind::KConst;
+                                for idx in 0..decls.len() {
+                                    if let BData::BIdentifier(id_ptr) = decls[idx].binding.data {
+                                        // SAFETY: arena-owned `*mut B::Identifier` valid for 'a.
+                                        let id_ref = unsafe { (*id_ptr).r#ref };
+                                        if p.const_values.contains(&id_ref) {
+                                            any_decl_in_const_values = true;
+                                            let symbol =
+                                                &p.symbols[id_ref.inner_index() as usize];
+                                            if symbol.use_count_estimate == 0 {
+                                                // Skip declarations that are constants with zero usage
+                                                continue;
+                                            }
+                                        }
+                                    }
+                                    // PORT NOTE: `Decl` is field-wise `Copy` but lacks the
+                                    // derive; `swap` compacts in place (idx >= end always).
+                                    decls.swap(end, idx);
+                                    end += 1;
+                                }
+                                local.decls.len = end as u32;
+                                if any_decl_in_const_values {
+                                    if end == 0 {
+                                        *stmt = stmt.to_empty();
+                                    }
+                                    continue;
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+
+                    // Break after processing relevant statements
+                    break;
+                }
+            }
+        }
+
+        let mut is_control_flow_dead = false;
+
+        let mut output: ListManaged<'a, Stmt> =
+            ListManaged::with_capacity_in(stmts.len(), p.allocator);
+
+        let dead_code_elimination = p.options.features.dead_code_elimination;
+        for stmt in stmts.iter().copied() {
+            if is_control_flow_dead
+                && dead_code_elimination
+                && !SideEffects::should_keep_stmt_in_dead_control_flow(stmt, p.allocator)
+            {
+                // Strip unnecessary statements if the control flow is dead here
+                continue;
+            }
+
+            // Inline single-use variable declarations where possible:
+            //
+            //   // Before
+            //   let x = fn();
+            //   return x.y();
+            //
+            //   // After
+            //   return fn().y();
+            //
+            // The declaration must not be exported. We can't just check for the
+            // "export" keyword because something might do "export {id};" later on.
+            // Instead we just ignore all top-level declarations for now. That means
+            // this optimization currently only applies in nested scopes.
+            //
+            // Ignore declarations if the scope is shadowed by a direct "eval" call.
+            // The eval'd code may indirectly reference this symbol and the actual
+            // use count may be greater than 1.
+            if !core::ptr::eq(p.current_scope, p.module_scope)
+                && !unsafe { &*p.current_scope }.contains_direct_eval
+            {
+                // Keep inlining variables until a failure or until there are none left.
+                // That handles cases like this:
+                //
+                //   // Before
+                //   let x = fn();
+                //   let y = x.prop;
+                //   return y;
+                //
+                //   // After
+                //   return fn().prop;
+                //
+                'inner: while output.len() > 0 {
+                    // Ignore "var" declarations since those have function-level scope and
+                    // we may not have visited all of their uses yet by this point. We
+                    // should have visited all the uses of "let" and "const" declarations
+                    // by now since they are scoped to this block which we just finished
+                    // visiting.
+                    let prev_idx = output.len() - 1;
+                    // PORT NOTE: reshaped for borrowck — Zig held `&mut output[..]`
+                    // across `p.substitute...` (which borrows `&mut p`). We read the
+                    // `StoreRef` (Copy) first, then re-borrow `output` only when
+                    // truncating.
+                    let StmtData::SLocal(mut local) = output[prev_idx].data else {
+                        break;
+                    };
+                    // "using" / "await using" declarations have disposal
+                    // side-effects on scope exit, so they must not be
+                    // removed by inlining their initializer into the use.
+                    if local.decls.len == 0
+                        || local.kind == LocalKind::KVar
+                        || local.kind.is_using()
+                        || local.is_export
+                    {
+                        break;
+                    }
+
+                    // The variable must be initialized, since we will be substituting
+                    // the value into the usage.
+                    let last_idx = (local.decls.len - 1) as usize;
+                    let last: &mut Decl = &mut local.decls.slice_mut()[last_idx];
+                    let Some(replacement) = last.value else { break };
+
+                    // The binding must be an identifier that is only used once.
+                    // Ignore destructuring bindings since that's not the simple case.
+                    // Destructuring bindings could potentially execute side-effecting
+                    // code which would invalidate reordering.
+                    let BData::BIdentifier(ident_ptr) = last.binding.data else { break };
+                    // SAFETY: arena-owned `*mut B::Identifier` valid for 'a.
+                    let id = unsafe { (*ident_ptr).r#ref };
+
+                    let symbol: &Symbol = &p.symbols[id.inner_index() as usize];
+
+                    // Try to substitute the identifier with the initializer. This will
+                    // fail if something with side effects is in between the declaration
+                    // and the usage.
+                    if symbol.use_count_estimate == 1
+                        && p.substitute_single_use_symbol_in_stmt(stmt, id, replacement)
+                    {
+                        match local.decls.len {
+                            1 => {
+                                local.decls.len = 0;
+                                let new_len = output.len() - 1;
+                                output.truncate(new_len);
+                                continue 'inner;
+                            }
+                            _ => {
+                                local.decls.len -= 1;
+                                continue 'inner;
+                            }
+                        }
+                    }
+                    break;
+                }
+            }
+
+            // don't merge super calls to ensure they are called before "this" is accessed
+            if stmt.is_super_call() {
+                output.push(stmt);
+                continue;
+            }
+
+            // The following calls to `joinWithComma` are only enabled during bundling. We do this
+            // to avoid changing line numbers too much for source maps
+
+            match stmt.data {
+                StmtData::SEmpty(_) => continue,
+
+                // skip directives for now
+                StmtData::SDirective(_) => continue,
+
+                StmtData::SLocal(local) => {
+                    // Merge adjacent local statements
+                    if output.len() > 0 {
+                        let prev_idx = output.len() - 1;
+                        let prev_stmt = &mut output[prev_idx];
+                        if let StmtData::SLocal(mut prev_local) = prev_stmt.data {
+                            if local.can_merge_with(&prev_local) {
+                                prev_local
+                                    .decls
+                                    .append_slice(local.decls.slice())
+                                    .expect("oom");
+                                continue;
+                            }
+                        }
+                    }
+                }
+
+                StmtData::SExpr(s_expr) => {
+                    // Merge adjacent expression statements
+                    if output.len() > 0 {
+                        let prev_idx = output.len() - 1;
+                        let prev_stmt = &mut output[prev_idx];
+                        if let StmtData::SExpr(mut prev_expr) = prev_stmt.data {
+                            if !prev_stmt.is_super_call()
+                                && p.options.runtime_merge_adjacent_expression_statements()
+                            {
+                                prev_expr.does_not_affect_tree_shaking = prev_expr
+                                    .does_not_affect_tree_shaking
+                                    && s_expr.does_not_affect_tree_shaking;
+                                prev_expr.value =
+                                    Expr::join_with_comma(prev_expr.value, s_expr.value);
+                                continue;
+                            }
+                        } else if let StmtData::SLocal(prev_local) = prev_stmt.data {
+                            //
+                            // Input:
+                            //      var f;
+                            //      f = 123;
+                            // Output:
+                            //      var f = 123;
+                            //
+                            // This doesn't handle every case. Only the very simple one.
+                            if let ExprData::EBinary(bin_assign) = s_expr.value.data {
+                                if prev_local.decls.len == 1
+                                    && bin_assign.op == OpCode::BinAssign
+                                    // we can only do this with var because var is hoisted
+                                    // the statement we are merging into may use the statement before its defined.
+                                    && prev_local.kind == LocalKind::KVar
+                                {
+                                    if let ExprData::EIdentifier(left_id) = bin_assign.left.data {
+                                        // PORT NOTE: `prev_local` is a `StoreRef` (Copy) so
+                                        // re-slicing here writes through to the arena slot.
+                                        let mut prev_local = prev_local;
+                                        let decl = &mut prev_local.decls.slice_mut()[0];
+                                        if let BData::BIdentifier(bid_ptr) = decl.binding.data {
+                                            // SAFETY: arena-owned `*mut B::Identifier`.
+                                            let bid_ref = unsafe { (*bid_ptr).r#ref };
+                                            if bid_ref.eql(left_id.ref_)
+                                                // If the value was assigned, we shouldn't merge it incase it was used in the current statement
+                                                // https://github.com/oven-sh/bun/issues/2948
+                                                // We don't have a more granular way to check symbol usage so this is the best we can do
+                                                && decl.value.is_none()
+                                            {
+                                                decl.value = Some(bin_assign.right);
+                                                p.ignore_usage(left_id.ref_);
+                                                continue;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                StmtData::SSwitch(mut s_switch) => {
+                    // Absorb a previous expression statement
+                    if output.len() > 0
+                        && p.options.runtime_merge_adjacent_expression_statements()
+                    {
+                        let prev_idx = output.len() - 1;
+                        let prev_stmt = output[prev_idx];
+                        if let StmtData::SExpr(prev_expr) = prev_stmt.data {
+                            if !prev_stmt.is_super_call() {
+                                s_switch.test_ =
+                                    Expr::join_with_comma(prev_expr.value, s_switch.test_);
+                                output.truncate(prev_idx);
+                            }
+                        }
+                    }
+                }
+                StmtData::SIf(mut s_if) => {
+                    // Absorb a previous expression statement
+                    if output.len() > 0
+                        && p.options.runtime_merge_adjacent_expression_statements()
+                    {
+                        let prev_idx = output.len() - 1;
+                        let prev_stmt = output[prev_idx];
+                        if let StmtData::SExpr(prev_expr) = prev_stmt.data {
+                            if !prev_stmt.is_super_call() {
+                                s_if.test_ =
+                                    Expr::join_with_comma(prev_expr.value, s_if.test_);
+                                output.truncate(prev_idx);
+                            }
+                        }
+                    }
+
+                    // TODO: optimize jump
+                }
+
+                StmtData::SReturn(mut ret) => {
+                    // Merge return statements with the previous expression statement
+                    if output.len() > 0
+                        && ret.value.is_some()
+                        && p.options.runtime_merge_adjacent_expression_statements()
+                    {
+                        let prev_idx = output.len() - 1;
+                        let prev_stmt = output[prev_idx];
+                        if let StmtData::SExpr(prev_expr) = prev_stmt.data {
+                            if !prev_stmt.is_super_call() {
+                                ret.value = Some(Expr::join_with_comma(
+                                    prev_expr.value,
+                                    ret.value.unwrap(),
+                                ));
+                                output[prev_idx] = stmt;
+                                continue;
+                            }
+                        }
+                    }
+
+                    is_control_flow_dead = true;
+                }
+
+                StmtData::SBreak(_) | StmtData::SContinue(_) => {
+                    is_control_flow_dead = true;
+                }
+
+                StmtData::SThrow(s_throw) => {
+                    // Merge throw statements with the previous expression statement
+                    if output.len() > 0
+                        && p.options.runtime_merge_adjacent_expression_statements()
+                    {
+                        let prev_idx = output.len() - 1;
+                        let prev_stmt = output[prev_idx];
+                        if let StmtData::SExpr(prev_expr) = prev_stmt.data {
+                            if !prev_stmt.is_super_call() {
+                                output[prev_idx] = p.s(
+                                    S::Throw {
+                                        value: Expr::join_with_comma(
+                                            prev_expr.value,
+                                            s_throw.value,
+                                        ),
+                                    },
+                                    stmt.loc,
+                                );
+                                continue;
+                            }
+                        }
+                    }
+
+                    is_control_flow_dead = true;
+                }
+
+                _ => {}
+            }
+
+            output.push(stmt);
+        }
+
+        // stmts.deinit(); — Drop handles freeing the old buffer (BumpVec is arena-backed).
+        *stmts = output;
+        Ok(())
     }
+}
+
+/// `p.scopes_in_order_for_enum.get(loc)` workaround: `logger::Loc` lacks
+/// `Hash`, so `ArrayHashMap::get` (gated on `ArrayHashContext<K>`) is
+/// unavailable. Linear scan over the (small) parallel key/value slices.
+///
+/// # Safety
+/// Reborrows the arena-owned `&'a mut [ScopeOrder<'a>]` stored in the map via
+/// raw ptr — same pattern as `P::next_scope_in_order_for_visit_pass` (P.rs:2449).
+/// The slice was leaked into the bump arena at parse time and outlives the map.
+// TODO(port): replace with `.get(&loc).unwrap()` once `Loc: Hash` lands in
+// bun_logger (cross-crate; out of scope here).
+unsafe fn scopes_for_enum_at<'a>(
+    map: &bun_collections::ArrayHashMap<logger::Loc, &'a mut [ScopeOrder<'a>]>,
+    loc: logger::Loc,
+) -> &'a mut [ScopeOrder<'a>] {
+    let keys = map.keys();
+    let values = map.values();
+    for i in 0..keys.len() {
+        if keys[i] == loc {
+            let s: &&'a mut [ScopeOrder<'a>] = &values[i];
+            // SAFETY: see fn doc.
+            return unsafe {
+                core::slice::from_raw_parts_mut(s.as_ptr() as *mut ScopeOrder<'a>, s.len())
+            };
+        }
+    }
+    unreachable!("scopes_in_order_for_enum miss for enum stmt loc");
 }
 
 pub fn fn_body_contains_use_strict(body: &[Stmt]) -> Option<logger::Loc> {

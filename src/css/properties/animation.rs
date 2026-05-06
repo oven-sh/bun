@@ -231,7 +231,6 @@ impl Animation {
 
 /// A value for the [animation-name](https://drafts.csswg.org/css-animations/#animation-name) property.
 #[derive(PartialEq, Eq, Hash)]
-// TODO(port): Hash must use wyhash to match Zig's std.hash.Wyhash (bun_wyhash hasher).
 pub enum AnimationName {
     /// The `none` keyword.
     None,

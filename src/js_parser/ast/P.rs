@@ -5976,6 +5976,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 if unsafe { (*class).ts_decorators.len } > 0 {
                     let mut array: Vec<Expr> = unsafe { &mut (*class).ts_decorators }.move_to_list_managed();
 
+                    #[cfg(any())] // blocked_on: serialize_metadata (gated below — TypeScript::Metadata variant set)
                     if self.options.features.emit_decorator_metadata {
                         if let Some(cf) = constructor_function {
                             // design:paramtypes

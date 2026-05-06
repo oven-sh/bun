@@ -1644,7 +1644,7 @@ impl ServerWebSocket {
             _ => return Ok(JSValue::UNDEFINED),
         };
         let text = bun_core::fmt::format_ip(&address, &mut text_buf).expect("unreachable");
-        bun_str::String::create_utf8_for_js(global_this, text)
+        bun_jsc::bun_string_jsc::create_utf8_for_js(global_this, text)
     }
 }
 

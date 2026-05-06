@@ -2111,22 +2111,28 @@ where
             }
 
             Body::Value::Blob(blob) => {
-                if blob.is_s3() {
+                if shim::blob_is_s3(blob) {
                     // we need to read the size asynchronously
                     // in this case should always be a redirect so should not hit this path, but in case we change it in the future lets handle it
                     this.ref_();
 
-                    let credentials = blob.store.as_ref().unwrap().data.s3.get_credentials();
-                    let path = blob.store.as_ref().unwrap().data.s3.path();
-                    let env = global_this.bun_vm().transpiler.env;
+                    let crate::webcore::blob::store::Data::S3(s3) =
+                        &blob.store.as_ref().unwrap().data
+                    else {
+                        unreachable!()
+                    };
+                    let credentials = s3.get_credentials();
+                    let path = s3.path();
+                    // SAFETY: bun_vm() returns the live VM raw ptr.
+                    let env = unsafe { (*global_this.bun_vm()).transpiler.env };
 
                     let _ = S3::client::stat(
                         credentials,
                         path,
-                        Self::on_s3_size_resolved as *const _,
+                        Self::on_s3_size_resolved,
                         this as *mut Self as *mut c_void,
                         env.get_http_proxy(true, None, None).map(|proxy| proxy.href),
-                        blob.store.as_ref().unwrap().data.s3.request_payer,
+                        s3.request_payer,
                     ); // TODO: properly propagate exception upwards
                     return;
                 }
@@ -2223,7 +2229,7 @@ where
 
                 match body_value {
                     Body::Value::Blob(blob) => {
-                        if blob.needs_to_read_file() {
+                        if shim::blob_needs_to_read_file(blob) {
                             response_value.protect();
                             ctx.flags.set_response_protected(true);
                         }
@@ -2296,7 +2302,7 @@ where
                     body_value.to_blob_if_possible();
                     match body_value {
                         Body::Value::Blob(blob) => {
-                            if blob.needs_to_read_file() {
+                            if shim::blob_needs_to_read_file(blob) {
                                 fulfilled_value.protect();
                                 ctx.flags.set_response_protected(true);
                             }
@@ -2311,7 +2317,7 @@ where
                     return;
                 }
                 jsc::PromiseResult::Rejected(err) => {
-                    ctx.handle_reject(err);
+                    Self::handle_reject(ctx, err);
                     return;
                 }
             }

@@ -4525,7 +4525,11 @@ impl Resolver {
         value: JSValue,
     ) -> JsResult<c_int> {
         let str_ = value.to_slice(global_this)?;
-        let slice = str_.into_owned_slice_z()?;
+        // PORT NOTE: ZigStringSlice has no `into_owned_slice_z`; build the
+        // NUL-terminated buffer inline (Zig: `toOwnedSliceZ`).
+        let bytes = str_.slice();
+        let mut slice = bytes.to_vec();
+        slice.push(0);
 
         let mut addr = [0u8; 16];
 
@@ -4540,7 +4544,10 @@ impl Resolver {
             return Ok(c_ares::AF::INET6);
         }
 
-        jsc::Error::INVALID_IP_ADDRESS.throw(global_this, format_args!("Invalid IP address: \"{}\"", bstr::BStr::new(slice.as_bytes())))
+        Err(jsc::Error::INVALID_IP_ADDRESS.throw(
+            global_this,
+            format_args!("Invalid IP address: \"{}\"", bstr::BStr::new(&slice[..slice.len() - 1])),
+        ))
     }
 
     fn set_channel_servers(

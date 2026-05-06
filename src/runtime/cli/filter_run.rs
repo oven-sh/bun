@@ -578,7 +578,9 @@ impl<'a> State<'a> {
         for handle in self.handles.iter_mut() {
             if let Some(proc) = &mut handle.process {
                 // if we get an error here we simply ignore it
-                let _ = proc.ptr.kill(bun_sys::SignalCode::SIGINT.0);
+                // SAFETY: proc.ptr is a live `*mut Process` (set in start(); leaked
+                // until program exit per on_process_exit note).
+                let _ = unsafe { (*proc.ptr).kill(bun_sys::SignalCode::SIGINT.0) };
             }
         }
     }

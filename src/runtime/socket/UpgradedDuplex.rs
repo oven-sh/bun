@@ -12,8 +12,7 @@
 //! and integrates with Bun's event loop for timeouts and async operations. It maintains
 //! JavaScript callbacks for handling connection events and errors.
 
-use core::ffi::{c_uint, c_void, CStr};
-use core::ptr::NonNull;
+use core::ffi::{c_char, c_uint, c_void, CStr};
 
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{host_fn, CallFrame, JSGlobalObject, JSValue, JsResult, StrongOptional};
@@ -66,21 +65,36 @@ pub struct Handlers {
     pub on_timeout: fn(*mut ()),
 }
 
+/// Recover this thread's `timer::All` heap (b2-cycle: `vm.timer` is `()` in
+/// the low-tier `VirtualMachine`; the real value lives in `RuntimeState`).
+#[inline]
+fn timer_all<'a>() -> &'a mut crate::timer::All {
+    // SAFETY: `runtime_state()` is non-null after `bun_runtime::init()`;
+    // single JS thread, raw-ptr-per-field re-entry pattern (jsc_hooks.rs).
+    unsafe { &mut (*crate::jsc_hooks::runtime_state()).timer }
+}
+
 impl<'a> UpgradedDuplex<'a> {
-    fn on_open(&mut self) {
+    fn on_open(this: *mut Self) {
         bun_output::scoped_log!(UpgradedDuplex, "onOpen");
-        (self.handlers.on_open)(self.handlers.ctx);
+        // SAFETY: SSLWrapper handlers ctx is `self as *mut Self`; live for the wrapper's lifetime.
+        let this = unsafe { &mut *this };
+        (this.handlers.on_open)(this.handlers.ctx);
     }
 
-    fn on_data(&mut self, decoded_data: &[u8]) {
+    fn on_data(this: *mut Self, decoded_data: &[u8]) {
         bun_output::scoped_log!(UpgradedDuplex, "onData ({})", decoded_data.len());
-        (self.handlers.on_data)(self.handlers.ctx, decoded_data);
+        // SAFETY: SSLWrapper handlers ctx is `self as *mut Self`; live for the wrapper's lifetime.
+        let this = unsafe { &mut *this };
+        (this.handlers.on_data)(this.handlers.ctx, decoded_data);
     }
 
-    fn on_handshake(&mut self, handshake_success: bool, ssl_error: us_bun_verify_error_t) {
+    fn on_handshake(this: *mut Self, handshake_success: bool, ssl_error: us_bun_verify_error_t) {
         bun_output::scoped_log!(UpgradedDuplex, "onHandshake");
+        // SAFETY: SSLWrapper handlers ctx is `self as *mut Self`; live for the wrapper's lifetime.
+        let this = unsafe { &mut *this };
 
-        self.ssl_error = CertError {
+        this.ssl_error = CertError {
             error_no: ssl_error.error_no,
             code: if ssl_error.code.is_null() || ssl_error.error_no == 0 {
                 None
@@ -95,19 +109,21 @@ impl<'a> UpgradedDuplex<'a> {
                 Some(unsafe { CStr::from_ptr(ssl_error.reason) }.into())
             },
         };
-        (self.handlers.on_handshake)(self.handlers.ctx, handshake_success, ssl_error);
+        (this.handlers.on_handshake)(this.handlers.ctx, handshake_success, ssl_error);
     }
 
-    fn on_close(&mut self) {
+    fn on_close(this: *mut Self) {
         bun_output::scoped_log!(UpgradedDuplex, "onClose");
+        // SAFETY: SSLWrapper handlers ctx is `self as *mut Self`; live for the wrapper's lifetime.
+        let this = unsafe { &mut *this };
         // Zig: `defer this.deinit();` — runs after the two calls below.
 
-        (self.handlers.on_close)(self.handlers.ctx);
+        (this.handlers.on_close)(this.handlers.ctx);
         // closes the underlying duplex
-        self.call_write_or_end(None, false);
+        this.call_write_or_end(None, false);
 
         // Early teardown (Zig calls deinit explicitly here; struct itself is dropped later by parent).
-        self.teardown();
+        this.teardown();
     }
 
     fn call_write_or_end(&mut self, data: Option<&[u8]>, msg_more: bool) {
@@ -118,15 +134,20 @@ impl<'a> UpgradedDuplex<'a> {
         // global is set in `from()` whenever origin is set.
         let Some(global) = self.global else { return };
 
-        // Zig `JSValue.getFunction` — `.get()` + callable check (`catch return orelse return`).
-        let name = if msg_more { "write" } else { "end" };
-        let write_or_end = match duplex.get(global, name) {
-            Ok(Some(f)) if f.is_callable() => f,
-            _ => return,
+        let write_or_end = if msg_more {
+            match duplex.get_function(global, "write") {
+                Ok(Some(f)) => f,
+                _ => return,
+            }
+        } else {
+            match duplex.get_function(global, "end") {
+                Ok(Some(f)) => f,
+                _ => return,
+            }
         };
 
         if let Some(data) = data {
-            let buffer = match bun_jsc::array_buffer::BinaryType::Buffer.to_js(data, global) {
+            let buffer = match bun_jsc::BinaryType::Buffer.to_js(data, global) {
                 Ok(b) => b,
                 Err(err) => {
                     (self.handlers.on_error)(self.handlers.ctx, global.take_exception(err));
@@ -145,15 +166,17 @@ impl<'a> UpgradedDuplex<'a> {
         }
     }
 
-    fn internal_write(&mut self, encoded_data: &[u8]) {
-        self.reset_timeout();
+    fn internal_write(this: *mut Self, encoded_data: &[u8]) {
+        // SAFETY: SSLWrapper handlers ctx is `self as *mut Self`; live for the wrapper's lifetime.
+        let this = unsafe { &mut *this };
+        this.reset_timeout();
 
         // Possible scenarios:
         // Scenario 1: will not write if vm is shutting down (we cannot do anything about it)
         // Scenario 2: will not write if a exception is thrown (will be handled by onError)
         // Scenario 3: will be queued in memory and will be flushed later
         // Scenario 4: no write/end function exists (will be handled by onError)
-        self.call_write_or_end(Some(encoded_data), true);
+        this.call_write_or_end(Some(encoded_data), true);
     }
 
     pub fn flush(&mut self) {
@@ -191,8 +214,7 @@ impl<'a> UpgradedDuplex<'a> {
 
     pub fn from(global: &'a JSGlobalObject, origin: JSValue, handlers: Handlers) -> UpgradedDuplex<'a> {
         UpgradedDuplex {
-            // SAFETY: `bun_vm()` never returns null for a Bun-owned global; lifetime tied to `global: &'a`.
-            vm: unsafe { &*global.bun_vm() },
+            vm: global.bun_vm(),
             origin: StrongOptional::create(origin, global),
             global: Some(global),
             wrapper: None,
@@ -202,8 +224,6 @@ impl<'a> UpgradedDuplex<'a> {
             on_end_callback: StrongOptional::empty(),
             on_writable_callback: StrongOptional::empty(),
             on_close_callback: StrongOptional::empty(),
-            // Zig: `.{ .next = .epoch, .tag = .UpgradedDuplex }` — `init_paused` yields the same
-            // (next=EPOCH, state=PENDING, heap zeroed).
             event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::UpgradedDuplex),
             current_timeout: 0,
         }
@@ -302,45 +322,24 @@ impl<'a> UpgradedDuplex<'a> {
         Ok(array)
     }
 
-    // ── ssl_wrapper::Handlers<*mut Self> trampolines ──────────────────────
-    // SSLWrapper stores `fn(*mut Self, ..)` (not `fn(&mut Self, ..)`), so the
-    // private methods can't coerce directly. These thin shims bridge the
-    // raw-ptr ABI; SAFETY: `ctx` is `self as *mut UpgradedDuplex` set below
-    // and is live for the wrapper's lifetime (wrapper is owned by `self`).
-    fn tramp_on_open(this: *mut UpgradedDuplex<'a>) {
-        unsafe { (*this).on_open() }
-    }
-    fn tramp_on_handshake(this: *mut UpgradedDuplex<'a>, ok: bool, err: us_bun_verify_error_t) {
-        unsafe { (*this).on_handshake(ok, err) }
-    }
-    fn tramp_on_data(this: *mut UpgradedDuplex<'a>, data: &[u8]) {
-        unsafe { (*this).on_data(data) }
-    }
-    fn tramp_on_close(this: *mut UpgradedDuplex<'a>) {
-        unsafe { (*this).on_close() }
-    }
-    fn tramp_write(this: *mut UpgradedDuplex<'a>, data: &[u8]) {
-        unsafe { (*this).internal_write(data) }
-    }
-
-    fn ssl_handlers(&mut self) -> super::ssl_wrapper::Handlers<*mut UpgradedDuplex<'a>> {
-        super::ssl_wrapper::Handlers {
-            ctx: self as *mut UpgradedDuplex,
-            on_open: Self::tramp_on_open,
-            on_handshake: Self::tramp_on_handshake,
-            on_data: Self::tramp_on_data,
-            on_close: Self::tramp_on_close,
-            write: Self::tramp_write,
-        }
-    }
-
     pub fn start_tls(
         &mut self,
         ssl_options: &crate::server::server_config::SSLConfig,
         is_client: bool,
     ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
-        self.wrapper = Some(WrapperType::init(ssl_options, is_client, self.ssl_handlers())?);
+        self.wrapper = Some(WrapperType::init(
+            ssl_options,
+            is_client,
+            super::ssl_wrapper::Handlers {
+                ctx: self as *mut UpgradedDuplex,
+                on_open: Self::on_open,
+                on_handshake: Self::on_handshake,
+                on_data: Self::on_data,
+                on_close: Self::on_close,
+                write: Self::internal_write,
+            },
+        )?);
 
         self.wrapper.as_mut().unwrap().start();
         Ok(())
@@ -361,9 +360,18 @@ impl<'a> UpgradedDuplex<'a> {
             // SAFETY: ctx is a valid SSL_CTX* with one ref adopted by this fn.
             unsafe { bun_boringssl_sys::SSL_CTX_free(ctx) };
         });
-        // SAFETY: contract — caller passes a non-null SSL_CTX* with one adopted ref.
-        let ctx_nn = unsafe { NonNull::new_unchecked(ctx) };
-        self.wrapper = Some(WrapperType::init_with_ctx(ctx_nn, is_client, self.ssl_handlers())?);
+        self.wrapper = Some(WrapperType::init_with_ctx(
+            ctx,
+            is_client,
+            super::ssl_wrapper::Handlers {
+                ctx: self as *mut UpgradedDuplex,
+                on_open: Self::on_open,
+                on_handshake: Self::on_handshake,
+                on_data: Self::on_data,
+                on_close: Self::on_close,
+                write: Self::internal_write,
+            },
+        )?);
         // Success: disarm the errdefer.
         scopeguard::ScopeGuard::into_inner(ctx_guard);
 
@@ -380,7 +388,7 @@ impl<'a> UpgradedDuplex<'a> {
     }
 
     pub fn raw_write(&mut self, encoded_data: &[u8]) -> i32 {
-        self.internal_write(encoded_data);
+        Self::internal_write(self as *mut Self, encoded_data);
         i32::try_from(encoded_data.len()).unwrap()
     }
 
@@ -449,17 +457,8 @@ impl<'a> UpgradedDuplex<'a> {
     }
 
     pub fn set_timeout_in_milliseconds(&mut self, ms: c_uint) {
-        // PORT NOTE (b2-cycle): `vm.timer` is a `()` placeholder in the
-        // low-tier `VirtualMachine`; the real `timer::All` lives in
-        // `RuntimeState` (see jsc_hooks.rs). Reach it via the thread-local.
-        let state = crate::jsc_hooks::runtime_state();
-        let timer_ptr: *mut EventLoopTimer = &mut self.event_loop_timer;
         if self.event_loop_timer.state == EventLoopTimerState::ACTIVE {
-            // SAFETY: `state` is non-null after `init_runtime_state` (always run
-            // before sockets exist); `timer_ptr` points into `self`.
-            if !state.is_null() {
-                unsafe { (*state).timer.remove(timer_ptr) };
-            }
+            timer_all().remove(&mut self.event_loop_timer);
         }
         self.current_timeout = ms;
 
@@ -469,17 +468,12 @@ impl<'a> UpgradedDuplex<'a> {
         }
 
         // reschedule the timer
-        // TODO(b2-blocked): `EventLoopTimer.next` is the local `ElTimespec` stub,
-        // not `bun_core::Timespec`; same `{sec,nsec}` shape — convert by field.
-        let next = bun_core::Timespec::ms_from_now(
-            bun_core::TimespecMockMode::AllowMockedTime,
-            i64::from(ms),
-        );
+        // PORT NOTE: `EventLoopTimer.next` is the lower-tier `ElTimespec` stub;
+        // bridge from `bun_core::Timespec` until the lower tier switches.
+        let next =
+            bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::AllowMockedTime, ms as i64);
         self.event_loop_timer.next = ElTimespec { sec: next.sec, nsec: next.nsec };
-        // SAFETY: see above.
-        if !state.is_null() {
-            unsafe { (*state).timer.insert(timer_ptr) };
-        }
+        timer_all().insert(&mut self.event_loop_timer);
     }
 
     pub fn set_timeout(&mut self, seconds: c_uint) {

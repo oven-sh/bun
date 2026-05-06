@@ -565,6 +565,18 @@ impl HotReloadEvent {
         self.extra_files.clear();
     }
 
+    /// `HotReloadEvent.appendFile` — full body in gated draft.
+    pub fn append_file(&mut self, file_path: &[u8]) {
+        let _ = self.files.get_or_put(file_path);
+    }
+
+    /// `HotReloadEvent.appendDir` — full body (with sub-path NUL-join into
+    /// `extra_files`) lives in the gated draft.
+    pub fn append_dir(&mut self, dir_path: &[u8], _maybe_sub_path: Option<&[u8]>) {
+        let _ = self.dirs.get_or_put(dir_path);
+        // TODO(b2): handle `maybe_sub_path` once `extra_files` consumer is un-gated.
+    }
+
     /// Spec DevServer.zig `HotReloadEvent.run` — main-thread side of the
     /// watcher → DevServer hand-off. Full body lives in the gated draft
     /// (calls `DevServer::on_hot_reload_event` which touches the bundler).

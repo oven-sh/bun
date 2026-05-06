@@ -87,9 +87,11 @@ impl<'a> bun_io::pipe_reader::BufferedReaderParent for PipeReader<'a> {
     unsafe fn on_reader_error(_this: *mut Self, _err: bun_sys::Error) {}
 
     unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
-        // SAFETY: backref; see on_read_chunk. Erase to the io-level opaque handle.
-        let (_, ptr) = EventLoopHandle::init_mini(unsafe { (*this).event_loop_ptr() }).into_tag_ptr();
-        bun_io::EventLoopHandle(ptr)
+        // CYCLEBREAK: bun_io::EventLoopHandle is an opaque `*mut c_void` whose
+        // concrete repr the FilePoll vtable (registered by bun_runtime::init)
+        // knows how to interpret. Pass the raw `*mut MiniEventLoop` through.
+        // SAFETY: backref; see on_read_chunk.
+        bun_io::EventLoopHandle(unsafe { (*this).event_loop_ptr() } as *mut c_void)
     }
 
     unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop {

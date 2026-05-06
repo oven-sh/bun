@@ -950,7 +950,7 @@ enum AdvanceSequenceStatus {
 }
 
 fn step_sequence(
-    buntest_strong: BunTestPtr,
+    buntest_strong: &BunTestPtr,
     global_this: &JSGlobalObject,
     group: NonNull<ConcurrentGroup>,
     sequence_index: usize,
@@ -967,13 +967,13 @@ fn step_sequence(
 
 /// returns None if the while loop should continue
 fn step_sequence_one(
-    buntest_strong: BunTestPtr,
+    buntest_strong: &BunTestPtr,
     global_this: &JSGlobalObject,
     group: NonNull<ConcurrentGroup>,
     sequence_index: usize,
     now: &mut Timespec,
 ) -> JsResult<Option<AdvanceSequenceStatus>> {
-    let _scope = group_log::begin();
+    group_begin!();
     let buntest = buntest_strong.get();
     let buntest_ptr = NonNull::from(&mut *buntest);
     let this = &mut buntest.execution;
@@ -999,7 +999,7 @@ fn step_sequence_one(
             Execution::advance_sequence(buntest_ptr, sequence_ptr, group);
             return Ok(None); // run again
         }
-        group_log::log("runOne: can't advance; already executing");
+        group_log::log(format_args!("runOne: can't advance; already executing"));
         return Ok(Some(AdvanceSequenceStatus::Execute {
             timeout: active_entry.timespec,
         }));
@@ -1009,7 +1009,7 @@ fn step_sequence_one(
         // Sequence is complete - either because:
         // 1. It ran out of entries (normal completion)
         // 2. All retry/repeat attempts have been exhausted
-        group_log::log("runOne: no more entries; sequence complete.");
+        group_log::log(format_args!("runOne: no more entries; sequence complete."));
         return Ok(Some(AdvanceSequenceStatus::Done));
     };
     // SAFETY: arena-owned entry

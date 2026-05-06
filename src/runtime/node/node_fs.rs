@@ -8,6 +8,7 @@ use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use bun_aio::KeepAlive;
+use bun_sys::FdExt as _;
 use bun_jsc::EventLoopTaskPtr;
 use crate::api::bun::process::event_loop_handle_to_ctx;
 use bun_threading::UnboundedQueue;
@@ -5438,7 +5439,7 @@ impl NodeFS {
         let mut outbuf = PathBuffer::uninit();
         let inbuf = &mut self.sync_error_buf;
         let path = args.path.slice_z(inbuf);
-        let link_len = match Syscall::readlink(path, outbuf.as_mut_slice()) {
+        let link_len = match Syscall::readlink(path, &mut outbuf[..]) {
             Maybe::Err(err) => return Maybe::Err(err.with_path(args.path.slice())),
             Maybe::Ok(result) => result,
         };
@@ -5521,7 +5522,7 @@ impl NodeFS {
             // SAFETY: instance() returns the leaked singleton; INSTANCE_LOADED checked above.
             let fs = unsafe { &*FileSystem::instance() };
             let parts = [fs.top_level_dir, path_slice];
-            let path_len = fs.abs_buf(&parts, inbuf.as_mut_slice()).len();
+            let path_len = fs.abs_buf(&parts, &mut inbuf[..]).len();
             inbuf[path_len] = 0;
             let path = unsafe { ZStr::from_raw(inbuf.as_ptr(), path_len) };
 

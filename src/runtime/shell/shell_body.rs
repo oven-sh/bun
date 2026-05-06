@@ -213,7 +213,7 @@ fn bunstr_index_of_ascii_char(s: &BunString, chr: u8) -> Option<usize> {
     if s.is_utf16() {
         s.utf16().iter().position(|&c| c == u16::from(chr))
     } else {
-        strings::index_of_char_usize(s.byte_slice(), chr)
+        strings::index_of_char(s.byte_slice(), chr)
     }
 }
 

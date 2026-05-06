@@ -454,8 +454,14 @@ impl WindowsNamedPipeContext {
 impl Drop for WindowsNamedPipeContext {
     fn drop(&mut self) {
         bun_output::scoped_log!(WindowsNamedPipeContext, "deinit");
-        // `socket` (Arc deref) and `named_pipe` drop automatically via field destructors;
-        // declaration order above guarantees socket goes first (matches Zig deinit).
+        // Zig `deinit`: deref the wrapped socket, then `named_pipe.deinit()`.
+        match core::mem::replace(&mut self.socket, SocketType::None) {
+            // SAFETY: +1 ref taken in `create()`; this is the matching release.
+            SocketType::Tls(tls) => unsafe { (*tls).deref() },
+            SocketType::Tcp(tcp) => unsafe { (*tcp).deref() },
+            SocketType::None => {}
+        }
+        // `named_pipe` drops via field destructor after this.
     }
 }
 

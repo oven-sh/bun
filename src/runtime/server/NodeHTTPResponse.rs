@@ -1726,7 +1726,7 @@ impl NodeHTTPResponse {
         self.ref_();
         AutoFlusher::register_deferred_microtask_with_type_unchecked::<NodeHTTPResponse>(
             self,
-            VirtualMachine::get(),
+            vm_get(),
         );
     }
 
@@ -1736,7 +1736,7 @@ impl NodeHTTPResponse {
         }
         AutoFlusher::unregister_deferred_microtask_with_type_unchecked::<NodeHTTPResponse>(
             self,
-            VirtualMachine::get(),
+            vm_get(),
         );
         self.deref();
     }
@@ -1775,8 +1775,8 @@ impl NodeHTTPResponse {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn get_bytes_written(&self, _global: &JSGlobalObject, _frame: &CallFrame) -> JSValue {
-        JSValue::js_number(self.bytes_written)
+    pub fn get_bytes_written(&mut self, _global: &JSGlobalObject, _frame: &CallFrame) -> JSValue {
+        JSValue::js_number(self.bytes_written as f64)
     }
 }
 
@@ -1815,13 +1815,19 @@ impl NodeHTTPResponse {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old(1);
-        if arguments.is_empty() {
-            return global_object.throw_not_enough_arguments("cork", 1, 0);
+        let arguments = callframe.arguments_old::<1>();
+        if arguments.len == 0 {
+            return Err(global_object
+                .err(ErrorCode::ERR_MISSING_ARGS, format_args!("cork requires at least 1 argument"))
+                .throw());
         }
 
-        if !arguments[0].is_callable() {
-            return global_object.throw_invalid_argument_type_value("cork", "function", arguments[0]);
+        if !arguments.ptr[0].is_callable() {
+            return Err(global_object.throw_invalid_argument_type_value(
+                "cork",
+                "function",
+                arguments.ptr[0],
+            ));
         }
 
         if self.flags.contains(Flags::REQUEST_HAS_COMPLETED)

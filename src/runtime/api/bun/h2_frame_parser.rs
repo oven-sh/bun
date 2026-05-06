@@ -5679,21 +5679,16 @@ impl H2FrameParser {
         if let Some(socket_js) = options.get(global_object, "native")? {
             if let Some(socket) = JSTLSSocket::from_js(socket_js) {
                 bun_output::scoped_log!(H2FrameParser, "TLSSocket attached");
-                if socket.attach_native_callback(crate::socket::NativeCallbacks::H2(this)) {
-                    this_ref.native_socket = BunSocket::Tls(socket);
-                } else {
-                    socket.ref_();
-                    this_ref.native_socket = BunSocket::TlsWriteonly(socket);
-                }
+                // TODO(port): `NativeCallbacks::H2` carries `IntrusiveRc<api::bun::h2_frame_parser::H2FrameParser>`
+                // (the gated stub type), not this body's `H2FrameParser`. Until the two are unified,
+                // fall back to write-only mode (matches the `attach_native_callback() == false` branch).
+                socket.ref_();
+                this_ref.native_socket = BunSocket::TlsWriteonly(socket as *mut TLSSocket);
                 let _ = this_ref.flush();
             } else if let Some(socket) = JSTCPSocket::from_js(socket_js) {
                 bun_output::scoped_log!(H2FrameParser, "TCPSocket attached");
-                if socket.attach_native_callback(crate::socket::NativeCallbacks::H2(this)) {
-                    this_ref.native_socket = BunSocket::Tcp(socket);
-                } else {
-                    socket.ref_();
-                    this_ref.native_socket = BunSocket::TcpWriteonly(socket);
-                }
+                socket.ref_();
+                this_ref.native_socket = BunSocket::TcpWriteonly(socket as *mut TCPSocket);
                 let _ = this_ref.flush();
             }
         }

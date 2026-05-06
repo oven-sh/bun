@@ -116,7 +116,11 @@ pub const DEFAULT_MAX_BUFFER_SIZE: u32 = 1024 * 1024 * 4;
 pub struct ShellSubprocess {
     pub cmd_parent: *mut ShellCmd,
 
-    pub process: Arc<Process>,
+    /// Intrusively ref-counted process (`bun_ptr::ThreadSafeRefCount`).
+    /// Stored raw because `Process` methods take `&mut self` and `RefPtr`
+    /// only implements `Deref`; the shell is single-threaded so raw mutable
+    /// access mirrors the Zig `*Process` pattern.
+    pub process: *mut Process,
 
     pub stdin: Writable,
     pub stdout: Readable,

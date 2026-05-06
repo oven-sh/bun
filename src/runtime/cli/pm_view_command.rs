@@ -68,7 +68,7 @@ pub fn view(
                 }
             }
 
-            break 'brk bun_paths::basename(bun_fs::FileSystem::instance().top_level_dir.as_slice());
+            break 'brk bun_paths::basename(bun_paths::fs::FileSystem::instance().top_level_dir());
         }
 
         break 'brk spec_;
@@ -78,20 +78,20 @@ pub fn view(
 
     let mut url_buf = PathBuffer::uninit();
     // TODO(port): std.fmt.bufPrint — `buf_print` returns the written slice
-    let encoded_name = bun_core::fmt::buf_print(
+    let encoded_name = buf_print(
         url_buf.as_mut_slice(),
         format_args!("{}", bun_fmt::dependency_url(name)),
-    )?;
+    );
     let mut path_buf = PathBuffer::uninit();
     // Always fetch the full registry manifest, not a specific version
-    let url = URL::parse(bun_core::fmt::buf_print(
+    let url = URL::parse(buf_print(
         path_buf.as_mut_slice(),
         format_args!(
             "{}/{}",
             BStr::new(strings::without_trailing_slash(scope.url.href.as_slice())),
             BStr::new(encoded_name),
         ),
-    )?);
+    ));
 
     let mut headers = http::HeaderBuilder::default();
     headers.count(b"Accept", b"application/json");
@@ -121,7 +121,7 @@ pub fn view(
         b"",
         manager.http_proxy(url),
         None,
-        http::Redirect::Follow,
+        http::FetchRedirect::Follow,
     );
     req.client.flags.reject_unauthorized = manager.tls_reject_unauthorized();
 

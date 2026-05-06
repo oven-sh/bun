@@ -55,7 +55,7 @@ impl ScanCommand {
             "{}",
             const_format::concatcp!(
                 "<r><b>bun pm scan <r><d>v",
-                Global::PACKAGE_JSON_VERSION_WITH_SHA,
+                Global::package_json_version_with_sha,
                 "<r>\n"
             )
         ));

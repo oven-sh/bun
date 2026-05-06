@@ -71,15 +71,15 @@ const DEFAULT_EXTENSIONS: &[&[u8]] = &[
 
 #[bun_jsc::JsClass]
 pub struct FileSystemRouter {
-    pub origin: Option<Arc<jsc::RefString>>,
-    pub base_dir: Option<Arc<jsc::RefString>>,
+    pub origin: Option<Arc<RefString>>,
+    pub base_dir: Option<Arc<RefString>>,
     // PORT NOTE: Router<'a> only borrows the global FileSystem singleton — `'static` is faithful.
     pub router: Router::Router<'static>,
     // PERF(port): was arena bulk-free — Router borrows slices from this arena across calls;
     // kept as boxed arena per LIFETIMES.tsv (OWNED). Phase B: confirm bumpalo vs ArenaAllocator.
     pub arena: Box<ArenaAllocator>,
     // PORT NOTE: dropped `allocator: std.mem.Allocator` field — it was always `arena.allocator()`.
-    pub asset_prefix: Option<Arc<jsc::RefString>>,
+    pub asset_prefix: Option<Arc<RefString>>,
 }
 
 impl FileSystemRouter {
@@ -478,7 +478,7 @@ impl FileSystemRouter {
                 ));
             }
         };
-        let mut params = Router::ParamList::default();
+        let mut params = ParamList::default();
         // `defer params.deinit(allocator)` → Drop
         let Some(route) = this.router.routes.match_page_with_allocator(
             b"",
@@ -575,11 +575,11 @@ pub struct MatchedRoute {
     pub route_holder: RouterMatch<'static>,
     pub query_string_map: Option<QueryStringMap>,
     pub param_map: Option<QueryStringMap>,
-    pub params_list_holder: Router::ParamList,
-    pub origin: Option<Arc<jsc::RefString>>,
-    pub asset_prefix: Option<Arc<jsc::RefString>>,
+    pub params_list_holder: ParamList,
+    pub origin: Option<Arc<RefString>>,
+    pub asset_prefix: Option<Arc<RefString>>,
     pub needs_deinit: bool,
-    pub base_dir: Option<Arc<jsc::RefString>>,
+    pub base_dir: Option<Arc<RefString>>,
 }
 
 impl MatchedRoute {
@@ -600,9 +600,9 @@ impl MatchedRoute {
 
     pub fn init(
         match_: RouterMatch,
-        origin: Option<Arc<jsc::RefString>>,
-        asset_prefix: Option<Arc<jsc::RefString>>,
-        base_dir: Arc<jsc::RefString>,
+        origin: Option<Arc<RefString>>,
+        asset_prefix: Option<Arc<RefString>>,
+        base_dir: Arc<RefString>,
     ) -> Result<Box<MatchedRoute>, bun_alloc::AllocError> {
         let params_list = match_.params.clone()?;
 
@@ -614,14 +614,14 @@ impl MatchedRoute {
             base_dir: Some(base_dir),
             query_string_map: None,
             param_map: None,
-            params_list_holder: Router::ParamList::default(),
+            params_list_holder: ParamList::default(),
             needs_deinit: true,
         });
         // PORT NOTE: `base_dir.ref()` / `o.ref()` / `prefix.ref()` — Arc::clone at call site
         // already bumped the refcount; no extra ref needed here.
         route.params_list_holder = params_list;
         route.route = &route.route_holder as *const RouterMatch;
-        route.route_holder.params = &route.params_list_holder as *const Router::ParamList;
+        route.route_holder.params = &route.params_list_holder as *const ParamList;
 
         Ok(route)
     }
@@ -644,7 +644,7 @@ impl MatchedRoute {
                 unsafe { bun_alloc::mimalloc::mi_free(pathname.as_ptr() as *mut core::ffi::c_void) };
             }
 
-            this_ref.params_list_holder = Router::ParamList::default();
+            this_ref.params_list_holder = ParamList::default();
         }
 
         this_ref.origin = None;

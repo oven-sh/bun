@@ -751,7 +751,7 @@ pub fn run(ctx: &mut Command::Context) -> Result<core::convert::Infallible, Erro
     }
 
     // Set up the transpiler/environment
-    let fsinstance = bun_fs::FileSystem::init(None)?;
+    let fsinstance = bun_resolver::fs::FileSystem::init(None)?;
     // TODO(port): out-param init pattern — Zig writes into `var this_transpiler: Transpiler = undefined;`
     let mut this_transpiler: bun_bundler::Transpiler =
         RunCommand::configure_env_for_run(ctx, None, true, false)?;

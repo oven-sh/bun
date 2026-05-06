@@ -1791,8 +1791,11 @@ impl TestCommand {
         vm.argv = ctx.passthrough;
         vm.preload = ctx.preloads;
         vm.transpiler.options.rewrite_jest_for_tests = true;
-        bun_http::set_experimental_http2_client_from_cli(ctx.runtime_options.experimental_http2_fetch);
-        bun_http::set_experimental_http3_client_from_cli(ctx.runtime_options.experimental_http3_fetch);
+        // SAFETY: set once at startup before the HTTP thread spawns; only read on that thread.
+        unsafe {
+            bun_http::EXPERIMENTAL_HTTP2_CLIENT_FROM_CLI = ctx.runtime_options.experimental_http2_fetch;
+            bun_http::EXPERIMENTAL_HTTP3_CLIENT_FROM_CLI = ctx.runtime_options.experimental_http3_fetch;
+        }
         vm.transpiler.options.env.behavior = bun_bundler::options::EnvBehavior::LoadAllWithoutInlining;
 
         let node_env_entry = env_loader.map.get_or_put_without_value(b"NODE_ENV")?;

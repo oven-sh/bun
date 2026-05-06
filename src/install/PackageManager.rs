@@ -485,7 +485,7 @@ pub struct PackageManager {
     pub patched_dependencies_to_remove:
         ArrayHashMap<PackageNameAndVersionHash, () /* , ArrayIdentityContext::U64, false */>,
 
-    pub active_lifecycle_scripts: LifecycleScriptSubprocess::List,
+    pub active_lifecycle_scripts: crate::lifecycle_script_runner::List<'static>,
     pub last_reported_slow_lifecycle_script_at: u64,
     pub cached_tick_for_slow_lifecycle_script_logging: u64,
 }

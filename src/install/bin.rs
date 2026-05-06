@@ -1588,12 +1588,12 @@ impl<'a> Linker<'a> {
 
                     let package_dir = &self.abs_target_buf[0..package_dir_len];
                     let abs_target_dir =
-                        path::join_abs_string_z(package_dir, &[target], path::Style::Auto);
+                        resolve_path::join_abs_string_z::<PlatformAuto>(package_dir, &[target]);
 
-                    let mut target_dir = match sys::open_dir_absolute(abs_target_dir) {
+                    let target_dir = match sys::open_dir_absolute(abs_target_dir.as_bytes()) {
                         Ok(d) => d,
                         Err(err) => {
-                            self.err = Some(err);
+                            self.err = Some(err.into());
                             return;
                         }
                     };
@@ -1601,14 +1601,15 @@ impl<'a> Linker<'a> {
 
                     let abs_dest_dir_end = dest_off;
 
-                    let mut iter = target_dir.iterate();
+                    let mut iter = sys::iterate_dir(target_dir);
                     while let Some(entry) = iter.next().unwrap_or(None) {
                         match entry.kind {
-                            sys::DirEntryKind::SymLink | sys::DirEntryKind::File => {
+                            sys::EntryKind::SymLink | sys::EntryKind::File => {
+                                let entry_name = entry.name.slice_u8();
                                 dest_off = abs_dest_dir_end;
-                                self.abs_dest_buf[dest_off..dest_off + entry.name.len()]
-                                    .copy_from_slice(entry.name);
-                                dest_off += entry.name.len();
+                                self.abs_dest_buf[dest_off..dest_off + entry_name.len()]
+                                    .copy_from_slice(entry_name);
+                                dest_off += entry_name.len();
                                 self.abs_dest_buf[dest_off] = 0;
                                 let abs_dest_len = dest_off;
                                 // SAFETY: abs_dest_buf[abs_dest_len] == 0 written above

@@ -48,6 +48,16 @@ mod high_tier {
         ValkeyContext, Blob, BlobStore, S3Client,
         WebSocketDeflateRareData, EditorContext, DnsGlobalData,
     );
+    // TODO(port): real impls live in bun_runtime::node::node_fs_watcher /
+    // node_fs_stat_watcher; no-op shims until the cycle-break vtable lands.
+    impl FSWatcher {
+        #[inline]
+        pub fn detach(&mut self) {}
+    }
+    impl StatWatcher {
+        #[inline]
+        pub fn close(&mut self) {}
+    }
     pub mod boring_sys {
         // bun_boringssl_sys is not in bun_jsc's dep graph; opaque FFI handles.
         #[repr(C)] pub struct ENGINE { _p: [u8; 0] }
@@ -1711,7 +1721,7 @@ impl Drop for RareData {
 
         // TODO(port): bun_boringssl_sys not in dep graph — inline extern decls
         // mirror `boring_engine()` above; BoringSSL is linked into the binary.
-        extern "C" {
+        unsafe extern "C" {
             fn ENGINE_free(engine: *mut boring_sys::ENGINE);
             fn SSL_CTX_free(ctx: *mut boring_sys::SSL_CTX);
         }

@@ -873,7 +873,6 @@ impl Expr {
         all: &[Expr],
         ctx: &mut C,
         callback: fn(ctx: &mut C, expr: Expr) -> Option<Expr>,
-        _: &Bump,
     ) -> Option<Expr> {
         match all.len() {
             0 => None,

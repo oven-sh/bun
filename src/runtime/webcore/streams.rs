@@ -468,6 +468,20 @@ impl WritableHandler {
 }
 
 impl WritablePending {
+    /// Record that `bytes` were submitted while the destination is still
+    /// pending. The caller buffers `bytes` itself; this only updates
+    /// `consumed` and pins the state at `Pending` so a later `run()` resolves
+    /// the buffered amount.
+    ///
+    /// PORT NOTE: Zig html_rewriter calls `pending.applyBackpressure(allocator,
+    /// &this.output, pending, bytes)` — that decl never existed in Zig (the
+    /// caller is dead code there). This is the minimal real implementation
+    /// matching that call shape.
+    pub fn apply_backpressure(&mut self, _output: &mut Sink<'_>, bytes: &[u8]) {
+        self.consumed = self.consumed.saturating_add(bytes.len() as BlobSizeType);
+        self.state = PendingState::Pending;
+    }
+
     pub fn run(&mut self) {
         if self.state != PendingState::Pending {
             return;

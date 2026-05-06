@@ -3266,9 +3266,6 @@ pub fn range_data(
 // code via `use bun_logger::FileSourceExt`.
 // ───────────────────────────────────────────────────────────────────────────
 
-// TODO(b2-blocked): bun_sys::file::File (full module gated in bun_sys::lib.rs).
-// Draft body also uses Box::leak (forbidden — PORTING.md §Forbidden); un-gating
-// requires the Source.contents ownership rework (Str → Vec<u8>/Cow).
 #[derive(Default, Clone, Copy)]
 pub struct ToSourceOptions {
     pub convert_bom: bool,
@@ -3282,20 +3279,36 @@ pub type ToSourceOpts = ToSourceOptions;
 ///
 /// MOVE_DOWN from `bun_sys::File::to_source` (T1 cannot name T2). Zig source:
 /// `src/sys/File.zig:toSource`.
-///
-/// TODO(b2-blocked): real body requires `bun_sys::file::File::read_from` (gated
-/// in `bun_sys`) **and** the `Source.contents` ownership rework — the Phase-A
-/// `Str = &'static [u8]` field cannot hold a heap buffer without `Box::leak`
-/// (forbidden, PORTING.md §Forbidden). Signature is exposed so dependents
-/// (`bun_ini`) can un-gate their bodies; calling this panics until Phase B.
 pub fn source_from_file(
     path: &bun_string::ZStr,
     opts: ToSourceOptions,
 ) -> bun_sys::Maybe<Source> {
-    let _ = (path, opts);
-    todo!("source_from_file — gated on bun_sys::file + Source.contents ownership rework")
+    source_from_file_at(bun_sys::Fd::cwd(), path, opts)
 }
 
+/// Read `path` (relative to `dir_fd`) into memory and wrap it in a `Source`.
+///
+/// MOVE_DOWN from `bun_sys::File::to_source_at`. Zig source:
+/// `src/sys/File.zig:toSourceAt`.
+pub fn source_from_file_at(
+    dir_fd: bun_sys::Fd,
+    path: &bun_string::ZStr,
+    opts: ToSourceOptions,
+) -> bun_sys::Maybe<Source> {
+    let mut bytes = match bun_sys::file::File::read_from(dir_fd, path) {
+        Err(err) => return Err(err),
+        Ok(bytes) => bytes,
+    };
+    if opts.convert_bom {
+        if let Some(bom) = bun_string::strings::BOM::detect(&bytes) {
+            bytes = bun_core::handle_oom(bom.remove_and_convert_to_utf8_and_free(bytes));
+        }
+    }
+    // `path` is caller-owned; goes through the Phase-A `IntoStr` borrow shim
+    // (same as every other `Source` constructor). `bytes` is owned by the
+    // returned `Source` via `Cow::Owned` — no `Box::leak`.
+    Ok(Source::init_path_string_owned(path.as_bytes(), bytes))
+}
 
 mod file_source_ext_draft {
 use super::*;
@@ -3306,28 +3319,12 @@ pub fn to_source_at(
     path: &bun_string::ZStr,
     opts: ToSourceOptions,
 ) -> bun_sys::Result<Source> {
-    let bytes = match bun_sys::file::File::read_from(dir_fd, path) {
-        bun_sys::Maybe::Err(err) => return bun_sys::Maybe::Err(err),
-        bun_sys::Maybe::Ok(bytes) => bytes,
-    };
-    let bytes = if opts.convert_bom {
-        // TODO(port): bun_str::strings::Bom::{detect, remove_and_convert_to_utf8_and_free}
-        // not yet ported — pass through unchanged for now.
-        bytes
-    } else {
-        bytes
-    };
-    // TODO(port): OWNERSHIP — `Source.contents` is `&'static [u8]` in Phase A (see
-    // module-level note). Leak the heap buffer until Phase B threads a real lifetime
-    // or moves `contents` to `Vec<u8>`/`bun_str::String`.
-    let contents: &'static [u8] = Box::leak(bytes.into_boxed_slice());
-    let path_bytes: &'static [u8] = Box::leak(path.as_bytes().to_vec().into_boxed_slice());
-    bun_sys::Maybe::Ok(Source::init_path_string(path_bytes, contents))
+    source_from_file_at(dir_fd, path, opts)
 }
 
 /// `to_source_at` rooted at the process CWD.
 pub fn to_source(path: &bun_string::ZStr, opts: ToSourceOptions) -> bun_sys::Result<Source> {
-    to_source_at(bun_sys::Fd::cwd(), path, opts)
+    source_from_file(path, opts)
 }
 
 /// Extension trait so `bun_sys::File` callers get the old static-method shape back.

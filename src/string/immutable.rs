@@ -36,7 +36,7 @@ pub use self::unicode::{
 // which is field-compatible with `bun_core::strings::EncodeIntoResult`.
 pub use unicode_draft::{
     allocate_latin1_into_utf8, copy_latin1_into_ascii, copy_latin1_into_utf16, copy_u16_into_u8,
-    copy_utf16_into_utf8_impl, element_length_utf8_into_utf16,
+    copy_utf16_into_utf8_impl, element_length_utf8_into_utf16, BOM,
 };
 
 mod escape_reg_exp { pub use crate::escape_reg_exp::*; }

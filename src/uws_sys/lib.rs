@@ -99,6 +99,46 @@ opaque!(
     UpgradedDuplex, WindowsNamedPipe,
 );
 
+// ── UpgradedDuplex (cycle-break shim) ────────────────────────────────────────
+// The full `UpgradedDuplex` lives in `bun_runtime::socket` (T6); `socket.rs`
+// here dispatches to it from the low-tier `InternalSocket` enum. To avoid an
+// upward dep, the opaque handle gets thin inherent methods that forward to
+// `extern "C"` symbols which the runtime crate exports with `#[no_mangle]`.
+// This is the same link-time-dispatch pattern as other `*_sys` crates use for
+// their C backends — only here the "backend" is Rust in a higher tier.
+// PORT NOTE: signatures mirror `src/runtime/socket/UpgradedDuplex.rs`.
+unsafe extern "C" {
+    fn UpgradedDuplex__ssl_error(this: *const UpgradedDuplex) -> us_bun_verify_error_t;
+    fn UpgradedDuplex__is_established(this: *const UpgradedDuplex) -> bool;
+    fn UpgradedDuplex__is_closed(this: *const UpgradedDuplex) -> bool;
+    fn UpgradedDuplex__is_shutdown(this: *const UpgradedDuplex) -> bool;
+    fn UpgradedDuplex__ssl(this: *const UpgradedDuplex) -> *mut bun_boringssl_sys::SSL;
+    fn UpgradedDuplex__set_timeout(this: *mut UpgradedDuplex, seconds: core::ffi::c_uint);
+    fn UpgradedDuplex__flush(this: *mut UpgradedDuplex);
+    fn UpgradedDuplex__encode_and_write(this: *mut UpgradedDuplex, ptr: *const u8, len: usize) -> i32;
+    fn UpgradedDuplex__raw_write(this: *mut UpgradedDuplex, ptr: *const u8, len: usize) -> i32;
+    fn UpgradedDuplex__shutdown(this: *mut UpgradedDuplex);
+    fn UpgradedDuplex__shutdown_read(this: *mut UpgradedDuplex);
+    fn UpgradedDuplex__close(this: *mut UpgradedDuplex);
+}
+impl UpgradedDuplex {
+    #[inline] pub fn ssl_error(&self) -> us_bun_verify_error_t { unsafe { UpgradedDuplex__ssl_error(self) } }
+    #[inline] pub fn is_established(&self) -> bool { unsafe { UpgradedDuplex__is_established(self) } }
+    #[inline] pub fn is_closed(&self) -> bool { unsafe { UpgradedDuplex__is_closed(self) } }
+    #[inline] pub fn is_shutdown(&self) -> bool { unsafe { UpgradedDuplex__is_shutdown(self) } }
+    #[inline] pub fn ssl(&self) -> Option<*mut bun_boringssl_sys::SSL> {
+        let p = unsafe { UpgradedDuplex__ssl(self) };
+        if p.is_null() { None } else { Some(p) }
+    }
+    #[inline] pub fn set_timeout(&mut self, seconds: core::ffi::c_uint) { unsafe { UpgradedDuplex__set_timeout(self, seconds) } }
+    #[inline] pub fn flush(&mut self) { unsafe { UpgradedDuplex__flush(self) } }
+    #[inline] pub fn encode_and_write(&mut self, data: &[u8]) -> i32 { unsafe { UpgradedDuplex__encode_and_write(self, data.as_ptr(), data.len()) } }
+    #[inline] pub fn raw_write(&mut self, data: &[u8]) -> i32 { unsafe { UpgradedDuplex__raw_write(self, data.as_ptr(), data.len()) } }
+    #[inline] pub fn shutdown(&mut self) { unsafe { UpgradedDuplex__shutdown(self) } }
+    #[inline] pub fn shutdown_read(&mut self) { unsafe { UpgradedDuplex__shutdown_read(self) } }
+    #[inline] pub fn close(&mut self) { unsafe { UpgradedDuplex__close(self) } }
+}
+
 // ───────────────────────────── module map ────────────────────────────────────
 // Snake-case names are what `bun_uws` imports; `#[path]` points at the
 // PascalCase Phase-A drafts kept on disk.

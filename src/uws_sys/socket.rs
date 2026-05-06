@@ -163,7 +163,7 @@ impl<'a, const IS_SSL: bool> NewSocketHandler<'a, IS_SSL> {
 
     pub fn start_tls(&self, is_client: bool) {
         if let Some(socket) = self.socket.get() {
-            us_socket_t::open(socket, is_client, None);
+            unsafe { (*socket).open(is_client, None);
         }
     }
 
@@ -213,14 +213,14 @@ impl<'a, const IS_SSL: bool> NewSocketHandler<'a, IS_SSL> {
             return Fd::INVALID;
         };
         // Same fd regardless of TLS — read it directly off the poll.
-        us_socket_t::get_fd(socket)
+        unsafe { (*socket).get_fd() }
     }
 
     pub fn mark_needs_more_for_sendfile(&self) {
         // Zig: `if (comptime is_ssl) @compileError(...)`.
         const { assert!(!IS_SSL, "SSL sockets do not support sendfile yet") };
         let Some(socket) = self.socket.get() else { return };
-        us_socket_t::send_file_needs_more(socket);
+        unsafe { (*socket).send_file_needs_more() };
     }
 
     pub fn ext<ContextType>(&self) -> Option<*mut ContextType> {
@@ -382,7 +382,7 @@ impl<'a, const IS_SSL: bool> NewSocketHandler<'a, IS_SSL> {
         self.socket.is_closed()
     }
 
-    pub fn close(&mut self, code: us_socket_t::CloseCode) {
+    pub fn close(&mut self, code: crate::CloseCode) {
         self.socket.close(code)
     }
 
@@ -703,7 +703,7 @@ impl<'a> InternalSocket<'a> {
         }
     }
 
-    pub fn close(&mut self, code: us_socket_t::CloseCode) {
+    pub fn close(&mut self, code: crate::CloseCode) {
         match self {
             InternalSocket::Detached => {}
             InternalSocket::Connected(socket) => unsafe { (**socket).close(code) },
@@ -807,15 +807,15 @@ impl<'a> AnySocket<'a> {
 
     pub fn close(&mut self) {
         match self {
-            AnySocket::SocketTcp(s) => s.close(us_socket_t::CloseCode::Normal),
-            AnySocket::SocketTls(s) => s.close(us_socket_t::CloseCode::Normal),
+            AnySocket::SocketTcp(s) => s.close(crate::CloseCode::Normal),
+            AnySocket::SocketTls(s) => s.close(crate::CloseCode::Normal),
         }
     }
 
     pub fn terminate(&mut self) {
         match self {
-            AnySocket::SocketTcp(s) => s.close(us_socket_t::CloseCode::Failure),
-            AnySocket::SocketTls(s) => s.close(us_socket_t::CloseCode::Failure),
+            AnySocket::SocketTcp(s) => s.close(crate::CloseCode::Failure),
+            AnySocket::SocketTls(s) => s.close(crate::CloseCode::Failure),
         }
     }
 

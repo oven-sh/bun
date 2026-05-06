@@ -1,8 +1,8 @@
 use bun_collections::{ArrayHashMap, BabyList};
-use bun_js_parser::ast::bundled_ast::BundledAstListExt as _;
-use crate::ungate_support::js_meta::JSMetaListExt as _;
+use bun_js_parser::ast::bundled_ast::BundledAstField as AstField;
+use crate::ungate_support::js_meta::JSMetaField;
 use crate::Graph::InputFileListExt as _;
-use crate::linker_graph::FileListExt as _;
+use crate::linker_graph::FileField;
 use crate::ungate_support::EntryPointListExt as _;
 use bun_js_parser as js_ast;
 use bun_js_parser::{Part, Symbol};

@@ -372,6 +372,9 @@ pub mod bake_types {
         /// Mirrors `Framework.server_components`. TYPE_ONLY: only the two
         /// flags the bundler reads.
         pub server_components: Option<ServerComponents>,
+        /// Mirrors `Framework.is_built_in_react` — read by
+        /// `linker_context::generateChunksInParallel` to gate `BakeExtra`.
+        pub is_built_in_react: bool,
         /// Read by `entry_points.rs` (FallbackEntryPoint/ClientEntryPoint::generate).
         /// In Zig this lives on the legacy package_json `Framework`; the duck-typed
         /// `comptime TranspilerType` callers reach it through `options.framework.?`.

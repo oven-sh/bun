@@ -71,6 +71,13 @@ pub fn compute_chunks(
     // Phase B when arena threading lands.
     let _allocator: &Arena = unsafe { &*this.graph.bump };
 
+    // PORT NOTE: borrowck escape hatch — the SoA column slices below hold disjoint
+    // immutable borrows into `this.graph` while several helpers (and the BundleV2
+    // back-pointer recovery) still want `&mut LinkerContext`. The Zig original
+    // freely aliases; Phase B should thread split borrows through `LinkerGraph`
+    // instead of laundering through a raw pointer.
+    let this_ptr: *mut LinkerContext = this;
+
     let entry_source_indices = this.graph.entry_points.items_source_index();
     let css_asts = this.graph.ast.items_css();
     let mut html_chunks: ArrayHashMap<&[u8], Chunk> = ArrayHashMap::new();
@@ -87,9 +94,14 @@ pub fn compute_chunks(
     for (entry_id_, &source_index) in entry_source_indices.iter().enumerate() {
         let entry_bit = entry_id_ as chunk::EntryPointId; // @truncate
 
-        let entry_bits =
-            &mut this.graph.files.items_entry_bits_mut()[source_index as usize];
-        entry_bits.set(entry_bit as usize);
+        // PORT NOTE: reshaped for borrowck — set the bit through a scoped &mut, then keep an
+        // owned clone so the `this.graph.files` borrow does not span the helper calls below
+        // that need `&LinkerContext` / `&mut LinkerContext`.
+        let entry_bits: AutoBitSet = {
+            let eb = &mut this.graph.files.items_entry_bits_mut()[source_index as usize];
+            eb.set(entry_bit as usize);
+            eb.clone()?
+        };
 
         let has_html_chunk = loaders[source_index as usize] == Loader::Html;
 
@@ -137,8 +149,10 @@ pub fn compute_chunks(
         }
 
         if css_asts[source_index as usize].is_some() {
+            // SAFETY: see `this_ptr` PORT NOTE above — the helper only reads from
+            // `this.graph` columns disjoint from the slices we hold here.
             let order = find_imported_files_in_css_order(
-                this,
+                unsafe { &mut *this_ptr },
                 temp,
                 &[Index::init(source_index)],
             );
@@ -211,8 +225,12 @@ pub fn compute_chunks(
             let css_source_indices =
                 find_imported_css_files_in_js_order(this, temp, Index::init(source_index));
             if css_source_indices.len > 0 {
-                let order =
-                    find_imported_files_in_css_order(this, temp, css_source_indices.slice());
+                // SAFETY: see `this_ptr` PORT NOTE above.
+                let order = find_imported_files_in_css_order(
+                    unsafe { &mut *this_ptr },
+                    temp,
+                    css_source_indices.slice(),
+                );
 
                 // Always use content-based hashing for CSS chunk deduplication.
                 // This ensures that when multiple JS entry points import the
@@ -533,14 +551,18 @@ pub fn compute_chunks(
         *buf = Box::default();
     });
 
-    let kinds = this.graph.files.items_entry_point_kind();
-    let output_paths = this.graph.entry_points.items_output_path();
-    // SAFETY: this points to LinkerContext which is the `linker` field of BundleV2
+    // SAFETY: `this` points to LinkerContext which is the `linker` field of BundleV2.
+    // Derived from `this_ptr` (raw) so it does not reborrow `*this` here — the column
+    // slices below hold disjoint immutable borrows into `this.graph`.
     let bv2: &mut BundleV2 = unsafe {
-        &mut *((this as *mut LinkerContext as *mut u8)
+        &mut *((this_ptr as *mut u8)
             .sub(offset_of!(BundleV2, linker))
             .cast::<BundleV2>())
     };
+    let kinds = this.graph.files.items_entry_point_kind();
+    let output_paths = this.graph.entry_points.items_output_path();
+    // PORT NOTE: re-borrow after `find_all_imported_parts_in_js_order` released `&mut this`.
+    let ast_targets = this.graph.ast.items_target();
     for (chunk_id, chunk) in chunks.iter_mut().enumerate() {
         // Assign a unique key to each chunk. This key encodes the index directly so
         // we can easily recover it later without needing to look it up in a map. The

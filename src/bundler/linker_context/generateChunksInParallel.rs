@@ -994,13 +994,14 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     if c.framework.is_none() || IS_DEV_SERVER {
                         break 'brk BakeExtra::default();
                     }
-                    if !c.framework.as_ref().unwrap().is_built_in_react {
+                    // SAFETY: framework pointer outlives the linker.
+                    if !unsafe { &**c.framework.as_ref().unwrap() }.is_built_in_react {
                         break 'brk BakeExtra::default();
                     }
 
                     let mut extra = BakeExtra::default();
                     extra.bake_is_runtime =
-                        chunk.files_with_parts_in_chunk.contains(Index::runtime().get());
+                        chunk.files_with_parts_in_chunk.contains(&Index::RUNTIME.get());
                     if output_kind == options::OutputKind::EntryPoint && side == options::Side::Server {
                         extra.is_route = true;
                         extra.fully_static =
@@ -1014,7 +1015,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
             // We want the chunk index to remain the same in `output_files` so the indices in `OutputFile.referenced_css_chunks` work
             debug_assert!(
-                chunk_index == chunk_index_in_chunks_list,
+                chunk_index as usize == chunk_index_in_chunks_list,
                 "chunk_index ({}) != chunk_index_in_chunks_list ({})",
                 chunk_index,
                 chunk_index_in_chunks_list
@@ -1022,7 +1023,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         }
 
         if !is_standalone {
-            output_files.insert_additional_output_files(&unsafe { &(*c.parse_graph).additional_output_files });
+            output_files.insert_additional_output_files(unsafe { &mut (*c.parse_graph).additional_output_files });
         }
     }
 

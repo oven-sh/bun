@@ -545,8 +545,10 @@ pub mod lockfile {
             if bun_semver::String::can_inline(slice) {
                 return T::from_init(self.string_bytes.as_slice(), slice, hash);
             }
-            if let Some(existing) = self.string_pool.get_mut(hash) {
-                return T::from_pooled(*existing, hash);
+            if let Ok(entry) = self.string_pool.get_or_put(hash) {
+                if entry.found_existing {
+                    return T::from_pooled(*entry.value_ptr, hash);
+                }
             }
             let ptr = self.ptr.expect("StringBuilder.allocate() not called");
             debug_assert!(self.len + slice.len() <= self.cap);
@@ -557,7 +559,9 @@ pub mod lockfile {
             let written = &self.string_bytes[self.off + self.len..self.off + self.len + slice.len()];
             self.len += slice.len();
             let s = bun_semver::String::init(self.string_bytes.as_slice(), written);
-            let _ = self.string_pool.put(hash, s);
+            if let Ok(entry) = self.string_pool.get_or_put(hash) {
+                *entry.value_ptr = s;
+            }
             T::from_pooled(s, hash)
         }
         pub fn clamp(&mut self) {
@@ -668,9 +672,11 @@ pub mod lockfile {
             // the file-backed loaders, which type against the column-vec
             // `Lockfile` here.
             let _ = (manager, log, migrate);
-            for (name, fmt) in [(b"bun.lock".as_slice(), Format::Text), (b"bun.lockb".as_slice(), Format::Binary)] {
-                match bun_sys::existsat(dir, name) {
-                    bun_sys::Maybe::Result(true) => {
+            for (name, fmt) in [
+                (bun_core::zstr!("bun.lock"), Format::Text),
+                (bun_core::zstr!("bun.lockb"), Format::Binary),
+            ] {
+                if bun_sys::exists_at(dir, name) {
                         // Found a lockfile. The actual parse populates `self`;
                         // both text and binary loaders are typed against
                         // `lockfile_real::Lockfile`, so the stub path returns
@@ -683,8 +689,6 @@ pub mod lockfile {
                             serializer_result: SerializerLoadResult::default(),
                             format: fmt,
                         });
-                    }
-                    _ => {}
                 }
             }
             LoadResult::NotFound
@@ -1207,7 +1211,7 @@ pub mod lockfile {
                 resolution: self.resolution[i],
                 meta: self.meta[i],
                 bin: self.bin[i],
-                scripts: self.scripts[i],
+                scripts: self.scripts[i].clone(),
             }
         }
         #[inline] pub fn items_bin(&self) -> &[crate::bin::Bin] { &self.bin }
@@ -2476,8 +2480,9 @@ impl PackageManager {
         self.increment_pending_tasks(1);
         // SAFETY: `task` is a heap allocation from `get_network_task`; the
         // queue takes ownership of the intrusive link.
-        let stub_task = task as *mut NetworkTask;
-        self.async_network_task_queue.push(stub_task);
+        // The async queue holds the stub `crate::NetworkTask`; bridge the
+        // pointer type (both are intrusive nodes with a `next: *mut Self`).
+        self.async_network_task_queue.push(task as *mut NetworkTask);
     }
 
     /// Port of `enqueue.enqueuePatchTask`
@@ -2531,11 +2536,12 @@ impl PackageManager {
             Entry::Occupied(_) => Ok(None),
             Entry::Vacant(v) => {
                 v.insert(());
-                let task = Box::into_raw(Box::<network_task::NetworkTask>::default());
+                // SAFETY: zero-init is valid for `NetworkTask` (POD-ish; raw ptrs/ints).
+                let task: *mut network_task::NetworkTask =
+                    Box::into_raw(unsafe { Box::new(core::mem::zeroed()) });
                 // SAFETY: fresh allocation, sole owner.
                 unsafe {
                     (*task).task_id = _task_id;
-                    (*task).package_manager = self as *mut _ as *mut ();
                 }
                 let _ = (_url, _is_required, _dependency_id, _pkg, _patch_name_and_version_hash, _authorization);
                 Ok(Some(task))
@@ -2620,13 +2626,15 @@ impl PackageManager {
         // cache directory's `.bin/` so lifecycle scripts that invoke
         // `node-gyp` resolve to bun's wrapper.
         let cache = self.get_cache_directory();
-        let _ = bun_sys::mkdirat(cache, b".bin", 0o755);
+        let _ = bun_sys::mkdirat(cache, bun_core::zstr!(".bin"), 0o755);
         const NODE_GYP_SHIM: &[u8] = b"#!/usr/bin/env bun\nimport {spawnSync} from 'node:child_process';\nprocess.exit(spawnSync('bun',['x','node-gyp',...process.argv.slice(2)],{stdio:'inherit'}).status??1);\n";
         let mut path_buf = bun_paths::PathBuffer::uninit();
-        if let bun_sys::Maybe::Result(cache_path) = bun_sys::get_fd_path_z(cache, &mut path_buf) {
+        if let Ok(cache_path) = bun_sys::get_fd_path_z(cache, &mut path_buf) {
             let mut full = cache_path.as_bytes().to_vec();
-            full.extend_from_slice(b"/.bin/node-gyp");
-            let _ = std::fs::write(std::ffi::OsStr::from_encoded_bytes_unchecked(&full), NODE_GYP_SHIM);
+            full.extend_from_slice(b"/.bin/node-gyp\0");
+            // SAFETY: just appended NUL terminator.
+            let zpath = unsafe { bun_core::ZStr::from_raw(full.as_ptr(), full.len() - 1) };
+            let _ = bun_sys::File::write_file(zpath, NODE_GYP_SHIM);
         }
         Ok(())
     }
@@ -3077,14 +3085,11 @@ impl PackageManager {
         }
         let scope = self.scope_for_package_name(_package_name) as *const _;
         let pm: *mut Self = self;
-        let manifest = self.manifests.by_name_hash(
-            pm,
-            unsafe { &*scope },
-            _name_hash,
-            package_manager::ManifestLoad::LoadFromMemory,
-            false,
-        )?;
-        manifest.find_best_version_newer_than(&_resolution.value.npm.version)
+        // Stub `PackageManifestMap::by_name_hash` always cache-misses; the
+        // real lookup runs through `package_manager_real::PackageManager`
+        // which holds the populated manifest cache.
+        let _ = (scope, pm);
+        None
     }
 
     /// Port of `directories.getCacheDirectoryAndAbsPath`
@@ -3184,7 +3189,7 @@ impl PackageManager {
     ) -> Result<(), bun_core::Error> {
         // Port of `enqueue.enqueuePackageForDownload`. Computes the task id,
         // dedupes, allocates a `NetworkTask` for the tarball URL, and pushes.
-        let task_id = package_manager_task::Id::for_npm_package(_name, _version);
+        let task_id = package_manager_task::Id::for_npm_package(_name, *_version);
         let pkg = self.lockfile.packages.get(_pkg_id);
         if let Some(task) = self.generate_network_task_for_tarball(
             task_id,
@@ -3193,7 +3198,7 @@ impl PackageManager {
             _dep_id,
             &pkg,
             _patch_name_and_version_hash,
-            network_task::Authorization::default(),
+            network_task::Authorization::AllowAuthorization,
         )? {
             self.enqueue_network_task(task);
         }
@@ -3213,8 +3218,12 @@ impl PackageManager {
         // Port of `enqueue.enqueueGitForCheckout`. Allocates a resolve task
         // that runs `Repository.checkout` off-thread, keyed by the repo's
         // `resolved` SHA.
+        let sb = self.lockfile.buffers.string_bytes.as_slice();
+        // SAFETY: `tag == .git` precondition (caller invariant).
+        let git = unsafe { &_resolution.value.git };
         let task_id = package_manager_task::Id::for_git_checkout(
-            _resolution.value.git.resolved.slice(&self.lockfile.buffers.string_bytes),
+            git.repo.slice(sb),
+            git.resolved.slice(sb),
         );
         if self.network_dedupe_map.insert(task_id, ()).is_some() {
             return;
@@ -3242,7 +3251,7 @@ impl PackageManager {
             _dep_id,
             &pkg,
             _patch_name_and_version_hash,
-            network_task::Authorization::default(),
+            network_task::Authorization::AllowAuthorization,
         )? {
             self.enqueue_network_task(task);
         }
@@ -3262,9 +3271,10 @@ impl PackageManager {
         // Port of `enqueue.enqueueTarballForReading` — local-tarball variant
         // of the download path; schedules an off-thread extract task without
         // an HTTP fetch.
-        let task_id = package_manager_task::Id::for_tarball(
-            _resolution.value.local_tarball.slice(&self.lockfile.buffers.string_bytes),
-        );
+        let sb = self.lockfile.buffers.string_bytes.as_slice();
+        // SAFETY: `tag == .local_tarball` precondition.
+        let url = unsafe { _resolution.value.local_tarball }.slice(sb);
+        let task_id = package_manager_task::Id::for_tarball(url);
         if self.network_dedupe_map.insert(task_id, ()).is_some() {
             return;
         }
@@ -3345,11 +3355,14 @@ impl PackageManager {
         // those handlers write into, so dispatch only the bookkeeping that the
         // stub fields can satisfy.
         let _ = (_extract_ctx, _callbacks, _install_peer, _log_level);
-        while let Some(task) = self.resolve_tasks.pop() {
+        loop {
+            let task = self.resolve_tasks.pop();
+            if task.is_null() {
+                break;
+            }
             // SAFETY: `task` is a heap allocation owned by the queue.
-            let task = unsafe { Box::from_raw(task) };
+            let _task = unsafe { Box::from_raw(task) };
             self.decrement_pending_tasks();
-            drop(task);
         }
         Ok(())
     }
@@ -3422,7 +3435,7 @@ impl PackageManager {
         // Port of `processDependencyList.processPeerDependencyList`.
         // Drain `peer_dependencies` FIFO, enqueueing each as a main dependency.
         while let Some(id) = self.peer_dependencies.read_item() {
-            let dep = self.lockfile.buffers.dependencies[id as usize];
+            let dep = self.lockfile.buffers.dependencies[id as usize].clone();
             let res = self.lockfile.buffers.resolutions[id as usize];
             self.enqueue_dependency_with_main(id, &dep, res, true)?;
         }
@@ -3454,7 +3467,7 @@ impl PackageManager {
         // forward each entry to `enqueue_dependency_with_main`.
         for offset in 0..list.len {
             let id = (list.off + offset) as DependencyID;
-            let dep = self.lockfile.buffers.dependencies[id as usize];
+            let dep = self.lockfile.buffers.dependencies[id as usize].clone();
             let res = self.lockfile.buffers.resolutions[id as usize];
             let _ = self.enqueue_dependency_with_main(id, &dep, res, false);
         }
@@ -3502,7 +3515,7 @@ impl PackageManager {
         // the global install directory and stashes its path on `self`.
         let dir = package_manager::Options::open_global_dir(b"")?;
         let mut buf = bun_paths::PathBuffer::uninit();
-        if let bun_sys::Maybe::Result(p) = bun_sys::get_fd_path_z(dir.as_fd(), &mut buf) {
+        if let Ok(p) = bun_sys::get_fd_path_z(dir.fd(), &mut buf) {
             self.global_link_dir_path = Box::<[u8]>::from(p.as_bytes());
         }
         let _ = dir;
@@ -3581,7 +3594,7 @@ impl PackageManager {
                 return;
             }
             let this = unsafe { &mut *mgr };
-            this.event_loop.tick_once();
+            this.event_loop.tick_once(core::ptr::null_mut());
         }
     }
     /// Port of `PackageManager.incrementPendingTasks`

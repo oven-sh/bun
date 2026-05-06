@@ -437,7 +437,7 @@ pub mod visited {
 pub struct Formatter<'a> {
     pub remaining_values: &'a [JSValue],
     pub map: visited::Map,
-    // TODO(port): lifetime — pool-owned node, released back via Pool guard (see JestPrettyFormat::format defer).
+    /// Lazily acquired from `visited::Pool`; released back in `Drop`.
     pub map_node: Option<core::ptr::NonNull<visited::PoolNode>>,
     pub hide_native: bool,
     pub global_this: &'a JSGlobalObject,

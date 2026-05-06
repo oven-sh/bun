@@ -427,9 +427,10 @@ pub mod js_valkey {
         /// Wrap an already-heap-allocated client pointer in its JS object.
         /// Ownership transfers to the C++ wrapper (freed via `finalize`).
         pub fn ptr_to_js(ptr: *mut Self, global: &JSGlobalObject) -> JSValue {
-            // SAFETY: codegen extern; `ptr` was produced by `JSValkeyClient::new`
-            // (heap-allocated) and is hereby owned by the JS wrapper.
-            unsafe { RedisClient__create(global.as_ptr(), ptr) }
+            // `ptr` was produced by `JSValkeyClient::new` (heap-allocated) and
+            // is hereby owned by the JS wrapper. Cast through the codegen's
+            // opaque `RedisClient` newtype — it's the same `m_ctx` pointer.
+            CodegenRedisClient::to_js(ptr.cast::<CodegenRedisClient>(), global)
         }
     }
 

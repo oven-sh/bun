@@ -1733,7 +1733,7 @@ fn parse_security_advisories_from_expr(
             );
             return Err(err!("MissingLevelField"));
         };
-        let Some(level_str) = level_expr.as_string() else {
+        let Some(level_str) = level_expr.as_string(bump) else {
             Output::err_generic(
                 "Security advisory at index {} 'level' field must be a string",
                 (i,),

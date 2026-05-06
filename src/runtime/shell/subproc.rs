@@ -1602,9 +1602,9 @@ impl CapturedWriter {
 
 impl Drop for CapturedWriter {
     fn drop(&mut self) {
-        if let Some(e) = self.err.take() {
-            e.deref();
-        }
+        // PORT NOTE: Zig called `e.deref()` on the SystemError; in Rust the
+        // `bun_sys::SystemError` strings drop themselves.
+        let _ = self.err.take();
         // self.writer Arc drops automatically.
     }
 }

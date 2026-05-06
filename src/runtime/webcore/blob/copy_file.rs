@@ -574,11 +574,11 @@ impl<'a> CopyFile<'a> {
                     if self.offset == 0
                         && matches!(
                             self.source_file_store.pathlike,
-                            jsc::node::PathOrFileDescriptor::Path(_)
+                            PathOrFileDescriptor::Path(_)
                         )
                         && matches!(
                             self.destination_file_store.pathlike,
-                            jsc::node::PathOrFileDescriptor::Path(_)
+                            PathOrFileDescriptor::Path(_)
                         )
                     {
                         'do_clonefile: {
@@ -611,7 +611,7 @@ impl<'a> CopyFile<'a> {
                             match self.do_clonefile() {
                                 Ok(()) => {
                                     let stat_size = stat_.unwrap().size;
-                                    if self.max_length != Blob::MAX_SIZE
+                                    if self.max_length != MAX_SIZE
                                         && self.max_length
                                             < SizeType::try_from(stat_size).unwrap()
                                     {
@@ -1190,7 +1190,7 @@ impl<'a> CopyFileWindows<'a> {
         must_close: &mut bool,
         is_reading: bool,
     ) -> bun_sys::Result<Fd> {
-        if let jsc::node::PathOrFileDescriptor::Path(path) = pathlike {
+        if let PathOrFileDescriptor::Path(path) = pathlike {
             let fd = match bun_sys::openat_windows_t::<u8>(
                 Fd::INVALID,
                 path.slice(),
@@ -1286,10 +1286,10 @@ impl<'a> CopyFileWindows<'a> {
 
         let new_path: &bun_str::ZStr = 'brk: {
             match &destination_file_store.pathlike {
-                jsc::node::PathOrFileDescriptor::Path(_) => {
+                PathOrFileDescriptor::Path(_) => {
                     break 'brk destination_file_store.pathlike.path().slice_z(&mut pathbuf1);
                 }
-                jsc::node::PathOrFileDescriptor::Fd(fd) => {
+                PathOrFileDescriptor::Fd(fd) => {
                     let fd = *fd;
                     match bun_sys::File::from(fd).kind() {
                         bun_sys::Result::Err(err) => {
@@ -1333,10 +1333,10 @@ impl<'a> CopyFileWindows<'a> {
         };
         let old_path: &bun_str::ZStr = 'brk: {
             match &source_file_store.pathlike {
-                jsc::node::PathOrFileDescriptor::Path(_) => {
+                PathOrFileDescriptor::Path(_) => {
                     break 'brk source_file_store.pathlike.path().slice_z(&mut pathbuf2);
                 }
-                jsc::node::PathOrFileDescriptor::Fd(fd) => {
+                PathOrFileDescriptor::Fd(fd) => {
                     let fd = *fd;
                     match bun_sys::File::from(fd).kind() {
                         bun_sys::Result::Err(err) => {
@@ -1422,7 +1422,7 @@ impl<'a> CopyFileWindows<'a> {
 
     pub fn on_complete(&mut self, written_actual: usize) {
         let mut written = written_actual;
-        if written != usize::try_from(self.size).unwrap() && self.size != Blob::MAX_SIZE {
+        if written != usize::try_from(self.size).unwrap() && self.size != MAX_SIZE {
             self.truncate();
             written = usize::try_from(self.size).unwrap();
         }
@@ -1431,7 +1431,7 @@ impl<'a> CopyFileWindows<'a> {
         if let Some(mode) = self.destination_mode {
             if matches!(
                 self.destination_file_store.data.file.pathlike,
-                jsc::node::PathOrFileDescriptor::Path(_)
+                PathOrFileDescriptor::Path(_)
             ) {
                 self.written_bytes = written;
                 let mut pathbuf = PathBuffer::uninit();
@@ -1464,7 +1464,7 @@ impl<'a> CopyFileWindows<'a> {
                         bun_sys::Tag::Chmod,
                     );
                     let destination = &self.destination_file_store.data.file;
-                    if let jsc::node::PathOrFileDescriptor::Path(p) = &destination.pathlike {
+                    if let PathOrFileDescriptor::Path(p) = &destination.pathlike {
                         err = err.with_path(p.slice());
                     }
                     self.throw(err);
@@ -1521,7 +1521,7 @@ impl<'a> CopyFileWindows<'a> {
         let destination = &self.destination_file_store.data.file;
         if !matches!(
             destination.pathlike,
-            jsc::node::PathOrFileDescriptor::Path(_)
+            PathOrFileDescriptor::Path(_)
         ) {
             self.throw(bun_sys::Error {
                 errno: bun_sys::SystemErrno::EINVAL as c_int,
@@ -1595,10 +1595,10 @@ extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
 
             // we don't really know which one it is
             match &destination.pathlike {
-                jsc::node::PathOrFileDescriptor::Path(p) => {
+                PathOrFileDescriptor::Path(p) => {
                     err = err.with_path(p.slice());
                 }
-                jsc::node::PathOrFileDescriptor::Fd(fd) => {
+                PathOrFileDescriptor::Fd(fd) => {
                     err = err.with_fd(*fd);
                 }
             }
@@ -1632,7 +1632,7 @@ extern "C" fn on_chmod(req: *mut libuv::fs_t) {
     if let Some(errno) = rc.err_enum() {
         let mut err = bun_sys::Error::from_code(errno, bun_sys::Tag::Chmod);
         let destination = &this.destination_file_store.data.file;
-        if let jsc::node::PathOrFileDescriptor::Path(p) = &destination.pathlike {
+        if let PathOrFileDescriptor::Path(p) = &destination.pathlike {
             err = err.with_path(p.slice());
         }
         this.throw(err);

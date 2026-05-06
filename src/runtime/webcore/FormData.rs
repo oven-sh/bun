@@ -335,7 +335,7 @@ pub fn to_js_from_multipart_data(
         fn on_entry(wrap: &mut Self, name: bun_semver::String, field: Field, buf: &[u8]) {
             // SAFETY: `field.value` points into `buf` (caller-owned input), valid for this call.
             let value_str: &[u8] = unsafe { &*field.value };
-            let mut key = ZigString::init_utf8(name.slice(buf));
+            let key = ZigString::init_utf8(name.slice(buf));
 
             if field.is_file {
                 let filename_str = field.filename.slice(buf);

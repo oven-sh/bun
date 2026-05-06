@@ -1518,10 +1518,12 @@ impl Expect {
 
         // try to retrieve the Expect instance
         let this_value: JSValue = call_frame.this();
-        let Some(expect) = Expect::from_js(this_value) else {
+        let Some(expect_ptr) = Expect::from_js(this_value) else {
             // if no Expect instance, assume it is a static call (`expect.myMatcher()`), so create an ExpectCustomAsymmetricMatcher instance
             return ExpectCustomAsymmetricMatcher::create(global_this, call_frame, matcher_fn);
         };
+        // SAFETY: from_js returned a non-null live m_ctx pointer owned by the JS wrapper.
+        let expect = unsafe { &mut *expect_ptr };
 
         // if we got an Expect instance, then it's a non-static call (`expect().myMatcher`),
         // so now execute the symmetric matching
@@ -1537,12 +1539,9 @@ impl Expect {
 
         // retrieve the captured expected value
         // TODO(port): blocked_on Expect::js cached-accessor module (codegen_cached_accessors!)
-        let Some(mut value): Option<JSValue> = todo!("blocked_on: Expect::js::captured_value_get_cached") else {
-            return Err(global_this.throw2(
-                "Internal consistency error: failed to retrieve the captured value",
-                format_args!(""),
-            ));
-        };
+        let _ = this_value;
+        #[allow(unreachable_code)]
+        let mut value: JSValue = todo!("blocked_on: Expect::js::captured_value_get_cached");
         value = Self::process_promise(
             expect.custom_label.clone(),
             expect.flags,

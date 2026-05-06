@@ -903,17 +903,16 @@ impl FetchTasklet {
 
     fn get_abort_error(&mut self) -> Option<BodyValueError> {
         if self.abort_reason.has() {
-            let out = core::mem::replace(&mut self.abort_reason, Strong::EMPTY);
+            let out = core::mem::replace(&mut self.abort_reason, StrongOptional::empty());
             self.clear_abort_signal();
             return Some(BodyValueError::JSValue(out));
         }
 
-        if let Some(signal) = self.signal.as_ref() {
-            if let Some(reason) = signal.reason_if_aborted(self.global_this) {
-                let result = reason.to_body_value_error(self.global_this);
-                self.clear_abort_signal();
-                return Some(result);
-            }
+        if let Some(_signal) = self.signal {
+            // TODO(b2-cycle): `bun_jsc::AbortSignal` at the crate root is a
+            // stub_ty!; the real `reason_if_aborted` (returning AbortReason) lives
+            // in `bun_jsc::abort_signal` which back-depends on `bun_runtime`.
+            todo!("blocked_on: bun_jsc::AbortSignal::reason_if_aborted");
         }
 
         None
@@ -923,9 +922,12 @@ impl FetchTasklet {
         let Some(signal) = self.signal.take() else {
             return;
         };
-        signal.clean_native_bindings(self as *mut _ as *mut c_void);
-        signal.pending_activity_unref();
-        drop(signal); // Arc unref
+        // SAFETY: signal is a live C++-owned WebCore::AbortSignal*; we hold one ref.
+        unsafe {
+            WebCore__AbortSignal__cleanNativeBindings(signal, self as *mut _ as *mut c_void);
+            WebCore__AbortSignal__decrementPendingActivity(signal);
+            WebCore__AbortSignal__unref(signal);
+        }
     }
 
     pub fn on_reject(&mut self) -> BodyValueError {

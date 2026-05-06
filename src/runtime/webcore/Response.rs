@@ -1061,10 +1061,9 @@ impl Response {
                 break 'brk Init::init(global_this, arguments[1])?.expect("unreachable");
             }
             if !global_this.has_exception() {
-                return global_this.throw_invalid_arguments(
+                return Err(global_this.throw_invalid_arguments(
                     "Failed to construct 'Response': The provided body value is not of type 'ResponseInit'",
-                    &[],
-                );
+                ));
             }
             return Err(bun_jsc::JsError::Thrown);
         };
@@ -1078,7 +1077,9 @@ impl Response {
             if arguments[0].is_undefined_or_null() {
                 break 'brk Body { value: BodyValue::Null };
             }
-            Body::extract(global_this, arguments[0])?
+            // PORT NOTE: `Body::extract` is a free fn in `body::_jsc_gated`,
+            // re-exported as `body::extract`.
+            super::body::extract(global_this, arguments[0])?
         };
         // errdefer body.deinit() — Body: Drop handles cleanup on `?` below
 
@@ -1094,9 +1095,12 @@ impl Response {
         }));
 
         if let BodyValue::Blob(blob) = &response.body.value {
-            if let Some(headers) = &response.init.headers {
-                if !blob.content_type.is_empty() && !headers.fast_has(FetchHeaders::HTTPHeaderName::ContentType) {
-                    headers.put(FetchHeaders::HTTPHeaderName::ContentType, &blob.content_type, global_this)?;
+            if let Some(headers) = &mut response.init.headers {
+                // SAFETY: see note in get_or_create_headers — `content_type`
+                // is a valid (possibly empty) slice pointer.
+                let content_type = unsafe { &*blob.content_type };
+                if !content_type.is_empty() && !headers.fast_has(HTTPHeaderName::ContentType) {
+                    headers.put(HTTPHeaderName::ContentType, content_type, global_this)?;
                 }
             }
         }

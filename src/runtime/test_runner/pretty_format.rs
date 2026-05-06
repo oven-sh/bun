@@ -1303,14 +1303,26 @@ impl<'a> Formatter<'a> {
 
         if FORMAT.can_have_circular_references() {
             if self.map_node.is_none() {
-                // TODO(port): Visited::Pool::get() — pool guard semantics
-                self.map_node = Some(visited::Pool::get());
-                self.map_node.as_mut().unwrap().data.clear();
+                // PORT NOTE: `visited::Pool::get()` returns an RAII `PoolGuard` that
+                // would release on scope exit; the Zig spec stashes the raw node on
+                // `self` and releases it from `JestPrettyFormat::format`'s defer, so
+                // take the raw node directly.
+                // SAFETY: `get_node()` never returns null; `data` is initialized by
+                // `Map::INIT` (see `visited::Map: ObjectPoolType`).
+                let node = unsafe {
+                    core::ptr::NonNull::new_unchecked(visited::Pool::get_node())
+                };
+                self.map_node = Some(node);
                 // PORT NOTE: Zig (.zig:878-880) does a struct copy aliasing the same
                 // backing buffer. Rust takes the map here and swaps it back into
-                // `node.data` at release time (see JestPrettyFormat::format defer),
+                // `node.data` at release time (see JestPrettyFormat::format tail),
                 // so the pooled allocation is retained across uses.
-                self.map = core::mem::take(&mut self.map_node.as_mut().unwrap().data);
+                // SAFETY: see above.
+                unsafe {
+                    let data = (*node.as_ptr()).data.assume_init_mut();
+                    data.clear();
+                    self.map = core::mem::take(data);
+                }
             }
 
             let entry = self.map.get_or_put(value).expect("unreachable");

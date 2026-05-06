@@ -477,9 +477,13 @@ impl<'a> Snapshots<'a> {
                             format_args!(
                                 "Failed to update inline snapshot: Multiple inline snapshots on the same line must all have the same value:\n{}",
                                 DiffFormatter {
-                                    received_string: &ils.value,
-                                    expected_string: last_value,
-                                    global_this: vm.global,
+                                    received_string: Some(&ils.value),
+                                    expected_string: Some(last_value),
+                                    // SAFETY: VM-global JSGlobalObject; valid for VM lifetime.
+                                    global_this: Some(unsafe { &*vm.global }),
+                                    received: None,
+                                    expected: None,
+                                    not: false,
                                 },
                             ),
                         )?;

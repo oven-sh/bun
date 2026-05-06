@@ -500,7 +500,7 @@ use crate::api::archive::Archive;
 use super::write_file as write_file_mod;
 use super::write_file::{WriteFilePromise, WriteFileWaitFromLockedValueTask};
 #[allow(unused_imports)]
-use bun_jsc::{SysErrorJsc as _, StringJsc as _, JsClass as _};
+use bun_jsc::{StringJsc as _, JsClass as _};
 #[allow(unused_imports)]
 use bun_bundler::options_impl::LoaderExt as _;
 // Local: the `bun_jsc::zig_string::ZigString` (repr(C)-identical to

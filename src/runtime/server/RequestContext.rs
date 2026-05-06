@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use bun_http_types::Method::Method;
 use bun_str::String as BunString;
-use bun_uws::{self as uws, SocketAddress, WebSocketUpgradeContext};
+use bun_uws::{self as uws, WebSocketUpgradeContext};
 
 use crate::server::jsc::{self, JSGlobalObject, JSValue, JsResult, VirtualMachine};
 use crate::server::{RangeRequest, ServerLike};
@@ -815,8 +815,9 @@ where
             reason: Some(Api::FallbackStep::fetch_event_handler),
             cwd,
             problems: Some(Api::Problems {
-                // TODO(port): @intFromError(err) — bun_core::Error is NonZeroU16
-                code: u16::from(err.0),
+                // TODO(port): @intFromError(err) — bun_core::Error wraps a
+                // private NonZeroU16; no public accessor yet.
+                code: { let _ = err; todo!("blocked_on: bun_core::Error::code") },
                 name: err.name().as_bytes().to_vec().into_boxed_slice(),
                 exceptions: exceptions.to_vec(),
                 build: {
@@ -2736,10 +2737,10 @@ where
 
     pub fn on_pipe(this: &mut Self, stream: WebCore::streams::Result) {
         // TODO(port): allocator param dropped — global mimalloc per §Allocators
-        let mut stream_ = stream;
         let stream_needs_deinit =
             matches!(stream, WebCore::streams::Result::Owned(_) | WebCore::streams::Result::OwnedAndDone(_));
         let is_done = stream.is_done();
+        let mut stream_ = stream;
         let this_ptr = this as *mut Self;
         let _guard = scopeguard::guard((), |_| {
             if is_done {

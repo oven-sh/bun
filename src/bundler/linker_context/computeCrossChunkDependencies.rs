@@ -200,7 +200,7 @@ impl<'a> CrossChunkDependencies<'a> {
                         let other_chunk_index =
                             entry_point_chunk_indices[import_record.source_index.get() as usize];
                         import_record.path.text =
-                            _chunks[other_chunk_index as usize].unique_key.clone();
+                            _chunks[other_chunk_index as usize].unique_key;
                         // TODO(port): Zig assigns the slice by pointer (no copy); decide
                         // ownership of `path.text` vs `unique_key` in Phase B.
                         import_record.source_index = Index::INVALID;

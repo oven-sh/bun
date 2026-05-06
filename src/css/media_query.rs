@@ -42,9 +42,27 @@ type CSSInteger = i32;
 /// Any type that can appear as a node in a query-condition tree.
 pub trait QueryCondition: Sized {
     fn parse_feature(input: &mut Parser) -> Result<Self>;
+    /// `parse_feature` with `ParserOptions` threaded — needed for the
+    /// `env()` arm of `MediaFeatureValue::parse_unknown`. Default impl
+    /// drops `options` so out-of-tree implementors (e.g.
+    /// `rules::container::{ContainerCondition,StyleQuery}`) keep compiling
+    /// until they opt in.
+    fn parse_feature_with_options(
+        input: &mut Parser,
+        _options: &css::ParserOptions,
+    ) -> Result<Self> {
+        Self::parse_feature(input)
+    }
     fn create_negation(condition: Box<Self>) -> Self;
     fn create_operation(operator: Operator, conditions: Vec<Self>) -> Self;
     fn parse_style_query(input: &mut Parser) -> Result<Self>;
+    /// See `parse_feature_with_options` — same default-forward rationale.
+    fn parse_style_query_with_options(
+        input: &mut Parser,
+        _options: &css::ParserOptions,
+    ) -> Result<Self> {
+        Self::parse_style_query(input)
+    }
     fn needs_parens(
         &self,
         parent_operator: Option<Operator>,
@@ -752,6 +770,13 @@ impl QueryCondition for MediaCondition {
         let feature = MediaFeature::parse(input)?;
         Ok(MediaCondition::Feature(feature))
     }
+    fn parse_feature_with_options(
+        input: &mut Parser,
+        options: &css::ParserOptions,
+    ) -> Result<Self> {
+        let feature = MediaFeature::parse_with_options(input, options)?;
+        Ok(MediaCondition::Feature(feature))
+    }
     fn create_negation(condition: Box<Self>) -> Self {
         MediaCondition::Not(condition)
     }
@@ -1035,11 +1060,15 @@ impl MediaFeatureValue {
 
     /// Parses a single media query feature value, with an expected type.
     /// If the type is unknown, pass `MediaFeatureType::Unknown` instead.
-    pub fn parse(input: &mut Parser, expected_type: MediaFeatureType) -> Result<MediaFeatureValue> {
+    pub fn parse(
+        input: &mut Parser,
+        expected_type: MediaFeatureType,
+        options: &css::ParserOptions,
+    ) -> Result<MediaFeatureValue> {
         if let Ok(value) = input.try_parse(|i| MediaFeatureValue::parse_known(i, expected_type)) {
             return Ok(value);
         }
-        MediaFeatureValue::parse_unknown(input)
+        MediaFeatureValue::parse_unknown(input, options)
     }
 
     pub fn parse_known(

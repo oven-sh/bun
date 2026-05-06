@@ -347,7 +347,7 @@ fn decode_frame(
             y += 1;
         }
     }
-    Ok(codecs::Decoded { rgba: out, width: w, height: h })
+    Ok(codecs::Decoded { rgba: out.into_vec(), width: w, height: h, icc_profile: None })
 }
 
 /// One row of palette indices → RGBA. Scalar 4-byte copy per pixel — see file

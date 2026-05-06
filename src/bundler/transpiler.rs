@@ -1619,7 +1619,7 @@ impl<'a> Transpiler<'a> {
     where
         W: js_printer::WriterTrait,
     {
-        if bun_core::feature_flag::BUN_FEATURE_FLAG_DISABLE_SOURCE_MAPS.get() {
+        if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_SOURCE_MAPS.get() {
             return self.print_with_source_map_maybe::<W, false>(
                 result.ast,
                 &result.source,

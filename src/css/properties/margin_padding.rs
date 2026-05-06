@@ -29,7 +29,7 @@ macro_rules! impl_rect_shorthand {
                 .to_css(dest)
             }
         }
-        crate::impl_parse_tocss_via_inherent!($T);
+        crate::impl_generic_parse_tocss!($T);
     };
 }
 
@@ -49,7 +49,7 @@ macro_rules! impl_size_shorthand {
                 Ok(())
             }
         }
-        crate::impl_parse_tocss_via_inherent!($T);
+        crate::impl_generic_parse_tocss!($T);
     };
 }
 

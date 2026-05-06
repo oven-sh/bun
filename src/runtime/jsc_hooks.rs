@@ -1808,39 +1808,646 @@ unsafe fn fetch_builtin_module(
     FetchBuiltinResult::NotFound
 }
 
-/// `Bun__transpileFile` body — concurrent-transpiler entry. Returns the
-/// in-flight `JSInternalPromise*` when `allow_promise && async`, else null.
+// ────────────────────────────────────────────────────────────────────────────
+// `Bun__transpileFile` helpers — local ports of `options.normalizeSpecifier` /
+// `options.getLoaderAndVirtualSource` (spec bundler/options.zig:909-1040).
+//
+// The canonical Rust port (`bun_bundler::options::get_loader_and_virtual_source`)
+// is `#[cfg(any())]`-gated behind a `VmLoaderCtx` vtable that nothing
+// constructs yet, and `Fs::Path::loader` returns the lower-tier
+// `bun_options_types::BundleEnums::Loader` (a *distinct* nominal type from the
+// `bun_bundler::options::Loader` we need for `TranspileExtra`). Porting the
+// body inline here lets us name `VirtualMachine` directly (no vtable) and look
+// the loader up in `transpiler.options.loaders` (which is already
+// `StringArrayHashMap<options::Loader>`), so no inter-enum bridge is required.
+// ────────────────────────────────────────────────────────────────────────────
+
+/// `bun.options.Loader.Optional.fromAPI` (spec options.zig) — maps the wire
+/// `bun.schema.api.Loader` (`#[repr(u8)]`, `_none = 254`) discriminant that
+/// crosses the C++ boundary as `force_loader: u8` to the runtime
+/// `options::Loader`. PORT NOTE: PORTING.md §Forbidden bars
+/// `transmute::<u8, enum>`, so this is an exhaustive match (any unknown tag —
+/// including 0, which `api::Loader` never uses — collapses to `None`).
+#[inline]
+fn force_loader_from_api_u8(api_loader: u8) -> Option<Loader> {
+    use Loader as L;
+    match api_loader {
+        1 => Some(L::Jsx),
+        2 => Some(L::Js),
+        3 => Some(L::Ts),
+        4 => Some(L::Tsx),
+        5 => Some(L::Css),
+        6 => Some(L::File),
+        7 => Some(L::Json),
+        8 => Some(L::Jsonc),
+        9 => Some(L::Toml),
+        10 => Some(L::Wasm),
+        11 => Some(L::Napi),
+        12 => Some(L::Base64),
+        13 => Some(L::Dataurl),
+        14 => Some(L::Text),
+        15 => Some(L::Bunsh),
+        16 => Some(L::Sqlite),
+        17 => Some(L::SqliteEmbedded),
+        18 => Some(L::Html),
+        19 => Some(L::Yaml),
+        20 => Some(L::Json5),
+        21 => Some(L::Md),
+        // 254 = `_none`; everything else is open-tail per schema.zig:325.
+        _ => None,
+    }
+}
+
+/// `Fs.Path.loader(&jsc_vm.transpiler.options.loaders)` — re-spelt against
+/// `options::LoaderHashTable` (= `StringArrayHashMap<options::Loader>`).
+/// Spec resolver/fs.zig `Path.loader`.
+fn loader_for_path(
+    path: &Fs::Path<'_>,
+    loaders: &options::LoaderHashTable,
+) -> Option<Loader> {
+    if path.is_data_url() {
+        return Some(Loader::Dataurl);
+    }
+    let ext = path.name.ext;
+    let result = loaders.get(ext).copied().or_else(|| Loader::from_string(ext));
+    if result.is_none() || result == Some(Loader::Json) {
+        let str = path.name.filename;
+        if str == b"package.json" || str == b"bun.lock" {
+            return Some(Loader::Jsonc);
+        }
+        if str.ends_with(b".jsonc") {
+            return Some(Loader::Jsonc);
+        }
+        if (str.starts_with(b"tsconfig.") || str.starts_with(b"jsconfig."))
+            && str.ends_with(b".json")
+        {
+            return Some(Loader::Jsonc);
+        }
+    }
+    result
+}
+
+/// `options.normalizeSpecifier(jsc_vm, slice)` — strip the VM's origin
+/// host/path prefix and split off the `?query`. Spec options.zig:909-941.
 ///
 /// # Safety
-/// `jsc_vm` is the live per-thread VM; `ret` is a valid out-param.
-unsafe fn transpile_file(
-    _jsc_vm: *mut VirtualMachine,
-    _global: *mut JSGlobalObject,
-    _specifier: *const bun_string::String,
-    _referrer: *const bun_string::String,
-    _type_attribute: *const bun_string::String,
-    _ret: *mut ErrorableResolvedSource,
-    _allow_promise: bool,
-    _is_commonjs_require: bool,
-    _force_loader: u8,
-) -> *mut c_void {
-    // TODO(b2-cycle): full port — needs `options.getLoaderAndVirtualSource`,
-    // `node_module_module`, `webcore.Blob`, the `RuntimeTranspilerStore`
-    // queue. All gated siblings.
-    //
-    // Contract (ModuleLoader.rs:138-150 / spec ModuleLoader.zig:881+): a null
-    // return means "synchronous; result is in `*ret`". The no-hook fallback
-    // (ModuleLoader.rs:223-228) writes `ModuleNotFound` into `*ret` before
-    // returning null; once this hook is installed it must do the same so C++
-    // reads a well-formed error instead of uninit memory.
-    // SAFETY: per fn contract — `_ret` is a valid out-param.
-    unsafe {
-        *_ret = ErrorableResolvedSource::err(
-            bun_core::err!("ModuleNotFound"),
-            JSValue::UNDEFINED,
-        );
+/// `jsc_vm` is the live per-thread VM.
+unsafe fn normalize_specifier_for_loader<'a>(
+    jsc_vm: *mut VirtualMachine,
+    slice_: &'a [u8],
+) -> (&'a [u8], &'a [u8], &'a [u8]) {
+    let mut slice = slice_;
+    if slice.is_empty() {
+        return (slice, slice, b"");
     }
-    ptr::null_mut()
+    // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+    let host = unsafe { (*jsc_vm).origin.host };
+    let opath = unsafe { (*jsc_vm).origin.path };
+    if slice.starts_with(host) {
+        slice = &slice[host.len()..];
+    }
+    if opath.len() > 1 && slice.starts_with(opath) {
+        slice = &slice[opath.len()..];
+    }
+    let specifier = slice;
+    let mut query: &[u8] = b"";
+    if let Some(i) = bun_string::strings::index_of_char(slice, b'?') {
+        let i = i as usize;
+        query = &slice[i..];
+        slice = &slice[..i];
+    }
+    (slice, specifier, query)
+}
+
+/// Result of [`get_loader_and_virtual_source`] — mirrors
+/// `options.LoaderResult` (options.zig:944-953).
+struct LoaderResult<'a> {
+    loader: Option<Loader>,
+    virtual_source: Option<&'a bun_logger::Source>,
+    path: Fs::Path<'a>,
+    is_main: bool,
+    specifier: &'a [u8],
+    /// Always `None` for non-JS-like loaders (not needed there).
+    package_json: Option<&'a bun_resolver::package_json::PackageJSON>,
+}
+
+/// `options.getLoaderAndVirtualSource` — high-tier body. Spec
+/// options.zig:955-1040. Named `*mut VirtualMachine` directly per the §Dispatch
+/// note above (no `VmLoaderCtx` vtable).
+///
+/// # Safety
+/// `jsc_vm` is the live per-thread VM; the returned borrows live as long as
+/// the input `specifier_str` / the VM's resolver caches.
+unsafe fn get_loader_and_virtual_source<'a>(
+    specifier_str: &'a [u8],
+    jsc_vm: *mut VirtualMachine,
+    virtual_source_to_use: &'a mut Option<bun_logger::Source>,
+    blob_to_deinit: &mut Option<crate::webcore::Blob>,
+    type_attribute_str: Option<&[u8]>,
+) -> Result<LoaderResult<'a>, bun_core::Error> {
+    let (normalized_file_path_from_specifier, specifier, query) =
+        // SAFETY: per fn contract.
+        unsafe { normalize_specifier_for_loader(jsc_vm, specifier_str) };
+    let mut path = Fs::Path::init(normalized_file_path_from_specifier);
+
+    // SAFETY: per fn contract — `transpiler.options` is a value field of the VM.
+    let mut loader: Option<Loader> =
+        loader_for_path(&path, unsafe { &(*jsc_vm).transpiler.options.loaders });
+    let mut virtual_source: Option<&'a bun_logger::Source> = None;
+
+    // Spec :971-979 — synthetic `[eval]`/`[stdin]` source.
+    // SAFETY: per fn contract.
+    if let Some(eval_source) = unsafe { (*jsc_vm).module_loader.eval_source.as_deref() } {
+        // PORT NOTE: `bun.pathLiteral("/[eval]")` is `\\[eval]` on Windows; the
+        // separator-agnostic `Path::sep_any()` check matches both.
+        const EVAL: &[u8] = b"[eval]";
+        const STDIN: &[u8] = b"[stdin]";
+        let is_eval = specifier.len() > EVAL.len()
+            && specifier.ends_with(EVAL)
+            && bun_paths::is_sep_any(specifier[specifier.len() - EVAL.len() - 1]);
+        let is_stdin = specifier.len() > STDIN.len()
+            && specifier.ends_with(STDIN)
+            && bun_paths::is_sep_any(specifier[specifier.len() - STDIN.len() - 1]);
+        if is_eval || is_stdin {
+            // SAFETY: `eval_source` is heap-owned by the VM (`Box<Source>`); it
+            // outlives the synchronous transpile this borrow feeds into.
+            virtual_source =
+                Some(unsafe { &*(eval_source as *const bun_logger::Source) });
+            loader = Some(Loader::Tsx);
+        }
+    }
+
+    // Spec :981-1007 — `blob:` ObjectURL → in-memory virtual source.
+    if crate::webcore::object_url_registry::is_blob_url(specifier) {
+        match crate::webcore::object_url_registry::ObjectURLRegistry::singleton()
+            .resolve_and_dupe(&specifier[b"blob:".len()..])
+        {
+            Some(blob) => {
+                *blob_to_deinit = Some(blob);
+                // SAFETY: `blob_to_deinit` is `Some` (just written); we hold
+                // `&mut` for the duration of this body, so `as_mut().unwrap()`
+                // is sound and the `&'a` reborrow points at storage owned by
+                // the *caller's* `Option<Blob>` slot (outlives `LoaderResult`).
+                let blob = blob_to_deinit.as_mut().unwrap();
+                // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+                loader = blob.get_loader(unsafe { &*jsc_vm });
+
+                // "file:" loader makes no sense for blobs, so default to tsx.
+                if let Some(filename) = blob.get_file_name() {
+                    // Only treat it as a file if it is a `Bun.file()`.
+                    if blob.needs_to_read_file() {
+                        // PORT NOTE: borrowck — `Fs::Path<'a>` borrows
+                        // `filename`, which borrows `*blob_to_deinit`. The
+                        // caller owns that slot for `'a`, so erase via raw ptr.
+                        path = Fs::Path::init(unsafe {
+                            core::slice::from_raw_parts(filename.as_ptr(), filename.len())
+                        });
+                    }
+                }
+
+                if !blob.needs_to_read_file() {
+                    // SAFETY: same lifetime erasure as above — `shared_view()`
+                    // borrows the blob's backing store (held in the caller's
+                    // `blob_to_deinit` slot for the synchronous transpile).
+                    let contents: &'a [u8] = unsafe {
+                        let v = blob.shared_view();
+                        core::slice::from_raw_parts(v.as_ptr(), v.len())
+                    };
+                    *virtual_source_to_use = Some(bun_logger::Source {
+                        path: path.clone(),
+                        contents,
+                        ..Default::default()
+                    });
+                    virtual_source = virtual_source_to_use.as_ref();
+                }
+            }
+            None => return Err(bun_core::err!("BlobNotFound")),
+        }
+    }
+
+    // Spec :1009-1015.
+    if query == b"?raw" {
+        loader = Some(Loader::Text);
+    }
+    if let Some(attr_str) = type_attribute_str {
+        if let Some(attr_loader) = Loader::from_string(attr_str) {
+            loader = Some(attr_loader);
+        }
+    }
+
+    // SAFETY: per fn contract.
+    let is_main = specifier == unsafe { (*jsc_vm).main };
+
+    // Spec :1019-1031 — package.json sniff for `.js`/`.ts` module-type.
+    let dir = path.name.dir;
+    let is_js_like = loader.map(|l| l.is_java_script_like()).unwrap_or(true);
+    let package_json = if is_js_like && bun_paths::is_absolute(dir) {
+        // SAFETY: per fn contract — `transpiler.resolver` is a value field of
+        // the VM; `read_dir_info` is re-entrant on the JS thread.
+        match unsafe { (*jsc_vm).transpiler.resolver.read_dir_info(dir) } {
+            Ok(Some(dir_info)) => {
+                // SAFETY: `read_dir_info` returns a stable cache slot
+                // (`*mut DirInfo`) owned by the resolver's interned arena; the
+                // PackageJSON it points at is `'static` per dir_info.rs.
+                let dir_info = unsafe { &*dir_info };
+                dir_info.package_json.or(dir_info.enclosing_package_json)
+            }
+            _ => None,
+        }
+    } else {
+        None
+    };
+
+    Ok(LoaderResult {
+        loader,
+        virtual_source,
+        path,
+        is_main,
+        specifier,
+        package_json,
+    })
+}
+
+thread_local! {
+    /// `pub threadlocal var source_code_printer: ?*js_printer.BufferPrinter`
+    /// (spec VirtualMachine.zig:1584). Lazy-init in [`transpile_file`] per
+    /// VirtualMachine.zig:489-494; never freed (process-lifetime singleton —
+    /// PORTING.md §Forbidden permits the leak for true thread-local singletons).
+    static TRANSPILE_PRINTER: Cell<*mut bun_js_printer::BufferPrinter> =
+        const { Cell::new(ptr::null_mut()) };
+}
+
+/// Spec ModuleLoader.zig:879 `const always_sync_modules = .{"reflect-metadata"};`.
+const ALWAYS_SYNC_MODULES: &[&[u8]] = &[b"reflect-metadata"];
+
+/// `Bun__transpileFile` body — concurrent-transpiler entry. Returns the
+/// in-flight `JSInternalPromise*` when `allow_promise && async`, else null
+/// (result is in `*ret`). Spec ModuleLoader.zig:881-1120.
+///
+/// # Safety
+/// `jsc_vm` is the live per-thread VM; `global` is its `JSGlobalObject*`;
+/// `specifier_ptr`/`referrer` are valid `bun.String*` for the call's duration;
+/// `type_attribute` is null or a valid `bun.String*`; `ret` is a valid
+/// out-param the caller reads when `null` is returned.
+#[allow(unused_variables, unused_mut)]
+unsafe fn transpile_file(
+    jsc_vm: *mut VirtualMachine,
+    global: *mut JSGlobalObject,
+    specifier_ptr: *const bun_string::String,
+    referrer: *const bun_string::String,
+    type_attribute: *const bun_string::String,
+    ret: *mut ErrorableResolvedSource,
+    allow_promise: bool,
+    is_commonjs_require: bool,
+    force_loader: u8,
+) -> *mut c_void {
+    use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
+    use bun_logger as logger;
+
+    // SAFETY: per fn contract.
+    let global_ref = unsafe { &*global };
+
+    let force_loader_type: Option<Loader> = force_loader_from_api_u8(force_loader);
+
+    // Spec :895 — `var log = logger.Log.init(jsc_vm.transpiler.allocator)`.
+    // PORT NOTE: per §Allocators the explicit allocator threads are dropped.
+    let mut log = logger::Log::init();
+    // PORT NOTE: reshaped for borrowck — Zig `defer log.deinit()` becomes a
+    // scopeguard so every `return null` path still frees the msg vec.
+    let mut log = scopeguard::guard(log, |mut l| {
+        l.msgs.clear();
+    });
+
+    // Spec :897-900 — UTF-8 views over the WTF-backed `bun.String` inputs.
+    // SAFETY: per fn contract — both pointers are valid for the call.
+    let _specifier = unsafe { (*specifier_ptr).to_utf8() };
+    let referrer_slice = unsafe { (*referrer).to_utf8() };
+
+    // Spec :902-905 — `type_attribute` may be null (no `with { type }`).
+    // SAFETY: per fn contract — null or a live `bun.String*`.
+    let type_attribute_str: Option<&[u8]> =
+        unsafe { type_attribute.as_ref() }.and_then(|s| s.as_utf8());
+
+    // Spec :907-913.
+    let mut virtual_source_to_use: Option<logger::Source> = None;
+    let mut blob_to_deinit: Option<crate::webcore::Blob> = None;
+    // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+    let mut lr = match unsafe {
+        get_loader_and_virtual_source(
+            _specifier.slice(),
+            jsc_vm,
+            &mut virtual_source_to_use,
+            &mut blob_to_deinit,
+            type_attribute_str,
+        )
+    } {
+        Ok(lr) => lr,
+        Err(_) => {
+            // Spec :910-912 — `ERR(.MODULE_NOT_FOUND, "Blob not found")`.
+            let js = global_ref
+                .err(
+                    bun_jsc::ErrCode::ERR_MODULE_NOT_FOUND,
+                    format_args!("Blob not found"),
+                )
+                .to_js();
+            // SAFETY: per fn contract — `ret` is a valid out-param.
+            unsafe {
+                *ret = ErrorableResolvedSource::err(
+                    bun_core::err!("JSErrorObject"),
+                    js,
+                );
+            }
+            return ptr::null_mut();
+        }
+    };
+    // Spec :914 — `defer if (blob_to_deinit) |*blob| blob.deinit()`.
+    let _blob_guard = scopeguard::guard((), |_| {
+        if let Some(mut blob) = blob_to_deinit.take() {
+            blob.deinit();
+        }
+    });
+
+    // ── force_loader / require.extensions override ──────────────────────────
+    // Spec :915-939.
+    if let Some(loader_type) = force_loader_type {
+        // PORT NOTE: `@branchHint(.unlikely)` dropped (no stable Rust equiv).
+        bun_core::assert!(!is_commonjs_require);
+        lr.loader = Some(loader_type);
+    } else if is_commonjs_require
+        // SAFETY: per fn contract.
+        && unsafe { (*jsc_vm).has_mutated_built_in_extensions } > 0
+    {
+        #[cfg(any())]
+        // TODO(b2-cycle): `node_module_module::find_longest_registered_extension`
+        // — `vm.commonjs_custom_extensions` is still typed `StringArrayHashMap<()>`
+        // on the low-tier VM (VirtualMachine.rs:262); widen to
+        // `StringArrayHashMap<CustomLoader>` and un-gate.
+        {
+            use bun_jsc::node_module_module::{
+                find_longest_registered_extension, CustomLoader,
+            };
+            if let Some(entry) =
+                find_longest_registered_extension(unsafe { &*jsc_vm }, _specifier.slice())
+            {
+                match entry {
+                    CustomLoader::Loader(loader) => lr.loader = Some(loader),
+                    CustomLoader::Custom(strong) => {
+                        unsafe {
+                            *ret = ErrorableResolvedSource::ok(ResolvedSource {
+                                allocator: ptr::null_mut(),
+                                source_code: bun_string::String::empty(),
+                                specifier: bun_string::String::empty(),
+                                source_url: bun_string::String::empty(),
+                                cjs_custom_extension_index: strong.get(),
+                                tag: ResolvedSourceTag::CommonJsCustomExtension,
+                                ..Default::default()
+                            });
+                        }
+                        return ptr::null_mut();
+                    }
+                }
+            }
+        }
+    }
+
+    // ── module_type sniff from extension / package.json ─────────────────────
+    // Spec :941-969.
+    let module_type: ModuleType = 'brk: {
+        let ext = lr.path.name.ext;
+        // regex /\.[cm][jt]s$/
+        if ext.len() == b".cjs".len() {
+            if ext == b".cjs" { break 'brk ModuleType::Cjs; }
+            if ext == b".mjs" { break 'brk ModuleType::Esm; }
+            if ext == b".cts" { break 'brk ModuleType::Cjs; }
+            if ext == b".mts" { break 'brk ModuleType::Esm; }
+        }
+        // regex /\.[jt]s$/
+        if ext.len() == b".ts".len() && (ext == b".js" || ext == b".ts") {
+            // Use the package.json module type if it exists.
+            break 'brk lr
+                .package_json
+                .map(|pkg| pkg.module_type)
+                .unwrap_or(ModuleType::Unknown);
+        }
+        // For JSX/TSX and other extensions, let the file contents decide.
+        ModuleType::Unknown
+    };
+    let pkg_name: Option<&[u8]> = lr
+        .package_json
+        .and_then(|pkg| (!pkg.name.is_empty()).then_some(&*pkg.name));
+
+    // ── Concurrent-transpiler dispatch (`transpile_async:` block) ───────────
+    // Spec :975-1028. We only run the transpiler concurrently when we can.
+    // Today that's: import statements (`import 'foo'`) and import expressions
+    // (`import('foo')`).
+    'transpile_async: {
+        // PORT NOTE: `comptime bun.FeatureFlags.concurrent_transpiler` — no
+        // Rust mirror yet, but the feature is unconditionally on in Zig builds.
+        let concurrent_loader = lr.loader.unwrap_or(Loader::File);
+        // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+        let (has_loaded, is_in_preload, plugin_runner_is_none) = unsafe {
+            (
+                (*jsc_vm).has_loaded,
+                (*jsc_vm).is_in_preload,
+                (*jsc_vm).plugin_runner.is_none(),
+            )
+        };
+        if blob_to_deinit.is_none()
+            && allow_promise
+            && (has_loaded || is_in_preload)
+            && concurrent_loader.is_java_script_like()
+            && !lr.is_main
+            // Plugins make this complicated.
+            // TODO: allow running concurrently when no onLoad handlers match a plugin.
+            && plugin_runner_is_none
+            // TODO(b2-cycle): `&& jsc_vm.transpiler_store.enabled` —
+            // `transpiler_store` is `()` on the low-tier VM (VirtualMachine.rs:183).
+        {
+            // Disgusting workaround (spec :993-1018): polyfills like
+            // `reflect-metadata` are CJS-with-side-effects that other ESM
+            // depends on synchronously, so they must transpile on-thread.
+            if let Some(pkg_name_) = pkg_name {
+                for always_sync in ALWAYS_SYNC_MODULES {
+                    if pkg_name_ == *always_sync {
+                        break 'transpile_async;
+                    }
+                }
+            }
+
+            #[cfg(any())]
+            // TODO(b2-cycle): `RuntimeTranspilerStore::transpile` — gated
+            // behind `vm.transpiler_store: ()` (VirtualMachine.rs:182-183).
+            // Un-gate once the field widens to the real store; the body is:
+            {
+                return unsafe {
+                    (*jsc_vm).transpiler_store.transpile(
+                        jsc_vm,
+                        global,
+                        (*specifier_ptr).dupe_ref(),
+                        lr.path,
+                        (*referrer).dupe_ref(),
+                        concurrent_loader,
+                        lr.package_json,
+                    )
+                }
+                .cast::<c_void>();
+            }
+            // Until then: fall through to the synchronous path (correct, just
+            // not concurrent — matches `concurrent_transpiler = false`).
+        }
+        let _ = concurrent_loader;
+    }
+
+    // ── Synchronous-loader fallback ────────────────────────────────────────
+    // Spec :1031-1078.
+    let synchronous_loader: Loader = lr.loader.unwrap_or_else(|| {
+        // SAFETY: per fn contract.
+        let (has_loaded, is_in_preload) =
+            unsafe { ((*jsc_vm).has_loaded, (*jsc_vm).is_in_preload) };
+        if has_loaded || is_in_preload {
+            // Extensionless files in this context are treated as the JS loader.
+            if lr.path.name.ext.is_empty() {
+                return Loader::Tsx;
+            }
+            // Unknown extensions are to be treated as file loader.
+            if is_commonjs_require {
+                #[cfg(any())]
+                // TODO(b2-cycle): same `commonjs_custom_extensions` typing
+                // gate as above (spec :1043-1064).
+                {
+                    use bun_jsc::node_module_module::{
+                        find_longest_registered_extension, CustomLoader,
+                    };
+                    if unsafe { (*jsc_vm).commonjs_custom_extensions.len() } > 0
+                        && unsafe { (*jsc_vm).has_mutated_built_in_extensions } == 0
+                    {
+                        if let Some(entry) = find_longest_registered_extension(
+                            unsafe { &*jsc_vm },
+                            lr.path.text,
+                        ) {
+                            match entry {
+                                CustomLoader::Loader(loader) => return loader,
+                                CustomLoader::Custom(_) => {
+                                    // Can't write `*ret` from inside this
+                                    // closure; the un-gate pass should hoist
+                                    // this branch out (Zig used a labelled
+                                    // `break :loader` + early `return null`).
+                                }
+                            }
+                        }
+                    }
+                }
+                // For Node.js compatibility, requiring a file with an unknown
+                // extension is treated as a JS file.
+                return Loader::Ts;
+            }
+            // For ESM, Bun treats unknown extensions as the file loader.
+            Loader::File
+        } else {
+            // Unless it's potentially the main module — important so that
+            // `bun run ./foo-i-have-no-extension` works.
+            Loader::Tsx
+        }
+    });
+
+    // Spec :1083 — `defer jsc_vm.module_loader.resetArena(jsc_vm)`.
+    let _reset_arena = scopeguard::guard((), |_| {
+        // SAFETY: `jsc_vm` is the live per-thread VM (closure runs on the same
+        // thread, before this hook returns).
+        ModuleLoader::reset_arena(unsafe { &mut *jsc_vm });
+    });
+
+    // Spec :1085 + VirtualMachine.zig:489-494 — lazy-init the per-thread
+    // shared printer. PORT NOTE: in Zig `loadExtraEnvAndSourceCodePrinter`
+    // primes `source_code_printer` before the first import; the Rust
+    // `load_extra_env_and_source_code_printer` is a `todo!()` stub
+    // (VirtualMachine.rs:1568), so prime here on first use instead.
+    let printer_ptr: *mut bun_js_printer::BufferPrinter = TRANSPILE_PRINTER.with(|cell| {
+        let mut p = cell.get();
+        if p.is_null() {
+            let writer = bun_js_printer::BufferWriter::init();
+            let mut bp = Box::new(bun_js_printer::BufferPrinter::init(writer));
+            bp.ctx.append_null_byte = false;
+            p = Box::into_raw(bp);
+            cell.set(p);
+        }
+        p
+    });
+
+    // ── `ModuleLoader.transpileSourceCode(...)` ─────────────────────────────
+    // Spec :1085-1116.
+    let mut promise: *mut JSInternalPromise = ptr::null_mut();
+    let mut extra = TranspileExtra {
+        path: lr.path,
+        loader: synchronous_loader,
+        module_type,
+        source_code_printer: printer_ptr,
+        promise_ptr: if allow_promise {
+            &mut promise as *mut *mut JSInternalPromise
+        } else {
+            ptr::null_mut()
+        },
+    };
+    let args = TranspileArgs {
+        specifier: lr.specifier,
+        referrer: referrer_slice.slice(),
+        // SAFETY: per fn contract — `*specifier_ptr` is valid for the call;
+        // `bun.String` is `Copy` (tagged-pointer pair) so by-value is sound.
+        input_specifier: unsafe { *specifier_ptr },
+        log: &mut *log as *mut logger::Log,
+        virtual_source: lr.virtual_source,
+        global_object: global,
+        flags: FetchFlags::Transpile,
+        extra: (&mut extra as *mut TranspileExtra).cast::<c_void>(),
+    };
+
+    match transpile_source_code_inner(jsc_vm, &args, &mut extra) {
+        Ok(resolved) => {
+            // SAFETY: per fn contract — `ret` is a valid out-param.
+            unsafe { *ret = ErrorableResolvedSource::ok(resolved) };
+            promise.cast::<c_void>()
+        }
+        Err(err) => {
+            // Spec :1100-1115.
+            if err == bun_core::err!("AsyncModule") {
+                bun_core::assert!(!promise.is_null());
+                return promise.cast::<c_void>();
+            }
+            if err == bun_core::err!("PluginError") {
+                return ptr::null_mut();
+            }
+            if err == bun_core::err!("JSError") {
+                // PORT NOTE: spec calls `globalObject.takeError(error.JSError)`;
+                // the Rust `take_error` wants a `JsError` proof token. The
+                // `transpile_source_code_inner` paths that return `"JSError"`
+                // have already left an exception pending on `global`, so
+                // surface it via `tryTakeException` (same C++ slot).
+                let exc = global_ref
+                    .try_take_exception()
+                    .unwrap_or(JSValue::UNDEFINED);
+                // SAFETY: per fn contract.
+                unsafe {
+                    *ret = ErrorableResolvedSource::err(
+                        bun_core::err!("JSError"),
+                        exc,
+                    );
+                }
+                return ptr::null_mut();
+            }
+            // Generic transpile error → format `log` into `*ret`.
+            bun_jsc::module_loader::process_fetch_log(
+                global_ref,
+                // SAFETY: per fn contract — pointers valid for the call.
+                unsafe { *specifier_ptr },
+                unsafe { *referrer },
+                &mut log,
+                // SAFETY: per fn contract — `ret` is a valid out-param.
+                unsafe { &mut *ret },
+                err,
+            );
+            ptr::null_mut()
+        }
+    }
 }
 
 /// `LoaderHooks::get_hardcoded_module` body — thin adaptor over the local

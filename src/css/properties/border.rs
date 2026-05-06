@@ -328,7 +328,7 @@ macro_rules! define_rect_shorthand {
                 self == rhs
             }
         }
-        crate::impl_parse_tocss_via_inherent!($name);
+        crate::impl_generic_parse_tocss!($name);
     };
 }
 
@@ -414,7 +414,7 @@ macro_rules! define_size_shorthand {
                 self == rhs
             }
         }
-        crate::impl_parse_tocss_via_inherent!($name);
+        crate::impl_generic_parse_tocss!($name);
     };
 }
 

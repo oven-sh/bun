@@ -879,14 +879,16 @@ pub mod symbol {
 
 // TODO(b0-move-in): bun_paths must define `PathContentsPair` (TYPE_ONLY from bun_resolver::fs).
 // Local mirror so init_file / init_recycled_file resolve until paths' move-in lands.
+// `pub` so `bun_bundler::Transpiler::parse_maybe` can construct it for
+// `Source::init_recycled_file` (transpiler.zig:852).
 #[allow(dead_code)]
-mod fs_ext {
+pub mod fs_ext {
     pub struct PathContentsPair {
         pub path: super::fs::Path,
         pub contents: &'static [u8],
     }
 }
-use fs_ext::PathContentsPair;
+pub use fs_ext::PathContentsPair;
 // TODO(b2-blocked): bun_schema::api — `to_api` methods gated behind #[cfg(any())].
 #[allow(unused_imports)]
 use bun_core::strings;

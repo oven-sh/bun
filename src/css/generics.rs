@@ -973,60 +973,44 @@ impl ToCss for Ident {
     }
 }
 
-// ── leaf-type forwarding macro ───────────────────────────────────────────────
+// ── leaf-type forwarding macros ──────────────────────────────────────────────
 // Every CSS leaf value type carries inherent `parse` / `to_css` (hand-written
-// or derived). This macro batch-registers them as `generic::{Parse,ToCss,
-// ParseWithOptions}` impls so `Property::{parse,value_to_css}` can dispatch
-// uniformly. `ParseWithOptions` ignores options (Zig fallthrough); types that
-// genuinely consume options override with a hand-written impl instead of
-// listing themselves here.
+// or derived). `Property::{parse,value_to_css}` dispatch through the
+// `generic::{Parse,ToCss,ParseWithOptions}` *traits*, so each leaf must impl
+// them.
 //
-// Idempotency w.r.t. `#[derive(ToCss/Parse/DefineEnumProperty)]`
-// ──────────────────────────────────────────────────────────────
-// The derive macros emit `impl generics::{ToCss,Parse,ParseWithOptions} for T`
-// directly. To let a derive-carrying type *also* appear in a batch
-// `impl_generic_parse_tocss!` list (legacy `properties::generic_registrations`
-// mixes both), the macro does **not** emit those impls itself — it tags the
-// type with a private marker trait, and the blanket impls below (with
-// `default fn`, requiring `#![feature(specialization)]` at the crate root)
-// lift the marker to the real protocol traits. A derive-emitted concrete impl
-// then specialises the blanket; a hand-written-only leaf uses the blanket.
-#[doc(hidden)]
-pub trait __ForwardInherentParseToCss: Sized {
-    fn __fwd_parse(input: &mut Parser) -> CssResult<Self>;
-    fn __fwd_to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr>;
-}
-impl<T: __ForwardInherentParseToCss> Parse for T {
-    #[inline]
-    default fn parse(input: &mut Parser) -> CssResult<Self> {
-        T::__fwd_parse(input)
-    }
-}
-impl<T: __ForwardInherentParseToCss> ParseWithOptions for T {
-    #[inline]
-    default fn parse_with_options(input: &mut Parser, _options: &ParserOptions) -> CssResult<Self> {
-        T::__fwd_parse(input)
-    }
-}
-impl<T: __ForwardInherentParseToCss> ToCss for T {
-    #[inline]
-    default fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        self.__fwd_to_css(dest)
-    }
-}
-
+// Two sources of the trait impl:
+//   1. `#[derive(ToCss/Parse/DeriveToCss/DeriveParse/DefineEnumProperty)]`
+//      (bun_css_derive) — emits the trait impl directly.
+//   2. Hand-written leaves — list them under `impl_parse_tocss_via_inherent!`
+//      to forward the trait to the inherent.
+//
+// A type must use exactly one of the two; listing a derive-carrying type in
+// the macro is an E0119 coherence conflict. The legacy batch name
+// `impl_generic_parse_tocss!` is kept as an alias of the via-inherent macro
+// (plain arm) plus the unchanged `@stub` arm so existing call sites continue
+// to compile while the registration lists are pruned of derive-carrying types.
 #[macro_export]
-macro_rules! impl_generic_parse_tocss {
+macro_rules! impl_parse_tocss_via_inherent {
     ($($ty:ty),+ $(,)?) => {$(
-        impl $crate::generics::__ForwardInherentParseToCss for $ty {
+        impl $crate::generics::Parse for $ty {
             #[inline]
-            fn __fwd_parse(
+            fn parse(input: &mut $crate::css_parser::Parser) -> $crate::css_parser::CssResult<Self> {
+                <$ty>::parse(input)
+            }
+        }
+        impl $crate::generics::ParseWithOptions for $ty {
+            #[inline]
+            fn parse_with_options(
                 input: &mut $crate::css_parser::Parser,
+                _options: &$crate::css_parser::ParserOptions,
             ) -> $crate::css_parser::CssResult<Self> {
                 <$ty>::parse(input)
             }
+        }
+        impl $crate::generics::ToCss for $ty {
             #[inline]
-            fn __fwd_to_css(
+            fn to_css(
                 &self,
                 dest: &mut $crate::printer::Printer,
             ) -> ::core::result::Result<(), $crate::PrintErr> {
@@ -1034,6 +1018,15 @@ macro_rules! impl_generic_parse_tocss {
             }
         }
     )+};
+}
+
+#[macro_export]
+macro_rules! impl_generic_parse_tocss {
+    // Plain arm — alias of `impl_parse_tocss_via_inherent!`. Do NOT list
+    // derive-carrying types here (E0119); list hand-written leaves only.
+    ($($ty:ty),+ $(,)?) => {
+        $crate::impl_parse_tocss_via_inherent!($($ty),+);
+    };
     // `@stub` arm: the leaf type's inherent `parse`/`to_css` is still
     // `#[cfg(any())]`-gated (its body bottoms out on a not-yet-ported helper).
     // Emitting a `todo!()` trait body lets `Property::{parse,value_to_css}`

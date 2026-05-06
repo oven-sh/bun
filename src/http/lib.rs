@@ -1218,7 +1218,7 @@ use bun_collections::{ArrayHashMap, MutableString};
 use bun_core::{self as bun, Environment, FeatureFlags, Global, Output, StringBuilder, err};
 // CommonAbortReason — enum(u8) only; toJS stays in jsc
 use bun_http_types::FetchRedirect::CommonAbortReason;
-use bun_string::{self as strings, ZigString, ZStr};
+use bun_string::{strings, ZigString, ZStr};
 // TODO(b0): bun_jsc::URL::{href_from_string, join} arrive in bun_url via move-in
 // (MOVE_DOWN bun_jsc::URL → bun_url, shared with install/js_parser/bake)
 use bun_url::URL;
@@ -1237,7 +1237,7 @@ use crate::internal_state::InternalState;
 use crate::proxy_tunnel::ProxyTunnel;
 use crate::signals::Signals;
 use crate::HTTPClientResultCallback;
-use bun_http_types::Encoding;
+use bun_http_types::Encoding::Encoding;
 use bun_http_types::FetchRedirect::FetchRedirect;
 use bun_http_types::Method::Method;
 use bun_http_types::ETag::{HeaderEntryField, StringPointer};

@@ -15,8 +15,27 @@ use super::bun_test::{self, DescribeScope};
 use super::diff_format::DiffFormatter;
 use super::execution::ExpectAssertions;
 use super::jest::Jest;
+use super::jest::FileListExt as _;
 #[allow(unused_imports)]
 use super::expect::{JSValueTestExt, JSGlobalObjectTestExt, FormatterTestExt, make_formatter};
+
+// Local shim: upstream `bun_jsc::AnyPromise` (lib.rs) lacks `.result()`; only
+// the per-file `jsc::any_promise::AnyPromise<'a>` has it. Hand-dispatch here.
+trait AnyPromiseResultExt {
+    fn result(self, vm: &bun_jsc::VM) -> JSValue;
+}
+impl AnyPromiseResultExt for bun_jsc::AnyPromise {
+    #[inline]
+    fn result(self, vm: &bun_jsc::VM) -> JSValue {
+        match self {
+            // SAFETY: variants hold a live JSC heap cell created via `as_any_promise`.
+            bun_jsc::AnyPromise::Normal(p) => unsafe { (*p).result(vm) },
+            bun_jsc::AnyPromise::Internal(_p) => {
+                todo!("blocked_on: bun_jsc::JSInternalPromise::result")
+            }
+        }
+    }
+}
 
 // `bun_core::deprecated::js_error_to_write_error` is ``-gated
 // (tier-0 cannot depend on bun_jsc). Inlined here at the use-site tier instead.

@@ -2573,12 +2573,16 @@ impl CreateListExamplesCommand {
 
         let mut progress = Progress::default();
         progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
-        let node = progress.start(b"Fetching manifest", 0);
+        // PORT NOTE: `Progress::start` returns `&mut Node` borrowing `progress`; detach
+        // via raw pointer so `progress.refresh()` can re-borrow below (mirrors Zig where
+        // both held independent `*Node`/`*Progress` pointers).
+        let node: *mut ProgressNode = progress.start(b"Fetching manifest", 0);
         progress.refresh();
 
         // SAFETY: FileSystem::init returns the process-global singleton; valid for 'static.
         let filesystem = unsafe { &mut *filesystem };
-        let examples = Example::fetch_all_local_and_remote(ctx, Some(node), &mut env_loader, filesystem)?;
+        // SAFETY: `node` points into `progress`, which outlives this call; single-threaded.
+        let examples = Example::fetch_all_local_and_remote(ctx, Some(unsafe { &mut *node }), &mut env_loader, filesystem)?;
         Output::prettyln(format_args!(
             "Welcome to bun! Create a new project by pasting any of the following:\n",
         ));

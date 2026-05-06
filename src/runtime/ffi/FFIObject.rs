@@ -92,7 +92,8 @@ pub fn to_js(global_object: &JSGlobalObject) -> JSValue {
         }
     }
 
-    DOM_CALL.put(global_object, object);
+    // SAFETY: `put` is the C++-side `FFI__ptr__put` helper; global_object is live.
+    unsafe { (DOM_CALL.put)(global_object as *const _ as *mut _, object) };
     object.put(global_object, ZigString::static_("read"), reader::to_js(global_object));
 
     object

@@ -1585,7 +1585,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     ),
                 );
             }
-            let promise = JSPromise::Strong::init(global_this);
+            let promise = jsc::JSPromiseStrong::init(global_this);
 
             let s3_stream = Box::new(S3StreamWrapper {
                 url,

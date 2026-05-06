@@ -642,8 +642,8 @@ impl TimerObjectInternals {
             return;
         }
 
-        let now = Timespec::now(Timespec::AllowMockedTime);
-        let scheduled_time = now.add_ms(self.interval);
+        let now = Timespec::now(TimespecMockMode::AllowMockedTime);
+        let scheduled_time = now.add_ms(i64::from(self.interval));
         let was_active = self.event_loop_timer().state == EventLoopTimer::State::ACTIVE;
         if was_active {
             vm.timer.remove(self.event_loop_timer());

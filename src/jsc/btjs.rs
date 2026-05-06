@@ -676,7 +676,7 @@ mod zig_std_debug {
     }
 }
 #[cfg(debug_assertions)]
-use zig_std_debug::{SelfInfo, SourceLocation, StackIterator, SymbolInfo, ThreadContext, UnwindError};
+use zig_std_debug::{Module, SelfInfo, SourceLocation, StackIterator, SymbolInfo, ThreadContext, UnwindError};
 
 // TODO(port): std.io.tty.Config — terminal color config. Placeholder.
 #[cfg(debug_assertions)]

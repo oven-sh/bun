@@ -243,6 +243,19 @@ impl Blob {
         &slice_[..slice_.len().min(self.size as usize)]
     }
 
+    /// C-ABI trampoline for [`shared_view`] so lower-tier crates
+    /// (`bun_jsc::webcore::Blob`, `bun_http_jsc`) can read blob bytes without a
+    /// `bun_runtime` forward-dep. Mirrors Zig `Blob.sharedView`'s
+    /// `(ptr,len)` shape.
+    #[no_mangle]
+    pub unsafe extern "C" fn Bun__Blob__sharedView(this: *const Blob, len: *mut usize) -> *const u8 {
+        // SAFETY: caller (bun_jsc shim) passes a live `*const Blob` obtained
+        // from `Blob__fromJS`; `len` is a stack out-param.
+        let view = unsafe { (*this).shared_view() };
+        unsafe { *len = view.len() };
+        view.as_ptr()
+    }
+
     /// Tear down owned resources. If heap-allocated, also frees the heap box.
     // PORT NOTE: kept as an explicit method (not Drop) because Blob is the m_ctx
     // payload of a .classes.ts class — finalize() owns teardown, and many

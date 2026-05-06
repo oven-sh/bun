@@ -259,6 +259,10 @@ use crate::webcore::{body as Body, s3 as S3, Blob, ReadableStream};
 // returns `None` until codegen lands.
 #[inline]
 fn as_response(value: JSValue) -> Option<&'static mut Response> {
+    // SAFETY: `from_js` returns the C++-owned cell pointer for `value`; the
+    // Response heap object is uniquely addressed here (JSC-owned alloc, no
+    // other Rust `&mut` to it is live) and outlives the borrow because every
+    // call site keeps `value` GC-rooted (ensure_still_alive / protect()).
     response::from_js(value).map(|p| unsafe { &mut *p.cast::<Response>() })
 }
 
@@ -2660,8 +2664,7 @@ where
 
     pub fn render_production_error(&mut self, status: u16) {
         if let Some(resp) = self.resp {
-            // SAFETY: FFI handle
-            let resp = unsafe { &mut *resp };
+            // `AnyResponse` is a `Copy` handle; methods take `self` by value.
             match status {
                 404 => {
                     if !self.flags.has_written_status() {
@@ -2857,9 +2860,8 @@ where
     }
 
     pub fn render_metadata(&mut self) {
+        // `AnyResponse` is a `Copy` handle; methods take `self` by value.
         let Some(resp) = self.resp else { return };
-        // SAFETY: FFI handle
-        let resp = unsafe { &mut *resp };
 
         // For plain in-memory bodies this runs synchronously from
         // render() before any backpressure gap, so the Response is
@@ -3023,9 +3025,8 @@ where
         debug_assert!(!self.flags.has_written_status());
         self.flags.set_has_written_status(true);
 
+        // `AnyResponse` is a `Copy` handle; methods take `self` by value.
         let Some(resp) = self.resp else { return };
-        // SAFETY: FFI handle
-        let resp = unsafe { &mut *resp };
         if let Some(text) = HTTPStatusText::get(status) {
             resp.write_status(text);
         } else {

@@ -19,9 +19,9 @@ use crate::webcore::{self, blob, Blob, FileSink, ReadableStream};
 use crate::shell::states::cmd::Cmd as ShellCmd;
 use crate::shell::io_writer::{self, IOWriter};
 use crate::shell::{self as sh, EnvMap, Yield};
-use bun_spawn::{self, Status};
 use crate::api::bun::process::{
-    self as bun_process, Process, Rusage, SignalCodeExt, SpawnOptions,
+    self as bun_process, Process, ProcessExitVTable, Rusage, SignalCodeExt, SpawnOptions,
+    Status,
 };
 #[cfg(windows)]
 use crate::api::bun::process::{WindowsSpawnOptions, WindowsSpawnResult, WindowsStdioResult, WindowsOptions};

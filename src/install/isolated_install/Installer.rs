@@ -619,17 +619,22 @@ impl Task {
         // is freely shared). Instead:
         //   * `installer` is a shared `&Installer`; every Installer method called
         //     below takes `&self`.
-        //   * `manager` / `lockfile` are reached by raw-reading their pointer
-        //     fields. They point to allocations *outside* `Installer`, so they do
-        //     not overlap `installer`. `manager` stays `&mut` to preserve the
-        //     existing call sites; its few cross-thread mutations are either
-        //     idempotent cache-init or guarded by `trusted_dependencies_mutex`.
+        //   * `manager_ptr` / `lockfile_ptr` are reached by raw-reading their
+        //     pointer fields. They point to allocations *outside* `Installer`, so
+        //     they do not overlap `installer`. They stay RAW for the whole body —
+        //     binding a function-scoped `&mut PackageManager` / `&mut Lockfile`
+        //     here would mean every concurrent task thread holds an aliased
+        //     `&mut` to the same object (UB regardless of mutex discipline; Zig's
+        //     `*PackageManager` / `*Lockfile` carry no exclusivity contract).
+        //     Per-site reborrows below are `&*manager_ptr` for read-only access,
+        //     and mutation is narrowed via `addr_of_mut!` to the single field
+        //     being written while `trusted_dependencies_mutex` is held.
         //   * Never access `installer.manager.*` / mutate `installer.lockfile.*`
         //     while these locals are live — that would reborrow through
-        //     `&Installer` and alias `manager` / `*lockfile_ptr`.
+        //     `&Installer` and alias `*manager_ptr` / `*lockfile_ptr`.
         let installer_ptr = self.installer;
-        let manager: &mut PackageManager =
-            unsafe { &mut **core::ptr::addr_of_mut!((*installer_ptr).manager) };
+        let manager_ptr: *mut PackageManager =
+            unsafe { *core::ptr::addr_of!((*installer_ptr).manager).cast::<*mut PackageManager>() };
         let lockfile_ptr: *mut Lockfile =
             unsafe { *core::ptr::addr_of!((*installer_ptr).lockfile).cast::<*mut Lockfile>() };
         let lockfile: &Lockfile = unsafe { &*lockfile_ptr };

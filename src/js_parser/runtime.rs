@@ -1,7 +1,7 @@
 #![allow(unexpected_cfgs)] // `feature = "codegen_embed"` is wired by build.rs in Phase C; not yet a declared cargo feature.
 
 use core::fmt;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use bun_collections::{StringArrayHashMap, StringSet};
 use bun_core::Output;

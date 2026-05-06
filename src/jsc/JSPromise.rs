@@ -50,12 +50,14 @@ unsafe extern "C" {
     fn JSC__JSPromise__result(this: *mut JSPromise, vm: *mut VM) -> JSValue;
     fn JSC__JSPromise__isHandled(this: *const JSPromise) -> bool;
     fn JSC__JSPromise__setHandled(this: *mut JSPromise);
-    // TODO(port): these three return `bun.JSError!void` across FFI in Zig (via the
-    // generated `bun.cpp` shims). The actual C ABI is a bool/int sentinel — Phase B
-    // must confirm the exact return encoding.
-    fn JSC__JSPromise__resolve(this: *mut JSPromise, global: *mut JSGlobalObject, value: JSValue) -> bool;
-    fn JSC__JSPromise__reject(this: *mut JSPromise, global: *mut JSGlobalObject, value: JSValue) -> bool;
-    fn JSC__JSPromise__rejectAsHandled(this: *mut JSPromise, global: *mut JSGlobalObject, value: JSValue) -> bool;
+    // These three are `void` on the C side (bindings.cpp). The Zig `bun.cpp.*`
+    // wrappers (build/debug/codegen/cpp.zig) call the void extern and then do
+    // `Bun__RETURN_IF_EXCEPTION(global)` to surface `error.JSError` — there is
+    // no bool sentinel on the wire. Mirror that by checking `global.has_exception()`
+    // after the call.
+    fn JSC__JSPromise__resolve(this: *mut JSPromise, global: *mut JSGlobalObject, value: JSValue);
+    fn JSC__JSPromise__reject(this: *mut JSPromise, global: *mut JSGlobalObject, value: JSValue);
+    fn JSC__JSPromise__rejectAsHandled(this: *mut JSPromise, global: *mut JSGlobalObject, value: JSValue);
 }
 
 // ───────────────────────────── JSPromise.Weak(T) ─────────────────────────────
@@ -313,12 +315,18 @@ impl JSPromise {
         // Zig: `var scope: jsc.TopExceptionScope = undefined; scope.init(global, @src()); defer scope.deinit();`
         // `TopExceptionScope::init` is in-place (placement-constructs into `bytes`), so we
         // stack-allocate via `MaybeUninit` and must not move it after `init`.
+        //
+        // Stacked Borrows: derive a single raw `*mut TopExceptionScope` from the
+        // `MaybeUninit` and route every access (init, assert, destroy) through it. We
+        // never materialize a long-lived `&mut TopExceptionScope` whose Unique tag
+        // could be popped by the guard's parked raw pointer (or vice versa).
         let mut scope = core::mem::MaybeUninit::<TopExceptionScope>::uninit();
+        let scope_ptr: *mut TopExceptionScope = scope.as_mut_ptr();
         // SAFETY: `init` writes into `bytes` via FFI without reading prior contents; the
         // `ci_assert`-gated `location` field is set inside `init` itself, so calling `init`
         // on uninit storage is sound (matches the Zig `= undefined; .init()` pattern).
-        let scope: &mut TopExceptionScope = unsafe {
-            (*scope.as_mut_ptr()).init(
+        unsafe {
+            (*scope_ptr).init(
                 global,
                 SourceLocation {
                     fn_name: c"JSPromise::wrap".as_ptr(),
@@ -326,9 +334,8 @@ impl JSPromise {
                     line: line!(),
                 },
             );
-            scope.assume_init_mut()
-        };
-        let _scope_guard = scopeguard::guard(scope as *mut TopExceptionScope, |s| {
+        }
+        let _scope_guard = scopeguard::guard(scope_ptr, |s| {
             // SAFETY: `s` was initialized by `init()` above and has not been destroyed.
             unsafe { TopExceptionScope::destroy(s) }
         });

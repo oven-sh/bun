@@ -31,25 +31,54 @@ use crate::napi::NapiEnv;
 
 use super::{get_dl_error, ABIType, Compiled, Function, Step, FFI};
 
-// ─── extern "C" thin-wrappers not yet surfaced by `bun_jsc` ──────────────────
+// ─── extern thin-wrappers not yet surfaced by `bun_jsc` ──────────────────────
 // These are emitted by `generate-classes.ts` (`ffi.classes.ts`) and
 // `JSFFIFunction.cpp`; declared locally so `open` is real without waiting on
 // the codegen `.rs` output.
 // TODO(port): move to `bun_jsc::codegen` once `generate-classes.ts --rs` runs.
-unsafe extern "C" {
+//
+// `FFI__create` / `FFIPrototype__symbolsValueSetCachedValue` are codegen
+// symbols declared `callconv(jsc.conv)` in Zig and `JSC_CALLCONV` in C++ —
+// i.e. `sysv64` on Windows-x64, plain C ABI everywhere else (src/jsc/jsc.zig
+// `pub const conv`). Split them out so the Rust side matches on win-x64.
+//
+// PORT NOTE: `global` is `*const` (not `*mut`) — `JSGlobalObject` is an
+// opaque ZST handle with `UnsafeCell` interior (src/jsc/lib.rs); C++ mutates
+// only C++-owned storage past the ZST, so a `&JSGlobalObject`-derived pointer
+// is sound and avoids `&T as *const T as *mut T` provenance laundering.
+#[cfg(all(windows, target_arch = "x86_64"))]
+unsafe extern "sysv64" {
     /// `JSFFI.symbolsValueSetCached` — caches `obj` on the JS wrapper so the
     /// per-symbol `JSFunction`s stay rooted.
-    // PORT NOTE: `global` is `*const` (not `*mut`) — `JSGlobalObject` is an
-    // opaque ZST handle; C++ mutates only C++-owned storage past the ZST, so
-    // a `&JSGlobalObject`-derived pointer is sound. Avoids a `&T as *const T
-    // as *mut T` provenance laundering at the call sites.
-    fn FFIPrototype__symbolsValueSetCached(
+    #[link_name = "FFIPrototype__symbolsValueSetCachedValue"]
+    fn FFIPrototype__symbolsValueSetCachedValue(
         this_value: JSValue,
         global: *const JSGlobalObject,
         value: JSValue,
     );
     /// `.classes.ts` `toJS` — boxes `*mut FFI` into a freshly-allocated JSCell.
+    #[link_name = "FFI__create"]
     fn FFI__create(global: *const JSGlobalObject, ptr: *mut FFI) -> JSValue;
+}
+#[cfg(not(all(windows, target_arch = "x86_64")))]
+unsafe extern "C" {
+    /// `JSFFI.symbolsValueSetCached` — caches `obj` on the JS wrapper so the
+    /// per-symbol `JSFunction`s stay rooted.
+    #[link_name = "FFIPrototype__symbolsValueSetCachedValue"]
+    fn FFIPrototype__symbolsValueSetCachedValue(
+        this_value: JSValue,
+        global: *const JSGlobalObject,
+        value: JSValue,
+    );
+    /// `.classes.ts` `toJS` — boxes `*mut FFI` into a freshly-allocated JSCell.
+    #[link_name = "FFI__create"]
+    fn FFI__create(global: *const JSGlobalObject, ptr: *mut FFI) -> JSValue;
+}
+
+// Plain C ABI — `Bun__CreateFFIFunctionValue` (src/jsc/host_fn.zig) and
+// `ZigGlobalObject__makeNapiEnvForFFI` are declared `extern "C"` on both the
+// Zig and C++ sides (no `JSC_CALLCONV`), so no sysv64 split needed.
+unsafe extern "C" {
     /// `host_fn::NewRuntimeFunction` — `Bun__CreateFFIFunctionValue`.
     fn Bun__CreateFFIFunctionValue(
         global: *const JSGlobalObject,
@@ -300,7 +329,7 @@ impl FFI {
         let js_object = unsafe { FFI__create(global, lib) };
         // SAFETY: `global` as above. `js_object` is the wrapper just created;
         // `obj` is rooted by `protect()` for the call duration.
-        unsafe { FFIPrototype__symbolsValueSetCached(js_object, global, obj) };
+        unsafe { FFIPrototype__symbolsValueSetCachedValue(js_object, global, obj) };
         js_object
     }
 }

@@ -289,7 +289,13 @@ pub mod entry {
         pub entry_hash: u64,
 
         // Zig default: `null`
-        pub scripts: Option<Box<package::scripts::List>>,
+        // PORT NOTE: `UnsafeCell` because `Installer::Task::run` writes this slot
+        // from a task thread through `&Store` (each Task is the sole writer for
+        // its own `entry_id`; see Installer.zig:541/1161). Without interior
+        // mutability the only access path is `&Store → &[Option<_>]` and the
+        // per-entry write would mutate through shared-reference provenance.
+        // Raw `*mut` instead of `Box` so reads don't move out of the cell.
+        pub scripts: core::cell::UnsafeCell<Option<*mut package::scripts::List>>,
     }
 
     #[repr(transparent)]

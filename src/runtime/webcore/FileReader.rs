@@ -21,7 +21,14 @@ bun_core::declare_scope!(FileReader, visible);
 // readable; Phase B should replace with a proper raw-slice wrapper (BACKREF lifetime).
 
 pub struct FileReader {
-    pub reader: IOReader,
+    /// Wrapped in `UnsafeCell` so that the back-ref `*mut FileReader` (vtable
+    /// `parent`) and the reader's own `&mut self` both derive from a
+    /// SharedReadWrite root — see `BufferedReaderParent` aliasing contract
+    /// (PipeReader.rs). The vtable callbacks fire while a `&mut BufferedReader`
+    /// is live on the caller's stack and re-enter `self.reader` (close/buffer/
+    /// is_done); without `UnsafeCell` materializing `&mut FileReader` there is
+    /// Stacked-Borrows UB. Matches sibling `IOReader` (shell) port.
+    pub reader: UnsafeCell<IOReader>,
     pub done: bool,
     pub pending: streams::Pending,
     pub pending_value: Strong, // Strong.Optional
@@ -43,7 +50,7 @@ pub struct FileReader {
 impl Default for FileReader {
     fn default() -> Self {
         Self {
-            reader: IOReader::init::<FileReader>(),
+            reader: UnsafeCell::new(IOReader::init::<FileReader>()),
             done: false,
             pending: streams::Pending::default(),
             pending_value: Strong::empty(),
@@ -248,9 +255,11 @@ impl Lazy {
 impl bun_io::pipe_reader::BufferedReaderParent for FileReader {
     const HAS_ON_READ_CHUNK: bool = true;
     // SAFETY (all): see `BufferedReaderParent` aliasing contract — `this` is the
-    // `*mut Self` registered via `set_parent`; a `&mut self.reader` may be live
-    // on the caller's stack. These reborrow `&mut *this` only to forward to
-    // inherent impls; further aliasing audit lives with those impls.
+    // `*mut Self` registered via `set_parent`; a `&mut` to the embedded reader
+    // may be live on the caller's stack. `reader` is `UnsafeCell`-wrapped so
+    // materializing `&mut FileReader` here does not assert Unique over the
+    // reader bytes (SharedReadWrite root); the inherent impls re-derive any
+    // reader access through `reader()` (UnsafeCell::get).
     unsafe fn on_read_chunk(this: *mut Self, chunk: &[u8], state: ReadState) -> bool {
         FileReader::on_read_chunk(unsafe { &mut *this }, chunk, state)
     }
@@ -261,7 +270,19 @@ impl bun_io::pipe_reader::BufferedReaderParent for FileReader {
         FileReader::on_reader_error(unsafe { &mut *this }, err)
     }
     unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop {
-        FileReader::loop_(unsafe { &*this })
+        // Raw `addr_of!` projection — no `&Self` materialized (reader field may
+        // be borrowed mutably by the caller). Spec FileReader.zig:161-165.
+        // SAFETY: `this` is non-null/live per trait contract; `event_loop` is
+        // `Copy` and disjoint from the reader field.
+        let ev = unsafe { *core::ptr::addr_of!((*this).event_loop) };
+        #[cfg(windows)]
+        {
+            ev.loop_().uv_loop
+        }
+        #[cfg(not(windows))]
+        {
+            ev.loop_()
+        }
     }
     unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
         // CYCLEBREAK: bun_io::EventLoopHandle is an opaque `*mut c_void` whose
@@ -275,6 +296,17 @@ impl bun_io::pipe_reader::BufferedReaderParent for FileReader {
 }
 
 impl FileReader {
+    /// SharedReadWrite accessor for the embedded `BufferedReader`. See the
+    /// `UnsafeCell` note on the field declaration — this is the single point
+    /// through which all `self.reader` access flows so vtable-callback
+    /// re-entrancy and outer `&mut FileReader` borrows both root at the cell.
+    /// SAFETY: single-threaded; matches Zig `*FileReader` aliasing model.
+    #[inline]
+    #[allow(clippy::mut_from_ref)]
+    pub fn reader(&self) -> &mut IOReader {
+        unsafe { &mut *self.reader.get() }
+    }
+
     pub fn event_loop(&self) -> EventLoopHandle {
         self.event_loop
     }
@@ -296,7 +328,7 @@ impl FileReader {
     // a quirk; preserved as-is.
     pub fn setup(&mut self, fd: Fd) {
         *self = FileReader {
-            reader: IOReader::default(),
+            reader: UnsafeCell::new(IOReader::default()),
             done: false,
             fd,
             ..Default::default()

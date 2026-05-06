@@ -836,7 +836,8 @@ impl IncrementalGraph<Client> {
             }
             Content::CssRoot(_) | Content::CssChild => {
                 if css == FreeCssMode::UnrefCss {
-                    self.owner().assets.unref_by_path(key);
+                    let _ = (&mut self.owner().assets, key);
+                    // TODO(port): blocked_on: dev_server::assets::Assets::unref_by_path
                 }
             }
             Content::Unknown => {}

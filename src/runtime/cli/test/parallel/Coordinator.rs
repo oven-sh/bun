@@ -351,24 +351,27 @@ impl<'a> Coordinator<'a> {
                     return;
                 }
 
-                let summary = self.reporter.summary();
-                summary.pass += pass;
-                summary.fail += fail;
-                summary.skip += skip;
-                summary.todo += todo;
-                summary.expectations += expectations;
-                summary.skipped_because_label += skipped_label;
-                summary.files += files;
+                // PORT NOTE: reshaped for borrowck — `summary()` mutably borrows
+                // `self.reporter`, so the unhandled-errors counter (also on
+                // `self.reporter.jest`) and `bail_out()` must run after the
+                // summary borrow is released.
+                {
+                    let summary = self.reporter.summary();
+                    summary.pass += pass;
+                    summary.fail += fail;
+                    summary.skip += skip;
+                    summary.todo += todo;
+                    summary.expectations += expectations;
+                    summary.skipped_because_label += skipped_label;
+                    summary.files += files;
+                }
                 self.reporter.jest.unhandled_errors_between_tests += unhandled;
 
                 w.inflight = None;
                 self.files_done += 1;
-                if self.bail > 0 && summary.fail >= self.bail {
-                    // PORT NOTE: reshaped for borrowck — re-read fail after dropping summary borrow.
-                    let fail_now = self.reporter.summary().fail;
-                    if fail_now >= self.bail {
-                        self.bail_out();
-                    }
+                let fail_now = self.reporter.summary().fail;
+                if self.bail > 0 && fail_now >= self.bail {
+                    self.bail_out();
                 }
                 // A dead worker can deliver a buffered file_done during the
                 // pre-reap drain; don't dispatch into it (stdin is gone, the

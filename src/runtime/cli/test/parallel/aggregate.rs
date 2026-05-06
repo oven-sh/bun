@@ -266,26 +266,27 @@ pub fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
             max_len = max_len.max(k.len());
         }
 
-        let mut console = Output::error_writer();
-        fn sep<const COLORS: bool>(c: &mut impl std::io::Write, n: usize) {
-            let _ = c.write_all(Output::pretty_fmt::<COLORS>("<r><d>").as_bytes());
+        let console = Output::error_writer();
+        fn sep<const COLORS: bool>(c: &mut bun_core::io::Writer, n: usize) {
+            let _ = c.write_all(Output::pretty_fmt::<COLORS>("<r><d>").as_ref());
             // TODO(port): splatByteAll equivalent on writer
             let _ = c.write_all(&vec![b'-'; n + 2]);
-            let _ = c.write_all(Output::pretty_fmt::<COLORS>("|---------|---------|-------------------<r>\n").as_bytes());
+            let _ = c.write_all(Output::pretty_fmt::<COLORS>("|---------|---------|-------------------<r>\n").as_ref());
         }
-        sep::<ENABLE_COLORS>(&mut console, max_len);
+        sep::<ENABLE_COLORS>(console, max_len);
         let _ = console.write_all(b"File");
         let _ = console.write_all(&vec![b' '; max_len - b"File".len() + 1]);
-        let _ = console.write_all(Output::pretty_fmt::<ENABLE_COLORS>(" <d>|<r> % Funcs <d>|<r> % Lines <d>|<r> Uncovered Line #s\n").as_bytes());
-        sep::<ENABLE_COLORS>(&mut console, max_len);
+        let _ = console.write_all(Output::pretty_fmt::<ENABLE_COLORS>(" <d>|<r> % Funcs <d>|<r> % Lines <d>|<r> Uncovered Line #s\n").as_ref());
+        sep::<ENABLE_COLORS>(console, max_len);
 
         let mut body: Vec<u8> = Vec::new();
-        debug_assert_eq!(by_file.values().len(), fracs.len());
-        for (fc, frac) in by_file.values().iter().zip(fracs.iter()) {
+        debug_assert_eq!(order.len(), fracs.len());
+        for (&i, frac) in order.iter().zip(fracs.iter()) {
+            let fc = &by_file.values()[i];
             let _ = CoverageReportText::write_format_with_values::<ENABLE_COLORS>(
                 &fc.path, max_len, *frac, base, frac.failing, &mut body, true,
             );
-            let _ = body.write_all(Output::pretty_fmt::<ENABLE_COLORS>("<r><d> | <r>").as_bytes());
+            let _ = body.write_all(Output::pretty_fmt::<ENABLE_COLORS>("<r><d> | <r>").as_ref());
 
             let mut sorted: Vec<u32> = fc.da.keys().to_vec();
             sorted.sort_unstable();
@@ -293,7 +294,7 @@ pub fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
             let mut range_start: u32 = 0;
             let mut range_end: u32 = 0;
             for &ln in &sorted {
-                if *fc.da.get(ln).expect("unreachable") != 0 { continue; }
+                if *fc.da.get(&ln).expect("unreachable") != 0 { continue; }
                 if range_start == 0 {
                     range_start = ln;
                     range_end = ln;
@@ -317,11 +318,15 @@ pub fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
             avg.stmts /= avg_n;
         }
         let _ = console.write_all(&body);
+        // PORT NOTE: bun_core::io::Writer doesn't impl bun_io::Write — buffer
+        // through a Vec then write_all once.
+        let mut all_files: Vec<u8> = Vec::new();
         let _ = CoverageReportText::write_format_with_values::<ENABLE_COLORS>(
-            b"All files", max_len, avg, base, failing, &mut console, false,
+            b"All files", max_len, avg, base, failing, &mut all_files, false,
         );
-        let _ = console.write_all(Output::pretty_fmt::<ENABLE_COLORS>("<r><d> |<r>\n").as_bytes());
-        sep::<ENABLE_COLORS>(&mut console, max_len);
+        let _ = console.write_all(&all_files);
+        let _ = console.write_all(Output::pretty_fmt::<ENABLE_COLORS>("<r><d> |<r>\n").as_ref());
+        sep::<ENABLE_COLORS>(console, max_len);
 
         Output::flush();
     }
@@ -331,7 +336,7 @@ fn write_range<const COLORS: bool>(w: &mut impl std::io::Write, first: &mut bool
     if *first {
         *first = false;
     } else {
-        let _ = w.write_all(Output::pretty_fmt::<COLORS>("<r><d>,<r>").as_bytes());
+        let _ = w.write_all(Output::pretty_fmt::<COLORS>("<r><d>,<r>").as_ref());
     }
     if a == b {
         let _ = write!(w, "{}{}", Output::pretty_fmt::<COLORS>("<red>"), a);

@@ -385,8 +385,9 @@ fn decr_pending_activity_flag(has_pending_activity: &AtomicUsize) {
 impl Glob {
     #[bun_jsc::host_fn(method)]
     pub fn __scan(&mut self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments_ = callframe.arguments_old(1);
-        let mut arguments = ArgumentsSlice::init(global_this.bun_vm(), arguments_.slice());
+        let arguments_ = callframe.arguments_old::<1>();
+        // SAFETY: bun_vm() returns a non-null *mut to the live VirtualMachine for this global.
+        let mut arguments = ArgumentsSlice::init(unsafe { &*global_this.bun_vm() }, arguments_.slice());
         // `arguments` drops at scope exit.
 
         let mut arena = Arena::new();

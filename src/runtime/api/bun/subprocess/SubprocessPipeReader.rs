@@ -314,7 +314,16 @@ impl PipeReader {
             State::Done(bytes) => {
                 let bytes = core::mem::take(bytes);
                 // `defer this.state = .{ .done = &.{} }` — state.done is now empty via take().
-                MarkedArrayBuffer::from_bytes(bytes, jsc::TypedArrayType::Uint8Array)
+                // PORT NOTE: `MarkedArrayBuffer::from_bytes` takes a borrowed `&mut [u8]`
+                // with `owns_buffer = true` (freed via mimalloc on the JS side); leak the
+                // boxed slice so JS becomes the owner — same pattern as
+                // `MarkedArrayBuffer::from_string`.
+                let boxed = bytes.into_boxed_slice();
+                let len = boxed.len();
+                let ptr = Box::into_raw(boxed) as *mut u8;
+                // SAFETY: ptr/len from Box::into_raw; backed by global mimalloc.
+                let slice = unsafe { core::slice::from_raw_parts_mut(ptr, len) };
+                MarkedArrayBuffer::from_bytes(slice, jsc::JSType::Uint8Array)
                     .to_node_buffer(global_this)
             }
             _ => JSValue::UNDEFINED,
@@ -327,7 +336,7 @@ impl PipeReader {
         if let Some(process) = self.process.take() {
             // SAFETY: `process` backref is valid while set; cleared before deref.
             let kind = self.kind(unsafe { process.as_ref() });
-            unsafe { process.as_ref().on_close_io(kind) };
+            unsafe { (*process.as_ptr()).on_close_io(kind) };
             // SAFETY: last use of `self`; see `on_reader_done` for rationale.
             unsafe { PipeReader::deref(self) };
         }

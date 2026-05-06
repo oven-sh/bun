@@ -234,8 +234,8 @@ pub fn encode(rgba: &[u8], w: u32, h: u32, level: i8, icc_profile: Option<NonNul
     // with libc `free` as the finalizer instead of duping.
     // SAFETY: buf is non-null and points to `len` bytes owned by us (malloc'd by libspng).
     Ok(codecs::Encoded {
-        bytes: unsafe { core::slice::from_raw_parts_mut(buf, len) },
-        free: codecs::Encoded::wrap(libc::free as unsafe extern "C" fn(*mut c_void)),
+        bytes: unsafe { NonNull::new_unchecked(core::ptr::slice_from_raw_parts_mut(buf, len)) },
+        free: encoded_wrap_free!(libc::free),
     })
 }
 

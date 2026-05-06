@@ -334,8 +334,9 @@ pub fn render_react(
     global_this: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
-    let mut marked_args = MarkedArgumentBuffer::new();
-    render_react_impl(global_this, callframe, &mut marked_args)
+    MarkedArgumentBuffer::new(|marked_args| {
+        render_react_impl(global_this, callframe, marked_args)
+    })
 }
 
 // TODO(port): move to <area>_sys

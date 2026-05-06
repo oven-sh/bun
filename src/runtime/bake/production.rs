@@ -210,9 +210,9 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
         vm: vm_ptr,
         loaded_files: AutoBitSet::init_empty(0).expect("unreachable"),
         // PORT NOTE: Zig set `.null` then `.protect()`/`.unprotect()` manually;
-        // PORTING.md mandates `Strong` for heap-stored JSValue. `Strong::empty()`
-        // mirrors the pre-init state; `PerThread::init` overwrites it.
-        all_server_files: bun_jsc::Strong::empty(),
+        // PORTING.md mandates `Strong` for heap-stored JSValue. `None` mirrors the
+        // pre-init state; `PerThread::init` overwrites it with `Some(Strong)`.
+        all_server_files: None,
     };
 
     // PORT NOTE: reshaped for borrowck — `pt.vm` already borrows `*vm`, so pass

@@ -1685,7 +1685,7 @@ impl TestCommand {
         // SAFETY: `env_map` is heap-allocated and never freed; valid for process lifetime.
         let mut env_loader: Box<DotEnv::Loader> = Box::new(DotEnv::Loader::init(unsafe { &mut *env_map }));
         jsc::initialize(false);
-        bun_http::init(&Default::default());
+        bun_http::http_thread::init(&Default::default());
 
         let enable_random = ctx.test_options.randomize;
         let seed: u32 = if enable_random {

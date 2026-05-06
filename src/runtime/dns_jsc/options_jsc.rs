@@ -255,7 +255,7 @@ pub fn address_to_js(
 }
 
 pub fn addr_info_to_js_array(addr_info: &libc::addrinfo, global: &JSGlobalObject) -> JsResult<JSValue> {
-    let array = JSValue::create_empty_array(global, addr_info_count(addr_info))?;
+    let array = JSValue::create_empty_array(global, addr_info_count(addr_info) as usize)?;
 
     {
         let mut j: u32 = 0;

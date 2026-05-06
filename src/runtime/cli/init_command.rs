@@ -801,9 +801,10 @@ impl InitCommand {
                     dependencies_object
                         .data
                         .e_object_mut()
-                        .put_string(dep.name, dep.version)?;
+                        .unwrap()
+                        .put_string(&bump, dep.name, dep.version)?;
                 }
-                object.put(b"dependencies", dependencies_object)?;
+                object.put(&bump, b"dependencies", dependencies_object)?;
             }
 
             if needs_dev_dependencies {
@@ -813,9 +814,12 @@ impl InitCommand {
                 let mut iter = needed_dev_dependencies.iter_set();
                 while let Some(index) = iter.next() {
                     let dep = &dev_dependencies[index];
-                    obj.data.e_object_mut().put_string(dep.name, dep.version)?;
+                    obj.data
+                        .e_object_mut()
+                        .unwrap()
+                        .put_string(&bump, dep.name, dep.version)?;
                 }
-                object.put(b"devDependencies", obj)?;
+                object.put(&bump, b"devDependencies", obj)?;
             }
 
             if needs_typescript_dependency {
@@ -825,13 +829,14 @@ impl InitCommand {
                 peer_dependencies
                     .data
                     .e_object_mut()
-                    .put_string(b"typescript", b"^5")?;
-                object.put(b"peerDependencies", peer_dependencies)?;
+                    .unwrap()
+                    .put_string(&bump, b"typescript", b"^5")?;
+                object.put(&bump, b"peerDependencies", peer_dependencies)?;
             }
         }
 
         if template.is_react() {
-            template.write_to_package_json(&mut fields)?;
+            template.write_to_package_json(&mut fields, &bump)?;
         }
 
         'write_package_json: {

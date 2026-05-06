@@ -129,7 +129,12 @@ impl<'a> Scanner<'a> {
             let e = root_err.original_err;
             if e == err!("NotDir") || e == err!("ENOTDIR") {
                 if self.is_test_file(path) {
-                    let rel_path = PathString::init(self.fs.filename_store.append(path));
+                    let stored = self
+                        .fs
+                        .filename_store
+                        .append_slice(path)
+                        .map_err(|_| ScanError::OutOfMemory)?;
+                    let rel_path = PathString::init(stored);
                     self.test_files.push(rel_path);
                 }
             } else if e == err!("ENOENT") {

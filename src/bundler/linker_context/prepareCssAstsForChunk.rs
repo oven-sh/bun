@@ -15,34 +15,52 @@ use bun_threading::ThreadPool as ThreadPoolLib;
 
 use crate::{BundleV2, Chunk, DataURL, LinkerContext};
 
-pub struct PrepareCssAstTask<'a> {
+// PORT NOTE: Zig stores `*Chunk` / `*LinkerContext` (freely-aliasing mutable
+// pointers). We mirror that with raw pointers rather than `&mut` / `&` so that
+// (a) the container_of `@fieldParentPtr` recovery of `*mut BundleV2` from
+// `linker` retains write provenance over the whole bundle, and (b) multiple
+// tasks may hold pointers to the same `LinkerContext` concurrently without
+// materializing aliased Rust references.
+pub struct PrepareCssAstTask {
     pub task: ThreadPoolLib::Task,
-    pub chunk: &'a mut Chunk,
-    pub linker: &'a LinkerContext,
+    pub chunk: *mut Chunk,
+    pub linker: *mut LinkerContext,
 }
 
 pub fn prepare_css_asts_for_chunk(task: *mut ThreadPoolLib::Task) {
-    // SAFETY: task points to PrepareCssAstTask.task (intrusive thread-pool node)
-    let prepare_css_asts: &mut PrepareCssAstTask = unsafe {
-        &mut *(task as *mut u8)
+    // SAFETY: `task` points to `PrepareCssAstTask.task` (intrusive thread-pool
+    // node); the thread pool hands us exclusive access for the callback's
+    // duration. We only read the two raw-pointer fields, matching Zig's
+    // `*const PrepareCssAstTask`.
+    let prepare_css_asts: &PrepareCssAstTask = unsafe {
+        &*(task as *mut u8)
             .sub(offset_of!(PrepareCssAstTask, task))
             .cast::<PrepareCssAstTask>()
     };
-    // SAFETY: prepare_css_asts.linker points to BundleV2.linker (LinkerContext is embedded by value)
-    let bundle_v2: *mut BundleV2 = unsafe {
-        (prepare_css_asts.linker as *const LinkerContext as *mut u8)
+    let linker: *mut LinkerContext = prepare_css_asts.linker;
+    let chunk: *mut Chunk = prepare_css_asts.chunk;
+    // SAFETY: `linker` is a raw `*mut` to `BundleV2.linker` (embedded by value),
+    // carrying provenance over the full `BundleV2` allocation. Recover the
+    // parent via container_of. `Worker::get` only needs `&BundleV2`, so we
+    // never materialize a `&mut BundleV2` here — avoiding any aliasing with the
+    // `&LinkerContext` reborrow below (both are shared, both cover overlapping
+    // memory, which is sound).
+    let bundle_v2: &BundleV2 = unsafe {
+        &*(linker as *mut u8)
             .sub(offset_of!(BundleV2, linker))
             .cast::<BundleV2>()
     };
-    // SAFETY: bundle_v2 derived via container_of from &LinkerContext embedded in BundleV2;
-    // exclusive access guaranteed by thread-pool task ownership.
-    let bundle_v2: &mut BundleV2 = unsafe { &mut *bundle_v2 };
-    // TODO(port): Worker::get likely returns an RAII guard whose Drop calls unget()
     let worker = ThreadPool::Worker::get(bundle_v2);
+    let worker = scopeguard::guard(worker, |w| w.unget());
 
+    // SAFETY: `linker` outlives this task (owned by the bundle); read-only.
+    // `chunk` is uniquely owned by this task — each CSS chunk gets exactly one
+    // `PrepareCssAstTask` (see generateChunksInParallel.rs), and `chunk` lives
+    // in a separate allocation from `bundle_v2`, so `&mut *chunk` does not
+    // alias the shared `&BundleV2` / `&LinkerContext` borrows above.
     prepare_css_asts_for_chunk_impl(
-        prepare_css_asts.linker,
-        prepare_css_asts.chunk,
+        unsafe { &*linker },
+        unsafe { &mut *chunk },
         worker.allocator(),
     );
 }

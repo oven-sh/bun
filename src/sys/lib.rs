@@ -1328,8 +1328,10 @@ mod posix_impl {
         }
     }
     /// sys.zig:2884 `unlinkatWithFlags` — explicit `flags` (e.g. `AT_REMOVEDIR`).
+    /// Zig builds the error via `errnoSysFP(.., .unlink, dirfd, to)` so the
+    /// surfaced `SystemError` carries BOTH the dirfd and the path.
     pub fn unlinkat_with_flags(dir: Fd, path: &ZStr, flags: i32) -> Maybe<()> {
-        check_p!(unsafe { libc::unlinkat(dir.native(), path.as_ptr(), flags) }, Tag::unlink, path); Ok(())
+        check_fp!(unsafe { libc::unlinkat(dir.native(), path.as_ptr(), flags) }, Tag::unlink, dir, path); Ok(())
     }
     /// sys.zig:2912 `unlinkat` — 2-arg form (`flags = 0`). Zig's surface is
     /// 2-arg; the 3-arg variant is `unlinkatWithFlags`.

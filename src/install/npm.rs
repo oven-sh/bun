@@ -65,7 +65,7 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
         Some(auth_type) => <&'static str>::from(*auth_type).as_bytes(),
         None => b"web",
     };
-    let ci_name = bun_core::ci::detect_ci_name();
+    let ci_name = crate::ci_info::detect_ci_name();
 
     let mut print_buf: Vec<u8> = Vec::new();
 
@@ -86,13 +86,13 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
         write!(
             &mut print_buf,
             "{} {} {} workspaces/{}{}{}",
-            Global::USER_AGENT,
-            Global::OS_NAME,
-            Global::ARCH_NAME,
+            Global::user_agent,
+            Global::os_name,
+            Global::arch_name,
             // TODO: figure out how npm determines workspaces=true
             false,
             if ci_name.is_some() { " ci/" } else { "" },
-            ci_name.unwrap_or(""),
+            bstr::BStr::new(ci_name.unwrap_or(b"")),
         )
         .unwrap();
         headers.count("user-agent", &print_buf);
@@ -118,12 +118,12 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
         write!(
             &mut print_buf,
             "{} {} {} workspaces/{}{}{}",
-            Global::USER_AGENT,
-            Global::OS_NAME,
-            Global::ARCH_NAME,
+            Global::user_agent,
+            Global::os_name,
+            Global::arch_name,
             false,
             if ci_name.is_some() { " ci/" } else { "" },
-            ci_name.unwrap_or(""),
+            bstr::BStr::new(ci_name.unwrap_or(b"")),
         )
         .unwrap();
         headers.append("user-agent", &print_buf);
@@ -148,7 +148,7 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
         http::Method::GET,
         url,
         headers.entries,
-        &headers.content.as_slice()[..headers.content.len()],
+        &headers.content.allocated_slice()[..headers.content.len],
         &mut response_buf,
         b"",
         None,

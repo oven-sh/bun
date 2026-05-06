@@ -560,8 +560,11 @@ impl BorderShorthand {
         self.width.is_some() && self.style.is_some() && self.color.is_some()
     }
 
-    fn to_border(&self, allocator: &Bump) -> Border {
-        Border {
+    /// Generic over the `P` const param so the same `BorderShorthand` data
+    /// can populate any of `BorderTop`/`BorderLeft`/.../`Border` (Zig used a
+    /// single anonymous struct literal that coerced to each alias).
+    fn to_border<const P: u8>(&self, allocator: &Bump) -> GenericBorder<LineStyle, P> {
+        GenericBorder {
             width: css::generic::deep_clone(&self.width, allocator).unwrap(),
             style: css::generic::deep_clone(&self.style, allocator).unwrap(),
             color: css::generic::deep_clone(&self.color, allocator).unwrap(),
@@ -1369,7 +1372,7 @@ impl BorderHandler {
                 self.has_any = true;
             }
             Property::Unparsed(val) => {
-                if is_border_property(val.property_id) {
+                if is_border_property(val.property_id.tag()) {
                     self.flush(dest, context);
                     self.flush_unparsed(val, dest, context);
                 } else {
@@ -1463,7 +1466,7 @@ impl BorderHandler {
             let mut up = unparsed.deep_clone(allocator);
             context.add_unparsed_fallbacks(allocator, &mut up);
             self.flushed_properties
-                .insert(BorderProperty::try_from_property_id(up.property_id).unwrap());
+                .insert(BorderProperty::try_from_property_id(up.property_id.tag()).unwrap());
             dest.push(Property::Unparsed(up));
             return;
         }
@@ -1493,7 +1496,7 @@ impl BorderHandler {
             }};
         }
 
-        match unparsed.property_id {
+        match unparsed.property_id.tag() {
             PropertyIdTag::BorderInlineStart => logical_prop!(BorderLeft, BorderRight),
             PropertyIdTag::BorderInlineStartWidth => logical_prop!(BorderLeftWidth, BorderRightWidth),
             PropertyIdTag::BorderInlineStartColor => logical_prop!(BorderLeftColor, BorderRightColor),

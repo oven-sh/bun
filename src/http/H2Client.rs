@@ -167,10 +167,10 @@ pub(crate) mod bridge {
         }
         #[inline]
         pub fn h2_unregister(&mut self, session: &super::ClientSession) {
-            // PORT NOTE: `unregister_h2` takes `*mut` only to write
-            // `registry_index` and call `deref()` on the intrusive refcount;
-            // it never aliases the `&self` borrow held here.
-            self.unregister_h2(session as *const super::ClientSession as *mut _);
+            // `unregister_h2` only touches `Cell<u32>` registry_index and the
+            // intrusive `&self` refcount, so a shared borrow suffices — no
+            // const→mut provenance laundering.
+            self.unregister_h2(session);
         }
     }
 }

@@ -14,11 +14,10 @@ pub fn post_process_html_chunk(
     // SAFETY: `ctx.c` is a non-null backref into `BundleV2.linker`, valid for the
     // duration of generateChunksInParallel() — see GenerateChunkCtx.
     let c = unsafe { &mut *ctx.c };
-    let mut j = StringJoiner {
-        watcher: Watcher {
-            input: chunk.unique_key,
-            ..Default::default()
-        },
+    // E0509: StringJoiner has Drop, so FRU `..Default::default()` is illegal — assign field instead.
+    let mut j = StringJoiner::default();
+    j.watcher = Watcher {
+        input: chunk.unique_key,
         ..Default::default()
     };
 

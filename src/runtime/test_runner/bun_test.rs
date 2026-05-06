@@ -1,5 +1,5 @@
 use core::fmt;
-use std::cell::Cell;
+use std::cell::{Cell, UnsafeCell};
 use std::rc::{Rc, Weak};
 
 use bun_alloc::AllocationScope;

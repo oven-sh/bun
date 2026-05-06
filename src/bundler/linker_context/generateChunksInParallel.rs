@@ -587,8 +587,16 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     if is_standalone {
         let mut scc: Vec<Option<Box<[u8]>>> = vec![None; chunks.len()];
 
-        for (ci, chunk_item) in chunks.iter_mut().enumerate() {
-            if matches!(chunk_item.content, crate::chunk::Content::Html) {
+        // PORT NOTE: `IntermediateOutput.code_standalone` takes `&mut self`,
+        // `&mut Chunk` (its container), and `&mut [Chunk]` (which contains the
+        // chunk) — three overlapping mutable views. Zig passes freely-aliased
+        // pointers; mirror that via raw-ptr derefs. Phase B may reshape the
+        // signature to take `&Chunk` / `&[Chunk]` once callees are audited.
+        let chunks_ptr: *mut [Chunk] = chunks as *mut [Chunk];
+        for ci in 0..chunks.len() {
+            // SAFETY: see PORT NOTE above.
+            let chunk_item: *mut Chunk = unsafe { &mut (*chunks_ptr)[ci] };
+            if matches!(unsafe { &(*chunk_item).content }, crate::chunk::Content::Html) {
                 continue;
             }
             let mut ds: usize = 0;
@@ -598,23 +606,26 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             // Sibling JS/CSS chunks may still be null at this point; `.chunk` pieces fall
             // back to file paths when their entry in `scc` is null, matching the previous
             // behavior for inter-chunk imports.
-            scc[ci] = Some(
-                chunk_item
+            // SAFETY: see PORT NOTE above — `code_standalone` only reads sibling
+            // chunks via `chunks` and writes through `self`.
+            let buffer = unsafe {
+                (*chunk_item)
                     .intermediate_output
                     .code_standalone(
                         None,
-                        unsafe { &*c.parse_graph },
+                        &*c.parse_graph,
                         &c.graph,
                         &c.options.public_path,
-                        chunk_item,
-                        chunks,
+                        &mut *chunk_item,
+                        &mut *chunks_ptr,
                         &mut ds,
                         false,
                         false,
                         &scc,
-                    )?
-                    .buffer,
-            );
+                    )
+            }?
+            .buffer;
+            scc[ci] = Some(buffer);
         }
 
         standalone_chunk_contents = Some(scc);
@@ -626,6 +637,10 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         write_output_files_to_disk(c, root_path, chunks, &mut output_files, standalone_chunk_contents.as_deref())?;
     } else {
         // In-memory build (also used for standalone mode)
+        // PORT NOTE: see standalone-prep PORT NOTE above — `code()` /
+        // `code_standalone()` need overlapping `&mut self` / `&mut Chunk` /
+        // `&mut [Chunk]`. Capture a raw `*mut [Chunk]` to mirror Zig aliasing.
+        let chunks_ptr: *mut [Chunk] = chunks as *mut [Chunk];
         for (chunk_index_in_chunks_list, chunk) in chunks.iter_mut().enumerate() {
             // In standalone mode, non-HTML chunks were already resolved in the first pass.
             // Insert a placeholder output file to keep chunk indices aligned.
@@ -662,31 +677,42 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 &c.options.public_path
             };
 
+            // SAFETY: see PORT NOTE on `chunks_ptr` above — Zig freely aliases
+            // `*IntermediateOutput` / `*Chunk` / `[]Chunk`; the callee only reads
+            // sibling chunks and writes via `self`.
+            let chunk_ptr: *mut Chunk = chunk as *mut Chunk;
             let _code_result = if is_standalone && matches!(chunk.content, crate::chunk::Content::Html) {
-                chunk.intermediate_output.code_standalone(
-                    None,
-                    unsafe { &*c.parse_graph },
-                    &c.graph,
-                    public_path,
-                    chunk,
-                    chunks,
-                    &mut display_size,
-                    false,
-                    false,
-                    standalone_chunk_contents.as_deref().unwrap(),
-                )?
+                unsafe {
+                    (*chunk_ptr).intermediate_output.code_standalone(
+                        None,
+                        &*c.parse_graph,
+                        &c.graph,
+                        public_path,
+                        &mut *chunk_ptr,
+                        &mut *chunks_ptr,
+                        &mut display_size,
+                        false,
+                        false,
+                        standalone_chunk_contents.as_deref().unwrap(),
+                    )
+                }?
             } else {
-                chunk.intermediate_output.code(
-                    None,
-                    unsafe { &*c.parse_graph },
-                    &c.graph,
-                    public_path,
-                    chunk,
-                    chunks,
-                    &mut display_size,
-                    unsafe { &(*c.resolver).opts }.compile && !chunk.flags.contains(crate::chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD),
-                    chunk.content.sourcemap(c.options.source_maps) != SourceMapOption::None,
-                )?
+                let force_abs = unsafe { &(*c.resolver).opts }.compile
+                    && !chunk.flags.contains(crate::chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD);
+                let enable_sm = chunk.content.sourcemap(c.options.source_maps) != SourceMapOption::None;
+                unsafe {
+                    (*chunk_ptr).intermediate_output.code(
+                        None,
+                        &*c.parse_graph,
+                        &c.graph,
+                        public_path,
+                        &mut *chunk_ptr,
+                        &mut *chunks_ptr,
+                        &mut display_size,
+                        force_abs,
+                        enable_sm,
+                    )
+                }?
             };
             let mut code_result = _code_result;
 

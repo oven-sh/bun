@@ -728,7 +728,7 @@ fn get_ast(
             return if let Some(res) = (crate::cache::JavaScript {}).parse(
                 bump, // TODO(port): zig passed transpiler.allocator
                 opts,
-                &transpiler.options.define,
+                &topts.define,
                 log,
                 source,
             )? {
@@ -758,14 +758,14 @@ fn get_ast(
             } else {
                 bun_resolver::tsconfig_json::JsonMode::Json
             };
-            let root: Expr = resolver
-                .caches
-                .json
+            // SAFETY: `resolver` is a live `*mut Resolver` (Zig `*Resolver`);
+            // `caches` is disjoint from `(*transpiler).options` reborrowed above.
+            let root: Expr = unsafe { &mut (*resolver).caches.json }
                 .parse_json(log, source, mode, true)?
                 .map(Into::into)
                 .unwrap_or_else(|| Expr::init(E::Object::default(), Loc::EMPTY));
             return Ok(JSAst::init(
-                js_parser::new_lazy_export_ast(bump, &mut transpiler.options.define, opts, log, root, source, b"")?
+                js_parser::new_lazy_export_ast(bump, &mut topts.define, opts, log, root, source, b"")?
                     .unwrap(),
             ));
         }
@@ -777,7 +777,7 @@ fn get_ast(
             // mutably below (NLL conflict); folded into the linear control flow.
             let root: Expr = bun_interchange::toml::TOML::parse(source, &mut temp_log, bump, false)?.into();
             let result = JSAst::init(
-                js_parser::new_lazy_export_ast(bump, &mut transpiler.options.define, opts, &mut temp_log, root, source, b"")?
+                js_parser::new_lazy_export_ast(bump, &mut topts.define, opts, &mut temp_log, root, source, b"")?
                     .unwrap(),
             );
             let _ = temp_log.clone_to_with_recycled(log, true);
@@ -794,7 +794,7 @@ fn get_ast(
                 }
             };
             let result = JSAst::init(
-                js_parser::new_lazy_export_ast(bump, &mut transpiler.options.define, opts, &mut temp_log, root, source, b"")?
+                js_parser::new_lazy_export_ast(bump, &mut topts.define, opts, &mut temp_log, root, source, b"")?
                     .unwrap(),
             );
             let _ = temp_log.clone_to_with_recycled(log, true);
@@ -805,7 +805,7 @@ fn get_ast(
             let mut temp_log = Log::init();
             let root: Expr = bun_interchange::json5::JSON5Parser::parse(source, &mut temp_log, bump)?.into();
             let result = JSAst::init(
-                js_parser::new_lazy_export_ast(bump, &mut transpiler.options.define, opts, &mut temp_log, root, source, b"")?
+                js_parser::new_lazy_export_ast(bump, &mut topts.define, opts, &mut temp_log, root, source, b"")?
                     .unwrap(),
             );
             let _ = temp_log.clone_to_with_recycled(log, true);
@@ -814,10 +814,10 @@ fn get_ast(
         Loader::Text => {
             let root = Expr::init(E::String { data: leak_static(&source.contents), ..Default::default() }, Loc { start: 0 });
             let mut ast = JSAst::init(
-                js_parser::new_lazy_export_ast(bump, &mut transpiler.options.define, opts, log, root, source, b"")?
+                js_parser::new_lazy_export_ast(bump, &mut topts.define, opts, log, root, source, b"")?
                     .unwrap(),
             );
-            ast.add_url_for_css(bump, source, Some(b"text/plain"), None, transpiler.options.compile_to_standalone_html);
+            ast.add_url_for_css(bump, source, Some(b"text/plain"), None, topts.compile_to_standalone_html);
             return Ok(ast);
         }
         Loader::Md => {
@@ -831,15 +831,15 @@ fn get_ast(
             let html: &'static [u8] = leak_static(bump.alloc_slice_copy(&html));
             let root = Expr::init(E::String { data: html, ..Default::default() }, Loc { start: 0 });
             let mut ast = JSAst::init(
-                js_parser::new_lazy_export_ast(bump, &mut transpiler.options.define, opts, log, root, source, b"")?
+                js_parser::new_lazy_export_ast(bump, &mut topts.define, opts, log, root, source, b"")?
                     .unwrap(),
             );
-            ast.add_url_for_css(bump, source, Some(b"text/html"), None, transpiler.options.compile_to_standalone_html);
+            ast.add_url_for_css(bump, source, Some(b"text/html"), None, topts.compile_to_standalone_html);
             return Ok(ast);
         }
 
         Loader::SqliteEmbedded | Loader::Sqlite => {
-            if !transpiler.options.target.is_bun() {
+            if !topts.target.is_bun() {
                 log.add_error(
                     Some(source),
                     Loc::EMPTY,
@@ -927,13 +927,13 @@ fn get_ast(
             );
 
             return Ok(JSAst::init(
-                js_parser::new_lazy_export_ast(bump, &mut transpiler.options.define, opts, log, root, source, b"")?
+                js_parser::new_lazy_export_ast(bump, &mut topts.define, opts, log, root, source, b"")?
                     .unwrap(),
             ));
         }
         Loader::Napi => {
             // (dap-eval-cb "source.contents.ptr")
-            if transpiler.options.target == options::Target::Browser {
+            if topts.target == options::Target::Browser {
                 log.add_error(
                     Some(source),
                     Loc::EMPTY,
@@ -981,7 +981,7 @@ fn get_ast(
                 content_hash: ContentHasher::run(&source.contents),
             };
             return Ok(JSAst::init(
-                js_parser::new_lazy_export_ast(bump, &mut transpiler.options.define, opts, log, root, source, b"")?
+                js_parser::new_lazy_export_ast(bump, &mut topts.define, opts, log, root, source, b"")?
                     .unwrap(),
             ));
         }
@@ -997,7 +997,7 @@ fn get_ast(
             let output_format = opts.output_format;
             let mut ast = js_parser::new_lazy_export_ast(
                 bump,
-                &mut transpiler.options.define,
+                &mut topts.define,
                 opts,
                 log,
                 Expr::init(E::Missing {}, Loc::EMPTY),
@@ -1089,7 +1089,7 @@ fn get_ast(
             if let Err(_e) = css_ast.minify(
                 bump,
                 bun_css::MinifyOptions {
-                    targets: bun_css::Targets::for_bundler_target(transpiler.options.target),
+                    targets: bun_css::Targets::for_bundler_target(topts.target),
                     unused_symbols: Default::default(),
                 },
                 &mut extra,
@@ -1107,7 +1107,7 @@ fn get_ast(
             let mut ast = JSAst::init(
                 js_parser::new_lazy_export_ast_impl(
                     bump,
-                    &mut transpiler.options.define,
+                    &mut topts.define,
                     opts,
                     &mut temp_log,
                     root,
@@ -1133,7 +1133,7 @@ fn get_ast(
             // of the bundle, the key is replaced with the actual URL.
             let content_hash = ContentHasher::run(&source.contents);
 
-            let unique_key: &'static [u8] = if !transpiler.options.dev_server.is_null() {
+            let unique_key: &'static [u8] = if !topts.dev_server.is_null() {
                 // With DevServer, the actual URL is added now, since it can be
                 // known this far ahead of time, and it means the unique key code
                 // does not have to perform an additional pass over files.
@@ -1167,10 +1167,10 @@ fn get_ast(
                 content_hash,
             };
             let mut ast = JSAst::init(
-                js_parser::new_lazy_export_ast(bump, &mut transpiler.options.define, opts, log, root, source, b"")?
+                js_parser::new_lazy_export_ast(bump, &mut topts.define, opts, log, root, source, b"")?
                     .unwrap(),
             );
-            ast.add_url_for_css(bump, source, None, Some(unique_key), transpiler.options.compile_to_standalone_html);
+            ast.add_url_for_css(bump, source, None, Some(unique_key), topts.compile_to_standalone_html);
             return Ok(ast);
         }
     }
@@ -1186,11 +1186,15 @@ fn get_ast(
 // `bake_types::Framework.built_in_modules` value variant carrying `&[u8]` (vs
 // `Box<[u8]>` here) and `resolver.caches.fs.read_file_with_allocator` shape.
 
+// PORT NOTE: `transpiler`/`resolver` are raw `*mut` (Zig `*Transpiler` /
+// `*Resolver`). Callers pass `resolver = &mut (*transpiler).resolver`; taking
+// `&mut Transpiler` + `&mut Resolver` would be aliased-`&mut` UB. We only
+// touch the disjoint `(*transpiler).fs` and `(*resolver).caches.fs` fields.
 fn get_code_for_parse_task_without_plugins(
     task: &mut ParseTask,
     log: &mut Log,
-    transpiler: &mut Transpiler,
-    resolver: &mut Resolver,
+    transpiler: *mut Transpiler,
+    resolver: *mut Resolver,
     bump: &Bump,
     file_path: &mut Fs::Path,
     loader: Loader,

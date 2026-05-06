@@ -2441,10 +2441,15 @@ impl<'a> BundleV2<'a> {
             return Ok(());
         }
 
-        let alloc = self.allocator();
+        // SAFETY: arena (`self.graph.heap`) outlives the bundle pass; erase the
+        // `&self` borrow so `server`/`client` don't keep `*self` borrowed across
+        // the `self.graph.ast.set(...)` calls at the end of this function.
+        let alloc: &'static bun_alloc::Arena =
+            unsafe { &*(self.allocator() as *const bun_alloc::Arena) };
 
-        let mut server = AstBuilder::init(self.allocator(), &bake::SERVER_VIRTUAL_SOURCE, self.transpiler.options.hot_module_reloading)?;
-        let mut client = AstBuilder::init(self.allocator(), &bake::CLIENT_VIRTUAL_SOURCE, self.transpiler.options.hot_module_reloading)?;
+        let hmr = self.transpiler.options.hot_module_reloading;
+        let mut server = AstBuilder::init(alloc, &bake::SERVER_VIRTUAL_SOURCE, hmr)?;
+        let mut client = AstBuilder::init(alloc, &bake::CLIENT_VIRTUAL_SOURCE, hmr)?;
 
         let mut server_manifest_props: Vec<G::Property> = Vec::new();
         let mut client_manifest_props: Vec<G::Property> = Vec::new();
@@ -2547,37 +2552,43 @@ impl<'a> BundleV2<'a> {
             }
         }
 
+        let server_manifest_ref = server.new_symbol(js_ast::ast::symbol::Kind::Other, b"serverManifest")?;
+        let server_manifest_value = server.new_expr(E::Object {
+            properties: js_ast::ast::g::PropertyList::move_from_list(server_manifest_props),
+            ..Default::default()
+        });
         server.append_stmt(S::Local {
             kind: js_ast::ast::s::Kind::KConst,
             decls: js_ast::ast::g::DeclList::from_owned_slice(Box::new([G::Decl {
-                binding: Binding::alloc(alloc, js_ast::ast::b::Identifier {
-                    r#ref: server.new_symbol(js_ast::ast::symbol::Kind::Other, b"serverManifest")?,
-                }, Logger::Loc::EMPTY),
-                value: Some(server.new_expr(E::Object {
-                    properties: js_ast::ast::g::PropertyList::move_from_list(server_manifest_props),
-                    ..Default::default()
-                })),
+                binding: Binding::alloc(alloc, js_ast::ast::b::Identifier { r#ref: server_manifest_ref }, Logger::Loc::EMPTY),
+                value: Some(server_manifest_value),
             }])),
             is_export: true,
             ..Default::default()
         })?;
+        let ssr_manifest_ref = server.new_symbol(js_ast::ast::symbol::Kind::Other, b"ssrManifest")?;
+        let ssr_manifest_value = server.new_expr(E::Object {
+            properties: js_ast::ast::g::PropertyList::move_from_list(client_manifest_props),
+            ..Default::default()
+        });
         server.append_stmt(S::Local {
             kind: js_ast::ast::s::Kind::KConst,
             decls: js_ast::ast::g::DeclList::from_owned_slice(Box::new([G::Decl {
-                binding: Binding::alloc(alloc, js_ast::ast::b::Identifier {
-                    r#ref: server.new_symbol(js_ast::ast::symbol::Kind::Other, b"ssrManifest")?,
-                }, Logger::Loc::EMPTY),
-                value: Some(server.new_expr(E::Object {
-                    properties: js_ast::ast::g::PropertyList::move_from_list(client_manifest_props),
-                    ..Default::default()
-                })),
+                binding: Binding::alloc(alloc, js_ast::ast::b::Identifier { r#ref: ssr_manifest_ref }, Logger::Loc::EMPTY),
+                value: Some(ssr_manifest_value),
             }])),
             is_export: true,
             ..Default::default()
         })?;
 
-        self.graph.ast.set(Index::BAKE_SERVER_DATA.get() as usize, server.to_bundled_ast(Target::Bun)?);
-        self.graph.ast.set(Index::BAKE_CLIENT_DATA.get() as usize, client.to_bundled_ast(Target::Browser)?);
+        // SAFETY: `BundledAst` stores arena-backed raw pointers; the elided
+        // lifetime on `to_bundled_ast`'s return only ties it to the `&mut`
+        // borrow of the builder, not to any data that drops here. Erase to
+        // `'static` to match `Graph.ast: MultiArrayList<JSAst<'static>>`.
+        let server_ast: JSAst = unsafe { core::mem::transmute::<_, JSAst>(server.to_bundled_ast(Target::Bun)?) };
+        let client_ast: JSAst = unsafe { core::mem::transmute::<_, JSAst>(client.to_bundled_ast(Target::Browser)?) };
+        self.graph.ast.set(Index::BAKE_SERVER_DATA.get() as usize, server_ast);
+        self.graph.ast.set(Index::BAKE_CLIENT_DATA.get() as usize, client_ast);
         Ok(())
     }
 
@@ -3359,20 +3370,24 @@ impl<'a> BundleV2<'a> {
                     return;
                 }
 
-                let log = this.log_for_resolution_failures(&resolve.import_record.source_file, resolve.import_record.original_target.bake_graph());
+                // SAFETY: Zig's `logForResolutionFailures` returns `*Log` (raw ptr).
+                // Holding the `&mut Logger::Log` borrow would alias `&this.graph`
+                // below; raw-ptr it so borrowck releases `this`. The log lives in
+                // `this.transpiler`/`this.framework`, disjoint from `graph.input_files`.
+                let log: *mut Logger::Log = this.log_for_resolution_failures(&resolve.import_record.source_file, resolve.import_record.original_target.bake_graph());
 
                 // When it's not a file, this is an error and we should report it.
                 //
                 // We have no way of loading non-files.
                 if resolve.import_record.kind == ImportKind::EntryPointBuild {
-                    let _ = log.add_error_fmt(None, Logger::Loc::EMPTY, format_args!(
+                    let _ = unsafe { &mut *log }.add_error_fmt(None, Logger::Loc::EMPTY, format_args!(
                         "Module not found {} in namespace {}",
                         bun_core::fmt::quote(&resolve.import_record.specifier),
                         bun_core::fmt::quote(&resolve.import_record.namespace),
                     ));
                 } else {
                     let source = &this.graph.input_files.items_source()[resolve.import_record.importer_source_index as usize];
-                    let _ = log.add_range_error_fmt(
+                    let _ = unsafe { &mut *log }.add_range_error_fmt(
                         Some(source),
                         resolve.import_record.range,
                         format_args!(

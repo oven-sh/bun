@@ -1494,8 +1494,10 @@ impl<'a> EnsureRouteCtx for RequestEnsureRouteBundledCtx<'a> {
     fn to_dev_response(&mut self) -> DevResponse { Self::to_dev_response(self) }
     // SAFETY: `self.dev` is set from a live `&mut DevServer` at ctx
     // construction and outlives the ctx (the ctx is stack-local in the request
-    // handler scope).
-    fn dev(&mut self) -> &mut DevServer { unsafe { &mut *self.dev } }
+    // handler scope). Lifetime erased to satisfy the trait's invariant signature.
+    fn dev(&mut self) -> &mut DevServer {
+        unsafe { ::core::mem::transmute::<&mut DevServer<'a>, &mut DevServer<'_>>(&mut *self.dev) }
+    }
     fn route_bundle_index(&self) -> route_bundle::Index { self.route_bundle_index }
 }
 
@@ -1704,10 +1706,10 @@ impl ReqOrSaved {
     }
 }
 
-impl DevServer<'_> {
+impl<'a> DevServer<'a> {
     fn defer_request(
         &mut self,
-        requests_array: &mut deferred_request::List<'_>,
+        requests_array: &mut deferred_request::List<'a>,
         route_bundle_index: route_bundle::Index,
         kind: deferred_request::HandlerKind,
         req: ReqOrSaved,

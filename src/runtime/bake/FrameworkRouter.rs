@@ -1943,10 +1943,10 @@ impl JSFrameworkRouter {
         };
         if let Some(index) = self.router.match_slow(path.slice(), &mut params_out) {
             // PERF(port): was stack-fallback allocator
-            let obj = bun_jsc::JSObject::create_empty(global, 2)?;
+            let obj = JSValue::create_empty_object(global, 2);
             obj.put(
                 global,
-                "params",
+                b"params",
                 if params_out.params.len() > 0 {
                     let params_obj =
                         JSValue::create_empty_object(global, params_out.params.len() as usize);
@@ -1954,15 +1954,15 @@ impl JSFrameworkRouter {
                         // SAFETY: key/value borrow from `path`/pattern, both live here
                         let (key, value) = unsafe { (&*param.key, &*param.value) };
                         let value_str = bun_str::String::clone_utf8(value);
-                        params_obj.put_bytes(global, key, value_str.to_js(global)?);
+                        params_obj.put(global, key, value_str.to_js(global)?);
                     }
                     params_obj
                 } else {
                     JSValue::NULL
                 },
             );
-            obj.put(global, "route", self.route_to_json_inverse(global, index)?);
-            return Ok(obj.to_js());
+            obj.put(global, b"route", self.route_to_json_inverse(global, index)?);
+            return Ok(obj);
         }
 
         Ok(JSValue::NULL)
@@ -1976,12 +1976,12 @@ impl JSFrameworkRouter {
 
     fn route_to_json(&self, global: &JSGlobalObject, route_index: RouteIndex) -> JsResult<JSValue> {
         let route = self.router.route_ptr(route_index);
-        let obj = bun_jsc::JSObject::create_empty(global, 4)?;
-        obj.put(global, "part", Self::part_to_js(global, &route.part)?);
-        obj.put(global, "page", self.file_id_to_js(global, route.file_page)?);
-        obj.put(global, "layout", self.file_id_to_js(global, route.file_layout)?);
+        let obj = JSValue::create_empty_object(global, 4);
+        obj.put(global, b"part", Self::part_to_js(global, &route.part)?);
+        obj.put(global, b"page", self.file_id_to_js(global, route.file_page)?);
+        obj.put(global, b"layout", self.file_id_to_js(global, route.file_layout)?);
         // obj.put(global, "notFound", self.file_id_to_js(global, route.file_not_found)?);
-        obj.put(global, "children", {
+        obj.put(global, b"children", {
             let mut len: usize = 0;
             let mut next = route.first_child;
             while let Some(r) = next {
@@ -1998,7 +1998,7 @@ impl JSFrameworkRouter {
             }
             arr
         });
-        Ok(obj.to_js())
+        Ok(obj)
     }
 
     fn route_to_json_inverse(
@@ -2007,21 +2007,21 @@ impl JSFrameworkRouter {
         route_index: RouteIndex,
     ) -> JsResult<JSValue> {
         let route = self.router.route_ptr(route_index);
-        let obj = bun_jsc::JSObject::create_empty(global, 4)?;
-        obj.put(global, "part", Self::part_to_js(global, &route.part)?);
-        obj.put(global, "page", self.file_id_to_js(global, route.file_page)?);
-        obj.put(global, "layout", self.file_id_to_js(global, route.file_layout)?);
+        let obj = JSValue::create_empty_object(global, 4);
+        obj.put(global, b"part", Self::part_to_js(global, &route.part)?);
+        obj.put(global, b"page", self.file_id_to_js(global, route.file_page)?);
+        obj.put(global, b"layout", self.file_id_to_js(global, route.file_layout)?);
         // obj.put(global, "notFound", self.file_id_to_js(global, route.file_not_found)?);
         obj.put(
             global,
-            "parent",
+            b"parent",
             if let Some(parent) = route.parent {
                 self.route_to_json_inverse(global, parent)?
             } else {
                 JSValue::NULL
             },
         );
-        Ok(obj.to_js())
+        Ok(obj)
     }
 
     pub fn finalize(this: *mut Self) {
@@ -2037,7 +2037,7 @@ impl JSFrameworkRouter {
 
         if frame.arguments_count() < 2 {
             return Err(
-                global.throw_invalid_arguments("parseRoutePattern takes two arguments", &[])
+                global.throw_invalid_arguments("parseRoutePattern takes two arguments")
             );
         }
 
@@ -2069,19 +2069,19 @@ impl JSFrameworkRouter {
 
         let mut rendered: Vec<u8> = Vec::with_capacity(filepath.slice().len());
         for part in parsed.parts {
-            use fmt::Write as _;
             // TODO(port): writing fmt into Vec<u8> — needs adapter (bstr or io::Write)
-            part.to_string_for_internal_use(&mut ByteFmtWriter::new(&mut rendered))?;
+            part.to_string_for_internal_use(&mut ByteFmtWriter::new(&mut rendered))
+                .expect("ByteFmtWriter is infallible");
         }
 
-        let mut out = bun_str::String::init(&rendered);
+        let mut out = bun_str::String::clone_utf8(&rendered);
         let obj = JSValue::create_empty_object(global, 2);
         obj.put(
             global,
-            "kind",
+            b"kind",
             bun_str::String::static_str(<&'static str>::from(parsed.kind)).to_js(global)?,
         );
-        obj.put(global, "pattern", out.transfer_to_js(global)?);
+        obj.put(global, b"pattern", out.transfer_to_js(global)?);
         Ok(obj)
     }
 
@@ -2092,8 +2092,8 @@ impl JSFrameworkRouter {
         let mut rendered: Vec<u8> = Vec::with_capacity(pattern.data().len());
         let mut it = pattern.iterate();
         while let Some(part) = it.next() {
-            use fmt::Write as _;
-            part.to_string_for_internal_use(&mut ByteFmtWriter::new(&mut rendered))?;
+            part.to_string_for_internal_use(&mut ByteFmtWriter::new(&mut rendered))
+                .expect("ByteFmtWriter is infallible");
         }
         let mut str = bun_str::String::clone_utf8(&rendered);
         str.transfer_to_js(global)
@@ -2101,8 +2101,8 @@ impl JSFrameworkRouter {
 
     fn part_to_js(global: &JSGlobalObject, part: &Part<'_>) -> JsResult<JSValue> {
         let mut rendered: Vec<u8> = Vec::new();
-        use fmt::Write as _;
-        part.to_string_for_internal_use(&mut ByteFmtWriter::new(&mut rendered))?;
+        part.to_string_for_internal_use(&mut ByteFmtWriter::new(&mut rendered))
+            .expect("ByteFmtWriter is infallible");
         let mut str = bun_str::String::clone_utf8(&rendered);
         str.transfer_to_js(global)
     }

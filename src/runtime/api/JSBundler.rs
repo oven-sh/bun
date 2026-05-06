@@ -764,10 +764,10 @@ pub mod js_bundler {
             config: JSValue,
             plugins: &mut Option<*mut Plugin>,
         ) -> JsResult<Config> {
-            let mut this = Config {
-                define: StringMap::init(true),
-                ..Default::default()
-            };
+            // Config implements Drop, so functional-record-update from Default::default()
+            // is rejected by rustc (E0509). Construct default then mutate instead.
+            let mut this = Config::default();
+            this.define = StringMap::init(true);
             // errdefer this.deinit(allocator) — handled by `impl Drop for Config` on `?` paths.
             // errdefer if (plugins.*) |plugin| plugin.deinit() — scopeguard below.
             let mut plugins = scopeguard::guard(plugins, |p| {

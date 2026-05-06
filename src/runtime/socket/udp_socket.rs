@@ -1137,8 +1137,12 @@ impl UDPSocket {
         // by the arena in Zig. Here we collect them into a Vec so they live until socket.send().
         let mut string_slices: Vec<ZigStringSlice> = Vec::with_capacity(len);
         for (slice_idx, val) in payload_vals.iter().enumerate() {
+            // Hoisted so the returned `slice()` borrow lives past the `'brk` block
+            // (the underlying buffer is GC-rooted via `payload_vals`; the
+            // `ArrayBuffer` struct itself is just a ptr+len view).
+            let array_buffer = val.as_array_buffer(global_this);
             let slice: &[u8] = 'brk: {
-                if let Some(array_buffer) = val.as_array_buffer(global_this) {
+                if let Some(ref array_buffer) = array_buffer {
                     // `byteSlice()` returns `&.{}` for a detached view; its
                     // `.ptr` is Zig's zero-length sentinel which the kernel
                     // rejects with EFAULT even though `iov_len == 0`. Hand

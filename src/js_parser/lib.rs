@@ -1624,8 +1624,10 @@ pub mod defines_full_draft {
 
     #[derive(Clone)]
     pub struct DotDefine {
-        // ARENA: parts borrow the original define key string.
-        pub parts: *const [*const [u8]],
+        // Zig stored borrowed `[][]const u8` into the user-define key strings;
+        // the Rust port owns the part bytes (small, allocated once at startup)
+        // so the `RawDefines` map can be dropped after `Define::init`.
+        pub parts: Vec<Box<[u8]>>,
         pub data: DefineData,
     }
 

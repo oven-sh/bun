@@ -257,7 +257,7 @@ impl DirectoryWatchStore {
                         }
                         bun_sys::Errno::NOTDIR => return Err(InsertError::Ignore), // ignore
                         _ => {
-                            todo!("log watcher error");
+                            bun_core::todo_panic!("log watcher error");
                         }
                     },
                 }

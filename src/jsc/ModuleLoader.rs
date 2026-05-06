@@ -530,62 +530,145 @@ pub extern "C" fn ModuleLoader__isBuiltin(data: *const u8, len: usize) -> bool {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// `bun_runtime` / `bun_transpiler` / gated-bundler-dependent items —
-// preserved verbatim from the Phase-A draft. Un-gate piecewise once the
-// cycle breaks.
+// `PluginRunner` namespace helpers — pure byte-string parsing, ported here
+// (spec bundler_jsc/PluginRunner.zig:14-53) so `Bun__runVirtualModule` can
+// pre-filter without depending on `bun_bundler_jsc` (forward-dep cycle).
 // ──────────────────────────────────────────────────────────────────────────
 
-mod _gated_impl {
-    use super::*;
-    use bun_bundler::analyze_transpiled_module;
-    use bun_bundler::options::{self, ModuleType};
-    use bun_bundler::Transpiler;
-    use bun_js_parser::{self as js_ast, js_printer, Runtime};
+/// Spec PluginRunner.zig:14-28 — `PluginRunner.extractNamespace`.
+fn plugin_extract_namespace(specifier: &[u8]) -> &[u8] {
+    let Some(colon) = bun_string::strings::index_of_char(specifier, b':') else {
+        return b"";
+    };
+    let colon = colon as usize;
+    // Windows drive-letter (`C:\…`) — not a namespace.
+    if cfg!(windows)
+        && colon == 1
+        && specifier.len() > 3
+        && bun_paths::resolve_path::is_sep_any(specifier[2])
+        && ((specifier[0] > b'a' && specifier[0] < b'z')
+            || (specifier[0] > b'A' && specifier[0] < b'Z'))
+    {
+        return b"";
+    }
+    &specifier[..colon]
+}
+
+/// Spec PluginRunner.zig:30-53 — `PluginRunner.couldBePlugin`.
+fn plugin_could_be_plugin(specifier: &[u8]) -> bool {
+    if let Some(last_dot) = bun_string::strings::last_index_of_char(specifier, b'.') {
+        let ext = &specifier[last_dot + 1..];
+        // '.' followed by either a letter or a non-ascii character — cheaply
+        // rule out "../", "..", "./".
+        if !ext.is_empty()
+            && ((ext[0] >= b'a' && ext[0] <= b'z')
+                || (ext[0] >= b'A' && ext[0] <= b'Z')
+                || ext[0] > 127)
+        {
+            return true;
+        }
+    }
+    let namespace = plugin_extract_namespace(specifier);
+    !namespace.is_empty()
+        && !bun_string::strings::eql_long(namespace, b"node", false)
+        && !bun_string::strings::eql_long(namespace, b"bun", false)
+        && !bun_string::strings::eql_long(namespace, b"file", false)
+}
+
+// PORT NOTE: `ModuleLoader.resolveEmbeddedFile` (spec ModuleLoader.zig:33-71)
+// has been MOVED to `bun_runtime::jsc_hooks::resolve_embedded_node_file_hook`
+// per PORTING.md §Forbidden ("dep-cycle: MOVE the code to the right crate") —
+// the body reaches into `bun_standalone_graph` + `bun_sys::Tmpfile` +
+// `node::fs`, none of which are `bun_jsc` deps. Both Zig callers
+// (`Bun__resolveEmbeddedNodeFile` above, and the `.sqlite` arm of
+// `transpileSourceCode`) now live in `bun_runtime`.
+
+/// Spec ModuleLoader.zig:73-83.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__getDefaultLoader(
+    global: &JSGlobalObject,
+    str: &bun_string::String,
+) -> bun_options_types::schema::api::Loader {
     use bun_options_types::schema::api;
-    use bun_paths::{self, PathBuffer};
-    use bun_resolver::fs as Fs;
-    use bun_resolver::package_json::{MacroMap as MacroRemap, PackageJSON};
-    use bun_string::{self as bun_str, strings, String, ZigString};
-    use bun_sys::{self, Fd as FD};
-    use bun_transpiler::{EntryPoints::MacroEntryPoint, ParseResult, PluginRunner};
-    use bun_watcher::Watcher;
+    let jsc_vm = global.bun_vm();
+    let filename = str.to_utf8();
+    let loader = jsc_vm
+        .transpiler
+        .options
+        .loader(bun_resolver::fs::PathName::init(filename.slice()).ext)
+        .to_api();
+    if loader == api::Loader::file {
+        return api::Loader::js;
+    }
+    loader
+}
 
-    use crate::node_module_module;
-    use crate::runtime_transpiler_store::{dump_source, dump_source_string, set_break_point_on_first_line};
+/// Spec ModuleLoader.zig:1234-1304.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__transpileVirtualModule(
+    global: *mut JSGlobalObject,
+    specifier: *const bun_string::String,
+    referrer: *const bun_string::String,
+    source_code: *mut bun_string::ZigString,
+    loader: bun_options_types::schema::api::Loader,
+    ret: *mut ErrorableResolvedSource,
+) -> bool {
+    jsc::mark_binding(core::panic::Location::caller());
+    // Body drives `transpileSourceCode` through the per-thread `BufferPrinter`
+    // (a `bun_runtime` thread-local), so per §Dispatch the low tier owns the
+    // extern symbol and dispatches; `bun_runtime` installs the body. Same
+    // shape as `Bun__transpileFile` above.
+    let Some(hooks) = loader_hooks() else {
+        // SAFETY: C++ passed a valid out-param.
+        unsafe {
+            *ret = ErrorableResolvedSource::err(
+                bun_core::err!("ModuleNotFound"),
+                JSValue::UNDEFINED,
+            );
+        }
+        return true;
+    };
+    // SAFETY: hook contract — all pointers are valid for the call (C++ ABI).
+    // PERF(port): was inline switch.
+    unsafe { (hooks.transpile_virtual_module)(global, specifier, referrer, source_code, loader, ret) }
+}
 
-    pub fn resolve_embedded_file<'a>(
-        vm: &mut VirtualMachine,
-        path_buf: &'a mut PathBuffer,
-        input_path: &[u8],
-        extname: &[u8],
-    ) -> Option<&'a [u8]> {
-        // body preserved in git @ 5410a51d85^:src/jsc/ModuleLoader.rs
-        todo!()
+/// Spec ModuleLoader.zig:1122-1143.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__runVirtualModule(
+    global: *mut JSGlobalObject,
+    specifier_ptr: *const bun_string::String,
+) -> JSValue {
+    jsc::mark_binding(core::panic::Location::caller());
+    // SAFETY: C++ passed the live JS-thread global; never null.
+    let global = unsafe { &*global };
+    if global.bun_vm().plugin_runner.is_none() {
+        return JSValue::ZERO;
     }
 
-    #[unsafe(no_mangle)]
-    pub extern "C" fn Bun__getDefaultLoader(global: &JSGlobalObject, str: &String) -> api::Loader {
-        todo!()
+    // SAFETY: C++ passed a valid `bun.String*`.
+    let specifier_slice = unsafe { &*specifier_ptr }.to_utf8();
+    let specifier = specifier_slice.slice();
+
+    if !plugin_could_be_plugin(specifier) {
+        return JSValue::ZERO;
     }
 
-    #[unsafe(no_mangle)]
-    pub extern "C" fn Bun__transpileVirtualModule(
-        global: *mut JSGlobalObject,
-        specifier: *const bun_string::String,
-        referrer: *const bun_string::String,
-        source_code: *mut bun_string::ZigString,
-        loader: api::Loader,
-        ret: *mut ErrorableResolvedSource,
-    ) -> bool {
-        todo!()
-    }
+    let namespace = plugin_extract_namespace(specifier);
+    let after_namespace = if namespace.is_empty() {
+        specifier
+    } else {
+        &specifier[(namespace.len() + 1).min(specifier.len())..]
+    };
 
-    #[unsafe(no_mangle)]
-    pub extern "C" fn Bun__runVirtualModule(
-        global: *mut JSGlobalObject,
-        specifier: *const bun_string::String,
-    ) -> JSValue {
-        todo!()
+    match global.run_on_load_plugins(
+        bun_string::String::init(bun_string::ZigString::init(namespace)),
+        bun_string::String::init(bun_string::ZigString::init(after_namespace)),
+        crate::BunPluginTarget::Bun,
+    ) {
+        // `catch return .zero` / `orelse return .zero`
+        Ok(Some(v)) => v,
+        Ok(None) | Err(_) => JSValue::ZERO,
     }
 }
 

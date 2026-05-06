@@ -14,7 +14,9 @@ use bun_jsc::{CallFrame, VirtualMachine};
 // through to fp-walking exactly as Zig does on targets without DWARF support.
 #[cfg(debug_assertions)]
 mod zig_std_debug {
+    #[allow(unused_imports)]
     use core::ffi::{c_int, c_void};
+    #[cfg(target_os = "linux")]
     use core::sync::atomic::{AtomicI32, Ordering};
     use std::collections::HashMap;
 

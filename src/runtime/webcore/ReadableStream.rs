@@ -621,9 +621,9 @@ impl<C: SourceContext + Default> Default for NewSource<C> {
 // Zig: `js = @field(jsc.Codegen, "JS" ++ name ++ "InternalReadableStreamSource")`
 // resolves to a *per-type* generated module; in Rust there is no inherent
 // associated-module syntax, so each `SourceContext` impl carries the codegen
-// accessors as trait fns. The `.classes.ts` → `.rs` generator (when re-run with
-// Rust output) is expected to emit `impl NewSourceCodegen for NewSource<Foo>`
-// blocks; until then the blanket impl below is the no-op stub.
+// extern symbols as associated consts (bound via `source_context_codegen!`).
+// The `.classes.ts` → `.rs` generator (when re-run with Rust output) is expected
+// to emit those `const JS_*` bindings directly.
 pub trait NewSourceCodegen {
     fn to_js(&mut self, global_this: &JSGlobalObject) -> JSValue;
     fn pending_promise_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
@@ -631,20 +631,86 @@ pub trait NewSourceCodegen {
     fn on_drain_callback_get_cached(this: JSValue) -> Option<JSValue>;
 }
 
-// TODO(port): codegen — replace with generated `impl NewSourceCodegen for NewSource<X>` blocks
-// (one per `.classes.ts` entry: Blob/File/Bytes). Blanket stub for now.
+/// Declares the four `${Name}InternalReadableStreamSource*` C++ externs and binds
+/// them to the `SourceContext::JS_*` associated consts. Hand-expansion of what
+/// `generate-classes.ts` emits for `toJS` / cached-property accessors per
+/// `.classes.ts` entry (`Blob`, `File`, `Bytes`).
+///
+/// Invoke *inside* an `impl SourceContext for Foo { ... }` block.
+#[macro_export]
+macro_rules! source_context_codegen {
+    ($create:ident, $pending_set:ident, $drain_set:ident, $drain_get:ident) => {
+        const JS_CREATE: unsafe extern "C" fn(
+            *const $crate::webcore::jsc::JSGlobalObject,
+            *mut ::core::ffi::c_void,
+        ) -> $crate::webcore::jsc::JSValue = {
+            unsafe extern "C" {
+                fn $create(
+                    global: *const $crate::webcore::jsc::JSGlobalObject,
+                    ptr: *mut ::core::ffi::c_void,
+                ) -> $crate::webcore::jsc::JSValue;
+            }
+            $create
+        };
+        const JS_PENDING_PROMISE_SET_CACHED: unsafe extern "C" fn(
+            $crate::webcore::jsc::JSValue,
+            *const $crate::webcore::jsc::JSGlobalObject,
+            $crate::webcore::jsc::JSValue,
+        ) = {
+            unsafe extern "C" {
+                fn $pending_set(
+                    this: $crate::webcore::jsc::JSValue,
+                    global: *const $crate::webcore::jsc::JSGlobalObject,
+                    value: $crate::webcore::jsc::JSValue,
+                );
+            }
+            $pending_set
+        };
+        const JS_ON_DRAIN_CALLBACK_SET_CACHED: unsafe extern "C" fn(
+            $crate::webcore::jsc::JSValue,
+            *const $crate::webcore::jsc::JSGlobalObject,
+            $crate::webcore::jsc::JSValue,
+        ) = {
+            unsafe extern "C" {
+                fn $drain_set(
+                    this: $crate::webcore::jsc::JSValue,
+                    global: *const $crate::webcore::jsc::JSGlobalObject,
+                    value: $crate::webcore::jsc::JSValue,
+                );
+            }
+            $drain_set
+        };
+        const JS_ON_DRAIN_CALLBACK_GET_CACHED: unsafe extern "C" fn(
+            $crate::webcore::jsc::JSValue,
+        ) -> $crate::webcore::jsc::JSValue = {
+            unsafe extern "C" {
+                fn $drain_get(
+                    this: $crate::webcore::jsc::JSValue,
+                ) -> $crate::webcore::jsc::JSValue;
+            }
+            $drain_get
+        };
+    };
+}
+
 impl<C: SourceContext> NewSourceCodegen for NewSource<C> {
-    fn to_js(&mut self, _global_this: &JSGlobalObject) -> JSValue {
-        unimplemented!("provided by JsClass codegen for JS{}InternalReadableStreamSource", C::NAME)
+    fn to_js(&mut self, global_this: &JSGlobalObject) -> JSValue {
+        // SAFETY: `self` is a heap-allocated `NewSource<C>` (via `TrivialNew`/`Box::new`);
+        // ownership transfers to the JS wrapper as `m_ctx`. C++ side stores it as `void*`.
+        unsafe { (C::JS_CREATE)(global_this, self as *mut Self as *mut c_void) }
     }
-    fn pending_promise_set_cached(_this: JSValue, _global: &JSGlobalObject, _value: JSValue) {
-        unimplemented!("provided by JsClass codegen for JS{}InternalReadableStreamSource", C::NAME)
+    fn pending_promise_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue) {
+        // SAFETY: `this` wraps a `JS{NAME}InternalReadableStreamSource` cell on `global`'s heap.
+        unsafe { (C::JS_PENDING_PROMISE_SET_CACHED)(this, global, value) }
     }
-    fn on_drain_callback_set_cached(_this: JSValue, _global: &JSGlobalObject, _value: JSValue) {
-        unimplemented!("provided by JsClass codegen for JS{}InternalReadableStreamSource", C::NAME)
+    fn on_drain_callback_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue) {
+        // SAFETY: `this` wraps a `JS{NAME}InternalReadableStreamSource` cell on `global`'s heap.
+        unsafe { (C::JS_ON_DRAIN_CALLBACK_SET_CACHED)(this, global, value) }
     }
-    fn on_drain_callback_get_cached(_this: JSValue) -> Option<JSValue> {
-        unimplemented!("provided by JsClass codegen for JS{}InternalReadableStreamSource", C::NAME)
+    fn on_drain_callback_get_cached(this: JSValue) -> Option<JSValue> {
+        // SAFETY: `this` wraps a `JS{NAME}InternalReadableStreamSource` cell; `.zero` ⇒ unset.
+        let result = unsafe { (C::JS_ON_DRAIN_CALLBACK_GET_CACHED)(this) };
+        if result == JSValue::ZERO { None } else { Some(result) }
     }
 }
 

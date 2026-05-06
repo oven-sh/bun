@@ -367,10 +367,16 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         // "export * as ns from 'path'"
         if let Some(alias) = &data.alias {
-            if REPLACE_EXPORTS_REAL {
-                // blocked_on: replace_exports map type + inject_replacement_export. See _draft.
-                let _ = unsafe { arena_str(alias.original_name) };
-                todo!("s_export_star: replace_exports map path");
+            if p.options.features.replace_exports.count() > 0 {
+                // SAFETY: original_name is arena-owned, valid for 'a.
+                let alias_name = unsafe { arena_str(alias.original_name) };
+                if let Some(entry) = p.options.features.replace_exports.get_ptr(alias_name).cloned() {
+                    let declared = p
+                        .declare_symbol(js_ast::symbol::Kind::Other, logger::Loc::EMPTY, alias_name)
+                        .expect("unreachable");
+                    let _ = p.inject_replacement_export(stmts, declared, logger::Loc::EMPTY, &entry);
+                    return Ok(());
+                }
             }
         }
 

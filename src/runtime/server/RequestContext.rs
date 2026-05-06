@@ -329,6 +329,7 @@ impl<ThisServer, const SSL_ENABLED: bool, const DEBUG_MODE: bool, const HTTP3: b
 where
     TransportFor<SSL_ENABLED, HTTP3>: Transport,
     ThisServer: ServerLike + 'static,
+    Self: NativePromiseContext::NativePromiseContextType,
 {
     const RESP_KIND: uws::ResponseKind = uws::ResponseKind::from(SSL_ENABLED, HTTP3);
 

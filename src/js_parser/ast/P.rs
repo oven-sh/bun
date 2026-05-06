@@ -3659,7 +3659,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 if symbol.namespace_alias.is_none() {
                     symbol.namespace_alias = Some(js_ast::NamespaceAlias {
                         namespace_ref: stmt.namespace_ref,
-                        alias,
+                        alias: alias as *const [u8],
                         import_record_index: stmt.import_record_index,
                         was_originally_property_access: false,
                     });

@@ -2040,10 +2040,6 @@ impl RootPackageId {
     /// callers deref via `self.log.unwrap().as_ptr()` mirroring Zig's
     /// non-optional `*Log` (set once at `init()`).
     pub log: Option<core::ptr::NonNull<bun_logger::Log>>,
-    /// Zig: `pending_tasks: std.atomic.Value(u32) = .init(0)`.
-    pub pending_tasks: core::sync::atomic::AtomicU32,
-    /// Zig: `total_tasks: u32 = 0`.
-    pub total_tasks: u32,
     /// Zig: `finished_installing: std.atomic.Value(bool) = .init(false)`.
     pub finished_installing: core::sync::atomic::AtomicBool,
     /// Zig: `pending_lifecycle_script_tasks: std.atomic.Value(u32) = .init(0)`.
@@ -2528,18 +2524,6 @@ pub mod ci_info {
         }
         None
     }
-}
-
-/// Port of the `void`-callbacks instantiation of `runTasks`' `Callbacks`
-/// (src/install/PackageManager/runTasks.zig). All hooks are no-ops; only
-/// `progress_bar` is read.
-#[derive(Default)]
-pub struct RunTasksCallbacks {
-    pub on_extract: (),
-    pub on_resolve: (),
-    pub on_package_manifest_error: (),
-    pub on_package_download_error: (),
-    pub progress_bar: bool,
 }
 
 /// Process-lifetime singleton — Zig: `var instance: PackageManager = undefined;`

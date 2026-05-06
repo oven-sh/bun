@@ -714,6 +714,11 @@ pub fn compute_cache_dir_and_subpath<'a>(
     patch_hash: Option<u64>,
 ) -> CacheDirAndSubpath<'a> {
     let name = pkg_name;
+    // PORT NOTE: borrowck — pre-fetch the cache directory before borrowing
+    // `manager.lockfile` so the `&mut` for `ensure_cache_directory` doesn't
+    // overlap the `&` over `buffers.string_bytes` below. `get_cache_directory`
+    // is idempotent after first call.
+    let cache_directory = get_cache_directory(manager);
     let buf = manager.lockfile.buffers.string_bytes.as_slice();
     let mut cache_dir = Dir::cwd();
     let mut cache_dir_subpath: &ZStr = ZStr::EMPTY;
@@ -721,15 +726,15 @@ pub fn compute_cache_dir_and_subpath<'a>(
     match resolution.tag {
         ResolutionTag::Npm => {
             cache_dir_subpath = cached_npm_package_folder_name(manager, name, resolution.value.npm.version, patch_hash);
-            cache_dir = get_cache_directory(manager);
+            cache_dir = cache_directory;
         }
         ResolutionTag::Git => {
             cache_dir_subpath = cached_git_folder_name(manager, &resolution.value.git, patch_hash);
-            cache_dir = get_cache_directory(manager);
+            cache_dir = cache_directory;
         }
         ResolutionTag::Github => {
             cache_dir_subpath = cached_github_folder_name(manager, &resolution.value.github, patch_hash);
-            cache_dir = get_cache_directory(manager);
+            cache_dir = cache_directory;
         }
         ResolutionTag::Folder => {
             let folder = resolution.value.folder.slice(buf);
@@ -748,11 +753,11 @@ pub fn compute_cache_dir_and_subpath<'a>(
         }
         ResolutionTag::LocalTarball => {
             cache_dir_subpath = cached_tarball_folder_name(manager, resolution.value.local_tarball, patch_hash);
-            cache_dir = get_cache_directory(manager);
+            cache_dir = cache_directory;
         }
         ResolutionTag::RemoteTarball => {
             cache_dir_subpath = cached_tarball_folder_name(manager, resolution.value.remote_tarball, patch_hash);
-            cache_dir = get_cache_directory(manager);
+            cache_dir = cache_directory;
         }
         ResolutionTag::Workspace => {
             let folder = resolution.value.workspace.slice(buf);
@@ -768,9 +773,11 @@ pub fn compute_cache_dir_and_subpath<'a>(
             cache_dir = Dir::cwd();
         }
         ResolutionTag::Symlink => {
+            // PORT NOTE: borrowck — `global_link_dir{,_path}` reborrow `manager`
+            // mutably, so copy the symlink target out of the lockfile string
+            // buffer first.
+            let folder = resolution.value.symlink.slice(buf).to_vec();
             let directory = global_link_dir(manager);
-
-            let folder = resolution.value.symlink.slice(buf);
 
             if folder.is_empty() || (folder.len() == 1 && folder[0] == b'.') {
                 cache_dir_subpath = z_static(b".\0");

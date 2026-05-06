@@ -228,7 +228,7 @@ impl<'a> Installer<'a> {
             patch.name_and_version_hash,
         );
         // patch_task dropped at end of scope
-        bun_core::handle_oom(patch_task.apply());
+        patch_task.apply();
 
         if patch_task.callback.apply.logger.has_errors() {
             bun_core::handle_oom(
@@ -691,7 +691,7 @@ impl Task {
         // SAFETY: installer outlives all tasks (BACKREF)
         let installer = unsafe { &*self.installer };
         installer.store.entries.items_step()[self.entry_id.get() as usize]
-            .store(next_step, Ordering::Release);
+            .store(next_step as u32, Ordering::Release);
 
         next_step
     }
@@ -1866,17 +1866,24 @@ impl<'a> Installer<'a> {
 
         let mut version_buf: Vec<u8> = Vec::new();
 
-        write!(&mut version_buf, "{}@", bstr::BStr::new(pkg_name.slice(string_buf)))?;
+        write!(&mut version_buf, "{}@", bstr::BStr::new(pkg_name.slice(string_buf)))
+            .map_err(|_| bun_alloc::AllocError)?;
 
         match pkg_res.tag {
             ResolutionTag::Workspace => {
                 if let Some(workspace_version) = self.lockfile.workspace_versions.get(&pkg_name_hash)
                 {
-                    write!(&mut version_buf, "{}", workspace_version.fmt(string_buf))?;
+                    write!(&mut version_buf, "{}", workspace_version.fmt(string_buf))
+                        .map_err(|_| bun_alloc::AllocError)?;
                 }
             }
             _ => {
-                write!(&mut version_buf, "{}", pkg_res.fmt(string_buf, bun_core::fmt::PathSep::Posix))?;
+                write!(
+                    &mut version_buf,
+                    "{}",
+                    pkg_res.fmt(string_buf, bun_core::fmt::PathSep::Posix),
+                )
+                .map_err(|_| bun_alloc::AllocError)?;
             }
         }
 
@@ -1969,7 +1976,7 @@ impl<'a> Installer<'a> {
 
         if let Some(optimizer) = postinstall_optimizer.get(postinstall_optimizer::PkgInfo {
             name_hash,
-            ..Default::default()
+            ..postinstall_optimizer::PkgInfo::default()
         }) {
             match optimizer {
                 PostinstallOptimizer::NativeBinlink => {

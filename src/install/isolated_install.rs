@@ -544,7 +544,7 @@ pub fn install_isolated_packages(
                     let dedupe_entry = early_dedupe.get_or_put(EarlyDedupeKey {
                         pkg_id: entry.pkg_id,
                         ctx_hash,
-                    });
+                    })?;
                     if dedupe_entry.found_existing {
                         let dedupe_node_id = *dedupe_entry.value_ptr;
 
@@ -624,10 +624,27 @@ pub fn install_isolated_packages(
             })?;
 
             let nodes_slice = nodes.slice();
-            let node_parent_ids = nodes_slice.items().parent_id;
-            let node_dependencies = nodes_slice.items_mut().dependencies;
-            let node_peers = nodes_slice.items_mut().peers;
-            let node_nodes = nodes_slice.items_mut().nodes;
+            // PORT NOTE: disjoint-column raw views (see above).
+            let nodes_len = nodes_slice.len();
+            let node_parent_ids = nodes_slice.parent_id();
+            let node_dependencies: &mut [Vec<store::node::DependencyIds>] = unsafe {
+                core::slice::from_raw_parts_mut(
+                    nodes_slice.items_raw::<Vec<store::node::DependencyIds>>(store::NodeField::dependencies),
+                    nodes_len,
+                )
+            };
+            let node_peers: &mut [store::node::Peers] = unsafe {
+                core::slice::from_raw_parts_mut(
+                    nodes_slice.items_raw::<store::node::Peers>(store::NodeField::peers),
+                    nodes_len,
+                )
+            };
+            let node_nodes: &mut [Vec<store::node::Id>] = unsafe {
+                core::slice::from_raw_parts_mut(
+                    nodes_slice.items_raw::<Vec<store::node::Id>>(store::NodeField::nodes),
+                    nodes_len,
+                )
+            };
 
             if let Some(parent_id) = entry.parent_id.try_get() {
                 node_nodes[parent_id].push(node_id);
@@ -651,9 +668,18 @@ pub fn install_isolated_packages(
             // TODO: make this sort in an order that allows peers to be resolved last
             // and devDependency handling to match `hoistDependency`
             // TODO(port): std.sort.pdq → slice::sort_by with DepSorter
-            dep_ids_sort_buf.sort_by(|a, b| {
-                Lockfile::DepSorter { lockfile }.compare(*a, *b)
-            });
+            {
+                let sorter = lockfile::DepSorter { lockfile };
+                dep_ids_sort_buf.sort_by(|a, b| {
+                    if sorter.is_less_than(*a, *b) {
+                        core::cmp::Ordering::Less
+                    } else if sorter.is_less_than(*b, *a) {
+                        core::cmp::Ordering::Greater
+                    } else {
+                        core::cmp::Ordering::Equal
+                    }
+                });
+            }
 
             peer_dep_ids.clear();
 
@@ -864,7 +890,7 @@ pub fn install_isolated_packages(
             timer = std::time::Instant::now();
             Output::pretty_errorln(format_args!(
                 "Resolved peers [{}]",
-                bun_fmt::fmt_duration_one_decimal(full_tree_end)
+                bun_fmt::fmt_duration_one_decimal(full_tree_end.as_nanos() as u64)
             ));
         }
 

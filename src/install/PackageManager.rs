@@ -1764,22 +1764,26 @@ pub fn init(
             manager_ptr,
             PackageManager {
                 cache_directory_: None,
-                cache_directory_path: ZStr::EMPTY_BOX, // TODO(port): default ""
+                cache_directory_path: ZBox::from_bytes(b""), // TODO(port): default ""
                 preallocated_network_tasks: PreallocatedNetworkTasks::init(),
                 preallocated_resolve_tasks: PreallocatedTaskStore::init(),
                 options,
                 active_lifecycle_scripts: crate::lifecycle_script_runner::List {
                     root: core::ptr::null_mut(),
-                    context: manager_ptr,
+                    // PORT NOTE: `lifecycle_script_runner::List`'s `Context` is
+                    // `*mut crate::PackageManager` (the lib.rs stub) until that
+                    // type alias is unified with `package_manager_real::PackageManager`.
+                    // Cast here; the heap comparator only uses it as opaque ctx.
+                    context: manager_ptr as *mut crate::PackageManager,
                 },
                 network_task_fifo: NetworkQueue::init(),
                 patch_task_fifo: PatchTaskFifo::init(),
                 log: ctx.log,
-                root_dir: entries_option.entries(),
+                root_dir: entries_option,
                 env: Some(NonNull::from(env)),
                 cpu_count,
                 thread_pool: ThreadPool::init(thread_pool::Config {
-                    max_threads: cpu_count,
+                    max_threads: cpu_count as u32,
                     ..Default::default()
                 }),
                 resolve_tasks: ResolveTaskQueue::default(),
@@ -1791,7 +1795,7 @@ pub fn init(
                 root_package_json_file,
                 // .progress
                 event_loop: AnyEventLoop::init(),
-                original_package_json_path: ZStr::from_vec(original_package_json_path_buf),
+                original_package_json_path: ZBox::from_vec_with_nul(original_package_json_path_buf),
                 // TODO(port): owned [:0]const u8 conversion
                 workspace_package_json_cache,
                 workspace_name_hash,
@@ -1842,7 +1846,7 @@ pub fn init(
                 global_link_dir_path: Box::default(),
                 on_wake: WakeHandler::default(),
                 ci_mode: LazyBool::new(PackageManager::compute_is_continuous_integration),
-                peer_dependencies: LinearFifo::init(),
+                peer_dependencies: LinearFifo::<DependencyID, DynamicBuffer<DependencyID>>::init(),
                 known_npm_aliases: NpmAliasMap::default(),
                 trusted_deps_to_add_to_package_json: Vec::new(),
                 any_failed_to_install: false,
@@ -2175,7 +2179,7 @@ pub fn init_with_runtime_once(
                 global_link_dir_path: Box::default(),
                 on_wake: WakeHandler::default(),
                 ci_mode: LazyBool::new(PackageManager::compute_is_continuous_integration),
-                peer_dependencies: LinearFifo::init(),
+                peer_dependencies: LinearFifo::<DependencyID, DynamicBuffer<DependencyID>>::init(),
                 known_npm_aliases: NpmAliasMap::default(),
                 trusted_deps_to_add_to_package_json: Vec::new(),
                 any_failed_to_install: false,

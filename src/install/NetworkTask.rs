@@ -25,7 +25,7 @@ use crate::{ExtractTarball, PackageManager, PatchTask, TarballStream, Task};
 // `append`/`append_lower_case` but doesn't itself implement
 // `strings::Appender` (that impl lives in `bun_resolver`, which this crate
 // can't reach without a cycle).
-struct DirnameStoreAppender<'a>(&'a DirnameStore);
+pub struct DirnameStoreAppender<'a>(pub &'a DirnameStore);
 impl strings::Appender for DirnameStoreAppender<'_> {
     fn append(&mut self, s: &[u8]) -> Result<&[u8], bun_alloc::AllocError> {
         self.0.append(s)
@@ -33,6 +33,14 @@ impl strings::Appender for DirnameStoreAppender<'_> {
     fn append_lower_case(&mut self, s: &[u8]) -> Result<&[u8], bun_alloc::AllocError> {
         self.0.append_lower_case(s)
     }
+}
+
+/// Convenience: returns an `Appender` over the global filename store, matching
+/// Zig `*FileSystem.FilenameStore` callsites in `runTasks.zig` /
+/// `PackageManagerEnqueue.zig`.
+#[inline]
+pub fn filename_store_appender() -> DirnameStoreAppender<'static> {
+    DirnameStoreAppender(FileSystem::instance().dirname_store())
 }
 
 pub struct NetworkTask {

@@ -440,7 +440,11 @@ pub fn scan_imports_and_exports(
 
                 if col_ref!(named_imports)[source_index].count() > 0 {
                     this.match_imports_with_exports_for_file(
-                        &mut col!(named_imports)[source_index],
+                        // SAFETY: `named_imports` is a `col_ptr!` raw column;
+                        // pass the element by raw `*const` so no `&mut`
+                        // protector spans the `&mut this` call (the callee
+                        // re-reads this same column via `self.graph.ast`).
+                        unsafe { core::ptr::addr_of!((*named_imports)[source_index]) },
                         &mut col!(imports_to_bind_list)[source_index],
                         source_index_.get(),
                     );

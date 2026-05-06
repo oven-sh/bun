@@ -1586,9 +1586,10 @@ impl CronJob {
                         jsc::AnyPromise::Normal(p) => unsafe { (*p).result(this_ref.global.vm()) },
                         jsc::AnyPromise::Internal(p) => unsafe { (*p).result(this_ref.global.vm()) },
                     };
-                    // SAFETY: `vm.global` is live; `&mut` derived for the call only.
+                    // SAFETY: `vm.global` is live; `&mut` derived via the thread-local
+                    // raw pointer (avoids `&T` → `&mut T` provenance laundering).
                     let global_ref = unsafe { &*vm.global };
-                    unsafe { &mut *(vm as *const VirtualMachine as *mut VirtualMachine) }
+                    unsafe { &mut *VirtualMachine::get() }
                         .unhandled_rejection(global_ref, reason, result);
                 }
             }

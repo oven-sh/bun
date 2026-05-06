@@ -1315,10 +1315,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     #[inline]
     fn vm_mut(&self) -> &mut jsc::virtual_machine::VirtualMachine {
         // SAFETY: see fn doc — singleton VM, single-threaded JS runtime.
-        unsafe {
-            &mut *(self.vm as *const jsc::virtual_machine::VirtualMachine
-                as *mut jsc::virtual_machine::VirtualMachine)
-        }
+        // Go through VirtualMachine::get() (returns *mut) rather than casting
+        // through the stored `&'static` to avoid invalid_reference_casting.
+        unsafe { &mut *jsc::virtual_machine::VirtualMachine::get() }
     }
 
     pub fn get_plugins(&self) -> PluginsResult<'_> {

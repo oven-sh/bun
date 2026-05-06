@@ -33,23 +33,27 @@ pub mod js {
     );
 
     // `callconv(jsc.conv)` — sysv64 on x86_64-windows, C ABI elsewhere.
+    // `*mut c_void` for the payload: the C++ side treats `m_ctx` as an opaque
+    // pointer, and `TimeoutObject` is intentionally Rust-layout (its
+    // `EventLoopTimer` field is not `#[repr(C)]`). Cast at the wrapper
+    // boundary below — same shape as the `JsClass` proc-macro hooks.
     #[cfg(all(windows, target_arch = "x86_64"))]
     unsafe extern "sysv64" {
         #[link_name = "Timeout__fromJS"]
-        fn Timeout__fromJS(value: JSValue) -> *mut TimeoutObject;
+        fn Timeout__fromJS(value: JSValue) -> *mut core::ffi::c_void;
         #[link_name = "Timeout__fromJSDirect"]
-        fn Timeout__fromJSDirect(value: JSValue) -> *mut TimeoutObject;
+        fn Timeout__fromJSDirect(value: JSValue) -> *mut core::ffi::c_void;
         #[link_name = "Timeout__create"]
-        fn Timeout__create(global: *mut JSGlobalObject, ptr: *mut TimeoutObject) -> JSValue;
+        fn Timeout__create(global: *mut JSGlobalObject, ptr: *mut core::ffi::c_void) -> JSValue;
     }
     #[cfg(not(all(windows, target_arch = "x86_64")))]
     unsafe extern "C" {
         #[link_name = "Timeout__fromJS"]
-        fn Timeout__fromJS(value: JSValue) -> *mut TimeoutObject;
+        fn Timeout__fromJS(value: JSValue) -> *mut core::ffi::c_void;
         #[link_name = "Timeout__fromJSDirect"]
-        fn Timeout__fromJSDirect(value: JSValue) -> *mut TimeoutObject;
+        fn Timeout__fromJSDirect(value: JSValue) -> *mut core::ffi::c_void;
         #[link_name = "Timeout__create"]
-        fn Timeout__create(global: *mut JSGlobalObject, ptr: *mut TimeoutObject) -> JSValue;
+        fn Timeout__create(global: *mut JSGlobalObject, ptr: *mut core::ffi::c_void) -> JSValue;
     }
 
     /// Create a new `JSTimeout` JSCell wrapping `this` as its `m_ctx`.

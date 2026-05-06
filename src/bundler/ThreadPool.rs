@@ -201,8 +201,14 @@ impl ThreadPool {
     /// resolve without a separate module path.
     pub type Worker = Worker;
 
-    pub fn init(
-        v2: &BundleV2<'_>,
+    // PORT NOTE: generic over `V2` because `bundle_v2.rs` currently carries two
+    // `BundleV2` definitions (the canonical one + `__phase_a_draft::BundleV2`)
+    // during the phased port, and both call `ThreadPool::init`. The backref is
+    // stored as a type-erased raw pointer (`.cast()`) regardless, so the
+    // monomorphised body is identical. Collapses to `&BundleV2<'_>` once the
+    // draft module is dropped.
+    pub fn init<V2>(
+        v2: &V2,
         worker_pool: Option<&mut ThreadPoolLib::ThreadPool>,
     ) -> Result<ThreadPool, bun_alloc::AllocError> {
         // PORT NOTE: Spec ThreadPool.zig:85 allocated via the bundle arena
@@ -228,12 +234,12 @@ impl ThreadPool {
         Ok(this)
     }
 
-    pub fn init_with_pool(v2: &BundleV2<'_>, worker_pool: *mut ThreadPoolLib::ThreadPool) -> ThreadPool {
+    pub fn init_with_pool<V2>(v2: &V2, worker_pool: *mut ThreadPoolLib::ThreadPool) -> ThreadPool {
         ThreadPool {
             worker_pool,
             io_pool: if Self::uses_io_pool() { Some(io_thread_pool::acquire()) } else { None },
             // BACKREF: lifetime erased behind the raw pointer.
-            v2: (v2 as *const BundleV2<'_>).cast(),
+            v2: (v2 as *const V2).cast(),
             worker_pool_is_owned: false,
             workers_assignments: parking_lot::Mutex::new(ArrayHashMap::default()),
         }

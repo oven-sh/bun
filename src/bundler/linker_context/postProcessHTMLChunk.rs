@@ -1,6 +1,6 @@
-use bun_string::string_joiner::{self, StringJoiner};
+use bun_string::string_joiner::{StringJoiner, Watcher};
 
-use crate::linker_context::GenerateChunkCtx;
+use crate::linker_context_mod::GenerateChunkCtx;
 use crate::thread_pool;
 use crate::Chunk;
 
@@ -13,7 +13,7 @@ pub fn post_process_html_chunk(
     // This is where we split output into pieces
     let c = ctx.c;
     let mut j = StringJoiner {
-        watcher: string_joiner::Watcher {
+        watcher: Watcher {
             input: chunk.unique_key,
             ..Default::default()
         },
@@ -23,8 +23,9 @@ pub fn post_process_html_chunk(
     let compile_results = &chunk.compile_results_for_chunk;
 
     for compile_result in compile_results.iter() {
-        // bun.default_allocator arg dropped per §Allocators
-        j.push(compile_result.code());
+        // PORT NOTE: Zig `j.push(.., bun.default_allocator)` — code() borrows from
+        // chunk.compile_results_for_chunk which outlives `j.done()`; allocator arg dropped.
+        j.push_static(compile_result.code());
     }
 
     j.ensure_newline_at_end();

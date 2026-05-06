@@ -12,10 +12,20 @@ use bun_collections::{ArrayHashMap, BabyList, StringHashMap};
 use bun_core::ThreadLock;
 use bun_logger as Logger;
 
-use crate::bake_types as bake;
+// `bake_types` / `dispatch` are canonically defined in `__phase_a_draft` below
+// (the full versions); re-exported here so the crate-root `lib.rs` modules and
+// the outer `BundleV2` struct see exactly the same types as the impl bodies.
+pub use __phase_a_draft::bake_types;
+pub use __phase_a_draft::dispatch;
+pub use __phase_a_draft::api;
+pub use __phase_a_draft::{
+    JSMeta, ImportData, ExportData, RefImportData, ImportTracker, DevServerOutput,
+    EntryPoint, EntryPointKind, EntryPointList, generic_path_with_pretty_initialized,
+};
+use self::bake_types as bake;
+
 use crate::barrel_imports::{self, RequestedExports};
 use crate::cache::ExternalFreeFunction;
-use crate::dispatch;
 use crate::options::{self, Target};
 use crate::parse_task::{self, ResultValue as ParseResultValue};
 use crate::transpiler::Transpiler;
@@ -552,7 +562,7 @@ fn parse_task_step_name(step: parse_task::Step) -> &'static str {
 // `ParseTask`, `ThreadPool`, OUT_DIR codegen for HmrRuntime embeds.)
 // ══════════════════════════════════════════════════════════════════════════
 
-mod __phase_a_draft {
+pub mod __phase_a_draft {
 // This is Bun's JavaScript/TypeScript bundler
 //
 // A lot of the implementation is based on the Go implementation of esbuild. Thank you Evan Wallace.
@@ -747,14 +757,14 @@ pub mod bake_types {
         std::sync::LazyLock::new(|| {
             let mut s = bun_logger::Source::default();
             s.path = crate::ungate_support::bun_fs::Path::init_for_kit_built_in(b"bun", b"bake/server");
-            s.index = bun_logger::Index(crate::Index::BAKE_SERVER_DATA.get());
+            s.index = bun_logger::Index(Index::BAKE_SERVER_DATA.get());
             s
         });
     pub static CLIENT_VIRTUAL_SOURCE: std::sync::LazyLock<bun_logger::Source<'static>> =
         std::sync::LazyLock::new(|| {
             let mut s = bun_logger::Source::default();
             s.path = crate::ungate_support::bun_fs::Path::init_for_kit_built_in(b"bun", b"bake/client");
-            s.index = bun_logger::Index(crate::Index::BAKE_CLIENT_DATA.get());
+            s.index = bun_logger::Index(Index::BAKE_CLIENT_DATA.get());
             s
         });
     /// Alias kept for callers that referenced the DevServer constant name directly.
@@ -1339,8 +1349,7 @@ type IndexInt = u32; // Index.Int
 
 /// This assigns a concise, predictable, and unique `.pretty` attribute to a Path.
 /// DevServer relies on pretty paths for identifying modules, so they must be unique.
-pub fn generic_path_with_pretty_initialized(
-    path: Fs::Path,
+pub fn generic_path_with_pretty_initialized(    path: Fs::Path,
     target: options::Target,
     top_level_dir: &[u8],
     bump: &bun_alloc::Arena,
@@ -2193,7 +2202,7 @@ impl<'a> BundleV2<'a> {
                 ..Default::default()
             },
             loader,
-            side_effects: resolve.primary_side_effects_data,
+            side_effects: result.primary_side_effects_data,
             ..Default::default()
         })?;
         let task = Box::leak(Box::new(ParseTask::init(&result, source_index, self)));
@@ -2405,7 +2414,7 @@ impl<'a> BundleV2<'a> {
             }
 
             // no plugins were matched
-            let resolved = match self.transpiler.resolve_entry_point(entry_point) {
+            let mut resolved = match self.transpiler.resolve_entry_point(entry_point) {
                 Ok(r) => r,
                 Err(_) => continue,
             };
@@ -2471,7 +2480,7 @@ impl<'a> BundleV2<'a> {
             }
 
             // Fall back to normal resolution if no plugins matched
-            let resolved = match transpiler.resolve_entry_point(abs_path) {
+            let mut resolved = match transpiler.resolve_entry_point(abs_path) {
                 Ok(r) => r,
                 Err(err) => {
                     let dev = self.dev_server.expect("unreachable");
@@ -2524,7 +2533,7 @@ impl<'a> BundleV2<'a> {
             }
 
             // no plugins matched
-            let resolved = match self.transpiler.resolve_entry_point(abs_path) {
+            let mut resolved = match self.transpiler.resolve_entry_point(abs_path) {
                 Ok(r) => r,
                 Err(_) => continue,
             };
@@ -4077,9 +4086,9 @@ impl<'a> BundleV2<'a> {
             self.free_list.push(maybe_decoded.clone());
             parse.contents_or_fd = ParseTask::ContentsOrFd::Contents(maybe_decoded);
             parse.loader = Some(match data_url.decode_mime_type().category {
-                bun_http_types::MimeType::Category::Javascript => Loader::Js,
-                bun_http_types::MimeType::Category::Css => Loader::Css,
-                bun_http_types::MimeType::Category::Json => Loader::Json,
+                bun_http_types::mime_type::MimeType::Category::Javascript => Loader::Js,
+                bun_http_types::mime_type::MimeType::Category::Css => Loader::Css,
+                bun_http_types::mime_type::MimeType::Category::Json => Loader::Json,
                 _ => parse.loader.unwrap_or(Loader::File),
             });
         }
@@ -4246,7 +4255,7 @@ impl<'a> BundleV2<'a> {
 
             estimated_resolve_queue_count += (!(import_record.flags.is_internal || import_record.flags.is_unused || import_record.source_index.is_valid())) as usize;
         }
-        let mut resolve_queue = ResolveQueue::new();
+        let mut resolve_queue = ResolveQueue::default();
         resolve_queue.reserve(estimated_resolve_queue_count);
 
         let mut last_error: Option<Error> = None;
@@ -4766,7 +4775,7 @@ impl<'a> BundleV2<'a> {
             } else {
                 if loader.should_copy_for_bundling() {
                     let additional_files: &mut BabyList<crate::AdditionalFile> = &mut graph.input_files.items_additional_files_mut()[importer_source_index as usize];
-                    additional_files.push(crate::AdditionalFile::SourceIndex(*existing.value_ptr));
+                    additional_files.push(crate::AdditionalFile::SourceIndex(*existing.value_ptr)).expect("oom");
                     graph.estimated_file_loader_count += 1;
                 }
 
@@ -4930,7 +4939,7 @@ impl<'a> BundleV2<'a> {
         // hoisted to tail position (see end of fn) so the closure doesn't
         // double-borrow `graph`/`this`.
 
-        let mut resolve_queue = ResolveQueue::new();
+        let mut resolve_queue = ResolveQueue::default();
         let mut process_log = true;
 
         if matches!(parse_result.value, parse_task::ResultValue::Success(_)) {
@@ -5006,7 +5015,7 @@ impl<'a> BundleV2<'a> {
                     graph.css_file_count += 1;
                 }
 
-                diff += this.process_resolve_queue(core::mem::replace(&mut resolve_queue, ResolveQueue::new()), result.ast.target, result_source_index as IndexInt);
+                diff += this.process_resolve_queue(core::mem::replace(&mut resolve_queue, ResolveQueue::default()), result.ast.target, result_source_index as IndexInt);
 
                 let mut import_records = core::mem::take(&mut result.ast.import_records);
                 let source_path_owned = source.path.text.to_vec().into_boxed_slice();

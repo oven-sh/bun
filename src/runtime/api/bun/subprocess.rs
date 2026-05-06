@@ -264,27 +264,10 @@ const _: () = {
         // `noConstructor: true` — no `Subprocess__getConstructor` export; trait default applies.
     }
 
-    #[unsafe(export_name = "SubprocessClass__finalize")]
-    extern "C" fn __subprocess_finalize(ptr: *mut c_void) {
-        // SAFETY: `ptr` was produced by `Box::into_raw` in `to_js`; the C++ wrapper
-        // guarantees exactly-once finalization on the mutator thread. Lifetime is
-        // erased across the C ABI; pick `'static` for the drop type.
-        let _ = unsafe { Box::<Subprocess<'static>>::from_raw(ptr.cast()) };
-    }
-
-    #[unsafe(export_name = "SubprocessClass__construct")]
-    extern "C" fn __subprocess_construct(
-        global: *mut JSGlobalObject,
-        frame: *mut CallFrame,
-    ) -> *mut c_void {
-        // SAFETY: JSC guarantees both pointers are live for the call.
-        let g = unsafe { &*global };
-        let f = unsafe { &*frame };
-        bun_jsc::__macro_support::host_fn_construct_result(
-            g,
-            <Subprocess<'static>>::constructor(g, f),
-        )
-    }
+    // `SubprocessClass__finalize` / `SubprocessClass__construct` are now emitted
+    // by `generateRust()` (`build/*/codegen/generated_classes.rs`); the
+    // hand-expanded copies that used to live here collided at link time and
+    // have been removed.
 };
 
 impl<'a> Subprocess<'a> {

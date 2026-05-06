@@ -496,86 +496,22 @@ fn js_class_hooks(args: &JsClassArgs, rust_ty: &Ident) -> TokenStream2 {
         .map(|l| l.value())
         .unwrap_or_else(|| rust_ty.to_string());
 
-    // C++→Rust hooks (we export these).
-    let finalize_sym = format!("{ty_name}Class__finalize");
-    let construct_sym = format!("{ty_name}Class__construct");
-    let estimated_sym = format!("{ty_name}__estimatedSize");
-    let finalize_ident = format_ident!("__{ty_name}Class__finalize");
-    let construct_ident = format_ident!("__{ty_name}Class__construct");
-    let estimated_ident = format_ident!("__{ty_name}__estimatedSize");
+    // C++→Rust export hooks (`${T}Class__construct` / `${T}Class__finalize` /
+    // `${T}__estimatedSize` / `${T}__ZigStructSize`) are now emitted by
+    // `generateRust()` in `src/codegen/generate-classes.ts` — see
+    // `build/*/codegen/generated_classes.rs`. Emitting them here as well
+    // produces duplicate-symbol link errors, so this macro is now *import-side
+    // only*: it declares the C++ externs and supplies the `JsClass` trait impl.
+    // The `no_finalize` / `no_construct` / `estimated_size` attribute knobs are
+    // still accepted (call sites carry them, and they document the
+    // `.classes.ts` shape), but no longer drive any token emission here.
+    let _ = (args.no_finalize, args.no_construct, args.estimated_size);
 
     // Rust→C++ hooks (we import these; bodies live in generated C++).
     let from_js_sym = format!("{ty_name}__fromJS");
     let from_js_direct_sym = format!("{ty_name}__fromJSDirect");
     let create_sym = format!("{ty_name}__create");
     let get_ctor_sym = format!("{ty_name}__getConstructor");
-
-    let finalize_hook = if args.no_finalize {
-        quote! {}
-    } else {
-        jsc_extern_fn(
-            Some(&finalize_sym),
-            quote! { #finalize_ident(__ptr: *mut ::core::ffi::c_void) },
-            quote! { () },
-            quote! {
-                // SAFETY: `__ptr` was produced by `Box::into_raw` in the
-                // construct hook (or `to_js`); the C++ wrapper guarantees
-                // exactly-once finalization on the mutator thread.
-                let _ = unsafe { ::std::boxed::Box::<#rust_ty>::from_raw(__ptr.cast()) };
-            },
-        )
-    };
-
-    let construct_hook = if args.no_construct {
-        quote! {}
-    } else {
-        jsc_extern_fn(
-            Some(&construct_sym),
-            quote! {
-                #construct_ident(
-                    __global: *mut ::bun_jsc::JSGlobalObject,
-                    __frame: *mut ::bun_jsc::CallFrame,
-                )
-            },
-            quote! { *mut ::core::ffi::c_void },
-            quote! {
-                // SAFETY: JSC guarantees both pointers are live for the call.
-                let __g = unsafe { &*__global };
-                let __f = unsafe { &*__frame };
-                ::bun_jsc::__macro_support::host_fn_construct_result(
-                    __g,
-                    <#rust_ty>::constructor(__g, __f),
-                )
-            },
-        )
-    };
-
-    // Only emit `${T}__estimatedSize` when the class opts in
-    // (`estimatedSize: true` in `.classes.ts`). The body MUST dereference the
-    // instance pointer and ask the value for its dynamic footprint — the C++
-    // side feeds this into `reportExtraMemoryAllocated` /
-    // `visitor.reportExtraMemoryVisited` (generate-classes.ts:1656-1660,
-    // 1913-1916), so returning the static struct size would hide MB-scale body
-    // buffers from the GC. Resolution is via method syntax so a user-provided
-    // inherent `fn estimated_size(&self) -> usize` shadows the `JsClass` trait
-    // default (`size_of::<Self>()`).
-    let estimated_hook = if args.estimated_size {
-        jsc_extern_fn(
-            Some(&estimated_sym),
-            quote! { #estimated_ident(__ptr: *mut ::core::ffi::c_void) },
-            quote! { usize },
-            quote! {
-                #[allow(unused_imports)]
-                use ::bun_jsc::JsClass as _;
-                // SAFETY: `__ptr` is the wrapper's `m_ctx` (Box<#rust_ty>),
-                // live for the duration of the call (called from
-                // `visitChildrenImpl` / `${T}__create` on the GC/mutator thread).
-                unsafe { (&*__ptr.cast::<#rust_ty>()).estimated_size() }
-            },
-        )
-    } else {
-        quote! {}
-    };
 
     // `JsClass` trait impl — wraps the C++-side `fromJS`/`create` exports.
     // `callconv(jsc.conv)` on the import side: two cfg-gated `extern` blocks.
@@ -662,12 +598,7 @@ fn js_class_hooks(args: &JsClassArgs, rust_ty: &Ident) -> TokenStream2 {
         };
     };
 
-    quote! {
-        #finalize_hook
-        #construct_hook
-        #estimated_hook
-        #trait_impl
-    }
+    trait_impl
 }
 
 // ──────────────────────────────────────────────────────────────────────────

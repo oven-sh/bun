@@ -84,26 +84,8 @@ pub extern "C" fn Bun__panic(msg: *const u8, len: usize) -> ! {
 // REAL: now provided by bun_runtime (src/runtime/node/node_process.rs).
 // Bun__NODE_NO_WARNINGS
 
-// PHASE-C: C++ callback — Zig: `export fn Bun__getTLSRejectUnauthorizedValue() i32`
-// REAL: src/jsc/virtual_machine_exports.rs (gated under `mod _gated`)
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__getTLSRejectUnauthorizedValue() -> i32 {
-    // Default = reject (1). Real impl consults VirtualMachine.get().
-    1
-}
-
-// PHASE-C: C++ callback — Zig: `export fn Bun__isNoProxy(host_ptr, host_len, …) bool`
-// REAL: src/jsc/virtual_machine_exports.rs (gated under `mod _gated`)
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__isNoProxy(
-    hostname_ptr: *const u8,
-    hostname_len: usize,
-    host_ptr: *const u8,
-    host_len: usize,
-) -> bool {
-    let _ = (hostname_ptr, hostname_len, host_ptr, host_len);
-    false
-}
+// REAL: `Bun__getTLSRejectUnauthorizedValue` / `Bun__isNoProxy` now exported
+// directly from `bun_jsc::virtual_machine_exports` (un-gated in phase-d).
 
 // REAL: now provided by bun_runtime (src/runtime/napi/napi_body.rs).
 // napi_internal_suppress_crash_on_abort_if_desired

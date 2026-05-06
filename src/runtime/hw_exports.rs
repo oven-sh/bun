@@ -152,16 +152,8 @@ pub extern "C" fn Bun__closeChildIPC(global: *mut JSGlobalObject) {
 
 // ─── outside-of-runtime sources (link name parked here, body delegated) ──────
 
-/// `@export(&jsc.toJSHostFn(Bun__Process__send_), .{ .name = "Bun__Process__send" })`
-/// (src/jsc/virtual_machine_exports.zig). The body is the IPC `do_send` path
-/// which lives in `bun_jsc::ipc`; the safe `JSHostFnZig` form is already
-/// ported as `bun_jsc::virtual_machine_exports::Bun__Process__send`.
-#[unsafe(no_mangle)]
-#[bun_jsc::host_call]
-pub fn Bun__Process__send(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    // SAFETY: JSC passes live global/callframe.
-    bun_jsc::to_js_host_fn(bun_jsc::virtual_machine_exports::Bun__Process__send)(global, callframe)
-}
+// REAL: `Bun__Process__send` now exported directly from
+// `bun_jsc::virtual_machine_exports` via `#[host_fn(export = ...)]`.
 
 /// `@export(&jsFunctionFindSourceMap, .{ .name = "Bun__JSSourceMap__find" })`
 /// (src/sourcemap_jsc/JSSourceMap.zig). Body is fully ported in

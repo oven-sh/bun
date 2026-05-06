@@ -12,26 +12,76 @@ use super::event_loop_timer::Tag as EventLoopTimerTag;
 pub type RefCount = bun_ptr::IntrusiveRc<TimeoutObject>;
 
 // `jsc.Codegen.JSTimeout` — the `.classes.ts` codegen module for this type.
-// `to_js` / `from_js` / `from_js_direct` are wired by `#[bun_jsc::JsClass]`.
-// The cached-property accessors (`callback_get_cached`, etc.) live in this generated module.
-// TODO(port): codegen — emit `js` module from `generate-classes.ts` with .rs output
+// Hand-expansion of what `src/codegen/generate-classes.ts` emits into
+// `ZigGeneratedClasses.zig` for `pub const JSTimeout = struct { ... }`:
+// `${name}GetCached` / `${name}SetCached` per `cache: true` prop, plus
+// `toJS` / `fromJS` / `fromJSDirect` thin-wrapping the C++-side
+// `Timeout__create` / `Timeout__fromJS` / `Timeout__fromJSDirect` shims.
 pub use self::js::{from_js, from_js_direct, to_js};
 pub mod js {
-    use super::*;
-    extern "C" {
-        // TODO(port): move to <area>_sys — these are codegen'd C++ shims
+    use super::{JSGlobalObject, JSValue, TimeoutObject};
+
+    // One `${snake}_get_cached` / `${snake}_set_cached` pair per cached prop,
+    // each wrapping `TimeoutPrototype__${prop}{Get,Set}CachedValue` and mapping
+    // `.zero` → `None` on the get side (matches Zig `${name}GetCached`).
+    bun_jsc::codegen_cached_accessors!(
+        "Timeout";
+        arguments,
+        callback,
+        idleTimeout,
+        repeat,
+        idleStart,
+    );
+
+    // `callconv(jsc.conv)` — sysv64 on x86_64-windows, C ABI elsewhere.
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    unsafe extern "sysv64" {
+        #[link_name = "Timeout__fromJS"]
+        fn Timeout__fromJS(value: JSValue) -> *mut TimeoutObject;
+        #[link_name = "Timeout__fromJSDirect"]
+        fn Timeout__fromJSDirect(value: JSValue) -> *mut TimeoutObject;
+        #[link_name = "Timeout__create"]
+        fn Timeout__create(global: *mut JSGlobalObject, ptr: *mut TimeoutObject) -> JSValue;
     }
-    pub fn callback_get_cached(_this_value: JSValue) -> Option<JSValue> { todo!("codegen") }
-    pub fn callback_set_cached(_this_value: JSValue, _global: &JSGlobalObject, _value: JSValue) { todo!("codegen") }
-    pub fn idle_timeout_get_cached(_this_value: JSValue) -> Option<JSValue> { todo!("codegen") }
-    pub fn idle_timeout_set_cached(_this_value: JSValue, _global: &JSGlobalObject, _value: JSValue) { todo!("codegen") }
-    pub fn repeat_get_cached(_this_value: JSValue) -> Option<JSValue> { todo!("codegen") }
-    pub fn repeat_set_cached(_this_value: JSValue, _global: &JSGlobalObject, _value: JSValue) { todo!("codegen") }
-    pub fn idle_start_get_cached(_this_value: JSValue) -> Option<JSValue> { todo!("codegen") }
-    pub fn idle_start_set_cached(_this_value: JSValue, _global: &JSGlobalObject, _value: JSValue) { todo!("codegen") }
-    pub fn to_js(_this: *mut TimeoutObject, _global: &JSGlobalObject) -> JSValue { todo!("codegen") }
-    pub fn from_js(_value: JSValue) -> Option<*mut TimeoutObject> { todo!("codegen") }
-    pub fn from_js_direct(_value: JSValue) -> Option<*mut TimeoutObject> { todo!("codegen") }
+    #[cfg(not(all(windows, target_arch = "x86_64")))]
+    unsafe extern "C" {
+        #[link_name = "Timeout__fromJS"]
+        fn Timeout__fromJS(value: JSValue) -> *mut TimeoutObject;
+        #[link_name = "Timeout__fromJSDirect"]
+        fn Timeout__fromJSDirect(value: JSValue) -> *mut TimeoutObject;
+        #[link_name = "Timeout__create"]
+        fn Timeout__create(global: *mut JSGlobalObject, ptr: *mut TimeoutObject) -> JSValue;
+    }
+
+    /// Create a new `JSTimeout` JSCell wrapping `this` as its `m_ctx`.
+    /// Ownership of `this` transfers to the wrapper; freed via `finalize`.
+    #[inline]
+    pub fn to_js(this: *mut TimeoutObject, global: &JSGlobalObject) -> JSValue {
+        // SAFETY: `global` is live; `this` was `Box::into_raw`'d by caller.
+        let value = unsafe { Timeout__create(global as *const _ as *mut _, this) };
+        #[cfg(debug_assertions)]
+        {
+            // Zig: `bun.assert(value__.as(Timeout).? == this)` — round-trip ABI check.
+            debug_assert!(from_js(value) == Some(this), "Timeout__create ABI mismatch");
+        }
+        value
+    }
+
+    /// Return the wrapped `m_ctx` pointer, or `None` on type mismatch.
+    #[inline]
+    pub fn from_js(value: JSValue) -> Option<*mut TimeoutObject> {
+        // SAFETY: pure FFI downcast; C++ returns null on mismatch.
+        let p = unsafe { Timeout__fromJS(value) };
+        if p.is_null() { None } else { Some(p) }
+    }
+
+    /// Like [`from_js`] but rejects subclasses / mutated structures.
+    #[inline]
+    pub fn from_js_direct(value: JSValue) -> Option<*mut TimeoutObject> {
+        // SAFETY: pure FFI downcast; C++ returns null on mismatch.
+        let p = unsafe { Timeout__fromJSDirect(value) };
+        if p.is_null() { None } else { Some(p) }
+    }
 }
 
 #[bun_jsc::JsClass]

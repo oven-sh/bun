@@ -66,11 +66,14 @@ pub use pending_connect::PendingConnect;
 // `*_jsc` crate via extension traits; the base crate has no mention of jsc.
 
 // ═══════════════════════════════════════════════════════════════════════
-// B-2 bridge stubs: methods on HTTPClient / HTTPContext that the h2_client
-// modules call but which are still gated behind lib.rs `_phase_a_draft` /
-// HTTPContext.rs `_phase_a_draft`. `todo!()` bodies so the call sites
-// type-check; replaced by the real impls once those blocks un-gate.
-// TODO(b2-bridge): delete this section once `_phase_a_draft` lands.
+// B-2 bridge: thin `h2_*` forwarders on HTTPClient / HTTPContext that the
+// h2_client modules call. The real bodies have since un-gated in lib.rs
+// (`register_abort_tracker` … `progress_update`) and HTTPContext.rs
+// (`register_h2` / `unregister_h2`); these now monomorphize the const-generic
+// `<IS_SSL>` callees to `<true>` (HTTP/2 is TLS-only) and erase the
+// `picohttp::Request<'_>` borrow back to `'static` so ClientSession can keep
+// using `client` after building the request. Kept as inherent methods so the
+// many call sites in `h2_client/*.rs` need no churn.
 // ═══════════════════════════════════════════════════════════════════════
 pub(crate) mod bridge {
     use crate::http_context::HTTPSocket;
@@ -84,62 +87,90 @@ pub(crate) mod bridge {
     }
 
     impl HTTPClient {
-        pub fn h2_register_abort_tracker(&mut self, _socket: HTTPSocket<true>) {
-            todo!("HTTPClient::register_abort_tracker — gated in lib.rs _phase_a_draft")
+        #[inline]
+        pub fn h2_register_abort_tracker(&mut self, socket: HTTPSocket<true>) {
+            self.register_abort_tracker::<true>(socket);
         }
+        #[inline]
         pub fn h2_retry_after_coalesce(&mut self) {
-            todo!("HTTPClient::retry_after_h2_coalesce — gated in lib.rs _phase_a_draft")
+            self.retry_after_h2_coalesce();
         }
+        #[inline]
         pub fn h2_retry(&mut self) {
-            todo!("HTTPClient::retry_from_h2 — gated in lib.rs _phase_a_draft")
+            self.retry_from_h2();
         }
-        pub fn h2_fail(&mut self, _err: bun_core::Error) {
-            todo!("HTTPClient::fail_from_h2 — gated in lib.rs _phase_a_draft")
+        #[inline]
+        pub fn h2_fail(&mut self, err: bun_core::Error) {
+            self.fail_from_h2(err);
         }
+        #[inline]
         pub fn h2_progress_update(
             &mut self,
-            _ctx: *mut NewHTTPContext<true>,
-            _socket: HTTPSocket<true>,
+            ctx: *mut NewHTTPContext<true>,
+            socket: HTTPSocket<true>,
         ) {
-            todo!("HTTPClient::progress_update — gated in lib.rs _phase_a_draft")
+            self.progress_update::<true>(ctx, socket);
         }
+        #[inline]
         pub fn h2_do_redirect(
             &mut self,
-            _ctx: *mut NewHTTPContext<true>,
-            _socket: HTTPSocket<true>,
+            ctx: *mut NewHTTPContext<true>,
+            socket: HTTPSocket<true>,
         ) {
-            todo!("HTTPClient::do_redirect — gated in lib.rs _phase_a_draft")
+            self.do_redirect::<true>(ctx, socket);
         }
+        #[inline]
         pub fn h2_clone_metadata(&mut self) {
-            todo!("HTTPClient::clone_metadata — gated in lib.rs _phase_a_draft")
+            self.clone_metadata();
         }
+        #[inline]
         pub fn h2_handle_response_metadata(
             &mut self,
-            _response: &mut picohttp::Response<'_>,
+            response: &mut picohttp::Response<'_>,
         ) -> Result<ShouldContinue, bun_core::Error> {
-            todo!("HTTPClient::handle_response_metadata — gated in lib.rs _phase_a_draft")
+            self.handle_response_metadata(response)
         }
+        #[inline]
         pub fn h2_handle_response_body(
             &mut self,
-            _buf: &[u8],
-            _is_only_buffer: bool,
+            buf: &[u8],
+            is_only_buffer: bool,
         ) -> Result<bool, bun_core::Error> {
-            todo!("HTTPClient::handle_response_body — gated in lib.rs _phase_a_draft")
+            self.handle_response_body(buf, is_only_buffer)
         }
-        pub fn h2_drain_response_body(&mut self, _socket: HTTPSocket<true>) {
-            todo!("HTTPClient::drain_response_body — gated in lib.rs _phase_a_draft")
+        #[inline]
+        pub fn h2_drain_response_body(&mut self, socket: HTTPSocket<true>) {
+            self.drain_response_body::<true>(socket);
         }
-        pub fn h2_build_request(&mut self, _body_len: usize) -> picohttp::Request<'static> {
-            todo!("HTTPClient::build_request — gated in lib.rs _phase_a_draft")
+        #[inline]
+        pub fn h2_build_request(&mut self, body_len: usize) -> picohttp::Request<'static> {
+            // SAFETY: `build_request` returns a `Request<'_>` whose borrowed
+            // slices point only at (a) the thread-local
+            // `SHARED_REQUEST_HEADERS_BUF` static and (b) `self.header_buf`,
+            // which is itself `&'static [u8]` — neither is tied to the `&mut
+            // self` borrow. Erasing to `'static` matches the Zig
+            // `buildRequest` (returns slices into module-static storage) and
+            // lets `ClientSession::attach` re-borrow `client` while the
+            // `Request` is still live. Same pattern as lib.rs `on_writable`.
+            unsafe {
+                core::mem::transmute::<picohttp::Request<'_>, picohttp::Request<'static>>(
+                    self.build_request(body_len),
+                )
+            }
         }
     }
 
     impl NewHTTPContext<true> {
-        pub fn h2_register(&mut self, _session: *mut super::ClientSession) {
-            todo!("HTTPContext::register_h2 — gated in HTTPContext.rs _phase_a_draft")
+        #[inline]
+        pub fn h2_register(&mut self, session: *mut super::ClientSession) {
+            self.register_h2(session);
         }
-        pub fn h2_unregister(&mut self, _session: &super::ClientSession) {
-            todo!("HTTPContext::unregister_h2 — gated in HTTPContext.rs _phase_a_draft")
+        #[inline]
+        pub fn h2_unregister(&mut self, session: &super::ClientSession) {
+            // PORT NOTE: `unregister_h2` takes `*mut` only to write
+            // `registry_index` and call `deref()` on the intrusive refcount;
+            // it never aliases the `&self` borrow held here.
+            self.unregister_h2(session as *const super::ClientSession as *mut _);
         }
     }
 }

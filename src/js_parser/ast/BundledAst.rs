@@ -127,7 +127,10 @@ impl<'arena> BundledAst<'arena> {
         Self::init(Ast::empty())
     }
 
-    pub fn to_ast(&self) -> Ast {
+    // PORT NOTE: Zig's `*const BundledAst` bitwise-copies every field; the Rust
+    // collection types aren't Copy, so consume `self` to move them (toAST is a
+    // one-shot conversion back to the fat Ast).
+    pub fn to_ast(self) -> Ast {
         Ast {
             approximate_newline_count: self.approximate_newline_count as usize,
             nested_scope_slot_counts: self.nested_scope_slot_counts,
@@ -157,9 +160,7 @@ impl<'arena> BundledAst<'arena> {
             // is conveniently fully parallelized.
             named_imports: self.named_imports,
             named_exports: self.named_exports,
-            // PORT NOTE: Ast owns Box<[u32]>; BundledAst borrows &'arena [u32]. Clone on the
-            // way back to owned Ast (rare path: BundledAst→Ast only used for diagnostics).
-            export_star_import_records: Box::<[u32]>::from(self.export_star_import_records),
+            export_star_import_records: self.export_star_import_records,
 
             top_level_symbols_to_parts: self.top_level_symbols_to_parts,
 
@@ -200,11 +201,6 @@ impl<'arena> BundledAst<'arena> {
         }
     }
 
-    // TODO(b2-ast-D): `export_star_import_records` field-type reconciliation —
-    // Ast owns Box<[u32]>, BundledAst<'arena> borrows &'arena [u32]. With no arena param
-    // and no Box::leak (PORTING.md §Forbidden), either retype the field to Box<[u32]> or
-    // add an `&'arena Bump` param and `bump.alloc_slice_copy(&ast.export_star_import_records)`.
-    
     pub fn init(ast: Ast) -> Self {
         let mut flags = Flags::empty();
         flags.set(Flags::USES_EXPORTS_REF, ast.uses_exports_ref);

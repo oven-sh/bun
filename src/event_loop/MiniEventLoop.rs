@@ -31,7 +31,7 @@ use bun_sys::{self as sys, Fd, Mode};
 use bun_threading::UnboundedQueue;
 use bun_uws::Loop as UwsLoop;
 
-use crate::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
+use crate::AnyTaskWithExtraContext::{AnyTaskWithExtraContext, New};
 // MOVE-IN: EventLoopHandle relocated from bun_jsc — see AnyEventLoop.rs.
 use crate::EventLoopHandle;
 

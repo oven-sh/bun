@@ -1275,24 +1275,13 @@ pub struct JSXTag<'a> {
     pub name: &'a [u8],
 }
 
-// Bridge stub so `parseJSXElement.rs` type-checks while the real body below
-// stays gated (Round-D blockers: ParserLike lexer_mut/source/arena, E::String/
-// E::Dot struct-init shape).
 impl<'a> JSXTag<'a> {
-    #[allow(unused_variables)]
-    pub fn parse<P>(p: &mut P) -> Result<JSXTag<'a>, bun_core::Error> {
-        todo!("JSXTag::parse — gated; see  impl below")
-    }
-}
-
-// Round-D: body uses ParserLike methods (lexer_mut/source/arena) not yet on the
-// trait, plus E::String/E::Dot struct-init that doesn't match round-B field set.
-
-impl<'a> JSXTag<'a> {
-    pub fn parse<P>(p: &'a mut P) -> Result<JSXTag<'a>, bun_core::Error>
+    pub fn parse<P>(p: &mut P) -> Result<JSXTag<'a>, bun_core::Error>
     where
         P: crate::ast::p::ParserLike<'a>,
     {
+        use bun_string::strings;
+
         let loc = p.lexer().loc();
 
         // A missing tag is a fragment
@@ -1305,20 +1294,20 @@ impl<'a> JSXTag<'a> {
         }
 
         // The tag is an identifier
-        let mut name = p.lexer().identifier;
+        let mut name: &'a [u8] = p.lexer().identifier;
         let mut tag_range = p.lexer().range();
-        p.lexer_mut()
+        p.lexer()
             .expect_inside_jsx_element_with_name(T::TIdentifier, b"JSX element name")?;
 
         // Certain identifiers are strings
         // <div
         // <button
         // <Hello-:Button
-        if strings::contains(name, b"-:")
+        if strings::contains_comptime(name, b"-:")
             || (p.lexer().token != T::TDot && name[0] >= b'a' && name[0] <= b'z')
         {
             return Ok(JSXTag {
-                data: JSXTagData::Tag(p.new_expr(E::String { data: name }, loc)),
+                data: JSXTagData::Tag(p.new_expr(E::String::init(name), loc)),
                 range: tag_range,
                 name,
             });
@@ -1326,24 +1315,21 @@ impl<'a> JSXTag<'a> {
 
         // Otherwise, this is an identifier
         // <Button>
-        let mut tag = p.new_expr(
-            E::Identifier {
-                r#ref: p.store_name_in_ref(name)?,
-            },
-            loc,
-        );
+        let ref_ = p.store_name_in_ref(name)?;
+        let mut tag = p.new_expr(E::Identifier { ref_, ..Default::default() }, loc);
 
         // Parse a member expression chain
         // <Button.Red>
         while p.lexer().token == T::TDot {
-            p.lexer_mut().next_inside_jsx_element()?;
+            p.lexer().next_inside_jsx_element()?;
             let member_range = p.lexer().range();
-            let member = p.lexer().identifier;
-            p.lexer_mut().expect_inside_jsx_element(T::TIdentifier)?;
+            let member: &'a [u8] = p.lexer().identifier;
+            p.lexer().expect_inside_jsx_element(T::TIdentifier)?;
 
             if let Some(index) = strings::index_of_char(member, b'-') {
+                let source = p.source();
                 p.log().add_error(
-                    p.source(),
+                    Some(source),
                     logger::Loc {
                         start: member_range.loc.start + i32::try_from(index).unwrap(),
                     },
@@ -1352,18 +1338,27 @@ impl<'a> JSXTag<'a> {
                 return Err(bun_core::err!("SyntaxError"));
             }
 
-            // TODO(port): arena allocation — Zig used p.allocator.alloc(u8, ...)
-            let new_name = p.arena().alloc_slice_fill_default(name.len() + 1 + member.len());
+            // Zig: p.allocator.alloc(u8, name.len + 1 + member.len)
+            let new_name: &'a mut [u8] =
+                p.bump().alloc_slice_fill_default::<u8>(name.len() + 1 + member.len());
             new_name[..name.len()].copy_from_slice(name);
             new_name[name.len()] = b'.';
             new_name[name.len() + 1..].copy_from_slice(member);
             name = new_name;
             tag_range.len = member_range.loc.start + member_range.len - tag_range.loc.start;
+            // TODO(port): `E::Dot::name` is `&'static [u8]` (Phase-A arena-slice
+            // placeholder); lexer hands back `&'a [u8]`. Phase B threads `'a`
+            // through E.* — until then, erase the lifetime here.
+            // SAFETY: identifier slice borrows the source text, which outlives
+            // every AST node produced from it.
+            let member_static: &'static [u8] =
+                unsafe { core::mem::transmute::<&[u8], &'static [u8]>(member) };
             tag = p.new_expr(
                 E::Dot {
                     target: tag,
-                    name: member,
+                    name: member_static,
                     name_loc: member_range.loc,
+                    ..Default::default()
                 },
                 loc,
             );

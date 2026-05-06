@@ -263,9 +263,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             let ref_ = p.store_name_in_ref(name).expect("unreachable");
              // blocked_on: parse_arrow_body args type — parseFn.rs stub takes ExprNodeList; Zig is []G.Arg.
             {
-                // PORT NOTE: reshaped for borrowck — build binding before borrowing allocator
+                // PORT NOTE: reshaped for borrowck — build binding before borrowing allocator.
+                // `Arg` is non-Copy (owns BabyList) → use fill_iter instead of alloc_slice_copy.
                 let binding = p.b(B::Identifier { ref_ }, loc);
-                let args = p.allocator.alloc_slice_copy(&[Arg { binding, ..Default::default() }]);
+                let args = p.allocator.alloc_slice_fill_iter([Arg { binding, ..Default::default() }]);
 
                 let _ = p
                     .push_scope_for_parse_pass(scope::Kind::FunctionArgs, loc)

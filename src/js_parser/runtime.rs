@@ -88,41 +88,78 @@ impl Fallback {
         Self::VERSION_HASH
     }
 
-    // TODO(port): narrow error set
     pub fn render(
         msg: &api::FallbackMessageContainer,
         preload: &[u8],
         entry_point: &[u8],
         writer: &mut impl bun_io::Write,
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): Zig used `writer.print(HTMLTemplate, struct{...})` with named-field
-        // substitution. Rust's `write!` requires a literal format string and positional/
-        // named args known at compile time. Phase B: either pre-process fallback.html into
-        // a `format_args!`-compatible literal at build time, or implement a tiny runtime
-        // template substitutor. For now, mirror argument construction only.
-        let _blob = Base64FallbackMessage { msg };
-        let _preload = preload;
-        let _fallback = Self::fallback_decoder_js();
-        let _entry_point = entry_point;
-        let _ = writer;
-        // spec: writer.print(HTMLTemplate, PrintArgs{...}) — must NOT silently no-op.
-        todo!("port: Fallback::render HTMLTemplate substitution (writer.print)")
+        // Zig: `writer.print(HTMLTemplate, PrintArgs{...})` — Zig's std.fmt named-field
+        // substitution (`{[name]s}`). Rust has no runtime named-format, so substitute
+        // by scanning the embedded template byte-for-byte.
+        let blob = Base64FallbackMessage { msg };
+        let fallback = Self::fallback_decoder_js();
+        render_named_template(writer, Self::HTML_TEMPLATE, &mut |w, name| match name {
+            b"blob" => w.write_fmt(format_args!("{}", blob)),
+            b"preload" => w.write_all(preload),
+            b"fallback" => w.write_all(fallback),
+            b"entry_point" => w.write_all(entry_point),
+            _ => Ok(()),
+        })
     }
 
-    // TODO(port): narrow error set
     pub fn render_backend(
         msg: &api::FallbackMessageContainer,
         writer: &mut impl bun_io::Write,
     ) -> Result<(), bun_core::Error> {
-        let _blob = Base64FallbackMessage { msg };
-        let _bun_error_css = Self::error_css();
-        let _bun_error = Self::error_js();
-        let _bun_error_page_css: &[u8] = b"";
-        let _fallback = Self::fallback_decoder_js();
-        let _ = writer;
-        // spec: writer.print(HTMLBackendTemplate, PrintArgs{...}) — must NOT silently no-op.
-        todo!("port: Fallback::render_backend HTMLBackendTemplate substitution (writer.print)")
+        let blob = Base64FallbackMessage { msg };
+        let bun_error_css = Self::error_css();
+        let bun_error = Self::error_js();
+        let bun_error_page_css: &[u8] = b"";
+        let fallback = Self::fallback_decoder_js();
+        render_named_template(writer, Self::HTML_BACKEND_TEMPLATE, &mut |w, name| match name {
+            b"blob" => w.write_fmt(format_args!("{}", blob)),
+            b"bun_error_css" => w.write_all(bun_error_css),
+            b"bun_error" => w.write_all(bun_error),
+            b"bun_error_page_css" => w.write_all(bun_error_page_css),
+            b"fallback" => w.write_all(fallback),
+            _ => Ok(()),
+        })
     }
+}
+
+/// Tiny substitutor for Zig-style `{[name]s}` / `{[name]f}` named placeholders
+/// (the only specifiers used in fallback.html / fallback-backend.html). Both
+/// `s` and `f` resolve to the same thing for our purposes — `Display` of the
+/// bound value — so the dispatch closure decides how to render each name.
+fn render_named_template<W: bun_io::Write>(
+    writer: &mut W,
+    template: &'static [u8],
+    subst: &mut dyn FnMut(&mut W, &[u8]) -> Result<(), bun_core::Error>,
+) -> Result<(), bun_core::Error> {
+    let mut i = 0usize;
+    let mut last = 0usize;
+    let bytes = template;
+    while i + 1 < bytes.len() {
+        if bytes[i] == b'{' && bytes[i + 1] == b'[' {
+            // find closing `]` then expect a single specifier char then `}`
+            let mut j = i + 2;
+            while j < bytes.len() && bytes[j] != b']' {
+                j += 1;
+            }
+            // require `]X}` tail
+            if j + 2 < bytes.len() && bytes[j] == b']' && bytes[j + 2] == b'}' {
+                writer.write_all(&bytes[last..i])?;
+                let name = &bytes[i + 2..j];
+                subst(writer, name)?;
+                i = j + 3;
+                last = i;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    writer.write_all(&bytes[last..])
 }
 
 /// Zig: `Fallback.Base64FallbackMessage`

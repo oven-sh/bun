@@ -449,107 +449,20 @@ fn write_to_socket_with_buffer_fallback<const IS_SSL: bool>(
     Ok(amount)
 }
 
-// ── `todo!()` bridge impls for cross-module deps still gated behind
-//    `_phase_a_draft` in their own files. These let the state machine
-//    type-check; bodies are filled when the sibling modules un-gate.
-//    TODO(b2-blocked): replace each with the real call once available.
-// ────────────────────────────────────────────────────────────────────────
-impl h2::ClientSession {
-    pub fn create<'a>(
-        _ctx: *mut HttpsContext,
-        _socket: HttpSocket<true>,
-        _client: &HTTPClient,
-    ) -> &'a mut h2::ClientSession {
-        todo!("h2::ClientSession::create — gated behind H2Client.rs")
-    }
-    pub fn attach(&mut self, _client: &mut HTTPClient) {
-        todo!("h2::ClientSession::attach — gated behind H2Client.rs")
-    }
-    pub fn enqueue(&mut self, _client: &mut HTTPClient) {
-        todo!("h2::ClientSession::enqueue — gated behind H2Client.rs")
-    }
-}
-impl h3::ClientContext {
-    pub fn get_or_create<L>(_loop_: L) -> Option<&'static mut Self> {
-        todo!("h3::ClientContext::get_or_create — gated behind H3Client.rs")
-    }
-    pub fn connect(&mut self, _client: &mut HTTPClient, _hostname: &[u8], _port: u16) -> bool {
-        todo!("h3::ClientContext::connect — gated behind H3Client.rs")
-    }
-}
-impl<const SSL: bool> GenHttpContext<SSL> {
-    pub fn terminate_socket(_socket: HttpSocket<SSL>) {
-        todo!("HTTPContext::terminate_socket — gated in HTTPContext.rs")
-    }
-    pub fn close_socket(_socket: HttpSocket<SSL>) {
-        todo!("HTTPContext::close_socket — gated in HTTPContext.rs")
-    }
-    pub fn mark_socket_as_dead(_socket: HttpSocket<SSL>) {
-        todo!("HTTPContext::mark_socket_as_dead — gated in HTTPContext.rs")
-    }
-    pub fn tag_as_h2(_socket: HttpSocket<SSL>, _session: &h2::ClientSession) {
-        todo!("HTTPContext::tag_as_h2 — gated in HTTPContext.rs")
-    }
-    pub fn release_socket(
-        &mut self,
-        _socket: HttpSocket<SSL>,
-        _did_have_handshaking_error_while_reject_unauthorized_is_false: bool,
-        _hostname: &[u8],
-        _port: u16,
-        _ssl_config: Option<&ssl_config::SharedPtr>,
-        _proxy_tunnel: Option<NonNull<ProxyTunnel>>,
-        _target_hostname: &[u8],
-        _target_port: u16,
-        _proxy_auth_hash: u64,
-        _alpn: Option<AlpnOffer>,
-    ) {
-        todo!("HTTPContext::release_socket — gated in HTTPContext.rs")
-    }
-}
-impl HTTPThread {
-    pub fn get_request_body_send_buffer(
-        &mut self,
-        _estimated_size: usize,
-    ) -> http_thread::RequestBodyBuffer {
-        todo!("HTTPThread::get_request_body_send_buffer — gated in HTTPThread.rs")
-    }
-    pub fn connect<const IS_SSL: bool>(
-        &mut self,
-        _client: &mut HTTPClient,
-    ) -> Result<Option<HttpSocket<IS_SSL>>, bun_core::Error> {
-        todo!("HTTPThread::connect — gated in HTTPThread.rs")
-    }
-}
-impl http_thread::RequestBodyBuffer {
-    pub fn to_array_list(&mut self) -> Vec<u8> {
-        todo!("RequestBodyBuffer::to_array_list — gated in HTTPThread.rs")
-    }
-}
-impl ProxyTunnel {
-    pub fn shutdown(&mut self) {
-        todo!("ProxyTunnel::shutdown — gated in ProxyTunnel.rs")
-    }
-    pub fn on_writable<const IS_SSL: bool>(&mut self, _socket: HttpSocket<IS_SSL>) {
-        todo!("ProxyTunnel::on_writable — gated in ProxyTunnel.rs")
-    }
-    pub fn write(&mut self, _buf: &[u8]) -> Result<usize, bun_core::Error> {
-        todo!("ProxyTunnel::write — gated in ProxyTunnel.rs")
-    }
-    pub fn receive(&mut self, _buf: &[u8]) {
-        todo!("ProxyTunnel::receive — gated in ProxyTunnel.rs")
-    }
-    pub fn detach_owner(&mut self, _client: &HTTPClient) {
-        todo!("ProxyTunnel::detach_owner — gated in ProxyTunnel.rs")
-    }
-    pub fn start<const IS_SSL: bool>(
-        _client: &mut HTTPClient,
-        _socket: HttpSocket<IS_SSL>,
-        _ssl_options: crate::ssl_config::SSLConfig,
-        _start_payload: &[u8],
-    ) {
-        todo!("ProxyTunnel::start — gated in ProxyTunnel.rs")
-    }
-}
+// ── bridge impls removed ────────────────────────────────────────────────
+// Formerly `todo!()` scaffolding while sibling modules were behind
+// `_phase_a_draft`. All 19 functions now have real ported bodies in their
+// home modules; the state machine calls them directly:
+//   - h2::ClientSession::{create,attach,enqueue}      → src/http/h2_client/ClientSession.rs
+//   - h3::ClientContext::{get_or_create,connect}       → src/http/h3_client/ClientContext.rs
+//   - HTTPContext::<SSL>::{terminate_socket,close_socket,mark_socket_as_dead,
+//       tag_as_h2,release_socket}                       → src/http/HTTPContext.rs
+//   - HTTPThread::{get_request_body_send_buffer,connect} → src/http/HTTPThread.rs
+//   - RequestBodyBuffer::to_array_list                   → src/http/HTTPThread.rs
+//   - ProxyTunnel::{shutdown,on_writable,write,receive,detach_owner,start}
+//                                                        → src/http/ProxyTunnel.rs
+// Keeping duplicate inherent impls here would be a hard "duplicate
+// definitions" error, so the block is dropped rather than re-ported.
 
 // ── HTTPClient field accessors ──────────────────────────────────────────
 // The Zig struct stored raw pointers (`*MutableString`, `*ProxyTunnel`); the

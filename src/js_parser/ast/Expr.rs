@@ -1663,7 +1663,7 @@ impl Expr {
             }
             _ => None,
         };
-        slice.map(|s| Expr::init(E::String::init(s), expr.loc))
+        slice.map(|s| Expr::init(E::String { data: s, ..Default::default() }, expr.loc))
     }
 
     pub fn is_optional_chain(&self) -> bool {

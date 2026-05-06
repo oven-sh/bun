@@ -538,7 +538,7 @@ impl<'a> Parser<'a> {
 
         // Parse the file in the first pass, but do not bind symbols
         let mut opts = ParseStatementOptions { is_module_scope: true, ..Default::default() };
-        let parse_tracer = bun_core::perf::trace("JSParser::parse");
+        let mut parse_tracer = bun_core::perf::trace("JSParser.parse");
 
         let stmts = match p.parse_stmts_up_to(js_lexer::T::TEndOfFile, &mut opts) {
             Ok(s) => s,
@@ -576,7 +576,7 @@ impl<'a> Parser<'a> {
             return Err(err!("SyntaxError"));
         }
 
-        let visit_tracer = bun_core::perf::trace("JSParser.visit");
+        let mut visit_tracer = bun_core::perf::trace("JSParser.visit");
         p.prepare_for_visit_pass()?;
 
         let mut parts = BumpVec::new_in(p.allocator);
@@ -584,7 +584,7 @@ impl<'a> Parser<'a> {
         p.append_part(&mut parts, stmts.into_bump_slice_mut())?;
         visit_tracer.end();
 
-        let analyze_tracer = bun_core::perf::trace("JSParser.analyze");
+        let mut analyze_tracer = bun_core::perf::trace("JSParser.analyze");
         callback(context, &mut p, parts.as_mut_slice())?;
         analyze_tracer.end();
         Ok(())

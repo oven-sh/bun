@@ -6765,40 +6765,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         r#ref
     }
 
-     // blocked_on: js_ast::Ast::TsEnumsMap path; StringHashMap::put_assume_capacity_no_clobber; ts::Data variants — only caller is to_ast
-     // superseded by the round-G un-gate copy below (see `to_ast` impl block)
-    pub fn compute_ts_enums_map(&self, allocator: &'a Bump) -> Result<js_ast::Ast::TsEnumsMap, bun_core::Error> {
-        // When hot module reloading is enabled, we disable enum inlining
-        // to avoid making the HMR graph more complicated.
-        if self.options.features.hot_module_reloading {
-            return Ok(Default::default());
-        }
-
-        use js_ast::InlinedEnumValue;
-        let mut map = js_ast::Ast::TsEnumsMap::default();
-        map.ensure_total_capacity(allocator, u32::try_from(self.top_level_enums.len()).unwrap() as usize)?;
-        for r#ref in self.top_level_enums.iter() {
-            let entry = self.ref_to_ts_namespace_member.get_entry(r#ref).unwrap();
-            let namespace = entry.value().namespace();
-            let mut inner_map = StringHashMap::<InlinedEnumValue>::default();
-            // SAFETY: arena-owned TSNamespaceMemberMap valid for parser 'a lifetime
-            inner_map.ensure_total_capacity(allocator, u32::try_from(unsafe { &*namespace }.count()).unwrap() as usize)?;
-            // SAFETY: arena-owned TSNamespaceMemberMap valid for parser 'a lifetime
-            for (key, val) in unsafe { &*namespace }.iter() {
-                match &val.data {
-                    js_ast::ts::Data::EnumNumber(num) => {
-                        inner_map.put_assume_capacity_no_clobber(key, InlinedEnumValue::encode(crate::InlinedEnumValueDecoded::Number(*num)));
-                    }
-                    js_ast::ts::Data::EnumString(str_) => {
-                        inner_map.put_assume_capacity_no_clobber(key, InlinedEnumValue::encode(crate::InlinedEnumValueDecoded::String(*str_)));
-                    }
-                    _ => continue,
-                }
-            }
-            map.put_assume_capacity(*entry.key(), inner_map);
-        }
-        Ok(map)
-    }
+    // compute_ts_enums_map() lives in the round-G `to_ast` impl block below
+    // (deduped — earlier draft body removed once both un-gated).
 
     pub fn should_lower_using_declarations(&self, stmts: &[Stmt]) -> bool {
         // TODO: We do not support lowering await, but when we do this needs to point to that var
@@ -6823,8 +6791,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         false
     }
 
-    const IMPORT_META_HOT_ACCEPT_ERR: &'static str =
-        "Dependencies to `import.meta.hot.accept` must be statically analyzable module specifiers matching direct imports.";
+    const IMPORT_META_HOT_ACCEPT_ERR: &'static [u8] =
+        b"Dependencies to `import.meta.hot.accept` must be statically analyzable module specifiers matching direct imports.";
 
     /// The signatures for `import.meta.hot.accept` are:
     /// `accept()`                   - self accept

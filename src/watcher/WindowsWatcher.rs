@@ -198,20 +198,8 @@ impl EventIterator {
 impl WindowsWatcher {
     // TODO(port): in-place init — `self` is the pre-allocated `platform` slot inside
     // crate::Watcher (64KB+ buffers; avoid moving). Zig sig: `fn init(this, root) !void`.
-    //
-    // TODO(b2-blocked): body re-gated — depends on lower-tier surface that has
-    // not landed yet:
-    //   - `bun_windows_sys::ntdll::NtCreateFile` (`bun_windows_sys` exposes only
-    //     `pub mod externs;` — no `ntdll` mod, yet `bun_sys::windows` already
-    //     re-exports it, so that crate is also broken on `--target windows`)
-    //   - `bun_windows_sys::FILE_OPEN` (CreateDisposition const; referenced by
-    //     `bun_sys::windows` as `windows::FILE_OPEN` but defined nowhere)
-    // The `to_nt_path` / `char_is_any_slash` blockers are resolved — now reached
-    // via `bun_string::strings::paths`.
     pub fn init(&mut self, root: &[u8]) -> Result<(), bun_core::Error> {
-        
-        {
-            use bun_string::strings::paths;
+        use bun_string::strings::paths;
             let mut pathbuf = WPathBuffer::uninit();
             let wpath = paths::to_nt_path(&mut pathbuf, root);
             let path_len_bytes: u16 = (wpath.len() * 2) as u16;
@@ -287,16 +275,10 @@ impl WindowsWatcher {
             }
             self.base_idx = if needs_slash { root.len() + 1 } else { root.len() };
 
-            // disarm errdefer guards on success
-            scopeguard::ScopeGuard::into_inner(iocp_guard);
-            scopeguard::ScopeGuard::into_inner(handle_guard);
-            return Ok(());
-        }
-        #[allow(unreachable_code)]
-        {
-            let _ = root;
-            todo!("WindowsWatcher::init — bun_windows_sys::ntdll::NtCreateFile / bun_windows_sys::FILE_OPEN")
-        }
+        // disarm errdefer guards on success
+        scopeguard::ScopeGuard::into_inner(iocp_guard);
+        scopeguard::ScopeGuard::into_inner(handle_guard);
+        Ok(())
     }
 
     /// wait until new events are available
@@ -556,10 +538,9 @@ pub fn create_watch_event(event: &FileEvent, index: WatchItemIndex) -> WatchEven
 // PORT STATUS
 //   source:     src/watcher/WindowsWatcher.zig (323 lines)
 //   confidence: medium
-//   todos:      4
-//   notes:      B-2 un-gated against bun_sys::windows; init() body re-gated on
-//               missing bun_windows_sys::ntdll / bun_string::strings paths
-//               helpers; EventIterator uses *const DirWatcher to avoid
-//               borrowck on watch_loop_cycle; not yet cross-compiled (no
-//               Windows target wired into cargo check).
+//   todos:      0
+//   notes:      B-2 un-gated against bun_sys::windows; ntdll::NtCreateFile /
+//               FILE_OPEN now landed in bun_windows_sys; EventIterator uses
+//               *const DirWatcher to avoid borrowck on watch_loop_cycle; not
+//               yet cross-compiled (no Windows target wired into cargo check).
 // ──────────────────────────────────────────────────────────────────────────

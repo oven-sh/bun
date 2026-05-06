@@ -48,6 +48,29 @@ fn has_value_for_this_in_call(expr: &Expr) -> bool {
     matches!(expr.data.tag(), Tag::EDot | Tag::EIndex)
 }
 
+// Zig: `p.options.macro_context.call(record.path.text, source_dir, log, source,
+// range, expr, name) catch ...` — the real `MacroContext::call` is FFI into
+// `bun_js_parser_jsc::Macro` (a tier above this crate). `js_parser` only sees
+// the opaque `MacroContext` handle (lib.rs). Thread the call through a free
+// fn so the visit-pass body is a faithful port of visitExpr.zig:415/1443; the
+// dispatch itself returns `Err` until the higher-tier crate wires a callback,
+// which lands on the spec's `catch return expr` path.
+#[inline]
+fn macro_context_call(
+    _ctx: Option<&mut crate::Macro::MacroContext>,
+    _path_text: &[u8],
+    _log: &mut logger::Log,
+    _source: &logger::Source,
+    _range: logger::Range,
+    _caller: Expr,
+    _function_name: &[u8],
+) -> Result<Expr, ()> {
+    // Real body lives in src/js_parser_jsc/Macro.rs (`MacroContext::call`);
+    // bridged at link time once the `_jsc` crate threads a fn-pointer through
+    // `MacroContext`. Behave as the Zig `catch` arm: propagate failure.
+    Err(())
+}
+
 // Zig: `pub fn VisitExpr(comptime ts, comptime jsx, comptime scan_only) type { return struct { ... } }`
 // — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
 // a direct `impl P` block. The 25+ per-variant `e_*` helpers are private; only `visit_expr` /

@@ -107,14 +107,13 @@ impl SyntaxString {
     /// Parses a value according to the syntax grammar.
     pub fn parse_value(&self, input: &mut css::Parser) -> CssResult<ParsedComponent> {
         match self {
-            SyntaxString::Universal => {
-                // blocked_on: properties::custom::TokenList::parse un-gate
-                // (its `parse_into` body is ``). Body identical to
-                // Zig once that flips:
-                //   ParsedComponent::TokenList(TokenList::parse(input, &ParserOptions::default(None), 0)?)
-                let _ = input;
-                todo!("blocked_on: properties::custom::TokenList::parse un-gate")
-            }
+            SyntaxString::Universal => Ok(ParsedComponent::TokenList(TokenList::parse(
+                input,
+                // PORT NOTE: Zig passes `ParserOptions.default(input.allocator(), null)`;
+                // Rust's signature drops the allocator param (global-alloc Phase A).
+                &ParserOptions::default(None),
+                0,
+            )?)),
             SyntaxString::Components(components) => {
                 // Loop through each component, and return the first one that parses successfully.
                 for component in components.iter() {

@@ -511,17 +511,23 @@ impl App {
         unsafe { c::uws_h3_app_clear_routes(self) }
     }
 
-    fn route<UD>(
-        which: RouteKind,
-        this: &mut App,
-        pattern: &[u8],
-        ud: *mut UD,
-        handler: fn(&mut UD, &mut Request, &mut Response),
-    ) {
-        // TODO(port): comptime-fn trampoline — see note on `for_each_header`.
-        let _ = handler;
-        unsafe extern "C" fn cb<UD>(_res: *mut Response, _req: *mut Request, _p: *mut c_void) {
-            unimplemented!("TODO(port): comptime handler trampoline");
+    fn route<UD, H>(which: RouteKind, this: &mut App, pattern: &[u8], ud: *mut UD, _handler: H)
+    where
+        H: Fn(&mut UD, &mut Request, &mut Response) + Copy + 'static,
+    {
+        const { assert!(core::mem::size_of::<H>() == 0, "handler must be a fn item or capture-less closure") };
+        unsafe extern "C" fn cb<UD, H>(res: *mut Response, req: *mut Request, p: *mut c_void)
+        where
+            H: Fn(&mut UD, &mut Request, &mut Response) + Copy + 'static,
+        {
+            // SAFETY: H is a ZST (asserted at compile time above).
+            let handler: H = unsafe { core::mem::zeroed() };
+            // SAFETY: `res`/`req` are live H3 handles for the duration of the callback.
+            let (res, req) = unsafe { (&mut *res, &mut *req) };
+            // SAFETY: `p` is the `ud` pointer we passed below; non-null by caller contract.
+            let ud = unsafe { &mut *p.cast::<UD>() };
+            // PERF(port): was @call(.always_inline)
+            handler(ud, req, res);
         }
         // PERF(port): was comptime enum dispatch — profile in Phase B
         let f = match which {
@@ -537,40 +543,61 @@ impl App {
             RouteKind::Any => c::uws_h3_app_any,
         };
         // SAFETY: this is a live FFI handle; pattern ptr/len valid for read; trampoline is `extern "C"`
-        unsafe { f(this, pattern.as_ptr(), pattern.len(), Some(cb::<UD>), ud.cast()) }
+        unsafe { f(this, pattern.as_ptr(), pattern.len(), Some(cb::<UD, H>), ud.cast()) }
     }
 
-    pub fn get<UD>(&mut self, p: &[u8], ud: *mut UD, h: fn(&mut UD, &mut Request, &mut Response)) {
+    pub fn get<UD, H>(&mut self, p: &[u8], ud: *mut UD, h: H)
+    where
+        H: Fn(&mut UD, &mut Request, &mut Response) + Copy + 'static,
+    {
         Self::route(RouteKind::Get, self, p, ud, h);
     }
-    pub fn post<UD>(&mut self, p: &[u8], ud: *mut UD, h: fn(&mut UD, &mut Request, &mut Response)) {
+    pub fn post<UD, H>(&mut self, p: &[u8], ud: *mut UD, h: H)
+    where
+        H: Fn(&mut UD, &mut Request, &mut Response) + Copy + 'static,
+    {
         Self::route(RouteKind::Post, self, p, ud, h);
     }
-    pub fn put<UD>(&mut self, p: &[u8], ud: *mut UD, h: fn(&mut UD, &mut Request, &mut Response)) {
+    pub fn put<UD, H>(&mut self, p: &[u8], ud: *mut UD, h: H)
+    where
+        H: Fn(&mut UD, &mut Request, &mut Response) + Copy + 'static,
+    {
         Self::route(RouteKind::Put, self, p, ud, h);
     }
-    pub fn delete<UD>(&mut self, p: &[u8], ud: *mut UD, h: fn(&mut UD, &mut Request, &mut Response)) {
+    pub fn delete<UD, H>(&mut self, p: &[u8], ud: *mut UD, h: H)
+    where
+        H: Fn(&mut UD, &mut Request, &mut Response) + Copy + 'static,
+    {
         Self::route(RouteKind::Delete, self, p, ud, h);
     }
-    pub fn patch<UD>(&mut self, p: &[u8], ud: *mut UD, h: fn(&mut UD, &mut Request, &mut Response)) {
+    pub fn patch<UD, H>(&mut self, p: &[u8], ud: *mut UD, h: H)
+    where
+        H: Fn(&mut UD, &mut Request, &mut Response) + Copy + 'static,
+    {
         Self::route(RouteKind::Patch, self, p, ud, h);
     }
-    pub fn head<UD>(&mut self, p: &[u8], ud: *mut UD, h: fn(&mut UD, &mut Request, &mut Response)) {
+    pub fn head<UD, H>(&mut self, p: &[u8], ud: *mut UD, h: H)
+    where
+        H: Fn(&mut UD, &mut Request, &mut Response) + Copy + 'static,
+    {
         Self::route(RouteKind::Head, self, p, ud, h);
     }
-    pub fn options<UD>(&mut self, p: &[u8], ud: *mut UD, h: fn(&mut UD, &mut Request, &mut Response)) {
+    pub fn options<UD, H>(&mut self, p: &[u8], ud: *mut UD, h: H)
+    where
+        H: Fn(&mut UD, &mut Request, &mut Response) + Copy + 'static,
+    {
         Self::route(RouteKind::Options, self, p, ud, h);
     }
-    pub fn any<UD>(&mut self, p: &[u8], ud: *mut UD, h: fn(&mut UD, &mut Request, &mut Response)) {
+    pub fn any<UD, H>(&mut self, p: &[u8], ud: *mut UD, h: H)
+    where
+        H: Fn(&mut UD, &mut Request, &mut Response) + Copy + 'static,
+    {
         Self::route(RouteKind::Any, self, p, ud, h);
     }
-    pub fn method<UD>(
-        &mut self,
-        m: bun_http_types::Method::Method,
-        p: &[u8],
-        ud: *mut UD,
-        h: fn(&mut UD, &mut Request, &mut Response),
-    ) {
+    pub fn method<UD, H>(&mut self, m: bun_http_types::Method::Method, p: &[u8], ud: *mut UD, h: H)
+    where
+        H: Fn(&mut UD, &mut Request, &mut Response) + Copy + 'static,
+    {
         use bun_http_types::Method::Method as M;
         match m {
             M::GET => self.get(p, ud, h),
@@ -586,16 +613,23 @@ impl App {
         }
     }
 
-    pub fn listen_with_config<UD>(
-        &mut self,
-        ud: *mut UD,
-        handler: fn(&mut UD, Option<&mut ListenSocket>),
-        config: ListenConfig,
-    ) {
-        // TODO(port): comptime-fn trampoline — see note on `for_each_header`.
-        let _ = handler;
-        unsafe extern "C" fn cb<UD>(_ls: *mut ListenSocket, _p: *mut c_void) {
-            unimplemented!("TODO(port): comptime handler trampoline");
+    pub fn listen_with_config<UD, H>(&mut self, ud: *mut UD, _handler: H, config: ListenConfig)
+    where
+        H: Fn(&mut UD, Option<&mut ListenSocket>) + Copy + 'static,
+    {
+        const { assert!(core::mem::size_of::<H>() == 0, "handler must be a fn item or capture-less closure") };
+        unsafe extern "C" fn cb<UD, H>(ls: *mut ListenSocket, p: *mut c_void)
+        where
+            H: Fn(&mut UD, Option<&mut ListenSocket>) + Copy + 'static,
+        {
+            // SAFETY: H is a ZST (asserted at compile time above).
+            let handler: H = unsafe { core::mem::zeroed() };
+            // SAFETY: `p` is the `ud` pointer we passed below; non-null by caller contract.
+            let ud = unsafe { &mut *p.cast::<UD>() };
+            // SAFETY: `ls`, when non-null, is a live listen-socket handle for the duration of the callback.
+            let ls = unsafe { ls.as_mut() };
+            // PERF(port): was @call(.always_inline)
+            handler(ud, ls);
         }
         // SAFETY: self is a live FFI handle; config fields valid; trampoline is `extern "C"`
         unsafe {
@@ -604,7 +638,7 @@ impl App {
                 config.host,
                 config.port,
                 config.options,
-                Some(cb::<UD>),
+                Some(cb::<UD, H>),
                 ud.cast(),
             )
         }

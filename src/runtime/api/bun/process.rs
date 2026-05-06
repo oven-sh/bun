@@ -4137,7 +4137,7 @@ pub mod sync {
                     let r = posix_spawn::wait4(child, libc::WNOHANG | libc::WUNTRACED, None);
                     if let Maybe::Result(ref w) = r {
                         if w.pid == child {
-                            if libc::WIFSTOPPED(w.status) {
+                            if libc::WIFSTOPPED(w.status as i32) {
                                 jc.on_child_stopped();
                             } else {
                                 child_status = Status::from(child, &r);
@@ -4311,7 +4311,7 @@ pub mod sync {
                 if w.pid != child {
                     continue; // subreaper-adopted orphan reaped
                 }
-                if libc::WIFSTOPPED(w.status) {
+                if libc::WIFSTOPPED(w.status as i32) {
                     jc.on_child_stopped();
                 } else {
                     child_status = Status::from(child, &r);

@@ -7,7 +7,80 @@ use bun_boringssl_sys as boring;
 use bun_csrf as csrf;
 
 use crate::api::crypto::evp::Algorithm as EvpAlgorithm;
+use crate::crypto::evp::AlgorithmExt as _;
 use crate::node::Encoding as NodeEncoding;
+
+// ── local shims ──────────────────────────────────────────────────────────
+// `bun.ComptimeStringMap.fromJSCaseInsensitive` — the upstream
+// `bun_jsc::comptime_string_map_jsc` only exposes the case-sensitive `from_js`;
+// the case-insensitive variant is still cfg-gated. Map keys are all lower-case
+// ASCII, so lower the probe and do a direct phf lookup (mirrors PBKDF2.rs).
+fn algorithm_from_js_case_insensitive(
+    global: &JSGlobalObject,
+    input: JSValue,
+) -> JsResult<Option<EvpAlgorithm>> {
+    let slice = input.to_slice(global)?;
+    let bytes = slice.slice();
+    // Longest key is "sha-512/224" (11 bytes); 32 is a comfortable upper bound.
+    if bytes.len() > 32 {
+        return Ok(None);
+    }
+    let mut buf = [0u8; 32];
+    for (i, b) in bytes.iter().enumerate() {
+        buf[i] = b.to_ascii_lowercase();
+    }
+    Ok(EvpAlgorithm::map().get(&buf[..bytes.len()]).copied())
+}
+
+/// `JSValue.getOptional(_, _, ZigString.Slice)` — local shim until `bun_jsc`
+/// grows a typed `get_optional`. Returns `None` for missing/null/undefined.
+fn get_optional_slice(
+    target: JSValue,
+    global: &JSGlobalObject,
+    property: &'static [u8],
+) -> JsResult<Option<ZigStringSlice>> {
+    match target.get(global, property)? {
+        Some(v) if !v.is_undefined_or_null() => {
+            if !v.is_string() {
+                return Err(global.throw_invalid_argument_type_value(
+                    core::str::from_utf8(property).unwrap_or(""),
+                    "string",
+                    v,
+                ));
+            }
+            Ok(Some(v.to_slice(global)?))
+        }
+        _ => Ok(None),
+    }
+}
+
+/// `JSValue.getOptionalInt(_, _, u64)` — local shim. Spec (`JSValue.zig:1896`)
+/// delegates to `validateIntegerRange` with `[0, MAX_SAFE_INTEGER]`; that
+/// helper is defined on the cfg-gated `JSGlobalObject` impl, so inline the
+/// minimal u64 path here.
+fn get_optional_int_u64(
+    target: JSValue,
+    global: &JSGlobalObject,
+    property: &'static str,
+) -> JsResult<Option<u64>> {
+    let Some(value) = target.get(global, property)? else {
+        return Ok(None);
+    };
+    if value.is_undefined() || value.is_empty() {
+        return Ok(Some(0));
+    }
+    if !value.is_number() {
+        return Err(global.throw_invalid_argument_type_value(property, "number", value));
+    }
+    let num: f64 = value.as_number();
+    const MAX_SAFE_INTEGER: f64 = 9007199254740991.0;
+    if num.fract() != 0.0 || num < 0.0 || num > MAX_SAFE_INTEGER {
+        return Err(global.throw_invalid_arguments(format_args!(
+            "{property} must be an integer between 0 and {MAX_SAFE_INTEGER}"
+        )));
+    }
+    Ok(Some(num as u64))
+}
 
 /// JS binding function for generating CSRF tokens
 /// First argument is secret (required), second is options (optional)

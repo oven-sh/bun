@@ -517,6 +517,14 @@ impl ResponseLike for bun_uws::AnyResponse {
         ctx: &mut bun_uws::WebSocketUpgradeContext,
     ) {
         let boxed = Box::into_raw(Box::new(data));
+        // `bun_uws::WebSocketUpgradeContext` and `bun_uws_sys::WebSocketUpgradeContext`
+        // are both opaque `#[repr(C)]` ZST handles that only round-trip to
+        // `uws_res_upgrade`; cast through the raw pointer.
+        // SAFETY: same-layout opaque handle, never dereferenced in Rust.
+        let ctx = unsafe {
+            &mut *(ctx as *mut bun_uws::WebSocketUpgradeContext
+                as *mut bun_uws_sys::WebSocketUpgradeContext)
+        };
         let _ = (*self).upgrade(
             boxed,
             sec_web_socket_key,

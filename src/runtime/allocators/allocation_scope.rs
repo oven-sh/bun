@@ -40,6 +40,19 @@ impl GenericAllocator for StdAllocator {
     fn allocator(&self) -> StdAllocator { *self }
 }
 
+/// Extension shim: Zig `arena.allocator()` returned a `std.mem.Allocator` handle. Per
+/// PORTING.md §Allocators, `bun_alloc::Arena`/`MimallocArena` is now `bumpalo::Bump` and
+/// callers thread `&Bump` directly — the bump *is* the allocator handle. This lets ported
+/// `heap.allocator()` call sites resolve without a rewrite. Not `GenericAllocator` because
+/// `Bump: !Clone`.
+pub trait BumpAllocatorExt {
+    fn allocator(&self) -> &Self;
+}
+impl<const MIN_ALIGN: usize> BumpAllocatorExt for bumpalo::Bump<MIN_ALIGN> {
+    #[inline]
+    fn allocator(&self) -> &Self { self }
+}
+
 /// Zig: `bun.allocators.asStd` — get the `std.mem.Allocator` for a generic allocator.
 #[inline]
 fn as_std<A: GenericAllocator>(a: &A) -> StdAllocator { a.allocator() }

@@ -744,7 +744,10 @@ impl<'a> TransformTask<'a> {
         let mut ast_memory_allocator = JSAst::ASTMemoryAllocator::new(&arena);
         let _ast_scope = ast_memory_allocator.enter();
 
-        self.transpiler.set_allocator(&arena);
+        // SAFETY: `arena` outlives every use through `self.transpiler` in this fn body;
+        // Transpiler<'static> forces the borrow to 'static, so launder through a raw ptr.
+        self.transpiler
+            .set_allocator(unsafe { &*(&arena as *const Arena) });
         self.transpiler.set_log(&mut self.log);
         // self.log.msgs.allocator = bun.default_allocator → no-op
 
@@ -857,7 +860,7 @@ impl<'a> TransformTask<'a> {
 impl<'a> Drop for TransformTask<'a> {
     fn drop(&mut self) {
         // log.deinit() → logger::Log: Drop
-        let input_code = core::mem::take(&mut self.input_code);
+        let mut input_code = core::mem::take(&mut self.input_code);
         input_code.deinit_and_unprotect();
         // output_code.deref() → BunString: Drop
         // tsconfig is owned by JSTranspiler, not by TransformTask.

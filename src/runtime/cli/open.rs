@@ -625,10 +625,11 @@ impl EditorContext {
 
         // EDITOR=code
         if let Some(editor_) = Editor::detect(env) {
+            // SAFETY: see PORT NOTE above — exclusive per-call reborrow.
             if Editor::by_path_for_editor(
                 env,
                 editor_,
-                &mut buf,
+                unsafe { &mut *buf_ptr },
                 Fs::FileSystem::instance().top_level_dir,
                 &mut out,
             ) {
@@ -653,9 +654,10 @@ impl EditorContext {
         }
 
         // Don't know, so we will just guess based on what exists
+        // SAFETY: see PORT NOTE above — exclusive per-call reborrow.
         if let Some(editor_) = Editor::by_fallback(
             env,
-            &mut buf,
+            unsafe { &mut *buf_ptr },
             Fs::FileSystem::instance().top_level_dir,
             &mut out,
         ) {

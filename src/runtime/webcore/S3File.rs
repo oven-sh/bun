@@ -117,26 +117,27 @@ where
 
 #[bun_jsc::host_fn]
 pub fn presign(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let arguments = callframe.arguments_old(3).slice();
-    let mut args = bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), arguments);
+    let arguments = callframe.arguments_old::<3>();
+    // SAFETY: bun_vm() returns the live VM raw ptr.
+    let mut args = bun_jsc::call_frame::ArgumentsSlice::init(unsafe { &*global.bun_vm() }, arguments.slice());
 
     // accept a path or a blob
-    let mut path_or_blob = PathOrBlob::from_js_no_copy(global, &mut args)?;
+    let path_or_blob = PathOrBlob::from_js_no_copy(global, &mut args)?;
     // errdefer: PathOrBlob impls Drop in Rust — path variant cleaned up automatically on `?`
 
     if let PathOrBlob::Blob(blob) = &path_or_blob {
         if blob.store.is_none() || !matches!(blob.store.as_ref().unwrap().data, blob::store::Data::S3(_)) {
-            return global.throw_invalid_arguments("Expected a S3 or path to presign", &[]);
+            return Err(global.throw_invalid_arguments("Expected a S3 or path to presign"));
         }
     }
 
     match path_or_blob {
         PathOrBlob::Path(path) => {
             if matches!(path, crate::node::PathOrFileDescriptor::Fd(_)) {
-                return global.throw_invalid_arguments("Expected a S3 or path to presign", &[]);
+                return Err(global.throw_invalid_arguments("Expected a S3 or path to presign"));
             }
             let options = args.next_eat();
-            let mut blob = construct_s3_file_internal_store(global, path.path(), options)?;
+            let mut blob = construct_s3_file_internal_store(global, path.path().clone(), options)?;
             get_presign_url_from(&mut blob, global, options)
         }
         PathOrBlob::Blob(mut blob) => get_presign_url_from(&mut blob, global, args.next_eat()),

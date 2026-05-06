@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import type { BlobOptions } from "node:buffer";
 import type { BinaryLike } from "node:crypto";
@@ -323,4 +323,51 @@ test("dupe() preserves allocated content_type for Body clone", () => {
   const clonedType = cloned.headers.get("content-type");
   expect(originalType).toStartWith("multipart/form-data; boundary=");
   expect(clonedType).toBe(originalType);
+});
+
+describe("File `instanceof` checks", () => {
+  // https://github.com/oven-sh/bun/issues/25422
+  test("respects Proxy getPrototypeOf trap returning File.prototype", () => {
+    class Foo {}
+    const proxy = new Proxy(new Foo(), {
+      getPrototypeOf() {
+        return File.prototype;
+      },
+    });
+    expect(proxy instanceof Foo).toBe(false);
+    expect(proxy instanceof File).toBe(true);
+  });
+
+  test("Object.create(File.prototype) is instanceof File", () => {
+    const o = Object.create(File.prototype);
+    expect(o instanceof File).toBe(true);
+    expect(o instanceof Blob).toBe(true);
+  });
+
+  test("real File and Blob instances behave as expected", () => {
+    const file = new File(["hi"], "f.txt");
+    const blob = new Blob(["hi"]);
+    expect(file instanceof File).toBe(true);
+    expect(file instanceof Blob).toBe(true);
+    // Blob instances must not be considered File instances even though
+    // File.prototype === Blob.prototype internally.
+    expect(blob instanceof File).toBe(false);
+    expect(blob instanceof Blob).toBe(true);
+  });
+
+  test("primitives and non-objects are not instanceof File", () => {
+    expect((null as any) instanceof File).toBe(false);
+    expect((undefined as any) instanceof File).toBe(false);
+    expect((42 as any) instanceof File).toBe(false);
+    expect(("hi" as any) instanceof File).toBe(false);
+    expect(({} as any) instanceof File).toBe(false);
+  });
+
+  test("subclassing File still satisfies instanceof File", () => {
+    class MyFile extends File {}
+    const f = new MyFile(["hi"], "x.txt");
+    expect(f instanceof MyFile).toBe(true);
+    expect(f instanceof File).toBe(true);
+    expect(f instanceof Blob).toBe(true);
+  });
 });

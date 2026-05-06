@@ -58,9 +58,23 @@ public:
         if (!value.isObject())
             return false;
 
-        // Note: this breaks [Symbol.hasInstance]
-        // We must do this for now until we update the code generator to export classes
-        return JSDOMFile__hasInstance(JSValue::encode(object), globalObject, JSValue::encode(value));
+        if (JSDOMFile__hasInstance(JSValue::encode(object), globalObject, JSValue::encode(value)))
+            return true;
+
+        // A direct Blob instance must not match `instanceof File` even though the
+        // default prototype-chain check below would say true (File.prototype is
+        // currently the same object as Blob.prototype). Real Files are caught
+        // above via JSDOMFile__hasInstance.
+        if (value.inherits<WebCore::JSBlob>())
+            return false;
+
+        // Fall back to the standard OrdinaryHasInstance check so proxies whose
+        // getPrototypeOf trap returns File.prototype, or ordinary objects with
+        // File.prototype in their chain, still satisfy `instanceof File`.
+        // See https://github.com/oven-sh/bun/issues/25422.
+        auto& vm = JSC::getVM(globalObject);
+        JSValue prototype = object->getDirect(vm, vm.propertyNames->prototype);
+        return JSObject::defaultHasInstance(globalObject, value, prototype);
     }
 
     static JSC_HOST_CALL_ATTRIBUTES JSC::EncodedJSValue construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)

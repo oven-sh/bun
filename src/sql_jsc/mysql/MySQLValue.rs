@@ -398,6 +398,9 @@ impl Value {
                 }
 
                 if let Some(blob) = value.as_::<Blob>() {
+                    // SAFETY: `as_` returned non-null; the Blob native is owned
+                    // by the JS cell rooted below for the lifetime of `Value`.
+                    let blob = unsafe { &*blob };
                     if blob.needs_to_read_file() {
                         return Err(global_object
                             .throw_invalid_arguments("File blobs are not supported")
@@ -437,7 +440,6 @@ impl Value {
                 Ok(Value::String(str.to_utf8()))
             }
         }
-        } // cfg(any()) gate
     }
 }
 

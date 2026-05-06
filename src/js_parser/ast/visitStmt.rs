@@ -895,38 +895,78 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             )); // PERF(port): was assume_capacity
         } else if !mark_as_dead {
             if remove_overwritten {
+                // Zig: defer { ... } — restore on early return.
+                p.react_refresh.hook_ctx_storage = prev_hook_storage;
                 if mark_as_dead { p.is_control_flow_dead = original_is_dead; }
                 return Ok(());
             }
 
-            if SERVER_COMPONENTS_WRAPS_EXPORTS && data.func.flags.contains(flags::Function::IsExport) {
-                // blocked_on: server_components.wraps_exports() (bool stub) — see _draft.
-                todo!("s_function: server_components.wraps_exports path");
+            if p.options.features.server_components.wraps_exports()
+                && data.func.flags.contains(flags::Function::IsExport)
+            {
+                // Convert this into `export var <name> = registerClientReference(<func>, ...);`
+                let name = data.func.name.unwrap();
+                // From the inner scope, have code reference the wrapped function.
+                data.func.name = None;
+                let func_expr =
+                    p.new_expr(E::Function { func: core::mem::take(&mut data.func) }, stmt.loc);
+                let wrapped =
+                    p.wrap_value_for_server_component_reference(func_expr, as_static(original_name));
+                stmts.push(p.s(
+                    S::Local {
+                        kind: S::Kind::KVar,
+                        is_export: true,
+                        decls: G::DeclList::from_slice(&[G::Decl {
+                            binding: p.b(B::Identifier { r#ref: name_ref }, name.loc),
+                            value: Some(wrapped),
+                        }])
+                        .expect("oom"),
+                        ..Default::default()
+                    },
+                    stmt.loc,
+                ));
             } else {
                 stmts.push(*stmt);
             }
         } else if mark_as_dead {
-            // blocked_on: replace_exports.get_ptr + inject_replacement_export — see _draft.
+            if let Some(replacement) =
+                p.options.features.replace_exports.get_ptr(original_name).cloned()
+            {
+                let _ = p.inject_replacement_export(
+                    stmts,
+                    name_ref,
+                    data.func.name.unwrap().loc,
+                    &replacement,
+                );
+            }
         }
 
         if p.options.features.react_fast_refresh {
             if let Some(hook) = react_hook_data.as_mut() {
-                // blocked_on: get_react_refresh_hook_signal_{decl,init} in  block (P.rs:5422)
-                //   AND hook_ctx_storage save/restore (see above). `react_hook_data` is never
-                //   populated until that lands, so this arm is unreachable; kept for shape.
-                let _ = hook.signature_cb;
-                todo!("s_function: react_refresh hook signal emit");
+                let signature_cb = hook.signature_cb;
+                stmts.push(p.get_react_refresh_hook_signal_decl(signature_cb));
+                let init = p.get_react_refresh_hook_signal_init(
+                    hook,
+                    Expr::init_identifier(name_ref, logger::Loc::EMPTY),
+                );
+                stmts.push(p.s(
+                    S::SExpr { value: init, ..Default::default() },
+                    logger::Loc::EMPTY,
+                ));
             }
 
-            // blocked_on: handle_react_refresh_register in  block (P.rs:5422)
-            //   AND hook_ctx_storage save/restore (see above). Gate loud unconditionally —
-            //   even off-module-scope, the parent's hook_ctx_storage was left active across
-            //   visit_func, mis-attributing inner hook calls. Cannot fall through silently.
-            let _ = (original_name, ReactRefreshExportKind::Named);
-            let _ = core::ptr::eq(p.current_scope, p.module_scope);
-            todo!("s_function: react_fast_refresh hook tracking + register");
+            if core::ptr::eq(p.current_scope, p.module_scope) {
+                p.handle_react_refresh_register(
+                    stmts,
+                    as_static(original_name),
+                    name_ref,
+                    ReactRefreshExportKind::Named,
+                )?;
+            }
         }
 
+        // Zig: defer p.react_refresh.hook_ctx_storage = prev;
+        p.react_refresh.hook_ctx_storage = prev_hook_storage;
         // Zig: defer { if (mark_as_dead) p.is_control_flow_dead = original_is_dead; }
         if mark_as_dead { p.is_control_flow_dead = original_is_dead; }
         Ok(())

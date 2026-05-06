@@ -1,8 +1,8 @@
 use bun_alloc::AllocError;
 use bun_bundler::options::{self, Loader};
 use bun_jsc::{
-    self as jsc, CallFrame, ErrorableString, JSArray, JSGlobalObject, JSValue, JsError, JsResult,
-    Strong, VirtualMachine,
+    self as jsc, ErrorableString, JSArray, JSGlobalObject, JSValue, JsError, JsResult, Strong,
+    VirtualMachine,
 };
 use bun_paths;
 use bun_str::{self, strings, String as BunString};

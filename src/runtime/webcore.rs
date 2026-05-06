@@ -364,6 +364,15 @@ pub enum ResumableSinkBackpressure {
 #[doc(hidden)]
 #[path = "webcore/s3/multipart_options.rs"]
 pub mod multipart_options_impl;
+// PORT NOTE: inner `#[path]` inside an inline `mod s3 { }` resolves relative to
+// `<this-file's-dir>/s3/`, which would point at `src/runtime/s3/...` (does not
+// exist). Declare the file mods at this level (where `#[path]` is relative to
+// `src/runtime/`) and re-export them under `s3`.
+#[doc(hidden)] #[path = "webcore/s3/simple_request.rs"] pub mod __s3_simple_request;
+#[doc(hidden)] #[path = "webcore/s3/download_stream.rs"] pub mod __s3_download_stream;
+#[doc(hidden)] #[path = "webcore/s3/list_objects.rs"] pub mod __s3_list_objects;
+#[doc(hidden)] #[path = "webcore/s3/multipart.rs"] pub mod __s3_multipart;
+#[doc(hidden)] #[path = "webcore/s3/client.rs"] pub mod __s3_client;
 pub mod s3 {
     pub use super::multipart_options_impl as multipart_options;
     pub use super::multipart_options_impl::MultiPartUploadOptions;
@@ -371,17 +380,12 @@ pub mod s3 {
     // PORT NOTE: `client` is the umbrella re-export hub (matches Zig's `s3/client.zig`
     // which `pub const X = @import(...)`-s every sibling). It pulls in `simple_request`
     // / `download_stream` / `list_objects` / `multipart` transitively.
-    #[path = "s3/simple_request.rs"]
-    pub mod simple_request;
-    #[path = "s3/download_stream.rs"]
-    pub mod download_stream;
-    #[path = "s3/list_objects.rs"]
-    pub mod list_objects;
-    #[path = "s3/multipart.rs"]
-    pub mod multipart;
+    pub use super::__s3_simple_request as simple_request;
+    pub use super::__s3_download_stream as download_stream;
+    pub use super::__s3_list_objects as list_objects;
+    pub use super::__s3_multipart as multipart;
     pub use multipart::MultiPartUpload;
-    #[path = "s3/client.rs"]
-    pub mod client;
+    pub use super::__s3_client as client;
 }
 
 #[path = "webcore/streams.rs"]

@@ -1238,11 +1238,8 @@ impl Init {
             result.status_text = BunString::from_js(status_text, global_this)?;
         }
 
-        // TODO(b2-blocked): bun_http_jsc — `Method::from_js` lives in the
-        // `bun_http_jsc` extension-trait crate (not yet a runtime dep).
-        
         if let Some(method_value) = response_init.get_truthy(global_this, b"method")? {
-            if let Some(method) = Method::from_js(global_this, method_value)? {
+            if let Some(method) = method_from_js(global_this, method_value)? {
                 result.method = method;
             }
         }

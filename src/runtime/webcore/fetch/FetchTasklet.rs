@@ -939,6 +939,14 @@ impl FetchTasklet {
         }
 
         if let Some(reason) = self.result.abort_reason() {
+            // PORT NOTE: `HTTPClientResult::abort_reason` returns
+            // `bun_http_types::CommonAbortReason`; `BodyValueError::AbortReason`
+            // wraps `bun_jsc::CommonAbortReason`. Same `repr(u8)` layout.
+            let reason = match reason {
+                bun_http_types::FetchRedirect::CommonAbortReason::Timeout => jsc::CommonAbortReason::Timeout,
+                bun_http_types::FetchRedirect::CommonAbortReason::UserAbort => jsc::CommonAbortReason::UserAbort,
+                bun_http_types::FetchRedirect::CommonAbortReason::ConnectionClosed => jsc::CommonAbortReason::ConnectionClosed,
+            };
             return BodyValueError::AbortReason(reason);
         }
 

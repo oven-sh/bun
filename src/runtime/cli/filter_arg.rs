@@ -312,36 +312,43 @@ impl PackageFilterIterator {
         // SAFETY: pattern_idx < patterns.len() checked by caller; patterns slice kept alive by caller.
         let pattern: &[u8] = unsafe { &*(&*self.patterns)[self.pattern_idx] };
         // PERF(port): Zig created an `ArenaAllocator` here and handed it to the walker (which takes
-        // ownership). bun_glob's Rust API should own its arena internally; passing only `cwd`.
-        // TODO(port): confirm bun_glob::GlobWalker::init_with_cwd signature & arena ownership.
+        // ownership). bun_glob's Rust API copies `pattern`/`cwd` internally.
         // SAFETY: root_dir slice kept alive by caller.
-        let cwd: Box<[u8]> = Box::from(unsafe { &*self.root_dir });
-        // TODO(port): in-place init — Zig `self.walker.initWithCwd(...)` is an out-param
-        // constructor writing into the `undefined` slot; bun_glob's Rust API should accept
-        // `&mut MaybeUninit<Self>`. `try (try ...).unwrap()`: outer `?` is the Zig `!`,
-        // inner `.unwrap()` converts `Maybe(void)` to `!void`.
-        GlobWalker::init_with_cwd(&mut self.walker, pattern, cwd, true, true, false, true, true)?
-            .unwrap()?;
-        // SAFETY: `init_with_cwd` just initialized `self.walker` above.
-        let walker = unsafe { self.walker.assume_init_mut() };
-        // TODO(port): self-referential — `iter.walker` stores `*mut self.walker`. This is unsound
+        let cwd: &[u8] = unsafe { &*self.root_dir };
+        // `try (try ...).unwrap()`: outer `?` is the Zig `!`, inner converts `Maybe(Self)` to `!Self`.
+        let walker = GlobWalker::init_with_cwd(
+            pattern,
+            cwd,
+            true,
+            true,
+            false,
+            true,
+            true,
+            Some(glob_ignore_fn),
+        )?
+        .map_err(|e| bun_core::errno_to_error(e.get_errno()))?;
+        self.walker.write(walker);
+        // TODO(port): self-referential — `iter.walker` borrows `self.walker`. This is unsound
         // if `PackageFilterIterator` moves after `init_walker`. Phase B: Pin<Box<Self>> or fold
-        // walker+iter into a single bun_glob type.
-        self.iter.write(GlobWalkerIterator {
-            walker: walker as *mut GlobWalker,
-        });
+        // walker+iter into a single bun_glob type. Erase the lifetime to `'static` for now.
+        // SAFETY: `init_with_cwd` just initialized `self.walker` above; lifetime erased per TODO.
+        let walker_ref: &'static mut GlobWalker =
+            unsafe { &mut *(self.walker.assume_init_mut() as *mut GlobWalker) };
+        self.iter.write(glob::walk::Iterator::new(walker_ref));
         // SAFETY: just wrote `iter`.
-        unsafe { self.iter.assume_init_mut() }.init()?.unwrap()?;
+        unsafe { self.iter.assume_init_mut() }
+            .init()?
+            .map_err(|e| bun_core::errno_to_error(e.get_errno()))?;
         Ok(())
     }
 
     fn deinit_walker(&mut self) {
         // SAFETY: `valid == true` (caller invariant) so both are initialized.
+        // Drop iter first (it borrows walker).
         unsafe {
-            self.walker.assume_init_mut().deinit(false);
-            self.iter.assume_init_mut().deinit();
+            self.iter.assume_init_drop();
+            self.walker.assume_init_drop();
         }
-        // TODO(port): if GlobWalker/Iterator gain `Drop`, replace with `assume_init_drop()`.
     }
 
     pub fn next(&mut self) -> Result<Option<&[u8]>, bun_core::Error> {

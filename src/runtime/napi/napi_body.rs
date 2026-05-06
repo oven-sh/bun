@@ -1463,7 +1463,7 @@ impl napi_async_work {
         WorkPool::schedule(&mut self.task);
     }
 
-    pub extern "C" fn run_from_thread_pool(task: *mut WorkPoolTask) {
+    pub unsafe fn run_from_thread_pool(task: *mut WorkPoolTask) {
         // SAFETY: task points to napi_async_work.task; recover parent via offset_of.
         let this: &mut napi_async_work = unsafe {
             &mut *(task as *mut u8)

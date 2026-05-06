@@ -79,10 +79,10 @@ use bun_http_types::Method::Method;
 use bun_url::URL as ZigURL;
 use bun_url::PercentEncoding;
 use bun_resolver::data_url::DataURL;
-use crate::api::server::ServerConfig::SSLConfig;
+use crate::api::server::server_config::SSLConfig;
 use crate::webcore::{AbortSignal, Blob, Body, FetchHeaders, ObjectURLRegistry, ReadableStream, Request, Response};
 use crate::node;
-use bun_paths::PosixToWinNormalizer;
+use bun_paths::resolve_path::PosixToWinNormalizer;
 use bun_picohttp as picohttp;
 use crate::webcore::s3_stub as s3;
 

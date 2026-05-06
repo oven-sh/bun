@@ -1273,7 +1273,7 @@ pub struct PipeReader {
 pub enum BufferedOutput {
     Bytelist(ByteList),
     ArrayBuffer {
-        buf: ArrayBuffer::Strong,
+        buf: jsc::array_buffer::ArrayBufferStrong,
         i: u32,
     },
 }

@@ -854,18 +854,62 @@ pub mod inet {
 
 #[cfg(not(windows))]
 pub mod inet {
-    use bun_sys::c as C; // bun.c → translated-c-headers
-    pub use C::IN4ADDR_LOOPBACK;
-    pub use C::INET6_ADDRSTRLEN;
+    #![allow(non_camel_case_types)]
+    // PORT NOTE: `bun_sys::c` (translated-c-headers) does not yet expose these
+    // socket constants/types; mirror them locally from libc / POSIX values.
+    pub const IN4ADDR_LOOPBACK: u32 = u32::from_ne_bytes([127, 0, 0, 1]);
+    pub const INET6_ADDRSTRLEN: usize = 46;
     // Make sure this is in line with IN6ADDR_ANY_INIT in `netinet/in.h` on all platforms.
     pub const IN6ADDR_ANY_INIT: [u8; 16] = [0; 16];
-    pub use C::AF_INET;
-    pub use C::AF_INET6;
-    pub type sa_family_t = C::sa_family_t;
-    pub type in_port_t = C::in_port_t;
+    pub const AF_INET: core::ffi::c_int = libc::AF_INET;
+    pub const AF_INET6: core::ffi::c_int = libc::AF_INET6;
+    pub type sa_family_t = libc::sa_family_t;
+    pub type in_port_t = libc::in_port_t;
     pub type socklen_t = super::ares::socklen_t;
-    pub type sockaddr_in = bun_sys::posix::sockaddr_in;
-    pub type sockaddr_in6 = bun_sys::posix::sockaddr_in6;
+
+    // Zig `std.posix.sockaddr.in`/`.in6` shape (field names without `sin_`
+    // prefix). Layout matches the platform C struct; on BSD a leading `len: u8`
+    // precedes `family: u8` (sa_family_t = u8 there).
+    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+    #[repr(C)]
+    #[derive(Copy, Clone)]
+    pub struct sockaddr_in {
+        pub len: u8,
+        pub family: sa_family_t,
+        pub port: in_port_t,
+        pub addr: u32,
+        pub zero: [u8; 8],
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
+    #[repr(C)]
+    #[derive(Copy, Clone)]
+    pub struct sockaddr_in {
+        pub family: sa_family_t,
+        pub port: in_port_t,
+        pub addr: u32,
+        pub zero: [u8; 8],
+    }
+    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+    #[repr(C)]
+    #[derive(Copy, Clone)]
+    pub struct sockaddr_in6 {
+        pub len: u8,
+        pub family: sa_family_t,
+        pub port: in_port_t,
+        pub flowinfo: u32,
+        pub addr: [u8; 16],
+        pub scope_id: u32,
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
+    #[repr(C)]
+    #[derive(Copy, Clone)]
+    pub struct sockaddr_in6 {
+        pub family: sa_family_t,
+        pub port: in_port_t,
+        pub flowinfo: u32,
+        pub addr: [u8; 16],
+        pub scope_id: u32,
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

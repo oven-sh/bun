@@ -330,7 +330,7 @@ impl TimerObjectInternals {
         if kind != Kind::Big::SetInterval {
             self.this_value.downgrade();
         } else {
-            time_before_call = Timespec::ms_from_now(Timespec::AllowMockedTime, self.interval);
+            time_before_call = Timespec::ms_from_now(TimespecMockMode::AllowMockedTime, i64::from(self.interval));
         }
         this_object.ensure_still_alive();
 

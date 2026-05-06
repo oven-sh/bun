@@ -1218,11 +1218,13 @@ pub extern "C" fn napi_get_typedarray_info(
     if let Some(arraybuffer) = unsafe { maybe_arraybuffer.as_mut() } {
         arraybuffer.set(
             env,
-            JSValue::c(jsc::c_api::JSObjectGetTypedArrayBuffer(
-                env.to_js().ref_(),
-                typedarray.as_object_ref(),
-                ptr::null_mut(),
-            )),
+            JSValue::c(unsafe {
+                JSObjectGetTypedArrayBuffer(
+                    env.to_js().as_ptr(),
+                    typedarray.as_object_ref(),
+                    ptr::null_mut(),
+                )
+            }),
         );
     }
 

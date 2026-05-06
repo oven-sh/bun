@@ -13,7 +13,7 @@ use crate::api::bun_x509 as X509;
 // into `bun_boringssl_sys` once the bindgen pass covers them.
 // ──────────────────────────────────────────────────────────────────────────
 #[allow(non_camel_case_types, non_upper_case_globals, dead_code)]
-mod ffi {
+pub mod ffi {
     use super::boringssl::{SSL, X509, struct_stack_st_X509, X509_STORE_CTX};
     use core::ffi::{c_char, c_int, c_long, c_uint, c_void};
 

@@ -80,7 +80,7 @@ const BUGFIX_S = {
   required: ["subtree", "applied"],
 };
 
-const HARD = `**HARD RULES:** Edit ONLY files under your subtree (and at most one upstream type-def file outside if signature change is unavoidable — note it). Never git reset/checkout/restore/stash. Never .zig. **DO NOT run cargo** — your errors are in the log file; trust them, fix the code, commit. Next round's survey re-runs cargo. **Commit+push with retry:** \`for i in 1 2 3 4 5; do git -c core.hooksPath=/dev/null add -A 'src/' && git -c core.hooksPath=/dev/null commit -q -m "phase-d(<subtree>): <what>" 2>/dev/null && git -c core.hooksPath=/dev/null pull --no-rebase --no-edit -X ours origin claude/phase-a-port 2>/dev/null; git -c core.hooksPath=/dev/null push origin claude/phase-a-port && break || sleep $((RANDOM%6+1)); done\`.`;
+const HARD = `**HARD RULES:** Never #[cfg(any())]/todo!()/unimplemented!() — port REAL bodies from .zig. Never git reset/checkout/restore/stash. Never edit .zig. DO NOT run cargo. **Commit only (NO push, NO pull):** \`git -c core.hooksPath=/dev/null add -A "src/" && git -c core.hooksPath=/dev/null commit -q -m "phase-d: <what>"\` — orchestrator pushes.`;
 
 let history = [];
 let seen = {};

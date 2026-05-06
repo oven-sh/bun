@@ -1469,7 +1469,7 @@ impl<'a> Drop for HTTPClient<'a> {
         debug_assert!(self.h2.is_none());
         // tls_props: Option<SharedPtr> — Drop releases strong ref.
         // custom_ssl_ctx: Option<Arc<_>> — Drop derefs.
-        self.unix_socket_path = ZigString::Slice::empty();
+        self.unix_socket_path = ZigStringSlice::empty();
     }
 }
 

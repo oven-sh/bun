@@ -2042,25 +2042,12 @@ fn run_with_source_code(
 // ───────────────────────────────────────────────────────────────────────────
 
 /// Live entry point for `task_callback` / `io_task_callback` (hoisted to
-/// `super::*`). Body is gated on `crate::ThreadPool::Worker` — see
-/// `run_from_thread_pool_impl` below for the full ported body.
+/// `super::*`). Thin shim over `run_from_thread_pool_impl` so the public
+/// symbol stays stable while the body lives in a private fn for borrowck
+/// reshaping.
 pub fn run_from_thread_pool(this: &mut ParseTask) {
-    
-    return run_from_thread_pool_impl(this);
-    // blocked_on: `crate::ThreadPool::Worker::get` (gated module). Fail loud
-    // rather than silently returning so a thread-pool dispatch with the gate
-    // still in place is caught immediately.
-    let _ = this;
-    todo!(
-        "ParseTask::run_from_thread_pool: bundler ThreadPool::Worker module is gated \
-         (lib.rs  pub mod ThreadPool)"
-    );
+    run_from_thread_pool_impl(this);
 }
-
-// blocked_on: `crate::ThreadPool::Worker` (gated); `ThreadPool::uses_io_pool`;
-// `ctx.graph.pool.schedule_inside_thread_pool` (`graph.pool: NonNull<ThreadPool>`
-// where `ThreadPool` is the lib.rs unit-stub); `BundleV2.loop_()` returning the
-// erased `EventLoop = Option<NonNull<()>>` (no `Js`/`Mini` variants yet).
 
 fn run_from_thread_pool_impl(this: &mut ParseTask) {
     // SAFETY: ctx backref valid.

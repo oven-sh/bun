@@ -300,7 +300,7 @@ impl core::fmt::Debug for MediaFeatureValue {
 }
 
 // PORT NOTE: derive(PartialEq) blocked on `Ident`/`EnvironmentVariable` lacking
-// PartialEq while `values/` is gated; hand-roll the comparable arms.
+// std `PartialEq`; hand-roll all arms (Zig: `css.implementEql`).
 impl PartialEq for MediaFeatureValue {
     fn eq(&self, other: &Self) -> bool {
         use MediaFeatureValue as V;

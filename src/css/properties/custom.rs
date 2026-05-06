@@ -389,19 +389,9 @@ impl TokenList {
                     dest.write_dashed_ident(v, true)?;
                     has_whitespace = false;
                 }
-                TokenOrValue::AnimationName(_v) => {
-                    // blocked_on: properties::animation un-gate — `AnimationName`
-                    // is currently a `prop_value_stub!` unit struct
-                    // (properties/mod.rs:100) with no `to_css`. The variant is
-                    // `pub` and constructible, so fail loudly rather than
-                    // silently emitting nothing (PORTING.md §Forbidden patterns).
-                    unimplemented!(
-                        "blocked_on: properties::animation AnimationName::to_css"
-                    );
-                    #[allow(unreachable_code)]
-                    {
-                        has_whitespace = false;
-                    }
+                TokenOrValue::AnimationName(v) => {
+                    v.to_css(dest)?;
+                    has_whitespace = false;
                 }
                 TokenOrValue::Token(token) => match token {
                     Token::Delim(d) => {

@@ -632,51 +632,21 @@ pub struct BackgroundHandler {
     pub has_any: bool,
 }
 
-impl BackgroundHandler {
-    // PORTING.md §Forbidden: silent no-op where the .zig has real logic is flagged.
-    // Real bodies are gated below in `mod background_handler_body` behind
-    // `` pending Property variant payloads + Image/CssColor fallback
-    // methods + SmallList helpers. Until those land, fail loudly so the missing
-    // shorthand-collapse / fallback / `-webkit-background-clip: text` prefixing
-    // is not silently skipped.
-    #[inline]
-    pub fn handle_property(
-        &mut self,
-        _property: &Property,
-        _dest: &mut DeclarationList<'_>,
-        _context: &mut PropertyHandlerContext<'_>,
-    ) -> bool {
-        todo!("blocked_on: Property variant payloads + Image/CssColor fallback methods + SmallList helpers — see background_handler_body below (background.zig:608-1043)")
-    }
-    #[inline]
-    pub fn finalize(
-        &mut self,
-        _dest: &mut DeclarationList<'_>,
-        _context: &mut PropertyHandlerContext<'_>,
-    ) {
-        todo!("blocked_on: Property variant payloads + Image/CssColor fallback methods + SmallList helpers — see background_handler_body below (background.zig:608-1043)")
-    }
-}
-
- // blocked_on: Property variant payloads + Image/CssColor fallback methods + SmallList helpers
-mod background_handler_body {
-use super::*;
-
-// TODO(port): the Zig uses comptime field-name strings + @field for `flushHelper` /
+// PORT NOTE: the Zig uses comptime field-name strings + @field for `flushHelper` /
 // `initSmallListHelper` / `push`. Rust cannot index struct fields by string at runtime;
 // these helpers are expanded into small per-field macros below. Phase B may want a
 // derive macro instead.
 
 macro_rules! init_small_list_helper {
-    ($this:expr, $field:ident, $allocator:expr, $length:expr) => {{
+    ($this:expr, $field:ident, $length:expr) => {{
         let length = $length;
         if let Some(list) = &mut $this.$field {
-            list.clear();
-            list.ensure_total_capacity($allocator, length);
+            list.clear_retaining_capacity();
+            list.ensure_total_capacity(length);
             list.set_len(length);
             list.slice_mut()
         } else {
-            $this.$field = Some(SmallList::init_capacity($allocator, length));
+            $this.$field = Some(SmallList::init_capacity(length));
             let list = $this.$field.as_mut().unwrap();
             list.set_len(length);
             list.slice_mut()
@@ -685,20 +655,20 @@ macro_rules! init_small_list_helper {
 }
 
 macro_rules! flush_helper {
-    ($this:expr, $allocator:expr, $field:ident, $val:expr, $dest:expr, $context:expr) => {{
+    ($this:expr, $field:ident, $val:expr, $dest:expr, $context:expr) => {{
         if let Some(existing) = &$this.$field {
             if !existing.eql($val)
                 && $context.targets.browsers.is_some()
                 && !$val.is_compatible($context.targets.browsers.unwrap())
             {
-                $this.flush($allocator, $dest, $context);
+                $this.flush($dest, $context);
             }
         }
     }};
 }
 
 macro_rules! push_property {
-    ($this:expr, $allocator:expr, $dest:expr, $variant:ident, $bg_prop:expr, $val:expr) => {{
+    ($this:expr, $dest:expr, $variant:ident, $bg_prop:expr, $val:expr) => {{
         $dest.push(Property::$variant($val));
         $this.flushed_properties.insert($bg_prop);
     }};
@@ -711,7 +681,7 @@ impl BackgroundHandler {
         dest: &mut DeclarationList,
         context: &mut PropertyHandlerContext,
     ) -> bool {
-        let allocator = context.allocator;
+        let allocator = dest.bump();
         match property {
             Property::BackgroundColor(val) => {
                 flush_helper!(self, allocator, color, val, dest, context);

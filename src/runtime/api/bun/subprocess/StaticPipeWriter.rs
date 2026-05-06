@@ -324,43 +324,6 @@ impl<P: StaticPipeWriterProcess> Drop for StaticPipeWriter<P> {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// BufferedWriter parent trait — wires bun_io callbacks to inherent methods.
-// Zig: `bun.io.BufferedWriter(@This(), struct { onWritable = null; getBuffer; onClose; onError; onWrite })`
-// ──────────────────────────────────────────────────────────────────────────
-
-#[cfg(not(windows))]
-impl<P> bun_io::pipe_writer::PosixBufferedWriterParent for StaticPipeWriter<P> {
-    unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus) {
-        // SAFETY: `this` is the BACKREF set via `set_parent`; the BufferedWriter
-        // holds `&mut writer` (a field of `*this`) but never materializes
-        // `&mut StaticPipeWriter`, so re-entering via `&mut *this` here is the
-        // intrusive-field aliasing model used throughout bun_io.
-        unsafe { (*this).on_write(amount, status) };
-    }
-    unsafe fn on_error(this: *mut Self, err: bun_sys::Error) {
-        // SAFETY: see on_write.
-        unsafe { (*this).on_error(err) };
-    }
-    const HAS_ON_CLOSE: bool = true;
-    unsafe fn on_close(this: *mut Self) {
-        // SAFETY: see on_write.
-        unsafe { (*this).on_close() };
-    }
-    unsafe fn get_buffer<'a>(this: *mut Self) -> &'a [u8] {
-        // SAFETY: see on_write. Returned slice borrows `(*this).source` storage.
-        unsafe { (*this).get_buffer() }
-    }
-    const HAS_ON_WRITABLE: bool = false;
-    unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
-        // CYCLEBREAK: `bun_io::EventLoopHandle` is an opaque `*mut c_void` whose
-        // pointee the io tier never dereferences directly; pass the address of
-        // the stored `bun_jsc::EventLoopHandle` field.
-        // SAFETY: `this` points to a live Self (BACKREF contract).
-        bun_io::EventLoopHandle(unsafe { &(*this).event_loop } as *const _ as *mut core::ffi::c_void)
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/api/bun/subprocess/StaticPipeWriter.zig (142 lines)
 //   confidence: medium

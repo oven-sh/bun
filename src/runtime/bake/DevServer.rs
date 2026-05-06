@@ -19,8 +19,9 @@ use bun_alloc::{AllocError, Arena};
 use bun_collections::{ArrayHashMap, AutoBitSet, DynamicBitSet, HashMap, HiveArray, StringHashMap};
 use bun_core::{self as core, Environment, Output};
 use bun_jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, Strong, VirtualMachine,
+    self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, Strong,
 };
+use bun_jsc::virtual_machine::VirtualMachine;
 use bun_logger::Log;
 use bun_paths::{self as paths, PathBuffer, MAX_PATH_BYTES};
 use bun_str::{self as str, strings, String as BunString, ZStr};

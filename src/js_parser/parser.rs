@@ -2691,13 +2691,20 @@ pub struct ReactRefresh<'a> {
     /// When a function is done visiting, the stack location is checked,
     /// and then it will insert `var _s = ...`, add the `_s()` call at
     /// the start of the function, and then add the call to `_s(func, ...)`.
-    pub hook_ctx_storage: Option<&'a mut Option<HookContext>>,
+    ///
+    /// PORT NOTE: Zig type is `?*?HookContext` — a raw nullable pointer to
+    /// stack storage on the visiting fn frame. Modeled as `Option<NonNull<_>>`
+    /// (Copy) so the save/set/restore dance in visitStmt/visitExpr can take a
+    /// stack-local address without the `'a` borrow the visitor cannot satisfy.
+    pub hook_ctx_storage: Option<core::ptr::NonNull<Option<HookContext>>>,
 
     /// This is the most recently generated `_s` call. This is used to compare
     /// against seen calls to plain identifiers when in "export default" and in
     /// "const Component =" to know if an expression had been wrapped in a hook
     /// signature function.
     pub latest_signature_ref: Ref,
+
+    _phantom: core::marker::PhantomData<&'a ()>,
 }
 
 impl<'a> Default for ReactRefresh<'a> {

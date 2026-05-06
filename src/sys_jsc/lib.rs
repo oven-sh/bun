@@ -104,68 +104,193 @@ pub trait FromJsEnum: Sized {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Shim method surface — mirrors `bun_jsc`'s real signatures so module bodies
-// type-check. Every body is `todo!()`.
+// JSC encoded-value tag constants (JSCJSValue.h / src/jsc/FFI.zig).
+// ──────────────────────────────────────────────────────────────────────────
+const NUMBER_TAG: usize = 0xfffe_0000_0000_0000;
+const NOT_CELL_MASK: usize = NUMBER_TAG | 0x2;
+const DOUBLE_ENCODE_OFFSET: i64 = 1i64 << 49;
+
+/// `JSType` byte values (src/jsc/JSType.zig) needed for `is_string`.
+const JSTYPE_STRING: u8 = 2;
+const JSTYPE_STRING_OBJECT: u8 = 94;
+const JSTYPE_DERIVED_STRING_OBJECT: u8 = 95;
+
+/// `ErrorCode` u16 discriminants (codegen ErrorCode.zig / ErrorCode+List.h).
+/// Kept local so this crate need not depend on `bun_jsc` while it is broken.
+const ERR_INVALID_ARG_TYPE: u16 = 119;
+const ERR_OUT_OF_RANGE: u16 = 157;
+
+// ──────────────────────────────────────────────────────────────────────────
+// extern "C" — JSC bindings (src/jsc/bindings/bindings.cpp). Shim types are
+// `#[repr(transparent)]` over `usize` so passing them by value matches the
+// `EncodedJSValue` / pointer ABI on all supported 64-bit targets.
+// ──────────────────────────────────────────────────────────────────────────
+unsafe extern "C" {
+    fn JSC__JSValue__isAnyInt(this: JSValue) -> bool;
+    fn JSC__JSValue__jsType(this: JSValue) -> u8;
+    fn JSC__JSValue__jsNumberFromDouble(n: f64) -> JSValue;
+    fn JSC__JSValue__toInt32(this: JSValue) -> i32;
+    fn JSC__JSValue__toInt64(this: JSValue) -> i64;
+    fn JSC__JSValue__asString(this: JSValue) -> *mut core::ffi::c_void;
+    fn JSC__JSString__length(this: *const core::ffi::c_void) -> usize;
+    fn JSC__JSGlobalObject__vm(this: *const JSGlobalObject) -> *const VM;
+    fn JSGlobalObject__hasException(this: *const JSGlobalObject) -> bool;
+    fn JSC__VM__throwError(vm: *const VM, global: *const JSGlobalObject, value: JSValue);
+    fn Bun__createErrorWithCode(
+        global: *const JSGlobalObject,
+        code: u16,
+        message: *mut bun_string::String,
+    ) -> JSValue;
+    fn BunString__toErrorInstance(
+        this: *const bun_string::String,
+        global: *const JSGlobalObject,
+    ) -> JSValue;
+    fn BunString__fromJS(
+        global: *const JSGlobalObject,
+        value: JSValue,
+        out: *mut bun_string::String,
+    ) -> bool;
+    fn SystemError__toErrorInstance(
+        this: *const CSystemError,
+        global: *const JSGlobalObject,
+    ) -> JSValue;
+    fn Bun__attachAsyncStackFromPromise(
+        global: *const JSGlobalObject,
+        err: JSValue,
+        promise: *const JSPromise,
+    );
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Shim method surface — REAL bodies ported from `src/jsc/JSValue.zig` /
+// `src/jsc/{JSGlobalObject,VM,CallFrame,JSString,SystemError}.zig`.
 // ──────────────────────────────────────────────────────────────────────────
 
 impl JSValue {
     pub const ZERO: JSValue = JSValue(0);
     pub const UNDEFINED: JSValue = JSValue(0xa);
+    pub const NULL: JSValue = JSValue(0x2);
+    pub const TRUE: JSValue = JSValue(0x7);
+    pub const FALSE: JSValue = JSValue(0x6);
 
+    // ── tag predicates ────────────────────────────────────────────────────
+    #[inline] fn is_empty(self) -> bool { self.0 == 0 }
+    #[inline] fn is_undefined_or_null(self) -> bool {
+        // Zig: `return @intFromEnum(this) | 0x8 == 0xa;`
+        (self.0 | 0x8) == 0xa
+    }
+    #[inline] fn is_boolean(self) -> bool {
+        self.0 == Self::TRUE.0 || self.0 == Self::FALSE.0
+    }
+    #[inline] fn is_int32(self) -> bool { (self.0 & NUMBER_TAG) == NUMBER_TAG }
+    #[inline] fn is_cell(self) -> bool {
+        !self.is_empty() && (self.0 & NOT_CELL_MASK) == 0
+    }
+    #[inline] fn as_int32(self) -> i32 {
+        debug_assert!(self.is_int32());
+        (self.0 & 0xffff_ffff) as u32 as i32
+    }
+    #[inline] fn as_double(self) -> f64 {
+        debug_assert!(self.is_number() && !self.is_int32());
+        // FFI.zig: JSVALUE_TO_DOUBLE — subtract DoubleEncodeOffset, bitcast to f64.
+        f64::from_bits((self.0 as i64).wrapping_sub(DOUBLE_ENCODE_OFFSET) as u64)
+    }
+
+    /// `JSValue.isNumber()` (FFI.zig `JSVALUE_IS_NUMBER`).
     #[inline]
     pub fn is_number(self) -> bool {
-        // TODO(b2-blocked): bun_jsc::JSValue::is_number
-        todo!("b2-blocked: bun_jsc::JSValue::is_number")
+        (self.0 & NUMBER_TAG) != 0
     }
+    /// `JSValue.isString()` — cell with `JSType.isStringLike()`.
     #[inline]
     pub fn is_string(self) -> bool {
-        // TODO(b2-blocked): bun_jsc::JSValue::is_string
-        todo!("b2-blocked: bun_jsc::JSValue::is_string")
+        if !self.is_cell() { return false; }
+        // SAFETY: `is_cell()` guarantees a valid JSCell pointer.
+        let ty = unsafe { JSC__JSValue__jsType(self) };
+        matches!(ty, JSTYPE_STRING | JSTYPE_STRING_OBJECT | JSTYPE_DERIVED_STRING_OBJECT)
     }
+    /// `JSValue.isAnyInt()` (JSValue.zig:960).
     #[inline]
     pub fn is_any_int(self) -> bool {
-        // TODO(b2-blocked): bun_jsc::JSValue::is_any_int
-        todo!("b2-blocked: bun_jsc::JSValue::is_any_int")
+        // SAFETY: pure FFI predicate; C++ handles non-cells.
+        unsafe { JSC__JSValue__isAnyInt(self) }
     }
+    /// `JSValue.isEmptyOrUndefinedOrNull()`.
     #[inline]
     pub fn is_empty_or_undefined_or_null(self) -> bool {
-        // TODO(b2-blocked): bun_jsc::JSValue::is_empty_or_undefined_or_null
-        todo!("b2-blocked: bun_jsc::JSValue::is_empty_or_undefined_or_null")
+        self.is_empty() || self.is_undefined_or_null()
     }
+    /// `JSValue.getNumber()` (JSValue.zig:2057).
     #[inline]
     pub fn get_number(self) -> Option<f64> {
-        // TODO(b2-blocked): bun_jsc::JSValue::get_number
-        todo!("b2-blocked: bun_jsc::JSValue::get_number")
+        if self.is_number() { Some(self.as_number()) } else { None }
     }
+    /// `JSValue.asNumber()` (JSValue.zig:2071) — asserts number/undefined/null/bool.
     #[inline]
     pub fn as_number(self) -> f64 {
-        // TODO(b2-blocked): bun_jsc::JSValue::as_number
-        todo!("b2-blocked: bun_jsc::JSValue::as_number")
+        if self.is_int32() {
+            self.as_int32() as f64
+        } else if self.is_number() {
+            self.as_double()
+        } else if self.is_undefined_or_null() {
+            0.0
+        } else if self.is_boolean() {
+            if self.0 == Self::TRUE.0 { 1.0 } else { 0.0 }
+        } else {
+            f64::NAN
+        }
     }
+    /// `JSValue.toInt32()` (JSValue.zig:2124).
     #[inline]
     pub fn to_int32(self) -> i32 {
-        // TODO(b2-blocked): bun_jsc::JSValue::to_int32
-        todo!("b2-blocked: bun_jsc::JSValue::to_int32")
+        if self.is_int32() {
+            return self.as_int32();
+        }
+        if let Some(num) = self.get_number() {
+            // coerceJSValueDoubleTruncatingT(i32, num): NaN→0, ±Inf/OOR saturate.
+            if num.is_nan() { return 0; }
+            return num as i32; // Rust `as` saturates on overflow — matches Zig helper.
+        }
+        // SAFETY: pure FFI conversion (BigInt / cell fallback).
+        unsafe { JSC__JSValue__toInt32(self) }
     }
+    /// `JSValue.toInt64()` (JSValue.zig:911).
     #[inline]
     pub fn to_int64(self) -> i64 {
-        // TODO(b2-blocked): bun_jsc::JSValue::to_int64
-        todo!("b2-blocked: bun_jsc::JSValue::to_int64")
+        if self.is_int32() {
+            return self.as_int32() as i64;
+        }
+        if let Some(num) = self.get_number() {
+            // coerceDoubleTruncatingIntoInt64.
+            if num.is_nan() { return 0; }
+            return num as i64; // saturating truncation
+        }
+        // SAFETY: pure FFI conversion (BigInt / cell fallback).
+        unsafe { JSC__JSValue__toInt64(self) }
     }
+    /// `JSValue.asString()` (JSValue.zig:2000). The bun_jsc version returns
+    /// `*mut JSString`; the shim wraps the raw cell pointer in the local
+    /// `JSString(usize)` newtype so callers can use `.length()` directly.
     #[inline]
     pub fn as_string(self) -> JSString {
-        // TODO(b2-blocked): bun_jsc::JSValue::as_string (returns *mut JSString in bun_jsc; deref at swap time)
-        todo!("b2-blocked: bun_jsc::JSValue::as_string")
+        debug_assert!(self.is_string());
+        // SAFETY: `is_string()` ⇒ cell-tagged ⇒ payload is the JSString*.
+        JSString(unsafe { JSC__JSValue__asString(self) } as usize)
     }
+    /// `JSValue.jsNumberFromInt32()` (JSValue.zig:810) — `NumberTag | i`.
     #[inline]
-    pub fn js_number_from_int32(_i: i32) -> JSValue {
-        // TODO(b2-blocked): bun_jsc::JSValue::js_number_from_int32
-        todo!("b2-blocked: bun_jsc::JSValue::js_number_from_int32")
+    pub fn js_number_from_int32(i: i32) -> JSValue {
+        JSValue(NUMBER_TAG | (i as u32 as usize))
     }
+    /// `JSValue.jsNumberFromUint64()` (JSValue.zig:822).
     #[inline]
-    pub fn js_number_from_uint64(_i: u64) -> JSValue {
-        // TODO(b2-blocked): bun_jsc::JSValue::js_number_from_uint64
-        todo!("b2-blocked: bun_jsc::JSValue::js_number_from_uint64")
+    pub fn js_number_from_uint64(i: u64) -> JSValue {
+        if i <= i32::MAX as u64 {
+            Self::js_number_from_int32(i as i32)
+        } else {
+            // SAFETY: pure FFI; encodes a double into a JSValue.
+            unsafe { JSC__JSValue__jsNumberFromDouble(i as f64) }
+        }
     }
     pub fn to_enum<E: FromJsEnum>(
         self,
@@ -177,57 +302,183 @@ impl JSValue {
 }
 
 impl JSString {
+    /// `JSString.length()` (JSString.zig).
     pub fn length(&self) -> usize {
-        // TODO(b2-blocked): bun_jsc::JSString::length
-        todo!("b2-blocked: bun_jsc::JSString::length")
+        // SAFETY: `self.0` is a valid JSString cell pointer (set by `as_string`).
+        unsafe { JSC__JSString__length(self.0 as *const core::ffi::c_void) }
     }
 }
 
 impl JSGlobalObject {
-    pub fn throw_invalid_arguments(&self, _args: core::fmt::Arguments<'_>) -> JsError {
-        // TODO(b2-blocked): bun_jsc::JSGlobalObject::throw_invalid_arguments
-        todo!("b2-blocked: bun_jsc::JSGlobalObject::throw_invalid_arguments")
+    #[inline]
+    fn has_exception(&self) -> bool {
+        // SAFETY: `&self` is a valid JSGlobalObject*.
+        unsafe { JSGlobalObject__hasException(self) }
     }
-    pub fn throw(&self, _args: core::fmt::Arguments<'_>) -> JsError {
-        // TODO(b2-blocked): bun_jsc::JSGlobalObject::throw
-        todo!("b2-blocked: bun_jsc::JSGlobalObject::throw")
+
+    /// `globalThis.throwValue(value)` — guards against an already-pending
+    /// termination exception before delegating to `VM.throwError`.
+    fn throw_value(&self, value: JSValue) -> JsError {
+        if self.has_exception() {
+            return JsError;
+        }
+        self.vm().throw_error(self, value)
     }
+
+    /// Format `args` into a `bun.String`, hand it to `Bun__createErrorWithCode`
+    /// (which picks ctor/`.name`/`.code` from `errors[code]`), then throw.
+    fn throw_with_code(&self, code: u16, args: core::fmt::Arguments<'_>) -> JsError {
+        let mut message = bun_string::String::create_format(args);
+        // SAFETY: `&self` is live; `message` is a valid `bun.String` borrowed for
+        // the call (C++ clones the impl into a JSString).
+        let v = unsafe { Bun__createErrorWithCode(self, code, &mut message) };
+        message.deref();
+        self.throw_value(v)
+    }
+
+    /// `globalThis.throwInvalidArguments(fmt, args)` →
+    /// `ErrorCode.INVALID_ARG_TYPE.fmt(...)` then `throwValue`.
+    pub fn throw_invalid_arguments(&self, args: core::fmt::Arguments<'_>) -> JsError {
+        self.throw_with_code(ERR_INVALID_ARG_TYPE, args)
+    }
+    /// `globalThis.throw(fmt, args)` — plain Error from a formatted string.
+    pub fn throw(&self, args: core::fmt::Arguments<'_>) -> JsError {
+        let message = bun_string::String::create_format(args);
+        // SAFETY: `&self` is live; `message` is a valid `bun.String`; C++ clones.
+        let instance = unsafe { BunString__toErrorInstance(&message, self) };
+        message.deref();
+        if instance.is_empty() {
+            debug_assert!(self.has_exception());
+            return JsError;
+        }
+        self.throw_value(instance)
+    }
+    /// `globalThis.throwRangeError(value, opts)` →
+    /// `ErrorCode.OUT_OF_RANGE.fmt(bun.fmt.outOfRange(value, opts))` then throw.
     pub fn throw_range_error<V: core::fmt::Display>(
         &self,
-        _value: V,
-        _options: RangeErrorOptions<'_>,
+        value: V,
+        options: RangeErrorOptions<'_>,
     ) -> JsError {
-        // TODO(b2-blocked): bun_jsc::JSGlobalObject::throw_range_error
-        todo!("b2-blocked: bun_jsc::JSGlobalObject::throw_range_error")
+        // Port of `bun.fmt.outOfRange` (src/bun_core/fmt.zig): builds the
+        // "The value of <field> is out of range. It must be <msg|min..max>.
+        // Received <value>" message.
+        let field = bstr::BStr::new(options.field_name);
+        let received = format_args!("{}", value);
+        if !options.msg.is_empty() {
+            self.throw_with_code(
+                ERR_OUT_OF_RANGE,
+                format_args!(
+                    "The value of \"{}\" is out of range. It must be {}. Received {}",
+                    field,
+                    bstr::BStr::new(options.msg),
+                    received,
+                ),
+            )
+        } else {
+            self.throw_with_code(
+                ERR_OUT_OF_RANGE,
+                format_args!(
+                    "The value of \"{}\" is out of range. It must be >= {} and <= {}. Received {}",
+                    field, options.min, options.max, received,
+                ),
+            )
+        }
     }
+    /// `globalThis.vm()`.
     pub fn vm(&self) -> &VM {
-        // TODO(b2-blocked): bun_jsc::JSGlobalObject::vm
-        todo!("b2-blocked: bun_jsc::JSGlobalObject::vm")
+        // SAFETY: JSC guarantees the VM outlives the global object; FFI returns
+        // a non-null pointer.
+        unsafe { &*JSC__JSGlobalObject__vm(self) }
     }
 }
 
 impl VM {
-    pub fn throw_error(&self, _global: &JSGlobalObject, _value: JSValue) -> JsError {
-        // TODO(b2-blocked): bun_jsc::VM::throw_error
-        todo!("b2-blocked: bun_jsc::VM::throw_error")
+    /// `VM.throwError(global, value)` (VM.zig:165).
+    pub fn throw_error(&self, global: &JSGlobalObject, value: JSValue) -> JsError {
+        // PORT NOTE: Zig wraps this in `ExceptionValidationScope` (debug-build
+        // assertion harness keyed by `@src()`). The shim cannot reach
+        // `bun_jsc::ExceptionValidationScope` while that crate is broken; the
+        // FFI call itself is the entire observable behaviour.
+        // SAFETY: `&self`/`global` are valid; `value` is live on this VM.
+        unsafe { JSC__VM__throwError(self, global, value) };
+        JsError
     }
 }
 
 impl CallFrame {
+    // JSC register-file slot offsets (CallFrame.zig / JSC CallFrame.h).
+    const OFFSET_ARGUMENT_COUNT_INCLUDING_THIS: usize = 4;
+    const OFFSET_THIS_ARGUMENT: usize = 5;
+    const OFFSET_FIRST_ARGUMENT: usize = 6;
+
+    #[inline]
+    fn as_unsafe_js_value_array(&self) -> *const JSValue {
+        // SAFETY: CallFrame is an opaque handle whose address IS the base of
+        // the JSC register array (Zig: `@ptrCast(@alignCast(self))`).
+        (self as *const Self).cast::<JSValue>()
+    }
+
+    fn argument_count_including_this(&self) -> u32 {
+        // SAFETY: slot OFFSET_ARGUMENT_COUNT_INCLUDING_THIS is a valid Register
+        // whose low 32 bits hold the count (`Register::unboxedInt32()`).
+        let raw = unsafe {
+            *self
+                .as_unsafe_js_value_array()
+                .add(Self::OFFSET_ARGUMENT_COUNT_INCLUDING_THIS)
+        };
+        // Little-endian payload extraction (`EncodedValueDescriptor.asBits.payload`).
+        u32::try_from((raw.0 & 0xffff_ffff) as u32 as i32).unwrap()
+    }
+
+    /// A slice of all passed arguments to this function call.
     pub fn arguments(&self) -> &[JSValue] {
-        // TODO(b2-blocked): bun_jsc::CallFrame::arguments
-        todo!("b2-blocked: bun_jsc::CallFrame::arguments")
+        let count = (self.argument_count_including_this() - 1) as usize;
+        // SAFETY: slots OFFSET_FIRST_ARGUMENT..+count are valid JSValue
+        // registers per JSC CallFrame layout.
+        unsafe {
+            core::slice::from_raw_parts(
+                self.as_unsafe_js_value_array().add(Self::OFFSET_FIRST_ARGUMENT),
+                count,
+            )
+        }
     }
 }
 
 impl FromJsEnum for bun_sys::SignalCode {
+    /// `JSValue.toEnumFromMap(global, "signal", SignalCode, SignalCode.Map)`
+    /// (JSValue.zig:1703).
     fn from_js_value(
-        _v: JSValue,
-        _global: &JSGlobalObject,
-        _property_name: &'static str,
+        v: JSValue,
+        global: &JSGlobalObject,
+        property_name: &'static str,
     ) -> JsResult<Self> {
-        // TODO(b2-blocked): bun_jsc::FromJsEnum impl (string→enum lookup via SignalCode name table)
-        todo!("b2-blocked: bun_jsc FromJsEnum for SignalCode")
+        if !v.is_string() {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "{} must be a string",
+                property_name
+            )));
+        }
+        // `StringMap.fromJS` — `bun.String.fromJS` then phf lookup.
+        let mut out = bun_string::String::DEAD;
+        // SAFETY: `out` is a valid out-param; `global` is live.
+        let ok = unsafe { BunString__fromJS(global, v, &mut out) };
+        if !ok {
+            return Err(JsError);
+        }
+        let utf8 = out.to_utf8();
+        let hit = bun_sys::signal_code::MAP.get(utf8.slice()).copied();
+        drop(utf8);
+        out.deref();
+        match hit {
+            Some(code) => Ok(code),
+            // Zig builds the `'SIGHUP', 'SIGINT' or ...` list at comptime; at
+            // 31 variants the runtime port keeps the message terse.
+            None => Err(global.throw_invalid_arguments(format_args!(
+                "{} must be one of the SignalCode names",
+                property_name
+            ))),
+        }
     }
 }
 

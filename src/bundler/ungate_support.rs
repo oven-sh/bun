@@ -58,62 +58,94 @@ pub mod perf {
 pub mod bun_css {
     use bun_collections::BabyList;
 
+    // ── feature = "css" (default) ────────────────────────────────────────
+    // The real crate now un-gates `BundlerStyleSheet` (= `StyleSheet<BundlerAtRule>`)
+    // with real `parse_bundler` / `minify` / `empty` bodies (`css_parser.rs`),
+    // so the bundler-facing surface is just a glob re-export. The previous
+    // local stub struct shadowed the glob; that shadow is dropped here so
+    // callers (`ParseTask.rs`, `prepareCssAstsForChunk.rs`) see the real type
+    // directly.
     #[cfg(feature = "css")]
     pub use ::bun_css::*;
+    #[cfg(feature = "css")]
+    pub use ::bun_css::css_modules::Config as CssModuleConfig;
 
-    /// `css::BundlerStyleSheet` — arena-backed stylesheet AST. The real type
-    /// is `StyleSheet<BundlerAtRule>` (gated in `css_parser.rs`).
-    pub struct BundlerStyleSheet(());
-    impl BundlerStyleSheet {
-        pub fn empty(_bump: &bun_alloc::Arena) -> Self {
-            Self(())
-        }
-        pub fn parse_bundler(
-            _bump: &bun_alloc::Arena,
-            _src: &[u8],
-            _opts: ParserOptions,
-            _idx: u32,
-        ) -> core::result::Result<(Self, StylesheetExtra), ()> {
-            todo!("b2-blocked: bun_css::BundlerStyleSheet (gated upstream)")
-        }
-        pub fn minify(
-            &mut self,
-            _bump: &bun_alloc::Arena,
-            _opts: MinifyOptions,
-            _extra: &mut StylesheetExtra,
-        ) -> core::result::Result<(), ()> {
-            todo!("b2-blocked: bun_css shim")
-        }
-    }
-    #[derive(Default)]
-    pub struct StylesheetExtra(());
-    pub struct ParserOptions {
-        pub css_modules: Option<CssModuleConfig>,
-    }
-    impl ParserOptions {
-        pub fn default(_bump: &bun_alloc::Arena, _log: &mut bun_logger::Log) -> Self {
-            Self { css_modules: None }
-        }
-    }
-    #[derive(Default)]
-    pub struct CssModuleConfig;
-    #[derive(Default)]
-    pub struct MinifyOptions {
-        pub targets: Targets,
-        pub unused_symbols: (),
-    }
+    // ── feature ≠ "css" ──────────────────────────────────────────────────
+    // Type-only surface so the bundler builds without the CSS crate. With no
+    // parser available these are data-free no-ops; the loader dispatch in
+    // `ParseTask::get_ast` never reaches `.css` without the feature, so the
+    // bodies below are the correct "css-disabled" semantics (empty sheet,
+    // identity minify).
     #[cfg(not(feature = "css"))]
-    #[derive(Default, Clone, Copy)]
-    pub struct Targets;
+    pub use self::no_css::*;
     #[cfg(not(feature = "css"))]
-    impl Targets {
-        pub fn for_bundler_target(_t: crate::options::Target) -> Self {
-            Self
+    mod no_css {
+        use bun_collections::BabyList;
+        use bun_options_types::ImportRecord;
+
+        /// `css::BundlerStyleSheet` — arena-backed stylesheet AST. The real
+        /// type is `StyleSheet<BundlerAtRule>` (`css_parser.rs`).
+        #[derive(Default)]
+        pub struct BundlerStyleSheet {
+            pub local_scope: bun_collections::StringArrayHashMap<()>,
         }
+        impl BundlerStyleSheet {
+            pub fn empty(_allocator: &bun_alloc::Arena) -> Self {
+                Self::default()
+            }
+            /// css_parser.zig:3238 `parseBundler` — without `bun_css` there is
+            /// no parser; return an empty sheet.
+            pub fn parse_bundler(
+                _allocator: &bun_alloc::Arena,
+                _code: &[u8],
+                _options: ParserOptions,
+                _import_records: &mut BabyList<ImportRecord>,
+                _source_index: u32,
+            ) -> core::result::Result<(Self, StylesheetExtra), ()> {
+                Ok((Self::default(), StylesheetExtra::default()))
+            }
+            /// css_parser.zig `StyleSheet.minify` — identity when CSS disabled.
+            pub fn minify(
+                &mut self,
+                _allocator: &bun_alloc::Arena,
+                _options: MinifyOptions,
+                _extra: &mut StylesheetExtra,
+            ) -> core::result::Result<(), ()> {
+                Ok(())
+            }
+        }
+        #[derive(Default)]
+        pub struct StylesheetExtra {
+            pub symbols: BabyList<bun_js_parser::Symbol>,
+        }
+        pub struct ParserOptions {
+            pub filename: &'static [u8],
+            pub css_modules: Option<CssModuleConfig>,
+        }
+        impl ParserOptions {
+            pub fn default(_allocator: &bun_alloc::Arena, _log: &mut bun_logger::Log) -> Self {
+                Self { filename: b"", css_modules: None }
+            }
+        }
+        #[derive(Default)]
+        pub struct CssModuleConfig;
+        #[derive(Default)]
+        pub struct MinifyOptions {
+            pub targets: Targets,
+            pub unused_symbols: bun_collections::ArrayHashMap<Box<[u8]>, ()>,
+        }
+        #[derive(Default, Clone, Copy)]
+        pub struct Targets;
+        impl Targets {
+            pub fn for_bundler_target(_t: crate::options::Target) -> Self {
+                Self
+            }
+        }
+        #[derive(Clone)]
+        pub struct ImportConditions(());
+        pub struct PrinterOptions;
+        pub struct Printer;
     }
-    #[cfg(not(feature = "css"))]
-    #[derive(Clone)]
-    pub struct ImportConditions(());
     /// Lifetime-erased `LayerName` for `Chunk::Layers`. The real
     /// `bun_css::rules::layer::LayerName<'bump>` borrows the arena; until
     /// `Chunk` threads `'bump`, this owns its parts.

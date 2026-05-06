@@ -4,6 +4,7 @@ use bun_semver::{query, SlicedString, Version};
 use bun_string::{strings, ZigString};
 
 use crate::jsc_stub::{CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult};
+use crate::to_js_host_fn;
 
 pub fn create(global: &JSGlobalObject) -> JSValue {
     let object = JSValue::create_empty_object(global, 2);
@@ -11,13 +12,13 @@ pub fn create(global: &JSGlobalObject) -> JSValue {
     object.put(
         global,
         ZigString::static_(b"satisfies"),
-        JSFunction::create(global, "satisfies", satisfies, 2, Default::default()),
+        JSFunction::create(global, "satisfies", to_js_host_fn!(satisfies), 2, Default::default()),
     );
 
     object.put(
         global,
         ZigString::static_(b"order"),
-        JSFunction::create(global, "order", order, 2, Default::default()),
+        JSFunction::create(global, "order", to_js_host_fn!(order), 2, Default::default()),
     );
 
     object

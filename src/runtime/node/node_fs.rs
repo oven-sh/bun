@@ -205,19 +205,12 @@ fn get_total_memory_size() -> u64 {
     unsafe { Bun__ramSize() as u64 }
 }
 
-/// `bun.sys.PosixStat` — uv-shaped stat struct (`src/sys/PosixStat.rs`). The
-/// `bun_sys` crate hasn't declared the `PosixStat` module yet (sibling owns
-/// `sys/lib.rs`), and the sibling `Stat.rs` import of it is itself unresolved.
-/// We only need it to bridge `libc::stat → Stats::init`. Until the upstream
-/// export lands, the bridge is a typed stub so `fstat`/`lstat`/`stat` keep
-/// their full bodies (only the final conversion is `todo!`).
-struct PosixStat;
-impl PosixStat {
-    #[inline]
-    fn init(_stat: &sys::Stat) -> ! {
-        todo!("blocked_on: bun_sys::PosixStat")
-    }
-}
+/// `bun.sys.PosixStat` — uv-shaped stat struct. `Stats::init` (from
+/// `super::stat`) takes its sibling `PosixStat` by reference, so route through
+/// that definition rather than `bun_sys::PosixStat` to keep the parameter
+/// type exact. Both are `#[repr(C)]` mirrors of `uv_stat_t`; once
+/// `super::stat` swaps to `pub use bun_sys::PosixStat` this alias collapses.
+use super::stat::PosixStat;
 
 /// Node `fs.rm` mapping helper — `bun_core::err!("Name")` produces a
 /// `bun_core::Error` from a static error-set name; the *reverse* (name →

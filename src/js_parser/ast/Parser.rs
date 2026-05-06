@@ -530,27 +530,35 @@ impl<'a> Parser<'a> {
         context: *mut c_void,
         callback: &dyn Fn(*mut c_void, &mut TSXParser, &mut [js_ast::Part]) -> Result<(), Error>,
     ) -> Result<(), Error> {
+        // See `_scan_imports`: move lexer/options out, leaving inert
+        // placeholders so `self` may drop without double-free.
+        //
+        // Order matters: see `_scan_imports` — placeholder's `&mut Log` must be
+        // created *before* the one handed to `P::init`.
+        let lexer = core::mem::replace(
+            &mut self.lexer,
+            js_lexer::Lexer::init_without_reading(
+                // SAFETY: reborrow of the unique Log handle for the inert
+                // placeholder lexer (never actually read).
+                unsafe { &mut *self.log.as_ptr() },
+                self.source,
+                self.bump,
+            ),
+        );
+        let options = core::mem::take(&mut self.options);
         let mut p = TSXParser::init(
             self.bump,
             // SAFETY: `log` was created from the `&'a mut Log` passed to
             // `Parser::init`; the unique borrow is being handed off to `P`
             // (which also receives the lexer). Matches Zig's two-`*Log` model.
+            // NOTE: `P` storing both `p.log` and `p.lexer.log` as `&'a mut Log`
+            // is a known structural alias (Zig held two `*Log`); the proper fix
+            // is changing `P.log` to `NonNull<Log>` (tracked in P.rs).
             unsafe { &mut *self.log.as_ptr() },
             self.source,
             self.define,
-            // See `_scan_imports`: move lexer/options out, leaving inert
-            // placeholders so `self` may drop without double-free.
-            core::mem::replace(
-                &mut self.lexer,
-                js_lexer::Lexer::init_without_reading(
-                    // SAFETY: reborrow of the unique Log handle for the inert
-                    // placeholder lexer (never actually read).
-                    unsafe { &mut *self.log.as_ptr() },
-                    self.source,
-                    self.bump,
-                ),
-            ),
-            core::mem::take(&mut self.options),
+            lexer,
+            options,
         )?;
 
         // Consume a leading hashbang comment

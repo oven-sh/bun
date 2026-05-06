@@ -8,14 +8,30 @@ use bun_collections::HashMap;
 use bun_logger::Log;
 use bun_options_types::{ImportKind, ImportRecord, ImportRecordFlags, ImportRecordTag};
 use bun_paths::{self, SEP};
+// PORT NOTE: two `fs` shapes are in play here. `bun_resolver::fs` (`Fs`) holds
+// the singleton `FileSystem` / `DirnameStore`; `bun_paths::fs` (`PFs`) defines
+// the `Path`/`PathName` value types that `ImportRecord.path` is typed against.
+// Both port `src/resolver/fs.zig`; B-3 collapses them. Until then, construct
+// `import_record.path` via `PFs::Path` so the field assignment unifies.
 use bun_resolver::fs as Fs;
+use bun_paths::fs as PFs;
 use bun_resolver::{self as resolver, Resolver};
 use bun_string::strings;
 use bun_sys::Fd;
 use bun_url::URL;
 
 use crate::options::{self, BundleOptions, ImportPathFormat};
+use crate::options_impl::Target as BundleTarget;
 use crate::transpiler::{ParseResult, PluginRunner, ResolveQueue, ResolveResults};
+
+/// `bun_options_types::ImportKind` ↔ `bun_logger::ImportKind` are the same
+/// `#[repr(u8)]` enum ported twice (logger/lib.rs:284, options_types/import_record.rs:12);
+/// B-3 collapses them via re-export. Until then, bridge by discriminant.
+#[inline]
+fn to_logger_import_kind(k: ImportKind) -> bun_logger::ImportKind {
+    // SAFETY: identical `#[repr(u8)]` variant set / discriminants (0..=11).
+    unsafe { core::mem::transmute::<u8, bun_logger::ImportKind>(k as u8) }
+}
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
 pub enum CSSResolveError {
@@ -117,7 +133,7 @@ mod hardcoded_module {
         pub tag: ImportRecordTag,
     }
     #[allow(clippy::extra_unused_type_parameters)]
-    pub fn get(_name: &[u8], _target: options::Target, _opts: AliasOptions) -> Option<Alias> {
+    pub fn get(_name: &[u8], _target: BundleTarget, _opts: AliasOptions) -> Option<Alias> {
         // TODO(b2-blocked): bun_resolve_builtins — real lookup table.
         None
     }
@@ -239,7 +255,7 @@ impl Linker {
 
     pub fn get_hashed_filename(
         &mut self,
-        file_path: &Fs::Path<'_>,
+        file_path: &PFs::Path<'_>,
         _fd: Option<Fd>,
     ) -> Result<&'static [u8], bun_core::Error> {
         if IS_CACHE_ENABLED {
@@ -283,7 +299,7 @@ impl Linker {
         let mut externals: Vec<u32> = Vec::new();
         let mut had_resolve_errors = false;
 
-        let is_deferred = result.pending_imports.len() > 0;
+        let is_deferred = !result.pending_imports.is_empty();
 
         // Step 1. Resolve imports & requires
         match result.loader {
@@ -320,7 +336,7 @@ impl Linker {
                     if !IGNORE_RUNTIME {
                         if import_record.path.namespace == b"runtime" {
                             if import_path_format == ImportPathFormat::AbsoluteUrl {
-                                import_record.path = Fs::Path::init_with_namespace(
+                                import_record.path = PFs::Path::init_with_namespace(
                                     intern_box(
                                         origin.join_alloc(b"", b"", b"bun:wrap", b"", b"")?,
                                     ),
@@ -381,7 +397,7 @@ impl Linker {
 
                         if strings::has_prefix_comptime(import_record.path.text, b"bun:") {
                             import_record.path =
-                                Fs::Path::init(&import_record.path.text[b"bun:".len()..]);
+                                PFs::Path::init(&import_record.path.text[b"bun:".len()..]);
                             import_record.path.namespace = b"bun";
 
                             // don't link bun
@@ -477,7 +493,7 @@ impl Linker {
         if !import_record.path.text.is_empty()
             && resolver::is_package_path(import_record.path.text)
         {
-            if opts.target == options::Target::Browser
+            if opts.target == BundleTarget::Browser
                 && is_node_builtin(import_record.path.text)
             {
                 log.add_resolve_error(
@@ -488,7 +504,7 @@ impl Linker {
                         bstr::BStr::new(import_record.path.text)
                     ),
                     import_record.path.text,
-                    import_record.kind,
+                    to_logger_import_kind(import_record.kind),
                     bun_core::err!("ModuleNotFound"),
                 )?;
             } else {
@@ -500,7 +516,7 @@ impl Linker {
                         bstr::BStr::new(import_record.path.text)
                     ),
                     import_record.path.text,
-                    import_record.kind,
+                    to_logger_import_kind(import_record.kind),
                     bun_core::err!("ModuleNotFound"),
                 )?;
             }
@@ -528,7 +544,7 @@ impl Linker {
         namespace: &'static [u8],
         origin: &URL<'_>,
         import_path_format: ImportPathFormat,
-    ) -> Result<Fs::Path<'static>, bun_core::Error> {
+    ) -> Result<PFs::Path<'static>, bun_core::Error> {
         // SAFETY: see `link()`.
         let fs = unsafe { &*self.fs };
         let opts = unsafe { &*self.options };
@@ -536,7 +552,7 @@ impl Linker {
         match import_path_format {
             ImportPathFormat::AbsolutePath => {
                 if namespace == b"node" {
-                    return Ok(Fs::Path::init_with_namespace(source_path, b"node"));
+                    return Ok(PFs::Path::init_with_namespace(source_path, b"node"));
                 }
 
                 if namespace == b"bun" || namespace == b"file" || namespace.is_empty() {
@@ -547,9 +563,9 @@ impl Linker {
                     // dup'd to outlive this call (Zig leaked into Path).
                     let relative_name =
                         dupe(bun_paths::resolve_path::relative(source_dir, source_path));
-                    Ok(Fs::Path::init_with_pretty(source_path, relative_name))
+                    Ok(PFs::Path::init_with_pretty(source_path, relative_name))
                 } else {
-                    Ok(Fs::Path::init_with_namespace(source_path, namespace))
+                    Ok(PFs::Path::init_with_namespace(source_path, namespace))
                 }
             }
             ImportPathFormat::Relative => {
@@ -559,7 +575,7 @@ impl Linker {
                 let pretty: &'static [u8];
                 let relative_name_out: &'static [u8];
                 if use_hashed_name {
-                    let basepath = Fs::Path::init(source_path);
+                    let basepath = PFs::Path::init(source_path);
                     let basename = self.get_hashed_filename(&basepath, None)?;
                     let dir = basepath.name.dir_with_trailing_slash();
                     let mut _pretty: Vec<u8> = Vec::with_capacity(
@@ -581,7 +597,7 @@ impl Linker {
                     relative_name_out = pretty;
                 }
 
-                Ok(Fs::Path::init_with_pretty(pretty, relative_name_out))
+                Ok(PFs::Path::init_with_pretty(pretty, relative_name_out))
             }
 
             ImportPathFormat::AbsoluteUrl => {
@@ -599,9 +615,9 @@ impl Linker {
                         bstr::BStr::new(without_leading_slash(source_path)),
                     )
                     .map_err(|_| bun_core::err!("OutOfMemory"))?;
-                    Ok(Fs::Path::init(intern(buf)))
+                    Ok(PFs::Path::init(intern(buf)))
                 } else {
-                    let mut absolute_pathname = Fs::PathName::init(source_path);
+                    let mut absolute_pathname = PFs::PathName::init(source_path);
 
                     if !opts.preserve_extensions {
                         if let Some(ext) = opts.out_extensions.get(absolute_pathname.ext) {
@@ -622,11 +638,11 @@ impl Linker {
                     let mut basename: &[u8] = bun_paths::basename(base);
 
                     if use_hashed_name {
-                        let basepath = Fs::Path::init(source_path);
+                        let basepath = PFs::Path::init(source_path);
                         basename = self.get_hashed_filename(&basepath, None)?;
                     }
 
-                    Ok(Fs::Path::init(intern_box(origin.join_alloc(
+                    Ok(PFs::Path::init(intern_box(origin.join_alloc(
                         b"",
                         dirname,
                         basename,

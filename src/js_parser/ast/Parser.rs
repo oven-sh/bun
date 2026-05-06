@@ -249,7 +249,7 @@ impl<'a> Parser<'a> {
 // per-method-gated in the impl block below and replaces this stub once that
 // surface lands.
 impl<'a> Parser<'a> {
-    pub fn parse(&mut self) -> Result<js_ast::Result, Error> {
+    pub fn parse(mut self) -> Result<js_ast::Result, Error> {
         // TODO(port): narrow error set
         #[cfg(target_arch = "wasm32")]
         {
@@ -559,7 +559,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    fn _parse<const TS: bool, JX: JsxT>(&mut self) -> Result<js_ast::Result, Error> {
+    fn _parse<const TS: bool, JX: JsxT>(self) -> Result<js_ast::Result, Error> {
         // TODO(port): narrow error set
         // TODO(b2-blocked): bun_crash_handler::current_action — `Action` stores
         // `&'static [u8]` but `self.source.path.text` is `'a`; Phase B widens
@@ -569,35 +569,25 @@ impl<'a> Parser<'a> {
             // bun_crash_handler::CURRENT_ACTION.set(prev_action);
         });
 
-        // SAFETY: see `log_mut` — `self.log` aliases the `&'a mut Log` handed
-        // to the lexer at `Parser::init`; reading the error count is sound.
-        let orig_error_count = unsafe { self.log.as_ref() }.errors;
         // Zig moves lexer/options by value into `P` (Parser.zig:339) and only
         // `defer p.lexer.deinit()` cleans up — Zig has no implicit destructor
-        // on `Parser.lexer`. In Rust, `Lexer` owns `Vec`s (comments_to_preserve_before,
-        // temp_buffer_u16, all_comments) and `Options` owns `jsx: Pragma` boxes,
-        // so a bitwise `ptr::read` would double-free when `self` later drops.
-        // Move them out, leaving inert placeholders behind.
-        let lexer = core::mem::replace(
-            &mut self.lexer,
-            js_lexer::Lexer::init_without_reading(
-                // SAFETY: `self.log` aliases the `&'a mut Log` originally given
-                // to `Parser::init`; the prior unique borrow lived in the lexer
-                // we just moved out, so reborrowing here is sound.
-                unsafe { &mut *self.log.as_ptr() },
-                self.source,
-                self.bump,
-            ),
-        );
-        let options = core::mem::take(&mut self.options);
+        // on `Parser.lexer`. `parse()` consumes `self` by value, so we
+        // destructure here and hand the owned `lexer`/`options` straight to
+        // `P::init` — no `ptr::read`/`mem::replace` placeholder dance, no
+        // double-free hazard.
+        let Parser { options, lexer, log, source, define, bump } = self;
+
+        // SAFETY: see `log_mut` — `log` aliases the `&'a mut Log` handed to the
+        // lexer at `Parser::init`; reading the error count is sound.
+        let orig_error_count = unsafe { log.as_ref() }.errors;
         let mut p = P::<TS, JX, false>::init(
-            self.bump,
+            bump,
             // SAFETY: handing the unique `&'a mut Log` to the inner parser;
             // matches Zig's two-`*Log` aliasing model (P also receives the
             // lexer which holds the same Log).
-            unsafe { &mut *self.log.as_ptr() },
-            self.source,
-            self.define,
+            unsafe { &mut *log.as_ptr() },
+            source,
+            define,
             lexer,
             options,
         )?;
@@ -636,7 +626,7 @@ impl<'a> Parser<'a> {
 
         // Detect a leading "// @bun" pragma
         if p.options.features.dont_bundle_twice {
-            if let Some(pragma) = self.has_bun_pragma(!hashbang.is_empty()) {
+            if let Some(pragma) = Self::has_bun_pragma(source.contents, !hashbang.is_empty()) {
                 return Ok(js_ast::Result::AlreadyBundled(pragma));
             }
         }
@@ -2053,10 +2043,12 @@ impl<'a> Parser<'a> {
         Ok(js_ast::Result::Ast(p.to_ast(&mut parts, exports_kind, wrap_mode, hashbang)?))
     }
 
+    // PORT NOTE: associated fn (was `&self` reading `self.lexer.source.contents`)
+    // because `_parse` consumes `self` by value and destructures it before this
+    // call site; the source contents are passed explicitly.
     #[allow(dead_code)] // called from gated `_parse` body above
-    fn has_bun_pragma(&self, has_hashbang: bool) -> Option<crate::AlreadyBundled> {
+    fn has_bun_pragma(contents: &[u8], has_hashbang: bool) -> Option<crate::AlreadyBundled> {
         const BUN_PRAGMA: &[u8] = b"// @bun";
-        let contents = self.lexer.source.contents;
         let end = contents.len();
 
         // pragmas may appear after a hashbang comment

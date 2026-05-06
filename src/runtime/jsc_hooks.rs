@@ -1334,9 +1334,13 @@ fn transpile_source_code_inner(
                 // Spec :525-539.
                 // SAFETY: `extra.source_code_printer` is non-null per `TranspileExtra`
                 // contract.
-                let printer: &mut bun_js_printer::BufferPrinter =
-                    unsafe { &mut *(*extra).source_code_printer };
-                printer.ctx.reset();
+                // PORT NOTE: do NOT bind a long-lived `&mut BufferPrinter`
+                // here — the `source_map_handler` / `print_with_source_map`
+                // calls below each rederive `&mut *(*extra).source_code_printer`
+                // from the raw pointer, which would invalidate any earlier
+                // Unique tag under Stacked Borrows. Rederive at each use-site
+                // instead (reset, mapper, print, get_written).
+                unsafe { (*(*extra).source_code_printer).ctx.reset() };
                 // Spec :529-538 — `var mapper = jsc_vm.sourceMapHandler(&printer);
                 // … jsc_vm.transpiler.printWithSourceMap(parse_result, &printer,
                 // .esm_ascii, mapper.get(), module_info)`.
@@ -1348,7 +1352,15 @@ fn transpile_source_code_inner(
                 // PORT NOTE), rederive both from `jsc_vm`/`extra` raw ptrs at
                 // each use-site so borrowck sees disjoint temporaries; the
                 // getter itself only stashes raw pointers (VirtualMachine.rs
-                // `SourceMapHandlerGetter`), so no live `&mut` actually overlaps.
+                // `SourceMapHandlerGetter`).
+                // TODO(port): aliased-&mut — when a debugger is attached
+                // (`mode != Connect`), `SourceMapHandlerGetter::on_source_map_chunk`
+                // (VirtualMachine.rs) reborrows `&mut *self.printer` while the
+                // `writer: &mut BufferPrinter` passed to `print_with_source_map`
+                // is still live inside `print_ast`. Fixing that requires
+                // changing `source_map_handler` to take `*mut BufferPrinter`
+                // and routing the inline-sourcemap append through the live
+                // writer; out of scope for this file.
                 {
                     // SAFETY: `jsc_vm` / `(*extra).source_code_printer` are live
                     // for the call (fn contract); `mapper` does not escape this
@@ -1396,6 +1408,13 @@ fn transpile_source_code_inner(
                     _ => ResolvedSourceTag::Javascript,
                 };
 
+                // SAFETY: `extra.source_code_printer` is non-null per
+                // `TranspileExtra` contract. Rederive from the raw pointer —
+                // the `&mut` reborrows inside the print block above
+                // invalidated any earlier Unique tag under Stacked Borrows,
+                // so reading through a pre-print binding here would be UB.
+                let printer: &mut bun_js_printer::BufferPrinter =
+                    unsafe { &mut *(*extra).source_code_printer };
                 let written = printer.ctx.get_written();
                 // PORT NOTE: bundler-side `cache.output_code` is
                 // `Option<Box<[u8]>>` (T6's `bun.String` wrapper lives in

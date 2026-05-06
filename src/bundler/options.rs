@@ -691,49 +691,68 @@ pub static LOADER_API_NAMES: phf::Map<&'static [u8], api::Loader> = phf::phf_map
     b"markdown" => api::Loader::md,
 };
 
-impl Loader {
-    // PORT NOTE: `pub type Optional` hoisted to module-level `LoaderOptional`
-    // (Rust inherent impls cannot declare associated types — E0658).
+/// Bundler-only `Loader` methods. Extension trait per PORTING.md crate-tier
+/// rule — the canonical `Loader` lives in `bun_options_types` (lower tier) and
+/// cannot depend on `bun_http_types::MimeType`. Re-exported through
+/// `bun_bundler::options` so `use bun_bundler::options::LoaderExt;` makes
+/// `.to_mime_type()` etc. available on the single canonical type.
+pub trait LoaderExt: Copy {
+    fn to_mime_type(self, paths: &[&[u8]]) -> bun_http_types::MimeType::MimeType;
+    fn from_mime_type(mime_type: bun_http::MimeType) -> Loader;
 
-    pub fn is_css(self) -> bool {
-        self == Loader::Css
+    // PORT NOTE: `pub type Map` hoisted to module-level `LoaderEnumMap`.
+
+    fn stdin_name_map() -> LoaderEnumMap {
+        let mut map: LoaderEnumMap = EnumMap::from_array([b"" as &[u8]; 21]);
+        // TODO(port): EnumMap::from_array length must match variant count; verify in Phase B
+        map[Loader::Jsx] = b"input.jsx";
+        map[Loader::Js] = b"input.js";
+        map[Loader::Ts] = b"input.ts";
+        map[Loader::Tsx] = b"input.tsx";
+        map[Loader::Css] = b"input.css";
+        map[Loader::File] = b"input";
+        map[Loader::Json] = b"input.json";
+        map[Loader::Toml] = b"input.toml";
+        map[Loader::Yaml] = b"input.yaml";
+        map[Loader::Json5] = b"input.json5";
+        map[Loader::Wasm] = b"input.wasm";
+        map[Loader::Napi] = b"input.node";
+        map[Loader::Text] = b"input.txt";
+        map[Loader::Bunsh] = b"input.sh";
+        map[Loader::Html] = b"input.html";
+        map[Loader::Md] = b"input.md";
+        map
     }
 
-    pub fn is_js_like(self) -> bool {
-        matches!(self, Loader::Jsx | Loader::Js | Loader::Ts | Loader::Tsx)
-    }
+    // pub const fromJS — deleted: see PORTING.md "*_jsc alias" rule.
+    // TODO(port): move to *_jsc — bun_bundler_jsc::options_jsc::loader_from_js
 
-    pub fn disable_html(self) -> Loader {
-        match self {
-            Loader::Html => Loader::File,
-            other => other,
-        }
-    }
-
+    // PORT NOTE: spelling-aliases for the canonical `is_typescript` /
+    // `is_javascript_like*` (acronym-collapsing rule). Kept so existing
+    // intra-crate callers (transpiler.rs / postProcessJSChunk.rs) compile until
+    // a B-3 sweep renames them.
     #[inline]
-    pub fn is_sqlite(self) -> bool {
-        matches!(self, Loader::Sqlite | Loader::SqliteEmbedded)
-    }
+    fn is_type_script(self) -> bool;
+    #[inline]
+    fn is_java_script_like(self) -> bool;
+    #[inline]
+    fn is_java_script_like_or_json(self) -> bool;
 
-    pub fn should_copy_for_bundling(self) -> bool {
-        match self {
-            Loader::File
-            | Loader::Napi
-            | Loader::Sqlite
-            | Loader::SqliteEmbedded
-            // TODO: loader for reading bytes and creating module or instance
-            | Loader::Wasm => true,
-            Loader::Css => false,
-            Loader::Html => false,
-            _ => false,
+    // TODO(port): `obj: anytype` — Zig duck-typed `.get(ext) -> Option<Loader>`.
+    // Monomorphized to the only concrete map type callers pass (`LoaderHashTable`);
+    // a `MapLike` trait is overkill for one call site.
+    fn for_file_name(filename: &[u8], obj: &LoaderHashTable) -> Option<Loader> {
+        let ext = bun_paths::extension(filename);
+        if ext.is_empty() || (ext.len() == 1 && ext[0] == b'.') {
+            return None;
         }
-    }
 
-    pub fn handles_empty_file(self) -> bool {
-        matches!(self, Loader::Wasm | Loader::File | Loader::Text)
+        obj.get(ext).copied()
     }
+}
 
-    pub fn to_mime_type(self, paths: &[&[u8]]) -> bun_http_types::MimeType::MimeType {
+impl LoaderExt for Loader {
+    fn to_mime_type(self, paths: &[&[u8]]) -> bun_http_types::MimeType::MimeType {
         use bun_http_types::MimeType;
         match self {
             Loader::Jsx | Loader::Js | Loader::Ts | Loader::Tsx => MimeType::JAVASCRIPT,
@@ -761,178 +780,14 @@ impl Loader {
         }
     }
 
-    // PORT NOTE: `pub type HashTable` hoisted to module-level `LoaderHashTable`
-    // (Rust inherent impls cannot declare associated types).
-
-    pub fn can_have_source_map(self) -> bool {
-        matches!(self, Loader::Jsx | Loader::Js | Loader::Ts | Loader::Tsx)
-    }
-
-    pub fn can_be_run_by_bun(self) -> bool {
-        matches!(
-            self,
-            Loader::Jsx | Loader::Js | Loader::Ts | Loader::Tsx | Loader::Wasm | Loader::Bunsh
-        )
-    }
-
-    // PORT NOTE: `pub type Map` hoisted to module-level `LoaderEnumMap`.
-
-    pub fn stdin_name_map() -> LoaderEnumMap {
-        let mut map: LoaderEnumMap = EnumMap::from_array([b"" as &[u8]; 21]);
-        // TODO(port): EnumMap::from_array length must match variant count; verify in Phase B
-        map[Loader::Jsx] = b"input.jsx";
-        map[Loader::Js] = b"input.js";
-        map[Loader::Ts] = b"input.ts";
-        map[Loader::Tsx] = b"input.tsx";
-        map[Loader::Css] = b"input.css";
-        map[Loader::File] = b"input";
-        map[Loader::Json] = b"input.json";
-        map[Loader::Toml] = b"input.toml";
-        map[Loader::Yaml] = b"input.yaml";
-        map[Loader::Json5] = b"input.json5";
-        map[Loader::Wasm] = b"input.wasm";
-        map[Loader::Napi] = b"input.node";
-        map[Loader::Text] = b"input.txt";
-        map[Loader::Bunsh] = b"input.sh";
-        map[Loader::Html] = b"input.html";
-        map[Loader::Md] = b"input.md";
-        map
-    }
-
     #[inline]
-    pub fn stdin_name(self) -> &'static [u8] {
-        // PERF(port): was comptime EnumArray — profile in Phase B
-        Self::stdin_name_map()[self]
-    }
+    fn is_type_script(self) -> bool { self.is_typescript() }
+    #[inline]
+    fn is_java_script_like(self) -> bool { self.is_javascript_like() }
+    #[inline]
+    fn is_java_script_like_or_json(self) -> bool { self.is_javascript_like_or_json() }
 
-    // pub const fromJS — deleted: see PORTING.md "*_jsc alias" rule.
-    // TODO(port): move to *_jsc — bun_bundler_jsc::options_jsc::loader_from_js
-
-    pub fn from_string(slice_: &[u8]) -> Option<Loader> {
-        let mut slice = slice_;
-        if !slice.is_empty() && slice[0] == b'.' {
-            slice = &slice[1..];
-        }
-
-        // Zig: `names.getWithEql(slice, strings.eqlCaseInsensitiveASCIIICheckLength)`.
-        // phf is case-sensitive, so lowercase into a stack buffer before lookup.
-        // Longest key ("sqlite_embedded") is 15 bytes; 32 is ample headroom.
-        let mut buf = [0u8; 32];
-        if slice.len() > buf.len() {
-            return None;
-        }
-        for (i, b) in slice.iter().enumerate() {
-            buf[i] = b.to_ascii_lowercase();
-        }
-        LOADER_NAMES.get(&buf[..slice.len()]).copied()
-    }
-
-    pub fn supports_client_entry_point(self) -> bool {
-        matches!(self, Loader::Jsx | Loader::Js | Loader::Ts | Loader::Tsx)
-    }
-
-    pub fn to_api(self) -> api::Loader {
-        match self {
-            Loader::Jsx => api::Loader::jsx,
-            Loader::Js => api::Loader::js,
-            Loader::Ts => api::Loader::ts,
-            Loader::Tsx => api::Loader::tsx,
-            Loader::Css => api::Loader::css,
-            Loader::Html => api::Loader::html,
-            Loader::File | Loader::Bunsh => api::Loader::file,
-            Loader::Json => api::Loader::json,
-            Loader::Jsonc => api::Loader::json,
-            Loader::Toml => api::Loader::toml,
-            Loader::Yaml => api::Loader::yaml,
-            Loader::Json5 => api::Loader::json5,
-            Loader::Wasm => api::Loader::wasm,
-            Loader::Napi => api::Loader::napi,
-            Loader::Base64 => api::Loader::base64,
-            Loader::Dataurl => api::Loader::dataurl,
-            Loader::Text => api::Loader::text,
-            Loader::SqliteEmbedded | Loader::Sqlite => api::Loader::sqlite,
-            Loader::Md => api::Loader::md,
-        }
-    }
-
-    pub fn from_api(loader: api::Loader) -> Loader {
-        match loader {
-            api::Loader::_none => Loader::File,
-            api::Loader::jsx => Loader::Jsx,
-            api::Loader::js => Loader::Js,
-            api::Loader::ts => Loader::Ts,
-            api::Loader::tsx => Loader::Tsx,
-            api::Loader::css => Loader::Css,
-            api::Loader::file => Loader::File,
-            api::Loader::json => Loader::Json,
-            api::Loader::jsonc => Loader::Jsonc,
-            api::Loader::toml => Loader::Toml,
-            api::Loader::yaml => Loader::Yaml,
-            api::Loader::json5 => Loader::Json5,
-            api::Loader::wasm => Loader::Wasm,
-            api::Loader::napi => Loader::Napi,
-            api::Loader::base64 => Loader::Base64,
-            api::Loader::dataurl => Loader::Dataurl,
-            api::Loader::text => Loader::Text,
-            api::Loader::bunsh => Loader::Bunsh,
-            api::Loader::html => Loader::Html,
-            api::Loader::sqlite => Loader::Sqlite,
-            api::Loader::sqlite_embedded => Loader::SqliteEmbedded,
-            api::Loader::md => Loader::Md,
-            _ => Loader::File,
-        }
-    }
-
-    pub fn is_jsx(self) -> bool {
-        self == Loader::Jsx || self == Loader::Tsx
-    }
-
-    pub fn is_type_script(self) -> bool {
-        self == Loader::Tsx || self == Loader::Ts
-    }
-
-    pub fn is_java_script_like(self) -> bool {
-        matches!(self, Loader::Jsx | Loader::Js | Loader::Ts | Loader::Tsx)
-    }
-
-    pub fn is_java_script_like_or_json(self) -> bool {
-        match self {
-            Loader::Jsx | Loader::Js | Loader::Ts | Loader::Tsx | Loader::Json | Loader::Jsonc => {
-                true
-            }
-            // toml, yaml, and json5 are included because we can serialize to the same AST as JSON
-            Loader::Toml | Loader::Yaml | Loader::Json5 => true,
-            _ => false,
-        }
-    }
-
-    // TODO(port): `obj: anytype` — Zig duck-typed `.get(ext) -> Option<Loader>`.
-    // Monomorphized to the only concrete map type callers pass (`LoaderHashTable`);
-    // a `MapLike` trait is overkill for one call site.
-    pub fn for_file_name(filename: &[u8], obj: &LoaderHashTable) -> Option<Loader> {
-        let ext = bun_paths::extension(filename);
-        if ext.is_empty() || (ext.len() == 1 && ext[0] == b'.') {
-            return None;
-        }
-
-        obj.get(ext).copied()
-    }
-
-    pub fn side_effects(self) -> bun_options_types::SideEffects {
-        match self {
-            Loader::Text
-            | Loader::Json
-            | Loader::Jsonc
-            | Loader::Toml
-            | Loader::Yaml
-            | Loader::Json5
-            | Loader::File
-            | Loader::Md => bun_options_types::SideEffects::NoSideEffectsPureData,
-            _ => bun_options_types::SideEffects::HasSideEffects,
-        }
-    }
-
-    pub fn from_mime_type(mime_type: bun_http::MimeType) -> Loader {
+    fn from_mime_type(mime_type: bun_http::MimeType) -> Loader {
         if mime_type.value.starts_with(b"application/javascript-jsx") {
             Loader::Jsx
         } else if mime_type.value.starts_with(b"application/typescript-jsx") {
@@ -1649,7 +1504,7 @@ pub fn defines_from_transform_options(
         // This enables some extra dead code elimination
         if let Some(value) = target.process_browser_define_value() {
             user_defines
-                .get_or_put_value(default_user_defines::process_browser_define::KEY, Box::from(value))?;
+                .get_or_put_value(default_user_defines::process_browser_define::KEY, Box::from(value.as_bytes()))?;
         }
     }
 
@@ -2218,7 +2073,7 @@ impl<'a> BundleOptions<'a> {
             output_format: Format::Esm,
             append_package_version_in_query_string: false,
             tsconfig_override: None,
-            main_fields: owned_string_list(Target::default_main_fields()[Target::Browser]),
+            main_fields: owned_string_list(Target::default_main_fields_map()[Target::Browser]),
             allow_unresolved: AllowUnresolved::All,
             entry_naming: Box::default(),
             asset_naming: Box::default(),
@@ -2322,7 +2177,7 @@ impl<'a> BundleOptions<'a> {
 
         if let Some(t) = transform.target {
             opts.target = Target::from(Some(t));
-            opts.main_fields = owned_string_list(Target::default_main_fields()[opts.target]);
+            opts.main_fields = owned_string_list(Target::default_main_fields_map()[opts.target]);
         }
 
         {
@@ -2582,7 +2437,7 @@ impl TransformOptions {
             loader,
             resolve_dir: entry_point.path.name.dir.clone(),
             // TODO(port): resolve_dir borrows from entry_point in Zig; cloned here
-            main_fields: Target::default_main_fields()[Target::Browser],
+            main_fields: Target::default_main_fields_map()[Target::Browser],
             jsx: if loader.is_jsx() { Some(jsx::Pragma::default()) } else { None },
             react_fast_refresh: false,
             inject: None,

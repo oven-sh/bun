@@ -5800,6 +5800,15 @@ impl WriteAll for Vec<u8> {
     }
 }
 
+impl<'b> WriteAll for bumpalo::collections::Vec<'b, u8> {
+    type Error = core::convert::Infallible;
+    #[inline]
+    fn write_all(&mut self, buf: &[u8]) -> Result<(), Self::Error> {
+        self.extend_from_slice(buf);
+        Ok(())
+    }
+}
+
 // Num/Dimension data layouts hoisted at crate root (lib.rs).
 pub use crate::{Num, Dimension};
 

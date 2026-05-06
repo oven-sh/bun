@@ -751,6 +751,13 @@ impl<'a> Transpiler<'a> {
         let log: &mut logger::Log = unsafe { &mut *self.log };
 
         let mut input_fd: Option<FD> = None;
+        // Owns the heap allocation backing `source.contents` for the
+        // non-shared-buffer file-read and `data:` URL paths. Threaded into the
+        // returned `ParseResult` so it drops with the result instead of being
+        // `mem::forget`-ed (PORTING.md §Forbidden patterns). For virtual /
+        // client-entry / `node:` / shared-buffer paths it stays `Empty`
+        // (`Drop` is a no-op).
+        let mut source_backing: crate::cache::Contents = crate::cache::Contents::Empty;
 
         // PORT NOTE: Zig `&brk: { ... }` took the address of a temporary; Rust
         // owns the value and borrows it after the block.
@@ -772,11 +779,11 @@ impl<'a> Transpiler<'a> {
                 break 'brk logger::Source::init_path_string(path.text, b"");
             }
 
-            // TODO(b2-blocked): `data:` URL → `bun_resolver::data_url::DataURL`.
-            // `decode_data()` returns `Vec<u8>` but `Source.contents: &'static
-            // [u8]` (Phase-B Str-ownership rework); can't surface without leaking.
-            #[cfg(any())]
-            if path.text.starts_with(b"data:") {
+            // Spec transpiler.zig:826-835. The decoded body is owned in
+            // `source_backing` (below) so `source.contents` re-borrows it
+            // without leaking; never falls through to `read_file_with_allocator`
+            // (which would try to open `data:...` as a filesystem path).
+            if strings::has_prefix_comptime(path.text, b"data:") {
                 use bun_resolver::data_url::DataURL;
                 let data_url = match DataURL::parse_without_check(path.text) {
                     Ok(u) => u,
@@ -784,7 +791,11 @@ impl<'a> Transpiler<'a> {
                         let _ = log.add_error_fmt(
                             None,
                             logger::Loc::EMPTY,
-                            format_args!("{} parsing data url \"{}\"", err, bstr::BStr::new(path.text)),
+                            format_args!(
+                                "{} parsing data url \"{}\"",
+                                bstr::BStr::new(err.name()),
+                                bstr::BStr::new(path.text),
+                            ),
                         );
                         return None;
                     }
@@ -795,19 +806,33 @@ impl<'a> Transpiler<'a> {
                         let _ = log.add_error_fmt(
                             None,
                             logger::Loc::EMPTY,
-                            format_args!("{} decoding data \"{}\"", err, bstr::BStr::new(path.text)),
+                            format_args!(
+                                "{} decoding data \"{}\"",
+                                bstr::BStr::new(err.name()),
+                                bstr::BStr::new(path.text),
+                            ),
                         );
                         return None;
                     }
                 };
-                break 'brk logger::Source::init_path_string(path.text, body);
+                source_backing = crate::cache::Contents::from(body);
+                // SAFETY: `source_backing` is moved into the returned
+                // `ParseResult` (or drops on `return None`); the re-borrow is
+                // sound for the lifetime of `source.contents`' consumers, which
+                // never outlive the `ParseResult`. Phase B threads a real
+                // lifetime once `logger::Source.contents` becomes `Cow`.
+                let contents: &'static [u8] = unsafe {
+                    let s = source_backing.as_slice();
+                    core::slice::from_raw_parts(s.as_ptr(), s.len())
+                };
+                break 'brk logger::Source::init_path_string(path.text, contents);
             }
 
             // PERF(port): Zig forwarded `if (use_shared_buffer)
             // bun.default_allocator else this_parse.allocator` — the Rust
             // `read_file_with_allocator` drops the allocator (global mimalloc
             // for the non-shared path; see resolver/lib.rs PORT NOTE).
-            let entry = match self.resolver.caches.fs.read_file_with_allocator(
+            let mut entry = match self.resolver.caches.fs.read_file_with_allocator(
                 // SAFETY: `self.fs` is the non-null `&Fs.FileSystem.instance`
                 // singleton (see `Transpiler.fs` field PORT NOTE).
                 unsafe { &mut *self.fs },
@@ -836,17 +861,23 @@ impl<'a> Transpiler<'a> {
             }
             // PORT NOTE: `Source.contents: &'static [u8]` (Phase-A `Str`
             // convention). The bytes live either in the per-thread shared
-            // buffer (`USE_SHARED_BUFFER`) or a heap allocation the caller
-            // recycles after the `ParseResult` is consumed (Zig handed
-            // ownership to the `Source`; `Entry.deinit` is never called on
-            // this path). `entry` is forgotten so `Contents::Owned`'s implicit
-            // `Drop` does not free out from under the returned `Source`.
-            // SAFETY: ARENA — `contents_is_recycled = true` records that the
-            // bytes are externally-owned; Phase B threads `'bump`.
+            // buffer (`USE_SHARED_BUFFER` → `Contents::SharedBuffer`, no-op
+            // drop) or a heap `Contents::Owned(Vec<u8>)`. Thread the
+            // provenance-tagged backing alongside the `ParseResult` so it
+            // drops when the result is recycled — no `mem::forget`
+            // (PORTING.md §Forbidden patterns). Spec transpiler.zig:853 hands
+            // `entry.contents` to `Source.initRecycledFile` by slice; Zig has
+            // no implicit drop, so ownership was already with the caller.
+            source_backing = core::mem::take(&mut entry.contents);
+            // SAFETY: `source_backing` outlives every read through
+            // `source.contents` (it is moved into the returned `ParseResult`,
+            // and the only consumers are the parser/printer which run before
+            // the result drops). `contents_is_recycled = true` records that
+            // the bytes are externally-owned; Phase B threads `'bump`.
             let contents: &'static [u8] = unsafe {
-                core::slice::from_raw_parts(entry.contents.as_ptr(), entry.contents.len())
+                let s = source_backing.as_slice();
+                core::slice::from_raw_parts(s.as_ptr(), s.len())
             };
-            core::mem::forget(entry);
             match logger::Source::init_recycled_file(logger::PathContentsPair {
                 path: path.clone(),
                 contents,
@@ -858,7 +889,12 @@ impl<'a> Transpiler<'a> {
         let source: &logger::Source = &source_owned;
 
         if RETURN_FILE_ONLY {
-            return Some(ParseResult::empty_with(dup_source(source), loader, input_fd));
+            return Some(ParseResult::empty_with(
+                dup_source(source),
+                loader,
+                input_fd,
+                source_backing,
+            ));
         }
 
         if source.contents.is_empty()
@@ -866,7 +902,12 @@ impl<'a> Transpiler<'a> {
                 && strings::trim(source.contents, b"\n\r ").is_empty())
         {
             if !loader.handles_empty_file() {
-                return Some(ParseResult::empty_with(dup_source(source), loader, input_fd));
+                return Some(ParseResult::empty_with(
+                    dup_source(source),
+                    loader,
+                    input_fd,
+                    source_backing,
+                ));
             }
         }
 
@@ -881,6 +922,7 @@ impl<'a> Transpiler<'a> {
                         dup_source(source),
                         options::Loader::Wasm,
                         input_fd,
+                        source_backing,
                     ));
                 }
 
@@ -1049,6 +1091,7 @@ impl<'a> Transpiler<'a> {
                         already_bundled: AlreadyBundled::None,
                         pending_imports: Default::default(),
                         empty: false,
+                        source_contents_backing: source_backing,
                     },
                     js_ast::Result::Cached => ParseResult {
                         // TODO(port): Zig used `undefined` for ast here.
@@ -1060,6 +1103,7 @@ impl<'a> Transpiler<'a> {
                         already_bundled: AlreadyBundled::None,
                         pending_imports: Default::default(),
                         empty: false,
+                        source_contents_backing: source_backing,
                     },
                     js_ast::Result::AlreadyBundled(already_bundled) => ParseResult {
                         // TODO(port): Zig used `undefined` for ast here.
@@ -1141,6 +1185,7 @@ impl<'a> Transpiler<'a> {
                         pending_imports: Default::default(),
                         runtime_transpiler_cache: None,
                         empty: false,
+                        source_contents_backing: source_backing,
                     },
                 });
                 // ── stale gated draft (superseded by the un-gated body above) ─
@@ -1474,6 +1519,7 @@ impl<'a> Transpiler<'a> {
                     pending_imports: Default::default(),
                     runtime_transpiler_cache: None,
                     empty: false,
+                    source_contents_backing: source_backing,
                 });
             }
             // TODO: use lazy export AST
@@ -1506,6 +1552,7 @@ impl<'a> Transpiler<'a> {
                     pending_imports: Default::default(),
                     runtime_transpiler_cache: None,
                     empty: false,
+                    source_contents_backing: source_backing,
                 });
             }
             options::Loader::Md => {

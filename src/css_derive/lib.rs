@@ -51,12 +51,13 @@ pub fn derive_deep_clone(input: TokenStream) -> TokenStream {
 // Zig's `implementEql` / `implementHash` use `@typeInfo(T)` to walk struct
 // fields or `union(enum)` variants and recurse via `eql(field.type, …)` /
 // `hash(field.type, …)`, which in turn dispatch to `T.eql` / `T.hash` if the
-// type `@hasDecl`s one. The derives below preserve that two-level dispatch by
-// emitting **method-syntax** calls (`field.eql(other)`, `field.hash(hasher)`)
-// with the trait brought into scope inside the body — so a field type may
-// satisfy the recursion either with an inherent `pub fn eql/hash` *or* a
-// `CssEql`/`CssHash` impl (Option, slices, primitives, … from
-// `bun_css::generics`).
+// type `@hasDecl`s one. `CssEql` keeps method-syntax dispatch (no conflicting
+// inherents exist — `BabyList::eql`/`SmallList::eql` are associated fns, not
+// `&self` methods, so the trait resolves). `CssHash` uses **UFCS** trait
+// dispatch (`CssHash::hash(&field, hasher)`) so an unrelated inherent
+// `fn hash` on a container type cannot shadow the blanket trait impl — Rust's
+// method probe picks inherents by name only and does NOT fall through on
+// signature mismatch.
 //
 // Unions: Zig prefixes the hash with `bun.writeAnyToHasher(@intFromEnum(this))`.
 // The derive feeds the variant index as a `u32` (CSS hashing is in-process
@@ -255,7 +256,7 @@ fn expand_css_hash(input: DeriveInput) -> syn::Result<TokenStream2> {
                     .enumerate()
                     .filter(|(_, f)| !has_css_skip(&f.attrs))
                     .map(|(i, _)| syn::Index::from(i));
-                quote! { #( self.#idx.hash(__hasher); )* }
+                quote! { #( ::bun_css::generics::CssHash::hash(&self.#idx, __hasher); )* }
             }
             Fields::Named(fs) => {
                 let names: Vec<_> = fs
@@ -264,7 +265,7 @@ fn expand_css_hash(input: DeriveInput) -> syn::Result<TokenStream2> {
                     .filter(|f| !has_css_skip(&f.attrs))
                     .map(|f| f.ident.clone().unwrap())
                     .collect();
-                quote! { #( self.#names.hash(__hasher); )* }
+                quote! { #( ::bun_css::generics::CssHash::hash(&self.#names, __hasher); )* }
             }
         },
         Data::Enum(e) => {
@@ -291,7 +292,7 @@ fn expand_css_hash(input: DeriveInput) -> syn::Result<TokenStream2> {
                         quote! {
                             Self::#vname( #(#binds),* ) => {
                                 #tag
-                                #( #kept.hash(__hasher); )*
+                                #( ::bun_css::generics::CssHash::hash(#kept, __hasher); )*
                             }
                         }
                     }
@@ -307,7 +308,7 @@ fn expand_css_hash(input: DeriveInput) -> syn::Result<TokenStream2> {
                         quote! {
                             Self::#vname { #(#fnames),* } => {
                                 #tag
-                                #( #kept.hash(__hasher); )*
+                                #( ::bun_css::generics::CssHash::hash(#kept, __hasher); )*
                             }
                         }
                     }
@@ -1228,11 +1229,19 @@ fn clone_fields(fields: &Fields, ctor: TokenStream2) -> TokenStream2 {
         Fields::Unit => quote! { #ctor },
         Fields::Unnamed(fs) => {
             let idx = (0..fs.unnamed.len()).map(syn::Index::from);
-            quote! { #ctor( #( self.#idx.deep_clone(__bump) ),* ) }
+            quote! {
+                #ctor( #(
+                    ::bun_css::generics::DeepClone::deep_clone(&self.#idx, __bump)
+                ),* )
+            }
         }
         Fields::Named(fs) => {
             let names: Vec<_> = fs.named.iter().map(|f| f.ident.clone().unwrap()).collect();
-            quote! { #ctor { #( #names: self.#names.deep_clone(__bump) ),* } }
+            quote! {
+                #ctor { #(
+                    #names: ::bun_css::generics::DeepClone::deep_clone(&self.#names, __bump)
+                ),* }
+            }
         }
     }
 }

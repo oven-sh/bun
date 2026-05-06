@@ -326,48 +326,45 @@ pub enum FontFamily {
 pub type FontFamilyHashMap<V> = bun_collections::ArrayHashMap<FontFamily, V>;
 
 impl FontFamily {
-    #[cfg(any())]
-    // blocked_on: Parser::expect_string/expect_ident lifetime detachment +
-    // GenericFontFamily::parse (EnumProperty impl) + bumpalo::collections::Vec
-    // arena threading (`input.allocator()` → &Bump).
     pub fn parse(input: &mut css::Parser) -> CssResult<Self> {
-        if let Ok(value) = input.try_parse(css::Parser::expect_string) {
+        if let Ok(value) = input.try_parse(|p| p.expect_string().map(|s| s as *const [u8])) {
             // arena-owned: parser slice lives for 'bump
-            return Ok(FontFamily::FamilyName(value as *const [u8]));
+            return Ok(FontFamily::FamilyName(value));
         }
 
         if let Ok(value) = input.try_parse(GenericFontFamily::parse) {
             return Ok(FontFamily::Generic(value));
         }
 
-        let bump = input.allocator();
-        let value = input.expect_ident()?;
+        // SAFETY: arena outlives the returned `FontFamily` (parser source/arena lives for 'bump).
+        let bump: &'static bun_alloc::Arena =
+            unsafe { &*(input.allocator() as *const bun_alloc::Arena) };
+        let value: *const [u8] = input.expect_ident()? as *const [u8];
         // AST crate: ArrayListUnmanaged fed input.allocator() (arena) → bumpalo Vec
         let mut string: Option<bumpalo::collections::Vec<'_, u8>> = None;
-        while let Ok(ident) = input.try_parse(css::Parser::expect_ident) {
+        while let Ok(ident) = input.try_parse(|p| p.expect_ident().map(|s| s as *const [u8])) {
             if string.is_none() {
                 let mut s = bumpalo::collections::Vec::<u8>::new_in(bump);
-                s.extend_from_slice(value);
+                // SAFETY: arena-owned slice valid for 'bump.
+                s.extend_from_slice(unsafe { &*value });
                 string = Some(s);
             }
 
             if let Some(s) = string.as_mut() {
                 s.push(b' ');
-                s.extend_from_slice(ident);
+                // SAFETY: arena-owned slice valid for 'bump.
+                s.extend_from_slice(unsafe { &*ident });
             }
         }
 
         let final_value: *const [u8] = match string {
             Some(s) => s.into_bump_slice() as *const [u8],
-            None => value as *const [u8],
+            None => value,
         };
 
         Ok(FontFamily::FamilyName(final_value))
     }
 
-    #[cfg(any())]
-    // blocked_on: GenericFontFamily::parse (EnumProperty), parse_utility::parse_string,
-    // serializer::serialize_string writer trait.
     pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
         match self {
             FontFamily::Generic(val) => val.to_css(dest),
@@ -416,6 +413,14 @@ impl FontFamily {
             FontFamily::Generic(g) => g.is_compatible(browsers),
             FontFamily::FamilyName(_) => true,
         }
+    }
+
+    pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+        // PORT NOTE: Zig's `css.implementDeepClone` re-allocs the slice in the
+        // target arena. Phase A: shallow pointer copy (arena-owned slice
+        // outlives both source and clone in the bundler's per-file arena
+        // model). Phase B threads `bump.dupe(slice)` once 'bump is plumbed.
+        self.clone()
     }
 
     // eql / hash / deepClone — see manual impls below

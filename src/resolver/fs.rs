@@ -2059,9 +2059,13 @@ impl RealFS {
             } else if store_fd {
                 bun_sys::open_file_absolute_z(absolute_path, bun_sys::OpenFlags::READ_ONLY)?.handle()
             } else {
-                // PORT NOTE: Zig `bun.openFileForPath` (O_PATH on Linux). Route through
-                // open() with O_PATH where available; fall back to RDONLY elsewhere.
-                bun_sys::open(absolute_path, bun_sys::O::PATH | bun_sys::O::CLOEXEC, 0)?
+                // PORT NOTE: Zig `bun.openFileForPath` (bun.zig:1900-1910) — O_PATH is
+                // Linux-only; macOS/BSD use O_RDONLY. Both add O_NOCTTY|O_CLOEXEC.
+                #[cfg(target_os = "linux")]
+                let flags = bun_sys::O::PATH | bun_sys::O::CLOEXEC | bun_sys::O::NOCTTY;
+                #[cfg(not(target_os = "linux"))]
+                let flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NOCTTY;
+                bun_sys::open(absolute_path, flags, 0)?
             };
             FileSystem::set_max_fd(file.native());
 
@@ -2224,8 +2228,13 @@ impl RealFS {
                     bun_sys::open_file_absolute_z(absolute_path_c, bun_sys::OpenFlags::READ_ONLY)?
                         .handle()
                 } else {
-                    // PORT NOTE: Zig `bun.openFileForPath` (O_PATH on Linux); fall back to RDONLY.
-                    bun_sys::open(absolute_path_c, bun_sys::O::PATH | bun_sys::O::CLOEXEC, 0)?
+                    // PORT NOTE: Zig `bun.openFileForPath` (bun.zig:1900-1910) — O_PATH is
+                    // Linux-only; macOS/BSD use O_RDONLY. Both add O_NOCTTY|O_CLOEXEC.
+                    #[cfg(target_os = "linux")]
+                    let flags = bun_sys::O::PATH | bun_sys::O::CLOEXEC | bun_sys::O::NOCTTY;
+                    #[cfg(not(target_os = "linux"))]
+                    let flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NOCTTY;
+                    bun_sys::open(absolute_path_c, flags, 0)?
                 };
                 FileSystem::set_max_fd(file.native());
 

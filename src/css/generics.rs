@@ -747,7 +747,13 @@ pub trait Parse: Sized {
 /// Here that's the trait's *default method* — leaf impls only override when the
 /// type actually consumes options (e.g. CSS-modules `Composes`, `TokenList`).
 pub trait ParseWithOptions: Sized {
-    fn parse_with_options(input: &mut Parser, options: &ParserOptions) -> CssResult<Self>;
+    fn parse_with_options(input: &mut Parser, options: &ParserOptions) -> CssResult<Self>
+    where
+        Self: Parse,
+    {
+        let _ = options;
+        <Self as Parse>::parse(input)
+    }
 }
 
 #[inline]

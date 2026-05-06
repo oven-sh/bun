@@ -26,12 +26,35 @@ pub enum BoxSizing {
     BorderBox,
 }
 // PORT NOTE: css::DefineEnumProperty(@This()) — provided eql/hash/parse/toCss/deepClone via
-// comptime reflection over @tagName. The derives above cover eql/hash/deepClone; parse/to_css
-// come from the `DefineEnumProperty` derive macro (kebab-case serialization).
-// (Can't `#[derive(DefineEnumProperty)]` directly here because the macro emits an inherent
-// `parse`/`to_css`; gated until BoxSizing's downstream callers are ready.)
-#[cfg(any())]
-const _: () = { impl css::EnumProperty for BoxSizing {} };
+// comptime reflection over @tagName. Hand-written here (only two variants) so the inherent
+// `parse`/`to_css` participate in `impl_generic_parse_tocss!` without a derive-coherence clash.
+impl BoxSizing {
+    pub fn parse(input: &mut css::Parser) -> css::Result<BoxSizing> {
+        let location = input.current_source_location();
+        let ident = input.expect_ident()?;
+        if bun_string::strings::eql_case_insensitive_ascii::<true>(ident, b"content-box") {
+            Ok(BoxSizing::ContentBox)
+        } else if bun_string::strings::eql_case_insensitive_ascii::<true>(ident, b"border-box") {
+            Ok(BoxSizing::BorderBox)
+        } else {
+            Err(location.new_unexpected_token_error(css::Token::Ident(unsafe {
+                css::css_parser::src_str(ident)
+            })))
+        }
+    }
+
+    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+        dest.write_str(match self {
+            BoxSizing::ContentBox => "content-box",
+            BoxSizing::BorderBox => "border-box",
+        })
+    }
+
+    #[inline]
+    pub fn deep_clone(&self, _bump: &Bump) -> Self {
+        *self
+    }
+}
 
 #[derive(Clone, PartialEq)]
 pub enum Size {

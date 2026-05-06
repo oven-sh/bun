@@ -7257,7 +7257,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                             part.can_be_removed_if_unused = false;
                         }
                         if part.declared_symbols.len() == 0 {
-                            part.declared_symbols = self.declared_symbols.clone().expect("unreachable");
+                            // `part` is a bitwise duplicate of `parts[idx]` (via
+                            // `ptr::read` above); the old `declared_symbols` is
+                            // still owned by that slot. Overwrite without running
+                            // Drop to match Zig's plain field assignment.
+                            core::mem::forget(core::mem::replace(
+                                &mut part.declared_symbols,
+                                self.declared_symbols.clone().expect("unreachable"),
+                            ));
                         } else {
                             part.declared_symbols
                                 .append_list(self.declared_symbols.clone().expect("unreachable"))

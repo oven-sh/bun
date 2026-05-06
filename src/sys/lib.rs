@@ -489,11 +489,13 @@ pub type Maybe<T> = core::result::Result<T, Error>;
 pub type Result<T> = core::result::Result<T, Error>;
 
 // ──────────────────────────────────────────────────────────────────────────
-// Syscall tag — opaque u16 (full enum in B-2).
+// Syscall tag — `enum(u8)` in spec (sys.zig:218-326). Newtype-over-u8 here so
+// the discriminants match Zig's positional ordinals 1:1 for FFI / cross-lang
+// comparison. PORTING.md §Forbidden flags wrong-discriminants as a logic-bug.
 // ──────────────────────────────────────────────────────────────────────────
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub struct Tag(pub u16);
+pub struct Tag(pub u8);
 pub mod syscall {
     pub use super::Tag;
 }

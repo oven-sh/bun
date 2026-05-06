@@ -73,7 +73,7 @@ pub mod bun_css {
             _src: &[u8],
             _opts: ParserOptions,
             _idx: u32,
-        ) -> Result<(Self, StylesheetExtra), ()> {
+        ) -> core::result::Result<(Self, StylesheetExtra), ()> {
             todo!("b2-blocked: bun_css::BundlerStyleSheet (gated upstream)")
         }
         pub fn minify(
@@ -81,7 +81,7 @@ pub mod bun_css {
             _bump: &bun_alloc::Arena,
             _opts: MinifyOptions,
             _extra: &mut StylesheetExtra,
-        ) -> Result<(), ()> {
+        ) -> core::result::Result<(), ()> {
             todo!("b2-blocked: bun_css shim")
         }
     }

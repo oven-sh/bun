@@ -51,20 +51,91 @@ const SERVER_COMPONENTS_WRAPS_EXPORTS: bool = false;
 // `visit_and_append_stmt` is surfaced. Full draft body preserved under #[cfg(any())] mod _draft below.
 
 impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
+    // SAFETY: `current_scope` is always a valid arena-owned Scope for the parse;
+    // `pushScopeForParsePass`/`popScope` keep it non-dangling.
+    #[inline(always)]
+    fn cur_scope(&self) -> &mut js_ast::Scope {
+        unsafe { &mut *self.current_scope }
+    }
+
     pub fn visit_and_append_stmt(
         &mut self,
         stmts: &mut StmtList<'a>,
         stmt: &mut Stmt,
     ) -> Result<(), Error> {
-        let _ = (stmts, stmt);
-        todo!("b2-ast-E: visit_and_append_stmt body")
+        let p = self;
+        // By default any statement ends the const local prefix
+        let was_after_after_const_local_prefix = p.cur_scope().is_after_const_local_prefix;
+        p.cur_scope().is_after_const_local_prefix = true;
+
+        // Zig: `switch (@as(Stmt.Tag, stmt.data))` with `inline else` reflection over @tagName.
+        // PORT NOTE: reshaped for borrowck — `Stmt::Data` is `Copy` (`StoreRef<T>` is a thin
+        // `NonNull`); take a copy of the enum so the StoreRef payload can be DerefMut'd
+        // without aliasing the `&mut Stmt` we also pass through. The deref'd `&mut S::*`
+        // points into the arena, not into `*stmt`.
+        let data_copy = stmt.data;
+        match data_copy {
+            StmtData::SDirective(_) | StmtData::SComment(_) | StmtData::SEmpty(_) => {
+                p.cur_scope().is_after_const_local_prefix = was_after_after_const_local_prefix;
+                stmts.push(*stmt);
+                Ok(())
+            }
+            StmtData::STypeScript(_) => {
+                p.cur_scope().is_after_const_local_prefix = was_after_after_const_local_prefix;
+                Ok(())
+            }
+            StmtData::SDebugger(_) => {
+                p.cur_scope().is_after_const_local_prefix = was_after_after_const_local_prefix;
+                if p.define.drop_debugger {
+                    return Ok(());
+                }
+                stmts.push(*stmt);
+                Ok(())
+            }
+
+            // Zig: `inline .s_enum, .s_local => |tag| return @field(visitors, @tagName(tag))(p, stmts, stmt, @field(stmt.data, @tagName(tag)), was_after_after_const_local_prefix)`
+            StmtData::SEnum(mut sr) => {
+                Self::s_enum(p, stmts, stmt, &mut *sr, was_after_after_const_local_prefix)
+            }
+            StmtData::SLocal(mut sr) => {
+                Self::s_local(p, stmts, stmt, &mut *sr, was_after_after_const_local_prefix)
+            }
+
+            // Zig: `inline else => |tag| return @field(visitors, @tagName(tag))(p, stmts, stmt, @field(stmt.data, @tagName(tag)))`
+            StmtData::SImport(mut sr) => Self::s_import(p, stmts, stmt, &mut *sr),
+            StmtData::SExportClause(mut sr) => Self::s_export_clause(p, stmts, stmt, &mut *sr),
+            StmtData::SExportFrom(mut sr) => Self::s_export_from(p, stmts, stmt, &mut *sr),
+            StmtData::SExportStar(mut sr) => Self::s_export_star(p, stmts, stmt, &mut *sr),
+            StmtData::SExportDefault(mut sr) => Self::s_export_default(p, stmts, stmt, &mut *sr),
+            StmtData::SFunction(mut sr) => Self::s_function(p, stmts, stmt, &mut *sr),
+            StmtData::SClass(mut sr) => Self::s_class(p, stmts, stmt, &mut *sr),
+            StmtData::SExportEquals(mut sr) => Self::s_export_equals(p, stmts, stmt, &mut *sr),
+            StmtData::SBreak(mut sr) => Self::s_break(p, stmts, stmt, &mut *sr),
+            StmtData::SContinue(mut sr) => Self::s_continue(p, stmts, stmt, &mut *sr),
+            StmtData::SLabel(mut sr) => Self::s_label(p, stmts, stmt, &mut *sr),
+            StmtData::SExpr(mut sr) => Self::s_expr(p, stmts, stmt, &mut *sr),
+            StmtData::SThrow(mut sr) => Self::s_throw(p, stmts, stmt, &mut *sr),
+            StmtData::SReturn(mut sr) => Self::s_return(p, stmts, stmt, &mut *sr),
+            StmtData::SBlock(mut sr) => Self::s_block(p, stmts, stmt, &mut *sr),
+            StmtData::SWith(mut sr) => Self::s_with(p, stmts, stmt, &mut *sr),
+            StmtData::SWhile(mut sr) => Self::s_while(p, stmts, stmt, &mut *sr),
+            StmtData::SDoWhile(mut sr) => Self::s_do_while(p, stmts, stmt, &mut *sr),
+            StmtData::SIf(mut sr) => Self::s_if(p, stmts, stmt, &mut *sr),
+            StmtData::SFor(mut sr) => Self::s_for(p, stmts, stmt, &mut *sr),
+            StmtData::SForIn(mut sr) => Self::s_for_in(p, stmts, stmt, &mut *sr),
+            StmtData::SForOf(mut sr) => Self::s_for_of(p, stmts, stmt, &mut *sr),
+            StmtData::STry(mut sr) => Self::s_try(p, stmts, stmt, &mut *sr),
+            StmtData::SSwitch(mut sr) => Self::s_switch(p, stmts, stmt, &mut *sr),
+            StmtData::SNamespace(mut sr) => Self::s_namespace(p, stmts, stmt, &mut *sr),
+
+            // Only used by the bundler for lazy export ASTs.
+            StmtData::SLazyExport(_) => unreachable!(),
+        }
     }
 
     // ─── visitors ───────────────────────────────────────────────────────────
     // In Zig these live on a nested `const visitors = struct { ... }`; in Rust they are private
-    // associated fns on this impl so they can see the const-generic feature params. Round-G
-    // un-gated s_local/s_import/s_export*/s_function/s_class; remaining s_* and the dispatch
-    // body stay `todo!()` with full draft preserved in `#[cfg(any())] mod _draft` below.
+    // associated fns on this impl so they can see the const-generic feature params.
 
     fn s_import(
         p: &mut Self,
@@ -90,25 +161,19 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         Ok(())
     }
 
-    // ─── heavy visitors (bodies still gated) ────────────────────────────────
-    // blocked_on: P::{inject_replacement_export, module_exports} (#[cfg(any())] in P.rs:5364 impl block);
-    //   visit_decls<const _>() -> usize return shape (visit.rs stub returns ());
-    //   visit_class(loc, &mut Class, Ref) 3-arg form (visit.rs stub is 1-arg);
-    //   visit_func by-value return (visit.rs stub takes &mut, returns ());
-    //   ReplaceableExport::{is_replace, replace} accessors;
-    //   scopeguard borrow-of-p across defer points (needs manual restructure);
-    //   S::ExportClause/ExportFrom *mut [ClauseItem] indexed-write + truncate.
-    //   Full draft bodies preserved verbatim under `#[cfg(any())] mod _draft` below.
-
     fn s_export_equals(
         p: &mut Self,
         stmts: &mut StmtList<'a>,
         stmt: &mut Stmt,
         data: &mut S::ExportEquals,
     ) -> Result<(), Error> {
-        let _ = (p, stmts, stmt, data);
-        todo!("G-round-4: s_export_equals body — blocked on P::module_exports; see _draft");
-        #[allow(unreachable_code)] Ok(())
+        // "module.exports = value"
+        // Zig: p.@"module.exports"(stmt.loc) — mapped to `module_exports`
+        let lhs = p.module_exports(stmt.loc);
+        let rhs = p.visit_expr(data.value);
+        stmts.push(Stmt::assign(lhs, rhs));
+        p.record_usage(p.module_ref);
+        Ok(())
     }
 
     fn s_export_clause(
@@ -117,9 +182,62 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         stmt: &mut Stmt,
         data: &mut S::ExportClause,
     ) -> Result<(), Error> {
-        let _ = (p, stmts, stmt, data);
-        todo!("G-round-4: s_export_clause body — see _draft");
-        #[allow(unreachable_code)] Ok(())
+        // "export {foo}"
+        // SAFETY: arena-owned slice; valid for 'a.
+        let items = unsafe { items_mut::<js_ast::ClauseItem>(data.items) };
+        let items_len = items.len();
+        let mut end: usize = 0;
+        let mut any_replaced = false;
+        if REPLACE_EXPORTS_REAL {
+            // blocked_on: replace_exports is bool placeholder; .count()/.get_ptr() not real.
+            // Full body preserved in `#[cfg(any())] mod _draft::s_export_clause`.
+            todo!("s_export_clause: replace_exports map path");
+        } else {
+            for i in 0..items_len {
+                let name = p.load_name_from_ref(items[i].name.ref_.unwrap());
+                let symbol = p.find_symbol(items[i].alias_loc, name)?;
+                let ref_ = symbol.r#ref;
+
+                if p.symbols[ref_.inner_index() as usize].kind == js_ast::symbol::Kind::Unbound {
+                    // Silently strip exports of non-local symbols in TypeScript, since
+                    // those likely correspond to type-only exports. But report exports of
+                    // non-local symbols as errors in JavaScript.
+                    if !TYPESCRIPT {
+                        let r = js_lexer::range_of_identifier(p.source, items[i].name.loc);
+                        p.log.add_range_error_fmt(
+                            Some(p.source),
+                            r,
+                            format_args!("\"{}\" is not declared in this file", bstr::BStr::new(name)),
+                        )?;
+                        continue;
+                    }
+                    continue;
+                }
+
+                items[i].name.ref_ = Some(ref_);
+                // PORT NOTE: reshaped for borrowck — index loop instead of iter_mut + indexed write
+                items.swap(end, i);
+                items.swap(end, i); // no-op pair: Zig does `items[end] = items[i]` (Copy); ClauseItem
+                                     // isn't Copy in Rust, so emulate via ptr copy below.
+                if end != i {
+                    // SAFETY: both indices < items_len; ClauseItem fields are POD/ptr.
+                    unsafe { core::ptr::copy_nonoverlapping(items.as_ptr().add(i), items.as_mut_ptr().add(end), 1) };
+                }
+                end += 1;
+            }
+        }
+
+        // blocked_on: p.options.tree_shaking field doesn't exist on ParserOptions stub.
+        let remove_for_tree_shaking = any_replaced && end == 0 && items_len > 0;
+        // Truncate `data.items` to `end` by reslicing the raw arena ptr.
+        data.items = core::ptr::slice_from_raw_parts_mut(items.as_mut_ptr(), end);
+
+        if remove_for_tree_shaking {
+            return Ok(());
+        }
+
+        stmts.push(*stmt);
+        Ok(())
     }
 
     fn s_export_from(
@@ -128,9 +246,33 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         stmt: &mut Stmt,
         data: &mut S::ExportFrom,
     ) -> Result<(), Error> {
-        let _ = (p, stmts, stmt, data);
-        todo!("G-round-4: s_export_from body — see _draft");
-        #[allow(unreachable_code)] Ok(())
+        // "export {foo} from 'path'"
+        let name = p.load_name_from_ref(data.namespace_ref);
+
+        data.namespace_ref = p.new_symbol(js_ast::symbol::Kind::Other, name)?;
+        p.cur_scope().generated.append(data.namespace_ref).expect("oom");
+        p.record_declared_symbol(data.namespace_ref);
+
+        // SAFETY: arena-owned slice; valid for 'a.
+        let items = unsafe { items_mut::<js_ast::ClauseItem>(data.items) };
+
+        if REPLACE_EXPORTS_REAL {
+            // blocked_on: replace_exports map type + inject_replacement_export.
+            // Full body (incl. dead `j == 0 && items.len > 0` branch) preserved in _draft.
+            todo!("s_export_from: replace_exports map path");
+        } else {
+            // This is a re-export and the symbols created here are used to reference
+            for item in items.iter_mut() {
+                let _name = p.load_name_from_ref(item.name.ref_.unwrap());
+                let ref_ = p.new_symbol(js_ast::symbol::Kind::Import, _name)?;
+                p.cur_scope().generated.append(ref_).expect("oom");
+                p.record_declared_symbol(ref_);
+                item.name.ref_ = Some(ref_);
+            }
+        }
+
+        stmts.push(*stmt);
+        Ok(())
     }
 
     fn s_export_star(
@@ -139,9 +281,23 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         stmt: &mut Stmt,
         data: &mut S::ExportStar,
     ) -> Result<(), Error> {
-        let _ = (p, stmts, stmt, data);
-        todo!("G-round-4: s_export_star body — see _draft");
-        #[allow(unreachable_code)] Ok(())
+        // "export * from 'path'"
+        let name = p.load_name_from_ref(data.namespace_ref);
+        data.namespace_ref = p.new_symbol(js_ast::symbol::Kind::Other, name)?;
+        p.cur_scope().generated.append(data.namespace_ref).expect("oom");
+        p.record_declared_symbol(data.namespace_ref);
+
+        // "export * as ns from 'path'"
+        if let Some(alias) = &data.alias {
+            if REPLACE_EXPORTS_REAL {
+                // blocked_on: replace_exports map type + inject_replacement_export. See _draft.
+                let _ = unsafe { arena_str(alias.original_name) };
+                todo!("s_export_star: replace_exports map path");
+            }
+        }
+
+        stmts.push(*stmt);
+        Ok(())
     }
 
     fn s_export_default(
@@ -150,9 +306,91 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         stmt: &mut Stmt,
         data: &mut S::ExportDefault,
     ) -> Result<(), Error> {
-        let _ = (p, stmts, stmt, data);
-        todo!("G-round-4: s_export_default body — see _draft");
-        #[allow(unreachable_code)] Ok(())
+        // Zig: defer { if (data.default_name.ref) |ref| p.recordDeclaredSymbol(ref) catch unreachable; }
+        // PORT NOTE: scopeguard can't borrow `p` across the body; restructured to a tail
+        // closure invoked at every return site below.
+        macro_rules! record_on_exit {
+            () => {
+                if let Some(ref_) = data.default_name.ref_ {
+                    p.record_declared_symbol(ref_);
+                }
+            };
+        }
+
+        let mut mark_for_replace: bool = false;
+
+        let orig_dead = p.is_control_flow_dead;
+        if REPLACE_EXPORTS_REAL {
+            // blocked_on: replace_exports.get_ptr(b"default") + ReplaceableExport::is_replace
+            todo!("s_export_default: replace_exports prologue");
+        }
+
+        // Zig: defer { p.is_control_flow_dead = orig_dead; }
+        macro_rules! restore_dead {
+            () => { p.is_control_flow_dead = orig_dead; };
+        }
+
+        // blocked_on: the .stmt branch needs hook_ctx_storage (Option<&'a mut _> can't hold a
+        //   stack local), visit_class 3-arg form, lower_class data flow, server_components.
+        //   Full body preserved verbatim in `#[cfg(any())] mod _draft::s_export_default`.
+        //   Round-H ports the .expr branch only; .stmt re-enters via todo!().
+        match &mut data.value {
+            js_ast::StmtOrExpr::Expr(expr) => {
+                let was_anonymous_named_expr = expr.is_anonymous_named();
+                // blocked_on: Expr::Data::e_class().should_lower_standard_decorators accessor;
+                // decorator_class_name handling deferred (see _draft).
+                *expr = p.visit_expr(*expr);
+
+                if p.is_control_flow_dead {
+                    restore_dead!();
+                    record_on_exit!();
+                    return Ok(());
+                }
+
+                // Optionally preserve the name
+                *expr = p.maybe_keep_expr_symbol_name(
+                    *expr,
+                    js_ast::ClauseItem::DEFAULT_ALIAS,
+                    was_anonymous_named_expr,
+                );
+
+                // Discard type-only export default statements
+                if TYPESCRIPT {
+                    if let js_ast::ExprData::EIdentifier(ident) = expr.data {
+                        if !ident.ref_.is_source_contents_slice() {
+                            let symbol = &p.symbols[ident.ref_.inner_index() as usize];
+                            if symbol.kind == js_ast::symbol::Kind::Unbound {
+                                // blocked_on: p.local_type_names.get(symbol.original_name) —
+                                // StringBoolMap key type vs *const [u8].
+                                // See _draft for the full type-elision branch.
+                            }
+                        }
+                    }
+                }
+
+                if data.default_name.ref_.unwrap().is_source_contents_slice() {
+                    data.default_name = p.create_default_name(stmt.loc).expect("unreachable");
+                }
+
+                // blocked_on: react_fast_refresh temp-var emit (E::Call/E::Arrow accessors,
+                //   G::Decl::List::from_slice arity), server_components.wraps_exports(),
+                //   will_wrap_module_in_try_catch_for_using lowering, mark_for_replace path.
+                //   See _draft for the full tail.
+                let _ = mark_for_replace;
+            }
+
+            js_ast::StmtOrExpr::Stmt(_s2) => {
+                // blocked_on: see comment above. Full SFunction/SClass branches in _draft.
+                restore_dead!();
+                record_on_exit!();
+                todo!("s_export_default: StmtOrExpr::Stmt branch — see _draft");
+            }
+        }
+
+        stmts.push(*stmt);
+        restore_dead!();
+        record_on_exit!();
+        Ok(())
     }
 
     fn s_function(
@@ -161,9 +399,91 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         stmt: &mut Stmt,
         data: &mut S::Function,
     ) -> Result<(), Error> {
-        let _ = (p, stmts, stmt, data);
-        todo!("G-round-4: s_function body — see _draft");
-        #[allow(unreachable_code)] Ok(())
+        // We mark it as dead, but the value may not actually be dead
+        // We just want to be sure to not increment the usage counts for anything in the function
+        // blocked_on: is_export_to_eliminate (#[cfg(any())] P.rs:5030) + replace_exports map.
+        let mark_as_dead = false;
+        let original_is_dead = p.is_control_flow_dead;
+
+        if mark_as_dead {
+            p.is_control_flow_dead = true;
+        }
+
+        // blocked_on: react_refresh.hook_ctx_storage is `Option<&'a mut Option<HookContext>>`;
+        //   a stack-local `react_hook_data` can't satisfy `'a`. Zig stores a raw ptr.
+        //   Hook tracking deferred — see _draft::s_function for save/restore + emission.
+        let mut react_hook_data: Option<crate::parser::HookContext> = None;
+
+        // visit.rs stub takes `&mut G::Fn` (in-place); Zig returns by value.
+        let open_parens_loc = data.func.open_parens_loc;
+        p.visit_func(&mut data.func, open_parens_loc);
+
+        let name_ref = data.func.name.unwrap().ref_.unwrap();
+        debug_assert!(name_ref.is_symbol());
+        let name_symbol = &p.symbols[name_ref.inner_index() as usize];
+        // SAFETY: original_name is arena-owned, valid for 'a.
+        let original_name: &'a [u8] = unsafe { arena_str(name_symbol.original_name) };
+        let remove_overwritten = name_symbol.remove_overwritten_function_declaration;
+
+        // Handle exporting this function from a namespace
+        if data.func.flags.contains(flags::Function::IsExport) && p.enclosing_namespace_arg_ref.is_some() {
+            data.func.flags.remove(flags::Function::IsExport);
+
+            let enclosing_namespace_arg_ref = p.enclosing_namespace_arg_ref.unwrap();
+            stmts.reserve(3);
+            stmts.push(*stmt); // PERF(port): was assume_capacity
+            let func_name = data.func.name.unwrap();
+            stmts.push(Stmt::assign(
+                p.new_expr(
+                    E::Dot {
+                        target: Expr::init_identifier(enclosing_namespace_arg_ref, stmt.loc),
+                        name: as_static(original_name),
+                        name_loc: func_name.loc,
+                        ..Default::default()
+                    },
+                    stmt.loc,
+                ),
+                Expr::init_identifier(func_name.ref_.unwrap(), func_name.loc),
+            )); // PERF(port): was assume_capacity
+        } else if !mark_as_dead {
+            if remove_overwritten {
+                if mark_as_dead { p.is_control_flow_dead = original_is_dead; }
+                return Ok(());
+            }
+
+            if SERVER_COMPONENTS_WRAPS_EXPORTS && data.func.flags.contains(flags::Function::IsExport) {
+                // blocked_on: server_components.wraps_exports() (bool stub) — see _draft.
+                todo!("s_function: server_components.wraps_exports path");
+            } else {
+                stmts.push(*stmt);
+            }
+        } else if mark_as_dead {
+            // blocked_on: replace_exports.get_ptr + inject_replacement_export — see _draft.
+        }
+
+        if p.options.features.react_fast_refresh {
+            if let Some(hook) = react_hook_data.as_mut() {
+                stmts.push(p.get_react_refresh_hook_signal_decl(hook.signature_cb));
+                stmts.push(p.s(
+                    S::SExpr {
+                        value: p.get_react_refresh_hook_signal_init(
+                            hook,
+                            Expr::init_identifier(name_ref, logger::Loc::EMPTY),
+                        ),
+                        ..Default::default()
+                    },
+                    logger::Loc::EMPTY,
+                ));
+            }
+
+            if core::ptr::eq(p.current_scope, p.module_scope) {
+                p.handle_react_refresh_register(stmts, original_name, name_ref, ReactRefreshExportKind::Named)?;
+            }
+        }
+
+        // Zig: defer { if (mark_as_dead) p.is_control_flow_dead = original_is_dead; }
+        if mark_as_dead { p.is_control_flow_dead = original_is_dead; }
+        Ok(())
     }
 
     fn s_class(
@@ -172,9 +492,56 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         stmt: &mut Stmt,
         data: &mut S::Class,
     ) -> Result<(), Error> {
-        let _ = (p, stmts, stmt, data);
-        todo!("G-round-4: s_class body — see _draft");
-        #[allow(unreachable_code)] Ok(())
+        // blocked_on: is_export_to_eliminate + replace_exports map.
+        let mark_as_dead = false;
+        let original_is_dead = p.is_control_flow_dead;
+
+        if mark_as_dead {
+            p.is_control_flow_dead = true;
+        }
+
+        // visit.rs stub is 1-arg; Zig form is `(loc, &mut Class, default_name_ref)`.
+        // TODO(port): pass stmt.loc + Ref::NONE once visit_class grows the full sig.
+        p.visit_class(&mut data.class);
+
+        // Remove the export flag inside a namespace
+        let was_export_inside_namespace = data.is_export && p.enclosing_namespace_arg_ref.is_some();
+        if was_export_inside_namespace {
+            data.is_export = false;
+        }
+
+        let lowered = p.lower_class(js_ast::StmtOrExpr::Stmt(*stmt));
+
+        if !mark_as_dead || was_export_inside_namespace {
+            // Lower class field syntax for browsers that don't support it
+            stmts.extend_from_slice(lowered);
+        } else {
+            // blocked_on: replace_exports.get_ptr + inject_replacement_export — see _draft.
+        }
+
+        // Handle exporting this class from a namespace
+        if was_export_inside_namespace {
+            let class_name = data.class.class_name.unwrap();
+            let class_name_ref = class_name.ref_.unwrap();
+            // SAFETY: original_name is arena-owned, valid for 'a.
+            let original_name = unsafe { arena_str(p.symbols[class_name_ref.inner_index() as usize].original_name) };
+            stmts.push(Stmt::assign(
+                p.new_expr(
+                    E::Dot {
+                        target: Expr::init_identifier(p.enclosing_namespace_arg_ref.unwrap(), stmt.loc),
+                        name: as_static(original_name),
+                        name_loc: class_name.loc,
+                        ..Default::default()
+                    },
+                    stmt.loc,
+                ),
+                Expr::init_identifier(class_name_ref, class_name.loc),
+            ));
+        }
+
+        // Zig: defer { if (mark_as_dead) p.is_control_flow_dead = original_is_dead; }
+        if mark_as_dead { p.is_control_flow_dead = original_is_dead; }
+        Ok(())
     }
 
     fn s_local(
@@ -184,9 +551,188 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         data: &mut S::Local,
         was_after_after_const_local_prefix: bool,
     ) -> Result<(), Error> {
-        let _ = (p, stmts, stmt, data, was_after_after_const_local_prefix);
-        todo!("G-round-4: s_local body — see _draft");
-        #[allow(unreachable_code)] Ok(())
+        // TODO: Silently remove unsupported top-level "await" in dead code branches
+        // (this was from 'await using' syntax)
+
+        // Local statements do not end the const local prefix
+        p.cur_scope().is_after_const_local_prefix = was_after_after_const_local_prefix;
+
+        // blocked_on: visit_decls<const _>() returns () in visit.rs stub; Zig returns the
+        //   surviving decl count. The `is_export && replace_exports` branch is also gated on
+        //   the bool placeholder. Until visit_decls returns usize, decls.len is unchanged.
+        let was_const = data.kind == S::Kind::KConst;
+        if !(data.is_export && REPLACE_EXPORTS_REAL) {
+            p.visit_decls::<false>(&mut data.decls, was_const);
+        } else {
+            p.visit_decls::<true>(&mut data.decls, was_const);
+        }
+        // TODO(port): once visit_decls returns usize, restore `is_now_dead`/`set_len` truncation.
+
+        // Handle being exported inside a namespace
+        if data.is_export && p.enclosing_namespace_arg_ref.is_some() {
+            for d in data.decls.slice() {
+                if let Some(val) = d.value {
+                    p.record_usage(p.enclosing_namespace_arg_ref.unwrap());
+                    // TODO: is it necessary to lowerAssign? why does esbuild do it _most_ of the time?
+                    // blocked_on: Binding2ExprWrapperNamespace is `()` stub (P.rs:578); Binding::to_expr
+                    //   needs a real ToExprWrapper impl. See _draft.
+                    let _ = (&d.binding, val);
+                    todo!("s_local: namespace-export Binding::to_expr path");
+                }
+            }
+
+            return Ok(());
+        }
+
+        // Optimization: Avoid unnecessary "using" machinery by changing ones
+        // initialized to "null" or "undefined" into a normal variable. Note that
+        // "await using" still needs the "await", so we can't do it for those.
+        if p.options.features.minify_syntax && data.kind == S::Kind::KUsing {
+            data.kind = S::Kind::KLet;
+            for d in data.decls.slice() {
+                if let Some(val) = d.value {
+                    if !matches!(val.data, js_ast::ExprData::ENull(_))
+                        && !matches!(val.data, js_ast::ExprData::EUndefined(_))
+                    {
+                        data.kind = S::Kind::KUsing;
+                        break;
+                    }
+                }
+            }
+        }
+
+        // We must relocate vars in order to safely handle removing if/else depending on NODE_ENV.
+        // Edgecase:
+        //  `export var` is skipped because it's unnecessary. That *should* be a noop, but it loses the `is_export` flag if we're in HMR.
+        let kind = p.select_local_kind(data.kind);
+        if kind == S::Kind::KVar && !data.is_export {
+            let relocated = p.maybe_relocate_vars_to_top_level(data.decls.slice(), RelocateVarsMode::Normal);
+            if relocated.ok {
+                if let Some(new_stmt) = relocated.stmt {
+                    stmts.push(new_stmt);
+                }
+
+                return Ok(());
+            }
+        }
+
+        data.kind = kind;
+        stmts.push(*stmt);
+
+        if p.options.features.react_fast_refresh && core::ptr::eq(p.current_scope, p.module_scope) {
+            for decl in data.decls.slice() {
+                'try_register: {
+                    let Some(val) = decl.value else { break 'try_register };
+                    match val.data {
+                        // Assigning a component to a local.
+                        js_ast::ExprData::EArrow(_) | js_ast::ExprData::EFunction(_) => {}
+
+                        // A wrapped component.
+                        js_ast::ExprData::ECall(call) => match call.target.data {
+                            js_ast::ExprData::EIdentifier(id) => {
+                                if id.ref_ != p.react_refresh.latest_signature_ref {
+                                    break 'try_register;
+                                }
+                            }
+                            _ => break 'try_register,
+                        },
+                        _ => break 'try_register,
+                    }
+                    let id = match decl.binding.data {
+                        js_ast::binding::B::BIdentifier(b) => b.r#ref,
+                        _ => break 'try_register,
+                    };
+                    let original_name = unsafe { arena_str(p.symbols[id.inner_index() as usize].original_name) };
+                    p.handle_react_refresh_register(stmts, original_name, id, ReactRefreshExportKind::Named)?;
+                }
+            }
+        }
+
+        if data.is_export && SERVER_COMPONENTS_WRAPS_EXPORTS {
+            // blocked_on: server_components.wraps_exports() (bool stub). See _draft.
+            todo!("s_local: server_components.wraps_exports path");
+        }
+
+        Ok(())
+    }
+
+    // ─── light visitors (bodies still gated) ────────────────────────────────
+    // Full draft bodies preserved verbatim under `#[cfg(any())] mod _draft` below.
+    // blocked_on: push_scope_for_visit_pass/find_label_symbol/SideEffects helpers per-variant;
+    //   un-gate in a follow-up round once those P helpers are real.
+
+    fn s_enum(p: &mut Self, stmts: &mut StmtList<'a>, stmt: &mut Stmt, data: &mut S::Enum, was_after: bool) -> Result<(), Error> {
+        let _ = (p, stmts, stmt, data, was_after);
+        todo!("visitStmt: s_enum body — see _draft")
+    }
+    fn s_break(p: &mut Self, stmts: &mut StmtList<'a>, stmt: &mut Stmt, data: &mut S::Break) -> Result<(), Error> {
+        let _ = (p, stmts, stmt, data);
+        todo!("visitStmt: s_break body — see _draft")
+    }
+    fn s_continue(p: &mut Self, stmts: &mut StmtList<'a>, stmt: &mut Stmt, data: &mut S::Continue) -> Result<(), Error> {
+        let _ = (p, stmts, stmt, data);
+        todo!("visitStmt: s_continue body — see _draft")
+    }
+    fn s_label(p: &mut Self, stmts: &mut StmtList<'a>, stmt: &mut Stmt, data: &mut S::Label) -> Result<(), Error> {
+        let _ = (p, stmts, stmt, data);
+        todo!("visitStmt: s_label body — see _draft")
+    }
+    fn s_expr(p: &mut Self, stmts: &mut StmtList<'a>, stmt: &mut Stmt, data: &mut S::SExpr) -> Result<(), Error> {
+        let _ = (p, stmts, stmt, data);
+        todo!("visitStmt: s_expr body — see _draft")
+    }
+    fn s_throw(p: &mut Self, stmts: &mut StmtList<'a>, stmt: &mut Stmt, data: &mut S::Throw) -> Result<(), Error> {
+        data.value = p.visit_expr(data.value);
+        stmts.push(*stmt);
+        Ok(())
+    }
+    fn s_return(p: &mut Self, stmts: &mut StmtList<'a>, stmt: &mut Stmt, data: &mut S::Return) -> Result<(), Error> {
+        let _ = (p, stmts, stmt, data);
+        todo!("visitStmt: s_return body — see _draft")
+    }
+    fn s_block(p: &mut Self, stmts: &mut StmtList<'a>, stmt: &mut Stmt, data: &mut S::Block) -> Result<(), Error> {
+        let _ = (p, stmts, stmt, data);
+        todo!("visitStmt: s_block body — see _draft")
+    }
+    fn s_with(p: &mut Self, stmts: &mut StmtList<'a>, stmt: &mut Stmt, data: &mut S::With) -> Result<(), Error> {
+        let _ = (p, stmts, stmt, data);
+        todo!("visitStmt: s_with body — see _draft")
+    }
+    fn s_while(p: &mut Self, stmts: &mut StmtList<'a>, stmt: &mut Stmt, data: &mut S::While) -> Result<(), Error> {
+        let _ = (p, stmts, stmt, data);
+        todo!("visitStmt: s_while body — see _draft")
+    }
+    fn s_do_while(p: &mut Self, stmts: &mut StmtList<'a>, stmt: &mut Stmt, data: &mut S::DoWhile) -> Result<(), Error> {
+        let _ = (p, stmts, stmt, data);
+        todo!("visitStmt: s_do_while body — see _draft")
+    }
+    fn s_if(p: &mut Self, stmts: &mut StmtList<'a>, stmt: &mut Stmt, data: &mut S::If) -> Result<(), Error> {
+        let _ = (p, stmts, stmt, data);
+        todo!("visitStmt: s_if body — see _draft")
+    }
+    fn s_for(p: &mut Self, stmts: &mut StmtList<'a>, stmt: &mut Stmt, data: &mut S::For) -> Result<(), Error> {
+        let _ = (p, stmts, stmt, data);
+        todo!("visitStmt: s_for body — see _draft")
+    }
+    fn s_for_in(p: &mut Self, stmts: &mut StmtList<'a>, stmt: &mut Stmt, data: &mut S::ForIn) -> Result<(), Error> {
+        let _ = (p, stmts, stmt, data);
+        todo!("visitStmt: s_for_in body — see _draft")
+    }
+    fn s_for_of(p: &mut Self, stmts: &mut StmtList<'a>, stmt: &mut Stmt, data: &mut S::ForOf) -> Result<(), Error> {
+        let _ = (p, stmts, stmt, data);
+        todo!("visitStmt: s_for_of body — see _draft")
+    }
+    fn s_try(p: &mut Self, stmts: &mut StmtList<'a>, stmt: &mut Stmt, data: &mut S::Try) -> Result<(), Error> {
+        let _ = (p, stmts, stmt, data);
+        todo!("visitStmt: s_try body — see _draft")
+    }
+    fn s_switch(p: &mut Self, stmts: &mut StmtList<'a>, stmt: &mut Stmt, data: &mut S::Switch) -> Result<(), Error> {
+        let _ = (p, stmts, stmt, data);
+        todo!("visitStmt: s_switch body — see _draft")
+    }
+    fn s_namespace(p: &mut Self, stmts: &mut StmtList<'a>, stmt: &mut Stmt, data: &mut S::Namespace) -> Result<(), Error> {
+        let _ = (p, stmts, stmt, data);
+        todo!("visitStmt: s_namespace body — see _draft")
     }
 }
 

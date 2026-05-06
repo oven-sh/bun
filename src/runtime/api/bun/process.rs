@@ -411,8 +411,11 @@ impl Process {
     #[cfg(unix)]
     pub fn wait_posix(&mut self, sync_: bool) {
         let mut rusage = rusage_zeroed();
-        let waitpid_result =
-            posix_spawn::wait4(self.pid, if sync_ { 0 } else { libc::WNOHANG }, Some(&mut rusage));
+        let waitpid_result = posix_spawn::wait4(
+            self.pid,
+            if sync_ { 0 } else { libc::WNOHANG as u32 },
+            Some(&mut rusage),
+        );
         self.on_wait_pid(&waitpid_result, &rusage);
     }
 
@@ -817,22 +820,25 @@ impl Status {
                 if result.pid != pid {
                     return None;
                 }
+                // `posix_spawn::WaitPidResult.status` is `u32` (Zig bitcasts);
+                // libc's W* helpers want `c_int`.
+                let status = result.status as c_int;
 
-                if libc::WIFEXITED(result.status) {
-                    exit_code = Some(libc::WEXITSTATUS(result.status) as u8);
+                if libc::WIFEXITED(status) {
+                    exit_code = Some(libc::WEXITSTATUS(status) as u8);
                     // True if the process terminated due to receipt of a signal.
                 }
 
-                if libc::WIFSIGNALED(result.status) {
-                    signal = Some(libc::WTERMSIG(result.status) as u8);
+                if libc::WIFSIGNALED(status) {
+                    signal = Some(libc::WTERMSIG(status) as u8);
                 }
                 // https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/waitpid.2.html
                 // True if the process has not terminated, but has stopped and can
                 // be restarted.  This macro can be true only if the wait call spec-ified specified
                 // ified the WUNTRACED option or if the child process is being
                 // traced (see ptrace(2)).
-                else if libc::WIFSTOPPED(result.status) {
-                    signal = Some(libc::WSTOPSIG(result.status) as u8);
+                else if libc::WIFSTOPPED(status) {
+                    signal = Some(libc::WSTOPSIG(status) as u8);
                 }
             }
         }
@@ -1035,8 +1041,20 @@ pub mod waiter_thread_posix {
         pub fn set_should_use_waiter_thread() {
             SHOULD_USE_WAITER_THREAD.store(true, Ordering::Relaxed);
         }
-        // TODO(b2-blocked): super::spawn — append/loop_/init/reload_handlers in waiter_thread_posix_body.
+        // TODO(b2-blocked): loop_/init/reload_handlers in waiter_thread_posix_body.
         pub fn reload_handlers() {}
+        /// Enqueue a `Process` for the waiter thread. The full body
+        /// (`waiter_thread_posix_body`) is still gated on
+        /// `bun_threading::UnboundedQueue` + `bun_event_loop::ConcurrentTask`;
+        /// until then `should_use_waiter_thread()` is `false`, so this is
+        /// unreachable on the pidfd path.
+        // TODO(b2-blocked): forward to `waiter_thread_posix_body::append` once un-gated.
+        pub fn append(_process: *mut Process) {
+            debug_assert!(
+                SHOULD_USE_WAITER_THREAD.load(Ordering::Relaxed),
+                "WaiterThread::append called without waiter-thread fallback enabled"
+            );
+        }
     }
 }
 
@@ -1717,13 +1735,8 @@ impl PosixSpawnResult {
 }
 
 impl PosixSpawnResult {
-    // TODO(b2-blocked): Process::init_posix gated above (FilePoll/EventLoopHandle wiring).
-    #[cfg(any())]
-    pub fn to_process(
-        self,
-        event_loop: impl Into<EventLoopHandle>,
-        sync_: bool,
-    ) -> *mut Process {
+    #[cfg(unix)]
+    pub fn to_process(self, event_loop: EventLoopHandle, sync_: bool) -> *mut Process {
         Process::init_posix(self, event_loop, sync_)
     }
 

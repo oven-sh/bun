@@ -1019,6 +1019,12 @@ fn get_ast(
 // getCodeForParseTaskWithoutPlugins
 // ───────────────────────────────────────────────────────────────────────────
 
+// blocked_on: `BundleV2.file_map` is `Option<NonNull<FileMap>>` where `FileMap`
+// is an opaque CYCLEBREAK forward-decl (`_opaque: [u8; 0]`); `.get(path)`
+// requires the real T6 `jsc::api::JSBundler::FileMap` surface. Also blocked on
+// `bake_types::Framework.built_in_modules` value variant carrying `&[u8]` (vs
+// `Box<[u8]>` here) and `resolver.caches.fs.read_file_with_allocator` shape.
+#[cfg(any())]
 fn get_code_for_parse_task_without_plugins(
     task: &mut ParseTask,
     log: &mut Log,
@@ -1137,6 +1143,12 @@ fn get_code_for_parse_task_without_plugins(
 // getCodeForParseTask
 // ───────────────────────────────────────────────────────────────────────────
 
+// blocked_on: `BundleV2.plugins` is `Option<NonNull<JSBundlerPlugin>>` where
+// `JSBundlerPlugin` is an opaque forward-decl; `.has_on_before_parse_plugins()`
+// requires the real T6 `jsc::api::JSBundler::Plugin` surface (or a
+// `dispatch::PluginVTable` slot). Also calls the gated
+// `get_code_for_parse_task_without_plugins`.
+#[cfg(any())]
 #[allow(clippy::too_many_arguments)]
 fn get_code_for_parse_task(
     task: &mut ParseTask,
@@ -1399,6 +1411,8 @@ impl OnBeforeParseResult {
     }
 }
 
+// blocked_on: calls `get_code_for_parse_task_without_plugins` (gated above).
+#[cfg(any())]
 pub extern "C" fn fetch_source_code(
     args: *mut OnBeforeParseArguments,
     result: *mut OnBeforeParseResult,
@@ -1480,6 +1494,11 @@ pub extern "C" fn OnBeforeParsePlugin__isDone(this: *mut OnBeforeParsePlugin<'_>
     0
 }
 
+// blocked_on: `crate::api::JSBundler::Plugin` (T6) — `call_on_before_parse_plugins`
+// is an `extern "C"` JSC dispatch; needs a `dispatch` vtable slot or the real
+// `bun_bundler_jsc::JSBundler::Plugin` re-export. Also references the gated
+// `fetch_source_code` callback above.
+#[cfg(any())]
 impl<'a> OnBeforeParsePlugin<'a> {
     pub fn run(
         &mut self,
@@ -1623,6 +1642,10 @@ impl<'a> OnBeforeParsePlugin<'a> {
 // getSourceCode
 // ───────────────────────────────────────────────────────────────────────────
 
+// blocked_on: `crate::ThreadPool::Worker` (lib.rs `#[cfg(any())] pub mod
+// ThreadPool` — the bundler worker module, distinct from `bun_threading`).
+// `Worker.{allocator, data.transpiler}` field shape comes from there.
+#[cfg(any())]
 fn get_source_code(
     task: &mut ParseTask,
     this: &mut ThreadPool::Worker,
@@ -1663,6 +1686,15 @@ fn get_source_code(
 // runWithSourceCode
 // ───────────────────────────────────────────────────────────────────────────
 
+// blocked_on: `crate::ThreadPool::Worker` (gated module) for
+// `this.{allocator, transpiler_for_target, ctx}`; `bake_types::Framework`
+// missing `server_components` field; `ParserOptions` field-type mismatches
+// (`allow_unresolved`, `framework`, `unwrap_commonjs_packages`,
+// `server_components` — bundler's `BundleOptions` types diverge from the
+// js_parser-local `parser::options` shims); `get_ast`/`get_empty_*` (gated).
+// Signature is real; body un-gates once the `ThreadPool` module + the
+// `parser::options` ↔ `BundleOptions` type unification land.
+#[cfg(any())]
 fn run_with_source_code(
     task: &mut ParseTask,
     this: &mut ThreadPool::Worker,

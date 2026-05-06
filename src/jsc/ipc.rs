@@ -1357,8 +1357,11 @@ impl SendQueue {
 
     /// starts a write request. on posix, this always calls _onWriteComplete immediately. on windows, it may
     /// call _onWriteComplete later.
-    fn _write(&mut self, data: &[u8], fd: Option<Fd>) {
-        log!("SendQueue#_write len {}", data.len());
+    ///
+    /// The outbound bytes are read from `self.queue[0]` *inside* this method so
+    /// the caller never passes a slice that borrows `self` into a `&mut self`
+    /// receiver (which would violate Stacked Borrows).
+    fn _write(&mut self, fd: Option<Fd>) {
         if self.get_socket().is_none() {
             self._on_write_complete(-1);
             return;
@@ -1370,42 +1373,49 @@ impl SendQueue {
                 // TODO: send fd on windows
             }
             let pipe: *mut uv::Pipe = socket;
-            let write_len = data.len().min(i32::MAX as usize);
+
+            // Copy the outbound bytes into an owned buffer while only holding a
+            // shared borrow of `self.queue`; all `&mut self` mutation happens
+            // after this block ends.
+            let write_req_slice: Box<[u8]> = {
+                let first = &self.queue[0];
+                let data = &first.data.list[first.data.cursor..];
+                log!("SendQueue#_write len {}", data.len());
+                let write_len = data.len().min(i32::MAX as usize);
+                Box::from(&data[0..write_len])
+            };
 
             // create write request
-            let write_req_slice: Box<[u8]> = Box::from(&data[0..write_len]);
-            let write_req = Box::new(WindowsWrite {
+            let mut write_req = Box::new(WindowsWrite {
                 owner: Some(self as *mut SendQueue),
                 write_slice: write_req_slice,
                 // SAFETY: all-zero is a valid uv_write_t (C struct, initialized by uv_write).
                 write_req: unsafe { core::mem::zeroed() },
                 write_buffer: uv::uv_buf_t::init(b""), // re-init below after slice address is stable
             });
-            // TODO(port): lifetime — Zig stores raw ptr; Box ownership here conflicts with
-            // libuv reclaiming via _windowsOnWriteComplete. Phase B: into_raw / from_raw.
+            write_req.write_buffer = uv::uv_buf_t::init(&write_req.write_slice);
+            // Hand ownership to libuv; reclaimed exactly once by
+            // `_windows_on_write_complete` via `WindowsWrite::destroy`.
+            let write_req: *mut WindowsWrite = Box::into_raw(write_req);
             debug_assert!(self.windows.windows_write.is_none());
             self.windows.windows_write = Some(write_req);
-            let write_req: &mut WindowsWrite =
-                self.windows.windows_write.as_mut().unwrap().as_mut();
-            write_req.write_buffer = uv::uv_buf_t::init(&write_req.write_slice);
 
             // SAFETY: pipe is live (socket == .open).
             unsafe { (*pipe).ref_() }; // ref on write
+            // SAFETY: `write_req` is a freshly-leaked Box; libuv owns it until
+            // the write callback fires.
             let result = unsafe {
-                write_req.write_req.write(
+                (*write_req).write_req.write(
                     (*pipe).as_stream(),
-                    &mut write_req.write_buffer,
-                    write_req as *mut WindowsWrite,
+                    &mut (*write_req).write_buffer,
+                    write_req,
                     Self::_windows_on_write_complete,
                 )
             };
             if let Some(err) = result.as_err() {
-                // SAFETY: err.errno is a valid uv errno.
                 Self::_windows_on_write_complete(
-                    write_req as *mut WindowsWrite,
-                    unsafe {
-                        core::mem::transmute::<c_int, uv::ReturnCode>(-(err.errno as c_int))
-                    },
+                    write_req,
+                    uv::ReturnCode::from_raw(-(err.errno as c_int)),
                 );
             }
             // write request is queued. it will call _onWriteComplete when it completes.
@@ -1413,37 +1423,52 @@ impl SendQueue {
         #[cfg(not(windows))]
         {
             let socket = *self.get_socket().unwrap();
-            if let Some(fd_unwrapped) = fd {
-                // `NewSocketHandler` doesn't expose `write_fd`; reach the
-                // underlying `us_socket_t` directly via the C symbol the
-                // SCM_RIGHTS path uses (`us_socket_ipc_write_fd`).
-                unsafe extern "C" {
-                    fn us_socket_ipc_write_fd(
-                        s: *mut bun_uws::us_socket_t,
-                        data: *const u8,
-                        length: i32,
-                        fd: i32,
-                    ) -> i32;
-                }
-                let n = match socket.socket {
-                    bun_uws::InternalSocket::Connected(s) => {
-                        // SAFETY: `s` is a live us_socket_t (socket == .open
-                        // checked above); data is a valid slice for the call.
-                        unsafe {
-                            us_socket_ipc_write_fd(
-                                s,
-                                data.as_ptr(),
-                                i32::try_from(data.len()).unwrap_or(i32::MAX),
-                                fd_unwrapped.native(),
-                            )
-                        }
+            // Compute the write result while only holding a *shared* borrow of
+            // `self.queue[0]`; `_on_write_complete` (which may pop the queue)
+            // runs after that borrow has ended.
+            let n: i32 = {
+                let first = &self.queue[0];
+                let data = &first.data.list[first.data.cursor..];
+                log!("SendQueue#_write len {}", data.len());
+                if let Some(fd_unwrapped) = fd {
+                    // `NewSocketHandler` doesn't expose `write_fd`; reach the
+                    // underlying `us_socket_t` directly via the C symbol the
+                    // SCM_RIGHTS path uses (`us_socket_ipc_write_fd`).
+                    unsafe extern "C" {
+                        fn us_socket_ipc_write_fd(
+                            s: *mut bun_uws::us_socket_t,
+                            data: *const u8,
+                            length: i32,
+                            fd: i32,
+                        ) -> i32;
                     }
-                    _ => -1,
-                };
-                self._on_write_complete(n);
-            } else {
-                self._on_write_complete(socket.write(data));
-            }
+                    match socket.socket {
+                        bun_uws::InternalSocket::Connected(s) => {
+                            // SAFETY: `s` is a live us_socket_t (socket == .open
+                            // checked above); data is a valid slice for the call.
+                            unsafe {
+                                us_socket_ipc_write_fd(
+                                    s,
+                                    data.as_ptr(),
+                                    i32::try_from(data.len()).unwrap_or(i32::MAX),
+                                    fd_unwrapped.native(),
+                                )
+                            }
+                        }
+                        // Mirror Zig `socket.writeFd`: duplex/pipe fall back to
+                        // a plain write (the fd is silently dropped); connecting
+                        // /detached report 0 bytes written so the queue waits
+                        // for writable instead of hard-closing the channel.
+                        bun_uws::InternalSocket::UpgradedDuplex(_)
+                        | bun_uws::InternalSocket::Pipe => socket.write(data),
+                        bun_uws::InternalSocket::Connecting(_)
+                        | bun_uws::InternalSocket::Detached => 0,
+                    }
+                } else {
+                    socket.write(data)
+                }
+            };
+            self._on_write_complete(n);
         }
     }
 

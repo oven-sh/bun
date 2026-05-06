@@ -1567,9 +1567,10 @@ impl RealFS {
                 DirnameStore::instance().append(dir_maybe_trail_slash)?
             }
         } else {
-            // TODO(port): lifetime — when handle was provided, `dir` retains caller's slice
-            // SAFETY: caller guarantees the slice outlives the cache entry (matches Zig)
-            unsafe { core::mem::transmute::<&[u8], &'static [u8]>(dir) }
+            // PORT NOTE: Zig stored the caller-provided slice directly (no lifetime system).
+            // Intern into DirnameStore so the cache entry never dangles — `append` is a
+            // bump-pointer copy and dedups against the singleton, so cost is bounded.
+            DirnameStore::instance().append(dir)?
         };
 
         // Cache miss: read the directory entries
@@ -1592,26 +1593,39 @@ impl RealFS {
         };
 
         if FeatureFlags::ENABLE_ENTRY_CACHE {
-            let entries_ptr: *mut DirEntry = match in_place {
-                Some(p) => {
-                    // SAFETY: see above
-                    unsafe { (*p).data.clear() };
-                    p
-                }
-                None => Box::into_raw(Box::new(DirEntry::init(dir, generation))),
-                // PORT NOTE: Zig used bun.default_allocator.create(DirEntry); EntriesOption owns Box<DirEntry>
-            };
             if store_fd && !entries.fd.is_valid() {
                 entries.fd = handle.fd();
             }
 
-            // SAFETY: entries_ptr is either in_place (BSSMap-owned) or fresh Box
-            unsafe { *entries_ptr = entries };
-            // SAFETY: entries_ptr ownership transferred into the BSSMap via EntriesOption
-            let result = EntriesOption::Entries(unsafe { Box::from_raw(entries_ptr) });
-            // TODO(port): when in_place is Some, this Box::from_raw aliases the BSSMap-owned slot — Phase B must reshape
-
-            let out = self.entries.put(cache_result.as_mut().unwrap(), result)?;
+            // PORT NOTE: Zig stores `EntriesOption{ .entries: *DirEntry }` (raw pointer), so
+            // `put` is a plain pointer overwrite with no drop glue. In Rust the slot owns a
+            // `Box<DirEntry>`; calling `put` again on an already-populated slot would drop the
+            // old Box (use-after-free if `in_place` aliases it) or leak it. Split the two cases:
+            //  - in_place Some → write through the existing pointer, return the existing slot.
+            //  - in_place None → fresh Box::new, hand it to `put`.
+            let out = match in_place {
+                Some(p) => {
+                    // SAFETY: `p` points at the `DirEntry` inside the `Box<DirEntry>` already
+                    // owned by `self.entries` at `cache_result.index`; no other borrow exists
+                    // (entries_mutex held). Clearing the stale map then assigning the freshly
+                    // built entries struct in place — no drop of the owning Box.
+                    unsafe {
+                        (*p).data.clear();
+                        *p = entries;
+                    }
+                    let idx = cache_result.as_ref().unwrap().index;
+                    self.entries
+                        .at_index(idx)
+                        .expect("in_place entry must exist in BSSMap")
+                }
+                None => {
+                    // PORT NOTE: Zig used bun.default_allocator.create(DirEntry); EntriesOption owns Box<DirEntry>
+                    let mut boxed = Box::new(DirEntry::init(dir, generation));
+                    *boxed = entries;
+                    let result = EntriesOption::Entries(boxed);
+                    self.entries.put(cache_result.as_mut().unwrap(), result)?
+                }
+            };
 
             if should_close_handle {
                 handle.close();
@@ -1632,13 +1646,13 @@ impl RealFS {
 
     fn read_file_error(&self, _: &[u8], _: bun_core::Error) {}
 
-    pub fn read_file_with_handle<const USE_SHARED_BUFFER: bool, const STREAM: bool>(
+    pub fn read_file_with_handle<'p, const USE_SHARED_BUFFER: bool, const STREAM: bool>(
         &mut self,
-        path: &[u8],
+        path: &'p [u8],
         size_: Option<usize>,
         file: bun_sys::File,
         shared_buffer: &mut MutableString,
-    ) -> Result<PathContentsPair, bun_core::Error> {
+    ) -> Result<PathContentsPair<'p>, bun_core::Error> {
         self.read_file_with_handle_and_allocator::<USE_SHARED_BUFFER, STREAM>(
             path,
             size_,
@@ -1647,13 +1661,13 @@ impl RealFS {
         )
     }
 
-    pub fn read_file_with_handle_and_allocator<const USE_SHARED_BUFFER: bool, const STREAM: bool>(
+    pub fn read_file_with_handle_and_allocator<'p, const USE_SHARED_BUFFER: bool, const STREAM: bool>(
         &mut self,
-        path: &[u8],
+        path: &'p [u8],
         size_hint: Option<usize>,
         std_file: bun_sys::File,
         shared_buffer: &mut MutableString,
-    ) -> Result<PathContentsPair, bun_core::Error> {
+    ) -> Result<PathContentsPair<'p>, bun_core::Error> {
         // PORT NOTE: allocator param dropped (global mimalloc)
         FileSystem::set_max_fd(std_file.handle().native());
         let file = std_file;
@@ -1691,9 +1705,9 @@ impl RealFS {
             if size == 0 {
                 if USE_SHARED_BUFFER {
                     shared_buffer.reset();
-                    return Ok(PathContentsPair { path: Path::init(path), contents: b"" });
+                    return Ok(PathContentsPair { path: Path::init(path), contents: Cow::Borrowed(b"") });
                 } else {
-                    return Ok(PathContentsPair { path: Path::init(path), contents: b"" });
+                    return Ok(PathContentsPair { path: Path::init(path), contents: Cow::Borrowed(b"") });
                 }
             }
 
@@ -2094,9 +2108,13 @@ pub type Implementation = RealFS;
 
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct PathContentsPair {
-    pub path: Path,
-    pub contents: &'static [u8], // TODO(port): lifetime — borrows shared_buffer or leaked alloc
+pub struct PathContentsPair<'a> {
+    pub path: Path<'a>,
+    /// `Owned` for the heap-allocated branch (caller frees on drop); `Borrowed`
+    /// for the shared-buffer branch (points into the caller's `MutableString`,
+    /// which the caller contractually keeps alive — see PORT NOTE in
+    /// `read_file_with_handle_and_allocator`).
+    pub contents: Cow<'static, [u8]>,
 }
 
 pub struct NodeJSPathName {

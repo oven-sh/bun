@@ -2598,59 +2598,15 @@ impl VirtualMachine {
         new: &mut bool,
         input_: &[u8],
         hash_: Option<u32>,
-    ) -> *mut crate::ref_string::RefString {
+    ) -> *mut c_void {
         jsc::mark_binding(core::panic::Location::caller());
         debug_assert!(!input_.is_empty());
-        let hash = hash_.unwrap_or_else(|| crate::ref_string::RefString::compute_hash(input_));
-        self.ref_strings_mutex.lock();
-        // PORT NOTE: Zig `defer unlock()`.
-        let entry = self.ref_strings.entry(hash);
-        use std::collections::hash_map::Entry;
-        let result = match entry {
-            Entry::Occupied(e) => {
-                *new = false;
-                *e.get()
-            }
-            Entry::Vacant(v) => {
-                let (ptr, len) = if DUPE {
-                    let dup: Box<[u8]> = input_.to_vec().into_boxed_slice();
-                    let len = dup.len();
-                    (Box::into_raw(dup) as *const u8, len)
-                } else {
-                    (input_.as_ptr(), input_.len())
-                };
-                let ref_ = Box::into_raw(Box::new(crate::ref_string::RefString {
-                    ptr,
-                    len,
-                    hash,
-                    // SAFETY: `ptr[..len]` is valid (just allocated or borrowed).
-                    impl_: bun_string::String::create_external::<crate::ref_string::RefString>(
-                        unsafe { core::slice::from_raw_parts(ptr, len) },
-                        true,
-                        core::ptr::null_mut(), // patched two lines down
-                        free_ref_string,
-                    )
-                    .value
-                    .wtf_string_impl(),
-                    ctx: NonNull::new((self as *mut VirtualMachine).cast()),
-                    on_before_deinit: Some(
-                        // SAFETY: matching `Callback` signature.
-                        VirtualMachine::clear_ref_string as crate::ref_string::Callback,
-                    ),
-                }));
-                // PORT NOTE: Zig passed `ref` into `createExternal` before
-                // assigning to `ref.*` (it had the address from
-                // `allocator.create`); Rust can't take `&*Box` before
-                // construction, so patch the external-string ctx now.
-                // TODO(port): `String::create_external` should accept ctx
-                // post-hoc, or use `Box::new_uninit` + `addr_of_mut!`.
-                v.insert(ref_);
-                *new = true;
-                ref_
-            }
-        };
-        self.ref_strings_mutex.unlock();
-        result
+        // TODO(b2-cycle): `crate::ref_string::{RefString, Callback}` are gated
+        // (RefString.rs not yet un-gated in lib.rs). Full body — hash lookup,
+        // `String::create_external`, map insert — restored once available.
+        let _ = (new, input_, hash_, DUPE);
+        let _ = &self.ref_strings_mutex;
+        todo!("blocked_on: crate::ref_string::RefString")
     }
 
     /// Spec VirtualMachine.zig:1650 `refCountedString`.
@@ -2658,7 +2614,7 @@ impl VirtualMachine {
         &mut self,
         input_: &[u8],
         hash_: Option<u32>,
-    ) -> *mut crate::ref_string::RefString {
+    ) -> *mut c_void {
         debug_assert!(!input_.is_empty());
         let mut was_new = false;
         self.ref_counted_string_with_was_new::<DUPE>(&mut was_new, input_, hash_)
@@ -2687,7 +2643,9 @@ impl VirtualMachine {
         let referrer_clone = referrer.to_utf8();
 
         let mut virtual_source_to_use: Option<logger::Source> = None;
-        let mut blob_to_deinit: Option<crate::webcore::Blob> = None;
+        // TODO(b2-cycle): real type is `bun_runtime::webcore::Blob`; `bun_bundler`
+        // models it as `OpaqueBlob = *mut ()` to break the dep cycle.
+        let mut blob_to_deinit: Option<bun_bundler::options::OpaqueBlob> = None;
         let lr = bun_bundler::options::get_loader_and_virtual_source(
             specifier_clone.slice(),
             jsc_vm,

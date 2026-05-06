@@ -531,7 +531,13 @@ pub mod codegen {
                 let p = unsafe { $from_js_direct(v) };
                 if p.is_null() { None } else { Some(p as *mut $payload) }
             }
-            // Backs `JSValue::as_::<$payload>()` (Zig: `value.as(T)`).
+        };
+        // Variant that also emits `impl JsClass` (Zig: `value.as(T)`). Some
+        // payload types already provide their own `impl JsClass` (e.g. the
+        // Connection types), so the impl is opt-in via this trailing marker
+        // rather than unconditional.
+        ($payload:ty, $create:ident, $from_js:ident, $from_js_direct:ident, impl_js_class) => {
+            js_class_fns!($payload, $create, $from_js, $from_js_direct);
             impl crate::jsc::JsClass for $payload {
                 fn from_js(v: JSValue) -> Option<*mut Self> { from_js(v) }
             }
@@ -576,7 +582,8 @@ pub mod codegen {
         js_class_fns!(crate::postgres::PostgresSQLQuery,
             PostgresSQLQuery__create,
             PostgresSQLQuery__fromJS,
-            PostgresSQLQuery__fromJSDirect);
+            PostgresSQLQuery__fromJSDirect,
+            impl_js_class);
     }
 
     pub mod js_mysql_connection {

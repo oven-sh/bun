@@ -312,9 +312,21 @@ pub struct NewSocket<const SSL: bool> {
     pub this_value: JSValue,
     pub poll_ref: KeepAlive,
     pub flags: SocketFlags,
+    /// SNI server name for client connect (owned, NUL-free bytes).
+    pub server_name: Option<Box<[u8]>>,
 }
 pub type TCPSocket = NewSocket<false>;
 pub type TLSSocket = NewSocket<true>;
+
+impl<const SSL: bool> NewSocket<SSL> {
+    /// True for sockets accepted by a `Listener` or duplex-upgraded to TLS server role.
+    #[inline]
+    pub fn is_server(&self) -> bool {
+        // SAFETY: `handlers` is set at construction and never null while the
+        // socket is reachable from JS (mark_active/mark_inactive contract).
+        unsafe { (*self.handlers).mode.is_server() }
+    }
+}
 
 bitflags::bitflags! {
     #[derive(Copy, Clone)]

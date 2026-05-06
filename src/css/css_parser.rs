@@ -2589,7 +2589,8 @@ impl<AtRule> StyleSheet<AtRule> {
         };
         let mut local_properties = LocalPropertyUsage::default();
 
-        let mut input = ParserInput::new(code);
+        let arena = Bump::new();
+        let mut input = ParserInput::new(code, &arena);
         let mut parser = Parser::new(
             &mut input,
             import_records,
@@ -2821,7 +2822,8 @@ impl StyleAttribute {
             symbols: SymbolList::default(),
             source_index,
         };
-        let mut input = ParserInput::new(code);
+        let arena = Bump::new();
+        let mut input = ParserInput::new(code, &arena);
         let mut parser = Parser::new(
             &mut input,
             Some(import_records),
@@ -3841,30 +3843,21 @@ impl Delimiters {
 pub struct ParserInput<'a> {
     pub tokenizer: Tokenizer<'a>,
     pub cached_token: Option<CachedToken>,
-    /// Owns the arena when no external `&'a Bump` was supplied, so it drops
-    /// with the parser instead of leaking. `tokenizer.allocator` borrows the
-    /// heap-stable `Bump` inside this `Box`. Declared last so it drops after
-    /// the borrow in `tokenizer`.
-    // TODO(port): remove once `&'bump Bump` is threaded from callers; see
-    // `Tokenizer::init_with_allocator`.
-    owned_arena: Option<Box<Bump>>,
 }
 
 impl<'a> ParserInput<'a> {
-    pub fn new(code: &'a [u8]) -> ParserInput<'a> {
-        let arena = Box::new(Bump::new());
-        // SAFETY: `arena` is boxed so its heap address is stable across moves
-        // of `ParserInput`. The resulting `&'a Bump` is stored only in
-        // `tokenizer.allocator` inside this same struct and is dropped before
-        // `owned_arena` (field order). No API hands out a `&'a Bump` that can
-        // outlive the `ParserInput` — `Parser<'a>` borrows `&'a mut
-        // ParserInput<'a>`, so the input outlives every `Parser` user. This
-        // replaces the former per-thread `Box::leak` (PORTING.md §Forbidden).
-        let arena_ref: &'a Bump = unsafe { &*(&*arena as *const Bump) };
+    /// Create a `ParserInput` borrowing `code` and an arena for unescaped
+    /// strings. Matches Zig `ParserInput.new` (css_parser.zig:4549) which
+    /// takes an `Allocator` parameter — the caller owns the arena and it must
+    /// outlive every `Token` produced from this input.
+    ///
+    /// PORTING.md §Forbidden: do not fabricate `&'a Bump` from a boxed field
+    /// via raw-pointer cast; the previous self-referential `owned_arena` hack
+    /// was removed. Callers now pass `&'a Bump` explicitly.
+    pub fn new(code: &'a [u8], allocator: &'a Bump) -> ParserInput<'a> {
         ParserInput {
-            tokenizer: Tokenizer::init_with_allocator(code, arena_ref),
+            tokenizer: Tokenizer::init_with_allocator(code, allocator),
             cached_token: None,
-            owned_arena: Some(arena),
         }
     }
 }
@@ -4052,7 +4045,8 @@ pub mod nth {
     }
 
     fn parse_number_saturate(string: &[u8]) -> Maybe<i32, ()> {
-        let mut input = ParserInput::new(string);
+        let arena = Bump::new();
+        let mut input = ParserInput::new(string, &arena);
         let mut parser = Parser::new(&mut input, None, ParserOpts::default(), None);
         let tok = match parser.next_including_whitespace_and_comments() {
             Ok(v) => v,
@@ -6131,7 +6125,8 @@ pub mod parse_utility {
     ) -> CssResult<T> {
         // I hope this is okay
         let mut import_records = BabyList::<ImportRecord>::default();
-        let mut i = ParserInput::new(input);
+        let arena = Bump::new();
+        let mut i = ParserInput::new(input, &arena);
         let mut parser = Parser::new(&mut i, Some(&mut import_records), ParserOpts::default(), None);
         let result = parse_one(&mut parser)?;
         parser.expect_exhausted()?;

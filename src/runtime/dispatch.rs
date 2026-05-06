@@ -28,6 +28,10 @@ use bun_event_loop::ManagedTask::ManagedTask;
 
 use bun_aio::posix_event_loop::{poll_tag, FilePoll, Flags as PollFlag, ON_POLL_DISPATCH};
 
+use bun_event_loop::EventLoopTimer::{
+    EventLoopTimer, Tag as EventLoopTimerTag, Timespec as ElTimespec, FIRE_TIMER,
+};
+
 // ════════════════════════════════════════════════════════════════════════════
 // Task dispatch (src/jsc/Task.zig `tickQueueWithCount` switch)
 // ════════════════════════════════════════════════════════════════════════════
@@ -397,6 +401,103 @@ unsafe fn run_wtf_timer_hook(
     }
     let _ = (real, vm);
     todo!("dispatch: WTFTimer::run")
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// EventLoopTimer dispatch (src/event_loop/EventLoopTimer.zig `fire` switch)
+// ════════════════════════════════════════════════════════════════════════════
+
+/// `FIRE_TIMER` body — the tag→`@fieldParentPtr` match for
+/// [`EventLoopTimer::fire`]. Spec EventLoopTimer.zig:170-223.
+///
+/// Reached from [`crate::timer::All::drain_timers`] (every due heap timer) and
+/// [`crate::timer::All::get_timeout`] (WTFTimer side-effect). Without this hook
+/// registered, the low-tier `fire()` transmutes a null fn-ptr in release
+/// builds (debug-asserts in debug) — i.e. `setTimeout`/`setInterval` callbacks
+/// never fire.
+///
+/// Arms whose container type is still `#[cfg(any())]`-gated in this crate are
+/// `todo!("dispatch: …")` placeholders so the table stays exhaustive against
+/// `EventLoopTimerTag`; un-gating a type means swapping its arm body in-place.
+///
+/// # Safety
+/// `t` points at a live [`EventLoopTimer`] just popped from `All.timers`;
+/// `now` is the snapshot taken by `All::next`; `vm` is the erased
+/// `*mut VirtualMachine`. The handler may free the container — do not touch
+/// `t` after the per-arm call returns.
+unsafe fn fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, vm: *mut ()) {
+    // SAFETY: per fn contract — `t` is live for the dispatch read.
+    let tag = unsafe { (*t).tag };
+    let _ = (now, vm);
+    match tag {
+        // ── JS-exposed timers (TimerObjectInternals::fire) ───────────────
+        EventLoopTimerTag::TimeoutObject | EventLoopTimerTag::ImmediateObject => {
+            // TODO(b2-blocked): `crate::timer::TimerObjectInternals::fire` is
+            // in the gated `TimerObjectInternals.rs` Phase-A draft.
+            todo!("dispatch: TimerObjectInternals::fire")
+        }
+        EventLoopTimerTag::TimerCallback => {
+            // TODO(b2-blocked): `bun_event_loop::TimerCallback` — `container.callback(container)`.
+            todo!("dispatch: TimerCallback")
+        }
+        EventLoopTimerTag::WTFTimer => {
+            // TODO(b2-blocked): `crate::timer::WTFTimer::fire` — gated draft.
+            todo!("dispatch: WTFTimer::fire")
+        }
+        EventLoopTimerTag::AbortSignalTimeout => {
+            // TODO(b2-blocked): `bun_jsc::abort_signal::Timeout::run` — gated module.
+            todo!("dispatch: AbortSignal.Timeout::run")
+        }
+        EventLoopTimerTag::DateHeaderTimer => {
+            // TODO(b2-blocked): `crate::timer::DateHeaderTimer::run` — gated draft.
+            todo!("dispatch: DateHeaderTimer::run")
+        }
+        EventLoopTimerTag::EventLoopDelayMonitor => {
+            // TODO(b2-blocked): `crate::timer::EventLoopDelayMonitor::on_fire` — gated draft.
+            todo!("dispatch: EventLoopDelayMonitor::on_fire")
+        }
+        EventLoopTimerTag::StatWatcherScheduler => todo!("dispatch: StatWatcherScheduler::timerCallback"),
+        EventLoopTimerTag::UpgradedDuplex => todo!("dispatch: UpgradedDuplex::onTimeout"),
+        EventLoopTimerTag::DNSResolver => todo!("dispatch: DNSResolver::checkTimeouts"),
+        EventLoopTimerTag::WindowsNamedPipe => {
+            #[cfg(windows)]
+            todo!("dispatch: WindowsNamedPipe::onTimeout");
+            #[cfg(not(windows))]
+            {
+                // Spec: `UnreachableTimer` on non-Windows.
+                if cfg!(debug_assertions) {
+                    unreachable!("WindowsNamedPipe timer on non-Windows");
+                }
+            }
+        }
+        EventLoopTimerTag::PostgresSQLConnectionTimeout => {
+            todo!("dispatch: PostgresSQLConnection::onConnectionTimeout")
+        }
+        EventLoopTimerTag::PostgresSQLConnectionMaxLifetime => {
+            todo!("dispatch: PostgresSQLConnection::onMaxLifetimeTimeout")
+        }
+        EventLoopTimerTag::MySQLConnectionTimeout => {
+            todo!("dispatch: MySQLConnection::onConnectionTimeout")
+        }
+        EventLoopTimerTag::MySQLConnectionMaxLifetime => {
+            todo!("dispatch: MySQLConnection::onMaxLifetimeTimeout")
+        }
+        EventLoopTimerTag::ValkeyConnectionTimeout => {
+            todo!("dispatch: Valkey::onConnectionTimeout")
+        }
+        EventLoopTimerTag::ValkeyConnectionReconnect => {
+            todo!("dispatch: Valkey::onReconnectTimer")
+        }
+        EventLoopTimerTag::SubprocessTimeout => todo!("dispatch: Subprocess::timeoutCallback"),
+        EventLoopTimerTag::DevServerSweepSourceMaps => {
+            todo!("dispatch: DevServer.SourceMapStore::sweepWeakRefs")
+        }
+        EventLoopTimerTag::DevServerMemoryVisualizerTick => {
+            todo!("dispatch: DevServer::emitMemoryVisualizerMessageTimer")
+        }
+        EventLoopTimerTag::BunTest => todo!("dispatch: BunTest::bunTestTimeoutCallback"),
+        EventLoopTimerTag::CronJob => todo!("dispatch: CronJob::onTimerFire"),
+    }
 }
 
 /// Wire the high-tier dispatchers into the low-tier hooks. Called once from

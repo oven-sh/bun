@@ -2,10 +2,12 @@
 //! client engine and the live-session registry. Never freed — the engine
 //! lives for the process, same as the HTTP thread itself.
 
+use core::ffi::{c_uint, c_void};
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
 use bun_uws::quic;
+use bun_uws::quic::context::ConnectResult;
 use bun_uws::Loop as UwsLoop;
 
 use super::callbacks;
@@ -13,14 +15,12 @@ use super::client_session::ClientSession;
 use super::pending_connect::PendingConnect;
 use super::stream::Stream;
 use crate::h3_client as H3;
-// TODO(port): `const HTTPClient = bun.http;` — Zig file-as-struct; in Rust the
-// top-level client struct lives at the crate root. Adjust path in Phase B.
-use crate::HttpClient;
+use crate::HTTPClient;
 
 bun_core::declare_scope!(h3_client, hidden);
 
 pub struct ClientContext {
-    // TODO(port): lifetime — FFI handle owned for process lifetime (never freed).
+    // FFI handle owned for process lifetime (never freed).
     qctx: NonNull<quic::Context>,
     sessions: Vec<*mut ClientSession>,
 }
@@ -41,20 +41,24 @@ impl ClientContext {
         unsafe { INSTANCE.map(|p| &mut *p.as_ptr()) }
     }
 
-    pub fn get_or_create(loop_: &mut UwsLoop) -> Option<&'static mut ClientContext> {
+    pub fn get_or_create(loop_: *mut UwsLoop) -> Option<&'static mut ClientContext> {
         // SAFETY: single-threaded access (HTTP thread only).
         if let Some(i) = unsafe { INSTANCE } {
             // SAFETY: INSTANCE points to a leaked Box that lives for the process.
             return Some(unsafe { &mut *i.as_ptr() });
         }
         LSQUIC_INIT_ONCE.call_once(|| quic::global_init());
+        // SAFETY: caller passes the live HTTP-thread uws loop.
         let qctx = quic::Context::create_client(
-            loop_,
+            unsafe { &mut *loop_ },
             0,
-            core::mem::size_of::<*mut ClientSession>(),
-            core::mem::size_of::<*mut Stream>(),
+            core::mem::size_of::<*mut ClientSession>() as c_uint,
+            core::mem::size_of::<*mut Stream>() as c_uint,
         )?;
-        callbacks::register(qctx);
+        // SAFETY: create_client returns non-null on Some.
+        let qctx = unsafe { NonNull::new_unchecked(qctx) };
+        // SAFETY: qctx is a fresh live us_quic_socket_context_t.
+        callbacks::register(unsafe { &mut *qctx.as_ptr() });
 
         let self_ = Box::leak(Box::new(ClientContext {
             qctx,
@@ -68,7 +72,7 @@ impl ClientContext {
     }
 
     /// Find or open a connection to `hostname:port` and queue `client` on it.
-    pub fn connect(&mut self, client: &mut HttpClient, hostname: &[u8], port: u16) -> bool {
+    pub fn connect(&mut self, client: &mut HTTPClient, hostname: &[u8], port: u16) -> bool {
         let reject = client.flags.reject_unauthorized;
         for &s in self.sessions.iter() {
             // SAFETY: sessions vec holds live ClientSession pointers; removed via unregister() before destroy.
@@ -78,24 +82,20 @@ impl ClientContext {
                     h3_client,
                     "reuse session {}:{}",
                     bstr::BStr::new(hostname),
-                    port
+                    port,
                 );
                 s.enqueue(client);
                 return true;
             }
         }
 
-        // TODO(port): ownership — host_z is moved into ClientSession.hostname; ZStr::from_bytes
-        // must yield an owned NUL-terminated buffer here (Zig was allocator.dupeZ).
-        let host_z = bun_string::ZStr::from_bytes(hostname);
-        let session = ClientSession::new(ClientSession {
-            qsocket: None,
-            hostname: host_z,
-            port,
-            reject_unauthorized: reject,
-            ..Default::default()
-        });
-        let _ = H3::live_sessions().fetch_add(1, Ordering::Relaxed);
+        // Zig: `dupeZ` — owned NUL-terminated buffer. We keep the hostname (no NUL)
+        // in the session and build a CString for the FFI call.
+        let Ok(host_z) = std::ffi::CString::new(hostname) else {
+            return false;
+        };
+        let session = ClientSession::new(hostname.to_vec(), port, reject);
+        let _ = H3::live_sessions.fetch_add(1, Ordering::Relaxed);
         // SAFETY: session was just allocated by ClientSession::new and is live.
         unsafe {
             (*session).registry_index = u32::try_from(self.sessions.len()).unwrap();
@@ -105,43 +105,45 @@ impl ClientContext {
         unsafe { (*session).enqueue(client) };
 
         // SAFETY: qctx is the process-lifetime lsquic client engine.
-        match unsafe {
-            (*self.qctx.as_ptr()).connect(host_z.as_ptr(), port, host_z.as_ptr(), reject, session)
-        } {
-            quic::ConnectResult::Socket(qs) => {
+        let result = unsafe {
+            (*self.qctx.as_ptr()).connect(&host_z, port, &host_z, reject, session.cast::<c_void>())
+        };
+        match result {
+            ConnectResult::Socket(qs) => {
                 // SAFETY: session is live; qs is a fresh quic socket whose ext slot
                 // was sized to hold a *mut ClientSession in get_or_create().
                 unsafe {
-                    (*session).qsocket = Some(qs);
-                    *qs.ext::<*mut ClientSession>() = session;
+                    (*session).qsocket = NonNull::new(qs);
+                    *(*qs).ext::<ClientSession>() = NonNull::new(session);
                 }
                 bun_core::scoped_log!(
                     h3_client,
                     "connect {}:{} (sync)",
                     bstr::BStr::new(hostname),
-                    port
+                    port,
                 );
             }
-            quic::ConnectResult::Pending(pending) => {
+            ConnectResult::Pending(pending) => {
                 bun_core::scoped_log!(
                     h3_client,
                     "connect {}:{} (dns pending)",
                     bstr::BStr::new(hostname),
-                    port
+                    port,
                 );
                 // SAFETY: qctx is live for the process.
-                PendingConnect::register(session, pending, unsafe { (*self.qctx.as_ptr()).loop_() });
+                let l = unsafe { (*self.qctx.as_ptr()).r#loop() };
+                PendingConnect::register(session, pending, l as *mut UwsLoop);
             }
-            quic::ConnectResult::Err => {
+            ConnectResult::Err => {
                 bun_core::scoped_log!(
                     h3_client,
                     "connect {}:{} failed",
                     bstr::BStr::new(hostname),
-                    port
+                    port,
                 );
                 // SAFETY: session was just allocated above and is live.
                 self.unregister(unsafe { &mut *session });
-                PendingConnect::fail_session(session, bun_core::err!("ConnectionRefused"));
+                PendingConnect::fail_session(session, bun_core::err!(ConnectionRefused));
                 return false;
             }
         }
@@ -189,6 +191,8 @@ impl ClientContext {
 // PORT STATUS
 //   source:     src/http/h3_client/ClientContext.zig (117 lines)
 //   confidence: medium
-//   todos:      3
-//   notes:      mutable global INSTANCE uses static mut (HTTP-thread-only); quic::ConnectResult enum & ZStr owned-dupeZ shape assumed; ClientSession registry storage stays raw *mut (FFI ext-slot back-ref), fn params take &mut
+//   todos:      0
+//   notes:      mutable global INSTANCE uses static mut (HTTP-thread-only);
+//               ConnectResult payloads are raw *mut per FFI; ClientSession
+//               registry storage stays raw *mut (FFI ext-slot back-ref).
 // ──────────────────────────────────────────────────────────────────────────

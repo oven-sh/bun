@@ -1,74 +1,73 @@
-use bun_css as css;
-use bun_css::css_rules::Location;
-use bun_css::css_values::ident::{CustomIdent, CustomIdentFns};
-use bun_css::media_query::{self, Operator, QueryConditionFlags, QueryFeature};
-use bun_css::targets::Features;
-use bun_css::{MediaFeatureType, Parser, ParserOptions, PrintErr, Printer, Property, PropertyId, Result, Targets};
-use bun_str::strings;
+use crate as css;
+use crate::css_rules::{CssRuleList, Location};
+use crate::css_values::ident::CustomIdent;
+use crate::media_query::{MediaFeatureType, Operator, QueryFeature};
+use crate::properties::Property;
+use crate::{PrintErr, Printer};
 
-#[derive(Clone)]
+/// A [`<container-name>`](https://drafts.csswg.org/css-contain-3/#typedef-container-name).
 pub struct ContainerName {
     pub v: CustomIdent,
 }
 
+// ─── ContainerName behavior ───────────────────────────────────────────────
+// blocked_on: CustomIdentFns::{parse,to_css}, Parser::new_unexpected_token_error,
+// bun_str::strings exact ASCII-eq fn name, DeepClone.
+#[cfg(any())]
 impl ContainerName {
-    pub fn parse(input: &mut Parser) -> Result<ContainerName> {
+    pub fn parse(input: &mut css::Parser) -> css::Result<ContainerName> {
+        use crate::css_values::ident::CustomIdentFns;
+        use bun_str::strings;
         let ident = match CustomIdentFns::parse(input) {
-            Result::Ok(vv) => vv,
-            Result::Err(e) => return Result::Err(e),
+            Ok(vv) => vv,
+            Err(e) => return Err(e),
         };
 
         // todo_stuff.match_ignore_ascii_case;
-        // TODO(port): verify exact snake_case name of eqlCaseInsensitiveASCIIICheckLength in bun_str
-        if strings::eql_case_insensitive_ascii_icheck_length(b"none", ident.v)
-            || strings::eql_case_insensitive_ascii_icheck_length(b"and", ident.v)
-            || strings::eql_case_insensitive_ascii_icheck_length(b"not", ident.v)
-            || strings::eql_case_insensitive_ascii_icheck_length(b"or", ident.v)
+        if strings::eql_case_insensitive_ascii_check_length(b"none", ident.v)
+            || strings::eql_case_insensitive_ascii_check_length(b"and", ident.v)
+            || strings::eql_case_insensitive_ascii_check_length(b"not", ident.v)
+            || strings::eql_case_insensitive_ascii_check_length(b"or", ident.v)
         {
-            return Result::Err(input.new_unexpected_token_error(css::Token::Ident(ident.v)));
+            return Err(input.new_unexpected_token_error(css::Token::Ident(ident.v)));
         }
 
-        Result::Ok(ContainerName { v: ident })
+        Ok(ContainerName { v: ident })
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+        use crate::css_values::ident::CustomIdentFns;
         CustomIdentFns::to_css(&self.v, dest)
     }
 
-    pub fn deep_clone(&self) -> Self {
-        // PERF(port): was css.implementDeepClone (comptime field-walk) — derive Clone covers it
-        self.clone()
+    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+        // PERF(port): was css.implementDeepClone (comptime field-walk).
+        css::implement_deep_clone(self, bump)
     }
 }
 
 pub use ContainerName as ContainerNameFns;
 pub type ContainerSizeFeature = QueryFeature<ContainerSizeFeatureId>;
 
-#[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ContainerSizeFeatureId {
     /// The [width](https://w3c.github.io/csswg-drafts/css-contain-3/#width) size container feature.
-    #[strum(serialize = "width")]
     Width,
     /// The [height](https://w3c.github.io/csswg-drafts/css-contain-3/#height) size container feature.
-    #[strum(serialize = "height")]
     Height,
     /// The [inline-size](https://w3c.github.io/csswg-drafts/css-contain-3/#inline-size) size container feature.
-    #[strum(serialize = "inline-size")]
     InlineSize,
     /// The [block-size](https://w3c.github.io/csswg-drafts/css-contain-3/#block-size) size container feature.
-    #[strum(serialize = "block-size")]
     BlockSize,
     /// The [aspect-ratio](https://w3c.github.io/csswg-drafts/css-contain-3/#aspect-ratio) size container feature.
-    #[strum(serialize = "aspect-ratio")]
     AspectRatio,
     /// The [orientation](https://w3c.github.io/csswg-drafts/css-contain-3/#orientation) size container feature.
-    #[strum(serialize = "orientation")]
     Orientation,
 }
 
 impl ContainerSizeFeatureId {
     // Zig: pub const valueType = css.DeriveValueType(@This(), ValueTypeMap).valueType;
-    // TODO(port): DeriveValueType is comptime reflection over ValueTypeMap; expanded inline here.
+    // PORT NOTE: DeriveValueType is comptime reflection over ValueTypeMap; expanded inline.
     pub fn value_type(&self) -> MediaFeatureType {
         match self {
             Self::Width => MediaFeatureType::Length,
@@ -79,12 +78,16 @@ impl ContainerSizeFeatureId {
             Self::Orientation => MediaFeatureType::Ident,
         }
     }
+}
 
+// blocked_on: css::enum_property_util EnumProperty derive bounds.
+#[cfg(any())]
+impl ContainerSizeFeatureId {
     pub fn as_str(&self) -> &'static [u8] {
         css::enum_property_util::as_str(self)
     }
 
-    pub fn parse(input: &mut Parser) -> Result<Self> {
+    pub fn parse(input: &mut css::Parser) -> css::Result<Self> {
         css::enum_property_util::parse::<Self>(input)
     }
 
@@ -99,7 +102,6 @@ impl ContainerSizeFeatureId {
 }
 
 /// Represents a style query within a container condition.
-#[derive(Clone)]
 pub enum StyleQuery {
     /// A style feature, implicitly parenthesized.
     Feature(Property),
@@ -112,18 +114,24 @@ pub enum StyleQuery {
         /// The operator for the conditions.
         operator: Operator,
         /// The conditions for the operator.
-        // PERF(port): was ArrayListUnmanaged fed input.allocator() (parser arena); css is an AST crate —
-        // Phase B decides bumpalo::collections::Vec<'bump, _> vs global Vec for the whole css crate.
+        // PERF(port): was ArrayListUnmanaged fed input.allocator() (parser arena);
+        // Phase B decides bumpalo::collections::Vec<'bump, _> vs global Vec crate-wide.
         conditions: Vec<StyleQuery>,
     },
 }
 
+// ─── StyleQuery behavior ──────────────────────────────────────────────────
+// blocked_on: Property::{to_css,parse}, PropertyId::parse,
+// media_query::{to_css_with_parens_if_needed,operation_to_css},
+// css::parse_important, ParserOptions::default allocator, DeepClone.
+#[cfg(any())]
 impl StyleQuery {
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+        use crate::media_query;
         match self {
             StyleQuery::Feature(f) => f.to_css(dest, false),
             StyleQuery::Not(c) => {
-                dest.write_str(b"not ")?;
+                dest.write_str("not ")?;
                 media_query::to_css_with_parens_if_needed(
                     &**c,
                     dest,
@@ -136,23 +144,23 @@ impl StyleQuery {
         }
     }
 
-    pub fn parse_feature(input: &mut Parser) -> Result<StyleQuery> {
-        let property_id = match PropertyId::parse(input) {
-            Result::Ok(vv) => vv,
-            Result::Err(e) => return Result::Err(e),
+    pub fn parse_feature(input: &mut css::Parser) -> css::Result<StyleQuery> {
+        let property_id = match css::PropertyId::parse(input) {
+            Ok(vv) => vv,
+            Err(e) => return Err(e),
         };
         if let Some(e) = input.expect_colon().as_err() {
-            return Result::Err(e);
+            return Err(e);
         }
         input.skip_whitespace();
         // TODO(port): css is an AST crate — thread &Bump from input.allocator() into ParserOptions::default (Zig passed (input.allocator(), null))
-        let opts = ParserOptions::default();
+        let opts = css::ParserOptions::default();
         let feature = StyleQuery::Feature(match Property::parse(property_id, input, &opts) {
-            Result::Ok(vv) => vv,
-            Result::Err(e) => return Result::Err(e),
+            Ok(vv) => vv,
+            Err(e) => return Err(e),
         });
         let _ = input.try_parse(css::parse_important);
-        Result::Ok(feature)
+        Ok(feature)
     }
 
     pub fn create_negation(condition: Box<StyleQuery>) -> StyleQuery {
@@ -163,7 +171,7 @@ impl StyleQuery {
         StyleQuery::Operation { operator, conditions }
     }
 
-    pub fn needs_parens(&self, parent_operator: Option<Operator>, _targets: &Targets) -> bool {
+    pub fn needs_parens(&self, parent_operator: Option<Operator>, _targets: &css::Targets) -> bool {
         match self {
             StyleQuery::Not(_) => true,
             StyleQuery::Operation { operator, .. } => Some(*operator) == parent_operator,
@@ -171,17 +179,16 @@ impl StyleQuery {
         }
     }
 
-    pub fn parse_style_query(input: &mut Parser) -> Result<Self> {
-        Result::Err(input.new_error_for_next_token())
+    pub fn parse_style_query(input: &mut css::Parser) -> css::Result<Self> {
+        Err(input.new_error_for_next_token())
     }
 
-    pub fn deep_clone(&self) -> Self {
-        // PERF(port): was css.implementDeepClone (comptime field-walk) — derive Clone covers it
-        self.clone()
+    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+        // PERF(port): was css.implementDeepClone (comptime field-walk).
+        css::implement_deep_clone(self, bump)
     }
 }
 
-#[derive(Clone)]
 pub enum ContainerCondition {
     /// A size container feature, implicitly parenthesized.
     Feature(ContainerSizeFeature),
@@ -192,31 +199,35 @@ pub enum ContainerCondition {
         /// The operator for the conditions.
         operator: Operator,
         /// The conditions for the operator.
-        // PERF(port): was ArrayListUnmanaged fed input.allocator() (parser arena); css is an AST crate —
-        // Phase B decides bumpalo::collections::Vec<'bump, _> vs global Vec for the whole css crate.
+        // PERF(port): was ArrayListUnmanaged fed input.allocator() (parser arena);
+        // Phase B decides bumpalo::collections::Vec<'bump, _> vs global Vec crate-wide.
         conditions: Vec<ContainerCondition>,
     },
     /// A style query.
     Style(StyleQuery),
 }
 
+// ─── ContainerCondition behavior ──────────────────────────────────────────
+// blocked_on: media_query::{parse_query_condition,QueryConditionFlags constructors,
+// to_css_with_parens_if_needed,operation_to_css}, QueryFeature::{parse,to_css,
+// needs_parens}, Parser::{try_parse,parse_nested_block}, StyleQuery behavior,
+// DeepClone.
+#[cfg(any())]
 impl ContainerCondition {
-    pub fn parse(input: &mut Parser) -> Result<ContainerCondition> {
+    pub fn parse(input: &mut css::Parser) -> css::Result<ContainerCondition> {
+        use crate::media_query::{self, QueryConditionFlags};
         media_query::parse_query_condition::<ContainerCondition>(
             input,
-            QueryConditionFlags {
-                allow_or: true,
-                allow_style: true,
-                ..QueryConditionFlags::default()
-            },
+            QueryConditionFlags::ALLOW_OR | QueryConditionFlags::ALLOW_STYLE,
         )
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+        use crate::media_query;
         match self {
             ContainerCondition::Feature(f) => f.to_css(dest),
             ContainerCondition::Not(c) => {
-                dest.write_str(b"not ")?;
+                dest.write_str("not ")?;
                 media_query::to_css_with_parens_if_needed(
                     &**c,
                     dest,
@@ -227,19 +238,19 @@ impl ContainerCondition {
                 media_query::operation_to_css::<ContainerCondition>(*operator, conditions, dest)
             }
             ContainerCondition::Style(query) => {
-                dest.write_str(b"style(")?;
+                dest.write_str("style(")?;
                 query.to_css(dest)?;
                 dest.write_char(b')')
             }
         }
     }
 
-    pub fn parse_feature(input: &mut Parser) -> Result<ContainerCondition> {
+    pub fn parse_feature(input: &mut css::Parser) -> css::Result<ContainerCondition> {
         let feature = match QueryFeature::<ContainerSizeFeatureId>::parse(input) {
-            Result::Ok(vv) => vv,
-            Result::Err(e) => return Result::Err(e),
+            Ok(vv) => vv,
+            Err(e) => return Err(e),
         };
-        Result::Ok(ContainerCondition::Feature(feature))
+        Ok(ContainerCondition::Feature(feature))
     }
 
     pub fn create_negation(condition: Box<ContainerCondition>) -> ContainerCondition {
@@ -250,38 +261,34 @@ impl ContainerCondition {
         ContainerCondition::Operation { operator, conditions }
     }
 
-    pub fn parse_style_query(input: &mut Parser) -> Result<ContainerCondition> {
+    pub fn parse_style_query(input: &mut css::Parser) -> css::Result<ContainerCondition> {
+        use crate::media_query::{self, QueryConditionFlags};
         // Zig defined a local `Fns` struct with two callbacks; in Rust we pass closures.
-        fn adapted_parse_query_condition(i: &mut Parser, flags: QueryConditionFlags) -> Result<StyleQuery> {
+        fn adapted_parse_query_condition(
+            i: &mut css::Parser,
+            flags: QueryConditionFlags,
+        ) -> css::Result<StyleQuery> {
             media_query::parse_query_condition::<StyleQuery>(i, flags)
         }
 
-        fn parse_nested_block_fn(_: (), i: &mut Parser) -> Result<ContainerCondition> {
+        fn parse_nested_block_fn(_: (), i: &mut css::Parser) -> css::Result<ContainerCondition> {
             if let Some(res) = i
-                .try_parse(|i| {
-                    adapted_parse_query_condition(
-                        i,
-                        QueryConditionFlags {
-                            allow_or: true,
-                            ..QueryConditionFlags::default()
-                        },
-                    )
-                })
+                .try_parse(|i| adapted_parse_query_condition(i, QueryConditionFlags::ALLOW_OR))
                 .as_value()
             {
-                return Result::Ok(ContainerCondition::Style(res));
+                return Ok(ContainerCondition::Style(res));
             }
 
-            Result::Ok(ContainerCondition::Style(match StyleQuery::parse_feature(i) {
-                Result::Ok(vv) => vv,
-                Result::Err(e) => return Result::Err(e),
+            Ok(ContainerCondition::Style(match StyleQuery::parse_feature(i) {
+                Ok(vv) => vv,
+                Err(e) => return Err(e),
             }))
         }
 
         input.parse_nested_block::<ContainerCondition, ()>((), parse_nested_block_fn)
     }
 
-    pub fn needs_parens(&self, parent_operator: Option<Operator>, targets: &Targets) -> bool {
+    pub fn needs_parens(&self, parent_operator: Option<Operator>, targets: &css::Targets) -> bool {
         match self {
             ContainerCondition::Not(_) => true,
             ContainerCondition::Operation { operator, .. } => Some(*operator) == parent_operator,
@@ -290,31 +297,34 @@ impl ContainerCondition {
         }
     }
 
-    pub fn deep_clone(&self) -> Self {
-        // PERF(port): was css.implementDeepClone (comptime field-walk) — derive Clone covers it
-        self.clone()
+    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+        // PERF(port): was css.implementDeepClone (comptime field-walk).
+        css::implement_deep_clone(self, bump)
     }
 }
 
 /// A [@container](https://drafts.csswg.org/css-contain-3/#container-rule) rule.
-#[derive(Clone)]
 pub struct ContainerRule<R> {
     /// The name of the container.
     pub name: Option<ContainerName>,
     /// The container condition.
     pub condition: ContainerCondition,
     /// The rules within the `@container` rule.
-    pub rules: css::CssRuleList<R>,
+    pub rules: CssRuleList<R>,
     /// The location of the rule in the source file.
     pub loc: Location,
 }
 
+// ─── ContainerRule behavior ───────────────────────────────────────────────
+// blocked_on: ContainerName::to_css, ContainerCondition::to_css,
+// CssRuleList::to_css, Printer.targets, css::Features, DeepClone.
+#[cfg(any())]
 impl<R> ContainerRule<R> {
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
 
-        dest.write_str(b"@container ")?;
+        dest.write_str("@container ")?;
         if let Some(name) = &self.name {
             name.to_css(dest)?;
             dest.write_char(b' ')?;
@@ -323,7 +333,7 @@ impl<R> ContainerRule<R> {
         // Don't downlevel range syntax in container queries.
         let exclude = dest.targets.exclude;
         // Zig: bun.bits.insert(css.targets.Features, &dest.targets.exclude, .media_queries);
-        dest.targets.exclude.insert(Features::MEDIA_QUERIES);
+        dest.targets.exclude.insert(css::Features::MEDIA_QUERIES);
         self.condition.to_css(dest)?;
         dest.targets.exclude = exclude;
 
@@ -337,12 +347,9 @@ impl<R> ContainerRule<R> {
         dest.write_char(b'}')
     }
 
-    pub fn deep_clone(&self) -> Self
-    where
-        R: Clone,
-    {
-        // PERF(port): was css.implementDeepClone (comptime field-walk) — derive Clone covers it
-        self.clone()
+    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+        // PERF(port): was css.implementDeepClone (comptime field-walk).
+        css::implement_deep_clone(self, bump)
     }
 }
 
@@ -351,5 +358,5 @@ impl<R> ContainerRule<R> {
 //   source:     src/css/rules/container.zig (350 lines)
 //   confidence: medium
 //   todos:      3
-//   notes:      css::Result treated as enum w/ Ok/Err arms; Vec<T> kept over bumpalo Vec (PERF-tagged) — Phase B picks arena vs global for whole css crate (TSV uses Box<T> for `not`); enum_property_util/DeriveValueType comptime reflection inlined or proxied — Phase B must wire trait bounds.
+//   notes:      structs/enums un-gated (data-only); Vec<T> kept over bumpalo Vec (PERF-tagged) — Phase B picks arena vs global crate-wide; parse/to_css/deep_clone gated on media_query parse_query_condition/operation_to_css + Property/PropertyId behavior + enum_property_util/FeatureIdTrait derive + CssRuleList::to_css + DeepClone
 // ──────────────────────────────────────────────────────────────────────────

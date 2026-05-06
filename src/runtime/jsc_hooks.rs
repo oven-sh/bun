@@ -223,10 +223,15 @@ unsafe fn generate_entry_point(
 /// # Safety
 /// `vm` is the live per-thread VM.
 unsafe fn load_preloads(_vm: *mut VirtualMachine) -> *mut JSInternalPromise {
-    // TODO(b2-cycle): port of `VirtualMachine.loadPreloads` — needs
-    // `ModuleLoader.loadAndEvaluate` + `bun_resolver` for each `vm.preload`
-    // entry. The low tier already short-circuits on `vm.preload.is_empty()`.
-    ptr::null_mut()
+    // Spec VirtualMachine.zig:2204-2280: set `is_in_preload = true`, resolve
+    // each `vm.preload` entry via `transpiler.resolver.resolveAndAutoInstall`,
+    // `JSModuleLoader.import` it, `wait_for_promise`, return the first rejected
+    // promise, then clear `vm.preload`. The low tier already short-circuits on
+    // `vm.preload.is_empty()`, so reaching here means there ARE preloads to
+    // run — returning `null_mut()` would silently skip them (PORTING.md
+    // §Forbidden: silent-no-op). Fail loudly until `transpiler.resolver`
+    // un-gates.
+    todo!("jsc_hooks: load_preloads")
 }
 
 /// `ensureDebugger(block_until_connected)` — no-op when no debugger.

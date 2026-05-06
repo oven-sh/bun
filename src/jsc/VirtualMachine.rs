@@ -728,12 +728,33 @@ impl VirtualMachine {
         unsafe { t.result.assume_init() }
     }
 
+    #[cold]
     pub fn run_error_handler(&mut self, result: JSValue, exception_list: Option<&mut ExceptionList>) {
-        let _ = (result, exception_list);
-        // TODO(b2-cycle): full impl walks ZigException + ConsoleObject formatter
-        // (gated siblings). Spec `runErrorHandler` (VirtualMachine.zig:2156-2180)
-        // does NOT touch `unhandled_error_counter` — that is bumped only by
-        // `unhandledRejection`/`uncaughtException`. No side-effect here.
+        // Spec VirtualMachine.zig:2156-2189: save/restore `had_errors` around
+        // the print, then route the value through `printException` /
+        // `printErrorlikeObject` (ConsoleObject formatter). The save/restore
+        // has no higher-tier dep, so it lives here unconditionally.
+        let prev_had_errors = self.had_errors;
+        self.had_errors = false;
+
+        // The actual print path needs `ConsoleObject::Formatter` +
+        // `ZigException` (high tier). Dispatch through `RuntimeHooks` —
+        // mirroring `auto_tick`/`ensure_debugger` — so the error is actually
+        // emitted to stderr before callers hard-exit. With no hook installed
+        // (low-tier unit tests), fail loudly: PORTING.md §Forbidden bans a
+        // silent no-op here since the .zig has real, observable logic.
+        if let Some(hooks) = runtime_hooks() {
+            // SAFETY: hook contract — `self` is the live per-thread VM;
+            // `exception_list` (if any) borrows caller stack for this call.
+            unsafe { (hooks.print_exception)(self, result, exception_list) };
+        } else {
+            let _ = (result, exception_list);
+            todo!("b2-cycle: run_error_handler needs ConsoleObject formatter via RuntimeHooks");
+        }
+
+        // PORT NOTE: Zig `defer this.had_errors = prev_had_errors;` — the hook
+        // does not unwind across the dispatch boundary, so restore linearly.
+        self.had_errors = prev_had_errors;
     }
 
     pub fn load_macro_entry_point(
@@ -790,9 +811,6 @@ impl VirtualMachine {
             panic!("made it past Bun__Process__exit");
         }
         self.is_handling_uncaught_exception = true;
-        // PORT NOTE: Zig `defer this.is_handling_uncaught_exception = false;` —
-        // the only thing between set and reset is the FFI call below, which
-        // does not unwind across the C boundary. Reset immediately after.
         // SAFETY: extern "C" FFI; `global_object` is the live VM global.
         let handled = unsafe {
             Bun__handleUncaughtException(
@@ -801,13 +819,22 @@ impl VirtualMachine {
                 if is_rejection { 1 } else { 0 },
             )
         } > 0;
-        self.is_handling_uncaught_exception = false;
         if !handled {
             // TODO maybe we want a separate code path for uncaught exceptions
             self.unhandled_error_counter += 1;
             self.exit_handler.exit_code = 1;
             (self.on_unhandled_rejection)(self, global_object, err);
         }
+        // PORT NOTE: Zig `defer this.is_handling_uncaught_exception = false;`
+        // (VirtualMachine.zig:707) covers BOTH the FFI call and the
+        // `onUnhandledRejection` callback above. The flag must stay raised
+        // while that callback runs so a re-entrant `uncaught_exception` from
+        // a user handler trips the recursion guard and hard-exits with code 7
+        // instead of recursing. Neither the FFI call nor the fn-pointer
+        // callback unwind past this frame (re-entry hits `Bun__Process__exit`
+        // → `panic!`, which never returns), so a linear reset here matches
+        // the Zig `defer` scope.
+        self.is_handling_uncaught_exception = false;
         handled
     }
 
@@ -987,6 +1014,13 @@ pub struct RuntimeHooks {
     /// `eventLoop().autoTick()` — needs `Timer::All` for the timeout calc.
     /// Hoisted here so `event_loop.rs` doesn't need its own hook table.
     pub auto_tick: unsafe fn(vm: *mut VirtualMachine),
+    /// `printException` / `printErrorlikeObject` — formats `value` (or its
+    /// wrapped `JSC::Exception`) to stderr via `ConsoleObject::Formatter`.
+    /// Spec `runErrorHandler` body (VirtualMachine.zig:2164-2188). High tier
+    /// owns the formatter; low tier dispatches here from
+    /// [`VirtualMachine::run_error_handler`].
+    pub print_exception:
+        unsafe fn(vm: *mut VirtualMachine, value: JSValue, exception_list: Option<&mut ExceptionList>),
 }
 
 static RUNTIME_HOOKS: core::sync::atomic::AtomicPtr<RuntimeHooks> =

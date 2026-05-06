@@ -156,10 +156,16 @@ impl ByteBlobLoader {
         debug_assert!(buffer.as_ptr() != temporary.as_ptr());
         buffer[..temporary.len()].copy_from_slice(temporary);
         if self.remain == 0 {
-            return streams::Result::IntoArrayAndDone { value: array, len: copied };
+            return streams::Result::IntoArrayAndDone(streams::IntoArray {
+                value: array,
+                len: copied as u32,
+            });
         }
 
-        streams::Result::IntoArray { value: array, len: copied }
+        streams::Result::IntoArray(streams::IntoArray {
+            value: array,
+            len: copied as u32,
+        })
     }
 
     pub fn to_any_blob(&mut self, global: &JSGlobalObject) -> Option<blob::Any> {

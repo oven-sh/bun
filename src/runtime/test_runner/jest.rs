@@ -469,7 +469,8 @@ pub mod Jest {
     pub fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let vm = global_object.bun_vm();
 
-        if vm.is_in_preload || runner().is_none() {
+        // SAFETY: bun_vm() returns the live per-thread VM; deref for a single field read.
+        if unsafe { (*vm).is_in_preload } || runner().is_none() {
             // in preload, no arguments needed
         } else {
             let arguments = callframe.arguments_old::<2>().slice();

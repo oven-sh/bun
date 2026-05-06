@@ -206,6 +206,45 @@ impl SysErrorAsyncJsc for bun_sys::Error {
     }
 }
 
+/// JS-thread `EventLoopCtx` for `KeepAlive::ref_`/`unref`. Zig passed
+/// `*jsc.VirtualMachine` directly; the Rust `bun_aio::KeepAlive` API now takes
+/// the type-erased `EventLoopCtx`. All async-FS tasks always run against the
+/// JS event loop (never the Mini loop), so the global Js ctx is correct.
+#[inline]
+fn js_event_loop_ctx() -> bun_aio::EventLoopCtx {
+    bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js)
+}
+
+/// `WorkPoolTask` (aka `bun_threading::thread_pool::Task`) does not derive
+/// `Default` (its `callback` field has no sensible default). Build one with
+/// the intrusive `node` zeroed and the supplied callback. Mirrors Zig's
+/// `.{ .callback = ... }` struct init where unset fields default.
+#[inline]
+fn work_pool_task(callback: unsafe fn(*mut WorkPoolTask)) -> WorkPoolTask {
+    WorkPoolTask {
+        node: bun_threading::thread_pool::Node::default(),
+        callback,
+    }
+}
+
+/// Local extension over the opaque `bun_jsc::AbortSignal` stub: the real
+/// `reason_if_aborted` lives in the gated `AbortSignal.rs` module. Until that
+/// un-gates, return `None` so the abort-signal fast path is a no-op (matches
+/// behaviour when `HAVE_ABORT_SIGNAL` is false).
+pub(super) trait AbortSignalFsExt {
+    fn reason_if_aborted_js(&self, global: &JSGlobalObject) -> Option<JSValue>;
+}
+impl AbortSignalFsExt for AbortSignal {
+    #[inline]
+    fn reason_if_aborted_js(&self, _global: &JSGlobalObject) -> Option<JSValue> {
+        // TODO(b2-blocked): blocked_on bun_jsc::AbortSignal::reason_if_aborted
+        // (gated behind `_gated` module in src/jsc/lib.rs). Returning `None`
+        // skips the abort-reason rejection, which is the pre-signal behaviour.
+        let _ = _global;
+        None
+    }
+}
+
 /// Local extension shim: `JSValue::get_boolean_strict` (Zig
 /// `getBooleanStrict`) is not yet on the upstream `bun_jsc::JSValue`. Mirrors
 /// the spec: missing/undefined → `None`; non-boolean → throw

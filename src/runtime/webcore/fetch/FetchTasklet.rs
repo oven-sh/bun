@@ -1,41 +1,83 @@
 use core::ffi::c_void;
+use core::mem::ManuallyDrop;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 
 use bun_aio::KeepAlive;
 use bun_boringssl as boringssl;
 use bun_core::{err, Error as BunError};
+use bun_event_loop::{ConcurrentTask::{AutoDeinit, ConcurrentTask}, AnyTask::AnyTask, Task, Taskable};
 use bun_http as http;
 use bun_http::{AsyncHTTP, CertificateInfo, FetchRedirect, HTTPClientResult, HTTPResponseMetadata, Headers, Signals, ThreadSafeStreamBuffer};
 use bun_http::Method;
 use bun_jsc::debugger::AsyncTaskTracker;
-use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue, JsResult, Strong, Task};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::ConcurrentTask::{ConcurrentTask, AutoDeinit};
-use bun_jsc::AnyTask::AnyTask;
-use bun_str::{self as strings, MutableString, String as BunString, ZigStringSlice};
-use bun_threading::{Mutex, ThreadPool};
+use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult, StringJsc, StrongOptional};
+use bun_str::{MutableString, String as BunString, ZigStringSlice};
+use bun_sys::FdExt;
+use bun_threading::Mutex;
 use bun_url::URL as ZigURL;
 
 use crate::api::bun_x509 as X509;
-use crate::socket::ssl_config::SharedPtr as SSLConfigSharedPtr;
 use crate::webcore::blob::{Any as AnyBlob, Blob, SizeType as BlobSizeType, Store as BlobStore};
 use crate::webcore::body::{self, Body, Value as BodyValue, ValueError as BodyValueError};
 use crate::webcore::readable_stream::{self, ReadableStream, Strong as ReadableStreamStrong};
+use crate::webcore::response::HeadersRef;
 use crate::webcore::resumable_sink::ResumableFetchSink;
-use crate::webcore::streams::{StreamResult, StreamError};
+use crate::webcore::streams::{StreamError, StreamResult};
 use crate::webcore::{AbortSignal, DrainResult, FetchHeaders, InternalBlob, Response, ResumableSinkBackpressure};
 
 // PORT NOTE: `bun_jsc` does not yet export `JsTerminatedResult`; alias locally.
 type JsTerminatedResult<T> = Result<T, bun_jsc::JsTerminated>;
+// PORT NOTE: `bun_event_loop::JsResult` (cycle-broken erased error) — used by
+// ConcurrentTask/AnyTask callbacks at the tier-3 layer.
+type ElJsResult<T> = bun_event_loop::JsResult<T>;
 
-// PORT NOTE: `d2i_X509` is in BoringSSL but not yet bound in `bun_boringssl_sys`; declare locally.
-extern "C" {
+// PORT NOTE: `d2i_X509`/`X509_free` are in BoringSSL but not yet bound in `bun_boringssl_sys`; declare locally.
+unsafe extern "C" {
     fn d2i_X509(
         out: *mut *mut boringssl::c::X509,
         inp: *mut *const u8,
         len: core::ffi::c_long,
     ) -> *mut boringssl::c::X509;
+    fn X509_free(x: *mut boringssl::c::X509);
+}
+
+// ─── local FFI shims: bun_jsc::AbortSignal is a stub_ty! at the crate root
+// (the real impl in `bun_jsc::abort_signal` back-depends on bun_runtime).
+// Declare the C ABI directly and wrap. ────────────────────────────────────
+unsafe extern "C" {
+    fn WebCore__AbortSignal__aborted(arg0: *mut AbortSignal) -> bool;
+    fn WebCore__AbortSignal__addListener(
+        arg0: *mut AbortSignal,
+        arg1: *mut c_void,
+        arg2: Option<unsafe extern "C" fn(*mut c_void, JSValue)>,
+    ) -> *mut AbortSignal;
+    fn WebCore__AbortSignal__cleanNativeBindings(arg0: *mut AbortSignal, arg1: *mut c_void);
+    fn WebCore__AbortSignal__ref(arg0: *mut AbortSignal) -> *mut AbortSignal;
+    fn WebCore__AbortSignal__unref(arg0: *mut AbortSignal);
+    fn WebCore__AbortSignal__incrementPendingActivity(arg0: *mut AbortSignal);
+    fn WebCore__AbortSignal__decrementPendingActivity(arg0: *mut AbortSignal);
+}
+
+#[inline]
+fn signal_aborted(s: *mut AbortSignal) -> bool {
+    unsafe { WebCore__AbortSignal__aborted(s) }
+}
+
+/// Local `EventLoopCtx` accessor for `KeepAlive::ref_/unref` (mirrors
+/// `node_zlib_binding::vm_ctx`). Zig passed `*VirtualMachine` directly via
+/// anytype dispatch; the Rust split routes through the aio hook registered
+/// by `crate::init()`.
+#[inline]
+fn vm_ctx() -> bun_aio::EventLoopCtx {
+    bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js)
+}
+
+// ConcurrentTask::from() needs `Taskable`; tag is declared in bun_event_loop
+// but the impl lives next to the type (cycle-break).
+impl Taskable for FetchTasklet {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::FetchTasklet;
 }
 
 bun_output::declare_scope!(FetchTasklet, visible);

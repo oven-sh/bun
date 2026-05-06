@@ -372,12 +372,12 @@ pub fn bun_random_uuid_v5(global: &JSGlobalObject, callframe: &CallFrame) -> JsR
             // `defer namespace_slice.deinit()` — Drop handles it.
 
             if namespace_slice.slice().len() != 36 {
-                if let Some(namespace) = UUID5::namespaces().get(namespace_slice.slice()) {
+                if let Some(namespace) = uuid::namespaces::get(namespace_slice.slice()) {
                     break 'brk *namespace;
                 }
 
                 return Err(global
-                    .ERR(
+                    .err(
                         bun_jsc::ErrorCode::INVALID_ARG_VALUE,
                         format_args!("Invalid UUID format for namespace"),
                     )
@@ -386,7 +386,7 @@ pub fn bun_random_uuid_v5(global: &JSGlobalObject, callframe: &CallFrame) -> JsR
 
             let Ok(parsed_uuid) = UUID::parse(namespace_slice.slice()) else {
                 return Err(global
-                    .ERR(
+                    .err(
                         bun_jsc::ErrorCode::INVALID_ARG_VALUE,
                         format_args!("Invalid UUID format for namespace"),
                     )
@@ -394,10 +394,10 @@ pub fn bun_random_uuid_v5(global: &JSGlobalObject, callframe: &CallFrame) -> JsR
             };
             break 'brk parsed_uuid.bytes;
         } else if let Some(array_buffer) = namespace_value.as_array_buffer(global) {
-            let slice = array_buffer.byte_slice();
+            let slice: &[u8] = array_buffer.byte_slice();
             if slice.len() != 16 {
                 return Err(global
-                    .ERR(
+                    .err(
                         bun_jsc::ErrorCode::INVALID_ARG_VALUE,
                         format_args!("Namespace must be exactly 16 bytes"),
                     )
@@ -407,7 +407,7 @@ pub fn bun_random_uuid_v5(global: &JSGlobalObject, callframe: &CallFrame) -> JsR
         }
 
         return Err(global
-            .ERR(
+            .err(
                 bun_jsc::ErrorCode::INVALID_ARG_TYPE,
                 format_args!("The \"namespace\" argument must be a string or buffer"),
             )

@@ -37,6 +37,33 @@ type BitSet = DynamicBitSetUnmanaged;
 #[cfg(feature = "css")]
 type SymbolList = BabyList<Symbol>;
 
+/// `CssRef::to_real_ref` returns `bun_logger::Ref`; the bundler AST wants
+/// `bun_js_parser::Ref`. Both are `#[repr(transparent)] u64` with the same
+/// bit-packing (see base.rs / logger/lib.rs), so reinterpret.
+#[cfg(feature = "css")]
+#[inline]
+fn to_js_ref(r: bun_logger::Ref) -> Ref {
+    // SAFETY: both Ref types are `#[repr(transparent)]` wrappers over `u64`
+    // with identical `{inner_index: u31, tag: u2, source_index: u31}` layout.
+    unsafe { core::mem::transmute::<bun_logger::Ref, Ref>(r) }
+}
+
+/// `ArrayHashAdapter` so `LocalScope` (`ArrayHashMap<Box<[u8]>, LocalEntry>`)
+/// can be queried by borrowed `&[u8]` (CSS idents are arena `*const [u8]`).
+#[cfg(feature = "css")]
+struct SliceBoxAdapter;
+#[cfg(feature = "css")]
+impl bun_collections::array_hash_map::ArrayHashAdapter<[u8], Box<[u8]>> for SliceBoxAdapter {
+    fn hash(&self, key: &[u8]) -> u32 {
+        // Match `LocalScope`'s default `AutoContext` hashing for `Box<[u8]>`.
+        use bun_collections::array_hash_map::{ArrayHashContext, AutoContext};
+        AutoContext::default().hash(key)
+    }
+    fn eql(&self, a: &[u8], b: &Box<[u8]>, _i: usize) -> bool {
+        a == &**b
+    }
+}
+
 pub fn generate_code_for_lazy_export(
     this: &mut LinkerContext,
     source_index: IndexInt,
@@ -145,7 +172,7 @@ pub fn generate_code_for_lazy_export(
                     let from_this_file = ref_.source_index(idx) == self.source_index;
                     if (from_this_file && self.inner_visited.is_set(ref_.inner_index() as usize))
                         || (!from_this_file
-                            && self.composes_visited.contains_key(&ref_.to_real_ref(idx)))
+                            && self.composes_visited.contains_key(&to_js_ref(ref_.to_real_ref(idx))))
                     {
                         return;
                     }
@@ -155,7 +182,7 @@ pub fn generate_code_for_lazy_export(
                     self.parts.push(E::TemplatePart {
                         value: Expr::init(
                             E::NameOfSymbol {
-                                ref_: ref_.to_real_ref(idx),
+                                ref_: to_js_ref(ref_.to_real_ref(idx)),
                                 ..Default::default()
                             },
                             self.loc,
@@ -167,7 +194,7 @@ pub fn generate_code_for_lazy_export(
                     if from_this_file {
                         self.inner_visited.set(ref_.inner_index() as usize);
                     } else {
-                        self.composes_visited.insert(ref_.to_real_ref(idx), ());
+                        self.composes_visited.insert(to_js_ref(ref_.to_real_ref(idx)), ());
                     }
                 }
 
@@ -182,8 +209,10 @@ pub fn generate_code_for_lazy_export(
                     let _ = ref_;
                     let _ = self.allocator;
                     let syms: &SymbolList = &self.all_symbols[css_ref.source_index(idx) as usize];
-                    let name = &syms.at(css_ref.inner_index() as usize).original_name;
-                    let loc = ast.local_scope.get(name).unwrap().loc;
+                    // SAFETY: `Symbol.original_name: *const [u8]` is arena-owned for the link pass.
+                    let name: &[u8] =
+                        unsafe { &*syms.at(css_ref.inner_index() as usize).original_name };
+                    let loc = ast.local_scope.get_adapted(name, SliceBoxAdapter).unwrap().loc;
 
                     // PERF(port): was `catch |err| bun.handleOom(err)`.
                     let _ = self.log.add_range_error_fmt_with_note(
@@ -251,8 +280,10 @@ pub fn generate_code_for_lazy_export(
                                             continue;
                                         };
                                         for name in compose.names.slice() {
+                                            // SAFETY: `CustomIdent.v: *const [u8]` borrows the source arena.
+                                            let name_v = unsafe { &*name.v };
                                             let Some(other_name_entry) =
-                                                other_file.local_scope.get(&name.v)
+                                                other_file.local_scope.get_adapted(name_v, SliceBoxAdapter)
                                             else {
                                                 continue;
                                             };
@@ -282,9 +313,11 @@ pub fn generate_code_for_lazy_export(
                                     // In this example `foo` is global and won't be rewritten to a locally scoped
                                     // name, so we can just add it as a string.
                                     for name in compose.names.slice() {
+                                        // SAFETY: `CustomIdent.v: *const [u8]` borrows the source arena.
+                                        let name_v = unsafe { &*name.v };
                                         self.parts.push(E::TemplatePart {
                                             value: Expr::init(
-                                                E::String::init(&name.v),
+                                                E::String::init(name_v),
                                                 self.loc,
                                             ),
                                             tail: E::TemplateContents::Cooked(
@@ -297,13 +330,15 @@ pub fn generate_code_for_lazy_export(
                             } else {
                                 // it is from the current file
                                 for name in compose.names.slice() {
-                                    let Some(name_entry) = ast.local_scope.get(&name.v) else {
+                                    // SAFETY: `CustomIdent.v: *const [u8]` borrows the source arena.
+                                    let name_v = unsafe { &*name.v };
+                                    let Some(name_entry) = ast.local_scope.get_adapted(name_v, SliceBoxAdapter) else {
                                         let _ = self.log.add_error_fmt(
                                             &self.all_sources[idx as usize],
                                             compose.loc,
                                             format_args!(
                                                 "The name {} never appears in {} as a CSS modules locally scoped class name. Note that \"composes\" only works with single class selectors.",
-                                                bun_fmt::quote(&name.v),
+                                                bun_fmt::quote(name_v),
                                                 bun_fmt::quote(&self.all_sources[idx as usize].path.pretty),
                                             ),
                                         );
@@ -333,13 +368,13 @@ pub fn generate_code_for_lazy_export(
 
             for entry in values {
                 let ref_ = entry.ref_;
-                debug_assert!(ref_.inner_index() < symbols.len());
+                debug_assert!(ref_.inner_index() < symbols.len);
 
                 // PERF(port): was arena-backed ArrayList (no deinit; `.items` moved into E.Template).
                 let mut template_parts: Vec<E::TemplatePart> = Vec::new();
                 let mut value = Expr::init(
                     E::NameOfSymbol {
-                        ref_: ref_.to_real_ref(source_index),
+                        ref_: to_js_ref(ref_.to_real_ref(source_index)),
                         ..Default::default()
                     },
                     stmt.loc,
@@ -384,7 +419,9 @@ pub fn generate_code_for_lazy_export(
                     );
                 }
 
-                let key = &symbols.at(ref_.inner_index() as usize).original_name;
+                // SAFETY: `Symbol.original_name: *const [u8]` is arena-owned for the link pass.
+                let key: &[u8] =
+                    unsafe { &*symbols.at(ref_.inner_index() as usize).original_name };
                 exports.put(this.allocator(), key, value)?;
             }
 

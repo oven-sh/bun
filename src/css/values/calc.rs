@@ -159,6 +159,28 @@ impl<V: Clone> Clone for Calc<V> {
     }
 }
 
+// Structural equality decoupled from `CalcValue` so `derive(PartialEq)` on
+// `Length` / `DimensionPercentage<D>` consumers can compare through
+// `Box<Calc<V>>` without pulling in the full behavior bound. `Calc::eql`
+// (below) keeps its `V: CalcValue` bound for callers that already have it.
+impl<V: PartialEq + Clone> PartialEq for Calc<V> {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Calc::Value(a), Calc::Value(b)) => **a == **b,
+            (Calc::Number(a), Calc::Number(b)) => a == b,
+            (Calc::Sum { left: al, right: ar }, Calc::Sum { left: bl, right: br }) => {
+                **al == **bl && **ar == **br
+            }
+            (
+                Calc::Product { number: an, expression: ae },
+                Calc::Product { number: bn, expression: be },
+            ) => an == bn && **ae == **be,
+            (Calc::Function(a), Calc::Function(b)) => **a == **b,
+            _ => false,
+        }
+    }
+}
+
 impl<V> Calc<V> {
     pub fn deep_clone(&self) -> Self
     where
@@ -219,11 +241,8 @@ impl<V> Calc<V> {
     }
 }
 
-impl<V: CalcValue> PartialEq for Calc<V> {
-    fn eq(&self, other: &Self) -> bool {
-        self.eql(other)
-    }
-}
+// `PartialEq for Calc<V>` is provided above with the looser `V: PartialEq +
+// Clone` bound so structural equality is available without `CalcValue`.
 
 impl<V: CalcValue> Calc<V> {
     fn mul_value_f32(lhs: V, rhs: f32) -> V {
@@ -1135,6 +1154,38 @@ pub enum MathFunction<V> {
     /// The `hypot()` function.
     // PERF(port): was arena bulk-free (ArrayList fed input.allocator()) — profile in Phase B
     Hypot(Vec<Calc<V>>),
+}
+
+impl<V: PartialEq + Clone> PartialEq for MathFunction<V> {
+    fn eq(&self, other: &Self) -> bool {
+        // Mirrors `MathFunction::eql` but bounds only on `V: PartialEq` so
+        // `Calc<V>: PartialEq` (above) closes without `CalcValue`.
+        match (self, other) {
+            (MathFunction::Calc(a), MathFunction::Calc(b)) => a == b,
+            (MathFunction::Min(a), MathFunction::Min(b)) => a == b,
+            (MathFunction::Max(a), MathFunction::Max(b)) => a == b,
+            (
+                MathFunction::Clamp { min: a0, center: a1, max: a2 },
+                MathFunction::Clamp { min: b0, center: b1, max: b2 },
+            ) => a0 == b0 && a1 == b1 && a2 == b2,
+            (
+                MathFunction::Round { strategy: as_, value: av, interval: ai },
+                MathFunction::Round { strategy: bs, value: bv, interval: bi },
+            ) => as_ == bs && av == bv && ai == bi,
+            (
+                MathFunction::Rem { dividend: ad, divisor: av },
+                MathFunction::Rem { dividend: bd, divisor: bv },
+            ) => ad == bd && av == bv,
+            (
+                MathFunction::Mod { dividend: ad, divisor: av },
+                MathFunction::Mod { dividend: bd, divisor: bv },
+            ) => ad == bd && av == bv,
+            (MathFunction::Abs(a), MathFunction::Abs(b)) => a == b,
+            (MathFunction::Sign(a), MathFunction::Sign(b)) => a == b,
+            (MathFunction::Hypot(a), MathFunction::Hypot(b)) => a == b,
+            _ => false,
+        }
+    }
 }
 
 fn eql_calc_list<V: CalcValue>(a: &[Calc<V>], b: &[Calc<V>]) -> bool {

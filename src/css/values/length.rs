@@ -714,7 +714,7 @@ impl Length {
     pub fn try_op(
         &self,
         other: &Length,
-        op_fn: impl FnOnce(f32, f32) -> f32,
+        op_fn: impl Fn(f32, f32) -> f32,
     ) -> Option<Length> {
         if let (Self::Value(a), Self::Value(b)) = (self, other) {
             if let Some(val) = a.try_op(b, op_fn) {

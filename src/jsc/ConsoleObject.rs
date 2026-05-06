@@ -2882,9 +2882,15 @@ pub mod formatter {
                 }
             }
 
-            let _circular_cleanup = scopeguard::guard((), |_| {
-                if FORMAT.can_have_circular_references() && remove_before_recurse {
-                    let _ = self.map.remove(&value);
+            // Zig: `defer { if (... && remove_before_recurse) _ = this.map.remove(value); }`.
+            // The body mutates both `self` and `remove_before_recurse`, so
+            // capture raw pointers and read the *current* `remove_before_recurse`
+            // at scope-exit time, exactly like Zig's late-evaluated `defer`.
+            let map_ptr: *mut visited::Map = &mut self.map;
+            let rbr_ptr: *const bool = &remove_before_recurse;
+            let _circular_cleanup = scopeguard::guard((), move |_| unsafe {
+                if FORMAT.can_have_circular_references() && *rbr_ptr {
+                    let _ = (*map_ptr).remove(&value);
                 }
             });
 
@@ -2917,9 +2923,10 @@ pub mod formatter {
                         if ENABLE_ANSI_COLORS {
                             writer.write_all(pfmt!("<r><green>", true).as_bytes());
                         }
-                        let _reset = scopeguard::guard((), |_| {
+                        let writer_reset_ptr: *mut WrappedWriter<'_> = &mut writer;
+                        let _reset = scopeguard::guard((), move |_| unsafe {
                             if ENABLE_ANSI_COLORS {
-                                writer.write_all(pfmt!("<r>", true).as_bytes());
+                                (*writer_reset_ptr).write_all(pfmt!("<r>", true).as_bytes());
                             }
                         });
 
@@ -2947,9 +2954,10 @@ pub mod formatter {
                         if ENABLE_ANSI_COLORS {
                             writer.print(format_args!("{}", pf!("<r><green>")));
                         }
-                        let _reset = scopeguard::guard((), |_| {
+                        let writer_reset_ptr: *mut WrappedWriter<'_> = &mut writer;
+                        let _reset = scopeguard::guard((), move |_| unsafe {
                             if ENABLE_ANSI_COLORS {
-                                writer.write_all(pfmt!("<r>", true).as_bytes());
+                                (*writer_reset_ptr).write_all(pfmt!("<r>", true).as_bytes());
                             }
                         });
 
@@ -3152,9 +3160,10 @@ pub mod formatter {
                     } else {
                         false
                     };
-                    let _restore = scopeguard::guard((), |_| {
+                    let map_restore_ptr: *mut visited::Map = &mut self.map;
+                    let _restore = scopeguard::guard((), move |_| unsafe {
                         if was_in_map {
-                            let _ = self.map.insert(value, ());
+                            let _ = (*map_restore_ptr).insert(value, ());
                         }
                     });
 
@@ -3397,7 +3406,7 @@ pub mod formatter {
                             Ok(result) => {
                                 let prev_quote_keys = self.quote_keys;
                                 self.quote_keys = true;
-                                let _r = scopeguard::guard((), |_| self.quote_keys = prev_quote_keys);
+                                let _r = defer_restore!(self.quote_keys, prev_quote_keys);
                                 let tag = Tag::get(result, self.global_this)?;
                                 reseat_writer!();
                                 self.format::<ENABLE_ANSI_COLORS>(tag, writer_, result, self.global_this)?;
@@ -3549,14 +3558,14 @@ pub mod formatter {
             {
                 self.indent += 1;
                 self.depth += 1;
-                let _depth = scopeguard::guard(&mut self.depth, |d| *d = d.saturating_sub(1));
-                let _indent = scopeguard::guard(&mut self.indent, |i| *i = i.saturating_sub(1));
+                let _depth = defer_decrement!(self.depth);
+                let _indent = defer_decrement!(self.indent);
 
                 self.add_for_new_line(2);
 
                 let prev_quote_strings = self.quote_strings;
                 self.quote_strings = true;
-                let _qs = scopeguard::guard(&mut self.quote_strings, move |q| *q = prev_quote_strings);
+                let _qs = defer_restore!(self.quote_strings, prev_quote_strings);
                 let mut empty_start: Option<u32> = None;
                 'first: {
                     let element = value.get_direct_index(self.global_this, 0);
@@ -3814,7 +3823,7 @@ pub mod formatter {
                     writer.write_all(pf!("<r>Headers ").as_bytes());
                     let prev_quote_keys = self.quote_keys;
                     self.quote_keys = true;
-                    let _r = scopeguard::guard(&mut self.quote_keys, move |q| *q = prev_quote_keys);
+                    let _r = defer_restore!(self.quote_keys, prev_quote_keys);
 
                     let result = to_json_function
                         .call(self.global_this, value, &[])
@@ -3874,7 +3883,7 @@ pub mod formatter {
                 if let Some(to_json_function) = value.get(self.global_this, "toJSON")? {
                     let prev_quote_keys = self.quote_keys;
                     self.quote_keys = true;
-                    let _r = scopeguard::guard(&mut self.quote_keys, move |q| *q = prev_quote_keys);
+                    let _r = defer_restore!(self.quote_keys, prev_quote_keys);
 
                     let result = to_json_function
                         .call(self.global_this, value, &[])
@@ -3920,7 +3929,7 @@ pub mod formatter {
 
             let prev_quote_strings = self.quote_strings;
             self.quote_strings = true;
-            let _qs = scopeguard::guard(&mut self.quote_strings, move |q| *q = prev_quote_strings);
+            let _qs = defer_restore!(self.quote_strings, prev_quote_strings);
 
             let map_name = if value.js_type() == jsc::JSType::WeakMap { "WeakMap" } else { "Map" };
 
@@ -3937,8 +3946,8 @@ pub mod formatter {
             {
                 self.indent += 1;
                 self.depth = self.depth.saturating_add(1);
-                let _i = scopeguard::guard(&mut self.indent, |i| *i = i.saturating_sub(1));
-                let _d = scopeguard::guard(&mut self.depth, |d| *d = d.saturating_sub(1));
+                let _i = defer_decrement!(self.indent);
+                let _d = defer_decrement!(self.depth);
                 // PERF(port): was comptime bool dispatch on single_line — profile in Phase B
                 if self.single_line {
                     let mut iter = MapIteratorCtx::<C, false, true> {
@@ -3972,14 +3981,14 @@ pub mod formatter {
         ) -> JsResult<()> {
             let prev_quote_strings = self.quote_strings;
             self.quote_strings = true;
-            let _qs = scopeguard::guard(&mut self.quote_strings, move |q| *q = prev_quote_strings);
+            let _qs = defer_restore!(self.quote_strings, prev_quote_strings);
 
             let _ = write!(writer_, "{label} {{ ");
             {
                 self.indent += 1;
                 self.depth = self.depth.saturating_add(1);
-                let _i = scopeguard::guard(&mut self.indent, |i| *i = i.saturating_sub(1));
-                let _d = scopeguard::guard(&mut self.depth, |d| *d = d.saturating_sub(1));
+                let _i = defer_decrement!(self.indent);
+                let _d = defer_decrement!(self.depth);
                 if self.single_line {
                     let mut iter = MapIteratorCtx::<C, true, true> {
                         formatter: self, writer: writer_, count: 0,
@@ -4026,7 +4035,7 @@ pub mod formatter {
 
             let prev_quote_strings = self.quote_strings;
             self.quote_strings = true;
-            let _qs = scopeguard::guard(&mut self.quote_strings, move |q| *q = prev_quote_strings);
+            let _qs = defer_restore!(self.quote_strings, prev_quote_strings);
 
             let set_name = if value.js_type() == jsc::JSType::WeakSet { "WeakSet" } else { "Set" };
 
@@ -4043,8 +4052,8 @@ pub mod formatter {
             {
                 self.indent += 1;
                 self.depth = self.depth.saturating_add(1);
-                let _i = scopeguard::guard(&mut self.indent, |i| *i = i.saturating_sub(1));
-                let _d = scopeguard::guard(&mut self.depth, |d| *d = d.saturating_sub(1));
+                let _i = defer_decrement!(self.indent);
+                let _d = defer_decrement!(self.depth);
                 if self.single_line {
                     let mut iter = SetIteratorCtx::<C, true> {
                         formatter: self, writer: writer_, is_first: true,
@@ -4112,11 +4121,11 @@ pub mod formatter {
             {
                 self.indent += 1;
                 self.depth = self.depth.saturating_add(1);
-                let _i = scopeguard::guard(&mut self.indent, |i| *i = i.saturating_sub(1));
-                let _d = scopeguard::guard(&mut self.depth, |d| *d = d.saturating_sub(1));
+                let _i = defer_decrement!(self.indent);
+                let _d = defer_decrement!(self.depth);
                 let old_quote_strings = self.quote_strings;
                 self.quote_strings = true;
-                let _qs = scopeguard::guard(&mut self.quote_strings, move |q| *q = old_quote_strings);
+                let _qs = defer_restore!(self.quote_strings, old_quote_strings);
                 self.write_indent(writer_).expect("unreachable");
 
                 if self.single_line {
@@ -4214,8 +4223,9 @@ pub mod formatter {
             let mut tag_name_slice: ZigString::Slice = ZigString::Slice::empty();
             let mut is_tag_kind_primitive = false;
 
-            let _tag_name_guard = scopeguard::guard(&mut tag_name_slice, |s| {
-                if s.is_allocated() { s.deinit(); }
+            let tag_name_ptr: *mut ZigString::Slice = &mut tag_name_slice;
+            let _tag_name_guard = scopeguard::guard((), move |_| unsafe {
+                if (*tag_name_ptr).is_allocated() { (*tag_name_ptr).deinit(); }
             });
 
             if let Some(type_value) = value.get(self.global_this, "type")? {
@@ -4262,7 +4272,7 @@ pub mod formatter {
 
                     let old_quote_strings = self.quote_strings;
                     self.quote_strings = true;
-                    let _qs = scopeguard::guard(&mut self.quote_strings, move |q| *q = old_quote_strings);
+                    let _qs = defer_restore!(self.quote_strings, old_quote_strings);
 
                     drop(writer);
                     self.format::<C>(
@@ -4280,7 +4290,7 @@ pub mod formatter {
 
             if let Some(props) = value.get(self.global_this, "props")? {
                 let prev_quote_strings = self.quote_strings;
-                let _qs = scopeguard::guard(&mut self.quote_strings, move |q| *q = prev_quote_strings);
+                let _qs = defer_restore!(self.quote_strings, prev_quote_strings);
                 self.quote_strings = true;
 
                 // SAFETY: JSX props are always objects
@@ -4294,7 +4304,7 @@ pub mod formatter {
                 if props_iter.len > 0 {
                     {
                         self.indent += 1;
-                        let _ind = scopeguard::guard(&mut self.indent, |i| *i = i.saturating_sub(1));
+                        let _ind = defer_decrement!(self.indent);
                         let count_without_children =
                             props_iter.len - usize::from(children_prop.is_some());
 
@@ -4391,7 +4401,7 @@ pub mod formatter {
                                         {
                                             self.indent += 1;
                                             self.write_indent(writer.ctx).expect("unreachable");
-                                            let _ind = scopeguard::guard(&mut self.indent, |i| *i = i.saturating_sub(1));
+                                            let _ind = defer_decrement!(self.indent);
                                             drop(writer);
                                             self.format::<C>(
                                                 Tag::get(children, self.global_this)?,
@@ -4414,8 +4424,8 @@ pub mod formatter {
                                             self.write_indent(writer.ctx).expect("unreachable");
                                             let _prev_quote_strings = self.quote_strings;
                                             self.quote_strings = false;
-                                            let _qs2 = scopeguard::guard(&mut self.quote_strings, move |q| *q = _prev_quote_strings);
-                                            let _ind = scopeguard::guard(&mut self.indent, |i| *i = i.saturating_sub(1));
+                                            let _qs2 = defer_restore!(self.quote_strings, _prev_quote_strings);
+                                            let _ind = defer_decrement!(self.indent);
 
                                             let mut j: usize = 0;
                                             while (j as u64) < length {
@@ -4476,7 +4486,7 @@ pub mod formatter {
             debug_assert!(value.is_cell());
             let prev_quote_strings = self.quote_strings;
             self.quote_strings = true;
-            let _qs = scopeguard::guard(&mut self.quote_strings, move |q| *q = prev_quote_strings);
+            let _qs = defer_restore!(self.quote_strings, prev_quote_strings);
 
             // We want to figure out if we should print this object on one line
             // or multiple lines.
@@ -4499,9 +4509,7 @@ pub mod formatter {
             //
             //   Then, we print it each property on a new line, recursively.
             let prev_always_newline_scope = self.always_newline_scope;
-            let _ans = scopeguard::guard(&mut self.always_newline_scope, move |a| {
-                *a = prev_always_newline_scope;
-            });
+            let _ans = defer_restore!(self.always_newline_scope, prev_always_newline_scope);
             let mut iter = PropertyIteratorCtx::<C> {
                 formatter: self,
                 writer: writer_,
@@ -4710,7 +4718,7 @@ pub mod formatter {
             global_this: &'a JSGlobalObject,
         ) -> JsResult<()> {
             let prev_global_this = self.global_this;
-            let _restore = scopeguard::guard(&mut self.global_this, move |g| *g = prev_global_this);
+            let _restore = defer_restore!(self.global_this, prev_global_this);
             self.global_this = global_this;
 
             // This looks incredibly redundant. We make the

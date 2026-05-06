@@ -33,7 +33,7 @@ pub use adler32::Adler32;
 pub use cityhash::{CityHash32, CityHash64};
 pub use murmur::{Murmur2_32, Murmur2_64, Murmur3_32};
 pub use rapidhash::RapidHash;
-pub use xxhash::{XxHash3, XxHash32, XxHash64};
+pub use xxhash::{XxHash3, XxHash32, XxHash64, XxHash64Streaming};
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

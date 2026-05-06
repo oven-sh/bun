@@ -33,6 +33,10 @@ pub struct ExecState {
     /// Index into argv where filepath args start.
     pub args_start: usize,
     pub err: Option<bun_sys::Error>,
+    /// FIFO of in-flight OutputTask pointers awaiting an IOWriter chunk
+    /// completion. Stopgap until `WriterTag` can carry the `*mut OutputTask`
+    /// directly — see mkdir.rs `Exec::output_queue` for rationale.
+    pub output_queue: std::collections::VecDeque<*mut OutputTask<Touch>>,
 }
 
 impl Touch {
@@ -63,6 +67,7 @@ impl Touch {
             output_waiting: 0,
             args_start,
             err: None,
+            output_queue: std::collections::VecDeque::new(),
         });
         Self::next(interp, cmd)
     }

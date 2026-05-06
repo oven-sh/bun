@@ -35,6 +35,13 @@ pub struct Exec {
     /// the lifetime tied to the Cmd's argv without a self-reference).
     pub args_start: usize,
     pub err: Option<bun_sys::Error>,
+    /// FIFO of in-flight OutputTask pointers awaiting an IOWriter chunk
+    /// completion. Stopgap until `WriterTag` can carry the `*mut OutputTask`
+    /// directly (IOWriter.rs is out of scope here): `write_err`/`write_out`
+    /// push, `on_io_writer_chunk` pops and forwards to
+    /// `OutputTask::on_io_writer_chunk` so the box is reclaimed and the
+    /// writeErr→writeOut→onDone state machine runs (spec mkdir.zig:134/150).
+    pub output_queue: std::collections::VecDeque<*mut OutputTask<Mkdir>>,
 }
 
 impl Mkdir {
@@ -64,6 +71,7 @@ impl Mkdir {
             output_done: 0,
             args_start,
             err: None,
+            output_queue: std::collections::VecDeque::new(),
         });
         Self::next(interp, cmd)
     }
@@ -158,13 +166,18 @@ impl Mkdir {
     pub fn on_io_writer_chunk(
         interp: &mut Interpreter,
         cmd: NodeId,
-        _: usize,
-        _e: Option<bun_sys::SystemError>,
+        written: usize,
+        e: Option<bun_sys::SystemError>,
     ) -> Yield {
-        match &mut Self::state_mut(interp, cmd).state {
+        let pending = match &mut Self::state_mut(interp, cmd).state {
             State::WaitingWriteErr => return Builtin::done(interp, cmd, 1),
-            State::Exec(exec) => exec.output_done += 1,
+            State::Exec(exec) => exec.output_queue.pop_front(),
             State::Idle | State::Done => panic!("Invalid state"),
+        };
+        if let Some(task) = pending {
+            // SAFETY: `task` was Box::into_raw'd in `OutputTask::new` and
+            // pushed by `write_err`/`write_out`; not yet freed.
+            return unsafe { OutputTask::<Mkdir>::on_io_writer_chunk(task, interp, written, e) };
         }
         Self::next(interp, cmd)
     }
@@ -218,7 +231,7 @@ impl OutputTaskVTable for Mkdir {
     fn write_err(
         interp: &mut Interpreter,
         cmd: NodeId,
-        _child: *mut OutputTask<Self>,
+        child: *mut OutputTask<Self>,
         errbuf: &[u8],
     ) -> Option<Yield> {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
@@ -226,12 +239,18 @@ impl OutputTaskVTable for Mkdir {
         }
         if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
             // TODO(b2-blocked): IOWriter ChildPtr for OutputTask — needs a
-            // dedicated WriterTag once OutputTask is dispatchable.
-            let child = ChildPtr { node: cmd, tag: WriterTag::Builtin };
+            // dedicated WriterTag once OutputTask is dispatchable. Until then
+            // stash `child` on `output_queue` so `on_io_writer_chunk` can
+            // route the completion back to the OutputTask state machine and
+            // reclaim the box (spec mkdir.zig:134 enqueues with childptr).
+            if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
+                exec.output_queue.push_back(child);
+            }
+            let childptr = ChildPtr { node: cmd, tag: WriterTag::Builtin };
             return Some(
                 Builtin::of_mut(interp, cmd)
                     .stderr
-                    .enqueue(child, errbuf, safeguard),
+                    .enqueue(childptr, errbuf, safeguard),
             );
         }
         Builtin::write_no_io(interp, cmd, IoKind::Stderr, errbuf);
@@ -247,19 +266,24 @@ impl OutputTaskVTable for Mkdir {
     fn write_out(
         interp: &mut Interpreter,
         cmd: NodeId,
-        _child: *mut OutputTask<Self>,
+        child: *mut OutputTask<Self>,
         output: &mut OutputSrc,
     ) -> Option<Yield> {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.output_waiting += 1;
         }
         if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
-            let child = ChildPtr { node: cmd, tag: WriterTag::Builtin };
+            // See write_err — stash `child` so the chunk callback routes to
+            // OutputTask::on_io_writer_chunk (spec mkdir.zig:150).
+            if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
+                exec.output_queue.push_back(child);
+            }
+            let childptr = ChildPtr { node: cmd, tag: WriterTag::Builtin };
             let buf = output.slice().to_vec();
             return Some(
                 Builtin::of_mut(interp, cmd)
                     .stdout
-                    .enqueue(child, &buf, safeguard),
+                    .enqueue(childptr, &buf, safeguard),
             );
         }
         let buf = output.slice().to_vec();

@@ -2390,7 +2390,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
         // PORT NOTE: Zig `defer self.context.unset(.flow_in)` — capture the
         // fallible body's result and unset on EVERY exit (including `?` paths).
-        let result: Result<Expr, ParseError> = (|| {
+        // The post-`]` scan happens AFTER `.flow_in` is popped (yaml.zig:771),
+        // so only the loop body lives inside the closure.
+        let result: Result<(), ParseError> = (|| {
             self.scan(ScanOptions::default())?;
             while !matches!(self.token.data, TokenData::SequenceEnd) {
                 let item = self.parse_node(ParseNodeOptions::default())?;
@@ -2407,16 +2409,18 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 self.scan(ScanOptions::default())?;
             }
 
-            self.scan(ScanOptions::default())?;
-
-            Ok(Expr::init(
-                E::Array { items: BabyList::move_from_list(core::mem::take(&mut seq)), ..Default::default() },
-                sequence_start.loc(),
-            ))
+            Ok(())
         })();
 
         self.context.unset(Context::FlowIn);
-        result
+        result?;
+
+        self.scan(ScanOptions::default())?;
+
+        Ok(Expr::init(
+            E::Array { items: BabyList::move_from_list(core::mem::take(&mut seq)), ..Default::default() },
+            sequence_start.loc(),
+        ))
     }
 
     fn parse_flow_mapping(&mut self) -> Result<Expr, ParseError> {
@@ -2430,7 +2434,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
         // PORT NOTE: Zig `defer self.context.unset(.flow_in)` — capture the
         // fallible body's result and unset on EVERY exit (including `?` paths).
-        let result: Result<Expr, ParseError> = (|| {
+        // The post-`}` scan happens AFTER `.flow_in` is popped (yaml.zig:852),
+        // so only the loop body lives inside the closure.
+        let result: Result<(), ParseError> = (|| {
             {
                 // Zig `defer self.context.unset(.flow_key)` — unset before propagating.
                 self.context.set(Context::FlowKey)?;
@@ -2487,16 +2493,18 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 }
             }
 
-            self.scan(ScanOptions::default())?;
-
-            Ok(Expr::init(
-                E::Object { properties: props.move_list(), ..Default::default() },
-                mapping_start.loc(),
-            ))
+            Ok(())
         })();
 
         self.context.unset(Context::FlowIn);
-        result
+        result?;
+
+        self.scan(ScanOptions::default())?;
+
+        Ok(Expr::init(
+            E::Object { properties: props.move_list(), ..Default::default() },
+            mapping_start.loc(),
+        ))
     }
 
     fn parse_block_sequence(&mut self) -> Result<Expr, ParseError> {

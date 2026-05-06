@@ -814,6 +814,13 @@ pub mod fs {
     /// `RealFS::read_directory` `ReadDirResult`; the Zig type is `EntriesOption`.
     pub type ReadDirResult = EntriesOption;
 
+    // SAFETY: ARENA — `EntriesOption` holds `&'static mut DirEntry` (whose `data`
+    // map stores `*mut Entry` into the BSSMap singleton). All access is serialized
+    // through `RealFS.entries_mutex`; Zig used a `threadlocal var instance`. The
+    // raw-pointer fields are the only thing blocking auto-Sync.
+    unsafe impl Sync for EntriesOption {}
+    unsafe impl Send for EntriesOption {}
+
     /// Port of `FileSystem.RealFS.EntriesOption.Map` in `fs.zig`:
     /// `allocators.BSSMap(EntriesOption, Preallocate.Counts.dir_entry, false, 256, true)`.
     /// `store_keys=false` → Rust `BSSMapInner<V, COUNT, RM_SLASH>` (est_key_len unused on inner shape).
@@ -3815,7 +3822,7 @@ impl<'a> Resolver<'a> {
                             if let Some(exports_map) = package_json.exports.as_ref() {
                                 // The condition set is determined by the kind of import
                                 let mut module_type = package_json.module_type;
-                                let esmodule = ESModule {
+                                let mut esmodule = ESModule {
                                     conditions: match kind {
                                         ast::ImportKind::Require | ast::ImportKind::RequireResolve => self.opts.conditions.require.clone().expect("oom"),
                                         ast::ImportKind::At | ast::ImportKind::AtConditional => self.opts.conditions.style.clone().expect("oom"),
@@ -4158,7 +4165,7 @@ impl<'a> Resolver<'a> {
                             if let Some(package_json) = pkg_dir_info.package_json {
                                 if let Some(exports_map) = package_json.exports.as_ref() {
                                     // The condition set is determined by the kind of import
-                                    let esmodule = ESModule {
+                                    let mut esmodule = ESModule {
                                         conditions: match kind {
                                             ast::ImportKind::Require | ast::ImportKind::RequireResolve => self.opts.conditions.require.clone(),
                                             _ => self.opts.conditions.import.clone(),
@@ -5400,7 +5407,7 @@ impl<'a> Resolver<'a> {
         }
         let mut module_type = options::ModuleType::Unknown;
 
-        let esmodule = ESModule {
+        let mut esmodule = ESModule {
             conditions: match kind {
                 ast::ImportKind::Require | ast::ImportKind::RequireResolve => self.opts.conditions.require.clone().expect("oom"),
                 _ => self.opts.conditions.import.clone().expect("oom"),

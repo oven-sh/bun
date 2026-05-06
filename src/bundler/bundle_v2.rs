@@ -5699,15 +5699,10 @@ pub struct CompileResultForSourceMap {
     pub source_index: u32,
 }
 
+#[derive(Default)]
 pub struct ContentHasher {
     // xxhash64 outperforms Wyhash if the file is > 1KB or so
-    pub hasher: xxhash_rust::xxh64::Xxh64,
-}
-
-impl Default for ContentHasher {
-    fn default() -> Self {
-        Self { hasher: xxhash_rust::xxh64::Xxh64::new(0) }
-    }
+    pub hasher: bun_hash::XxHash64Streaming,
 }
 
 impl ContentHasher {

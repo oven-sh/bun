@@ -404,8 +404,18 @@ impl Context {
     }
 
     pub fn set_flush(&mut self, flush: c_int) {
-        // SAFETY: caller passes a valid zlib flush constant; FlushValue is #[repr(c_int)].
-        self.flush = unsafe { mem::transmute::<c_int, c::FlushValue>(flush) };
+        // Checked conversion (mirrors Zig debug-mode `@enumFromInt` panic on
+        // out-of-range); transmuting an arbitrary c_int into a Rust enum is UB.
+        self.flush = match flush {
+            0 => c::FlushValue::NoFlush,
+            1 => c::FlushValue::PartialFlush,
+            2 => c::FlushValue::SyncFlush,
+            3 => c::FlushValue::FullFlush,
+            4 => c::FlushValue::Finish,
+            5 => c::FlushValue::Block,
+            6 => c::FlushValue::Trees,
+            _ => unreachable!("invalid zlib flush value: {flush}"),
+        };
     }
 
     pub fn do_work(&mut self) {

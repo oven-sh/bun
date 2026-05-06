@@ -167,12 +167,10 @@ impl<D: Clone> Clone for DimensionPercentage<D> {
 impl<D: PartialEq + Clone> PartialEq for DimensionPercentage<D> {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
-        // Forwarded to `eql()` (below) — `Calc<V>` doesn't derive `PartialEq`
-        // because of its `Box<V>` payload, so a manual impl is needed.
         match (self, other) {
             (Self::Dimension(a), Self::Dimension(b)) => a == b,
             (Self::Percentage(a), Self::Percentage(b)) => a.eql(b),
-            (Self::Calc(a), Self::Calc(b)) => a.eql(b),
+            (Self::Calc(a), Self::Calc(b)) => **a == **b,
             _ => false,
         }
     }
@@ -242,12 +240,7 @@ where
         D: PartialEq,
     {
         // TODO(port): Zig used css.implementEql (reflection). Phase B: #[derive(PartialEq)] on enum.
-        match (self, other) {
-            (Self::Dimension(a), Self::Dimension(b)) => a == b,
-            (Self::Percentage(a), Self::Percentage(b)) => a.eql(b),
-            (Self::Calc(a), Self::Calc(b)) => a.eql(b),
-            _ => false,
-        }
+        self == other
     }
 
     pub fn deep_clone(&self) -> Self {
@@ -349,6 +342,7 @@ where
 
     fn add_recursive(&self, other: &Self) -> Option<Self>
     where
+        Self: crate::values::calc::CalcValue,
         D: protocol::TryAdd + protocol::Zero + protocol::TrySign,
     {
         match (self, other) {
@@ -401,6 +395,7 @@ where
 
     fn add_impl(self, other: Self) -> Self
     where
+        Self: crate::values::calc::CalcValue,
         D: protocol::Zero + protocol::TrySign,
     {
         let mut a = self;
@@ -439,6 +434,7 @@ where
     #[inline]
     fn is_sign_positive(&self) -> bool
     where
+        Self: crate::values::calc::CalcValue,
         D: protocol::TrySign,
     {
         let Some(sign) = self.try_sign() else {
@@ -450,6 +446,7 @@ where
     #[inline]
     fn is_sign_negative(&self) -> bool
     where
+        Self: crate::values::calc::CalcValue,
         D: protocol::TrySign,
     {
         let Some(sign) = self.try_sign() else {

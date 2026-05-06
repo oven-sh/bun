@@ -373,11 +373,12 @@ impl<R> Maybe<R, bun_sys::Error> {
         match self {
             Maybe::Result(_) => bun_sys::posix::E::SUCCESS,
             Maybe::Err(e) => {
-                // SAFETY: `e.errno` was produced from `@intFromEnum(posix.E)` /
-                // `translateToErrInt`, so it is always a valid `posix::E`
-                // discriminant. `posix::E` (= SystemErrno) is `#[repr(u16)]`
-                // matching `ErrorInt`.
-                unsafe { core::mem::transmute::<bun_sys::ErrorInt, bun_sys::posix::E>(e.errno) }
+                // Checked conversion: `errno` originates from raw syscalls/libc
+                // and is not guaranteed to map to a `SystemErrno` variant on
+                // every platform; transmuting an out-of-range discriminant into
+                // a Rust enum is UB. Mirrors Zig debug-mode `@enumFromInt`
+                // (panics on bad value) without the UB.
+                bun_sys::posix::E::init(i64::from(e.errno)).expect("errno out of range")
             }
         }
     }

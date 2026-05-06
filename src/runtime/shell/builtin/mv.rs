@@ -446,7 +446,10 @@ impl ShellMvBatchedTask {
             if !this.error_signal.is_null()
                 && unsafe { &*this.error_signal }.load(Ordering::SeqCst)
             {
-                return;
+                // Another batch hit an error — abort the move loop, but
+                // still post back to the main thread so `tasks_done`
+                // reaches `task_count` and `mv` doesn't hang.
+                break;
             }
             let _ = (src, &this.target, this.target_fd, this.cwd);
         }

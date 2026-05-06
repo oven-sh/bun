@@ -918,24 +918,6 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     // single intrusive RefPtr<Process> shape.
     let process = core::mem::ManuallyDrop::new(spawned.to_process(loop_handle, IS_SYNC));
 
-    let subprocess = Box::into_raw(Box::new(SubprocessT {
-        ref_count: bun_ptr::RefCount::init(),
-        global_this,
-        process,
-        pid_rusage: None,
-        stdin: Writable::Ignore,
-        stdout: Readable::Ignore,
-        stderr: Readable::Ignore,
-        stdio_pipes: Vec::new(),
-        ipc_data: None,
-        flags: if IS_SYNC { Subprocess::Flags::IS_SYNC } else { Subprocess::Flags::empty() },
-        // SAFETY: field is overwritten by the aggregate init below before any read.
-        kill_signal: unsafe { core::mem::zeroed() },
-        ..Default::default()
-    }));
-    // SAFETY: subprocess is a freshly-boxed Subprocess; we hold the only reference.
-    let subprocess = unsafe { &mut *subprocess };
-
     #[cfg(unix)]
     let posix_ipc_fd = if !IS_SYNC && maybe_ipc_mode.is_some() {
         spawned.extra_pipes[usize::try_from(ipc_channel).unwrap()].fd()
@@ -943,13 +925,15 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         Fd::INVALID
     };
 
-    MaxBuf::create_for_subprocess(subprocess, &mut subprocess.stderr_maxbuf, max_buffer);
-    MaxBuf::create_for_subprocess(subprocess, &mut subprocess.stdout_maxbuf, max_buffer);
-
-    let mut promise_for_stream: JSValue = JSValue::ZERO;
-
-    // When run synchronously, subprocess isn't garbage collected
-    *subprocess = SubprocessT {
+    // When run synchronously, subprocess isn't garbage collected.
+    //
+    // PORT NOTE: Zig built a placeholder struct, took its address for
+    // `MaxBuf::create_for_subprocess`, then overwrote `subprocess.*` with the
+    // real aggregate. In Rust that whole-struct reassignment would (a) move
+    // `process` twice and (b) run Drop on every field of the placeholder. Build
+    // the struct once with its final field values instead, then fill in the
+    // address-dependent fields (maxbufs, ipc_data on Windows) afterward.
+    let subprocess_ptr = Box::into_raw(Box::new(SubprocessT {
         global_this,
         process,
         pid_rusage: None,
@@ -970,32 +954,36 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         // 2. Process.
         ref_count: bun_ptr::RefCount::init_exact_refs(2),
         stdio_pipes: core::mem::take(&mut spawned.extra_pipes),
-        ipc_data: if !IS_SYNC && cfg!(windows) {
-            #[cfg(windows)]
-            {
-                maybe_ipc_mode.map(|ipc_mode| {
-                    IPC::SendQueue::init(
-                        ipc_mode,
-                        IPC::Owner::Subprocess(subprocess),
-                        IPC::Socket::Uninitialized,
-                    )
-                })
-            }
-            #[cfg(not(windows))]
-            {
-                None
-            }
-        } else {
-            None
-        },
-
+        ipc_data: None,
         flags: if IS_SYNC { Subprocess::Flags::IS_SYNC } else { Subprocess::Flags::empty() },
         kill_signal,
-        stderr_maxbuf: subprocess.stderr_maxbuf.take(),
-        stdout_maxbuf: subprocess.stdout_maxbuf.take(),
+        stderr_maxbuf: None,
+        stdout_maxbuf: None,
         terminal: existing_terminal.or_else(|| terminal_info.as_ref().map(|info| info.terminal)),
         ..Default::default()
-    };
+    }));
+    // SAFETY: subprocess_ptr is a freshly-boxed Subprocess; we hold the only reference.
+    let subprocess = unsafe { &mut *subprocess_ptr };
+
+    // Address-dependent fields, filled now that `subprocess` has a stable address.
+    // PORT NOTE: pass the raw `*mut SubprocessT` captured above instead of the
+    // live `&mut subprocess` alongside a `&mut subprocess.<field>` borrow
+    // (PORTING.md §Forbidden aliased-&mut).
+    MaxBuf::create_for_subprocess(subprocess_ptr, &mut subprocess.stderr_maxbuf, max_buffer);
+    MaxBuf::create_for_subprocess(subprocess_ptr, &mut subprocess.stdout_maxbuf, max_buffer);
+
+    #[cfg(windows)]
+    if !IS_SYNC {
+        if let Some(ipc_mode) = maybe_ipc_mode {
+            subprocess.ipc_data = Some(IPC::SendQueue::init(
+                ipc_mode,
+                IPC::Owner::Subprocess(subprocess_ptr),
+                IPC::Socket::Uninitialized,
+            ));
+        }
+    }
+
+    let mut promise_for_stream: JSValue = JSValue::ZERO;
 
     subprocess.stdin = match Writable::init(
         &mut stdio[0],
@@ -1036,7 +1024,11 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             }
             subprocess.finalize_streams();
             subprocess.process.detach();
-            subprocess.process.deref();
+            // Zig: `subprocess.process.deref()` releases the intrusive ref. The
+            // field is `ManuallyDrop<Arc<Process>>`; release the Arc strong ref
+            // explicitly here (finalize() won't run on this error path).
+            // SAFETY: this error path returns without ever reading `process` again.
+            unsafe { core::mem::ManuallyDrop::drop(&mut subprocess.process) };
             MaxBuf::remove_from_subprocess(&mut subprocess.stdout_maxbuf);
             MaxBuf::remove_from_subprocess(&mut subprocess.stderr_maxbuf);
             subprocess.deref();
@@ -1247,7 +1239,10 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     }
 
     if let Readable::Pipe(pipe) = &mut subprocess.stdout {
-        if let Some(err) = pipe.start(subprocess, event_loop).as_err() {
+        // PORT NOTE: pass `subprocess_ptr` (the Box::into_raw pointer captured
+        // before any field borrow) instead of the live `&mut subprocess`, which
+        // would alias with the `&mut subprocess.stdout` borrow held by `pipe`.
+        if let Some(err) = pipe.start(subprocess_ptr, event_loop).as_err() {
             let _ = subprocess.try_kill(subprocess.kill_signal);
             let _ = global_this.throw_value(err.to_js(global_this)?);
             return Err(JsError::Thrown);
@@ -1260,7 +1255,8 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     }
 
     if let Readable::Pipe(pipe) = &mut subprocess.stderr {
-        if let Some(err) = pipe.start(subprocess, event_loop).as_err() {
+        // PORT NOTE: see stdout arm above — avoid aliased &mut.
+        if let Some(err) = pipe.start(subprocess_ptr, event_loop).as_err() {
             let _ = subprocess.try_kill(subprocess.kill_signal);
             let _ = global_this.throw_value(err.to_js(global_this)?);
             return Err(JsError::Thrown);

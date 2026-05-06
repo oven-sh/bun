@@ -17,7 +17,7 @@ const TAG_TURN: u8 = 8;
 /// Angles may be explicit or computed by `calc()`, but are always stored and serialized
 /// as their computed value.
 #[repr(u8)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub enum Angle {
     /// An angle in degrees. There are 360 degrees in a full circle.
     Deg(CSSNumber) = TAG_DEG,

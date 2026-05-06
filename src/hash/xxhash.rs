@@ -25,6 +25,8 @@ impl XxHash64 {
     }
 }
 
+use core::hash::Hasher;
+
 /// Streaming `std.hash.XxHash64` — used by `bundle_v2.zig:ContentHasher`
 /// (length-prefixed chunk hashing across many `update()` calls before a single
 /// `digest()`). Wraps `twox_hash::XxHash64` so the workspace has exactly one

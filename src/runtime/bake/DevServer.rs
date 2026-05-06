@@ -5304,7 +5304,7 @@ impl UnrefSourceMapRequest {
         // SAFETY: dev outlives the request
         let _ = unsafe { &mut *ctx.dev }
             .source_maps
-            .remove_or_upgrade_weak_ref(source_map_key, source_map_store::WeakRefAction::Remove);
+            .remove_or_upgrade_weak_ref(source_map_key, source_map_store::RemoveOrUpgradeMode::Remove);
         r.write_status("204 No Content");
         r.end("", false);
         Ok(())

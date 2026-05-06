@@ -431,11 +431,15 @@ pub mod bun_string_jsc {
 }
 
 /// `bun_jsc::StringJsc` — extension trait for `bun_string::String` providing
-/// JSC-aware `.to_js()` (mirrors src/jsc/lib.rs).
-pub trait StringJsc {
+/// JSC-aware `.to_js()` / `.from_js()` (mirrors src/jsc/lib.rs).
+pub trait StringJsc: Sized {
+    fn from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<bun_string::String>;
     fn to_js(&self, global: &JSGlobalObject) -> JsResult<JSValue>;
 }
 impl StringJsc for bun_string::String {
+    fn from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<bun_string::String> {
+        bun_string_jsc::from_js(value, global)
+    }
     fn to_js(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         bun_string_jsc::to_js(self, global)
     }

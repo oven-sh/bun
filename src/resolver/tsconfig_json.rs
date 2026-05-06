@@ -1,6 +1,7 @@
 // CYCLEBREAK: bun_bundler::cache → JsonCache vtable (see below).
 // CYCLEBREAK: bun_bundler::options::jsx::Pragma → local structural def (see `options` mod).
 use bun_collections::ArrayHashMap;
+use bun_interchange::json_parser;
 use bun_js_parser as js_ast;
 use bun_js_parser::lexer as js_lexer;
 use bun_logger as logger;

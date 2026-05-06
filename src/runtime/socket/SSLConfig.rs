@@ -468,10 +468,23 @@ pub mod GlobalRegistry {
             }
         }
 
-        // TODO(port): static mutable map — wrap in a Mutex<ArrayHashMap<...>> or
-        // OnceLock. Zig used module-level `var` which is implicitly static mut.
+        /// Module-level storage. Zig: `var configs: ArrayHashMapUnmanaged(...) = .empty`.
+        ///
+        /// Access discipline: every caller holds `MUTEX` for the full lifetime of
+        /// the returned `&'static mut`, so the `static mut` aliasing rules are
+        /// upheld by that lock (PORTING.md §Concurrency: lock owns data, but
+        /// `ArrayHashMap` has no `const fn new()` so it can't sit inside the
+        /// `Mutex` directly — lazy `Option` init under the lock instead).
         fn configs() -> &'static mut ArrayHashMap<*mut SSLConfig, WeakPtr> {
-            unimplemented!("GlobalRegistry static map storage")
+            // `*mut SSLConfig` key makes the map `!Sync`; `static mut` sidesteps
+            // the auto-trait bound and matches Zig's plain `var`.
+            static mut CONFIGS: Option<ArrayHashMap<*mut SSLConfig, WeakPtr>> = None;
+            // SAFETY: only ever entered while `MUTEX` is held (see `intern` /
+            // `remove`), guaranteeing a single live `&mut` at a time.
+            #[allow(static_mut_refs)]
+            unsafe {
+                CONFIGS.get_or_insert_with(ArrayHashMap::new)
+            }
         }
 
         /// Takes a by-value SSLConfig, wraps it in a `SharedPtr` (strong=1), and

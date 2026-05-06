@@ -1750,5 +1750,5 @@ fn consume_operation_or_colon(
 //   source:     src/css/media_query.zig (1494 lines)
 //   confidence: medium-high
 //   todos:      1
-//   notes:      module fully un-gated; QueryFeature::parse + MediaFeatureName/Value::parse real (values/ calc lattice landed); to_css/add_f32 route through real Length/Resolution/Ratio; PartialEq for MediaFeatureValue::Env still loud-todo on EnvironmentVariable: PartialEq; parse_unknown env() arm restored — ParserOptions threaded from MediaList::parse → QueryFeature::parse_with_options (fixes Zig UB: undefined options/depth via tryParse ArgsTuple)
+//   notes:      module fully un-gated; QueryFeature::parse + MediaFeatureName/Value::parse real (values/ calc lattice landed); to_css/add_f32 route through real Length/Resolution/Ratio; PartialEq for MediaFeatureValue::Env routes through EnvironmentVariable: CssEql; parse_unknown env() arm restored — ParserOptions threaded from MediaList::parse → QueryFeature::parse_with_options (fixes Zig UB: undefined options/depth via tryParse ArgsTuple)
 // ──────────────────────────────────────────────────────────────────────────

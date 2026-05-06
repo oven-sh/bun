@@ -23,13 +23,11 @@ impl PackageManager {
                     return None;
                 }
 
-                // TODO(port): `.load_from_memory` is a Zig enum literal — replace with the
-                // concrete Rust enum path once `manifests::LoadMode` (or equivalent) is ported.
                 let manifest = self.manifests.by_name_hash(
                     self,
                     self.scope_for_package_name(package_name),
                     name_hash,
-                    todo!(".load_from_memory — manifests::LoadMode not yet ported"),
+                    crate::package_manifest_map::CacheBehavior::LoadFromMemory,
                     self.options.minimum_release_age_ms.is_some(),
                 )?;
 

@@ -153,21 +153,67 @@ pub struct Task {
     pub ptr: *mut (),
 }
 
+/// Type → tag binding for [`Task`]. Implement on every type that can be
+/// enqueued; the impl lives in whatever crate owns the type (mirrors Zig's
+/// comptime `TaggedPointerUnion` type-list lookup, where the tag was derived
+/// from `@typeName(std.meta.Child(@TypeOf(ptr)))`).
+///
+/// ```ignore
+/// impl bun_event_loop::Taskable for FetchTasklet {
+///     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::FetchTasklet;
+/// }
+/// ```
+///
+/// Re-exported from `bun_jsc` for ergonomics, but defined here (lowest tier on
+/// the hot-dispatch list, see CYCLEBREAK.md §Hot dispatch list) so that
+/// [`Task::init`] can use it without a dep cycle.
+pub trait Taskable {
+    /// The tag constant from [`task_tag`] for this type. Both this and the
+    /// `bun_runtime::dispatch::run_task` match arm MUST agree.
+    const TAG: TaskTag;
+
+    /// Build a [`Task`] from a raw pointer to `Self`. Ownership semantics are
+    /// per-variant (most arms `Box::from_raw` on dispatch; a few are borrows).
+    #[inline]
+    fn into_task(ptr: *mut Self) -> Task {
+        Task::new(Self::TAG, ptr.cast::<()>())
+    }
+}
+
 impl Task {
     #[inline]
     pub const fn new(tag: TaskTag, ptr: *mut ()) -> Task {
         Task { tag, ptr }
     }
 
-    // TODO(b0): Zig `Task.init(anytype)` mapped variant type → tag at comptime.
-    // The tag table now lives in `bun_runtime::dispatch`; callers that know their
-    // tag should use `Task::new(task_tag::X, ptr)` instead. This stub keeps Phase-A
-    // call sites parsing until the move-in pass rewrites them.
+    /// Zig: `TaggedPointerUnion.init(_ptr: anytype)` — `@typeInfo` asserted
+    /// `_ptr` was a pointer, then `@intFromEnum(@field(Tag, @typeName(Child)))`
+    /// resolved the tag from the comptime type list. Rust expresses the
+    /// type→tag table as the [`Taskable`] trait; the per-type impl supplies
+    /// `T::TAG` and the body is the Zig `TaggedPointer.init(ptr, tag)`.
+    // PORT NOTE: Zig accepted `anytype` and reflected on `@TypeOf`; Rust takes
+    // `*mut T` directly (the only shape Zig admitted). `&mut T` coerces at
+    // call sites.
     #[inline]
-    pub fn init<T>(of: T) -> Task {
-        let _ = of;
-        unimplemented!("TODO(b0): Task::init — tag mapping owned by bun_runtime::dispatch::run_task")
+    pub fn init<T: Taskable>(ptr: *mut T) -> Task {
+        Task::new(T::TAG, ptr.cast::<()>())
     }
+
+    /// Zig: `TaggedPointerUnion.initWithType(comptime Type, _ptr)` — for the
+    /// rare case where the pointer's static type differs from the variant
+    /// (Zig used this when `_ptr` was `*anyopaque`).
+    #[inline]
+    pub fn init_with_type<T: Taskable>(ptr: *mut ()) -> Task {
+        Task::new(T::TAG, ptr)
+    }
+}
+
+// Taskable impls for the low-tier task wrappers defined in this crate.
+impl Taskable for crate::AnyTask::AnyTask {
+    const TAG: TaskTag = task_tag::AnyTask;
+}
+impl Taskable for crate::ManagedTask::ManagedTask {
+    const TAG: TaskTag = task_tag::ManagedTask;
 }
 // ────────────────────────────────────────────────────────────────────────────
 

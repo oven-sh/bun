@@ -128,6 +128,11 @@ pub use ref_counted_str::RefCountedStr;
 pub use yield_::Yield;
 pub use interpreter::{ExitCode, Interpreter, NodeId, Node, ShellExecEnv};
 pub use io::IO;
+pub use io_writer as IOWriter;
+
+/// Forward-decl task payloads for `runtime::dispatch::run_task` arms whose
+/// owning modules are still gated. See `dispatch_tasks.rs` header.
+pub mod dispatch_tasks;
 
 pub const SUBSHELL_TODO_ERROR: &str =
     "Subshells are not implemented, please open GitHub issue!";

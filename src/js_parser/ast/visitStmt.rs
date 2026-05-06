@@ -1152,16 +1152,31 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         _ => break 'try_register,
                     };
                     let original_name = unsafe { arena_str(p.symbols[id.inner_index() as usize].original_name) };
-                    // blocked_on: handle_react_refresh_register in  block (P.rs:5422).
-                    let _ = (original_name, id, ReactRefreshExportKind::Named);
-                    todo!("s_local: handle_react_refresh_register");
+                    p.handle_react_refresh_register(
+                        stmts,
+                        as_static(original_name),
+                        id,
+                        ReactRefreshExportKind::Named,
+                    )?;
                 }
             }
         }
 
-        if data.is_export && SERVER_COMPONENTS_WRAPS_EXPORTS {
-            // blocked_on: server_components.wraps_exports() (bool stub). See _draft.
-            todo!("s_local: server_components.wraps_exports path");
+        if data.is_export && p.options.features.server_components.wraps_exports() {
+            for decl in data.decls.slice_mut() {
+                'try_annotate: {
+                    let Some(val) = decl.value else { break 'try_annotate };
+                    let id = match decl.binding.data {
+                        // SAFETY: arena-owned B::Identifier ptr, valid for 'a.
+                        js_ast::binding::Data::BIdentifier(b) => unsafe { (*b).r#ref },
+                        _ => break 'try_annotate,
+                    };
+                    let original_name =
+                        unsafe { arena_str(p.symbols[id.inner_index() as usize].original_name) };
+                    decl.value =
+                        Some(p.wrap_value_for_server_component_reference(val, as_static(original_name)));
+                }
+            }
         }
 
         Ok(())

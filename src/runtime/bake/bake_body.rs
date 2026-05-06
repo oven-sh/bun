@@ -579,9 +579,12 @@ impl Framework {
         }
 
         for fsr in clone.file_system_router_types.iter_mut() {
-            fsr.root = arena.alloc_slice_copy(paths::resolve_path::join_abs::<
-                paths::platform::Auto,
-            >(server.fs.top_level_dir, fsr.root));
+            fsr.root = arena_erase(arena.alloc_slice_copy(
+                paths::resolve_path::join_abs::<paths::platform::Auto>(
+                    server.fs.top_level_dir,
+                    fsr.root,
+                ),
+            ));
             if let Some(entry_client) = &mut fsr.entry_client {
                 self.resolve_helper(client, entry_client, &mut had_errors, b"client side entrypoint");
             }

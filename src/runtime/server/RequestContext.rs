@@ -2440,19 +2440,30 @@ where
     pub fn handle_reject_stream(req: &mut Self, global_this: &JSGlobalObject, err: JSValue) {
         stream_log!("handleRejectStream");
 
-        // TODO(b2-blocked): once `ResponseStreamJSSink` is real:
-        //   if let Some(prom) = wrapper.sink.pending_flush.take() { prom.to_js().unprotect(); }
-        //   wrapper.sink.done = true;
-        //   req.flags.set_aborted(req.flags.aborted() || wrapper.sink.aborted);
-        //   wrapper.sink.finalize();
-        //   wrapper.detach(wrapper.sink.global_this);
-        // Until the sink type is real, no path populates `sink`; enforce that
-        // so we don't silently leak the wrapper or skip aborted propagation.
-        debug_assert!(
-            req.sink.is_none(),
-            "ResponseStreamJSSink populated but finalize/detach is still stubbed"
-        );
-        req.sink = None;
+        if let Some(wrapper_ptr) = req.sink.take() {
+            // SAFETY: `sink` is the Box::into_raw'd JSSink set by do_render_stream;
+            // sole live mutable view in this scope.
+            let wrapper = unsafe { &mut *wrapper_ptr.as_ptr() };
+            if let Some(prom) = wrapper.sink.pending_flush.take() {
+                // The promise value was protected when pending_flush was
+                // assigned (flushFromJS / endFromJS). Drop that root before
+                // abandoning the pointer, otherwise it leaks for the
+                // lifetime of the VM.
+                // SAFETY: prom is a GC-rooted *JSPromise.
+                unsafe { (*prom).to_js() }.unprotect();
+            }
+            wrapper.sink.done = true;
+            let aborted = req.flags.aborted() || wrapper.sink.aborted;
+            req.flags.set_aborted(aborted);
+            wrapper.sink.finalize();
+            // SAFETY: global_this set in do_render_stream before sink was stored.
+            let sink_global = unsafe { &*wrapper.sink.global_this };
+            ResponseStreamJSSink::<SSL_ENABLED, HTTP3>::detach(
+                &mut wrapper.sink.signal,
+                sink_global,
+            );
+            Self::destroy_sink(wrapper_ptr);
+        }
 
         if let Some(resp) = req.response_weakref.get() {
             // PORT NOTE: Zig captures `bodyValue` ptr first then derefs after

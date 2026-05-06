@@ -3029,10 +3029,17 @@ pub mod formatter {
             // Capture raw pointers so the body can keep using `writer`/`self`;
             // the guard reads the *current* `writer.failed` at scope exit, so
             // every return path (including `?` propagation) is covered.
-            let writer_ptr: *const WrappedWriter<'_> = &writer;
+            // PORT NOTE: point at the `failed: bool` field directly rather than
+            // the whole `WrappedWriter<'_>` — a `*const WrappedWriter<'_>` would
+            // carry the `'_` lifetime into the guard's closure type, keeping the
+            // borrows of `writer_` / `self.estimated_line_length` alive across
+            // every `reseat_writer!()` (E0499). `*const bool` is lifetime-free,
+            // and `writer` is a fixed stack slot so the field address survives
+            // `reseat_writer!()` reassignment.
+            let writer_failed_ptr: *const bool = core::ptr::addr_of!(writer.failed);
             let self_failed_ptr: *mut bool = &mut self.failed;
             let _writer_failed = scopeguard::guard((), move |_| unsafe {
-                if (*writer_ptr).failed {
+                if *writer_failed_ptr {
                     *self_failed_ptr = true;
                 }
             });

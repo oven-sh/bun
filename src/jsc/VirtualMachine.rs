@@ -2532,9 +2532,11 @@ impl VirtualMachine {
         // SAFETY: `vm` is the unique live VM on this thread.
         let vm_ref = unsafe { &mut *vm };
         vm_ref.worker = Some((worker as *const crate::web_worker::WebWorker).cast());
-        vm_ref.standalone_module_graph =
-            NonNull::new(worker.parent_standalone_module_graph().cast());
-        vm_ref.hot_reload = worker.parent_hot_reload();
+        // SAFETY: `parent_vm()` is non-null and outlives this worker while
+        // `parent_poll_ref` is held (see web_worker.rs file header).
+        let parent = unsafe { &*worker.parent_vm() };
+        vm_ref.standalone_module_graph = parent.standalone_module_graph;
+        vm_ref.hot_reload = parent.hot_reload;
         vm_ref.initial_script_execution_context_identifier =
             worker.execution_context_id() as i32;
         vm_ref.transpiler.resolver.store_fd = opts.store_fd;
@@ -2602,7 +2604,10 @@ impl VirtualMachine {
             return ResolvedSource {
                 source_code: bun_string::String::init(b""),
                 specifier,
-                source_url: specifier.create_if_different(source_url),
+                // PORT NOTE: Zig `String.createIfDifferent` (reuse `specifier`
+                // when equal); `bun_string::String` has no such method yet, so
+                // unconditionally allocate. PERF(port): revisit.
+                source_url: bun_string::String::init(source_url),
                 allocator: core::ptr::null_mut(),
                 source_code_needs_deref: false,
                 ..Default::default()
@@ -2626,7 +2631,7 @@ impl VirtualMachine {
         input_: &[u8],
         hash_: Option<u32>,
     ) -> *mut c_void {
-        jsc::mark_binding(core::panic::Location::caller());
+        jsc::mark_binding();
         debug_assert!(!input_.is_empty());
         // TODO(b2-cycle): `crate::ref_string::{RefString, Callback}` are gated
         // (RefString.rs not yet un-gated in lib.rs). Full body — hash lookup,
@@ -2662,8 +2667,14 @@ impl VirtualMachine {
     ) -> Result<ResolvedSource, bun_core::Error> {
         debug_assert!(VirtualMachine::is_loaded());
 
-        if let Some(builtin) = ModuleLoader::fetch_builtin_module(jsc_vm, specifier)? {
-            return Ok(builtin);
+        let global_ptr = global_object as *const JSGlobalObject as *mut JSGlobalObject;
+        let mut ret = ErrorableResolvedSource::ok(ResolvedSource::default());
+        match ModuleLoader::fetch_builtin_module(
+            jsc_vm, global_ptr, &specifier, &referrer, &mut ret,
+        ) {
+            ModuleLoader::FetchBuiltinResult::Found
+            | ModuleLoader::FetchBuiltinResult::Errored => return ret.unwrap(),
+            ModuleLoader::FetchBuiltinResult::NotFound => {}
         }
 
         let specifier_clone = specifier.to_utf8();
@@ -2673,14 +2684,18 @@ impl VirtualMachine {
         // TODO(b2-cycle): real type is `bun_runtime::webcore::Blob`; `bun_bundler`
         // models it as `OpaqueBlob = *mut ()` to break the dep cycle.
         let mut blob_to_deinit: Option<bun_bundler::options::OpaqueBlob> = None;
-        let lr = bun_bundler::options::get_loader_and_virtual_source(
-            specifier_clone.slice(),
-            jsc_vm,
-            &mut virtual_source_to_use,
-            &mut blob_to_deinit,
-            None,
-        )
-        .map_err(|_| bun_core::err!("ModuleNotFound"))?;
+        // TODO(b2-cycle): `get_loader_and_virtual_source` takes a `&VmLoaderCtx`
+        // (erased VM + vtable); nothing registers the `VmLoaderVTable` yet
+        // (see runtime/jsc_hooks.rs). Restored once the runtime wires it.
+        #[allow(unreachable_code)]
+        let lr: bun_bundler::options::LoaderResult<'_> = {
+            let _ = (
+                specifier_clone.slice(),
+                &mut virtual_source_to_use,
+                &mut blob_to_deinit,
+            );
+            todo!("blocked_on: bun_bundler::options::VmLoaderCtx vtable")
+        };
         let module_type = lr
             .package_json
             .map(|pkg| pkg.module_type)
@@ -2695,7 +2710,7 @@ impl VirtualMachine {
                 if self.1 {
                     let vm = self.0 as *mut VirtualMachine;
                     // SAFETY: `vm` is the live per-thread VM.
-                    unsafe { (*vm).module_loader.reset_arena(&mut *vm) };
+                    unsafe { ModuleLoader::ModuleLoader::reset_arena(&mut *vm) };
                 }
             }
         }

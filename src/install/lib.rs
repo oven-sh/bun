@@ -1299,67 +1299,14 @@ pub mod lockfile {
     /// `bun_install::lockfile::package_index::Entry` before `lockfile_real`
     /// un-gates.
     pub use crate::lockfile_real::package_index;
+    /// `Lockfile.Tree` (src/install/lockfile/Tree.zig) -- re-export the
+    /// file-backed module so the stub `Buffers.trees` and callers in
+    /// `PackageInstaller` / `lockfile_real` agree on a single `Tree` type.
     pub mod tree {
-        use crate::DependencyID;
-        use super::DependencyIDSlice;
-
-        pub type Id = u32;
-
-        /// `Lockfile.Tree.invalid_id` (src/install/lockfile/Tree.zig).
-        pub const INVALID_ID: Id = Id::MAX;
-        /// `Lockfile.Tree.max_depth`.
-        pub const MAX_DEPTH: usize = 256;
-        /// `Lockfile.Tree.DepthBuf` — fixed-size hoist-depth scratch.
-        pub type DepthBuf = [Id; MAX_DEPTH];
-        /// `Lockfile.Tree.Iterator.PathStyle`
-        /// (src/install/lockfile/Tree.zig). Aliased as `PathStyle` to match
-        /// the Zig namespace `Tree.Iterator(.node_modules)` callers use.
-        #[derive(Clone, Copy, PartialEq, Eq)]
-        pub enum IteratorPathStyle { NodeModules, PkgPath }
-        pub use IteratorPathStyle as PathStyle;
-
-        /// Port of `Lockfile.Tree` (src/install/lockfile/Tree.zig) — the
-        /// hoisted dependency tree node. Associated consts mirror the Zig
-        /// module-level `invalid_id` / `root_dep_id`.
-        #[derive(Clone, Copy)]
-        pub struct Tree {
-            pub id: Id,
-            pub dependency_id: DependencyID,
-            pub parent: Id,
-            pub dependencies: DependencyIDSlice,
-        }
-        impl Tree {
-            pub const INVALID_ID: Id = Id::MAX;
-            pub const ROOT_DEP_ID: DependencyID = crate::INVALID_PACKAGE_ID - 1;
-        }
-        impl Default for Tree {
-            fn default() -> Self {
-                Self {
-                    id: Self::INVALID_ID,
-                    dependency_id: crate::INVALID_PACKAGE_ID,
-                    parent: Self::INVALID_ID,
-                    dependencies: DependencyIDSlice::default(),
-                }
-            }
-        }
-
-        /// Port of `Lockfile.Tree.relativePathAndDepth`
-        /// (src/install/lockfile/Tree.zig). Typed against the stub `Lockfile`
-        /// so `PackageInstaller::link_remaining_bins` can call it before
-        /// `lockfile_real` un-gates. Full body lives in
-        /// `lockfile_real::tree::relative_path_and_depth`.
-        pub fn relative_path_and_depth<'b>(
-            _lockfile: &super::Lockfile,
-            _tree_id: Id,
-            path_buf: &'b mut bun_paths::PathBuffer,
-            _depth_buf: &mut DepthBuf,
-            _style: IteratorPathStyle,
-        ) -> (&'b [u8], usize) {
-            // TODO(port): the stub `Buffers` lacks `.trees`; route to the real
-            // impl once the Lockfile types unify (reconciler-6).
-            path_buf[0] = 0;
-            (&path_buf[..0], 0)
-        }
+        pub use crate::lockfile_real::tree::*;
+        /// `Lockfile.Tree.Iterator.PathStyle` -- alias matching the Zig
+        /// namespace `Tree.Iterator(.node_modules)` callers use.
+        pub use crate::lockfile_real::tree::IteratorPathStyle as PathStyle;
     }
     pub mod bun_lock {}
 }

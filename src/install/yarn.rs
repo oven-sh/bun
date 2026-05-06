@@ -1728,11 +1728,11 @@ pub fn migrate_yarn_lockfile<'a>(
 
             let mut parsed_version = Dependency::parse(
                 dep_name_string,
-                name_hash,
+                Some(name_hash),
                 dep_version_string.slice(this.buffers.string_bytes.as_slice()),
                 &sliced_string,
-                log,
-                manager,
+                Some(log),
+                Some(manager),
             )
             .unwrap_or_default();
 
@@ -1742,14 +1742,7 @@ pub fn migrate_yarn_lockfile<'a>(
                 name_hash,
                 name: dep_name_string,
                 version: parsed_version,
-                behavior: dependency::Behavior {
-                    prod: root_dep.dep_type == DependencyType::Production,
-                    dev: root_dep.dep_type == DependencyType::Development,
-                    optional: root_dep.dep_type == DependencyType::Optional,
-                    peer: root_dep.dep_type == DependencyType::Peer,
-                    workspace: false,
-                    ..Default::default()
-                },
+                behavior: behavior_for(root_dep.dep_type, false),
             };
 
             this.buffers.dependencies.push(dep);
@@ -1771,14 +1764,14 @@ pub fn migrate_yarn_lockfile<'a>(
         }
     }
 
-    packages_slice.items_dependencies_mut()[0] = lockfile::DependencySlice {
-        off: root_deps_off,
-        len: u32::try_from(root_dependencies.len()).unwrap(),
-    };
-    packages_slice.items_resolutions_mut()[0] = lockfile::DependencyIDSlice {
-        off: root_resolutions_off,
-        len: u32::try_from(root_dependencies.len()).unwrap(),
-    };
+    this.packages.items_dependencies_mut()[0] = lockfile::DependencySlice::new(
+        root_deps_off,
+        u32::try_from(root_dependencies.len()).unwrap(),
+    );
+    this.packages.items_resolutions_mut()[0] = lockfile::DependencyIDSlice::new(
+        root_resolutions_off,
+        u32::try_from(root_dependencies.len()).unwrap(),
+    );
 
     for (yarn_idx, entry) in yarn_lock.entries.iter().enumerate() {
         let package_id = yarn_entry_to_package_id[yarn_idx];

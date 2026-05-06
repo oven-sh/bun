@@ -320,13 +320,13 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
             // defer file.close() — TODO(port): File should impl Drop to close
 
             {
-                body.data.reset();
+                body.reset();
                 // TODO(port): toManaged/moveToUnmanaged dance is a no-op in Rust (Vec owns its allocator)
                 let _ = file
-                    .read_to_end_with_array_list(&mut body.data.list, bun_sys::SizeHint::ProbablySmall)?;
+                    .read_to_end_with_array_list(&mut body.list, bun_sys::SizeHint::ProbablySmall)?;
             }
 
-            break 'brk logger::Source::init_path_string(abs.as_bytes(), body.data.list.as_slice());
+            break 'brk logger::Source::init_path_string(abs.as_bytes(), body.list.as_slice());
         };
 
         // TODO(port): see note above on `parse_with_json` — same stub/real

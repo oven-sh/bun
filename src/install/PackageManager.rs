@@ -1305,7 +1305,8 @@ pub fn init(
             explicit_global_dir = opts.global_dir.as_deref().unwrap_or(explicit_global_dir);
         }
         let global_dir = package_manager_options::open_global_dir(explicit_global_dir)?;
-        bun_sys::Dir { fd: global_dir }.set_as_cwd()?;
+        // Zig: `global_dir.setAsCwd()` → `fchdir`.
+        bun_sys::fchdir(global_dir)?;
     }
 
     // Zig: `Fs.FileSystem.init(null)` — registers the resolver-tier singleton.

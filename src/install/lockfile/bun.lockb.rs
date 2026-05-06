@@ -499,23 +499,35 @@ pub fn load(
 
                 // PORT NOTE: Zig: `var map = lockfile.overrides.map; defer lockfile.overrides.map = map;`
                 // is a move-out/move-back pattern. In Rust we mutate in place.
-                let map = &mut lockfile.overrides.map;
-
-                map.ensure_total_capacity(overrides_name_hashes.len())?;
+                lockfile
+                    .overrides
+                    .map
+                    .ensure_total_capacity(overrides_name_hashes.len())?;
                 let override_versions_external: Vec<dependency::External> =
                     buffers::read_array(stream)?;
-                let mut context = dependency::Context {
-                    log,
-                    buffer: lockfile.buffers.string_bytes.as_slice(),
-                    package_manager: manager.as_deref_mut(),
+                // PORT NOTE: reshaped for borrowck — `Context.buffer` borrows
+                // `lockfile.buffers` while we also need `&mut lockfile.overrides`.
+                // `string_bytes` is not reallocated in this block, so a raw-ptr
+                // slice view is sound (matches Zig's aliased pointers).
+                let string_bytes: &[u8] = unsafe {
+                    let s = lockfile.buffers.string_bytes.as_slice();
+                    core::slice::from_raw_parts(s.as_ptr(), s.len())
                 };
                 debug_assert_eq!(overrides_name_hashes.len(), override_versions_external.len());
                 for (name, value) in overrides_name_hashes
                     .iter()
                     .zip(override_versions_external.iter())
                 {
+                    let mut context = dependency::Context {
+                        log,
+                        buffer: string_bytes,
+                        package_manager: manager.as_deref_mut(),
+                    };
                     // PERF(port): was assume_capacity
-                    map.put_assume_capacity(*name, dependency::to_dependency(*value, &mut context));
+                    lockfile
+                        .overrides
+                        .map
+                        .put_assume_capacity(*name, dependency::to_dependency(*value, &mut context));
                 }
             } else {
                 stream.pos -= 8;

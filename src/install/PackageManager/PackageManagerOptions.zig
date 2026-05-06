@@ -215,6 +215,31 @@ pub fn openGlobalBinDir(opts_: ?*const Api.BunInstall) !std.fs.Dir {
     return error.@"Missing global bin directory: try setting $BUN_INSTALL";
 }
 
+/// `frozenLockfile = true` in `bunfig.toml` applies only to plain
+/// `bun install` — when the user explicitly asks to change the
+/// dependency graph (`bun add`, `bun remove`, `bun update <pkg>`,
+/// `bun install <pkg>`, `bun link`, `bun unlink`, `bun patch`,
+/// `bun patch-commit`) the bunfig setting is ignored.
+///
+/// The `--frozen-lockfile` CLI flag still forces the behavior on
+/// every subcommand and is handled separately.
+fn shouldObeyBunfigFrozenLockfile(
+    subcommand: Subcommand,
+    maybe_cli: ?CommandLineArguments,
+) bool {
+    if (!subcommand.shouldObeyBunfigFrozenLockfile()) return false;
+
+    // `bun install <pkg>` is routed through subcommand `.install` but is
+    // effectively `bun add <pkg>` (see `cli/install_command.zig`).
+    if (subcommand == .install) {
+        if (maybe_cli) |cli| {
+            if (cli.positionals.len > 1) return false;
+        }
+    }
+
+    return true;
+}
+
 pub fn load(
     this: *Options,
     allocator: std.mem.Allocator,
@@ -338,7 +363,7 @@ pub fn load(
         }
 
         if (config.frozen_lockfile) |frozen_lockfile| {
-            if (frozen_lockfile) {
+            if (frozen_lockfile and shouldObeyBunfigFrozenLockfile(subcommand, maybe_cli)) {
                 this.enable.frozen_lockfile = true;
             }
         }

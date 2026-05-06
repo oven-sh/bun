@@ -6656,6 +6656,189 @@ describe.concurrent("bun-install", () => {
     });
   });
 
+  // https://github.com/oven-sh/bun/issues/30333
+  // `frozenLockfile = true` in bunfig.toml should only lock the file for plain
+  // `bun install` — explicit mutations (`bun add`, `bun remove`,
+  // `bun update <pkg>`, `bun install <pkg>`) are a user-intended lockfile
+  // change and must still work.
+  describe("frozenLockfile in bunfig.toml should not block explicit mutations", () => {
+    async function setupFrozenBunfigCtx(ctx: TestContext) {
+      setContextHandler(
+        ctx,
+        dummyRegistryForContext(ctx, [], {
+          "0.0.2": { as: "0.0.2" },
+          "0.0.3": { as: "0.0.3" },
+          "0.0.5": { as: "0.0.5" },
+        }),
+      );
+
+      await writeFile(
+        join(ctx.package_dir, "package.json"),
+        JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { baz: "0.0.3" } }),
+      );
+
+      // seed the lockfile while bunfig doesn't yet exist
+      expect(
+        await spawn({
+          cmd: [bunExe(), "install"],
+          cwd: ctx.package_dir,
+          stdout: "ignore",
+          stdin: "ignore",
+          stderr: "ignore",
+          env,
+        }).exited,
+      ).toBe(0);
+
+      // now turn on frozenLockfile in bunfig.toml
+      await writeFile(
+        join(ctx.package_dir, "bunfig.toml"),
+        `
+[install]
+frozenLockfile = true
+registry = "${ctx.registry_url}"
+cache = false
+`,
+      );
+    }
+
+    it("bun add <pkg> works with bunfig frozenLockfile=true", async () => {
+      await withContext(defaultOpts, async ctx => {
+        await setupFrozenBunfigCtx(ctx);
+
+        const { stderr, exited } = spawn({
+          cmd: [bunExe(), "add", "bar@0.0.2"],
+          cwd: ctx.package_dir,
+          stdout: "pipe",
+          stdin: "pipe",
+          stderr: "pipe",
+          env,
+        });
+        const err = await stderr.text();
+        expect(err).not.toContain("lockfile is frozen");
+        expect(await exited).toBe(0);
+      });
+    });
+
+    it("bun install <pkg> works with bunfig frozenLockfile=true", async () => {
+      await withContext(defaultOpts, async ctx => {
+        await setupFrozenBunfigCtx(ctx);
+
+        const { stderr, exited } = spawn({
+          cmd: [bunExe(), "install", "bar@0.0.2"],
+          cwd: ctx.package_dir,
+          stdout: "pipe",
+          stdin: "pipe",
+          stderr: "pipe",
+          env,
+        });
+        const err = await stderr.text();
+        expect(err).not.toContain("lockfile is frozen");
+        expect(await exited).toBe(0);
+      });
+    });
+
+    it("bun remove <pkg> works with bunfig frozenLockfile=true", async () => {
+      await withContext(defaultOpts, async ctx => {
+        await setupFrozenBunfigCtx(ctx);
+
+        const { stderr, exited } = spawn({
+          cmd: [bunExe(), "remove", "baz"],
+          cwd: ctx.package_dir,
+          stdout: "pipe",
+          stdin: "pipe",
+          stderr: "pipe",
+          env,
+        });
+        const err = await stderr.text();
+        expect(err).not.toContain("lockfile is frozen");
+        expect(await exited).toBe(0);
+      });
+    });
+
+    it("bun update <pkg> works with bunfig frozenLockfile=true", async () => {
+      await withContext(defaultOpts, async ctx => {
+        await setupFrozenBunfigCtx(ctx);
+
+        // `bun update --latest baz` forces a version change (0.0.3 -> 0.0.5)
+        // so the lockfile MUST change — this exercises the frozen check.
+        const { stderr, exited } = spawn({
+          cmd: [bunExe(), "update", "--latest", "baz"],
+          cwd: ctx.package_dir,
+          stdout: "pipe",
+          stdin: "pipe",
+          stderr: "pipe",
+          env,
+        });
+        const err = await stderr.text();
+        expect(err).not.toContain("lockfile is frozen");
+        expect(await exited).toBe(0);
+      });
+    });
+
+    it("plain `bun install` still respects bunfig frozenLockfile=true", async () => {
+      await withContext(defaultOpts, async ctx => {
+        await setupFrozenBunfigCtx(ctx);
+
+        // change the package.json so the lockfile is out of date
+        await writeFile(
+          join(ctx.package_dir, "package.json"),
+          JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { baz: "0.0.5" } }),
+        );
+
+        const { stderr, exited } = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: ctx.package_dir,
+          stdout: "pipe",
+          stdin: "pipe",
+          stderr: "pipe",
+          env,
+        });
+        const err = await stderr.text();
+        expect(err).toContain("error: lockfile had changes, but lockfile is frozen");
+        expect(await exited).toBe(1);
+      });
+    });
+
+    it("--frozen-lockfile CLI flag still forces frozen on `bun add`", async () => {
+      await withContext(defaultOpts, async ctx => {
+        // no bunfig this time — just use the CLI flag on `bun add`
+        setContextHandler(
+          ctx,
+          dummyRegistryForContext(ctx, [], {
+            "0.0.2": { as: "0.0.2" },
+            "0.0.3": { as: "0.0.3" },
+          }),
+        );
+        await writeFile(
+          join(ctx.package_dir, "package.json"),
+          JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { baz: "0.0.3" } }),
+        );
+        expect(
+          await spawn({
+            cmd: [bunExe(), "install"],
+            cwd: ctx.package_dir,
+            stdout: "ignore",
+            stdin: "ignore",
+            stderr: "ignore",
+            env,
+          }).exited,
+        ).toBe(0);
+
+        const { stderr, exited } = spawn({
+          cmd: [bunExe(), "add", "--frozen-lockfile", "bar@0.0.2"],
+          cwd: ctx.package_dir,
+          stdout: "pipe",
+          stdin: "pipe",
+          stderr: "pipe",
+          env,
+        });
+        const err = await stderr.text();
+        expect(err).toContain("error: lockfile had changes, but lockfile is frozen");
+        expect(await exited).toBe(1);
+      });
+    });
+  });
+
   it("should perform bin-linking across multiple dependencies", async () => {
     await withContext(defaultOpts, async ctx => {
       const foo_package = JSON.stringify({

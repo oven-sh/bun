@@ -645,6 +645,12 @@ pub fn installWithManager(
 
         manager.verifyResolutions(log_level);
 
+        if (manager.options.enable.block_exotic_subdeps) {
+            if (try block_exotic_subdeps.enforceBlockExoticSubdeps(manager)) {
+                Global.exit(1);
+            }
+        }
+
         if (manager.options.security_scanner != null) {
             const is_subcommand_to_run_scanner = manager.subcommand == .add or manager.subcommand == .update or manager.subcommand == .install or manager.subcommand == .remove;
 
@@ -1164,6 +1170,7 @@ fn addDependencyError(manager: *PackageManager, dependency: *const Dependency, e
         manager.log.addZigErrorWithNote(manager.allocator, err, note.fmt, note.args) catch unreachable;
 }
 
+const block_exotic_subdeps = @import("./block_exotic_subdeps.zig");
 const security_scanner = @import("./security_scanner.zig");
 const std = @import("std");
 const installHoistedPackages = @import("../hoisted_install.zig").installHoistedPackages;

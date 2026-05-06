@@ -1,0 +1,129 @@
+//! Enforces `install.blockExoticSubdeps` — refuses to install when any
+//! *transitive* dependency resolves to a non-registry source: git, github,
+//! remote or local tarball URLs, local folders, symlinks, or workspace
+//! references pulled in by a non-workspace parent.
+//!
+//! Modeled on pnpm's feature of the same name:
+//! https://pnpm.io/11.x/supply-chain-security#prevent-exotic-transitive-dependencies
+//!
+//! Direct dependencies of the root package (and of any workspace package)
+//! are allowed to use exotic specifiers — only *nested* dependencies are
+//! restricted.
+
+const Violation = struct {
+    package_id: PackageID,
+    parent_id: PackageID,
+    dep_id: DependencyID,
+};
+
+/// Walks the fully-resolved lockfile and emits an error for every
+/// transitive dependency whose resolution uses a non-registry source.
+/// Returns true if any violations were found.
+pub fn enforceBlockExoticSubdeps(manager: *PackageManager) !bool {
+    if (!manager.options.enable.block_exotic_subdeps) return false;
+    if (manager.lockfile.packages.len == 0) return false;
+
+    const pkgs = manager.lockfile.packages.slice();
+    const pkg_resolutions = pkgs.items(.resolution);
+    const pkg_names = pkgs.items(.name);
+    const pkg_dependencies = pkgs.items(.dependencies);
+    const string_buf = manager.lockfile.buffers.string_bytes.items;
+    const resolutions = manager.lockfile.buffers.resolutions.items;
+    const dependencies = manager.lockfile.buffers.dependencies.items;
+
+    // Collect violations — dedupe by (parent_id, package_id) so we don't
+    // print the same pair twice when a package is referenced more than once.
+    var violations: std.ArrayList(Violation) = .{};
+    defer violations.deinit(manager.allocator);
+    var seen: std.AutoHashMapUnmanaged(u64, void) = .{};
+    defer seen.deinit(manager.allocator);
+
+    for (0..pkgs.len) |_parent_id| {
+        const parent_id: PackageID = @intCast(_parent_id);
+        const parent_res = pkg_resolutions[parent_id];
+
+        // Only transitive edges — skip root/workspace (direct deps are allowed).
+        if (isTopLevel(parent_res.tag)) continue;
+
+        const parent_deps = pkg_dependencies[parent_id];
+        for (parent_deps.begin()..parent_deps.end()) |_dep_id| {
+            const dep_id: DependencyID = @intCast(_dep_id);
+            const dep_pkg_id = resolutions[dep_id];
+            if (dep_pkg_id == invalid_package_id) continue;
+            if (dep_pkg_id >= pkgs.len) continue;
+
+            const dep_res = pkg_resolutions[dep_pkg_id];
+            if (!isExotic(dep_res.tag)) continue;
+
+            const key = (@as(u64, parent_id) << 32) | @as(u64, dep_pkg_id);
+            const gop = try seen.getOrPut(manager.allocator, key);
+            if (gop.found_existing) continue;
+
+            try violations.append(manager.allocator, .{
+                .package_id = dep_pkg_id,
+                .parent_id = parent_id,
+                .dep_id = dep_id,
+            });
+        }
+    }
+
+    if (violations.items.len == 0) return false;
+
+    Output.prettyErrorln("<r><red>error<r><d>:<r> <b>install.blockExoticSubdeps<r> is enabled, but the following transitive dependencies use non-registry sources:", .{});
+    Output.flush();
+
+    for (violations.items) |v| {
+        const parent_name = pkg_names[v.parent_id].slice(string_buf);
+        const parent_res = pkg_resolutions[v.parent_id];
+        const dep = dependencies[v.dep_id];
+        const dep_name = dep.name.slice(string_buf);
+        const dep_res = pkg_resolutions[v.package_id];
+
+        Output.prettyErrorln(
+            "  <b>{s}<r><d>@{f}<r> depends on <b>{s}<r> via <yellow>{s}<r> source <d>({f})<r>",
+            .{
+                parent_name,
+                parent_res.fmt(string_buf, .auto),
+                dep_name,
+                @tagName(dep_res.tag),
+                dep_res.fmt(string_buf, .auto),
+            },
+        );
+    }
+
+    Output.prettyErrorln(
+        "\n<d>To allow these, unset <b>install.blockExoticSubdeps<r><d> in bunfig.toml.<r>",
+        .{},
+    );
+    Output.flush();
+    return true;
+}
+
+inline fn isTopLevel(tag: Resolution.Tag) bool {
+    return tag == .root or tag == .workspace;
+}
+
+/// A resolution tag is "exotic" if the package came from somewhere other
+/// than a registry. Registry-resolved packages have `Resolution.Tag.npm`.
+/// `root`, `workspace`, and `uninitialized` are not transitive edges we're
+/// checking; callers skip those parents before reaching this helper.
+inline fn isExotic(tag: Resolution.Tag) bool {
+    return switch (tag) {
+        .npm, .root, .workspace, .uninitialized => false,
+        // folder, local_tarball, github, git, symlink, remote_tarball,
+        // single_file_module, and any future non-registry sources
+        else => true,
+    };
+}
+
+const std = @import("std");
+
+const bun = @import("bun");
+const Output = bun.Output;
+
+const install = bun.install;
+const DependencyID = install.DependencyID;
+const PackageID = install.PackageID;
+const PackageManager = install.PackageManager;
+const Resolution = install.Resolution;
+const invalid_package_id = install.invalid_package_id;

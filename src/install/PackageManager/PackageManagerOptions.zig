@@ -277,6 +277,10 @@ pub fn load(
             this.enable.global_virtual_store = global_store;
         }
 
+        if (config.block_exotic_subdeps) |block_exotic_subdeps| {
+            this.enable.block_exotic_subdeps = block_exotic_subdeps;
+        }
+
         if (config.security_scanner) |security_scanner| {
             this.security_scanner = security_scanner;
             this.do.prefetch_resolved_tarballs = false;
@@ -729,7 +733,14 @@ pub const Enable = packed struct(u16) {
     /// install. Off by default; set BUN_INSTALL_GLOBAL_STORE=1 or
     /// `install.globalStore = true` in bunfig to enable.
     global_virtual_store: bool = false,
-    _: u6 = 0,
+
+    /// Reject transitive dependencies resolved to non-registry sources
+    /// (git, github, tarball URLs, local folders, symlinks, workspaces).
+    /// Root-level dependencies are not affected.
+    /// https://pnpm.io/11.x/supply-chain-security#prevent-exotic-transitive-dependencies
+    block_exotic_subdeps: bool = false,
+
+    _: u5 = 0,
 };
 
 const string = []const u8;

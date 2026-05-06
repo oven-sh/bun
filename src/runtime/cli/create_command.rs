@@ -733,7 +733,10 @@ impl CreateCommand {
 
                 let source = logger::Source::init_path_string(b"package.json", package_json_contents.list.as_slice());
 
-                let mut package_json_expr = match JSON::parse_utf8(&source, ctx.log, /* allocator */) {
+                // SAFETY: ctx.log is a process-global Log pointer (Zig: `Context = *ContextData`).
+                let log: &mut logger::Log = unsafe { &mut *ctx.log };
+                let bump = bumpalo::Bump::new();
+                let mut package_json_expr = match JSON::parse_utf8(&source, log, &bump) {
                     Ok(e) => e,
                     Err(_) => {
                         package_json_file = None;
@@ -741,28 +744,28 @@ impl CreateCommand {
                     }
                 };
 
-                if !package_json_expr.data.is_e_object() {
+                if package_json_expr.data.e_object().is_none() {
                     package_json_file = None;
                     break 'process_package_json;
                 }
 
                 let mut properties_list: Vec<js_ast::G::Property> =
-                    package_json_expr.data.e_object_mut().properties.slice().to_vec();
+                    package_json_expr.data.e_object_mut().unwrap().properties.slice().to_vec();
                 // PORT NOTE: Zig used fromOwnedSlice; here we copy into Vec for mutation.
 
-                if ctx.log.errors > 0 {
-                    ctx.log.print(Output::error_writer())?;
+                if log.errors > 0 {
+                    log.print(Output::error_writer())?;
 
                     package_json_file = None;
                     break 'process_package_json;
                 }
 
-                if let Some(name_expr) = package_json_expr.as_property(b"name") {
+                if let Some(mut name_expr) = package_json_expr.as_property(b"name") {
                     if name_expr.expr.data.is_e_string() {
                         let basename = bun_paths::basename(destination);
                         // SAFETY: casting away const to match Zig's @ptrFromInt(@intFromPtr(...))
                         // pattern; the string is never mutated through this pointer.
-                        name_expr.expr.data.e_string_mut().data = unsafe {
+                        name_expr.expr.data.e_string_mut().unwrap().data = unsafe {
                             core::slice::from_raw_parts_mut(basename.as_ptr() as *mut u8, basename.len())
                         };
                     }

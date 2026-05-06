@@ -1331,15 +1331,14 @@ pub mod js_bundler {
                     let value_type = property_value.js_type();
 
                     if !value_type.is_string_like() {
-                        return global_this.throw_invalid_arguments(
+                        return Err(global_this.throw_invalid_arguments(
                             &format!("define \"{}\" must be a JSON string", prop),
-                            &[],
-                        );
+                        ));
                     }
 
                     let mut val = ZigString::init(b"");
                     property_value.to_zig_string(&mut val, global_this)?;
-                    if val.len() == 0 {
+                    if val.len == 0 {
                         val = ZigString::from_utf8(b"\"\"");
                     }
 

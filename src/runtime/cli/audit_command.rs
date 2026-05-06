@@ -208,24 +208,20 @@ struct PackageVersions {
     versions: Vec<Box<[u8]>>,
 }
 
+#[allow(unreachable_code, unused)]
 fn collect_packages_for_audit(
     pm: &mut PackageManager,
     prod_only: bool,
 ) -> Result<CollectPackagesResult, bun_alloc::AllocError> {
-    let _ = (pm, prod_only, build_production_package_set as fn(_, _) -> _);
     // Body iterates `pm.lockfile.packages` / `pm.root_package_id` /
     // `pm.workspace_name_hash` and per-package resolution tags — all gated
     // behind the upstream PackageManager stub (reconciler-6).
-    todo!("blocked_on: bun_install::PackageManager::lockfile");
-
-    // Unreachable tail kept so PackageVersions stays referenced.
-    #[allow(unreachable_code)]
-    let packages_list: Vec<PackageVersions> = Vec::new();
-    #[allow(unreachable_code)]
+    let packages_list: Vec<PackageVersions> =
+        todo!("blocked_on: bun_install::PackageManager::lockfile");
+    let _ = (pm, prod_only, build_production_package_set as fn(_, _) -> _);
     let skipped_packages: Vec<Box<[u8]>> = Vec::new();
 
     // PERF(port): Zig used MutableString with initial capacity 1024.
-    #[allow(unreachable_code)]
     let mut body: Vec<u8> = Vec::with_capacity(1024);
     body.push(b'{');
 

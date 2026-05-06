@@ -198,7 +198,9 @@ pub fn run_as_coordinator(
     }
 
     vm.event_loop().ensure_waker();
-    vm.run_with_api_lock(&mut coord, Coordinator::drive);
+    // PORT NOTE: Zig `runWithAPILock(Coordinator, &coord, Coordinator.drive)`
+    // collapses to a closure under the Rust `FnOnce()` signature.
+    vm.run_with_api_lock(|| coord.drive());
 
     if ctx.test_options.reporters.junit {
         if let Some(outfile) = ctx.test_options.reporter_outfile.as_deref() {

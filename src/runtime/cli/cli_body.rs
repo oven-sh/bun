@@ -707,10 +707,10 @@ pub mod command {
                     Some(acc)
                 })() {
                     Some(v) if v <= i32::MAX as u32 => v,
-                    _ => Output::panic(
+                    _ => Output::panic(format_args!(
                         "Invalid BUN_INTERNAL_WEBVIEW_HOST fd: {}",
-                        format_args!("{}", bstr::BStr::new(fd_str)),
-                    ),
+                        bstr::BStr::new(fd_str),
+                    )),
                 };
                 // TODO(port): move to cli_sys
                 unsafe extern "C" {

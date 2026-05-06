@@ -63,6 +63,42 @@ fn dir_open_dir_z(dir: &Dir, path: &ZStr, _opts: bun_sys::OpenDirOptions) -> Res
         .map_err(Into::into)
 }
 
+
+/// Process-lifetime bump arena for `Expr::as_string*` calls (CLI is one-shot;
+/// see `pm_pkg_command::dummy_bump`).
+fn pack_bump() -> &'static bumpalo::Bump {
+    use std::sync::OnceLock;
+    static BUMP: OnceLock<bumpalo::Bump> = OnceLock::new();
+    BUMP.get_or_init(bumpalo::Bump::new)
+}
+
+/// Shim for the removed `bun_sys::File::to_source_at` (T1->T2 layering split).
+#[allow(unused_variables)]
+fn file_to_source_at(dir: &Dir, path: &ZStr) -> bun_sys::Maybe<bun_logger::Source> {
+    todo!("blocked_on: bun_sys::File::to_source_at")
+}
+
+// `PackageManager` stub-field accessors - real fields gated behind
+// `bun_install::package_manager_real` (`#![cfg(any())]` reconciler-6).
+#[inline]
+fn pm_log(_m: &mut PackageManager) -> &mut bun_logger::Log {
+    todo!("blocked_on: bun_install::PackageManager::log")
+}
+#[inline]
+fn pm_workspace_cache(
+    _m: &mut PackageManager,
+) -> &mut WorkspacePackageJSONCache::WorkspacePackageJSONCache {
+    todo!("blocked_on: bun_install::PackageManager::workspace_package_json_cache")
+}
+#[inline]
+fn pm_env(_m: &PackageManager) -> *mut bun_dotenv::Loader<'static> {
+    todo!("blocked_on: bun_install::PackageManager::env")
+}
+#[inline]
+fn pm_run_scripts(_m: &PackageManager) -> bool {
+    todo!("blocked_on: bun_install::PackageManagerOptions::do_")
+}
+
 // type aliases matching Zig `string`/`stringZ`
 // (used as `&[u8]` / `&ZStr` at fn boundaries; owned forms use Box<[u8]> / Box<ZStr>)
 

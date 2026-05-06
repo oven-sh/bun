@@ -939,13 +939,16 @@ impl CronRemoveJob {
             return;
         }
         if let Some(proc) = self.process.take() {
-            proc.detach();
-            drop(proc);
+            // SAFETY: intrusive-RC pointer; we hold a ref.
+            unsafe {
+                (*proc).detach();
+                (*proc).deref();
+            }
         }
         if self.err_msg.is_some() {
             return Self::finish(self);
         }
-        let Some(status) = self.exit_status else { return };
+        let Some(status) = self.exit_status.take() else { return };
         match status {
             Status::Exited(exited) => {
                 let is_acceptable_nonzero = (self.state == RemoveState::ReadingCrontab

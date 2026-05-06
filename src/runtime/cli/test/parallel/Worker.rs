@@ -94,15 +94,15 @@ impl Worker {
         // which fields are populated doesn't matter.
         let mut this = scopeguard::guard(self, |this| {
             if let Some(p) = this.process.take() {
-                // TODO(port): Arc<Process> gives only &Process; exit_handler
-                // reset / kill / close mutate. Process is ThreadSafeRefCount
-                // (intrusive) in Zig — Phase B may need IntrusiveArc<Process>
-                // or interior mutability on these fields.
-                p.exit_handler = Default::default();
-                if !p.has_exited() {
-                    let _ = p.kill(9);
+                // SAFETY: `p` is a live intrusive-refcounted *mut Process
+                // produced by `to_process` below; sole owner until reaped.
+                unsafe {
+                    (*p).exit_handler = Default::default();
+                    if !(*p).has_exited() {
+                        let _ = (*p).kill(9);
+                    }
+                    (*p).close();
                 }
-                p.close();
             }
             // Reset to fresh state after deinit so reapWorker's `!respawned`
             // cleanup (which can't tell whether start() ran) doesn't deinit on

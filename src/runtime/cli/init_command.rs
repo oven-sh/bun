@@ -4,8 +4,10 @@ use core::ffi::c_char;
 use std::io::Write as _;
 
 use bun_collections::IntegerBitSet;
+use bun_collections::bit_set::Range as BitRange;
 use bun_core::{self as bun, env_var, fmt as bun_fmt, Environment, Error, Global, Output};
 use bun_js_parser as js_ast;
+use bun_js_parser::ast::StoreRef;
 use bun_js_printer as js_printer;
 use bun_interchange::json;
 use bun_logger as logger;
@@ -357,7 +359,7 @@ impl InitCommand {
         let mut minimal = false;
         let mut auto_yes = false;
         let mut parse_flags = true;
-        let mut initialize_in_folder: Option<&[u8]> = None;
+        let mut initialize_in_folder: Option<&ZStr> = None;
 
         let mut template: Template = Template::Blank;
         let mut prev_flag_was_react = false;
@@ -403,7 +405,7 @@ impl InitCommand {
                 }
             } else {
                 if initialize_in_folder.is_none() {
-                    initialize_in_folder = Some(arg);
+                    initialize_in_folder = Some(arg_);
                 } else {
                     // invalid positional; ignore
                 }
@@ -708,7 +710,7 @@ impl InitCommand {
         // SAFETY: `fields.object` was set above either from the parsed JSON
         // (arena-owned, lives for the duration of `exec`) or from a freshly
         // allocated `Expr.init` from the AST store (also lives until process exit).
-        let object = unsafe { &mut *fields.object };
+        let object = unsafe { &mut *fields.object.unwrap().as_ptr() };
 
         if !minimal {
             if !fields.name.is_empty() {
@@ -1169,7 +1171,7 @@ pub struct PackageJSONFields {
     pub name: Vec<u8>,
     pub type_: &'static [u8],
     /// ARENA: allocated from `js_ast::Expr` Store via `initialize_store()`; no deinit.
-    pub object: *mut js_ast::E::Object,
+    pub object: Option<StoreRef<js_ast::E::Object>>,
     // TODO(port): Zig type was `[:0]const u8`; we drop the NUL sentinel and
     // re-terminate at FFI boundaries.
     pub entry_point: Vec<u8>,
@@ -1181,7 +1183,7 @@ impl Default for PackageJSONFields {
         Self {
             name: b"project".to_vec(),
             type_: b"module",
-            object: core::ptr::null_mut(),
+            object: None,
             entry_point: Vec::new(),
             private: true,
         }
@@ -1679,7 +1681,7 @@ impl Template {
                     Output::err(
                         err,
                         "failed to create file: '{s}'",
-                        format_args!("{}", bstr::BStr::new(path)),
+                        &[&bstr::BStr::new(path)],
                     );
                     Global::crash();
                 }

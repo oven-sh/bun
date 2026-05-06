@@ -128,6 +128,15 @@ pub struct IncrementalGraph<const SIDE: bake::Side = { bake::Side::Server }> {
     pub first_import: Vec<Option<EdgeIndex>>,
     pub first_dependency: Vec<Option<EdgeIndex>>,
     pub free_edge_head: Option<EdgeIndex>,
+    // ── per-bundle scratch (`current_chunk_*`) ─────────────────────────
+    /// Total byte length of the current JS chunk being assembled.
+    pub current_chunk_len: usize,
+    /// File indices contributing to the current chunk (in emit order).
+    pub current_chunk_parts: Vec<FileIndex<SIDE>>,
+    /// Per-part source-map handles parallel to `current_chunk_parts`.
+    pub current_chunk_source_maps: Vec<packed_map::Shared>,
+    /// CSS file content-hashes referenced by the current chunk (client only).
+    pub current_css_files: Vec<u64>,
 }
 
 impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
@@ -135,6 +144,57 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     #[inline]
     pub fn file_kind_at(&self, index: usize) -> FileKind {
         self.bundled_files.values()[index].kind
+    }
+
+    /// `IncrementalGraph(side).getFileByIndex` — direct value-slot accessor.
+    #[inline]
+    pub fn get_file_by_index(&self, index: FileIndex<SIDE>) -> &File {
+        &self.bundled_files.values()[index.get() as usize]
+    }
+
+    /// `IncrementalGraph(side).traceDependencies` — full body in gated draft.
+    pub fn trace_dependencies(
+        &mut self,
+        _index: FileIndex<SIDE>,
+        _gts: &mut super::GraphTraceState,
+        _goal: TraceDependencyGoal,
+        _from: FileIndex<SIDE>,
+    ) -> Result<(), bun_core::Error> {
+        todo!("blocked_on: dev_server::IncrementalGraph::trace_dependencies body un-gate")
+    }
+
+    /// `IncrementalGraph(side).takeSourceMap` — full body in gated draft.
+    pub fn take_source_map(
+        &mut self,
+        _entry: &mut super::source_map_store::Entry,
+    ) -> Result<(), bun_core::Error> {
+        todo!("blocked_on: dev_server::IncrementalGraph::take_source_map body un-gate")
+    }
+
+    /// `IncrementalGraph(side).takeJSBundle` — full body in gated draft.
+    pub fn take_js_bundle(
+        &mut self,
+        _opts: &TakeJSBundleOptionsServer,
+    ) -> Result<Vec<u8>, bun_core::Error> {
+        todo!("blocked_on: dev_server::IncrementalGraph::take_js_bundle body un-gate")
+    }
+
+    /// `IncrementalGraph(side).takeJSBundleToList` — full body in gated draft.
+    pub fn take_js_bundle_to_list(
+        &mut self,
+        _out: &mut Vec<u8>,
+        _opts: &TakeJSBundleOptionsClient,
+    ) -> Result<(), bun_core::Error> {
+        todo!("blocked_on: dev_server::IncrementalGraph::take_js_bundle_to_list body un-gate")
+    }
+
+    /// `IncrementalGraph(side).onFileDeleted` — full body in gated draft.
+    pub fn on_file_deleted(
+        &mut self,
+        _abs_path: &[u8],
+        _bv2: &mut bun_bundler::BundleV2,
+    ) -> Result<(), bun_alloc::AllocError> {
+        todo!("blocked_on: dev_server::IncrementalGraph::on_file_deleted body un-gate")
     }
 
     /// `IncrementalGraph(side).invalidate` — DevServer.zig. Full per-side body in

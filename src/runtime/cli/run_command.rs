@@ -4164,17 +4164,21 @@ impl RunCommand {
         // find what to run
 
         let mut positionals = &ctx.positionals[..];
-        if !positionals.is_empty() && positionals[0] == b"run" {
+        if !positionals.is_empty() && &*positionals[0] == b"run" {
             positionals = &positionals[1..];
         }
 
         let mut target_name: &[u8] = b"";
         if !positionals.is_empty() {
-            target_name = positionals[0];
+            target_name = &positionals[0];
             positionals = &positionals[1..];
         }
         let _ = positionals;
-        let passthrough = ctx.passthrough; // unclear why passthrough is an escaped string, it should probably be []const []const u8 and allow its users to escape it.
+        // unclear why passthrough is an escaped string, it should probably be []const []const u8 and allow its users to escape it.
+        // PORT NOTE: ContextData::passthrough is `Vec<Box<[u8]>>`; downstream
+        // helpers want `&[&[u8]]`, so reborrow each element.
+        let passthrough_storage: Vec<&[u8]> = ctx.passthrough.iter().map(|s| &**s).collect();
+        let passthrough: &[&[u8]] = &passthrough_storage;
 
         let mut try_fast_run = false;
         let mut skip_script_check = false;

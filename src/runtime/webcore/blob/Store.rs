@@ -967,29 +967,89 @@ impl S3 {
 // TODO(port): verify PathLike owns its `.string` storage so the manual
 // `allocator.free(@constCast(this.pathlike.slice()))` path from Zig deinit is covered.
 
-#[derive(Default)]
+/// Port of `Blob.Store.Bytes` (Zig: `ptr/len/cap/allocator/stored_name`).
+///
+/// PORT NOTE: an earlier pass collapsed this to `Vec<u8>`, but that cannot
+/// represent the memfd-backed path (`LinuxMemFdAllocator::create` hands back an
+/// `mmap`'d region whose `free` is `munmap`, not heap `free`). Restored to the
+/// Zig shape so the allocator vtable travels with the buffer; the common case
+/// (`init(Vec<u8>)`) stores the global mimalloc allocator and round-trips back
+/// to `Vec<u8>` in [`Bytes::to_internal_blob`].
 pub struct Bytes {
-    // LIFETIMES.tsv: ptr+len+cap+allocator collapse to Vec<u8>.
-    // PORT NOTE: Zig stored len/cap as SizeType (Blob.SizeType); Vec<u8> uses usize.
-    // Accessors below truncate to SizeType to preserve the original API surface.
-    data: Vec<u8>,
+    ptr: Option<NonNull<u8>>,
+    len: SizeType,
+    cap: SizeType,
+    allocator: bun_alloc::StdAllocator,
 
     /// Used by standalone module graph and the File constructor
     pub stored_name: PathString,
 }
 
+// SAFETY: `Bytes` is morally `Vec<u8>`-with-custom-free. The raw `NonNull<u8>`
+// is uniquely owned (Zig: `ptr` is the sole alias) and `StdAllocator` is
+// `Send + Sync` (its vtable dispatch is the implementor's thread-safety
+// concern, same as Zig). Restores the auto-traits the previous `Vec<u8>` field
+// provided.
+unsafe impl Send for Bytes {}
+unsafe impl Sync for Bytes {}
+
+impl Default for Bytes {
+    fn default() -> Self {
+        Self {
+            ptr: None,
+            len: 0,
+            cap: 0,
+            allocator: bun_alloc::basic::C_ALLOCATOR,
+            stored_name: PathString::default(),
+        }
+    }
+}
+
 impl Bytes {
-    /// Takes ownership of `bytes`.
+    /// Takes ownership of `bytes` (allocated by the global mimalloc allocator).
     pub fn init(bytes: Vec<u8>) -> Bytes {
+        let mut v = core::mem::ManuallyDrop::new(bytes);
+        let len = v.len();
+        let cap = v.capacity();
         Bytes {
-            data: bytes,
+            ptr: NonNull::new(v.as_mut_ptr()),
+            // Zig: `@truncate(bytes.len)` for both — we additionally keep the
+            // real `cap` so `to_internal_blob` can soundly `Vec::from_raw_parts`.
+            len: len as SizeType,
+            cap: cap as SizeType,
+            allocator: bun_alloc::basic::C_ALLOCATOR,
+            stored_name: PathString::default(),
+        }
+    }
+
+    /// Construct from a raw `(ptr, len, cap)` triple owned by `allocator`.
+    ///
+    /// # Safety
+    /// `ptr[..cap]` must be a live allocation owned by `allocator`'s vtable
+    /// (i.e. `(allocator.vtable.free)(allocator.ptr, ptr[..cap], …)` is the
+    /// correct release), and `len <= cap`. Ownership transfers to the returned
+    /// `Bytes`; the caller must not free `ptr` afterwards.
+    pub unsafe fn from_raw_parts(
+        ptr: *mut u8,
+        len: SizeType,
+        cap: SizeType,
+        allocator: bun_alloc::StdAllocator,
+    ) -> Bytes {
+        Bytes {
+            ptr: NonNull::new(ptr),
+            len,
+            cap,
+            allocator,
             stored_name: PathString::default(),
         }
     }
 
     pub fn init_empty_with_name(name: PathString) -> Bytes {
         Bytes {
-            data: Vec::new(),
+            ptr: None,
+            len: 0,
+            cap: 0,
+            allocator: bun_alloc::basic::C_ALLOCATOR,
             stored_name: name,
         }
     }
@@ -1000,45 +1060,99 @@ impl Bytes {
         Ok(Bytes::init(list))
     }
 
+    /// The allocator that owns `ptr[..cap]` (Zig: `this.allocator`).
+    #[inline]
+    pub fn allocator(&self) -> bun_alloc::StdAllocator {
+        self.allocator
+    }
+
     pub fn to_internal_blob(&mut self) -> super::Internal {
-        // PORT NOTE: reshaped — Zig manually rebuilt an ArrayList from ptr/len/cap then
-        // zeroed self. With Vec<u8>, mem::take moves the buffer out and leaves an empty Vec.
-        super::Internal {
-            bytes: core::mem::take(&mut self.data),
-            was_string: false,
-        }
+        // Zig built an `array_list.Managed(u8)` over the same allocator and
+        // zeroed self. `Internal.bytes` is `Vec<u8>` (global allocator), so
+        // round-trip only when the storage *is* the global allocator; otherwise
+        // copy + free through the original allocator (e.g. memfd → munmap).
+        let bytes = match self.ptr.take() {
+            None => Vec::new(),
+            Some(ptr) => {
+                let len = self.len as usize;
+                let cap = self.cap as usize;
+                if core::ptr::eq(
+                    self.allocator.vtable as *const _,
+                    bun_alloc::basic::C_ALLOCATOR.vtable as *const _,
+                ) {
+                    // SAFETY: `init(Vec<u8>)` is the only path that stores
+                    // `C_ALLOCATOR`, and it recorded the exact `(ptr, len, cap)`
+                    // from `Vec::into_raw_parts`-equivalent decomposition.
+                    unsafe { Vec::from_raw_parts(ptr.as_ptr(), len, cap) }
+                } else {
+                    // SAFETY: `ptr[..len]` is a live initialized region per the
+                    // `from_raw_parts` contract; freed via its own allocator below.
+                    let copy = unsafe { core::slice::from_raw_parts(ptr.as_ptr(), len) }.to_vec();
+                    // SAFETY: releasing the `ptr[..cap]` allocation through the
+                    // vtable that owns it (e.g. `LinuxMemFdAllocator` → munmap).
+                    let buf = unsafe { core::slice::from_raw_parts_mut(ptr.as_ptr(), cap) };
+                    self.allocator.raw_free(buf, bun_alloc::Alignment::of::<u8>(), 0);
+                    copy
+                }
+            }
+        };
+        self.len = 0;
+        self.cap = 0;
+        self.allocator = bun_alloc::basic::C_ALLOCATOR;
+        super::Internal { bytes, was_string: false }
     }
 
     #[inline]
     pub fn len(&self) -> SizeType {
-        self.data.len() as SizeType
+        self.len
     }
 
     pub fn slice(&self) -> &[u8] {
-        self.data.as_slice()
+        match self.ptr {
+            // SAFETY: `ptr[..len]` is a live initialized region (init/from_raw_parts contract).
+            Some(p) => unsafe { core::slice::from_raw_parts(p.as_ptr(), self.len as usize) },
+            None => &[],
+        }
     }
 
     pub fn allocated_slice(&self) -> &[u8] {
-        // SAFETY: Vec guarantees ptr[0..capacity] is allocated; bytes in [len..cap] are
-        // uninitialized. Mirrors Zig `ptr[0..this.cap]` which has the same caveat.
-        unsafe { core::slice::from_raw_parts(self.data.as_ptr(), self.data.capacity()) }
+        match self.ptr {
+            // SAFETY: `ptr[..cap]` is the full allocation; bytes in `[len..cap]`
+            // may be uninitialized. Mirrors Zig `ptr[0..this.cap]` (same caveat).
+            Some(p) => unsafe { core::slice::from_raw_parts(p.as_ptr(), self.cap as usize) },
+            None => &[],
+        }
     }
 
-    pub fn as_array_list(&mut self) -> &mut Vec<u8> {
+    pub fn as_array_list(&mut self) -> &mut [u8] {
         self.as_array_list_leak()
     }
 
-    pub fn as_array_list_leak(&mut self) -> &mut Vec<u8> {
-        // PORT NOTE: Zig returned an ArrayListUnmanaged view (items=ptr[0..len], cap=cap)
-        // without transferring ownership. Returning &mut Vec<u8> is the closest safe
-        // equivalent; callers that need to take ownership should use to_internal_blob().
-        &mut self.data
+    pub fn as_array_list_leak(&mut self) -> &mut [u8] {
+        // Zig returned an `ArrayListUnmanaged{ items=ptr[0..len], capacity=cap }`
+        // view without transferring ownership. The sole caller only needs
+        // `as_mut_ptr()`/`len()`, both of which `&mut [u8]` provides.
+        match self.ptr {
+            // SAFETY: `ptr[..len]` is live and uniquely owned by `*self`.
+            Some(p) => unsafe { core::slice::from_raw_parts_mut(p.as_ptr(), self.len as usize) },
+            None => &mut [],
+        }
     }
 }
 
-// PORT NOTE: Bytes.deinit deleted — Vec<u8> and PathString fields drop automatically.
-// Zig also freed `stored_name.slice()` via default_allocator; PathString::drop must own that.
-// TODO(port): verify PathString::drop frees its backing buffer.
+impl Drop for Bytes {
+    fn drop(&mut self) {
+        // Zig `deinit`: `default_allocator.free(stored_name.slice())` then
+        // `this.allocator.free(ptr[0..cap])`. `stored_name` drops itself.
+        if let Some(ptr) = self.ptr.take() {
+            // SAFETY: `ptr[..cap]` is the allocation owned by `self.allocator`;
+            // sole owner at drop time. Reconstructing the slice only for the
+            // vtable signature (callee treats it as opaque ptr+len).
+            let buf = unsafe { core::slice::from_raw_parts_mut(ptr.as_ptr(), self.cap as usize) };
+            self.allocator.raw_free(buf, bun_alloc::Alignment::of::<u8>(), 0);
+        }
+    }
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

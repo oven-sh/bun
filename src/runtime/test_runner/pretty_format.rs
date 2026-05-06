@@ -973,6 +973,20 @@ impl<'w, W: bun_io::Write> WrappedWriter<'w, W> {
     }
 }
 
+/// `bun_io::Write` → `core::fmt::Write` bridge for the `write_format` hooks
+/// on `Response`/`Request`/`Blob`/`BuildArtifact`. Those hooks (and the
+/// `ConsoleFormatter` trait they round-trip through) are typed against
+/// `core::fmt::Write`; this file's `Formatter` is byte-oriented. Route
+/// `write_str` through `write_all` so the same underlying sink is used end to
+/// end with no intermediate `String` buffer.
+struct IoFmt<'a, W: bun_io::Write + ?Sized>(&'a mut W);
+impl<W: bun_io::Write + ?Sized> core::fmt::Write for IoFmt<'_, W> {
+    #[inline]
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        self.0.write_all(s.as_bytes()).map_err(|_| core::fmt::Error)
+    }
+}
+
 impl<'a> Formatter<'a> {
     pub fn write_indent<W: bun_io::Write>(&self, writer: &mut W) -> bun_io::Result<()> {
         let indent = self.indent.min(32);
@@ -2841,6 +2855,92 @@ impl<'a> Formatter<'a> {
         };
         self.global_this = prev_global_this;
         r
+    }
+}
+
+/// Bridge so the `Response`/`Request`/`Blob`/`BuildArtifact` `write_format`
+/// hooks (typed `F: bun_jsc::ConsoleFormatter`) can re-enter this formatter
+/// for nested values. The trait is the layering seam — it lives in `bun_jsc`,
+/// the webcore types call through it generically, and this file supplies the
+/// test-runner-specific dispatch. Mirrors the `bun_jsc::console_object`
+/// `Formatter` impl (`src/jsc/lib.rs`) one-for-one, mapping the
+/// `bun_jsc::FormatTag` enum onto this file's smaller `Tag` set.
+impl bun_jsc::ConsoleFormatter for Formatter<'_> {
+    #[inline]
+    fn global_this(&self) -> &JSGlobalObject { self.global_this }
+    #[inline]
+    fn indent_inc(&mut self) { self.indent += 1; }
+    #[inline]
+    fn indent_dec(&mut self) { self.indent = self.indent.saturating_sub(1); }
+    #[inline]
+    fn reset_line(&mut self) { Formatter::reset_line(self) }
+    fn write_indent<W: core::fmt::Write>(&self, writer: &mut W) -> core::fmt::Result {
+        let mut sink = bun_io::FmtAdapter::new(writer);
+        Formatter::write_indent(self, &mut sink).map_err(|_| core::fmt::Error)
+    }
+    fn print_comma<W: core::fmt::Write, const ENABLE_ANSI_COLORS: bool>(
+        &mut self,
+        writer: &mut W,
+    ) -> core::fmt::Result {
+        let mut sink = bun_io::FmtAdapter::new(writer);
+        Formatter::print_comma::<_, ENABLE_ANSI_COLORS>(self, &mut sink)
+            .map_err(|_| core::fmt::Error)
+    }
+    fn print_as<W: core::fmt::Write, const ENABLE_ANSI_COLORS: bool>(
+        &mut self,
+        tag: bun_jsc::FormatTag,
+        writer: &mut W,
+        value: JSValue,
+        cell: JSType,
+    ) -> JsResult<()> {
+        use bun_jsc::FormatTag as Ft;
+        // Map the wider `console_object::Tag` onto this file's `Tag`. Only the
+        // variants the `write_format` hooks actually emit are reachable
+        // (Boolean / Double / Object / Private / String); the rest collapse
+        // onto `Object` so any future caller still renders something useful.
+        let local = match tag {
+            Ft::StringPossiblyFormatted => Tag::StringPossiblyFormatted,
+            Ft::String => Tag::String,
+            Ft::Undefined => Tag::Undefined,
+            Ft::Double => Tag::Double,
+            Ft::Integer => Tag::Integer,
+            Ft::Null => Tag::Null,
+            Ft::Boolean => Tag::Boolean,
+            Ft::Array => Tag::Array,
+            Ft::Object => Tag::Object,
+            Ft::Function => Tag::Function,
+            Ft::Class => Tag::Class,
+            Ft::Error => Tag::Error,
+            Ft::TypedArray => Tag::TypedArray,
+            Ft::Map => Tag::Map,
+            Ft::Set => Tag::Set,
+            Ft::Symbol => Tag::Symbol,
+            Ft::BigInt => Tag::BigInt,
+            Ft::GlobalObject => Tag::GlobalObject,
+            Ft::Private => Tag::Private,
+            Ft::Promise => Tag::Promise,
+            Ft::JSON => Tag::JSON,
+            Ft::NativeCode => Tag::NativeCode,
+            Ft::JSX => Tag::JSX,
+            Ft::Event => Tag::Event,
+            // Variants the test-runner formatter has no dedicated arm for:
+            Ft::MapIterator
+            | Ft::SetIterator
+            | Ft::CustomFormattedObject
+            | Ft::ToJSON
+            | Ft::GetterSetter
+            | Ft::CustomGetterSetter
+            | Ft::Proxy
+            | Ft::RevokedProxy => Tag::Object,
+        };
+        let mut sink = bun_io::FmtAdapter::new(writer);
+        let global = self.global_this;
+        self.format::<_, ENABLE_ANSI_COLORS>(
+            TagResult { tag: local, cell },
+            &mut sink,
+            value,
+            global,
+        )
     }
 }
 

@@ -20,8 +20,8 @@ use crate::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Re-exports (thin re-exports of sibling/neighbor modules — do NOT inline
-// bodies). Siblings still gated in `_gated` are surfaced as `stub_ty!` so
-// downstream `bun_jsc::event_loop::Foo` paths keep resolving.
+// bodies). Kept so downstream `bun_jsc::event_loop::Foo` paths match the
+// Zig namespace shape (`jsc.EventLoop.Foo` re-exports at file tail).
 // ──────────────────────────────────────────────────────────────────────────
 pub use bun_event_loop::any_event_loop::{
     AnyEventLoop, EventLoopHandle, EventLoopTask, EventLoopTaskPtr,
@@ -31,21 +31,15 @@ pub use bun_event_loop::AnyTaskWithExtraContext;
 pub use bun_event_loop::ConcurrentTask::{self, ConcurrentTask as ConcurrentTaskItem, Queue as ConcurrentQueue};
 pub use bun_event_loop::DeferredTaskQueue::{self, DeferredRepeatingTask};
 pub use bun_event_loop::ManagedTask;
-pub use bun_event_loop::MiniEventLoop::{self, EventLoopKind, JsVM, MiniVM};
+pub use bun_event_loop::MiniEventLoop::{self, AbstractVM, EventLoopKind, JsVM, MiniVM};
 pub use bun_event_loop::Task;
 pub use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 
-// Siblings still in `_gated` — opaque placeholders so re-exports type-check.
-crate::stub_ty!(
-    AbstractVM,
-    ConcurrentCppTask,
-    ConcurrentPromiseTask,
-    CppTask,
-    PosixSignalHandle,
-    PosixSignalTask,
-    WorkTask,
-);
+pub use crate::concurrent_promise_task::ConcurrentPromiseTask;
+pub use crate::cpp_task::{ConcurrentCppTask, CppTask};
 pub use crate::garbage_collection_controller::GarbageCollectionController;
+pub use crate::posix_signal_handle::{PosixSignalHandle, PosixSignalTask};
+pub use crate::work_task::WorkTask;
 
 bun_core::declare_scope!(EventLoop, hidden);
 
@@ -102,8 +96,8 @@ pub struct EventLoop {
     pub imminent_gc_timer: AtomicPtr<WTFTimer>,
 
     #[cfg(unix)]
-    // TODO(port): lifetime — ?*PosixSignalHandle (gated sibling)
-    pub signal_handler: Option<NonNull<c_void>>,
+    // TODO(port): lifetime — ?*PosixSignalHandle (boxed, process-lifetime)
+    pub signal_handler: Option<NonNull<PosixSignalHandle>>,
     #[cfg(not(unix))]
     pub signal_handler: (),
 }
@@ -491,12 +485,7 @@ impl EventLoop {
                 // SAFETY: `signal_handler` is the boxed `PosixSignalHandle` installed by
                 // `Bun__ensureSignalHandler`; it lives for the process lifetime and is
                 // disjoint from `*self`, so passing `&mut *self` alongside is sound.
-                unsafe {
-                    (*signal_handler
-                        .cast::<crate::posix_signal_handle::PosixSignalHandle>()
-                        .as_ptr())
-                    .drain(self)
-                };
+                unsafe { (*signal_handler.as_ptr()).drain(self) };
             }
         }
 
@@ -596,11 +585,16 @@ impl EventLoop {
 
     pub fn tick(&mut self) {
         jsc::mark_binding();
-        // TODO(b2): TopExceptionScope::init guard — re-enable once API stabilises.
+        // PORT NOTE: `TopExceptionScope` is placement-constructed into its
+        // `bytes` field, so `scope` MUST NOT move after binding (no NRVO
+        // guarantee in Rust). It is held by value here and only borrowed.
+        let mut scope = jsc::TopExceptionScope::init(self.global_ref());
         self.entered_event_loop_count += 1;
         self.debug.enter();
-        // PORT NOTE: reshaped for borrowck — Zig `defer { entered_event_loop_count -= 1; debug.exit() }`
-        // is inlined at each return site below (scopeguard would alias &mut self).
+        // PORT NOTE: reshaped for borrowck — Zig
+        //   `defer scope.deinit(); defer { entered_event_loop_count -= 1; debug.exit() }`
+        // is inlined at each return site below (a scopeguard closure would
+        // alias `&mut self`).
 
         let ctx = self.vm();
         self.tick_concurrent();
@@ -619,12 +613,15 @@ impl EventLoop {
             }
             // Zig while-else: else branch runs whenever the condition becomes false.
             // SAFETY: `global` outlives EventLoop (set during VM init).
-            if self.drain_microtasks_with_global(unsafe { &*global }, global_vm).is_err() {
+            if self.drain_microtasks_with_global(unsafe { &*global }, global_vm).is_err()
+                || scope.has_exception()
+            {
                 self.entered_event_loop_count -= 1;
                 self.debug.exit();
+                // SAFETY: `scope` was init'd above and not moved.
+                unsafe { jsc::TopExceptionScope::destroy(&mut scope) };
                 return;
             }
-            // TODO(b2): scope.has_exception() — TopExceptionScope re-enable.
             self.tick_concurrent();
             if self.tasks.readable_length() > 0 {
                 continue;
@@ -640,6 +637,8 @@ impl EventLoop {
 
         self.entered_event_loop_count -= 1;
         self.debug.exit();
+        // SAFETY: `scope` was init'd above and not moved.
+        unsafe { jsc::TopExceptionScope::destroy(&mut scope) };
     }
 
     /// Tick the task queue without draining microtasks afterward.
@@ -761,8 +760,15 @@ impl EventLoop {
                 self.uws_loop = NonNull::new(uws::Loop::get());
             }
         }
-        // TODO(b2): uws::Loop::get().internal_loop_data.set_parent_event_loop(EventLoopHandle::init(self))
-        // — needs ParentEventLoopHandle impl for jsc::EventLoopHandle.
+        // PORT NOTE: `EventLoopHandle` lives in `bun_event_loop` (lower tier),
+        // which cannot name `jsc::EventLoop`, so it stores `*mut ()`. The
+        // typed `set_parent_event_loop` extension trait in `bun_uws` expects
+        // a `ParentEventLoopHandle` impl, but `EventLoopHandle` already
+        // exposes `into_tag_ptr()` — go straight to the sys-level setter.
+        let (tag, ptr) =
+            EventLoopHandle::init((self as *mut EventLoop).cast::<()>()).into_tag_ptr();
+        // SAFETY: `uws::Loop::get()` returns the live process-global uws loop.
+        unsafe { (*uws::Loop::get()).internal_loop_data.set_parent_raw(tag, ptr) };
     }
 
     /// Asynchronously run the garbage collector and track how much memory is now allocated
@@ -773,12 +779,22 @@ impl EventLoop {
 
     /// `eventLoop().autoTick()` — bounces through `VirtualMachine::auto_tick`,
     /// which dispatches to the `bun_runtime` hook (needs `Timer::All` for the
-    /// poll timeout). The full body is preserved in the `` block
-    /// below; the high-tier hook is expected to be ABI-equivalent.
+    /// poll timeout). The body lives in `bun_runtime::jsc_hooks::auto_tick`.
     #[inline]
     pub fn auto_tick(&mut self) {
         // SAFETY: `vm()` is the live owning VM; reborrow uniquely (no `&mut self` overlaps).
         unsafe { (*self.vm()).auto_tick() };
+    }
+
+    /// `eventLoop().autoTickActive()` — like [`auto_tick`](Self::auto_tick) but
+    /// only sleeps in the uSockets loop while it has active handles
+    /// (spec event_loop.zig:455-493). Dispatches through
+    /// `VirtualMachine::auto_tick_active` → `RuntimeHooks::auto_tick_active`
+    /// (body lives in `bun_runtime::jsc_hooks` — needs `Timer::All`).
+    #[inline]
+    pub fn auto_tick_active(&mut self) {
+        // SAFETY: `vm()` is the live owning VM; reborrow uniquely.
+        unsafe { (*self.vm()).auto_tick_active() };
     }
 
     /// `eventLoop().waitForPromise(promise)` — spin tick/auto_tick until

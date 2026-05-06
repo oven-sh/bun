@@ -573,6 +573,29 @@ fn js_class_hooks(args: &JsClassArgs, rust_ty: &Ident) -> TokenStream2 {
                 #get_ctor_extern
             }
 
+            impl #rust_ty {
+                /// Wrap an already-heap-allocated `*mut Self` in a JS object
+                /// without re-boxing. Mirrors Zig's generated
+                /// `${T}.toJS(this: *T, globalThis)` which forwards the
+                /// existing pointer to `${T}__create`. Use this when `Self`
+                /// was allocated via `Box::into_raw` / intrusive-RC `init()`
+                /// and `JsClass::to_js(self, ..)` would double-allocate.
+                ///
+                /// # Safety
+                /// `ptr` must be a uniquely-owned heap allocation compatible
+                /// with `${T}Class__finalize` (i.e. `Box::into_raw`-produced);
+                /// ownership transfers to the GC wrapper.
+                #[inline]
+                pub unsafe fn to_js_ptr(
+                    ptr: *mut Self,
+                    global: &::bun_jsc::JSGlobalObject,
+                ) -> ::bun_jsc::JSValue {
+                    // SAFETY: caller contract — `ptr` is a fresh heap payload;
+                    // ownership transfers to the C++ wrapper. See `to_js`.
+                    unsafe { __create(global.as_mut_ptr(), ptr) }
+                }
+            }
+
             impl ::bun_jsc::JsClass for #rust_ty {
                 fn to_js(self, global: &::bun_jsc::JSGlobalObject) -> ::bun_jsc::JSValue {
                     let ptr = ::std::boxed::Box::into_raw(::std::boxed::Box::new(self));

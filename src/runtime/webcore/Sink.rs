@@ -467,6 +467,10 @@ pub trait JsSinkAbi {
         amount: crate::webcore::jsc::JSValue,
         offset: crate::webcore::jsc::JSValue,
     );
+    /// `${abi_name}__detachPtr`. Defaulted to a no-op for sinks that never
+    /// route through `JSSink::detach` (only `HTTPServerWritable` uses this
+    /// path today via `RequestContext::do_render_stream`).
+    unsafe fn detach_ptr_extern(_ptr: crate::webcore::jsc::JSValue) {}
 }
 
 /// `from_js_extern` encodes two distinct failure types using 0 and 1. Any other
@@ -529,6 +533,26 @@ impl<T: JsSinkAbi> JSSink<T> {
                 jsvalue_ptr,
             )
         }
+    }
+
+    /// `JSSink.detach(globalThis)` — disconnect the C++ controller cell stashed
+    /// in `signal.ptr` (a JSValue's encoded bits, see `SinkSignal::init`). Port
+    /// of `Sink.JSSink.detach` (Sink.zig) for the `HAS_SIGNAL = true` path; the
+    /// `@hasField(SinkType, "signal")` early-return is folded into the caller
+    /// by passing the `Signal` directly.
+    pub fn detach(signal: &mut Signal, _global: &crate::webcore::jsc::JSGlobalObject) {
+        use crate::webcore::jsc::JSValue;
+        let Some(ptr) = signal.ptr else { return }; // is_dead()
+        signal.clear();
+        // SAFETY: `signal.ptr` was stored by `SinkSignal::<T>::init` as the
+        // encoded JSValue bits (never a real Rust pointer); bitcast back.
+        let value = JSValue::from_encoded(ptr.as_ptr() as usize);
+        value.unprotect();
+        // Zig: `detachPtr(globalThis, value) catch {}` — fromJSHostCallGeneric
+        // wrapper omitted; the extern itself does not throw (the Zig wrapper
+        // only re-surfaces a pending JS exception, which the catch discards).
+        // SAFETY: FFI call into generated C++ sink glue (`${abi_name}__detachPtr`).
+        unsafe { T::detach_ptr_extern(value) };
     }
 }
 

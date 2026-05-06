@@ -18,15 +18,12 @@
 use core::ffi::c_void;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use bun_alloc::Allocator;
+use bun_alloc::{Alignment, AllocatorVTable, StdAllocator};
 use bun_core::Fd;
 // bun_sys (T1) — mmap/munmap/pwrite/ftruncate/memfd_create/Result/Error/E/Tag/can_use_memfd.
 use bun_sys as sys;
 use bun_sys::FdExt;
-// TODO(b0-genuine): crate::webcore::blob::store::Bytes — return-value struct constructed
-// inline (cap/ptr/len/allocator). Not dispatch; not a hook. Candidate fix: define a local
-// `MemFdBytes { cap: u32, ptr: *mut u8, len: u32, allocator: ... }` here and have runtime convert,
-// or hoist `alloc()`/`create()` into bun_runtime via the move-in pass.
+
 use crate::webcore::blob::store::Bytes as BlobStoreBytes;
 
 /// Intrusive thread-safe ref-counted memfd allocator.
@@ -106,25 +103,38 @@ impl LinuxMemFdAllocator {
         unsafe { bun_ptr::RefCount::<Self>::deref(this) };
     }
 
-    pub fn allocator(&self) -> &dyn Allocator {
-        // Zig returned `std.mem.Allocator{ .ptr = self, .vtable = AllocatorInterface.VTable }`.
-        // The trait impl below is the vtable; `self` is the data pointer.
-        self
+    /// Zig: `.{ .ptr = self, .vtable = AllocatorInterface.VTable }`
+    ///
+    /// # Safety
+    /// `this` must be the `*mut Self` originally produced by `Box::into_raw`
+    /// (via [`Self::new`] / `IntrusiveArc::new`) — the returned allocator's
+    /// `free` will call [`Self::deref`] on it, which on the final ref drops
+    /// the `Box`. A `*mut Self` derived from `&self` (SharedReadOnly
+    /// provenance) would make that `Box::from_raw` UB.
+    pub unsafe fn allocator(this: *mut Self) -> StdAllocator {
+        StdAllocator {
+            ptr: this.cast::<c_void>(),
+            vtable: allocator_interface::VTABLE,
+        }
     }
 
-    pub fn from<'a>(allocator: &'a dyn Allocator) -> Option<&'a Self> {
-        // Zig compared vtable pointer identity. `bun_alloc::Allocator` exposes
-        // `type_id()` for exactly this — concrete-type identity on the trait object.
-        if Allocator::type_id(allocator) == core::any::TypeId::of::<Self>() {
-            // SAFETY: type_id matched our impl, so the data pointer is `*const Self`.
-            Some(unsafe { &*(allocator as *const dyn Allocator as *const Self) })
+    /// Zig: `if (allocator_.vtable == AllocatorInterface.VTable) @ptrCast(@alignCast(allocator_.ptr))`
+    pub fn from(allocator: StdAllocator) -> Option<*mut Self> {
+        if core::ptr::eq(allocator.vtable, allocator_interface::VTABLE) {
+            Some(allocator.ptr.cast::<Self>())
         } else {
             None
         }
     }
 
-    pub fn alloc(
-        &self,
+    /// Zig: `fn alloc(self: *Self, len, offset, flags: std.posix.MAP) Maybe(Blob.Store.Bytes)`
+    ///
+    /// # Safety
+    /// `this` must be a live Box-allocated `*mut Self` (see [`Self::allocator`]).
+    /// On `Ok`, the returned `Bytes` borrows one ref on `*this` (via the
+    /// embedded allocator); the caller must NOT consume that ref separately.
+    pub unsafe fn alloc(
+        this: *mut Self,
         len: usize,
         offset: usize,
         // Zig: `std.posix.MAP` bitset. `sys::mmap` takes raw `i32` flags; callers
@@ -140,26 +150,33 @@ impl LinuxMemFdAllocator {
         // Zig: `flags_mut.TYPE = .SHARED;`
         let flags_mut = flags | libc::MAP_SHARED;
 
-        let map_len = size.min(self.size);
+        // SAFETY: `this` is live per caller contract; we only read scalar fields.
+        let self_size = unsafe { (*this).size };
+        let self_fd = unsafe { (*this).fd };
+
+        let map_len = size.min(self_size);
         match sys::mmap(
             core::ptr::null_mut(),
             map_len,
             libc::PROT_READ | libc::PROT_WRITE,
             flags_mut,
-            self.fd,
+            self_fd,
             offset as i64,
         ) {
-            Ok(ptr) => {
+            Ok(slice_ptr) => {
                 // Zig: `Blob.Store.Bytes{ .cap = @truncate(slice.len), .ptr = slice.ptr,
                 //                          .len = @truncate(len), .allocator = self.allocator() }`
-                // PORT NOTE: `webcore::blob::store::Bytes` was reshaped to wrap a
-                // `Vec<u8>` (private `data` field) and no longer exposes raw
-                // ptr/len/cap/allocator construction. mmap'd memory cannot be
-                // placed into a `Vec<u8>` (its `Drop` would `free()` the mapping).
-                // This requires a `Bytes::from_raw_parts(ptr, len, cap, allocator)`
-                // constructor on the upstream type before this path is usable.
-                let _ = (ptr, map_len, len);
-                todo!("blocked_on: webcore::blob::store::Bytes raw ptr/len/cap/allocator constructor")
+                // SAFETY: `slice_ptr[0..map_len]` is the mmap'd region; `Self::allocator(this)`
+                // is the vtable whose `free` will `munmap` exactly that region and then
+                // `deref` `this`. `len <= map_len` (cap) by construction.
+                Ok(unsafe {
+                    BlobStoreBytes::from_raw_parts(
+                        slice_ptr,
+                        len as u32,
+                        map_len as u32,
+                        Self::allocator(this),
+                    )
+                })
             }
             Err(errno) => Err(errno),
         }
@@ -261,11 +278,16 @@ impl LinuxMemFdAllocator {
 
             let linux_memfd_allocator = Self::new(fd, bytes.len());
 
-            match linux_memfd_allocator.alloc(
-                bytes.len(),
-                0,
-                libc::MAP_SHARED, // Zig: `.{ .TYPE = .SHARED }`
-            ) {
+            // SAFETY: `IntrusiveArc::as_ptr` yields the `Box::into_raw` pointer
+            // (full provenance) — required by `Self::alloc`/`Self::allocator`.
+            match unsafe {
+                Self::alloc(
+                    linux_memfd_allocator.as_ptr(),
+                    bytes.len(),
+                    0,
+                    libc::MAP_SHARED, // Zig: `.{ .TYPE = .SHARED }`
+                )
+            } {
                 Ok(res) => {
                     // PORT NOTE: Zig's `Self.new` returns a raw `*Self` (refcount=1) which
                     // is transferred into `res.allocator` on success. `IntrusiveArc<Self>`
@@ -284,21 +306,18 @@ impl LinuxMemFdAllocator {
         }
     }
 
-    pub fn is_instance(allocator: &dyn Allocator) -> bool {
-        Self::from(allocator).is_some()
+    /// Zig: `allocator_.vtable == AllocatorInterface.VTable`
+    pub fn is_instance(allocator: StdAllocator) -> bool {
+        core::ptr::eq(allocator.vtable, allocator_interface::VTABLE)
     }
 }
 
 // ─── AllocatorInterface ─────────────────────────────────────────────────────
 // Zig defined a private `AllocatorInterface` struct holding alloc/free/VTable.
-// `bun_alloc::Allocator` is a marker trait (type_id-only); the vtable functions
-// are kept as raw-ptr free functions matching Zig's `*anyopaque` signatures so
-// that `free` retains the `Box::into_raw` *mut provenance it needs to drop `self`.
-
-impl Allocator for LinuxMemFdAllocator {
-    // resize/remap: Zig used `std.mem.Allocator.noResize` / `noRemap`.
-    // `bun_alloc::Allocator` is a marker trait — only `type_id()` is provided.
-}
+// `bun_alloc::AllocatorVTable` is the `std.mem.Allocator.VTable` shape; the
+// vtable functions are kept as raw-ptr free functions matching Zig's
+// `*anyopaque` signatures so that `free` retains the `Box::into_raw` *mut
+// provenance it needs to drop `self`.
 
 mod allocator_interface {
     use super::*;
@@ -306,14 +325,9 @@ mod allocator_interface {
     /// # Safety
     /// No preconditions; marked `unsafe` only to match the allocator-vtable
     /// fn-pointer signature.
-    pub(super) unsafe fn alloc(
-        _ptr: *mut c_void,
-        _len: usize,
-        _alignment: usize,
-        _ret_addr: usize,
-    ) -> Option<*mut u8> {
+    unsafe fn alloc(_ptr: *mut c_void, _len: usize, _alignment: Alignment, _ret_addr: usize) -> *mut u8 {
         // it should perform no allocations or resizes
-        None
+        core::ptr::null_mut()
     }
 
     /// Zig: `fn free(ptr: *anyopaque, buf: []u8, _, _) void`
@@ -325,22 +339,10 @@ mod allocator_interface {
     /// borrow of `*ptr` may be live across this call — when the refcount hits
     /// zero, `*ptr` is dropped and freed.
     ///
-    /// `buf_ptr`/`buf_len` must describe the exact `mmap` region previously
-    /// returned for this allocator. The region is unmapped on return; the
-    /// caller must not access it afterwards.
-    pub(super) unsafe fn free(
-        ptr: *mut c_void,
-        // Zig `buf: []u8` — raw ptr+len pair. Kept as raw pointers (NOT
-        // `&mut [u8]`) because (a) this is `MAP_SHARED` memfd memory that may
-        // be concurrently mapped elsewhere, so a `&mut` uniqueness assertion
-        // is unsound, and (b) once `munmap` returns the pages are gone and any
-        // still-live reference would dangle (UB). Raw pointers carry no
-        // validity/aliasing invariants, matching the Zig slice semantics.
-        buf_ptr: *mut u8,
-        buf_len: usize,
-        _alignment: usize,
-        _ret_addr: usize,
-    ) {
+    /// `buf` must describe the exact `mmap` region previously returned for this
+    /// allocator. The region is unmapped on return; the caller must not access
+    /// it afterwards.
+    unsafe fn free(ptr: *mut c_void, buf: &mut [u8], _alignment: Alignment, _ret_addr: usize) {
         // Zig: `var self: *Self = @ptrCast(@alignCast(ptr)); defer self.deref();`
         // — runs after munmap regardless of result.
         //
@@ -350,8 +352,8 @@ mod allocator_interface {
         // it from a `&self` (`as *const _ as *mut _`) would be SharedReadOnly
         // provenance and the `Box::from_raw` → `Drop` write would be UB under
         // Stacked Borrows.
-        let this = ptr as *mut LinuxMemFdAllocator;
-        match sys::munmap(buf_ptr, buf_len) {
+        let this = ptr.cast::<LinuxMemFdAllocator>();
+        match sys::munmap(buf.as_mut_ptr(), buf.len()) {
             Ok(()) => {}
             Err(err) => {
                 bun_core::debug_warn!("Failed to munmap memfd: {}", err);
@@ -362,15 +364,19 @@ mod allocator_interface {
         unsafe { LinuxMemFdAllocator::deref(this) };
     }
 
-    // TODO(port): expose a `std.mem.Allocator.VTable`-shaped static once the
-    // crate-level dynamic-allocator vtable type lands, wiring `alloc`/`free`
-    // above plus `noResize`/`noRemap`.
+    /// `std.mem.Allocator.VTable{ .alloc, .resize = noResize, .remap = noRemap, .free }`
+    pub(super) static VTABLE: &AllocatorVTable = &AllocatorVTable {
+        alloc,
+        resize: AllocatorVTable::NO_RESIZE,
+        remap: AllocatorVTable::NO_REMAP,
+        free,
+    };
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/bun_alloc/LinuxMemFdAllocator.zig (195 lines)
-//   confidence: medium
-//   todos:      9
-//   notes:      vtable-identity downcast (from/is_instance) needs crate::Allocator type_id; std.posix.MAP/PROT, page_size, BlobStoreBytes path, VirtualMachine::is_smol_mode are guessed symbol names; IntrusiveArc owns dealloc so Drop only closes fd; create() forgets the IntrusiveArc on Ok to transfer the +1 into Bytes.allocator.
+//   confidence: high
+//   todos:      1
+//   notes:      Vtable identity via `bun_alloc::AllocatorVTable` (mirrors Zig `std.mem.Allocator`). `Bytes` reshaped upstream to ptr/len/cap/StdAllocator so mmap-backed buffers free via `munmap`+deref. `allocator()`/`alloc()` take `*mut Self` (Box provenance) — `&self` would be UB on final deref. `create()` forgets the IntrusiveArc on Ok to transfer the +1 into Bytes.allocator.
 // ──────────────────────────────────────────────────────────────────────────

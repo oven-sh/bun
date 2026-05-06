@@ -518,7 +518,7 @@ pub extern "C" fn Bun__RareData__mysqlGroup(vm: *mut c_void, ssl: bool) -> *mut 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/jsc/virtual_machine_exports.zig (244 lines)
-//   confidence: medium
-//   todos:      7
-//   notes:      IPC bodies (connectedIPC/ensureProcessIPCInitialized/Process__send) reduced while vm.ipc is Option<()>; plugin_runner sets discriminant only; verbose_fetch stored as u8 per Phase-B field type.
+//   confidence: high
+//   todos:      2
+//   notes:      plugin_runner sets discriminant only (PluginRunner real body lives in bundler_jsc — cycle); verbose_fetch stored as u8 per Phase-B field type.
 // ──────────────────────────────────────────────────────────────────────────

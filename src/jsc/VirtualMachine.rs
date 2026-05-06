@@ -230,8 +230,7 @@ pub struct VirtualMachine {
     pub gc_controller: crate::GarbageCollectionController,
     // BACKREF — WebWorker owns the VM. Real type: `*const bun_runtime::webcore::WebWorker`.
     pub worker: Option<*const c_void>,
-    // TODO(b2-cycle): `ipc` is `Option<IPCInstanceUnion>` — depends on ipc.rs (gated sibling).
-    pub ipc: Option<()>,
+    pub ipc: Option<IPCInstanceUnion>,
     pub hot_reload_counter: u32,
 
     pub debugger: Option<Box<crate::debugger::Debugger>>,
@@ -1152,6 +1151,47 @@ pub struct RuntimeHooks {
     /// [`VirtualMachine::run_error_handler`].
     pub print_exception:
         unsafe fn(vm: *mut VirtualMachine, value: JSValue, exception_list: Option<&mut ExceptionList>),
+    /// `vm.timer.insert(&mut event_loop_timer)` — `Timer::All` lives in
+    /// `bun_runtime::RuntimeState` (b2-cycle); low-tier callers
+    /// (`AbortSignal::Timeout`) reach it through this slot.
+    pub timer_insert:
+        unsafe fn(vm: *mut VirtualMachine, timer: *mut bun_event_loop::EventLoopTimer::EventLoopTimer),
+    /// `vm.timer.remove(&mut event_loop_timer)` — see `timer_insert`.
+    pub timer_remove:
+        unsafe fn(vm: *mut VirtualMachine, timer: *mut bun_event_loop::EventLoopTimer::EventLoopTimer),
+}
+
+impl VirtualMachine {
+    /// `vm.timer.insert(timer)` — dispatches through `RuntimeHooks` because
+    /// `Timer::All` lives in `bun_runtime` (b2-cycle).
+    ///
+    /// # Safety
+    /// `timer` must point at a live `EventLoopTimer` not currently linked into
+    /// the heap; caller must be on the JS thread.
+    #[inline]
+    pub unsafe fn timer_insert(
+        vm: *mut Self,
+        timer: *mut bun_event_loop::EventLoopTimer::EventLoopTimer,
+    ) {
+        let hooks = runtime_hooks().expect("RuntimeHooks not installed");
+        // SAFETY: per fn contract; `vm` is the live per-thread VM.
+        unsafe { (hooks.timer_insert)(vm, timer) }
+    }
+
+    /// `vm.timer.remove(timer)` — see [`Self::timer_insert`].
+    ///
+    /// # Safety
+    /// `timer` must point at a live `EventLoopTimer` currently linked into the
+    /// heap (state == ACTIVE); caller must be on the JS thread.
+    #[inline]
+    pub unsafe fn timer_remove(
+        vm: *mut Self,
+        timer: *mut bun_event_loop::EventLoopTimer::EventLoopTimer,
+    ) {
+        let hooks = runtime_hooks().expect("RuntimeHooks not installed");
+        // SAFETY: per fn contract; `vm` is the live per-thread VM.
+        unsafe { (hooks.timer_remove)(vm, timer) }
+    }
 }
 
 static RUNTIME_HOOKS: core::sync::atomic::AtomicPtr<RuntimeHooks> =

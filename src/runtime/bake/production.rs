@@ -200,16 +200,11 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
     vm.is_main_thread = true;
     jsc::virtual_machine::IS_MAIN_THREAD_VM.with(|c| c.set(true));
 
-    // SAFETY: vm.jsc_vm is the live JSC::VM* set in init.
-    // PORT NOTE: Zig's `vm.jsc_vm.getAPILock()` returns an RAII lock guard; the
-    // Rust `bun_jsc::VM` only exposes the callback-style `hold_api_lock`, which
-    // can't span the rest of this function body. Stub as a unit guard.
-    // TODO(port): wire JSC API lock once `bun_jsc::VM::get_api_lock` lands.
-    let api_lock: () = {
-        let _ = unsafe { &*vm.jsc_vm };
-        todo!("blocked_on: bun_jsc::VM::get_api_lock");
-    };
-    // defer api_lock.release() — handled by Lock's Drop
+    // SAFETY: vm.jsc_vm is the live JSC::VM* set in `VirtualMachine::initBake`;
+    // raw-ptr deref yields an unbounded `&VM` so the `ApiLock<'_>` does not
+    // borrow `vm` (the VirtualMachine) and the body below can keep using it.
+    let api_lock = unsafe { (*vm.jsc_vm).get_api_lock() };
+    // defer api_lock.release() — handled by ApiLock's Drop
 
     let mut pt: PerThread = PerThread {
         input_files: &[],
@@ -253,9 +248,7 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
         Err(e) => return Err(e),
     }
     // Explicitly end the API-lock scope here (mirrors Zig's `defer api_lock.release()`).
-    // `api_lock` is currently `()` until `bun_jsc::VM::get_api_lock` lands, so `drop`
-    // is a no-op that trips the dropping_copy_types lint — bind to `_` instead.
-    let _ = api_lock;
+    api_lock.release();
     Ok(())
 }
 

@@ -15,10 +15,20 @@
 //!   - `sync::Result`      → process.zig `sync.Result`
 //!   - `WaiterThread` flag → process.zig `WaiterThread.setShouldUseWaiterThread`
 
-/// Process-global "force waiter thread" flag (process.zig:929-934). The waiter
-/// thread itself is implemented in `bun_runtime::api::bun::process`; this flag
-/// lives at this tier so `bun_install` and `bun_jsc` can flip it without a
-/// `bun_runtime` cycle.
+#![allow(dead_code)]
+
+use core::ffi::c_char;
+
+use bun_sys::Fd;
+
+// ──────────────────────────────────────────────────────────────────────────
+// WaiterThread force-flag (process.zig `WaiterThread.shouldUseWaiterThread`).
+//
+// MOVE_DOWN(b0): the static lived in `bun_runtime::api::bun::process`, but
+// `bun_install` and `bun_jsc` both need to *set* it during early init
+// (`BUN_FEATURE_FLAG_FORCE_WAITER_THREAD`). Hosting the flag here breaks the
+// cycle — the high-tier `WaiterThread` reads it via `should_use_waiter_thread`.
+// ──────────────────────────────────────────────────────────────────────────
 pub mod process {
     use core::sync::atomic::{AtomicBool, Ordering};
 
@@ -37,33 +47,6 @@ pub mod process {
             SHOULD_USE_WAITER_THREAD.load(Ordering::Relaxed)
         }
     }
-}
-
-#![allow(dead_code)]
-
-use core::ffi::c_char;
-use core::sync::atomic::{AtomicBool, Ordering};
-
-use bun_sys::Fd;
-
-// ──────────────────────────────────────────────────────────────────────────
-// WaiterThread force-flag (process.zig `WaiterThread.shouldUseWaiterThread`).
-//
-// MOVE_DOWN(b0): the static lived in `bun_runtime::api::bun::process`, but
-// `bun_install` and `bun_jsc` both need to *set* it during early init
-// (`BUN_FEATURE_FLAG_FORCE_WAITER_THREAD`). Hosting the flag here breaks the
-// cycle — the high-tier `WaiterThread` reads it via `should_use_waiter_thread`.
-// ──────────────────────────────────────────────────────────────────────────
-static SHOULD_USE_WAITER_THREAD: AtomicBool = AtomicBool::new(false);
-
-/// `process.zig` `WaiterThread.setShouldUseWaiterThread`.
-pub fn set_should_use_waiter_thread() {
-    SHOULD_USE_WAITER_THREAD.store(true, Ordering::Relaxed);
-}
-
-/// `process.zig` `WaiterThread.shouldUseWaiterThread`.
-pub fn should_use_waiter_thread() -> bool {
-    SHOULD_USE_WAITER_THREAD.load(Ordering::Relaxed)
 }
 
 // ──────────────────────────────────────────────────────────────────────────

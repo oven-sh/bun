@@ -409,6 +409,46 @@ macro_rules! impl_timer_refcount {
 impl_timer_refcount!(TimeoutObject);
 impl_timer_refcount!(ImmediateObject);
 
+// `jsc.Codegen.JS{Timeout,Immediate}` — hand-expansion of what the
+// `#[bun_jsc::JsClass]` derive emits. Symbol names match generate-classes.ts
+// (`Timeout__fromJS` / `Immediate__fromJS` etc., per Timer.classes.ts).
+macro_rules! impl_timer_js_class {
+    ($ty:ident, $name:literal) => {
+        const _: () = {
+            use bun_jsc::{JSGlobalObject, JSValue};
+            #[allow(improper_ctypes)]
+            unsafe extern "C" {
+                #[link_name = concat!($name, "__fromJS")]
+                fn __from_js(value: JSValue) -> *mut $ty;
+                #[link_name = concat!($name, "__fromJSDirect")]
+                fn __from_js_direct(value: JSValue) -> *mut $ty;
+                #[link_name = concat!($name, "__create")]
+                fn __create(global: *mut JSGlobalObject, ptr: *mut $ty) -> JSValue;
+            }
+            impl bun_jsc::JsClass for $ty {
+                fn from_js(value: JSValue) -> Option<*mut Self> {
+                    // SAFETY: pure FFI downcast; null on type mismatch.
+                    let p = unsafe { __from_js(value) };
+                    if p.is_null() { None } else { Some(p) }
+                }
+                fn from_js_direct(value: JSValue) -> Option<*mut Self> {
+                    // SAFETY: exact-structure FFI downcast; null on miss.
+                    let p = unsafe { __from_js_direct(value) };
+                    if p.is_null() { None } else { Some(p) }
+                }
+                fn to_js(self, global: &JSGlobalObject) -> JSValue {
+                    let ptr = Box::into_raw(Box::new(self));
+                    // SAFETY: ownership transfers to the C++ wrapper
+                    // (freed via `${name}Class__finalize` → `Self::deref`).
+                    unsafe { __create(global.as_ptr(), ptr) }
+                }
+            }
+        };
+    };
+}
+impl_timer_js_class!(TimeoutObject, "Timeout");
+impl_timer_js_class!(ImmediateObject, "Immediate");
+
 impl ImmediateObject {
     /// Spec ImmediateObject.zig `runImmediateTask` — thin forwarder to
     /// `internals.run_immediate_task`. Registered into

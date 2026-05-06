@@ -344,6 +344,7 @@ pub use crate::api::markdown_object as MarkdownObject;
 pub use crate::api::js_bundler::BuildArtifact;
 pub use crate::api::js_bundler::JSBundler;
 pub use crate::api::js_bundler::OutputKind;
+impl_js_class_codegen!(BuildArtifact);
 pub use crate::api::html_rewriter as HTMLRewriter;
 pub use crate::api::filesystem_router::FileSystemRouter;
 pub use crate::api::filesystem_router::MatchedRoute;

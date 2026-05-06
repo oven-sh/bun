@@ -2,9 +2,13 @@ use core::cell::UnsafeCell;
 use core::ffi::c_void;
 use core::marker::{PhantomData, PhantomPinned};
 use core::ptr::NonNull;
+use core::sync::atomic::Ordering;
 
 use crate::{JSGlobalObject, JSValue, VirtualMachineRef as VirtualMachine};
-use bun_core::Timespec;
+use bun_event_loop::EventLoopTimer::{
+    EventLoopTimer, IntrusiveField, State as TimerState, Tag as TimerTag, TimerFlags,
+    Timespec as ElTimespec,
+};
 
 use crate::CommonAbortReason;
 
@@ -87,7 +91,7 @@ impl AbortSignal {
     }
 
     pub fn signal(&self, global_object: &JSGlobalObject, reason: CommonAbortReason) {
-        // TODO(port): analytics counter — Zig: `bun.analytics.Features.abort_signal += 1`
+        bun_analytics::Features::abort_signal.fetch_add(1, Ordering::Relaxed);
         // SAFETY: thin FFI forward.
         unsafe { WebCore__AbortSignal__signal(self.as_mut_ptr(), global_object.as_ptr(), reason) }
     }

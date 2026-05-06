@@ -63,6 +63,7 @@ impl Default for CompileTarget {
                 minor: Environment::VERSION.minor as _, // @truncate
                 patch: Environment::VERSION.patch as _, // @truncate
                 tag: Default::default(),
+                _tag_padding: Default::default(),
             },
             libc: if Environment::IS_MUSL {
                 Libc::Musl
@@ -546,6 +547,7 @@ impl CompileTarget {
                         minor: version.version.minor.unwrap(),
                         patch: version.version.patch.unwrap(),
                         tag: Default::default(),
+                        _tag_padding: Default::default(),
                     };
                     _found_version = true;
                     continue;

@@ -1494,17 +1494,16 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     // Adding the abort listener may call the onAbortSignal callback immediately if it was already aborted
     // Therefore, we must do this at the very end.
     if let Some(signal) = abort_signal.take() {
-        // SAFETY: signal is a valid *mut AbortSignal ref'd above.
+        // SAFETY: `signal` is a live *mut AbortSignal carrying the +1 ref taken
+        // above; ownership of that ref transfers to `subprocess.abort_signal`.
+        // `add_listener` may synchronously fire `on_abort_signal` (already
+        // aborted), which re-enters via `subprocess_ptr` — write through the
+        // raw pointer so no `&mut Subprocess` is held across the call.
         unsafe {
             (*signal).pending_activity_ref();
-            (*signal).add_listener(subprocess_ptr.cast(), Subprocess::on_abort_signal);
+            let _ = (*signal).add_listener(subprocess_ptr.cast(), Subprocess::on_abort_signal);
+            (*subprocess_ptr).abort_signal = NonNull::new(signal);
         }
-        // TODO(port): `subprocess.abort_signal` is `Option<Arc<AbortSignal>>`
-        // but `AbortSignal` is an opaque FFI handle (cannot be Arc-wrapped
-        // from a borrowed `&AbortSignal`). Retype the field to
-        // `Option<NonNull<AbortSignal>>` in subprocess.rs once its other call
-        // sites are reconciled.
-        let _ = signal;
     }
 
     if !IS_SYNC {
@@ -1539,13 +1538,13 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             // Adding the abort listener may call the onAbortSignal callback immediately if it was already aborted
             // Therefore, we must do this at the very end.
             if let Some(signal) = abort_signal.take() {
-                // SAFETY: signal is a valid *mut AbortSignal ref'd above.
+                // SAFETY: see the matching block above.
                 unsafe {
                     (*signal).pending_activity_ref();
-                    (*signal).add_listener(subprocess_ptr.cast(), Subprocess::on_abort_signal);
+                    (*subprocess_ptr).abort_signal = NonNull::new(
+                        (*signal).add_listener(subprocess_ptr.cast(), Subprocess::on_abort_signal),
+                    );
                 }
-                // TODO(port): see note above re: `Option<Arc<AbortSignal>>` field type.
-                let _ = signal;
             }
         }
         sys::Result::Err(_) => {
@@ -1577,7 +1576,8 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         // Support `AbortSignal.timeout`, but it's best-effort.
         // Specifying both `timeout: number` and `AbortSignal.timeout` chooses the soonest one.
         // This does mean if an AbortSignal times out it will throw
-        if let Some(signal) = subprocess.abort_signal.as_deref() {
+        // SAFETY: `abort_signal` holds a +1-ref'd live AbortSignal*.
+        if let Some(signal) = subprocess.abort_signal.map(|p| unsafe { p.as_ref() }) {
             // PORT NOTE: explicit UFCS — the inherent `AbortSignal::get_timeout`
             // (now un-stubbed) returns `bun_jsc::abort_signal::Timeout`, which
             // hasn't grown `event_loop_timer` yet; keep routing through the

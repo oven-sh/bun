@@ -74,32 +74,38 @@ fn pack_bump() -> &'static bun_alloc::Arena {
     BUMP.with(|b| *b)
 }
 
-/// Shim for the removed `bun_sys::File::to_source_at` (T1->T2 layering split).
-#[allow(unused_variables)]
+/// `bun.sys.File.toSourceAt` re-homed here (T1→T2 layering split: `bun_sys`
+/// can't depend on `bun_logger`, but `bun_runtime` already does).
 fn file_to_source_at(dir: &Dir, path: &ZStr) -> bun_sys::Maybe<bun_logger::Source> {
-    todo!("blocked_on: bun_sys::File::to_source_at")
+    let bytes = File::read_from(dir.fd, path)?;
+    Ok(bun_logger::Source::init_path_string_owned(path.as_bytes(), bytes))
 }
 
-// `PackageManager` stub-field accessors - real fields gated behind
-#[allow(clippy::mut_from_ref)]
+/// `manager.log` deref — Zig: non-optional `*logger.Log`, set once at `init()`.
+/// Raw-pointer receiver so the borrow doesn't conflict with the simultaneous
+/// `&mut workspace_package_json_cache` borrow at the call site (mirrors Zig's
+/// freely-aliased `*PackageManager`).
 #[inline]
-fn pm_log<'a>(_m: *const PackageManager) -> &'a mut bun_logger::Log {
-    todo!("blocked_on: bun_install::PackageManager::log")
+fn pm_log<'a>(m: *mut PackageManager) -> &'a mut bun_logger::Log {
+    // SAFETY: `m` came from `&mut PackageManager`; `log` is non-null after
+    // `PackageManager::init()` (Zig: non-optional `*Log`).
+    unsafe { (*m).log.unwrap().as_mut() }
 }
-#[allow(clippy::mut_from_ref)]
+/// `manager.workspace_package_json_cache` field projection via raw pointer.
 #[inline]
 fn pm_workspace_cache<'a>(
-    _m: *const PackageManager,
+    m: *mut PackageManager,
 ) -> &'a mut WorkspacePackageJSONCache::WorkspacePackageJSONCache {
-    todo!("blocked_on: bun_install::PackageManager::workspace_package_json_cache")
+    // SAFETY: `m` came from `&mut PackageManager`; field disjoint from `log`.
+    unsafe { &mut (*m).workspace_package_json_cache }
 }
 #[inline]
 fn pm_env(m: &PackageManager) -> *mut bun_dotenv::Loader<'static> {
     m.env_ptr()
 }
 #[inline]
-fn pm_run_scripts(_m: &PackageManager) -> bool {
-    todo!("blocked_on: bun_install::PackageManagerOptions::do_")
+fn pm_run_scripts(m: &PackageManager) -> bool {
+    m.options.do_.run_scripts
 }
 
 // type aliases matching Zig `string`/`stringZ`
@@ -188,19 +194,134 @@ pub struct BundledDep {
 
 impl PackCommand {
     pub fn exec_with_manager(ctx: Command::Context<'_>, manager: &mut PackageManager) -> Result<(), bun_core::Error> {
-        let _ = (ctx, manager);
-        // Upstream `bun_install::PackageManager` stub lacks `.log`,
-        // `.original_package_json_path`, and `Lockfile::load_from_cwd`;
-        // `bun_install::{LoadResult,LoadStep}` are unit structs (real enums
-        // gated behind `package_manager_real`, reconciler-6).
-        todo!("blocked_on: bun_install::Lockfile::load_from_cwd / PackageManager.{{log,original_package_json_path}} (package_manager_real un-gate)")
+        use bun_install::lockfile::{LoadResult, LoadStep};
+
+        if manager.options.log_level != LogLevel::Silent && manager.options.log_level != LogLevel::Quiet {
+            Output::prettyln(format_args!(
+                "<r><b>bun pack <r><d>v{}<r>",
+                Global::package_json_version_with_sha(),
+            ));
+            Output::flush();
+        }
+
+        let mut lockfile = Lockfile::default();
+        let load_from_disk_result = lockfile.load_from_cwd(
+            manager,
+            // SAFETY: `log` is non-null after `PackageManager::init()`.
+            unsafe { manager.log.unwrap().as_ptr() },
+            false,
+        );
+
+        let lockfile_ref: Option<&Lockfile> = match load_from_disk_result {
+            LoadResult::Ok(ok) => Some(ok.lockfile),
+            LoadResult::Err(cause) => {
+                match cause.step {
+                    LoadStep::OpenFile => {
+                        if cause.value == bun_core::err!("ENOENT") {
+                            None
+                        } else {
+                            Output::err_generic("failed to open lockfile: {}", format_args!("{}", cause.value.name()));
+                            if manager.log_mut().has_errors() {
+                                let _ = manager.log_mut().print(Output::error_writer() as *mut _);
+                            }
+                            Global::crash();
+                        }
+                    }
+                    LoadStep::ParseFile => {
+                        Output::err_generic("failed to parse lockfile: {}", format_args!("{}", cause.value.name()));
+                        if manager.log_mut().has_errors() {
+                            let _ = manager.log_mut().print(Output::error_writer() as *mut _);
+                        }
+                        Global::crash();
+                    }
+                    LoadStep::ReadFile => {
+                        Output::err_generic("failed to read lockfile: {}", format_args!("{}", cause.value.name()));
+                        if manager.log_mut().has_errors() {
+                            let _ = manager.log_mut().print(Output::error_writer() as *mut _);
+                        }
+                        Global::crash();
+                    }
+                    LoadStep::Migrating => {
+                        Output::err_generic("failed to migrate lockfile: {}", format_args!("{}", cause.value.name()));
+                        if manager.log_mut().has_errors() {
+                            let _ = manager.log_mut().print(Output::error_writer() as *mut _);
+                        }
+                        Global::crash();
+                    }
+                }
+            }
+            LoadResult::NotFound => None,
+        };
+
+        // PORT NOTE: Zig packed both `manager` and `lockfile` into `Context` and
+        // freely aliased the `*PackageManager`; here split-borrowing through
+        // `Context` would conflict with `&mut PackageManager`, so capture the
+        // package.json path before constructing `Context`.
+        let abs_pkg_json = ZBox::from_bytes(manager.original_package_json_path.as_bytes());
+
+        let mut pack_ctx = Context {
+            manager,
+            command_ctx: ctx,
+            lockfile: lockfile_ref,
+            bundled_deps: Vec::new(),
+            stats: Stats::default(),
+        };
+
+        // just pack the current workspace
+        if let Err(err) = pack::<false>(&mut pack_ctx, &abs_pkg_json) {
+            match err {
+                PackError::OutOfMemory => bun_core::out_of_memory(),
+                PackError::MissingPackageName | PackError::MissingPackageVersion => {
+                    Output::err_generic("package.json must have `name` and `version` fields", format_args!(""));
+                    Global::crash();
+                }
+                PackError::InvalidPackageName | PackError::InvalidPackageVersion => {
+                    Output::err_generic("package.json `name` and `version` fields must be non-empty strings", format_args!(""));
+                    Global::crash();
+                }
+                PackError::MissingPackageJSON => {
+                    Output::err_generic("failed to find a package.json in: \"{}\"", format_args!("{}", bstr::BStr::new(abs_pkg_json.as_bytes())));
+                    Global::crash();
+                }
+                // for_publish-only variants — unreachable when FOR_PUBLISH=false.
+                PackError::RestrictedUnscopedPackage | PackError::PrivatePackage => unreachable!(),
+            }
+        }
+        Ok(())
     }
 
     pub fn exec(ctx: Command::Context<'_>) -> Result<(), bun_core::Error> {
-        let _ = ctx;
-        // Upstream stub has no `PackageManager::init`, no
-        // `CommandLineArguments::parse`, and `Subcommand` lacks a `Pack` variant.
-        todo!("blocked_on: bun_install::PackageManager::{{init,CommandLineArguments::parse}} / Subcommand::Pack (package_manager_real un-gate)")
+        let cli = bun_install::package_manager::command_line_arguments::CommandLineArguments::parse(
+            bun_install::Subcommand::Pack,
+        )?;
+
+        let (manager, original_cwd) = match PackageManager::init(&mut *ctx, &cli, bun_install::Subcommand::Pack) {
+            Ok(v) => v,
+            Err(err) => {
+                if !cli.silent {
+                    if err == bun_core::err!("MissingPackageJSON") {
+                        let mut cwd_buf = PathBuffer::uninit();
+                        match bun_sys::getcwd(&mut cwd_buf[..]) {
+                            Ok(cwd) => {
+                                Output::err_generic(
+                                    "failed to find project package.json from: \"{}\"",
+                                    format_args!("{}", bstr::BStr::new(cwd)),
+                                );
+                            }
+                            Err(_) => {
+                                Output::err_generic("failed to find project package.json", format_args!(""));
+                            }
+                        }
+                    } else {
+                        Output::err_generic("failed to initialize bun install: {}", format_args!("{}", err.name()));
+                    }
+                }
+                Global::crash();
+            }
+        };
+        drop(original_cwd);
+
+        Self::exec_with_manager(ctx, manager)
     }
 }
 
@@ -1411,14 +1532,6 @@ impl PackExprExt for Expr {
     }
 }
 
-/// Allocate an owned `Box<ZStr>` from bytes (Zig `allocator.dupeZ`). The
-/// `Box<ZStr>` representation is intentionally not constructible upstream
-/// (`bun_str::ZStr`); callers in this file should migrate to `ZBox`.
-#[allow(dead_code)]
-fn boxed_zstr_from_bytes(_bytes: &[u8]) -> Box<ZStr> {
-    todo!("blocked_on: bun_str::ZStr boxed constructor (use ZBox)")
-}
-
 /// NUL-terminated literal → `&'static ZStr` (replacement for missing
 /// `ZStr::from_lit`).
 #[inline]
@@ -1428,8 +1541,7 @@ const fn zstr_lit(s: &'static [u8]) -> &'static ZStr {
 }
 
 /// Extension trait wrapping `*mut Archive` so existing `archive.method()` call
-/// sites compile without per-call `unsafe { &* }`. Missing libarchive write
-/// helpers are stubbed with `todo!` until `bun_libarchive` exposes them.
+/// sites compile without per-call `unsafe { &* }`.
 trait ArchivePtrExt {
     fn write_set_format_pax_restricted(self) -> ArchiveResult;
     fn write_add_filter_gzip(self) -> ArchiveResult;
@@ -1455,21 +1567,25 @@ impl ArchivePtrExt for *mut Archive {
         // SAFETY: `self` came from `Archive::write_new()`.
         unsafe { &*self }.write_set_format_pax_restricted()
     }
+    #[inline]
     fn write_add_filter_gzip(self) -> ArchiveResult {
-        let _ = self;
-        todo!("blocked_on: bun_libarchive::Archive::write_add_filter_gzip")
+        // SAFETY: `self` came from `Archive::write_new()`.
+        unsafe { &*self }.write_add_filter_gzip()
     }
-    fn write_set_filter_option(self, _module: Option<&ZStr>, _key: &ZStr, _value: &ZStr) -> ArchiveResult {
-        let _ = self;
-        todo!("blocked_on: bun_libarchive::Archive::write_set_filter_option")
+    #[inline]
+    fn write_set_filter_option(self, module: Option<&ZStr>, key: &ZStr, value: &ZStr) -> ArchiveResult {
+        // SAFETY: `self` came from `Archive::write_new()`.
+        unsafe { &*self }.write_set_filter_option(module, key, value)
     }
-    fn write_set_options(self, _opts: &ZStr) -> ArchiveResult {
-        let _ = self;
-        todo!("blocked_on: bun_libarchive::Archive::write_set_options")
+    #[inline]
+    fn write_set_options(self, opts: &ZStr) -> ArchiveResult {
+        // SAFETY: `self` came from `Archive::write_new()`.
+        unsafe { &*self }.write_set_options(opts)
     }
-    fn write_open_filename(self, _path: &ZStr) -> ArchiveResult {
-        let _ = self;
-        todo!("blocked_on: bun_libarchive::Archive::write_open_filename")
+    #[inline]
+    fn write_open_filename(self, path: &ZStr) -> ArchiveResult {
+        // SAFETY: `self` came from `Archive::write_new()`.
+        unsafe { &*self }.write_open_filename(path)
     }
     #[inline]
     fn write_close(self) -> ArchiveResult {
@@ -1583,22 +1699,23 @@ fn buffered_file_reader_read(r: &mut BufferedFileReader, dest: &mut [u8]) -> bun
     Ok(to_transfer)
 }
 
-/// Shims for `PackageManagerOptionsStub` fields missing on the upstream stub.
+/// `PackageManagerOptions` field accessors (kept as fns so call sites read
+/// uniformly regardless of stub/real options shape).
 #[inline]
 fn opt_dry_run(m: &PackageManager) -> bool {
     m.options.dry_run
 }
 #[inline]
-fn opt_pack_destination(_m: &PackageManager) -> &[u8] {
-    todo!("blocked_on: bun_install::PackageManagerOptionsStub::pack_destination")
+fn opt_pack_destination(m: &PackageManager) -> &[u8] {
+    m.options.pack_destination
 }
 #[inline]
-fn opt_pack_filename(_m: &PackageManager) -> &[u8] {
-    todo!("blocked_on: bun_install::PackageManagerOptionsStub::pack_filename")
+fn opt_pack_filename(m: &PackageManager) -> &[u8] {
+    m.options.pack_filename
 }
 #[inline]
-fn opt_pack_gzip_level(_m: &PackageManager) -> Option<&[u8]> {
-    todo!("blocked_on: bun_install::PackageManagerOptionsStub::pack_gzip_level")
+fn opt_pack_gzip_level(m: &PackageManager) -> Option<&[u8]> {
+    m.options.pack_gzip_level
 }
 #[inline]
 fn manager_env<'a>(m: &'a PackageManager) -> &'a bun_dotenv::Loader<'static> {

@@ -27,14 +27,16 @@ use bun_jsc::ZigStringJsc as _;
 // ────────────────────────────────────────────────────────────────────────────
 
 #[inline]
-fn as_dom_form_data(_value: JSValue) -> Option<*mut DOMFormData> {
-    // TODO(port): blocked_on: bun_jsc::JsClass for DOMFormData (opaque stub_ty!).
-    None
+fn as_dom_form_data(value: JSValue) -> Option<*mut DOMFormData> {
+    // `DOMFormData` is an opaque C++ type without a `#[bun_jsc::JsClass]` derive;
+    // route through the hand-written `from_js` (`DOMFormData.rs`) instead of
+    // `value.as_::<DOMFormData>()`.
+    DOMFormData::from_js(value).map(|r| r as *mut DOMFormData)
 }
 #[inline]
-fn as_url_search_params(_value: JSValue) -> Option<*mut URLSearchParams> {
-    // TODO(port): blocked_on: bun_jsc::JsClass for URLSearchParams (opaque stub_ty!).
-    None
+fn as_url_search_params(value: JSValue) -> Option<*mut URLSearchParams> {
+    // See `as_dom_form_data` — opaque C++ type, hand-written `from_js`.
+    URLSearchParams::from_js(value).map(|p| p.as_ptr())
 }
 #[inline]
 fn as_image(_value: JSValue) -> Option<*mut crate::image::Image> {
@@ -655,12 +657,7 @@ impl ValueError {
             // with their Drop deref). Zig did `var v = this.*; v.ref();` (bitwise copy
             // + one bump) — `.clone()` alone is the Rust equivalent. An extra `.ref_()`
             // here would leak +1 per dupe.
-            ValueError::SystemError(_e) => {
-                // SystemError lacks `Clone` in bun_jsc; Zig did `var v = this.*; v.ref();`
-                // (bitwise copy + bump). Bitwise copy of a non-Copy upstream struct is
-                // not expressible safely in Rust without `Clone`.
-                todo!("blocked_on: bun_jsc::SystemError::Clone")
-            }
+            ValueError::SystemError(e) => ValueError::SystemError(e.dupe()),
             ValueError::Message(m) => ValueError::Message(m.clone()),
             ValueError::TypeError(m) => ValueError::TypeError(m.clone()),
             ValueError::JSValue(js_ref) => {
@@ -897,20 +894,46 @@ impl Value {
                     return ReadableStream::empty(global_this);
                 }
 
-                // TODO(b2-blocked): `ByteStream::Source` (`NewSource<ByteStream>`) requires
-                // the full `NewSource { context, cancelled, ref_count, ... }` field set and
-                // `SourceContext` codegen externs to be wired. The Zig path:
-                //   var reader = ByteStream.Source.new(.{ .context = undefined, .globalThis = ... });
-                //   reader.context.setup(); reader.toReadableStream(...);
-                // is not yet expressible against the current `readable_stream::NewSource` shape.
-                let _ = (&locked.on_stream_cancelled, &locked.task, &drain_result);
-                todo!("blocked_on: webcore::byte_stream::Source / readable_stream::NewSource<ByteStream>");
-                #[allow(unreachable_code)]
-                {
+                let mut reader = webcore::readable_stream::NewSource::<ByteStream>::new(
+                    webcore::readable_stream::NewSource {
+                        // Zig: `.context = undefined` then `reader.context.setup()`; Rust
+                        // default-constructs (ByteStream::default == post-setup state).
+                        context: ByteStream::default(),
+                        global_this,
+                        ..Default::default()
+                    },
+                );
+
+                if let Some(on_cancelled) = locked.on_stream_cancelled {
+                    if let Some(task) = locked.task {
+                        reader.cancel_handler = Some(on_cancelled);
+                        reader.cancel_ctx = Some(task);
+                    }
+                }
+
+                reader.context.setup();
+
+                match drain_result {
+                    DrainResult::EstimatedSize(estimated_size) => {
+                        reader.context.high_water_mark = estimated_size as blob::SizeType;
+                        reader.context.size_hint = estimated_size as blob::SizeType;
+                    }
+                    DrainResult::Owned { list, size_hint } => {
+                        reader.context.buffer = list;
+                        reader.context.size_hint = size_hint as blob::SizeType;
+                    }
+                    _ => {}
+                }
+
+                // PORT NOTE: `reader` is `Box<NewSource<ByteStream>>`; the JS wrapper takes
+                // ownership via `to_readable_stream`. Leak the Box and hand the raw context
+                // pointer to `Source::Bytes` (lifetime now tied to the JS wrapper's GC).
+                let reader = Box::leak(reader);
+                let context_ptr: *mut ByteStream = &mut reader.context;
                 locked.readable = webcore::readable_stream::Strong::init(
                     ReadableStream {
-                        ptr: webcore::readable_stream::Source::Invalid,
-                        value: JSValue::ZERO,
+                        ptr: webcore::readable_stream::Source::Bytes(context_ptr),
+                        value: reader.to_readable_stream(global_this)?,
                     },
                     global_this,
                 );
@@ -924,7 +947,6 @@ impl Value {
                 }
 
                 Ok(locked.readable.get(global_this).unwrap().value)
-                }
             }
             Value::Error(_) => {
                 // TODO: handle error properly
@@ -1136,7 +1158,7 @@ impl Value {
                     }
                     Action::GetFormData(form_data_slot) => 'inner: {
                         let mut blob = new.use_as_any_blob();
-                        let Some(_async_form_data) = form_data_slot.take() else {
+                        let Some(async_form_data) = form_data_slot.take() else {
                             // Zig: `defer blob.detach()` covers the `try promise.reject(...)` error path.
                             let r = promise.reject_value(
                                 global,
@@ -1147,13 +1169,14 @@ impl Value {
                             r?;
                             break 'inner;
                         };
-                        // TODO(port): `bun_core::form_data::AsyncFormData::to_js` —
-                        // the bun_core stub has no `to_js`; `Action::GetFormData`
-                        // payload is `Box<()>` until that lands.
-                        let result: JsTerminated<()> = {
-                            let _ = (global, blob.slice(), &promise);
-                            todo!("blocked_on: bun_core::form_data::AsyncFormData::to_js")
-                        };
+                        // PORT NOTE: `Action` carries the JSC-free `bun_core::form_data::AsyncFormData`
+                        // (so the enum is constructible from lower tiers). `to_js` lives on the
+                        // sibling `webcore::form_data::AsyncFormData`; both wrap the same
+                        // `bun_core::form_data::Encoding`, so re-wrap and dispatch.
+                        let result = webcore::form_data::AsyncFormData {
+                            encoding: async_form_data.encoding,
+                        }
+                        .to_js(global, blob.slice(), promise);
                         blob.detach();
                         // async_form_data dropped (Box<AsyncFormData> -> Drop replaces deinit)
                         result?;
@@ -2034,15 +2057,40 @@ pub trait BodyMixin: BodyOwnerJs + Sized {
         // SAFETY: `Blob::new` returns a freshly heap-allocated, ref-counted Blob.
         let blob = unsafe { &mut *blob_ptr };
         if blob.content_type().is_empty() {
-            // TODO(port): Blob.content_type is `*const [u8]` and StoreRef has no
-            // public `mime_type` setter yet; full content-type/mime-type plumbing
-            // pending the Blob/Store port. Preserve the Zig logic structure but
-            // defer the field assignments.
-            let _ = self.get_fetch_headers();
-            let _ = HTTPHeaderName::ContentType;
-            todo!("blocked_on: webcore::blob::Blob content_type/MimeType plumbing");
+            if let Some(fetch_headers) = self.get_fetch_headers() {
+                // SAFETY: `fast_get` only writes a stack out-param via FFI; the
+                // `&FetchHeaders` is an opaque C++ ZST handle (interior-mutable),
+                // so re-deriving `&mut` from the raw handle pointer is sound — no
+                // Rust-side state is aliased. Zig spec takes `?*FetchHeaders`.
+                #[allow(invalid_reference_casting)]
+                let fetch_headers =
+                    unsafe { &mut *(fetch_headers as *const FetchHeaders as *mut FetchHeaders) };
+                if let Some(content_type) = fetch_headers.fast_get(HTTPHeaderName::ContentType) {
+                    let content_slice = content_type.to_slice();
+                    let mut allocated = false;
+                    let mime_type =
+                        MimeType::init(content_slice.slice(), true, Some(&mut allocated));
+                    blob.content_type = mime_type.value.as_ref() as *const [u8];
+                    blob.content_type_allocated = allocated;
+                    blob.content_type_was_set = true;
+                    if let Some(store) = blob.store.as_ref() {
+                        // SAFETY: store is a live StoreRef; single-threaded JS — no concurrent &Store.
+                        unsafe { (*store.as_ptr()).mime_type = mime_type };
+                    }
+                    // content_slice dropped (replaces defer content_slice.deinit())
+                }
+            }
+            if !blob.content_type_was_set && blob.store.is_some() {
+                blob.content_type = bun_http_types::MimeType::TEXT.value.as_ref() as *const [u8];
+                blob.content_type_allocated = false;
+                blob.content_type_was_set = true;
+                // SAFETY: store presence checked above; single-threaded JS — no concurrent &Store.
+                unsafe {
+                    (*blob.store.as_ref().unwrap().as_ptr()).mime_type =
+                        bun_http_types::MimeType::TEXT
+                };
+            }
         }
-        #[allow(unreachable_code)]
         Ok(JSPromise::resolved_promise_value(
             global_object,
             blob.to_js(global_object),
@@ -2102,11 +2150,12 @@ impl<'a> Drop for ValueBufferer<'a> {
         }
         self.readable_stream_ref.deinit();
 
-        if let Some(_buffer_stream) = self.js_sink.take() {
-            // TODO(blocked_on: webcore::sink::ArrayBufferSink): JSSink::detach /
-            // ArrayBufferSink::destroy not yet ported; create_js_sink (the only
-            // path that populates js_sink) is itself stubbed out.
-            todo!("blocked_on: webcore::sink::JSSink::detach / ArrayBufferSink::destroy");
+        if let Some(mut buffer_stream) = self.js_sink.take() {
+            buffer_stream.detach(self.global);
+            // SAFETY: `buffer_stream` is a `Box<JSSink<ArrayBufferSink>>`; `destroy`
+            // takes the raw pointer and frees both the inner sink and the box.
+            unsafe { ArrayBufferSink::destroy(&mut buffer_stream.sink as *mut ArrayBufferSink) };
+            core::mem::forget(buffer_stream);
         }
     }
 }
@@ -2159,9 +2208,19 @@ impl<'a> ValueBufferer<'a> {
                 let is_pending = input.needs_to_read_file();
 
                 if is_pending {
-                    if let AnyBlob::Blob(_blob) = &mut input {
-                        // _blob.do_read_file_internal(self, Self::on_finished_loading_file, self.global);
-                        todo!("blocked_on: blob::read_file::do_read_file_internal");
+                    if let AnyBlob::Blob(blob) = &mut input {
+                        let global = self.global;
+                        blob.do_read_file_internal(
+                            self as *mut Self,
+                            // PORT NOTE: comptime fn-param → fn pointer; the generic `H`
+                            // is `*mut Self` so the callback receives the raw context.
+                            |sink, bytes| {
+                                // SAFETY: `sink` was set from `self as *mut Self` above and
+                                // outlives the read (ValueBufferer is heap-pinned by caller).
+                                Self::on_finished_loading_file(unsafe { &mut *sink }, bytes)
+                            },
+                            global,
+                        );
                     }
                 } else {
                     let bytes = input.slice();
@@ -2178,21 +2237,34 @@ impl<'a> ValueBufferer<'a> {
         Ok(())
     }
 
-    // restore the real `ReadFileResultType` parameter and match body once ungated.
-    #[allow(dead_code)]
-    fn on_finished_loading_file(&mut self /*, bytes: blob::read_file::ReadFileResultType */) {
-        todo!("blocked_on: blob::read_file::ReadFileResultType");
-        // match bytes {
-        //     blob::read_file::ReadFileResultType::Err(err) => {
-        //         bun_core::scoped_log!(BodyValueBufferer, "onFinishedLoadingFile Error");
-        //         (self.on_finished_buffering)(self.ctx, b"", Some(ValueError::SystemError(err)), true);
-        //     }
-        //     blob::read_file::ReadFileResultType::Result(data) => {
-        //         bun_core::scoped_log!(BodyValueBufferer, "onFinishedLoadingFile Data {}", data.buf.len());
-        //         (self.on_finished_buffering)(self.ctx, &data.buf, None, true);
-        //         if data.is_temporary { drop(data.buf); }
-        //     }
-        // }
+    fn on_finished_loading_file(&mut self, bytes: blob::read_file::ReadFileResultType) {
+        match bytes {
+            blob::read_file::ReadFileResultType::Err(err) => {
+                bun_core::scoped_log!(BodyValueBufferer, "onFinishedLoadingFile Error");
+                (self.on_finished_buffering)(
+                    self.ctx,
+                    b"",
+                    Some(ValueError::SystemError(err)),
+                    true,
+                );
+            }
+            blob::read_file::ReadFileResultType::Result(data) => {
+                bun_core::scoped_log!(
+                    BodyValueBufferer,
+                    "onFinishedLoadingFile Data {}",
+                    data.buf.len()
+                );
+                (self.on_finished_buffering)(self.ctx, data.buf, None, true);
+                if data.is_temporary {
+                    // SAFETY: `is_temporary` ⇒ `data.buf` was handed over from a
+                    // default-allocator Vec via `Vec::leak`/`into_raw_parts`; reclaim it.
+                    let len = data.buf.len();
+                    unsafe {
+                        drop(Vec::from_raw_parts(data.buf.as_mut_ptr(), len, len));
+                    }
+                }
+            }
+        }
     }
 
     fn on_stream_pipe(&mut self, stream: streams::Result) {

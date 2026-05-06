@@ -1258,6 +1258,21 @@ pub mod get_addr_info_request {
     }
 }
 
+impl jsc::work_task::WorkTaskContext for GetAddrInfoRequest {
+    const TASK_TAG: bun_event_loop::ConcurrentTask::TaskTag =
+        bun_event_loop::ConcurrentTask::task_tag::GetAddrInfoRequestTask;
+
+    #[inline]
+    fn run(this: *mut Self, task: *mut get_addr_info_request::Task) {
+        GetAddrInfoRequest::run(this, task);
+    }
+    #[inline]
+    fn then(this: *mut Self, global_this: &JSGlobalObject) -> Result<(), jsc::JsTerminated> {
+        GetAddrInfoRequest::then(this, global_this);
+        Ok(())
+    }
+}
+
 impl GetAddrInfoRequest {
     pub fn init(
         cache: CacheHit,
@@ -1363,9 +1378,8 @@ impl GetAddrInfoRequest {
                 get_addr_info_request::Backend::Libc(l) => l.run(),
                 _ => unreachable!(),
             }
-            let _ = task;
-            todo!("blocked_on: bun_jsc::WorkTask::on_finish");
         }
+        get_addr_info_request::Task::on_finish(task);
     }
 
     pub fn then(this: *mut Self, _global: &JSGlobalObject) {
@@ -4780,14 +4794,10 @@ impl Resolver {
             }
         }
 
-        // TODO(port): blocked_on bun_jsc::JsClass — `JsClass::to_js` takes `self`
-        // by value (Boxes it), but `Resolver::init` already returns a heap
-        // `*mut Self` (intrusive-RC). Zig's `resolver.toJS(globalThis)` called the
-        // generated `${T}__create(global, ptr)` directly with the existing pointer.
-        // Until the proc-macro grows a `to_js_ptr(*mut Self)` (or `Resolver` gets an
-        // inherent FFI shim), this would double-allocate.
-        let _ = resolver;
-        todo!("blocked_on: bun_jsc::JsClass::to_js for already-allocated *mut Resolver")
+        // SAFETY: `resolver` was `Box::into_raw`'d in `Resolver::init`; ownership
+        // transfers to the GC wrapper (`DNSResolver__create` → `finalize` →
+        // `Self::deref` → `Box::from_raw`).
+        Ok(unsafe { Resolver::to_js_ptr(resolver, global_this) })
     }
 
     #[host_fn(method)]
@@ -4826,9 +4836,7 @@ impl Resolver {
         let addr_s = addr_zigstr.slice();
 
         let port_value = arguments.ptr[1];
-        // TODO(port): blocked_on bun_jsc::JSValue::to_port_number — Zig validated
-        // 0..=0xFFFF and threw ERR_SOCKET_BAD_PORT. Coerce-and-truncate for now.
-        let port: u16 = port_value.coerce_to_i32(global_this)? as u16;
+        let port: u16 = port_value.to_port_number(global_this)?;
 
         // SAFETY: all-zero is a valid sockaddr_storage
         let mut sa: libc::sockaddr_storage = unsafe { core::mem::zeroed() };
@@ -4848,16 +4856,7 @@ impl Resolver {
                 .throw());
         }
 
-        // TODO(port): blocked_on bun_jsc::RareData::global_dns_resolver — upstream
-        // `RareData::global_dns_resolver` returns a stub `high_tier::dns::Resolver`,
-        // not this crate's `Resolver`. Until the cycle-break vtable lands and
-        // `RareData` carries the real `dns_jsc::Resolver`, this entry point cannot
-        // acquire the global resolver.
-        let _ = (sa, addr_s);
-        return todo!("blocked_on: bun_jsc::RareData::global_dns_resolver — type cycle");
-        #[allow(unreachable_code)]
-        let resolver: &mut Resolver = unreachable!();
-        #[allow(unreachable_code)]
+        let resolver = global_resolver_mut(global_this);
         let channel = resolver.get_channel_or_error(global_this)?;
 
         // This string will be freed in `CAresNameInfo.deinit`

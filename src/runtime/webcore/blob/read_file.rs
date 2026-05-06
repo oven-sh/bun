@@ -19,7 +19,7 @@ use bun_jsc::{
     WorkTask,
 };
 use crate::webcore::blob::{
-    Blob, ClosingState, FileCloser, FileOpener, SizeType, Store,
+    Blob, ClosingState, FileCloser, FileOpener, SizeType, Store, StoreRef,
 };
 use crate::webcore::blob::store::{Bytes as ByteStore, File as FileStore};
 use bun_str::String as BunString;
@@ -63,6 +63,10 @@ pub struct NewReadFileHandler<'a, F: ReadFileToJs> {
 }
 
 impl<'a, F: ReadFileToJs> NewReadFileHandler<'a, F> {
+    pub fn new(context: Blob, global_this: &'a JSGlobalObject) -> Self {
+        Self { context, promise: JSPromise::Strong::default(), global_this, _f: PhantomData }
+    }
+
     pub fn run(handler: *mut Self, maybe_bytes: ReadFileResultType) -> jsc::JsTerminatedResult<()> {
         // SAFETY: handler was Box::into_raw'd by doReadFile(); we take ownership here.
         let handler = unsafe { Box::from_raw(handler) };
@@ -139,7 +143,7 @@ pub type ReadFileTask = WorkTask<ReadFile>;
 pub struct ReadFile {
     pub file_store: FileStore,
     pub byte_store: ByteStore,
-    pub store: Option<std::sync::Arc<Store>>,
+    pub store: Option<StoreRef>,
     pub offset: SizeType,
     pub max_length: SizeType,
     pub total_size: SizeType,
@@ -187,7 +191,7 @@ impl ReadFile {
     }
 
     pub fn create_with_ctx(
-        store: std::sync::Arc<Store>,
+        store: StoreRef,
         on_read_file_context: *mut c_void,
         on_complete_callback: ReadFileOnReadFileCallback,
         off: SizeType,
@@ -229,7 +233,7 @@ impl ReadFile {
     }
 
     pub fn create<C: 'static>(
-        store: std::sync::Arc<Store>,
+        store: StoreRef,
         off: SizeType,
         max_len: SizeType,
         context: *mut C,
@@ -787,7 +791,7 @@ pub struct ReadFileUV<'a> {
     pub event_loop: &'a EventLoop,
     pub file_store: FileStore,
     pub byte_store: ByteStore,
-    pub store: std::sync::Arc<Store>,
+    pub store: StoreRef,
     pub offset: SizeType,
     pub max_length: SizeType,
     pub total_size: SizeType,
@@ -817,7 +821,7 @@ impl<'a> ReadFileUV<'a> {
 
     pub fn start<H>(
         event_loop: &'a EventLoop,
-        store: std::sync::Arc<Store>,
+        store: StoreRef,
         off: SizeType,
         max_len: SizeType,
         handler: *mut c_void,

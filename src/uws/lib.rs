@@ -2290,50 +2290,12 @@ impl AnySocket {
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Transport-agnostic request handle. Static/file routes take this so the same
-/// handler body serves HTTP/1.1 and HTTP/3.
-pub enum AnyRequest {
-    H1(*mut Request),
-    H3(*mut H3::Request),
-}
-
-impl AnyRequest {
-    /// Look up a request header by lowercase name. Borrows request-internal
-    /// storage; valid for the duration of the request callback only.
-    pub fn header(&self, name: &[u8]) -> Option<&[u8]> {
-        debug_assert!(name.first().is_none_or(|b| b.is_ascii_lowercase()));
-        let mut ptr: *const u8 = core::ptr::null();
-        // SAFETY: variant pointers are non-null FFI handles owned by uWS/lsquic
-        // for the duration of the request callback; the C side writes a pointer
-        // into request-owned storage and returns its length.
-        let len = match self {
-            Self::H1(r) => unsafe { req_c::uws_req_get_header(*r, name.as_ptr(), name.len(), &mut ptr) },
-            Self::H3(r) => unsafe { req_c::uws_h3_req_get_header(*r, name.as_ptr(), name.len(), &mut ptr) },
-        };
-        if len == 0 {
-            return None;
-        }
-        // SAFETY: ptr/len describe a slice owned by the request for its lifetime.
-        Some(unsafe { core::slice::from_raw_parts(ptr, len) })
-    }
-}
-
-mod req_c {
-    use super::{H3, Request};
-    unsafe extern "C" {
-        pub fn uws_req_get_header(
-            res: *const Request,
-            lower_case_header: *const u8,
-            lower_case_header_length: usize,
-            dest: *mut *const u8,
-        ) -> usize;
-        pub fn uws_h3_req_get_header(
-            res: *const H3::Request,
-            lower_case_header: *const u8,
-            lower_case_header_length: usize,
-            dest: *mut *const u8,
-        ) -> usize;
-    }
-}
+/// handler body serves HTTP/1.1 and HTTP/3. Re-exported from `bun_uws_sys` —
+/// the sys-crate version already carries `header`/`method`/`url`/`set_yield`/
+/// `date_for_header`, so route handlers need no local extension trait.
+/// Variants: `H1(*mut Request)`, `H3(*mut H3::Request)` (same field types as
+/// the previous local enum — both crates name `bun_uws_sys::{Request, h3::Request}`).
+pub use bun_uws_sys::AnyRequest;
 
 /// `uws::Response<SSL>` — re-exported from `bun_uws_sys` so callers get the full
 /// method surface (`write`/`end`/`try_end`/`on_aborted`/`on_writable`/...) without

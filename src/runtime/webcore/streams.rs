@@ -1114,6 +1114,93 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
 pub type HTTPServerWritableJSSink<const SSL: bool, const HTTP3: bool> =
     crate::webcore::sink::JSSink<HTTPServerWritable<SSL, HTTP3>>;
 
+// `HTTPServerWritable` is exposed to JS via `Sink.JSSink(@This(), name)` where
+// `name` ∈ {HTTPResponseSink, HTTPSResponseSink, H3ResponseSink}. Const-generics
+// can't drive `#[link_name]`, so declare all three extern sets in a private mod
+// and dispatch at call time on `(SSL, HTTP3)`. The branch is on const generics;
+// the optimizer folds it to a direct call per monomorphization.
+#[allow(non_snake_case)]
+mod http_sink_abi {
+    use super::{c_void, JSGlobalObject, JSValue};
+    macro_rules! decl {
+        ($($abi:literal => $m:ident;)*) => {$(
+            pub mod $m {
+                use super::*;
+                unsafe extern "C" {
+                    #[link_name = concat!($abi, "__fromJS")]
+                    pub fn from_js(value: JSValue) -> usize;
+                    #[link_name = concat!($abi, "__createObject")]
+                    pub fn create_object(g: *mut JSGlobalObject, o: *mut c_void, d: usize) -> JSValue;
+                    #[link_name = concat!($abi, "__setDestroyCallback")]
+                    pub fn set_destroy_callback(v: JSValue, cb: usize);
+                    #[link_name = concat!($abi, "__assignToStream")]
+                    pub fn assign_to_stream(
+                        g: *mut JSGlobalObject, s: JSValue, p: *mut c_void, jp: *mut *mut c_void,
+                    ) -> JSValue;
+                    #[link_name = concat!($abi, "__onClose")]
+                    pub fn on_close(p: JSValue, r: JSValue);
+                    #[link_name = concat!($abi, "__onReady")]
+                    pub fn on_ready(p: JSValue, a: JSValue, o: JSValue);
+                    #[link_name = concat!($abi, "__detachPtr")]
+                    pub fn detach_ptr(p: JSValue);
+                }
+            }
+        )*};
+    }
+    decl! {
+        "HTTPResponseSink"  => http;
+        "HTTPSResponseSink" => https;
+        "H3ResponseSink"    => h3;
+    }
+}
+
+macro_rules! http_sink_dispatch {
+    ($f:ident($($arg:expr),*)) => {
+        if HTTP3 {
+            unsafe { http_sink_abi::h3::$f($($arg),*) }
+        } else if SSL {
+            unsafe { http_sink_abi::https::$f($($arg),*) }
+        } else {
+            unsafe { http_sink_abi::http::$f($($arg),*) }
+        }
+    };
+}
+
+impl<const SSL: bool, const HTTP3: bool> crate::webcore::sink::JsSinkAbi
+    for HTTPServerWritable<SSL, HTTP3>
+{
+    unsafe fn from_js_extern(value: JSValue) -> usize {
+        http_sink_dispatch!(from_js(value))
+    }
+    unsafe fn create_object_extern(
+        global: *mut JSGlobalObject,
+        object: *mut c_void,
+        destructor: usize,
+    ) -> JSValue {
+        http_sink_dispatch!(create_object(global, object, destructor))
+    }
+    unsafe fn set_destroy_callback_extern(value: JSValue, callback: usize) {
+        http_sink_dispatch!(set_destroy_callback(value, callback))
+    }
+    unsafe fn assign_to_stream_extern(
+        global: *mut JSGlobalObject,
+        stream: JSValue,
+        ptr: *mut c_void,
+        jsvalue_ptr: *mut *mut c_void,
+    ) -> JSValue {
+        http_sink_dispatch!(assign_to_stream(global, stream, ptr, jsvalue_ptr))
+    }
+    unsafe fn on_close_extern(ptr: JSValue, reason: JSValue) {
+        http_sink_dispatch!(on_close(ptr, reason))
+    }
+    unsafe fn on_ready_extern(ptr: JSValue, amount: JSValue, offset: JSValue) {
+        http_sink_dispatch!(on_ready(ptr, amount, offset))
+    }
+    unsafe fn detach_ptr_extern(ptr: JSValue) {
+        http_sink_dispatch!(detach_ptr(ptr))
+    }
+}
+
 // TODO(b2-blocked): full impl depends on `bun_uws::Response<SSL>`
 // const-generic dispatch (the body casts `res` to `*mut uws::Response` without
 // the SSL/H3 parameter), `bun_event_loop::AutoFlusher` free-fns (the local

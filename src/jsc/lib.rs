@@ -704,6 +704,18 @@ impl VM {
         self._opaque.get() as *mut VM
     }
 
+    /// Spec `VM.zig` `getAPILock` — RAII JSLockHolder. Prefer this over the
+    /// callback-style [`Self::hold_api_lock`] when the locked region spans the
+    /// rest of a function body (mirrors Zig's `defer api_lock.release()`).
+    pub fn get_api_lock(&self) -> ApiLock<'_> {
+        unsafe extern "C" {
+            fn JSC__VM__getAPILock(vm: *mut VM);
+        }
+        // SAFETY: `self` is a live opaque JSC VM handle.
+        unsafe { JSC__VM__getAPILock(self.as_mut_ptr()) }
+        ApiLock { vm: self }
+    }
+
     /// Spec `VM.zig:34` `holdAPILock` — wraps `JSC__VM__holdAPILock`.
     pub fn hold_api_lock(
         &self,
@@ -732,6 +744,27 @@ impl VM {
         unsafe { JSC__VM__executionForbidden(self.as_mut_ptr()) }
     }
 }
+
+/// RAII guard returned by [`VM::get_api_lock`]. Mirrors Zig `JSC.VM.Lock`
+/// (`defer api_lock.release()` → `Drop`).
+pub struct ApiLock<'a> {
+    vm: &'a VM,
+}
+impl ApiLock<'_> {
+    /// Explicit release (Zig spelling). Equivalent to `drop(self)`.
+    #[inline]
+    pub fn release(self) {}
+}
+impl Drop for ApiLock<'_> {
+    fn drop(&mut self) {
+        unsafe extern "C" {
+            fn JSC__VM__releaseAPILock(vm: *mut VM);
+        }
+        // SAFETY: lock was acquired via JSC__VM__getAPILock on this VM.
+        unsafe { JSC__VM__releaseAPILock(self.vm.as_mut_ptr()) }
+    }
+}
+
 impl JSGlobalObject {
     /// Raw `*mut JSGlobalObject` for FFI. See [`VM::as_mut_ptr`] for the
     /// soundness argument (interior mutability via `UnsafeCell`).
@@ -1122,7 +1155,6 @@ impl AnyPromise {
             Self::Internal(p) => unsafe { (*p).set_handled() },
         }
     }
-    /// `AnyPromise.unwrap` (AnyPromise.zig:14).
     /// `AnyPromise.resolve` (AnyPromise.zig:50).
     #[inline] pub fn resolve(self, global: &JSGlobalObject, value: JSValue) -> Result<(), JsTerminated> {
         // SAFETY: variants hold a live JSC heap cell created via `as_any_promise`.
@@ -1140,6 +1172,7 @@ impl AnyPromise {
             Self::Internal(p) => unsafe { (*p).reject(global, Ok(value)) },
         }
     }
+    /// `AnyPromise.unwrap` (AnyPromise.zig:14).
     #[inline] pub fn unwrap(self, vm: &VM, mode: PromiseUnwrapMode) -> PromiseResult {
         // SAFETY: variants hold a live JSC heap cell; `vm` is the owning VM.
         // `JSPromise::unwrap` takes `&VM` (interior-mutable opaque handle) — no
@@ -1841,6 +1874,43 @@ pub struct SystemError {
     pub hostname: bun_string::String,
     pub fd: core::ffi::c_int,
     pub dest: bun_string::String,
+}
+impl Default for SystemError {
+    fn default() -> Self {
+        Self {
+            errno: 0,
+            code: bun_string::String::EMPTY,
+            message: bun_string::String::EMPTY,
+            path: bun_string::String::EMPTY,
+            syscall: bun_string::String::EMPTY,
+            hostname: bun_string::String::EMPTY,
+            fd: core::ffi::c_int::MIN,
+            dest: bun_string::String::EMPTY,
+        }
+    }
+}
+impl Clone for SystemError {
+    /// Zig: `var v = this.*; v.ref();` — bitwise copy then bump every `bun.String`
+    /// ref. `bun_string::String` is `Copy` (intrusive-refcounted handle), so the
+    /// field copies below are bitwise; `.ref_()` provides the +1 per field.
+    fn clone(&self) -> Self {
+        self.code.ref_();
+        self.message.ref_();
+        self.path.ref_();
+        self.syscall.ref_();
+        self.hostname.ref_();
+        self.dest.ref_();
+        Self {
+            errno: self.errno,
+            code: self.code,
+            message: self.message,
+            path: self.path,
+            syscall: self.syscall,
+            hostname: self.hostname,
+            fd: self.fd,
+            dest: self.dest,
+        }
+    }
 }
 unsafe extern "C" {
     fn SystemError__toErrorInstance(this: *const SystemError, global: *mut JSGlobalObject) -> JSValue;

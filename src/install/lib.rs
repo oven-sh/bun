@@ -836,6 +836,10 @@ pub mod lockfile {
         }
     }
     pub use package::Package;
+    /// `Lockfile.Printer` (src/install/lockfile.zig) — re-export the real
+    /// struct so `printer::{tree_printer,yarn}` can name
+    /// `bun_install::lockfile::Printer` until the stub/real modules unify.
+    pub use crate::lockfile_real::Printer;
     /// `Lockfile.Scripts` (src/install/lockfile.zig) — re-export the real
     /// impl so `Lockfile::Scripts::NAMES` resolves for lifecycle scripts.
     pub use crate::lockfile_real::Scripts;

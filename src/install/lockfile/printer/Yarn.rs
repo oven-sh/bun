@@ -9,8 +9,10 @@ use bun_install::Resolution;
 use bun_install::Dependency;
 use bun_install::dependency::{self, Behavior};
 use bun_install::Lockfile;
-use bun_install::lockfile::{self, package};
-use bun_install::lockfile::Printer;
+use bun_install::lockfile::package;
+use crate::lockfile_real::package::Alphabetizer;
+use crate::lockfile_real::Printer;
+use crate::integrity;
 
 pub struct Yarn;
 
@@ -112,7 +114,7 @@ fn packages(
     }
 
     {
-        let alphabetizer = package::Alphabetizer {
+        let alphabetizer = Alphabetizer {
             names,
             buf: string_buf,
             resolutions: resolved,
@@ -135,8 +137,7 @@ fn packages(
         let resolution = &resolved[i as usize];
         let meta = &metas[i as usize];
         let dependencies: &[Dependency] = dependency_lists[i as usize].get(dependencies_buffer);
-        // TODO(port): verify second arg enum for Resolution::fmt (.posix)
-        let version_formatter = resolution.fmt(string_buf, bun_paths::Style::Posix);
+        let version_formatter = resolution.fmt(string_buf, bun_core::fmt::PathSep::Posix);
 
         // This prints:
         // "@babel/core@7.9.0":
@@ -200,7 +201,7 @@ fn packages(
             // Resolved URL is always quoted
             write!(writer, "\"{}\"\n", url_formatter)?;
 
-            if meta.integrity.tag != lockfile::integrity::Tag::Unknown {
+            if meta.integrity.tag != integrity::Tag::UNKNOWN {
                 // Integrity is...never quoted?
                 write!(writer, "  integrity {}\n", &meta.integrity)?;
             }

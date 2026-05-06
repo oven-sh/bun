@@ -28,6 +28,8 @@ pub use guarded::GuardedBy;
 pub use guarded::Debug as DebugGuarded;
 pub use wait_group::WaitGroup;
 pub use thread_pool::ThreadPool;
+/// Zig: `bun.jsc.WorkPoolTask` = `ThreadPool.Task` (work_pool.zig:2).
+pub use work_pool::Task as WorkPoolTask;
 pub use channel::Channel;
 pub use unbounded_queue::UnboundedQueue;
 

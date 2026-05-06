@@ -1237,7 +1237,7 @@ impl Diff {
     }
 }
 
-impl<SemverIntType> Package<SemverIntType> {
+impl<SemverIntType: VersionInt> Package<SemverIntType> {
     pub fn hash(name: &[u8], version: SemverVersion) -> u64 {
         let mut hasher = bun_wyhash::Wyhash::init(0);
         hasher.update(name);
@@ -2561,7 +2561,7 @@ impl<SemverIntType> Package<SemverIntType> {
     }
 }
 
-pub type List<SemverIntType> = MultiArrayList<Package<SemverIntType>>;
+pub type List<SemverIntType: VersionInt> = MultiArrayList<Package<SemverIntType>>;
 
 // ─── Serializer ──────────────────────────────────────────────────────────────
 
@@ -2588,7 +2588,7 @@ pub mod serializer {
     // TODO(port): MultiArrayList<T>::Field enum reflection. Phase B: expose
     // `List::<T>::FIELDS: &[Field]` from bun_collections.
 
-    pub fn byte_size<SemverIntType>(list: &List<SemverIntType>) -> usize {
+    pub fn byte_size<SemverIntType: VersionInt>(list: &List<SemverIntType>) -> usize {
         // Zig used SIMD @Vector reduction; equivalent scalar loop:
         let mut sum: usize = 0;
         for &sz in SIZES.bytes {
@@ -2600,7 +2600,7 @@ pub mod serializer {
     // Zig: `const AlignmentType = sizes.Types[sizes.fields[0]];`
     // TODO(port): depends on SIZES.Types — Phase B.
 
-    pub fn save<SemverIntType, S, W>(
+    pub fn save<SemverIntType: VersionInt, S, W>(
         list: &List<SemverIntType>,
         stream: &mut S,
         writer: &mut W,
@@ -2671,12 +2671,12 @@ pub mod serializer {
     }
 
     #[derive(Default)]
-    pub struct PackagesLoadResult<SemverIntType> {
+    pub struct PackagesLoadResult<SemverIntType: VersionInt> {
         pub list: List<SemverIntType>,
         pub needs_update: bool,
     }
 
-    pub fn load<SemverIntType>(
+    pub fn load<SemverIntType: VersionInt>(
         stream: &mut Stream,
         end: usize,
         migrate_from_v2: bool,
@@ -2802,7 +2802,7 @@ pub mod serializer {
         Ok(PackagesLoadResult { list, needs_update })
     }
 
-    fn load_fields<SemverIntType>(
+    fn load_fields<SemverIntType: VersionInt>(
         stream: &mut Stream,
         end_at: u64,
         list: &mut List<SemverIntType>,

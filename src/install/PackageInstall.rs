@@ -12,10 +12,10 @@ use bun_sys::{self as sys, walker_skippable, Dir, EntryKind, Fd, OpenDirOptions}
 use bun_threading::{ThreadPool, WaitGroup, WorkPoolTask};
 
 use crate::{
-    buntaghashbuf_make, initialize_store, BuntagHashBuf, Lockfile, Npm, PackageID, PackageManager,
-    Repository, Resolution, TruncatedPackageNameHash,
+    bun_fs, bun_json, buntaghashbuf_make, initialize_store, resolution, BuntagHashBuf, Lockfile,
+    Npm, PackageID, PackageManager, Repository, Resolution, TruncatedPackageNameHash,
 };
-use crate::package_manager::package_installer::NodeModulesFolder;
+use crate::package_installer::NodeModulesFolder;
 
 // TODO(port): `std.fs.Dir` is used pervasively here; Zig has a TODO to switch to `bun.FD.Dir`.
 // Phase A maps it to `bun_sys::Dir` (an Fd-backed dir handle). Method names (.close(), .fd,
@@ -678,14 +678,14 @@ impl<'a> PackageInstall<'a> {
 
     pub fn verify(&mut self, resolution: &Resolution, root_node_modules_dir: Dir) -> bool {
         let verified = match resolution.tag {
-            Resolution::Tag::Git => {
+            resolution::Tag::Git => {
                 self.verify_git_resolution(&resolution.value.git, root_node_modules_dir)
             }
-            Resolution::Tag::Github => {
+            resolution::Tag::Github => {
                 self.verify_git_resolution(&resolution.value.github, root_node_modules_dir)
             }
-            Resolution::Tag::Root => self.verify_transitive_symlinked_folder(root_node_modules_dir),
-            Resolution::Tag::Folder => {
+            resolution::Tag::Root => self.verify_transitive_symlinked_folder(root_node_modules_dir),
+            resolution::Tag::Folder => {
                 if self.lockfile.is_workspace_tree_id(self.node_modules.tree_id) {
                     self.verify_package_json_name_and_version(root_node_modules_dir, resolution.tag)
                 } else {
@@ -718,7 +718,7 @@ impl<'a> PackageInstall<'a> {
         &mut self,
         root_node_modules_dir: Dir,
         mutable: &mut MutableString,
-        resolution_tag: Resolution::Tag,
+        resolution_tag: resolution::Tag,
     ) -> Option<logger::Source> {
         let mut total: usize = 0;
         let mut read: usize;
@@ -779,7 +779,7 @@ impl<'a> PackageInstall<'a> {
         }
 
         // If it's not long enough to have {"name": "foo", "version": "1.2.0"}, there's no way it's valid
-        let minimum = if resolution_tag == Resolution::Tag::Workspace && self.package_version.is_empty() {
+        let minimum = if resolution_tag == resolution::Tag::Workspace && self.package_version.is_empty() {
             // workspaces aren't required to have a version
             br#"{"name":""}"#.len() + self.package_name.len()
         } else {
@@ -799,7 +799,7 @@ impl<'a> PackageInstall<'a> {
     fn verify_package_json_name_and_version(
         &mut self,
         root_node_modules_dir: Dir,
-        resolution_tag: Resolution::Tag,
+        resolution_tag: resolution::Tag,
     ) -> bool {
         let mut body_pool = Npm::Registry::BodyPool::get();
         let mut mutable: MutableString = core::mem::take(&mut body_pool.data);
@@ -838,7 +838,7 @@ impl<'a> PackageInstall<'a> {
             return false;
         }
         // workspaces aren't required to have a version
-        if !package_json_checker.has_found_version && resolution_tag != Resolution::Tag::Workspace {
+        if !package_json_checker.has_found_version && resolution_tag != resolution::Tag::Workspace {
             return false;
         }
 
@@ -2111,7 +2111,7 @@ impl<'a> PackageInstall<'a> {
         &mut self,
         manager: &mut PackageManager,
         package_id: PackageID,
-        resolution_tag: Resolution::Tag,
+        resolution_tag: resolution::Tag,
     ) -> bool {
         let state = manager.get_preinstall_state(package_id);
         match state {
@@ -2119,7 +2119,7 @@ impl<'a> PackageInstall<'a> {
             _ => 'brk: {
                 if self.patch.is_none() {
                     let exists = match resolution_tag {
-                        Resolution::Tag::Npm => 'package_json_exists: {
+                        resolution::Tag::Npm => 'package_json_exists: {
                             let buf = PackageManager::cached_package_folder_name_buf();
 
                             if cfg!(debug_assertions) {
@@ -2202,7 +2202,7 @@ impl<'a> PackageInstall<'a> {
         skip_delete: bool,
         destination_dir: Dir,
         method_: Method,
-        resolution_tag: Resolution::Tag,
+        resolution_tag: resolution::Tag,
     ) -> InstallResult {
         let _tracer = bun_core::perf::trace("PackageInstaller.install");
         // tracer.end() on Drop
@@ -2215,7 +2215,7 @@ impl<'a> PackageInstall<'a> {
 
         let mut supported_method_to_use = method_;
 
-        if resolution_tag == Resolution::Tag::Folder
+        if resolution_tag == resolution::Tag::Folder
             && !self.lockfile.is_workspace_tree_id(self.node_modules.tree_id)
         {
             supported_method_to_use = Method::Symlink;

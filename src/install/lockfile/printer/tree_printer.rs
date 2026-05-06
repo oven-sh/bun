@@ -4,11 +4,13 @@ use bun_collections::{DynamicBitSet, HashMap};
 use bun_core::Output;
 use bun_semver as semver;
 
+use bun_core::fmt::PathSep;
 use bun_install::{
     self as install, Bin, Dependency, DependencyID, PackageID, PackageManager, PackageNameHash,
     Resolution, INVALID_PACKAGE_ID,
 };
-use bun_install::lockfile::{Lockfile, Package, Printer};
+use bun_install::lockfile::{package::Meta as PackageMeta, Printer};
+use crate::package_manager_real::TrackInstalledBin;
 
 type Bitset = DynamicBitSet;
 
@@ -78,9 +80,10 @@ where
                         write!(
                             writer,
                             "{}",
-                            Output::pretty_fmt::<ENABLE_ANSI_COLORS>(
+                            Output::pretty_fmt_args(
                                 "<r>\n<cyan>{s}<r><d>:<r>\n",
-                                format_args!("{}", bstr::BStr::new(workspace_name)),
+                                ENABLE_ANSI_COLORS,
+                                (bstr::BStr::new(workspace_name),),
                             ),
                         )?;
                     }
@@ -127,9 +130,10 @@ where
                 write!(
                     writer,
                     "{}",
-                    Output::pretty_fmt::<ENABLE_ANSI_COLORS>(
+                    Output::pretty_fmt_args(
                         "<r>\n<cyan>{s}<r><d>:<r>\n",
-                        format_args!("{}", bstr::BStr::new(workspace_name)),
+                        ENABLE_ANSI_COLORS,
+                        (bstr::BStr::new(workspace_name),),
                     ),
                 )?;
             }
@@ -168,7 +172,7 @@ fn should_print_package_install<'a>(
     dep_id: DependencyID,
     installed: &Bitset,
     id_map: Option<&mut [DependencyID]>,
-    pkg_metas: &[Package::Meta],
+    pkg_metas: &[PackageMeta],
 ) -> ShouldPrintPackageInstallResult<'a> {
     let dependencies = this.lockfile.buffers.dependencies.as_slice();
     let resolutions = this.lockfile.buffers.resolutions.as_slice();

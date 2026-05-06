@@ -1267,7 +1267,9 @@ impl VirtualMachine {
         };
         vm_ref.regular_event_loop.global = NonNull::new(vm_ref.global);
         // SAFETY: global is freshly created and live for VM lifetime.
-        vm_ref.jsc_vm = unsafe { (*vm_ref.global).vm() } as *const VM as *mut VM;
+        // `vm_ptr()` returns the FFI `*mut VM` directly (no `&VM` reborrow),
+        // preserving mutable provenance for later FFI use.
+        vm_ref.jsc_vm = unsafe { (*vm_ref.global).vm_ptr() };
         VMHolder::CACHED_GLOBAL_OBJECT.set(Some(vm_ref.global));
 
         // Spec VirtualMachine.zig:1313: `uws.Loop.get().internal_loop_data.jsc_vm
@@ -2527,7 +2529,8 @@ impl VirtualMachine {
         VMHolder::CACHED_GLOBAL_OBJECT.set(Some(new_global));
         vm_ref.regular_event_loop.global = NonNull::new(new_global);
         // SAFETY: `new_global` is freshly created and live for VM lifetime.
-        vm_ref.jsc_vm = unsafe { (*new_global).vm() } as *const VM as *mut VM;
+        // `vm_ptr()` returns the FFI `*mut VM` directly (no `&VM` reborrow).
+        vm_ref.jsc_vm = unsafe { (*new_global).vm_ptr() };
         // SAFETY: per-thread uws loop is live.
         unsafe { (*uws::Loop::get()).internal_loop_data.jsc_vm = vm_ref.jsc_vm.cast() };
         // SAFETY: `event_loop` is a self-pointer into this VM.

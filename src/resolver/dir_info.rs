@@ -27,11 +27,13 @@ pub struct DirInfo {
     // A pointer to the enclosing dirInfo with a valid "browser" field in
     // package.json. We need this to remap paths after they have been resolved.
     pub enclosing_browser_scope: Index,
-    // PORT NOTE: lifetime — all `&'static` borrows below are ARENA-backed (the
-    // resolver-owned PackageJSON/TSConfigJSON caches outlive every DirInfo). Zig
-    // used `?*PackageJSON`; modeled as `Option<&'static T>` so call sites
-    // auto-deref without `unsafe { ptr.as_ref() }` boilerplate. `reset()` casts
-    // away const to drop-in-place (the storage itself is BSS/cache-owned).
+    // PORT NOTE: lifetime — `&'static` borrows below are ARENA-backed (the
+    // resolver-owned PackageJSON/TSConfigJSON caches outlive every DirInfo).
+    // Fields Zig typed `?*const T` are `Option<&'static T>`; fields Zig typed
+    // `?*T` (mutable — `package_json`/`tsconfig_json`, dropped in `reset()`)
+    // are `Option<NonNull<T>>` so mut-provenance from the allocation site is
+    // preserved through to `drop_in_place` (a `*const→*mut` cast there would
+    // be UB). Read sites use the `.package_json()`/`.tsconfig_json()` accessors.
     pub package_json_for_browser_field: Option<&'static PackageJSON>,
     pub enclosing_tsconfig_json: Option<&'static TSConfigJSON>,
 
@@ -47,11 +49,15 @@ pub struct DirInfo {
     pub abs_path: &'static [u8],
     pub entries: Index,
     /// Is there a "package.json" file?
-    // TODO(port): lifetime — reset() drops the pointee in-place; storage owned by resolver cache
-    pub package_json: Option<&'static PackageJSON>,
+    // PORT NOTE: Zig `?*PackageJSON` (mutable). `NonNull` (not `&'static`) so
+    // `reset()` can `drop_in_place` without a const→mut provenance cast. Read
+    // via `.package_json()`.
+    pub package_json: Option<NonNull<PackageJSON>>,
     /// Is there a "tsconfig.json" file in this directory or a parent directory?
-    // TODO(port): lifetime — reset() drops the pointee in-place; storage owned by resolver cache
-    pub tsconfig_json: Option<&'static TSConfigJSON>,
+    // PORT NOTE: Zig `?*TSConfigJSON` (mutable). `NonNull` (not `&'static`) so
+    // `reset()` can `drop_in_place` without a const→mut provenance cast. Read
+    // via `.tsconfig_json()`.
+    pub tsconfig_json: Option<NonNull<TSConfigJSON>>,
     /// If non-empty, this is the real absolute path resolving any symlinks
     // TODO(port): lifetime — slice into BSS-backed path storage; never individually freed
     pub abs_real_path: &'static [u8],

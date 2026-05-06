@@ -560,7 +560,7 @@ pub struct Linux {
     /// a recursive watch on `/a` plus a watch on `/a/sub`) end up sharing a wd. Each
     /// owner gets its own subpath so the event can be reported relative to the right
     /// root, and `inotify_rm_watch` is only issued when the last owner detaches.
-    wd_map: HashMap<i32, Vec<WdOwner<'static>>>,
+    wd_map: HashMap<i32, Vec<WdOwner>>,
 }
 
 #[cfg(target_os = "linux")]

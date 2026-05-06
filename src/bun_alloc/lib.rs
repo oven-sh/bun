@@ -59,20 +59,21 @@ pub const USE_MIMALLOC: bool = true;
 // ── Allocator-vtable modules: per-module disposition (PORTING.md §Allocators) ──
 //
 // These modelled Zig's `std.mem.Allocator` vtable. With `#[global_allocator]`
-// + `Arena = bumpalo::Bump`, most are obsolete. Kept gated for the .zig↔.rs
-// diff pass; not on the un-gate path.
+// + `Arena = bumpalo::Bump`, most callers should drop the allocator param
+// entirely. The sub-modules are ported in full (no `#![cfg(any())]` gating —
+// PORTING.md §Forbidden) so the .zig↔.rs diff pass has a real body to compare;
+// callers are migrated incrementally.
 //
-//   MimallocArena            → OBSOLETE: use `bun_alloc::Arena` (= bumpalo::Bump)
-//   NullableAllocator        → OBSOLETE: `Option<&Arena>` or just drop the param
-//   MaxHeapAllocator         → OBSOLETE: debug-only cap; if needed, custom GlobalAlloc wrapper
-//   BufferFallbackAllocator  → OBSOLETE: PORTING.md "StackFallbackAllocator → just use the heap"
-//   fallback                 → OBSOLETE: same (re-export module)
-//   maybe_owned              → OBSOLETE: use `std::borrow::Cow` / `bun_ptr::Owned`
-//   allocation_scope         → DEBUG-ONLY: leak tracker; TODO(b2): port over `mi_heap_*` if asan-equiv wanted
-//   LinuxMemFdAllocator      → MOVE TO bun_sys: not an allocator-vtable; it's a memfd-backed
-//                              shared buffer for Blob. TODO(b2): port at `bun_sys::memfd`.
-//   heap_breakdown           → DEBUG-ONLY (macOS malloc_zone_*); keep gated
-//   basic                    → SUPERSEDED: `impl GlobalAlloc for Mimalloc` above is the real impl
+//   MimallocArena            → prefer `bun_alloc::Arena` (= bumpalo::Bump)
+//   NullableAllocator        → prefer `Option<&Arena>` or drop the param
+//   MaxHeapAllocator         → debug-only cap (single-allocation arena)
+//   BufferFallbackAllocator  → PORTING.md "StackFallbackAllocator → just use the heap"
+//   fallback                 → libc-malloc + zeroing wrapper (Zig std.heap.c_allocator)
+//   maybe_owned              → prefer `std::borrow::Cow` / `bun_ptr::Owned`
+//   allocation_scope         → leak tracker (debug builds)
+//   LinuxMemFdAllocator      → memfd-backed shared buffer for Blob (TODO(b2): move to bun_sys)
+//   heap_breakdown           → macOS malloc_zone_* per-tag heaps (debug builds)
+//   basic                    → `impl GlobalAlloc for Mimalloc` above is the canonical impl
 //
  #[path = "MimallocArena.rs"]           pub mod mimalloc_arena;
                                         pub mod allocation_scope;
@@ -83,24 +84,15 @@ pub const USE_MIMALLOC: bool = true;
  #[path = "BufferFallbackAllocator.rs"] pub mod buffer_fallback_allocator;
                                         pub mod fallback;
 
-// Stub types so re-exports / downstream `use` resolve.
-pub struct AllocationScope;
-impl AllocationScope {
-    /// Zig: `AllocationScope.allocator()` — returns the tracking allocator
-    /// vtable. Stub form: with the global-allocator model there is no per-scope
-    /// vtable to hand back, so this degenerates to `default_allocator()`. The
-    /// full debug tracker lives in `allocation_scope::AllocationScopeIn::allocator`.
-    #[inline]
-    pub fn allocator(&self) -> &dyn Allocator {
-        crate::default_allocator()
-    }
-}
-pub struct AllocationScopeIn;
-pub struct NullableAllocator;
-pub struct LinuxMemFdAllocator;
-pub struct MaxHeapAllocator;
-pub struct BufferFallbackAllocator;
-pub struct MaybeOwned<T>(core::marker::PhantomData<T>);
+// Re-exports so downstream `use bun_alloc::X` resolve to the real ports.
+// Zig: `pub const AllocationScope = AllocationScopeIn(std.mem.Allocator);`
+pub use allocation_scope::AllocationScope;
+pub use allocation_scope::AllocationScopeIn;
+pub use nullable_allocator::NullableAllocator;
+pub use linux_mem_fd_allocator::LinuxMemFdAllocator;
+pub use max_heap_allocator::MaxHeapAllocator;
+pub use buffer_fallback_allocator::BufferFallbackAllocator;
+pub use maybe_owned::MaybeOwned;
 
 // ── stubs ─────────────────────────────────────────────────────────────────
 // Forward refs introduced by B-0 move-out seds. Real impls in bun_core (T0

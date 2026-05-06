@@ -46,7 +46,12 @@ use bun_paths as resolve_path;
 use bun_resolver::{self as resolver, fs as Fs};
 use bun_bundler::options::{self, Loader, Target};
 use bun_bundler::BundleV2;
-use bun_options_types::{CompileTarget, ImportKind};
+use bun_options_types::CompileTarget::CompileTarget;
+use bun_options_types::ImportKind;
+use bun_jsc::AnyTask::AnyTask;
+use bun_jsc::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
+use bun_jsc::ConcurrentTask::ConcurrentTask;
+use bun_standalone_graph::StandaloneModuleGraph;
 use bun_js_parser::ast::Index;
 use bun_options_types::schema::api; // bun.schema.api
 use crate::webcore::Blob;

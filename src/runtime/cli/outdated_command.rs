@@ -156,8 +156,8 @@ impl OutdatedCommand {
 
         let mut workspace_pkg_ids: Vec<PackageID> = Vec::new();
         for (pkg_id, resolution) in pkg_resolutions.iter().enumerate() {
-            if resolution.tag != bun_install::ResolutionTag::Workspace
-                && resolution.tag != bun_install::ResolutionTag::Root
+            if resolution.tag != resolution::Tag::Workspace
+                && resolution.tag != resolution::Tag::Root
             {
                 continue;
             }
@@ -180,8 +180,8 @@ impl OutdatedCommand {
 
         let mut workspace_pkg_ids: Vec<PackageID> = Vec::new();
         for (pkg_id, resolution) in pkg_resolutions.iter().enumerate() {
-            if resolution.tag != bun_install::ResolutionTag::Workspace
-                && resolution.tag != bun_install::ResolutionTag::Root
+            if resolution.tag != resolution::Tag::Workspace
+                && resolution.tag != resolution::Tag::Root
             {
                 continue;
             }
@@ -214,10 +214,10 @@ impl OutdatedCommand {
                             let res = &pkg_resolutions[workspace_pkg_id as usize];
 
                             let res_path = match res.tag {
-                                bun_install::ResolutionTag::Workspace => {
+                                resolution::Tag::Workspace => {
                                     res.value.workspace.slice(string_buf)
                                 }
-                                bun_install::ResolutionTag::Root => {
+                                resolution::Tag::Root => {
                                     FileSystem::instance().top_level_dir
                                 }
                                 _ => unreachable!(),
@@ -431,13 +431,13 @@ impl OutdatedCommand {
                 let Some(resolved_version) = manager.lockfile.resolve_catalog_dependency(dep) else {
                     continue;
                 };
-                if resolved_version.tag != bun_install::DependencyVersionTag::Npm
-                    && resolved_version.tag != bun_install::DependencyVersionTag::DistTag
+                if resolved_version.tag != dependency::Tag::Npm
+                    && resolved_version.tag != dependency::Tag::DistTag
                 {
                     continue;
                 }
                 let resolution = &pkg_resolutions[package_id as usize];
-                if resolution.tag != bun_install::ResolutionTag::Npm {
+                if resolution.tag != resolution::Tag::Npm {
                     continue;
                 }
 
@@ -475,7 +475,7 @@ impl OutdatedCommand {
                     manager.scope_for_package_name(package_name),
                     package_name,
                     &mut expired,
-                    bun_install::ManifestLoad::LoadFromMemoryFallbackToDisk,
+                    CacheBehavior::LoadFromMemoryFallbackToDisk,
                     manager.options.minimum_release_age_ms.is_some(),
                 ) else {
                     continue;
@@ -491,7 +491,7 @@ impl OutdatedCommand {
                     &manager.options.minimum_release_age_excludes,
                 );
 
-                let update_version = if resolved_version.tag == bun_install::DependencyVersionTag::Npm {
+                let update_version = if resolved_version.tag == dependency::Tag::Npm {
                     manifest.find_best_version_with_filter(
                         &resolved_version.value.npm.version,
                         string_buf,
@@ -575,7 +575,7 @@ impl OutdatedCommand {
                     package_id,
                     dep_id: DependencyID::try_from(dep_id).unwrap(),
                     workspace_pkg_id,
-                    is_catalog: dep.version.tag == bun_install::DependencyVersionTag::Catalog,
+                    is_catalog: dep.version.tag == dependency::Tag::Catalog,
                 });
             }
         }
@@ -667,7 +667,7 @@ impl OutdatedCommand {
                     manager.scope_for_package_name(package_name),
                     package_name,
                     &mut expired,
-                    bun_install::ManifestLoad::LoadFromMemoryFallbackToDisk,
+                    CacheBehavior::LoadFromMemoryFallbackToDisk,
                     manager.options.minimum_release_age_ms.is_some(),
                 ) else {
                     continue;
@@ -681,7 +681,7 @@ impl OutdatedCommand {
                 let Some(resolved_version) = manager.lockfile.resolve_catalog_dependency(dep) else {
                     continue;
                 };
-                let update = if resolved_version.tag == bun_install::DependencyVersionTag::Npm {
+                let update = if resolved_version.tag == dependency::Tag::Npm {
                     manifest.find_best_version_with_filter(
                         &resolved_version.value.npm.version,
                         string_buf,

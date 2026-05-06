@@ -8,7 +8,7 @@ use bun_core::{Global, Output};
 use bun_resolver::fs::FileSystem;
 use bun_glob as glob;
 use bun_install::dependency::Behavior;
-use bun_install::package_manager_real::WorkspaceFilter;
+use bun_install::package_manager::WorkspaceFilter;
 use bun_install::{DependencyID, PackageID, PackageManager, INVALID_PACKAGE_ID};
 use bun_js_parser::ast::{Expr, E};
 use bun_js_printer as js_printer;

@@ -504,8 +504,9 @@ struct HashJob {
 impl Drop for HashJob {
     fn drop(&mut self) {
         // promise: Drop on JSPromiseStrong handles deinit.
-        // TODO(port): bun.freeSensitive — zero the buffer before the Box<[u8]> field drops.
-        bun_core::secure_zero(&mut self.password);
+        // bun.freeSensitive — volatile-zero the buffer then free; take the Box so the
+        // field's own Drop sees an empty slice afterwards.
+        bun_alloc::free_sensitive(core::mem::take(&mut self.password));
     }
 }
 

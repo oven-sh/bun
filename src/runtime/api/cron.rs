@@ -1311,7 +1311,7 @@ impl CronJob {
         self.last_next_ms = next_ms;
         let delta: i64 = (next_ms - now_ms).max(1.0) as i64;
         Some(bun_core::Timespec::ms_from_now(
-            bun_core::TimespecMode::ForceRealTime,
+            bun_core::TimespecMockMode::ForceRealTime,
             delta,
         ))
     }

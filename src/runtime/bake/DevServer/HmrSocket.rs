@@ -30,10 +30,10 @@ pub struct HmrSocket {
 
 impl HmrSocket {
     // `res: anytype` — only `.getRemoteSocketInfo()` is called on it.
-    // TODO(port): bound `R` on a `RemoteSocketInfo` trait once uws wrappers land.
-    pub fn new<R>(dev: &mut DevServer, res: &R) -> Box<HmrSocket>
+    // Bound matches the caller in `DevServer::on_web_socket_upgrade`.
+    pub fn new<R>(dev: &mut DevServer, res: &mut R) -> Box<HmrSocket>
     where
-        R: bun_uws::HasRemoteSocketInfo,
+        R: bun_uws::ResponseLike,
     {
         let is_from_localhost = if let Some(addr) = res.get_remote_socket_info() {
             if addr.is_ipv6 {

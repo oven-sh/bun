@@ -472,7 +472,7 @@ impl Terminal {
                         // PTY behaves like a pipe, not a socket
                         terminal.reader.flags.nonblocking = true;
                         terminal.reader.flags.pollable = true;
-                        poll.flags.insert(bun_aio::PollFlags::NONBLOCKING);
+                        poll.flags.insert(bun_aio::PollFlag::Nonblocking);
                     }
                 }
                 terminal.flags.insert(Flags::READER_STARTED);

@@ -1676,7 +1676,7 @@ impl DevServer<'_> {
                             // SAFETY: p is the &mut deferred.data registered below; lifetime erased
                             unsafe { &mut *(p as *mut DeferredRequest<'static>) }.on_abort(r)
                         },
-                        &mut deferred.data as *mut _ as *mut c_void,
+                        deferred_data_ptr,
                     );
                     break 'brk Handler::BundledHtmlPage(ResponseAndMethod { response: resp, method });
                 }
@@ -1704,7 +1704,7 @@ impl DevServer<'_> {
                             // SAFETY: deferred.data is a live field of a HiveArray-owned node
                             data: unsafe {
                                 ::core::ptr::NonNull::new_unchecked(
-                                    &mut deferred.data as *mut _ as *mut c_void,
+                                    deferred_data_ptr,
                                 )
                             },
                             deref_fn: {

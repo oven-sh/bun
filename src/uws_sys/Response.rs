@@ -347,35 +347,44 @@ impl<const SSL: bool> Response<SSL> {
         }
     }
 
-    pub fn on_writable<U>(
-        &mut self,
-        _handler: fn(*mut U, u64, &mut Response<SSL>) -> bool,
-        user_data: *mut U,
-    ) {
-        // TODO(port): Zig takes `comptime handler` and bakes it into the trampoline at
-        // monomorphization time. Rust cannot capture a runtime fn pointer in a bare
-        // `extern "C"` trampoline without extra storage. Phase B: convert callers to a
-        // trait (`trait OnWritable { fn on_writable(&mut self, amount: u64, res: ...) -> bool }`)
-        // or generate the trampoline via macro so `handler` is a type-level constant.
-        unsafe extern "C" fn handle<U, const SSL: bool>(
+    /// Register an on-writable callback.
+    ///
+    /// Zig takes `comptime handler` and bakes it into the trampoline at
+    /// monomorphization time. Rust models this by requiring `H` to be a
+    /// zero-sized type (function item or capture-less closure): the trampoline
+    /// is monomorphized over `H` and conjures the ZST inside, so the user
+    /// handler is baked in with no runtime storage.
+    pub fn on_writable<U, H>(&mut self, _handler: H, user_data: *mut U)
+    where
+        H: Fn(*mut U, u64, &mut Response<SSL>) -> bool + Copy + 'static,
+    {
+        const { assert!(core::mem::size_of::<H>() == 0, "handler must be a fn item or capture-less closure") };
+        unsafe extern "C" fn handle<U, H, const SSL: bool>(
             this: *mut c::uws_res,
             amount: u64,
             data: *mut c_void,
-        ) -> bool {
-            if !data.is_null() {
+        ) -> bool
+        where
+            H: Fn(*mut U, u64, &mut Response<SSL>) -> bool + Copy + 'static,
+        {
+            if data.is_null() {
                 // null should always be treated as a no-op, there's no case where it should have any effect.
-                // PERF(port): was @call(.always_inline)
-                let _ = (this, amount, data.cast::<U>());
-                // TODO(port): invoke `handler` here once trait/macro shape lands.
+                return true;
             }
-            true
+            // SAFETY: H is a ZST (asserted at compile time above), so any bit
+            // pattern (i.e. zero bits) is a valid value.
+            let handler: H = unsafe { core::mem::zeroed() };
+            // SAFETY: `this` is a live uws_res for the duration of the callback.
+            let res = unsafe { &mut *Response::<SSL>::cast_res(this) };
+            // PERF(port): was @call(.always_inline)
+            handler(data.cast::<U>(), amount, res)
         }
         // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
         unsafe {
             c::uws_res_on_writable(
                 Self::ssl_flag(),
                 self.downcast(),
-                Some(handle::<U, SSL>),
+                Some(handle::<U, H, SSL>),
                 user_data.cast(),
             );
         }
@@ -394,29 +403,34 @@ impl<const SSL: bool> Response<SSL> {
         }
     }
 
-    pub fn on_aborted<U>(
-        &mut self,
-        _handler: fn(*mut U, &mut Response<SSL>),
-        optional_data: *mut U,
-    ) {
-        // TODO(port): see on_writable — comptime handler monomorphization.
-        unsafe extern "C" fn handle<U, const SSL: bool>(
+    pub fn on_aborted<U, H>(&mut self, _handler: H, optional_data: *mut U)
+    where
+        H: Fn(*mut U, &mut Response<SSL>) + Copy + 'static,
+    {
+        const { assert!(core::mem::size_of::<H>() == 0, "handler must be a fn item or capture-less closure") };
+        unsafe extern "C" fn handle<U, H, const SSL: bool>(
             this: *mut c::uws_res,
             user_data: *mut c_void,
-        ) {
-            if !user_data.is_null() {
+        ) where
+            H: Fn(*mut U, &mut Response<SSL>) + Copy + 'static,
+        {
+            if user_data.is_null() {
                 // null should always be treated as a no-op, there's no case where it should have any effect.
-                // PERF(port): was @call(.always_inline)
-                let _ = (this, user_data.cast::<U>());
-                // TODO(port): invoke `handler` here once trait/macro shape lands.
+                return;
             }
+            // SAFETY: H is a ZST (asserted at compile time above).
+            let handler: H = unsafe { core::mem::zeroed() };
+            // SAFETY: `this` is a live uws_res for the duration of the callback.
+            let res = unsafe { &mut *Response::<SSL>::cast_res(this) };
+            // PERF(port): was @call(.always_inline)
+            handler(user_data.cast::<U>(), res);
         }
         // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
         unsafe {
             c::uws_res_on_aborted(
                 Self::ssl_flag(),
                 self.downcast(),
-                Some(handle::<U, SSL>),
+                Some(handle::<U, H, SSL>),
                 optional_data.cast(),
             );
         }
@@ -427,29 +441,34 @@ impl<const SSL: bool> Response<SSL> {
         unsafe { c::uws_res_on_aborted(Self::ssl_flag(), self.downcast(), None, core::ptr::null_mut()) }
     }
 
-    pub fn on_timeout<U>(
-        &mut self,
-        _handler: fn(*mut U, &mut Response<SSL>),
-        optional_data: *mut U,
-    ) {
-        // TODO(port): see on_writable — comptime handler monomorphization.
-        unsafe extern "C" fn handle<U, const SSL: bool>(
+    pub fn on_timeout<U, H>(&mut self, _handler: H, optional_data: *mut U)
+    where
+        H: Fn(*mut U, &mut Response<SSL>) + Copy + 'static,
+    {
+        const { assert!(core::mem::size_of::<H>() == 0, "handler must be a fn item or capture-less closure") };
+        unsafe extern "C" fn handle<U, H, const SSL: bool>(
             this: *mut c::uws_res,
             user_data: *mut c_void,
-        ) {
-            if !user_data.is_null() {
+        ) where
+            H: Fn(*mut U, &mut Response<SSL>) + Copy + 'static,
+        {
+            if user_data.is_null() {
                 // null should always be treated as a no-op, there's no case where it should have any effect.
-                // PERF(port): was @call(.always_inline)
-                let _ = (this, user_data.cast::<U>());
-                // TODO(port): invoke `handler` here once trait/macro shape lands.
+                return;
             }
+            // SAFETY: H is a ZST (asserted at compile time above).
+            let handler: H = unsafe { core::mem::zeroed() };
+            // SAFETY: `this` is a live uws_res for the duration of the callback.
+            let res = unsafe { &mut *Response::<SSL>::cast_res(this) };
+            // PERF(port): was @call(.always_inline)
+            handler(user_data.cast::<U>(), res);
         }
         // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
         unsafe {
             c::uws_res_on_timeout(
                 Self::ssl_flag(),
                 self.downcast(),
-                Some(handle::<U, SSL>),
+                Some(handle::<U, H, SSL>),
                 optional_data.cast(),
             );
         }
@@ -465,38 +484,43 @@ impl<const SSL: bool> Response<SSL> {
         unsafe { c::uws_res_on_data(Self::ssl_flag(), self.downcast(), None, core::ptr::null_mut()) }
     }
 
-    pub fn on_data<U>(
-        &mut self,
-        _handler: fn(*mut U, &mut Response<SSL>, chunk: &[u8], last: bool),
-        optional_data: *mut U,
-    ) {
-        // TODO(port): see on_writable — comptime handler monomorphization.
-        unsafe extern "C" fn handle<U, const SSL: bool>(
+    pub fn on_data<U, H>(&mut self, _handler: H, optional_data: *mut U)
+    where
+        H: Fn(*mut U, &mut Response<SSL>, &[u8], bool) + Copy + 'static,
+    {
+        const { assert!(core::mem::size_of::<H>() == 0, "handler must be a fn item or capture-less closure") };
+        unsafe extern "C" fn handle<U, H, const SSL: bool>(
             this: *mut c::uws_res,
             chunk_ptr: *const u8,
             len: usize,
             last: bool,
             user_data: *mut c_void,
-        ) {
-            if !user_data.is_null() {
+        ) where
+            H: Fn(*mut U, &mut Response<SSL>, &[u8], bool) + Copy + 'static,
+        {
+            if user_data.is_null() {
                 // null should always be treated as a no-op, there's no case where it should have any effect.
-                let _chunk: &[u8] = if len > 0 {
-                    // SAFETY: chunk_ptr/len come from uws and are valid for this call.
-                    unsafe { core::slice::from_raw_parts(chunk_ptr, len) }
-                } else {
-                    b""
-                };
-                // PERF(port): was @call(.always_inline)
-                let _ = (this, last, user_data.cast::<U>());
-                // TODO(port): invoke `handler` here once trait/macro shape lands.
+                return;
             }
+            let chunk: &[u8] = if len > 0 {
+                // SAFETY: chunk_ptr/len come from uws and are valid for this call.
+                unsafe { core::slice::from_raw_parts(chunk_ptr, len) }
+            } else {
+                b""
+            };
+            // SAFETY: H is a ZST (asserted at compile time above).
+            let handler: H = unsafe { core::mem::zeroed() };
+            // SAFETY: `this` is a live uws_res for the duration of the callback.
+            let res = unsafe { &mut *Response::<SSL>::cast_res(this) };
+            // PERF(port): was @call(.always_inline)
+            handler(user_data.cast::<U>(), res, chunk, last);
         }
         // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
         unsafe {
             c::uws_res_on_data(
                 Self::ssl_flag(),
                 self.downcast(),
-                Some(handle::<U, SSL>),
+                Some(handle::<U, H, SSL>),
                 optional_data.cast(),
             );
         }
@@ -712,37 +736,41 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.timeout(seconds))
     }
 
-    pub fn on_data<U>(
-        self,
-        handler: fn(*mut U, &[u8], bool),
-        optional_data: *mut U,
-    ) {
-        // TODO(port): Zig wraps `handler` in per-variant trampolines that drop the
-        // `*Response` arg. Same comptime-handler limitation as Response::on_data —
-        // Phase B should expose a trait/macro so the trampoline can call `handler`.
-        match self {
-            AnyResponse::SSL(ptr) => {
-                // SAFETY: AnyResponse stores a live FFI handle; valid while caller holds it.
-                unsafe { &mut *ptr }.on_data::<U>(
-                    // TODO(port): adapter that drops the `&mut Response` arg
-                    |_u, _r, _d, _l| {},
-                    optional_data,
-                )
-            }
-            AnyResponse::TCP(ptr) => {
-                // SAFETY: see above.
-                unsafe { &mut *ptr }.on_data::<U>(|_u, _r, _d, _l| {}, optional_data)
-            }
-            AnyResponse::H3(ptr) => {
-                // SAFETY: see above.
-                unsafe { &mut *ptr }.on_data(
-                    // TODO(port): H3Response::on_data signature
-                    |_u, _r, _d, _l| {},
-                    optional_data,
-                )
-            }
+    pub fn on_data<U: 'static, H>(self, _handler: H, optional_data: *mut U)
+    where
+        H: Fn(*mut U, &[u8], bool) + Copy + 'static,
+    {
+        const { assert!(core::mem::size_of::<H>() == 0, "handler must be a fn item or capture-less closure") };
+        // Per-variant adapters drop the typed `*Response` arg (Zig `wrapper` structs).
+        // They are generic fn *items* (ZSTs), so they monomorphize over the user `H`
+        // and can be passed both to `Response::<SSL>::on_data` (generic ZST handler)
+        // and to `H3Response::on_data` (fn-pointer coercion).
+        fn ssl<U, H: Fn(*mut U, &[u8], bool) + Copy + 'static>(
+            u: *mut U, _r: &mut TLSResponse, d: &[u8], l: bool,
+        ) {
+            // SAFETY: H is a ZST (compile-time asserted in the enclosing fn).
+            (unsafe { core::mem::zeroed::<H>() })(u, d, l)
         }
-        let _ = handler;
+        fn tcp<U, H: Fn(*mut U, &[u8], bool) + Copy + 'static>(
+            u: *mut U, _r: &mut TCPResponse, d: &[u8], l: bool,
+        ) {
+            // SAFETY: H is a ZST (compile-time asserted in the enclosing fn).
+            (unsafe { core::mem::zeroed::<H>() })(u, d, l)
+        }
+        fn h3<U, H: Fn(*mut U, &[u8], bool) + Copy + 'static>(
+            u: &mut U, _r: &mut H3Response, d: &[u8], l: bool,
+        ) {
+            // SAFETY: H is a ZST (compile-time asserted in the enclosing fn).
+            (unsafe { core::mem::zeroed::<H>() })(u as *mut U, d, l)
+        }
+        match self {
+            // SAFETY: AnyResponse stores a live FFI handle; valid while caller holds it.
+            AnyResponse::SSL(ptr) => unsafe { &mut *ptr }.on_data(ssl::<U, H>, optional_data),
+            // SAFETY: see above.
+            AnyResponse::TCP(ptr) => unsafe { &mut *ptr }.on_data(tcp::<U, H>, optional_data),
+            // SAFETY: see above.
+            AnyResponse::H3(ptr) => unsafe { &mut *ptr }.on_data(h3::<U, H>, optional_data),
+        }
     }
 
     pub fn write_status(self, status: &[u8]) {
@@ -821,74 +849,92 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.prepare_for_sendfile())
     }
 
-    pub fn on_writable<U>(
-        self,
-        handler: fn(*mut U, u64, AnyResponse) -> bool,
-        optional_data: *mut U,
-    ) {
-        // TODO(port): same comptime-handler limitation. Zig generates per-variant
-        // adapters that wrap the typed *Response back into AnyResponse before calling
-        // `handler`. Phase B trait/macro should generate these.
-        let _ = handler;
+    pub fn on_writable<U: 'static, H>(self, _handler: H, optional_data: *mut U)
+    where
+        H: Fn(*mut U, u64, AnyResponse) -> bool + Copy + 'static,
+    {
+        const { assert!(core::mem::size_of::<H>() == 0, "handler must be a fn item or capture-less closure") };
+        // Per-variant adapters wrap the typed `*Response` back into `AnyResponse`
+        // before calling `H` (mirrors Zig's per-variant `wrapper` structs).
+        fn ssl<U, H: Fn(*mut U, u64, AnyResponse) -> bool + Copy + 'static>(
+            u: *mut U, off: u64, r: &mut TLSResponse,
+        ) -> bool {
+            // SAFETY: H is a ZST (compile-time asserted in the enclosing fn).
+            (unsafe { core::mem::zeroed::<H>() })(u, off, AnyResponse::SSL(r as *mut _))
+        }
+        fn tcp<U, H: Fn(*mut U, u64, AnyResponse) -> bool + Copy + 'static>(
+            u: *mut U, off: u64, r: &mut TCPResponse,
+        ) -> bool {
+            // SAFETY: H is a ZST (compile-time asserted in the enclosing fn).
+            (unsafe { core::mem::zeroed::<H>() })(u, off, AnyResponse::TCP(r as *mut _))
+        }
+        fn h3<U, H: Fn(*mut U, u64, AnyResponse) -> bool + Copy + 'static>(
+            u: &mut U, off: u64, r: &mut H3Response,
+        ) -> bool {
+            // SAFETY: H is a ZST (compile-time asserted in the enclosing fn).
+            (unsafe { core::mem::zeroed::<H>() })(u as *mut U, off, AnyResponse::H3(r as *mut _))
+        }
         match self {
-            AnyResponse::SSL(ptr) => {
-                // SAFETY: AnyResponse stores a live FFI handle; valid while caller holds it.
-                unsafe { &mut *ptr }.on_writable::<U>(|_u, _o, _r| true, optional_data)
-            }
-            AnyResponse::TCP(ptr) => {
-                // SAFETY: see above.
-                unsafe { &mut *ptr }.on_writable::<U>(|_u, _o, _r| true, optional_data)
-            }
-            AnyResponse::H3(ptr) => {
-                // SAFETY: see above.
-                unsafe { &mut *ptr }.on_writable(|_u, _o, _r| true, optional_data)
-            }
+            // SAFETY: AnyResponse stores a live FFI handle; valid while caller holds it.
+            AnyResponse::SSL(ptr) => unsafe { &mut *ptr }.on_writable(ssl::<U, H>, optional_data),
+            // SAFETY: see above.
+            AnyResponse::TCP(ptr) => unsafe { &mut *ptr }.on_writable(tcp::<U, H>, optional_data),
+            // SAFETY: see above.
+            AnyResponse::H3(ptr) => unsafe { &mut *ptr }.on_writable(h3::<U, H>, optional_data),
         }
     }
 
-    pub fn on_timeout<U>(
-        self,
-        handler: fn(*mut U, AnyResponse),
-        optional_data: *mut U,
-    ) {
-        // TODO(port): see on_writable.
-        let _ = handler;
+    pub fn on_timeout<U: 'static, H>(self, _handler: H, optional_data: *mut U)
+    where
+        H: Fn(*mut U, AnyResponse) + Copy + 'static,
+    {
+        const { assert!(core::mem::size_of::<H>() == 0, "handler must be a fn item or capture-less closure") };
+        fn ssl<U, H: Fn(*mut U, AnyResponse) + Copy + 'static>(u: *mut U, r: &mut TLSResponse) {
+            // SAFETY: H is a ZST (compile-time asserted in the enclosing fn).
+            (unsafe { core::mem::zeroed::<H>() })(u, AnyResponse::SSL(r as *mut _))
+        }
+        fn tcp<U, H: Fn(*mut U, AnyResponse) + Copy + 'static>(u: *mut U, r: &mut TCPResponse) {
+            // SAFETY: H is a ZST (compile-time asserted in the enclosing fn).
+            (unsafe { core::mem::zeroed::<H>() })(u, AnyResponse::TCP(r as *mut _))
+        }
+        fn h3<U, H: Fn(*mut U, AnyResponse) + Copy + 'static>(u: &mut U, r: &mut H3Response) {
+            // SAFETY: H is a ZST (compile-time asserted in the enclosing fn).
+            (unsafe { core::mem::zeroed::<H>() })(u as *mut U, AnyResponse::H3(r as *mut _))
+        }
         match self {
-            AnyResponse::SSL(ptr) => {
-                // SAFETY: AnyResponse stores a live FFI handle; valid while caller holds it.
-                unsafe { &mut *ptr }.on_timeout::<U>(|_u, _r| {}, optional_data)
-            }
-            AnyResponse::TCP(ptr) => {
-                // SAFETY: see above.
-                unsafe { &mut *ptr }.on_timeout::<U>(|_u, _r| {}, optional_data)
-            }
-            AnyResponse::H3(ptr) => {
-                // SAFETY: see above.
-                unsafe { &mut *ptr }.on_timeout(|_u, _r| {}, optional_data)
-            }
+            // SAFETY: AnyResponse stores a live FFI handle; valid while caller holds it.
+            AnyResponse::SSL(ptr) => unsafe { &mut *ptr }.on_timeout(ssl::<U, H>, optional_data),
+            // SAFETY: see above.
+            AnyResponse::TCP(ptr) => unsafe { &mut *ptr }.on_timeout(tcp::<U, H>, optional_data),
+            // SAFETY: see above.
+            AnyResponse::H3(ptr) => unsafe { &mut *ptr }.on_timeout(h3::<U, H>, optional_data),
         }
     }
 
-    pub fn on_aborted<U>(
-        self,
-        handler: fn(*mut U, AnyResponse),
-        optional_data: *mut U,
-    ) {
-        // TODO(port): see on_writable.
-        let _ = handler;
+    pub fn on_aborted<U: 'static, H>(self, _handler: H, optional_data: *mut U)
+    where
+        H: Fn(*mut U, AnyResponse) + Copy + 'static,
+    {
+        const { assert!(core::mem::size_of::<H>() == 0, "handler must be a fn item or capture-less closure") };
+        fn ssl<U, H: Fn(*mut U, AnyResponse) + Copy + 'static>(u: *mut U, r: &mut TLSResponse) {
+            // SAFETY: H is a ZST (compile-time asserted in the enclosing fn).
+            (unsafe { core::mem::zeroed::<H>() })(u, AnyResponse::SSL(r as *mut _))
+        }
+        fn tcp<U, H: Fn(*mut U, AnyResponse) + Copy + 'static>(u: *mut U, r: &mut TCPResponse) {
+            // SAFETY: H is a ZST (compile-time asserted in the enclosing fn).
+            (unsafe { core::mem::zeroed::<H>() })(u, AnyResponse::TCP(r as *mut _))
+        }
+        fn h3<U, H: Fn(*mut U, AnyResponse) + Copy + 'static>(u: &mut U, r: &mut H3Response) {
+            // SAFETY: H is a ZST (compile-time asserted in the enclosing fn).
+            (unsafe { core::mem::zeroed::<H>() })(u as *mut U, AnyResponse::H3(r as *mut _))
+        }
         match self {
-            AnyResponse::SSL(ptr) => {
-                // SAFETY: AnyResponse stores a live FFI handle; valid while caller holds it.
-                unsafe { &mut *ptr }.on_aborted::<U>(|_u, _r| {}, optional_data)
-            }
-            AnyResponse::TCP(ptr) => {
-                // SAFETY: see above.
-                unsafe { &mut *ptr }.on_aborted::<U>(|_u, _r| {}, optional_data)
-            }
-            AnyResponse::H3(ptr) => {
-                // SAFETY: see above.
-                unsafe { &mut *ptr }.on_aborted(|_u, _r| {}, optional_data)
-            }
+            // SAFETY: AnyResponse stores a live FFI handle; valid while caller holds it.
+            AnyResponse::SSL(ptr) => unsafe { &mut *ptr }.on_aborted(ssl::<U, H>, optional_data),
+            // SAFETY: see above.
+            AnyResponse::TCP(ptr) => unsafe { &mut *ptr }.on_aborted(tcp::<U, H>, optional_data),
+            // SAFETY: see above.
+            AnyResponse::H3(ptr) => unsafe { &mut *ptr }.on_aborted(h3::<U, H>, optional_data),
         }
     }
 
@@ -920,9 +966,6 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.corked(f))
     }
 
-    // TODO(b2-blocked): h3::Response::run_corked_with_type takes &mut U; H1 takes *mut U.
-    // Unify signatures before un-gating.
-    #[cfg(any())]
     pub fn run_corked_with_type<U>(self, handler: fn(*mut U), optional_data: *mut U) {
         any_dispatch!(self, |r| r.run_corked_with_type(handler, optional_data))
     }

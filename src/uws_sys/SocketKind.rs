@@ -64,6 +64,21 @@ pub enum SocketKind {
 }
 
 impl SocketKind {
+    /// Checked conversion from the raw `u8` returned by C (`us_socket_kind`).
+    /// Mirrors Zig's `@enumFromInt`, which traps on out-of-range values in
+    /// safe builds. Never `transmute::<u8, SocketKind>` directly — an invalid
+    /// discriminant in a `#[repr(u8)]` enum is immediate UB in Rust.
+    #[inline]
+    pub fn from_u8(v: u8) -> Self {
+        assert!(
+            v <= SocketKind::UwsWsTls as u8,
+            "invalid SocketKind discriminant {v} from C",
+        );
+        // SAFETY: SocketKind is #[repr(u8)] with contiguous discriminants
+        // 0..=UwsWsTls; the assert above guarantees `v` is in range.
+        unsafe { core::mem::transmute::<u8, SocketKind>(v) }
+    }
+
     #[inline]
     pub const fn is_tls(self) -> bool {
         matches!(

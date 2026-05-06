@@ -77,12 +77,16 @@ impl ThreadLock {
     pub fn assert_locked(&self) {
         #[cfg(feature = "ci_assert")]
         {
-            debug_assert!(
+            // Spec uses `bun.assertf` (always-on under ci_assert), not a
+            // debug-only check. The body is already cfg-gated on `ci_assert`,
+            // so use `assert!` — `debug_assert!` would silently no-op in a
+            // release CI build with `ci_assert` enabled.
+            assert!(
                 self.owning_thread != INVALID_THREAD_ID,
                 "`ThreadLock` is not locked",
             );
             let current = thread_id::current();
-            debug_assert!(
+            assert!(
                 self.owning_thread == current,
                 "`ThreadLock` is locked by thread {}, not thread {}",
                 self.owning_thread,

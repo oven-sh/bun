@@ -87,8 +87,6 @@ impl BunSocketContextOptions {
     /// pointers so the digest is content-addressed (not pointer-addressed).
     /// Two option structs that build the same `SSL_CTX*` produce the same
     /// digest. Used as the key for `SSLContextCache`.
-    // TODO(b2-blocked): bun_boringssl_sys::Sha256 wrapper not yet exported.
-    #[cfg(any())]
     pub fn digest(&self) -> [u8; 32] {
         let mut h = Sha256::init();
 
@@ -131,14 +129,17 @@ impl BunSocketContextOptions {
             hp.update(&[(!s.is_null()) as u8]);
             if !s.is_null() {
                 // SAFETY: NUL-terminated C string.
-                let path = unsafe { bun_core::ZStr::from_ptr(s.cast::<u8>()) };
+                let bytes = unsafe { core::ffi::CStr::from_ptr(s) }.to_bytes();
+                // SAFETY: `s[bytes.len()] == 0` (CStr invariant) and `s[..len]` is readable.
+                let path = unsafe { bun_core::ZStr::from_raw(s.cast::<u8>(), bytes.len()) };
                 hp.update(path.as_bytes());
                 let mut meta: [i64; 3] = [0; 3];
                 if !path.as_bytes().is_empty() {
                     let hook = STAT_FILE_HOOK.load(Ordering::Relaxed);
                     if !hook.is_null() {
-                        // SAFETY: hook was registered as a `StatFileFn` by runtime init.
-                        if let Some(m) = unsafe { core::mem::transmute::<_, StatFileFn>(hook)(path) } {
+                        // SAFETY: hook was registered as a `StatFileFn` by runtime init;
+                        // *mut () → fn ptr transmute is the §Dispatch tag+ptr pattern.
+                        if let Some(m) = unsafe { core::mem::transmute::<*mut (), StatFileFn>(hook)(path) } {
                             meta = m;
                         }
                     }
@@ -189,6 +190,36 @@ impl BunSocketContextOptions {
         sum(self.cert, self.cert_count, &mut n);
         sum(self.ca, self.ca_count, &mut n);
         n
+    }
+}
+
+/// Thin SHA-256 wrapper over the raw `bun_boringssl_sys` FFI so `digest()`
+/// reads the same as the Zig (`Sha256.init`/`update`/`final`). No higher-tier
+/// `bun_boringssl::Sha256` exists yet; this stays local until one does.
+struct Sha256(core::mem::MaybeUninit<bun_boringssl_sys::SHA256_CTX>);
+impl Sha256 {
+    #[inline]
+    fn init() -> Self {
+        let mut ctx = core::mem::MaybeUninit::<bun_boringssl_sys::SHA256_CTX>::uninit();
+        // SAFETY: SHA256_Init writes the full ctx; never reads uninit bytes.
+        unsafe { bun_boringssl_sys::SHA256_Init(ctx.as_mut_ptr()) };
+        Self(ctx)
+    }
+    #[inline]
+    fn update(&mut self, data: &[u8]) {
+        // SAFETY: ctx was initialized in `init`; data is a valid readable slice.
+        unsafe {
+            bun_boringssl_sys::SHA256_Update(
+                self.0.as_mut_ptr(),
+                data.as_ptr().cast::<core::ffi::c_void>(),
+                data.len(),
+            )
+        };
+    }
+    #[inline]
+    fn final_(&mut self, out: &mut [u8; 32]) {
+        // SAFETY: ctx was initialized in `init`; out has room for 32 bytes.
+        unsafe { bun_boringssl_sys::SHA256_Final(out.as_mut_ptr(), self.0.as_mut_ptr()) };
     }
 }
 

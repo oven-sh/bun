@@ -630,11 +630,10 @@ impl<const SSL: bool> ListenSocket<SSL> {
         unsafe { (*(self as *mut Self as *mut UwsListenSocket)).get_local_port() }
     }
 
-    // TODO(b2-blocked): NewSocketHandler::from() not yet wired (see crate::socket).
-    #[cfg(any())]
-    pub fn socket(&mut self) -> SocketHandler<SSL> {
-        // SAFETY: opaque cast; SocketHandler::from accepts *mut us_socket_t-compatible ptr.
-        unsafe { SocketHandler::<SSL>::from((self as *mut Self).cast()) }
+    pub fn socket(&mut self) -> crate::socket::NewSocketHandler<'static, SSL> {
+        // SAFETY: ListenSocket<SSL> is layout-identical to us_socket_t on the C side
+        // (a listen socket IS a us_socket_t); Zig does `.from(@ptrCast(this))`.
+        crate::socket::NewSocketHandler::<SSL>::from((self as *mut Self).cast())
     }
 }
 

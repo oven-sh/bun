@@ -11,6 +11,7 @@
 //! the `bun_bundler::dispatch::DevServerVTable` can be wired.
 
 use core::ptr::NonNull;
+use std::borrow::Cow;
 
 // ─── Phase-A drafts ──────────────────────────────────────────────────────────
 // `bake_body.rs` (Framework/UserOptions/BuildConfigSubset `from_js` + the
@@ -61,33 +62,44 @@ pub enum Mode {
 }
 
 /// `bake.Framework.ServerComponents`.
+///
+/// PORT NOTE: string fields are arena-backed at runtime (freed via
+/// `UserOptions.arena.deinit()`, bake.zig:23) but default to static literals
+/// (bake.zig:360-367). `Cow<'static, [u8]>` covers both without leaking.
 #[derive(Clone)]
 pub struct ServerComponents {
     pub separate_ssr_graph: bool,
-    pub server_runtime_import: &'static [u8],
-    pub server_register_client_reference: &'static [u8],
-    pub server_register_server_reference: &'static [u8],
-    pub client_register_server_reference: &'static [u8],
+    /// REQUIRED — spec (bake.zig:360) gives no default; `fromJS` throws if
+    /// `serverRuntimeImportSource` is absent (bake.zig:511-513).
+    pub server_runtime_import: Cow<'static, [u8]>,
+    pub server_register_client_reference: Cow<'static, [u8]>,
+    pub server_register_server_reference: Cow<'static, [u8]>,
+    pub client_register_server_reference: Cow<'static, [u8]>,
 }
-impl Default for ServerComponents {
-    fn default() -> Self {
+// PORT NOTE: no `Default` impl — `server_runtime_import` is a required field
+// in the spec (bake.zig:360 has no `= "..."` initializer). Callers must
+// supply it explicitly (`Framework::react()` sets `"react-server-dom-bun/server"`).
+impl ServerComponents {
+    /// Construct with the spec defaults for the three `register*` exports
+    /// (bake.zig:362-367); `server_runtime_import` must be supplied.
+    pub fn new(server_runtime_import: Cow<'static, [u8]>) -> Self {
         Self {
             separate_ssr_graph: false,
-            server_runtime_import: b"",
-            server_register_client_reference: b"registerClientReference",
-            server_register_server_reference: b"registerServerReference",
-            client_register_server_reference: b"registerServerReference",
+            server_runtime_import,
+            server_register_client_reference: Cow::Borrowed(b"registerClientReference"),
+            server_register_server_reference: Cow::Borrowed(b"registerServerReference"),
+            client_register_server_reference: Cow::Borrowed(b"registerServerReference"),
         }
     }
 }
 
 #[derive(Clone)]
 pub struct ReactFastRefresh {
-    pub import_source: &'static [u8],
+    pub import_source: Cow<'static, [u8]>,
 }
 impl Default for ReactFastRefresh {
     fn default() -> Self {
-        Self { import_source: b"react-refresh/runtime" }
+        Self { import_source: Cow::Borrowed(b"react-refresh/runtime") }
     }
 }
 
@@ -96,13 +108,16 @@ impl Default for ReactFastRefresh {
 /// DevServer touches is named here.
 #[derive(Clone)]
 pub struct FileSystemRouterType {
-    pub root: &'static [u8],
-    pub prefix: &'static [u8],
-    pub entry_client: Option<&'static [u8]>,
-    pub entry_server: Option<&'static [u8]>,
+    pub root: Cow<'static, [u8]>,
+    pub prefix: Cow<'static, [u8]>,
+    pub entry_client: Option<Cow<'static, [u8]>>,
+    /// REQUIRED — spec bake.zig:346 is `[]const u8` (non-optional). `fromJS`
+    /// throws if missing (bake.zig:573-575); `Framework.resolve` (bake.zig:404)
+    /// dereferences unconditionally.
+    pub entry_server: Cow<'static, [u8]>,
     pub ignore_underscores: bool,
-    pub ignore_dirs: &'static [&'static [u8]],
-    pub extensions: &'static [&'static [u8]],
+    pub ignore_dirs: Vec<Cow<'static, [u8]>>,
+    pub extensions: Vec<Cow<'static, [u8]>>,
     pub style: framework_router::Style,
     pub allow_layouts: bool,
 }
@@ -113,10 +128,11 @@ pub struct FileSystemRouterType {
 /// always arena-allocated, usually owned by the arena in `UserOptions`.
 pub struct Framework {
     pub is_built_in_react: bool,
-    /// PORT NOTE: arena-owned in Zig (`options.arena`). `'static` is a
-    /// placeholder for the arena lifetime; see LIFETIMES.tsv.
-    // TODO(port): thread `'arena` lifetime once `UserOptions<'arena>` is real.
-    pub file_system_router_types: &'static [FileSystemRouterType],
+    /// Spec (bake.zig:248) is `[]FileSystemRouterType` — a *mutable*
+    /// arena-owned slice that `Framework.resolve` (bake.zig:401-404) rewrites
+    /// in place. Owned `Vec` so `resolve()` can take `&mut` and so the arena
+    /// free in `UserOptions::drop` is mirrored by `Vec::drop`.
+    pub file_system_router_types: Vec<FileSystemRouterType>,
     pub server_components: Option<ServerComponents>,
     pub react_fast_refresh: Option<ReactFastRefresh>,
     pub built_in_modules: bun_collections::StringArrayHashMap<BuiltInModule>,
@@ -125,7 +141,7 @@ impl Default for Framework {
     fn default() -> Self {
         Self {
             is_built_in_react: false,
-            file_system_router_types: &[],
+            file_system_router_types: Vec::new(),
             server_components: None,
             react_fast_refresh: None,
             built_in_modules: bun_collections::StringArrayHashMap::new(),
@@ -165,7 +181,9 @@ pub struct BuildConfigSubset {
 
 /// `bake.HmrRuntime` — embedded HMR runtime code + precomputed line count.
 pub struct HmrRuntime {
-    pub code: &'static [u8],
+    /// Spec bake.zig:841 is `[:0]const u8` — NUL-terminated; the sentinel is
+    /// load-bearing where this buffer is handed to JSC/C++ as a C string.
+    pub code: &'static bun_str::ZStr,
     pub line_count: u32,
 }
 
@@ -216,6 +234,7 @@ pub mod framework_router {
     pub enum Style {
         NextjsPages,
         NextjsAppUi,
+        NextjsAppRoutes,
         // TODO(b2-blocked): JavaScriptDefined(jsc::Strong) — needs bun_jsc.
     }
 
@@ -231,6 +250,7 @@ pub mod framework_router {
     pub struct Route {
         pub parent: Option<RouteIndex>,
         pub first_child: Option<RouteIndex>,
+        pub prev_sibling: Option<RouteIndex>,
         pub next_sibling: Option<RouteIndex>,
         pub r#type: TypeIndex,
         pub file_page: OpaqueFileIdOptional,
@@ -250,7 +270,9 @@ pub mod framework_router {
         pub style: Style,
         pub allow_layouts: bool,
         pub client_file: OpaqueFileIdOptional,
-        pub server_file: OpaqueFileIdOptional,
+        /// Spec FrameworkRouter.zig:112 — NON-optional (every router type has
+        /// a server entrypoint). Only `client_file` is `.Optional`.
+        pub server_file: OpaqueFileId,
         pub server_file_string: super::jsc::StrongOptional,
     }
 
@@ -261,8 +283,35 @@ pub mod framework_router {
         _opaque: (),
     }
 
+    /// `FrameworkRouter.EncodedPattern` — a route pattern with dynamic
+    /// segments encoded so that `/hello/[foo]/bar` and `/hello/[baz]/bar`
+    /// hash/compare *equal* (FrameworkRouter.zig:19-27). Keying
+    /// `DynamicRouteMap` on raw bytes would let those two patterns coexist,
+    /// silently passing routes the spec rejects as duplicates.
+    #[derive(Clone, Debug)]
+    pub struct EncodedPattern(pub Box<[u8]>);
+    impl core::hash::Hash for EncodedPattern {
+        fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+            // Spec: `EffectiveURLContext` (FrameworkRouter.zig:19-27) hashes the
+            // pattern with dynamic-segment *names* erased so `[foo]` ≡ `[bar]`.
+            // TODO(port): full segment-erasure body lives in the gated
+            // `FrameworkRouter.rs::EffectiveUrlContext`; un-gate once
+            // `Part::decode` is available here.
+            self.0.hash(state)
+        }
+    }
+    impl PartialEq for EncodedPattern {
+        fn eq(&self, other: &Self) -> bool {
+            // TODO(port): must match `EffectiveURLContext.eql` — compares by
+            // effective URL (dynamic segment names ignored). See gated
+            // `FrameworkRouter.rs::EffectiveUrlContext`.
+            self.0 == other.0
+        }
+    }
+    impl Eq for EncodedPattern {}
+
     pub type StaticRouteMap = StringArrayHashMap<RouteIndex>;
-    pub type DynamicRouteMap = ArrayHashMap<Box<[u8]>, RouteIndex>;
+    pub type DynamicRouteMap = ArrayHashMap<EncodedPattern, RouteIndex>;
 
     /// Discovers routes from the filesystem; see `FrameworkRouter.zig`.
     pub struct FrameworkRouter {

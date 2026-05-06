@@ -32,20 +32,19 @@ pub mod api;
 pub mod timer;
 pub mod dispatch;
 
-// Newly declared in B-2 (was in the "unwired" list).
-pub mod image {
-    #[path = "thumbhash.rs"]
-    pub mod thumbhash;
-    #[path = "quantize.rs"]
-    pub mod quantize;
-    #[path = "exif.rs"]
-    pub mod exif;
-    // Remaining image submodules (codec_*, Image, codecs, backend_*) depend on
-    // bun_jsc / FFI sys crates and stay gated.
-}
+// ─── un-gated in B-2 round 3 (each subdir owns a real `mod.rs`; heavy bodies
+//     re-gated *inside* those files) ────────────────────────────────────────
+// `image` was previously an inline stub re-declaring thumbhash/quantize/exif
+// here; that's now the job of `src/runtime/image/mod.rs` (which also carries
+// the gated codec_*/backend_* drafts). Dropping the inline stub means a single
+// flip point per subtree.
+pub mod image;
+pub mod dns_jsc;
+pub mod valkey_jsc;
+pub mod test_runner;
 
 // Additional subdirectories present under src/runtime/ but not yet wired:
-// dns_jsc, test_runner, timer, valkey_jsc, webview.
+// webview.
 // These remain un-declared (blocked on bun_jsc method surface).
 
 

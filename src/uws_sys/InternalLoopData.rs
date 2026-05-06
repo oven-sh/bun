@@ -2,6 +2,19 @@ use core::ffi::{c_char, c_int, c_void};
 
 use crate::{udp, us_socket_t, ConnectingSocket, Loop, SocketGroup, Timer};
 
+/// Layout placeholder for the `mutex` field of `us_internal_loop_data_t`.
+/// Must match `zig_mutex_t` in `packages/bun-usockets/src/internal/loop_data.h`
+/// and `bun_threading::mutex::ReleaseImpl` (which exports `Bun__lock__size`):
+///   - Windows: `SRWLOCK` (pointer-sized)
+///   - macOS:   `os_unfair_lock` (4-byte u32)
+///   - Linux/FreeBSD: futex word (4-byte u32)
+/// This crate never locks/unlocks it — C calls `Bun__lock`/`Bun__unlock`
+/// (exported from `bun_threading`) on the raw field address.
+#[cfg(windows)]
+pub type LoopDataMutex = *mut c_void;
+#[cfg(not(windows))]
+pub type LoopDataMutex = u32;
+
 /// Opaque C handle from `us_internal_create_async`.
 #[repr(C)]
 pub struct us_internal_async {
@@ -30,9 +43,13 @@ pub struct InternalLoopData {
     pub low_prio_budget: i32,
     pub dns_ready_head: *mut ConnectingSocket,
     pub closed_connecting_head: *mut ConnectingSocket,
-    // FORWARD_DECL(b0): was `bun_threading::Mutex` (tier 2). `bun.Mutex.ReleaseImpl.Type`
-    // C layout must match; verify size/align with static assert in Phase B.
-    pub mutex: parking_lot::RawMutex,
+    /// `bun.Mutex.ReleaseImpl.Type` — must match the C-side `zig_mutex_t`
+    /// (`packages/bun-usockets/src/internal/loop_data.h`). `Bun__lock`/`Bun__unlock`
+    /// are called on this field by C, and `loop.c` runtime-checks
+    /// `Bun__lock__size == sizeof(loop->data.mutex)`. This crate is tier-0 and
+    /// cannot name `bun_threading::ReleaseImpl` directly, so use a layout-only
+    /// placeholder of the correct size/align per platform.
+    pub mutex: LoopDataMutex,
     pub parent_ptr: *mut c_void,
     pub parent_tag: c_char,
     pub iteration_nr: u64,

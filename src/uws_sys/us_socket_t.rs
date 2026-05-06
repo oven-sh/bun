@@ -219,10 +219,8 @@ impl us_socket_t {
     }
 
     pub fn kind(&self) -> SocketKind {
-        unsafe {
-            // SAFETY: SocketKind is #[repr(u8)] and the C side only stores valid discriminants
-            core::mem::transmute::<u8, SocketKind>(c::us_socket_kind(self as *const _ as *mut _))
-        }
+        // SAFETY: self is a live us_socket_t; C side does not mutate through this pointer
+        SocketKind::from_u8(unsafe { c::us_socket_kind(self as *const _ as *mut _) })
     }
 
     /// Re-stamp the dispatch kind in place. Used after `Listener.onCreate`

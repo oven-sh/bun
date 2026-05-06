@@ -17,11 +17,10 @@ pub type LIBUS_SOCKET_DESCRIPTOR = usize;
 pub const LIBUS_LISTEN_DEFAULT: core::ffi::c_int = 0;
 pub const LIBUS_LISTEN_EXCLUSIVE_PORT: core::ffi::c_int = 1;
 pub const LIBUS_SOCKET_ALLOW_HALF_OPEN: core::ffi::c_int = 2;
-pub const LIBUS_LISTEN_REUSE_ADDR: core::ffi::c_int = 4;
-pub const LIBUS_LISTEN_REUSE_PORT: core::ffi::c_int = 8;
-pub const LIBUS_SOCKET_IPV6_ONLY: core::ffi::c_int = 16;
+pub const LIBUS_LISTEN_REUSE_PORT: core::ffi::c_int = 4;
+pub const LIBUS_SOCKET_IPV6_ONLY: core::ffi::c_int = 8;
+pub const LIBUS_LISTEN_REUSE_ADDR: core::ffi::c_int = 16;
 pub const LIBUS_LISTEN_DISALLOW_REUSE_PORT_FAILURE: core::ffi::c_int = 32;
-pub const LIBUS_SKIP_REUSE_PORT_BEHAVIOR: core::ffi::c_int = 64;
 
 /// BoringSSL `SSL_CTX` (alias so callers don't need a direct boringssl dep).
 pub type SslCtx = bun_boringssl_sys::SSL_CTX;
@@ -52,19 +51,26 @@ pub enum create_bun_socket_error_t {
 }
 
 /// WebSocket frame opcode (`uWS::OpCode`).
-#[repr(i32)]
+///
+/// Spec is `enum(i32) { ..., _ }` — non-exhaustive, so any `i32` from C++ is a
+/// valid bit pattern. This type crosses the FFI boundary *into* Rust via
+/// `uws_websocket_message_handler`, so it must not be an exhaustive
+/// `#[repr(i32)]` enum (an out-of-range discriminant would be instant UB).
+#[repr(transparent)]
 #[derive(Clone, Copy, Eq, PartialEq, Debug)]
-pub enum Opcode {
-    Continuation = 0,
-    Text = 1,
-    Binary = 2,
-    Close = 8,
-    Ping = 9,
-    Pong = 10,
+pub struct Opcode(pub i32);
+
+impl Opcode {
+    pub const Continuation: Opcode = Opcode(0);
+    pub const Text: Opcode = Opcode(1);
+    pub const Binary: Opcode = Opcode(2);
+    pub const Close: Opcode = Opcode(8);
+    pub const Ping: Opcode = Opcode(9);
+    pub const Pong: Opcode = Opcode(10);
 }
 
 /// `uWS::WebSocket::SendStatus`.
-#[repr(i32)]
+#[repr(u32)]
 #[derive(Clone, Copy, Eq, PartialEq, Debug)]
 pub enum SendStatus {
     Backpressure = 0,
@@ -138,6 +144,21 @@ pub mod socket {
     }
     pub struct NewSocketHandler<'a, const IS_SSL: bool> {
         pub socket: InternalSocket<'a>,
+    }
+    impl<'a, const IS_SSL: bool> NewSocketHandler<'a, IS_SSL> {
+        pub const DETACHED: Self = Self { socket: InternalSocket::Detached };
+        #[inline]
+        pub fn from(socket: *mut us_socket_t) -> Self {
+            Self { socket: InternalSocket::Connected(socket) }
+        }
+        #[inline]
+        pub fn from_connecting(connecting: *mut ConnectingSocket) -> Self {
+            Self { socket: InternalSocket::Connecting(connecting) }
+        }
+        #[inline]
+        pub fn from_any(socket: InternalSocket<'a>) -> Self {
+            Self { socket }
+        }
     }
     pub type SocketTCP<'a> = NewSocketHandler<'a, false>;
     pub type SocketTLS<'a> = NewSocketHandler<'a, true>;

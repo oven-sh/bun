@@ -351,14 +351,21 @@ impl Response {
         let _ = self;
         handler();
     }
-    pub fn run_corked_with_type<UD>(&mut self, handler: fn(&mut UD), ud: *mut UD) {
-        // TODO(port): comptime-fn trampoline — see note on `for_each_header`.
-        let _ = handler;
-        unsafe extern "C" fn cb<UD>(_p: *mut c_void) {
-            unimplemented!("TODO(port): comptime handler trampoline");
+    pub fn run_corked_with_type<UD>(&mut self, handler: fn(*mut UD), ud: *mut UD) {
+        // cork is synchronous, so we stack-allocate the (handler, ud) pair and
+        // recover it inside the trampoline — same shape as H1's
+        // `Response::run_corked_with_type` so `AnyResponse` can dispatch uniformly.
+        type Ctx<UD> = (fn(*mut UD), *mut UD);
+        unsafe extern "C" fn cb<UD>(p: *mut c_void) {
+            // SAFETY: p points at a stack Ctx<UD> valid for this synchronous call.
+            let ctx = unsafe { &*p.cast::<Ctx<UD>>() };
+            // PERF(port): was @call(.always_inline)
+            (ctx.0)(ctx.1);
         }
-        // SAFETY: self is a live FFI handle; trampoline is `extern "C"`; ud forwarded opaquely
-        unsafe { c::uws_h3_res_cork(self, ud.cast(), cb::<UD>) }
+        let mut ctx: Ctx<UD> = (handler, ud);
+        // SAFETY: self is a live FFI handle; trampoline is `extern "C"`; ctx outlives the
+        // synchronous FFI call.
+        unsafe { c::uws_h3_res_cork(self, (&mut ctx as *mut Ctx<UD>).cast(), cb::<UD>) }
     }
 }
 

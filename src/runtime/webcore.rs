@@ -200,6 +200,10 @@ pub use crate::jsc::FetchHeaders;
 pub mod encoding_label;
 pub use encoding_label::EncodingLabel;
 
+#[path = "webcore/FormData.rs"]
+pub mod form_data;
+pub use form_data::{FormData, AsyncFormData};
+
 #[path = "webcore/ScriptExecutionContext.rs"]
 pub mod script_execution_context;
 

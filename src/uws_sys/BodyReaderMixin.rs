@@ -1,7 +1,52 @@
 use core::marker::PhantomData;
 use core::mem;
 
+use crate::response::Response;
 use crate::AnyResponse;
+
+/// Response types that can drive a `BodyReaderMixin`: must support registering
+/// data/abort callbacks and converting to `AnyResponse`. Stands in for the Zig
+/// `anytype` parameter on `readBody`.
+///
+/// Only `Response<SSL>` is wired today (DevServer's only consumer is HTTP/1.x);
+/// `h3::Response` can be added once its callback signatures are unified.
+pub trait BodyResponse: Sized + 'static {
+    fn on_data<U, H>(&mut self, handler: H, ctx: *mut U)
+    where
+        H: Fn(*mut U, &mut Self, &[u8], bool) + Copy + 'static;
+    fn on_aborted<U, H>(&mut self, handler: H, ctx: *mut U)
+    where
+        H: Fn(*mut U, &mut Self) + Copy + 'static;
+    fn to_any(&mut self) -> AnyResponse;
+}
+
+impl<const SSL: bool> BodyResponse for Response<SSL> {
+    #[inline]
+    fn on_data<U, H>(&mut self, handler: H, ctx: *mut U)
+    where
+        H: Fn(*mut U, &mut Self, &[u8], bool) + Copy + 'static,
+    {
+        Response::<SSL>::on_data(self, handler, ctx)
+    }
+    #[inline]
+    fn on_aborted<U, H>(&mut self, handler: H, ctx: *mut U)
+    where
+        H: Fn(*mut U, &mut Self) + Copy + 'static,
+    {
+        Response::<SSL>::on_aborted(self, handler, ctx)
+    }
+    #[inline]
+    fn to_any(&mut self) -> AnyResponse {
+        // `From<*mut Response<{true,false}>>` exist as two concrete impls, not a
+        // const-generic one, so dispatch on `SSL` here. Same shape as Zig's
+        // `AnyResponse.init` switching on @TypeOf.
+        if SSL {
+            AnyResponse::SSL((self as *mut Self).cast())
+        } else {
+            AnyResponse::TCP((self as *mut Self).cast())
+        }
+    }
+}
 
 /// Mixin to read an entire request body into memory and run a callback.
 /// Consumers should make sure a reference count is held on the server,
@@ -39,34 +84,28 @@ impl<Wrap: BodyReaderHandler> BodyReaderMixin<Wrap> {
     }
 
     /// Memory is freed after the callback returns, or automatically on failure.
-    // TODO(b2-blocked): R bound (uws Response trait with on_data/on_aborted)
-    // and AnyResponse::init() conversion not yet wired.
-    #[cfg(any())]
-    pub fn read_body<R>(&mut self, resp: R)
-    where
-        // TODO(port): bound R by the uws Response trait (must provide
-        // on_data/on_aborted and be convertible via AnyResponse::init)
-        R: Copy,
-    {
+    pub fn read_body<R: BodyResponse>(&mut self, resp: &mut R) {
         let ctx: *mut Self = self;
-        // TODO(port): exact on_data/on_aborted signatures from bun_uws_sys Response wrapper
         resp.on_data(Self::on_data_generic::<R>, ctx);
         resp.on_aborted(Self::on_aborted_handler::<R>, ctx);
     }
 
-    #[cfg(any())]
-    fn on_data_generic<R: Copy>(mixin: *mut Self, r: R, chunk: &[u8], last: bool) {
-        let any = AnyResponse::init(r);
+    fn on_data_generic<R: BodyResponse>(mixin: *mut Self, r: &mut R, chunk: &[u8], last: bool) {
+        let any = r.to_any();
         // SAFETY: mixin was registered via read_body and remains alive for the request duration.
         let this = unsafe { &mut *mixin };
         match this.on_data(any, chunk, last) {
             Ok(()) => {}
-            Err(e) if e == bun_core::err!("OutOfMemory") => this.on_oom(any),
+            // Match Zig's `error.OutOfMemory => onOOM, else => onInvalid` by error
+            // *kind* only — `bun_core::Error`'s derived `PartialEq` compares all
+            // fields (syscall/fd/path), and `err!("OutOfMemory")` is currently a
+            // TODO sentinel, so a full-struct compare would invert the branch.
+            Err(e) if e.errno == bun_core::Error::OUT_OF_MEMORY.errno => this.on_oom(any),
             Err(_) => this.on_invalid(any),
         }
     }
 
-    fn on_aborted_handler<R>(mixin: *mut Self, _r: R) {
+    fn on_aborted_handler<R>(mixin: *mut Self, _r: &mut R) {
         // SAFETY: mixin was registered via read_body and remains alive for the request duration.
         let this = unsafe { &mut *mixin };
         this.body = Vec::new();

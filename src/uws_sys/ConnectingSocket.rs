@@ -27,8 +27,8 @@ impl ConnectingSocket {
     }
 
     pub fn kind(&mut self) -> SocketKind {
-        // SAFETY: SocketKind is #[repr(u8)] and the C side returns a valid discriminant
-        unsafe { core::mem::transmute::<u8, SocketKind>(us_connecting_socket_kind(self)) }
+        // SAFETY: self is a valid us_connecting_socket_t handle
+        SocketKind::from_u8(unsafe { us_connecting_socket_kind(self) })
     }
 
     pub fn r#loop(&mut self) -> &mut Loop {

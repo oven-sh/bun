@@ -351,8 +351,7 @@ impl<'a> GlobalJS<'a> {
     pub fn create_null_delimited_env_map(
         self,
         // TODO(port): allocator param dropped (global mimalloc)
-    ) -> Result<Box<[Option<*const c_char>]>, bun_core::Error> {
-        // TODO(port): narrow error set
+    ) -> Result<bun_dotenv::NullDelimitedEnvMap, bun_core::AllocError> {
         // SAFETY: bun_vm() is non-null for a Bun-owned global; `transpiler.env` is a
         // long-lived `*mut Loader` owned by the VM.
         unsafe { (*(*self.global_this.bun_vm()).transpiler.env).map.create_null_delimited_env_map() }
@@ -438,8 +437,7 @@ impl<'a> GlobalMini<'a> {
     #[inline]
     pub fn create_null_delimited_env_map(
         self,
-    ) -> Result<Box<[Option<*const c_char>]>, bun_core::Error> {
-        // TODO(port): narrow error set
+    ) -> Result<bun_dotenv::NullDelimitedEnvMap, bun_core::AllocError> {
         // SAFETY: `MiniEventLoop.env` is set during `initGlobal` and outlives the loop.
         unsafe { self.mini.env.unwrap().as_mut() }.map.create_null_delimited_env_map()
     }

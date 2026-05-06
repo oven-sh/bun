@@ -217,7 +217,7 @@ pub fn filter<'a>(
         if index.is_runtime() {
             continue;
         }
-        let path_text = source.path.text.as_slice();
+        let path_text: &[u8] = source.path.text;
         if path_text.is_empty() {
             continue;
         }

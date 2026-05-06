@@ -549,10 +549,6 @@ pub fn writable_stream(
     Ok(sink.to_js(global_this))
 }
 
-// TODO(b2-blocked): ResumableS3UploadSink — `webcore::resumable_sink` is gated on
-// `bun_jsc::codegen::JSResumableS3UploadSink`. The wrapper + `upload_stream` /
-// `readable_stream` below are the only consumers; un-gate as a unit.
-
 mod _upload_stream_gated {
 use super::*;
 

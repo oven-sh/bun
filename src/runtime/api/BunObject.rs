@@ -547,13 +547,15 @@ impl ZigStringToJs for ZigString {
 
 // PORT NOTE: `bun_gen::bun_object::BracesOptions` is codegen output from
 // BunObject.bind.ts. The `bun_gen` crate is not yet wired, so define the
-// generated shape locally per the `.bind.ts` schema:
-//   `t.dictionary({ tokenize: t.boolean.default(false), parse: t.boolean.default(false) })`
-mod r#gen {
+// generated shape locally per the `.bind.ts` schema. Field order matches the
+// codegen `extern struct` (`GeneratedBindings.zig:53`: `parse`, `tokenize`)
+// because the C++ dispatch shim passes `*const BracesOptions` by C ABI.
+pub mod r#gen {
+    #[repr(C)]
     #[derive(Default, Clone, Copy)]
     pub struct BracesOptions {
-        pub tokenize: bool,
         pub parse: bool,
+        pub tokenize: bool,
     }
 }
 
@@ -3399,6 +3401,7 @@ pub fn create_bun_stdout(global_this: &JSGlobalObject) -> JSValue {
 // `filesystem_router` and `jsc_hooks` (the bun_io::Write variant lives inside
 // the gated mod alongside its `_with_asset_prefix` sibling).
 pub use _jsc_gated::get_public_path;
+pub use _jsc_gated::{braces, r#gen};
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

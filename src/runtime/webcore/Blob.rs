@@ -3043,7 +3043,7 @@ impl S3BlobDownloadTask {
 impl Drop for S3BlobDownloadTask {
     fn drop(&mut self) {
         Blob::deinit(&mut self.blob);
-        todo!("blocked_on: bun_aio::KeepAlive::unref(EventLoopCtx) from VirtualMachine");
+        self.poll_ref.unref(vm_ctx());
         // promise: Drop handles deinit.
     }
 }

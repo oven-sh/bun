@@ -36,6 +36,7 @@ use bun_string::strings;
 use bun_which::which;
 
 use crate::cli::arguments;
+use crate::cli::Command;
 use crate::cli::command::{ContextData, Tag as CommandTag};
 
 bun_core::declare_scope!(RUN_LOG, visible);

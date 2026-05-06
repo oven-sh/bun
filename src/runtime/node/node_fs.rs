@@ -228,11 +228,25 @@ fn work_pool_task(callback: unsafe fn(*mut WorkPoolTask)) -> WorkPoolTask {
 }
 
 /// Local extension over the opaque `bun_jsc::AbortSignal` stub: the real
-/// `reason_if_aborted` lives in the gated `AbortSignal.rs` module. Until that
-/// un-gates, return `None` so the abort-signal fast path is a no-op (matches
-/// behaviour when `HAVE_ABORT_SIGNAL` is false).
+/// methods live in the gated `AbortSignal.rs` module (back-depends on this
+/// crate). Declare the C ABI directly and wrap, mirroring
+/// `src/jsc/AbortSignal.rs` so call sites keep the Zig-spec spelling.
+unsafe extern "C" {
+    fn WebCore__AbortSignal__aborted(arg0: *mut AbortSignal) -> bool;
+    fn WebCore__AbortSignal__fromJS(value0: JSValue) -> *mut AbortSignal;
+    fn WebCore__AbortSignal__ref(arg0: *mut AbortSignal) -> *mut AbortSignal;
+    fn WebCore__AbortSignal__unref(arg0: *mut AbortSignal);
+    fn WebCore__AbortSignal__incrementPendingActivity(arg0: *mut AbortSignal);
+    fn WebCore__AbortSignal__decrementPendingActivity(arg0: *mut AbortSignal);
+}
 pub(super) trait AbortSignalFsExt {
     fn reason_if_aborted_js(&self, global: &JSGlobalObject) -> Option<JSValue>;
+    fn pending_activity_ref(&self);
+    fn pending_activity_unref(&self);
+    fn aborted(&self) -> bool;
+    fn ref_(&self) -> *mut AbortSignal;
+    fn unref(&self);
+    fn from_js(value: JSValue) -> Option<*mut AbortSignal>;
 }
 impl AbortSignalFsExt for AbortSignal {
     #[inline]
@@ -242,6 +256,37 @@ impl AbortSignalFsExt for AbortSignal {
         // skips the abort-reason rejection, which is the pre-signal behaviour.
         let _ = _global;
         None
+    }
+    #[inline]
+    fn pending_activity_ref(&self) {
+        // SAFETY: `self` aliases a live WebCore::AbortSignal (see AbortSignalRef).
+        unsafe { WebCore__AbortSignal__incrementPendingActivity((self as *const Self).cast_mut()) }
+    }
+    #[inline]
+    fn pending_activity_unref(&self) {
+        // SAFETY: thin FFI forward.
+        unsafe { WebCore__AbortSignal__decrementPendingActivity((self as *const Self).cast_mut()) }
+    }
+    #[inline]
+    fn aborted(&self) -> bool {
+        // SAFETY: thin FFI forward; not threadsafe (bool, not atomic).
+        unsafe { WebCore__AbortSignal__aborted((self as *const Self).cast_mut()) }
+    }
+    #[inline]
+    fn ref_(&self) -> *mut AbortSignal {
+        // SAFETY: increments C++ intrusive refcount, returns self.
+        unsafe { WebCore__AbortSignal__ref((self as *const Self).cast_mut()) }
+    }
+    #[inline]
+    fn unref(&self) {
+        // SAFETY: decrements C++ intrusive refcount.
+        unsafe { WebCore__AbortSignal__unref((self as *const Self).cast_mut()) }
+    }
+    #[inline]
+    fn from_js(value: JSValue) -> Option<*mut AbortSignal> {
+        // SAFETY: thin FFI forward; ptr borrowed from the JS wrapper.
+        let ptr = unsafe { WebCore__AbortSignal__fromJS(value) };
+        if ptr.is_null() { None } else { Some(ptr) }
     }
 }
 

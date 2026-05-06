@@ -3466,18 +3466,43 @@ unsafe fn resolve_hook(
     // short-circuits plugin namespaces in C++ (ZigGlobalObject.cpp:3299-3331),
     // and `Bun__resolveSync` callers go through `PluginRunner` only when a
     // plugin is registered (which Phase B doesn't yet do).
-    
+    //
+    // PORT NOTE: `vm.plugin_runner` is `Option<()>` (TODO(b2-cycle) discriminant
+    // placeholder in VirtualMachine.rs — the Zig field is just
+    // `?PluginRunner{ global, allocator }`). The runner state is fully
+    // recoverable from `global_ref`, so reconstruct a transient
+    // `bun_bundler_jsc::PluginRunner` here. When the VM field widens to a
+    // typed `Option<PluginRunner>`, swap this for `(*vm).plugin_runner.as_ref()`
+    // verbatim.
     {
+        use bun_bundler_jsc::PluginRunner::PluginRunner;
         // SAFETY: `vm` is the live per-thread VM.
-        if let Some(plugin_runner) = unsafe { (*vm).plugin_runner.as_mut() } {
-            // `vm.plugin_runner` is `Option<()>` (TODO(b2-cycle) placeholder in
-            // VirtualMachine.rs) and `bun_bundler_jsc::PluginRunner` is not a
-            // `bun_runtime` dep, so `extract_namespace`/`on_resolve_jsc` are
-            // unreachable here. The branch is dead until the field widens.
-            let _ = plugin_runner;
-            let _ = &specifier_utf8;
-            let _ = &source;
-            todo!("blocked_on: bun_bundler_jsc::PluginRunner::on_resolve_jsc (vm.plugin_runner is Option<()>)");
+        if unsafe { (*vm).plugin_runner.is_some() }
+            && PluginRunner::could_be_plugin(specifier_utf8.slice())
+        {
+            let namespace = PluginRunner::extract_namespace(specifier_utf8.slice());
+            let after_namespace = if namespace.is_empty() {
+                specifier_utf8.slice()
+            } else {
+                &specifier_utf8.slice()[namespace.len() + 1..]
+            };
+            let runner = PluginRunner { global_object: global_ref };
+            match runner.on_resolve_jsc(
+                bun_string::String::init(namespace),
+                bun_string::String::borrow_utf8(after_namespace),
+                source.dupe_ref(),
+                bun_jsc::BunPluginTarget::Bun,
+            ) {
+                Ok(Some(resolved_path)) => {
+                    // SAFETY: per fn contract — `res` is a valid out-param.
+                    unsafe { *res = resolved_path };
+                    return true;
+                }
+                Ok(None) => {}
+                // Spec `try` — JS exception escaped; caller treats `false` as
+                // "exception thrown" (matches the NameTooLong path above).
+                Err(_) => return false,
+            }
         }
     }
 

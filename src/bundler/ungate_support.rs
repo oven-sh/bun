@@ -738,10 +738,10 @@ pub type MangledProps = bun_collections::ArrayHashMap<Ref, Box<[u8]>>;
 
 // ──────────────────────────────────────────────────────────────────────────
 // B-2 un-gate surface for `LinkerGraph.rs` + `linker_context/scanImportsAndExports.rs`.
-// Real value-type defs extracted from the gated `bundle_v2::__phase_a_draft`
-// (JSMeta, EntryPoint, ImportData, ExportData, …) so the freshly un-gated
-// modules can name them at `crate::*`. Once `bundle_v2.rs` un-gates its draft
-// body these collapse to re-exports.
+// Real value-type defs extracted from `bundle_v2.zig` (JSMeta, EntryPoint,
+// ImportData, ExportData, …) so the un-gated modules can name them at
+// `crate::*`. Once `bundle_v2.rs` un-gates its draft body these collapse to
+// re-exports.
 // ──────────────────────────────────────────────────────────────────────────
 
 /// `bun.logger` — alias used by Phase-A drafts as `crate::Logger::Source`.
@@ -843,8 +843,8 @@ pub mod entry_point {
     }
 }
 
-/// `bundle_v2.zig:ImportData` / `ExportData` / `JSMeta` — see gated
-/// `bundle_v2::__phase_a_draft` for full doc-comments.
+/// `bundle_v2.zig:ImportData` / `ExportData` / `JSMeta` — see `bundle_v2.zig`
+/// for full doc-comments.
 pub mod js_meta {
     use bun_collections::{ArrayHashMap, BabyList, StringArrayHashMap};
     use bun_js_parser::{Dependency, Ref};

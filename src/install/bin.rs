@@ -1381,19 +1381,37 @@ impl<'a> Linker<'a> {
     // target: what the symlink points to
     // destination: where the symlink exists on disk
     pub fn link(&mut self, global: bool) {
-        // PORT NOTE: reshaped for borrowck — copy package_dir into a local
-        // since build_target_package_dir borrows abs_target_buf which is later reused.
         let package_dir_len = self.build_target_package_dir().len();
         let mut dest_off = self.build_destination_dir(global);
+        let is_redirect = self.is_native_binlink_redirect();
 
         debug_assert!(self.bin.tag != Tag::None);
+
+        // PORT NOTE: reshaped for borrowck — `link_bin_or_create_shim(&mut self, ..)`
+        // is called while `abs_target` / `abs_dest` borrow `self.abs_target_buf`
+        // / `self.abs_dest_buf`. The Zig holds raw `[]u8` views (no exclusivity
+        // implied) and `link_bin_or_create_shim` never reads or writes those two
+        // buffers (it only touches `rel_buf`, `node_modules_path`, `seen`, `err`,
+        // `skipped_due_to_missing_bin`). Detach the borrows via raw pointers so
+        // borrowck allows the disjoint access; the SAFETY invariant is that
+        // those two buffers are not aliased mutably for the lifetime of the
+        // detached slices.
+        let abs_target_buf_ptr: *mut u8 = self.abs_target_buf.as_mut_ptr();
+        let abs_target_buf_len: usize = self.abs_target_buf.len();
+        let abs_dest_buf_ptr: *mut u8 = self.abs_dest_buf.as_mut_ptr();
+
+        // SAFETY: see PORT NOTE above — abs_target_buf is not written between
+        // here and the call to link_bin_or_create_shim.
+        let package_dir =
+            unsafe { core::slice::from_raw_parts(abs_target_buf_ptr, package_dir_len) };
 
         // SAFETY: tag determines the active union field
         unsafe {
             match self.bin.tag {
                 Tag::None => {}
                 Tag::File => {
-                    let target = self.bin.value.file.slice(self.string_buf);
+                    let file = self.bin.value.file;
+                    let target = file.slice(self.string_buf);
                     if target.is_empty() {
                         return;
                     }
@@ -1401,47 +1419,55 @@ impl<'a> Linker<'a> {
                     let unscoped_package_name =
                         Dependency::unscoped_package_name(self.package_name.slice());
 
-                    let package_dir = &self.abs_target_buf[0..package_dir_len];
                     // for normalizing `target`
-                    let abs_target =
-                        self.resolve_bin_target(package_dir, target, unscoped_package_name);
+                    let abs_target = Self::resolve_bin_target(
+                        is_redirect,
+                        package_dir,
+                        target,
+                        unscoped_package_name,
+                    );
 
                     self.abs_dest_buf[dest_off..dest_off + unscoped_package_name.len()]
                         .copy_from_slice(unscoped_package_name);
                     dest_off += unscoped_package_name.len();
                     self.abs_dest_buf[dest_off] = 0;
                     let abs_dest_len = dest_off;
-                    // SAFETY: abs_dest_buf[abs_dest_len] == 0 written above
-                    let abs_dest = ZStr::from_raw(self.abs_dest_buf.as_ptr(), abs_dest_len);
+                    // SAFETY: abs_dest_buf[abs_dest_len] == 0 written above; see PORT NOTE.
+                    let abs_dest = ZStr::from_raw(abs_dest_buf_ptr, abs_dest_len);
 
                     self.link_bin_or_create_shim(abs_target, abs_dest, global);
                 }
                 Tag::NamedFile => {
-                    let name = self.bin.value.named_file[0].slice(self.string_buf);
+                    let named = self.bin.value.named_file;
+                    let name = named[0].slice(self.string_buf);
                     let normalized_name = normalized_bin_name(name);
-                    let target = self.bin.value.named_file[1].slice(self.string_buf);
+                    let target = named[1].slice(self.string_buf);
                     if normalized_name.is_empty() || target.is_empty() {
                         return;
                     }
 
-                    let package_dir = &self.abs_target_buf[0..package_dir_len];
                     // for normalizing `target`
-                    let abs_target =
-                        self.resolve_bin_target(package_dir, target, normalized_name);
+                    let abs_target = Self::resolve_bin_target(
+                        is_redirect,
+                        package_dir,
+                        target,
+                        normalized_name,
+                    );
 
                     self.abs_dest_buf[dest_off..dest_off + normalized_name.len()]
                         .copy_from_slice(normalized_name);
                     dest_off += normalized_name.len();
                     self.abs_dest_buf[dest_off] = 0;
                     let abs_dest_len = dest_off;
-                    // SAFETY: abs_dest_buf[abs_dest_len] == 0 written above
-                    let abs_dest = ZStr::from_raw(self.abs_dest_buf.as_ptr(), abs_dest_len);
+                    // SAFETY: abs_dest_buf[abs_dest_len] == 0 written above; see PORT NOTE.
+                    let abs_dest = ZStr::from_raw(abs_dest_buf_ptr, abs_dest_len);
 
                     self.link_bin_or_create_shim(abs_target, abs_dest, global);
                 }
                 Tag::Map => {
-                    let mut i = self.bin.value.map.begin();
-                    let end = self.bin.value.map.end();
+                    let map = self.bin.value.map;
+                    let mut i = map.begin();
+                    let end = map.end();
 
                     let abs_dest_dir_end = dest_off;
 
@@ -1455,9 +1481,12 @@ impl<'a> Linker<'a> {
                             continue;
                         }
 
-                        let package_dir = &self.abs_target_buf[0..package_dir_len];
-                        let abs_target =
-                            self.resolve_bin_target(package_dir, bin_target, normalized_bin_dest);
+                        let abs_target = Self::resolve_bin_target(
+                            is_redirect,
+                            package_dir,
+                            bin_target,
+                            normalized_bin_dest,
+                        );
 
                         dest_off = abs_dest_dir_end;
                         self.abs_dest_buf[dest_off..dest_off + normalized_bin_dest.len()]
@@ -1465,8 +1494,8 @@ impl<'a> Linker<'a> {
                         dest_off += normalized_bin_dest.len();
                         self.abs_dest_buf[dest_off] = 0;
                         let abs_dest_len = dest_off;
-                        // SAFETY: abs_dest_buf[abs_dest_len] == 0 written above
-                        let abs_dest = ZStr::from_raw(self.abs_dest_buf.as_ptr(), abs_dest_len);
+                        // SAFETY: abs_dest_buf[abs_dest_len] == 0 written above; see PORT NOTE.
+                        let abs_dest = ZStr::from_raw(abs_dest_buf_ptr, abs_dest_len);
 
                         self.link_bin_or_create_shim(abs_target, abs_dest, global);
 
@@ -1474,12 +1503,12 @@ impl<'a> Linker<'a> {
                     }
                 }
                 Tag::Dir => {
-                    let target = self.bin.value.dir.slice(self.string_buf);
+                    let dir = self.bin.value.dir;
+                    let target = dir.slice(self.string_buf);
                     if target.is_empty() {
                         return;
                     }
 
-                    let package_dir = &self.abs_target_buf[0..package_dir_len];
                     // for normalizing `target`
                     let abs_target_dir =
                         resolve_path::join_abs_string_z::<PlatformAuto>(package_dir, &[target]);
@@ -1496,7 +1525,9 @@ impl<'a> Linker<'a> {
                             return;
                         }
                     };
-                    let _close = scopeguard::guard((), |_| target_dir.close());
+                    let _close = scopeguard::guard(target_dir, |fd| {
+                        let _ = sys::close(fd);
+                    });
 
                     let abs_dest_dir_end = dest_off;
 
@@ -1505,10 +1536,15 @@ impl<'a> Linker<'a> {
                         match entry.kind {
                             sys::EntryKind::SymLink | sys::EntryKind::File => {
                                 let entry_name = entry.name.slice_u8();
-                                // `self.abs_target_buf` is available now because `path::join_abs_string_z` copied everything into `parse_join_input_buffer`
+                                // `self.abs_target_buf` is available now because `path::join_abs_string_z` copied everything into `parser_join_input_buffer`
+                                // SAFETY: see PORT NOTE above — exclusive access to abs_target_buf here.
+                                let abs_target_buf = core::slice::from_raw_parts_mut(
+                                    abs_target_buf_ptr,
+                                    abs_target_buf_len,
+                                );
                                 let abs_target = resolve_path::join_abs_string_buf_z::<PlatformAuto>(
                                     abs_target_dir.as_bytes(),
-                                    self.abs_target_buf,
+                                    abs_target_buf,
                                     &[entry_name],
                                 );
 
@@ -1518,9 +1554,8 @@ impl<'a> Linker<'a> {
                                 dest_off += entry_name.len();
                                 self.abs_dest_buf[dest_off] = 0;
                                 let abs_dest_len = dest_off;
-                                // SAFETY: abs_dest_buf[abs_dest_len] == 0 written above
-                                let abs_dest =
-                                    ZStr::from_raw(self.abs_dest_buf.as_ptr(), abs_dest_len);
+                                // SAFETY: abs_dest_buf[abs_dest_len] == 0 written above; see PORT NOTE.
+                                let abs_dest = ZStr::from_raw(abs_dest_buf_ptr, abs_dest_len);
 
                                 self.link_bin_or_create_shim(abs_target, abs_dest, global);
                             }
@@ -1537,6 +1572,12 @@ impl<'a> Linker<'a> {
         let mut dest_off = self.build_destination_dir(global);
 
         debug_assert!(self.bin.tag != Tag::None);
+
+        // PORT NOTE: see `link()` — detach abs_target_buf borrow via raw ptr.
+        let abs_target_buf_ptr: *const u8 = self.abs_target_buf.as_ptr();
+        // SAFETY: abs_target_buf is not written between here and use.
+        let package_dir =
+            unsafe { core::slice::from_raw_parts(abs_target_buf_ptr, package_dir_len) };
 
         // SAFETY: tag determines the active union field
         unsafe {
@@ -1556,7 +1597,8 @@ impl<'a> Linker<'a> {
                     Self::unlink_bin_or_shim(abs_dest);
                 }
                 Tag::NamedFile => {
-                    let name = self.bin.value.named_file[0].slice(self.string_buf);
+                    let named = self.bin.value.named_file;
+                    let name = named[0].slice(self.string_buf);
                     let normalized_name = normalized_bin_name(name);
                     if normalized_name.is_empty() {
                         return;
@@ -1601,23 +1643,25 @@ impl<'a> Linker<'a> {
                     }
                 }
                 Tag::Dir => {
-                    let target = self.bin.value.dir.slice(self.string_buf);
+                    let dir = self.bin.value.dir;
+                    let target = dir.slice(self.string_buf);
                     if target.is_empty() {
                         return;
                     }
 
-                    let package_dir = &self.abs_target_buf[0..package_dir_len];
                     let abs_target_dir =
                         resolve_path::join_abs_string_z::<PlatformAuto>(package_dir, &[target]);
 
                     let target_dir = match sys::open_dir_absolute(abs_target_dir.as_bytes()) {
                         Ok(d) => d,
                         Err(err) => {
-                            self.err = Some(err.into());
+                            self.err = Some(err.to_zig_err());
                             return;
                         }
                     };
-                    let _close = scopeguard::guard((), |_| target_dir.close());
+                    let _close = scopeguard::guard(target_dir, |fd| {
+                        let _ = sys::close(fd);
+                    });
 
                     let abs_dest_dir_end = dest_off;
 

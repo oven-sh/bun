@@ -2149,6 +2149,18 @@ impl RootPackageId {
     pub network_dedupe_map: std::collections::HashMap<package_manager_task::Id, ()>,
     /// Zig: `to_update: bool = false`.
     pub to_update: bool,
+    /// Zig: `manifests: PackageManifestMap = .{}` — cached npm registry
+    /// manifests keyed by package-name hash.
+    pub manifests: PackageManifestMap,
+    /// Zig: `root_dir: std.fs.Dir` — opened by `init()`; `Option` is the
+    /// `Default`-derive sentinel (always Some after init).
+    pub root_dir: Option<bun_sys::Fd>,
+    /// Zig: `allocator: std.mem.Allocator` (src/install/PackageManager.zig) —
+    /// backing arena for AST edits in `editCatalogDefinitions` /
+    /// `updatePackageJsonFilesFromUpdates`. Zig used `bun.default_allocator`;
+    /// Rust threads a `Bump` so `Expr::allocate` (which requires `&Bump`)
+    /// type-checks.
+    pub allocator: bun_alloc::Arena,
     /// Zig: `summary: Lockfile.Package.Diff.Summary = .{}`.
     pub summary: crate::lockfile_real::package::DiffSummary,
     /// Zig: `peer_dependencies: std.fifo.LinearFifo(DependencyID, .Dynamic)`.
@@ -2367,6 +2379,45 @@ impl PackageManager {
         todo!("blocked_on: bun_install::package_manager_real un-gate (reconciler-6) - PackageManager::init")
     }
 
+    /// Zig: field access `manager.root_dir.dir`. The stub stores `Option<Fd>`
+    /// (Default sentinel); this unwraps with `Fd::cwd()` fallback so callers
+    /// type-check before `init()` populates it.
+    #[inline]
+    pub fn root_dir(&self) -> bun_sys::Fd {
+        self.root_dir.unwrap_or(bun_sys::Fd::cwd())
+    }
+
+    /// Zig: `PackageManager.root_package_json_path` (process-global static).
+    /// Real value is written by `init()`; surfaced here so CLI commands can
+    /// thread it into `install_with_manager`.
+    pub fn root_package_json_path() -> &'static [u8] {
+        // SAFETY: process-global written once on the main thread by `init()`.
+        unsafe { package_manager_real::ROOT_PACKAGE_JSON_PATH }.as_bytes()
+    }
+
+    /// Port of `PackageManager.populateManifestCache`
+    /// (src/install/PackageManager/PopulateManifestCache.zig). Real body lives
+    /// in `package_manager_real::populate_manifest_cache`; the stub
+    /// `PackageManager` lacks the network/task plumbing so defer.
+    pub fn populate_manifest_cache(
+        &mut self,
+        _opts: package_manager::ManifestCacheOptions<'_>,
+    ) -> Result<(), bun_core::Error> {
+        todo!("blocked_on: bun_install::package_manager_real un-gate (reconciler-6) — populate_manifest_cache")
+    }
+
+    /// Port of `PackageManager.installWithManager`
+    /// (src/install/PackageManager/install_with_manager.zig). Real body lives
+    /// in `package_manager_real::install_with_manager`.
+    pub fn install_with_manager(
+        _manager: &mut PackageManager,
+        _ctx: package_manager_real::Command::Context<'_>,
+        _root_package_json_path: &[u8],
+        _root_dir: bun_sys::Fd,
+    ) -> Result<(), bun_core::Error> {
+        todo!("blocked_on: bun_install::package_manager_real un-gate (reconciler-6) — install_with_manager")
+    }
+
     /// Port of `PackageManager.ensureTempNodeGypScript`
     /// (src/install/PackageManager.zig:451). Real body in
     /// `package_manager_real::PackageManager::ensure_temp_node_gyp_script`.
@@ -2388,6 +2439,8 @@ impl PackageManager {
 #[derive(Default)] pub struct PackageManagerOptionsStub {
     /// Zig: `Options.max_concurrent_lifecycle_scripts: usize`.
     pub max_concurrent_lifecycle_scripts: usize,
+    /// Zig: `Options.json_output: bool = false`.
+    pub json_output: bool,
     /// Zig: `Options.top_only: bool = false` — `bun why --top`.
     pub top_only: bool,
     /// Zig: `Options.depth: ?usize = null` — `bun why --depth N`.
@@ -2452,6 +2505,11 @@ impl PackageManager {
     /// Zig: `Options.public_hoist_pattern: ?PnpmMatcher = null` — isolated
     /// installer public-hoist matcher.
     pub public_hoist_pattern: Option<crate::pnpm_matcher::PnpmMatcher>,
+    /// Zig: `Options.minimum_release_age_ms: ?f64 = null` — `--minimum-release-age`.
+    pub minimum_release_age_ms: Option<f64>,
+    /// Zig: `Options.minimum_release_age_excludes: ?[]const []const u8 = null`.
+    /// `&'static` slices because they alias process-lifetime CLI argv.
+    pub minimum_release_age_excludes: Option<Vec<&'static [u8]>>,
 }
 /// Port of `Options.Do` (src/install/PackageManager/PackageManagerOptions.zig).
 /// Field-access shape (Zig packed-struct of bools) so Phase-A drafts written

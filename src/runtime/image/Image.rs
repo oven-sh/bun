@@ -1284,16 +1284,20 @@ impl<'a> BlobReadChain<'a> {
             outer: jsc::JSPromiseStrong::init(global),
         });
         let promise = chain.outer.value();
-        // TODO(port): `read_bytes_to_handler` takes `&mut H: ReadBytesHandler`;
-        // BlobReadChain needs to impl that trait + ownership reshuffle (Box vs &mut).
-        let _ = (blob, chain);
-        todo!("blocked_on: webcore::blob::ReadBytesHandler impl for BlobReadChain");
-        #[allow(unreachable_code)]
+        // `read_bytes_to_handler` stores the handler pointer and calls
+        // `on_read_bytes` on the JS thread (sync for in-memory, async for
+        // file/S3). Ownership of the chain transfers there; the trait impl
+        // below reconstructs the Box and frees it.
+        let raw = Box::into_raw(chain);
+        // SAFETY: `raw` is freshly leaked and uniquely owned by the read
+        // dispatch; reclaimed in `<BlobReadChain as ReadBytesHandler>::on_read_bytes`.
+        blob.read_bytes_to_handler(unsafe { &mut *raw }, global)
+            .map_err(jsc::JsError::from)?;
         Ok(promise)
     }
 
     /// JS thread — `read_bytes_to_handler` guarantees this. `r.ok` is owned by us.
-    pub fn on_read_bytes(self: Box<Self>, r: ReadBytesResult) {
+    fn on_read_bytes_impl(self: Box<Self>, r: ReadBytesResult) {
         let global = self.global;
         // SAFETY: `image` is a BACKREF kept alive by the Strong `this_ref`
         // bump in `start()`; we are on the JS thread.
@@ -1353,18 +1357,37 @@ impl<'a> BlobReadChain<'a> {
             }
             ReadBytesResult::Err(e) => {
                 drop(deliver);
-                let _ = outer.reject(global, Ok(e.to_js(global)));
+                let _ = outer.reject(global, Ok(e.to_error_instance(global)));
             }
         }
     }
 }
 
-// TODO(port): the real `ConcurrentPromiseTask<'a, Ctx>` and its
-// `ConcurrentPromiseTaskContext` trait live in `bun_jsc`'s private `_gated`
-// module (src/jsc/ConcurrentPromiseTask.rs). Until those are re-exported the
-// public alias degrades to the bare context so `mod.rs`'s `pub use` resolves.
-// blocked_on: jsc::ConcurrentPromiseTask / jsc::ConcurrentPromiseTaskContext
-pub type AsyncImageTask<'a> = PipelineTask<'a>;
+impl<'a> ReadBytesHandler for BlobReadChain<'a> {
+    fn on_read_bytes(&mut self, result: ReadBytesResult) {
+        // SAFETY: `self` is the `&mut *Box::into_raw(chain)` handed to
+        // `read_bytes_to_handler` in `start()`; we are the sole consumer on
+        // the JS thread. Reconstruct the Box so the body can move fields out
+        // and free the allocation (mirrors Zig `bun.destroy(self)`).
+        let boxed = unsafe { Box::from_raw(self as *mut Self) };
+        boxed.on_read_bytes_impl(result);
+    }
+}
+
+/// `jsc.ConcurrentPromiseTask(PipelineTask)` — the heap object the event-loop
+/// dispatch sees (`task_tag::AsyncImageTask`).
+pub type AsyncImageTask<'a> = ConcurrentPromiseTask<'a, PipelineTask<'a>>;
+
+impl<'a> ConcurrentPromiseTaskContext for PipelineTask<'a> {
+    #[inline]
+    fn run(&mut self) {
+        PipelineTask::run(self)
+    }
+    #[inline]
+    fn then(&mut self, promise: &mut JSPromise) -> Result<(), jsc::JsTerminated> {
+        PipelineTask::then(self, promise)
+    }
+}
 
 pub struct PipelineTask<'a> {
     image: *mut Image,
@@ -1726,8 +1749,11 @@ impl<'a> PipelineTask<'a> {
                     let mut blob = Blob::init(owned, global);
                     blob.content_type = format.mime().as_bytes() as *const [u8];
                     blob.content_type_was_set = true;
-                    let _ = (promise, blob);
-                    todo!("blocked_on: webcore::blob::Blob::to_js (ambiguous inherent impls)");
+                    // UFCS to pick the consuming `JsClass::to_js(self, _)`
+                    // (heap-promotes via `Blob::new`) over the inherent
+                    // `Blob::to_js(&mut self, _)` that expects an
+                    // already-heap-allocated receiver.
+                    promise.resolve(global, <Blob as bun_jsc::JsClass>::to_js(blob, global))?;
                 }
                 tag @ (Deliver::Base64 | Deliver::DataUrl) => {
                     // PERF(port): was comptime tag dispatch — profile in Phase B.

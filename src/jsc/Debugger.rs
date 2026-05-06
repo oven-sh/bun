@@ -58,6 +58,78 @@ impl BunFrontendDevServerAgent {
     pub fn is_enabled(&self) -> bool {
         !self.handle.is_null()
     }
+
+    /// `notifyBundleStart` — calls into C++ if the agent is enabled.
+    pub fn notify_bundle_start(
+        &self,
+        dev_server_id: DebuggerId,
+        trigger_files: &mut [crate::String],
+    ) {
+        if let Some(handle) = core::ptr::NonNull::new(self.handle) {
+            // SAFETY: handle is non-null (agent enabled); slice valid for the call.
+            unsafe {
+                ffi::InspectorBunFrontendDevServerAgent__notifyBundleStart(
+                    handle.as_ptr(),
+                    dev_server_id.get(),
+                    trigger_files.as_mut_ptr(),
+                    trigger_files.len(),
+                )
+            }
+        }
+    }
+
+    /// `notifyBundleComplete` — calls into C++ if the agent is enabled.
+    pub fn notify_bundle_complete(&self, dev_server_id: DebuggerId, duration_ms: f64) {
+        if let Some(handle) = core::ptr::NonNull::new(self.handle) {
+            // SAFETY: handle is non-null (agent enabled).
+            unsafe {
+                ffi::InspectorBunFrontendDevServerAgent__notifyBundleComplete(
+                    handle.as_ptr(),
+                    dev_server_id.get(),
+                    duration_ms,
+                )
+            }
+        }
+    }
+
+    /// `notifyBundleFailed` — calls into C++ if the agent is enabled.
+    pub fn notify_bundle_failed(
+        &self,
+        dev_server_id: DebuggerId,
+        build_errors_payload_base64: &mut crate::String,
+    ) {
+        if let Some(handle) = core::ptr::NonNull::new(self.handle) {
+            // SAFETY: handle is non-null (agent enabled); payload valid for the call.
+            unsafe {
+                ffi::InspectorBunFrontendDevServerAgent__notifyBundleFailed(
+                    handle.as_ptr(),
+                    dev_server_id.get(),
+                    build_errors_payload_base64,
+                )
+            }
+        }
+    }
+}
+
+mod ffi {
+    unsafe extern "C" {
+        pub fn InspectorBunFrontendDevServerAgent__notifyBundleStart(
+            agent: *mut core::ffi::c_void,
+            dev_server_id: i32,
+            trigger_files: *mut crate::String,
+            trigger_files_len: usize,
+        );
+        pub fn InspectorBunFrontendDevServerAgent__notifyBundleComplete(
+            agent: *mut core::ffi::c_void,
+            dev_server_id: i32,
+            duration_ms: f64,
+        );
+        pub fn InspectorBunFrontendDevServerAgent__notifyBundleFailed(
+            agent: *mut core::ffi::c_void,
+            dev_server_id: i32,
+            build_errors_payload_base64: *mut crate::String,
+        );
+    }
 }
 
 /// `bun.GenericIndex(i32, Debugger)`

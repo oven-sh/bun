@@ -19,7 +19,7 @@ pub use __phase_a_draft::bake_types;
 pub use __phase_a_draft::dispatch;
 pub use __phase_a_draft::api;
 pub use __phase_a_draft::{
-    JSMeta, ImportData, ExportData, ImportTracker, DevServerOutput,
+    JSMeta, ImportData, ExportData, ImportTracker, DevServerOutput, DevServerInput,
     EntryPoint, EntryPointKind, EntryPointList, generic_path_with_pretty_initialized,
 };
 pub use __phase_a_draft::{DependenciesScanner, DependenciesScannerResult};
@@ -1276,26 +1276,36 @@ impl<'a> BundleV2<'a> {
 
     #[cold]
     fn initialize_client_transpiler(&mut self) -> Result<&mut Transpiler<'a>, Error> {
-        // PORT NOTE: `Transpiler<'a>` is not `Clone` (owns resolver/log) and the
-        // arena's lifetime can't be threaded as `'a` here without restructuring
-        // `BundleV2`. Allocate via Box::leak (lifetime tied to `graph.heap` in
-        // practice; freed in `deinit_without_freeing_arena`). The body mirrors
-        // bundle_v2.zig:310-360.
-        todo!("blocked_on: Transpiler::shallow_clone_for_client");
+        // bundle_v2.zig:198-239 — `client_transpiler.* = this_transpiler.*` is a
+        // bitwise struct copy. `Transpiler<'a>` is `!Clone` in Rust (owns
+        // resolver/router/etc.), so reuse `clone_for_worker`'s memcpy contract:
+        // arena-allocate an uninit slot and memcpy the source in. The clone is
+        // never `Drop`ped — it lives in `self.graph.heap` (the per-bundle arena)
+        // and is freed wholesale in `deinit_without_freeing_arena`, so no
+        // double-free of the aliased heap fields occurs.
+        //
         // PORT NOTE: Zig holds `this_transpiler = this.transpiler` (a `*Transpiler`)
         // and reads `.options.compile` / `.log` from it while also touching
         // `this.client_transpiler`. In Rust `self.transpiler` is `&'a mut Transpiler`,
         // so materializing a second `&mut` here would alias `*self`. Keep it as a raw
         // pointer and snapshot the two `Copy` fields up front — no overlapping `&mut`
         // is ever produced for the source transpiler.
-        #[allow(unreachable_code)]
         let this_transpiler: *mut Transpiler<'a> = &mut *self.transpiler as *mut _;
         // SAFETY: `self.transpiler` is a live exclusive reference; no other borrow of
         // `*self` is outstanding while we read these two `Copy` fields.
-        #[allow(unreachable_code)]
         let (this_compile, this_log) = unsafe { ((*this_transpiler).options.compile, (*this_transpiler).log) };
-        #[allow(unreachable_code)]
-        let client_transpiler: &'a mut Transpiler<'a> = unreachable!();
+
+        // SAFETY: `self.graph.heap` outlives `'a` (the bundle pass); erase the
+        // arena-ref lifetime so the returned `&'a mut` doesn't keep `&self`
+        // borrowed.
+        let bump: &'a bun_alloc::Arena = unsafe { &*(self.allocator() as *const bun_alloc::Arena) };
+        let slot: &'a mut core::mem::MaybeUninit<Transpiler<'a>> =
+            bump.alloc(core::mem::MaybeUninit::<Transpiler<'a>>::uninit());
+        // SAFETY: per `clone_for_worker` contract — bitwise copy into a slot
+        // where `Drop` never runs (arena bytes).
+        unsafe { Transpiler::clone_for_worker(&*this_transpiler, slot) };
+        // SAFETY: `clone_for_worker` fully initialised the slot.
+        let client_transpiler: &'a mut Transpiler<'a> = unsafe { slot.assume_init_mut() };
 
         client_transpiler.options.target = Target::Browser;
         client_transpiler.options.main_fields = Target::Browser

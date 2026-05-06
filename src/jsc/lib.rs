@@ -637,9 +637,10 @@ stub_ty!(
     CachedBytecode,
     DOMFormData, DeferredError,
     URL,
-    ZigStackTrace, ZigStackFrame,
     JSBundler,
 );
+pub use self::zig_stack_trace::ZigStackTrace;
+pub use self::zig_stack_frame::ZigStackFrame;
 pub use abort_signal::AbortSignal;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1822,6 +1823,20 @@ pub struct SystemError {
     pub hostname: bun_string::String,
     pub fd: core::ffi::c_int,
     pub dest: bun_string::String,
+}
+impl Default for SystemError {
+    fn default() -> Self {
+        Self {
+            errno: 0,
+            code: bun_string::String::EMPTY,
+            message: bun_string::String::EMPTY,
+            path: bun_string::String::EMPTY,
+            syscall: bun_string::String::EMPTY,
+            hostname: bun_string::String::EMPTY,
+            fd: core::ffi::c_int::MIN,
+            dest: bun_string::String::EMPTY,
+        }
+    }
 }
 unsafe extern "C" {
     fn SystemError__toErrorInstance(this: *const SystemError, global: *mut JSGlobalObject) -> JSValue;

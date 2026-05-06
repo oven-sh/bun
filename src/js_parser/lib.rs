@@ -1873,7 +1873,7 @@ pub mod defines_full_draft {
     /// Zig: `Expr.Data.deepClone` — restricted to the JSON-value subset, mapping
     /// the cycle-broken `bun_logger::js_ast` payloads onto the full parser
     /// `expr::Data`. Recurses through arrays/objects.
-    fn json_data_to_expr_data(
+    pub fn json_data_to_expr_data(
         data: bun_logger::js_ast::expr::Data,
         bump: &bun_alloc::Arena,
     ) -> core::result::Result<expr::Data, bun_core::Error> {

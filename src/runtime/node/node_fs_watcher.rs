@@ -39,7 +39,7 @@ pub struct FSWatcher {
     // TODO(port): lifetime — JSC_BORROW; lives as long as `ctx` (singleton VM)
     global_this: &'static JSGlobalObject,
     // TODO(port): bare JSValue heap field — self-wrapper; consider JsRef in Phase B
-    js_this: JSValue,
+    pub(super) js_this: JSValue,
     encoding: Encoding,
 
     /// User can call close and pre-detach so we need to track this

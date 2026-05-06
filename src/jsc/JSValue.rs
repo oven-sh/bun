@@ -126,6 +126,36 @@ impl JSValue {
         }
     }
 
+    /// Like [`then`], but the context is a `JSValue` instead of a raw pointer.
+    /// Use this when the context should be GC-managed (e.g. a JSCell that gets
+    /// collected with the Promise's reaction if the Promise is GC'd without
+    /// settling).
+    ///
+    /// Port of `JSValue.thenWithValue` (JSValue.zig). The Zig version wraps in
+    /// a `TopExceptionScope` and surfaces only termination; matching `then`
+    /// above this returns `()` and lets the surrounding scope observe a
+    /// termination on its next check.
+    pub fn then_with_value(
+        self,
+        global: &JSGlobalObject,
+        ctx: JSValue,
+        resolve: host_fn::JSHostFn,
+        reject: host_fn::JSHostFn,
+    ) {
+        unsafe extern "C" {
+            fn JSC__JSValue___then(
+                this: JSValue,
+                global: *mut JSGlobalObject,
+                ctx: JSValue,
+                resolve: host_fn::JSHostFn,
+                reject: host_fn::JSHostFn,
+            );
+        }
+        // SAFETY: FFI into JSC; `self` is a Promise (caller contract), `global`
+        // is live, and `resolve`/`reject` are valid C-ABI host fns.
+        unsafe { JSC__JSValue___then(self, global.as_ptr(), ctx, resolve, reject) };
+    }
+
     /// `@enumFromInt(@bitCast(@intFromPtr(ptr)))`.
     #[inline]
     pub fn cast<T>(ptr: *const T) -> JSValue { JSValue(ptr as usize, PhantomData) }

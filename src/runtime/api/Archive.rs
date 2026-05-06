@@ -99,6 +99,8 @@ use bun_event_loop::{Taskable, TaskTag, task_tag};
 use crate::webcore::Blob;
 use crate::webcore::blob::{Store as BlobStore, StoreRef};
 use bun_aio::KeepAlive;
+use bun_aio::posix_event_loop::get_vm_ctx;
+use bun_aio::AllocatorType;
 use bun_core::{self, Output, ZBox};
 use bun_str::{self as strings, ZigString};
 use bun_str::zig_string::Slice as ZigStringSlice;
@@ -242,28 +244,28 @@ impl Archive {
 
         {
             formatter.indent_inc();
-            // `defer formatter.indent -|= 1;`
-            // PORT NOTE: reshaped for borrowck — scopeguard cannot reborrow
-            // `formatter` while it is also borrowed for the body; decrement
-            // after the block instead.
-
-            formatter.write_indent(writer).map_err(fmt_err)?;
-            write!(
-                writer,
-                "{}",
-                Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>files<d>:<r> "),
-            )
-            .map_err(fmt_err)?;
-            formatter
-                .print_as::<W, ENABLE_ANSI_COLORS>(
-                    jsc::FormatTag::Double,
+            // `defer formatter.indent -|= 1;` — must fire on the error path too.
+            // scopeguard can't hold `&mut F` while the body also borrows
+            // `formatter`, so collect the result and restore before `?`.
+            let body: Result<(), bun_core::Error> = (|| {
+                formatter.write_indent(writer).map_err(fmt_err)?;
+                write!(
                     writer,
-                    JSValue::js_number(f64::from(count_files_in_archive(data))),
-                    jsc::JSType::NumberObject,
+                    "{}",
+                    Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>files<d>:<r> "),
                 )
-                .map_err(|_| bun_core::err!("JSError"))?;
-
+                .map_err(fmt_err)?;
+                formatter
+                    .print_as::<W, ENABLE_ANSI_COLORS>(
+                        jsc::FormatTag::Double,
+                        writer,
+                        JSValue::js_number(f64::from(count_files_in_archive(data))),
+                        jsc::JSType::NumberObject,
+                    )
+                    .map_err(|_| bun_core::err!("JSError"))
+            })();
             formatter.indent_dec();
+            body?;
         }
         writer.write_str("\n").map_err(fmt_err)?;
         formatter.write_indent(writer).map_err(fmt_err)?;
@@ -802,10 +804,12 @@ impl<C: TaskContext> AsyncTask<C> {
             keep_alive: KeepAlive::default(),
         });
         let raw = Box::into_raw(this);
-        // SAFETY: raw was just produced by Box::into_raw; not yet shared.
-        // TODO(port): KeepAlive::ref_ now takes EventLoopCtx; pass once VM→ctx bridge stabilizes.
-        let _ = unsafe { &mut (*raw).keep_alive };
-        // TODO(port): bun_aio::KeepAlive::ref_(EventLoopCtx) — VM bridge
+        // self.ref.ref(vm) — keep the JS event loop alive while the task is on
+        // the thread pool. Zig passed `*VirtualMachine` (anytype dispatch); the
+        // Rust `KeepAlive` takes the erased `EventLoopCtx`, resolved via the
+        // global hook (same singleton VM as `global.bun_vm()`).
+        // SAFETY: `raw` was just produced by `Box::into_raw`; not yet shared.
+        unsafe { (*raw).keep_alive.ref_(get_vm_ctx(AllocatorType::Js)) };
         Ok(raw)
     }
 
@@ -835,10 +839,9 @@ impl<C: TaskContext> AsyncTask<C> {
     pub fn run_from_js(this: *mut Self) -> Result<(), bun_jsc::JsTerminated> {
         // SAFETY: called once on the JS thread after run_callback enqueued us; reclaim ownership.
         let mut owned = unsafe { Box::from_raw(this) };
-        // TODO(port): `KeepAlive::unref` now takes `EventLoopCtx`; the VM→ctx
-        // bridge is not wired yet (see matching TODO in `create`). The ref was
-        // never taken above, so skipping the unref is a no-op for now.
-        let _ = &mut owned.keep_alive;
+        // this.ref.unref(this.vm) — drop the event-loop hold taken in `create`.
+        // `owned.vm` is the same singleton the `Js` hook resolves to.
+        owned.keep_alive.unref(get_vm_ctx(AllocatorType::Js));
 
         // `defer { ctx.deinit; destroy(this) }` — handled by `owned: Box<Self>` dropping at scope
         // exit (ctx implements Drop).

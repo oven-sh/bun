@@ -727,11 +727,18 @@ impl Tree {
                 }
             }
 
-            let dependency = builder.dependencies[dep_id as usize];
+            // PORT NOTE: reshaped for borrowck — `Dependency` is not `Copy` in Rust and
+            // borrowing it from `builder.dependencies` would conflict with the `&mut builder`
+            // passed to `hoist_dependency`. Capture the two `Copy` fields used locally and
+            // pass `dep_id` so `hoist_dependency` can re-derive the rest from `builder`.
+            let (dep_behavior, dep_name_hash) = {
+                let d = &builder.dependencies[dep_id as usize];
+                (d.behavior, d.name_hash)
+            };
 
             let hoisted: HoistDependencyResult = 'hoisted: {
                 // don't hoist if it's a folder dependency or a bundled dependency.
-                if dependency.behavior.is_bundled() {
+                if dep_behavior.is_bundled() {
                     break 'hoisted HoistDependencyResult::Placement(Placement {
                         id: next_id,
                         bundled: true,
@@ -739,12 +746,12 @@ impl Tree {
                 }
 
                 if pkg_id == invalid_package_id {
-                    if dependency.behavior.is_optional_peer() {
+                    if dep_behavior.is_optional_peer() {
                         break 'hoisted Tree::hoist_dependency::<true, METHOD>(
                             next_id,
                             hoist_root_id,
                             pkg_id,
-                            &dependency,
+                            dep_id,
                             builder,
                         )?;
                     }
@@ -764,7 +771,7 @@ impl Tree {
                     next_id,
                     hoist_root_id,
                     pkg_id,
-                    &dependency,
+                    dep_id,
                     builder,
                 )?
             };
@@ -777,11 +784,11 @@ impl Tree {
                     debug_assert!(res_id != invalid_package_id);
                     builder.resolutions[dep_id as usize] = res_id;
                     if cfg!(debug_assertions) {
-                        debug_assert!(!builder.pending_optional_peers.contains_key(&dependency.name_hash));
+                        debug_assert!(!builder.pending_optional_peers.contains_key(&dep_name_hash));
                     }
 
                     if let Some(entry) =
-                        builder.pending_optional_peers.fetch_swap_remove(&dependency.name_hash)
+                        builder.pending_optional_peers.fetch_swap_remove(&dep_name_hash)
                     {
                         let peers = entry.1;
                         for &unresolved_dep_id in peers.keys() {
@@ -800,7 +807,7 @@ impl Tree {
                     debug_assert!(pkg_id != invalid_package_id);
                     builder.resolutions[replace.dep_id as usize] = pkg_id;
                     if let Some(entry) =
-                        builder.pending_optional_peers.fetch_swap_remove(&dependency.name_hash)
+                        builder.pending_optional_peers.fetch_swap_remove(&dep_name_hash)
                     {
                         let peers = entry.1;
                         for &unresolved_dep_id in peers.keys() {
@@ -838,7 +845,7 @@ impl Tree {
                     // later if it's possible to resolve it.
                     let entry = builder
                         .pending_optional_peers
-                        .get_or_put(dependency.name_hash)?;
+                        .get_or_put(dep_name_hash)?;
                     if !entry.found_existing {
                         *entry.value_ptr = ArrayHashMap::default();
                     }

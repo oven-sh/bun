@@ -10,7 +10,7 @@ use core::mem;
 use core::ptr::NonNull;
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, JsError, JsClass, StringJsc};
-use bun_str::{self as strings, String as BunString, ZStr};
+use bun_str::{self as strings, String as BunString, OwnedString, ZStr};
 // TODO(port): move to <area>_sys — c-ares FFI lives in bun_cares_sys
 use bun_cares_sys::c_ares as ares;
 use bun_jsc::URL;
@@ -62,15 +62,17 @@ fn throw_invalid_argument_property_value(
     expected: &str,
     value: JSValue,
 ) -> JsError {
+    // `defer actual.deref()` → OwnedString releases the +1 from determine_specific_type
     let actual = match global.determine_specific_type(value) {
-        Ok(s) => s,
+        Ok(s) => OwnedString::new(s),
         Err(e) => return e,
     };
     global
         .err(
             bun_jsc::ErrorCode::INVALID_ARG_VALUE,
             format_args!(
-                "The property \"{argname}\" is invalid. Expected {expected}, received {actual}"
+                "The property \"{argname}\" is invalid. Expected {expected}, received {}",
+                actual.get(),
             ),
         )
         .throw()
@@ -198,11 +200,12 @@ impl Options {
                 .err(bun_jsc::ErrorCode::SOCKET_BAD_PORT, format_args!("The \"options.port\" argument must be a valid IP port number."))
                 .throw();
         };
-        // `defer ty.deref()` → BunString drops at scope exit
+        // `defer ty.deref()` → OwnedString releases the +1 from determine_specific_type
+        let ty = OwnedString::new(ty);
         global
             .err(
                 bun_jsc::ErrorCode::SOCKET_BAD_PORT,
-                format_args!("The \"options.port\" argument must be a valid IP port number. Got {}.", ty),
+                format_args!("The \"options.port\" argument must be a valid IP port number. Got {}.", ty.get()),
             )
             .throw()
     }

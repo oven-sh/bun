@@ -139,19 +139,36 @@ pub trait ResolverContext {
         _json: &Expr,
     ) -> Result<ResolutionType<SemverIntType>, bun_core::Error> {
         // Default: callers gate on `!IS_VOID`; non-void resolvers must override.
-        todo!("blocked_on: ResolverContext::resolve impl for {}", core::any::type_name::<Self>())
+        // Zig duck-types `resolver.resolve(...)` so a non-void resolver that
+        // forgot to define it would be a compile error there; in Rust we
+        // surface that as a debug assertion and return an uninitialized
+        // resolution so release builds keep going (matching the
+        // `Resolution{}` zero-init Zig falls back to elsewhere).
+        debug_assert!(
+            Self::IS_VOID,
+            "ResolverContext::resolve must be overridden by non-void resolver {}",
+            core::any::type_name::<Self>()
+        );
+        Ok(ResolutionType::<SemverIntType>::default())
     }
 
     // ── GitResolver-only surface ────────────────────────────────────────────
     // Zig accessed `resolver.resolved`, `resolver.new_name`, `resolver.dep_id`
     // directly when `ResolverContext == GitResolver`. Trait methods so non-git
     // resolvers don't need the fields; default impls are dead code (gated on
-    // `IS_GIT_RESOLVER`).
-    fn resolution<SemverIntType: VersionInt>(&self) -> &ResolutionType<SemverIntType> {
-        unreachable!("ResolverContext::resolution called on non-git resolver")
+    // `IS_GIT_RESOLVER`). The bodies here are never executed — calls are
+    // statically guarded by `if R::IS_GIT_RESOLVER` — so a debug assertion
+    // documents the invariant without panicking in release.
+    fn resolution(&self) -> &ResolutionType<u64> {
+        debug_assert!(false, "ResolverContext::resolution called on non-git resolver");
+        // SAFETY: unreachable in practice; never dereferenced when the
+        // `IS_GIT_RESOLVER` gate is false.
+        const EMPTY: ResolutionType<u64> = ResolutionType::<u64>::ZEROED;
+        &EMPTY
     }
     fn dep_id(&self) -> install::DependencyID {
-        unreachable!("ResolverContext::dep_id called on non-git resolver")
+        debug_assert!(false, "ResolverContext::dep_id called on non-git resolver");
+        0
     }
     fn new_name(&self) -> &[u8] { b"" }
     fn set_new_name(&mut self, _name: Vec<u8>) {}
@@ -1560,15 +1577,15 @@ impl Package<u64> {
     ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         initialize_store();
-        // Zig threaded `lockfile.allocator`; the JSON parser keeps its arena
-        // alive for the lifetime of the returned `Expr` tree, so leak a `Bump`
-        // here (matching Zig's allocator semantics until reconciler-6 threads
-        // the lockfile arena through).
-        let bump: &'static bumpalo::Bump = Box::leak(Box::new(bumpalo::Bump::new()));
-        let json = match crate::bun_json::parse_package_json_utf8(source, log, bump) {
+        // Zig threaded `lockfile.allocator`; the JSON parser allocates the
+        // returned `Expr` tree in an arena. `parse_with_json` only reads from
+        // the tree (every retained string is copied via `string_builder`), so a
+        // function-scoped arena is sufficient and is dropped on return.
+        let bump = bun_alloc::Arena::new();
+        let json = match crate::bun_json::parse_package_json_utf8(source, log, &bump) {
             Ok(j) => j,
             Err(err) => {
-                let _ = log.print(Output::error_writer());
+                let _ = log.print(Output::error_writer() as *mut _);
                 Output::pretty_errorln(format_args!(
                     "<r><red>{}<r> parsing package.json in <b>\"{}\"<r>",
                     err.name(),
@@ -1979,7 +1996,7 @@ impl Package<u64> {
 
             // name is not validated by npm, so fallback to creating a new from the version literal
             if R::IS_GIT_RESOLVER {
-                let resolution: &Resolution<SemverIntType> = resolver.resolution();
+                let resolution: &Resolution<u64> = resolver.resolution();
                 let repo = match resolution.tag {
                     // SAFETY: tag selects the active union member.
                     ResolutionTag::Git => unsafe { resolution.value.git },
@@ -1990,7 +2007,7 @@ impl Package<u64> {
                 resolver.set_new_name(
                     Repository::create_dependency_name_from_version_literal(
                         &repo,
-                        lockfile,
+                        string_builder.lockfile,
                         resolver.dep_id(),
                     ),
                 );

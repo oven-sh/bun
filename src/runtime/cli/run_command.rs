@@ -1792,27 +1792,303 @@ impl RunCommand {
         Ok(new_path)
     }
 
-    /// Port of `runBinary` (run_command.zig). Spawns `executable` with the
-    /// passthrough argv + env, then `Global::exit`s with the child's status —
-    /// hence the `Infallible` Ok arm (this only returns on spawn-setup error).
+    /// When printing error messages from 'bun run', attribute bun-overridden
+    /// node.js to bun. This prevents '"node" exited with ...' when it was
+    /// actually bun. As of writing this is only used for `runBinary`.
+    fn basename_or_bun(str: &[u8]) -> &[u8] {
+        // The full path is not used here, because on windows it is dependant on
+        // the username. Before windows we checked bun_node_dir, but this is not
+        // allowed on Windows.
+        let suffix_posix =
+            const_format::concatcp!("/bun-node/node", std::env::consts::EXE_SUFFIX).as_bytes();
+        let suffix_win =
+            const_format::concatcp!("\\bun-node\\node", std::env::consts::EXE_SUFFIX).as_bytes();
+        if str.ends_with(suffix_posix) || (cfg!(windows) && str.ends_with(suffix_win)) {
+            return b"bun";
+        }
+        paths::basename(str)
+    }
+
+    /// Port of `runBinary` (run_command.zig). On Windows this first probes for
+    /// a sibling `.bunx` shim and direct-launches it via `BunXFastPath` to
+    /// skip the wrapper exe; otherwise (or if the fast path declines) it falls
+    /// through to `run_binary_without_bunx_path`.
     ///
-    /// On Windows this first probes for a sibling `.bunx` shim and direct-
-    /// launches it via `BunXFastPath` to skip the wrapper exe.
-    ///
-    /// Real body lives in `phase_a_draft::RunCommand::run_binary` (depends on
-    /// `crate::api::bun_process::sync` spawn surface + `BunXFastPath`, both
-    /// still draft-gated).
-    #[allow(unused_variables)]
+    /// This function only returns if an error starting the process is
+    /// encountered; most other errors are handled by printing and exiting.
     pub fn run_binary(
-        ctx: &Command::Context,
+        ctx: &mut ContextData,
         executable: &[u8],
         executable_z: &ZStr,
         cwd: &[u8],
-        env: &mut DotEnv::Loader,
-        passthrough: &[&[u8]],
+        env: &mut DotEnv::Loader<'static>,
+        passthrough: &[Box<[u8]>],
         original_script_for_bun_run: Option<&[u8]>,
     ) -> Result<::core::convert::Infallible, bun_core::Error> {
-        todo!("blocked_on: RunCommand::run_binary (phase_a_draft)")
+        // Attempt to find a ".bunx" file on disk, and run it, skipping the
+        // wrapper exe.  we build the full exe path even though we could do
+        // a relative lookup, because in the case we do find it, we have to
+        // generate this full path anyways.
+        #[cfg(windows)]
+        if bun_core::FeatureFlags::WINDOWS_BUNX_FAST_PATH && executable.ends_with(b".exe") {
+            debug_assert!(paths::is_absolute(executable));
+
+            // SAFETY: `DIRECT_LAUNCH_BUFFER` is a process-lifetime static used
+            // single-threaded from CLI dispatch. The returned slice points into
+            // it; we keep the borrow scoped until `try_launch` consumes it.
+            let buf = unsafe { &mut *::core::ptr::addr_of_mut!(BunXFastPath::DIRECT_LAUNCH_BUFFER) };
+            let w = strings::to_nt_path(buf, executable);
+            let w_len = w.len();
+            debug_assert!(w_len > sys::windows::NT_OBJECT_PREFIX.len() + b".exe".len());
+            let new_len = w_len + b".bunx".len() - b".exe".len();
+            let bunx = bun_string::w!("bunx");
+            buf[new_len - bunx.len()..new_len].copy_from_slice(bunx);
+            buf[new_len] = 0;
+
+            BunXFastPath::try_launch(ctx, new_len, env, passthrough);
+        }
+
+        Self::run_binary_without_bunx_path(
+            ctx,
+            executable,
+            executable_z.as_ptr() as *const c_char,
+            cwd,
+            env,
+            passthrough,
+            original_script_for_bun_run,
+        )
+    }
+
+    fn run_binary_generic_error(executable: &[u8], silent: bool, err: sys::Error) -> ! {
+        if !silent {
+            pretty_errorln!(
+                "<r><red>error<r>: Failed to run \"<b>{}<r>\" due to:\n{}",
+                bstr::BStr::new(Self::basename_or_bun(executable)),
+                err.with_path(executable),
+            );
+        }
+        Global::exit(1);
+    }
+
+    /// Port of `runBinaryWithoutBunxPath` (run_command.zig). Spawns
+    /// `executable` with the passthrough argv + env, then `Global::exit`s with
+    /// the child's status — hence the `Infallible` Ok arm.
+    pub fn run_binary_without_bunx_path(
+        ctx: &mut ContextData,
+        executable: &[u8],
+        executable_z: *const c_char,
+        cwd: &[u8],
+        env: &mut DotEnv::Loader<'static>,
+        passthrough: &[Box<[u8]>],
+        original_script_for_bun_run: Option<&[u8]>,
+    ) -> Result<::core::convert::Infallible, bun_core::Error> {
+        use crate::api::bun_process::{sync, Status as SpawnStatus};
+
+        let mut argv: Vec<Box<[u8]>> = Vec::with_capacity(1 + passthrough.len());
+        argv.push(executable.to_vec().into_boxed_slice());
+        for p in passthrough {
+            argv.push(p.clone());
+        }
+
+        let silent = ctx.debug.silent;
+
+        // TODO: remember to free this when we add --filter or --concurrent
+        // in the meantime we don't need to free it.
+        let envp = env.map.create_null_delimited_env_map()?;
+
+        let spawn_result = match sync::spawn(&sync::Options {
+            argv,
+            argv0: Some(executable_z),
+            envp: Some(envp.as_ptr() as *const *const c_char),
+            cwd: cwd.to_vec().into_boxed_slice(),
+            stderr: sync::SyncStdio::Inherit,
+            stdout: sync::SyncStdio::Inherit,
+            stdin: sync::SyncStdio::Inherit,
+            use_execve_on_macos: silent,
+            #[cfg(windows)]
+            windows: crate::api::bun_process::WindowsOptions {
+                loop_: bun_jsc::EventLoopHandle::init(
+                    bun_event_loop::MiniEventLoop::init_global(
+                        Some(unsafe {
+                            // SAFETY: env loader is process-lifetime; erase
+                            // borrowed lifetime for the singleton handoff.
+                            &mut *(env as *mut DotEnv::Loader<'_>
+                                as *mut DotEnv::Loader<'static>)
+                        }),
+                        None,
+                    ),
+                ),
+                ..Default::default()
+            },
+            ..Default::default()
+        }) {
+            Ok(r) => r,
+            Err(err) => {
+                bun_core::handle_error_return_trace(&err);
+
+                // an error occurred before the process was spawned
+                'print_error: {
+                    if !silent {
+                        #[cfg(unix)]
+                        {
+                            // SAFETY: `executable_z` is the NUL-terminated form
+                            // of `executable` (caller invariant).
+                            let exec_z = unsafe {
+                                let cstr = ::core::ffi::CStr::from_ptr(executable_z);
+                                ZStr::from_raw(cstr.as_ptr().cast(), cstr.to_bytes().len())
+                            };
+                            match sys::stat(exec_z) {
+                                Ok(stat) => {
+                                    if sys::S::ISDIR(stat.st_mode as _) {
+                                        pretty_errorln!(
+                                            "<r><red>error<r>: Failed to run directory \"<b>{}<r>\"\n",
+                                            bstr::BStr::new(Self::basename_or_bun(executable)),
+                                        );
+                                        break 'print_error;
+                                    }
+                                }
+                                Err(err2) => match err2.get_errno() {
+                                    sys::E::ENOENT | sys::E::EPERM | sys::E::ENOTDIR => {
+                                        pretty_errorln!(
+                                            "<r><red>error<r>: Failed to run \"<b>{}<r>\" due to error:\n{}",
+                                            bstr::BStr::new(Self::basename_or_bun(executable)),
+                                            err2,
+                                        );
+                                        break 'print_error;
+                                    }
+                                    _ => {}
+                                },
+                            }
+                        }
+
+                        pretty_errorln!(
+                            "<r><red>error<r>: Failed to run \"<b>{}<r>\" due to <r><red>{}<r>",
+                            bstr::BStr::new(Self::basename_or_bun(executable)),
+                            bstr::BStr::new(err.name()),
+                        );
+                    }
+                }
+                Global::exit(1);
+            }
+        };
+
+        match spawn_result {
+            Err(err) => {
+                // an error occurred while spawning the process
+                Self::run_binary_generic_error(executable, silent, err);
+            }
+            Ok(result) => {
+                let signal_code = result.status.signal_code();
+                match result.status {
+                    // An error occurred after the process was spawned.
+                    SpawnStatus::Err(err) => {
+                        Self::run_binary_generic_error(executable, silent, err);
+                    }
+
+                    SpawnStatus::Signaled(signal) => {
+                        let signal = bun_sys::SignalCode(signal);
+                        if signal.valid() && signal != bun_sys::SignalCode::SIGINT && !silent {
+                            pretty_errorln!(
+                                "<r><red>error<r>: Failed to run \"<b>{}<r>\" due to signal <b>{}<r>",
+                                bstr::BStr::new(Self::basename_or_bun(executable)),
+                                signal.name().unwrap_or("unknown"),
+                            );
+                        }
+
+                        if bun_core::env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN
+                            .get()
+                            == Some(true)
+                        {
+                            bun_crash_handler::suppress_reporting();
+                        }
+
+                        if let Some(sc) = signal_code {
+                            Global::raise_ignoring_panic_handler(sc);
+                        }
+                        Global::exit(1);
+                    }
+
+                    SpawnStatus::Exited(exit_code) => {
+                        // A process can be both signaled and exited
+                        let exit_signal = bun_sys::SignalCode(exit_code.signal);
+                        if exit_signal.valid() {
+                            if !silent {
+                                pretty_errorln!(
+                                    "<r><red>error<r>: \"<b>{}<r>\" exited with signal <b>{}<r>",
+                                    bstr::BStr::new(Self::basename_or_bun(executable)),
+                                    exit_signal.name().unwrap_or("unknown"),
+                                );
+                            }
+
+                            if bun_core::env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN
+                                .get()
+                                == Some(true)
+                            {
+                                bun_crash_handler::suppress_reporting();
+                            }
+
+                            if let Some(sc) = signal_code {
+                                Global::raise_ignoring_panic_handler(sc);
+                            }
+                        }
+
+                        let code = exit_code.code;
+                        if code != 0 {
+                            if !silent {
+                                let is_probably_trying_to_run_a_pkg_script =
+                                    original_script_for_bun_run.is_some()
+                                        && ((code == 1
+                                            && original_script_for_bun_run.unwrap() == b"test")
+                                            || (code == 2
+                                                && strings::eql_any_comptime(
+                                                    original_script_for_bun_run.unwrap(),
+                                                    &[b"install", b"kill", b"link"],
+                                                )
+                                                && ctx.positionals.len() == 1));
+
+                                if is_probably_trying_to_run_a_pkg_script {
+                                    // if you run something like `bun run test`,
+                                    // you get a confusing message because you
+                                    // don't usually think about your global
+                                    // path, let alone "/bin/test"
+                                    //
+                                    // test exits with code 1, the other ones i
+                                    // listed exit with code 2
+                                    //
+                                    // so for these script names, print the
+                                    // entire exe name.
+                                    Output::err_generic(
+                                        "\"<b>{}<r>\" exited with code {}",
+                                        (bstr::BStr::new(executable), code),
+                                    );
+                                    bun_core::note!(
+                                        "a package.json script \"{}\" was not found",
+                                        bstr::BStr::new(original_script_for_bun_run.unwrap()),
+                                    );
+                                }
+                                // 128 + 2 is the exit code of a process killed
+                                // by SIGINT, which is caused by CTRL + C
+                                else if code > 0 && code != 130 {
+                                    Output::err_generic(
+                                        "\"<b>{}<r>\" exited with code {}",
+                                        (bstr::BStr::new(Self::basename_or_bun(executable)), code),
+                                    );
+                                } else {
+                                    pretty_errorln!(
+                                        "<r><red>error<r>: Failed to run \"<b>{}<r>\" due to exit code <b>{}<r>",
+                                        bstr::BStr::new(Self::basename_or_bun(executable)),
+                                        code,
+                                    );
+                                }
+                            }
+                        }
+
+                        Global::exit(code as u32);
+                    }
+                    SpawnStatus::Running => panic!("Unexpected state: process is running"),
+                }
+            }
+        }
     }
 
     /// Dispatch `bun run <target>`: classify as file path vs. package.json
@@ -1828,7 +2104,7 @@ impl RunCommand {
     }
 
     pub fn exec_with_cfg(ctx: &mut ContextData, cfg: ExecCfg) -> Result<bool, bun_core::Error> {
-        let _bin_dirs_only = cfg.bin_dirs_only;
+        let bin_dirs_only = cfg.bin_dirs_only;
         let log_errors = cfg.log_errors;
 
         // ── find what to run ────────────────────────────────────────────────
@@ -1913,10 +2189,8 @@ impl RunCommand {
 
         // ── empty command → print help ──────────────────────────────────────
         if target_name.is_empty() {
-            if root_dir.enclosing_package_json.is_some() {
-                // TODO(port): pass `package_json` once `print_help` takes
-                // `Option<&PackageJSON>` (script-listing section).
-                Self::print_help(Some(&()));
+            if let Some(package_json) = root_dir.enclosing_package_json {
+                Self::print_help(Some(package_json));
             } else {
                 Self::print_help(None);
                 prettyln!("\n<r><yellow>No package.json found.<r>\n");

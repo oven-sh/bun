@@ -1,16 +1,13 @@
-use core::ffi::CStr;
-
 use bstr::BStr;
 
-use bun_core::{output, ZBox};
+use bun_core::ZBox;
 use bun_core::fmt::PathSep;
 use bun_install::lockfile::Lockfile;
-use bun_install::lockfile::package::Package;
 use bun_install::lockfile::Scripts as LockfileScripts;
 use bun_install::{initialize_store, Resolution, ResolutionTag};
 use bun_js_parser::Expr;
 use bun_logger as logger;
-use bun_paths::{self, AbsPath, PathBuffer, SEP_STR};
+use bun_paths::{self, AbsPath, SEP_STR};
 use bun_semver::String as SemverString;
 use bun_str::strings;
 use bun_sys::{self, Fd};
@@ -23,11 +20,10 @@ use crate::lockfile_real::{Lockfile as RealLockfile, StringBuilder as LockfileSt
 
 bun_output::declare_scope!(Lockfile, hidden);
 
-// TODO(port): verify const name/path — Zig: `Lockfile.Scripts.names.len`
 const SCRIPT_NAMES_LEN: usize = LockfileScripts::NAMES.len();
 
 #[repr(C)]
-#[derive(Default)]
+#[derive(Default, Clone, Copy)]
 pub struct Scripts {
     pub preinstall: SemverString,
     pub install: SemverString,
@@ -54,7 +50,7 @@ impl Scripts {
     /// Zig used `@field(this, hook)` over `Lockfile.Scripts.names`; Rust has no
     /// field-by-name reflection, so we tabulate the 6 hooks explicitly.
     #[inline]
-    fn hooks(&self) -> [&SemverString; SCRIPT_NAMES_LEN] {
+    pub fn hooks(&self) -> [&SemverString; SCRIPT_NAMES_LEN] {
         [
             &self.preinstall,
             &self.install,
@@ -65,8 +61,14 @@ impl Scripts {
         ]
     }
 
+    /// Alias of [`hooks`] for callers porting Zig `inline for (Scripts.names)`.
     #[inline]
-    fn hooks_mut(&mut self) -> [&mut SemverString; SCRIPT_NAMES_LEN] {
+    pub fn iter_all(&self) -> [&SemverString; SCRIPT_NAMES_LEN] {
+        self.hooks()
+    }
+
+    #[inline]
+    pub fn hooks_mut(&mut self) -> [&mut SemverString; SCRIPT_NAMES_LEN] {
         [
             &mut self.preinstall,
             &mut self.install,
@@ -77,13 +79,13 @@ impl Scripts {
         ]
     }
 
-    pub fn eql(l: &Scripts, r: &Scripts, l_buf: &[u8], r_buf: &[u8]) -> bool {
-        l.preinstall.eql(r.preinstall, l_buf, r_buf)
-            && l.install.eql(r.install, l_buf, r_buf)
-            && l.postinstall.eql(r.postinstall, l_buf, r_buf)
-            && l.preprepare.eql(r.preprepare, l_buf, r_buf)
-            && l.prepare.eql(r.prepare, l_buf, r_buf)
-            && l.postprepare.eql(r.postprepare, l_buf, r_buf)
+    pub fn eql(&self, r: &Scripts, l_buf: &[u8], r_buf: &[u8]) -> bool {
+        self.preinstall.eql(r.preinstall, l_buf, r_buf)
+            && self.install.eql(r.install, l_buf, r_buf)
+            && self.postinstall.eql(r.postinstall, l_buf, r_buf)
+            && self.preprepare.eql(r.preprepare, l_buf, r_buf)
+            && self.prepare.eql(r.prepare, l_buf, r_buf)
+            && self.postprepare.eql(r.postprepare, l_buf, r_buf)
     }
 
     /// Named `clone_into` (not `clone`) to avoid shadowing `Clone::clone`.

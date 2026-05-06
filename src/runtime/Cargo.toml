@@ -34,6 +34,7 @@ bun_brotli.workspace = true
 bun_alloc.workspace = true
 bun_core.workspace = true
 bun_bundler = { workspace = true, default-features = false }
+bun_bundler_jsc.workspace = true
 bun_clap.workspace = true
 bun_collections.workspace = true
 bun_crash_handler.workspace = true

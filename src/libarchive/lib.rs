@@ -552,6 +552,156 @@ pub mod lib {
             0
         }
     }
+
+    // ── Archive::Iterator ──────────────────────────────────────────────────
+    // Port of `Archive.Iterator` (src/libarchive_sys/bindings.zig). Thin
+    // wrapper that opens a tarball from memory and yields one
+    // `IteratorEntry` per `next()`, used by `bun publish <tarball>`.
+
+    /// Port of `Iterator.Result(T).err` payload.
+    pub struct IteratorError {
+        pub archive: *mut Archive,
+        pub message: &'static [u8],
+    }
+    impl IteratorError {
+        #[inline]
+        pub fn error_string(&self) -> &[u8] {
+            Archive::error_string(self.archive)
+        }
+    }
+    /// Port of `Iterator.Result(T)` — `Ok`/`Err` carry the same shapes as the
+    /// Zig `union(enum) { .err, .result }`.
+    pub type IteratorResult<T> = core::result::Result<T, IteratorError>;
+
+    /// Port of `Iterator.NextEntry` (bindings.zig).
+    pub struct IteratorEntry {
+        pub entry: *mut Entry,
+        pub kind: bun_sys::FileKind,
+    }
+    impl IteratorEntry {
+        /// Borrow the libarchive entry. Valid until the next `next()` call.
+        #[inline]
+        pub fn entry(&self) -> &Entry {
+            // SAFETY: `entry` was just written by `archive_read_next_header`;
+            // libarchive guarantees it stays valid until the next header read.
+            unsafe { &*self.entry }
+        }
+        /// Port of `NextEntry.readEntryData` (bindings.zig). Allocates `size`
+        /// bytes and reads the current entry's data into it.
+        pub fn read_entry_data(
+            &self,
+            archive: *mut Archive,
+        ) -> core::result::Result<IteratorResult<Vec<u8>>, bun_core::OOM> {
+            let size = self.entry().size();
+            if size < 0 {
+                return Ok(Err(IteratorError { archive, message: b"invalid archive entry size" }));
+            }
+            let mut buf = vec![0u8; usize::try_from(size).unwrap()];
+            // SAFETY: `archive` came from `Archive::read_new()`.
+            let read = unsafe { &*archive }.read_data(&mut buf);
+            if read < 0 {
+                return Ok(Err(IteratorError { archive, message: b"failed to read archive data" }));
+            }
+            buf.truncate(usize::try_from(read).unwrap());
+            Ok(Ok(buf))
+        }
+    }
+
+    /// Port of `Archive.Iterator` (src/libarchive_sys/bindings.zig).
+    pub struct Iterator {
+        pub archive: *mut Archive,
+        // PORT NOTE: Zig had a `filter: std.EnumSet(std.fs.File.Kind)` field
+        // that every caller leaves at `.initEmpty()` and never sets. Dropped
+        // here (would need `EnumSetType` on `FileKind`); re-add if a caller
+        // ever needs it.
+    }
+    impl Iterator {
+        /// Port of `Iterator.init` (bindings.zig). Opens `tarball_bytes` as a
+        /// gzip-compressed (gnu)tar archive.
+        pub fn init(tarball_bytes: &[u8]) -> IteratorResult<Self> {
+            let archive = Archive::read_new();
+            // SAFETY: `archive` is a fresh non-null `*mut Archive`.
+            let a = unsafe { &*archive };
+
+            match a.read_support_format_tar() {
+                Result::Failed | Result::Fatal | Result::Warn => {
+                    return Err(IteratorError { archive, message: b"failed to enable tar format support" });
+                }
+                _ => {}
+            }
+            match a.read_support_format_gnutar() {
+                Result::Failed | Result::Fatal | Result::Warn => {
+                    return Err(IteratorError { archive, message: b"failed to enable gnutar format support" });
+                }
+                _ => {}
+            }
+            match a.read_support_filter_gzip() {
+                Result::Failed | Result::Fatal | Result::Warn => {
+                    return Err(IteratorError { archive, message: b"failed to enable support for gzip compression" });
+                }
+                _ => {}
+            }
+            match a.read_set_options(c"read_concatenated_archives") {
+                Result::Failed | Result::Fatal | Result::Warn => {
+                    return Err(IteratorError { archive, message: b"failed to set option `read_concatenated_archives`" });
+                }
+                _ => {}
+            }
+            match a.read_open_memory(tarball_bytes) {
+                Result::Failed | Result::Fatal | Result::Warn => {
+                    return Err(IteratorError { archive, message: b"failed to read tarball" });
+                }
+                _ => {}
+            }
+
+            Ok(Iterator { archive })
+        }
+
+        /// Port of `Iterator.next` (bindings.zig).
+        pub fn next(&mut self) -> IteratorResult<Option<IteratorEntry>> {
+            // SAFETY: `archive` came from `Archive::read_new()`.
+            let a = unsafe { &*self.archive };
+            let mut entry: *mut Entry = core::ptr::null_mut();
+            loop {
+                match a.read_next_header(&mut entry) {
+                    Result::Retry => continue,
+                    Result::Eof => return Ok(None),
+                    Result::Ok => {
+                        // SAFETY: on ARCHIVE_OK, `entry` is valid until the next header read.
+                        let kind = bun_sys::kind_from_mode(unsafe { &*entry }.filetype() as bun_sys::Mode);
+                        return Ok(Some(IteratorEntry { entry, kind }));
+                    }
+                    _ => {
+                        return Err(IteratorError {
+                            archive: self.archive,
+                            message: b"failed to read archive header",
+                        });
+                    }
+                }
+            }
+        }
+
+        /// Port of `Iterator.deinit` (bindings.zig). Closes & frees the
+        /// underlying `*mut Archive`. NOT a `Drop` impl because the Zig
+        /// returns a `Result` the caller inspects for error reporting.
+        pub fn deinit(&mut self) -> IteratorResult<()> {
+            // SAFETY: `archive` came from `Archive::read_new()`.
+            let a = unsafe { &*self.archive };
+            match a.read_close() {
+                Result::Failed | Result::Fatal | Result::Warn => {
+                    return Err(IteratorError { archive: self.archive, message: b"failed to close archive read" });
+                }
+                _ => {}
+            }
+            match a.read_free() {
+                Result::Failed | Result::Fatal | Result::Warn => {
+                    return Err(IteratorError { archive: self.archive, message: b"failed to free archive read" });
+                }
+                _ => {}
+            }
+            Ok(())
+        }
+    }
 }
 
 use lib::Archive;

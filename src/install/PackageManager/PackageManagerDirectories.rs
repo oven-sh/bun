@@ -1003,29 +1003,36 @@ pub fn write_yarn_lock(this: &mut PackageManager) -> Result<(), Error> {
     }
 
     let file = tmpfile.file();
-    {
-        // TODO(port): blocked_on bun_install::package_manager_real un-gate
-        // (reconciler-6). `lockfile::Printer` borrows `&mut lockfile_real::Lockfile`
-        // but `this.lockfile` is the stub `lockfile::Lockfile`; once the two
-        // unify this becomes:
-        //   let mut printer = lockfile::Printer { lockfile: &mut *this.lockfile, options: this.options.clone(), ... };
-        //   lockfile::printer_mods::yarn::print(&mut printer, &mut writer)?;
-        let _ = (&this.lockfile, &this.options, &file);
-        todo!("blocked_on: lockfile_real un-gate (reconciler-6) — Printer<'_> borrows real Lockfile, stub/real types not yet unified");
-    }
-    #[allow(unreachable_code)]
-    {
-        #[cfg(unix)]
-        {
-            let _ = sys::fchmod(
-                tmpfile.fd,
-                // chmod 666,
-                0o0000040 | 0o0000004 | 0o0000002 | 0o0000400 | 0o0000200 | 0o0000020,
-            );
-        }
+    let mut file_buffer = [0u8; 4096];
+    let mut writer = bun_io::BufWriter::with_buffer(&mut file_buffer, FileSink(file));
+    // PORT NOTE: `lockfile::Printer` borrows `&mut lockfile_real::Lockfile` but
+    // `PackageManager.lockfile` is the stub `lockfile::Lockfile`; route through
+    // the stub `Lockfile::print_yarn` (which constructs the `Printer` once the
+    // two types unify under reconciler-6).
+    this.lockfile.print_yarn(&this.options, &mut writer)?;
+    bun_io::Write::flush(&mut writer)?;
 
-        tmpfile.promote_to_cwd(tmpname, z_static(b"yarn.lock\0"))?;
-        Ok(())
+    #[cfg(unix)]
+    {
+        let _ = sys::fchmod(
+            tmpfile.fd,
+            // chmod 666,
+            0o0000040 | 0o0000004 | 0o0000002 | 0o0000400 | 0o0000200 | 0o0000020,
+        );
+    }
+
+    tmpfile.promote_to_cwd(tmpname, z_static(b"yarn.lock\0"))?;
+    Ok(())
+}
+
+/// `bun_io::Write` adapter for `bun_sys::File` — port of Zig
+/// `std.fs.File.writerStreaming(&buf).interface`. `bun_sys` doesn't depend on
+/// `bun_io`, so the impl lives here next to its sole caller.
+struct FileSink(File);
+impl bun_io::Write for FileSink {
+    #[inline]
+    fn write_all(&mut self, buf: &[u8]) -> bun_io::Result<()> {
+        self.0.write_all(buf).map_err(Error::from)
     }
 }
 

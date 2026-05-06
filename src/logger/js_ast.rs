@@ -842,6 +842,23 @@ impl Expr {
         }
     }
 
+    /// Zig: `Expr.deepClone(allocator)` (src/js_parser/ast/Expr.zig). Recursively
+    /// copies the tree into fresh allocations so the result outlives the
+    /// arena/store the source was parsed into.
+    ///
+    /// PORT NOTE: Zig allocates clones into the supplied `std.mem.Allocator`
+    /// (usually `bun.default_allocator`). The T2 `Expr` boxes its payloads
+    /// behind `StoreRef` into the thread-local `DATA_STORE` bump (see
+    /// `into_data_store`); that store is *not* reset by
+    /// `bun_install::initialize_store()` (which targets the T4
+    /// `bun_js_parser` slab), so re-allocating into `DATA_STORE` here gives
+    /// the same survives-across-parses guarantee the Zig callers rely on.
+    /// `BabyList` buffers (items / properties) are heap-backed and owned by
+    /// the boxed payload, matching Zig's per-clone `allocator.alloc`.
+    pub fn deep_clone(&self) -> Result<Expr, AllocError> {
+        Ok(Expr { loc: self.loc, data: self.data.deep_clone()? })
+    }
+
     /// `Expr.Data.Store.assert()` — debug-only re-entrancy guard. No-op until
     /// the typed Store lands (boxed payloads currently leak; see PERF note).
     #[inline]

@@ -854,16 +854,7 @@ impl<'a> Parser<'a> {
                     }
                 }
 
-                // TODO(b2-blocked): api::BunInstall fields (peechy codegen) —
-                // cafile, ca, exact, registry, scopes, dryRun, production,
-                // frozenLockfile, saveTextLockfile, concurrentScripts,
-                // ignoreScripts, linker, globalStore, lockfile.*, optional,
-                // peer, dev, globalDir, globalBinDir, cache.*,
-                // linkWorkspacePackages, security.scanner, minimumReleaseAge,
-                // minimumReleaseAgeExcludes, publicHoistPattern, hoistPattern.
-                // Full body preserved in the gated `phase_a_install` block below.
-                
-                { self.phase_a_install(&install_obj)?; }
+                self.parse_install(&install_obj)?;
 
                 if let Some(expr) = expr_get(&install_obj, b"logLevel") {
                     self.load_log_level(&expr)?;
@@ -941,13 +932,9 @@ impl<'a> Parser<'a> {
             }
         }
 
-        // TODO(b2-blocked): api::TransformOptions.serve_* fields (peechy codegen)
-        // — `[serve.static]` plugins/hmr/minify/define/publicPath/env handled in
-        // the gated `phase_a_serve_static` block.
-        
         if let Some(serve_obj2) = expr_get_object(&json, b"serve") {
             if let Some(serve_obj) = expr_get_object(&serve_obj2, b"static") {
-                self.phase_a_serve_static(&serve_obj)?;
+                self.parse_serve_static(&serve_obj)?;
             }
         }
 
@@ -1109,34 +1096,26 @@ impl<'a> Parser<'a> {
                     self.ctx.debug.macros = MacroOptions::Disable;
                 }
             } else {
-                // TODO(b2-blocked): bun_resolver::package_json::PackageJSON::parse_macros_json
-                // takes `bun_js_parser::ast::Expr`; the value-shaped T2 tree must be
-                // lifted via `Expr::from` first. Gate until the From-bridge is verified.
-                
-                {
-                    let _ = &expr;
-                    self.ctx.debug.macros = MacroOptions::Map(
-                        todo!("blocked_on: bun_resolver::package_json::MacroMap vs bun_options_types::Context::MacroMap"),
-                    );
-                }
+                self.ctx.debug.macros =
+                    MacroOptions::Map(parse_macros_json(&expr, self.log, self.source, self.bump));
             }
             bun_analytics::features::macros.fetch_add(1, Ordering::Relaxed);
         }
 
         if let Some(expr) = expr_get(&json, b"external") {
             match &expr.data {
-                ExprData::EString(_) => {
-                    // TODO(b2-blocked): api::TransformOptions.external (peechy codegen)
-                    
-                    { /* see phase_a_draft */ }
+                ExprData::EString(s) => {
+                    self.ctx.args.external = vec![estring_to_owned(s, self.bump)];
                 }
                 ExprData::EArray(array) => {
-                    for item in array.items.slice() {
+                    let items = array.items.slice();
+                    let mut externals: Vec<Box<[u8]>> = Vec::with_capacity(items.len());
+                    for item in items {
                         self.expect_string(item)?;
+                        externals
+                            .push(estring_to_owned(item.data.e_string().unwrap().get(), self.bump));
                     }
-                    // TODO(b2-blocked): api::TransformOptions.external (peechy codegen)
-                    
-                    { /* see phase_a_draft */ }
+                    self.ctx.args.external = externals;
                 }
                 _ => self.add_error(expr.loc, b"Expected string or array")?,
             }
@@ -1146,6 +1125,8 @@ impl<'a> Parser<'a> {
             self.expect(&expr, ExprTag::EObject)?;
             let obj = expr.data.e_object().unwrap();
             let properties = obj.properties.slice();
+            let mut loader_names: Vec<Box<[u8]>> = Vec::with_capacity(properties.len());
+            let mut loader_values: Vec<api::Loader> = Vec::with_capacity(properties.len());
             for item in properties {
                 let key_expr = item.key.as_ref().unwrap();
                 let key = expr_as_string(key_expr, self.bump).unwrap();
@@ -1160,18 +1141,21 @@ impl<'a> Parser<'a> {
                 }
                 let value = item.value.as_ref().unwrap();
                 self.expect_string(value)?;
-                if bun_bundler::options::Loader::from_string(
+                let Some(loader) = bun_bundler::options::Loader::from_string(
                     expr_as_string(value, self.bump).unwrap(),
-                )
-                .is_none()
-                {
+                ) else {
                     self.add_error(value.loc, b"Invalid loader")?;
-                }
+                    unreachable!();
+                };
+                // PERF(port): Zig used `allocator.alloc(.., len)` then index; Vec
+                // mirrors `appendAssumeCapacity` since `continue` above can skip.
+                loader_names.push(key.into());
+                loader_values.push(loader.to_api());
             }
-            // TODO(b2-blocked): api::TransformOptions.loaders (peechy codegen) — only the
-            // `self.ctx.args.loaders = api::LoaderMap{…}` write is gated; validation above is live.
-            
-            { /* see phase_a_draft */ }
+            self.ctx.args.loaders = Some(api::LoaderMap {
+                extensions: loader_names,
+                loaders: loader_values,
+            });
         }
 
         Ok(())

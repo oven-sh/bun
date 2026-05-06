@@ -455,7 +455,29 @@ impl Cmd {
         if let Some(fd) = me.redirection_fd.take() {
             CowFd::deref(fd);
         }
-        me.exec = Exec::None;
+        // Spec (Cmd.zig deinit lines 715-730): tear down the running exec.
+        match core::mem::take(&mut me.exec) {
+            Exec::None => {}
+            Exec::Builtin(b) => drop(b),
+            Exec::Subproc(sub) => {
+                // SAFETY: `child` was set by `initSubproc` from a
+                // `Box::into_raw(ShellSubprocess)` and stays valid until
+                // this drop. Single-threaded.
+                let child = unsafe { &mut *sub.child };
+                if !child.has_exited() {
+                    let _ = child.try_kill(9);
+                }
+                child.unref::<true>();
+                // SAFETY: reclaim the box; `ShellSubprocess::drop` runs
+                // `finalize_sync` (closes stdin/stdout/stderr).
+                drop(unsafe { Box::from_raw(sub.child) });
+                // `sub.buffered_closed` drops here, freeing any captured
+                // `ByteList`s (spec `buffered_closed.deinit()`).
+            }
+        }
+        // PORT NOTE: spec frees `spawn_arena` here unless `spawn_arena_freed`.
+        // Argv/env are heap-owned `Vec`s in the port; nothing arena-backed to
+        // free.
         // `base.shell` is borrowed (or, when parent is Pipeline, freed by
         // `Pipeline::child_done` before this runs) — never freed here.
         me.base.end_scope();
@@ -463,30 +485,165 @@ impl Cmd {
 
     // ── Subprocess callbacks (legacy `*Cmd` backref shape) ────────────────
     // Spec: Cmd.zig `bufferedInputClose` / `bufferedOutputClose` / `onExit`.
-    // The NodeId-arena port routes these through `(interp, NodeId)` instead;
-    // the `*mut Cmd` backref kept on `ShellSubprocess` will be replaced with a
-    // `NodeId` once spawn is wired in the new model.
+    // `ShellSubprocess` / `PipeReader` hold a `*mut Cmd` backref and call
+    // these via `&mut self`. The NodeId-arena port stashes `(interp, this_id)`
+    // on `SubprocExec` so the resulting `Yield` can be driven by the caller's
+    // `PipeReader::run_yield` without aliasing `&mut Interpreter` against
+    // `&mut self`.
 
-    pub fn buffered_input_close(&mut self) {
-        // Spec: `this.exec.subproc.buffered_closed.close(this, .stdin)`.
-        // TODO(port): subprocess buffered-close bookkeeping moves to
-        // `Exec::Subproc` once that variant carries the `BufferedIoClosed`
-        // bitset. No-op until then.
+    /// Spec: Cmd.zig `hasFinished`.
+    pub fn has_finished(&self) -> bool {
+        log!("Cmd has_finished exit_code={:?}", self.exit_code);
+        if self.exit_code.is_none() {
+            return false;
+        }
+        match &self.exec {
+            Exec::None => true,
+            Exec::Builtin(_) => false,
+            Exec::Subproc(sub) => sub.buffered_closed.all_closed(),
+        }
     }
 
+    /// Spec: Cmd.zig `bufferedInputClose`.
+    pub fn buffered_input_close(&mut self) {
+        if let Exec::Subproc(sub) = &mut self.exec {
+            sub.buffered_closed.close_stdin();
+        }
+    }
+
+    /// Spec: Cmd.zig `bufferedOutputClose`.
     pub fn buffered_output_close(
         &mut self,
-        _kind: crate::shell::util::OutKind,
-        _err: Option<bun_sys::SystemError>,
+        kind: OutKind,
+        err: Option<bun_sys::SystemError>,
     ) -> Yield {
-        // Spec: tee captured output into the JS-side bytelist, mark the kind
-        // closed, and if all stdio + exit are settled, run `next()`.
-        todo!("blocked_on: Cmd::buffered_output_close NodeId-arena port")
+        match kind {
+            OutKind::Stdout => self.buffered_output_close_stdout(err),
+            OutKind::Stderr => self.buffered_output_close_stderr(err),
+        }
+        if self.has_finished() {
+            // Spec: `if (!spawn_arena_freed)` enqueues a
+            // `ShellAsyncSubprocessDone` task; else returns
+            // `parent.childDone(this, exit_code)` directly. Both paths land in
+            // `Cmd::next` → `CmdState::Done` → `interp.child_done(...)`. In
+            // the NodeId-arena port we set `state = Done` and hand the Yield
+            // back to the caller (`PipeReader::run_yield`), which drives the
+            // trampoline with the `*mut Interpreter` it already holds —
+            // semantically the `else` branch (post-spawn `spawn_arena_freed`
+            // is always true by the time a pipe closes).
+            self.state = CmdState::Done;
+            let this_id = match &self.exec {
+                Exec::Subproc(sub) => sub.this_id,
+                // Only the subprocess path calls this; builtin output goes
+                // through `Builtin::done` → `on_exec_done`.
+                _ => return Yield::suspended(),
+            };
+            // PORT NOTE: the `!spawn_arena_freed` arm
+            // (`ShellAsyncSubprocessDone::enqueue`) is unreachable here in
+            // practice — `initSubproc` sets `spawn_arena_freed = true` before
+            // any pipe can close. Kept as the same `Yield::Next` since the
+            // task body (`runFromMainThread`) is identical.
+            let _ = self.spawn_arena_freed;
+            return Yield::Next(this_id);
+        }
+        Yield::suspended()
     }
 
+    /// Spec: Cmd.zig `bufferedOutputCloseStdout`.
+    fn buffered_output_close_stdout(&mut self, err: Option<bun_sys::SystemError>) {
+        debug_assert!(matches!(self.exec, Exec::Subproc(_)));
+        log!("cmd close buffered stdout");
+        if let Some(e) = err {
+            self.exit_code = Some(e.errno.unsigned_abs() as ExitCode);
+        }
+        // SAFETY: `node` points into the AST arena which outlives this Cmd.
+        let redirect = unsafe { &*self.node }.redirect;
+        let Exec::Subproc(sub) = &mut self.exec else { return };
+        // SAFETY: `child` is the live subprocess owned by this Cmd.
+        let child = unsafe { &mut *sub.child };
+        // Spec: tee into the JS-side captured buffer if `io.stdout == .fd`
+        // with a `captured` slot and the redirect didn't send stdout
+        // elsewhere.
+        if let IoOutKind::Fd(fd) = &self.io.stdout {
+            if let Some(captured) = fd.captured {
+                if !redirect.redirects_elsewhere(ast::IoKind::Stdout) {
+                    if let Readable::Pipe(pipe) = &child.stdout {
+                        let the_slice = pipe.slice();
+                        // SAFETY: `captured` points into a live `ShellExecEnv`
+                        // bufio (see `OutFd::captured` doc). Single-threaded.
+                        bun_core::handle_oom(unsafe { (*captured).append_slice(the_slice) });
+                    }
+                }
+            }
+        }
+        BufferedIoClosed::close_out(
+            &mut sub.buffered_closed.stdout,
+            &mut child.stdout,
+            matches!(self.io.stdout, IoOutKind::Pipe),
+            redirect.redirects_elsewhere(ast::IoKind::Stdout),
+            // SAFETY: `base.shell` is live for the duration of the command.
+            unsafe { &mut *self.base.shell }.buffered_stdout(),
+        );
+        child.close_io(StdioKind::Stdout);
+    }
+
+    /// Spec: Cmd.zig `bufferedOutputCloseStderr`.
+    fn buffered_output_close_stderr(&mut self, err: Option<bun_sys::SystemError>) {
+        debug_assert!(matches!(self.exec, Exec::Subproc(_)));
+        log!("cmd close buffered stderr");
+        if let Some(e) = err {
+            self.exit_code = Some(e.errno.unsigned_abs() as ExitCode);
+        }
+        // SAFETY: see `buffered_output_close_stdout`.
+        let redirect = unsafe { &*self.node }.redirect;
+        let Exec::Subproc(sub) = &mut self.exec else { return };
+        // SAFETY: `child` is the live subprocess owned by this Cmd.
+        let child = unsafe { &mut *sub.child };
+        if let IoOutKind::Fd(fd) = &self.io.stderr {
+            if let Some(captured) = fd.captured {
+                if !redirect.redirects_elsewhere(ast::IoKind::Stderr) {
+                    if let Readable::Pipe(pipe) = &child.stderr {
+                        let the_slice = pipe.slice();
+                        // SAFETY: see `buffered_output_close_stdout`.
+                        bun_core::handle_oom(unsafe { (*captured).append_slice(the_slice) });
+                    }
+                }
+            }
+        }
+        BufferedIoClosed::close_out(
+            &mut sub.buffered_closed.stderr,
+            &mut child.stderr,
+            matches!(self.io.stderr, IoOutKind::Pipe),
+            redirect.redirects_elsewhere(ast::IoKind::Stderr),
+            // SAFETY: `base.shell` is live for the duration of the command.
+            unsafe { &mut *self.base.shell }.buffered_stderr(),
+        );
+        child.close_io(StdioKind::Stderr);
+    }
+
+    /// Spec: Cmd.zig `onExit` — called by `ShellSubprocess::on_process_exit`.
     pub fn on_exit(&mut self, exit_code: ExitCode) {
-        // Spec: stash exit code; subprocess pipe-close drives `next()`.
         self.exit_code = Some(exit_code);
+        let has_finished = self.has_finished();
+        log!("cmd exit code={} has_finished={}", exit_code, has_finished);
+        if has_finished {
+            self.state = CmdState::Done;
+            // Spec: `this.next().run()`. In the NodeId-arena port `self` lives
+            // inside `interp.nodes`, so we resume via the stashed backrefs.
+            let (interp, this_id) = match &self.exec {
+                Exec::Subproc(sub) => (sub.interp, sub.this_id),
+                _ => return,
+            };
+            if interp.is_null() {
+                return;
+            }
+            // SAFETY: `interp` outlives every spawned subprocess (it owns the
+            // arena slot containing `self`). `&mut self` is dead by NLL after
+            // this point so the `&mut Interpreter` borrow does not alias it.
+            // The caller (`ShellSubprocess::on_process_exit`) does not touch
+            // its `*mut Cmd` again after this returns.
+            Yield::Next(this_id).run(unsafe { &mut *interp });
+        }
     }
 }
 

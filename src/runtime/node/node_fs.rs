@@ -322,48 +322,17 @@ impl JSValueBooleanStrict for JSValue {
 }
 
 pub use super::node_fs_constant as constants;
-// node_fs_watcher / node_fs_stat_watcher are JSC-bound and not yet declared in
-// `node.rs`. Their `Arguments` structs are needed by `args::Watch` /
-// `args::WatchFile` and the `watch()` / `watch_file()` bodies below, so we
-// provide minimal local stand-ins that mirror the real shapes from
-// `node_fs_watcher.rs` / `node_fs_stat_watcher.rs`. Swap to
-// `pub use super::node_fs_watcher::FSWatcher as Watcher;` /
-// `pub use super::node_fs_stat_watcher::StatWatcher;` once the parent
-// `node.rs` wires those `#[path = ...]` modules.
+// `fs.watch()` / `fs.watchFile()` backends — wired in `node.rs`. Re-export
+// under the local names `Watcher` / `StatWatcher` so `args::Watch =
+// Watcher::Arguments` / `args::WatchFile = StatWatcher::Arguments` resolve to
+// the real structs in `node_fs_watcher.rs` / `node_fs_stat_watcher.rs`.
 #[allow(non_snake_case)]
 pub mod Watcher {
-    use super::{JSGlobalObject, JSValue, Maybe, PathLike};
-    /// Stand-in for `node_fs_watcher::FSWatcher` — only the field read by
-    /// [`NodeFS::watch`] (`js_this`) is modeled.
-    pub struct FSWatcher {
-        pub js_this: JSValue,
-    }
-    /// Stand-in for `node_fs_watcher::Arguments` — see real struct at
-    /// `src/runtime/node/node_fs_watcher.rs`.
-    pub struct Arguments {
-        pub path: PathLike,
-        pub global_this: *const JSGlobalObject,
-    }
-    impl Arguments {
-        pub fn create_fs_watcher(&self) -> Maybe<FSWatcher> {
-            todo!("blocked_on: super::node_fs_watcher (module not declared in node.rs)")
-        }
-    }
+    pub use super::super::node_fs_watcher::{Arguments, FSWatcher};
 }
 #[allow(non_snake_case)]
 pub mod StatWatcher {
-    use super::{JSGlobalObject, JSValue, PathLike};
-    /// Stand-in for `node_fs_stat_watcher::Arguments` — see real struct at
-    /// `src/runtime/node/node_fs_stat_watcher.rs`.
-    pub struct Arguments {
-        pub path: PathLike,
-        pub global_this: &'static JSGlobalObject,
-    }
-    impl Arguments {
-        pub fn create_stat_watcher(&self) -> Result<JSValue, bun_core::Error> {
-            todo!("blocked_on: super::node_fs_stat_watcher (module not declared in node.rs)")
-        }
-    }
+    pub use super::super::node_fs_stat_watcher::{Arguments, StatWatcher};
 }
 
 // PORT NOTE: `Binding` is `super::node_fs_binding::Binding` in Zig, but that
@@ -3576,10 +3545,7 @@ pub mod args {
     }
 
     pub type UnwatchFile = ();
-    // Watcher / StatWatcher are local stand-in modules until `node.rs` wires
-    // the real `node_fs_watcher` / `node_fs_stat_watcher` siblings; see the
-    // module docs at the top of this file.
-    pub type Watch = super::Watcher::Arguments;
+    pub type Watch<'a> = super::Watcher::Arguments<'a>;
     pub type WatchFile = super::StatWatcher::Arguments;
 
     pub struct Fsync { pub fd: FD }

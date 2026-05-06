@@ -408,6 +408,60 @@ pub mod deferred_request {
     pub struct List {
         pub first: Option<core::ptr::NonNull<Node>>,
     }
+    impl List {
+        /// `std.SinglyLinkedList(...).popFirst` — unlinks and returns the head.
+        pub fn pop_first(&mut self) -> Option<core::ptr::NonNull<Node>> {
+            let first = self.first.take()?;
+            // SAFETY: `first` is a live `*mut Node` owned by `deferred_request_pool`;
+            // exclusively held by this list while linked.
+            self.first = unsafe { first.as_ref().next };
+            Some(first)
+        }
+    }
+
+    impl DeferredRequest {
+        /// `DeferredRequest.abort` — DevServer.zig. Deinitializes state by
+        /// aborting the connection. Swaps `handler` to `Aborted`.
+        pub fn abort(&mut self) {
+            match core::mem::replace(&mut self.handler, Handler::Aborted) {
+                Handler::ServerHandler(mut saved) => {
+                    saved
+                        .ctx
+                        .set_signal_aborted(bun_jsc::CommonAbortReason::ConnectionClosed);
+                    // `saved.js_request` (jsc::Strong) drops at end of arm.
+                }
+                Handler::BundledHtmlPage(r) => {
+                    r.resp.end_without_body(true);
+                }
+                Handler::Aborted => {}
+            }
+        }
+
+        /// `DeferredRequest.deref` — DevServer.zig. Called only by DevServer
+        /// (the sole strong-ref holder). Deinits + returns the node to the
+        /// pool if no weak-ref outstanding.
+        pub fn deref_(&mut self) {
+            self.referenced_by_devserver = false;
+            let should_free = !self.weakly_referenced_by_requestcontext;
+            // `__deinit`: handler-specific cleanup.
+            if let Handler::ServerHandler(saved) = &mut self.handler {
+                // PORT NOTE: `jsc::Strong` drops via `SavedRequest::Drop` once
+                // ownership reshape lands; explicit deinit not yet wired.
+                let _ = &mut saved.js_request;
+            }
+            if should_free {
+                // SAFETY: `self` is the `.data` field of a `Node` in
+                // `dev.deferred_request_pool` (intrusive layout).
+                let node = unsafe {
+                    &mut *(self as *mut Self as *mut u8)
+                        .sub(core::mem::offset_of!(Node, data))
+                        .cast::<Node>()
+                };
+                // SAFETY: `dev` BACKREF is valid while the pool entry exists.
+                unsafe { (*(self.dev as *mut super::DevServer)).deferred_request_pool.put(node) };
+            }
+        }
+    }
 }
 pub use deferred_request::DeferredRequest;
 
@@ -841,22 +895,49 @@ impl HotReloadEvent {
 }
 
 impl DevServer {
-    /// Spec DevServer.zig `onPluginsRejected` — plugin-load failure hook
-    /// called from `ServePlugins::handle_on_reject`. Full body (mark all
-    /// pending bundles failed, broadcast HMR error) lives in the gated draft.
+    /// `DevServer.onPluginsRejected` — DevServer.zig:4420. Plugin-load failure
+    /// hook called from `ServePlugins::handle_on_reject`.
     pub fn on_plugins_rejected(&mut self) {
-        todo!("blocked_on: bake::DevServer::on_plugins_rejected body")
+        self.plugin_state = PluginState::Err;
+        while let Some(mut item) = self.next_bundle.requests.pop_first() {
+            // SAFETY: `pop_first` returns a live `Node` owned by the pool;
+            // `data` was initialized by `defer_request`.
+            let data = unsafe { &mut item.as_mut().data };
+            data.abort();
+            data.deref_();
+        }
+        self.next_bundle.route_queue.clear_retaining_capacity();
+        // TODO: allow recovery from this state (matches Zig spec).
     }
 
-    /// Spec DevServer.zig `emitMemoryVisualizerMessageTimer` — periodic
-    /// memory-visualizer push to connected HMR sockets. Called from the
-    /// high-tier `EventLoopTimer` dispatch with the raw `*EventLoopTimer`
+    /// `DevServer.emitMemoryVisualizerMessageTimer` — DevServer.zig:3680.
+    /// Periodic memory-visualizer push to connected HMR sockets. Called from
+    /// the high-tier `EventLoopTimer` dispatch with the raw `*EventLoopTimer`
     /// (Zig recovers `*DevServer` via `@fieldParentPtr`).
     pub fn emit_memory_visualizer_message_timer(
-        _t: &mut bun_event_loop::EventLoopTimer::EventLoopTimer,
+        timer: &mut bun_event_loop::EventLoopTimer::EventLoopTimer,
         _now: &bun_event_loop::EventLoopTimer::Timespec,
     ) {
-        todo!("blocked_on: bake::DevServer::emit_memory_visualizer_message_timer body")
+        if !cfg!(feature = "bake_debugging_features") {
+            return;
+        }
+        // SAFETY: `timer` is the `.memory_visualizer_timer` field of a
+        // heap-allocated `DevServer` (Zig: `@fieldParentPtr`).
+        let dev: &mut DevServer = unsafe {
+            &mut *(timer as *mut _ as *mut u8)
+                .sub(core::mem::offset_of!(DevServer, memory_visualizer_timer))
+                .cast::<DevServer>()
+        };
+        debug_assert!(dev.magic == Magic::Valid);
+        dev.emit_memory_visualizer_message();
+        timer.state = bun_event_loop::EventLoopTimer::State::FIRED;
+        // Re-arm for +1000 ms.
+        // TODO(port): `dev.vm.timer.update(timer, &Timespec::ms_from_now(1000))` —
+        // `bun_jsc::VirtualMachine.timer` is a `()` placeholder until the
+        // `bun.api.Timer.All` storage lands. The timer registration path
+        // (`HmrSocket.subscribe`) is gated, so this re-arm is unreachable in
+        // practice and the early-return above (feature flag off) covers it.
+        let _ = dev.vm;
     }
 }
 
@@ -1367,15 +1448,15 @@ impl DevServer {
         bun_alloc::AllocationScope
     }
 
-    /// `DevServer.emitMemoryVisualizerMessageIfNeeded` -- DevServer.zig:4341.
-    /// Full body lives in the gated `../DevServer.rs` draft (depends on
-    /// `HmrSocket::publish` + `memory_cost_detailed`). Sub-stores call this
-    /// after structural mutations so the inspector tab refreshes.
+    /// `DevServer.emitMemoryVisualizerMessageIfNeeded` — DevServer.zig:3689.
     pub fn emit_memory_visualizer_message_if_needed(&mut self) {
+        if !cfg!(feature = "bake_debugging_features") {
+            return;
+        }
         if self.emit_memory_visualizer_events == 0 {
             return;
         }
-        todo!("blocked_on: dev_server::DevServer::emit_memory_visualizer_message_if_needed body un-gate")
+        self.emit_memory_visualizer_message();
     }
 
     /// `dev.isFileCached(abs_path, side)` — DevServer.zig:2128. Exposed via

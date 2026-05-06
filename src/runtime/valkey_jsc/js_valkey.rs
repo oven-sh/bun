@@ -500,7 +500,7 @@ impl JSValkeyClient {
             }
 
             if strings::strings::contains(url_byte_slice, b"://") {
-                break 'get_url match <URL as UrlShim>::from_utf8(url_byte_slice) {
+                break 'get_url match URL::from_utf8(url_byte_slice) {
                     Some(u) => u,
                     None => {
                         return Err(global_object.throw_invalid_arguments("Invalid URL format"))
@@ -523,14 +523,16 @@ impl JSValkeyClient {
                 break 'get_url_slice &fallback_url_buf[..written];
             };
 
-            match <URL as UrlShim>::from_utf8(corrected_url) {
+            match URL::from_utf8(corrected_url) {
                 Some(u) => u,
                 None => return Err(global_object.throw_invalid_arguments("Invalid URL format")),
             }
         };
         // SAFETY: `from_string`/`from_utf8` returns a heap-allocated URL we own.
-        let parsed_url = unsafe { parsed_url.as_ref() };
-        // `defer parsed_url.deinit();` — TODO(port): URL leaks here until Drop is wired.
+        let parsed_url_ref = unsafe { parsed_url.as_ref() };
+        // SAFETY: `from_utf8` heap-allocates; release on scope exit (Zig: `defer parsed_url.deinit()`).
+        let _parsed_url_drop = scopeguard::guard(parsed_url, |p| unsafe { URL::deinit(p) });
+        let parsed_url = parsed_url_ref;
 
         // Extract protocol string
         let protocol_str = parsed_url.protocol();
@@ -1109,12 +1111,11 @@ impl JSValkeyClient {
         // PORT NOTE: `bun_event_loop::Timespec` is a local stub distinct from
         // `bun_core::Timespec`; convert by fields until B-2 unifies them.
         timer_ref.next = Timer::Timespec { sec: now.sec, nsec: now.nsec };
-        // TODO(b2-blocked): VirtualMachine.timer is type-erased to `()` in
-        // Phase A; the real `vm.timer.insert(timer_ref)` lands with the
-        // high-tier timer heap. Recorded as blocked.
-        let _ = timer_ref;
-        todo!("blocked_on: bun_jsc::VirtualMachine::timer.insert");
-        #[allow(unreachable_code)]
+        // `vm.timer.insert(timer)` — `VirtualMachine::timer` is type-erased to
+        // `()` (b2-cycle); the real `timer::All` heap lives in `RuntimeState`.
+        // SAFETY: `runtime_state()` is non-null after `bun_runtime::init()`;
+        // single JS thread (see `crate::api::cron::timer_all`).
+        unsafe { (*crate::jsc_hooks::runtime_state()).timer.insert(timer) };
         self.ref_();
     }
 
@@ -1124,13 +1125,12 @@ impl JSValkeyClient {
         let timer_ref = unsafe { &mut *timer };
         if timer_ref.state == Timer::State::ACTIVE {
             // Remove the timer from the event loop
-            // TODO(b2-blocked): see `add_timer` — `vm.timer.remove(timer_ref)`.
-            let _ = timer_ref;
-            todo!("blocked_on: bun_jsc::VirtualMachine::timer.remove");
+            // SAFETY: `runtime_state()` is non-null after `bun_runtime::init()`;
+            // `timer` was previously inserted by the caller.
+            unsafe { (*crate::jsc_hooks::runtime_state()).timer.remove(timer) };
 
             // self.add_timer() adds a reference to 'self' when the timer is
             // alive which is balanced here.
-            #[allow(unreachable_code)]
             self.deref();
         }
     }

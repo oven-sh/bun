@@ -247,14 +247,16 @@ impl RuntimeTranspilerStore {
     ) -> *mut c_void {
         let job: *mut TranspilerJob = self.store.get();
         // Zig: `bun.default_allocator.dupe(u8, path.text)` then `Fs.Path.init`.
-        // The duped slice is freed in `reset_for_pool` (Zig `deinit`).
-        let owned_text: &'static [u8] =
-            Box::leak(path.text.to_vec().into_boxed_slice());
-        // PORT NOTE: `Box::leak` here is the literal port of Zig's
-        // `allocator.dupe` + later `allocator.free` (in `reset_for_pool`). The
-        // allocation is reclaimed via `Box::from_raw` against `path.text` when
-        // the job slot is recycled — not a permanent leak.
-        let owned_path = Fs::Path::init(owned_text);
+        // The duped slice is freed in `reset_for_pool` (Zig `deinit`) via
+        // `Box::from_raw`. `Box::into_raw`/`from_raw` is the literal port of
+        // Zig's `allocator.dupe`/`allocator.free` pair — not a leak.
+        let owned_text_ptr: *mut [u8] =
+            Box::into_raw(path.text.to_vec().into_boxed_slice());
+        // SAFETY: `owned_text_ptr` is a fresh heap allocation; the `'static`
+        // borrow is sound because the allocation outlives every read of
+        // `path.text` (only until `reset_for_pool`, which frees it), and the
+        // job slot is pinned (HiveArray slot or heap, never moved).
+        let owned_path = Fs::Path::init(unsafe { &*owned_text_ptr });
         // SAFETY: caller passes a live JSGlobalObject (BACKREF).
         let promise = JSInternalPromise::create(unsafe { &*global_object });
 
@@ -322,8 +324,8 @@ const TRANSPILER_JOB_HIVE_CAP: usize = 0;
 #[cfg(not(feature = "heap_breakdown"))]
 const TRANSPILER_JOB_HIVE_CAP: usize = 64;
 
-// TODO(b2-blocked): bun_collections::HiveArrayFallback<TranspilerJob, N> — type alias gated.
-pub type TranspilerJobStore = ();
+/// Zig: `bun.HiveArray(TranspilerJob, if (bun.heap_breakdown.enabled) 0 else 64).Fallback`.
+pub type TranspilerJobStore = HiveArrayFallback<TranspilerJob, TRANSPILER_JOB_HIVE_CAP>;
 
 pub struct TranspilerJob {
     pub path: Fs::Path<'static>,
@@ -331,13 +333,14 @@ pub struct TranspilerJob {
     pub non_threadsafe_referrer: String,
     pub loader: Loader,
     pub promise: StrongOptional, // Strong.Optional → crate::strong::Optional (default empty)
-    // LIFETIMES.tsv: JSC_BORROW → `&VirtualMachine` / `&JSGlobalObject` verbatim.
     // PORT NOTE: struct is stored in HiveArray and crosses to a worker thread; a borrow
     // with no named lifetime cannot live in a struct. Stored as raw pointers; SAFETY
     // invariant is the same as the Zig (`*jsc.VirtualMachine` / `*jsc.JSGlobalObject`
-    // outlive the job because the VM owns the store).
-    pub vm: *const VirtualMachine,
-    pub global_this: *const JSGlobalObject,
+    // outlive the job because the VM owns the store). `*mut` (not `*const`) because
+    // `dispatch_to_main_thread`/`run_from_js_thread` push into / put back to
+    // `vm.transpiler_store` — Zig `*VirtualMachine` is mutable.
+    pub vm: *mut VirtualMachine,
+    pub global_this: *mut JSGlobalObject,
     pub fetcher: Fetcher,
     pub poll_ref: KeepAlive,
     pub generation_number: u32,
@@ -345,8 +348,32 @@ pub struct TranspilerJob {
     pub parse_error: Option<bun_core::Error>,
     pub resolved_source: ResolvedSource,
     pub work_task: WorkPoolTask,
-    // LIFETIMES.tsv: INTRUSIVE
+    // LIFETIMES.tsv: INTRUSIVE — `UnboundedQueue<TranspilerJob>` link.
     pub next: *mut TranspilerJob,
+}
+
+// SAFETY: `next` is the intrusive link field; all four accessors target it.
+// Atomicity is provided by reinterpreting the `*mut` slot as `AtomicPtr` (same
+// layout/align). The queue only touches `next` while it owns the node.
+unsafe impl bun_threading::unbounded_queue::Node for TranspilerJob {
+    unsafe fn get_next(item: *mut Self) -> *mut Self {
+        unsafe { (*item).next }
+    }
+    unsafe fn set_next(item: *mut Self, ptr: *mut Self) {
+        unsafe { (*item).next = ptr; }
+    }
+    unsafe fn atomic_load_next(item: *mut Self, ordering: Ordering) -> *mut Self {
+        unsafe {
+            core::sync::atomic::AtomicPtr::from_ptr(core::ptr::addr_of_mut!((*item).next))
+                .load(ordering)
+        }
+    }
+    unsafe fn atomic_store_next(item: *mut Self, ptr: *mut Self, ordering: Ordering) {
+        unsafe {
+            core::sync::atomic::AtomicPtr::from_ptr(core::ptr::addr_of_mut!((*item).next))
+                .store(ptr, ordering)
+        }
+    }
 }
 
 pub enum Fetcher {

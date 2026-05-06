@@ -1536,27 +1536,6 @@ fn writer_splat_bytes_all(
     Ok(())
 }
 
-/// Local extension shim — `JSValue::putBunStringOneOrArray` exists in
-/// `JSValue.zig` but not yet in `bun_jsc`. Stubbed until upstream lands.
-trait JsValuePutOneOrArray {
-    fn put_bun_string_one_or_array(
-        self,
-        global: &JSGlobalObject,
-        key: &bun_str::String,
-        value: JSValue,
-    ) -> JsResult<JSValue>;
-}
-impl JsValuePutOneOrArray for JSValue {
-    fn put_bun_string_one_or_array(
-        self,
-        _global: &JSGlobalObject,
-        _key: &bun_str::String,
-        _value: JSValue,
-    ) -> JsResult<JSValue> {
-        todo!("blocked_on: bun_jsc::JSValue::put_bun_string_one_or_array")
-    }
-}
-
 /// Interface for connecting FrameworkRouter to another codebase
 // PORT NOTE: Zig's `InsertionContext` was an `*anyopaque` + `*const VTable` pair, with `wrap()`
 // generating a comptime vtable per concrete type. Per LIFETIMES.tsv this is BORROW_PARAM →
@@ -2165,7 +2144,17 @@ impl fmt::Write for ByteFmtWriter<'_> {
     }
 }
 
-impl InsertionHandler for JSFrameworkRouter {
+// PORT NOTE: reshaped for borrowck. Zig's `InsertionContext.wrap(JSFrameworkRouter, jsfr)`
+// needs `&mut jsfr.router` (for `scan`) and `&mut *jsfr` (as the handler) simultaneously.
+// The handler only touches `files` / `stored_parse_errors`, so we split-borrow those two
+// fields into a dedicated context struct instead of implementing the trait on
+// `JSFrameworkRouter` itself.
+struct JSFrameworkRouterScanCtx<'a> {
+    files: &'a mut Vec<bun_str::String>,
+    stored_parse_errors: &'a mut Vec<StoredParseError>,
+}
+
+impl InsertionHandler for JSFrameworkRouterScanCtx<'_> {
     fn get_file_id_for_router(
         &mut self,
         abs_path: &[u8],
@@ -2193,8 +2182,8 @@ impl InsertionHandler for JSFrameworkRouter {
         _other_id: OpaqueFileId,
         _file_kind: FileKind,
     ) -> Result<(), AllocError> {
-        // TODO(port): Zig's wrap() panics if onRouterCollisionError is undeclared on T.
-        // JSFrameworkRouter does NOT define it, so this would have panicked at comptime in Zig.
+        // Zig's `InsertionContext.wrap()` emits `@panic("TODO: onRouterCollisionError for " ++ @typeName(T))`
+        // when `T` does not declare `onRouterCollisionError`. JSFrameworkRouter does not declare it.
         panic!("TODO: onRouterCollisionError for JSFrameworkRouter")
     }
 }

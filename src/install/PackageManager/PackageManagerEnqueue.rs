@@ -513,17 +513,15 @@ pub fn enqueue_dependency_to_root(
                     // this callback, so this is the unique live borrow.
                     let manager = unsafe { &mut *self.manager };
                     if manager.pending_task_count() > 0 {
-                        if let Err(err) = run_tasks(manager,
-                            (),
-                            (),
-                            PackageManager::RunTasksCallbacks {
-                                on_extract: (),
-                                on_resolve: (),
-                                on_package_manifest_error: (),
-                                on_package_download_error: (),
-                            },
+                        // Zig: `runTasks(void, {}, .{ .onExtract = {}, ... }, false, log_level)`
+                        // — all callbacks `void`. `VoidRunTasksCallbacks` (below)
+                        // mirrors that with `Ctx = ()` and every `HAS_* = false`.
+                        let log_level = manager.options.log_level;
+                        if let Err(err) = run_tasks::run_tasks::<VoidRunTasksCallbacks>(
+                            manager,
+                            &mut (),
                             false,
-                            manager.options.log_level,
+                            log_level,
                         ) {
                             self.err = Some(err);
                             return true;
@@ -580,6 +578,14 @@ pub fn enqueue_dependency_to_root(
     }
 }
 
+/// Mirrors Zig's `runTasks(void, {}, .{ all-void callbacks }, ...)` shape used
+/// by `enqueueDependencyToRoot`: `Ctx = void`, every `on*` is `{}` so the
+/// `HAS_*` const-gates compile out the callback paths.
+struct VoidRunTasksCallbacks;
+impl run_tasks::RunTasksCallbacks for VoidRunTasksCallbacks {
+    type Ctx = ();
+}
+
 pub fn enqueue_network_task(this: &mut PackageManager, task: *mut NetworkTask) {
     if this.network_task_fifo.writable_length() == 0 {
         this.flush_network_queue();
@@ -589,12 +595,13 @@ pub fn enqueue_network_task(this: &mut PackageManager, task: *mut NetworkTask) {
     this.network_task_fifo.write_item_assume_capacity(task);
 }
 
-pub fn enqueue_patch_task(this: &mut PackageManager, task: Box<PatchTask>) {
+pub fn enqueue_patch_task(this: &mut PackageManager, task: *mut PatchTask) {
     bun_output::scoped_log!(
         PackageManager,
         "Enqueue patch task: 0x{:x} {}",
-        (&*task as *const PatchTask) as usize,
-        <&'static str>::from(&task.callback)
+        task as usize,
+        // SAFETY: `task` is non-null (fresh `Box::into_raw` from `new_*`).
+        unsafe { (*task).callback.tag_name() }
     );
     if this.patch_task_fifo.writable_length() == 0 {
         this.flush_patch_task_queue();
@@ -605,14 +612,16 @@ pub fn enqueue_patch_task(this: &mut PackageManager, task: Box<PatchTask>) {
 }
 
 /// We need to calculate all the patchfile hashes at the beginning so we don't run into problems with stale hashes
-pub fn enqueue_patch_task_pre(this: &mut PackageManager, mut task: Box<PatchTask>) {
+pub fn enqueue_patch_task_pre(this: &mut PackageManager, task: *mut PatchTask) {
     bun_output::scoped_log!(
         PackageManager,
         "Enqueue patch task pre: 0x{:x} {}",
-        (&*task as *const PatchTask) as usize,
-        <&'static str>::from(&task.callback)
+        task as usize,
+        // SAFETY: `task` is non-null (fresh `Box::into_raw` from `new_*`).
+        unsafe { (*task).callback.tag_name() }
     );
-    task.pre = true;
+    // SAFETY: `task` is non-null (fresh `Box::into_raw` from `new_*`).
+    unsafe { (*task).pre = true };
     if this.patch_task_fifo.writable_length() == 0 {
         this.flush_patch_task_queue();
     }
@@ -686,7 +695,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             && (dependency.version.tag != dependency::version::Tag::Npm
                 || !dependency.version.value.npm.is_alias)
         {
-            if let Some(new) = this.lockfile.overrides.get(&name_hash) {
+            if let Some(new) = this.lockfile.overrides.get(name_hash) {
                 bun_output::scoped_log!(
                     PackageManager,
                     "override: {} -> {}",
@@ -695,19 +704,20 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 );
 
                 (name, name_hash) =
-                    update_name_and_name_hash_from_version_replacement(this.lockfile, name, name_hash, new);
+                    update_name_and_name_hash_from_version_replacement(&this.lockfile, name, name_hash, new.clone());
 
                 if new.tag == dependency::version::Tag::Catalog {
                     if let Some(catalog_dep) =
-                        this.lockfile.catalogs.get(this.lockfile, &new.value.catalog, &name)
+                        this.lockfile.catalogs.get(&this.lockfile, new.value.catalog, name)
                     {
+                        let v = catalog_dep.version.clone();
                         (name, name_hash) = update_name_and_name_hash_from_version_replacement(
-                            this.lockfile,
+                            &this.lockfile,
                             name,
                             name_hash,
-                            catalog_dep.version,
+                            v.clone(),
                         );
-                        break 'version catalog_dep.version;
+                        break 'version v;
                     }
                 }
 
@@ -717,18 +727,19 @@ pub fn enqueue_dependency_with_main_and_success_fn(
 
             if dependency.version.tag == dependency::version::Tag::Catalog {
                 if let Some(catalog_dep) = this.lockfile.catalogs.get(
-                    this.lockfile,
-                    &dependency.version.value.catalog,
-                    &name,
+                    &this.lockfile,
+                    dependency.version.value.catalog,
+                    name,
                 ) {
+                    let v = catalog_dep.version.clone();
                     (name, name_hash) = update_name_and_name_hash_from_version_replacement(
-                        this.lockfile,
+                        &this.lockfile,
                         name,
                         name_hash,
-                        catalog_dep.version,
+                        v.clone(),
                     );
 
-                    break 'version catalog_dep.version;
+                    break 'version v;
                 }
             }
         }
@@ -914,7 +925,8 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                     if get_preinstall_state(this, result.package.meta.id)
                                         == install::PreinstallState::Extract
                                     {
-                                        set_preinstall_state(this, 
+                                        set_preinstall_state(
+                                            this,
                                             result.package.meta.id,
                                             install::PreinstallState::Extracting,
                                         );
@@ -922,20 +934,24 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                     }
                                 }
                                 ResolvedPackageTask::PatchTask(patch_task) => {
-                                    if matches!(patch_task.callback, PatchTaskCallback::CalcHash(..))
+                                    // SAFETY: `patch_task` is a non-null `Box::into_raw`.
+                                    let cb = unsafe { &(*patch_task).callback };
+                                    if cb.is_calc_hash()
                                         && get_preinstall_state(this, result.package.meta.id)
                                             == install::PreinstallState::CalcPatchHash
                                     {
-                                        set_preinstall_state(this, 
+                                        set_preinstall_state(
+                                            this,
                                             result.package.meta.id,
                                             install::PreinstallState::CalcingPatchHash,
                                         );
                                         enqueue_patch_task(this, patch_task);
-                                    } else if matches!(patch_task.callback, PatchTaskCallback::Apply(..))
+                                    } else if cb.is_apply()
                                         && get_preinstall_state(this, result.package.meta.id)
                                             == install::PreinstallState::ApplyPatch
                                     {
-                                        set_preinstall_state(this, 
+                                        set_preinstall_state(
+                                            this,
                                             result.package.meta.id,
                                             install::PreinstallState::ApplyingPatch,
                                         );

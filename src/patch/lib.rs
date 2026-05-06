@@ -1836,20 +1836,87 @@ pub fn git_diff_internal(
     let old_folder = &paths[0][..];
     let new_folder = &paths[1][..];
 
-    // TODO(port): Zig used `std.process.Child` here. PORTING.md bans
-    // `std::process`. Replace with `bun_spawn::sync` (see `spawn_opts` above).
-    // Logic preserved as comments for Phase B:
-    //
-    //   spawn `git -c core.safecrlf=false diff --src-prefix=a/ --dst-prefix=b/
-    //          --ignore-cr-at-eol --irreversible-delete --full-index --no-index
-    //          <old_folder> <new_folder>`
-    //   with env { PATH=<inherited>, GIT_CONFIG_NOSYSTEM=1, HOME=, XDG_CONFIG_HOME=, USERPROFILE= }
-    //   collect stdout+stderr (max 4 MiB)
-    //   if stderr non-empty → return Err(stderr)
-    //   else postprocess stdout and return Ok(stdout)
-    let _ = (old_folder, new_folder);
-    // TODO(port): narrow error set
-    Err(bun_core::err!("NotImplemented"))
+    // PORT NOTE: Zig used `std.process.Child` directly (spawn + collectOutput +
+    // wait). PORTING.md bans `std::process`; route through `bun_spawn::sync`
+    // (= `bun.spawnSync`) which captures stdout/stderr when `Stdio::Buffer`.
+    // Zig's `collectOutput` enforced a 4 MiB cap; `bun_spawn::sync` reads to
+    // EOF unbounded — acceptable for the test-only `makeDiff` caller.
+    const ARGV: &[&[u8]] = &[
+        b"git",
+        b"-c",
+        b"core.safecrlf=false",
+        b"diff",
+        b"--src-prefix=a/",
+        b"--dst-prefix=b/",
+        b"--ignore-cr-at-eol",
+        b"--irreversible-delete",
+        b"--full-index",
+        b"--no-index",
+    ];
+    let mut argv: Vec<Box<[u8]>> = Vec::with_capacity(ARGV.len() + 2);
+    for s in ARGV {
+        argv.push(Box::from(*s));
+    }
+    argv.push(Box::from(old_folder));
+    argv.push(Box::from(new_folder));
+
+    // env: { PATH (inherited if set), GIT_CONFIG_NOSYSTEM=1, HOME=, XDG_CONFIG_HOME=, USERPROFILE= }
+    // Static entries point at 'static literals; PATH=<value>\0 needs an owned buffer.
+    let path_var: Option<Vec<u8>> = bun_core::env_var::PATH.get().map(|p| {
+        let mut s = Vec::with_capacity(b"PATH=".len() + p.len() + 1);
+        s.extend_from_slice(b"PATH=");
+        s.extend_from_slice(p);
+        s.push(0);
+        s
+    });
+    const ENV_STATIC: &[&[u8]] = &[
+        b"GIT_CONFIG_NOSYSTEM=1\0",
+        b"HOME=\0",
+        b"XDG_CONFIG_HOME=\0",
+        b"USERPROFILE=\0",
+    ];
+    let mut envp_buf: Vec<*const core::ffi::c_char> =
+        Vec::with_capacity(ENV_STATIC.len() + usize::from(path_var.is_some()) + 1);
+    if let Some(p) = &path_var {
+        envp_buf.push(p.as_ptr() as *const core::ffi::c_char);
+    }
+    for s in ENV_STATIC {
+        envp_buf.push(s.as_ptr() as *const core::ffi::c_char);
+    }
+    envp_buf.push(core::ptr::null()); // sentinel
+
+    let opts = bun_spawn::sync::Options {
+        stdout: bun_spawn::sync::Stdio::Buffer,
+        stderr: bun_spawn::sync::Stdio::Buffer,
+        envp: Some(envp_buf.as_ptr()),
+        argv,
+        // PORT NOTE: Zig's `std.process.Child` carried no Windows event-loop
+        // handle here; `Options::default()` zero-inits `windows.loop_` to match.
+        ..Default::default()
+    };
+
+    // unfortunately, git diff returns non-zero exit codes even when it succeeds.
+    // we have to check that stderr was not empty to know if it failed
+    let mut result = match bun_spawn::sync::spawn(&opts)? {
+        sys::Result::Ok(r) => r,
+        sys::Result::Err(e) => return Err(e.into()),
+    };
+
+    // Keep envp storage alive across the spawn call; Options.envp borrows it.
+    drop(opts);
+    drop(envp_buf);
+    drop(path_var);
+
+    let mut stdout = mem::take(&mut result.stdout);
+    let stderr = mem::take(&mut result.stderr);
+
+    if !stderr.is_empty() {
+        return Ok(Err(stderr));
+    }
+
+    bun_core::scoped_log!(Patch, "Before postprocess: {}\n", bstr::BStr::new(&stdout));
+    git_diff_postprocess(&mut stdout, old_folder, new_folder)?;
+    Ok(Ok(stdout))
 }
 
 /// Now we need to do the equivalent of these regex subtitutions.

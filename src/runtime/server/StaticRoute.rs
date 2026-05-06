@@ -4,13 +4,19 @@
 use core::cell::Cell;
 use core::mem::size_of;
 
-use bun_http::Headers;
+use bun_core::Error;
+use bun_http::headers::Options as HeadersFromOptions;
+use bun_http::{Headers, Method};
+use bun_http_types::ETag;
+use bun_http_types::ETag::{HeaderEntryField, StringPointer};
 use bun_http_types::MimeType::MimeType;
+use bun_jsc::HTTPHeaderName as HttpHeader;
 use bun_uws::{AnyRequest, AnyResponse};
 
 use crate::server::jsc::{JSGlobalObject, JSValue, JsResult};
-use crate::server::AnyServer;
-use crate::webcore::{AnyBlob, FetchHeaders};
+use crate::server::{write_status, AnyServer};
+use crate::webcore::body::Value as BodyValue;
+use crate::webcore::{AnyBlob, FetchHeaders, InternalBlob, Response};
 
 // bun.ptr.RefCount(@This(), "ref_count", deinit, .{}) — single-thread refcount.
 // PORT NOTE (§Pointers Rc/Arc default): owned via `Rc<StaticRoute>` from
@@ -47,31 +53,6 @@ impl<'a> Default for InitFromBytesOptions<'a> {
         }
     }
 }
-
-impl StaticRoute {
-    pub fn memory_cost(&self) -> usize {
-        size_of::<StaticRoute>() + self.blob.memory_cost() + self.headers.memory_cost()
-    }
-}
-
-// ─── route-handler bodies (gated) ────────────────────────────────────────────
-// init_from_any_blob / from_js / clone need: Headers::from(body=..),
-// AnyBlob::{to_blob, dupe, content_type, slice}, ETag::append_to_headers,
-// JSValue::as_::<Response>.
-// on / on_head_request / on_response / send need: bun_uws AnyResponse
-// write/end/on_writable/on_aborted (cycle-5-B), HTTPStatusText, RangeRequest.
-// TODO(b2-blocked): bun_jsc + bun_uws response write surface.
-
-mod _gated {
-use super::*;
-use bun_core::Error;
-use bun_http::Method;
-use bun_http_types::ETag;
-use bun_http_types::ETag::{HeaderEntryField, StringPointer};
-use crate::server::write_status;
-use crate::webcore::body::Value as BodyValue;
-use crate::webcore::blob::Blob;
-use crate::webcore::Response;
 
 // ─── local cycle-break shims ─────────────────────────────────────────────────
 // `bun_http::Headers::from` takes vtable-erased refs (`FetchHeadersRef` /
@@ -180,24 +161,6 @@ impl AnyRequestExt for AnyRequest {
     }
 }
 
-// ─── blocked shims (duplicate inherent methods upstream) ─────────────────────
-// `webcore::blob::Blob` currently has two `dupe` and two `needs_to_read_file`
-// inherent impls; method-call syntax is E0034-ambiguous and UFCS cannot
-// disambiguate same-type duplicates. Shim until Blob.rs is deduped.
-#[inline]
-fn blob_dupe(_b: &Blob) -> Blob {
-    todo!("blocked_on: webcore::blob::Blob::dupe (duplicate inherent impl)")
-}
-#[inline]
-fn blob_needs_to_read_file(_b: &Blob) -> bool {
-    todo!("blocked_on: webcore::blob::Blob::needs_to_read_file (duplicate inherent impl)")
-}
-/// `Response` does not yet implement `bun_jsc::JsClass`; downcast stub.
-#[inline]
-fn response_from_js(_value: JSValue) -> Option<*mut Response> {
-    todo!("blocked_on: bun_jsc::JsClass for webcore::Response")
-}
-
 impl StaticRoute {
     // pub const ref / deref — intrusive refcount accessors.
     // `ref` is a Rust keyword; use ref_/deref_ on &self for parity with Zig call sites.
@@ -272,7 +235,7 @@ impl StaticRoute {
 
     pub fn clone(&mut self, global_this: &JSGlobalObject) -> Result<*mut StaticRoute, Error> {
         let blob = self.blob.to_blob(global_this);
-        let duped = blob_dupe(&blob);
+        let duped = blob.dupe();
         self.blob = AnyBlob::Blob(blob);
 
         Ok(Box::into_raw(Box::new(StaticRoute {
@@ -286,9 +249,13 @@ impl StaticRoute {
         })))
     }
 
+    pub fn memory_cost(&self) -> usize {
+        size_of::<StaticRoute>() + self.blob.memory_cost() + self.headers.memory_cost()
+    }
+
     pub fn from_js(global_this: &JSGlobalObject, argument: JSValue) -> JsResult<Option<*mut StaticRoute>> {
-        if let Some(response_ptr) = response_from_js(argument) {
-            // SAFETY: `response_from_js` returns a live JSC-owned Response cell
+        if let Some(response_ptr) = argument.as_::<Response>() {
+            // SAFETY: `as_::<Response>` returns a live JSC-owned Response cell
             // valid for the duration of this call (GC cannot run mid-function).
             let response = unsafe { &mut *response_ptr };
 
@@ -298,7 +265,7 @@ impl StaticRoute {
             let was_string = body_value.was_string();
             body_value.to_blob_if_possible();
 
-            let mut blob: AnyBlob = 'brk: {
+            let blob: AnyBlob = 'brk: {
                 match &*body_value {
                     BodyValue::Used => {
                         return Err(global_this
@@ -314,7 +281,7 @@ impl StaticRoute {
 
                     BodyValue::Blob(_) | BodyValue::InternalBlob(_) | BodyValue::WTFStringImpl(_) => {
                         if let BodyValue::Blob(b) = &*body_value {
-                            if blob_needs_to_read_file(b) {
+                            if b.needs_to_read_file() {
                                 return Err(global_this
                                     .throw_todo("TODO: support Bun.file(path) in static routes"));
                             }
@@ -325,7 +292,7 @@ impl StaticRoute {
                             !blob.is_heap_allocated(),
                             "expected blob not to be heap-allocated",
                         );
-                        *body_value = BodyValue::Blob(blob_dupe(&blob));
+                        *body_value = BodyValue::Blob(blob.dupe());
 
                         break 'brk AnyBlob::Blob(blob);
                     }
@@ -581,24 +548,24 @@ impl StaticRoute {
 
     fn do_write_status(&self, status: u16, resp: AnyResponse) {
         match resp {
-            // SAFETY: variant pointers are non-null live uWS response handles
-            // for the duration of the request callback.
-            AnyResponse::SSL(r) => write_status::<true>(unsafe { &mut *r }, status),
-            AnyResponse::TCP(r) => write_status::<false>(unsafe { &mut *r }, status),
+            AnyResponse::SSL(r) => write_status::<true>(r, status),
+            AnyResponse::TCP(r) => write_status::<false>(r, status),
             AnyResponse::H3(r) => {
                 use std::io::Write;
                 let mut b = [0u8; 16];
                 let mut cursor: &mut [u8] = &mut b[..];
                 write!(cursor, "{}", status).expect("unreachable");
                 let written = 16 - cursor.len();
-                // SAFETY: see above.
+                // SAFETY: `r` is a non-null live uWS H3 response handle for the
+                // duration of the request callback.
                 unsafe { (*r).write_status(&b[..written]) };
             }
         }
     }
 
     fn do_write_headers(&self, resp: AnyResponse) {
-        // Zig: switch (resp) { inline else => |s, tag| { ... } } — expanded per arm.
+        // Zig: switch (resp) { inline else => |s, tag| { ... } } — names/values
+        // column slices, then `s.writeHeader(name.slice(buf), value.slice(buf))`.
         let entries = self.headers.entries.slice();
         // SAFETY: `HeaderEntry` columns are both `StringPointer` (see
         // `bun_http_types::ETag::HeaderEntry` MultiArrayElement impl).
@@ -609,51 +576,19 @@ impl StaticRoute {
         let buf = self.headers.buf.as_slice();
 
         #[inline]
-        fn sp_slice(ptr: &StringPointer, buf: &[u8]) -> *const [u8] {
+        fn sp_slice<'a>(ptr: &StringPointer, buf: &'a [u8]) -> &'a [u8] {
             &buf[ptr.offset as usize..][..ptr.length as usize]
         }
 
-        match resp {
-            // SAFETY: variant pointers are non-null live uWS response handles
-            // for the duration of the request callback.
-            AnyResponse::SSL(s) => {
-                let s = unsafe { &mut *s };
-                debug_assert_eq!(names.len(), values.len());
-                for (name, value) in names.iter().zip(values) {
-                    // SAFETY: sp_slice returns a borrow of `buf` which is live.
-                    s.write_header(unsafe { &*sp_slice(name, buf) }, unsafe {
-                        &*sp_slice(value, buf)
-                    });
+        debug_assert_eq!(names.len(), values.len());
+        for (name, value) in names.iter().zip(values) {
+            resp.write_header(sp_slice(name, buf), sp_slice(value, buf));
+        }
+        if !matches!(resp, AnyResponse::H3(_)) {
+            if let Some(srv) = self.server.get() {
+                if let Some(alt) = srv.h3_alt_svc() {
+                    resp.write_header(b"alt-svc", alt);
                 }
-                if let Some(srv) = self.server.get() {
-                    if let Some(alt) = srv.h3_alt_svc() {
-                        s.write_header(b"alt-svc", alt);
-                    }
-                }
-            }
-            AnyResponse::TCP(s) => {
-                let s = unsafe { &mut *s };
-                debug_assert_eq!(names.len(), values.len());
-                for (name, value) in names.iter().zip(values) {
-                    s.write_header(unsafe { &*sp_slice(name, buf) }, unsafe {
-                        &*sp_slice(value, buf)
-                    });
-                }
-                if let Some(srv) = self.server.get() {
-                    if let Some(alt) = srv.h3_alt_svc() {
-                        s.write_header(b"alt-svc", alt);
-                    }
-                }
-            }
-            AnyResponse::H3(s) => {
-                let s = unsafe { &mut *s };
-                debug_assert_eq!(names.len(), values.len());
-                for (name, value) in names.iter().zip(values) {
-                    s.write_header(unsafe { &*sp_slice(name, buf) }, unsafe {
-                        &*sp_slice(value, buf)
-                    });
-                }
-                // tag == .H3: skip alt-svc
             }
         }
     }
@@ -737,15 +672,11 @@ impl Drop for StaticRoute {
     }
 }
 
-use crate::webcore::InternalBlob;
-use bun_jsc::HTTPHeaderName as HttpHeader;
-use bun_http::headers::Options as HeadersFromOptions;
-} // mod _gated
-
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/server/StaticRoute.zig (409 lines)
-//   confidence: medium
-//   todos:      6
-//   notes:      IntrusiveRc pattern hand-rolled (ref_/deref_); uws callback registration + MultiArrayList accessors + Headers::from signature need Phase B wiring; resp.corked mapped to closure form
+//   confidence: high
+//   notes:      IntrusiveRc pattern hand-rolled (ref_/deref_); resp.corked
+//               mapped to closure form; FetchHeaders/AnyBlob threaded through
+//               cycle-break vtables for bun_http::Headers::from.
 // ──────────────────────────────────────────────────────────────────────────

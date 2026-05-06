@@ -483,6 +483,6 @@ impl Glob {
 // PORT STATUS
 //   source:     src/runtime/api/glob.zig (397 lines)
 //   confidence: medium
-//   todos:      12
-//   notes:      WalkTask<'a> borrows outlive stack frame (scheduled task) — likely needs raw ptrs; arena ownership flows into bun_glob::BunGlobWalker; GlobWalker::deinit(true) vs Drop semantics unresolved.
+//   todos:      6
+//   notes:      WalkTask<'a> borrows (&JSGlobalObject, &AtomicUsize) escape via Box::into_raw across the thread-pool hop — sound because Glob is GC-rooted by hasPendingActivity(); arena ownership flows into bun_glob::BunGlobWalker.
 // ──────────────────────────────────────────────────────────────────────────

@@ -859,13 +859,17 @@ pub mod sync {
 
     /// `bun.spawnSync(opts)` (process.zig:2065) — blocking spawn, returns
     /// `!Maybe(sync.Result)`. The actual subprocess machinery lives in
-    /// `bun_runtime::api::bun::process::sync` at a higher tier; this
-    /// crate only owns the data shapes so `bun_install` can name them
-    /// without a dep cycle (runtime → install → spawn).
+    /// `bun_runtime::api::bun::process::sync` at a higher tier; dispatched
+    /// through [`hooks::SYNC_SPAWN`] so `bun_install` / `bun_patch` can call
+    /// it without a dep cycle (runtime → install → spawn).
     pub fn spawn(
-        _opts: &Options,
+        opts: &Options,
     ) -> core::result::Result<bun_sys::Maybe<Result>, bun_core::Error> {
-        todo!("blocked_on: bun_runtime::api::bun::process::sync::spawn (dep cycle — install via vtable in Phase B)")
+        let f = super::hooks::load::<super::hooks::SyncSpawnFn>(&super::hooks::SYNC_SPAWN)?;
+        // SAFETY: `f` was registered by `bun_runtime` with exactly this
+        // signature; `opts` is fully initialized (`Default` covers all
+        // fields, no `undefined` reads).
+        unsafe { f(opts) }
     }
 }
 
@@ -902,9 +906,12 @@ pub struct RunResult {
 
 /// Port of `std.process.Child.run`. Blocking spawn that captures stdout/stderr.
 ///
-/// TODO(port): wire to `bun_runtime::api::bun::process::sync::spawn` once the
-/// runtime crate is reachable here without a cycle. Typed stub for now so
-/// `bun_install::repository` type-checks.
-pub fn run(_opts: RunOptions<'_>) -> core::result::Result<RunResult, bun_core::Error> {
-    todo!("blocked_on: bun_runtime::api::bun::process::sync::spawn (dep cycle)")
+/// Dispatched through [`hooks::RUN`] — the body builds a `sync::Options` from
+/// `argv`/`env_map` and calls `bun.spawnSync`, which requires the runtime's
+/// `posix_spawn`/libuv process loop (higher tier). `bun_runtime` registers the
+/// adapter at startup; `bun_install::repository` calls through this symbol.
+pub fn run(opts: RunOptions<'_>) -> core::result::Result<RunResult, bun_core::Error> {
+    let f = hooks::load::<hooks::RunFn>(&hooks::RUN)?;
+    // SAFETY: `f` was registered by `bun_runtime` with exactly this signature.
+    unsafe { f(opts) }
 }

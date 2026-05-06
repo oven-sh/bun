@@ -1,5 +1,4 @@
 use core::fmt::Write as _;
-#[allow(unused_imports)]
 use std::sync::Arc;
 
 use bun_core::output;
@@ -344,13 +343,17 @@ pub fn construct_s3_file_with_s3_credentials_and_options(
         global,
     )?;
 
-    let mut store = 'brk: {
-        if aws_options.changed_credentials {
-            break 'brk blob::Store::init_s3(path, None, aws_options.credentials).expect("oom");
-        } else {
-            let _ = default_credentials;
-            break 'brk todo!("blocked_on: bun_s3_signing::S3Credentials::dupe (Arc from &S3Credentials)");
-        }
+    let mut store = if aws_options.changed_credentials {
+        blob::Store::init_s3(path, None, aws_options.credentials).expect("oom")
+    } else {
+        // PORT NOTE: Zig bumped the intrusive refcount on `default_credentials`
+        // (`initS3WithReferencedCredentials`). The Rust `Store::S3` holds
+        // `Arc<S3Credentials>` (not `IntrusiveRc`), and the caller hands us a
+        // bare `&S3Credentials`, so we cannot share the existing allocation —
+        // deep-copy into a fresh `Arc` instead.
+        // PERF(port): one extra alloc when credentials unchanged — profile in Phase B.
+        blob::Store::init_s3_with_referenced_credentials(path, None, Arc::new(default_credentials.clone()))
+            .expect("oom")
     };
     // errdefer store.deinit() — handled by Drop on early return
     store.data.as_s3_mut().options = aws_options.options;
@@ -657,10 +660,12 @@ impl S3BlobStatTask {
     // deinit: store.deref() + promise.deinit() + bun.destroy(this) — all handled by Box<Self> Drop
 }
 
-// PORT NOTE: local shim for `Method::from_js` — `bun_http::Method` has no JSC dep.
-// Mirrors the shim in `webcore/Response.rs` / `webcore/fetch.rs`.
-fn method_from_js(_global: &JSGlobalObject, _value: JSValue) -> JsResult<Option<Method>> {
-    todo!("blocked_on: bun_http_jsc::Method::from_js")
+// PORT NOTE: local shim for `Method::from_js` — `bun_http::Method` has no JSC dep;
+// the JSC bridge lives in `bun_http_jsc::method_jsc`. Kept as a thin wrapper so
+// call sites match the Zig `Method.fromJS(global, value)` shape.
+#[inline]
+fn method_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Method>> {
+    bun_http_jsc::method_jsc::from_js(global, value)
 }
 
 pub fn get_presign_url_from(this: &mut Blob, global: &JSGlobalObject, extra_options: Option<JSValue>) -> JsResult<JSValue> {

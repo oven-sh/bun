@@ -228,9 +228,76 @@ impl Listener {
         if port.is_none() {
             // we check if the path is a named pipe otherwise we try to connect using AF_UNIX
             let mut buf = PathBuffer::uninit();
-            if let Some(_pipe_name) = normalize_pipe_name(socket_config.hostname_or_unix.slice(), buf.as_mut_slice()) {
-                let _ = (vm, global_static, ssl_enabled);
-                todo!("blocked_on: WindowsNamedPipeListeningContext::listen — Windows named-pipe listen path");
+            if let Some(pipe_name) = normalize_pipe_name(socket_config.hostname_or_unix.slice(), buf.as_mut_slice()) {
+                let connection = UnixOrHost::Unix(
+                    socket_config.hostname_or_unix.slice().to_vec().into_boxed_slice(),
+                );
+
+                // PORT NOTE: by-value move of Handlers — see the non-Windows arm for rationale.
+                // SAFETY: socket_config.handlers is valid; we forget socket_config below.
+                let handlers_moved: Handlers = unsafe { core::ptr::read(&socket_config.handlers) };
+                let protos_taken = socket_config.ssl.as_mut().and_then(|s| s.take_protos());
+                let default_data = socket_config.default_data;
+                let ssl_cfg_taken = socket_config.ssl.take();
+                core::mem::forget(socket_config);
+
+                // SAFETY: event_loop() returns a non-null *mut EventLoop owned by the VM.
+                unsafe { (*vm.event_loop()).ensure_waker() };
+
+                let this: *mut Listener = Box::into_raw(Box::new(Listener {
+                    handlers: handlers_moved,
+                    connection,
+                    ssl: ssl_enabled,
+                    listener: ListenerType::None,
+                    protos: protos_taken,
+                    poll_ref: KeepAlive::init(),
+                    group: uws::SocketGroup::default(),
+                    secure_ctx: None,
+                    strong_data: if !default_data.is_empty() {
+                        Strong::create(default_data, global)
+                    } else {
+                        Strong::empty()
+                    },
+                    strong_self: Strong::empty(),
+                }));
+                // SAFETY: just allocated, non-null, exclusive
+                let this_ref = unsafe { &mut *this };
+                // TODO: server_name is not supported on named pipes, I belive its , lets wait for
+                // someone to ask for it
+
+                // On error, clean up everything `this` owns *except* `this.handlers`: the outer
+                // `errdefer handlers.deinit()` already unprotects those JSValues, and `this.handlers`
+                // is a by-value copy of the same struct, so calling `this.deinit()` here would
+                // unprotect the same callbacks a second time.
+                // PORT NOTE: handlers were moved (not copied) here, so dropping the Box runs
+                // Handlers::Drop exactly once — the Zig double-unprotect hazard does not apply.
+
+                // we need to add support for the backlog parameter on listen here we use the
+                // default value of nodejs
+                let named_pipe = match WindowsNamedPipeListeningContext::listen(
+                    global_static,
+                    pipe_name,
+                    511,
+                    ssl_cfg_taken.as_ref(),
+                    this,
+                ) {
+                    Ok(np) => np,
+                    Err(_) => {
+                        // SAFETY: reclaim the Box on the error path; drops Handlers/connection/protos/strong_data.
+                        drop(unsafe { Box::from_raw(this) });
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "Failed to listen at {}",
+                            bstr::BStr::new(pipe_name)
+                        )));
+                    }
+                };
+                this_ref.listener = ListenerType::NamedPipe(named_pipe);
+
+                // SAFETY: `global` is live; ownership of `this` transfers to the C++ wrapper.
+                let this_value = unsafe { Listener__create(global.as_mut_ptr(), this) };
+                this_ref.strong_self.set(global, this_value);
+                this_ref.poll_ref.ref_(vm_event_loop_ctx());
+                return Ok(this_value);
             }
         }
 

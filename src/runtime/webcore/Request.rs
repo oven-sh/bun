@@ -1,7 +1,7 @@
 //! https://developer.mozilla.org/en-US/docs/Web/API/Request
 
 use core::ffi::{c_uint, c_void};
-use std::sync::Arc;
+use core::ptr::NonNull;
 
 use enumset::EnumSet;
 
@@ -23,6 +23,10 @@ use crate::webcore::{AbortSignal, Blob, CookieMap, FetchHeaders, ReadableStream,
 use super::response::HeadersRef;
 use bun_str::{strings, String as BunString, ZigString};
 use bun_uws as uws;
+use bun_jsc::StringJsc as _;
+use bun_http_jsc::method_jsc::MethodJsc as _;
+use bun_http_jsc::fetch_enums_jsc::{fetch_cache_mode_to_js, fetch_redirect_to_js, fetch_request_mode_to_js};
+use crate::webcore::blob::ZigStringBlobExt as _;
 
 // TODO(port): WeakRef = bun.ptr.WeakPtr(Request, "weak_ptr_data") — intrusive weak-ptr;
 // keep raw *mut Request + embedded WeakPtrData. See PORTING.md §Pointers.
@@ -81,7 +85,11 @@ pub struct Request {
     pub url: BunString,
 
     headers: Option<HeadersRef>,
-    pub signal: Option<Arc<AbortSignal>>,
+    // Zig: `?*AbortSignal` — C++-intrusive-refcounted opaque handle. Stored as
+    // a +1-ref'd raw pointer (assigned via `signal.ref_()`, released via
+    // `signal.unref()` in `finalize_without_deinit`). Not `Arc` — `AbortSignal`
+    // is an opaque ZST whose refcount lives on the C++ heap.
+    pub signal: Option<NonNull<AbortSignal>>,
     // TODO(port): mapped from *Body.Value.HiveRef per LIFETIMES.tsv. Zig pools
     // BodyValue in a HiveAllocator and mutates `#body.value` in place; Phase B
     // must decide on `Arc<RefCell<BodyValue>>` vs `IntrusiveRc<HiveRef>` once
@@ -314,19 +322,6 @@ impl Request {
         Ok(None)
     }
 }
-
-// TODO(b2-blocked): bun_jsc::* — every block below until `Flags`-adjacent
-// `init`/accessors depends on JSC method surface (JSValue::is_number/to/call,
-// Strong::create/get, request_context methods, JsRef::try_get, codegen
-// gc.stream slots, etc.). Struct + Flags + InternalJSEventCallback type are
-// kept un-gated; impl bodies gated.
-
-mod _jsc_gated {
-use super::*;
-use bun_jsc::StringJsc as _;
-use bun_http_jsc::method_jsc::MethodJsc as _;
-use bun_http_jsc::fetch_enums_jsc::{fetch_cache_mode_to_js, fetch_redirect_to_js, fetch_request_mode_to_js};
-use crate::webcore::blob::ZigStringBlobExt as _;
 
 impl Request {
     pub fn memory_cost(&self) -> usize {
@@ -706,11 +701,16 @@ impl Request {
         if let Some(headers) = &mut self.headers {
             // TODO(port): Zig has `try` here but fn returns plain `string` — preserved as
             // non-fallible; FetchHeaders.fastGet may need to be infallible in Rust.
-            if let Some(_content_type) = headers.fast_get(HTTPHeaderName::ContentType) {
-                // TODO(port): blocked_on lifetimes — `fast_get` returns an owned
-                // `ZigString` whose slice borrows a local; cannot return `&[u8]`.
-                // Phase B: change return type to owned slice or `bun.String`.
-                todo!("blocked_on: bun_jsc::FetchHeaders::fast_get borrowed-slice return");
+            if let Some(content_type) = headers.fast_get(HTTPHeaderName::ContentType) {
+                // PORT NOTE: `fast_get` returns a by-value `ZigString` whose
+                // payload pointer borrows the C++ `WTF::String` backing store
+                // owned by `self.headers`. `ZigString::slice()` ties the slice
+                // lifetime to the local, so detach via raw parts and rebind to
+                // `&self` (the data outlives this borrow).
+                let s = content_type.slice();
+                // SAFETY: data lives in `self.headers`' WTF backing store;
+                // valid for at least the lifetime of `&self`.
+                return unsafe { core::slice::from_raw_parts(s.as_ptr(), s.len()) };
             }
         }
 
@@ -763,14 +763,21 @@ impl Request {
 
     // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
     pub fn get_signal(&mut self, global_this: &JSGlobalObject) -> JSValue {
-        let _ = global_this;
         // Already have a C++ instance
-        if let Some(_signal) = &self.signal {
-            todo!("blocked_on: bun_jsc::AbortSignal::to_js")
-        } else {
-            // Lazy create default signal
-            todo!("blocked_on: bun_jsc::AbortSignal::create / from_js")
+        if let Some(signal) = self.signal {
+            // SAFETY: `self.signal` holds a +1-ref'd live AbortSignal*.
+            return unsafe { signal.as_ref() }.to_js(global_this);
         }
+        // Lazy create default signal
+        let js_signal = AbortSignal::create(global_this);
+        js_signal.ensure_still_alive();
+        if let Some(signal) = AbortSignal::from_js(js_signal) {
+            // SAFETY: `from_js` returns a live AbortSignal* borrowed from the
+            // JS wrapper rooted by `js_signal` on the stack; `ref_()` bumps
+            // the C++ intrusive refcount and returns the same pointer.
+            self.signal = NonNull::new(unsafe { (*signal).ref_() });
+        }
+        js_signal
     }
 
     // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
@@ -784,13 +791,16 @@ impl Request {
     }
 
     pub fn finalize_without_deinit(&mut self) {
-        // headers.deref() / signal.unref() → handled by Arc Drop when set to None
+        // headers.deref() → HeadersRef::Drop when set to None
         self.headers = None;
 
         self.url.deref();
         self.url = BunString::empty();
 
-        self.signal = None;
+        if let Some(signal) = self.signal.take() {
+            // SAFETY: `self.signal` held a +1-ref'd live AbortSignal*.
+            unsafe { signal.as_ref().unref() };
+        }
         // internal_event_callback.deinit() → Drop on Strong inside; explicit take to match timing
         self.internal_event_callback = InternalJSEventCallback::default();
     }
@@ -1284,11 +1294,9 @@ impl Request {
                     Ok(None) => {
                         if value == values_to_try[values_to_try.len() - 1]
                             && !is_first_argument_a_url
-                            && {
-                                let _ = value;
-                                todo!("blocked_on: bun_jsc::JSValue::implements_to_string");
-                                #[allow(unreachable_code)]
-                                false
+                            && match value.implements_to_string(global_this) {
+                                Ok(b) => b,
+                                Err(e) => bail!(Err(e)),
                             }
                         {
                             let str = match BunString::from_js(value, global_this) {
@@ -1603,8 +1611,6 @@ impl Request {
         let _ = self.request_context.set_timeout(seconds);
     }
 }
-
-} // mod _jsc_gated
 
 #[derive(Default)]
 pub struct InternalJSEventCallback {

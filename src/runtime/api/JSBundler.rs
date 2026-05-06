@@ -982,9 +982,13 @@ pub mod js_bundler {
                         };
                     }
                 } else if !source_map_js.is_empty_or_undefined_or_null() {
-                    let _ = source_map_js;
-                    this.source_map =
-                        todo!("blocked_on: bun_jsc::FromJsEnum for options::SourceMapOption");
+                    this.source_map = to_enum_from_map(
+                        source_map_js,
+                        global_this,
+                        "sourcemap",
+                        &options::SOURCE_MAP_OPTION_MAP,
+                        "'none', 'inline', 'external' or 'linked'",
+                    )?;
                 }
             }
 
@@ -1027,9 +1031,14 @@ pub mod js_bundler {
                 }
             }
 
-            if let Some(_packages_val) = config.get_truthy(global_this, "packages")? {
-                this.packages =
-                    todo!("blocked_on: bun_jsc::JSValue::get_optional_enum::<options::PackagesOption>");
+            if let Some(packages) = get_optional_enum_from_map(
+                config,
+                global_this,
+                "packages",
+                &options::PACKAGES_OPTION_MAP,
+                "'external' or 'bundle'",
+            )? {
+                this.packages = packages;
             }
 
             // Parse JSX configuration
@@ -1095,9 +1104,13 @@ pub mod js_bundler {
                 }
             }
 
-            if let Some(_format_val) = config.get_truthy(global_this, "format")? {
-                let format: options::Format =
-                    todo!("blocked_on: bun_jsc::JSValue::get_optional_enum::<options::Format>");
+            if let Some(format) = get_optional_enum_from_map(
+                config,
+                global_this,
+                "format",
+                &options::Format::MAP,
+                "'esm', 'cjs' or 'iife'",
+            )? {
                 this.format = format;
 
                 if this.bytecode && format != options::Format::Cjs && format != options::Format::Esm
@@ -1457,10 +1470,15 @@ pub mod js_bundler {
                     drop(prop_slice);
 
                     // PERF(port): was assume_capacity
-                    let _ = loader_iter.value;
-                    loader_values.push(todo!(
-                        "blocked_on: bun_jsc::JSValue::to_enum_from_map::<api::Loader>"
-                    ));
+                    loader_values.push(to_enum_from_map(
+                        loader_iter.value,
+                        global_this,
+                        "loader",
+                        &options::LOADER_API_NAMES,
+                        "'js', 'jsx', 'ts', 'tsx', 'css', 'file', 'json', 'jsonc', 'toml', \
+                         'yaml', 'json5', 'wasm', 'node', 'dataurl', 'base64', 'text', \
+                         'sqlite', 'html', 'md' or 'markdown'",
+                    )?);
                     loader_names.push(prop.to_owned_slice().into_boxed_slice());
                 }
 
@@ -2262,9 +2280,64 @@ pub mod js_bundler {
         /// is still called and the bundler's pending-item counter is decremented. Returning
         /// early here would cause `Bun.build` to hang forever waiting on the counter.
         fn msg_from_js(plugin: &mut Plugin, file: &[u8], exception: JSValue) -> logger::Msg {
-            // TODO(port): blocked_on: bun_logger::Msg::from_js — see logger.zig `Msg.fromJS`.
-            let _ = (plugin, file, exception);
-            todo!("blocked_on: bun_logger::Msg::from_js")
+            // SAFETY: `file` borrows from `Resolve.import_record.source_file` /
+            // `Load.path` — sibling fields of the `Msg` slot it is stored into
+            // (`ResolveValue::Err` / `LoadValue::Err`). Both live for the rest
+            // of the bundle; `logger::Location.file` is `&'static [u8]` so we
+            // launder the lifetime to match Zig's borrowed-slice semantics.
+            let file_static: &'static [u8] =
+                unsafe { core::slice::from_raw_parts(file.as_ptr(), file.len()) };
+
+            // PORT NOTE: `logger.Msg.fromJS` body inlined (lives in
+            // `bun_logger_jsc`, which `bun_runtime` cannot depend on without a
+            // crate-tier cycle via `bun_jsc::BuildMessage` consumers).
+            let global = plugin.global_object();
+            let try_convert = || -> JsResult<logger::Msg> {
+                let mut holder = jsc::zig_exception::Holder::init();
+                if let Some(value) = exception.to_error() {
+                    value.to_zig_exception(global, holder.zig_exception());
+                } else {
+                    holder.zig_exception().message = exception.to_bun_string(global)?;
+                }
+                Ok(logger::Msg {
+                    data: logger::Data {
+                        text: std::borrow::Cow::Owned(
+                            holder.zig_exception().message.to_owned_slice(),
+                        ),
+                        location: Some(logger::Location {
+                            file: file_static,
+                            ..Default::default()
+                        }),
+                    },
+                    ..Default::default()
+                })
+            };
+
+            match try_convert() {
+                Ok(msg) => msg,
+                Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
+                Err(JsError::Thrown | JsError::Terminated) => {
+                    // We are already producing a build error for the original plugin
+                    // exception; the secondary exception from string conversion is not
+                    // useful to the user and should not be treated as unhandled.
+                    let _ = plugin.global_object().clear_exception_except_termination();
+                    logger::Msg {
+                        data: logger::Data {
+                            text: std::borrow::Cow::Owned(
+                                b"A bundler plugin threw a value that could not be converted to a string"
+                                    .to_vec(),
+                            ),
+                            location: Some(logger::Location {
+                                file: file_static,
+                                line: -1,
+                                column: -1,
+                                ..Default::default()
+                            }),
+                        },
+                        ..Default::default()
+                    }
+                }
+            }
         }
     }
 

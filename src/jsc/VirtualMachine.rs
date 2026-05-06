@@ -103,8 +103,7 @@ pub struct VirtualMachine {
     pub main_hash: u32,
     /// Set if code overrides Bun.main to a custom value.
     pub overridden_main: crate::strong::Optional,
-    // TODO(b2-cycle): `entry_point` is `bun_bundler::entry_points::ServerEntryPoint` (gated in bundler).
-    pub entry_point: (),
+    pub entry_point: bun_bundler::entry_points::ServerEntryPoint,
     pub origin: bun_url::URL<'static>,
     // TODO(b2-cycle): `node_fs` is `Option<Box<bun_runtime::node::fs::NodeFS>>`.
     pub node_fs: Option<*mut c_void>,
@@ -168,8 +167,7 @@ pub struct VirtualMachine {
     pub macro_entry_points: bun_collections::ArrayHashMap<i32, *mut c_void>,
     pub macro_mode: bool,
     pub no_macros: bool,
-    // TODO(b2-cycle): `auto_killer` is `ProcessAutoKiller` (gated sibling).
-    pub auto_killer: (),
+    pub auto_killer: crate::process_auto_killer::ProcessAutoKiller,
 
     pub has_any_macro_remappings: bool,
     pub is_from_devserver: bool,
@@ -230,8 +228,7 @@ pub struct VirtualMachine {
     pub gc_controller: crate::GarbageCollectionController,
     // BACKREF — WebWorker owns the VM. Real type: `*const bun_runtime::webcore::WebWorker`.
     pub worker: Option<*const c_void>,
-    // TODO(b2-cycle): `ipc` is `Option<IPCInstanceUnion>` — depends on ipc.rs (gated sibling).
-    pub ipc: Option<()>,
+    pub ipc: Option<IPCInstanceUnion>,
     pub hot_reload_counter: u32,
 
     pub debugger: Option<Box<crate::debugger::Debugger>>,
@@ -1152,6 +1149,30 @@ pub struct RuntimeHooks {
     /// [`VirtualMachine::run_error_handler`].
     pub print_exception:
         unsafe fn(vm: *mut VirtualMachine, value: JSValue, exception_list: Option<&mut ExceptionList>),
+    /// `Node.fs.NodeFS{ .vm = … }` lazy creation (spec VirtualMachine.zig:827).
+    /// `NodeFS` lives in `bun_runtime`; the high tier boxes one and returns
+    /// the type-erased pointer. Stored back into `vm.node_fs`.
+    pub create_node_fs: unsafe fn(vm: *mut VirtualMachine) -> *mut c_void,
+    /// `Body.Value.HiveRef.init(body, &vm.body_value_hive_allocator)` — spec
+    /// VirtualMachine.zig:255. The hive allocator lives inside `runtime_state`
+    /// (high tier); `body` and the returned `*mut Body.Value.HiveRef` are
+    /// erased here and cast back on the `bun_runtime` side.
+    pub init_request_body_value:
+        unsafe fn(vm: *mut VirtualMachine, body: *mut c_void) -> *mut c_void,
+    /// `WebCore.ObjectURLRegistry.singleton().has(specifier["blob:".len..])` —
+    /// spec VirtualMachine.zig:1760. Registry lives in `bun_runtime::webcore`.
+    pub has_blob_url: unsafe fn(blob_id: &[u8]) -> bool,
+    /// The static `VmLoaderVTable` instance for [`fetch_without_on_load_plugins`]
+    /// — its function pointers reach into `Blob`/`ObjectURLRegistry`
+    /// (`bun_runtime::webcore`), so the high tier supplies the table.
+    pub vm_loader_vtable: &'static bun_bundler::options::VmLoaderVTable,
+    /// `node_cluster_binding.handleInternalMessageChild(global, data)` — spec
+    /// VirtualMachine.zig:3960 (IPCInstance.handleIPCMessage `.internal` arm).
+    pub handle_ipc_internal_child:
+        unsafe fn(global: *mut JSGlobalObject, data: JSValue),
+    /// `node_cluster_binding.child_singleton.deinit()` — spec
+    /// VirtualMachine.zig:3972 (IPCInstance.handleIPCClose).
+    pub ipc_child_singleton_deinit: unsafe fn(),
 }
 
 static RUNTIME_HOOKS: core::sync::atomic::AtomicPtr<RuntimeHooks> =
@@ -1837,15 +1858,6 @@ impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
         printer.ctx.buffer.append(b"\n")?;
         Ok(())
     }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// `bun_runtime` / `bun_schema` / gated-sibling-dependent impl — preserved
-// verbatim from the Phase-A draft. Un-gate piecewise once the cycle breaks.
-// ──────────────────────────────────────────────────────────────────────────
-
-mod _gated_impl {
-    include!("VirtualMachine.gated.rs");
 }
 
 // ──────────────────────────────────────────────────────────────────────────

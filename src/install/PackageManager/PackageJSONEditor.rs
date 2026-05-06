@@ -601,6 +601,20 @@ pub fn edit(
                                                     break 'add_packages_to_update;
                                                 }
 
+                                                // PORT NOTE: reshaped for borrowck — clone the
+                                                // literal up front so the `entry` borrow on
+                                                // `manager` can live across the alias check.
+                                                let version_literal_owned =
+                                                    Box::<[u8]>::from(version_literal);
+                                                let entry = manager
+                                                    .updating_packages
+                                                    .get_or_put(name)?;
+
+                                                // first come, first serve
+                                                if entry.found_existing {
+                                                    break 'add_packages_to_update;
+                                                }
+
                                                 let mut is_alias = false;
                                                 if strings::trim(
                                                     version_literal,
@@ -624,17 +638,6 @@ pub fn edit(
                                                         }
                                                         is_alias = true;
                                                     }
-                                                }
-
-                                                let version_literal_owned =
-                                                    Box::<[u8]>::from(version_literal);
-                                                let entry = manager
-                                                    .updating_packages
-                                                    .get_or_put(name)?;
-
-                                                // first come, first serve
-                                                if entry.found_existing {
-                                                    break 'add_packages_to_update;
                                                 }
 
                                                 *entry.value_ptr = PackageUpdateInfo {
@@ -787,7 +790,7 @@ pub fn edit(
                         // Duplicate dependency (e.g., "react" in both "dependencies" and
                         // "optionalDependencies"). Remove the old dependency.
                         new_dependencies[k] = G::Property::default();
-                        // TODO(port): Zig does `items.len -= 1` here without shifting; replicating via truncate
+                        // Zig: `new_dependencies.items.len -= 1` — drop the trailing slot.
                         let new_len = new_dependencies.len() - 1;
                         new_dependencies.truncate(new_len);
                     }

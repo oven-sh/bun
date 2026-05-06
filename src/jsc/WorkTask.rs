@@ -1,36 +1,45 @@
 use core::mem::offset_of;
 
-use bun_aio::KeepAlive;
-use bun_jsc::debugger::AsyncTaskTracker;
-use bun_jsc::{ConcurrentTask, EventLoop, JSGlobalObject};
-use bun_threading::{WorkPool, WorkPoolTask};
+use bun_aio::{self as Async, KeepAlive};
+use bun_event_loop::ConcurrentTask::{AutoDeinit, ConcurrentTask, Taskable, TaskTag};
+use bun_threading::{work_pool::WorkPool, WorkPoolTask};
+
+use crate::debugger::AsyncTaskTracker;
+use crate::event_loop::EventLoop;
+use crate::JSGlobalObject;
 
 /// A generic task that runs work on a thread pool and executes a callback on the main JavaScript thread.
 /// Unlike ConcurrentPromiseTask which automatically resolves a Promise, WorkTask provides more flexibility
 /// by allowing the Context to handle the result however it wants (e.g., calling callbacks, emitting events, etc.).
 ///
 /// The Context type must implement:
-/// - `run(&Context, &mut WorkTask)` - performs the work on the thread pool
-/// - `then(&JSGlobalObject)` - handles the result on the JS thread (no automatic Promise resolution)
+/// - `run(*mut Context, *mut WorkTask)` - performs the work on the thread pool
+/// - `then(*mut Context, &JSGlobalObject)` - handles the result on the JS thread (no automatic Promise resolution)
 ///
 /// Key differences from ConcurrentPromiseTask:
 /// - No automatic Promise creation or resolution
 /// - Includes async task tracking for debugging
 /// - More flexible result handling via the `then` callback
 /// - Context receives a reference to the WorkTask itself in the `run` method
-// TODO(port): trait bound synthesized from body call sites (`Context.run` / `ctx.then`).
-// Phase B: confirm whether an existing trait already covers this.
 pub trait WorkTaskContext: Sized {
-    fn run(this: &Self, task: &mut WorkTask<'_, Self>);
-    fn then(this: &Self, global_this: &JSGlobalObject) -> Result<(), bun_jsc::JsTerminated>;
+    /// Tag this `WorkTask<Self>` carries when enqueued back onto the JS event
+    /// loop's concurrent queue (`task_tag::*`). Mirrors Zig's per-instantiation
+    /// `TaggedPointerUnion` membership (e.g. `GetAddrInfoRequestTask`).
+    const TASK_TAG: TaskTag;
+
+    /// Perform the work on the thread pool. `this`/`task` are raw pointers
+    /// because the context is heap-allocated, crosses threads, and is mutated
+    /// — the Zig signature is `fn run(this: *Context, task: *Task) void`.
+    fn run(this: *mut Self, task: *mut WorkTask<Self>);
+    fn then(this: *mut Self, global_this: &JSGlobalObject) -> Result<(), crate::JsTerminated>;
 }
 
-pub struct WorkTask<'a, Context: WorkTaskContext> {
-    pub ctx: &'a Context,
+pub struct WorkTask<Context: WorkTaskContext> {
+    pub ctx: *mut Context,
     pub task: WorkPoolTask,
-    pub event_loop: &'static EventLoop,
+    pub event_loop: *const EventLoop,
     // allocator field dropped — global mimalloc (see PORTING.md §Allocators)
-    pub global_this: &'a JSGlobalObject,
+    pub global_this: *const JSGlobalObject,
     pub concurrent_task: ConcurrentTask,
     pub async_task_tracker: AsyncTaskTracker,
 
@@ -39,29 +48,35 @@ pub struct WorkTask<'a, Context: WorkTaskContext> {
     pub ref_: KeepAlive,
 }
 
-impl<'a, Context: WorkTaskContext> WorkTask<'a, Context> {
-    type TaskType = WorkPoolTask;
+// SAFETY: `WorkTask` is moved into the thread pool's queue (intrusive `task`
+// node) and back via the concurrent task queue. All access to `ctx` /
+// `global_this` is sequenced by the work-pool → on_finish → run_from_js
+// hand-off; raw pointers are inert.
+unsafe impl<C: WorkTaskContext> Send for WorkTask<C> {}
 
-    pub fn create_on_js_thread(global_this: &'a JSGlobalObject, value: &'a Context) -> *mut Self {
+impl<Context: WorkTaskContext> Taskable for WorkTask<Context> {
+    const TAG: TaskTag = Context::TASK_TAG;
+}
+
+impl<Context: WorkTaskContext> WorkTask<Context> {
+    pub fn create_on_js_thread(global_this: &JSGlobalObject, value: *mut Context) -> *mut Self {
         // SAFETY: `bun_vm()` never returns null for a Bun-owned global; the
         // VirtualMachine outlives every WorkTask scheduled on it.
         let vm = unsafe { &mut *global_this.bun_vm() };
-        // SAFETY: `event_loop()` returns a stable self-pointer into the VM that
-        // lives for the program (`'static` per field decl above).
-        let event_loop = unsafe { &*vm.event_loop() };
+        let event_loop = vm.event_loop();
         let mut this = Box::new(Self {
             event_loop,
             ctx: value,
             global_this,
             task: WorkPoolTask {
+                node: Default::default(),
                 callback: Self::run_from_thread_pool,
-                ..Default::default()
             },
             concurrent_task: ConcurrentTask::default(),
             async_task_tracker: AsyncTaskTracker::init(vm),
             ref_: KeepAlive::default(),
         });
-        this.ref_.ref_(this.event_loop.virtual_machine);
+        this.ref_.ref_(js_event_loop_ctx());
 
         // PORT NOTE: intrusive `task` field is recovered via container_of in
         // run_from_thread_pool, so this must live at a stable heap address as a
@@ -75,58 +90,72 @@ impl<'a, Context: WorkTaskContext> WorkTask<'a, Context> {
     pub unsafe fn destroy(this: *mut Self) {
         // SAFETY: `this` was produced by Box::into_raw in create_on_js_thread and
         // has not been freed.
-        let this = unsafe { Box::from_raw(this) };
-        this.ref_.unref(this.event_loop.virtual_machine);
+        let mut this = unsafe { Box::from_raw(this) };
+        this.ref_.unref(js_event_loop_ctx());
         // drop(this) — Box freed at scope exit
     }
 
-    pub fn run_from_thread_pool(task: *mut WorkPoolTask) {
-        // TODO(port): jsc.markBinding(@src()) — debug-only binding marker
-        bun_jsc::mark_binding(core::panic::Location::caller());
-        // SAFETY: `task` points to the `task` field of a heap-allocated `Self`
-        // created in `create_on_js_thread`; recover the parent via offset_of.
+    /// SAFETY: `task` points to the `task` field of a heap-allocated `Self`
+    /// created in `create_on_js_thread`.
+    pub unsafe fn run_from_thread_pool(task: *mut WorkPoolTask) {
+        crate::mark_binding();
+        // SAFETY: recover the parent via offset_of (Zig: `@fieldParentPtr`).
         let this: *mut Self = unsafe {
             (task as *mut u8)
                 .sub(offset_of!(Self, task))
                 .cast::<Self>()
         };
         // SAFETY: `this` is alive for the duration of the thread-pool callback.
-        let this = unsafe { &mut *this };
-        Context::run(this.ctx, this);
+        Context::run(unsafe { (*this).ctx }, this);
     }
 
-    pub fn run_from_js(this: &mut Self) -> Result<(), bun_jsc::JsTerminated> {
-        // TODO(port): narrow error set — Zig is `bun.JSTerminated!void`
+    pub fn run_from_js(this: *mut Self) -> Result<(), crate::JsTerminated> {
+        // SAFETY: `this` is the live heap allocation from create_on_js_thread,
+        // exclusively owned by the JS thread at this point.
+        let this = unsafe { &mut *this };
         let ctx = this.ctx;
         let tracker = this.async_task_tracker;
-        let vm = this.event_loop.virtual_machine;
         let global_this = this.global_this;
-        this.ref_.unref(vm);
+        this.ref_.unref(js_event_loop_ctx());
 
+        // SAFETY: `global_this` outlives the WorkTask (BACKREF, captured at create).
+        let global_this = unsafe { &*global_this };
         tracker.will_dispatch(global_this);
         let _guard = scopeguard::guard((), |_| tracker.did_dispatch(global_this));
         Context::then(ctx, global_this)
     }
 
-    pub fn schedule(this: &mut Self) {
-        let vm = this.event_loop.virtual_machine;
-        this.ref_.ref_(vm);
-        this.async_task_tracker.did_schedule(this.global_this);
+    pub fn schedule(this: *mut Self) {
+        // SAFETY: `this` is the live heap allocation from create_on_js_thread.
+        let this = unsafe { &mut *this };
+        this.ref_.ref_(js_event_loop_ctx());
+        // SAFETY: `global_this` outlives the WorkTask (BACKREF).
+        this.async_task_tracker.did_schedule(unsafe { &*this.global_this });
         WorkPool::schedule(&mut this.task);
     }
 
-    pub fn on_finish(this: &mut Self) {
-        this.event_loop
-            .enqueue_task_concurrent(this.concurrent_task.from(this, .manual_deinit));
-        // TODO(port): `.manual_deinit` is a Zig enum literal on ConcurrentTask;
-        // replace with the Rust variant once ConcurrentTask is ported.
+    pub fn on_finish(this: *mut Self) {
+        // SAFETY: `this` is alive (called from `Context::run` on the thread pool).
+        let event_loop = unsafe { &*(*this).event_loop };
+        // SAFETY: `concurrent_task` is an intrusive field of `*this`; `from`
+        // re-initializes it in place and returns the same address.
+        let task = unsafe { (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit) } as *mut _;
+        event_loop.enqueue_task_concurrent(task);
     }
+}
+
+/// Bridge to the aio-level `EventLoopCtx` used by `KeepAlive`. WorkTask always
+/// runs on the JS event loop, so the global `Js` ctx is the correct erasure.
+#[inline]
+fn js_event_loop_ctx() -> Async::EventLoopCtx {
+    Async::posix_event_loop::get_vm_ctx(Async::AllocatorType::Js)
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/jsc/WorkTask.zig (88 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      intrusive task + raw-ptr ownership; `&'a Context` per LIFETIMES.tsv but crosses threads — Phase B may need *mut/NonNull instead
+//   confidence: high
+//   notes:      `ctx`/`global_this` are raw `*mut`/`*const` (cross-thread,
+//               BACKREF — LIFETIMES.tsv); `KeepAlive` takes the cycle-break
+//               `EventLoopCtx` rather than `*VirtualMachine` directly.
 // ──────────────────────────────────────────────────────────────────────────

@@ -30,6 +30,8 @@ pub mod cookie_map;
 pub mod byte_blob_loader;
 #[path = "webcore/ByteStream.rs"]
 pub mod byte_stream;
+#[path = "webcore/ArrayBufferSink.rs"]
+pub mod array_buffer_sink;
 
 // ─── flat re-exports (mirror Zig `pub const X = @import(...)`) ───────────────
 pub use bun_jsc::js_error_code::DOMExceptionCode;

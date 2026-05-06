@@ -380,8 +380,6 @@ pub mod bun_object {
         #[cfg(not(feature = "css"))]
         BunObject_callback_color => color_unsupported,
         BunObject_callback_connect => super::static_adapters::listener_connect,
-        BunObject_callback_createParsedShellScript => super::static_adapters::parsed_shell_script_create,
-        BunObject_callback_createShellInterpreter => super::static_adapters::shell_interpreter_create,
         BunObject_callback_deflateSync => JSZlib::deflate_sync,
         BunObject_callback_file => crate::webcore::blob::construct_bun_file,
         BunObject_callback_gunzipSync => JSZlib::gunzip_sync,
@@ -412,6 +410,25 @@ pub mod bun_object {
         BunObject_callback_zstdCompress => JSZstd::compress,
         BunObject_callback_zstdDecompress => JSZstd::decompress,
     }
+    // `createParsedShellScript` / `createShellInterpreter` are pre-wrapped
+    // `JSHostFn` constants (MarkedArgumentBuffer-shimmed), so re-export the
+    // raw extern symbol directly instead of re-wrapping.
+    #[unsafe(no_mangle)]
+    pub extern "C" fn BunObject_callback_createParsedShellScript(
+        g: *mut JSGlobalObject,
+        f: *mut CallFrame,
+    ) -> JSValue {
+        // SAFETY: JSC always passes valid pointers here.
+        unsafe { (crate::shell::parsed_shell_script::CREATE_PARSED_SHELL_SCRIPT)(g, f) }
+    }
+    #[unsafe(no_mangle)]
+    pub extern "C" fn BunObject_callback_createShellInterpreter(
+        g: *mut JSGlobalObject,
+        f: *mut CallFrame,
+    ) -> JSValue {
+        // SAFETY: JSC always passes valid pointers here.
+        bun_jsc::to_js_host_fn(crate::shell::interpreter::Interpreter::create_shell_interpreter)(g, f)
+    }
     // --- Callbacks ---
 
     // --- Lazy property callbacks ---
@@ -423,14 +440,14 @@ pub mod bun_object {
         BunObject_lazyPropCb_FileSystemRouter => super::get_file_system_router,
         BunObject_lazyPropCb_Glob => super::get_glob_constructor,
         BunObject_lazyPropCb_Image => super::get_image_constructor,
-        BunObject_lazyPropCb_MD4 => super::static_adapters::static_hasher_getter,
-        BunObject_lazyPropCb_MD5 => super::static_adapters::static_hasher_getter,
-        BunObject_lazyPropCb_SHA1 => super::static_adapters::static_hasher_getter,
-        BunObject_lazyPropCb_SHA224 => super::static_adapters::static_hasher_getter,
-        BunObject_lazyPropCb_SHA256 => super::static_adapters::static_hasher_getter,
-        BunObject_lazyPropCb_SHA384 => super::static_adapters::static_hasher_getter,
-        BunObject_lazyPropCb_SHA512 => super::static_adapters::static_hasher_getter,
-        BunObject_lazyPropCb_SHA512_256 => super::static_adapters::static_hasher_getter,
+        BunObject_lazyPropCb_MD4 => Crypto::MD4::getter,
+        BunObject_lazyPropCb_MD5 => Crypto::MD5::getter,
+        BunObject_lazyPropCb_SHA1 => Crypto::SHA1::getter,
+        BunObject_lazyPropCb_SHA224 => Crypto::SHA224::getter,
+        BunObject_lazyPropCb_SHA256 => Crypto::SHA256::getter,
+        BunObject_lazyPropCb_SHA384 => Crypto::SHA384::getter,
+        BunObject_lazyPropCb_SHA512 => Crypto::SHA512::getter,
+        BunObject_lazyPropCb_SHA512_256 => Crypto::SHA512_256::getter,
         BunObject_lazyPropCb_JSONC => super::get_jsonc_object,
         BunObject_lazyPropCb_markdown => super::get_markdown_object,
         BunObject_lazyPropCb_TOML => super::get_toml_object,
@@ -465,16 +482,8 @@ pub mod bun_object {
 
     // PORT NOTE: Zig's `lazyPropertyCallbackName`/`callbackName` were comptime
     // string concats used only at `comptime @export` sites. The export names
-    // are now spelled out verbatim in the `export_*!` macro invocations above,
-    // so the runtime variant just leaks the formatted name (no callers on the
-    // hot path).
-    pub fn lazy_property_callback_name(base_name: &str) -> &'static str {
-        Box::leak(format!("BunObject_lazyPropCb_{base_name}").into_boxed_str())
-    }
-
-    pub fn callback_name(base_name: &str) -> &'static str {
-        Box::leak(format!("BunObject_callback_{base_name}").into_boxed_str())
-    }
+    // are spelled out verbatim in the `export_*!` macro invocations above; no
+    // runtime equivalent is needed (and `Box::leak` for `&'static` is banned).
 
     // type LazyPropertyCallback = extern "C" fn(*mut JSGlobalObject, *mut JSObject) -> JSValue
     // (the `callconv(jsc.conv)` ABI is emitted by `#[bun_jsc::host_fn]` / the macro above;
@@ -511,9 +520,8 @@ pub mod bun_object {
     // --- Setters ---
 }
 
-pub fn get_cron_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    let _ = global_this;
-    todo!("blocked_on: crate::api::cron::get_cron_object (gated under private _jsc_gated)")
+pub fn get_cron_object(global_this: &JSGlobalObject, obj: &JSObject) -> JSValue {
+    cron::get_cron_object(global_this, obj)
 }
 
 #[bun_jsc::host_fn]

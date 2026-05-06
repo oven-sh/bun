@@ -32,13 +32,14 @@ fn parse_bytea(hex: &[u8]) -> Result<SQLDataCell> {
     let mut buf = vec![0u8; len].into_boxed_slice();
     // errdefer free(buf) → Box drops on `?`
 
-    let written = bun_string::strings::decode_hex_to_bytes(&mut buf, hex)?;
+    let written = bun_string::strings::decode_hex_to_bytes(&mut buf, hex)
+        .map_err(|_| AnyPostgresError::InvalidByteSequence)?;
     let ptr = Box::into_raw(buf) as *mut u8;
 
     Ok(SQLDataCell {
         tag: Tag::Bytea,
         value: Value {
-            bytea: (ptr as usize, written),
+            bytea: [ptr as usize, written],
         },
         free_value: 1,
         ..Default::default()
@@ -203,11 +204,11 @@ fn parse_array(
                 }
                 types::Tag::timestamptz_array | types::Tag::timestamp_array | types::Tag::date_array => {
                     let date_str = &slice[1..current_idx];
-                    let str = BunString::init(date_str);
+                    let mut str = BunString::init(date_str);
                     // defer str.deref() → Drop on BunString
                     array.push(SQLDataCell {
                         tag: Tag::Date,
-                        value: Value { date: str.parse_date(global_object)? },
+                        value: Value { date: crate::jsc::bun_string_jsc::parse_date(&mut str, global_object)? },
                         ..Default::default()
                     });
 
@@ -342,10 +343,10 @@ fn parse_array(
                         continue;
                     }
                     if array_type == types::Tag::date_array {
-                        let str = BunString::init(element);
+                        let mut str = BunString::init(element);
                         array.push(SQLDataCell {
                             tag: Tag::Date,
-                            value: Value { date: str.parse_date(global_object)? },
+                            value: Value { date: crate::jsc::bun_string_jsc::parse_date(&mut str, global_object)? },
                             ..Default::default()
                         });
                     } else {
@@ -725,7 +726,7 @@ fn parse_array(
 // PORT NOTE: Zig used `inline ... => |tag|` to capture the comptime tag and call
 // `tag.toJSTypedArrayType()` / `tag.byteArrayType()` / `tag.pgArrayType()` in type
 // position. Those return types, so we monomorphize over the element type here.
-fn from_bytes_typed_array<Elem>(
+fn from_bytes_typed_array<Elem: Copy>(
     tag: types::Tag,
     bytes: &[u8],
 ) -> Result<SQLDataCell> {
@@ -733,8 +734,8 @@ fn from_bytes_typed_array<Elem>(
         return Err(AnyPostgresError::InvalidBinaryData);
     }
     // https://github.com/postgres/postgres/blob/master/src/backend/utils/adt/arrayfuncs.c#L1549-L1645
-    let dimensions_raw: types::int4 = i32::from_ne_bytes(bytes[0..4].try_into().unwrap());
-    let contains_nulls: types::int4 = i32::from_ne_bytes(bytes[4..8].try_into().unwrap());
+    let dimensions_raw: types::int4 = u32::from_ne_bytes(bytes[0..4].try_into().unwrap());
+    let contains_nulls: types::int4 = u32::from_ne_bytes(bytes[4..8].try_into().unwrap());
 
     let dimensions = dimensions_raw.swap_bytes();
     if dimensions > 1 {
@@ -745,7 +746,8 @@ fn from_bytes_typed_array<Elem>(
         return Err(AnyPostgresError::NullsInArrayNotSupportedYet);
     }
 
-    let js_typed_array_type = tag.to_js_typed_array_type()?;
+    let js_typed_array_type = crate::postgres::types::tag_jsc::to_js_typed_array_type(tag)
+        .map_err(|_| AnyPostgresError::InvalidBinaryData)?;
 
     if dimensions == 0 {
         return Ok(SQLDataCell {

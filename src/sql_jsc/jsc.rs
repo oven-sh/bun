@@ -1487,6 +1487,82 @@ pub struct JSFunction { _opaque: [u8; 0], _m: PhantomData<(*mut u8, core::marker
 /// Zig: `fn(*JSGlobalObject, *CallFrame) callconv(jsc.conv) JSValue`.
 pub type JSHostFn = unsafe extern "C" fn(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue;
 
+/// `jsc.JSHostFnZig` — Rust-side host fn signature returning `JsResult` so
+/// callers can use `?`. Wrapped via [`IntoJSHostFn`] (Zig: `toJSHostFn`,
+/// host_fn.zig:16).
+pub type JSHostFnZig = fn(&JSGlobalObject, &CallFrame) -> JsResult<JSValue>;
+
+/// Coerce a host-fn implementation into the C-ABI [`JSHostFn`] pointer.
+///
+/// Mirrors the comptime dispatch in `JSFunction.create` (JSFunction.zig:44-45):
+/// accepts either a raw [`JSHostFn`], a `fn(&JSGlobalObject, &CallFrame) ->
+/// JsResult<JSValue>` (wrapped via a generated thunk that maps `Err` →
+/// `.zero`), or the infallible `fn(&JSGlobalObject, &CallFrame) -> JSValue`
+/// shape. The `Marker` parameter exists only to keep the blanket `Fn` impls
+/// coherent (return-type-directed dispatch).
+pub trait IntoJSHostFn<Marker>: Sized {
+    fn into_js_host_fn(self) -> JSHostFn;
+}
+
+#[doc(hidden)] pub struct HostFnRaw;
+#[doc(hidden)] pub struct HostFnResult;
+#[doc(hidden)] pub struct HostFnPlain;
+
+impl IntoJSHostFn<HostFnRaw> for JSHostFn {
+    #[inline] fn into_js_host_fn(self) -> JSHostFn { self }
+}
+
+impl<F> IntoJSHostFn<HostFnResult> for F
+where
+    F: Fn(&JSGlobalObject, &CallFrame) -> JsResult<JSValue> + Copy + 'static,
+{
+    fn into_js_host_fn(self) -> JSHostFn {
+        // Zig `toJSHostFn` mints a fresh `extern fn` per `comptime` callee. In
+        // Rust we monomorphize on `F` (a fn-item ZST) and conjure the instance
+        // inside the thunk — fn items are zero-sized so `zeroed()` is a no-op.
+        debug_assert_eq!(core::mem::size_of::<F>(), 0, "IntoJSHostFn: expected fn item (ZST)");
+        let _ = self;
+        unsafe extern "C" fn thunk<F>(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue
+        where
+            F: Fn(&JSGlobalObject, &CallFrame) -> JsResult<JSValue> + Copy + 'static,
+        {
+            // SAFETY: `F` is a ZST fn item — no bit pattern to invalidate.
+            let f: F = unsafe { core::mem::MaybeUninit::zeroed().assume_init() };
+            // SAFETY: JSC passes live non-null `*JSGlobalObject` / `*CallFrame`.
+            let global = unsafe { &*g };
+            let frame = unsafe { &*c };
+            // host_fn.zig:31 `toJSHostFnResult` — Err maps to `.zero`
+            // (OOM throws first).
+            match f(global, frame) {
+                Ok(v) => v,
+                Err(JsError::OutOfMemory) => { let _ = global.throw_out_of_memory(); JSValue::ZERO }
+                Err(_) => JSValue::ZERO,
+            }
+        }
+        thunk::<F>
+    }
+}
+
+impl<F> IntoJSHostFn<HostFnPlain> for F
+where
+    F: Fn(&JSGlobalObject, &CallFrame) -> JSValue + Copy + 'static,
+{
+    fn into_js_host_fn(self) -> JSHostFn {
+        debug_assert_eq!(core::mem::size_of::<F>(), 0, "IntoJSHostFn: expected fn item (ZST)");
+        let _ = self;
+        unsafe extern "C" fn thunk<F>(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue
+        where
+            F: Fn(&JSGlobalObject, &CallFrame) -> JSValue + Copy + 'static,
+        {
+            // SAFETY: `F` is a ZST fn item.
+            let f: F = unsafe { core::mem::MaybeUninit::zeroed().assume_init() };
+            // SAFETY: JSC passes live non-null `*JSGlobalObject` / `*CallFrame`.
+            f(unsafe { &*g }, unsafe { &*c })
+        }
+        thunk::<F>
+    }
+}
+
 /// Zig: `JSFunction.ImplementationVisibility` (src/jsc/JSFunction.zig:2-6).
 #[repr(u8)]
 #[derive(Clone, Copy, Default)]

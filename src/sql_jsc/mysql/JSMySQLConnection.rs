@@ -863,6 +863,22 @@ impl JSMySQLConnection {
         reader: NewReader<C>,
     ) -> Result<(), OnResultRowError> {
         let result_mode = request.get_result_mode();
+        let mut structure: JSValue = JSValue::UNDEFINED;
+        // PORT NOTE: hoisted above `row` — `MySQLStatement::structure` takes
+        // `&mut self`, which would conflict with `row.columns: &statement.columns`.
+        let cached_structure: Option<&CachedStructure> = match result_mode {
+            ResultMode::Objects => {
+                let cs = self
+                    .js_value
+                    .try_get()
+                    .map(|value| &*statement.structure(value, self.global_object));
+                structure = cs.unwrap().js_value().unwrap_or(JSValue::UNDEFINED);
+                cs
+            }
+            // no need to check for duplicate fields or structure
+            ResultMode::Raw | ResultMode::Values => None,
+        };
+        let fields_flags = statement.fields_flags;
         // PERF(port): was stack-fallback allocator (4096 bytes)
         let mut row = ResultSet::Row {
             global_object: self.global_object,
@@ -872,24 +888,6 @@ impl JSMySQLConnection {
             bigint: request.is_bigint_supported(),
             values: Box::default(),
         };
-        let mut structure: JSValue = JSValue::UNDEFINED;
-        let mut cached_structure: Option<&CachedStructure> = None;
-        match result_mode {
-            ResultMode::Objects => {
-                cached_structure = if let Some(value) = self.js_value.try_get() {
-                    Some(statement.structure(value, self.global_object))
-                } else {
-                    None
-                };
-                structure = cached_structure
-                    .unwrap()
-                    .js_value()
-                    .unwrap_or(JSValue::UNDEFINED);
-            }
-            ResultMode::Raw | ResultMode::Values => {
-                // no need to check for duplicate fields or structure
-            }
-        }
         // defer row.deinit(allocator) — Drop on ResultSet::Row
         if let Err(e) = row.decode(reader) {
             if e == AnyMySQLErrorT::ShortRead {
@@ -906,7 +904,7 @@ impl JSMySQLConnection {
                 self.global_object,
                 pending_value,
                 structure,
-                statement.fields_flags,
+                fields_flags,
                 result_mode,
                 cached_structure,
             )

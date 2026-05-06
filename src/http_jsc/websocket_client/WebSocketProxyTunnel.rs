@@ -279,10 +279,18 @@ impl WebSocketProxyTunnel {
                 if let Some(hostname) = this.sni_hostname.as_deref() {
                     if !strings::is_ip_address(hostname) {
                         // Set SNI hostname
-                        let hostname_z = bun_core::ZBox::from_slice(hostname);
-                        // SAFETY: ssl_ptr is a live `*mut SSL` owned by the wrapper.
-                        unsafe { &mut *ssl_ptr.as_ptr() }
-                            .configure_http_client(hostname_z.as_zstr());
+                        let hostname_z = bun_core::ZBox::from_vec_with_nul(hostname.to_vec());
+                        // CYCLEBREAK: Zig `ssl_ptr.configureHTTPClient(host)` =
+                        // SNI + verify-hostname. The boringssl-crate ext-method
+                        // hasn't landed yet; route through bun_http's
+                        // tier-neutral helper which does SNI + ALPN(h1) (no
+                        // verify-hostname — that is checked manually in
+                        // `on_handshake`, matching the Zig path).
+                        bun_http::configure_http_client_with_alpn(
+                            ssl_ptr.as_ptr(),
+                            hostname_z.as_ptr(),
+                            bun_http::AlpnOffer::H1,
+                        );
                         // hostname_z dropped here (owned NUL-terminated copy)
                     }
                 }

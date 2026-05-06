@@ -5,11 +5,16 @@ use bun_collections::{ArrayHashMap, BabyList, StringArrayHashMap};
 use bun_core::handle_oom;
 use bun_options_types::{ImportKind, ImportRecord, ImportRecordFlags};
 
-use crate::bun_css::{self, BundlerStyleSheet, ImportConditions, LayerName};
+#[cfg(feature = "css")]
+use crate::bun_css::css_parser::BundlerCssRule;
+use crate::bun_css::{BundlerStyleSheet, ImportConditions, LayerName};
+use crate::bun_fs;
 use crate::chunk::{CssImportOrder, CssImportOrderKind, Layers};
+use crate::linker_context::LinkerCtx;
 use crate::Graph::{Graph, InputFileListExt as _};
 use crate::{Index, LinkerContext};
 use bun_js_parser::ast::bundled_ast::BundledAstListExt as _;
+use bun_js_parser::Index as AstIndex;
 
 // `debug` in the Zig is `LinkerContext.debug`, a scoped Output log.
 macro_rules! debug {

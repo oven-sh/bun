@@ -419,7 +419,7 @@ impl IntermediateOutput {
     /// resolved to inline code content instead of file paths. Asset references
     /// are resolved to data: URIs from url_for_css.
     #[allow(clippy::too_many_arguments)]
-    pub fn code_standalone(
+    pub fn code_standalone<'d>(
         &mut self,
         allocator_to_use: Option<&DynAlloc>,
         parse_graph: &Graph,
@@ -427,11 +427,14 @@ impl IntermediateOutput {
         import_prefix: &[u8],
         chunk: &mut Chunk,
         chunks: &mut [Chunk],
-        display_size: Option<&mut usize>,
+        // PORT NOTE: `?*usize` in Zig — accept both `&mut usize` and
+        // `Option<&mut usize>` so call sites that ported either way compile.
+        display_size: impl Into<Option<&'d mut usize>>,
         force_absolute_path: bool,
         enable_source_map_shifts: bool,
         standalone_chunk_contents: &[Option<&[u8]>],
     ) -> Result<CodeResult, AllocError> {
+        let display_size: Option<&mut usize> = display_size.into();
         if enable_source_map_shifts {
             self.code_with_source_map_shifts::<true>(
                 allocator_to_use,

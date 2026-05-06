@@ -40,6 +40,16 @@ pub struct DeclarationBlock<'bump> {
     pub declarations: DeclarationList<'bump>,
 }
 
+// SAFETY: `bumpalo::collections::Vec<'bump, T>` is `!Send`/`!Sync` because it
+// holds a raw `NonNull<T>` and `&'bump Bump` (Bump is `!Sync`). After parsing,
+// the CSS AST is treated as an immutable, owned tree shared read-only across
+// the bundler thread pool (Zig passes the same arena-backed AST between
+// threads freely). The `&Bump` is never used to allocate post-parse, and the
+// element storage is uniquely owned exactly like `Vec<T>`, so thread-safety
+// follows `Property`'s auto-traits.
+unsafe impl<'bump> Send for DeclarationBlock<'bump> {}
+unsafe impl<'bump> Sync for DeclarationBlock<'bump> {}
+
 pub struct DebugFmt<'a, 'bump>(&'a DeclarationBlock<'bump>);
 
 // blocked_on: Printer::new signature (Zig passes allocator + Managed(u8) +

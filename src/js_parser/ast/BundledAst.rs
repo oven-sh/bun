@@ -267,7 +267,6 @@ impl<'arena> BundledAst<'arena> {
     }
 
     /// TODO: Move this from being done on all parse tasks into the start of the linker. This currently allocates base64 encoding for every small file loaded thing.
-     // TODO(b2-blocked): bun_http_types::MimeType + bun_paths::extension (back-edge); CSS-only helper
     pub fn add_url_for_css(
         &mut self,
         bump: &'arena bun_alloc::Arena,
@@ -277,16 +276,18 @@ impl<'arena> BundledAst<'arena> {
         force_inline: bool,
     ) {
         {
+            // `by_extension` returns an owned MimeType whose `.value` is a Cow; bind it
+            // so the borrow in the else-arm outlives the `mime_type` slice.
+            let mime_type_owned;
             let mime_type: &[u8] = if let Some(m) = mime_type_ {
                 m
             } else {
-                MimeType::by_extension(strings::trim_leading_char(
-                    bun_paths::extension(source.path.text),
-                    b'.',
-                ))
-                .value
+                mime_type_owned = bun_http_types::MimeType::by_extension(
+                    strings::trim_leading_char(bun_paths::extension(source.path.text), b'.'),
+                );
+                &mime_type_owned.value
             };
-            let contents = source.contents;
+            let contents: &[u8] = &source.contents;
             // TODO: make this configurable
             const COPY_THRESHOLD: usize = 128 * 1024; // 128kb
             let should_copy =

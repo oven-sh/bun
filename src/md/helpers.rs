@@ -1,9 +1,132 @@
-// TODO(b1): bun_str crate missing — local stubs for the four fns we call.
+// Local ports of the four `bun.strings.*` helpers we call. Bodies are 1:1 with
+// `src/string/immutable/unicode.zig` + `src/string/immutable.zig`; kept inline
+// because `codepoint_size` / `encode_wtf8_rune_t` are not (yet) re-exported
+// from `bun_str::strings`.
 mod strings {
-    pub fn codepoint_size<T>(_b0: u8) -> u8 { todo!("b1: bun_str::strings stub") }
-    pub fn decode_wtf8_rune_t<T>(_buf: &[u8], _len: u8, _replacement: u32) -> u32 { todo!("b1: bun_str::strings stub") }
-    pub fn encode_wtf8_rune_t<T>(_buf: &mut [u8], _cp: u32) -> u32 { todo!("b1: bun_str::strings stub") }
-    pub fn eql_case_insensitive_asciii_check_length(_a: &[u8], _b: &[u8]) -> bool { todo!("b1: bun_str::strings stub") }
+    /// Port of `bun.strings.codepointSize` — UTF-8 sequence length from leading byte.
+    /// Returns 0 for an invalid leading byte.
+    #[inline]
+    pub fn codepoint_size<R: Into<u32> + Copy>(r: R) -> u8 {
+        match r.into() {
+            0b0000_0000..=0b0111_1111 => 1,
+            0b1100_0000..=0b1101_1111 => 2,
+            0b1110_0000..=0b1110_1111 => 3,
+            0b1111_0000..=0b1111_0111 => 4,
+            _ => 0,
+        }
+    }
+
+    /// Port of `bun.strings.decodeWTF8RuneT` (and its `decodeWTF8RuneTMultibyte`
+    /// tail). Converts potentially ill-formed UTF-8 bytes to a codepoint;
+    /// invalid sequences return `zero`.
+    #[inline]
+    pub fn decode_wtf8_rune_t<T>(p: &[u8; 4], len: u8, zero: T) -> T
+    where
+        T: Copy
+            + From<u8>
+            + core::ops::Shl<u32, Output = T>
+            + core::ops::BitOr<Output = T>
+            + PartialOrd,
+    {
+        if len == 0 {
+            return zero;
+        }
+        if len == 1 {
+            return T::from(p[0]);
+        }
+
+        // decodeWTF8RuneTMultibyte:
+        debug_assert!(len > 1);
+
+        let s1 = p[1];
+        if (s1 & 0xC0) != 0x80 {
+            return zero;
+        }
+
+        if len == 2 {
+            let cp = (T::from(p[0] & 0x1F) << 6) | T::from(s1 & 0x3F);
+            if cp < T::from(0x80) {
+                return zero;
+            }
+            return cp;
+        }
+
+        let s2 = p[2];
+        if (s2 & 0xC0) != 0x80 {
+            return zero;
+        }
+
+        if len == 3 {
+            let cp = (T::from(p[0] & 0x0F) << 12) | (T::from(s1 & 0x3F) << 6) | T::from(s2 & 0x3F);
+            // 0x800 doesn't fit u8 — build via shift (T is u32/i32 in practice).
+            if cp < (T::from(0x08) << 8) {
+                return zero;
+            }
+            return cp;
+        }
+
+        let s3 = p[3];
+        if (s3 & 0xC0) != 0x80 {
+            return zero;
+        }
+
+        let cp = (T::from(p[0] & 0x07) << 18)
+            | (T::from(s1 & 0x3F) << 12)
+            | (T::from(s2 & 0x3F) << 6)
+            | T::from(s3 & 0x3F);
+        let lo = T::from(1) << 16; // 0x1_0000
+        let hi = (T::from(0x10) << 16) | (T::from(0xFF) << 8) | T::from(0xFF); // 0x10_FFFF
+        if cp < lo || cp > hi {
+            return zero;
+        }
+        cp
+    }
+
+    /// Port of `bun.strings.encodeWTF8RuneT` — clone of golang's
+    /// `utf8.EncodeRune` modified for WTF-8.
+    #[inline]
+    pub fn encode_wtf8_rune_t<R: Into<u32> + Copy>(p: &mut [u8; 4], r: R) -> u8 {
+        let r: u32 = r.into();
+        match r {
+            0..=0x7F => {
+                p[0] = r as u8;
+                1
+            }
+            0x80..=0x7FF => {
+                p[0] = (0xC0 | (r >> 6)) as u8;
+                p[1] = (0x80 | (r & 0x3F)) as u8;
+                2
+            }
+            0x800..=0xFFFF => {
+                p[0] = (0xE0 | (r >> 12)) as u8;
+                p[1] = (0x80 | ((r >> 6) & 0x3F)) as u8;
+                p[2] = (0x80 | (r & 0x3F)) as u8;
+                3
+            }
+            _ => {
+                p[0] = (0xF0 | (r >> 18)) as u8;
+                p[1] = (0x80 | ((r >> 12) & 0x3F)) as u8;
+                p[2] = (0x80 | ((r >> 6) & 0x3F)) as u8;
+                p[3] = (0x80 | (r & 0x3F)) as u8;
+                4
+            }
+        }
+    }
+
+    /// Port of `bun.strings.eqlCaseInsensitiveASCIIICheckLength` (sic — triple-`i`
+    /// typo preserved from Zig). Length-checked ASCII case-insensitive compare.
+    #[inline]
+    pub fn eql_case_insensitive_asciii_check_length(a: &[u8], b: &[u8]) -> bool {
+        if a.len() != b.len() {
+            return false;
+        }
+        if a.is_empty() {
+            return true;
+        }
+        // SAFETY: both slices are non-empty and equal length; strncasecmp reads
+        // at most `a.len()` bytes from each pointer.
+        unsafe { libc::strncasecmp(a.as_ptr().cast(), b.as_ptr().cast(), a.len()) == 0 }
+    }
 }
 
 use super::entity as entity_mod;

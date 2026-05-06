@@ -6847,12 +6847,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     break 'found i;
                 }
             }
-            let _ = self.log.add_error(self.source, loc, Self::IMPORT_META_HOT_ACCEPT_ERR);
+            let _ = self.log.add_error(Some(self.source), loc, Self::IMPORT_META_HOT_ACCEPT_ERR);
             return None;
         };
 
         Some(js_ast::ExprData::ESpecial(E::Special::ResolvedSpecifierString(
-            E::Special::ResolvedSpecifierStringIndex::init(u32::try_from(import_record_index).unwrap()),
+            u32::try_from(import_record_index).unwrap(),
         )))
     }
 

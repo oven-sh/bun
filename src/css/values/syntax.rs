@@ -450,9 +450,13 @@ pub struct Repeated {
 }
 
 impl Repeated {
-    pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
-        // TODO(port): css.implementDeepClone — replace with DeepClone trait/derive
-        todo!("blocked_on: ParsedComponent payload deep_clone (Image/TokenList/Transform lack Clone)")
+    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+        // PORT NOTE: hand-expanded `css.implementDeepClone` (field-wise reflection):
+        // ArrayList → Vec deep-cloned per element; `Multiplier` is `Copy`.
+        Repeated {
+            components: self.components.iter().map(|c| c.deep_clone(bump)).collect(),
+            multiplier: self.multiplier,
+        }
     }
 }
 

@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════════════
-// B-2 un-gate prelude: imports, constants, helper fns, and `todo!()` bridge
+// B-2 un-gate prelude: imports, constants, helper fns, and bridge
 // impls the `impl HTTPClient` state machine needs. Reconstructed from the
 // recipe at tasks/wbod1goes (prior pass reached 67/371 errors before an
 // external `git reset` discarded it). Kept in a separate file so concurrent
@@ -450,7 +450,7 @@ fn write_to_socket_with_buffer_fallback<const IS_SSL: bool>(
 }
 
 // ── bridge impls removed ────────────────────────────────────────────────
-// Formerly `todo!()` scaffolding while sibling modules were behind
+// Formerly placeholder scaffolding while sibling modules were behind
 // `_phase_a_draft`. All 19 functions now have real ported bodies in their
 // home modules; the state machine calls them directly:
 //   - h2::ClientSession::{create,attach,enqueue}      → src/http/h2_client/ClientSession.rs

@@ -19,19 +19,20 @@ use bun_sys::{self, Fd, FdExt};
 use bun_wyhash::hash;
 
 // ──────────────────────────────────────────────────────────────────────────
-// Local libarchive C-API surface. The real bindings live in
-// `bun_libarchive_sys::bindings`, which is still ``-gated at
-// tier 0. This module provides the *type-level* surface needed for
-// `bun_libarchive` to compile; every method body is a `todo!()` so a real
-// build that reaches FFI will panic loudly until the sys crate un-gates.
-// TODO(b2-blocked): bun_libarchive_sys::bindings
+// Local libarchive C-API surface. Thin safe(ish) wrappers over the raw
+// `extern "C"` libarchive symbols, ported 1:1 from
+// `src/libarchive_sys/bindings.zig`. The opaque `Archive` / `Entry` types
+// here are layout-compatible with libarchive's `struct archive` /
+// `struct archive_entry` (zero-sized, `#[repr(C)]`, !Unpin).
 // ──────────────────────────────────────────────────────────────────────────
 #[allow(non_camel_case_types)]
 pub mod lib {
     use super::*;
+    use core::ffi::{c_char, c_int, c_long, c_uint, c_void};
 
     pub type la_ssize_t = isize;
     pub type la_int64_t = i64;
+    type time_t = isize;
 
     /// Opaque libarchive `struct archive`. Always used behind `*mut Archive`.
     #[repr(C)]
@@ -58,73 +59,420 @@ pub mod lib {
         Fatal = -30,
     }
 
+    // ── raw libarchive C FFI ───────────────────────────────────────────────
+    // Signatures match `vendor/libarchive/archive.h` /
+    // `src/libarchive_sys/bindings.zig` exactly. `Result` is `#[repr(i32)]`
+    // so it is ABI-compatible with the C `int` return values.
+    unsafe extern "C" {
+        // read side
+        fn archive_read_new() -> *mut Archive;
+        fn archive_read_close(a: *mut Archive) -> Result;
+        fn archive_read_free(a: *mut Archive) -> Result;
+        fn archive_read_support_format_tar(a: *mut Archive) -> Result;
+        fn archive_read_support_format_gnutar(a: *mut Archive) -> Result;
+        fn archive_read_support_filter_gzip(a: *mut Archive) -> Result;
+        fn archive_read_set_options(a: *mut Archive, opts: *const c_char) -> Result;
+        fn archive_read_open_memory(a: *mut Archive, buf: *const c_void, size: usize) -> Result;
+        fn archive_read_next_header(a: *mut Archive, entry: *mut *mut Entry) -> Result;
+        fn archive_read_data(a: *mut Archive, buf: *mut c_void, size: usize) -> la_ssize_t;
+        fn archive_read_data_block(
+            a: *mut Archive,
+            buff: *mut *const c_void,
+            size: *mut usize,
+            offset: *mut la_int64_t,
+        ) -> Result;
+        fn archive_error_string(a: *mut Archive) -> *const c_char;
+
+        // write side
+        fn archive_write_new() -> *mut Archive;
+        fn archive_write_free(a: *mut Archive) -> Result;
+        fn archive_write_close(a: *mut Archive) -> Result;
+        fn archive_write_set_format_pax_restricted(a: *mut Archive) -> Result;
+        fn archive_write_header(a: *mut Archive, entry: *mut Entry) -> Result;
+        fn archive_write_data(a: *mut Archive, data: *const c_void, size: usize) -> la_ssize_t;
+        fn archive_write_finish_entry(a: *mut Archive) -> Result;
+        fn archive_write_open2_ffi(
+            a: *mut Archive,
+            client_data: *mut c_void,
+            open: Option<archive_open_callback>,
+            write: Option<archive_write_callback>,
+            close: Option<archive_close_callback>,
+            free: Option<archive_free_callback>,
+        ) -> c_int;
+
+        // entry
+        fn archive_entry_new() -> *mut Entry;
+        fn archive_entry_free(e: *mut Entry);
+        fn archive_entry_clear(e: *mut Entry) -> *mut Entry;
+        fn archive_entry_pathname(e: *mut Entry) -> *const c_char;
+        fn archive_entry_pathname_utf8(e: *mut Entry) -> *const c_char;
+        fn archive_entry_pathname_w(e: *mut Entry) -> *const u16;
+        fn archive_entry_symlink(e: *mut Entry) -> *const c_char;
+        fn archive_entry_perm(e: *mut Entry) -> bun_sys::Mode;
+        fn archive_entry_size(e: *mut Entry) -> la_int64_t;
+        fn archive_entry_filetype(e: *mut Entry) -> bun_sys::Mode;
+        fn archive_entry_mtime(e: *mut Entry) -> time_t;
+        fn archive_entry_set_pathname_utf8(e: *mut Entry, name: *const c_char);
+        fn archive_entry_set_size(e: *mut Entry, s: la_int64_t);
+        fn archive_entry_set_filetype(e: *mut Entry, t: c_uint);
+        fn archive_entry_set_perm(e: *mut Entry, p: bun_sys::Mode);
+        fn archive_entry_set_mtime(e: *mut Entry, secs: time_t, nsecs: c_long);
+    }
+
+    // The real C symbol is `archive_write_open2`; we expose a Rust wrapper of
+    // the same name below, so the extern uses a `#[link_name]` alias.
+    #[link_name = "archive_write_open2"]
+    unsafe extern "C" {
+        fn archive_write_open2_raw(
+            a: *mut Archive,
+            client_data: *mut c_void,
+            open: Option<archive_open_callback>,
+            write: Option<archive_write_callback>,
+            close: Option<archive_close_callback>,
+            free: Option<archive_free_callback>,
+        ) -> c_int;
+    }
+
+    /// `bun.sliceTo(ptr, 0)` — make a `&ZStr` from a possibly-null C string.
+    /// SAFETY: `p` must be either null or point at a NUL-terminated buffer
+    /// that outlives `'a` (libarchive owns these and keeps them alive for the
+    /// duration of the `Archive` / `Entry`).
+    #[inline]
+    unsafe fn cstr_to_zstr<'a>(p: *const c_char) -> &'a ZStr {
+        if p.is_null() {
+            return ZStr::EMPTY;
+        }
+        // SAFETY: `p` is non-null and NUL-terminated per caller contract.
+        let len = unsafe { libc::strlen(p) };
+        // SAFETY: `p[len] == 0` and `p[..len]` is readable for `'a`.
+        unsafe { ZStr::from_raw(p.cast::<u8>(), len) }
+    }
+
+    #[cfg(windows)]
+    #[inline]
+    unsafe fn wcstr_to_wstr<'a>(p: *const u16) -> &'a bun_core::WStr {
+        if p.is_null() {
+            return bun_core::WStr::EMPTY;
+        }
+        let mut len = 0usize;
+        // SAFETY: `p` is non-null and NUL-terminated per caller contract.
+        while unsafe { *p.add(len) } != 0 {
+            len += 1;
+        }
+        // SAFETY: `p[len] == 0` and `p[..len]` is readable for `'a`.
+        unsafe { bun_core::WStr::from_raw(p, len) }
+    }
+
     impl Archive {
+        #[inline]
+        fn as_mut_ptr(&self) -> *mut Archive {
+            // libarchive's C API takes `struct archive *` (non-const) everywhere;
+            // these `&self` wrappers all came from a `*mut Archive` originally
+            // (see `read_new` / `write_new`), so casting away const is sound.
+            self as *const Archive as *mut Archive
+        }
+
         pub fn read_new() -> *mut Archive {
-            // TODO(b2-blocked): bun_libarchive_sys::archive_read_new
-            todo!("bun_libarchive_sys::bindings gated")
+            // SAFETY: FFI call with no preconditions.
+            unsafe { archive_read_new() }
         }
-        pub fn read_close(&self) -> Result { todo!("bun_libarchive_sys gated") }
-        pub fn read_free(&self) -> Result { todo!("bun_libarchive_sys gated") }
-        pub fn read_support_format_tar(&self) -> Result { todo!("bun_libarchive_sys gated") }
-        pub fn read_support_format_gnutar(&self) -> Result { todo!("bun_libarchive_sys gated") }
-        pub fn read_support_filter_gzip(&self) -> Result { todo!("bun_libarchive_sys gated") }
-        pub fn read_set_options(&self, _opts: &core::ffi::CStr) -> Result {
-            todo!("bun_libarchive_sys gated")
+        pub fn read_close(&self) -> Result {
+            // SAFETY: self came from archive_read_new().
+            unsafe { archive_read_close(self.as_mut_ptr()) }
         }
-        pub fn read_open_memory(&self, _buf: &[u8]) -> Result {
-            todo!("bun_libarchive_sys gated")
+        pub fn read_free(&self) -> Result {
+            // SAFETY: self came from archive_read_new(); not used after this.
+            unsafe { archive_read_free(self.as_mut_ptr()) }
         }
-        pub fn read_next_header(&self, _entry: &mut *mut Entry) -> Result {
-            todo!("bun_libarchive_sys gated")
+        pub fn read_support_format_tar(&self) -> Result {
+            // SAFETY: self valid.
+            unsafe { archive_read_support_format_tar(self.as_mut_ptr()) }
         }
-        pub fn read_data(&self, _buf: &mut [u8]) -> isize {
-            todo!("bun_libarchive_sys gated")
+        pub fn read_support_format_gnutar(&self) -> Result {
+            // SAFETY: self valid.
+            unsafe { archive_read_support_format_gnutar(self.as_mut_ptr()) }
         }
+        pub fn read_support_filter_gzip(&self) -> Result {
+            // SAFETY: self valid.
+            unsafe { archive_read_support_filter_gzip(self.as_mut_ptr()) }
+        }
+        pub fn read_set_options(&self, opts: &core::ffi::CStr) -> Result {
+            // SAFETY: self valid; opts is NUL-terminated.
+            unsafe { archive_read_set_options(self.as_mut_ptr(), opts.as_ptr()) }
+        }
+        pub fn read_open_memory(&self, buf: &[u8]) -> Result {
+            // SAFETY: self valid; buf outlives the archive (caller contract,
+            // see `BufferReadStream::buf` field comment).
+            unsafe {
+                archive_read_open_memory(self.as_mut_ptr(), buf.as_ptr().cast(), buf.len())
+            }
+        }
+        pub fn read_next_header(&self, entry: &mut *mut Entry) -> Result {
+            // SAFETY: self valid; entry is a valid out-ptr.
+            unsafe { archive_read_next_header(self.as_mut_ptr(), entry as *mut *mut Entry) }
+        }
+        pub fn read_data(&self, buf: &mut [u8]) -> isize {
+            // SAFETY: self valid; buf writable for buf.len().
+            unsafe { archive_read_data(self.as_mut_ptr(), buf.as_mut_ptr().cast(), buf.len()) }
+        }
+
+        /// One block from `archive_read_data_block`. `bytes` borrows
+        /// libarchive's internal buffer (valid until the next read call).
+        pub struct Block<'a> {
+            pub bytes: &'a [u8],
+            pub offset: i64,
+            pub result: Result,
+        }
+
+        /// `archive_read_data_block` — returns `None` on EOF.
+        pub fn next(&self, offset: &mut i64) -> Option<Block<'_>> {
+            let mut buff: *const c_void = core::ptr::null();
+            let mut size: usize = 0;
+            // SAFETY: self valid; out-ptrs are valid stack locations.
+            let r = unsafe {
+                archive_read_data_block(self.as_mut_ptr(), &mut buff, &mut size, offset)
+            };
+            if r == Result::Eof {
+                return None;
+            }
+            if r != Result::Ok {
+                return Some(Block { bytes: &[], offset: *offset, result: r });
+            }
+            // SAFETY: on ARCHIVE_OK, libarchive guarantees buff[0..size] is
+            // readable until the next read call on this archive.
+            let bytes = unsafe { core::slice::from_raw_parts(buff.cast::<u8>(), size) };
+            Some(Block { bytes, offset: *offset, result: r })
+        }
+
+        fn write_zeros_to_file(file: &bun_sys::File, count: usize) -> Result {
+            // Use a runtime memset (vs `[0u8; _]`) to keep .rodata small,
+            // matching the Zig (`@memset(&zero_buf, 0)`).
+            let mut zero_buf = [0u8; 16 * 1024];
+            zero_buf.fill(0);
+            let mut remaining = count;
+            while remaining > 0 {
+                let to_write = &zero_buf[..remaining.min(zero_buf.len())];
+                if file.write_all(to_write).is_err() {
+                    return Result::Failed;
+                }
+                remaining -= to_write.len();
+            }
+            Result::Ok
+        }
+
+        /// Reads data from the archive and writes it to the given file
+        /// descriptor. This is a port of libarchive's
+        /// `archive_read_data_into_fd` with optimizations:
+        /// - Uses pwrite when possible to avoid needing lseek for sparse file handling
+        /// - Falls back to lseek + write if pwrite is not available
+        /// - Falls back to writing zeros if lseek is not available
+        /// - Truncates the file to the final size to handle trailing sparse holes
         pub fn read_data_into_fd(
             &self,
-            _fd: Fd,
-            _use_pwrite: &mut bool,
-            _use_lseek: &mut bool,
+            fd: Fd,
+            can_use_pwrite: &mut bool,
+            can_use_lseek: &mut bool,
         ) -> Result {
-            todo!("bun_libarchive_sys gated")
+            let mut target_offset: i64 = 0; // Updated by archive.next() — where this block should be written
+            let mut actual_offset: i64 = 0; // Where we've actually written to (for write() path)
+            let mut final_offset: i64 = 0; // Furthest point the file must extend to
+            let file = bun_sys::File { handle: fd };
+
+            while let Some(block) = self.next(&mut target_offset) {
+                if block.result != Result::Ok {
+                    return block.result;
+                }
+                let data = block.bytes;
+
+                // Track the furthest point we need to write to (for final truncation)
+                final_offset = final_offset.max(block.offset + data.len() as i64);
+
+                #[cfg(unix)]
+                {
+                    // Try pwrite first — it handles sparse files without needing lseek
+                    if *can_use_pwrite {
+                        match file.pwrite_all(data, block.offset) {
+                            Err(_) => {
+                                *can_use_pwrite = false;
+                                bun_core::output::debug_warn(
+                                    "libarchive: falling back to write() after pwrite() failure",
+                                    (),
+                                );
+                                // Fall through to lseek+write path
+                            }
+                            Ok(()) => {
+                                // pwrite doesn't update file position, but track logical position for fallback
+                                actual_offset =
+                                    actual_offset.max(block.offset + data.len() as i64);
+                                continue;
+                            }
+                        }
+                    }
+                }
+
+                // Handle mismatch between actual position and target position
+                if block.offset != actual_offset {
+                    'seek: {
+                        if *can_use_lseek {
+                            match bun_sys::set_file_offset(fd, block.offset as u64) {
+                                Err(_) => *can_use_lseek = false,
+                                Ok(()) => {
+                                    actual_offset = block.offset;
+                                    break 'seek;
+                                }
+                            }
+                        }
+
+                        // lseek failed or not available
+                        if block.offset > actual_offset {
+                            // Write zeros to fill the gap
+                            let zero_count = (block.offset - actual_offset) as usize;
+                            let zero_result = Self::write_zeros_to_file(&file, zero_count);
+                            if zero_result != Result::Ok {
+                                return zero_result;
+                            }
+                            actual_offset = block.offset;
+                        } else {
+                            // Can't seek backward without lseek
+                            return Result::Failed;
+                        }
+                    }
+                }
+
+                match file.write_all(data) {
+                    Err(_) => return Result::Failed,
+                    Ok(()) => {
+                        actual_offset += data.len() as i64;
+                    }
+                }
+            }
+
+            // Handle trailing sparse hole by truncating file to final size.
+            // This extends the file to include any trailing zeros without actually writing them.
+            if final_offset > actual_offset {
+                let _ = bun_sys::ftruncate(fd, final_offset);
+            }
+
+            Result::Ok
         }
-        pub fn error_string(_this: *mut Archive) -> &'static [u8] {
-            todo!("bun_libarchive_sys gated")
+
+        pub fn error_string(this: *mut Archive) -> &'static [u8] {
+            // SAFETY: `this` came from archive_{read,write}_new().
+            let p = unsafe { archive_error_string(this) };
+            if p.is_null() {
+                return b"";
+            }
+            // SAFETY: libarchive owns the error string for the lifetime of the
+            // archive; callers treat it as borrowed-until-next-call. The
+            // `'static` here mirrors Zig's `[]const u8` — caller must not
+            // outlive the archive (same as the Zig API).
+            unsafe { cstr_to_zstr(p) }.as_bytes()
         }
 
         // ── write side ─────────────────────────────────────────────────────
-        pub fn write_new() -> *mut Archive { todo!("bun_libarchive_sys gated") }
-        pub fn write_free(&self) -> Result { todo!("bun_libarchive_sys gated") }
-        pub fn write_close(&self) -> Result { todo!("bun_libarchive_sys gated") }
-        pub fn write_set_format_pax_restricted(&self) -> Result {
-            todo!("bun_libarchive_sys gated")
+        pub fn write_new() -> *mut Archive {
+            // SAFETY: FFI call with no preconditions.
+            unsafe { archive_write_new() }
         }
-        pub fn write_header(&self, _entry: &Entry) -> Result { todo!("bun_libarchive_sys gated") }
-        pub fn write_data(&self, _data: &[u8]) -> isize { todo!("bun_libarchive_sys gated") }
-        pub fn write_finish_entry(&self) -> Result { todo!("bun_libarchive_sys gated") }
+        pub fn write_free(&self) -> Result {
+            // SAFETY: self came from archive_write_new(); not used after this.
+            unsafe { archive_write_free(self.as_mut_ptr()) }
+        }
+        pub fn write_close(&self) -> Result {
+            // SAFETY: self valid.
+            unsafe { archive_write_close(self.as_mut_ptr()) }
+        }
+        pub fn write_set_format_pax_restricted(&self) -> Result {
+            // SAFETY: self valid.
+            unsafe { archive_write_set_format_pax_restricted(self.as_mut_ptr()) }
+        }
+        pub fn write_header(&self, entry: &Entry) -> Result {
+            // SAFETY: self valid; entry came from Entry::new()/read_next_header().
+            unsafe { archive_write_header(self.as_mut_ptr(), entry as *const Entry as *mut Entry) }
+        }
+        pub fn write_data(&self, data: &[u8]) -> isize {
+            // SAFETY: self valid; data readable for data.len().
+            unsafe { archive_write_data(self.as_mut_ptr(), data.as_ptr().cast(), data.len()) }
+        }
+        pub fn write_finish_entry(&self) -> Result {
+            // SAFETY: self valid.
+            unsafe { archive_write_finish_entry(self.as_mut_ptr()) }
+        }
     }
 
     impl Entry {
-        pub fn pathname(&self) -> &ZStr { todo!("bun_libarchive_sys gated") }
-        pub fn pathname_utf8(&self) -> &ZStr { todo!("bun_libarchive_sys gated") }
+        #[inline]
+        fn as_mut_ptr(&self) -> *mut Entry {
+            self as *const Entry as *mut Entry
+        }
+
+        pub fn pathname(&self) -> &ZStr {
+            // SAFETY: self valid; returned string owned by libarchive for the
+            // lifetime of this entry.
+            unsafe { cstr_to_zstr(archive_entry_pathname(self.as_mut_ptr())) }
+        }
+        pub fn pathname_utf8(&self) -> &ZStr {
+            // SAFETY: self valid.
+            unsafe { cstr_to_zstr(archive_entry_pathname_utf8(self.as_mut_ptr())) }
+        }
         #[cfg(windows)]
-        pub fn pathname_w(&self) -> &bun_core::WStr { todo!("bun_libarchive_sys gated") }
-        pub fn symlink(&self) -> &ZStr { todo!("bun_libarchive_sys gated") }
-        pub fn perm(&self) -> u32 { todo!("bun_libarchive_sys gated") }
-        pub fn size(&self) -> i64 { todo!("bun_libarchive_sys gated") }
-        pub fn filetype(&self) -> u32 { todo!("bun_libarchive_sys gated") }
-        pub fn mtime(&self) -> i64 { todo!("bun_libarchive_sys gated") }
+        pub fn pathname_w(&self) -> &bun_core::WStr {
+            // SAFETY: self valid.
+            unsafe { wcstr_to_wstr(archive_entry_pathname_w(self.as_mut_ptr())) }
+        }
+        pub fn symlink(&self) -> &ZStr {
+            // SAFETY: self valid.
+            unsafe { cstr_to_zstr(archive_entry_symlink(self.as_mut_ptr())) }
+        }
+        pub fn perm(&self) -> u32 {
+            // SAFETY: self valid.
+            unsafe { archive_entry_perm(self.as_mut_ptr()) as u32 }
+        }
+        pub fn size(&self) -> i64 {
+            // SAFETY: self valid.
+            unsafe { archive_entry_size(self.as_mut_ptr()) }
+        }
+        pub fn filetype(&self) -> u32 {
+            // SAFETY: self valid.
+            unsafe { archive_entry_filetype(self.as_mut_ptr()) as u32 }
+        }
+        pub fn mtime(&self) -> i64 {
+            // SAFETY: self valid.
+            unsafe { archive_entry_mtime(self.as_mut_ptr()) as i64 }
+        }
 
         // ── write side ─────────────────────────────────────────────────────
-        pub fn new() -> *mut Entry { todo!("bun_libarchive_sys gated") }
-        pub fn free(&self) { todo!("bun_libarchive_sys gated") }
-        pub fn clear(&self) -> *mut Entry { todo!("bun_libarchive_sys gated") }
-        pub fn set_pathname_utf8(&self, _name: &ZStr) { todo!("bun_libarchive_sys gated") }
-        pub fn set_size(&self, _s: i64) { todo!("bun_libarchive_sys gated") }
-        pub fn set_filetype(&self, _t: u32) { todo!("bun_libarchive_sys gated") }
-        pub fn set_perm(&self, _p: u32) { todo!("bun_libarchive_sys gated") }
-        pub fn set_mtime(&self, _secs: isize, _nsecs: core::ffi::c_long) {
-            todo!("bun_libarchive_sys gated")
+        pub fn new() -> *mut Entry {
+            // SAFETY: FFI call with no preconditions.
+            unsafe { archive_entry_new() }
+        }
+        pub fn free(&self) {
+            // SAFETY: self came from Entry::new(); not used after this.
+            unsafe { archive_entry_free(self.as_mut_ptr()) }
+        }
+        pub fn clear(&self) -> *mut Entry {
+            // SAFETY: self valid.
+            unsafe { archive_entry_clear(self.as_mut_ptr()) }
+        }
+        pub fn set_pathname_utf8(&self, name: &ZStr) {
+            // SAFETY: self valid; name is NUL-terminated.
+            unsafe { archive_entry_set_pathname_utf8(self.as_mut_ptr(), name.as_ptr()) }
+        }
+        pub fn set_size(&self, s: i64) {
+            // SAFETY: self valid.
+            unsafe { archive_entry_set_size(self.as_mut_ptr(), s) }
+        }
+        pub fn set_filetype(&self, t: u32) {
+            // SAFETY: self valid.
+            unsafe { archive_entry_set_filetype(self.as_mut_ptr(), t as c_uint) }
+        }
+        pub fn set_perm(&self, p: u32) {
+            // SAFETY: self valid.
+            unsafe { archive_entry_set_perm(self.as_mut_ptr(), p as bun_sys::Mode) }
+        }
+        pub fn set_mtime(&self, secs: isize, nsecs: core::ffi::c_long) {
+            // SAFETY: self valid.
+            unsafe { archive_entry_set_mtime(self.as_mut_ptr(), secs as time_t, nsecs) }
         }
     }
 
@@ -136,14 +484,16 @@ pub mod lib {
     pub type archive_free_callback = unsafe extern "C" fn(*mut Archive, *mut c_void) -> c_int;
 
     pub fn archive_write_open2(
-        _a: *mut Archive,
-        _client_data: *mut c_void,
-        _open: Option<archive_open_callback>,
-        _write: Option<archive_write_callback>,
-        _close: Option<archive_close_callback>,
-        _free: Option<archive_free_callback>,
+        a: *mut Archive,
+        client_data: *mut c_void,
+        open: Option<archive_open_callback>,
+        write: Option<archive_write_callback>,
+        close: Option<archive_close_callback>,
+        free: Option<archive_free_callback>,
     ) -> c_int {
-        todo!("bun_libarchive_sys gated")
+        // SAFETY: `a` came from archive_write_new(); callbacks have correct
+        // ABI; client_data lifetime is caller's responsibility.
+        unsafe { archive_write_open2_raw(a, client_data, open, write, close, free) }
     }
 
     /// Growing memory buffer for archive writes with libarchive callbacks.

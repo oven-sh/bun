@@ -2336,7 +2336,9 @@ impl Data {
                         None => None,
                     },
                     parts: el.parts,
-                    head: el.head,
+                    // SAFETY: `TemplateContents` is POD-shaped (no Drop); Zig
+                    // copied `el.head` by value. `ptr::read` mirrors that.
+                    head: unsafe { core::ptr::read(&el.get().head) },
                 });
                 Ok(Data::ETemplate(StoreRef::from_bump(item)))
             }

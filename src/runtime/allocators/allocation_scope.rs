@@ -606,12 +606,16 @@ pub const TRACE_LIMITS: WriteStackTraceLimits = WriteStackTraceLimits {
     frame_count: 6,
     stop_at_jsc_llint: true,
     skip_stdlib: true,
+    skip_file_patterns: &[],
+    skip_function_patterns: &[],
 };
 
 pub const FREE_TRACE_LIMITS: WriteStackTraceLimits = WriteStackTraceLimits {
     frame_count: 3,
     stop_at_jsc_llint: true,
     skip_stdlib: true,
+    skip_file_patterns: &[],
+    skip_function_patterns: &[],
 };
 
 extern "C" fn vtable_alloc(ctx: *mut c_void, len: usize, alignment: usize, ret_addr: usize) -> *mut u8 {

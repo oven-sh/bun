@@ -507,7 +507,7 @@ impl<Owner: ChannelOwner> PosixHandlers<Owner> {
         // the owner outlives all usockets callbacks (see module doc).
         unsafe { &mut **self_ }.ingest(data);
     }
-    pub fn on_writable(self_: Self::Ext, _s: *mut uws::us_socket_t) {
+    pub fn on_writable(self_: PosixExt<Owner>, _s: *mut uws::us_socket_t) {
         // SAFETY: see on_data.
         unsafe { &mut **self_ }.flush();
     }

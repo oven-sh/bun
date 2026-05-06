@@ -18,6 +18,7 @@ use super::frame::{self, Frame};
 use super::worker::Worker;
 use crate::test_command::{self, CommandLineReporter, TestCommand};
 use crate::Command;
+use bun_options_types::CodeCoverageOptions::CodeCoverageOptions;
 
 /// All workers are busy for at least this long before another is spawned.
 /// Overridable via BUN_TEST_PARALLEL_SCALE_MS for tests, where debug-build

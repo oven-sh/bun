@@ -2140,7 +2140,7 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
                             .trusted_dependencies
                             .as_mut()
                             .unwrap()
-                            .ensure_unused_capacity(arr.items.len())?;
+                            .ensure_unused_capacity(arr.items.len as usize)?;
                         for item in arr.slice() {
                             let Some(name) = item.as_string() else {
                                 let _ = log.add_error_fmt(

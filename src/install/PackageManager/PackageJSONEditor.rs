@@ -402,8 +402,7 @@ pub fn edit_update_no_args(
                                         continue;
                                     }
 
-                                    let resolved_version = manager
-                                        .lockfile
+                                    let resolved_version = lockfile
                                         .resolve_catalog_dependency(workspace_dep)
                                         .unwrap_or(&workspace_dep.version);
                                     if let Some(npm_version) = resolved_version.npm() {

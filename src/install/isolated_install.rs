@@ -305,7 +305,7 @@ pub fn install_isolated_packages(
                     };
                     if dep.behavior.is_peer() {
                         own_peers.set(pkg_id as usize, bit);
-                    } else if !Tree::is_filtered_dependency_or_workspace(
+                    } else if !is_filtered_dependency_or_workspace(
                         dep_id,
                         pkg_id,
                         workspace_filters,
@@ -374,7 +374,7 @@ pub fn install_isolated_packages(
             // Only mark workspaces that root will actually queue; an entry excluded
             // by --filter or `bun install <pkgs>` never gets a root-declared node,
             // so a `workspace:` reference must keep its dependencies.
-            if Tree::is_filtered_dependency_or_workspace(
+            if is_filtered_dependency_or_workspace(
                 dep_idx,
                 0,
                 workspace_filters,
@@ -667,7 +667,7 @@ pub fn install_isolated_packages(
                 }
 
                 for &dep_id in &dep_ids_sort_buf {
-                    if Tree::is_filtered_dependency_or_workspace(
+                    if is_filtered_dependency_or_workspace(
                         dep_id,
                         entry.pkg_id,
                         workspace_filters,

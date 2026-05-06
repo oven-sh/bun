@@ -155,7 +155,12 @@ impl<'a> PatchTask<'a> {
                 self.apply().expect("OOM");
             }
         }
-        self.manager.patch_task_queue.push(self as *mut _);
+        // PORT NOTE: the queue is typed against the crate-level `PatchTask` stub
+        // (intrusive `next` link only); cast through that erased shape until the
+        // two types unify under `package_manager_real`.
+        self.manager
+            .patch_task_queue
+            .push(self as *mut Self as *mut crate::PatchTask);
         self.manager.wake();
     }
 
@@ -705,7 +710,12 @@ impl<'a> PatchTask<'a> {
 
     pub fn notify(&mut self) {
         // PORT NOTE: Zig `defer this.manager.wake()` then `push`. No early returns; inline order.
-        self.manager.patch_task_queue.push(self as *mut _);
+        // PORT NOTE: the queue is typed against the crate-level `PatchTask` stub
+        // (intrusive `next` link only); cast through that erased shape until the
+        // two types unify under `package_manager_real`.
+        self.manager
+            .patch_task_queue
+            .push(self as *mut Self as *mut crate::PatchTask);
         self.manager.wake();
     }
 

@@ -1723,22 +1723,22 @@ pub fn init(
 
     let options = Options {
         global: cli.global,
-        max_concurrent_lifecycle_scripts: cli.concurrent_scripts.unwrap_or(cpu_count * 2),
+        max_concurrent_lifecycle_scripts: cli.concurrent_scripts.unwrap_or((cpu_count * 2) as usize),
         ..Default::default()
     };
 
-    if env.get("BUN_INSTALL_VERBOSE").is_some() {
+    if env.get(b"BUN_INSTALL_VERBOSE").is_some() {
         // SAFETY: main-thread init
         unsafe {
             VERBOSE_INSTALL = true;
         }
     }
 
-    if env.get("BUN_FEATURE_FLAG_FORCE_WAITER_THREAD").is_some() {
+    if env.get(b"BUN_FEATURE_FLAG_FORCE_WAITER_THREAD").is_some() {
         WaiterThread::set_should_use_waiter_thread();
     }
 
-    if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_FORCE_WINDOWS_JUNCTIONS.get() {
+    if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_FORCE_WINDOWS_JUNCTIONS.get().unwrap_or(false) {
         bun_sys::WindowsSymlinkOptions::set_has_failed_to_create_symlink(true);
     }
 

@@ -66,7 +66,48 @@ mod boringssl_ffi {
             arg: *mut c_void,
         );
         pub fn SSL_set_alpn_protos(ssl: *mut SSL, protos: *const u8, protos_len: c_uint) -> c_int;
+        pub fn SSL_is_init_finished(ssl: *const SSL) -> c_int;
+        pub fn SSL_set_tlsext_host_name(ssl: *mut SSL, name: *const core::ffi::c_char) -> c_int;
     }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Local NewSocketHandler address helpers (not yet in `bun_uws`)
+// ──────────────────────────────────────────────────────────────────────────
+//
+// `bun_uws::NewSocketHandler` exposes `local_port`/`remote_port` but not the
+// address accessors. The underlying `us_socket_t` already has them, so wrap
+// with a small extension trait until they land upstream.
+trait SocketHandlerAddrExt {
+    fn local_address<'a>(&self, buf: &'a mut [u8]) -> Option<&'a [u8]>;
+    fn remote_address<'a>(&self, buf: &'a mut [u8]) -> Option<&'a [u8]>;
+}
+impl<const SSL: bool> SocketHandlerAddrExt for uws::NewSocketHandler<SSL> {
+    fn local_address<'a>(&self, buf: &'a mut [u8]) -> Option<&'a [u8]> {
+        match self.socket {
+            uws::InternalSocket::Connected(s) => {
+                // SAFETY: `s` is a non-null FFI handle owned by uSockets.
+                unsafe { (*s).local_address(buf) }.ok()
+            }
+            _ => None,
+        }
+    }
+    fn remote_address<'a>(&self, buf: &'a mut [u8]) -> Option<&'a [u8]> {
+        match self.socket {
+            uws::InternalSocket::Connected(s) => {
+                // SAFETY: `s` is a non-null FFI handle owned by uSockets.
+                unsafe { (*s).remote_address(buf) }.ok()
+            }
+            _ => None,
+        }
+    }
+}
+
+/// Shorthand for the JS-side `EventLoopCtx` (replaces direct VM passing to
+/// `KeepAlive::ref_/unref` — `bun_aio` no longer accepts `&VirtualMachine`).
+#[inline]
+fn js_loop_ctx() -> bun_aio::EventLoopCtx {
+    bun_aio::posix_event_loop::get_vm_ctx(bun_aio::posix_event_loop::AllocatorType::Js)
 }
 
 // ──────────────────────────────────────────────────────────────────────────

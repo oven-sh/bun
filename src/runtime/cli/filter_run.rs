@@ -534,13 +534,13 @@ impl<'a> State<'a> {
                         }
                     }
                     Status::Signaled(code) => {
-                        if code == bun_sys::SignalCode::SIGINT.0 {
+                        if *code == bun_sys::SignalCode::SIGINT.0 {
                             write!(&mut self.draw_buf, fmt!("<red>Interrupted<r>\n"))?;
                         } else {
                             write!(
                                 &mut self.draw_buf,
                                 fmt!("<red>Signaled with code {s}<r>\n"),
-                                <&'static str>::from(code),
+                                bun_sys::SignalCode(*code).name().unwrap_or("UNKNOWN"),
                             )?;
                         }
                     }

@@ -1482,9 +1482,19 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             // PORT NOTE: `EventLoopTimer.next` is a local-stub Timespec until
             // `bun_event_loop` switches to `bun_core::Timespec`; copy fieldwise.
             subprocess.event_loop_timer.next = crate::timer::ElTimespec { sec: ts.sec, nsec: ts.nsec };
-            // TODO(port): `VirtualMachineRef.timer` is a `()` cycle-breaker stub;
-            // skip the insert until the timer queue is wired.
-            let _ = &mut subprocess.event_loop_timer;
+            // Zig: `globalThis.bunVM().timer.insert(&subprocess.event_loop_timer)`.
+            // `Timer::All` lives in `bun_runtime`; reach it via the
+            // `RuntimeHooks` dispatch (`VirtualMachineRef::timer_insert`) which
+            // forwards to `crate::timer::All::insert`.
+            // SAFETY: `jsc_vm_ptr` is the live per-thread VM; the timer node is
+            // owned by the boxed `Subprocess` and stays at a stable address
+            // until `Subprocess::finalize` removes it from the heap.
+            unsafe {
+                jsc::VirtualMachineRef::timer_insert(
+                    jsc_vm_ptr,
+                    core::ptr::addr_of_mut!(subprocess.event_loop_timer),
+                );
+            }
             subprocess.set_event_loop_timer_refd(true);
         }
 

@@ -77,13 +77,39 @@ pub struct EntryPointResult {
 /// Downstream-compat alias: lib.rs previously exposed `virtual_machine::InitOptions`.
 /// The full `Options<'a>` (with `args: api::TransformOptions`, `env_loader`, etc.)
 /// is gated below — this is the minimal surface dependents type-check against.
-#[derive(Default)]
 pub struct InitOptions {
     pub args: alloc::vec::Vec<alloc::string::String>,
     pub graph: *mut c_void,
     pub smol: bool,
     pub eval_mode: bool,
     pub is_main_thread: bool,
+    /// Forwarded to `Zig__GlobalObject__create` so the C++ ZigGlobalObject is
+    /// created with its `WebCore::Worker*` already wired (spec
+    /// VirtualMachine.zig:1477-1484). `null` for the main-thread / bake paths.
+    pub worker_ptr: *mut c_void,
+    /// Debugger script-execution-context id. Main thread = 1, workers receive
+    /// `WebWorker::execution_context_id`; `None` lets [`init`] derive it from
+    /// `is_main_thread` (matches the previous behaviour for non-worker init).
+    pub context_id: Option<i32>,
+    /// Forwarded as `mini_mode` to `Zig__GlobalObject__create`. For the
+    /// main-thread path this is `smol`; for workers it is `WebWorker::mini`
+    /// (spec VirtualMachine.zig:1482).
+    pub mini_mode: bool,
+}
+
+impl Default for InitOptions {
+    fn default() -> Self {
+        Self {
+            args: alloc::vec::Vec::new(),
+            graph: core::ptr::null_mut(),
+            smol: false,
+            eval_mode: false,
+            is_main_thread: false,
+            worker_ptr: core::ptr::null_mut(),
+            context_id: None,
+            mini_mode: false,
+        }
+    }
 }
 
 pub struct VirtualMachine {

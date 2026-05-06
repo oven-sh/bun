@@ -124,18 +124,24 @@ impl DOMFormData {
 
     // PORT NOTE: Zig's `comptime Context: type, ctx: *Context, comptime callback_wrapper`
     // reshaped to a Rust closure; the generic `extern "C"` trampoline below is `Wrap.forEachWrapper`.
-    pub fn for_each<F>(&mut self, callback: &mut F)
+    //
+    // LAYERING: `FormDataEntry::File::blob` is a `*mut webcore::Blob`, whose
+    // layout lives in `bun_runtime` (a dependent of this crate). The C++ side
+    // hands it as `*mut c_void`; this fn is generic over `B` so the caller (in
+    // `bun_runtime`) names the concrete `Blob` type and gets a typed `&B`
+    // borrow without `bun_jsc` ever seeing the layout.
+    pub fn for_each<B, F>(&mut self, callback: &mut F)
     where
-        F: FnMut(ZigString, FormDataEntry<'_>),
+        F: FnMut(ZigString, FormDataEntry<'_, B>),
     {
-        unsafe extern "C" fn for_each_wrapper<F>(
+        unsafe extern "C" fn for_each_wrapper<B, F>(
             ctx_ptr: *mut c_void,
             name_: *mut ZigString,
             value_ptr: *mut c_void,
             filename: *mut ZigString,
             is_blob: u8,
         ) where
-            F: FnMut(ZigString, FormDataEntry<'_>),
+            F: FnMut(ZigString, FormDataEntry<'_, B>),
         {
             // SAFETY: ctx_ptr is the `&mut F` passed below; Zig did `ctx_ptr.?` (unwrap non-null).
             let ctx_ = unsafe { &mut *(ctx_ptr as *mut F) };
@@ -144,9 +150,10 @@ impl DOMFormData {
                 FormDataEntry::String(unsafe { *(value_ptr as *mut ZigString) })
             } else {
                 FormDataEntry::File {
-                    // SAFETY: when is_blob != 0, value_ptr points to a WebCore Blob valid for
-                    // the callback scope (LIFETIMES.tsv: BORROW_PARAM).
-                    blob: unsafe { &*(value_ptr as *mut Blob) },
+                    // SAFETY: when is_blob != 0, value_ptr points to a webcore
+                    // Blob (`bun_runtime::webcore::Blob`) valid for the callback
+                    // scope (LIFETIMES.tsv: BORROW_PARAM). Caller picks `B`.
+                    blob: unsafe { &*(value_ptr as *const B) },
                     filename: if filename.is_null() {
                         ZigString::EMPTY
                     } else {

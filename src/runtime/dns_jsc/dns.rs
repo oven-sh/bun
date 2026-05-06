@@ -4194,7 +4194,7 @@ impl Resolver {
     pub fn reverse(this: &mut Self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments = callframe.arguments_old::<2>();
         if arguments.len < 1 {
-            return global_this.throw_not_enough_arguments("reverse", 1, arguments.len);
+            return Err(global_this.throw_not_enough_arguments("reverse", 1, arguments.len));
         }
 
         let ip_value = arguments.ptr[0];
@@ -4247,7 +4247,7 @@ impl Resolver {
     pub fn global_lookup(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments = callframe.arguments_old::<2>();
         if arguments.len < 1 {
-            return global_this.throw_not_enough_arguments("lookup", 2, arguments.len);
+            return Err(global_this.throw_not_enough_arguments("lookup", 2, arguments.len));
         }
 
         let name_value = arguments.ptr[0];
@@ -4351,7 +4351,7 @@ macro_rules! resolve_record_fn {
         pub fn $method(this: &mut Self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
             let arguments = callframe.arguments_old::<2>();
             if arguments.len < 1 {
-                return global_this.throw_not_enough_arguments($jsname, 1, arguments.len);
+                return Err(global_this.throw_not_enough_arguments($jsname, 1, arguments.len));
             }
             let name_value = arguments.ptr[0];
             if name_value.is_empty_or_undefined_or_null() || !name_value.is_string() {

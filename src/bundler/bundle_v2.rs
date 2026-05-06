@@ -1253,10 +1253,15 @@ fn event_loop_tick<Ctx>(_loop: &mut EventLoop, ctx: *mut Ctx, is_done: fn(&mut C
     }
 }
 
-/// `JSBundleCompletionTask` (JSBundler.zig) — TYPE_ONLY backref for
-/// `BundleV2.completion`. The bundler reads only `.jsc_event_loop`.
+/// `JSBundleCompletionTask` (JSBundler.zig) — typed-ptr marker for
+/// `BundleV2.completion`. The concrete struct lives in `bun_runtime`
+/// (its fields name `Config`/`Plugin`/`HTMLBundle::Route`), so the bundler
+/// holds it as a `*mut JSBundleCompletionTask` only and routes every field
+/// read through the `COMPLETION_DISPATCH` vtable. Never dereferenced.
+#[repr(C)]
 pub struct JSBundleCompletionTask {
-    pub jsc_event_loop: dispatch::JsEventLoopHandle,
+    _opaque: [u8; 0],
+    _marker: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
 }
 
 type IndexInt = u32; // Index.Int

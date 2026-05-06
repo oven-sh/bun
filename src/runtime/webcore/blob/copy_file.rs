@@ -4,8 +4,6 @@ use core::ffi::{c_int, c_void};
 use core::marker::ConstParamTy;
 #[cfg(windows)]
 use core::mem::offset_of;
-#[cfg(windows)]
-use std::sync::Arc;
 
 #[cfg(windows)]
 use bun_aio as aio;

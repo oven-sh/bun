@@ -502,8 +502,10 @@ fn parse_selector<Impl: BunSelectorImpl>(
                     any_whitespace = true;
                     continue;
                 }
-                Token::Delim(d) => match *d {
-                    '>' => {
+                // PORT NOTE: `Token::Delim` carries `u32` codepoint; cast to
+                // `u8` for ASCII match (all CSS combinator delims are ASCII).
+                Token::Delim(d) => match u8::try_from(*d).ok() {
+                    Some(b'>') => {
                         if parser.deep_combinator_enabled()
                             && input
                                 .try_parse(|i: &mut CssParser| -> CResult<()> {
@@ -518,19 +520,19 @@ fn parse_selector<Impl: BunSelectorImpl>(
                         }
                         break;
                     }
-                    '+' => {
+                    Some(b'+') => {
                         combinator = Combinator::NextSibling;
                         break;
                     }
-                    '~' => {
+                    Some(b'~') => {
                         combinator = Combinator::LaterSibling;
                         break;
                     }
-                    '/' => {
+                    Some(b'/') => {
                         if parser.deep_combinator_enabled() {
                             if input
                                 .try_parse(|i: &mut CssParser| -> CResult<()> {
-                                    i.expect_ident_matching("deep")?;
+                                    i.expect_ident_matching(b"deep")?;
                                     i.expect_delim(b'/')
                                 })
                                 .is_ok()
@@ -2878,11 +2880,11 @@ pub fn parse_one_simple_selector<Impl: BunSelectorImpl>(
                 return Ok(Some(S::SimpleSelector(pseudo_class)));
             }
         }
-        Token::Delim(d) => match d {
-            '.' => {
+        Token::Delim(d) => match u8::try_from(*d).ok() {
+            Some(b'.') => {
                 if state.after_any_pseudo() {
                     return Err(token_location.new_custom_error(
-                        SelectorParseErrorKind::UnexpectedSelectorAfterPseudoElement(Token::Delim('.'))
+                        SelectorParseErrorKind::UnexpectedSelectorAfterPseudoElement(Token::Delim(b'.' as u32))
                             .into_default_parser_error(),
                     ));
                 }
@@ -2898,7 +2900,7 @@ pub fn parse_one_simple_selector<Impl: BunSelectorImpl>(
                     parser.new_local_identifier(input, css::CssRefTag::CLASS, class, token_loc),
                 ))));
             }
-            '&' => {
+            Some(b'&') => {
                 if parser.is_nesting_allowed() {
                     state.insert(SelectorParsingState::AFTER_NESTING);
                     return Ok(Some(S::SimpleSelector(GenericComponent::Nesting)));

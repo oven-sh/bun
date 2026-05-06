@@ -13,6 +13,7 @@
 //! `phase_a_draft` below.
 
 use ::core::ffi::c_void;
+use ::core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_core::{self as core, Global, Output};
 use bun_core::{pretty, pretty_errorln, prettyln};
@@ -146,7 +147,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         let vm_ptr = VirtualMachine::init(VmInitOptions {
             smol: ctx.runtime_options.smol,
-            eval_mode: !ctx.runtime_options.eval.script.is_empty(),
+            eval_mode: ctx.runtime_options.eval.eval_and_print,
             is_main_thread: true,
             ..Default::default()
         })?;
@@ -188,7 +189,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             (&raw mut RUN).write(Run {
                 vm: vm_ptr,
                 entry_path,
-                any_unhandled: false,
                 eval_and_print: ctx.runtime_options.eval.eval_and_print,
             });
         }

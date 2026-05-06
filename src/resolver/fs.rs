@@ -194,24 +194,28 @@ impl FileSystem {
         }
     }
 
-    pub fn init(top_level_dir: Option<&'static ZStr>) -> Result<&'static mut FileSystem, bun_core::Error> {
+    pub fn init(top_level_dir: Option<&'static [u8]>) -> Result<&'static mut FileSystem, bun_core::Error> {
         Self::init_with_force::<false>(top_level_dir)
     }
 
     pub fn init_with_force<const FORCE: bool>(
-        top_level_dir_: Option<&'static ZStr>,
+        top_level_dir_: Option<&'static [u8]>,
     ) -> Result<&'static mut FileSystem, bun_core::Error> {
         // TODO(port): Environment.isBrowser branch
-        let top_level_dir = match top_level_dir_ {
+        let top_level_dir: &'static [u8] = match top_level_dir_ {
             Some(d) => d,
             None => {
                 #[cfg(target_arch = "wasm32")]
                 {
-                    ZStr::from_static(b"/project/\0")
+                    b"/project/"
                 }
                 #[cfg(not(target_arch = "wasm32"))]
                 {
-                    bun_sys::getcwd_alloc()?
+                    // PORT NOTE: Zig used `bun.getcwdAlloc(default_allocator)`; intern into
+                    // DirnameStore so it lives for `'static` without `Box::leak`.
+                    let mut buf = PathBuffer::uninit();
+                    let n = bun_sys::getcwd(&mut buf[..])?;
+                    DirnameStore::instance().append(&buf[..n])?
                 }
             }
         };
@@ -222,14 +226,15 @@ impl FileSystem {
                 INSTANCE.write(FileSystem {
                     top_level_dir,
                     top_level_dir_buf: PathBuffer::uninit(),
-                    fs: Implementation::init(top_level_dir.as_bytes()),
+                    fs: Implementation::init(top_level_dir),
                     // must always use default_allocator since the other allocators may not be threadsafe when an element resizes
-                    dirname_store: DirnameStore::init(),
-                    filename_store: FilenameStore::init(),
+                    dirname_store: DirnameStore::instance(),
+                    filename_store: FilenameStore::instance(),
                 });
                 INSTANCE_LOADED = true;
 
-                let _ = dir_entry::EntryStore::init();
+                // Touch the EntryStore singleton so it's initialized.
+                let _ = entry_store_backing();
             }
 
             Ok(INSTANCE.assume_init_mut())
@@ -238,8 +243,9 @@ impl FileSystem {
 
     #[inline]
     pub fn instance() -> &'static mut FileSystem {
-        // SAFETY: caller guarantees init() was called
-        unsafe { INSTANCE.assume_init_mut() }
+        // SAFETY: caller guarantees init() was called.
+        // `&raw mut` avoids the `static_mut_refs` edition-2024 deny lint.
+        unsafe { (*(&raw mut INSTANCE)).assume_init_mut() }
     }
 }
 
@@ -250,7 +256,21 @@ pub mod dir_entry {
     use super::*;
 
     pub type EntryMap = bun_collections::StringHashMap<*mut Entry>;
-    pub type EntryStore = allocators::BSSList<Entry, { preallocate::counts::FILES }>;
+    /// Port of `DirEntry.EntryStore` (`allocators.BSSList<Entry, files>`).
+    /// ZST handle resolving to the `entry_store_backing()` singleton.
+    pub struct EntryStore(());
+    impl EntryStore {
+        #[inline]
+        pub fn instance() -> &'static mut EntryStoreBacking {
+            // SAFETY: `entry_store_backing()` returns the raw `*mut` singleton (Zig `*Self`);
+            // the singleton serializes all mutation through its internal `mutex`.
+            unsafe { &mut *entry_store_backing() }
+        }
+        pub fn append(value: Entry) -> core::result::Result<*mut Entry, AllocError> {
+            let r = Self::instance().append(value)?;
+            Ok(r as *mut Entry)
+        }
+    }
 
     #[derive(Clone, Copy)]
     pub struct Err {

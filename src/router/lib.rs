@@ -24,10 +24,10 @@ use bun_http_types::URLPath::URLPath;
 // ──────────────────────────────────────────────────────────────────────────
 #[allow(dead_code, non_snake_case)]
 mod b1_stubs {
-    // TODO(b1): bun_wyhash::hash missing — local stub
+    // `bun.hash(bytes)` — std.hash.Wyhash seed 0. NOT Wyhash11 (different algo).
     #[inline]
     pub fn wyhash(input: &[u8]) -> u64 {
-        bun_wyhash::Wyhash11::hash(0, input)
+        bun_wyhash::hash(input)
     }
 
     // TODO(b1): bun_logger crate missing from deps

@@ -760,28 +760,25 @@ impl PackageJSON {
     }
 
     pub fn parse<const INCLUDE_DEPENDENCIES: IncludeDependencies>(
-        r: &mut resolver::Resolver,
+        r: &mut resolver::Resolver<'_>,
         input_path: &[u8],
         dirname_fd: Fd,
         package_id: Option<PackageID>,
         include_scripts_: IncludeScripts,
-    ) -> Option<PackageJSON>
-    where
-        IncludeDependencies: core::marker::ConstParamTy, // TODO(port): derive ConstParamTy on IncludeDependencies
-    {
+    ) -> Option<PackageJSON> {
         // PERF(port): include_scripts_ was a comptime enum param — profile in Phase B
         let include_scripts = include_scripts_ == IncludeScripts::IncludeScripts;
 
         // TODO: remove this extra copy
-        let parts = [input_path, b"package.json"];
+        let parts: [&[u8]; 2] = [input_path, b"package.json"];
         let package_json_path_ = r.fs.abs(&parts);
-        let package_json_path = r.fs.dirname_store.append(package_json_path_).expect("unreachable");
+        let package_json_path = r.fs.dirname_store.append_slice(package_json_path_).expect("unreachable");
 
         // DirInfo cache is reused globally
         // So we cannot free these
         // (allocator dropped — global mimalloc)
 
-        let mut entry = match r.caches.fs.read_file_with_allocator(
+        let entry = match r.caches.fs.read_file_with_allocator(
             r.fs,
             package_json_path,
             dirname_fd,
@@ -798,7 +795,7 @@ impl PackageJSON {
                             format_args!(
                                 "Cannot read file \"{}\": {}",
                                 bstr::BStr::new(input_path),
-                                err.name()
+                                bstr::BStr::new(err.name())
                             ),
                         )
                         .expect("unreachable");
@@ -807,20 +804,21 @@ impl PackageJSON {
                 return None;
             }
         };
-        // defer _ = entry.closeFD(); — handled by RAII guard
-        let _close_guard = scopeguard::guard((), |_| {
-            let _ = entry.close_fd();
+        // PORT NOTE: reshaped for borrowck — read `contents` first, then move `entry`
+        // into the close-guard so the fd is closed on every return path.
+        let entry_contents = entry.contents;
+        let _close_guard = scopeguard::guard(entry, |mut e| {
+            let _ = e.close_fd();
         });
-        // TODO(port): scopeguard borrows `entry` — Phase B reshape
 
         if let Some(debug) = r.debug_logs.as_mut() {
             debug.add_note_fmt(format_args!("The file \"{}\" exists", bstr::BStr::new(package_json_path)));
         }
 
-        let key_path = fs::Path::init(package_json_path);
-
-        let mut json_source = logger::Source::init_path_string(key_path.text, entry.contents);
-        json_source.path.pretty = json_source.path.text.clone();
+        // PORT NOTE: `logger::Source.path` is the lightweight `logger::fs::Path` (no
+        // `pretty`/`is_node_module`); `key_path` is only used for `text`, so init the
+        // source directly from the interned path.
+        let json_source = logger::Source::init_path_string(package_json_path, entry_contents);
 
         let json: js_ast::Expr = match r.caches.json.parse_package_json(r.log, &json_source, true) {
             Ok(Some(v)) => v,
@@ -830,7 +828,7 @@ impl PackageJSON {
                     Output::print_error(format_args!(
                         "{}: JSON parse error: {}",
                         bstr::BStr::new(package_json_path),
-                        err.name()
+                        bstr::BStr::new(err.name())
                     ));
                 }
                 return None;
@@ -847,22 +845,23 @@ impl PackageJSON {
         let mut package_json = PackageJSON {
             name: Box::default(),
             version: Box::default(),
-            source: json_source,
-            module_type: options::ModuleType::Unknown,
-            browser_map: BrowserMap::init(false),
-            main_fields: MainFieldMap::init(false),
+            // PORT NOTE: reshaped for borrowck — `json_source` stays a local until the
+            // end so we can borrow it while mutating other `package_json` fields.
+            source: logger::Source::default(),
+            module_type: ModuleType::Unknown,
+            browser_map: BrowserMap::default(),
+            main_fields: MainFieldMap::default(),
             scripts: None,
             config: None,
             arch: Architecture::all(),
             os: OperatingSystem::all(),
-            package_manager_package_id: Install::INVALID_PACKAGE_ID,
+            package_manager_package_id: INVALID_PACKAGE_ID,
             dependencies: DependencyMap::default(),
             side_effects: SideEffects::Unspecified,
             exports: None,
             imports: None,
         };
-        // PORT NOTE: reshaped for borrowck — json_source moved into package_json; use package_json.source below
-        let json_source = &package_json.source;
+        let json_source = &json_source;
 
         // Note: we tried rewriting this to be fewer loops over all the properties (asProperty loops over each)
         // The end result was: it's not faster! Sometimes, it's slower.

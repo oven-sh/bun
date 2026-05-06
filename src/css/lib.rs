@@ -73,8 +73,10 @@ pub mod media_query;
 // `PropertyHandlerContext` / `DeclarationContext` now compile for real so the
 // `rules/` leaf modules can un-gate against them. The heavy method bodies
 // (parse / to_css / minify / get_*_rules) and the per-property handler
-// fields stay internally `#[cfg(any())]`-gated until `properties/*` and the
-// `rule_parsers` block in css_parser.rs un-gate.
+// fields stay internally `#[cfg(any())]`-gated until `properties/*` un-gate.
+// The `RuleBodyParser`/`RuleBodyItemParser`/`DeclarationParser` traits are
+// now un-gated in css_parser.rs (round 5), so `DeclarationBlock::parse` can
+// flip when `properties_generated` lands.
 #[path = "context.rs"]
 pub mod context;
 #[path = "declaration.rs"]

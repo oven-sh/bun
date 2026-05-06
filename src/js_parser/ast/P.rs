@@ -973,10 +973,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         self.options.features.unwrap_commonjs_to_esm
     }
 
-    #[cfg(any())] // blocked_on: Binding::Data variant payload deref (B::Array/Object store *mut [..]); named_imports.contains
     fn is_binding_used(&mut self, binding: Binding, default_export_ref: Ref) -> bool {
         match binding.data {
-            Binding::Data::BIdentifier(ident) => {
+            js_ast::b::B::BIdentifier(ident) => {
+                // SAFETY: arena-owned `*mut Identifier` valid for parser 'a; no aliasing &mut.
+                let ident = unsafe { &*ident };
                 if default_export_ref.eql(ident.r#ref) {
                     return true;
                 }
@@ -985,7 +986,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 }
 
                 for named_export in self.named_exports.values() {
-                    if named_export.r#ref.eql(ident.r#ref) {
+                    if named_export.ref_.eql(ident.r#ref) {
                         return true;
                     }
                 }
@@ -993,23 +994,27 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 let symbol: &Symbol = &self.symbols[ident.r#ref.inner_index() as usize];
                 symbol.use_count_estimate > 0
             }
-            Binding::Data::BArray(array) => {
-                for item in array.items.iter() {
+            js_ast::b::B::BArray(array) => {
+                // SAFETY: arena-owned `*mut Array` / `*mut [ArrayBinding]` valid for parser 'a.
+                let array = unsafe { &*array };
+                for item in unsafe { &*array.items } {
                     if self.is_binding_used(item.binding, default_export_ref) {
                         return true;
                     }
                 }
                 false
             }
-            Binding::Data::BObject(obj) => {
-                for prop in obj.properties.iter() {
+            js_ast::b::B::BObject(obj) => {
+                // SAFETY: arena-owned `*mut Object` / `*mut [Property]` valid for parser 'a.
+                let obj = unsafe { &*obj };
+                for prop in unsafe { &*obj.properties } {
                     if self.is_binding_used(prop.value, default_export_ref) {
                         return true;
                     }
                 }
                 false
             }
-            Binding::Data::BMissing(_) => false,
+            js_ast::b::B::BMissing(_) => false,
         }
     }
 
@@ -3431,30 +3436,36 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         self.scopes_in_order.truncate(scope_index);
     }
 
-    #[cfg(any())] // blocked_on: B::Object/Array payload deref; TSNamespaceMemberMap.put allocator arg
     pub fn define_exported_namespace_binding(
         &mut self,
         exported_members: &mut js_ast::TSNamespaceMemberMap,
         binding: Binding,
     ) -> Result<(), bun_core::Error> {
         match binding.data {
-            Binding::Data::BMissing(_) => {}
-            Binding::Data::BIdentifier(id) => {
-                let name = self.symbols[id.r#ref.inner_index() as usize].original_name;
+            js_ast::b::B::BMissing(_) => {}
+            js_ast::b::B::BIdentifier(id) => {
+                // SAFETY: arena-owned `*mut Identifier` valid for parser 'a.
+                let id = unsafe { &*id };
+                // SAFETY: Symbol.original_name is `*const [u8]` arena-owned for 'a.
+                let name = unsafe { &*self.symbols[id.r#ref.inner_index() as usize].original_name };
                 exported_members.put(
-                    self.allocator,
                     name,
                     js_ast::TSNamespaceMember { loc: binding.loc, data: js_ast::ts::Data::Property },
                 )?;
-                self.ref_to_ts_namespace_member.put(self.allocator, id.r#ref, js_ast::ts::Data::Property)?;
+                // ref_to_ts_namespace_member derefs to std HashMap; Zig `put(allocator, k, v)` → insert.
+                self.ref_to_ts_namespace_member.insert(id.r#ref, js_ast::ts::Data::Property);
             }
-            Binding::Data::BObject(obj) => {
-                for prop in obj.properties.iter() {
+            js_ast::b::B::BObject(obj) => {
+                // SAFETY: arena-owned `*mut Object` / `*mut [Property]` valid for parser 'a.
+                let obj = unsafe { &*obj };
+                for prop in unsafe { &*obj.properties } {
                     self.define_exported_namespace_binding(exported_members, prop.value)?;
                 }
             }
-            Binding::Data::BArray(obj) => {
-                for prop in obj.items.iter() {
+            js_ast::b::B::BArray(obj) => {
+                // SAFETY: arena-owned `*mut Array` / `*mut [ArrayBinding]` valid for parser 'a.
+                let obj = unsafe { &*obj };
+                for prop in unsafe { &*obj.items } {
                     self.define_exported_namespace_binding(exported_members, prop.binding)?;
                 }
             }

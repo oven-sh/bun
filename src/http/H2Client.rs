@@ -51,14 +51,18 @@ pub use live_streams as LIVE_STREAMS;
 // reconciler-3: Stream/ClientSession/dispatch/encode reference `bun_str`/
 // `bun_output`/`crate::state`/`crate::Signal`/`http_thread::InitOpts` that are
 // still gated; re-gate until those crate roots land. PendingConnect is real.
+// Type-only stubs keep `HTTPContext`'s `h2::ClientSession`/`h2::Stream`
+// pointer fields resolving.
 #[cfg(any())] #[path = "h2_client/Stream.rs"]         pub mod stream;
+#[cfg(not(any()))] pub mod stream { pub struct Stream; }
 #[cfg(any())] #[path = "h2_client/ClientSession.rs"]  pub mod client_session;
+#[cfg(not(any()))] pub mod client_session { pub struct ClientSession; }
 #[path = "h2_client/PendingConnect.rs"]               pub mod pending_connect;
 #[cfg(any())] #[path = "h2_client/dispatch.rs"]       pub mod dispatch;
 #[cfg(any())] #[path = "h2_client/encode.rs"]         pub mod encode;
 
-#[cfg(any())] pub use stream::Stream;
-#[cfg(any())] pub use client_session::ClientSession;
+pub use stream::Stream;
+pub use client_session::ClientSession;
 pub use pending_connect::PendingConnect;
 
 // PORT NOTE: Zig had `pub const TestingAPIs = @import("../http_jsc/headers_jsc.zig").H2TestingAPIs;`

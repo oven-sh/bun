@@ -623,6 +623,21 @@ mod js {
     ) {
         // generated: JSNativeBrotli.writeCallbackSetCached
     }
+    pub fn write_callback_get_cached(_this_value: JSValue) -> Option<JSValue> {
+        // generated: JSNativeBrotli.writeCallbackGetCached
+        todo!("blocked_on: codegen JSNativeBrotli.writeCallbackGetCached")
+    }
+    pub fn error_callback_get_cached(_this_value: JSValue) -> Option<JSValue> {
+        // generated: JSNativeBrotli.errorCallbackGetCached
+        todo!("blocked_on: codegen JSNativeBrotli.errorCallbackGetCached")
+    }
+    pub fn error_callback_set_cached(
+        _this_value: JSValue,
+        _global: &JSGlobalObject,
+        _cb: JSValue,
+    ) {
+        // generated: JSNativeBrotli.errorCallbackSetCached
+    }
 }
 
 } // mod _impl

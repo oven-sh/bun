@@ -317,7 +317,7 @@ impl Context {
                 };
                 // SAFETY: ZSTD_isError is a pure fn on usize.
                 if unsafe { c::ZSTD_isError(result) } > 0 {
-                    return Error::init(c"Setting parameter failed".as_ptr(), -1, c"ERR_ZSTD_PARAM_SET_FAILED".as_ptr());
+                    return Error::init("Setting parameter failed", -1, "ERR_ZSTD_PARAM_SET_FAILED");
                 }
                 Error::OK
             }
@@ -328,7 +328,7 @@ impl Context {
                 };
                 // SAFETY: ZSTD_isError is a pure fn on usize.
                 if unsafe { c::ZSTD_isError(result) } > 0 {
-                    return Error::init(c"Setting parameter failed".as_ptr(), -1, c"ERR_ZSTD_PARAM_SET_FAILED".as_ptr());
+                    return Error::init("Setting parameter failed", -1, "ERR_ZSTD_PARAM_SET_FAILED");
                 }
                 Error::OK
             }

@@ -155,75 +155,22 @@ impl ToExprWrapper {
     }
 
     /// Zig: `Context.init(context)` — captures `*ExprType` and its allocator.
-    /// `ExprType` is erased to `c_void`; the trampoline `wrap` recovers the
-    /// concrete `&mut ExprType` and calls `func` (which is `P::wrap_identifier_*`).
+    /// `ExprType` is erased to `c_void`; callers (P.rs) supply a trampoline
+    /// closure that casts back to `*mut P<..>` and dispatches to
+    /// `P::wrap_identifier_{namespace,hoisting}`. Non-capturing closures
+    /// coerce to fn pointers, so this stays zero-cost like Zig's comptime fn.
     #[inline]
-    pub fn new<ExprType>(
-        context: *mut ExprType,
+    pub fn new(
+        context: *mut core::ffi::c_void,
         allocator: &Arena,
-        func: fn(&mut ExprType, logger::Loc, Ref) -> Expr,
+        wrap: fn(*mut core::ffi::c_void, logger::Loc, Ref) -> Expr,
     ) -> Self {
-        // Stash the monomorphized `func` in a generic-fn-item trampoline so the
-        // erased `wrap` field stays a plain `fn(*mut c_void, ..) -> Expr`.
-        // PORT NOTE: Zig captured `func_type` as a comptime param; here we hide
-        // it behind a one-shot closure coerced to a fn pointer via a generic
-        // inner fn — but a fn pointer can't close over `func`, so instead we
-        // route through a tiny vtable-like indirection: store `func` itself,
-        // bit-cast through `c_void` for the context only.
-        //
-        // We can't store `func` directly (its type mentions `ExprType`), so we
-        // generate a per-`ExprType` trampoline that re-derives `func` from a
-        // static. Simpler: require callers to pass a trampoline themselves —
-        // but that pushes boilerplate to every call-site. Instead, leverage
-        // that every caller is `P::wrap_identifier_*`, and build the
-        // trampoline inline here using a generic inner fn that captures `func`
-        // via a `const`-like thunk. Rust fn pointers can't capture, so we
-        // transmute the typed fn pointer to the erased one — sound because
-        // `*mut ExprType` and `*mut c_void` have identical ABI.
-        //
-        // SAFETY: `fn(&mut ExprType, Loc, Ref) -> Expr` and
-        // `fn(*mut c_void, Loc, Ref) -> Expr` differ only in the first
-        // parameter's pointee type; both are thin pointers with identical
-        // calling convention. The callee never inspects the pointee through
-        // the erased type — it is immediately cast back by the caller-side
-        // contract (the same `ExprType` that produced this wrapper).
-        let erased_allocator: *const Arena = allocator;
-        // We need a trampoline because `&mut ExprType` ≠ `*mut c_void` at the
-        // ABI level for the Rust-ABI fn pointer (Rust makes no cross-type
-        // fn-ptr ABI guarantee). Generate one per `(ExprType, func)` via a
-        // local generic fn that smuggles `func` through a `'static` slot.
-        // That requires `func` be addressable at monomorphization time — it
-        // is, since fn items are; but we only have it as a *value* here.
-        //
-        // Pragmatic resolution: store `func` transmuted to a `usize` alongside
-        // and recover it in a single shared trampoline. Two-word state
-        // (ctx + fn) is exactly what Zig's struct held.
-        let erased_func: *const () = func as *const ();
-        Self {
-            context: context as *mut core::ffi::c_void,
-            allocator: erased_allocator,
-            // SAFETY: see `wrap_identifier` — `wrap` is never called directly;
-            // it stores the erased `func` pointer for `wrap_identifier` to
-            // transmute back. We hijack the `wrap` field's fn-pointer slot to
-            // carry `erased_func` since both are pointer-sized; the actual
-            // dispatch lives in `wrap_identifier`.
-            wrap: unsafe {
-                core::mem::transmute::<*const (), fn(*mut core::ffi::c_void, logger::Loc, Ref) -> Expr>(
-                    erased_func,
-                )
-            },
-        }
+        Self { context, allocator: allocator as *const Arena, wrap }
     }
 
     #[inline]
     pub fn wrap_identifier(&self, loc: logger::Loc, ref_: Ref) -> Expr {
         debug_assert!(!self.context.is_null(), "ToExprWrapper not wired (prepare_for_visit_pass)");
-        // SAFETY: `wrap` was produced by `new::<ExprType>` transmuting a
-        // `fn(&mut ExprType, Loc, Ref) -> Expr` to the erased signature; the
-        // first argument is `*mut c_void` here but was `*mut ExprType` at
-        // creation. `&mut ExprType` and `*mut c_void` are both thin data
-        // pointers — the Rust ABI passes them identically. The callee
-        // (`P::wrap_identifier_*`) treats it as `&mut P`, which it is.
         (self.wrap)(self.context, loc, ref_)
     }
 
@@ -341,7 +288,7 @@ impl Binding {
 // the aggregate. `Serializable` is a private layout-only carrier.
 // ──────────────────────────────────────────────────────────────────────────
 
-struct Serializable {
+pub struct Serializable {
     r#type: Tag,
     object: &'static [u8],
     value: B,

@@ -3294,8 +3294,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     let tup = self.convert_expr_to_binding_and_initializer(value, invalid_loc, false);
                     let initializer = tup.expr.or(item.initializer);
                     let is_spread = item.kind == js_ast::g::PropertyKind::Spread || item.flags.contains(Flags::Property::IsSpread);
+                    let mut flags = Flags::PropertySet::empty();
+                    if is_spread { flags |= Flags::Property::IsSpread; }
+                    if item.flags.contains(Flags::Property::IsComputed) { flags |= Flags::Property::IsComputed; }
                     properties.push(B::Property {
-                        flags: Flags::Property::init(Flags::PropertyInit { is_spread, is_computed: item.flags.contains(Flags::Property::IsComputed), ..Default::default() }),
+                        flags,
                         key: item.key.unwrap_or_else(|| self.new_expr(E::Missing {}, expr.loc)),
                         value: tup.binding.unwrap_or_else(|| self.b(B::Missing {}, expr.loc)),
                         default_value: initializer,
@@ -3304,7 +3307,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 }
 
                 return Some(self.b(
-                    B::Object { properties: properties.into_bump_slice(), is_single_line: ex.is_single_line },
+                    B::Object { properties: properties.into_bump_slice_mut() as *mut [_], is_single_line: ex.is_single_line },
                     expr.loc,
                 ));
             }
@@ -3339,7 +3342,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             let equals_range = self.source.range_of_operator_before(initial.loc, b"=");
             if is_spread {
                 self.log
-                    .add_range_error(self.source, equals_range, "A rest argument cannot have a default initializer")
+                    .add_range_error(Some(self.source), equals_range, b"A rest argument cannot have a default initializer")
                     .expect("unreachable");
             } else {
                 // p.markSyntaxFeature();
@@ -3428,24 +3431,26 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             self.import_records.items_mut()[id as usize].flags.insert(bun_options_types::ImportRecordFlags::IS_UNUSED);
 
             if let Some(name_loc) = stmt.default_name {
-                let name = self.load_name_from_ref(name_loc.r#ref.unwrap());
+                let name = self.load_name_from_ref(name_loc.ref_.unwrap());
                 let r#ref = self.declare_symbol(js_ast::symbol::Kind::Other, name_loc.loc, name)?;
-                self.is_import_item.insert(r#ref, ())?;
-                self.macro_.refs.put(r#ref, crate::parser::MacroRefData { import_record_id: id, name: b"default" })?;
+                self.is_import_item.insert(r#ref, ());
+                self.macro_.refs.put(r#ref, crate::parser::MacroRefData { import_record_id: id, name: Some(b"default") })?;
             }
 
             if let Some(star) = stmt.star_name_loc {
                 let name = self.load_name_from_ref(stmt.namespace_ref);
                 let r#ref = self.declare_symbol(js_ast::symbol::Kind::Other, star, name)?;
                 stmt.namespace_ref = r#ref;
-                self.macro_.refs.put(r#ref, crate::parser::MacroRefData { import_record_id: id, ..Default::default() })?;
+                self.macro_.refs.put(r#ref, crate::parser::MacroRefData { import_record_id: id, name: None })?;
             }
 
-            for item in stmt.items.iter() {
-                let name = self.load_name_from_ref(item.name.r#ref.unwrap());
+            // SAFETY: arena-owned `*mut [ClauseItem]` valid for parser 'a lifetime.
+            for item in unsafe { &*stmt.items }.iter() {
+                let name = self.load_name_from_ref(item.name.ref_.unwrap());
                 let r#ref = self.declare_symbol(js_ast::symbol::Kind::Other, item.name.loc, name)?;
-                self.is_import_item.insert(r#ref, ())?;
-                self.macro_.refs.put(r#ref, crate::parser::MacroRefData { import_record_id: id, name: item.alias })?;
+                self.is_import_item.insert(r#ref, ());
+                // SAFETY: ClauseItem.alias is `*const [u8]` arena-owned for 'a.
+                self.macro_.refs.put(r#ref, crate::parser::MacroRefData { import_record_id: id, name: Some(unsafe { &*item.alias }) })?;
             }
 
             return Ok(self.s(S::Empty {}, loc));
@@ -3456,7 +3461,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // We handle it here at parse time (similar to macros) rather than at visit time.
         if path.text == b"bun:bundle" {
             // Look for the "feature" import and validate specifiers
-            for item in stmt.items.iter_mut() {
+            // SAFETY: arena-owned `*mut [ClauseItem]` valid for parser 'a lifetime.
+            for item in unsafe { &mut *stmt.items }.iter_mut() {
                 // In ClauseItem from parseImportClause:
                 // - alias is the name from the source module ("feature")
                 // - original_name is the local binding name

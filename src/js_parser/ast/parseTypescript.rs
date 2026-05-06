@@ -714,7 +714,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 let Some(item) = item else { continue };
                 items.push(*item);
             }
-            break 'scope_order_clone items.into_bump_slice();
+            break 'scope_order_clone items.into_bump_slice_mut();
         };
         // Zig: putNoClobber — debug-assert no prior entry.
         let prev = p.scopes_in_order_for_enum.insert(loc, scope_order_clone);
@@ -724,13 +724,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             S::Enum {
                 name,
                 arg: arg_ref,
-                values: values.into_bump_slice(),
+                values: values.into_bump_slice_mut() as *mut [EnumValue],
                 is_export: opts.is_export,
             },
             loc,
         ))
-        }
-        todo!("b2-ast-E: parse_typescript_enum_stmt body")
     }
 }
 

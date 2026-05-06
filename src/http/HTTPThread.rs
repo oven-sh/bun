@@ -967,7 +967,15 @@ mod _event_loop_draft {
     }
 
     fn init_once(opts: &InitOpts) {
-        // Left undefined here; assigned in on_start.
+        // Spec HTTPThread.zig:195-206 — initialize the global (with timer
+        // started on the calling thread) BEFORE spawning, so `on_start`'s
+        // `crate::http_thread_mut()` finds `Some(..)` and can fill in
+        // `loop_`/`uws_loop`/contexts.
+        // SAFETY: `init_once` runs under `Once`; no other thread reads
+        // `HTTP_THREAD` until `has_awoken` is set in `on_start`.
+        unsafe {
+            crate::HTTP_THREAD = Some(HttpThread::new());
+        }
         bun_libdeflate_sys::libdeflate::load();
         let opts_copy = opts.clone();
         let thread = std::thread::Builder::new()

@@ -369,24 +369,6 @@ impl Expr {
         }
     }
 
-    /// Construct an `Expr` from an opaque `Blob` (JSON / text / data-URL).
-    ///
-    /// This is the macro-expansion `Expr.fromBlob` path. The body is owned by
-    /// the higher-tier `bun_js_parser_jsc` crate (touches `MimeType`, JSON
-    /// parsing, and `jsc::webcore::Blob`). Downstream callers in lower tiers
-    /// only need the symbol to exist for type-check; calling it without the
-    /// JSC bridge is a logic error.
-    // TODO(b2-blocked): bun_http_types::MimeType + bun_interchange::json::parse.
-    pub fn from_blob(
-        _blob: BlobRef,
-        _bump: &Bump,
-        _mime_type: Option<&[u8]>,
-        _log: &mut logger::Log,
-        loc: Loc,
-    ) -> Result<Expr, bun_core::Error> {
-        let _ = loc;
-        todo!("Expr::from_blob — owned by bun_js_parser_jsc (MimeType/JSON bridge)")
-    }
 }
 
 // Expr — property/object/string accessor methods.

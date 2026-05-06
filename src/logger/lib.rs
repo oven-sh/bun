@@ -1125,7 +1125,7 @@ impl Kind {
 
 // Do not mark these as packed
 // https://github.com/ziglang/zig/issues/15715
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
 pub struct Loc {
     pub start: i32,
 }

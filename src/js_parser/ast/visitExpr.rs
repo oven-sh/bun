@@ -853,13 +853,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // "a['b']" => "a.b"
         if p.options.features.minify_syntax {
             if let Some(mut s) = e_.index.data.e_string() {
-                if s.is_utf8() && s.is_identifier(p.allocator) {
+                if !s.is_utf16 && s.is_identifier(p.allocator) {
                     // PORT NOTE: `E::Dot.name: &'static [u8]` is the arena-erased
                     // `Str` newtype; matches the transmute pattern in E.rs.
                     let dot = p.new_expr(
                         E::Dot {
                             name: unsafe {
-                                core::mem::transmute::<&[u8], &'static [u8]>(s.slice(p.allocator))
+                                core::mem::transmute::<&[u8], &'static [u8]>(s.data)
                             },
                             name_loc: e_.index.loc,
                             target: e_.target,
@@ -980,7 +980,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                 let unwrapped = e_.index.unwrap_inlined();
                 if let Some(mut s) = unwrapped.data.e_string() {
-                    if s.is_utf8() {
+                    if !s.is_utf16 {
                         // "a['b' + '']" => "a.b"
                         // "enum A { B = 'b' }; a[A.B]" => "a.b"
                         if p.options.features.minify_syntax && s.is_identifier(p.allocator) {
@@ -988,7 +988,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 E::Dot {
                                     name: unsafe {
                                         core::mem::transmute::<&[u8], &'static [u8]>(
-                                            s.slice(p.allocator),
+                                            s.data,
                                         )
                                     },
                                     name_loc: unwrapped.loc,
@@ -1043,8 +1043,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 {
                     // "foo"[2] -> "o"
                     if let Some(mut str_) = target.data.as_e_string() {
-                        if str_.is_utf8() {
-                            let literal = str_.slice(p.allocator);
+                        if !str_.is_utf16 {
+                            let literal = str_.data;
                             let num: usize = index.data.e_number().unwrap().to_usize();
                             if cfg!(debug_assertions) {
                                 debug_assert!(strings::is_all_ascii(literal));

@@ -1058,6 +1058,41 @@ impl Bytes {
         }
     }
 
+
+    /// Adopt an mmap'd region. `Drop` (`allocator.free`) will `munmap` it.
+    /// Mirrors Zig `Store.init(ptr[0..len], .{ .vtable = MmapFreeInterface.vtable })`.
+    #[cfg(unix)]
+    pub fn init_mmap(slice: &'static mut [u8]) -> Bytes {
+        // Stateless allocator vtable whose `free` munmap's. Same pattern as
+        // `LinuxMemFdAllocator` but without the stateful fd. `alloc` returns
+        // `None`: blob stores never grow.
+        unsafe fn alloc(_: *mut core::ffi::c_void, _: usize, _: bun_alloc::Alignment, _: usize) -> Option<core::ptr::NonNull<u8>> {
+            None
+        }
+        unsafe fn free(_: *mut core::ffi::c_void, buf: &mut [u8], _: bun_alloc::Alignment, _: usize) {
+            if let bun_sys::Result::Err(err) = bun_sys::munmap(buf.as_mut_ptr(), buf.len()) {
+                bun_core::Output::debug_warn(format_args!("Blob mmap-store munmap failed: {err:?}"));
+            }
+        }
+        static MMAP_FREE_VTABLE: bun_alloc::AllocatorVTable = bun_alloc::AllocatorVTable {
+            alloc,
+            resize: bun_alloc::no_resize,
+            remap: bun_alloc::no_remap,
+            free,
+        };
+        // SAFETY: caller (C++ WebKit screenshot path) guarantees `slice` is a
+        // page-aligned mmap'd region we now own. `len == cap` so `free` munmaps
+        // exactly the same range.
+        unsafe {
+            Bytes::from_raw_parts(
+                slice.as_mut_ptr(),
+                slice.len() as SizeType,
+                slice.len() as SizeType,
+                bun_alloc::StdAllocator { ptr: core::ptr::null_mut(), vtable: &MMAP_FREE_VTABLE },
+            )
+        }
+    }
+
     pub fn init_empty_with_name(name: PathString) -> Bytes {
         Bytes {
             ptr: None,

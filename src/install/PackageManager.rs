@@ -592,11 +592,10 @@ impl WorkspaceFilter {
         let is_path = !remain.is_empty() && remain[0] == b'.';
 
         let filter: &[u8] = if is_path {
-            strings::without_trailing_slash(path::join_abs_string_buf(
+            strings::without_trailing_slash(resolve_path::join_abs_string_buf::<platform::Posix>(
                 cwd,
                 path_buf,
                 &[remain],
-                path::Style::Posix,
             ))
         } else {
             remain
@@ -648,7 +647,7 @@ impl Default for TrackInstalledBin {
 
 pub struct ScriptRunEnvironment {
     pub root_dir_info: Option<NonNull<DirInfo>>, // UNKNOWN — struct appears unused // TODO(port): lifetime
-    pub transpiler: Transpiler,
+    pub transpiler: Transpiler<'static>,
 }
 
 #[derive(Default)]
@@ -775,7 +774,7 @@ impl PackageManager {
         &mut self,
         ctx: Command::Context,
         log_level: Options::LogLevel,
-    ) -> Result<transpiler::Transpiler, Error> {
+    ) -> Result<transpiler::Transpiler<'static>, Error> {
         // TODO(port): narrow error set
         CONFIGURE_ENV_FOR_SCRIPTS_ONCE.call((self, ctx, log_level))
     }
@@ -794,7 +793,15 @@ impl PackageManager {
 
     #[inline]
     pub fn is_continuous_integration(&mut self) -> bool {
-        self.ci_mode.get()
+        // PORT NOTE: Zig `LazyBool.get` recovers `*PackageManager` via
+        // `@fieldParentPtr("ci_mode", self)`. Rust has no field-parent-pointer,
+        // so pass the parent explicitly. `ci_mode.value` is a `Cell` so a
+        // shared `&self` projection suffices and does not alias the implicit
+        // shared `&PackageManager` the getter receives.
+        // SAFETY: `self` is a valid `*const PackageManager`; both projections
+        // are shared reads of disjoint state (`ci_mode` Cell vs. `env`).
+        let parent: *const PackageManager = self;
+        unsafe { (*parent).ci_mode.get(&*parent) }
     }
 
     pub fn fail_root_resolution(
@@ -909,12 +916,12 @@ impl PackageManager {
 
     // Helper: deref env (UNKNOWN ownership wrapper)
     #[inline]
-    fn env(&self) -> &dot_env::Loader {
+    fn env(&self) -> &dot_env::Loader<'static> {
         // SAFETY: env is set during init() and never null afterward
         unsafe { self.env.unwrap().as_ref() }
     }
     #[inline]
-    fn env_mut(&mut self) -> &mut dot_env::Loader {
+    fn env_mut(&mut self) -> &mut dot_env::Loader<'static> {
         // SAFETY: env is set during init() and never null afterward
         unsafe { self.env.unwrap().as_mut() }
     }
@@ -927,14 +934,14 @@ impl PackageManager {
 // TODO(port): bun.once returns a struct whose .call() runs the closure exactly once
 // and caches the result. Mapping to bun_core::Once with the run fn below.
 pub static CONFIGURE_ENV_FOR_SCRIPTS_ONCE: Once<
-    fn(&mut PackageManager, Command::Context, Options::LogLevel) -> Result<transpiler::Transpiler, Error>,
+    fn(&mut PackageManager, Command::Context, Options::LogLevel) -> Result<transpiler::Transpiler<'static>, Error>,
 > = Once::new(configure_env_for_scripts_run);
 
 fn configure_env_for_scripts_run(
     this: &mut PackageManager,
     ctx: Command::Context,
     log_level: Options::LogLevel,
-) -> Result<transpiler::Transpiler, Error> {
+) -> Result<transpiler::Transpiler<'static>, Error> {
     // We need to figure out the PATH and other environment variables
     // to do that, we re-use the code from bun run
     // this is expensive, it traverses the entire directory tree going up to the root
@@ -1069,9 +1076,14 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
     #[cfg(not(windows))]
     const MODE: u32 = 0o755;
 
-    let node_gyp_file = match _node_gyp_tempdir_guard.create_file(
-        FILE_NAME,
-        bun_sys::CreateFileOptions { mode: MODE },
+    // Zig: `node_gyp_tempdir.createFile(file_name, .{ .mode = mode })`.
+    // `bun_sys::Dir` has no `create_file`; route through `File::openat` with the
+    // same flags `std.fs.Dir.createFile` uses (`O_WRONLY|O_CREAT|O_TRUNC`).
+    let node_gyp_file = match bun_sys::File::openat(
+        _node_gyp_tempdir_guard.fd,
+        FILE_NAME.as_bytes(),
+        bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC | bun_sys::O::CLOEXEC,
+        MODE,
     ) {
         Ok(f) => f,
         Err(e) => {
@@ -1145,7 +1157,7 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
     let written = path_buf.len() - cursor.len();
     let npm_config_node_gyp = &path_buf[..written];
 
-    let node_gyp_abs_dir = path::dirname(npm_config_node_gyp).unwrap();
+    let node_gyp_abs_dir = bun_core::dirname(npm_config_node_gyp).unwrap();
     manager
         .env_mut()
         .map
@@ -1154,10 +1166,10 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
     Ok(())
 }
 
-fn http_thread_on_init_error(err: http::InitError, opts: http::HTTPThread::InitOpts) -> ! {
+fn http_thread_on_init_error(err: http::InitError, opts: &http::http_thread::InitOpts) -> ! {
     match err {
         http::InitError::LoadCAFile => {
-            let mut normalizer = path::PosixToWinNormalizer::default();
+            let mut normalizer = PosixToWinNormalizer::default();
             let normalized =
                 normalizer.resolve_z(FileSystem::instance().top_level_dir, opts.abs_ca_file_name);
             if !bun_sys::exists_z(normalized) {
@@ -1285,7 +1297,7 @@ pub fn init(
     let mut original_package_json_path =
         unsafe { ZStr::from_raw(original_package_json_path_buf.as_ptr(), path_len) };
     let original_cwd =
-        strings::without_suffix(original_package_json_path.as_bytes(), SEP_PACKAGE_JSON);
+        strings::without_suffix_comptime(original_package_json_path.as_bytes(), SEP_PACKAGE_JSON);
     let original_cwd_clone = Box::<[u8]>::from(original_cwd);
 
     let mut workspace_names = Package::WorkspaceMap::init();
@@ -1326,18 +1338,19 @@ pub fn init(
                     )
                 };
 
-                match bun_sys::open_file_z(
+                match bun_sys::File::openat(
                     bun_sys::Fd::cwd(),
-                    &package_json_path,
+                    package_json_path.as_bytes(),
                     if need_write {
-                        bun_sys::OpenMode::ReadWrite
+                        bun_sys::O::RDWR
                     } else {
-                        bun_sys::OpenMode::ReadOnly
-                    },
+                        bun_sys::O::RDONLY
+                    } | bun_sys::O::CLOEXEC,
+                    0,
                 ) {
                     Ok(f) => break 'child f,
                     Err(e) if e == err!("FileNotFound") => {
-                        if let Some(parent) = path::dirname(this_cwd) {
+                        if let Some(parent) = bun_core::dirname(this_cwd) {
                             this_cwd = strings::without_trailing_slash(parent);
                             continue;
                         } else {
@@ -1361,7 +1374,9 @@ pub fn init(
                         Global::crash();
                     }
                     Err(e) => {
-                        Output::err_value(
+                        // Zig: `Output.err(err, "could not open \"{s}\"", .{path})` —
+                        // `bun.Output.err` accepts an error value directly.
+                        Output::err(
                             e,
                             "could not open \"{s}\"",
                             &[&bstr::BStr::new(package_json_path.as_bytes())],

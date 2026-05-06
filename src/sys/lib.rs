@@ -4816,13 +4816,6 @@ pub fn open_file(path: &[u8], flags: OpenFlags) -> Maybe<File> {
 pub fn open_dir_for_iteration(dir: Fd, path: &[u8]) -> Maybe<Fd> {
     open_dir_at(dir, path)
 }
-/// bun.zig:850 — `bun.openDir(dir, path)`. Opens a directory handle relative to
-/// `dir`. POSIX: `openat(.., O.DIRECTORY|O.CLOEXEC|O.RDONLY, 0)`; Windows:
-/// `openDirAtWindowsA(.., .{ .iterable, .can_rename_or_delete, .read_only })`.
-#[inline]
-pub fn open_dir(dir: Dir, path: &[u8]) -> core::result::Result<Dir, bun_core::Error> {
-    open_dir_at(dir.fd, path).map(Dir::from_fd).map_err(Into::into)
-}
 /// bun.zig:1303 — `bun.getFdPathZ(fd, buf)`. Wraps [`get_fd_path`] then
 /// NUL-terminates in-place so callers receive a `&ZStr`.
 pub fn get_fd_path_z<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a ZStr> {
@@ -4832,19 +4825,9 @@ pub fn get_fd_path_z<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'
     Ok(unsafe { ZStr::from_raw(out.0.as_ptr(), len) })
 }
 
-/// Options for [`renameat_concurrently`]. Port of the anonymous-struct
-/// `comptime opts` parameter on `bun.sys.renameatConcurrently` (sys.zig:2461).
-#[derive(Clone, Copy, Default)]
-pub struct RenameatConcurrentlyOptions {
-    /// On `EXDEV`, fall back to a slow open+copy via [`move_file_z_slow`].
-    pub move_fallback: bool,
-}
-
-/// sys.zig:2461 — `bun.sys.renameatConcurrently`. Attempts an atomic
-/// `RENAME_NOREPLACE` first, then `RENAME_EXCHANGE`, then a racy
-/// delete-tree + plain `renameat`. Optionally falls back to a slow
-/// cross-device copy on `EXDEV`.
-pub fn renameat_concurrently(
+/// `&[u8]`-taking convenience over [`renameat_concurrently`] — Z-terminates both
+/// paths into stack buffers (Zig signature is `[:0]const u8`).
+pub fn renameat_concurrently_a(
     from_dir_fd: Fd,
     from: &[u8],
     to_dir_fd: Fd,

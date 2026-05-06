@@ -2,24 +2,28 @@ use core::sync::atomic::Ordering;
 
 
 use bun_collections::{ArrayHashMap, DynamicBitSet, StringHashMap};
+use bun_core::fmt::PathSep;
 use bun_core::{Global, Output};
-use bun_paths::{self as Path, PathBuffer, AbsPath, MAX_PATH_BYTES, SEP};
+use bun_paths::resolve_path::{dirname, join_abs_string_z, join_z_buf};
+use bun_paths::{self as Path, platform, AbsPath, PathBuffer, MAX_PATH_BYTES, SEP};
 use bun_semver::String;
 use bun_str::{strings, ZStr};
 use bun_sys::{self as Syscall, Dir, Fd};
 
-use crate::bun_fs::FileSystem;
-use crate::bun_progress::Progress;
+use crate::bin_real as bin;
+use crate::bin_real::Bin;
 use crate::bun_bunfig::Arguments as Command;
-use crate::bin::Bin;
+use crate::bun_fs::FileSystem;
+use crate::bun_progress::{Node as ProgressNode, Progress};
 use crate::lifecycle_script_runner::LifecycleScriptSubprocess;
-use crate::lockfile::{self, Lockfile, Package};
-use crate::package_install::PackageInstall;
-use crate::package_manager::{self, PackageManager, Options};
+use crate::lockfile_real::{self as lockfile, DependencySlice, Lockfile, Tree};
+use crate::lockfile_real::package::{self as Package, scripts::Scripts as PackageScripts};
+use crate::package_install::{self, PackageInstall};
+use crate::package_manager::{self, Options, PackageManager};
+use crate::package_manager_task as task;
 use crate::patch_install::PatchTask;
 use crate::postinstall_optimizer::PostinstallOptimizer;
-use crate::resolution::Resolution;
-use crate::package_manager_task::Task;
+use crate::resolution::{self, Resolution};
 use crate::{
     invalid_package_id, DependencyID, DependencyInstallContext, ExtractData, PackageID,
     PackageNameHash, TaskCallbackContext, TruncatedPackageNameHash,
@@ -47,22 +51,22 @@ pub struct PackageInstaller<'a> {
     pub skip_delete: bool,
     pub force_install: bool,
     pub root_node_modules_folder: Dir,
-    pub summary: &'a mut PackageInstall::Summary,
-    pub options: &'a PackageManager::Options,
+    pub summary: &'a mut package_install::Summary,
+    pub options: &'a Options,
     // TODO(port): the following slice fields alias into `self.lockfile.packages` (BACKREF);
     // borrowck will reject `&'a mut Lockfile` + `&'a [T]` into it. Phase B: store as raw
     // `*const [T]` or re-fetch via `fix_cached_lockfile_package_slices` helper accessors.
-    pub metas: &'a [lockfile::package::Meta],
+    pub metas: &'a [Package::Meta],
     pub names: &'a [String],
-    pub pkg_dependencies: &'a [lockfile::DependencySlice],
+    pub pkg_dependencies: &'a [DependencySlice],
     pub pkg_name_hashes: &'a [PackageNameHash],
     pub bins: &'a [Bin],
     pub resolutions: &'a mut [Resolution],
-    pub node: &'a mut Progress::Node,
+    pub node: &'a mut ProgressNode,
     pub destination_dir_subpath_buf: PathBuffer,
     pub folder_path_buf: PathBuffer,
     pub successfully_installed: Bitset,
-    pub command_ctx: Command::Context,
+    pub command_ctx: Command::Context<'a>,
     pub current_tree_id: lockfile::tree::Id,
 
     // fields used for running lifecycle scripts when it's safe
@@ -70,7 +74,7 @@ pub struct PackageInstaller<'a> {
     /// set of completed tree ids
     pub completed_trees: Bitset,
     /// the tree ids a tree depends on before it can run the lifecycle scripts of it's immediate dependencies
-    pub tree_ids_to_trees_the_id_depends_on: bun_collections::dynamic_bit_set::List,
+    pub tree_ids_to_trees_the_id_depends_on: bun_collections::DynamicBitSetList,
     pub pending_lifecycle_scripts: Vec<PendingLifecycleScript>,
 
     pub trusted_dependencies_from_update_requests: ArrayHashMap<TruncatedPackageNameHash, ()>,
@@ -99,7 +103,7 @@ impl NodeModulesFolder {
         let parts: [&[u8]; 2] = [self.path.as_slice(), file_path.as_bytes()];
         bun_sys::directory_exists_at(
             Fd::from_std_dir(root_node_modules_dir),
-            bun_paths::join_z_buf(&mut path_buf, &parts, bun_paths::Style::Auto),
+            join_z_buf::<platform::Auto>(path_buf.as_mut_slice(), &parts),
         )
         .unwrap_or(false)
     }
@@ -130,7 +134,7 @@ impl NodeModulesFolder {
         let parts: [&[u8]; 2] = [self.path.as_slice(), file_path.as_bytes()];
         bun_sys::File::openat(
             Fd::from_std_dir(root_node_modules_dir),
-            bun_paths::join_z_buf(&mut path_buf, &parts, bun_paths::Style::Auto),
+            join_z_buf::<platform::Auto>(path_buf.as_mut_slice(), &parts),
             bun_sys::O::RDONLY,
             0,
         )
@@ -194,7 +198,7 @@ impl NodeModulesFolder {
         #[cfg(unix)]
         {
             // TODO(port): std.posix.toPosixPath — copies into a NUL-terminated PathBuffer
-            let path_z = bun_paths::to_posix_path(self.path.as_slice())?;
+            let path_z = bun_sys::to_posix_path(self.path.as_slice())?;
             return Ok(bun_sys::openat(
                 Fd::from_std_dir(root),
                 &path_z,
@@ -229,7 +233,7 @@ impl NodeModulesFolder {
                 // TODO(port): std.fs.Dir.makeOpenPath — bun_sys equivalent (mkdir -p + open)
                 break 'brk root.make_open_path(
                     self.path.as_slice(),
-                    bun_sys::DirOpenOptions { iterate: true, access_sub_paths: true },
+                    bun_sys::OpenDirOptions { iterate: true, ..Default::default() },
                 )?;
             }
 
@@ -263,15 +267,13 @@ pub struct TreeContext {
     /// being able to install it's dependencies
     pub pending_installs: Vec<DependencyInstallContext>,
 
-    pub binaries: Bin::PriorityQueue,
+    pub binaries: bin::PriorityQueue<'static>,
 
     /// Number of installed dependencies. Could be successful or failure.
     pub install_count: usize,
 }
 
-impl TreeContext {
-    pub type Id = lockfile::tree::Id;
-}
+pub type TreeContextId = lockfile::tree::Id;
 
 // PORT NOTE: TreeContext::deinit dropped — Vec and Bin::PriorityQueue impl Drop.
 
@@ -318,8 +320,12 @@ impl<'a> LazyPackageDestinationDir<'a> {
 impl<'a> PackageInstaller<'a> {
     /// Increments the number of installed packages for a tree id and runs available scripts
     /// if the tree is finished.
-    pub fn increment_tree_install_count<const SHOULD_INSTALL_PACKAGES: bool>(
+    // PORT NOTE: Zig parametrised this on `comptime should_install_packages: bool`.
+    // Rust can't pass `!CONST_PARAM` as a const-generic arg on stable, and the
+    // bool only gates a single call below, so it's a runtime arg here.
+    pub fn increment_tree_install_count(
         &mut self,
+        should_install_packages: bool,
         tree_id: lockfile::tree::Id,
         log_level: Options::LogLevel,
     ) {

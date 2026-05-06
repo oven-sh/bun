@@ -2,10 +2,12 @@ use core::ffi::c_char;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bun_core::{Global, Output};
-use bun_install::lockfile::{self as Lockfile, Package};
-use bun_install::isolated_install::store::{self as Store};
-use bun_install::isolated_install::installer::Installer;
-use bun_install::PackageManager;
+use crate::lockfile_real::{self as Lockfile, Scripts as LockfileScripts};
+use crate::lockfile_real::package::scripts::List as ScriptsList;
+use crate::isolated_install::store::{self as Store, entry};
+use crate::isolated_install::installer::{Installer, Step, CompleteState};
+use crate::PackageManager;
+use bun_event_loop::AnyEventLoop;
 use bun_io::heap as io_heap;
 use bun_io::BufferedReader;
 
@@ -188,7 +190,7 @@ pub fn replace_package_manager_run(
 pub struct LifecycleScriptSubprocess<'a> {
     pub package_name: &'a [u8],
 
-    pub scripts: Package::Scripts::List,
+    pub scripts: ScriptsList,
     pub current_script_index: u8,
 
     pub remaining_fds: i8,
@@ -216,25 +218,34 @@ pub struct LifecycleScriptSubprocess<'a> {
 }
 
 pub struct InstallCtx<'a> {
-    pub entry_id: Store::Entry::Id,
-    pub installer: &'a Installer,
+    pub entry_id: entry::Id,
+    pub installer: &'a Installer<'a>,
 }
 
-pub type List<'a> = io_heap::Intrusive<
-    LifecycleScriptSubprocess<'a>,
-    *mut PackageManager,
-    sort_by_started_at,
->;
-// TODO(port): Rust type aliases cannot capture a fn item as a generic param like Zig's
-// `Intrusive(T, Ctx, sortFn)` does. Phase B: make `Intrusive` take the comparator at
-// construction or via a trait, and wire `sort_by_started_at` there.
+// PORT NOTE: Zig's `Intrusive(T, Context, less)` takes the comparator as a comptime
+// fn-pointer. The Rust `io_heap::Intrusive` folds it into `HeapContext::less` on the
+// `Context` type instead, so `sort_by_started_at` is provided via a trait impl on
+// `*mut PackageManager` (the Zig context arg) rather than a third generic param.
+pub type List<'a> = io_heap::Intrusive<LifecycleScriptSubprocess<'a>, *mut PackageManager>;
 
-fn sort_by_started_at(
-    _: &PackageManager,
-    a: &LifecycleScriptSubprocess<'_>,
-    b: &LifecycleScriptSubprocess<'_>,
-) -> bool {
-    a.started_at < b.started_at
+impl<'a> io_heap::HeapNode for LifecycleScriptSubprocess<'a> {
+    #[inline]
+    fn heap(&mut self) -> &mut io_heap::IntrusiveField<Self> {
+        &mut self.heap
+    }
+}
+
+impl<'a> io_heap::HeapContext<LifecycleScriptSubprocess<'a>> for *mut PackageManager {
+    #[inline]
+    fn less(
+        &self,
+        a: *mut LifecycleScriptSubprocess<'a>,
+        b: *mut LifecycleScriptSubprocess<'a>,
+    ) -> bool {
+        // SAFETY: `a`/`b` are live heap nodes owned by the intrusive heap; the
+        // heap only calls `less` on nodes it has been handed via `insert`.
+        unsafe { (*a).started_at < (*b).started_at }
+    }
 }
 
 pub const MIN_MILLISECONDS_TO_LOG: u64 = 500;
@@ -272,8 +283,8 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     }
 
     pub fn script_name(&self) -> &'static [u8] {
-        debug_assert!((self.current_script_index as usize) < Lockfile::Scripts::NAMES.len());
-        Lockfile::Scripts::NAMES[self.current_script_index as usize]
+        debug_assert!((self.current_script_index as usize) < LockfileScripts::NAMES.len());
+        LockfileScripts::NAMES[self.current_script_index as usize].as_bytes()
     }
 
     pub fn on_reader_done(&mut self) {
@@ -326,7 +337,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             debug_assert!(flags & bun_sys::O::NONBLOCK != 0);
 
             let stat = bun_sys::fstat(fd).unwrap().expect("Failed to fstat");
-            debug_assert!(bun_sys::posix::S::is_sock(stat.mode));
+            debug_assert!(bun_sys::posix::S::ISSOCK(stat.mode as _));
         }
         let _ = fd;
     }
@@ -362,7 +373,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         next_script_index: u8,
     ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
-        bun_core::analytics::Features::lifecycle_scripts_inc(1);
+        bun_core::analytics::Features::LIFECYCLE_SCRIPTS.fetch_add(1, Ordering::Relaxed);
 
         if !(*this).has_incremented_alive_count {
             (*this).has_incremented_alive_count = true;
@@ -422,7 +433,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         let combined_script: &mut ZStr =
             unsafe { ZStr::from_raw_mut(copy_script.as_mut_ptr(), copy_script.len() - 1) };
 
-        if (*this).foreground && (*this).manager.options.log_level != PackageManager::Options::LogLevel::Silent {
+        if (*this).foreground && (*this).manager.options.log_level != crate::LogLevel::Silent {
             Output::command(combined_script.as_bytes());
         } else if let Some(scripts_node) = manager.scripts_node.as_ref() {
             manager.set_node_name(
@@ -485,7 +496,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 bun_spawn::Stdio::Ignore
             },
 
-            stdout: if (*this).manager.options.log_level == PackageManager::Options::LogLevel::Silent {
+            stdout: if (*this).manager.options.log_level == crate::LogLevel::Silent {
                 bun_spawn::Stdio::Ignore
             } else if (*this).manager.options.log_level.is_verbose() || (*this).foreground {
                 bun_spawn::Stdio::Inherit
@@ -499,7 +510,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     bun_spawn::Stdio::BufferPipe((*this).stdout.source.as_ref().unwrap().pipe)
                 }
             },
-            stderr: if (*this).manager.options.log_level == PackageManager::Options::LogLevel::Silent {
+            stderr: if (*this).manager.options.log_level == crate::LogLevel::Silent {
                 bun_spawn::Stdio::Ignore
             } else if (*this).manager.options.log_level.is_verbose() || (*this).foreground {
                 bun_spawn::Stdio::Inherit
@@ -592,7 +603,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         let event_loop = &(*this).manager.event_loop;
         let process = spawned.to_process(event_loop, false);
 
-        bun_core::assertf!((*this).process.is_none(), "forgot to call `resetPolls`");
+        debug_assert!((*this).process.is_none(), "forgot to call `resetPolls`");
         (*this).process = Some(process.clone());
         // Store the allocation-rooted `this` as the exit-handler owner. We hold no
         // live `&mut Self` here, so the synchronous `on_exit` dispatch below may
@@ -677,9 +688,9 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     if self.optional {
                         if let Some(ctx) = &self.ctx {
                             ctx.installer.store.entries.items_step()[ctx.entry_id.get()]
-                                .store(Store::Step::Done, Ordering::Release);
+                                .store(Step::Done, Ordering::Release);
                             ctx.installer
-                                .on_task_complete(ctx.entry_id, Store::TaskResult::Skipped);
+                                .on_task_complete(ctx.entry_id, CompleteState::Skipped);
                         }
                         self.decrement_pending_script_tasks();
                         self.deinit_and_delete_package();
@@ -737,8 +748,8 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                         0 => {
                             let previous_step = ctx.installer.store.entries.items_step()
                                 [ctx.entry_id.get()]
-                            .swap(Store::Step::Binaries, Ordering::Release);
-                            debug_assert!(previous_step == Store::Step::RunPreinstall);
+                            .swap(Step::Binaries, Ordering::Release);
+                            debug_assert!(previous_step == Step::RunPreinstall);
                             ctx.installer.start_task(ctx.entry_id);
                             self.decrement_pending_script_tasks();
                             // SAFETY: `self` was created by `Self::new` (Box::into_raw); uniquely owned here.
@@ -750,7 +761,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 }
 
                 for new_script_index in
-                    (self.current_script_index as usize + 1)..Lockfile::Scripts::NAMES.len()
+                    (self.current_script_index as usize + 1)..LockfileScripts::NAMES.len()
                 {
                     if self.scripts.items[new_script_index].is_some() {
                         self.reset_polls();
@@ -766,7 +777,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                         } {
                             Output::err_generic(format_args!(
                                 "Failed to run script <b>{}<r> due to error <b>{}<r>",
-                                bstr::BStr::new(Lockfile::Scripts::NAMES[new_script_index]),
+                                bstr::BStr::new(LockfileScripts::NAMES[new_script_index]),
                                 err.name(),
                             ));
                             Global::exit(1);

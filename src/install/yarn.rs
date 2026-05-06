@@ -6,7 +6,15 @@ use bun_install::bin::Bin;
 use bun_install::dependency::{self, Dependency};
 use bun_install::install::{self, DependencyID, PackageID, PackageManager};
 use bun_install::integrity::Integrity;
-use bun_install::lockfile::{self, LoadResult, Lockfile, Tree};
+// PORT NOTE: `bun_install::lockfile` is the column-accessor stub used by the
+// audit/why CLI walkers; the yarn migrator needs the real Lockfile/Tree/
+// LoadResult enum, so import from `lockfile_real` and alias it back to
+// `lockfile` so the qualified `lockfile::DependencySlice` etc. paths below
+// resolve against the ported types.
+use crate::lockfile_real::{self as lockfile, LoadResult, Lockfile, tree::Tree};
+use crate::lockfile_real::package::{Package as LockfilePackage, Meta as PackageMeta};
+use crate::lockfile_real::package::meta::HasInstallScript;
+use crate::Origin;
 use bun_install::npm;
 use bun_install::resolution::Resolution;
 use crate::bun_json;
@@ -816,19 +824,19 @@ pub fn migrate_yarn_lockfile(
             string_buf.append(b"")?
         };
 
-        this.packages.append(lockfile::Package {
+        this.packages.append(LockfilePackage {
             name: root_name,
             name_hash: package_name_hash,
             resolution: Resolution::init(Resolution::Value::Root(())),
             dependencies: Default::default(),
             resolutions: Default::default(),
-            meta: lockfile::Meta {
+            meta: PackageMeta {
                 id: 0,
-                origin: lockfile::Origin::Local,
+                origin: Origin::Local,
                 arch: npm::Architecture::All,
                 os: npm::OperatingSystem::All,
                 man_dir: SemverString::default(),
-                has_install_script: lockfile::HasInstallScript::False,
+                has_install_script: HasInstallScript::False,
                 integrity: Integrity::default(),
                 ..Default::default()
             },
@@ -1039,7 +1047,7 @@ pub fn migrate_yarn_lockfile(
 
         let name_hash = string_hash(name_to_use);
 
-        this.packages.append(lockfile::Package {
+        this.packages.append(LockfilePackage {
             name: string_buf.append_with_hash(name_to_use, name_hash)?,
             name_hash,
             resolution: 'blk: {
@@ -1148,9 +1156,9 @@ pub fn migrate_yarn_lockfile(
             },
             dependencies: Default::default(),
             resolutions: Default::default(),
-            meta: lockfile::Meta {
+            meta: PackageMeta {
                 id: package_id,
-                origin: lockfile::Origin::Npm,
+                origin: Origin::Npm,
                 arch: if let Some(cpu_list) = &entry.cpu {
                     let mut arch = npm::Architecture::None.negatable();
                     for cpu in cpu_list.iter() {
@@ -2038,7 +2046,7 @@ pub fn migrate_yarn_lockfile(
         migrated: lockfile::Migrated::Yarn,
         loaded_from_binary_lockfile: false,
         serializer_result: Default::default(),
-        format: lockfile::Format::Binary,
+        format: lockfile::LockfileFormat::Binary,
     });
 
     Ok(result)

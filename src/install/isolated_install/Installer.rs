@@ -74,7 +74,10 @@ pub struct Installer<'a> {
     pub task_queue: UnboundedQueue<Task>, // intrusive via .next
     pub tasks: Box<[Task]>,
 
-    pub supported_backend: bun_core::Atomic<InstallMethod>,
+    /// Zig: `std.atomic.Value(PackageInstall.Method)`. Stable Rust has no
+    /// generic atomic-enum, so store the `#[repr(u8)]` discriminant and
+    /// transmute at the load/store sites below.
+    pub supported_backend: AtomicU8,
 
     pub trusted_dependencies_from_update_requests: ArrayHashMap<TruncatedPackageNameHash, ()>,
 
@@ -1017,18 +1020,12 @@ impl Task {
                                         sys::Result::Ok(()) => {}
                                         sys::Result::Err(err) => match err.get_errno() {
                                             sys::Errno::XDEV => {
-                                                installer.supported_backend.store(
-                                                    InstallMethod::Copyfile,
-                                                    Ordering::Relaxed,
-                                                );
+                                                installer.supported_backend.store(InstallMethod::Copyfile as u8, Ordering::Relaxed);
                                                 backend = InstallMethod::Copyfile;
                                                 continue 'backend;
                                             }
                                             sys::Errno::OPNOTSUPP => {
-                                                installer.supported_backend.store(
-                                                    InstallMethod::Hardlink,
-                                                    Ordering::Relaxed,
-                                                );
+                                                installer.supported_backend.store(InstallMethod::Hardlink as u8, Ordering::Relaxed);
                                                 backend = InstallMethod::Hardlink;
                                                 continue 'backend;
                                             }
@@ -1079,10 +1076,7 @@ impl Task {
                                     sys::Result::Ok(()) => {}
                                     sys::Result::Err(err) => {
                                         if err.get_errno() == sys::Errno::XDEV {
-                                            installer.supported_backend.store(
-                                                InstallMethod::Copyfile,
-                                                Ordering::Relaxed,
-                                            );
+                                            installer.supported_backend.store(InstallMethod::Copyfile as u8, Ordering::Relaxed);
                                             backend = InstallMethod::Copyfile;
                                             continue 'backend;
                                         }

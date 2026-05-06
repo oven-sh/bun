@@ -202,6 +202,8 @@ pub mod features {
     }
     /// dotenv crate calls `bun_core::analytics::Features::dotenv_inc()`.
     #[inline] pub fn dotenv_inc() { DOTENV.fetch_add(1, core::sync::atomic::Ordering::Relaxed); }
+    /// install crate calls `bun_core::analytics::Features::binlinks_inc()`.
+    #[inline] pub fn binlinks_inc() { BINLINKS.fetch_add(1, core::sync::atomic::Ordering::Relaxed); }
     /// install crate calls `bun_core::analytics::Features::extracted_packages_inc()`.
     #[inline] pub fn extracted_packages_inc() { EXTRACTED_PACKAGES.fetch_add(1, core::sync::atomic::Ordering::Relaxed); }
     /// yaml crate calls `bun_core::analytics::Features::yaml_parse_inc()`.

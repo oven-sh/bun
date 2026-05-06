@@ -15,8 +15,7 @@ use bun_install::{
 // `Task::Id` etc. are namespaced types in Zig (`PackageManagerTask.Id`); import
 // the *module* under the `Task` name so `Task::Id` resolves as a path.
 use bun_install::package_manager_task as Task;
-use bun_install::lockfile::Lockfile;
-use crate::lockfile_real::package::Package;
+use bun_install::lockfile::{Lockfile, Package};
 use crate::network_task::{Authorization, ForTarballError};
 use crate::package_manifest_map::Value as ManifestEntry;
 use bun_core::fmt::PathSep;

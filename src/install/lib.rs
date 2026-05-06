@@ -706,13 +706,83 @@ pub mod lockfile {
         pub resolutions: Vec<PackageID>,
     }
     #[derive(Default)] pub struct PatchedDep;
-    #[derive(Default)] pub struct LoadResult;
     #[derive(Default)] pub struct LoadStep;
+
+    /// Port of `Lockfile.LoadResult` (src/install/lockfile.zig). Typed against
+    /// the stub `Lockfile` so migration entrypoints (`yarn.rs` / `pnpm.rs` /
+    /// `migration.rs`) can construct the `Ok` payload before `lockfile_real`
+    /// un-gates.
+    pub enum LoadResult<'a> {
+        NotFound,
+        Err(LoadResultErr),
+        Ok(LoadResultOk<'a>),
+    }
+    impl Default for LoadResult<'_> {
+        fn default() -> Self { LoadResult::NotFound }
+    }
+    #[derive(Default)]
+    pub struct LoadResultErr {
+        pub step: LoadStep,
+        pub value: bun_core::Error,
+        pub lockfile_path: &'static [u8],
+        pub format: Format,
+    }
+    pub struct LoadResultOk<'a> {
+        pub lockfile: &'a mut Lockfile,
+        pub loaded_from_binary_lockfile: bool,
+        pub migrated: Migrated,
+        pub serializer_result: SerializerLoadResult,
+        pub format: Format,
+    }
+    /// Stub: `Serializer.LoadResult` (src/install/lockfile/bun.lockb.zig).
+    #[derive(Default)] pub struct SerializerLoadResult;
+
+    /// Port of `Lockfile.LoadResult.Migrated` (src/install/lockfile.zig).
+    #[derive(Clone, Copy, PartialEq, Eq, Default)]
+    pub enum Migrated { #[default] None, Npm, Yarn, Pnpm }
+
+    /// Port of `Lockfile.Format` (src/install/lockfile.zig).
+    #[derive(Clone, Copy, PartialEq, Eq, Default)]
+    pub enum Format { #[default] Text, Binary }
+
+    /// Port of `Lockfile.PackageIndex.Entry` (src/install/lockfile.zig).
+    pub enum PackageIndexEntry {
+        Id(PackageID),
+        Ids(PackageIDList),
+    }
+
+    pub use package::{Meta, HasInstallScript};
+    pub use tree::Tree;
+
     pub mod package {
-        #[derive(Default, Clone, Copy)] pub struct Meta {
+        use bun_semver::String;
+        use crate::integrity::Integrity;
+        use crate::{Origin, PackageID};
+
+        /// Port of `Package.Meta` (src/install/lockfile/Package/Meta.zig).
+        #[derive(Default, Clone, Copy)]
+        pub struct Meta {
+            pub origin: Origin,
             pub arch: crate::npm::Architecture,
             pub os: crate::npm::OperatingSystem,
+            pub id: PackageID,
+            pub man_dir: String,
+            pub integrity: Integrity,
+            pub has_install_script: HasInstallScript,
         }
+
+        /// Port of `Package.Meta.HasInstallScript`
+        /// (src/install/lockfile/Package/Meta.zig).
+        #[derive(Default, Clone, Copy, PartialEq, Eq)]
+        #[repr(u8)]
+        pub enum HasInstallScript {
+            /// Legacy lockfiles wrote 0 unconditionally; treated as "unknown".
+            Old = 0,
+            #[default]
+            False = 1,
+            True = 2,
+        }
+
         /// Port: `Lockfile.Package` (src/install/lockfile/Package.zig) — the
         /// real generic instantiated at `u64` (matches Zig `Package(u64)`).
         /// Re-exported from the file-backed module so callers in
@@ -722,7 +792,35 @@ pub mod lockfile {
     }
     pub use package::Package;
     pub mod tree {
+        use crate::DependencyID;
+        use super::DependencyIDSlice;
+
         pub type Id = u32;
+
+        /// Port of `Lockfile.Tree` (src/install/lockfile/Tree.zig) — the
+        /// hoisted dependency tree node. Associated consts mirror the Zig
+        /// module-level `invalid_id` / `root_dep_id`.
+        #[derive(Clone, Copy)]
+        pub struct Tree {
+            pub id: Id,
+            pub dependency_id: DependencyID,
+            pub parent: Id,
+            pub dependencies: DependencyIDSlice,
+        }
+        impl Tree {
+            pub const INVALID_ID: Id = Id::MAX;
+            pub const ROOT_DEP_ID: DependencyID = crate::INVALID_PACKAGE_ID - 1;
+        }
+        impl Default for Tree {
+            fn default() -> Self {
+                Self {
+                    id: Self::INVALID_ID,
+                    dependency_id: crate::INVALID_PACKAGE_ID,
+                    parent: Self::INVALID_ID,
+                    dependencies: DependencyIDSlice::default(),
+                }
+            }
+        }
     }
     pub mod bun_lock {}
 }

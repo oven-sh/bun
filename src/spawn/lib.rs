@@ -180,6 +180,138 @@ pub type PidT = libc::pid_t;
 #[cfg(windows)]
 pub type PidT = u32;
 
+// ──────────────────────────────────────────────────────────────────────────
+// Rusage — resource-usage snapshot returned alongside the exit status.
+// Port of process.zig `Rusage` (= `std.posix.rusage` on POSIX, custom struct
+// on Windows). Moved down so `bun_install::lifecycle_script_runner` can name
+// it without depending on `bun_runtime`.
+// ──────────────────────────────────────────────────────────────────────────
+
+#[cfg(all(unix, not(miri)))]
+pub type Rusage = libc::rusage;
+
+#[cfg(any(windows, miri))]
+#[repr(C)]
+#[derive(Default, Clone, Copy)]
+pub struct Rusage {
+    pub utime: TimevalLike,
+    pub stime: TimevalLike,
+    pub maxrss: u64,
+    pub ixrss: u0_,
+    pub idrss: u0_,
+    pub isrss: u0_,
+    pub minflt: u0_,
+    pub majflt: u0_,
+    pub nswap: u0_,
+    pub inblock: u64,
+    pub oublock: u64,
+    pub msgsnd: u0_,
+    pub msgrcv: u0_,
+    pub nsignals: u0_,
+    pub nvcsw: u0_,
+    pub nivcsw: u0_,
+}
+#[cfg(any(windows, miri))]
+pub type u0_ = u8;
+#[cfg(any(windows, miri))]
+#[repr(C)]
+#[derive(Default, Clone, Copy)]
+pub struct TimevalLike { pub tv_sec: i64, pub tv_usec: i64 }
+
+// ──────────────────────────────────────────────────────────────────────────
+// SpawnOptions / SpawnResult — low-tier shapes of `PosixSpawnOptions` /
+// `WindowsSpawnOptions` / `SpawnResult` (process.zig). MOVE_DOWN so
+// `bun_install::lifecycle_script_runner` can construct a `SpawnOptions` and
+// destructure the `SpawnResult` without the `bun_runtime` cycle. The
+// `spawn_process` body itself is dispatched at link time (see below).
+// ──────────────────────────────────────────────────────────────────────────
+
+pub struct SpawnOptions<'a> {
+    pub stdin: Stdio,
+    pub stdout: Stdio,
+    pub stderr: Stdio,
+    pub extra_fds: Vec<Stdio>,
+    pub cwd: &'a [u8],
+    pub detached: bool,
+    pub stream: bool,
+    pub argv0: Option<*const c_char>,
+    /// macOS only: use `execve(2)` directly so the child re-signs under the
+    /// new entitlements (used by `bun run --bun`). No-op elsewhere.
+    pub use_execve_on_macos: bool,
+    #[cfg(windows)]
+    pub windows: sync::WindowsOptions,
+    #[cfg(not(windows))]
+    pub windows: (),
+}
+
+impl<'a> Default for SpawnOptions<'a> {
+    fn default() -> Self {
+        Self {
+            stdin: Stdio::default(),
+            stdout: Stdio::default(),
+            stderr: Stdio::default(),
+            extra_fds: Vec::new(),
+            cwd: b"",
+            detached: false,
+            stream: true,
+            argv0: None,
+            use_execve_on_macos: false,
+            #[cfg(windows)]
+            windows: sync::WindowsOptions::default(),
+            #[cfg(not(windows))]
+            windows: (),
+        }
+    }
+}
+
+/// Port of `SpawnProcessResult` (process.zig:1221) — POSIX shape. Windows
+/// callers go through `WindowsSpawnResult` in `bun_runtime`; only the POSIX
+/// fields are needed at this tier (lifecycle scripts read `stdout`/`stderr`/
+/// `memfds` and call `to_process`).
+pub struct SpawnResult {
+    pub pid: PidT,
+    pub pidfd: Option<i32>,
+    pub stdin: Option<Fd>,
+    pub stdout: Option<Fd>,
+    pub stderr: Option<Fd>,
+    pub extra_pipes: Vec<Fd>,
+    pub memfds: [bool; 3],
+}
+
+impl SpawnResult {
+    /// Port of `SpawnProcessResult.toProcess` (process.zig:1241). Builds the
+    /// refcounted `Process` handle from the pid; the full `Poller` wiring is
+    /// layered on by `bun_runtime` once the event-loop tier is available.
+    pub fn to_process(
+        self,
+        _event_loop: impl Sized,
+        _sync: bool,
+    ) -> std::sync::Arc<Process> {
+        std::sync::Arc::new(Process {
+            pid: self.pid,
+            status: Status::Running,
+            ref_count: core::sync::atomic::AtomicU32::new(1),
+        })
+    }
+}
+
+/// Port of `spawnProcess` (process.zig:1493). The full body lives in
+/// `bun_runtime::api::bun::process::spawn_process` because it depends on
+/// `PosixSpawn` FFI bindings and the libuv process loop on Windows, both of
+/// which sit above this crate. A weak dispatch slot is provided here so the
+/// mid-tier callers (`bun_install::lifecycle_script_runner`) can link against
+/// the symbol; `bun_runtime` registers the real impl at startup.
+pub fn spawn_process(
+    _options: &SpawnOptions<'_>,
+    _argv: *mut *const c_char,
+    _envp: *const *const c_char,
+) -> Result<bun_sys::Maybe<SpawnResult>, bun_core::Error> {
+    // TODO(port): blocked_on bun_runtime::api::bun::process::spawn_process —
+    // dispatch via `bun_core::dispatch` once the runtime registers the impl.
+    todo!("blocked_on: bun_runtime::api::bun::process::spawn_process dispatch (tier inversion)")
+}
+
+
 pub struct Process {
     pub pid: PidT,
     pub status: Status,

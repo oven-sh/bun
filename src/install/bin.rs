@@ -569,10 +569,12 @@ impl<'a> NamesIterator<'a> {
         let iter = self.dir_iterator.as_mut().unwrap();
         if let Some(entry) = iter.next().unwrap_or(None) {
             self.i += 1;
-            Ok(Some(entry.name))
+            let name = entry.name.slice_u8();
+            Ok(Some(strings::copy(self.buf.as_mut_slice(), name)))
         } else {
             self.done = true;
-            self.dir_iterator.take().unwrap().dir().close();
+            let dir = self.dir_iterator.take().unwrap().dir();
+            dir.close();
             Ok(None)
         }
     }
@@ -1234,8 +1236,8 @@ impl<'a> Linker<'a> {
         // delete and try again
         // TODO(port): std.fs.deleteTreeAbsolute → bun_sys equivalent
         let _ = sys::delete_tree_absolute(abs_dest.as_bytes());
-        if let Err(err) = sys::symlink_running_executable(rel_target, abs_dest).unwrap() {
-            self.err = Some(err);
+        if let Err(err) = sys::symlink_running_executable(rel_target, abs_dest) {
+            self.err = Some(err.to_zig_err());
         }
         Self::chmod_on_ok(&self.err, abs_target);
     }

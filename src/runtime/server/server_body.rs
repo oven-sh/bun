@@ -2611,7 +2611,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                                 cursor,
                                 "permission denied {}:{}",
                                 BStr::new(
-                                    hostname.as_deref().map(|h| h.as_bytes()).unwrap_or(b"0.0.0.0")
+                                    hostname.as_deref().map(|h| h.to_bytes()).unwrap_or(b"0.0.0.0")
                                 ),
                                 port
                             ) {

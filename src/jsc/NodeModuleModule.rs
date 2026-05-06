@@ -10,18 +10,23 @@ use bun_sys::{self, Fd};
 // TODO(port): `bun.schema.api.Loader` lives in generated `src/api/schema.zig`; confirm crate path.
 use bun_api::schema::api::Loader as ApiLoader;
 
-// TODO(port): `jsc.host_fn.wrap3` auto-coerces CallFrame args (BunString, Option<&JSArray>)
-// into the wrapped fn's params. Phase B: emit equivalent via `#[bun_jsc::host_fn]` proc-macro
-// or hand-write the CallFrame → (BunString, Option<&JSArray>) extraction shim.
-#[bun_jsc::host_fn]
-pub fn NodeModuleModule__findPath(
-    global: &JSGlobalObject,
-    frame: &CallFrame,
-) -> JsResult<JSValue> {
-    // TODO(port): wrap3 arg extraction — see note above
-    let request_bun_str: BunString = todo!("extract arg 0 as bun.String");
-    let paths_maybe: Option<&JSArray> = todo!("extract arg 1 as ?*JSArray");
-    find_path(global, request_bun_str, paths_maybe)
+// Zig: `export const NodeModuleModule__findPath = jsc.host_fn.wrap3(findPath);`
+// `wrap3` emits an `extern "C" fn(*JSGlobalObject, bun.String, ?*JSArray) -> JSValue` shim
+// that forwards to `findPath` via `toJSHostCall`. The C++ caller (NodeModuleModule.cpp
+// `jsFunctionFindPath`) does the CallFrame → (BunString, JSArray*) extraction itself and
+// invokes this with the coerced args directly — there is no CallFrame here.
+#[unsafe(no_mangle)]
+pub extern "C" fn NodeModuleModule__findPath(
+    global: *mut JSGlobalObject,
+    request_bun_str: BunString,
+    paths_maybe: *mut JSArray,
+) -> JSValue {
+    // SAFETY: C++ caller guarantees non-null global; paths_maybe is a nullable JSArray*.
+    let global = unsafe { &*global };
+    let paths_maybe: Option<&JSArray> = unsafe { paths_maybe.as_ref() };
+    jsc::host_fn::to_js_host_call(global, core::panic::Location::caller(), || {
+        find_path(global, request_bun_str, paths_maybe)
+    })
 }
 
 // https://github.com/nodejs/node/blob/40ef9d541ed79470977f90eb445c291b95ab75a0/lib/internal/modules/cjs/loader.js#L666

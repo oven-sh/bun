@@ -897,8 +897,10 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
     }
 
     fn on_import_rule(this: &mut Self, import_rule: &mut ImportRule, start_position: u32, end_position: u32) {
-        // SAFETY: aliases `Parser.import_records` (see field doc); the parser
-        // is not reading/writing the list while this hook runs.
+        // SAFETY: `import_records` shares raw-pointer provenance with
+        // `Parser.import_records` (see field doc / `parse_bundler`). This hook
+        // runs synchronously between parser accesses, so the fresh `&mut`
+        // created here is the only live reference for its scope.
         let import_records = unsafe { &mut *this.import_records };
         let import_record_index = import_records.len;
         import_rule.import_record_idx = import_record_index;

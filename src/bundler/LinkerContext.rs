@@ -3156,7 +3156,10 @@ impl<'a> LinkerContext<'a> {
                     ).expect("unreachable");
                 }
                 MatchImportKind::Namespace => {
-                    // SAFETY: get() returns a stable *mut Symbol; ref is valid.
+                    // SAFETY: get() yields a stable *mut into the symbols NestedList
+                    // (NonNull-backed heap, never reallocated during linking). Sole
+                    // live &mut into that allocation — one-shot field store, no other
+                    // borrow of symbols is live in this arm.
                     unsafe { &mut *self.graph.symbols.get(import_ref).unwrap() }.namespace_alias =
                         Some(G::NamespaceAlias {
                             namespace_ref: result.namespace_ref,

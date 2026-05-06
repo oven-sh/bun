@@ -7,7 +7,7 @@ export const meta = {
   ],
 };
 
-const MAX_ROUNDS = (args && args.max_rounds) || 12;
+const MAX_ROUNDS = (args && args.max_rounds) || 100;
 const FIX_S = {
   type: "object",
   properties: {

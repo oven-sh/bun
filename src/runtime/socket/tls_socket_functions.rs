@@ -228,7 +228,7 @@ pub fn get_x509_certificate(this: &mut This, global: &JSGlobalObject, _frame: &C
 }
 
 pub fn get_tls_version(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-    jsc::mark_binding(core::panic::Location::caller());
+    jsc::mark_binding();
 
     let Some(ssl_ptr) = this.socket.ssl() else { return Ok(JSValue::NULL) };
     // SAFETY: ssl_ptr is a live *mut SSL returned by this.socket.ssl().
@@ -245,24 +245,24 @@ pub fn get_tls_version(this: &mut This, global: &JSGlobalObject, _frame: &CallFr
 }
 
 pub fn set_max_send_fragment(this: &mut This, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    jsc::mark_binding(core::panic::Location::caller());
+    jsc::mark_binding();
 
-    let args = frame.arguments_old(1);
+    let args = frame.arguments_old::<1>();
 
-    if args.len() < 1 {
-        return global.throw("Expected size to be a number");
+    if args.len < 1 {
+        return Err(global.throw("Expected size to be a number"));
     }
 
     let arg = args.ptr[0];
     if !arg.is_number() {
-        return global.throw("Expected size to be a number");
+        return Err(global.throw("Expected size to be a number"));
     }
     let size = args.ptr[0].coerce_to_int64(global)?;
     if size < 1 {
-        return global.throw("Expected size to be greater than 1");
+        return Err(global.throw("Expected size to be greater than 1"));
     }
     if size > 16384 {
-        return global.throw("Expected size to be less than 16385");
+        return Err(global.throw("Expected size to be less than 16385"));
     }
 
     let Some(ssl_ptr) = this.socket.ssl() else { return Ok(JSValue::FALSE) };
@@ -273,14 +273,14 @@ pub fn set_max_send_fragment(this: &mut This, global: &JSGlobalObject, frame: &C
 }
 
 pub fn get_peer_certificate(this: &mut This, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    jsc::mark_binding(core::panic::Location::caller());
+    jsc::mark_binding();
 
-    let args = frame.arguments_old(1);
+    let args = frame.arguments_old::<1>();
     let mut abbreviated: bool = true;
-    if args.len() > 0 {
+    if args.len > 0 {
         let arg = args.ptr[0];
         if !arg.is_boolean() {
-            return global.throw("Expected abbreviated to be a boolean");
+            return Err(global.throw("Expected abbreviated to be a boolean"));
         }
         abbreviated = arg.to_boolean();
     }
@@ -376,7 +376,7 @@ pub fn get_tls_finished_message(this: &mut This, global: &JSGlobalObject, _frame
     }
 
     let buffer_size = usize::try_from(size).unwrap();
-    let buffer = JSValue::create_buffer_from_length(global, buffer_size)?;
+    let buffer = create_buffer_from_length(global, buffer_size)?;
     let buffer_ptr = buffer.as_array_buffer(global).unwrap().ptr.cast::<c_void>();
 
     // SAFETY: ssl_ptr is a live *mut SSL; buffer_ptr points to a buffer_size-byte JS ArrayBuffer kept alive on the stack.
@@ -386,7 +386,7 @@ pub fn get_tls_finished_message(this: &mut This, global: &JSGlobalObject, _frame
 }
 
 pub fn get_shared_sigalgs(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-    jsc::mark_binding(core::panic::Location::caller());
+    jsc::mark_binding();
 
     let Some(ssl_ptr) = this.socket.ssl() else { return Ok(JSValue::NULL) };
 
@@ -489,40 +489,40 @@ pub fn get_cipher(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) 
     let result = JSValue::create_empty_object(global, 0);
 
     if cipher.is_null() {
-        result.put(global, ZigString::static_("name"), JSValue::NULL);
-        result.put(global, ZigString::static_("standardName"), JSValue::NULL);
-        result.put(global, ZigString::static_("version"), JSValue::NULL);
+        result.put(global, b"name", JSValue::NULL);
+        result.put(global, b"standardName", JSValue::NULL);
+        result.put(global, b"version", JSValue::NULL);
         return Ok(result);
     }
 
     // SAFETY: cipher is a non-null *const SSL_CIPHER (null-checked above).
     let name = unsafe { ffi::SSL_CIPHER_get_name(cipher) };
     if name.is_null() {
-        result.put(global, ZigString::static_("name"), JSValue::NULL);
+        result.put(global, b"name", JSValue::NULL);
     } else {
         // SAFETY: SSL_CIPHER_get_name returns a static NUL-terminated C string.
         let s = unsafe { CStr::from_ptr(name) }.to_bytes();
-        result.put(global, ZigString::static_("name"), ZigString::from_utf8(s).to_js(global));
+        result.put(global, b"name", ZigString::from_utf8(s).to_js(global));
     }
 
     // SAFETY: cipher is a non-null *const SSL_CIPHER (null-checked above).
     let standard_name = unsafe { ffi::SSL_CIPHER_standard_name(cipher) };
     if standard_name.is_null() {
-        result.put(global, ZigString::static_("standardName"), JSValue::NULL);
+        result.put(global, b"standardName", JSValue::NULL);
     } else {
         // SAFETY: SSL_CIPHER_standard_name returns a static NUL-terminated C string.
         let s = unsafe { CStr::from_ptr(standard_name) }.to_bytes();
-        result.put(global, ZigString::static_("standardName"), ZigString::from_utf8(s).to_js(global));
+        result.put(global, b"standardName", ZigString::from_utf8(s).to_js(global));
     }
 
     // SAFETY: cipher is a non-null *const SSL_CIPHER (null-checked above).
     let version = unsafe { ffi::SSL_CIPHER_get_version(cipher) };
     if version.is_null() {
-        result.put(global, ZigString::static_("version"), JSValue::NULL);
+        result.put(global, b"version", JSValue::NULL);
     } else {
         // SAFETY: SSL_CIPHER_get_version returns a static NUL-terminated C string.
         let s = unsafe { CStr::from_ptr(version) }.to_bytes();
-        result.put(global, ZigString::static_("version"), ZigString::from_utf8(s).to_js(global));
+        result.put(global, b"version", ZigString::from_utf8(s).to_js(global));
     }
 
     Ok(result)
@@ -545,7 +545,7 @@ pub fn get_tls_peer_finished_message(this: &mut This, global: &JSGlobalObject, _
     }
 
     let buffer_size = usize::try_from(size).unwrap();
-    let buffer = JSValue::create_buffer_from_length(global, buffer_size)?;
+    let buffer = create_buffer_from_length(global, buffer_size)?;
     let buffer_ptr = buffer.as_array_buffer(global).unwrap().ptr.cast::<c_void>();
 
     // SAFETY: ssl_ptr is a live *mut SSL; buffer_ptr points to a buffer_size-byte JS ArrayBuffer kept alive on the stack.
@@ -559,30 +559,30 @@ pub fn export_keying_material(this: &mut This, global: &JSGlobalObject, frame: &
         return Ok(JSValue::UNDEFINED);
     }
 
-    let args = frame.arguments_old(3);
-    if args.len() < 2 {
-        return global.throw("Expected length and label to be provided");
+    let args = frame.arguments_old::<3>();
+    if args.len < 2 {
+        return Err(global.throw("Expected length and label to be provided"));
     }
     let length_arg = args.ptr[0];
     if !length_arg.is_number() {
-        return global.throw("Expected length to be a number");
+        return Err(global.throw("Expected length to be a number"));
     }
 
     let length = length_arg.coerce_to_int64(global)?;
     if length < 0 {
-        return global.throw("Expected length to be a positive number");
+        return Err(global.throw("Expected length to be a positive number"));
     }
 
     let label_arg = args.ptr[1];
     if !label_arg.is_string() {
-        return global.throw("Expected label to be a string");
+        return Err(global.throw("Expected label to be a string"));
     }
 
     let label = label_arg.to_slice_or_null(global)?;
     let label_slice = label.slice();
     let Some(ssl_ptr) = this.socket.ssl() else { return Ok(JSValue::UNDEFINED) };
 
-    if args.len() > 2 {
+    if args.len > 2 {
         let context_arg = args.ptr[2];
 
         // PERF(port): was arena bulk-free — profile in Phase B
@@ -590,7 +590,7 @@ pub fn export_keying_material(this: &mut This, global: &JSGlobalObject, frame: &
             let context_slice = sb.slice();
 
             let buffer_size = usize::try_from(length).unwrap();
-            let buffer = JSValue::create_buffer_from_length(global, buffer_size)?;
+            let buffer = create_buffer_from_length(global, buffer_size)?;
             let buffer_ptr = buffer.as_array_buffer(global).unwrap().ptr;
 
             // SAFETY: ssl_ptr is a live *mut SSL; buffer_ptr/label_slice/context_slice are valid for the lengths passed.
@@ -607,15 +607,15 @@ pub fn export_keying_material(this: &mut This, global: &JSGlobalObject, frame: &
                 )
             };
             if result != 1 {
-                return global.throw_value(get_ssl_exception(global, b"Failed to export keying material"));
+                return Err(global.throw_value(get_ssl_exception(global, b"Failed to export keying material")));
             }
             Ok(buffer)
         } else {
-            global.throw("Expected context to be a string, Buffer or TypedArray")
+            Err(global.throw("Expected context to be a string, Buffer or TypedArray"))
         }
     } else {
         let buffer_size = usize::try_from(length).unwrap();
-        let buffer = JSValue::create_buffer_from_length(global, buffer_size)?;
+        let buffer = create_buffer_from_length(global, buffer_size)?;
         let buffer_ptr = buffer.as_array_buffer(global).unwrap().ptr;
 
         // SAFETY: ssl_ptr is a live *mut SSL; buffer_ptr/label_slice are valid for the lengths passed; context is null with use_context=0.
@@ -632,7 +632,7 @@ pub fn export_keying_material(this: &mut This, global: &JSGlobalObject, frame: &
             )
         };
         if result != 1 {
-            return global.throw_value(get_ssl_exception(global, b"Failed to export keying material"));
+            return Err(global.throw_value(get_ssl_exception(global, b"Failed to export keying material")));
         }
         Ok(buffer)
     }
@@ -667,8 +667,8 @@ pub fn get_ephemeral_key_info(this: &mut This, global: &JSGlobalObject, _frame: 
 
     match kid {
         ffi::EVP_PKEY_DH => {
-            result.put(global, ZigString::static_("type"), BunString::static_("DH").to_js(global)?);
-            result.put(global, ZigString::static_("size"), JSValue::js_number(bits));
+            result.put(global, b"type", BunString::static_("DH").to_js(global)?);
+            result.put(global, b"size", JSValue::js_number(f64::from(bits)));
         }
         ffi::EVP_PKEY_EC | ffi::EVP_PKEY_X25519 | ffi::EVP_PKEY_X448 => {
             let curve_name: &[u8];
@@ -695,9 +695,9 @@ pub fn get_ephemeral_key_info(this: &mut This, global: &JSGlobalObject, _frame: 
                     curve_name = b"";
                 }
             }
-            result.put(global, ZigString::static_("type"), BunString::static_("ECDH").to_js(global)?);
-            result.put(global, ZigString::static_("name"), ZigString::from_utf8(curve_name).to_js(global));
-            result.put(global, ZigString::static_("size"), JSValue::js_number(bits));
+            result.put(global, b"type", BunString::static_("ECDH").to_js(global)?);
+            result.put(global, b"name", ZigString::from_utf8(curve_name).to_js(global));
+            result.put(global, b"size", JSValue::js_number(f64::from(bits)));
         }
         _ => {}
     }
@@ -741,7 +741,7 @@ pub fn get_session(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame)
     }
 
     let buffer_size = usize::try_from(size).unwrap();
-    let buffer = JSValue::create_buffer_from_length(global, buffer_size)?;
+    let buffer = create_buffer_from_length(global, buffer_size)?;
     let mut buffer_ptr: *mut u8 = buffer.as_array_buffer(global).unwrap().ptr;
 
     // SAFETY: session is a non-null *mut SSL_SESSION; buffer_ptr points to a buffer_size-byte JS ArrayBuffer kept alive on the stack.
@@ -755,10 +755,10 @@ pub fn set_session(this: &mut This, global: &JSGlobalObject, frame: &CallFrame) 
         return Ok(JSValue::UNDEFINED);
     }
 
-    let args = frame.arguments_old(1);
+    let args = frame.arguments_old::<1>();
 
-    if args.len() < 1 {
-        return global.throw("Expected session to be a string, Buffer or TypedArray");
+    if args.len < 1 {
+        return Err(global.throw("Expected session to be a string, Buffer or TypedArray"));
     }
 
     let session_arg = args.ptr[0];
@@ -781,11 +781,11 @@ pub fn set_session(this: &mut This, global: &JSGlobalObject, frame: &CallFrame) 
         let _guard = scopeguard::guard(session, |s| unsafe { ffi::SSL_SESSION_free(s) });
         // SAFETY: ssl_ptr is a live *mut SSL; session is a non-null *mut SSL_SESSION owned above.
         if unsafe { ffi::SSL_set_session(ssl_ptr, session) } != 1 {
-            return global.throw_value(get_ssl_exception(global, b"SSL_set_session error"));
+            return Err(global.throw_value(get_ssl_exception(global, b"SSL_set_session error")));
         }
         Ok(JSValue::UNDEFINED)
     } else {
-        global.throw("Expected session to be a string, Buffer or TypedArray")
+        Err(global.throw("Expected session to be a string, Buffer or TypedArray"))
     }
 }
 
@@ -817,7 +817,7 @@ pub fn renegotiate(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame)
     unsafe { boringssl::ERR_clear_error() };
     // SAFETY: ssl_ptr is a live *mut SSL returned by this.socket.ssl().
     if unsafe { boringssl::SSL_renegotiate(ssl_ptr) } != 1 {
-        return global.throw_value(get_ssl_exception(global, b"SSL_renegotiate error"));
+        return Err(global.throw_value(get_ssl_exception(global, b"SSL_renegotiate error")));
     }
     Ok(JSValue::UNDEFINED)
 }
@@ -840,15 +840,15 @@ pub fn set_verify_mode(this: &mut This, global: &JSGlobalObject, frame: &CallFra
         return Ok(JSValue::UNDEFINED);
     }
 
-    let args = frame.arguments_old(2);
+    let args = frame.arguments_old::<2>();
 
-    if args.len() < 2 {
-        return global.throw("Expected requestCert and rejectUnauthorized arguments");
+    if args.len < 2 {
+        return Err(global.throw("Expected requestCert and rejectUnauthorized arguments"));
     }
     let request_cert_js = args.ptr[0];
     let reject_unauthorized_js = args.ptr[1];
     if !request_cert_js.is_boolean() || !reject_unauthorized_js.is_boolean() {
-        return global.throw("Expected requestCert and rejectUnauthorized arguments to be boolean");
+        return Err(global.throw("Expected requestCert and rejectUnauthorized arguments to be boolean"));
     }
 
     let request_cert = request_cert_js.to_boolean();
@@ -862,7 +862,7 @@ pub fn set_verify_mode(this: &mut This, global: &JSGlobalObject, frame: &CallFra
             }
         }
     }
-    let ssl_ptr = this.socket.ssl();
+    let Some(ssl_ptr) = this.socket.ssl() else { return Ok(JSValue::UNDEFINED) };
     // we always allow and check the SSL certificate after the handshake or renegotiation
     // SAFETY: ssl_ptr is a live *mut SSL; the callback is an `extern "C"` fn with the SSL_verify_cb signature.
     unsafe { boringssl::SSL_set_verify(ssl_ptr, verify_mode, Some(always_allow_ssl_verify_callback)) };
@@ -951,7 +951,7 @@ fn get_ssl_exception(global: &JSGlobalObject, default_message: &[u8]) -> JSValue
         unsafe { boringssl::ERR_clear_error() };
     }
 
-    if zig_str.len() == 0 {
+    if zig_str.len == 0 {
         zig_str = ZigString::init(default_message);
     }
 

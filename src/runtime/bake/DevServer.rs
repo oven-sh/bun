@@ -3246,7 +3246,7 @@ pub fn finalize_bundle(
 
     // TODO(port): ctx fields server_seen_bit_set/gts were `undefined` then assigned later.
     let mut gts_storage = dev.init_graph_trace_state(
-        if !result.css_chunks().is_empty() { bv2.graph.input_files.len() } else { 0 },
+        if !css_chunks_mut.is_empty() { bv2.graph.input_files.len() } else { 0 },
     )?;
     let mut ctx = HotUpdateContext {
         import_records,
@@ -3313,13 +3313,13 @@ pub fn finalize_bundle(
         }
     }
 
-    for (chunk, metadata) in result.css_chunks().iter_mut().zip(result.css_file_list.values()) {
+    for (chunk, metadata) in css_chunks_mut.iter_mut().zip(result.css_file_list.values()) {
         debug_assert!(matches!(chunk.content, bundler::chunk::Content::Css(_)));
 
         let index = bun_js_parser::ast::Index::init(chunk.entry_point.source_index());
 
         let code = {
-            let _ = (&bv2.graph, &bv2.linker.graph, &result.chunks, chunk as *mut _);
+            let _ = (&bv2.graph, &bv2.linker.graph, chunk as *mut _);
             todo!("blocked_on: bun_bundler::IntermediateOutput::code (split self/chunk borrow)");
             #[allow(unreachable_code)]
             bundler::chunk::CodeResult { buffer: Vec::new().into(), shifts: Default::default() }
@@ -3361,7 +3361,7 @@ pub fn finalize_bundle(
         }
     }
 
-    for chunk in result.html_chunks().iter_mut() {
+    for chunk in html_chunks_mut.iter_mut() {
         let index = bun_js_parser::ast::Index::init(chunk.entry_point.source_index());
         let bundler::CompileResult::Html { code: compile_result_code, script_injection_offset: compile_result_offset, .. } =
             &chunk.compile_results_for_chunk[0]
@@ -3439,7 +3439,7 @@ pub fn finalize_bundle(
         dev.client_graph
             .process_chunk_dependencies(&mut ctx, incremental_graph::ProcessMode::Normal, index)?;
     }
-    for chunk in result.css_chunks() {
+    for chunk in css_chunks_mut.iter() {
         let entry_index = bun_js_parser::ast::Index::init(chunk.entry_point.source_index());
         dev.client_graph
             .process_chunk_dependencies(&mut ctx, incremental_graph::ProcessMode::Css, entry_index)?;
@@ -3449,7 +3449,7 @@ pub fn finalize_bundle(
     if !dev.incremental_result.failures_removed.is_empty()
         || !dev.incremental_result.failures_added.is_empty()
     {
-        had_sent_hmr_event = true;
+        had_sent_hmr_event.set(true);
     }
     dev.index_failures()?;
 
@@ -3463,7 +3463,7 @@ pub fn finalize_bundle(
             dev.generation,
             dev.server_graph.current_chunk_parts.len(),
             dev.client_graph.current_chunk_parts.len(),
-            current_bundle.timer.elapsed().as_millis(),
+            current_bundle!().timer.elapsed().as_millis(),
         );
     }
 
@@ -3481,9 +3481,13 @@ pub fn finalize_bundle(
                 // Fill the source map entry
                 // PERF(port): was ArenaAllocator
                 dev.server_graph.take_source_map(&mut source_map_entry)?;
-                let _cleanup = scopeguard::guard((), |_| {
-                    source_map_entry.ref_count = 0;
-                    source_map_entry.deinit();
+                // PORT NOTE: erase to raw ptr so `render_json` can borrow the entry
+                // while the cleanup guard is armed (Zig `defer` had no aliasing check).
+                let entry_ptr: *mut source_map_store::Entry = &mut source_map_entry;
+                // SAFETY: `source_map_entry` is a stack local that outlives this guard.
+                let _cleanup = scopeguard::guard((), move |_| unsafe {
+                    (*entry_ptr).ref_count = 0;
+                    (*entry_ptr).deinit();
                 });
 
                 let json_data = source_map_entry.render_json(
@@ -3520,8 +3524,9 @@ pub fn finalize_bundle(
             ) {
                 Ok(v) => v,
                 Err(err) => {
-                    // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime
-                    unsafe { &*dev.vm }
+                    // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime;
+                    // `print_error_like_object_to_console` needs `&mut`.
+                    unsafe { &mut *(dev.vm as *const VirtualMachine as *mut VirtualMachine) }
                         .print_error_like_object_to_console(global.take_exception(err));
                     panic!("Error thrown while evaluating server code. This is always a bug in the bundler.");
                 }
@@ -3530,8 +3535,9 @@ pub fn finalize_bundle(
             match c::bake_load_server_hmr_patch(global, BunString::clone_latin1(&server_bundle)) {
                 Ok(v) => v,
                 Err(err) => {
-                    // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime
-                    unsafe { &*dev.vm }
+                    // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime;
+                    // `print_error_like_object_to_console` needs `&mut`.
+                    unsafe { &mut *(dev.vm as *const VirtualMachine as *mut VirtualMachine) }
                         .print_error_like_object_to_console(global.take_exception(err));
                     panic!("Error thrown while evaluating server code. This is always a bug in the bundler.");
                 }
@@ -3593,7 +3599,7 @@ pub fn finalize_bundle(
 
     // This list of routes affected excludes client code.
     if will_hear_hot_update
-        && current_bundle.had_reload_event
+        && current_bundle!().had_reload_event
         && (dev.incremental_result.framework_routes_affected.len()
             + dev.incremental_result.html_routes_hard_affected.len())
             > 0
@@ -3693,11 +3699,22 @@ pub fn finalize_bundle(
 
     // `route_bits` will have all of the routes that were modified.
     if has_route_bits_set && (will_hear_hot_update || dev.incremental_result.had_adjusted_edges) {
+        // PORT NOTE: copy out before the loop so the `&mut RouteBundle` borrow
+        // below doesn't overlap a `&dev.incremental_result` read.
+        let had_adjusted_edges = dev.incremental_result.had_adjusted_edges;
         let mut it = route_bits.iterator::<true, true>();
         // List 2
         while let Some(i) = it.next() {
-            let route_bundle = dev.route_bundle_ptr(route_bundle::Index::init(u32::try_from(i).unwrap()));
-            if dev.incremental_result.had_adjusted_edges {
+            // PORT NOTE: erase to raw ptr — `trace_all_route_imports` below needs
+            // `&mut *dev` while `route_bundle` (a sub-borrow of `dev.route_bundles`)
+            // is still live; the two do not actually alias.
+            let route_bundle: *mut RouteBundle =
+                dev.route_bundle_ptr(route_bundle::Index::init(u32::try_from(i).unwrap()));
+            // SAFETY: `route_bundle` points into `dev.route_bundles`, which is not
+            // resized inside this loop; `trace_all_route_imports` does not mutate
+            // `route_bundles`.
+            let route_bundle = unsafe { &mut *route_bundle };
+            if had_adjusted_edges {
                 match &mut route_bundle.data {
                     route_bundle::Data::Framework(fw_bundle) => {
                         fw_bundle.cached_css_file_array.clear_without_deallocation()
@@ -3717,7 +3734,7 @@ pub fn finalize_bundle(
 
             // If no edges were changed, then it is impossible to
             // change the list of CSS files.
-            if dev.incremental_result.had_adjusted_edges {
+            if had_adjusted_edges {
                 ctx.gts.clear();
                 dev.client_graph.current_css_files.clear();
                 dev.trace_all_route_imports(route_bundle, ctx.gts, TraceImportGoal::FindCss)?;
@@ -3736,7 +3753,7 @@ pub fn finalize_bundle(
     }
     w_int!(i32, -1);
 
-    let css_chunks = result.css_chunks();
+    let css_chunks = &*css_chunks_mut;
     if will_hear_hot_update {
         if dev.client_graph.current_chunk_len > 0 || !css_chunks.is_empty() {
             // Send CSS mutations
@@ -3826,7 +3843,7 @@ pub fn finalize_bundle(
         }
 
         dev.publish(HmrTopic::HotUpdate, &hot_update_payload, Opcode::BINARY);
-        had_sent_hmr_event = true;
+        had_sent_hmr_event.set(true);
     }
 
     if !dev.incremental_result.failures_added.is_empty() {

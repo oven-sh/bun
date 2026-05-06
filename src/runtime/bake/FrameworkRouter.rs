@@ -1599,18 +1599,22 @@ impl FrameworkRouter {
         // SAFETY: BACKREF — `r.fs()` is the process-global FileSystem singleton; valid for the
         // program lifetime. Resolver mutex serializes mutation. We hold a raw pointer (no borrow)
         // so `r.read_dir_info_ignore_error(&mut self)` below does not conflict.
-        let fs_ref: &bun_resolver::fs::FileSystem = unsafe { &*fs };
-        let fs_impl: *mut bun_resolver::fs::Implementation = unsafe { &mut (*fs).fs as *mut _ };
+        let fs_ref = unsafe { &*fs };
+        let fs_impl = unsafe { core::ptr::addr_of_mut!((*fs).fs) };
 
         if let Some(entries) = dir_info.get_entries_const() {
             let mut it = entries.data.iter();
             'outer: while let Some(entry) = it.next() {
                 // SAFETY: EntryMap stores `*mut Entry` into the EntryStore singleton; entries
                 // outlive this scan and are serialized via `RealFS.entries_mutex`.
-                let file: &bun_resolver::fs::Entry = unsafe { &**entry.1 };
+                let file_ptr: *mut bun_resolver::fs::Entry = *entry.1;
+                let file = unsafe { &*file_ptr };
                 let base = file.base();
                 // PORT NOTE: reshaped for borrowck — fetch type fields fresh each iteration.
-                match file.kind(fs_impl, false) {
+                // SAFETY: `Entry::kind` mutates only the entry's lazily-cached kind; `file_ptr`
+                // is the unique live reference to this entry during the scan, and `fs_impl`
+                // points at the process-global FS implementation.
+                match unsafe { (*file_ptr).kind(&mut *fs_impl, false) } {
                     bun_resolver::fs::EntryKind::Dir => {
                         let t = &self.types[t_index.get() as usize];
                         if t.ignore_underscores && base.starts_with(b"_") {
@@ -1868,8 +1872,8 @@ impl JSFrameworkRouter {
 
         let abs_root: Box<[u8]> = strings::without_trailing_slash(
             paths::resolve_path::join_abs::<paths::platform::Auto>(
-                // FileSystem::instance() returns the process-global singleton; live for the program.
-                bun_resolver::fs::FileSystem::instance().top_level_dir,
+                // SAFETY: FileSystem::instance() returns the process-global singleton; live for the program.
+                unsafe { (*bun_resolver::fs::FileSystem::instance()).top_level_dir },
                 root.slice(),
             ),
         )

@@ -73,9 +73,14 @@ impl ReplCommand {
             smol: ctx.runtime_options.smol,
             eval: true,
             debugger: ctx.runtime_options.debugger,
-            dns_result_order: DNSResolver::Order::from_string_or_die(
-                ctx.runtime_options.dns_result_order,
-            ),
+            dns_result_order: DnsOrder::from_string(ctx.runtime_options.dns_result_order)
+                .unwrap_or_else(|| {
+                    Output::pretty_errorln(
+                        "<r><red>error<r><d>:<r> Invalid DNS result order.",
+                        &[],
+                    );
+                    Global::exit(1);
+                }),
             is_main_thread: true,
         })?;
 

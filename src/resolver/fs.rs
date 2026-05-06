@@ -387,7 +387,6 @@ impl DirEntry {
 
         // SAFETY: just produced from EntryStore append or prev_map lookup
         let stored_ref = unsafe { &mut *stored };
-        let stored_name = stored_ref.base();
 
         self.data.put(stored_ref.base_lowercase(), stored)?;
 
@@ -396,6 +395,8 @@ impl DirEntry {
         }
 
         if FeatureFlags::VERBOSE_FS {
+            // PORT NOTE: re-borrow `base()` after the `iterator.next` mutable borrow ends.
+            let stored_name = stored_ref.base();
             if found_kind == Some(EntryKind::Dir) {
                 bun_core::prettyln!("   + {}/", BStr::new(stored_name));
             } else {

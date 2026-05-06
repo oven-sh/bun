@@ -52,6 +52,11 @@ struct State {
     readers: Readers,
     read: usize,
     err: Option<sys::SystemError>,
+    /// The raw `sys::Error` that produced `err`. `SystemError` is not `Clone`
+    /// in the Rust port yet, so we keep the source error to re-derive a fresh
+    /// `SystemError` per callee in `on_reader_done_cb` (Spec IOReader.zig:189
+    /// passes `this.err` ref'd to each child).
+    raw_err: Option<sys::Error>,
     evtloop: EventLoopHandle,
     #[cfg(windows)]
     is_reading: bool,
@@ -94,6 +99,7 @@ impl IOReader {
                 readers: Readers::new(),
                 read: 0,
                 err: None,
+                raw_err: None,
                 evtloop,
                 #[cfg(windows)]
                 is_reading: false,
@@ -198,20 +204,27 @@ impl IOReader {
     /// Spec: IOReader.zig `onReadChunk` (the `BufferedReader.onReadChunk` hook).
     fn on_read_chunk_cb(&self, chunk: &[u8], has_more: bun_io::ReadState) -> bool {
         self.set_reading(false);
-        let s = self.state();
+        // PORT NOTE: reshaped for borrowck — `dispatch_read_chunk`/`run_yield`
+        // both re-derive `state()` (and the interpreter callback may re-enter
+        // `add_reader`/`remove_reader`), so we must NOT hold a long-lived
+        // `&mut State` across the dispatch. Re-derive `state()` per access
+        // instead, mirroring Zig's `this.readers.len()`/`this.readers.get(i)`
+        // pattern (IOReader.zig:143-153).
         let mut i = 0usize;
-        while i < s.readers.len() {
-            let r = s.readers[i];
+        while i < self.state().readers.len() {
+            let r = self.state().readers[i];
+            let interp = self.state().interp;
             let mut remove = false;
-            self.run_yield(dispatch_read_chunk(r, chunk, &mut remove, s.interp));
+            self.run_yield(dispatch_read_chunk(r, chunk, &mut remove, interp));
             if remove {
-                s.readers.swap_remove(i);
+                self.state().readers.swap_remove(i);
             } else {
                 i += 1;
             }
         }
 
         let should_continue = has_more != bun_io::ReadState::Eof;
+        let s = self.state();
         if should_continue && !s.readers.is_empty() {
             self.set_reading(true);
             #[cfg(not(windows))]
@@ -234,6 +247,7 @@ impl IOReader {
         self.set_reading(false);
         let s = self.state();
         s.err = Some(err.to_shell_system_error());
+        s.raw_err = Some(err.clone());
         // PORT NOTE: reshaped for borrowck — copy out before dispatching.
         let readers: Vec<ChildPtr> = s.readers.clone();
         let interp = s.interp;
@@ -251,13 +265,14 @@ impl IOReader {
         let s = self.state();
         let readers: Vec<ChildPtr> = s.readers.clone();
         let interp = s.interp;
+        // Spec IOReader.zig:189-193: pass `this.err` (ref'd) if set.
+        // `SystemError` isn't `Clone` in the Rust port yet, so we kept the
+        // source `sys::Error` (which IS `Clone`) and re-derive a fresh
+        // `SystemError` per callee — same approach as `on_reader_error`.
+        let raw_err = s.raw_err.clone();
         for r in readers {
-            // Spec: pass `this.err` (ref'd) if set. SystemError isn't Clone in
-            // the Rust port yet, so pass None and let the child consult the
-            // reader's `err` if it cares (Cat doesn't — it only checks errno).
-            // TODO(port): once bun_sys::SystemError grows ref()/Clone, forward
-            // the stored error here.
-            self.run_yield(dispatch_reader_done(r, None, interp));
+            let ee = raw_err.as_ref().map(|e| e.to_shell_system_error());
+            self.run_yield(dispatch_reader_done(r, ee, interp));
         }
     }
 

@@ -175,10 +175,19 @@ pub mod options {
             pub const JSX_STATIC_FUNCTION: &[u8] = b"jsxs";
             pub const JSX_FUNCTION_DEV: &[u8] = b"jsxDEV";
         }
-        pub static RUNTIME_MAP: phf::Map<&'static [u8], Runtime> = phf::phf_map! {
-            b"automatic" => Runtime::Automatic,
-            b"classic" => Runtime::Classic,
-            b"solid" => Runtime::Solid,
+        /// Port of `bundler/options.zig` `JSX::RuntimeDevelopmentPair`.
+        #[derive(Clone, Copy)]
+        pub struct RuntimeDevelopmentPair {
+            pub runtime: Runtime,
+            pub development: Option<bool>,
+        }
+        /// Port of `bundler/options.zig` `JSX.RuntimeMap`.
+        pub static RUNTIME_MAP: phf::Map<&'static [u8], RuntimeDevelopmentPair> = phf::phf_map! {
+            b"classic" => RuntimeDevelopmentPair { runtime: Runtime::Classic, development: None },
+            b"automatic" => RuntimeDevelopmentPair { runtime: Runtime::Automatic, development: Some(true) },
+            b"react" => RuntimeDevelopmentPair { runtime: Runtime::Classic, development: None },
+            b"react-jsx" => RuntimeDevelopmentPair { runtime: Runtime::Automatic, development: Some(true) },
+            b"react-jsxdev" => RuntimeDevelopmentPair { runtime: Runtime::Automatic, development: Some(true) },
         };
     }
     pub use JSX::Runtime as JSXRuntime;
@@ -187,8 +196,11 @@ pub mod options {
     impl ServerComponents { pub const fn is_enabled(self) -> bool { false } }
     #[derive(Clone, Copy, Default, PartialEq, Eq)]
     pub enum OutputFormat { #[default] Preserve, Cjs, Esm, Iife, Internal_BakeDev }
+    /// Port of `options_types/BundleEnums.zig` `Format` (spec for
+    /// `Parser.Options.output_format`). Variants and order match spec exactly;
+    /// Zig's first variant `.esm` is the `#[default]`.
     #[derive(Clone, Copy, Default, PartialEq, Eq)]
-    pub enum Format { #[default] Preserve, Cjs, Esm }
+    pub enum Format { #[default] Esm, Iife, Cjs, InternalBakeDev }
     impl Format {
         #[inline] pub const fn is_esm(self) -> bool { matches!(self, Format::Esm) }
         #[inline] pub const fn is_cjs(self) -> bool { matches!(self, Format::Cjs) }

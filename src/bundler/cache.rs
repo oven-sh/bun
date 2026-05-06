@@ -10,7 +10,12 @@ use bun_resolver::fs as fs_mod;
 use bun_string::{strings, MutableString};
 use bun_sys::{self, Fd};
 
-use crate::defines::Define;
+// PORT NOTE: cache.zig pulled `Define` from `./defines.zig`. In the Rust split
+// the parser crate carries its own CYCLEBREAK `defines::Define` (the type
+// `Parser::init` actually accepts); the bundler's richer `crate::defines::Define`
+// unifies with it once T3 round-D lands. `JavaScript::parse`/`scan` take the
+// parser-crate type so the call into `Parser::init` typechecks today.
+use js_parser::defines::Define;
 
 // ══════════════════════════════════════════════════════════════════════════
 // CYCLEBREAK(b0) MOVE_DOWN: `jsc::RuntimeTranspilerCache` (src/jsc/RuntimeTranspilerCache.zig:28)

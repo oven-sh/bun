@@ -1,7 +1,6 @@
-use crate::css_rules::Location;
-use crate::selector::parser::SelectorList;
-use crate::selector::serialize::serialize_selector_list;
-use crate::{CssRuleList, PrintErr, Printer};
+use crate::css_rules::{CssRuleList, Location};
+use crate::selectors::SelectorList;
+use crate::{PrintErr, Printer};
 
 /// A [@scope](https://drafts.csswg.org/css-cascade-6/#scope-atrule) rule.
 ///
@@ -19,23 +18,30 @@ pub struct ScopeRule<R> {
     pub loc: Location,
 }
 
+// ─── behavior bodies ──────────────────────────────────────────────────────
+// blocked_on: CssRuleList::to_css (gated in rules/mod.rs),
+// selector::serialize::serialize_selector_list (selector.rs body gated on
+// values/ident Fns), Printer::{with_context,with_cleared_context} (printer.rs
+// gated context helpers), DeepClone derive.
+#[cfg(any())]
 impl<R> ScopeRule<R> {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+        use crate::selectors::selector::serialize::serialize_selector_list;
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
 
         dest.write_str("@scope")?;
         dest.whitespace()?;
         if let Some(scope_start) = &self.scope_start {
-            dest.write_char('(')?;
+            dest.write_char(b'(')?;
             // scope_start.to_css(dest)?;
             serialize_selector_list(scope_start.v.as_slice(), dest, dest.context(), false)?;
-            dest.write_char(')')?;
+            dest.write_char(b')')?;
             dest.whitespace()?;
         }
         if let Some(scope_end) = &self.scope_end {
             if dest.minify {
-                dest.write_char(' ')?;
+                dest.write_char(b' ')?;
             }
             dest.write_str("to (")?;
             // <scope-start> is treated as an ancestor of scope end.
@@ -48,10 +54,10 @@ impl<R> ScopeRule<R> {
             } else {
                 return serialize_selector_list(scope_end.v.as_slice(), dest, dest.context(), false);
             }
-            dest.write_char(')')?;
+            dest.write_char(b')')?;
             dest.whitespace()?;
         }
-        dest.write_char('{')?;
+        dest.write_char(b'{')?;
         dest.indent();
         dest.newline()?;
         // Nested style rules within @scope are implicitly relative to the <scope-start>
@@ -60,7 +66,7 @@ impl<R> ScopeRule<R> {
         dest.with_cleared_context(|d: &mut Printer| self.rules.to_css(d))?;
         dest.dedent();
         dest.newline()?;
-        dest.write_char('}')?;
+        dest.write_char(b'}')?;
         Ok(())
     }
 
@@ -76,5 +82,5 @@ impl<R> ScopeRule<R> {
 //   source:     src/css/rules/scope.zig (76 lines)
 //   confidence: medium
 //   todos:      1
-//   notes:      with_context/with_cleared_context reshaped to closures; deep_clone needs DeepClone trait
+//   notes:      struct un-gated; to_css/deep_clone gated on CssRuleList::to_css + selector serialize + Printer context helpers; with_context/with_cleared_context reshaped to closures
 // ──────────────────────────────────────────────────────────────────────────

@@ -1,6 +1,5 @@
-use crate::css_rules::Location;
-use crate::{CssRuleList, PrintErr, Printer};
-use bun_alloc::Arena;
+use crate::css_rules::{CssRuleList, Location};
+use crate::{PrintErr, Printer};
 
 /// A [@starting-style](https://drafts.csswg.org/css-transitions-2/#defining-before-change-style-the-starting-style-rule) rule.
 pub struct StartingStyleRule<R> {
@@ -10,6 +9,9 @@ pub struct StartingStyleRule<R> {
     pub loc: Location,
 }
 
+// ─── behavior bodies ──────────────────────────────────────────────────────
+// blocked_on: CssRuleList::to_css (gated in rules/mod.rs) + DeepClone derive.
+#[cfg(any())]
 impl<R> StartingStyleRule<R> {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         // #[cfg(feature = "sourcemap")]
@@ -17,17 +19,17 @@ impl<R> StartingStyleRule<R> {
 
         dest.write_str("@starting-style")?;
         dest.whitespace()?;
-        dest.write_char('{')?;
+        dest.write_char(b'{')?;
         dest.indent();
         dest.newline()?;
         self.rules.to_css(dest)?;
         dest.dedent();
         dest.newline()?;
-        dest.write_char('}')?;
+        dest.write_char(b'}')?;
         Ok(())
     }
 
-    pub fn deep_clone(&self, bump: &Arena) -> Self {
+    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         // TODO(port): css.implementDeepClone uses @typeInfo field reflection — replace with a DeepClone trait/derive in Phase B
         crate::implement_deep_clone(self, bump)
     }
@@ -38,5 +40,5 @@ impl<R> StartingStyleRule<R> {
 //   source:     src/css/rules/starting_style.zig (39 lines)
 //   confidence: high
 //   todos:      1
-//   notes:      deep_clone delegates to reflection helper; needs DeepClone trait in Phase B
+//   notes:      struct un-gated; to_css/deep_clone gated on CssRuleList::to_css + DeepClone trait
 // ──────────────────────────────────────────────────────────────────────────

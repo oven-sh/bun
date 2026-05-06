@@ -273,13 +273,13 @@ impl<'a> Parser<'a> {
     #[cfg(any())] // blocked_on: _scan_imports (P::init / parse_stmts_up_to gated)
     pub fn scan_imports(&mut self, scan_pass: &mut ScanPassResult) -> Result<(), Error> {
         if self.options.ts && self.options.jsx.parse {
-            self._scan_imports::<TSXImportScanner>(scan_pass)
+            self._scan_imports::<true, JsxReact>(scan_pass)
         } else if self.options.ts {
-            self._scan_imports::<TypeScriptImportScanner>(scan_pass)
+            self._scan_imports::<true, JsxNone>(scan_pass)
         } else if self.options.jsx.parse {
-            self._scan_imports::<JSXImportScanner>(scan_pass)
+            self._scan_imports::<false, JsxReact>(scan_pass)
         } else {
-            self._scan_imports::<JavaScriptImportScanner>(scan_pass)
+            self._scan_imports::<false, JsxNone>(scan_pass)
         }
     }
 
@@ -648,7 +648,7 @@ impl<'a> Parser<'a> {
         // In a number of situations, we continue to parsing despite errors so that we can report more errors to the user
         //   Example where NOT halting causes a crash: A TS enum with a number literal as a member name
         //     https://discord.com/channels/876711213126520882/876711213126520885/1039325382488371280
-        if self.log.errors > orig_error_count {
+        if p.log.errors > orig_error_count {
             return Err(err!("SyntaxError"));
         }
 
@@ -869,7 +869,7 @@ impl<'a> Parser<'a> {
         visit_tracer.end();
 
         // If there were errors while visiting, also halt here
-        if self.log.errors > orig_error_count {
+        if p.log.errors > orig_error_count {
             return Err(err!("SyntaxError"));
         }
 
@@ -1900,24 +1900,7 @@ impl<'a> Parser<'a> {
         Ok(js_ast::Result::Ast(p.to_ast(&mut parts, exports_kind, wrap_mode, hashbang)?))
     }
 
-    pub fn init(
-        _options: Options<'a>,
-        log: &'a mut logger::Log,
-        source: &'a logger::Source,
-        define: &'a Define,
-        bump: &'a Arena,
-    ) -> Result<Parser<'a>, Error> {
-        // TODO(port): narrow error set
-        Ok(Parser {
-            options: _options,
-            bump,
-            lexer: js_lexer::Lexer::init(log, source, bump)?,
-            define,
-            source,
-            log,
-        })
-    }
-
+    #[allow(dead_code)] // called from gated `_parse` body above
     fn has_bun_pragma(&self, has_hashbang: bool) -> Option<crate::AlreadyBundled> {
         const BUN_PRAGMA: &[u8] = b"// @bun";
         let contents = self.lexer.source.contents;

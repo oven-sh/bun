@@ -219,12 +219,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             BStr::new(name)
                         )
                         .unwrap();
-                        v.into_boxed_slice().into()
+                        std::borrow::Cow::Owned(v)
                     },
-                    location: Some(logger::Location::init_or_null(
+                    location: logger::Location::init_or_null(
                         Some(p.source),
                         js_lexer::range_of_identifier(p.source, result.declare_loc.unwrap()),
-                    )),
+                    ),
                     ..Default::default()
                 }]);
 
@@ -381,7 +381,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // Everything uses a single stack to reduce allocation overhead. This stack
         // should almost always be very small, and almost all visits should reuse
         // existing memory without allocating anything.
-        let stack_bottom = p.binary_expression_stack.len();
+        //
+        // PORT NOTE: `P::binary_expression_stack` is currently typed against the
+        // placeholder `p::BinaryExpressionVisitor` (P.rs:179) — distinct from
+        // `visit_binary_expression::BinaryExpressionVisitor<'_>`. Until that field
+        // is retyped, fall back to a function-local stack so the iterative descent
+        // is structurally correct (loses cross-call buffer reuse only).
+        let mut local_stack: Vec<BinaryExpressionVisitor<'_>> = Vec::new();
+        let stack_bottom = local_stack.len();
 
         let mut current = Expr { data: Data::EBinary(e_), loc: v.loc };
 
@@ -416,7 +423,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             // Note that we only append to the stack (and therefore allocate memory
             // on the heap) when there are nested binary expressions. A single binary
             // expression doesn't add anything to the stack.
-            p.binary_expression_stack.push(v);
+            local_stack.push(v);
             let mut lb = left_binary.unwrap();
             v = BinaryExpressionVisitor {
                 e: &mut *lb,
@@ -429,8 +436,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         // Process all binary operations from the deepest-visited node back toward
         // our original top-level binary operation.
-        while p.binary_expression_stack.len() > stack_bottom {
-            v = p.binary_expression_stack.pop().unwrap();
+        while local_stack.len() > stack_bottom {
+            v = local_stack.pop().unwrap();
             v.e.left = current;
             current = BinaryExpressionVisitor::visit_right_and_finish(&mut v, p);
         }
@@ -1281,7 +1288,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         );
 
         // Copy the call side effect flag over if this is a known target
-        match &e_.target.data {
+        // PORT NOTE: copy the small inline payloads out first so the `match &e_.target.data`
+        // borrow doesn't overlap the `e_.can_be_unwrapped_if_unused = …` write below.
+        match e_.target.data {
             Data::EIdentifier(ident) => {
                 if ident.call_can_be_unwrapped_if_unused
                     && e_.can_be_unwrapped_if_unused == E::CallUnwrap::Never
@@ -1470,7 +1479,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             }
 
             if e_.args.len >= 1 {
-                p.check_dynamic_specifier(e_.args.slice()[0], e_.target.loc, b"require()");
+                // blocked_on: P::check_dynamic_specifier gated (P.rs:690 `#[cfg(any())]`).
+                let _ = (e_.args.slice()[0], e_.target.loc);
+                todo!("e_call: P::check_dynamic_specifier (gated)");
             }
 
             if p.options.features.allow_runtime {
@@ -1555,6 +1566,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     return p.new_expr(E::Undefined {}, expr.loc);
                 }
 
+                // blocked_on: bun_logger::fs::Path::is_node_module (Zig: `path.isNodeModule()`).
+                #[cfg(any())]
                 if p.source.path.is_node_module() {
                     p.log
                         .add_error(
@@ -1583,9 +1596,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         //
         // When we see a hook call, we need to hash it, and then mark a flag so that if
         // it is assigned to a variable, that variable also get's hashed.
-        if p.options.features.react_fast_refresh
-            || p.options.features.server_components.is_server_side()
-        {
+        //
+        // PORT NOTE: round-C `Runtime::Features.server_components` is a `bool` stub; the
+        // full Zig type is `enum { off, client, server }` with `.isServerSide()`. Treat
+        // `true` as server-side until the enum lands.
+        if p.options.features.react_fast_refresh || p.options.features.server_components {
             'try_record_hook: {
                 let original_name: &[u8] = match &e_.target.data {
                     Data::EIdentifier(id) => unsafe {
@@ -1633,7 +1648,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     }
                     break 'check_for_usestate false;
                 } {
-                    debug_assert!(p.options.features.server_components.is_server_side());
+                    debug_assert!(p.options.features.server_components);
+                    // blocked_on: bun_logger::fs::Path::pretty field/accessor.
+                    #[cfg(any())]
                     if !strings::starts_with(p.source.path.pretty, b"node_modules")
                         && original_name == b"useState"
                     {

@@ -439,10 +439,10 @@ mod json {
         // otherwise we have to convert it utf-8 into utf16-le.
         let str = if is_ascii {
             // .dead if `json_data` exceeds max length
-            let s = BunString::create_external::<bool>(
+            let s = BunString::create_external::<*mut bool>(
                 json_data,
                 true,
-                &mut was_ascii_string_freed,
+                &mut was_ascii_string_freed as *mut bool,
                 json_ipc_data_string_free_cb,
             );
             if s.tag() == bun_string::Tag::Dead {
@@ -1961,7 +1961,7 @@ fn on_data2(send_queue: &mut SendQueue, all_data: &[u8]) {
                         return;
                     }
                     Err(IPCDecodeError::OutOfMemory) => {
-                        Output::print_errorln("IPC message is too long.", &[]);
+                        Output::print_errorln("IPC message is too long.");
                         send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
                         return;
                     }
@@ -2005,7 +2005,7 @@ fn on_data2(send_queue: &mut SendQueue, all_data: &[u8]) {
                                 return;
                             }
                             Err(IPCDecodeError::OutOfMemory) => {
-                                Output::print_errorln("IPC message is too long.", &[]);
+                                Output::print_errorln("IPC message is too long.");
                                 send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
                                 return;
                             }
@@ -2057,7 +2057,7 @@ fn on_data2(send_queue: &mut SendQueue, all_data: &[u8]) {
                             return;
                         }
                         Err(IPCDecodeError::OutOfMemory) => {
-                            Output::print_errorln("IPC message is too long.", &[]);
+                            Output::print_errorln("IPC message is too long.");
                             send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
                             return;
                         }
@@ -2238,10 +2238,14 @@ pub mod IPCHandlers {
                     debug_assert!(
                         json_buf.data.len as usize + buffer.len() <= json_buf.data.cap as usize
                     );
-                    debug_assert!(bun_core::is_slice_in_buffer(
-                        buffer,
-                        json_buf.data.allocated_slice()
-                    ));
+                    // SAFETY: allocated_slice() yields `[MaybeUninit<u8>]`; we
+                    // only inspect its address range here, never read its bytes.
+                    debug_assert!(bun_core::is_slice_in_buffer(buffer, unsafe {
+                        core::slice::from_raw_parts(
+                            json_buf.data.ptr.as_ptr().cast::<u8>(),
+                            json_buf.data.cap as usize,
+                        )
+                    }));
 
                     json_buf.notify_written(buffer);
 
@@ -2273,7 +2277,7 @@ pub mod IPCHandlers {
                                 return;
                             }
                             Err(IPCDecodeError::OutOfMemory) => {
-                                Output::print_errorln("IPC message is too long.", &[]);
+                                Output::print_errorln("IPC message is too long.");
                                 send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
                                 loop_.exit();
                                 return;
@@ -2299,10 +2303,14 @@ pub mod IPCHandlers {
                     let mut slice_start: usize = 0;
 
                     debug_assert!(adv_buf.len <= adv_buf.cap);
-                    debug_assert!(bun_core::is_slice_in_buffer(
-                        buffer,
-                        adv_buf.allocated_slice()
-                    ));
+                    // SAFETY: allocated_slice() yields `[MaybeUninit<u8>]`; we
+                    // only inspect its address range here, never read its bytes.
+                    debug_assert!(bun_core::is_slice_in_buffer(buffer, unsafe {
+                        core::slice::from_raw_parts(
+                            adv_buf.ptr.as_ptr().cast::<u8>(),
+                            adv_buf.cap as usize,
+                        )
+                    }));
 
                     loop {
                         let IncomingBuffer::Advanced(adv_buf) = &mut send_queue.incoming else {
@@ -2321,11 +2329,8 @@ pub mod IPCHandlers {
                                 // copy the remaining bytes to the start of the buffer
                                 // SAFETY: src/dst may overlap; ptr::copy is memmove.
                                 unsafe {
-                                    core::ptr::copy(
-                                        adv_buf.ptr.add(slice_start),
-                                        adv_buf.ptr,
-                                        slice_len,
-                                    );
+                                    let base = adv_buf.ptr.as_ptr();
+                                    core::ptr::copy(base.add(slice_start), base, slice_len);
                                 }
                                 // slice.len is guaranteed <= adv_buf.len (u32) since it's derived from adv_buf.slice()
                                 debug_assert!(slice_len <= u32::MAX as usize);
@@ -2344,7 +2349,7 @@ pub mod IPCHandlers {
                                 return;
                             }
                             Err(IPCDecodeError::OutOfMemory) => {
-                                Output::print_errorln("IPC message is too long.", &[]);
+                                Output::print_errorln("IPC message is too long.");
                                 send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
                                 loop_.exit();
                                 return;

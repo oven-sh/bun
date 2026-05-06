@@ -1,7 +1,6 @@
-use crate::css_parser as css;
-use crate::css_parser::css_rules::style::StyleRule;
-use crate::css_parser::css_rules::Location;
-use crate::css_parser::{PrintErr, Printer};
+use crate::css_rules::style::StyleRule;
+use crate::css_rules::Location;
+use crate::{PrintErr, Printer};
 
 /// A [@nest](https://www.w3.org/TR/css-nesting-1/#at-nest) rule.
 pub struct NestingRule<R> {
@@ -11,6 +10,9 @@ pub struct NestingRule<R> {
     pub loc: Location,
 }
 
+// ─── behavior bodies ──────────────────────────────────────────────────────
+// blocked_on: StyleRule::to_css (gated in rules/style.rs) + DeepClone derive.
+#[cfg(any())]
 impl<R> NestingRule<R> {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         // #[cfg(feature = "sourcemap")]
@@ -24,7 +26,7 @@ impl<R> NestingRule<R> {
     pub fn deep_clone(&self, allocator: &bun_alloc::Arena) -> Self {
         // TODO(port): css.implementDeepClone uses @typeInfo field reflection; Phase B should
         // replace with a #[derive(DeepClone)] or hand-written per-field clone into the arena.
-        css::implement_deep_clone(self, allocator)
+        crate::implement_deep_clone(self, allocator)
     }
 }
 
@@ -33,5 +35,5 @@ impl<R> NestingRule<R> {
 //   source:     src/css/rules/nesting.zig (32 lines)
 //   confidence: medium
 //   todos:      1
-//   notes:      generic type-returning fn → struct<R>; deep_clone allocator kept as arena (css is AST crate)
+//   notes:      generic type-returning fn → struct<R>; struct un-gated; to_css/deep_clone gated on StyleRule::to_css
 // ──────────────────────────────────────────────────────────────────────────

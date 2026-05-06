@@ -61,27 +61,12 @@ gated_rule!(layer, {
     }
 });
 pub mod style;
-gated_rule!(keyframes, {
-    #[derive(Default)]
-    pub struct KeyframesRule;
-});
-gated_rule!(font_face, {
-    #[derive(Default)]
-    pub struct FontFaceRule;
-});
-gated_rule!(font_palette_values, {
-    #[derive(Default)]
-    pub struct FontPaletteValuesRule;
-});
-gated_rule!(page, {
-    #[derive(Default)]
-    pub struct PageRule;
-});
+pub mod keyframes;
+pub mod font_face;
+pub mod font_palette_values;
+pub mod page;
 pub mod supports;
-gated_rule!(counter_style, {
-    #[derive(Default)]
-    pub struct CounterStyleRule;
-});
+pub mod counter_style;
 gated_rule!(custom_media, {
     /// `@custom-media --name <media-list>;`
     #[derive(Clone)]
@@ -105,45 +90,14 @@ gated_rule!(unknown, {
         pub loc: super::Location,
     }
 });
-gated_rule!(document, {
-    pub struct MozDocumentRule<R> {
-        pub rules: super::CssRuleList<R>,
-        pub loc: super::Location,
-    }
-});
-gated_rule!(nesting, {
-    pub struct NestingRule<R> {
-        pub style: super::style::StyleRule<R>,
-        pub loc: super::Location,
-    }
-});
-gated_rule!(viewport, {
-    #[derive(Default)]
-    pub struct ViewportRule;
-});
-gated_rule!(property, {
-    #[derive(Default)]
-    pub struct PropertyRule;
-});
-gated_rule!(container, {
-    pub struct ContainerRule<R> {
-        pub rules: super::CssRuleList<R>,
-        pub loc: super::Location,
-    }
-});
-gated_rule!(scope, {
-    pub struct ScopeRule<R> {
-        pub rules: super::CssRuleList<R>,
-        pub loc: super::Location,
-    }
-});
+pub mod document;
+pub mod nesting;
+pub mod viewport;
+pub mod property;
+pub mod container;
+pub mod scope;
 pub mod media;
-gated_rule!(starting_style, {
-    pub struct StartingStyleRule<R> {
-        pub rules: super::CssRuleList<R>,
-        pub loc: super::Location,
-    }
-});
+pub mod starting_style;
 gated_rule!(tailwind, {
     /// `@tailwind base|components|utilities|variants;`
     // PORT NOTE: spec `TailwindAtRule` is a struct `{ style_name, loc }`; the

@@ -208,6 +208,12 @@ impl String {
         // SAFETY: Ctx is pointer-sized (asserted); the C ABI for the callback
         // is identical with Ctx erased to *mut c_void.
         let ctx_erased: *mut c_void = unsafe { core::mem::transmute_copy(&ctx) };
+        // PORT NOTE: Zig asserted `@typeInfo(Ctx) == .pointer` (raw pointer, no
+        // destructor). The Rust const-assert only checks size, so an owning
+        // pointer-sized `Ctx` (e.g. `Box<T>`) would otherwise be dropped here
+        // and later double-freed by the WTF finalizer. Ownership transfers to
+        // the external string; suppress the local drop.
+        core::mem::forget(ctx);
         let cb_erased: Option<extern "C" fn(*mut c_void, *mut c_void, u32)> =
             // SAFETY: same ABI; first param erased per the const-assert above.
             Some(unsafe { core::mem::transmute::<
@@ -733,16 +739,18 @@ impl ZigString {
 
     /// 8-bit byte slice (asserts !is16Bit in debug — matches Zig `slice()`).
     pub fn slice(&self) -> &[u8] {
-        debug_assert!(!self.is_16bit(), "ZigString::slice() on UTF-16 string; use to_slice()");
         if self.len == 0 { return &[]; }
+        // ZigString.zig:637 — only panics when `len > 0 and is16Bit()`.
+        debug_assert!(!self.is_16bit(), "ZigString::slice() on UTF-16 string; use to_slice()");
         // Zig caps at u32::MAX (ZigString.zig:642).
         let len = self.len.min(u32::MAX as usize);
         // SAFETY: constructor stored a valid ptr/len; flag bits stripped.
         unsafe { core::slice::from_raw_parts(Self::untagged(self.ptr), len) }
     }
     pub fn utf16_slice(&self) -> &[u16] {
-        debug_assert!(self.is_16bit());
         if self.len == 0 { return &[]; }
+        // ZigString.zig:436 — only panics when `len > 0 and !is16Bit()`.
+        debug_assert!(self.is_16bit());
         unsafe { core::slice::from_raw_parts(Self::untagged(self.ptr).cast(), self.len) }
     }
     /// `ZigString.utf16SliceAligned` — same as `utf16_slice`; the Zig variant
@@ -779,17 +787,35 @@ impl ZigString {
     /// `ZigString.toOwnedSlice` — allocate a fresh UTF-8 `Vec<u8>` regardless
     /// of the source encoding (ZigString.zig:239). UTF-16 → transcode; UTF-8 →
     /// copy; Latin-1 → transcode (or copy if all-ASCII).
+    ///
+    /// The returned buffer is NUL-terminated one byte past `len()` (the
+    /// terminator is *not* included in `len()`), matching ZigString.zig:243-245
+    /// so `sliceZBuf` / C-string consumers can read `as_ptr()` directly.
     pub fn to_owned_slice(&self) -> Vec<u8> {
-        if self.len == 0 { return Vec::new(); }
-        if self.is_16bit() {
-            return bun_core::strings::to_utf8_alloc(self.utf16_slice());
+        // Write a NUL sentinel at `v[len]` without bumping `len` (mirrors
+        // ZigString.zig:243-245 / `dupeZ`).
+        #[inline]
+        fn with_sentinel(mut v: Vec<u8>) -> Vec<u8> {
+            v.reserve_exact(1);
+            // SAFETY: `reserve_exact(1)` guarantees `cap >= len + 1`; the byte
+            // at `len` is inside the allocation.
+            unsafe { *v.as_mut_ptr().add(v.len()) = 0; }
+            v
         }
-        let bytes = self.slice();
+        if self.len == 0 { return Vec::new(); }
+        // PORT NOTE: order matches ZigString.zig:233-253 — `isUTF8()` is tested
+        // before `is16Bit()` so a string with both tags set takes the UTF-8 arm.
         if self.is_utf8() {
-            return bytes.to_vec();
+            return with_sentinel(self.slice().to_vec());
+        }
+        if self.is_16bit() {
+            return with_sentinel(bun_core::strings::to_utf8_alloc(self.utf16_slice()));
         }
         // Latin-1: transcode non-ASCII, else byte-copy.
-        bun_core::strings::to_utf8_from_latin1(bytes).unwrap_or_else(|| bytes.to_vec())
+        let bytes = self.slice();
+        with_sentinel(
+            bun_core::strings::to_utf8_from_latin1(bytes).unwrap_or_else(|| bytes.to_vec()),
+        )
     }
 
     /// `ZigString.toSliceClone` — the returned slice is *always* heap-owned

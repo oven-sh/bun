@@ -770,13 +770,14 @@ impl Default for File {
     fn default() -> Self {
         Self {
             // TODO(port): Zig had `entry_bits: AutoBitSet = undefined` — using
-            // Default here; Phase B: confirm zero-init is acceptable.
-            entry_bits: AutoBitSet::default(),
+            // an empty static-arm bitset here; Phase B: confirm zero-init is
+            // acceptable (load() overwrites before any read).
+            entry_bits: AutoBitSet::init_empty(0).expect("static AutoBitSet"),
             input_file: Index::source(0),
             distance_from_entry_point: u32::MAX,
             entry_point_kind: EntryPoint::Kind::None,
             entry_point_chunk_index: u32::MAX,
-            line_offset_table: bun_sourcemap::line_offset_table::List::EMPTY,
+            line_offset_table: bun_sourcemap::line_offset_table::List::default(),
             quoted_source_contents: None,
         }
     }

@@ -1,3 +1,13 @@
+// ──────────────────────────────────────────────────────────────────────────
+// TODO(b2-blocked): body depends on `bun_io::{Action, Loop, Poll, Request}`,
+// `bun_jsc::{AnyPromise, WorkTask, to_js_host_call, JsTerminatedResult}`,
+// `bun_threading::{ThreadPool, WorkPool, WorkPoolTask}`, and
+// `crate::webcore::blob::{FileOpener, FileCloser}` modeled as generic structs
+// (they're currently traits). Module is un-gated so `crate::webcore::blob::read_file`
+// is a real path; the heavy body re-gates here.
+// ──────────────────────────────────────────────────────────────────────────
+#![cfg(any())]
+
 use core::ffi::c_void;
 use core::marker::PhantomData;
 use core::mem::{offset_of, MaybeUninit};
@@ -9,10 +19,10 @@ use bun_jsc::{
     self as jsc, AnyPromise, EventLoop, JSGlobalObject, JSPromise, JSValue, JsResult, SystemError,
     WorkTask,
 };
-use bun_runtime::webcore::blob::{
+use crate::webcore::blob::{
     Blob, ClosingState, FileCloser, FileOpener, SizeType, Store,
 };
-use bun_runtime::webcore::blob::store::{Bytes as ByteStore, File as FileStore};
+use crate::webcore::blob::store::{Bytes as ByteStore, File as FileStore};
 use bun_str::String as BunString;
 use bun_sys::{self, Fd, Stat};
 use bun_sys::windows::libuv;

@@ -1905,8 +1905,9 @@ impl DebugMeta {
             } else {
                 r
             };
-            let mut data = logger::range_data(source, suggestion_range, self.suggestion_message);
-            data.location.as_mut().unwrap().suggestion = self.suggestion_text;
+            let data = logger::range_data(source, suggestion_range, self.suggestion_message);
+            // TODO(b2-blocked): bun_logger::Location has no `suggestion` field yet (Zig has it).
+            let _ = &self.suggestion_text;
             self.notes.push(data);
         }
 
@@ -2073,13 +2074,10 @@ impl PendingResolution {
         dependency: Dependency::Version,
         resolution_id: Install::PackageID,
     ) -> core::result::Result<PendingResolution, bun_core::Error> {
-        // TODO(port): narrow error set
-        Ok(PendingResolution {
-            esm: esm.copy()?,
-            dependency,
-            resolution_id,
-            ..Default::default()
-        })
+        // TODO(b2-blocked): Package::copy → PackageExternal needs a string-builder/arena;
+        // wire once Semver::String::Builder is threaded through here.
+        let _ = (esm, dependency, resolution_id);
+        unimplemented!("PendingResolution::init (Phase B — Package::copy)")
     }
 }
 
@@ -2793,7 +2791,7 @@ impl<'a> Resolver<'a> {
                     PJSideEffects::Unspecified => SideEffects::HasSideEffects,
                     PJSideEffects::False => SideEffects::NoSideEffectsPackageJson,
                     PJSideEffects::Map(map) => {
-                        if map.contains(&crate::package_json::StringHashMapUnownedKey::init(path.text())) {
+                        if map.contains_key(&crate::package_json::StringHashMapUnownedKey::init(path.text())) {
                             SideEffects::HasSideEffects
                         } else {
                             SideEffects::NoSideEffectsPackageJson
@@ -2831,7 +2829,7 @@ impl<'a> Resolver<'a> {
                         PJSideEffects::Unspecified => SideEffects::HasSideEffects,
                         PJSideEffects::False => SideEffects::NoSideEffectsPackageJson,
                         PJSideEffects::Map(map) => {
-                            if map.contains(&crate::package_json::StringHashMapUnownedKey::init(path.text())) {
+                            if map.contains_key(&crate::package_json::StringHashMapUnownedKey::init(path.text())) {
                                 SideEffects::HasSideEffects
                             } else {
                                 SideEffects::NoSideEffectsPackageJson
@@ -2898,7 +2896,7 @@ impl<'a> Resolver<'a> {
                             // SAFETY: buf[out.len()] == 0 written above
                             let span = unsafe { bun_core::ZStr::from_raw(buf.as_ptr(), out.len()) };
                             // TODO(port): std.fs.openFileAbsoluteZ → bun_sys::open
-                            let file = bun_sys::open(span, bun_sys::O::RDONLY, 0).unwrap()?;
+                            let file = bun_sys::open(span, bun_sys::O::RDONLY, 0).unwrap();
                             query.entry.cache.fd = file;
                             Fs::FileSystem::set_max_fd(file.native());
                         }
@@ -3096,7 +3094,7 @@ impl<'a> Resolver<'a> {
                 let had_node_prefix = import_path.starts_with(b"node:");
                 let import_path_without_node_prefix = if had_node_prefix { &import_path[b"node:".len()..] } else { import_path };
 
-                if let Some(fallback_module) = NodeFallbackModules::MAP.get(import_path_without_node_prefix) {
+                if let Some(fallback_module) = NodeFallbackModules::map().get(import_path_without_node_prefix) {
                     result.path_pair.primary = fallback_module.path.clone();
                     result.module_type = options::ModuleType::Cjs;
                     // @ptrFromInt(@intFromPtr(...)) — cast away constness

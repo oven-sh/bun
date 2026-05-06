@@ -4,6 +4,7 @@ pub mod css_modules {
     /// Defines where the class names referenced in the `composes` property are located.
     ///
     /// See [Composes](Composes).
+    #[derive(Debug, Clone, Copy)]
     pub enum Specifier {
         /// The referenced name is global.
         Global,
@@ -67,7 +68,7 @@ gated_value!(image);
 // css_parser.rs. Real impls (3.5kL color.rs colorspace traits + into_hsl/
 // into_lab matrix chains; ident.rs IdentOrRef) un-gate with the calc lattice.
 gated_value!(color, { pub use crate::values_stub::color::*; });
-gated_value!(ident, { pub use crate::values_stub::ident::*; });
+pub mod ident;
 gated_value!(url,   { pub use crate::values_stub::url::*; });
 
 // ──────────────────────────────────────────────────────────────────────────

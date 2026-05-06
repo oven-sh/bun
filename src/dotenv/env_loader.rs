@@ -884,13 +884,109 @@ impl<'a> Loader<'a> {
         base: &'static [u8],
         value_buffer: &mut Vec<u8>,
     ) -> Result<(), bun_core::Error> {
-        #[cfg(any())]
-        {
-            // TODO(b2-blocked): bun_logger::Source owning its contents (PORTING.md §Forbidden:
-            //   Phase-A draft used mem::forget to leak the file buffer; correct fix is making
-            //   logger::Source own a Box<[u8]>, which lives in bun_logger).
+        if self.default_file_slot(base).is_some() {
+            return Ok(());
         }
-        let _ = (dir, base, value_buffer);
+
+        // PORT NOTE: Zig used `std.fs.Dir.openFile` whose error set names
+        // (`error.FileNotFound`, `error.FileBusy`, …) don't map 1:1 to errno.
+        // `bun_sys` is errno-based, so the match arms below approximate the Zig
+        // error groups by errno. Any errno not listed propagates (matches the
+        // Zig `else => return err`).
+        let file = match bun_sys::openat_a(dir, base, bun_sys::O::RDONLY | bun_sys::O::CLOEXEC, 0) {
+            Ok(fd) => bun_sys::File::from_fd(fd),
+            Err(err) => {
+                use bun_sys::E;
+                match err.get_errno() {
+                    E::EISDIR | E::ENOENT => {
+                        // prevent retrying
+                        *self.default_file_slot(base) =
+                            Some(logger::Source::init_path_string(base, b""));
+                        return Ok(());
+                    }
+                    E::EBUSY | E::EACCES => {
+                        if !self.quiet {
+                            bun_core::pretty_errorln!(
+                                "<r><red>{}<r> error loading {} file",
+                                bstr::BStr::new(err.name()),
+                                bstr::BStr::new(base)
+                            );
+                        }
+                        // prevent retrying
+                        *self.default_file_slot(base) =
+                            Some(logger::Source::init_path_string(base, b""));
+                        return Ok(());
+                    }
+                    _ => return Err(err.into()),
+                }
+            }
+        };
+        let file = scopeguard::guard(file, |f| {
+            let _ = f.close();
+        });
+
+        #[cfg(windows)]
+        let end: usize = {
+            let pos = file.get_end_pos()?;
+            if pos == 0 {
+                *self.default_file_slot(base) =
+                    Some(logger::Source::init_path_string(base, b""));
+                return Ok(());
+            }
+            pos
+        };
+        #[cfg(not(windows))]
+        let end: usize = {
+            let stat = file.stat()?;
+            if stat.st_size == 0 || !bun_sys::S::ISREG(stat.st_mode as _) {
+                *self.default_file_slot(base) =
+                    Some(logger::Source::init_path_string(base, b""));
+                return Ok(());
+            }
+            stat.st_size as usize
+        };
+
+        let mut buf: Vec<u8> = vec![0u8; end + 1];
+        // errdefer free(buf) — Vec drops automatically.
+        let amount_read = match file.read_all(&mut buf[0..end]) {
+            Ok(n) => n,
+            Err(err) => {
+                use bun_sys::E;
+                match err.get_errno() {
+                    E::ENOMEM | E::EPIPE | E::EACCES | E::EISDIR => {
+                        if !self.quiet {
+                            bun_core::pretty_errorln!(
+                                "<r><red>{}<r> error loading {} file",
+                                bstr::BStr::new(err.name()),
+                                bstr::BStr::new(base)
+                            );
+                        }
+                        // prevent retrying
+                        *self.default_file_slot(base) =
+                            Some(logger::Source::init_path_string(base, b""));
+                        return Ok(());
+                    }
+                    _ => return Err(err.into()),
+                }
+            }
+        };
+
+        // The null byte here is mostly for debugging purposes.
+        buf[end] = 0;
+
+        Parser::parse_bytes::<OVERRIDE, false, true>(
+            &buf[0..amount_read],
+            &mut *self.map,
+            value_buffer,
+        )?;
+
+        // TODO(port): Zig retained the file buffer in `Source.contents`; here we
+        // drop it after parsing because `bun_logger::Source.contents` is
+        // `&'static [u8]` and §Forbidden bans `Box::leak`. The stored `Source`
+        // is only ever checked for `.is_some()` / its path printed, so dropping
+        // the bytes is observationally identical. Revisit once `bun_logger`
+        // grows an owning `contents` (Phase-B `Str` rework).
+        *self.default_file_slot(base) = Some(logger::Source::init_path_string(base, b""));
         Ok(())
     }
 
@@ -899,11 +995,81 @@ impl<'a> Loader<'a> {
         file_path: &[u8],
         value_buffer: &mut Vec<u8>,
     ) -> Result<(), bun_core::Error> {
-        #[cfg(any())]
-        {
-            // TODO(b2-blocked): bun_logger::Source owning its contents (see load_env_file).
+        if self.custom_files_loaded.contains(file_path) {
+            return Ok(());
         }
-        let _ = (file_path, value_buffer);
+
+        let file = match bun_sys::open_file(file_path, bun_sys::OpenFlags::READ_ONLY) {
+            Ok(f) => f,
+            Err(_) => {
+                // prevent retrying
+                // PORT NOTE: `Source::init_path_string` requires a `'static` path; the
+                // map key already carries `file_path` (boxed), and the value is never
+                // read for its path/contents — only `.contains()` and key iteration —
+                // so an empty placeholder is observationally identical.
+                self.custom_files_loaded.put(file_path, logger::Source::default())?;
+                return Ok(());
+            }
+        };
+        let file = scopeguard::guard(file, |f| {
+            let _ = f.close();
+        });
+
+        #[cfg(windows)]
+        let end: usize = {
+            let pos = file.get_end_pos()?;
+            if pos == 0 {
+                self.custom_files_loaded.put(file_path, logger::Source::default())?;
+                return Ok(());
+            }
+            pos
+        };
+        #[cfg(not(windows))]
+        let end: usize = {
+            let stat = file.stat()?;
+            if stat.st_size == 0 || !bun_sys::S::ISREG(stat.st_mode as _) {
+                self.custom_files_loaded.put(file_path, logger::Source::default())?;
+                return Ok(());
+            }
+            stat.st_size as usize
+        };
+
+        let mut buf: Vec<u8> = vec![0u8; end + 1];
+        // errdefer free(buf) — Vec drops automatically.
+        let amount_read = match file.read_all(&mut buf[0..end]) {
+            Ok(n) => n,
+            Err(err) => {
+                use bun_sys::E;
+                match err.get_errno() {
+                    E::ENOMEM | E::EPIPE | E::EACCES | E::EISDIR => {
+                        if !self.quiet {
+                            bun_core::pretty_errorln!(
+                                "<r><red>{}<r> error loading {} file",
+                                bstr::BStr::new(err.name()),
+                                bstr::BStr::new(file_path)
+                            );
+                        }
+                        // prevent retrying
+                        self.custom_files_loaded.put(file_path, logger::Source::default())?;
+                        return Ok(());
+                    }
+                    _ => return Err(err.into()),
+                }
+            }
+        };
+
+        // The null byte here is mostly for debugging purposes.
+        buf[end] = 0;
+
+        Parser::parse_bytes::<OVERRIDE, false, true>(
+            &buf[0..amount_read],
+            &mut *self.map,
+            value_buffer,
+        )?;
+
+        // TODO(port): see `load_env_file` — `Source.contents` not retained
+        // pending the `bun_logger` owning-`Str` rework.
+        self.custom_files_loaded.put(file_path, logger::Source::default())?;
         Ok(())
     }
 }

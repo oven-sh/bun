@@ -680,11 +680,12 @@ impl<'a> Parser<'a> {
                         return Ok(PrepareResult::Key(b"[Object object]"));
                     }
                     _ => {
-                        // PERF(port): was std.fmt.allocPrint into arena
-                        let mut buf = ArenaVec::<u8>::new_in(bump);
-                        use core::fmt::Write as _;
-                        let _ = write!(&mut buf, "{}", ToStringFormatter { d: &json_val.data });
-                        let str_ = buf.into_bump_slice();
+                        // PERF(port): was std.fmt.allocPrint into arena. Cold
+                        // npm-quirk path (JSON array/number used as a section
+                        // header or key); format to a temp `String` then copy
+                        // into the arena.
+                        let s = format!("{}", ToStringFormatter { d: &json_val.data });
+                        let str_ = bump.alloc_slice_copy(s.as_bytes());
                         if usage == Usage::Section {
                             return Ok(PrepareResult::Section(Self::single_str_rope(
                                 ropealloc, str_,

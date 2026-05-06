@@ -1,3 +1,14 @@
+// ──────────────────────────────────────────────────────────────────────────
+// TODO(b2-blocked): body depends on `bun_io::{Action, Poll, Request}` field
+// types, `bun_jsc::{ConcurrentTask, ManagedTask, WorkPoolTask, WorkTask,
+// JsTerminated, JSPromiseStrong}`, `bun_threading::{ThreadPool, WorkPool}`,
+// `crate::node::fs::async_::AsyncMkdirp`, and `crate::webcore::blob::{FileOpener,
+// FileCloser}` modeled as generic-struct mixins (currently traits). Module is
+// un-gated so `crate::webcore::blob::write_file` is a real path; the heavy body
+// re-gates here.
+// ──────────────────────────────────────────────────────────────────────────
+#![cfg(any())]
+
 use core::ffi::c_void;
 use core::mem::offset_of;
 use core::ptr::null_mut;

@@ -72,6 +72,8 @@ pub mod js_transpiler;
 pub mod js_bundler;
 #[path = "api/BunObject.rs"]
 pub mod bun_object;
+#[path = "api/HashObject.rs"]
+pub mod hash_object;
 
 // ─── api/bun/ core (process / spawn / pty / h2) ──────────────────────────────
 // `#[path]` is relative to the dir containing this file (`src/runtime/`); the
@@ -89,9 +91,9 @@ pub mod bun_process;
 // ── JSC-heavy siblings: Phase-A drafts preserved on disk, body-gated. ──
 // TODO(b2-blocked): bun_jsc method surface — un-gate bodies once bun_jsc dep is green.
 
-// posix_spawn(2) wrappers + Stdio enum. process.rs references this as
-// `super::spawn`; body uses `bun_sys::posix::*` (not yet exported).
-#[cfg(any())]
+// posix_spawn(2) wrappers + Stdio enum. `bun_sys::posix` surface is now wide
+// enough for the `bun_spawn` half; libc-backed `PosixSpawn*` wrappers are
+// cfg-gated to macOS inside the file. `stdio` submod stays re-gated within.
 #[path = "api/bun/spawn.rs"]
 pub mod bun_spawn;
 
@@ -129,6 +131,8 @@ pub mod bun_x509;
 
 pub mod bun {
     pub use super::bun_process as process;
+    pub use super::bun_spawn as spawn;
+    pub use spawn::posix_spawn;
     pub use process::{
         Dup2, Exited, ExtraPipe, PidFdType, PidT, Poller, PosixSpawnOptions, PosixSpawnResult,
         PosixStdio, Process, ProcessExitHandler, ProcessExitVTable, Rusage, SpawnOptions,
@@ -214,6 +218,7 @@ pub use crate::api::filesystem_router::FileSystemRouter;
 pub use crate::api::filesystem_router::MatchedRoute;
 pub use crate::api::archive as Archive;
 pub use crate::api::js_transpiler as JSTranspiler;
+pub use crate::api::hash_object as HashObject;
 pub use crate::api::bun::h2_frame_parser::H2FrameParser;
 
 // ─── gated re-exports (target modules not yet declared / lower-tier missing) ─
@@ -227,7 +232,6 @@ mod _gated_reexports {
     // TODO(b2-blocked): crate::webview (module not declared)
     pub use crate::webview::host_process as WebViewHostProcess;
     pub use crate::webview::chrome_process as ChromeProcess;
-    pub use crate::api::hash_object as HashObject;
     pub use crate::api::toml_object as TOMLObject;
     pub use crate::api::unsafe_object as UnsafeObject;
     pub use crate::api::json5_object as JSON5Object;

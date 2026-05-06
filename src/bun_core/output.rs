@@ -2358,23 +2358,28 @@ pub fn stdin_reader() -> StdinReader {
     StdinReader { fd: Fd::stdin() }
 }
 
-/// `bun.Output.buffered_stdin.reader()` — borrow the process-global 4 KiB
+/// `bun.Output.buffered_stdin` — raw pointer to the process-global 4 KiB
 /// buffered stdin. Used by `prompt()`/`bun init`/`bun publish` line reads.
+///
+/// Returns `*mut` (not `&'static mut`) to avoid handing out two live aliasing
+/// `&mut` to the same static (PORTING.md §Forbidden); callers materialise the
+/// `&mut` at the use site. Matches the other self-ref escapes in this module
+/// (`writer()`, `error_writer()`, …).
 ///
 /// SAFETY: the static is single-threaded by construction (only ever touched
 /// from the main JS/CLI thread while blocked on user input).
 #[inline]
-#[allow(static_mut_refs)]
-pub fn buffered_stdin_reader() -> &'static mut BufferedStdin {
-    unsafe { &mut BUFFERED_STDIN }
+pub fn buffered_stdin() -> *mut BufferedStdin {
+    // SAFETY: taking a raw pointer to a `static mut` is always sound.
+    unsafe { core::ptr::addr_of_mut!(BUFFERED_STDIN) }
+    // TODO(port): self-ref pointer escape — see error_writer()
 }
 
-/// `bun.Output.buffered_stdin` — same borrow as [`buffered_stdin_reader`]; the
-/// Zig spelling exposed the static itself and callers chained `.reader()`.
+/// `bun.Output.buffered_stdin.reader()` — same accessor as [`buffered_stdin`];
+/// the Zig spelling exposed the static itself and callers chained `.reader()`.
 #[inline]
-#[allow(static_mut_refs)]
-pub fn buffered_stdin() -> &'static mut BufferedStdin {
-    unsafe { &mut BUFFERED_STDIN }
+pub fn buffered_stdin_reader() -> *mut BufferedStdin {
+    buffered_stdin()
 }
 
 /// Convenience for `bun.Output.buffered_stdin.reader().readUntilDelimiterArrayList`.
@@ -2384,7 +2389,8 @@ pub fn buffered_stdin_read_until_delimiter(
     delimiter: u8,
     max_size: usize,
 ) -> Result<(), crate::Error> {
-    buffered_stdin().read_until_delimiter_array_list(out, delimiter, max_size)
+    // SAFETY: single-threaded static; only live `&mut` for this call's duration.
+    unsafe { (*buffered_stdin()).read_until_delimiter_array_list(out, delimiter, max_size) }
 }
 
 /// https://gist.github.com/christianparpart/d8a62cc1ab659194337d73e399004036

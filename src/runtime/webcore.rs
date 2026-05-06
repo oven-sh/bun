@@ -15,12 +15,9 @@ mod _gated_submods {
     pub use bun_event_loop::auto_flusher;
 
     pub mod crypto;
-    pub mod fetch;
     pub mod bake_response;
-    pub mod text_decoder;
     pub mod text_encoder;
     pub mod text_encoder_stream_encoder;
-    pub mod encoding;
     pub mod s3_stat;
     pub use s3_stat::S3Stat;
     pub mod resumable_sink;
@@ -202,6 +199,19 @@ pub use crate::jsc::FetchHeaders;
 #[path = "webcore/EncodingLabel.rs"]
 pub mod encoding_label;
 pub use encoding_label::EncodingLabel;
+
+#[path = "webcore/encoding.rs"]
+pub mod encoding;
+
+#[path = "webcore/TextDecoder.rs"]
+pub mod text_decoder;
+pub use text_decoder::TextDecoder;
+
+#[path = "webcore/fetch.rs"]
+pub mod fetch;
+
+#[path = "webcore/prompt.rs"]
+pub mod prompt;
 
 #[path = "webcore/FormData.rs"]
 pub mod form_data;

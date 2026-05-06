@@ -360,7 +360,7 @@ pub struct JSSink<T> {
 impl<T> JSSink<T> {
     pub fn create_object(
         _global: &crate::webcore::jsc::JSGlobalObject,
-        _object: *mut T,
+        _object: &mut T,
         _destructor: usize,
     ) -> crate::webcore::jsc::JSValue {
         // TODO(b2-blocked): `${abi_name}__createObject` extern — needs per-T abi_name.
@@ -428,6 +428,11 @@ pub trait JsSinkType: Sized {
     }
 }
 
+// TODO(b2-blocked): macro body references `bun_jsc::{host_fn, host_call,
+// mark_binding, from_js_host_call_generic, ErrorCode, SystemError,
+// EnsureStillAlive, VirtualMachine::get}` and `streams::Start::from_js` — gated
+// until those land.
+#[cfg(any())]
 #[macro_export]
 macro_rules! js_sink {
     ($SinkType:ty, $abi_name:literal, $mod_name:ident) => {
@@ -983,8 +988,15 @@ pub struct Detached {
     _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
 }
 
-pub type DestructorPtr = TaggedPtrUnion<(Detached, Subprocess)>;
+// TODO(b2-blocked): `crate::api::Subprocess` is currently a module re-export,
+// not the `Subprocess<'a>` struct — and TaggedPtrUnion can't carry a borrowed
+// type. Use `Detached` as both tags so `DestructorPtr` is nameable for
+// FileSink/subprocess::Writable; the `as_mut::<Subprocess>` arm in the gated
+// body below restores the real second variant.
+pub type DestructorPtr = TaggedPtrUnion<(Detached, Detached)>;
 
+// TODO(b2-blocked): `Subprocess::on_stdin_destroyed` + `Output::debug_warn`.
+#[cfg(any())]
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__onSinkDestroyed(ptr_value: *mut c_void, sink_ptr: *mut c_void) {
     let _ = sink_ptr; // autofix

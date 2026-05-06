@@ -1,22 +1,22 @@
 use bun_alloc::AllocError;
 use bun_collections::{ArrayHashMap, HashMap, StringArrayHashMap};
-use bun_core::{fmt as bun_fmt, perf, FeatureFlags};
+use bun_core::FeatureFlags;
 use bun_logger as logger;
 use bun_logger::Log;
 use bun_options_types::ImportRecord;
-use bun_str::strings;
+use bun_string::strings;
 
-use bun_bundler::options::{self, Format, Loader};
-use bun_bundler::{
+use crate::bun_css::BundlerStyleSheet;
+use crate::options::{self, Format, Loader};
+use crate::ungate_support::perf;
+use crate::{
     EntryPoint, ExportData, ImportData, Index, JSMeta, LinkerContext, Part, RefImportData,
     ResolvedExports, Symbol,
 };
-use bun_css::{BundlerStyleSheet, PropertyIdTag};
 use bun_js_parser as js_ast;
 use bun_js_parser::{Ast, Dependency, ExportsKind, Ref};
 
-use super::debug; // LinkerContext::debug
-type SymbolMap = bun_js_parser::symbol::Map;
+type SymbolMap = bun_js_parser::ast::symbol::Map;
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
 pub enum ScanImportsAndExportsError {
@@ -39,31 +39,50 @@ impl From<ScanImportsAndExportsError> for bun_core::Error {
 pub fn scan_imports_and_exports(
     this: &mut LinkerContext,
 ) -> Result<(), ScanImportsAndExportsError> {
+    // TODO(b2-blocked): body depends on `MultiArrayList` per-field SoA
+    // accessors (`graph.ast.items_mut().field`) and overlapping &mut borrows on
+    // `graph.ast`/`graph.meta`/`graph.files`. Preserved verbatim in the
+    // `__phase_a_draft` module below; un-gates with the `MultiArrayElement`
+    // derive for `JSAst`/`JSMeta`/`LinkerGraph::File`.
+    let _ = this;
+    todo!("b2-blocked: scanImportsAndExports — MultiArrayList SoA accessors")
+}
+
+#[cfg(any())]
+mod __phase_a_draft {
+use super::*;
+use super::super::debug; // LinkerContext::debug
+use bun_core::fmt as bun_fmt;
+use bun_css::PropertyIdTag;
+
+pub fn scan_imports_and_exports(
+    this: &mut LinkerContext,
+) -> Result<(), ScanImportsAndExportsError> {
     let _outer_trace = perf::trace("Bundler.scanImportsAndExports");
     let reachable = this.graph.reachable_files.as_slice();
     let output_format = this.options.output_format;
     {
         let import_records_list: &mut [ImportRecord::List] =
-            this.graph.ast.items_mut(.import_records);
+            this.graph.ast.items_mut().import_records;
 
-        // var parts_list: [][]Part = this.graph.ast.items(.parts);
-        let exports_kind: &mut [js_ast::ExportsKind] = this.graph.ast.items_mut(.exports_kind);
+        // var parts_list: [][]Part = this.graph.ast.items().parts;
+        let exports_kind: &mut [js_ast::ExportsKind] = this.graph.ast.items_mut().exports_kind;
         let entry_point_kinds: &mut [EntryPoint::Kind] =
-            this.graph.files.items_mut(.entry_point_kind);
+            this.graph.files.items_mut().entry_point_kind;
         let named_imports: &mut [js_ast::Ast::NamedImports] =
-            this.graph.ast.items_mut(.named_imports);
-        let flags: &mut [JSMeta::Flags] = this.graph.meta.items_mut(.flags);
+            this.graph.ast.items_mut().named_imports;
+        let flags: &mut [JSMeta::Flags] = this.graph.meta.items_mut().flags;
 
-        let input_files = this.parse_graph.input_files.items(.source);
-        let loaders: &[Loader] = this.parse_graph.input_files.items(.loader);
+        let input_files = this.parse_graph.input_files.items().source;
+        let loaders: &[Loader] = this.parse_graph.input_files.items().loader;
 
         let export_star_import_records: &mut [&mut [u32]] =
-            this.graph.ast.items_mut(.export_star_import_records);
-        let exports_refs: &mut [Ref] = this.graph.ast.items_mut(.exports_ref);
-        let module_refs: &mut [Ref] = this.graph.ast.items_mut(.module_ref);
-        let ast_flags_list = this.graph.ast.items_mut(.flags);
+            this.graph.ast.items_mut().export_star_import_records;
+        let exports_refs: &mut [Ref] = this.graph.ast.items_mut().exports_ref;
+        let module_refs: &mut [Ref] = this.graph.ast.items_mut().module_ref;
+        let ast_flags_list = this.graph.ast.items_mut().flags;
 
-        let css_asts: &mut [Option<&mut BundlerStyleSheet>] = this.graph.ast.items_mut(.css);
+        let css_asts: &mut [Option<&mut BundlerStyleSheet>] = this.graph.ast.items_mut().css;
         // TODO(port): the above MultiArrayList .items() accessors will overlap &mut borrows on
         // `this.graph.ast`. Phase B should switch to a single `.slice()` and use the SoA columns.
 
@@ -321,9 +340,9 @@ pub fn scan_imports_and_exports(
             // PORT NOTE: `defer { if (export_star_ctx) |*export_ctx| export_ctx.source_index_stack.deinit(); }`
             // → Drop on `export_star_ctx` handles freeing `source_index_stack: Vec<u32>`.
             let resolved_exports: &mut [ResolvedExports] =
-                this.graph.meta.items_mut(.resolved_exports);
+                this.graph.meta.items_mut().resolved_exports;
             let resolved_export_stars: &mut [ExportData] =
-                this.graph.meta.items_mut(.resolved_export_star);
+                this.graph.meta.items_mut().resolved_export_star;
 
             for source_index_ in reachable {
                 let source_index = source_index_.get();
@@ -345,11 +364,11 @@ pub fn scan_imports_and_exports(
                             import_records_list,
                             export_star_records: export_star_import_records,
 
-                            imports_to_bind: this.graph.meta.items_mut(.imports_to_bind),
+                            imports_to_bind: this.graph.meta.items_mut().imports_to_bind,
 
                             source_index_stack: Vec::with_capacity(32),
                             exports_kind,
-                            named_exports: this.graph.ast.items_mut(.named_exports),
+                            named_exports: this.graph.ast.items_mut().named_exports,
                         });
                     }
                     export_star_ctx
@@ -381,8 +400,8 @@ pub fn scan_imports_and_exports(
         {
             this.cycle_detector.clear();
             let _trace = perf::trace("Bundler.MatchImportsWithExports");
-            let wrapper_part_indices = this.graph.meta.items_mut(.wrapper_part_index);
-            let imports_to_bind = this.graph.meta.items_mut(.imports_to_bind);
+            let wrapper_part_indices = this.graph.meta.items_mut().wrapper_part_index;
+            let imports_to_bind = this.graph.meta.items_mut().imports_to_bind;
             for source_index_ in reachable {
                 let source_index = source_index_.get() as usize;
 
@@ -425,7 +444,7 @@ pub fn scan_imports_and_exports(
                     flags[source_index] = flag;
                 }
 
-                let wrapped_ref = this.graph.ast.items(.wrapper_ref)[source_index];
+                let wrapped_ref = this.graph.ast.items().wrapper_ref[source_index];
 
                 // Create the wrapper part for wrapped files. This is needed by a later step.
                 this.create_wrapper_for_file(
@@ -462,33 +481,33 @@ pub fn scan_imports_and_exports(
     // generate wrapper parts for wrapped files.
     {
         let _trace = perf::trace("Bundler.BindImportsToExports");
-        // const needs_export_symbol_from_runtime: []const bool = this.graph.meta.items(.needs_export_symbol_from_runtime);
+        // const needs_export_symbol_from_runtime: []const bool = this.graph.meta.items().needs_export_symbol_from_runtime;
 
         let mut runtime_export_symbol_ref: Ref = Ref::NONE;
         let entry_point_kinds: &mut [EntryPoint::Kind] =
-            this.graph.files.items_mut(.entry_point_kind);
-        let flags: &mut [JSMeta::Flags] = this.graph.meta.items_mut(.flags);
+            this.graph.files.items_mut().entry_point_kind;
+        let flags: &mut [JSMeta::Flags] = this.graph.meta.items_mut().flags;
         let mut ast_fields = this.graph.ast.slice();
 
-        let wrapper_refs = ast_fields.items(.wrapper_ref);
-        let exports_kind = ast_fields.items(.exports_kind);
-        let exports_refs = ast_fields.items(.exports_ref);
-        let module_refs = ast_fields.items(.module_ref);
-        let named_imports = ast_fields.items(.named_imports);
-        let import_records_list = ast_fields.items(.import_records);
-        let export_star_import_records = ast_fields.items(.export_star_import_records);
-        let ast_flags = ast_fields.items(.flags);
+        let wrapper_refs = ast_fields.items().wrapper_ref;
+        let exports_kind = ast_fields.items().exports_kind;
+        let exports_refs = ast_fields.items().exports_ref;
+        let module_refs = ast_fields.items().module_ref;
+        let named_imports = ast_fields.items().named_imports;
+        let import_records_list = ast_fields.items().import_records;
+        let export_star_import_records = ast_fields.items().export_star_import_records;
+        let ast_flags = ast_fields.items().flags;
         for source_index_ in reachable {
             let source_index = source_index_.get();
             let id = source_index as usize;
 
             let is_entry_point = entry_point_kinds[id].is_entry_point();
-            let aliases = &this.graph.meta.items(.sorted_and_filtered_export_aliases)[id];
+            let aliases = &this.graph.meta.items().sorted_and_filtered_export_aliases[id];
             let flag = flags[id];
             let wrap = flag.wrap;
             let export_kind = exports_kind[id];
             let source: &logger::Source =
-                &this.parse_graph.input_files.items(.source)[id];
+                &this.parse_graph.input_files.items().source[id];
 
             let exports_ref = exports_refs[id];
 
@@ -554,7 +573,7 @@ pub fn scan_imports_and_exports(
                         .graph
                         .generate_new_symbol(source_index, SymbolKind::Other, original_name);
                 }
-                this.graph.meta.items_mut(.cjs_export_copies)[id] = copies;
+                this.graph.meta.items_mut().cjs_export_copies[id] = copies;
             }
 
             // Use "init_*" for ESM wrappers instead of "require_*"
@@ -624,8 +643,8 @@ pub fn scan_imports_and_exports(
                 )?;
             }
             let imports_to_bind_list: &mut [RefImportData] =
-                this.graph.meta.items_mut(.imports_to_bind);
-            let parts_list: &mut [Part::List] = ast_fields.items_mut(.parts);
+                this.graph.meta.items_mut().imports_to_bind;
+            let parts_list: &mut [Part::List] = ast_fields.items_mut().parts;
 
             let mut parts: &mut [Part] = parts_list[id].slice_mut();
 
@@ -686,7 +705,7 @@ pub fn scan_imports_and_exports(
                     Vec::with_capacity(extra_count);
 
                 let resolved_exports_list: &mut ResolvedExports =
-                    &mut this.graph.meta.items_mut(.resolved_exports)[id];
+                    &mut this.graph.meta.items_mut().resolved_exports[id];
                 for alias in aliases.iter() {
                     let exp = resolved_exports_list.get(alias).unwrap();
                     let mut target_source_index = exp.data.source_index;
@@ -731,7 +750,7 @@ pub fn scan_imports_and_exports(
                     // PERF(port): was appendAssumeCapacity — profile in Phase B
                     dependencies.push(Dependency {
                         source_index: Index::source(source_index),
-                        part_index: this.graph.meta.items(.wrapper_part_index)[id].get(),
+                        part_index: this.graph.meta.items().wrapper_part_index[id].get(),
                     });
                 }
 
@@ -747,7 +766,7 @@ pub fn scan_imports_and_exports(
                 // PORT NOTE: `catch |err| bun.handleOom(err)` dropped — aborts on OOM.
 
                 parts = parts_list[id].slice_mut();
-                this.graph.meta.items_mut(.entry_point_part_index)[id] =
+                this.graph.meta.items_mut().entry_point_part_index[id] =
                     Index::part(entry_point_part_index);
 
                 // Pull in the "__toCommonJS" symbol if we need it due to being an entry point
@@ -805,7 +824,7 @@ pub fn scan_imports_and_exports(
                                 // We create a default object with getters for each statically-known export
                                 // This is kind of similar to what Node.js does
                                 // Once we track usages of the dynamic import, we can remove this.
-                                if !ast_fields.items(.named_exports)[other_id].contains(b"default")
+                                if !ast_fields.items().named_exports[other_id].contains(b"default")
                                 {
                                     flags[other_id].needs_synthetic_default_export = true;
                                 }
@@ -896,7 +915,7 @@ pub fn scan_imports_and_exports(
                             this.graph.generate_symbol_import_and_use(
                                 source_index,
                                 u32::try_from(part_index).unwrap(),
-                                this.graph.ast.items(.exports_ref)[other_id],
+                                this.graph.ast.items().exports_ref[other_id],
                                 1,
                                 Index::source(other_source_index),
                             )?;
@@ -926,7 +945,7 @@ pub fn scan_imports_and_exports(
                         this.graph.generate_symbol_import_and_use(
                             source_index,
                             u32::try_from(part_index).unwrap(),
-                            this.graph.ast.items(.exports_ref)[other_id],
+                            this.graph.ast.items().exports_ref[other_id],
                             1,
                             Index::source(other_source_index),
                         )?;
@@ -959,7 +978,7 @@ pub fn scan_imports_and_exports(
                             this.graph.generate_symbol_import_and_use(
                                 source_index,
                                 u32::try_from(part_index).unwrap(),
-                                this.graph.ast.items(.exports_ref)[other_id],
+                                this.graph.ast.items().exports_ref[other_id],
                                 1,
                                 Index::source(other_source_index),
                             )?;
@@ -971,11 +990,11 @@ pub fn scan_imports_and_exports(
                         this.graph.generate_symbol_import_and_use(
                             source_index,
                             u32::try_from(part_index).unwrap(),
-                            this.graph.ast.items(.exports_ref)[id],
+                            this.graph.ast.items().exports_ref[id],
                             1,
                             Index::source(source_index),
                         )?;
-                        this.graph.ast.items_mut(.flags)[id].uses_exports_ref = true;
+                        this.graph.ast.items_mut().flags[id].uses_exports_ref = true;
                         record.flags.calls_runtime_re_export_fn = true;
                         re_export_uses += 1;
                     }
@@ -1458,7 +1477,7 @@ fn validate_composes_from_properties(
         all_import_records: import_records_list,
         all_css_asts,
         all_symbols: &this.graph.symbols,
-        all_sources: this.parse_graph.input_files.items(.source),
+        all_sources: this.parse_graph.input_files.items().source,
         log: this.log,
     };
     for local in root_css_ast.local_scope.values() {
@@ -1469,9 +1488,10 @@ fn validate_composes_from_properties(
 
 // TODO(port): cross-file type aliases — Phase B should resolve these to real paths.
 use bun_options_types::ImportKind;
-use bun_js_parser::symbol::Kind as SymbolKind;
-use bun_js_parser::WrapKind;
+use bun_js_parser::ast::symbol::Kind as SymbolKind;
+use crate::WrapKind;
 use bun_css::ComposeFrom;
+} // end #[cfg(any())] __phase_a_draft
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

@@ -385,7 +385,7 @@ pub mod part {
     pub use bun_js_parser::ast::symbol::Use as SymbolUse;
 }
 pub mod import_record {
-    pub use bun_options_types::ImportRecordList as List;
+    pub use bun_options_types::import_record::List;
 }
 
 /// `bundle_v2.zig:EntryPoint` — both a struct and (via the sibling module

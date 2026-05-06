@@ -1,12 +1,22 @@
-use crate as css;
-use crate::{Parser, ParserOptions, Printer, PrintErr, Result as CssResult, LocalsResultsMap, SmallList};
-use crate::css_properties::css_modules::Specifier;
+use crate::css_parser as css;
+use crate::css_parser::{CssResult, Parser, PrintErr, Printer, Token};
+use crate::SmallList;
 
-use bun_alloc::Arena as Bump;
-use bun_str::strings;
-use bun_wyhash::Wyhash;
-use bun_js_parser::Ref;
-use bun_logger::Symbol;
+use bun_logger::Ref;
+use bun_string::strings;
+use bun_wyhash::Wyhash11 as Wyhash;
+
+/// SAFETY: `s` borrows the parser source / arena which outlives every `Token`
+/// constructed from it. Same trick as `css_parser::src_str` (private) — `'static`
+/// is the Phase-A placeholder for the not-yet-threaded `'bump` lifetime.
+#[inline]
+unsafe fn arena_str(s: &[u8]) -> &'static [u8] {
+    unsafe { &*(s as *const [u8]) }
+}
+
+// ───────────────────────── DashedIdentReference ──────────────────────────
+// blocked_on: properties/css_modules::Specifier::parse + Printer::css_module
+// field shape. Data layout is real; behavior gated.
 
 /// A CSS [`<dashed-ident>`](https://www.w3.org/TR/css-values-4/#dashed-idents) reference.
 ///
@@ -15,62 +25,71 @@ use bun_logger::Symbol;
 ///
 /// In CSS modules, when the `dashed_idents` option is enabled, the identifier may be followed by the
 /// `from` keyword and an argument indicating where the referenced identifier is declared (e.g. a filename).
+#[derive(Debug, Clone, Copy)]
 pub struct DashedIdentReference {
     /// The referenced identifier.
     pub ident: DashedIdent,
     /// CSS modules extension: the filename where the variable is defined.
     /// Only enabled when the CSS modules `dashed_idents` option is turned on.
-    pub from: Option<Specifier>,
+    // blocked_on: properties/css_modules::Specifier un-gate (uses crate::values::
+    // css_modules::Specifier here for now — same layout as the gated real type).
+    pub from: Option<crate::values::css_modules::Specifier>,
 }
 
 impl DashedIdentReference {
+    #[cfg(any())] // blocked_on: generics::CssEql for DashedIdentReference
     pub fn eql(lhs: &Self, rhs: &Self) -> bool {
-        css::implement_eql(lhs, rhs)
+        crate::implement_eql(lhs, rhs)
     }
 
-    pub fn parse_with_options(input: &mut Parser, options: &ParserOptions) -> CssResult<DashedIdentReference> {
-        let ident = match DashedIdent::parse(input) {
-            CssResult::Ok(vv) => vv,
-            CssResult::Err(e) => return CssResult::Err(e),
-        };
-
-        let from = if options.css_modules.is_some() && options.css_modules.as_ref().unwrap().dashed_idents {
-            'from: {
-                if input.try_parse(Parser::expect_ident_matching, (b"from",)).is_ok() {
-                    break 'from match Specifier::parse(input) {
-                        CssResult::Ok(vv) => Some(vv),
-                        CssResult::Err(e) => return CssResult::Err(e),
-                    };
-                }
-                break 'from None;
+    #[cfg(any())] // blocked_on: ParserOptions.css_modules + Specifier::parse
+    pub fn parse_with_options(
+        input: &mut Parser,
+        options: &css::ParserOptions,
+    ) -> CssResult<DashedIdentReference> {
+        let ident = DashedIdent::parse(input)?;
+        let from = if options
+            .css_modules
+            .as_ref()
+            .map_or(false, |m| m.dashed_idents)
+        {
+            if input
+                .try_parse(|i| i.expect_ident_matching(b"from"))
+                .is_ok()
+            {
+                Some(crate::values::css_modules::Specifier::parse(input)?)
+            } else {
+                None
             }
         } else {
             None
         };
-
-        CssResult::Ok(DashedIdentReference { ident, from })
+        Ok(DashedIdentReference { ident, from })
     }
 
+    #[cfg(any())] // blocked_on: Printer::{css_module, write_dashed_ident}
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         if let Some(css_module) = &mut dest.css_module {
             if css_module.config.dashed_idents {
                 // SAFETY: arena-owned slice; see DashedIdent.v
                 let ident_v = unsafe { &*self.ident.v };
-                if let Some(name) = css_module.reference_dashed(dest, ident_v, &self.from, dest.loc.source_index)? {
+                if let Some(name) =
+                    css_module.reference_dashed(dest, ident_v, &self.from, dest.loc.source_index)?
+                {
                     dest.write_str("--")?;
-                    if let Err(_) = css::serializer::serialize_name(name, dest) {
-                        return dest.add_fmt_error();
+                    if css::serializer::serialize_name(name, dest).is_err() {
+                        return Err(dest.add_fmt_error());
                     }
                     return Ok(());
                 }
             }
         }
-
         dest.write_dashed_ident(&self.ident, false)
     }
 
+    #[cfg(any())] // blocked_on: generics::CssHash for DashedIdentReference
     pub fn hash(&self, hasher: &mut Wyhash) {
-        css::implement_hash(self, hasher)
+        crate::implement_hash(self, hasher)
     }
 }
 
@@ -80,46 +99,60 @@ pub use DashedIdent as DashedIdentFns;
 ///
 /// Dashed idents are used in cases where an identifier can be either author defined _or_ CSS-defined.
 /// Author defined idents must start with two dash characters ("--") or parsing will fail.
+#[derive(Debug, Clone, Copy)]
 pub struct DashedIdent {
     // TODO(port): arena lifetime — CSS parser slices are arena-owned; Phase B threads `'bump`
     pub v: *const [u8],
 }
 
-impl DashedIdent {
-    // TODO(port): Zig `pub fn HashMap(comptime V: type) type` returned an ArrayHashMapUnmanaged
-    // with a custom string-hash context. bun_collections::ArrayHashMap is wyhash-keyed; Phase B
-    // must verify the hasher matches std.array_hash_map.hashString or supply a custom Hash impl.
-    pub type HashMap<V> = bun_collections::ArrayHashMap<DashedIdent, V>;
+// TODO(port): Zig `pub fn HashMap(comptime V: type) type` returned an
+// ArrayHashMapUnmanaged with a custom string-hash context. Inherent assoc
+// type aliases are unstable in Rust; expose as a free type alias instead.
+// bun_collections::ArrayHashMap is wyhash-keyed; Phase B must verify the
+// hasher matches std.array_hash_map.hashString or supply a custom Hash impl.
+#[cfg(any())] // blocked_on: bun_collections::ArrayHashMap surface
+pub type DashedIdentHashMap<V> = bun_collections::ArrayHashMap<DashedIdent, V>;
 
+impl DashedIdent {
     pub fn parse(input: &mut Parser) -> CssResult<DashedIdent> {
         let location = input.current_source_location();
-        let ident = match input.expect_ident() {
-            CssResult::Ok(vv) => vv,
-            CssResult::Err(e) => return CssResult::Err(e),
-        };
+        let ident = input.expect_ident()?;
         if !strings::starts_with(ident, b"--") {
-            return CssResult::Err(location.new_unexpected_token_error(css::Token::Ident(ident)));
+            // SAFETY: ident borrows parser source/arena; see `arena_str`.
+            let ident: &'static [u8] = unsafe { arena_str(ident) };
+            return Err(location.new_unexpected_token_error(Token::Ident(ident)));
         }
-
-        CssResult::Ok(DashedIdent { v: ident as *const [u8] })
+        Ok(DashedIdent { v: ident as *const [u8] })
     }
 
+    #[cfg(any())] // blocked_on: Printer::write_dashed_ident
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         dest.write_dashed_ident(self, true)
     }
 
-    pub fn deep_clone(&self, bump: &Bump) -> Self {
-        css::implement_deep_clone(self, bump)
+    #[cfg(any())] // blocked_on: generics::DeepClone for DashedIdent
+    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+        crate::implement_deep_clone(self, bump)
     }
 
     pub fn hash(&self, hasher: &mut Wyhash) {
-        css::implement_hash(self, hasher)
+        // PORT NOTE: Zig used css.implementHash (comptime field-walk) → arena slice bytes.
+        // SAFETY: arena-owned slice valid for the parse session.
+        hasher.update(unsafe { &*self.v });
+    }
+
+    /// Borrow the underlying arena slice.
+    /// SAFETY: caller must ensure the parser arena outlives the borrow.
+    #[inline]
+    pub unsafe fn as_slice(&self) -> &[u8] {
+        unsafe { &*self.v }
     }
 }
 
 /// A CSS [`<ident>`](https://www.w3.org/TR/css-values-4/#css-css-identifier).
 pub use Ident as IdentFns;
 
+#[derive(Debug, Clone, Copy)]
 pub struct Ident {
     // TODO(port): arena lifetime — CSS parser slices are arena-owned; Phase B threads `'bump`
     pub v: *const [u8],
@@ -127,11 +160,8 @@ pub struct Ident {
 
 impl Ident {
     pub fn parse(input: &mut Parser) -> CssResult<Ident> {
-        let ident = match input.expect_ident() {
-            CssResult::Ok(vv) => vv,
-            CssResult::Err(e) => return CssResult::Err(e),
-        };
-        CssResult::Ok(Ident { v: ident as *const [u8] })
+        let ident = input.expect_ident()?;
+        Ok(Ident { v: ident as *const [u8] })
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
@@ -139,18 +169,29 @@ impl Ident {
         let v = unsafe { &*self.v };
         match css::serializer::serialize_identifier(v, dest) {
             Ok(()) => Ok(()),
-            Err(_) => dest.add_fmt_error(),
+            Err(_) => Err(dest.add_fmt_error()),
         }
     }
 
-    pub fn deep_clone(&self, bump: &Bump) -> Self {
-        css::implement_deep_clone(self, bump)
+    #[cfg(any())] // blocked_on: generics::DeepClone for Ident
+    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+        crate::implement_deep_clone(self, bump)
     }
 
     pub fn hash(&self, hasher: &mut Wyhash) {
-        css::implement_hash(self, hasher)
+        // SAFETY: arena-owned slice valid for the parse session.
+        hasher.update(unsafe { &*self.v });
+    }
+
+    /// Borrow the underlying arena slice.
+    /// SAFETY: caller must ensure the parser arena outlives the borrow.
+    #[inline]
+    pub unsafe fn as_slice(&self) -> &[u8] {
+        unsafe { &*self.v }
     }
 }
+
+// ───────────────────────────── IdentOrRef ────────────────────────────────
 
 /// Encodes an `Ident` or the bundler's `Ref` into 16 bytes.
 ///
@@ -186,9 +227,9 @@ enum Tag {
 }
 
 #[cfg(debug_assertions)]
-pub type DebugIdent<'a> = (&'a [u8], &'a Bump);
+pub type DebugIdent<'a> = (&'a [u8], &'a bun_alloc::Arena);
 #[cfg(not(debug_assertions))]
-pub type DebugIdent = ();
+pub type DebugIdent<'a> = core::marker::PhantomData<&'a ()>;
 
 impl IdentOrRef {
     #[inline]
@@ -245,9 +286,10 @@ impl IdentOrRef {
         Self::pack(ptr, false, len)
     }
 
-    pub fn from_ref(r: Ref, debug_ident: DebugIdent) -> Self {
-        // SAFETY: Ref is #[repr(transparent)] over u64 (bun.bundle_v2.Ref is packed struct(u64))
+    pub fn from_ref(r: Ref, debug_ident: DebugIdent<'_>) -> Self {
+        // SAFETY: Ref is #[repr(transparent)] over u64 (bun_logger::Ref / js_ast Ref).
         let len: u64 = unsafe { core::mem::transmute::<Ref, u64>(r) };
+        #[allow(unused_mut)]
         let mut this = Self::pack(0, true, len);
 
         #[cfg(debug_assertions)]
@@ -299,7 +341,12 @@ impl IdentOrRef {
         None
     }
 
-    pub fn as_str(self, map: &Symbol::Map, local_names: Option<&LocalsResultsMap>) -> Option<&'static [u8]> {
+    #[cfg(any())] // blocked_on: bun_logger::symbol::Map::follow + LocalsResultsMap::get surface
+    pub fn as_str(
+        self,
+        map: &bun_logger::symbol::Map,
+        local_names: Option<&css::LocalsResultsMap>,
+    ) -> Option<&'static [u8]> {
         // TODO(port): lifetime — returns arena/symbol-table borrow; `'static` is a placeholder.
         if self.is_ident() {
             // SAFETY: arena slice reconstructed from packed ptr/len
@@ -310,7 +357,8 @@ impl IdentOrRef {
         local_names.unwrap().get(final_ref)
     }
 
-    pub fn as_original_string(self, symbols: &Symbol::List) -> &[u8] {
+    #[cfg(any())] // blocked_on: bun_logger::symbol::List::at + Symbol.original_name
+    pub fn as_original_string(self, symbols: &bun_logger::symbol::List) -> &[u8] {
         if self.is_ident() {
             // SAFETY: arena slice reconstructed from packed ptr/len
             return unsafe { &*self.as_ident().unwrap().v };
@@ -327,9 +375,8 @@ impl IdentOrRef {
             // SAFETY: self is #[repr(transparent)] u128; reading first 2 bytes matches Zig's
             // `slice_u8[0..2]` (which is almost certainly a Zig bug — hashes 2 bytes, not 16).
             // TODO(port): verify upstream intent; preserving behavior verbatim.
-            let bytes = unsafe {
-                core::slice::from_raw_parts(self as *const Self as *const u8, 2)
-            };
+            let bytes =
+                unsafe { core::slice::from_raw_parts(self as *const Self as *const u8, 2) };
             hasher.update(bytes);
         }
     }
@@ -348,7 +395,7 @@ impl IdentOrRef {
         false
     }
 
-    pub fn deep_clone(&self, _bump: &Bump) -> Self {
+    pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
         *self
     }
 }
@@ -357,7 +404,7 @@ impl core::fmt::Display for IdentOrRef {
     fn fmt(&self, writer: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         if self.ref_bit() {
             let r = self.as_ref().unwrap();
-            return write!(writer, "Ref({})", r);
+            return write!(writer, "Ref({:?})", r);
         }
         // SAFETY: arena slice reconstructed from packed ptr/len
         let v = unsafe { &*self.as_ident().unwrap().v };
@@ -367,6 +414,7 @@ impl core::fmt::Display for IdentOrRef {
 
 pub use CustomIdent as CustomIdentFns;
 
+#[derive(Debug, Clone, Copy)]
 pub struct CustomIdent {
     // TODO(port): arena lifetime — CSS parser slices are arena-owned; Phase B threads `'bump`
     pub v: *const [u8],
@@ -375,12 +423,9 @@ pub struct CustomIdent {
 impl CustomIdent {
     pub fn parse(input: &mut Parser) -> CssResult<CustomIdent> {
         let location = input.current_source_location();
-        let ident = match input.expect_ident() {
-            CssResult::Ok(vv) => vv,
-            CssResult::Err(e) => return CssResult::Err(e),
-        };
+        let ident = input.expect_ident()?;
         // css.todo_stuff.match_ignore_ascii_case
-        // TODO(port): Zig fn name has typo `ASCIII` (3 I's); bun_str exports the corrected name.
+        // PORT NOTE: Zig fn name has typo `ASCIII` (3 I's); bun_string exports both spellings.
         let valid = !(strings::eql_case_insensitive_ascii_check_length(ident, b"initial")
             || strings::eql_case_insensitive_ascii_check_length(ident, b"inherit")
             || strings::eql_case_insensitive_ascii_check_length(ident, b"unset")
@@ -389,16 +434,20 @@ impl CustomIdent {
             || strings::eql_case_insensitive_ascii_check_length(ident, b"revert-layer"));
 
         if !valid {
-            return CssResult::Err(location.new_unexpected_token_error(css::Token::Ident(ident)));
+            // SAFETY: ident borrows parser source/arena; see `arena_str`.
+            let ident: &'static [u8] = unsafe { arena_str(ident) };
+            return Err(location.new_unexpected_token_error(Token::Ident(ident)));
         }
-        CssResult::Ok(CustomIdent { v: ident as *const [u8] })
+        Ok(CustomIdent { v: ident as *const [u8] })
     }
 
+    #[cfg(any())] // blocked_on: Printer::write_ident
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         Self::to_css_with_options(self, dest, true)
     }
 
     /// Write the custom ident to CSS.
+    #[cfg(any())] // blocked_on: Printer::{css_module, write_ident}
     pub fn to_css_with_options(
         &self,
         dest: &mut Printer,
@@ -415,12 +464,21 @@ impl CustomIdent {
         dest.write_ident(v, css_module_custom_idents_enabled)
     }
 
-    pub fn deep_clone(&self, bump: &Bump) -> Self {
-        css::implement_deep_clone(self, bump)
+    #[cfg(any())] // blocked_on: generics::DeepClone for CustomIdent
+    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+        crate::implement_deep_clone(self, bump)
     }
 
     pub fn hash(&self, hasher: &mut Wyhash) {
-        css::implement_hash(self, hasher)
+        // SAFETY: arena-owned slice valid for the parse session.
+        hasher.update(unsafe { &*self.v });
+    }
+
+    /// Borrow the underlying arena slice.
+    /// SAFETY: caller must ensure the parser arena outlives the borrow.
+    #[inline]
+    pub unsafe fn as_slice(&self) -> &[u8] {
+        unsafe { &*self.v }
     }
 }
 
@@ -432,5 +490,5 @@ pub type CustomIdentList = SmallList<CustomIdent, 1>;
 //   source:     src/css/values/ident.zig (324 lines)
 //   confidence: medium
 //   todos:      8
-//   notes:      `v: []const u8` fields use raw *const [u8] (arena-owned) pending 'bump threading; IdentOrRef.hash preserves suspicious Zig 2-byte hash; inherent assoc type alias (HashMap<V>) needs Phase B reshape; debug_ident is debug-only (no release stub — Rust compile_error! is eager).
+//   notes:      `v: []const u8` fields use raw *const [u8] (arena-owned) pending 'bump threading; IdentOrRef.hash preserves suspicious Zig 2-byte hash; inherent assoc type alias (HashMap<V>) hoisted to free alias; debug_ident is debug-only (no release stub — Rust compile_error! is eager). to_css/deep_clone gated on Printer::write_ident/write_dashed_ident + generics::DeepClone.
 // ──────────────────────────────────────────────────────────────────────────

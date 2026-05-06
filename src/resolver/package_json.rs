@@ -154,7 +154,7 @@ impl PackageJSON {
             Ok(Box::from(&*self.name))
         } else {
             let parent = self.source.path.name.dir_with_trailing_slash();
-            let top_level_dir = fs::FileSystem::instance().top_level_dir.as_bytes();
+            let top_level_dir = fs::FileSystem::instance().top_level_dir;
             if let Some(i) = strings::index_of(parent, top_level_dir) {
                 let relative_dir = &parent[i + top_level_dir.len()..];
                 let mut out_dir = vec![0u8; relative_dir.len() + 2];
@@ -1928,7 +1928,7 @@ impl<'a> ESModule<'a> {
     fn resolve_exports(&mut self, package_url: &[u8], subpath: &[u8], exports: &Entry) -> Resolution {
         if matches!(exports.data, EntryData::Invalid) {
             if let Some(logs) = self.debug_logs.as_deref_mut() {
-                logs.add_note("Invalid package configuration");
+                logs.add_note(b"Invalid package configuration".to_vec());
             }
 
             return Resolution {

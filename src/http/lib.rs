@@ -2244,7 +2244,7 @@ impl HTTPClient {
         &buf[ptr.offset as usize..][..ptr.length as usize]
     }
 
-    pub fn build_request(&mut self, body_len: usize) -> picohttp::Request {
+    pub fn build_request(&mut self, body_len: usize) -> picohttp::Request<'_> {
         let mut header_count: usize = 0;
         let header_entries = self.header_entries.slice();
         let header_names = header_entries.items_name();

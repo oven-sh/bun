@@ -212,10 +212,8 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
         let pending_unref = unsafe { (*vm).pending_unref_counter };
         if pending_unref > 0 {
             unsafe { (*vm).pending_unref_counter = 0 };
-            // TODO(b2-blocked): `bun_uws::Loop::unref_count` — not yet exposed.
-            #[cfg(any())]
+            // SAFETY: `loop_` is the live per-thread uws loop.
             unsafe { (*loop_).unref_count(pending_unref) };
-            let _ = pending_unref;
         }
     }
 

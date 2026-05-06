@@ -71,14 +71,9 @@ mod posix_compat {
     #[inline]
     pub fn errno(rc: c_int) -> Errno {
         if rc == -1 {
-            #[cfg(unix)]
-            // SAFETY: __errno_location() always returns a valid thread-local ptr.
-            return Errno(unsafe { *libc::__errno_location() });
-            #[cfg(not(unix))]
-            return Errno(0);
+            return Errno(bun_sys::posix::errno());
         }
-        // posix_spawn* returns errno directly; treat nonzero as that errno.
-        Errno(rc)
+        Errno::SUCCESS
     }
 
     /// `std.posix.toPosixPath` — copy into a NUL-terminated buffer.
@@ -788,6 +783,15 @@ pub mod posix_spawn {
             });
         }
 
+        // Linux/FreeBSD: `use_bun_spawn` is statically true above, so the
+        // early return always fires; rustc can't prove that from the runtime
+        // bool. macOS falls through to the system-posix_spawn block above.
+        #[cfg(all(unix, not(target_os = "macos")))]
+        #[allow(unreachable_code)]
+        {
+            unreachable!("posix_spawn_bun handles all unix-non-darwin spawns");
+        }
+
         // Windows path (uses different mechanism)
         // Gated not(unix) because `actions`/`attr` here are PosixSpawnActions/PosixSpawnAttr
         // fields; on unix the Actions/Attr aliases resolve to bun_spawn::* which lack `.attr`.
@@ -924,7 +928,9 @@ pub use bun_spawn as BunSpawn;
 pub use posix_spawn as PosixSpawn;
 
 // sibling module: src/runtime/api/bun/process.zig
-use super::process;
+// PORT NOTE: `super` here is `crate::api` (this file is `#[path]`-mounted as
+// `crate::api::bun_spawn`, not under an `api/bun/` mod tree).
+use super::bun_process as process;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

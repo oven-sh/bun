@@ -102,7 +102,8 @@ impl DirInfo {
         let Some(parent) = self.get_parent() else {
             return false;
         };
-        !parent.is_node_modules()
+        // SAFETY: ARENA — DirInfo ptrs are arena-owned and outlive the resolver.
+        !unsafe { &*parent }.is_node_modules()
     }
 
     pub fn get_file_descriptor(&self) -> Fd {

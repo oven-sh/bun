@@ -53,12 +53,9 @@ pub mod bundle_v2;
 
 /// `linker_context/` submodule directory. Un-gated B-2: only
 /// `scanImportsAndExports.rs` so far; remaining files un-gate as their
-/// `LinkerGraph` SoA accessors land.
+/// `LinkerGraph` SoA accessors land. Declared inline (no `mod.rs`) so paths
+/// stay 1:1 with the Zig directory.
 pub mod linker_context {
-    // Re-export the parent `LinkerContext` `debug!` macro so submodules that
-    // wrote `use super::debug;` resolve.
-    pub(crate) use crate::linker_context_mod::debug;
-
     #[path = "scanImportsAndExports.rs"]
     pub mod scan_imports_and_exports;
 }

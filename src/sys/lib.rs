@@ -3476,9 +3476,44 @@ pub fn mkdirat_z(dir: Fd, path: &ZStr, mode: Mode) -> Maybe<()> {
 pub fn open_dir_at(dir: Fd, path: &[u8]) -> Maybe<Fd> {
     openat_a(dir, path, O::DIRECTORY | O::CLOEXEC | O::RDONLY, 0)
 }
+/// bun.zig:850 `openDir` — `dir.openDirZ(path, .{ .iterate = true })`.
+/// Returns a `Dir` wrapper so callers can `.close()` / iterate.
+pub fn open_dir(dir: Dir, path: &ZStr) -> core::result::Result<Dir, bun_core::Error> {
+    openat(dir.fd, path, O::DIRECTORY | O::CLOEXEC | O::RDONLY, 0)
+        .map(Dir::from_fd)
+        .map_err(Into::into)
+}
 /// bun.zig:890 `openDirAbsolute`. PORT NOTE: returns `Fd`, not `std.fs.Dir`.
 pub fn open_dir_absolute(path: &[u8]) -> Maybe<Fd> {
     open_a(path, O::DIRECTORY | O::CLOEXEC | O::RDONLY, 0)
+}
+/// sys.zig:2615 `symlinkRunningExecutable` — same as `symlink`, except it
+/// handles ETXTBSY/EBUSY by unlinking the destination and retrying once.
+pub fn symlink_running_executable(target: &ZStr, dest: &ZStr) -> Maybe<()> {
+    match symlink(target, dest) {
+        Err(err) => match err.get_errno() {
+            E::BUSY | E::TXTBSY => {
+                let _ = unlink(dest);
+                symlink(target, dest)
+            }
+            _ => Err(err),
+        },
+        Ok(()) => Ok(()),
+    }
+}
+/// `std.fs.deleteTreeAbsolute` — best-effort recursive delete of an absolute
+/// path. Routes through `Dir::delete_tree` on the parent directory.
+pub fn delete_tree_absolute(path: &[u8]) -> core::result::Result<(), bun_core::Error> {
+    let parent = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(path);
+    let base = bun_paths::basename(path);
+    if parent.is_empty() || base.is_empty() {
+        // Nothing sensible to do (root or empty); mirror Zig's silent success on ENOENT.
+        return Ok(());
+    }
+    let dir = open_dir_absolute(parent).map(Dir::from_fd).map_err(bun_core::Error::from)?;
+    let res = dir.delete_tree(base);
+    dir.close();
+    res
 }
 /// bun.zig:899 — Windows variant skips `DELETE` access; on POSIX identical.
 pub fn open_dir_absolute_not_for_deleting_or_renaming(path: &[u8]) -> Maybe<Fd> {
@@ -4380,6 +4415,14 @@ pub fn make_path_w(dir: Fd, sub_path: &[u16]) -> Maybe<()> {
 pub mod posix {
     use core::ffi::{c_int, c_void};
     pub use bun_errno::posix::*;
+
+    // ── stat mode-kind tests (Zig: `std.posix.S.ISLNK` etc.) ──
+    #[cfg(unix)]
+    #[inline] pub const fn s_islnk(m: u32) -> bool { (m & libc::S_IFMT) == libc::S_IFLNK }
+    #[cfg(unix)]
+    #[inline] pub const fn s_isdir(m: u32) -> bool { (m & libc::S_IFMT) == libc::S_IFDIR }
+    #[cfg(unix)]
+    #[inline] pub const fn s_isreg(m: u32) -> bool { (m & libc::S_IFMT) == libc::S_IFREG }
 
     // ── signals ──
     #[cfg(unix)] pub use libc::sigaction as Sigaction;

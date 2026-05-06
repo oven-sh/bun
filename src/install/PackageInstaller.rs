@@ -412,7 +412,7 @@ impl<'a> PackageInstaller<'a> {
             let package_id = lockfile.buffers.resolutions.as_slice()[dep_id as usize];
             debug_assert!(package_id != invalid_package_id);
             let bin = self.bins[package_id as usize];
-            debug_assert!(bin.tag != Bin::Tag::None);
+            debug_assert!(bin.tag != bin::Tag::None);
 
             let alias = lockfile.buffers.dependencies.as_slice()[dep_id as usize]
                 .name
@@ -482,7 +482,7 @@ impl<'a> PackageInstaller<'a> {
             };
 
             loop {
-                let mut bin_linker = Bin::Linker {
+                let mut bin_linker = bin::Linker {
                     bin,
                     global_bin_path: self.options.bin_path,
                     package_name: package_name_,
@@ -562,12 +562,13 @@ impl<'a> PackageInstaller<'a> {
                 self.node_modules.path.truncate(
                     strings::without_trailing_slash(FileSystem::instance().top_level_dir).len() + 1,
                 );
-                let (rel_path, _) = lockfile::Tree::relative_path_and_depth(
+                let (rel_path, _) = lockfile::tree::relative_path_and_depth::<
+                    { lockfile::tree::IteratorPathStyle::NodeModules },
+                >(
                     lockfile,
                     u32::try_from(tree_id).unwrap(),
                     &mut node_modules_rel_path_buf,
                     &mut depth_buf,
-                    lockfile::tree::PathStyle::NodeModules,
                 );
 
                 self.node_modules.path.extend_from_slice(rel_path);
@@ -774,7 +775,7 @@ impl<'a> PackageInstaller<'a> {
     /// isn't finished, we need to wait because it's possible a package installed in this tree will be deleted by the parent.
     pub fn can_install_package_for_tree(
         &self,
-        trees: &mut [lockfile::Tree],
+        trees: &mut [Tree],
         package_tree_id: lockfile::tree::Id,
     ) -> bool {
         let mut curr_tree_id = trees[package_tree_id as usize].parent;
@@ -818,7 +819,7 @@ impl<'a> PackageInstaller<'a> {
     /// Install versions of a package which are waiting on a network request
     pub fn install_enqueued_packages_after_extraction(
         &mut self,
-        task_id: Task::Id,
+        task_id: task::Id,
         dependency_id: DependencyID,
         data: &ExtractData,
         log_level: Options::LogLevel,
@@ -910,13 +911,13 @@ impl<'a> PackageInstaller<'a> {
         &mut self,
         alias: &[u8],
         package_id: PackageID,
-        resolution_tag: Resolution::Tag,
+        resolution_tag: resolution::Tag,
         folder_path: &mut AbsPath, // TODO(port): bun.AbsPath(.{ .sep = .auto }) const-generic sep variant
         log_level: Options::LogLevel,
     ) -> usize {
         if cfg!(debug_assertions) {
-            debug_assert!(resolution_tag != Resolution::Tag::Root);
-            debug_assert!(resolution_tag != Resolution::Tag::Workspace);
+            debug_assert!(resolution_tag != resolution::Tag::Root);
+            debug_assert!(resolution_tag != resolution::Tag::Workspace);
             debug_assert!(package_id != 0);
         }
         let mut count: usize = 0;
@@ -926,7 +927,7 @@ impl<'a> PackageInstaller<'a> {
                 break 'brk scripts;
             }
 
-            let mut temp = Package::Scripts::default();
+            let mut temp = PackageScripts::default();
             let mut temp_lockfile = Lockfile::default();
             temp_lockfile.init_empty();
             // PORT NOTE: `defer temp_lockfile.deinit()` — Lockfile impls Drop.
@@ -958,7 +959,7 @@ impl<'a> PackageInstaller<'a> {
         }
 
         match resolution_tag {
-            Resolution::Tag::Git | Resolution::Tag::Github | Resolution::Tag::Root => {
+            resolution::Tag::Git | resolution::Tag::Github | resolution::Tag::Root => {
                 // PORT NOTE: zig `inline for (Lockfile.Scripts.names) |script_name| { @field(...) }`.
                 // TODO(port): @field reflection — Phase B should add a `Scripts::iter_all()` helper
                 // that yields each named script field.
@@ -975,10 +976,9 @@ impl<'a> PackageInstaller<'a> {
         }
 
         if scripts.preinstall.is_empty() && scripts.install.is_empty() {
-            let binding_dot_gyp_path = Path::join_abs_string_z(
+            let binding_dot_gyp_path = join_abs_string_z::<platform::Auto>(
                 self.node_modules.path.as_slice(),
                 &[alias, b"binding.gyp"],
-                Path::Style::Auto,
             );
             count += Syscall::exists(binding_dot_gyp_path) as usize;
         }
@@ -1024,7 +1024,7 @@ impl<'a> PackageInstaller<'a> {
         let pkg_name_hash = self.pkg_name_hashes[package_id as usize];
 
         let mut resolution_buf = [0u8; 512];
-        let package_version: &[u8] = if resolution.tag == Resolution::Tag::Workspace {
+        let package_version: &[u8] = if resolution.tag == resolution::Tag::Workspace {
             'brk: {
                 if let Some(workspace_version) =
                     self.manager.lockfile.workspace_versions.get(pkg_name_hash)
@@ -1050,7 +1050,7 @@ impl<'a> PackageInstaller<'a> {
                     "{}",
                     resolution.fmt(
                         self.lockfile.buffers.string_bytes.as_slice(),
-                        Path::Style::Posix
+                        PathSep::Posix
                     )
                 ),
             )
@@ -1128,11 +1128,11 @@ impl<'a> PackageInstaller<'a> {
             PackageInstaller,
             "Installing {}@{}",
             bstr::BStr::new(pkg_name.slice(self.lockfile.buffers.string_bytes.as_slice())),
-            resolution.fmt(self.lockfile.buffers.string_bytes.as_slice(), Path::Style::Posix),
+            resolution.fmt(self.lockfile.buffers.string_bytes.as_slice(), PathSep::Posix),
         );
 
         match resolution.tag {
-            Resolution::Tag::Npm => {
+            resolution::Tag::Npm => {
                 installer.cache_dir_subpath = self.manager.cached_npm_package_folder_name(
                     pkg_name.slice(self.lockfile.buffers.string_bytes.as_slice()),
                     resolution.value.npm.version,
@@ -1140,19 +1140,19 @@ impl<'a> PackageInstaller<'a> {
                 );
                 installer.cache_dir = self.manager.get_cache_directory();
             }
-            Resolution::Tag::Git => {
+            resolution::Tag::Git => {
                 installer.cache_dir_subpath = self
                     .manager
                     .cached_git_folder_name(&resolution.value.git, patch_contents_hash);
                 installer.cache_dir = self.manager.get_cache_directory();
             }
-            Resolution::Tag::Github => {
+            resolution::Tag::Github => {
                 installer.cache_dir_subpath = self
                     .manager
                     .cached_github_folder_name(&resolution.value.github, patch_contents_hash);
                 installer.cache_dir = self.manager.get_cache_directory();
             }
-            Resolution::Tag::Folder => {
+            resolution::Tag::Folder => {
                 let folder = resolution
                     .value
                     .folder
@@ -1185,20 +1185,20 @@ impl<'a> PackageInstaller<'a> {
                     installer.cache_dir = bun_sys::cwd();
                 }
             }
-            Resolution::Tag::LocalTarball => {
+            resolution::Tag::LocalTarball => {
                 installer.cache_dir_subpath = self
                     .manager
                     .cached_tarball_folder_name(resolution.value.local_tarball, patch_contents_hash);
                 installer.cache_dir = self.manager.get_cache_directory();
             }
-            Resolution::Tag::RemoteTarball => {
+            resolution::Tag::RemoteTarball => {
                 installer.cache_dir_subpath = self.manager.cached_tarball_folder_name(
                     resolution.value.remote_tarball,
                     patch_contents_hash,
                 );
                 installer.cache_dir = self.manager.get_cache_directory();
             }
-            Resolution::Tag::Workspace => {
+            resolution::Tag::Workspace => {
                 let folder = resolution
                     .value
                     .workspace
@@ -1215,11 +1215,11 @@ impl<'a> PackageInstaller<'a> {
                 }
                 installer.cache_dir = bun_sys::cwd();
             }
-            Resolution::Tag::Root => {
+            resolution::Tag::Root => {
                 installer.cache_dir_subpath = ZStr::from_static(b".\0");
                 installer.cache_dir = bun_sys::cwd();
             }
-            Resolution::Tag::Symlink => {
+            resolution::Tag::Symlink => {
                 let directory = self.manager.global_link_dir();
 
                 let folder = resolution
@@ -1285,7 +1285,7 @@ impl<'a> PackageInstaller<'a> {
                     },
                 );
                 match resolution.tag {
-                    Resolution::Tag::Git => {
+                    resolution::Tag::Git => {
                         self.manager.enqueue_git_for_checkout(
                             dependency_id,
                             alias.slice(self.lockfile.buffers.string_bytes.as_slice()),
@@ -1294,7 +1294,7 @@ impl<'a> PackageInstaller<'a> {
                             patch_name_and_version_hash,
                         );
                     }
-                    Resolution::Tag::Github => {
+                    resolution::Tag::Github => {
                         let url = self.manager.alloc_github_url(&resolution.value.github);
                         // PORT NOTE: `defer this.manager.allocator.free(url)` — url: Box<[u8]>/Vec drops.
                         match self.manager.enqueue_tarball_for_download(
@@ -1311,7 +1311,7 @@ impl<'a> PackageInstaller<'a> {
                             Err(_) => unreachable!(),
                         }
                     }
-                    Resolution::Tag::LocalTarball => {
+                    resolution::Tag::LocalTarball => {
                         self.manager.enqueue_tarball_for_reading(
                             dependency_id,
                             package_id,
@@ -1320,7 +1320,7 @@ impl<'a> PackageInstaller<'a> {
                             context,
                         );
                     }
-                    Resolution::Tag::RemoteTarball => {
+                    resolution::Tag::RemoteTarball => {
                         match self.manager.enqueue_tarball_for_download(
                             dependency_id,
                             package_id,
@@ -1338,7 +1338,7 @@ impl<'a> PackageInstaller<'a> {
                             Err(_) => unreachable!(),
                         }
                     }
-                    Resolution::Tag::Npm => {
+                    resolution::Tag::Npm => {
                         #[cfg(debug_assertions)]
                         {
                             // Very old versions of Bun didn't store the tarball url when it didn't seem necessary
@@ -1352,7 +1352,7 @@ impl<'a> PackageInstaller<'a> {
                                     ),
                                     resolution.fmt(
                                         self.lockfile.buffers.string_bytes.as_slice(),
-                                        Path::Style::Posix
+                                        PathSep::Posix
                                     ),
                                 ));
                             }
@@ -1473,12 +1473,12 @@ impl<'a> PackageInstaller<'a> {
             let mut lazy_package_dir = LazyPackageDestinationDir::Dir(destination_dir);
 
             let install_result: PackageInstall::Result = match resolution.tag {
-                Resolution::Tag::Symlink | Resolution::Tag::Workspace => {
+                resolution::Tag::Symlink | resolution::Tag::Workspace => {
                     installer.install_from_link(self.skip_delete, destination_dir)
                 }
                 _ => 'result: {
-                    if resolution.tag == Resolution::Tag::Root
-                        || (resolution.tag == Resolution::Tag::Folder
+                    if resolution.tag == resolution::Tag::Root
+                        || (resolution.tag == resolution::Tag::Folder
                             && !self.lockfile.is_workspace_tree_id(self.current_tree_id))
                     {
                         // This is a transitive folder dependency. It is installed with a single symlink to the target folder/file,
@@ -1504,7 +1504,7 @@ impl<'a> PackageInstaller<'a> {
                             }
                         };
 
-                        let result = if resolution.tag == Resolution::Tag::Root {
+                        let result = if resolution.tag == resolution::Tag::Root {
                             installer.install_from_link(self.skip_delete, destination_dir)
                         } else {
                             installer.install(
@@ -1544,7 +1544,7 @@ impl<'a> PackageInstaller<'a> {
                         self.node.complete_one();
                     }
 
-                    if self.bins[package_id as usize].tag != Bin::Tag::None {
+                    if self.bins[package_id as usize].tag != bin::Tag::None {
                         self.trees[self.current_tree_id as usize]
                             .binaries
                             .add(dependency_id)
@@ -1571,8 +1571,8 @@ impl<'a> PackageInstaller<'a> {
                         break 'brk (false, false);
                     };
 
-                    if resolution.tag != Resolution::Tag::Root
-                        && (resolution.tag == Resolution::Tag::Workspace || is_trusted)
+                    if resolution.tag != resolution::Tag::Root
+                        && (resolution.tag == resolution::Tag::Workspace || is_trusted)
                     {
                         let mut folder_path = AbsPath::from(self.node_modules.path.as_slice());
                         // PORT NOTE: `defer folder_path.deinit()` — AbsPath impls Drop.
@@ -1583,7 +1583,7 @@ impl<'a> PackageInstaller<'a> {
                             if self.manager.postinstall_optimizer.should_ignore_lifecycle_scripts(
                                 PostinstallOptimizer::ScriptCheck {
                                     name_hash: pkg_name_hash,
-                                    version: if resolution.tag == Resolution::Tag::Npm {
+                                    version: if resolution.tag == resolution::Tag::Npm {
                                         Some(resolution.value.npm.version)
                                     } else {
                                         None
@@ -1642,7 +1642,7 @@ impl<'a> PackageInstaller<'a> {
                     }
 
                     match resolution.tag {
-                        Resolution::Tag::Root | Resolution::Tag::Workspace => {
+                        resolution::Tag::Root | resolution::Tag::Workspace => {
                             // these will never be blocked
                         }
                         _ => {
@@ -1674,7 +1674,7 @@ impl<'a> PackageInstaller<'a> {
                                             )),
                                             resolution.fmt(
                                                 self.lockfile.buffers.string_bytes.as_slice(),
-                                                Path::Style::Posix
+                                                PathSep::Posix
                                             ),
                                         ));
                                     }
@@ -1702,8 +1702,8 @@ impl<'a> PackageInstaller<'a> {
                     if cfg!(debug_assertions) {
                         debug_assert!(
                             !cause.is_package_missing_from_cache()
-                                || (resolution.tag != Resolution::Tag::Symlink
-                                    && resolution.tag != Resolution::Tag::Workspace)
+                                || (resolution.tag != resolution::Tag::Symlink
+                                    && resolution.tag != resolution::Tag::Workspace)
                         );
                     }
 
@@ -1840,7 +1840,7 @@ impl<'a> PackageInstaller<'a> {
                 }
             }
         } else {
-            if self.bins[package_id as usize].tag != Bin::Tag::None {
+            if self.bins[package_id as usize].tag != bin::Tag::None {
                 self.trees[self.current_tree_id as usize]
                     .binaries
                     .add(dependency_id)
@@ -1879,7 +1879,7 @@ impl<'a> PackageInstaller<'a> {
                 break 'brk (false, false, false);
             };
 
-            if resolution.tag != Resolution::Tag::Root && is_trusted {
+            if resolution.tag != resolution::Tag::Root && is_trusted {
                 let mut folder_path = AbsPath::from(self.node_modules.path.as_slice());
                 folder_path.append(alias.slice(self.lockfile.buffers.string_bytes.as_slice()));
 
@@ -1887,7 +1887,7 @@ impl<'a> PackageInstaller<'a> {
                     if self.manager.postinstall_optimizer.should_ignore_lifecycle_scripts(
                         PostinstallOptimizer::ScriptCheck {
                             name_hash: pkg_name_hash,
-                            version: if resolution.tag == Resolution::Tag::Npm {
+                            version: if resolution.tag == resolution::Tag::Npm {
                                 Some(resolution.value.npm.version)
                             } else {
                                 None

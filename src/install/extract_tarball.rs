@@ -265,7 +265,7 @@ impl ExtractTarball {
             let mut esimated_output_size: usize = 0;
 
             let time_started_for_verbose_logs: u64 = if PackageManager::verbose_install() {
-                bun_core::get_rough_tick_count(bun_core::TickCount::AllowMockedTime).ns()
+                bun_core::Timespec::now_allow_mocked_time().ns()
             } else {
                 0
             };
@@ -299,17 +299,30 @@ impl ExtractTarball {
                 && esimated_output_size > 0
             {
                 'use_libdeflate: {
-                    let Some(decompressor) = bun_libdeflate::Decompressor::alloc() else {
+                    use bun_libdeflate_sys::libdeflate;
+                    let decompressor_ptr = libdeflate::Decompressor::alloc();
+                    if decompressor_ptr.is_null() {
                         break 'use_libdeflate;
+                    }
+                    // `defer decompressor.deinit()` — RAII guard frees on scope exit.
+                    let _guard = scopeguard::guard(decompressor_ptr, |p| {
+                        // SAFETY: `p` was returned by libdeflate_alloc_decompressor and is
+                        // not used after this guard fires.
+                        unsafe { libdeflate::Decompressor::destroy(p) }
+                    });
+                    // SAFETY: alloc returned non-null; valid until destroy.
+                    let decompressor = unsafe { &mut *decompressor_ptr };
+
+                    // SAFETY: write into the full allocated capacity (Zig `allocatedSlice()` equiv).
+                    let allocated = unsafe {
+                        core::slice::from_raw_parts_mut(
+                            zlib_pool.data.list.as_mut_ptr(),
+                            zlib_pool.data.list.capacity(),
+                        )
                     };
-                    // `defer decompressor.deinit()` → Drop
+                    let result = decompressor.gzip(tgz_bytes, allocated);
 
-                    let result = decompressor.gzip(tgz_bytes, zlib_pool.data.list.spare_capacity_mut_full());
-                    // TODO(port): Zig used `list.allocatedSlice()` (full backing buffer including
-                    // initialized portion). Here we need the full allocated slice; expose a helper
-                    // on the pool buffer or use `Vec::set_len`-style access.
-
-                    if result.status == bun_libdeflate::Status::Success {
+                    if result.status == libdeflate::Status::Success {
                         // SAFETY: libdeflate wrote `result.written` bytes into the backing buffer.
                         unsafe { zlib_pool.data.list.set_len(result.written) };
                         needs_to_decompress = false;
@@ -330,7 +343,7 @@ impl ExtractTarball {
                             "{} decompressing \"{}\" to \"{}\"",
                             err.name(),
                             BStr::new(name),
-                            bun_core::fmt::fmt_path(tmpname.as_bytes(), Default::default()),
+                            bun_core::fmt::fmt_path_u8(tmpname.as_bytes(), Default::default()),
                         ),
                     )
                     .expect("unreachable");
@@ -340,14 +353,14 @@ impl ExtractTarball {
 
             if PackageManager::verbose_install() {
                 let decompressing_ended_at: u64 =
-                    bun_core::get_rough_tick_count(bun_core::TickCount::AllowMockedTime).ns();
+                    bun_core::Timespec::now_allow_mocked_time().ns();
                 let elapsed = decompressing_ended_at - time_started_for_verbose_logs;
                 Output::pretty_errorln(format_args!(
                     "[{}] Extract {}<r> (decompressed {} tgz file in {})",
                     BStr::new(name),
                     BStr::new(tmpname.as_bytes()),
                     bun_core::fmt::size(tgz_bytes.len(), Default::default()),
-                    bun_core::fmt::duration(elapsed),
+                    bun_core::fmt::fmt_duration_one_decimal(elapsed),
                 ));
             }
 
@@ -403,16 +416,20 @@ impl ExtractTarball {
                     // meaningless in cases like this.
                     if !resolved.is_empty() {
                         'insert_tag: {
-                            let Ok(gh_tag) = extract_destination.create_file_z(
-                                ZStr::from_literal(b".bun-tag\0"),
-                                sys::CreateFileOptions { truncate: true, ..Default::default() },
+                            // `std.fs.Dir.createFileZ(".bun-tag", .{ .truncate = true })`
+                            let Ok(gh_tag) = sys::File::create(
+                                extract_destination.fd(),
+                                b".bun-tag",
+                                true,
                             ) else {
                                 break 'insert_tag;
                             };
                             // `defer gh_tag.close()` → Drop
                             if gh_tag.write_all(resolved).is_err() {
-                                let _ = extract_destination
-                                    .delete_file_z(ZStr::from_literal(b".bun-tag\0"));
+                                // SAFETY: literal is NUL-terminated.
+                                let bun_tag_z =
+                                    unsafe { ZStr::from_raw(b".bun-tag\0".as_ptr(), 8) };
+                                let _ = sys::unlinkat(extract_destination.fd(), bun_tag_z);
                             }
                         }
                     }
@@ -450,14 +467,13 @@ impl ExtractTarball {
             }
 
             if PackageManager::verbose_install() {
-                let elapsed = bun_core::get_rough_tick_count(bun_core::TickCount::AllowMockedTime)
-                    .ns()
+                let elapsed = bun_core::Timespec::now_allow_mocked_time().ns()
                     - time_started_for_verbose_logs;
                 Output::pretty_errorln(format_args!(
                     "[{}] Extracted to {} ({})<r>",
                     BStr::new(name),
                     BStr::new(tmpname.as_bytes()),
-                    bun_core::fmt::duration(elapsed),
+                    bun_core::fmt::fmt_duration_one_decimal(elapsed),
                 ));
                 Output::flush();
             }

@@ -1661,7 +1661,7 @@ pub fn init(
         WaiterThread::set_should_use_waiter_thread();
     }
 
-    if bun_core::feature_flag::BUN_FEATURE_FLAG_FORCE_WINDOWS_JUNCTIONS.get() {
+    if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_FORCE_WINDOWS_JUNCTIONS.get() {
         bun_sys::WindowsSymlinkOptions::set_has_failed_to_create_symlink(true);
     }
 
@@ -1700,8 +1700,9 @@ pub fn init(
                 root_dir: entries_option.entries(),
                 env: Some(NonNull::from(env)),
                 cpu_count,
-                thread_pool: ThreadPool::init(ThreadPool::Options {
+                thread_pool: ThreadPool::init(thread_pool::Config {
                     max_threads: cpu_count,
+                    ..Default::default()
                 }),
                 resolve_tasks: ResolveTaskQueue::default(),
                 // SAFETY: placeholder — Lockfile is NOT all-zero-valid POD. Zig leaves this
@@ -1711,7 +1712,7 @@ pub fn init(
                 lockfile: Box::new(unsafe { core::mem::zeroed() }), // overwritten below
                 root_package_json_file,
                 // .progress
-                event_loop: AnyEventLoop::Mini(MiniEventLoop::init()),
+                event_loop: AnyEventLoop::init(),
                 original_package_json_path: ZStr::from_vec(original_package_json_path_buf),
                 // TODO(port): owned [:0]const u8 conversion
                 workspace_package_json_cache,
@@ -1734,17 +1735,17 @@ pub fn init(
                 to_update: false,
                 update_requests: Box::default(),
                 root_package_id: RootPackageId::default(),
-                task_batch: ThreadPool::Batch::default(),
+                task_batch: thread_pool::Batch::default(),
                 task_queue: TaskDependencyQueue::default(),
                 manifests: PackageManifestMap::default(),
-                folders: FolderResolution::Map::default(),
+                folders: Default::default(),
                 git_repositories: RepositoryMap::default(),
-                network_dedupe_map: NetworkTask::DedupeMap::init(),
+                network_dedupe_map: Default::default(),
                 async_network_task_queue: AsyncNetworkTaskQueue::default(),
-                network_tarball_batch: ThreadPool::Batch::default(),
-                network_resolve_batch: ThreadPool::Batch::default(),
-                patch_apply_batch: ThreadPool::Batch::default(),
-                patch_calc_hash_batch: ThreadPool::Batch::default(),
+                network_tarball_batch: thread_pool::Batch::default(),
+                network_resolve_batch: thread_pool::Batch::default(),
+                patch_apply_batch: thread_pool::Batch::default(),
+                patch_calc_hash_batch: thread_pool::Batch::default(),
                 patch_task_queue: PatchTaskQueue::default(),
                 pending_pre_calc_hashes: AtomicU32::new(0),
                 pending_tasks: AtomicU32::new(0),
@@ -1757,7 +1758,7 @@ pub fn init(
                 node_gyp_tempdir_name: Box::default(),
                 env_configure: None,
                 preinstall_state: Vec::new(),
-                postinstall_optimizer: PostinstallOptimizer::List::default(),
+                postinstall_optimizer: Default::default(),
                 global_link_dir: None,
                 global_dir: None,
                 global_link_dir_path: Box::default(),
@@ -1796,8 +1797,10 @@ pub fn init(
     {
         // make sure folder packages can find the root package without creating a new one
         // SAFETY: ROOT_PACKAGE_JSON_PATH set above
-        let mut normalized =
-            bun_paths::AbsPath::<{ bun_paths::Sep::Posix }>::from(unsafe { ROOT_PACKAGE_JSON_PATH });
+        let mut normalized = bun_paths::AbsPath::<
+            u8,
+            { bun_paths::path_options::PathSeparators::POSIX },
+        >::from(unsafe { ROOT_PACKAGE_JSON_PATH });
         // SAFETY: singleton fully initialized; main thread, no workers yet.
         unsafe { &mut *manager_ptr }.folders.put(
             FolderResolution::hash(normalized.slice()),
@@ -1807,7 +1810,16 @@ pub fn init(
     }
 
     // SAFETY: singleton fully initialized; main thread, no workers yet.
-    MiniEventLoop::set_global(&mut unsafe { &mut *manager_ptr }.event_loop.mini());
+    // Zig: `jsc.MiniEventLoop.global = &manager.event_loop.mini` — set the
+    // thread-local global to point at the embedded mini loop. The Rust port
+    // stores it in `bun_event_loop::mini_event_loop::GLOBAL`.
+    {
+        let evl = unsafe { &mut (*manager_ptr).event_loop };
+        if let AnyEventLoop::Mini(mini) = evl {
+            let mini_ptr: *mut MiniEventLoop<'static> = mini;
+            bun_event_loop::mini_event_loop::GLOBAL.with(|g| g.set(mini_ptr));
+        }
+    }
     {
         // SAFETY: as above; scoped reborrow for the options/manifest-cache block.
         let manager = unsafe { &mut *manager_ptr };
@@ -1858,12 +1870,12 @@ pub fn init(
                 abs_ca_file_name = ZStr::dupe_z(&options.ca_file_name)?;
             } else {
                 let mut path_buf = PathBuffer::uninit();
-                abs_ca_file_name = ZStr::dupe_z(path::join_abs_string_buf(
-                    &original_cwd_clone,
-                    &mut path_buf,
-                    &[&options.ca_file_name],
-                    path::Style::Auto,
-                ))?;
+                abs_ca_file_name =
+                    ZStr::dupe_z(resolve_path::join_abs_string_buf::<platform::Auto>(
+                        &original_cwd_clone,
+                        &mut path_buf,
+                        &[&options.ca_file_name],
+                    ))?;
             }
         }
     }
@@ -1888,10 +1900,11 @@ pub fn init(
         Ordering::Relaxed, // .monotonic
     );
 
-    http::HTTPThread::init(&http::HTTPThread::InitOpts {
+    http::HTTPThread::init(&http::http_thread::InitOpts {
         ca: ca.into_boxed_slice(),
         abs_ca_file_name,
         on_init_error: http_thread_on_init_error,
+        ..Default::default()
     });
 
     let timestamp_for_manifest_cache_control: u32 = 'brk: {
@@ -2049,17 +2062,17 @@ pub fn init_with_runtime_once(
                 update_requests: Box::default(),
                 root_package_json_name_at_time_of_init: Box::default(),
                 root_package_id: RootPackageId::default(),
-                task_batch: ThreadPool::Batch::default(),
+                task_batch: thread_pool::Batch::default(),
                 task_queue: TaskDependencyQueue::default(),
                 manifests: PackageManifestMap::default(),
-                folders: FolderResolution::Map::default(),
+                folders: Default::default(),
                 git_repositories: RepositoryMap::default(),
-                network_dedupe_map: NetworkTask::DedupeMap::init(),
+                network_dedupe_map: Default::default(),
                 async_network_task_queue: AsyncNetworkTaskQueue::default(),
-                network_tarball_batch: ThreadPool::Batch::default(),
-                network_resolve_batch: ThreadPool::Batch::default(),
-                patch_apply_batch: ThreadPool::Batch::default(),
-                patch_calc_hash_batch: ThreadPool::Batch::default(),
+                network_tarball_batch: thread_pool::Batch::default(),
+                network_resolve_batch: thread_pool::Batch::default(),
+                patch_apply_batch: thread_pool::Batch::default(),
+                patch_calc_hash_batch: thread_pool::Batch::default(),
                 patch_task_fifo: PatchTaskFifo::init(),
                 patch_task_queue: PatchTaskQueue::default(),
                 pending_pre_calc_hashes: AtomicU32::new(0),
@@ -2073,7 +2086,7 @@ pub fn init_with_runtime_once(
                 node_gyp_tempdir_name: Box::default(),
                 env_configure: None,
                 preinstall_state: Vec::new(),
-                postinstall_optimizer: PostinstallOptimizer::List::default(),
+                postinstall_optimizer: Default::default(),
                 global_link_dir: None,
                 global_dir: None,
                 global_link_dir_path: Box::default(),

@@ -2,9 +2,9 @@ use core::ffi::c_char;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bun_core::{Global, Output};
-use crate::lockfile_real::{self as Lockfile, Scripts as LockfileScripts};
+use crate::lockfile_real::Scripts as LockfileScripts;
 use crate::lockfile_real::package::scripts::List as ScriptsList;
-use crate::isolated_install::store::{self as Store, entry};
+use crate::isolated_install::store::entry;
 use crate::isolated_install::installer::{Installer, Step, CompleteState};
 use crate::PackageManager;
 use bun_event_loop::AnyEventLoop;
@@ -920,7 +920,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             let Some(dirname) = bun_core::dirname(self.scripts.cwd.as_bytes()) else {
                 break 'try_delete_dir;
             };
-            let basename = bun_paths::basename(&self.scripts.cwd);
+            let basename = bun_paths::basename(self.scripts.cwd.as_bytes());
             let Ok(dir) = bun_sys::open_dir_absolute(dirname) else {
                 break 'try_delete_dir;
             };

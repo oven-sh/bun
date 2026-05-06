@@ -167,6 +167,12 @@ pub struct OrderedArraySet<T> {
     pub list: Vec<T>,
 }
 
+impl<T: Clone> Clone for OrderedArraySet<T> {
+    fn clone(&self) -> Self {
+        Self { list: self.list.clone() }
+    }
+}
+
 impl<T> Default for OrderedArraySet<T> {
     fn default() -> Self {
         Self::EMPTY

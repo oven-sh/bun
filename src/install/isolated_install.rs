@@ -1751,11 +1751,12 @@ pub fn install_isolated_packages(
                     // 4. attempt renaming 'node_modules/.old_modules-{hex}/.cache' to 'node_modules/.cache'
                     // 5. rename each workspace 'node_modules' into 'node_modules/.old_modules-{hex}/old_{basename}_modules'
                     let mut temp_node_modules_buf = PathBuffer::uninit();
-                    let temp_node_modules = crate::bun_fs::FileSystem::tmpname(
+                    let temp_node_modules = paths::fs::FileSystem::tmpname(
                         b"tmp_modules",
                         &mut temp_node_modules_buf.0,
                         fast_random(),
-                    );
+                    )
+                    .expect("unreachable");
 
                     // 1
                     if sys::renameat(Fd::cwd(), bun_str::zstr!(b"node_modules"), Fd::cwd(), temp_node_modules).is_err() {

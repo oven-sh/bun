@@ -1265,19 +1265,25 @@ impl<'a, AtRuleParserT: CustomAtRuleParser> AtRuleParser for TopLevelRuleParser<
                 if input.try_parse(|p| p.expect_ident_matching(b"layer")).is_ok() {
                     Some(None)
                 } else if input.try_parse(|p| p.expect_function_matching(b"layer")).is_ok() {
-                    Some(Some(input.parse_nested_block(|p| LayerName::parse(p))?))
+                    Some(Some(input.parse_nested_block(|p| {
+                        let _ = p;
+                        gated_parse!("LayerName::parse", LayerName::parse(p))
+                    })?))
                 } else {
                     None
                 };
 
             let supports = if input.try_parse(|p| p.expect_function_matching(b"supports")).is_ok() {
                 Some(input.parse_nested_block(|p| {
-                    let result = p.try_parse(SupportsCondition::parse);
-                    if result.is_err() {
-                        SupportsCondition::parse_declaration(p)
-                    } else {
-                        result
-                    }
+                    let _ = p;
+                    gated_parse!("SupportsCondition::parse", {
+                        let result = p.try_parse(SupportsCondition::parse);
+                        if result.is_err() {
+                            SupportsCondition::parse_declaration(p)
+                        } else {
+                            result
+                        }
+                    })
                 })?)
             } else {
                 None
@@ -1587,7 +1593,9 @@ impl<'a, T: CustomAtRuleParser> AtRuleParser for NestedRuleParser<'a, T> {
                 break 'brk AtRulePrelude::Media(parse_media_list(input)?);
             }
             if strings::eql_case_insensitive_ascii::<true>(name, b"supports") {
-                break 'brk AtRulePrelude::Supports(SupportsCondition::parse(input)?);
+                break 'brk AtRulePrelude::Supports(
+                    gated_parse!("SupportsCondition::parse", SupportsCondition::parse(input)?),
+                );
             }
             if strings::eql_case_insensitive_ascii::<true>(name, b"font-face") {
                 break 'brk AtRulePrelude::FontFace;
@@ -1625,16 +1633,21 @@ impl<'a, T: CustomAtRuleParser> AtRuleParser for NestedRuleParser<'a, T> {
                 } else {
                     VendorPrefix::NONE
                 };
-                let keyframes_name =
-                    input.try_parse(css_rules::keyframes::KeyframesName::parse)?;
+                let keyframes_name = gated_parse!(
+                    "KeyframesName::parse",
+                    input.try_parse(css_rules::keyframes::KeyframesName::parse)?
+                );
                 break 'brk AtRulePrelude::Keyframes { name: keyframes_name, prefix };
             }
             if strings::eql_case_insensitive_ascii::<true>(name, b"page") {
-                let selectors = input
-                    .try_parse(|input2| {
-                        input2.parse_comma_separated(css_rules::page::PageSelector::parse)
-                    })
-                    .unwrap_or_default();
+                let selectors: Vec<PageSelector> = gated_parse!(
+                    "PageSelector::parse",
+                    input
+                        .try_parse(|input2| {
+                            input2.parse_comma_separated(css_rules::page::PageSelector::parse)
+                        })
+                        .unwrap_or_default()
+                );
                 break 'brk AtRulePrelude::Page(selectors);
             }
             if strings::eql_case_insensitive_ascii::<true>(name, b"-moz-document") {
@@ -1655,25 +1668,33 @@ impl<'a, T: CustomAtRuleParser> AtRuleParser for NestedRuleParser<'a, T> {
                 break 'brk AtRulePrelude::MozDocument;
             }
             if strings::eql_case_insensitive_ascii::<true>(name, b"layer") {
-                let names = match input.parse_comma_separated(LayerName::parse) {
-                    Ok(vv) => SmallList::<LayerName, 1>::from_list(vv),
-                    Err(e) => {
-                        if matches!(
-                            e.kind,
-                            errors_::ParserErrorKind::basic(BasicParseErrorKind::end_of_input)
-                        ) {
-                            SmallList::default()
-                        } else {
-                            return Err(e);
+                let names: SmallList<LayerName, 1> = gated_parse!(
+                    "LayerName::parse",
+                    match input.parse_comma_separated(LayerName::parse) {
+                        Ok(vv) => SmallList::<LayerName, 1>::from_list(vv),
+                        Err(e) => {
+                            if matches!(
+                                e.kind,
+                                errors_::ParserErrorKind::basic(BasicParseErrorKind::end_of_input)
+                            ) {
+                                SmallList::default()
+                            } else {
+                                return Err(e);
+                            }
                         }
                     }
-                };
+                );
                 break 'brk AtRulePrelude::Layer(names);
             }
             if strings::eql_case_insensitive_ascii::<true>(name, b"container") {
-                let container_name =
-                    input.try_parse(css_rules::container::ContainerName::parse).ok();
-                let condition = css_rules::container::ContainerCondition::parse(input)?;
+                let container_name: Option<ContainerName> = gated_parse!(
+                    "ContainerName::parse",
+                    input.try_parse(css_rules::container::ContainerName::parse).ok()
+                );
+                let condition: ContainerCondition = gated_parse!(
+                    "ContainerCondition::parse",
+                    css_rules::container::ContainerCondition::parse(input)?
+                );
                 break 'brk AtRulePrelude::Container { name: container_name, condition };
             }
             if strings::eql_case_insensitive_ascii::<true>(name, b"starting-style") {
@@ -1771,9 +1792,11 @@ impl<'a, T: CustomAtRuleParser> AtRuleParser for NestedRuleParser<'a, T> {
                 }
             }
             AtRulePrelude::FontPaletteValues(name) => {
-                let rule = css_rules::font_palette_values::FontPaletteValuesRule::parse(
-                    name, input, loc,
-                )?;
+                let rule = gated_parse!(
+                    "FontPaletteValuesRule::parse",
+                    css_rules::font_palette_values::FontPaletteValuesRule::parse(name, input, loc)?
+                );
+                let _ = (name, input, loc);
                 this.rules.v.push(CssRule::FontPaletteValues(rule));
                 Ok(())
             }
@@ -1861,7 +1884,11 @@ impl<'a, T: CustomAtRuleParser> AtRuleParser for NestedRuleParser<'a, T> {
                 }
             }
             AtRulePrelude::Page(selectors) => {
-                let rule = css_rules::page::PageRule::parse(selectors, input, loc, this.options)?;
+                let rule = gated_parse!(
+                    "PageRule::parse",
+                    css_rules::page::PageRule::parse(selectors, input, loc, this.options)?
+                );
+                let _ = (selectors, input, loc);
                 this.rules.v.push(CssRule::Page(rule));
                 Ok(())
             }
@@ -1914,9 +1941,12 @@ impl<'a, T: CustomAtRuleParser> AtRuleParser for NestedRuleParser<'a, T> {
                 Ok(())
             }
             AtRulePrelude::Property { name } => {
-                this.rules.v.push(CssRule::Property(
-                    css_rules::property::PropertyRule::parse(name, input, loc)?,
-                ));
+                let rule = gated_parse!(
+                    "PropertyRule::parse",
+                    css_rules::property::PropertyRule::parse(name, input, loc)?
+                );
+                let _ = (name, input, loc);
+                this.rules.v.push(CssRule::Property(rule));
                 Ok(())
             }
             AtRulePrelude::Import { .. }

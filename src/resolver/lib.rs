@@ -7549,15 +7549,15 @@ impl<'a> Resolver<'a> {
 
         // if (entries != null) {
         if !info.is_node_modules() {
-            if let Some(entry) = entries.get_comptime_query(b"node_modules") {
-                info.flags.set_present(DirInfo::Flag::HasNodeModules, entry.entry.kind(rfs, self.store_fd) == Fs::file_system::EntryKind::Dir);
+            if let Some(entry) = entries!().get_comptime_query(b"node_modules") {
+                info.flags.set_present(DirInfo::Flag::HasNodeModules, entry.entry.kind(rfs!(), self.store_fd) == Fs::file_system::EntryKind::Dir);
             }
         }
 
         if self.care_about_bin_folder {
             'append_bin_dir: {
                 if info.has_node_modules() {
-                    if entries.has_comptime_query(b"node_modules") {
+                    if entries!().has_comptime_query(b"node_modules") {
                         // SAFETY: BIN_FOLDERS guarded by BIN_FOLDERS_LOCK below
                         unsafe {
                             if !BIN_FOLDERS_LOADED {
@@ -7594,8 +7594,8 @@ impl<'a> Resolver<'a> {
                 }
 
                 if info.is_node_modules() {
-                    if let Some(q) = entries.get_comptime_query(b".bin") {
-                        if q.entry.kind(rfs, self.store_fd) == Fs::file_system::EntryKind::Dir {
+                    if let Some(q) = entries!().get_comptime_query(b".bin") {
+                        if q.entry.kind(rfs!(), self.store_fd) == Fs::file_system::EntryKind::Dir {
                             // SAFETY: BIN_FOLDERS_LOADED is single-thread init-once; protected by RESOLVER_MUTEX held by callers.
                             unsafe {
                                 if !BIN_FOLDERS_LOADED {
@@ -7664,12 +7664,14 @@ impl<'a> Resolver<'a> {
                     // SAFETY: ARENA — slot in the BSSMap-backed EntriesOptionMap singleton; outlives the resolver.
                     let parent_entries = unsafe { &mut *parent_entries };
                     if let Some(lookup) = parent_entries.get(base) {
-                        if entries.fd.is_valid() && !lookup.entry.cache().fd.is_valid() && self.store_fd {
-                            lookup.entry.cache_mut().fd = entries.fd;
+                        // SAFETY: entries_ptr is a slot in the BSSMap-backed entries singleton.
+                        let entries_fd = unsafe { &*entries_ptr }.fd;
+                        if entries_fd.is_valid() && !lookup.entry.cache().fd.is_valid() && self.store_fd {
+                            lookup.entry.cache_mut().fd = entries_fd;
                         }
                         let entry = &lookup.entry;
 
-                        let mut symlink = entry.symlink(rfs, self.store_fd);
+                        let mut symlink = entry.symlink(rfs!(), self.store_fd);
                         if !symlink.is_empty() {
                             if let Some(logs) = self.debug_logs.as_mut() {
                                 let mut buf = Vec::new();
@@ -7704,9 +7706,9 @@ impl<'a> Resolver<'a> {
 
         // Record if this directory has a package.json file
         if self.opts.load_package_json {
-            if let Some(lookup) = entries.get_comptime_query(b"package.json") {
+            if let Some(lookup) = entries!().get_comptime_query(b"package.json") {
                 let entry = &lookup.entry;
-                if entry.kind(rfs, self.store_fd) == Fs::file_system::EntryKind::File {
+                if entry.kind(rfs!(), self.store_fd) == Fs::file_system::EntryKind::File {
                     info.package_json = if self.use_package_manager() && !info.has_node_modules() && !info.is_node_modules() {
                         self.parse_package_json::<true>(path, if FeatureFlags::STORE_FILE_DESCRIPTORS { fd } else { FD::INVALID }, package_id).ok().flatten()
                     } else {
@@ -7739,17 +7741,17 @@ impl<'a> Resolver<'a> {
         if self.opts.load_tsconfig_json {
             let mut tsconfig_path: Option<&[u8]> = None;
             if self.opts.tsconfig_override.is_none() {
-                if let Some(lookup) = entries.get_comptime_query(b"tsconfig.json") {
+                if let Some(lookup) = entries!().get_comptime_query(b"tsconfig.json") {
                     let entry = &lookup.entry;
-                    if entry.kind(rfs, self.store_fd) == Fs::file_system::EntryKind::File {
+                    if entry.kind(rfs!(), self.store_fd) == Fs::file_system::EntryKind::File {
                         let parts = [path, b"tsconfig.json".as_slice()];
                         tsconfig_path = Some(self.fs().abs_buf(&parts, bufs!(dir_info_uncached_filename)));
                     }
                 }
                 if tsconfig_path.is_none() {
-                    if let Some(lookup) = entries.get_comptime_query(b"jsconfig.json") {
+                    if let Some(lookup) = entries!().get_comptime_query(b"jsconfig.json") {
                         let entry = &lookup.entry;
-                        if entry.kind(rfs, self.store_fd) == Fs::file_system::EntryKind::File {
+                        if entry.kind(rfs!(), self.store_fd) == Fs::file_system::EntryKind::File {
                             let parts = [path, b"jsconfig.json".as_slice()];
                             tsconfig_path = Some(self.fs().abs_buf(&parts, bufs!(dir_info_uncached_filename)));
                         }

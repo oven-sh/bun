@@ -89,19 +89,16 @@ unsafe fn env_string_store_put_string(
     let store = unsafe { &mut *(owner as *mut UserDefinesArray) };
     // Mirrors Zig: allocate an `E.String` slab entry, point Expr::Data at it,
     // wrap in DefineData::init({can_be_removed_if_unused: true,
-    // call_can_be_unwrapped_if_unused: .if_unused}). Zig bump-alloc'd both the
-    // `E.String` slab and `key_buf` and never freed them (only `errdefer`); here
-    // the wrapper goes through the AST node store (`IntoExprData::into_data_store`)
-    // and the value bytes are duplicated into a long-lived heap slot since the
-    // vtable contract makes no lifetime guarantee on `value`.
-    // PERF(port): was zero-copy alias into env-map storage — Phase B can thread
-    // the env-map lifetime through and drop this dupe.
-    let owned: &'static [u8] = if value.is_empty() {
-        b""
-    } else {
-        Box::leak(Box::<[u8]>::from(value))
-    };
-    let value: ExprData = js_ast::E::EString::init(owned).into_data_store();
+    // call_can_be_unwrapped_if_unused: .if_unused}). Zig (env_loader.zig:476-481)
+    // does NOT copy the value bytes — `E.String.init(value)` aliases directly
+    // into the env-map storage, which outlives the defines table. We do the
+    // same: `EString::init` erases the borrow lifetime per the Phase-A `Str`
+    // convention (see E.rs), and the sole caller `Loader::copy_for_define`
+    // passes `&v.value` borrowed from `self.map`, which is owned by the
+    // long-lived env loader.
+    // TODO(port): Phase B — thread the env-map lifetime through
+    // `DefineStoreVTable` so this aliasing is checked rather than asserted.
+    let value: ExprData = js_ast::E::EString::init(value).into_data_store();
     let data = DefineData::init(Options {
         value,
         can_be_removed_if_unused: true,

@@ -71,7 +71,7 @@ impl DashedIdentReference {
                 .try_parse(|i| i.expect_ident_matching(b"from"))
                 .is_ok()
             {
-                Some(crate::values::css_modules::Specifier::parse(input)?)
+                Some(crate::properties::css_modules::Specifier::parse(input)?)
             } else {
                 None
             }

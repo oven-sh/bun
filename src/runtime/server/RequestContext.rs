@@ -1184,8 +1184,7 @@ where
 
         if let Some(stream) = self.byte_stream.take() {
             ctx_log!("finalizeWithoutDeinit: stream != null");
-            // SAFETY: kept alive by response_body_readable_stream_ref (BORROW_FIELD)
-            shim::byte_stream_unpipe(unsafe { stream.as_ref() });
+            shim::byte_stream_unpipe(stream);
         }
 
         self.response_body_readable_stream_ref.deinit();

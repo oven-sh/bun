@@ -1738,7 +1738,7 @@ impl TestCommand {
             last_dot: 0,
             prev_file: 0,
             repeat_count: 1,
-            last_printed_dot: false,
+            last_printed_dot: core::cell::Cell::new(false),
             worker_ipc_file_idx: None,
             failures_to_repeat_buf: Vec::new(),
             skips_to_repeat_buf: Vec::new(),

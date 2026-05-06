@@ -1525,9 +1525,10 @@ impl<'a> PerThread<'a> {
 
     pub fn attach(&mut self) {
         unsafe {
-            // SAFETY: PerThread outlives the attached lifetime; detached in Drop
+            // SAFETY: self.vm is the live per-thread VM (raw ptr from init_bake);
+            // PerThread outlives the attached lifetime; detached in Drop.
             BakeGlobalObject__attachPerThreadData(
-                self.vm.global,
+                (*self.vm).global,
                 self as *mut PerThread<'a> as *mut PerThread<'static>,
             );
         }

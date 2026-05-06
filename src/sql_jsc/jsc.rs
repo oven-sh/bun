@@ -869,9 +869,10 @@ impl JSFunction {
         let fn_name = bun_string::String::init(name);
         // SAFETY: `global` is live; `implementation` is a valid C-ABI fn
         // pointer; `fn_name` is moved by value (C++ side derefs on return).
+        // `as_mut_ptr` is sound via `UnsafeCell` (interior mutability).
         unsafe {
             JSFunction__createFromZig(
-                global as *const _ as *mut _,
+                global.as_mut_ptr(),
                 fn_name,
                 implementation,
                 arg_count,

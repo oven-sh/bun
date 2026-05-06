@@ -590,6 +590,11 @@ pub const TransformTask = struct {
     }
 
     pub fn deinit(this: *TransformTask) void {
+        for (this.log.msgs.items) |*msg| {
+            freeClonedLocation(&msg.data);
+            for (msg.notes) |*note| freeClonedLocation(note);
+            msg.deinit(bun.default_allocator);
+        }
         this.log.deinit();
         this.input_code.deinitAndUnprotect();
         this.output_code.deref();
@@ -597,6 +602,12 @@ pub const TransformTask = struct {
         // Do not free it here — JSTranspiler.deinit handles it.
         this.js_instance.deref();
         bun.destroy(this);
+    }
+
+    fn freeClonedLocation(data: *logger.Data) void {
+        const loc = &(data.location orelse return);
+        bun.default_allocator.free(loc.file);
+        if (loc.line_text) |lt| bun.default_allocator.free(lt);
     }
 };
 

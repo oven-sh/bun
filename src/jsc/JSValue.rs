@@ -839,10 +839,20 @@ pub struct SerializedFlags {
 /// `JSValue.SerializedScriptValue` (JSValue.zig:2287) — owned view over a
 /// `WebCore::SerializedScriptValue` byte buffer. Call `deinit` to free.
 pub struct SerializedScriptValue {
-    pub data: &'static [u8],
+    bytes: *const u8,
+    size: usize,
     handle: *mut c_void,
 }
 impl SerializedScriptValue {
+    /// Borrow the serialized bytes. Valid only while `self` is alive (the
+    /// backing buffer is freed by `deinit`); the lifetime is tied to `&self`.
+    #[inline]
+    pub fn data(&self) -> &[u8] {
+        // SAFETY: C++ guarantees `bytes[..size]` is valid for the lifetime of
+        // `handle` (until `Bun__SerializedScriptSlice__free`); the returned
+        // borrow is tied to `&self` so it cannot outlive `deinit`.
+        unsafe { core::slice::from_raw_parts(self.bytes, self.size) }
+    }
     #[inline]
     pub fn deinit(self) {
         // SAFETY: `handle` was returned by `Bun__serializeJSValue`.
@@ -1094,10 +1104,7 @@ impl JSValue {
         if ext.bytes.is_null() || ext.handle.is_null() {
             return Err(JsError::Thrown);
         }
-        // SAFETY: C++ guarantees `bytes[..size]` is valid for the lifetime of
-        // `handle` (until `Bun__SerializedScriptSlice__free`).
-        let data = unsafe { core::slice::from_raw_parts(ext.bytes, ext.size) };
-        Ok(SerializedScriptValue { data, handle: ext.handle })
+        Ok(SerializedScriptValue { bytes: ext.bytes, size: ext.size, handle: ext.handle })
     }
 }
 

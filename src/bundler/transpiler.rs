@@ -638,6 +638,75 @@ fn init_file_system(
     }
 }
 
+/// CYCLEBREAK: project this crate's `options::BundleOptions<'a>` into the
+/// resolver-crate FORWARD_DECL subset (`bun_resolver::options::BundleOptions`).
+/// The two are nominally distinct until MOVE_DOWN to `bun_options_types`
+/// unifies them (resolver/lib.rs `mod options` note). Fields whose types are
+/// shared (`Target`, `GlobalCache`, `ForceNodeEnv`, bools, `Option<Box<[u8]>>`)
+/// copy through; fields whose resolver-side type is a `&'static [&'static [u8]]`
+/// FORWARD_DECL keep the resolver `Default` (the bundler side stores owned
+/// `Box<[Box<[u8]>]>`, which can't be borrowed as `&'static` without leaking).
+///
+/// TODO(b3): drop this once `bun_options_types::BundleOptions` exists and both
+/// crates re-export it — `Resolver::init1` will then take the canonical type
+/// directly and Zig's `bundle_options` value can flow through unchanged
+/// (transpiler.zig:209 passes the same `options` to both struct fields).
+fn resolver_bundle_options_subset(
+    src: &options::BundleOptions<'_>,
+) -> resolver::options::BundleOptions {
+    use crate::options_impl::jsx::Runtime as BR;
+    use resolver::options as ropts;
+    use resolver::tsconfig_json::options::jsx as rjsx;
+
+    ropts::BundleOptions {
+        target: src.target,
+        packages: match src.packages {
+            options::PackagesOption::External => ropts::Packages::External,
+            options::PackagesOption::Bundle => ropts::Packages::Bundle,
+        },
+        jsx: rjsx::Pragma {
+            factory: src.jsx.factory.iter().cloned().collect(),
+            fragment: src.jsx.fragment.iter().cloned().collect(),
+            runtime: match src.jsx.runtime {
+                // bundler-side `_None` round-trips `api::JsxRuntime::_none`;
+                // resolver-side enum has no such variant — map to spec default.
+                BR::_None | BR::Automatic => rjsx::Runtime::Automatic,
+                BR::Classic => rjsx::Runtime::Classic,
+                BR::Solid => rjsx::Runtime::Solid,
+            },
+            import_source: rjsx::ImportSource {
+                development: src.jsx.import_source.development.clone(),
+                production: src.jsx.import_source.production.clone(),
+            },
+            package_name: src.jsx.package_name.clone(),
+            development: src.jsx.development,
+        },
+        global_cache: src.global_cache,
+        load_package_json: src.load_package_json,
+        load_tsconfig_json: src.load_tsconfig_json,
+        main_field_extension_order: src.main_field_extension_order,
+        // Resolver compares this slice's *pointer* against
+        // `DEFAULT_MAIN_FIELDS.get(target)` to detect "user did not set
+        // --main-fields" (resolver/lib.rs `auto_main` note). Bundler stores an
+        // owned `Box<[Box<[u8]>]>` whose pointer can never match, so route to
+        // the resolver-side per-target default to preserve the heuristic.
+        // TODO(b3): thread user-provided `--main-fields` once the type unifies.
+        main_fields: ropts::DEFAULT_MAIN_FIELDS.get(src.target),
+        mark_builtins_as_external: src.mark_builtins_as_external,
+        polyfill_node_globals: src.polyfill_node_globals,
+        prefer_offline_install: src.prefer_offline_install,
+        preserve_symlinks: src.preserve_symlinks,
+        rewrite_jest_for_tests: src.rewrite_jest_for_tests,
+        tsconfig_override: src.tsconfig_override.clone(),
+        production: src.production,
+        force_node_env: src.force_node_env,
+        // FORWARD_DECL types differ from bundler's; keep resolver Default.
+        // TODO(b3): map `extension_order` / `external` / `conditions` /
+        // `extra_cjs_extensions` / `framework` / `install` once MOVE_DOWN lands.
+        ..ropts::BundleOptions::default()
+    }
+}
+
 impl<'a> Transpiler<'a> {
     /// Port of `transpiler.zig:Transpiler.init`.
     ///
@@ -717,58 +786,54 @@ impl<'a> Transpiler<'a> {
         //     .allocator = allocator,
         // });
 
-        // TODO(b2-blocked): `options::BundleOptions::from_api` (this crate,
-        // options.rs:2267) and `Resolver::init1` (bun_resolver lib.rs:2754)
-        // are both `#[cfg(any())]`. `Resolver` cannot be inlined here either —
-        // its `opts` field has private-module type
-        // `bun_resolver::options::BundleOptions` (resolver lib.rs:1880
-        // `mod options`). Un-gate this block once both surface; the un-gated
-        // fallthrough returns `Err(TODO)` so `init_runtime_state` logs and
-        // leaves `vm.transpiler` zeroed (same failure mode as before this
-        // function existed).
-        #[cfg(any())]
-        {
-            // SAFETY: `from_api` only reads `log` to push diagnostics; aliased
-            // again into `Resolver::init1` below (see header PORT NOTE).
-            let bundle_options =
-                options::BundleOptions::from_api(unsafe { &mut *fs }, unsafe { &mut *log }, opts)?;
-            let resolve_results = Box::new(ResolveResults::default());
-            return Ok(Transpiler {
-                options: bundle_options,
-                fs,
-                allocator,
-                timer: SystemTimer::start().expect("Timer fail"),
-                resolver: Resolver::init1(
-                    unsafe { &mut *log },
-                    unsafe { &mut *fs },
-                    bundle_options,
-                ),
-                log,
-                // .thread_pool = pool,
-                // TODO(port): Zig used `undefined`; configureLinker assigns later.
-                // `crate::Linker` is the unit stub `struct Linker(())` in lib.rs.
-                linker: unsafe { core::mem::zeroed::<crate::linker::Linker>() },
-                result: options::TransformResult {
-                    outbase: bundle_options.output_dir,
-                    ..Default::default()
-                },
-                resolve_results,
-                resolve_queue: ResolveQueue::default(),
-                output_files: Vec::new(),
-                env: env_loader.cast(),
-                elapsed: 0,
-                needs_runtime: false,
-                router: None,
-                source_map: options::SourceMapOption::None,
-                macro_context: None,
-            });
-        }
+        // SAFETY: `from_api` only reads `log` to push diagnostics; the same
+        // raw `log` is aliased into `Resolver::init1` and the struct field
+        // below (see header PORT NOTE — Zig aliased `*Log` everywhere).
+        // `fs` is the process-lifetime `Fs::FileSystem` singleton from
+        // `init_file_system` above; `&mut *fs` here is the only live borrow.
+        let bundle_options =
+            options::BundleOptions::from_api(unsafe { &mut *fs }, unsafe { &mut *log }, opts)?;
 
-        #[allow(unreachable_code)]
-        {
-            let _ = (allocator, fs, env_loader, opts);
-            Err(bun_core::Error::TODO)
-        }
+        // CYCLEBREAK: `Resolver.opts` is the resolver-crate FORWARD_DECL subset
+        // (`bun_resolver::options::BundleOptions`), nominally distinct from this
+        // crate's `options::BundleOptions<'a>`. Project the fields the resolver
+        // reads; the rest stay at `Default` until MOVE_DOWN to
+        // `bun_options_types` unifies the two (resolver/lib.rs:2773 note).
+        let resolver_opts = resolver_bundle_options_subset(&bundle_options);
+
+        let outbase = bundle_options.output_dir.clone();
+        let resolve_results = Box::new(ResolveResults::default());
+        Ok(Transpiler {
+            fs,
+            allocator,
+            timer: SystemTimer::start().expect("Timer fail"),
+            resolver: Resolver::init1(log, fs, resolver_opts),
+            log,
+            // .thread_pool = pool,
+            // PORT NOTE: Zig used `undefined`; `configure_linker` assigns later.
+            // `crate::linker::Linker` stores only raw pointers + integers
+            // (linker.rs `Linker::init`), so `zeroed` is the bit-exact analogue
+            // of Zig `undefined` here — no Drop fields, no niche invariants.
+            // SAFETY: every field of `crate::linker::Linker` is a raw pointer,
+            // integer, or `bool`; the all-zeroes bit pattern is a valid value
+            // for each (null ptrs / 0 / false). Callers must run
+            // `configure_linker*` before any `linker.link()` deref.
+            linker: unsafe { core::mem::zeroed::<crate::linker::Linker>() },
+            result: options::TransformResult {
+                outbase,
+                ..Default::default()
+            },
+            resolve_results,
+            resolve_queue: ResolveQueue::default(),
+            output_files: Vec::new(),
+            env: env_loader.cast(),
+            elapsed: 0,
+            needs_runtime: false,
+            router: None,
+            source_map: options::SourceMapOption::None,
+            macro_context: None,
+            options: bundle_options,
+        })
     }
 
     pub fn parse(

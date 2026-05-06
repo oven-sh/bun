@@ -412,8 +412,8 @@ pub struct UDPSocket {
 impl UDPSocket {
     // TODO(port): Codegen.JSUDPSocket — `js`, `to_js`, `from_js`, `from_js_direct` provided by
     // #[bun_jsc::JsClass] derive in Phase B. The `js()` accessor below is a placeholder.
-    pub fn js() -> &'static Codegen::JSUDPSocket {
-        Codegen::JSUDPSocket::get()
+    pub fn js() -> &'static codegen_stub::JSUDPSocket {
+        todo!("blocked_on: bun_jsc::codegen::JSUDPSocket")
     }
 
     pub fn new(init: Self) -> *mut Self {
@@ -514,7 +514,7 @@ impl UDPSocket {
                     return global_this.throw_value(sys_err.err().to_js(global_this)?);
                 }
 
-                if let Some(eai_err) = bun_cares::Error::init_eai(ret) {
+                if let Some(eai_err) = c_ares::Error::init_eai(ret) {
                     return global_this.throw_value(
                         eai_err.to_js_with_syscall_and_hostname(global_this, "connect", address_slice.as_bytes())?,
                     );
@@ -644,7 +644,7 @@ impl UDPSocket {
         }
 
         // SAFETY: all-zero is a valid sockaddr_storage.
-        let mut addr: posix::sockaddr_storage = unsafe { core::mem::zeroed() };
+        let mut addr: sockaddr_storage = unsafe { core::mem::zeroed() };
         if !this.parse_addr(global_this, JSValue::js_number(0), arguments[0], &mut addr)? {
             return global_this.throw_value(
                 bun_sys::Result::<()>::errno_sys(posix::E::INVAL as i32, bun_sys::Tag::Setsockopt)
@@ -654,7 +654,7 @@ impl UDPSocket {
         }
 
         // SAFETY: all-zero is a valid sockaddr_storage.
-        let mut interface: posix::sockaddr_storage = unsafe { core::mem::zeroed() };
+        let mut interface: sockaddr_storage = unsafe { core::mem::zeroed() };
 
         let Some(socket) = this.socket else {
             return global_this.throw(format_args!("Socket is closed"));
@@ -720,7 +720,7 @@ impl UDPSocket {
                 .throw_invalid_arguments(format_args!("Expected 2 arguments, got {}", arguments.len()));
         }
 
-        let mut source_addr = MaybeUninit::<posix::sockaddr_storage>::uninit();
+        let mut source_addr = MaybeUninit::<sockaddr_storage>::uninit();
         // SAFETY: parse_addr fully initializes on success; we never read on failure.
         if !this.parse_addr(global_this, JSValue::js_number(0), arguments[0], unsafe {
             &mut *source_addr.as_mut_ptr()
@@ -734,7 +734,7 @@ impl UDPSocket {
         // SAFETY: initialized by parse_addr above.
         let source_addr = unsafe { source_addr.assume_init() };
 
-        let mut group_addr = MaybeUninit::<posix::sockaddr_storage>::uninit();
+        let mut group_addr = MaybeUninit::<sockaddr_storage>::uninit();
         // SAFETY: see above.
         if !this.parse_addr(global_this, JSValue::js_number(0), arguments[1], unsafe {
             &mut *group_addr.as_mut_ptr()
@@ -754,7 +754,7 @@ impl UDPSocket {
             ));
         }
 
-        let mut interface = MaybeUninit::<posix::sockaddr_storage>::uninit();
+        let mut interface = MaybeUninit::<sockaddr_storage>::uninit();
 
         let Some(socket) = this.socket else {
             return global_this.throw(format_args!("Socket is closed"));
@@ -824,7 +824,7 @@ impl UDPSocket {
                 .throw_invalid_arguments(format_args!("Expected 1 argument, got {}", arguments.len()));
         }
 
-        let mut addr = MaybeUninit::<posix::sockaddr_storage>::uninit();
+        let mut addr = MaybeUninit::<sockaddr_storage>::uninit();
 
         // SAFETY: parse_addr fully initializes on success; never read on failure.
         if !this.parse_addr(global_this, JSValue::js_number(0), arguments[0], unsafe {
@@ -987,7 +987,7 @@ impl UDPSocket {
         let mut payloads: Vec<*const u8> = vec![core::ptr::null(); len];
         let mut lens: Vec<usize> = vec![0; len];
         let mut addr_ptrs: Vec<*const c_void> = vec![core::ptr::null(); len];
-        let mut addrs: Vec<posix::sockaddr_storage> = Vec::with_capacity(len);
+        let mut addrs: Vec<sockaddr_storage> = Vec::with_capacity(len);
         // SAFETY: sockaddr_storage is POD; entries written before read in phase 1/2.
         unsafe { addrs.set_len(len) };
 
@@ -1135,7 +1135,7 @@ impl UDPSocket {
         // to `socket.send`, so a borrowed pointer cannot be freed out from
         // under us. `payload_arg` itself stays rooted in the callframe.
         // SAFETY: all-zero is a valid sockaddr_storage.
-        let mut addr: posix::sockaddr_storage = unsafe { core::mem::zeroed() };
+        let mut addr: sockaddr_storage = unsafe { core::mem::zeroed() };
         let addr_ptr: *const c_void = 'brk: {
             if let Some(dest) = dst {
                 if !this.parse_addr(global_this, dest.port, dest.address, &mut addr)? {
@@ -1187,7 +1187,7 @@ impl UDPSocket {
         global_this: &JSGlobalObject,
         port_val: JSValue,
         address_val: JSValue,
-        storage: &mut posix::sockaddr_storage,
+        storage: &mut sockaddr_storage,
     ) -> JsResult<bool> {
         let _ = self;
         let number = port_val.coerce_to_int32(global_this)?;

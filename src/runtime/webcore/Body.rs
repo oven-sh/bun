@@ -1992,29 +1992,23 @@ impl<'a> ValueBufferer<'a> {
     }
 
     // TODO(blocked_on: blob::read_file): `blob::read_file` is `#![cfg(any())]`-gated;
-    // restore the real `ReadFileResultType` parameter once that module is ungated.
+    // restore the real `ReadFileResultType` parameter and match body once ungated.
     #[allow(dead_code)]
     fn on_finished_loading_file(&mut self /*, bytes: blob::read_file::ReadFileResultType */) {
         todo!("blocked_on: blob::read_file::ReadFileResultType");
+        // match bytes {
+        //     blob::read_file::ReadFileResultType::Err(err) => {
+        //         bun_core::scoped_log!(BodyValueBufferer, "onFinishedLoadingFile Error");
+        //         (self.on_finished_buffering)(self.ctx, b"", Some(ValueError::SystemError(err)), true);
+        //     }
+        //     blob::read_file::ReadFileResultType::Result(data) => {
+        //         bun_core::scoped_log!(BodyValueBufferer, "onFinishedLoadingFile Data {}", data.buf.len());
+        //         (self.on_finished_buffering)(self.ctx, &data.buf, None, true);
+        //         if data.is_temporary { drop(data.buf); }
+        //     }
+        // }
         #[allow(unreachable_code)]
-        #[cfg(any())]
-        match bytes {
-            blob::read_file::ReadFileResultType::Err(err) => {
-                bun_core::scoped_log!(BodyValueBufferer, "onFinishedLoadingFile Error");
-                (self.on_finished_buffering)(self.ctx, b"", Some(ValueError::SystemError(err)), true);
-            }
-            blob::read_file::ReadFileResultType::Result(data) => {
-                bun_core::scoped_log!(
-                    BodyValueBufferer,
-                    "onFinishedLoadingFile Data {}",
-                    data.buf.len()
-                );
-                (self.on_finished_buffering)(self.ctx, &data.buf, None, true);
-                if data.is_temporary {
-                    // data.buf dropped (Box<[u8]> Drop replaces allocator.free)
-                    drop(data.buf);
-                }
-            }
+        {
         }
     }
 

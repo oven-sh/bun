@@ -1154,10 +1154,10 @@ fn on_asset_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
     }
     let hex = &param[..::core::mem::size_of::<u64>() * 2];
     let mut out = [0u8; ::core::mem::size_of::<u64>()];
-    let Ok(decoded) = bun_core::fmt::hex_to_bytes(&mut out, hex) else {
+    let Ok(decoded) = strings::decode_hex_to_bytes(&mut out, hex) else {
         return not_found(resp);
     };
-    debug_assert!(decoded.len() == ::core::mem::size_of::<u64>());
+    debug_assert!(decoded == ::core::mem::size_of::<u64>());
     let hash: u64 = u64::from_ne_bytes(out);
     debug_log!("onAssetRequest {} {}", hash, bstr::BStr::new(param));
     let Some(asset) = dev.assets.get(hash) else {
@@ -1167,15 +1167,33 @@ fn on_asset_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
     asset.on(resp);
 }
 
-pub fn parse_hex_to_int<T>(slice: &[u8]) -> Option<T>
-where
-    T: bytemuck::Pod, // TODO(port): @bitCast on [@sizeOf(T)]u8
-{
-    let mut out = [0u8; ::core::mem::size_of::<T>()];
-    let decoded = bun_core::fmt::hex_to_bytes(&mut out, slice).ok()?;
-    debug_assert!(decoded.len() == ::core::mem::size_of::<T>());
-    // SAFETY: out has size_of::<T>() bytes fully initialized by hex_to_bytes; T: Pod
-    Some(unsafe { core::ptr::read(out.as_ptr() as *const T) })
+// TODO(port): Zig was generic over `T` via `@bitCast([@sizeOf(T)]u8)`. Stable
+// Rust can't size a stack array by a generic `T` without `generic_const_exprs`,
+// so cap the buffer at 16 bytes (enough for u128) and bound on `Copy`.
+pub fn parse_hex_to_int<T: Copy>(slice: &[u8]) -> Option<T> {
+    let size = ::core::mem::size_of::<T>();
+    debug_assert!(size <= 16);
+    let mut out = [0u8; 16];
+    let decoded = strings::decode_hex_to_bytes(&mut out[..size], slice).ok()?;
+    debug_assert!(decoded == size);
+    // SAFETY: out[..size] is fully initialized by decode_hex_to_bytes; T: Copy
+    Some(unsafe { ::core::ptr::read_unaligned(out.as_ptr() as *const T) })
+}
+
+// Free-fn adapter for the route!() macro (the `impl DevServer` method takes a
+// generic `R: ResponseLike`, which doesn't fit the `Fn(&mut DevServer, &mut
+// Request, AnyResponse)` shape `wrap_generic_request_handler` expects).
+fn on_src_request(_dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
+    if req.header("open-in-editor").is_none() {
+        resp.write_status("501 Not Implemented");
+        resp.end(
+            "Viewing source without opening in editor is not implemented yet!",
+            false,
+        );
+        return;
+    }
+    resp.write_status("501 Not Implemented");
+    resp.end("TODO", false);
 }
 
 // TODO(port): `wrapGenericRequestHandler` returned a comptime-generated fn that

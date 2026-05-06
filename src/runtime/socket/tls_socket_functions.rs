@@ -447,7 +447,7 @@ pub fn get_shared_sigalgs(this: &mut This, global: &JSGlobalObject, _frame: &Cal
 pub fn get_cipher(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let Some(ssl_ptr) = this.socket.ssl() else { return Ok(JSValue::UNDEFINED) };
     // SAFETY: ssl_ptr is a live *mut SSL returned by this.socket.ssl().
-    let cipher = unsafe { boringssl::SSL_get_current_cipher(ssl_ptr) };
+    let cipher = unsafe { ffi::SSL_get_current_cipher(ssl_ptr) };
     let result = JSValue::create_empty_object(global, 0);
 
     if cipher.is_null() {

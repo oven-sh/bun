@@ -8,8 +8,8 @@ use bun_boringssl as boringssl;
 use bun_core::{self, timespec};
 use bun_jsc::{
     self as jsc, CallFrame, JSArray, JSGlobalObject, JSMap, JSPromise, JSValue, JsRef, JsResult,
-    VirtualMachine,
 };
+use bun_jsc::virtual_machine::VirtualMachine;
 use crate::socket::SSLConfig;
 use bun_event_loop::EventLoopTimer as Timer;
 use bun_str::{self as strings, String as BunString};
@@ -17,9 +17,13 @@ use bun_uws as uws;
 
 use super::js_valkey_functions as fns;
 use super::valkey;
-use super::ValkeyCommand as Command;
+use super::valkey_command_body::Command;
 use bun_jsc::URL;
 use bun_valkey::valkey_protocol as protocol;
+use super::protocol_jsc;
+
+/// `bun.JSTerminated!T` — convenience alias (no public re-export in `bun_jsc` yet).
+type JsTerminatedResult<T> = Result<T, jsc::JsTerminated>;
 
 bun_output::declare_scope!(RedisJS, visible);
 macro_rules! debug {

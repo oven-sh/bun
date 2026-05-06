@@ -174,11 +174,24 @@ pub struct PathParsed<'a, T: PathChar> {
     pub name: &'a [T],
 }
 
-// Gated: calls `BunString::create_utf8_for_js` + FFI (bun_jsc method surface).
-// TODO(b2-blocked): un-gate once bun_jsc is a dep.
+// path.zig:2750 — `extern "c" fn PathParsedObject__create(*jsc.JSGlobalObject, jsc.JSValue × 5) jsc.JSValue;`
+unsafe extern "C" {
+    fn PathParsedObject__create(
+        global: *const JSGlobalObject,
+        root: JSValue,
+        dir: JSValue,
+        base: JSValue,
+        ext: JSValue,
+        name: JSValue,
+    ) -> JSValue;
+}
 
 impl<'a, T: PathChar> PathParsed<'a, T> {
     pub fn to_js_object(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+        // PORT NOTE: alias the free-fn module so the Zig-mirrored
+        // `BunString::create_utf8_for_js(...)` call shape resolves (same pattern
+        // as the per-submodule imports below).
+        use crate::jsc::bun_string_jsc as BunString;
         let root = BunString::create_utf8_for_js(global_object, self.root)?;
         let dir = BunString::create_utf8_for_js(global_object, self.dir)?;
         let base = BunString::create_utf8_for_js(global_object, self.base)?;

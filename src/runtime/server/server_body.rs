@@ -2339,9 +2339,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // replaces the `if pool == null { create }` block.
 
         if SSL {
-            analytics::Features::https_server_inc();
+            analytics::Features::HTTPS_SERVER.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         } else {
-            analytics::Features::http_server_inc();
+            analytics::Features::HTTP_SERVER.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         }
 
         Ok(server)

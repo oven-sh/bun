@@ -1697,43 +1697,44 @@ impl VM {
     /// execution at the next safepoint.
     #[inline]
     pub fn notify_need_termination(&self) {
-        // SAFETY: `self` is a live JSC::VM.
-        unsafe { JSC__VM__notifyNeedTermination(self as *const _ as *mut _) }
+        // SAFETY: `self` is a live JSC::VM; `as_mut_ptr` is sound via `UnsafeCell`.
+        unsafe { JSC__VM__notifyNeedTermination(self.as_mut_ptr()) }
     }
     pub fn throw_error(&self, global: &JSGlobalObject, value: JSValue) -> JsError {
-        // SAFETY: `self` and `global` are live; throws into the VM's exception scope.
-        unsafe { JSC__VM__throwError(self as *const _ as *mut _, global, value) };
+        // SAFETY: `self` and `global` are live; throws into the VM's exception
+        // scope. `as_mut_ptr` is sound via `UnsafeCell` (interior mutability).
+        unsafe { JSC__VM__throwError(self.as_mut_ptr(), global, value) };
         JsError::Thrown
     }
     /// `VM.releaseWeakRefs()` (VM.zig:202).
     #[inline]
     pub fn release_weak_refs(&self) {
-        // SAFETY: `self` is a live JSC::VM.
-        unsafe { JSC__VM__releaseWeakRefs(self as *const _ as *mut _) }
+        // SAFETY: `self` is a live JSC::VM; `as_mut_ptr` is sound via `UnsafeCell`.
+        unsafe { JSC__VM__releaseWeakRefs(self.as_mut_ptr()) }
     }
     /// `VM.collectAsync()` (VM.zig:90).
     #[inline]
     pub fn collect_async(&self) {
-        // SAFETY: `self` is a live JSC::VM.
-        unsafe { JSC__VM__collectAsync(self as *const _ as *mut _) }
+        // SAFETY: `self` is a live JSC::VM; `as_mut_ptr` is sound via `UnsafeCell`.
+        unsafe { JSC__VM__collectAsync(self.as_mut_ptr()) }
     }
     /// `VM.heapSize()` (VM.zig:98).
     #[inline]
     pub fn heap_size(&self) -> usize {
-        // SAFETY: `self` is a live JSC::VM.
-        unsafe { JSC__VM__heapSize(self as *const _ as *mut _) }
+        // SAFETY: `self` is a live JSC::VM; `as_mut_ptr` is sound via `UnsafeCell`.
+        unsafe { JSC__VM__heapSize(self.as_mut_ptr()) }
     }
     /// `VM.blockBytesAllocated()` (VM.zig). Requires `RESOURCE_USAGE` build
     /// option in JavaScriptCore. Faster than checking the heap size.
     #[inline]
     pub fn block_bytes_allocated(&self) -> usize {
-        // SAFETY: `self` is a live JSC::VM.
-        unsafe { JSC__VM__blockBytesAllocated(self as *const _ as *mut _) }
+        // SAFETY: `self` is a live JSC::VM; `as_mut_ptr` is sound via `UnsafeCell`.
+        unsafe { JSC__VM__blockBytesAllocated(self.as_mut_ptr()) }
     }
     /// `VM.runGC(sync)` (VM.zig:80-82).
     pub fn run_gc(&self, sync: bool) -> usize {
-        // SAFETY: `self` is a live JSC::VM.
-        unsafe { JSC__VM__runGC(self as *const _ as *mut _, sync) }
+        // SAFETY: `self` is a live JSC::VM; `as_mut_ptr` is sound via `UnsafeCell`.
+        unsafe { JSC__VM__runGC(self.as_mut_ptr(), sync) }
     }
 }
 

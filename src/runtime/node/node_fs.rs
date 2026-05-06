@@ -560,7 +560,7 @@ pub trait FsArgument {
 pub struct AsyncFSTask<R, A, const F: NodeFSFunctionEnum> {
     pub promise: JSPromiseStrong,
     pub args: A,
-    pub global_object: *mut JSGlobalObject,
+    pub global_object: *const JSGlobalObject,
     pub task: WorkPoolTask,
     pub result: Maybe<R>,
     pub r#ref: KeepAlive,
@@ -587,7 +587,7 @@ impl<R, A: FsArgument, const F: NodeFSFunctionEnum> AsyncFSTask<R, A, F> {
             promise: JSPromiseStrong::init(global_object),
             args,
             result: unsafe { core::mem::zeroed() }, // SAFETY: written before read
-            global_object: global_object as *const _ as *mut _,
+            global_object: global_object as *const _,
             task: WorkPoolTask { callback: Self::work_pool_callback },
             r#ref: KeepAlive::default(),
             tracker: AsyncTaskTracker::init(vm),
@@ -1294,7 +1294,7 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
 pub struct AsyncReaddirRecursiveTask {
     pub promise: JSPromiseStrong,
     pub args: args::Readdir,
-    pub global_object: *mut JSGlobalObject,
+    pub global_object: *const JSGlobalObject,
     pub task: WorkPoolTask,
     pub r#ref: KeepAlive,
     pub tracker: AsyncTaskTracker,
@@ -1430,7 +1430,7 @@ impl AsyncReaddirRecursiveTask {
             promise: JSPromiseStrong::init(global_object),
             args,
             has_result: AtomicBool::new(false),
-            global_object: global_object as *const _ as *mut _,
+            global_object: global_object as *const _,
             task: WorkPoolTask { callback: Self::work_pool_callback },
             r#ref: KeepAlive::default(),
             tracker: AsyncTaskTracker::init(vm),

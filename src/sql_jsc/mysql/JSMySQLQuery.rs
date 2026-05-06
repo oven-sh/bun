@@ -324,7 +324,10 @@ impl JSMySQLQuery {
             // SAFETY: `p` aliases `*self` for the duration of this scope only.
             unsafe { (*p).deref() };
         });
-        // SAFETY: see above.
+        // SAFETY: `*_guard` was derived from `self as *mut Self`; this re-borrow
+        // is a stacked descendant of the incoming `&mut self`. `self` is not
+        // accessed again below, and `_guard`'s drop-closure runs only after
+        // `this` is dropped (reverse local drop order).
         let this = unsafe { &mut **_guard };
         if this.this_value.is_not_empty() {
             this.this_value.downgrade();
@@ -363,7 +366,10 @@ impl JSMySQLQuery {
             }
         });
         // PORT NOTE: reshaped for borrowck — re-borrow through guard pointer.
-        // SAFETY: see above.
+        // SAFETY: `*_guard` was derived from `self as *mut Self`; this re-borrow
+        // is a stacked descendant of the incoming `&mut self`. `self` is not
+        // accessed again below, and `_guard`'s drop-closure (raw-ptr access)
+        // runs only after `this` is dropped (reverse local drop order).
         let this = unsafe { &mut **_guard };
 
         if !this.query.fail() {
@@ -422,7 +428,11 @@ impl JSMySQLQuery {
             }
         });
         // PORT NOTE: reshaped for borrowck — re-borrow through guard pointer.
-        // SAFETY: see above.
+        // SAFETY: `*errguard` was derived from `self as *mut Self`; this
+        // re-borrow is a stacked descendant of the incoming `&mut self`. `self`
+        // is not accessed again below. On the success path `errguard` is
+        // disarmed via `into_inner` after `this`'s last use; on error paths the
+        // guard's drop-closure runs only after `this` is dropped.
         let this = unsafe { &mut **errguard };
 
         let columns_value = this.get_columns().unwrap_or(JSValue::UNDEFINED);

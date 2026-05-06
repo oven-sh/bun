@@ -1767,7 +1767,9 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
             return;
         }
 
-        // SAFETY: data was set to *mut Self in process_send().
+        // SAFETY: data was set to `self as *mut Self` in process_send(); libuv
+        // invokes this callback on the single-threaded event loop with no other
+        // Rust borrow of `*this` live, so this is the sole `&mut` at this point.
         let this = unsafe { &mut *(parent_ptr as *mut Self) };
 
         if was_canceled {

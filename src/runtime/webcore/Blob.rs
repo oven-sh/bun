@@ -72,8 +72,10 @@ pub struct Blob {
     // PORT NOTE: `RawRefCount(u32, .single_threaded)` → non-generic `RawRefCount` (always u32).
     ref_count: bun_ptr::RawRefCount,
 
-    // LIFETIMES.tsv: JSC_BORROW → *mut JSGlobalObject
-    pub global_this: *mut JSGlobalObject,
+    // LIFETIMES.tsv: JSC_BORROW → *const JSGlobalObject (opaque FFI handle;
+    // all access goes through `&self` methods, so `*const` preserves the
+    // shared-borrow provenance from callers passing `&JSGlobalObject`).
+    pub global_this: *const JSGlobalObject,
 
     pub last_modified: f64,
     /// Blob name will lazy initialize when getName is called, but
@@ -122,7 +124,7 @@ const _: () = {
         #[link_name = "Blob__fromJSDirect"]
         fn __from_js_direct(value: bun_jsc::JSValue) -> *mut Blob;
         #[link_name = "Blob__create"]
-        fn __create(global: *mut bun_jsc::JSGlobalObject, ptr: *mut Blob) -> bun_jsc::JSValue;
+        fn __create(global: *const bun_jsc::JSGlobalObject, ptr: *mut Blob) -> bun_jsc::JSValue;
     }
     #[cfg(not(all(windows, target_arch = "x86_64")))]
     unsafe extern "C" {
@@ -131,7 +133,7 @@ const _: () = {
         #[link_name = "Blob__fromJSDirect"]
         fn __from_js_direct(value: bun_jsc::JSValue) -> *mut Blob;
         #[link_name = "Blob__create"]
-        fn __create(global: *mut bun_jsc::JSGlobalObject, ptr: *mut Blob) -> bun_jsc::JSValue;
+        fn __create(global: *const bun_jsc::JSGlobalObject, ptr: *mut Blob) -> bun_jsc::JSValue;
     }
 
     impl bun_jsc::JsClass for Blob {
@@ -151,7 +153,7 @@ const _: () = {
             let ptr = Blob::new(self);
             // SAFETY: `global` is live; ownership of `ptr` transfers to the
             // C++ wrapper (freed via `BlobClass__finalize`).
-            unsafe { __create(global as *const _ as *mut _, ptr) }
+            unsafe { __create(global, ptr) }
         }
     }
 };

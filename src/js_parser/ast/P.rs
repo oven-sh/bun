@@ -218,8 +218,8 @@ pub enum RecentlyVisitedTSNamespaceExpressionData {
 }
 
 #[derive(Clone, Copy)]
-pub struct ReactRefreshImportClause {
-    pub name: &'static [u8],
+pub struct ReactRefreshImportClause<'a> {
+    pub name: &'a [u8],
     pub enabled: bool,
     pub r#ref: Ref,
 }
@@ -2000,7 +2000,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         &mut self,
         parts: &mut ListManaged<'a, js_ast::Part>,
         import_path: &'a [u8],
-        clauses: &[ReactRefreshImportClause],
+        clauses: &[ReactRefreshImportClause<'a>],
     ) -> Result<(), bun_core::Error> {
         if self.options.features.hot_module_reloading {
             self.generate_react_refresh_import_hmr::<true>(parts, import_path, clauses)
@@ -2013,7 +2013,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         &mut self,
         parts: &mut ListManaged<'a, js_ast::Part>,
         import_path: &'a [u8],
-        clauses: &[ReactRefreshImportClause],
+        clauses: &[ReactRefreshImportClause<'a>],
     ) -> Result<(), bun_core::Error> {
         // If `hot_module_reloading`, we are going to generate a require call:
         //
@@ -6964,16 +6964,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     break 'hash_arg;
                 }
                 let arg = hook_call.args.slice()[arg_index];
-                // TODO(port): blocked_on: ExprData::write_to_hasher (Expr.rs track-A;
-                // needs SymbolTable trait + bun_core::write_any_to_hasher).
-                // BEHAVIOUR GAP: omitting the initial-state arg from the hash
-                // changes the emitted base64 refresh signature vs Zig and means
-                // editing a useState/useReducer initial value will not force a
-                // remount as the spec intends. Un-gate as soon as
-                // `ExprData::write_to_hasher` lands.
-                #[cfg(any())]
-                arg.data.write_to_hasher(&mut ctx.hasher, self.symbols.as_slice());
-                let _ = arg;
+                arg.data.write_to_hasher(&mut ctx.hasher, self.symbols.as_mut_slice());
             }
         } else {
             // TODO(port): Zig used `inline .e_identifier, .e_import_identifier, .e_commonjs_export_identifier => |id, tag|`

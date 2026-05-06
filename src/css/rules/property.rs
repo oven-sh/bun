@@ -78,95 +78,75 @@ impl PropertyRule {
 }
 
 // ─── PropertyRule parse ───────────────────────────────────────────────────
-// blocked_on: RuleBodyParser, ParserInput, Parser::new signature,
-// SyntaxString::{parse,parse_value}, ParsedComponent::TokenList,
-// ParserError variants.
-// Stub so css_parser's now-un-gated `@property` block path type-checks.
-// Real body is the `#[cfg(any())]` port below.
-#[cfg(not(any()))]
-impl PropertyRule {
-    pub fn parse(
-        _name: DashedIdent,
-        _input: &mut css::Parser,
-        _loc: Location,
-    ) -> css::Result<PropertyRule> {
-        todo!("port: PropertyRule::parse — gated body below")
-    }
-}
-
-#[cfg(any())]
 impl PropertyRule {
     pub fn parse(
         name: DashedIdent,
         input: &mut css::Parser,
         loc: Location,
     ) -> css::Result<PropertyRule> {
-        use css::{ParserError, ParserInput, RuleBodyParser, TokenList};
+        use css::css_parser::{ParserOpts, RuleBodyParser};
+        use css::{ParserError, ParserInput, TokenList};
         let mut p = PropertyRuleDeclarationParser {
             syntax: None,
             inherits: None,
             initial_value: None,
         };
 
-        let mut decl_parser = RuleBodyParser::<PropertyRuleDeclarationParser>::new(input, &mut p);
-        while let Some(decl) = decl_parser.next() {
-            if let Err(e) = decl {
-                return Err(e);
+        // PORT NOTE: split the borrows — `RuleBodyParser` borrows `input`+`p`;
+        // we re-borrow `input` after dropping `decl_parser`.
+        {
+            let mut decl_parser = RuleBodyParser::new(input, &mut p);
+            while let Some(decl) = decl_parser.next() {
+                if let Err(e) = decl {
+                    return Err(e);
+                }
             }
         }
 
         // `syntax` and `inherits` are always required.
-        let parser = decl_parser.parser;
         // TODO(zack): source clones these two, but I omitted here becaues it seems 100% unnecessary
-        let syntax: SyntaxString = match parser.syntax {
+        let syntax: SyntaxString = match p.syntax.take() {
             Some(s) => s,
-            None => return Err(decl_parser.input.new_custom_error(ParserError::AtRuleBodyInvalid)),
+            None => return Err(input.new_custom_error(ParserError::at_rule_body_invalid)),
         };
-        let inherits: bool = match parser.inherits {
+        let inherits: bool = match p.inherits {
             Some(i) => i,
-            None => return Err(decl_parser.input.new_custom_error(ParserError::AtRuleBodyInvalid)),
+            None => return Err(input.new_custom_error(ParserError::at_rule_body_invalid)),
         };
+
+        // SAFETY: `Tokenizer<'a>` owns `allocator: &'a Bump`; the arena outlives
+        // the sub-`ParserInput` constructed below. `'static` is the crate-wide
+        // erasure (PORTING.md §AST crates).
+        let bump: &'static bun_alloc::Arena =
+            unsafe { &*(input.allocator() as *const bun_alloc::Arena) };
 
         // `initial-value` is required unless the syntax is a universal definition.
         let initial_value = match syntax {
             SyntaxString::Universal => {
-                if let Some(val) = parser.initial_value {
-                    let mut i = ParserInput::new(val);
-                    // TODO(port): Parser::new options/import_records params (None, default, None)
-                    let mut p2 = css::Parser::new(&mut i, None, Default::default(), None);
+                if let Some(val) = p.initial_value {
+                    let mut i = ParserInput::new(val, bump);
+                    let mut p2 = css::Parser::new(&mut i, None, ParserOpts::default(), None);
 
                     if p2.is_exhausted() {
                         Some(ParsedComponent::TokenList(TokenList { v: Default::default() }))
                     } else {
-                        match syntax.parse_value(&mut p2) {
-                            Ok(vv) => Some(vv),
-                            Err(e) => return Err(e),
-                        }
+                        Some(syntax.parse_value(&mut p2)?)
                     }
                 } else {
                     None
                 }
             }
-            _ => 'brk: {
-                let Some(val) = parser.initial_value else {
-                    return Err(input.new_custom_error(ParserError::AtRuleBodyInvalid));
+            _ => {
+                let Some(val) = p.initial_value else {
+                    return Err(input.new_custom_error(ParserError::at_rule_body_invalid));
                 };
-                let mut i = ParserInput::new(val);
-                // TODO(port): Parser::new options/import_records params (None, default, None)
-                let mut p2 = css::Parser::new(&mut i, None, Default::default(), None);
-                break 'brk match syntax.parse_value(&mut p2) {
-                    Ok(vv) => Some(vv),
-                    Err(e) => return Err(e),
-                };
+                let mut i = ParserInput::new(val, bump);
+                let mut p2 = css::Parser::new(&mut i, None, ParserOpts::default(), None);
+                Some(syntax.parse_value(&mut p2)?)
             }
         };
 
         Ok(PropertyRule { name, syntax, inherits, initial_value, loc })
-    }
-
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-        // TODO(port): css.implementDeepClone is reflection-based; replace with #[derive(DeepClone)] trait
-        css::implement_deep_clone(self, bump)
     }
 }
 
@@ -182,23 +162,19 @@ pub struct PropertyRuleDeclarationParser {
 // PORT NOTE: Zig's nested `pub const DeclarationParser = struct { ... }`
 // namespaces are structural duck-typing for RuleBodyParser; in Rust these
 // become trait impls.
-//
-// blocked_on: css::{DeclarationParser,RuleBodyItemParser,AtRuleParser,
-// QualifiedRuleParser} trait signatures, SyntaxString::parse, Parser::
-// {expect_ident,current_source_location,position,slice_from,next,
-// new_custom_error,new_error}, ParserError variants, BasicParseErrorKind
-// variants.
-#[cfg(any())]
 const _: () = {
-    use bun_str::strings;
+    use bun_string::strings;
+    use css::css_parser::{
+        AtRuleParser, DeclarationParser, QualifiedRuleParser, RuleBodyItemParser,
+    };
     use css::{BasicParseErrorKind, Maybe, Parser, ParserError, ParserState, Result};
 
-    impl css::DeclarationParser for PropertyRuleDeclarationParser {
+    impl DeclarationParser for PropertyRuleDeclarationParser {
         type Declaration = ();
 
         // TODO(port): the Zig defines a ComptimeStringMap over FieldEnum but never uses it
         // (usage is commented out). Preserved the active if/else-if chain instead.
-        fn parse_value(&mut self, name: &[u8], input: &mut Parser) -> Result<Self::Declaration> {
+        fn parse_value(this: &mut Self, name: &[u8], input: &mut Parser) -> Result<Self::Declaration> {
             // todo_stuff.match_ignore_ascii_case
 
             //   if (Map.getASCIIICaseInsensitive(
@@ -207,15 +183,13 @@ const _: () = {
             //         .syntax => |syntax| {
 
             if strings::eql_case_insensitive_ascii_check_length(b"syntax", name) {
-                let syntax = match SyntaxString::parse(input) {
-                    Ok(vv) => vv,
-                    Err(e) => return Err(e),
-                };
-                self.syntax = Some(syntax);
+                let syntax = SyntaxString::parse(input)?;
+                this.syntax = Some(syntax);
             } else if strings::eql_case_insensitive_ascii_check_length(b"inherits", name) {
                 let location = input.current_source_location();
-                let ident = match input.expect_ident() {
-                    Ok(vv) => vv,
+                // SAFETY: ident borrows parser source/arena; see `css_parser::src_str`.
+                let ident: &'static [u8] = match input.expect_ident() {
+                    Ok(vv) => unsafe { css::css_parser::src_str(vv) },
                     Err(e) => return Err(e),
                 };
                 let inherits = if strings::eql_case_insensitive_ascii_check_length(b"true", ident) {
@@ -225,50 +199,51 @@ const _: () = {
                 } else {
                     return Err(location.new_unexpected_token_error(css::Token::Ident(ident)));
                 };
-                self.inherits = Some(inherits);
+                this.inherits = Some(inherits);
             } else if strings::eql_case_insensitive_ascii_check_length(b"initial-value", name) {
                 // Buffer the value into a string. We will parse it later.
                 let start = input.position();
                 while input.next().is_ok() {}
-                let initial_value = input.slice_from(start);
-                self.initial_value = Some(initial_value);
+                // SAFETY: borrows parser source/arena; see `css_parser::src_str`.
+                let initial_value = unsafe { css::css_parser::src_str(input.slice_from(start)) };
+                this.initial_value = Some(initial_value);
             } else {
-                return Err(input.new_custom_error(ParserError::InvalidDeclaration));
+                return Err(input.new_custom_error(ParserError::invalid_declaration));
             }
 
             Ok(())
         }
     }
 
-    impl css::RuleBodyItemParser for PropertyRuleDeclarationParser {
-        fn parse_qualified(&self) -> bool {
+    impl RuleBodyItemParser for PropertyRuleDeclarationParser {
+        fn parse_qualified(_this: &Self) -> bool {
             false
         }
 
-        fn parse_declarations(&self) -> bool {
+        fn parse_declarations(_this: &Self) -> bool {
             true
         }
     }
 
-    impl css::AtRuleParser for PropertyRuleDeclarationParser {
+    impl AtRuleParser for PropertyRuleDeclarationParser {
         type Prelude = ();
         type AtRule = ();
 
-        fn parse_prelude(&mut self, name: &[u8], input: &mut Parser) -> Result<Self::Prelude> {
-            Err(input.new_error(BasicParseErrorKind::AtRuleInvalid(name)))
+        fn parse_prelude(_this: &mut Self, name: &[u8], input: &mut Parser) -> Result<Self::Prelude> {
+            Err(input.new_error(BasicParseErrorKind::at_rule_invalid(name as *const [u8])))
         }
 
         fn parse_block(
-            &mut self,
+            _this: &mut Self,
             _prelude: Self::Prelude,
             _start: &ParserState,
             input: &mut Parser,
         ) -> Result<Self::AtRule> {
-            Err(input.new_error(BasicParseErrorKind::AtRuleBodyInvalid))
+            Err(input.new_error(BasicParseErrorKind::at_rule_body_invalid))
         }
 
         fn rule_without_block(
-            &mut self,
+            _this: &mut Self,
             _prelude: Self::Prelude,
             _start: &ParserState,
         ) -> Maybe<Self::AtRule, ()> {
@@ -276,21 +251,21 @@ const _: () = {
         }
     }
 
-    impl css::QualifiedRuleParser for PropertyRuleDeclarationParser {
+    impl QualifiedRuleParser for PropertyRuleDeclarationParser {
         type Prelude = ();
         type QualifiedRule = ();
 
-        fn parse_prelude(&mut self, input: &mut Parser) -> Result<Self::Prelude> {
-            Err(input.new_error(BasicParseErrorKind::QualifiedRuleInvalid))
+        fn parse_prelude(_this: &mut Self, input: &mut Parser) -> Result<Self::Prelude> {
+            Err(input.new_error(BasicParseErrorKind::qualified_rule_invalid))
         }
 
         fn parse_block(
-            &mut self,
+            _this: &mut Self,
             _prelude: Self::Prelude,
             _start: &ParserState,
             input: &mut Parser,
         ) -> Result<Self::QualifiedRule> {
-            Err(input.new_error(BasicParseErrorKind::QualifiedRuleInvalid))
+            Err(input.new_error(BasicParseErrorKind::qualified_rule_invalid))
         }
     }
 };

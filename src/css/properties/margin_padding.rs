@@ -761,7 +761,67 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
         dest: &mut DeclarationList,
         context: &mut PropertyHandlerContext,
     ) -> bool {
-        // Zig: `switch (@as(PropertyIdTag, property.*))`
+        // Zig: `switch (@as(PropertyIdTag, property.*))` — the *raw* union
+        // discriminant. `property_id().tag()` is wrong for that:
+        // `Property::Unparsed(u).property_id()` returns the *inner*
+        // `u.property_id`, not `Unparsed`, which would route an unparsed
+        // `margin-top: var(--x)` into the `S::TOP` arm and panic in
+        // `extract_top`. Match the `Unparsed` variant directly first.
+        if let Property::Unparsed(unparsed) = property {
+            let id = unparsed.property_id.tag();
+            if id == S::TOP
+                || id == S::BOTTOM
+                || id == S::LEFT
+                || id == S::RIGHT
+                || id == S::BLOCK_START
+                || id == S::BLOCK_END
+                || id == S::INLINE_START
+                || id == S::INLINE_END
+                || id == S::BLOCK_SHORTHAND
+                || id == S::INLINE_SHORTHAND
+                || id == S::SHORTHAND
+            {
+                let bump = dest.bump();
+                // Even if we weren't able to parse the value (e.g. due to var() references),
+                // we can still add vendor prefixes to the property itself.
+                if id == S::BLOCK_START {
+                    self.logical_property_helper(
+                        LogicalSlot::BlockStart,
+                        Property::Unparsed(unparsed.deep_clone(bump)),
+                        dest,
+                        context,
+                    );
+                } else if id == S::BLOCK_END {
+                    self.logical_property_helper(
+                        LogicalSlot::BlockEnd,
+                        Property::Unparsed(unparsed.deep_clone(bump)),
+                        dest,
+                        context,
+                    );
+                } else if id == S::INLINE_START {
+                    self.logical_property_helper(
+                        LogicalSlot::InlineStart,
+                        Property::Unparsed(unparsed.deep_clone(bump)),
+                        dest,
+                        context,
+                    );
+                } else if id == S::INLINE_END {
+                    self.logical_property_helper(
+                        LogicalSlot::InlineEnd,
+                        Property::Unparsed(unparsed.deep_clone(bump)),
+                        dest,
+                        context,
+                    );
+                } else {
+                    self.flush(dest, context);
+                    dest.push(Property::Unparsed(unparsed.deep_clone(bump)));
+                }
+            } else {
+                return false;
+            }
+            return true;
+        }
+
         let tag = property.property_id().tag();
         if tag == S::TOP {
             self.property_helper(
@@ -948,63 +1008,6 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
             self.inline_start = None;
             self.inline_end = None;
             self.has_any = true;
-        } else if tag == PropertyIdTag::Unparsed {
-            // Zig: `property.unparsed.property_id`
-            let unparsed = match property {
-                Property::Unparsed(u) => u,
-                _ => unreachable!(),
-            };
-            let id = unparsed.property_id.tag();
-            if id == S::TOP
-                || id == S::BOTTOM
-                || id == S::LEFT
-                || id == S::RIGHT
-                || id == S::BLOCK_START
-                || id == S::BLOCK_END
-                || id == S::INLINE_START
-                || id == S::INLINE_END
-                || id == S::BLOCK_SHORTHAND
-                || id == S::INLINE_SHORTHAND
-                || id == S::SHORTHAND
-            {
-                let bump = dest.bump();
-                // Even if we weren't able to parse the value (e.g. due to var() references),
-                // we can still add vendor prefixes to the property itself.
-                if id == S::BLOCK_START {
-                    self.logical_property_helper(
-                        LogicalSlot::BlockStart,
-                        Property::Unparsed(unparsed.deep_clone(bump)),
-                        dest,
-                        context,
-                    );
-                } else if id == S::BLOCK_END {
-                    self.logical_property_helper(
-                        LogicalSlot::BlockEnd,
-                        Property::Unparsed(unparsed.deep_clone(bump)),
-                        dest,
-                        context,
-                    );
-                } else if id == S::INLINE_START {
-                    self.logical_property_helper(
-                        LogicalSlot::InlineStart,
-                        Property::Unparsed(unparsed.deep_clone(bump)),
-                        dest,
-                        context,
-                    );
-                } else if id == S::INLINE_END {
-                    self.logical_property_helper(
-                        LogicalSlot::InlineEnd,
-                        Property::Unparsed(unparsed.deep_clone(bump)),
-                        dest,
-                        context,
-                    );
-                } else {
-                    self.flush(dest, context);
-                    dest.push(Property::Unparsed(unparsed.deep_clone(bump)));
-                }
-            } else {
-                return false;
-            }
         } else {
             return false;
         }

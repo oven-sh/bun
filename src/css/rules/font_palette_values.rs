@@ -46,35 +46,19 @@ impl FontPaletteValuesRule {
     }
 }
 
-// Stub so css_parser's now-un-gated `@font-palette-values` block path
-// type-checks. Real body is the `#[cfg(any())]` port below.
-#[cfg(not(any()))]
-impl FontPaletteValuesRule {
-    pub fn parse(_name: DashedIdent, _input: &mut css::Parser, _loc: Location) -> css::Result<FontPaletteValuesRule> {
-        todo!("port: FontPaletteValuesRule::parse — gated body below")
-    }
-}
-
-// blocked_on: RuleBodyParser, FontPaletteValuesDeclarationParser trait impls,
-// DeepClone.
-#[cfg(any())]
 impl FontPaletteValuesRule {
     pub fn parse(name: DashedIdent, input: &mut css::Parser, loc: Location) -> css::Result<FontPaletteValuesRule> {
         let mut decl_parser = FontPaletteValuesDeclarationParser {};
-        let mut parser = css::RuleBodyParser::<FontPaletteValuesDeclarationParser>::new(input, &mut decl_parser);
+        let mut parser = css::css_parser::RuleBodyParser::new(input, &mut decl_parser);
         let mut properties: ArrayList<FontPaletteValuesProperty> = ArrayList::new();
         while let Some(result) = parser.next() {
-            if let Some(decl) = result.as_value() {
+            if let Ok(decl) = result {
                 properties.push(decl);
                 // PERF(port): was `append(input.allocator(), decl) catch unreachable`
             }
         }
 
         Ok(FontPaletteValuesRule { name, properties, loc })
-    }
-
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-        css::implement_deep_clone(self, bump)
     }
 }
 

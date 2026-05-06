@@ -94,8 +94,35 @@ pub struct Options<'a> {
 
 impl<'a> Default for Options<'a> {
     fn default() -> Self {
-        // Zig: `macro_context = undefined` — modeled as `None`; caller must set before use.
-        unimplemented!("Options::default() requires macro_context; use Options::init()")
+        // Zig: `macro_context = undefined` — modeled as `None`; caller must set
+        // before use. This impl exists so `_parse` can `core::mem::take` the
+        // real options out of `Parser` (moving the heap-owning `jsx: Pragma`
+        // by value) instead of bitwise-copying it and double-freeing on drop.
+        Options {
+            jsx: options::JSX::Pragma::default(),
+            ts: false,
+            keep_names: true,
+            ignore_dce_annotations: false,
+            preserve_unused_imports_ts: false,
+            use_define_for_class_fields: false,
+            suppress_warnings_about_weird_code: true,
+            filepath_hash_for_hmr: 0,
+            features: RuntimeFeatures::default(),
+            tree_shaking: false,
+            bundle: false,
+            code_splitting: false,
+            package_version: b"",
+            macro_context: None,
+            warn_about_unbundled_modules: true,
+            allow_unresolved: &options::AllowUnresolved::DEFAULT,
+            module_type: options::ModuleType::Unknown,
+            output_format: options::Format::Esm,
+            transform_only: false,
+            import_meta_main_value: None,
+            lower_import_meta_main_for_node_js: false,
+            framework: None,
+            repl_mode: false,
+        }
     }
 }
 
@@ -532,6 +559,24 @@ impl<'a> Parser<'a> {
         // SAFETY: see `log_mut` — `self.log` aliases the `&'a mut Log` handed
         // to the lexer at `Parser::init`; reading the error count is sound.
         let orig_error_count = unsafe { self.log.as_ref() }.errors;
+        // Zig moves lexer/options by value into `P` (Parser.zig:339) and only
+        // `defer p.lexer.deinit()` cleans up — Zig has no implicit destructor
+        // on `Parser.lexer`. In Rust, `Lexer` owns `Vec`s (comments_to_preserve_before,
+        // temp_buffer_u16, all_comments) and `Options` owns `jsx: Pragma` boxes,
+        // so a bitwise `ptr::read` would double-free when `self` later drops.
+        // Move them out, leaving inert placeholders behind.
+        let lexer = core::mem::replace(
+            &mut self.lexer,
+            js_lexer::Lexer::init_without_reading(
+                // SAFETY: `self.log` aliases the `&'a mut Log` originally given
+                // to `Parser::init`; the prior unique borrow lived in the lexer
+                // we just moved out, so reborrowing here is sound.
+                unsafe { &mut *self.log.as_ptr() },
+                self.source,
+                self.bump,
+            ),
+        );
+        let options = core::mem::take(&mut self.options);
         let mut p = P::<TS, JX, false>::init(
             self.bump,
             // SAFETY: handing the unique `&'a mut Log` to the inner parser;
@@ -540,10 +585,8 @@ impl<'a> Parser<'a> {
             unsafe { &mut *self.log.as_ptr() },
             self.source,
             self.define,
-            // SAFETY: Zig moves lexer/options by value into `P`; `Parser` is
-            // not reused after `_parse` returns.
-            unsafe { core::ptr::read(&self.lexer) },
-            unsafe { core::ptr::read(&self.options) },
+            lexer,
+            options,
         )?;
 
         if p.options.features.hot_module_reloading {
@@ -579,7 +622,7 @@ impl<'a> Parser<'a> {
         }
 
         // Detect a leading "// @bun" pragma
-        if self.options.features.dont_bundle_twice {
+        if p.options.features.dont_bundle_twice {
             if let Some(pragma) = self.has_bun_pragma(!hashbang.is_empty()) {
                 return Ok(js_ast::Result::AlreadyBundled(pragma));
             }

@@ -61,6 +61,7 @@ impl Globals {
 }
 
 // `fs::Path::init` is not `const fn`; lazily build the path.
+#[allow(dead_code)] // used only in the cfg(any())-gated json-parse arm below
 fn defines_path() -> fs::Path {
     let mut p = fs::Path::init(b"defines.json");
     p.namespace = b"internal";

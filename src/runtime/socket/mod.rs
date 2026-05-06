@@ -56,7 +56,7 @@ pub use ssl_config::SSLConfig;
 // un-gate; now that the real submodules compile, re-export instead so
 // `socket_body`/`tls_socket_functions`/`uws_handlers` all agree on one type.
 
-pub use socket_body::{NativeCallbacks, NewSocket, SocketMode, TCPSocket, TLSSocket};
+pub use socket_body::{Flags as SocketFlags, NativeCallbacks, NewSocket, SocketMode, TCPSocket, TLSSocket};
 pub use handlers::{Handlers, SocketConfig};
 pub use listener::Listener;
 pub use socket_address::SocketAddress;

@@ -836,15 +836,15 @@ impl<'a> Snapshots<'a> {
 
             // PORT NOTE: avoid `Jest::runner()` (aliases `&mut TestRunner` over live `&mut self`).
             // SAFETY: see `parse_file` — raw-pointer projection to disjoint `.files` field.
-            let test_file = unsafe {
+            let test_file_source = unsafe {
                 let p = Jest::RUNNER.expect("Jest runner not set").as_ptr();
-                (*p).files.get(file_id)
+                &(*p).files.items_source()[file_id as usize]
             };
-            let test_filename = test_file.source.path.name.filename;
-            let dir_path = test_file.source.path.name.dir_with_trailing_slash();
+            let test_filename = test_file_source.path.name.filename;
+            let dir_path = test_file_source.path.name.dir_with_trailing_slash();
 
             let mut snapshot_file_path_buf = PathBuffer::uninit();
-            let buf = snapshot_file_path_buf.as_mut_slice();
+            let buf = snapshot_file_path_buf.0.as_mut_slice();
             let mut pos = 0usize;
             buf[pos..pos + dir_path.len()].copy_from_slice(dir_path);
             pos += dir_path.len();
@@ -868,7 +868,7 @@ impl<'a> Snapshots<'a> {
                         self.snapshot_dir_path = Some(core::ptr::NonNull::from(dir_path));
                     }
                     bun_sys::Result::Err(err) => match err.get_errno() {
-                        bun_sys::Errno::EXIST => {
+                        bun_sys::Errno::EEXIST => {
                             // SAFETY: see above — read-only backref, never written through.
                             self.snapshot_dir_path = Some(core::ptr::NonNull::from(dir_path));
                         }

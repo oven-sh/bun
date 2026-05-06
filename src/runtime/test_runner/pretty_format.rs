@@ -1868,11 +1868,10 @@ impl<'a> Formatter<'a> {
                         // ALWAYS `None` until codegen lands; Immediate values fall through to
                         // the generic Object printer instead of `Immediate (#N)` per
                         // .zig:1255-1261. Replace with `value.as_::<crate::timer::ImmediateObject>()`.
-                        
+                        #[cfg(any())]
                         {
                             value.as_::<crate::timer::ImmediateObject>()
                         }
-                        #[cfg(any())]
                         {
                             None::<*mut crate::timer::ImmediateObject>
                         }
@@ -1903,11 +1902,10 @@ impl<'a> Formatter<'a> {
                         // ALWAYS `None` until codegen lands; BuildMessage values fall through
                         // to the generic Object printer instead of `msg.writeFormat` per
                         // .zig:1262-1264. Replace with `value.as_::<crate::api::BuildMessage>()`.
-                        
+                        #[cfg(any())]
                         {
                             value.as_::<crate::api::BuildMessage>()
                         }
-                        #[cfg(any())]
                         {
                             None::<*mut crate::api::BuildMessage>
                         }
@@ -1925,11 +1923,10 @@ impl<'a> Formatter<'a> {
                         // ALWAYS `None` until codegen lands; ResolveMessage values fall through
                         // to the generic Object printer instead of `msg.writeFormat` per
                         // .zig:1265-1268. Replace with `value.as_::<crate::api::ResolveMessage>()`.
-                        
+                        #[cfg(any())]
                         {
                             value.as_::<crate::api::ResolveMessage>()
                         }
-                        #[cfg(any())]
                         {
                             None::<*mut crate::api::ResolveMessage>
                         }
@@ -2246,7 +2243,7 @@ impl<'a> Formatter<'a> {
                     let mut needs_space = false;
                     let mut tag_name_str = ZigString::init(b"");
 
-                    let mut tag_name_slice: ZigString::Slice = ZigString::Slice::EMPTY;
+                    let mut tag_name_slice: ZigStringSlice = ZigStringSlice::EMPTY;
                     let mut is_tag_kind_primitive = false;
 
                     // PORT NOTE: defer if (tag_name_slice.isAllocated()) tag_name_slice.deinit()

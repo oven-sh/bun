@@ -171,6 +171,23 @@ pub mod node_types {
         /// Zig: `deinit()` — only the `.path` arm owns memory; fds are not closed.
         #[inline]
         pub fn deinit(&self) {}
+        /// Zig: `deinitAndUnprotect()` — stub: nothing to unprotect on this
+        /// thin shim (the real `node::types` version unprotects JS handles).
+        #[inline]
+        pub fn deinit_and_unprotect(&mut self) {}
+        pub fn path_slice(&self) -> &[u8] {
+            match self { Self::Path(p) => p.slice(), Self::Fd(_) => b"" }
+        }
+        #[inline]
+        pub fn to_thread_safe(&mut self) {
+            // stub: PathLike here is already heap-owned.
+        }
+        pub fn from_js(
+            _global: &bun_jsc::JSGlobalObject,
+            _args: &mut bun_jsc::ArgumentsSlice<'_>,
+        ) -> bun_jsc::JsResult<Option<Self>> {
+            todo!("blocked_on: crate::node::types::PathOrFileDescriptor::from_js (webcore::node_types stub swap)")
+        }
     }
     /// `node.PathOrBlob` — used by `Blob.writeFile*`.
     pub enum PathOrBlob {

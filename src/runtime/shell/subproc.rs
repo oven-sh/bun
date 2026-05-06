@@ -1922,13 +1922,13 @@ impl PipeReader {
 
         match core::mem::replace(&mut self.state, PipeReaderState::Done(Box::default())) {
             PipeReaderState::Pending => {
-                let stream = ReadableStream::from_pipe(global_object, self, &mut self.reader);
+                let stream = ReadableStream::from_pipe(global_object, self, &mut self.reader)?;
                 self.state = PipeReaderState::Done(Box::default());
                 Ok(stream)
             }
             PipeReaderState::Done(bytes) => {
                 self.state = PipeReaderState::Done(Box::default());
-                Ok(ReadableStream::from_owned_slice(global_object, bytes, 0))
+                ReadableStream::from_owned_slice(global_object, bytes, 0)
             }
             PipeReaderState::Err(_err) => {
                 let empty = ReadableStream::empty(global_object)?;
@@ -1945,8 +1945,10 @@ impl PipeReader {
     pub fn to_buffer(&mut self, global_this: &JSGlobalObject) -> JSValue {
         match &mut self.state {
             PipeReaderState::Done(bytes) => {
-                let bytes = core::mem::take(bytes);
-                MarkedArrayBuffer::from_bytes(bytes, jsc::TypedArrayType::Uint8Array)
+                // PORT NOTE: `MarkedArrayBuffer::from_bytes` takes `&mut [u8]`
+                // and adopts the allocation; leak the Box so it isn't double-freed.
+                let leaked: &mut [u8] = Box::leak(core::mem::take(bytes));
+                MarkedArrayBuffer::from_bytes(leaked, jsc::JSType::Uint8Array)
                     .to_node_buffer(global_this)
             }
             _ => JSValue::UNDEFINED,

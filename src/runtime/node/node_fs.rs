@@ -953,8 +953,8 @@ impl FsReturn for Null {
     fn fs_to_js(&mut self, _global: &JSGlobalObject) -> JsResult<JSValue> { Ok(JSValue::NULL) }
 }
 impl_fs_return_stub!(
-    Stats, FD, ZigString, StringOrBuffer, ret::StringOrUndefined,
-    ret::Read, ret::Write, node::StatFS, ret::Readdir, ret::StatOrNotFound,
+    Stats, FD, ZigString, StringOrBuffer, StringOrUndefined,
+    ret::Read, ret::Write, node::StatFS, ret::Readdir, StatOrNotFound,
 );
 
 /// `Taskable` glue so `ConcurrentTask::create_from(this)` resolves on the

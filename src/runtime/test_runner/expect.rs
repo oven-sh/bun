@@ -1983,7 +1983,8 @@ impl ExpectCloseTo {
 
     // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn call(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let args = call_frame.arguments_old::<2>().slice();
+        let args_buf = call_frame.arguments_old::<2>();
+        let args = args_buf.slice();
 
         if args.is_empty() || !args[0].is_number() {
             return Err(global_this.throw_pretty(
@@ -2030,7 +2031,8 @@ impl ExpectObjectContaining {
 
     // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn call(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let args = call_frame.arguments_old::<1>().slice();
+        let args_buf = call_frame.arguments_old::<1>();
+        let args = args_buf.slice();
 
         if args.is_empty() || !args[0].is_object() {
             const FMT: &str = "<d>expect.<r>objectContaining<d>(<r>object<d>)<r>\n\nExpected an object\n";

@@ -20,8 +20,7 @@ use bun_uws_sys as uws_sys;
 
 use crate::api::bun_secure_context::SecureContext;
 use crate::node::path as node_path;
-use crate::socket::{Handlers, NewSocket, SocketConfig, SocketMode, TCPSocket, TLSSocket};
-use crate::socket::socket_body::Flags as SocketFlags;
+use crate::socket::{Handlers, NewSocket, SocketConfig, SocketFlags, SocketMode, TCPSocket, TLSSocket};
 use crate::socket::SSLConfig;
 
 #[cfg(windows)]
@@ -127,7 +126,7 @@ impl Listener {
         if args.len < 1
             || (matches!(this.listener, ListenerType::None) && this.handlers.active_connections == 0)
         {
-            return Err(global.throw("Expected 1 argument"));
+            return Err(global.throw("{}", format_args!("Expected 1 argument")));
         }
 
         let opts = args.ptr[0];

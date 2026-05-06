@@ -8,7 +8,7 @@ use bun_jsc::{
     CallFrame, JSGlobalObject, JSValue, JsClass, JsRef, JsResult, MarkedArgumentBuffer,
     Ref as JscRef, StringJsc, SysErrorJsc, SystemError,
 };
-use bun_str::{self as bun_string, String as BunString, ZigString, ZigStringSlice};
+use bun_str::{String as BunString, ZigStringSlice};
 
 use crate::node::validators;
 use bun_cares_sys::c_ares_draft as c_ares;

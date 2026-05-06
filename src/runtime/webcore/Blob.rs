@@ -1930,25 +1930,26 @@ pub fn write_file_internal(
     options: WriteFileOptions,
 ) -> JsResult<JSValue> {
     if data.is_empty_or_undefined_or_null() {
-        return global_this.throw_invalid_arguments(
+        return Err(global_this.throw_invalid_arguments(
             "Bun.write(pathOrFdOrBlob, blob) expects a Blob-y thing to write",
-        );
+        ));
     }
-    let mut path_or_blob = path_or_blob_.clone();
-    if let PathOrBlob::Blob(ref blob) = path_or_blob {
+    // PORT NOTE: Zig copies `path_or_blob_.*`; Blob is non-Clone, so reborrow.
+    let path_or_blob = &mut *path_or_blob_;
+    if let PathOrBlob::Blob(ref blob) = *path_or_blob {
         let Some(blob_store) = &blob.store else {
-            return global_this.throw_invalid_arguments("Blob is detached");
+            return Err(global_this.throw_invalid_arguments("Blob is detached"));
         };
-        debug_assert!(!matches!(blob_store.data, Store::Data::Bytes(_)));
+        debug_assert!(!matches!(blob_store.data, store::Data::Bytes(_)));
         // TODO only reset last_modified on success paths instead of resetting
         // last_modified at the beginning for better performance.
-        if let Store::Data::File(ref mut file) = blob_store.data_mut() {
+        if let store::Data::File(ref mut file) = *blob_store.data_mut() {
             file.last_modified = jsc::INIT_TIMESTAMP;
         }
     }
 
     let input_store: Option<StoreRef> =
-        if let PathOrBlob::Blob(ref b) = path_or_blob { b.store.clone() } else { None };
+        if let PathOrBlob::Blob(ref b) = *path_or_blob { b.store.clone() } else { None };
     // PORT NOTE: Zig manually ref/deref's; StoreRef clone+drop achieves the same.
     let _input_store_hold = input_store;
 
@@ -1956,13 +1957,13 @@ pub fn write_file_internal(
 
     if let Some(mkdir) = options.mkdirp_if_not_exists {
         if mkdir
-            && matches!(path_or_blob, PathOrBlob::Blob(ref b)
+            && matches!(*path_or_blob, PathOrBlob::Blob(ref b)
                 if b.store.is_some()
-                    && matches!(b.store.as_ref().unwrap().data, Store::Data::File(ref f)
-                        if matches!(f.pathlike, node::PathLike::Fd(_))))
+                    && matches!(b.store.as_ref().unwrap().data, store::Data::File(ref f)
+                        if matches!(f.pathlike, PathOrFileDescriptor::Fd(_))))
         {
-            return global_this
-                .throw_invalid_arguments("Cannot create a directory for a file descriptor");
+            return Err(global_this
+                .throw_invalid_arguments("Cannot create a directory for a file descriptor"));
         }
     }
 
@@ -1972,18 +1973,18 @@ pub fn write_file_internal(
     // except if you're on Windows. Windows I/O is slower. Let's not even try.
     #[cfg(not(windows))]
     {
-        let fast_path_ok = matches!(path_or_blob, PathOrBlob::Path(_))
-            || (matches!(path_or_blob, PathOrBlob::Blob(ref b)
+        let fast_path_ok = matches!(*path_or_blob, PathOrBlob::Path(_))
+            || (matches!(*path_or_blob, PathOrBlob::Blob(ref b)
                 if b.offset == 0 && !b.is_s3()
                     && !(b.store.is_some()
-                        && matches!(b.store.as_ref().unwrap().data, Store::Data::File(ref f)
+                        && matches!(b.store.as_ref().unwrap().data, store::Data::File(ref f)
                             if f.mode != 0 && bun_core::kind_from_mode(f.mode) == bun_core::FileKind::File))));
         if fast_path_ok {
             if data.is_string() {
                 let len = data.get_length(global_this)?;
                 if len < 256 * 1024 {
                     let str = data.to_bun_string(global_this)?;
-                    let pathlike: PathOrFileDescriptor = match &path_or_blob {
+                    let pathlike: PathOrFileDescriptor = match &*path_or_blob {
                         PathOrBlob::Path(p) => p.clone(),
                         PathOrBlob::Blob(b) => b.store.as_ref().unwrap().data.as_file().pathlike.clone(),
                     };
@@ -1998,7 +1999,7 @@ pub fn write_file_internal(
                 }
             } else if let Some(buffer_view) = data.as_array_buffer(global_this) {
                 if buffer_view.byte_len < 256 * 1024 {
-                    let pathlike: PathOrFileDescriptor = match &path_or_blob {
+                    let pathlike: PathOrFileDescriptor = match &*path_or_blob {
                         PathOrBlob::Path(p) => p.clone(),
                         PathOrBlob::Blob(b) => b.store.as_ref().unwrap().data.as_file().pathlike.clone(),
                     };
@@ -2016,25 +2017,20 @@ pub fn write_file_internal(
     }
 
     // if path_or_blob is a path, convert it into a file blob
-    let mut destination_blob: Blob = if let PathOrBlob::Path(_) = path_or_blob {
-        let new_blob = Blob::find_or_create_file_from_path::<true>(
-            path_or_blob_.as_path_mut(),
-            global_this,
-        );
-        if new_blob.store.is_none() {
-            return global_this
-                .throw_invalid_arguments("Writing to an empty blob is not implemented yet");
+    let mut destination_blob: Blob = match path_or_blob {
+        PathOrBlob::Path(ref mut path) => {
+            let new_blob = Blob::find_or_create_file_from_path::<true>(path, global_this);
+            if new_blob.store.is_none() {
+                return Err(global_this
+                    .throw_invalid_arguments("Writing to an empty blob is not implemented yet"));
+            }
+            new_blob
         }
-        new_blob
-    } else {
-        path_or_blob.as_blob().dupe()
-    };
-
-    if cfg!(debug_assertions) {
-        if let PathOrBlob::Blob(ref b) = path_or_blob {
+        PathOrBlob::Blob(ref b) => {
             debug_assert!(b.store.is_some());
+            b.dupe()
         }
-    }
+    };
 
     // TODO: implement a writev() fast path
     let mut source_blob: Blob = 'brk: {

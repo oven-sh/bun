@@ -77,7 +77,7 @@ impl Collection {
     // filter_buffer. All of that is covered by field Drop (Box, Vec<QueuedDescribe>, Vec<u8>).
     // No explicit `impl Drop for Collection` needed.
 
-    fn bun_test(&mut self) -> &mut BunTest {
+    fn bun_test(&mut self) -> &mut BunTest<'_> {
         // SAFETY: self points to BunTest.collection (Collection is only ever embedded there).
         unsafe {
             &mut *(self as *mut Self as *mut u8)

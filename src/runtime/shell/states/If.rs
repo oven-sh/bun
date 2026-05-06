@@ -150,7 +150,7 @@ impl If {
                             // SAFETY: `i` was bounds-checked against
                             // `stmts_len()`.
                             let stmt_node: *const ast::Stmt =
-                                unsafe { &(*exec.stmts)[i as usize] as *const _ };
+                                unsafe { &(&*exec.stmts)[i as usize] as *const _ };
                             Action::SpawnStmt(stmt_node)
                         }
                     }

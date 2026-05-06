@@ -4417,17 +4417,20 @@ impl NodeFS {
                     if let Some(file) = graph.find(path.as_bytes()) {
                         let contents = file.contents.as_bytes();
                         return if args.encoding == Encoding::Buffer {
+                            // PORTING.md §Forbidden bans `Vec::leak()`; round-trip through
+                            // `into_boxed_slice()` so the allocation layout JSC frees with
+                            // matches what we hand it (capacity == len).
+                            let owned = contents.to_vec().into_boxed_slice();
                             Maybe::Ok(ret::ReadFileWithOptions::Buffer(
-                                Buffer::from_bytes(contents.to_vec().leak(), bun_jsc::JSType::Uint8Array),
+                                Buffer::from_bytes(Box::leak(owned), bun_jsc::JSType::Uint8Array),
                             ))
                         } else if string_type == ReadFileStringType::Default {
                             Maybe::Ok(ret::ReadFileWithOptions::String(contents.to_vec().into_boxed_slice()))
                         } else {
                             let mut z = contents.to_vec();
                             z.push(0);
-                            // SAFETY: NUL just appended.
                             Maybe::Ok(ret::ReadFileWithOptions::NullTerminated(
-                                unsafe { Box::from_raw(ZStr::from_raw_mut(z.leak().as_mut_ptr(), contents.len())) },
+                                bun_core::ZBox::from_vec_with_nul(z),
                             ))
                         };
                     }
@@ -4497,9 +4500,9 @@ impl NodeFS {
                     // to the `Buffer::from_bytes(dupe)` branch which Zig also uses
                     // when `this.vm == null`.
                     // TODO(port-jsc): re-introduce the create_buffer fast-path.
-                    let dup = temporary_read_buffer_before_stat_call.to_vec();
+                    let dup = temporary_read_buffer_before_stat_call.to_vec().into_boxed_slice();
                     Maybe::Ok(ret::ReadFileWithOptions::Buffer(
-                        Buffer::from_bytes(dup.leak(), bun_jsc::JSType::Uint8Array),
+                        Buffer::from_bytes(Box::leak(dup), bun_jsc::JSType::Uint8Array),
                     ))
                 }
                 _ => {
@@ -4509,11 +4512,9 @@ impl NodeFS {
                         ))
                     } else {
                         let mut z = temporary_read_buffer_before_stat_call.to_vec();
-                        let n = z.len();
                         z.push(0);
-                        // SAFETY: NUL just appended.
                         Maybe::Ok(ret::ReadFileWithOptions::NullTerminated(
-                            unsafe { Box::from_raw(ZStr::from_raw_mut(z.leak().as_mut_ptr(), n)) },
+                            bun_core::ZBox::from_vec_with_nul(z),
                         ))
                     }
                 }
@@ -4627,7 +4628,7 @@ impl NodeFS {
                     if string_type == ReadFileStringType::Default {
                         Maybe::Ok(ret::ReadFileWithOptions::String(Box::<[u8]>::default()))
                     } else {
-                        Maybe::Ok(ret::ReadFileWithOptions::NullTerminated(ZStr::empty_box()))
+                        Maybe::Ok(ret::ReadFileWithOptions::NullTerminated(bun_core::ZBox::from_vec_with_nul(vec![0u8])))
                     }
                 }
             };

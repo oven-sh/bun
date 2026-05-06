@@ -534,11 +534,159 @@ impl SideEffects {
         if result.is_missing() { None } else { Some(result) }
     }
 
+    fn find_identifiers(binding: Binding, decls: &mut Vec<G::Decl>) {
+        match binding.data {
+            ast::binding::Data::BIdentifier(_) => {
+                decls.push(G::Decl { binding, value: None });
+            }
+            ast::binding::Data::BArray(array) => {
+                // SAFETY: arena-owned; pointer is non-null while the AST is live.
+                let items = unsafe { &*(*array).items };
+                for item in items {
+                    Self::find_identifiers(item.binding, decls);
+                }
+            }
+            ast::binding::Data::BObject(obj) => {
+                // SAFETY: arena-owned; pointer is non-null while the AST is live.
+                let properties = unsafe { &*(*obj).properties };
+                for item in properties {
+                    Self::find_identifiers(item.value, decls);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn should_keep_stmts_in_dead_control_flow(stmts: *mut [Stmt], bump: &Bump) -> bool {
+        // SAFETY: arena-owned slice; pointer is non-null while the AST is live.
+        let stmts = unsafe { &*stmts };
+        for child in stmts {
+            if Self::should_keep_stmt_in_dead_control_flow(*child, bump) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// If this is in a dead branch, then we want to trim as much dead code as we
+    /// can. Everything can be trimmed except for hoisted declarations ("var" and
+    /// "function"), which affect the parent scope. For example:
+    ///
+    ///   function foo() {
+    ///     if (false) { var x; }
+    ///     x = 1;
+    ///   }
+    ///
+    /// We can't trim the entire branch as dead or calling foo() will incorrectly
+    /// assign to a global variable instead.
+    ///
+    /// Caller is expected to first check `p.options.dead_code_elimination` so we only check it once.
     pub fn should_keep_stmt_in_dead_control_flow(stmt: Stmt, bump: &Bump) -> bool {
-        // blocked_on: BindingData variant matching + Binding::extract_decls_for_binding;
-        //   StmtData::SLocal decl walk (BabyList<Decl>); Stmt::allocate arity. _draft:640.
-        let _ = (stmt, bump);
-        true
+        match stmt.data {
+            // Omit these statements entirely
+            StmtData::SEmpty(_)
+            | StmtData::SExpr(_)
+            | StmtData::SThrow(_)
+            | StmtData::SReturn(_)
+            | StmtData::SBreak(_)
+            | StmtData::SContinue(_)
+            | StmtData::SClass(_)
+            | StmtData::SDebugger(_) => false,
+
+            StmtData::SLocal(mut local) => {
+                if local.kind != ast::S::Kind::KVar {
+                    // Omit these statements entirely
+                    return false;
+                }
+
+                // Omit everything except the identifiers
+
+                // common case: single var foo = blah, don't need to allocate
+                if local.decls.len == 1
+                    && matches!(
+                        local.decls.at(0).binding.data,
+                        ast::binding::Data::BIdentifier(_)
+                    )
+                {
+                    let prev_binding = local.decls.at(0).binding;
+                    *local.decls.mut_(0) = G::Decl { binding: prev_binding, value: None };
+                    return true;
+                }
+
+                let mut decls: Vec<G::Decl> = Vec::with_capacity(local.decls.len as usize);
+                for i in 0..(local.decls.len as usize) {
+                    let binding = local.decls.at(i).binding;
+                    Self::find_identifiers(binding, &mut decls);
+                }
+
+                local.decls = G::DeclList::move_from_list(decls);
+                true
+            }
+
+            StmtData::SBlock(block) => {
+                Self::should_keep_stmts_in_dead_control_flow(block.stmts, bump)
+            }
+
+            StmtData::STry(try_stmt) => {
+                if Self::should_keep_stmts_in_dead_control_flow(try_stmt.body, bump) {
+                    return true;
+                }
+                if let Some(catch_stmt) = &try_stmt.catch_ {
+                    if Self::should_keep_stmts_in_dead_control_flow(catch_stmt.body, bump) {
+                        return true;
+                    }
+                }
+                if let Some(finally_stmt) = &try_stmt.finally {
+                    if Self::should_keep_stmts_in_dead_control_flow(finally_stmt.stmts, bump) {
+                        return true;
+                    }
+                }
+                false
+            }
+
+            StmtData::SIf(if_) => {
+                if Self::should_keep_stmt_in_dead_control_flow(if_.yes, bump) {
+                    return true;
+                }
+                match if_.no {
+                    Some(no) => Self::should_keep_stmt_in_dead_control_flow(no, bump),
+                    None => false,
+                }
+            }
+
+            StmtData::SWhile(while_) => {
+                Self::should_keep_stmt_in_dead_control_flow(while_.body, bump)
+            }
+
+            StmtData::SDoWhile(do_while) => {
+                Self::should_keep_stmt_in_dead_control_flow(do_while.body, bump)
+            }
+
+            StmtData::SFor(for_) => {
+                if let Some(init_) = for_.init {
+                    if Self::should_keep_stmt_in_dead_control_flow(init_, bump) {
+                        return true;
+                    }
+                }
+                Self::should_keep_stmt_in_dead_control_flow(for_.body, bump)
+            }
+
+            StmtData::SForIn(for_) => {
+                Self::should_keep_stmt_in_dead_control_flow(for_.init, bump)
+                    || Self::should_keep_stmt_in_dead_control_flow(for_.body, bump)
+            }
+
+            StmtData::SForOf(for_) => {
+                Self::should_keep_stmt_in_dead_control_flow(for_.init, bump)
+                    || Self::should_keep_stmt_in_dead_control_flow(for_.body, bump)
+            }
+
+            StmtData::SLabel(label) => {
+                Self::should_keep_stmt_in_dead_control_flow(label.stmt, bump)
+            }
+
+            _ => true,
+        }
     }
 
     pub fn is_primitive_with_side_effects(data: &ExprData) -> bool {

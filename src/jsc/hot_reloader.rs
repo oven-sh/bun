@@ -392,6 +392,13 @@ where
         self.count += 1;
     }
 
+    /// Spec: hot_reloader.zig `Task.deinit`. The task is a fixed-size buffer
+    /// owned by the reloader (not heap-allocated per dispatch), so this only
+    /// clears `count`; the next `append` reuses the slot.
+    pub fn deinit(&mut self) {
+        self.count = 0;
+    }
+
     pub fn run(&mut self) {
         // Since we rely on the event loop for hot reloads, there can be
         // a delay before the next reload begins. In the time between the

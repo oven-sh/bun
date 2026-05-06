@@ -73,7 +73,7 @@ impl<T: Node> Default for Batch<T> {
 }
 
 pub struct BatchIterator<T: Node> {
-    batch: Batch<T>,
+    pub batch: Batch<T>,
 }
 
 impl<T: Node> BatchIterator<T> {

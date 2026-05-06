@@ -12,6 +12,11 @@ use bun_alloc::Arena;
 use crate::bake as bake;
 use crate::bake::bake_body;
 use crate::bake::framework_router::{self as framework_router, FrameworkRouter, OpaqueFileId};
+// Full Phase-A FrameworkRouter draft (has `Part`, `route_ptr`, `init_empty`,
+// `scan_all`, `Route.part`). The keystone stub in `mod.rs::framework_router`
+// only carries the index newtypes; route construction/walking goes through
+// the full body. Phase B unifies these once the stub is dropped.
+use crate::bake::framework_router_body as fr;
 use super::PatternBuffer;
 use bun_bundler::options::{self as bundler_options, OutputFile, SourceMapOption};
 use bun_bundler::output_file::Index as OutputFileIndex;

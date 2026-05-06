@@ -1216,48 +1216,36 @@ pub fn parse_with_tag(
                 input = &input[1..];
             }
 
-            
-            {
-                // TODO(b2-blocked): bun_semver::query::Group — Rust port carries
-                // a `'a` borrow on `input`; storing it in `NpmInfo` (no lifetime
-                // param per PORTING.md §Type-map) requires Group to drop the
-                // borrow (offset+len into the lockfile buffer, like Zig).
-                let version = match Semver::query::parse(input, sliced.sub(input)) {
-                    Ok(v) => v,
-                    Err(_e) => {
-                        // error.OutOfMemory => bun.outOfMemory()
-                        bun_core::out_of_memory();
-                    }
-                };
-
-                let result = Version {
-                    literal: sliced.value(),
-                    value: Value {
-                        npm: ManuallyDrop::new(NpmInfo {
-                            is_alias,
-                            name,
-                            version,
-                        }),
-                    },
-                    tag: Tag::Npm,
-                };
-
-                if is_alias {
-                    if let Some(pm) = package_manager {
-                        // TODO(port): Zig moves `result` into map by value; here we
-                        // can't both store and return ownership. Phase B: clone or
-                        // change map value type to track keys only.
-                        pm.known_npm_aliases.insert(alias_hash.unwrap(), ());
-                    }
+            let version = match Semver::query::parse(input, sliced.sub(input)) {
+                Ok(v) => v,
+                Err(_e) => {
+                    // error.OutOfMemory => bun.outOfMemory()
+                    bun_core::out_of_memory();
                 }
+            };
 
-                Some(result)
+            let result = Version {
+                literal: sliced.value(),
+                value: Value {
+                    npm: ManuallyDrop::new(NpmInfo {
+                        is_alias,
+                        name,
+                        version,
+                    }),
+                },
+                tag: Tag::Npm,
+            };
+
+            if is_alias {
+                if let Some(pm) = package_manager {
+                    // TODO(port): Zig moves `result` into the map by value; here we
+                    // can't both store and return ownership. Phase B: clone or
+                    // change map value type to track keys only.
+                    pm.known_npm_aliases.insert(alias_hash.unwrap(), ());
+                }
             }
-            #[cfg(any())]
-            {
-                let _ = (input, sliced, is_alias, name, alias_hash, package_manager);
-                todo!("b2-blocked: bun_semver::query::Group lifetime")
-            }
+
+            Some(result)
         }
         Tag::DistTag => {
             let mut tag_to_use = sliced.value();

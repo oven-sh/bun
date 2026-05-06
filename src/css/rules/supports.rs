@@ -192,9 +192,6 @@ impl SupportsCondition {
         Ok(())
     }
 
-    // blocked_on: properties::PropertyId::{prefix,name,with_prefix,add_prefix} —
-    // PropertyId is the data-only `()` stub until properties_generated.rs un-gates.
-    
     fn declaration_to_css(decl: &Declaration, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         let property_id = &decl.property_id;
         let value = decl.value;
@@ -208,11 +205,12 @@ impl SupportsCondition {
 
         let name = property_id.name();
         let mut first = true;
-        // TODO(port): `inline for (css.VendorPrefix.FIELDS) |field| { if @field(prefix, field) ... }`
+        // PORT NOTE: `inline for (css.VendorPrefix.FIELDS) |field| { if @field(prefix, field) ... }`
         // iterates the packed-struct bool fields at comptime. VendorPrefix ports to
-        // bitflags!; iterate the per-flag constants here. Phase B: confirm
-        // css::VendorPrefix exposes a FIELDS/iter() that matches Zig field order.
-        for &flag in css::VendorPrefix::FIELDS {
+        // bitflags!; iterate the ordered string table and map back via `from_name_str`
+        // (same pattern as rules/style.rs).
+        for &field in css::VendorPrefix::FIELDS {
+            let flag = css::VendorPrefix::from_name_str(field);
             if prefix.contains(flag) {
                 if first {
                     first = false;
@@ -220,10 +218,11 @@ impl SupportsCondition {
                     dest.write_str(b") or (")?;
                 }
 
+                // PORT NOTE: Zig builds `var p = VendorPrefix{}; @field(p, field) = true;`
+                // but never reads it — likely intended to feed a prefixed-name
+                // serializer. Ported faithfully as a dead store.
                 let mut p = css::VendorPrefix::empty();
                 p |= flag;
-                // TODO(port): `p` is constructed but unused in the Zig source as well —
-                // likely intended to feed a prefixed-name serializer. Ported faithfully.
                 let _ = p;
                 css::serializer::serialize_name(name, dest)
                     .map_err(|_| dest.add_fmt_error())?;
@@ -237,12 +236,6 @@ impl SupportsCondition {
         }
         dest.write_char(b')')?;
         Ok(())
-    }
-    #[cfg(any())]
-    fn declaration_to_css(_decl: &Declaration, _dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        // unreachable until properties_generated un-gates and the parse() body
-        // below starts producing Declaration variants.
-        todo!("bun_css::SupportsCondition::Declaration::to_css — gated on properties::PropertyId un-gate")
     }
 }
 

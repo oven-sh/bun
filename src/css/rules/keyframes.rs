@@ -362,9 +362,10 @@ pub struct KeyframesListParser;
 // allocator threading.
 
 const _: () = {
+    use css::css_parser::{AtRuleParser, DeclarationParser, QualifiedRuleParser, RuleBodyItemParser};
     use css::{BasicParseErrorKind, Maybe, Parser, ParserOptions, ParserState, Result};
 
-    impl css::DeclarationParser for KeyframesListParser {
+    impl DeclarationParser for KeyframesListParser {
         type Declaration = Keyframe;
 
         fn parse_value(&mut self, name: &[u8], input: &mut Parser) -> Result<Self::Declaration> {
@@ -372,7 +373,7 @@ const _: () = {
         }
     }
 
-    impl css::RuleBodyItemParser for KeyframesListParser {
+    impl RuleBodyItemParser for KeyframesListParser {
         fn parse_qualified(&self) -> bool {
             true
         }
@@ -382,7 +383,7 @@ const _: () = {
         }
     }
 
-    impl css::AtRuleParser for KeyframesListParser {
+    impl AtRuleParser for KeyframesListParser {
         type Prelude = ();
         type AtRule = Keyframe;
 
@@ -408,7 +409,7 @@ const _: () = {
         }
     }
 
-    impl css::QualifiedRuleParser for KeyframesListParser {
+    impl QualifiedRuleParser for KeyframesListParser {
         type Prelude = ArrayList<KeyframeSelector>;
         type QualifiedRule = Keyframe;
 

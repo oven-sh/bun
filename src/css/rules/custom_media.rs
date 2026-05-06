@@ -1,5 +1,6 @@
 use crate::values::ident::{DashedIdent, DashedIdentFns};
-use crate::{Location, MediaList, PrintErr, Printer};
+use crate::media_query::MediaList;
+use crate::{Location, PrintErr, Printer};
 use bun_alloc::Arena;
 
 /// A [@custom-media](https://drafts.csswg.org/mediaqueries-5/#custom-mq) rule.

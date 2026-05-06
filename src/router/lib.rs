@@ -1158,7 +1158,10 @@ impl Route {
     ) -> Option<Route> {
         // PORT NOTE: bun_sys::fs::Entry is opaque — field reads go through
         // accessor methods (abs_path()/dir()/base()/cache()).
-        let entry_abs_path = entry.abs_path().slice();
+        // PORT NOTE: reshaped for borrowck — bind the `PathString` so the
+        // `.slice()` borrow lives across the closure below.
+        let entry_abs_path_ps = entry.abs_path();
+        let entry_abs_path = entry_abs_path_ps.slice();
         let mut abs_path_str: &[u8] = if entry_abs_path.is_empty() {
             b""
         } else {

@@ -348,6 +348,18 @@ impl String {
     pub fn to_wtf_string(&mut self) {
         unsafe { BunString__toWTFString(self) }
     }
+    /// Zig: `bun.String{...}.value.WTFStringImpl` — extract the raw `*mut WTFStringImplStruct`
+    /// from a WTF-backed string, transferring ownership of the +1 ref to the caller. Returns
+    /// null for non-WTF tags. Used by SQL data-cell paths that hand the impl pointer to C++.
+    #[inline]
+    pub fn leak_wtf_impl(self) -> WTFStringImpl {
+        if self.tag == Tag::WTFStringImpl {
+            // SAFETY: tag == WTFStringImpl guarantees `value.wtf` is the active union field.
+            unsafe { self.value.wtf }
+        } else {
+            core::ptr::null_mut()
+        }
+    }
     pub fn to_thread_safe(&mut self) {
         if self.tag == Tag::WTFStringImpl {
             unsafe { BunString__toThreadSafe(self) }

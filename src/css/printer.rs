@@ -15,7 +15,7 @@ use css_values::ident::DashedIdent;
 
 pub use css::Error;
 
-type PrintResult<T> = Result<T, PrintErr>;
+pub type PrintResult<T> = Result<T, PrintErr>;
 
 // TODO(port): move to <area>_sys / clarify which Write trait. Zig used *std.Io.Writer
 // (byte-oriented: writeAll/writeByte/print/splatByteAll). Using a local dyn trait alias.

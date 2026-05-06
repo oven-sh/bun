@@ -52,7 +52,7 @@ impl TailwindStyleName {
         enum_property_util::as_str::<Self>(self)
     }
 
-    pub fn parse(input: &mut Parser) -> css::Result<Self> {
+    pub fn parse(input: &mut Parser) -> css::CssResult<Self> {
         enum_property_util::parse::<Self>(input)
     }
 

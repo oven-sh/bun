@@ -1237,6 +1237,8 @@ pub fn append_source_mapping_url_remote<W: bun_io::Write + ?Sized>(
 mod _phase_a_draft {
 use super::*;
 use bun_alloc::Arena;
+use bun_logger::js_ast::{Expr as AstExpr, Stmt as AstStmt};
+use crate::mapping::SourceMap as SourceMapLog;
 use std::sync::Arc;
 
 /// Parses a JSON source-map
@@ -1257,16 +1259,16 @@ pub fn parse_json(
 
     // the allocator given to the JS parser is not respected for all parts
     // of the parse, so we need to remember to reset the ast store
-    bun_js_parser::Expr::data_store_reset();
-    bun_js_parser::Stmt::data_store_reset();
+    AstExpr::data_store_reset();
+    AstStmt::data_store_reset();
     let _store_reset = scopeguard::guard((), |_| {
         // the allocator given to the JS parser is not respected for all parts
         // of the parse, so we need to remember to reset the ast store
-        bun_js_parser::Expr::data_store_reset();
-        bun_js_parser::Stmt::data_store_reset();
+        AstExpr::data_store_reset();
+        AstStmt::data_store_reset();
     });
-    bun_core::scoped_log!(SourceMap, "parse (JSON, {} bytes)", source.len());
-    let json = match bun_interchange::json::parse(&json_src, &mut log, arena, false) {
+    bun_core::scoped_log!(SourceMapLog, "parse (JSON, {} bytes)", source.len());
+    let json = match bun_interchange::json::parse::<false>(&json_src, &mut log, arena) {
         Ok(j) => j,
         Err(_) => return Err(bun_core::err!("InvalidJSON")),
     };
@@ -1330,11 +1332,11 @@ pub fn parse_json(
     };
 
     let map: Option<Arc<ParsedSourceMap>> = if !source_only {
-        let mut map_data = match Mapping::parse(
+        let mut map_data = match mapping::parse(
             mappings_str.data.as_e_string().slice(arena),
             None,
             i32::MAX,
-            i32::MAX,
+            i32::MAX as usize,
             mapping::ParseOptions {
                 allow_names: matches!(
                     hint,
@@ -1348,7 +1350,7 @@ pub fn parse_json(
         };
 
         if let ParseUrlResultHint::All { include_names: true, .. } = hint {
-            if map_data.mappings.impl_.is_with_names() {
+            if matches!(map_data.mappings.r#impl, mapping::ListValue::WithNames(_)) {
                 if let Some(names) = json.get(b"names") {
                     if let Some(arr) = names.data.as_e_array() {
                         let mut names_list: Vec<bun_semver::String> =
@@ -1371,7 +1373,7 @@ pub fn parse_json(
 
                         map_data.mappings.names = names_list.into_boxed_slice();
                         map_data.mappings.names_buffer =
-                            bun_collections::BabyList::move_from_vec(&mut names_buffer);
+                            bun_collections::BabyList::move_from_list(names_buffer);
                     }
                 }
             }

@@ -3479,16 +3479,21 @@ pub mod fs {
         // CYCLEBREAK: real fields/body live in `bun_resolver::fs::Entry`. These
         // accessor stubs let dependents type-check against the `bun_sys::fs`
         // path until MOVE_DOWN lands; bodies panic to surface mis-routing.
-        #[inline] pub fn base(&self) -> &[u8] {
+        // PORT NOTE: return `&'static` (not `&'_ self`) — the real backing
+        // strings are interned in `DirnameStore`/`FilenameStore` and outlive
+        // the `Entry`; tying them to `&self` over-constrains borrowck at the
+        // call sites (e.g. `bun_router` holds `entry.base()` across a
+        // `&mut entry` reborrow).
+        #[inline] pub fn base(&self) -> &'static [u8] {
             todo!("b2-blocked: bun_resolver::fs::Entry::base (MOVE_DOWN pending)")
         }
-        #[inline] pub fn base_lowercase(&self) -> &[u8] {
+        #[inline] pub fn base_lowercase(&self) -> &'static [u8] {
             todo!("b2-blocked: bun_resolver::fs::Entry::base_lowercase (MOVE_DOWN pending)")
         }
         #[inline] pub fn dir(&self) -> &'static [u8] {
             todo!("b2-blocked: bun_resolver::fs::Entry::dir (MOVE_DOWN pending)")
         }
-        #[inline] pub fn abs_path(&self) -> &bun_string::PathString {
+        #[inline] pub fn abs_path(&self) -> bun_string::PathString {
             todo!("b2-blocked: bun_resolver::fs::Entry::abs_path (MOVE_DOWN pending)")
         }
         /// Zig: `entry.abs_path = PathString.init(...)`.

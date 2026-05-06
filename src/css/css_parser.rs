@@ -88,7 +88,7 @@ pub use crate::context::PropertyHandlerContext;
 pub use crate::values::{
     color::ColorFallbackKind,
     number::{CSSInteger, CSSIntegerFns, CSSNumber, CSSNumberFns},
-    string::{CSSString, CSSStringFns},
+    string::{CssString as CSSString, CssStringFns as CSSStringFns},
     url::Url,
 };
 
@@ -2562,7 +2562,7 @@ impl<AtRule> StyleSheet<AtRule> {
          {
         let mut printer = Printer::new(
             allocator,
-            bun_alloc::BumpVec::new_in(allocator),
+            bumpalo::collections::Vec::new_in(allocator),
             writer,
             options,
             import_info,

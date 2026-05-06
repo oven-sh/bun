@@ -936,4 +936,6 @@ pub struct Stmt(());
 impl Stmt {
     #[inline]
     pub fn data_store_assert() {}
+    #[inline]
+    pub fn data_store_reset() {}
 }

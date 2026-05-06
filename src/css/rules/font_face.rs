@@ -272,7 +272,7 @@ impl UnicodeRange {
 
     // PORT NOTE: Zig `css.Maybe(UnicodeRange, void)` carries no error payload → `Option<UnicodeRange>`.
     fn parse_concatenated(text_: &[u8]) -> Option<UnicodeRange> {
-        use bun_str::strings;
+        use bun_string::strings;
         let mut text = if !text_.is_empty() && text_[0] == b'+' {
             &text_[1..]
         } else {
@@ -308,7 +308,7 @@ impl UnicodeRange {
     }
 
     fn consume_question_marks(text: &mut &[u8]) -> usize {
-        use bun_str::strings;
+        use bun_string::strings;
         let mut question_marks: usize = 0;
         while let Some(rest) = strings::split_first_with_expected(*text, b'?') {
             question_marks += 1;
@@ -318,7 +318,7 @@ impl UnicodeRange {
     }
 
     fn consume_hex(text: &mut &[u8]) -> (u32, usize) {
-        use bun_str::strings;
+        use bun_string::strings;
         let mut value: u32 = 0;
         let mut digits: usize = 0;
         while let Some(result) = strings::split_first(*text) {
@@ -437,7 +437,7 @@ pub enum FontFormat {
 
 impl FontFormat {
     pub fn parse(input: &mut css::Parser) -> css::Result<FontFormat> {
-        use bun_str::strings;
+        use bun_string::strings;
         let s = match input.expect_ident_or_string() {
             Ok(vv) => vv,
             Err(e) => return Err(e),
@@ -742,10 +742,11 @@ pub struct FontFaceDeclarationParser;
 const _: () = {
     use crate::css_properties::custom::{CustomProperty, CustomPropertyName};
     use crate::css_properties::font::{FontFamily, FontStretch, FontWeight};
-    use bun_str::strings;
+    use bun_string::strings;
+    use css::css_parser::{AtRuleParser, DeclarationParser, QualifiedRuleParser, RuleBodyItemParser};
     use css::{BasicParseErrorKind, Maybe, Parser, ParserOptions, ParserState, Result};
 
-    impl css::AtRuleParser for FontFaceDeclarationParser {
+    impl AtRuleParser for FontFaceDeclarationParser {
         type Prelude = ();
         type AtRule = FontFaceProperty;
 
@@ -762,7 +763,7 @@ const _: () = {
         }
     }
 
-    impl css::QualifiedRuleParser for FontFaceDeclarationParser {
+    impl QualifiedRuleParser for FontFaceDeclarationParser {
         type Prelude = ();
         type QualifiedRule = FontFaceProperty;
 
@@ -775,7 +776,7 @@ const _: () = {
         }
     }
 
-    impl css::DeclarationParser for FontFaceDeclarationParser {
+    impl DeclarationParser for FontFaceDeclarationParser {
         type Declaration = FontFaceProperty;
 
         fn parse_value(&mut self, name: &[u8], input: &mut Parser) -> Result<Self::Declaration> {
@@ -831,7 +832,7 @@ const _: () = {
         }
     }
 
-    impl css::RuleBodyItemParser for FontFaceDeclarationParser {
+    impl RuleBodyItemParser for FontFaceDeclarationParser {
         fn parse_qualified(&self) -> bool {
             false
         }

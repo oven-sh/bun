@@ -284,8 +284,14 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
             }
         };
         // SAFETY: cwd is a valid byte slice; FFI fn reads exactly `len` bytes.
+        // PORT NOTE: C++ signature is `void` with `[[ZIG_EXPORT(check_slow)]]` — Zig codegen
+        // wraps it as `JSError!void` by post-checking `hasException()`. Replicate that here
+        // since `Result<(), JsError>` is not FFI-safe across `extern "C"`.
         unsafe {
-            Bun__REPL__setupGlobalRequire(vm.global, cwd.as_ptr() as *const c_char, cwd.len())?;
+            Bun__REPL__setupGlobalRequire(vm.global, cwd.as_ptr() as *const c_char, cwd.len());
+            if (*vm.global).has_exception() {
+                return Err(bun_jsc::JsError::Thrown);
+            }
         }
 
         // Set timezone if specified

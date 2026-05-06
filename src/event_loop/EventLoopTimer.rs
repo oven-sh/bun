@@ -243,7 +243,9 @@ struct UnreachableTimer {
 impl UnreachableTimer {
     #[allow(dead_code)]
     fn callback(_: &mut UnreachableTimer, _: &mut UnreachableTimer) {
-        #[cfg(feature = "ci_assert")]
+        // PORT NOTE: `bun.Environment.ci_assert` → `debug_assertions` (no `ci_assert` Cargo
+        // feature in bun_event_loop; see ptr/ref_count.rs / runtime/timer/mod.rs for precedent).
+        #[cfg(debug_assertions)]
         debug_assert!(false);
     }
 }

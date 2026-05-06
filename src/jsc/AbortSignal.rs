@@ -233,6 +233,11 @@ impl AbortReason {
 // and `todo!()` the timer insert/remove until `Timer::All` is reachable.
 // ──────────────────────────────────────────────────────────────────────────
 
+// `#[repr(C)]` for FFI-safety: `*mut Timeout` crosses the C ABI in both
+// directions (extern getTimeout / exported create/run/deinit). C++ treats it
+// as an opaque token, so the concrete layout is private to Rust — `repr(C)`
+// just gives it a defined layout so the `improper_ctypes` lint is satisfied.
+#[repr(C)]
 pub struct Timeout {
     // The `Timeout`'s lifetime is owned by the AbortSignal.
     // But this does have a ref count increment.

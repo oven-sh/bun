@@ -78,7 +78,7 @@ pub fn install_with_manager(
     // this defaults to false
     // but we force allowing updates to the lockfile when you do bun add
     let mut had_any_diffs = false;
-    manager.progress = Progress::default();
+    manager.progress = Progress::Progress::default();
 
     match &load_result {
         lockfile::LoadResult::Err(cause) => {
@@ -107,7 +107,7 @@ pub fn install_with_manager(
                 }
 
                 if !manager.options.enable.fail_early {
-                    Output::print_error_ln("", format_args!(""));
+                    Output::print_errorln("");
                     Output::warn("Ignoring lockfile");
                 }
 
@@ -406,7 +406,7 @@ pub fn install_with_manager(
                             // TODO(port): ArrayHashMap getOrPut semantics — using entry API approximation
                             match gop {
                                 bun_collections::array_hash_map::Entry::Vacant(v) => {
-                                    let mut new = lockfile::PatchedDependency {
+                                    let mut new = crate::lockfile_real::PatchedDep {
                                         path: builder.append::<SemverString>(
                                             value.path.slice(&lockfile.buffers.string_bytes),
                                         ),
@@ -537,7 +537,7 @@ pub fn install_with_manager(
 
         if manager.options.enable.frozen_lockfile && !matches!(load_result, lockfile::LoadResult::NotFound) {
             if log_level != Options::LogLevel::Silent {
-                Output::pretty_error_ln("<r><red>error<r>: lockfile had changes, but lockfile is frozen", format_args!(""));
+                Output::pretty_errorln("<r><red>error<r>: lockfile had changes, but lockfile is frozen");
             }
             Global::crash();
         }
@@ -547,15 +547,15 @@ pub fn install_with_manager(
             root_package_json_path,
             Default::default(),
         ) {
-            crate::WorkspacePackageJsonCacheResult::Entry(entry) => entry,
-            crate::WorkspacePackageJsonCacheResult::ReadErr(err) => {
+            WorkspacePackageJsonCacheResult::Entry(entry) => entry,
+            WorkspacePackageJsonCacheResult::ReadErr(err) => {
                 if ctx.log.errors > 0 {
                     manager.log.print(Output::error_writer())?;
                 }
                 Output::err(err, "failed to read '{}'", format_args!("{}", bstr::BStr::new(root_package_json_path.as_bytes())));
                 Global::exit(1);
             }
-            crate::WorkspacePackageJsonCacheResult::ParseErr(err) => {
+            WorkspacePackageJsonCacheResult::ParseErr(err) => {
                 if ctx.log.errors > 0 {
                     manager.log.print(Output::error_writer())?;
                 }
@@ -609,7 +609,7 @@ pub fn install_with_manager(
         if log_level.show_progress() {
             manager.start_progress_bar();
         } else if log_level != Options::LogLevel::Silent {
-            Output::pretty_error_ln("Resolving dependencies", format_args!(""));
+            Output::pretty_errorln("Resolving dependencies");
             Output::flush();
         }
 
@@ -639,10 +639,10 @@ pub fn install_with_manager(
         if log_level.show_progress() {
             manager.end_progress_bar();
         } else if log_level != Options::LogLevel::Silent {
-            Output::pretty_error_ln(
+            Output::pretty_errorln(format_args!(
                 "Resolved, downloaded and extracted [{}]",
-                format_args!("{}", manager.total_tasks),
-            );
+                manager.total_tasks,
+            ));
             Output::flush();
         }
     }
@@ -761,7 +761,7 @@ pub fn install_with_manager(
                         let (first_index, _, entries) = scripts.get_script_entries(
                             manager.lockfile,
                             &manager.lockfile.buffers.string_bytes,
-                            lockfile::ScriptKind::Workspace,
+                            Resolution::Tag::Workspace,
                             false,
                         );
 
@@ -783,7 +783,7 @@ pub fn install_with_manager(
                         let (first_index, _, entries) = scripts.get_script_entries(
                             manager.lockfile,
                             &manager.lockfile.buffers.string_bytes,
-                            lockfile::ScriptKind::Workspace,
+                            Resolution::Tag::Workspace,
                             true,
                         );
 
@@ -830,7 +830,7 @@ pub fn install_with_manager(
             }
 
             if log_level != Options::LogLevel::Silent {
-                Output::pretty_error_ln("<r><red>error<r><d>:<r> lockfile had changes, but lockfile is frozen", format_args!(""));
+                Output::pretty_errorln("<r><red>error<r><d>:<r> lockfile had changes, but lockfile is frozen");
                 Output::note("try re-running without <d>--frozen-lockfile<r> and commit the updated lockfile");
             }
             Global::crash();
@@ -866,8 +866,8 @@ pub fn install_with_manager(
                 format_args!(
                     "{} {} {}",
                     match save_format {
-                        lockfile::SaveFormat::Text => "bun.lock",
-                        lockfile::SaveFormat::Binary => "bun.lockb",
+                        lockfile::Format::Text => "bun.lock",
+                        lockfile::Format::Binary => "bun.lockb",
                     },
                     manager.lockfile.packages.len(),
                     if manager.lockfile.packages.len() == 1 { "" } else { "s" },
@@ -884,31 +884,31 @@ pub fn install_with_manager(
     let (workspace_filters, install_root_dependencies) = get_workspace_filters(manager, original_cwd)?;
     // `workspace_filters` drops at end of scope (Zig had `defer manager.allocator.free(workspace_filters)`)
 
-    let install_summary: PackageInstall::Summary = 'install_summary: {
+    let install_summary: PackageInstallSummary = 'install_summary: {
         if !manager.options.do_.install_packages {
-            break 'install_summary PackageInstall::Summary::default();
+            break 'install_summary PackageInstallSummary::default();
         }
 
         // Zig `linker: switch` with `continue :linker` — emulate with a small loop.
         let mut linker = manager.options.node_linker;
         loop {
             match linker {
-                Options::NodeLinker::Auto => match config_version {
-                    Options::ConfigVersion::V0 => {
-                        linker = Options::NodeLinker::Hoisted;
+                NodeLinker::Auto => match config_version {
+                    ConfigVersion::V0 => {
+                        linker = NodeLinker::Hoisted;
                         continue;
                     }
-                    Options::ConfigVersion::V1 => {
+                    ConfigVersion::V1 => {
                         if !load_result.migrated_from_npm() && manager.lockfile.workspace_paths.len() > 0 {
-                            linker = Options::NodeLinker::Isolated;
+                            linker = NodeLinker::Isolated;
                             continue;
                         }
-                        linker = Options::NodeLinker::Hoisted;
+                        linker = NodeLinker::Hoisted;
                         continue;
                     }
                 },
 
-                Options::NodeLinker::Hoisted => {
+                NodeLinker::Hoisted => {
                     break 'install_summary install_hoisted_packages(
                         manager,
                         &ctx,
@@ -919,7 +919,7 @@ pub fn install_with_manager(
                     )?;
                 }
 
-                Options::NodeLinker::Isolated => {
+                NodeLinker::Isolated => {
                     break 'install_summary install_isolated_packages(
                         manager,
                         &ctx,
@@ -954,10 +954,10 @@ pub fn install_with_manager(
 
     // It's unnecessary work to re-save the lockfile if there are no changes
     let should_save_lockfile = (matches!(load_result, lockfile::LoadResult::Ok { .. })
-        && ((load_result.ok().format == lockfile::Format::Binary && save_format == lockfile::SaveFormat::Text)
+        && ((load_result.ok().format == lockfile::Format::Binary && save_format == lockfile::Format::Text)
             // make sure old versions are updated
             || load_result.ok().format == lockfile::Format::Text
-                && save_format == lockfile::SaveFormat::Text
+                && save_format == lockfile::Format::Text
                 && manager.lockfile.text_lockfile_version != TextLockfile::Version::current()))
         // check `save_lockfile` after checking if loaded from binary and save format is text
         // because `save_lockfile` is set to false for `--frozen-lockfile`
@@ -993,7 +993,7 @@ pub fn install_with_manager(
             node = Some(manager.progress.start("Saving yarn.lock", 0));
             manager.progress.refresh();
         } else if log_level != Options::LogLevel::Silent {
-            Output::pretty_error_ln("Saved yarn.lock", format_args!(""));
+            Output::pretty_errorln("Saved yarn.lock");
             Output::flush();
         }
 
@@ -1004,7 +1004,7 @@ pub fn install_with_manager(
             }
             manager.progress.refresh();
             manager.progress.root.end();
-            manager.progress = Progress::default();
+            manager.progress = Progress::Progress::default();
         }
     }
 
@@ -1115,10 +1115,10 @@ impl<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool>
 
         if PackageManager::verbose_install() && pending_tasks > 0 {
             if PackageManager::has_enough_time_passed_between_waiting_messages() {
-                Output::pretty_error_ln(
+                Output::pretty_errorln(format_args!(
                     "<d>[PackageManager]<r> waiting for {} tasks\n",
-                    format_args!("{}", pending_tasks),
-                );
+                    pending_tasks,
+                ));
             }
         }
 
@@ -1165,7 +1165,7 @@ fn wait_for_peers(this: &mut PackageManager) -> Result<(), bun_core::Error> {
 fn print_install_summary(
     this: &mut PackageManager,
     ctx: &Command::Context,
-    install_summary: &PackageInstall::Summary,
+    install_summary: &PackageInstallSummary,
     did_meta_hash_change: bool,
     log_level: Options::LogLevel,
 ) -> Result<(), bun_core::Error> {
@@ -1173,7 +1173,7 @@ fn print_install_summary(
 
     let mut printed_timestamp = false;
     if this.options.do_.summary {
-        let mut printer = lockfile::Printer {
+        let mut printer = crate::lockfile_real::Printer {
             lockfile: this.lockfile,
             options: this.options,
             updates: &this.update_requests,
@@ -1188,9 +1188,9 @@ fn print_install_summary(
             let writer = Output::writer_buffered();
             // Runtime bool → comptime dispatch
             if Output::enable_ansi_colors_stdout() {
-                lockfile::Printer::Tree::print::<_, true>(&mut printer, this, writer, log_level)?;
+                crate::lockfile_real::printer::Tree::print::<_, true>(&mut printer, this, writer, log_level)?;
             } else {
-                lockfile::Printer::Tree::print::<_, false>(&mut printer, this, writer, log_level)?;
+                crate::lockfile_real::printer::Tree::print::<_, false>(&mut printer, this, writer, log_level)?;
             }
         }
 
@@ -1218,7 +1218,7 @@ fn print_install_summary(
         } else if this.summary.remove > 0 {
             if this.subcommand == PackageManager::Subcommand::Remove {
                 for request in &this.update_requests {
-                    Output::pretty_ln("<r><red>-<r> {}", format_args!("{}", bstr::BStr::new(&request.name)));
+                    Output::prettyln(format_args!("<r><red>-<r> {}", bstr::BStr::new(&request.name)));
                 }
             }
 
@@ -1266,10 +1266,11 @@ fn print_install_summary(
         }
 
         if install_summary.fail > 0 {
-            Output::pretty_ln(
+            Output::prettyln(format_args!(
                 "<r>Failed to install <red><b>{}<r> package{}\n",
-                format_args!("{}{}", install_summary.fail, if install_summary.fail == 1 { "" } else { "s" }),
-            );
+                install_summary.fail,
+                if install_summary.fail == 1 { "" } else { "s" },
+            ));
             // TODO(port): Output::pretty multi-arg formatting
             Output::flush();
         }

@@ -662,6 +662,17 @@ pub fn getcwd_alloc() -> Maybe<bun_core::ZBox> {
     Ok(bun_core::ZBox::from_bytes(&buf[..len]))
 }
 
+/// `bun.sys.getcwdZ(buf)` (sys.zig:349) — `getcwd` returning a NUL-terminated
+/// borrow into `buf`. POSIX `getcwd(3)` already NUL-terminates; on Windows
+/// the libuv path does too.
+pub fn getcwd_z(buf: &mut bun_paths::PathBuffer) -> Maybe<&ZStr> {
+    let len = getcwd(&mut buf[..])?;
+    debug_assert!(len < buf.len());
+    buf[len] = 0;
+    // SAFETY: NUL written at buf[len]; slice is within buf.
+    Ok(unsafe { ZStr::from_raw(buf.as_ptr(), len) })
+}
+
 pub mod coreutils_error_map;
 pub mod libuv_error_map;
 #[path = "SignalCode.rs"] pub mod signal_code;
@@ -5308,6 +5319,15 @@ pub mod fs {
         #[inline] pub fn top_level_dir(&self) -> &'static [u8] {
             // SAFETY: `self` is the resolver's process-static singleton.
             unsafe { (vtable().top_level_dir)(self) }
+        }
+        /// Zig: `topLevelDirWithoutTrailingSlash`.
+        pub fn top_level_dir_without_trailing_slash(&self) -> &'static [u8] {
+            let d = self.top_level_dir();
+            if d.len() > 1 && d.last() == Some(&bun_paths::SEP) {
+                &d[..d.len() - 1]
+            } else {
+                d
+            }
         }
         /// `fs.abs(parts)` — join `parts` against the cached `top_level_dir`.
         /// Zig (fs.zig:489): `joinAbsString(f.top_level_dir, parts, .loose)`.

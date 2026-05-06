@@ -1533,7 +1533,7 @@ pub fn install_isolated_packages(
                 break 'global_store_path None;
             }
             break 'global_store_path Some(bun_str::ZStr::from_bytes(
-                paths::join_abs_string(cache_dir_path, &[b"links"], paths::Style::Auto),
+                paths::resolve_path::join_abs_string::<paths::platform::Auto>(cache_dir_path, &[b"links"]),
             ));
         }
     } else {
@@ -1571,7 +1571,7 @@ pub fn install_isolated_packages(
                     let mut rename_path = AutoRelPath::init();
 
                     {
-                        let mut mkdir_path: RelPath<{ paths::Sep::Auto }, u16> = RelPath::from(b"node_modules");
+                        let mut mkdir_path: RelPath<u16, { paths::path_options::PathSeparators::AUTO }> = RelPath::from(b"node_modules");
                         // TODO(port): RelPath generic params — verify exact type sig in Phase B
 
                         mkdir_path.append_fmt(format_args!(
@@ -1650,7 +1650,7 @@ pub fn install_isolated_packages(
                     // 4. attempt renaming 'node_modules/.old_modules-{hex}/.cache' to 'node_modules/.cache'
                     // 5. rename each workspace 'node_modules' into 'node_modules/.old_modules-{hex}/old_{basename}_modules'
                     let mut temp_node_modules_buf = PathBuffer::uninit();
-                    let temp_node_modules = bun_core::fs::FileSystem::tmpname(
+                    let temp_node_modules = paths::fs::FileSystem::tmpname(
                         b"tmp_modules",
                         &mut temp_node_modules_buf,
                         fast_random(),
@@ -1786,7 +1786,7 @@ pub fn install_isolated_packages(
         // TODO: delete
         let mut seen_workspace_ids: HashMap<PackageID, ()> = HashMap::default();
 
-        let mut tasks: Box<[store::installer::Task]> =
+        let mut tasks: Box<[installer::Task]> =
             // TODO(port): allocator.alloc → Box::new_uninit_slice; init below
             // SAFETY: every element is fully initialized in the for-loop immediately
             // below before any read of `tasks[..]`.
@@ -1814,14 +1814,14 @@ pub fn install_isolated_packages(
 
         for (_entry_id, task) in tasks.iter_mut().enumerate() {
             let entry_id = store::entry::Id::from(u32::try_from(_entry_id).unwrap());
-            *task = store::installer::Task {
+            *task = installer::Task {
                 entry_id,
                 installer: &mut installer as *mut _,
                 // TODO(port): back-pointer to installer; raw ptr to avoid borrowck cycle
-                result: store::installer::TaskResult::None,
+                result: installer::Result::None,
 
-                task: bun_threading::Task { callback: store::installer::Task::callback },
-                next: None,
+                task: bun_threading::thread_pool::Task { callback: installer::Task::callback },
+                next: core::ptr::null_mut(),
             };
         }
 
@@ -1908,7 +1908,7 @@ pub fn install_isolated_packages(
                         if installer.global_store_path.is_none() {
                             break 'stale false;
                         }
-                        let mut local: paths::Path<{ paths::Sep::Auto }> = paths::Path::init_top_level_dir();
+                        let mut local: paths::AutoAbsPath = paths::AutoAbsPath::init_top_level_dir();
                         installer.append_local_store_entry_path(&mut local, entry_id);
                         #[cfg(windows)]
                         {
@@ -1935,7 +1935,7 @@ pub fn install_isolated_packages(
                         // should still take the cheap symlink-only path.
                         || (is_new_bun_modules && !uses_global_store)
                         || has_stale_gvs_link
-                        || matches!(patch_info, install::PatchInfo::Remove)
+                        || matches!(patch_info, installer::PatchInfo::Remove(_))
                         || 'needs_install: {
                             let mut store_path: AbsPath = AbsPath::init_top_level_dir();
                             if uses_global_store {
@@ -1958,10 +1958,10 @@ pub fn install_isolated_packages(
                             let exists = sys::exists_z(store_path.slice_z());
 
                             break 'needs_install match &patch_info {
-                                install::PatchInfo::None => !exists,
+                                installer::PatchInfo::None => !exists,
                                 // checked above
-                                install::PatchInfo::Remove => unreachable!(),
-                                install::PatchInfo::Patch(patch) => {
+                                installer::PatchInfo::Remove(_) => unreachable!(),
+                                installer::PatchInfo::Patch(patch) => {
                                     let mut hash_buf: install::BuntagHashBuf = Default::default();
                                     let hash = install::buntaghashbuf_make(&mut hash_buf, patch.contents_hash);
                                     scope_for_patch_tag_path.restore();
@@ -1995,7 +1995,7 @@ pub fn install_isolated_packages(
                         continue;
                     }
 
-                    let mut pkg_cache_dir_subpath: RelPath<{ paths::Sep::Auto }> = RelPath::from(match pkg_res_tag {
+                    let mut pkg_cache_dir_subpath: AutoRelPath = AutoRelPath::from(match pkg_res_tag {
                         ResolutionTag::Npm => manager.cached_npm_package_folder_name(
                             pkg_name.slice(string_buf),
                             &pkg_res.value.npm.version,
@@ -2021,7 +2021,7 @@ pub fn install_isolated_packages(
                     let missing_from_cache = match manager.get_preinstall_state(pkg_id) {
                         install::PreinstallState::Done => false,
                         _ => 'missing_from_cache: {
-                            if matches!(patch_info, install::PatchInfo::None) {
+                            if matches!(patch_info, installer::PatchInfo::None) {
                                 let exists = match pkg_res_tag {
                                     ResolutionTag::Npm => 'exists: {
                                         let cache_dir_path_save = pkg_cache_dir_subpath.save();
@@ -2044,7 +2044,7 @@ pub fn install_isolated_packages(
                     };
 
                     if !missing_from_cache {
-                        if let install::PatchInfo::Patch(patch) = &patch_info {
+                        if let installer::PatchInfo::Patch(patch) = &patch_info {
                             let mut patch_log = logger::Log::init();
                             installer.apply_package_patch(entry_id, patch, &mut patch_log);
                             if patch_log.has_errors() {
@@ -2280,8 +2280,25 @@ fn bytes_of<T: Copy>(v: &T) -> &[u8] {
 /// `std.fmt.bytesToHex(.., .lower)`
 #[inline]
 fn hex_lower(bytes: &[u8]) -> impl core::fmt::Display + '_ {
-    bun_fmt::hex_lower(bytes)
-    // TODO(port): verify bun_core::fmt::hex_lower exists; otherwise hand-roll.
+    // PORT NOTE: `bun_core::fmt` exposes `bytes_to_hex_lower{,_string}` for
+    // buffer/String output but no Display adapter, so hand-roll one over the
+    // bytes — used only for short (8-byte) random suffixes in temp dir names.
+    struct HexLower<'a>(&'a [u8]);
+    impl core::fmt::Display for HexLower<'_> {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            const ALPHABET: &[u8; 16] = b"0123456789abcdef";
+            for &b in self.0 {
+                f.write_str(unsafe {
+                    core::str::from_utf8_unchecked(&[
+                        ALPHABET[(b >> 4) as usize],
+                        ALPHABET[(b & 0x0f) as usize],
+                    ])
+                })?;
+            }
+            Ok(())
+        }
+    }
+    HexLower(bytes)
 }
 
 // TODO(port): VersionTag / ResolutionTag are placeholder names for the enum

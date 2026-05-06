@@ -460,7 +460,7 @@ impl TarballStream {
                             bun_output::scoped_log!(
                                 TarballStream,
                                 "readNextHeader: {}",
-                                bstr::BStr::new(archive.error_string())
+                                bstr::BStr::new(lib::Archive::error_string(self.archive.unwrap()))
                             );
                             return Err(bun_core::err!("Fail"));
                         }
@@ -485,7 +485,7 @@ impl TarballStream {
                             bun_output::scoped_log!(
                                 TarballStream,
                                 "read_data_block: {}",
-                                bstr::BStr::new(archive.error_string())
+                                bstr::BStr::new(lib::Archive::error_string(self.archive.unwrap()))
                             );
                             return Err(bun_core::err!("Fail"));
                         }
@@ -552,7 +552,7 @@ impl TarballStream {
                     TarballStream,
                     "archive_read_open: {}",
                     // SAFETY: archive is a valid handle (guard not yet dropped).
-                    bstr::BStr::new(unsafe { (*archive).error_string() })
+                    bstr::BStr::new(lib::Archive::error_string(archive))
                 );
                 return Err(bun_core::err!("Fail"));
             }
@@ -568,15 +568,18 @@ impl TarballStream {
         let mut buf = PathBuffer::uninit();
         let tmpname = FileSystem::tmpname(
             &basename[0..basename.len().min(32)],
-            buf.as_mut_slice(),
+            &mut buf[..],
             bun_core::fast_random(),
         )?;
-        // TODO(port): allocator.dupeZ → owned NUL-terminated copy.
-        self.tmpname = bun_str::ZStr::from_bytes(tmpname).into();
+        // allocator.dupeZ → owned NUL-terminated copy.
+        self.tmpname = ZBox::from_bytes(tmpname);
 
         self.dest = Some(Fd::from_std_dir(
-            // TODO(port): bun.MakePath.makeOpenPath — verify crate path.
-            bun_sys::make_path::make_open_path(tarball.temp_dir, self.tmpname.to_bytes())?,
+            &bun_sys::make_path::make_open_path(
+                tarball.temp_dir,
+                self.tmpname.as_bytes(),
+                Default::default(),
+            )?,
         ));
         Ok(())
     }
@@ -611,8 +614,7 @@ impl TarballStream {
             // relies on. Take only the leading component so a tarball
             // whose first member is `repo-sha/file` (no directory entry)
             // still yields the correct cache-folder name.
-            let mut root_it = pathname
-                .as_slice()
+            let mut root_it = pathname[..]
                 .split(|c| *c == ('/' as OSPathChar))
                 .filter(|s| !s.is_empty());
             let root: &[OSPathChar] = root_it.next().unwrap_or(&[]);
@@ -632,9 +634,9 @@ impl TarballStream {
             }
         }
 
-        let kind = bun_sys::kind_from_mode(entry.filetype());
+        let kind = bun_sys::kind_from_mode(entry.filetype() as Mode);
 
-        if self.npm_mode && kind != bun_sys::Kind::File {
+        if self.npm_mode && kind != FileKind::File {
             // npm tarballs only contain files; matching the libarchive path
             // in Archiver.extractToDir we skip everything else.
             self.phase = Phase::WantData;
@@ -705,18 +707,18 @@ impl TarballStream {
         let dest = self.dest.unwrap();
 
         match kind {
-            bun_sys::Kind::Directory => {
+            FileKind::Directory => {
                 make_directory(entry, dest, path, path_slice);
                 self.phase = Phase::WantData;
                 self.out_fd = None;
             }
-            bun_sys::Kind::SymLink => {
+            FileKind::SymLink => {
                 #[cfg(unix)]
                 make_symlink(entry, dest, path, path_slice);
                 self.phase = Phase::WantData;
                 self.out_fd = None;
             }
-            bun_sys::Kind::File => {
+            FileKind::File => {
                 #[cfg(windows)]
                 let mode: Mode = 0;
                 #[cfg(not(windows))]
@@ -755,7 +757,7 @@ impl TarballStream {
     /// `entry_actual_offset` / `entry_final_offset` persist across calls so
     /// `close_output_file` can perform the same trailing `ftruncate` the
     /// buffered path does after its block loop.
-    fn write_data_block(&mut self, fd: Fd, block: lib::archive::Block) -> Result<(), bun_core::Error> {
+    fn write_data_block(&mut self, fd: Fd, block: lib::Block) -> Result<(), bun_core::Error> {
         let file = bun_sys::File { handle: fd };
         let data = block.bytes;
         if data.is_empty() {
@@ -798,7 +800,7 @@ impl TarballStream {
                 let zero_count: usize =
                     usize::try_from(block.offset - self.entry_actual_offset).unwrap();
                 match lib::Archive::write_zeros_to_file(file, zero_count) {
-                    lib::archive::WriteZerosResult::Ok => {
+                    lib::Result::Ok => {
                         self.entry_actual_offset = block.offset;
                     }
                     _ => return Err(bun_core::err!("Fail")),
@@ -1050,8 +1052,8 @@ fn drain_callback(task: *mut thread_pool::Task) {
 /// are currently buffered in `reading`; if none, returns `ARCHIVE_RETRY`
 /// (when more data is still expected) so libarchive unwinds with a
 /// resumable status, or `0` (EOF) once the HTTP response is complete.
-extern "C" fn archive_read_callback(
-    _a: *mut lib::struct_archive,
+unsafe extern "C" fn archive_read_callback(
+    _a: *mut lib::Archive,
     ctx: *mut c_void,
     out_buffer: *mut *const c_void,
 ) -> lib::la_ssize_t {

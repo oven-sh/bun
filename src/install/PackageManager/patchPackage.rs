@@ -2,7 +2,12 @@ use core::fmt;
 use std::io::Write as _;
 
 use bun_core::{Global, Output, env_var, fmt as bun_fmt};
+use bun_core::fmt::PathSep;
 use bun_paths::{self as path, PathBuffer, SEP};
+use bun_paths::resolve_path;
+use bun_paths::platform;
+use bun_paths::path_options::{PathSeparators, Kind as PathKind};
+use bun_paths::path::OsUnit;
 use bun_str::{strings, ZStr};
 use bun_sys::{self as sys, Fd};
 
@@ -10,10 +15,12 @@ use bun_install::{
     BuntagHashBuf, Dependency, DependencyID, Features, FileCopier, PackageID, Resolution,
     buntaghashbuf_make, initialize_store, invalid_package_id,
 };
-use bun_install::lockfile::{Lockfile, Package};
+use bun_install::lockfile::{self, Lockfile, Package};
+use bun_install::lockfile::tree;
 use bun_install::package_manager::{Options, PackageManager};
 use bun_semver::String as SemverString;
 use bun_logger as logger;
+use crate::bun_fs::FileSystem;
 use crate::bun_json as JSON;
 
 pub struct PatchCommitResult {
@@ -116,12 +123,12 @@ pub fn do_patch_commit(
     };
     // `defer root_node_modules.close();` — handled by Drop
 
-    let mut iterator = Lockfile::Tree::Iterator::<{ Lockfile::Tree::IterKind::NodeModules }>::init(&lockfile);
+    let mut iterator = tree::Iterator::<{ tree::IteratorPathStyle::NodeModules }>::init(&lockfile);
     let mut resolution_buf = [0u8; 1024];
     let (cache_dir, cache_dir_subpath, changes_dir, pkg): (sys::Dir, &ZStr, &[u8], Package) = match arg_kind {
         PatchArgKind::Path => 'result: {
             let package_json_source: logger::Source = 'brk: {
-                let package_json_path = path::join_z(&[argument, b"package.json"], path::Style::Auto);
+                let package_json_path = resolve_path::join_z::<platform::Auto>(&[argument, b"package.json"]);
 
                 match sys::File::to_source(&package_json_path, Default::default()) {
                     sys::Result::Ok(s) => break 'brk s,
@@ -174,7 +181,7 @@ pub fn do_patch_commit(
                     for &id in ids.as_slice() {
                         let pkg = lockfile.packages.get(id);
                         let mut cursor: &mut [u8] = &mut resolution_buf[..];
-                        write!(&mut cursor, "{}", pkg.resolution.fmt(lockfile.buffers.string_bytes.as_slice(), path::Style::Posix)).expect("unreachable");
+                        write!(&mut cursor, "{}", pkg.resolution.fmt(lockfile.buffers.string_bytes.as_slice(), PathSep::Posix)).expect("unreachable");
                         let written = resolution_buf.len() - cursor.len();
                         let resolution_label = &resolution_buf[..written];
                         if resolution_label == version {
@@ -206,10 +213,10 @@ pub fn do_patch_commit(
             let (name, version) = Dependency::split_name_and_maybe_version(argument);
             let (pkg_id, node_modules) = pkg_info_for_name_and_version(&mut lockfile, &mut iterator, argument, name, version);
 
-            let changes_dir = path::join_z_buf(&mut pathbuf[..], &[
+            let changes_dir = resolve_path::join_z_buf::<platform::Auto>(&mut pathbuf[..], &[
                 node_modules.relative_path,
                 name,
-            ], path::Style::Auto);
+            ]);
             let pkg = lockfile.packages.get(pkg_id);
 
             let cache_result = manager.compute_cache_dir_and_subpath(
@@ -233,7 +240,7 @@ pub fn do_patch_commit(
     let name = pkg.name.slice(lockfile.buffers.string_bytes.as_slice());
     let resolution_label_len = {
         let mut cursor: &mut [u8] = &mut resolution_buf[..];
-        write!(&mut cursor, "{}@{}", bstr::BStr::new(name), pkg.resolution.fmt(lockfile.buffers.string_bytes.as_slice(), path::Style::Posix)).expect("unreachable");
+        write!(&mut cursor, "{}@{}", bstr::BStr::new(name), pkg.resolution.fmt(lockfile.buffers.string_bytes.as_slice(), PathSep::Posix)).expect("unreachable");
         resolution_buf.len() - cursor.len()
     };
     let resolution_label = &resolution_buf[..resolution_label_len];
@@ -250,13 +257,13 @@ pub fn do_patch_commit(
                     Global::crash();
                 }
             };
-            break 'old_folder path::join(&[
+            break 'old_folder resolve_path::join::<platform::Posix>(&[
                 cache_dir_path,
                 cache_dir_subpath.as_bytes(),
-            ], path::Style::Posix);
+            ]);
         };
 
-        let random_tempdir = match bun_fs::FileSystem::tmpname("node_modules_tmp", &mut buf2[..], bun_core::fast_random()) {
+        let random_tempdir = match bun_paths::fs::FileSystem::tmpname(b"node_modules_tmp", &mut buf2[..], bun_core::fast_random()) {
             Ok(s) => s,
             Err(e) => {
                 Output::err(e, "failed to make tempdir", format_args!(""));

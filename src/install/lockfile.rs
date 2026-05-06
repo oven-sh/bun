@@ -9,19 +9,21 @@ use std::io::Write as _;
 
 use bun_collections::{
     ArrayHashMap, DynamicBitSet, HashMap as BunHashMap, IdentityContext, ArrayIdentityContext,
-    LinearFifo,
+    LinearFifo, linear_fifo::DynamicBuffer,
 };
-use bun_core::{err, Error as BunError, Global, Output, ConfigVersion};
+use bun_core::{err, Error as BunError, Global, Output};
+use bun_core::fmt::PathSep;
 use bun_alloc::AllocError;
 use bun_logger as logger;
-use bun_paths::{self as Path, PathBuffer, MAX_PATH_BYTES, SEP, SEP_STR};
+use bun_paths::{self as Path, resolve_path, platform, PathBuffer, MAX_PATH_BYTES, SEP, SEP_STR};
 // MOVE_DOWN(b0): bun_resolver::fs → bun_sys::fs
 use bun_sys::fs::FileSystem;
 use bun_semver::{self as Semver, ExternalString, String as SemverString};
-use bun_sha::Hashers as Crypto;
+use bun_sha_hmac as Crypto;
 use bun_str::{strings, ZStr};
 use bun_sys::{self as sys, Fd, File};
 use bun_dotenv as DotEnv;
+use bun_perf::system_timer::Timer;
 use crate::bun_json as JSON;
 
 use crate::{
@@ -30,7 +32,11 @@ use crate::{
     PackageNameAndVersionHash, PackageNameHash, TruncatedPackageNameHash,
     initialize_store, invalid_dependency_id, invalid_package_id,
 };
+use crate::config_version::ConfigVersion;
 use crate::package_manager::WorkspaceFilter;
+use crate::package_manager_real::{Options as PackageManagerOptions, options::LogLevel, populate_manifest_cache};
+use crate::package_install::Summary as PackageInstallSummary;
+use crate::update_request::UpdateRequest;
 use crate::migration;
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -54,17 +60,23 @@ pub mod catalog_map;
 pub mod override_map;
 #[path = "lockfile/lockfile_json_stringify_for_debugging.rs"]
 pub mod lockfile_json_stringify_for_debugging;
+pub mod printer_mods {
+    #[path = "../lockfile/printer/tree_printer.rs"]
+    pub mod tree_printer;
+    #[path = "../lockfile/printer/Yarn.rs"]
+    pub mod yarn;
+}
 
 // Sub-module re-exports
-pub use crate::lockfile::buffers::Buffers;
-pub use crate::lockfile::bun_lockb as Serializer;
-pub use crate::lockfile::catalog_map::CatalogMap;
-pub use crate::lockfile::override_map::OverrideMap;
-pub use crate::lockfile::package::Package; // TODO(port): Zig was `Package(u64)` — generic instantiation
-pub use crate::lockfile::tree::Tree;
-pub use crate::lockfile::lockfile_json_stringify_for_debugging::json_stringify;
+pub use self::buffers::Buffers;
+pub use self::bun_lockb as Serializer;
+pub use self::catalog_map::CatalogMap;
+pub use self::override_map::OverrideMap;
+pub use self::package::Package; // TODO(port): Zig was `Package(u64)` — generic instantiation
+pub use self::tree::Tree;
+pub use self::lockfile_json_stringify_for_debugging::json_stringify;
 pub use crate::padding_checker::assert_no_uninitialized_padding;
-use crate::lockfile::bun_lock as TextLockfile;
+use self::bun_lock as TextLockfile;
 
 // ────────────────────────────────────────────────────────────────────────────
 // Type aliases / collection types

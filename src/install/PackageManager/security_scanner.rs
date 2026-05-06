@@ -9,7 +9,8 @@ use bun_aio::Loop as AsyncLoop;
 use bun_options_types::context::Context::Context as CommandContext;
 use bun_collections::ArrayHashMap;
 use bun_core::{self, err, Error, Output};
-use crate::bun_fs::{FileSystem, Path as FsPath};
+use crate::bun_fs::FileSystem;
+use bun_paths::fs::Path as FsPath;
 use bun_install::{
     invalid_dependency_id, invalid_package_id, DependencyID, PackageID, PackageManager,
 };

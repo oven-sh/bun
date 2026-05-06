@@ -87,6 +87,13 @@ pub struct Package<SemverIntType> {
 
 type Resolution<SemverIntType> = ResolutionType<SemverIntType>;
 
+/// `Package.List` (Zig: `MultiArrayList(Package)`). The associated-type
+/// indirection lets `lockfile.rs` name `<Package as PackageListProvider>::List`
+/// without instantiating the generic at the field site.
+impl<SemverIntType> super::PackageListProvider for Package<SemverIntType> {
+    type List = MultiArrayList<Package<SemverIntType>>;
+}
+
 impl<SemverIntType> Default for Package<SemverIntType> {
     fn default() -> Self {
         Self {
@@ -2740,48 +2747,40 @@ pub mod serializer {
                     resolutions: old.resolutions,
                     scripts: old.scripts,
                     resolution: match old.resolution.tag {
-                        lockfile::ResolutionTag::Uninitialized => {
-                            Resolution::init(lockfile::ResolutionValue::uninitialized())
+                        ResolutionTag::Uninitialized => {
+                            Resolution::init(TaggedValue::Uninitialized)
                         }
-                        lockfile::ResolutionTag::Root => {
-                            Resolution::init(lockfile::ResolutionValue::root())
+                        ResolutionTag::Root => Resolution::init(TaggedValue::Root),
+                        ResolutionTag::Npm => Resolution::init(TaggedValue::Npm(
+                            old.resolution.value.npm.migrate(),
+                        )),
+                        ResolutionTag::Folder => {
+                            Resolution::init(TaggedValue::Folder(old.resolution.value.folder))
                         }
-                        lockfile::ResolutionTag::Npm => Resolution::init(
-                            lockfile::ResolutionValue::npm(old.resolution.value.npm.migrate()),
+                        ResolutionTag::LocalTarball => Resolution::init(
+                            TaggedValue::LocalTarball(old.resolution.value.local_tarball),
                         ),
-                        lockfile::ResolutionTag::Folder => Resolution::init(
-                            lockfile::ResolutionValue::folder(old.resolution.value.folder),
-                        ),
-                        lockfile::ResolutionTag::LocalTarball => {
-                            Resolution::init(lockfile::ResolutionValue::local_tarball(
-                                old.resolution.value.local_tarball,
-                            ))
+                        ResolutionTag::Github => {
+                            Resolution::init(TaggedValue::Github(old.resolution.value.github))
                         }
-                        lockfile::ResolutionTag::Github => Resolution::init(
-                            lockfile::ResolutionValue::github(old.resolution.value.github),
-                        ),
-                        lockfile::ResolutionTag::Git => Resolution::init(
-                            lockfile::ResolutionValue::git(old.resolution.value.git),
-                        ),
-                        lockfile::ResolutionTag::Symlink => Resolution::init(
-                            lockfile::ResolutionValue::symlink(old.resolution.value.symlink),
-                        ),
-                        lockfile::ResolutionTag::Workspace => Resolution::init(
-                            lockfile::ResolutionValue::workspace(
-                                old.resolution.value.workspace,
-                            ),
-                        ),
-                        lockfile::ResolutionTag::RemoteTarball => {
-                            Resolution::init(lockfile::ResolutionValue::remote_tarball(
-                                old.resolution.value.remote_tarball,
-                            ))
+                        ResolutionTag::Git => {
+                            Resolution::init(TaggedValue::Git(old.resolution.value.git))
                         }
-                        lockfile::ResolutionTag::SingleFileModule => {
-                            Resolution::init(lockfile::ResolutionValue::single_file_module(
+                        ResolutionTag::Symlink => Resolution::init(TaggedValue::Symlink(
+                            old.resolution.value.symlink,
+                        )),
+                        ResolutionTag::Workspace => Resolution::init(TaggedValue::Workspace(
+                            old.resolution.value.workspace,
+                        )),
+                        ResolutionTag::RemoteTarball => Resolution::init(
+                            TaggedValue::RemoteTarball(old.resolution.value.remote_tarball),
+                        ),
+                        ResolutionTag::SingleFileModule => {
+                            Resolution::init(TaggedValue::SingleFileModule(
                                 old.resolution.value.single_file_module,
                             ))
                         }
-                        _ => Resolution::init(lockfile::ResolutionValue::uninitialized()),
+                        _ => Resolution::init(TaggedValue::Uninitialized),
                     },
                 };
 

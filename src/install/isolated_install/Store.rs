@@ -16,9 +16,9 @@ pub use super::installer::Installer;
 bun_output::declare_scope!(Store, visible);
 
 #[derive(Copy, Clone)]
-struct Ids {
-    dep_id: DependencyID,
-    pkg_id: PackageID,
+pub struct Ids {
+    pub dep_id: DependencyID,
+    pub pkg_id: PackageID,
 }
 
 pub struct Store {
@@ -568,6 +568,9 @@ pub mod node {
     pub type Id = NewId<Node>;
     pub type List = MultiArrayList<Node>;
     pub type Peers = OrderedArraySet<TransitivePeer>;
+    /// Zig: `Node.dependencies: ArrayList(Ids)` — re-exported under a
+    /// disambiguating name for callers building the dependency vec.
+    pub use super::Ids as DependencyIds;
 
     pub struct Node {
         pub dep_id: DependencyID,

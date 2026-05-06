@@ -524,6 +524,17 @@ pub mod sync {
         }
     }
     // `deinit` → `Drop` (Vec<u8> auto-frees).
+
+    /// `bun.spawnSync(opts)` (process.zig:2065) — blocking spawn, returns
+    /// `!Maybe(sync.Result)`. The actual subprocess machinery lives in
+    /// `bun_runtime::api::bun::process::sync` at a higher tier; this
+    /// crate only owns the data shapes so `bun_install` can name them
+    /// without a dep cycle (runtime → install → spawn).
+    pub fn spawn(
+        _opts: &Options,
+    ) -> core::result::Result<bun_sys::Maybe<Result>, bun_core::Error> {
+        todo!("blocked_on: bun_runtime::api::bun::process::sync::spawn (dep cycle — install via vtable in Phase B)")
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

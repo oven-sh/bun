@@ -241,12 +241,11 @@ impl Zone {
     }
 
     /// Zig: `pub fn isInstance(allocator_: std.mem.Allocator) bool`
+    ///
+    /// Zig: `return allocator_.vtable == &vtable;` — implemented as a `TypeId`
+    /// identity check via the `Allocator::type_id()` hook.
     pub fn is_instance(allocator_: &dyn crate::Allocator) -> bool {
-        // TODO(port): Zig compared `allocator_.vtable == &vtable`. With a trait
-        // object we cannot compare vtable identity portably. Phase B: either
-        // expose a `.kind()` on `bun_alloc::Allocator` or use `Any::type_id`.
-        let _ = allocator_;
-        false
+        crate::Allocator::type_id(allocator_) == core::any::TypeId::of::<Zone>()
     }
 }
 

@@ -449,7 +449,9 @@ impl FileSink {
     fn clear_keep_alive_ref(&mut self) {
         if self.must_be_kept_alive_until_eof {
             self.must_be_kept_alive_until_eof = false;
-            self.deref();
+            // SAFETY: `&mut self` carries write provenance over the whole
+            // allocation; this is the last use of `self` in this fn.
+            unsafe { FileSink::deref(self as *mut Self) };
         }
     }
 

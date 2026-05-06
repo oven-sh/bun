@@ -281,45 +281,66 @@ impl LinuxMemFdAllocator {
 
 // ─── AllocatorInterface ─────────────────────────────────────────────────────
 // Zig defined a private `AllocatorInterface` struct holding alloc/free/VTable.
-// In Rust this is `impl crate::Allocator for LinuxMemFdAllocator`.
+// `crate::Allocator` is a marker trait (type_id-only); the vtable functions are
+// kept as raw-ptr free functions matching Zig's `*anyopaque` signatures so that
+// `free` retains the `Box::into_raw` *mut provenance it needs to drop `self`.
 
 impl crate::Allocator for LinuxMemFdAllocator {
-    fn alloc(&self, _len: usize, _alignment: usize, _ret_addr: usize) -> Option<*mut u8> {
+    // resize/remap: Zig used `std.mem.Allocator.noResize` / `noRemap`.
+    // TODO(port): rely on `crate::Allocator` default no-op impls for resize/remap.
+}
+
+mod allocator_interface {
+    use super::*;
+
+    pub(super) unsafe fn alloc(
+        _ptr: *mut c_void,
+        _len: usize,
+        _alignment: usize,
+        _ret_addr: usize,
+    ) -> Option<*mut u8> {
         // it should perform no allocations or resizes
         None
     }
 
-    fn free(&self, buf: &mut [u8], _alignment: usize, _ret_addr: usize) {
+    /// Zig: `fn free(ptr: *anyopaque, buf: []u8, _, _) void`
+    ///
+    /// # Safety
+    /// `ptr` must be the `*mut LinuxMemFdAllocator` originally produced by
+    /// `Box::into_raw` (via [`LinuxMemFdAllocator::new`] / `IntrusiveArc::new`)
+    /// and the caller must own one outstanding ref on it. No `&Self`/`&mut Self`
+    /// borrow of `*ptr` may be live across this call — when the refcount hits
+    /// zero, `*ptr` is dropped and freed.
+    pub(super) unsafe fn free(
+        ptr: *mut c_void,
+        buf: &mut [u8],
+        _alignment: usize,
+        _ret_addr: usize,
+    ) {
         // Zig: `var self: *Self = @ptrCast(@alignCast(ptr)); defer self.deref();`
         // — runs after munmap regardless of result.
         //
-        // PORT NOTE: the trait hands us `&self`, but Zig's vtable passes a raw
-        // `*anyopaque`. `deref` may free the allocation, so it must operate on
-        // a raw `*mut Self`, not a live `&self` borrow. Derive the raw pointer
-        // up front and do not touch `self` afterwards.
-        // TODO(port): `crate::Allocator::free` should expose the raw data ptr
-        // (matching Zig's `*anyopaque`) so this cast retains Box provenance.
-        let this = self as *const Self as *mut Self;
+        // PORT NOTE: takes the raw vtable data pointer (Zig's `*anyopaque`)
+        // directly rather than `&self`. `deref` may free the allocation, which
+        // requires `*mut Self` with full `Box::into_raw` provenance; deriving
+        // it from a `&self` (`as *const _ as *mut _`) would be SharedReadOnly
+        // provenance and the `Box::from_raw` → `Drop` write would be UB under
+        // Stacked Borrows.
+        let this = ptr as *mut LinuxMemFdAllocator;
         match sys::munmap(buf) {
             Ok(()) => {}
             Err(err) => {
                 bun_core::output::debug_warn!("Failed to munmap memfd: {}", err);
             }
         }
-        // FIXME(unsound): `this` was derived from `&self` (SharedReadOnly
-        // provenance), so it does NOT carry the `Box::into_raw` *mut provenance
-        // that `deref`'s contract requires — and `self: &Self` is still a live
-        // borrow here, violating "no live `&Self` derived from `this`". Under
-        // Stacked Borrows the `Box::from_raw` → `Drop` write at .rs:92/.rs:49
-        // is UB regardless of whether `self` is accessed afterwards. This is
-        // load-bearing on the TODO above: once `crate::Allocator::free` takes
-        // the raw `*mut ()` data pointer (matching Zig's `*anyopaque`), `this`
-        // can be reconstructed with full Box provenance and this becomes sound.
-        unsafe { Self::deref(this) };
+        // SAFETY: caller contract — `this` is the Box-allocated `*mut Self` and
+        // we hold one ref. No live `&Self` exists (we never materialized one).
+        unsafe { LinuxMemFdAllocator::deref(this) };
     }
 
-    // resize/remap: Zig used `std.mem.Allocator.noResize` / `noRemap`.
-    // TODO(port): rely on `crate::Allocator` default no-op impls for resize/remap.
+    // TODO(port): expose a `std.mem.Allocator.VTable`-shaped static once the
+    // crate-level dynamic-allocator vtable type lands, wiring `alloc`/`free`
+    // above plus `noResize`/`noRemap`.
 }
 
 // Probe instance used only for vtable-identity comparison in `from()`.

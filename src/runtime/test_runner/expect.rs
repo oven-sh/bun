@@ -619,7 +619,8 @@ impl Expect {
 
     // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn call(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<2>().slice();
+        let arguments_ = callframe.arguments_old::<2>();
+        let arguments = arguments_.slice();
         let value = if arguments.len() < 1 { JSValue::UNDEFINED } else { arguments[0] };
 
         let mut custom_label = bun_str::String::empty();

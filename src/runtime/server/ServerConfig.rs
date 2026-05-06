@@ -1257,15 +1257,14 @@ impl ServerConfig {
             args.base_url = URL::parse(&args.base_uri);
             if args.base_url.hostname.is_empty() {
                 args.base_uri = Box::default();
-                return global.throw_invalid_arguments("baseURI must have a hostname", &[]);
+                return Err(global.throw_invalid_arguments("baseURI must have a hostname"));
             }
 
             if !strings::is_all_ascii(&args.base_uri) {
                 args.base_uri = Box::default();
-                return global.throw_invalid_arguments(
+                return Err(global.throw_invalid_arguments(
                     "Unicode baseURI must already be encoded for now.\nnew URL(baseuRI).toString() should do the trick.",
-                    &[],
-                );
+                ));
             }
 
             if args.base_url.protocol.is_empty() {

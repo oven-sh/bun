@@ -3575,11 +3575,12 @@ impl RunCommand {
         if FILTER == Filter::AllPlusBunJs || FILTER == Filter::BunJs {
             if let Some(dir_info) = this_transpiler
                 .resolver
-                .read_dir_info(this_transpiler.fs.top_level_dir)
+                .read_dir_info(top_level_dir)
                 .ok()
                 .flatten()
             {
-                if let Some(entries) = dir_info.get_entries_const() {
+                // SAFETY: resolver cache owns the DirInfo for the process lifetime.
+                if let Some(entries) = unsafe { &*dir_info }.get_entries_const() {
                     let mut iter = entries.data.iter();
 
                     while let Some(entry) = iter.next() {
@@ -3594,9 +3595,11 @@ impl RunCommand {
                             && !strings::contains(name, b".d.ts")
                             && !strings::contains(name, b".d.mts")
                             && !strings::contains(name, b".d.cts")
-                            && value.kind(&this_transpiler.fs.fs, true) == bun_resolver::fs::EntryKind::File
+                            // SAFETY: `Transpiler::fs` is the non-null process-static singleton.
+                            && value.kind(unsafe { &(*this_transpiler.fs).fs }, true) == bun_resolver::fs::EntryKind::File
                         {
-                            let Ok(appended) = this_transpiler.fs.filename_store.append(name) else {
+                            // SAFETY: `Transpiler::fs` is the non-null process-static singleton.
+                            let Ok(appended) = unsafe { (*this_transpiler.fs).filename_store }.append_slice(name) else {
                                 continue;
                             };
                             let _ = results.get_or_put(Box::from(appended))?;

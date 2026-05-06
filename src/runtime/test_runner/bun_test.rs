@@ -323,31 +323,76 @@ pub mod js_fns {
 pub use js_fns::GenericHookTag as HookKind;
 
 /// `bun.ptr.shared.WithOptions(*BunTest, .{ .allow_weak = true, .Allocator = bun.DefaultAllocator })`
-/// → `Rc<BunTest>` (single-thread, weak-capable).
-// TODO(port): BunTest is mutated through this handle pervasively. Phase B must
-// pick between `Rc<RefCell<BunTest>>` and an intrusive shared ptr that hands
-// out `&mut`. For now type aliases keep call sites readable.
-pub type BunTestPtr = Rc<BunTest<'static>>;
-pub type BunTestPtrWeak = Weak<BunTest<'static>>;
-pub type BunTestPtrOptional = Option<Rc<BunTest<'static>>>;
-
-/// Centralized `Rc<BunTest>` → `&mut BunTest` projection.
+/// → `Rc<BunTestCell>` (single-thread, weak-capable, interior-mutable).
 ///
 /// Zig's `BunTestPtr.get()` hands back a freely-aliasing `*BunTest`; the Rust
-/// port currently models this with `Rc<BunTest>` and mutates through it. That
-/// requires casting `Rc::as_ptr`'s `*const T` to `*mut T`, which is UB once
-/// written through unless the pointee sits in an `UnsafeCell`. Until the
-/// Phase-B decision above lands (`Rc<RefCell<…>>` vs intrusive shared ptr),
-/// every call site funnels through this one function so the cast — and its
-/// eventual fix — lives in exactly one place.
+/// port mutates through this handle pervasively (re-entrantly via JS callbacks).
+/// `Rc<T>` does **not** wrap `T` in `UnsafeCell`, so the previous
+/// `Rc::as_ptr(&rc) as *mut T` + write was UB. The payload now lives in an
+/// explicit `UnsafeCell` so all writes go through interior-mutable provenance.
+pub type BunTestPtr = Rc<BunTestCell>;
+pub type BunTestPtrWeak = Weak<BunTestCell>;
+pub type BunTestPtrOptional = Option<Rc<BunTestCell>>;
+
+/// `UnsafeCell` newtype so `Rc<BunTestCell>` permits mutation of the shared
+/// `BunTest` (Zig: `*BunTest` aliases freely; Rust requires `UnsafeCell` for
+/// any write reachable through a shared/`*const` path).
+#[repr(transparent)]
+pub struct BunTestCell(UnsafeCell<BunTest<'static>>);
+
+impl BunTestCell {
+    #[inline]
+    pub fn new(bt: BunTest<'static>) -> Rc<Self> {
+        Rc::new(Self(UnsafeCell::new(bt)))
+    }
+
+    /// Zig `BunTestPtr.get()` → `*BunTest`.
+    ///
+    /// Returns `&mut` because every call site mutates. The borrow is derived
+    /// from `UnsafeCell::get()` so provenance is valid for writes even while
+    /// other `Rc`/`Weak` handles exist.
+    ///
+    /// **Aliasing contract:** the test runner is single-threaded and this is
+    /// the moral equivalent of Zig's freely-aliasing `*T`. Callers must not
+    /// hold the returned `&mut` across a re-entrancy point (JS callback,
+    /// `Collection::step`, `Execution::step`, `BunTest::run`) that itself calls
+    /// `.get()` — re-derive afterwards instead. Prefer [`as_ptr`](Self::as_ptr)
+    /// for long-lived handles that span re-entrant calls.
+    #[inline]
+    #[allow(clippy::mut_from_ref)]
+    pub fn get(&self) -> &mut BunTest<'static> {
+        // SAFETY: `UnsafeCell` interior; single-threaded JS VM. See contract above.
+        unsafe { &mut *self.0.get() }
+    }
+
+    /// Raw pointer for sites that must span re-entrant `.get()` calls without
+    /// holding a live `&mut` (Stacked-Borrows-safe: raw ptrs do not assert
+    /// uniqueness).
+    #[inline]
+    pub fn as_ptr(&self) -> *mut BunTest<'static> {
+        self.0.get()
+    }
+}
+
+impl core::ops::Deref for BunTestCell {
+    type Target = BunTest<'static>;
+    #[inline]
+    fn deref(&self) -> &BunTest<'static> {
+        // SAFETY: shared read through `UnsafeCell`; single-threaded — caller
+        // must not hold a live `&mut` from `.get()` concurrently.
+        unsafe { &*self.0.get() }
+    }
+}
+
+/// Back-compat shim for sibling modules (jest.rs) that funneled through this
+/// helper. Now routes through `UnsafeCell::get()` instead of the UB
+/// `*const T as *mut T` cast.
 ///
 /// # Safety
-/// Caller must guarantee the single-threaded JS VM invariant: no other live
-/// `&`/`&mut` borrow of the same `BunTest` overlaps this one (no reentrancy
-/// across the borrow). The returned reference must not outlive `ptr`.
+/// Caller must uphold the aliasing contract documented on [`BunTestCell::get`].
 #[inline]
 pub unsafe fn buntest_as_mut(ptr: &BunTestPtr) -> &mut BunTest<'static> {
-    &mut *(Rc::as_ptr(ptr) as *mut BunTest<'static>)
+    ptr.get()
 }
 
 pub struct BunTestRoot {

@@ -1345,12 +1345,14 @@ fn get_code_for_parse_task_without_plugins(
 // `dispatch::PluginVTable` slot). Also calls the gated
 // `get_code_for_parse_task_without_plugins`.
 
+// PORT NOTE: `transpiler`/`resolver` are raw `*mut` — see
+// `get_code_for_parse_task_without_plugins`.
 #[allow(clippy::too_many_arguments)]
 fn get_code_for_parse_task<'b>(
     task: &mut ParseTask,
     log: &mut Log,
-    transpiler: &mut Transpiler<'b>,
-    resolver: &mut Resolver<'b>,
+    transpiler: *mut Transpiler<'b>,
+    resolver: *mut Resolver<'b>,
     bump: &Bump,
     file_path: &mut Fs::Path<'b>,
     loader: &mut Loader,
@@ -1406,14 +1408,12 @@ fn get_code_for_parse_task<'b>(
 pub struct OnBeforeParsePlugin<'a, 'b: 'a> {
     task: &'a mut ParseTask,
     log: &'a mut Log,
-    // PORT NOTE: split borrow lifetime `'a` from data lifetime `'b` so callers
-    // (e.g. `get_code_for_parse_task`) don't have to satisfy the invariant
-    // `&'a mut Transpiler<'a>` shape, which would force every argument's
-    // lifetime to unify (and, with `'static` Worker-owned transpilers, demand
-    // `'static` borrows of stack locals). Zig has no lifetimes; this is a
-    // Rust-side relaxation only.
-    transpiler: &'a mut Transpiler<'b>,
-    resolver: &'a mut Resolver<'b>,
+    // PORT NOTE: raw `*mut` (Zig `*Transpiler` / `*Resolver`). Callers pass
+    // `resolver = &mut (*transpiler).resolver`; storing `&'a mut Transpiler<'b>`
+    // alongside `&'a mut Resolver<'b>` would be aliased-`&mut` UB. The data
+    // lifetime `'b` is retained on the pointee for variance only.
+    transpiler: *mut Transpiler<'b>,
+    resolver: *mut Resolver<'b>,
     bump: &'a Bump,
     file_path: &'a mut Fs::Path<'b>,
     loader: &'a mut Loader,
@@ -1938,17 +1938,22 @@ fn get_source_code(
 
     // SAFETY: `has_created` ⇒ `data`/`transpiler` were initialized in `create()`.
     let data = unsafe { this.data.assume_init_mut() };
-    let transpiler: &mut Transpiler<'static> = unsafe { data.transpiler.assume_init_mut() };
+    // PORT NOTE: `resolver` is a field of `*transpiler` (Zig
+    // `&transpiler.resolver`). Hold both as raw `*mut` and never materialize
+    // `&mut Transpiler` while `resolver` is live — the callee chain takes raw
+    // pointers and reborrows disjoint fields only.
+    // SAFETY: `data.transpiler` is initialized (see above) and pinned for the
+    // bundle pass.
+    let transpiler: *mut Transpiler<'static> = unsafe { data.transpiler.as_mut_ptr() };
     // PORT NOTE: errdefer transpiler.resetStore() — reshaped: call on the err
-    // path explicitly (scopeguard would alias `transpiler` with the &mut passed
-    // to `get_code_for_parse_task` below).
-    // PORT NOTE: reshaped for borrowck — `resolver` is a field of `transpiler`;
-    // pass via raw to avoid two overlapping `&mut`.
-    let resolver: &mut Resolver = unsafe { &mut *(core::ptr::addr_of_mut!(transpiler.resolver)) };
+    // path explicitly (scopeguard would alias `transpiler` access below).
+    // SAFETY: `transpiler` is live; `resolver` projects a field of it.
+    let resolver: *mut Resolver = unsafe { core::ptr::addr_of_mut!((*transpiler).resolver) };
     let mut file_path = task.path.clone();
     let mut loader = task
         .loader
-        .or_else(|| file_path.loader(&transpiler.options.loaders))
+        // SAFETY: `options` is a disjoint field of the live `*transpiler`.
+        .or_else(|| file_path.loader(unsafe { &(*transpiler).options.loaders }))
         .unwrap_or(Loader::File);
 
     let mut contents_came_from_plugin: bool = false;
@@ -1963,7 +1968,8 @@ fn get_source_code(
         &mut contents_came_from_plugin,
     );
     if result.is_err() {
-        transpiler.reset_store();
+        // SAFETY: `transpiler` is live; no other borrow of it is held here.
+        unsafe { (*transpiler).reset_store() };
     }
     result
 }

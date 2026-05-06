@@ -777,12 +777,17 @@ impl InitialStatTask {
             },
         });
         let task_ptr = Box::into_raw(task);
-        // SAFETY: task_ptr leaked until work_pool_callback reclaims it
-        WorkPool::schedule(unsafe { &mut (*task_ptr).task });
+        // SAFETY: task_ptr leaked until work_pool_callback reclaims it. Use addr_of_mut! so the
+        // field pointer inherits `task_ptr`'s full-Box provenance — `&mut (*task_ptr).task` would
+        // narrow provenance to just the `task` field, making the later `.sub(offset_of!)` +
+        // `Box::from_raw` in work_pool_callback out-of-provenance under Stacked Borrows.
+        WorkPool::schedule(unsafe { core::ptr::addr_of_mut!((*task_ptr).task) });
     }
 
     fn work_pool_callback(task: *mut WorkPoolTask) {
-        // SAFETY: task points to InitialStatTask.task; recover parent via offset_of
+        // SAFETY: task points to InitialStatTask.task; recover parent via offset_of. The incoming
+        // pointer carries whole-allocation provenance (see addr_of_mut! in create_and_schedule),
+        // which is required for both the `.sub(offset_of!)` and the subsequent `Box::from_raw`.
         let initial_stat_task: *mut InitialStatTask = unsafe {
             (task as *mut u8)
                 .sub(core::mem::offset_of!(InitialStatTask, task))
@@ -792,10 +797,15 @@ impl InitialStatTask {
         // `watcher` is a raw *mut (Copy), so dropping the Box does not touch the refcount.
         let initial_stat_task = unsafe { Box::from_raw(initial_stat_task) };
         let this: *mut StatWatcher = initial_stat_task.watcher;
-        // SAFETY: `this` is kept alive by the intrusive ref taken in create_and_schedule. We are
-        // the sole mutator on the work-pool thread for this task; Zig's `*StatWatcher` freely
-        // aliases and mutates here (closed check, setLastStat, enqueueTaskConcurrent).
-        let this_ref = unsafe { &mut *this };
+        // SAFETY: `this` is kept alive by the intrusive ref taken in create_and_schedule. We only
+        // need shared access here — `closed` is read-only, `path` is borrowed, and
+        // `set_last_stat`/`enqueue_task_concurrent` take `&self` (mutation goes through
+        // `Guarded`/atomics). The main thread may concurrently run `close()`/`finalize()` after
+        // `init()` returns the watcher to JS, so materializing `&mut` would alias their `&mut self`
+        // across threads. Zig's `*StatWatcher` (zig:367-395) carries no exclusivity assertion.
+        // (The residual `&Self`-vs-main-thread-`&mut` race on `closed: bool` is a separate
+        // `close()`/field-type concern — `closed` should become `AtomicBool`.)
+        let this_ref = unsafe { &*this };
 
         if this_ref.closed {
             // SAFETY: balance the ref() from createAndSchedule(); raw ptr (not `&self`).

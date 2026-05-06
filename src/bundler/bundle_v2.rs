@@ -3401,24 +3401,50 @@ impl<'a> BundleV2<'a> {
             jsc_api::JSBundler::ResolveValue::Success(result) => {
                 let mut out_source_index: Option<Index> = None;
                 if !result.external {
-                    let mut path = Fs::Path::init(&result.path);
+                    // SAFETY: `result.{path,namespace}` are `Box<[u8]>` whose heap
+                    // allocations are moved into `this.free_list` below (in the
+                    // `!found_existing` branch) and thus outlive `BundleV2`. Erase
+                    // to `'static` so `Fs::Path<'static>` can borrow them across
+                    // `path_with_pretty_initialized` / `ParseTask` (mirrors Zig's
+                    // untracked-slice ownership). In the `found_existing`/`external`
+                    // branches `path` is dead before the boxes drop, so the dangling
+                    // `'static` is never observed.
+                    let (result_path_static, result_ns_static): (&'static [u8], &'static [u8]) = unsafe {
+                        (
+                            &*(result.path.as_ref() as *const [u8]),
+                            &*(result.namespace.as_ref() as *const [u8]),
+                        )
+                    };
+                    let mut path = Fs::Path::init(result_path_static);
                     if result.namespace.is_empty() || result.namespace.as_ref() == b"file" {
                         path.namespace = b"file";
                     } else {
-                        path.namespace = &result.namespace;
+                        path.namespace = result_ns_static;
                     }
 
-                    let existing = this.path_to_source_index_map(resolve.import_record.original_target)
-                        .get_or_put(path.text).expect("oom");
-                    if !existing.found_existing {
-                        let _ = this.free_list.extend_from_slice(&[result.namespace.clone(), result.path.clone()]);
+                    // SAFETY: `GetOrPutResult` borrows `&mut this` for its whole
+                    // lifetime, blocking the `free_list`/`graph` accesses below.
+                    // Capture `value_ptr` as a raw ptr + `found_existing` and drop
+                    // the borrow; the map entry is not rehashed before we write
+                    // through `value_ptr` (no intervening map mutation).
+                    let (value_ptr, found_existing) = {
+                        let existing = this.path_to_source_index_map(resolve.import_record.original_target)
+                            .get_or_put(path.text).expect("oom");
+                        (existing.value_ptr as *mut _, existing.found_existing)
+                    };
+                    if !found_existing {
+                        // Move (not clone) — `path` keeps borrowing the heap bytes via the
+                        // `'static` erasure above; `Box<[u8]>` heap data does not relocate
+                        // when the Box itself is moved into the Vec.
+                        this.free_list.push(result.namespace);
+                        this.free_list.push(result.path);
                         path = this.path_with_pretty_initialized(path, resolve.import_record.original_target).expect("oom");
                         // PORT NOTE: `GetOrPutResult` has no `key_ptr` — `get_or_put` already
                         // duped the key into the map (see PathToSourceIndexMap.rs).
 
                         // We need to parse this
                         let source_index = Index::init(u32::try_from(this.graph.ast.len()).unwrap());
-                        *existing.value_ptr = source_index.get();
+                        unsafe { *value_ptr = source_index.get() };
                         out_source_index = Some(source_index);
                         this.graph.ast.append(JSAst::empty());
                         let loader = path.loader(&this.transpiler.options.loaders).unwrap_or(Loader::File);
@@ -3467,7 +3493,7 @@ impl<'a> BundleV2<'a> {
                             unsafe { this.graph.pool.as_mut() }.schedule(task);
                         }
                     } else {
-                        out_source_index = Some(Index::init(*existing.value_ptr));
+                        out_source_index = Some(Index::init(unsafe { *value_ptr }));
                         // PORT NOTE: Zig freed result.{namespace,path} here; Rust drops below.
                         drop(result.namespace);
                         drop(result.path);

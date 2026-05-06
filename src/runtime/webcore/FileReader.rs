@@ -792,7 +792,7 @@ impl FileReader {
             if !self.flowing {
                 bun_core::scoped_log!(FileReader, "onPull({}) = pending (not flowing)", buffer.len());
                 // SAFETY: see `parent()`.
-                let global = unsafe { (*self.parent()).global_this() };
+                let global = unsafe { &*(*self.parent()).global_this };
                 self.pending_value.set(global, array);
                 self.pending_view = buffer;
                 return streams::Result::Pending(&mut self.pending as *mut _);
@@ -831,7 +831,7 @@ impl FileReader {
                     // PORT NOTE: fallthrough — but `buffer` was moved into read_inside_on_pull.
                     // Recover it from `remaining_buf` (amount_read == 0 ⇒ same slice).
                     // SAFETY: see `parent()`.
-                    let global = unsafe { (*self.parent()).global_this() };
+                    let global = unsafe { &*(*self.parent()).global_this };
                     self.pending_value.set(global, array);
                     self.pending_view = remaining_buf;
                     bun_core::scoped_log!(FileReader, "onPull({}) = pending", buffer_len);

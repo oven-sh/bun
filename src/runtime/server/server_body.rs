@@ -447,21 +447,21 @@ impl AnyRoute {
         }
     }
 
-    pub fn set_server(&self, server: Option<AnyServer>) {
+    pub fn set_server(&self, server: Option<super::AnyServer>) {
         match self {
             AnyRoute::Static(static_route) => static_route.server.set(server),
-            AnyRoute::File(file_route) => file_route.server.set(server),
-            AnyRoute::Html(html_bundle_route) => html_bundle_route.server.set(server),
+            AnyRoute::File(file_route) => file_route.set_server(server),
+            // SAFETY: RefPtr.data is a live NonNull while held in the route table.
+            AnyRoute::Html(html_bundle_route) => unsafe { html_bundle_route.data.as_ref() }.server.set(server),
             AnyRoute::FrameworkRouter(_) => {} // DevServer contains .server field
         }
     }
 
     pub fn deref_(&self) {
-        // TODO(port): intrusive ref-counting; Rc<> handles Static/File via Drop, but
-        // these are intrusive in Zig (StaticRoute.ref/deref). Keep manual calls for now.
+        // PORT NOTE: Rc<> handles Static/File via Drop; only the intrusive
+        // RefPtr<html_bundle::Route> needs an explicit decrement here.
         match self {
-            AnyRoute::Static(static_route) => static_route.deref(),
-            AnyRoute::File(file_route) => file_route.deref(),
+            AnyRoute::Static(_) | AnyRoute::File(_) => {} // Rc-managed
             AnyRoute::Html(html_bundle_route) => html_bundle_route.deref(),
             AnyRoute::FrameworkRouter(_) => {} // not reference counted
         }
@@ -469,9 +469,11 @@ impl AnyRoute {
 
     pub fn ref_(&self) {
         match self {
-            AnyRoute::Static(static_route) => static_route.ref_(),
-            AnyRoute::File(file_route) => file_route.ref_(),
-            AnyRoute::Html(html_bundle_route) => html_bundle_route.ref_(),
+            AnyRoute::Static(_) | AnyRoute::File(_) => {} // Rc-managed; callers .clone() the Rc
+            AnyRoute::Html(html_bundle_route) => {
+                // SAFETY: RefPtr.data is a live NonNull while held in the route table.
+                unsafe { bun_ptr::RefCount::<html_bundle::Route>::ref_(html_bundle_route.data.as_ptr()) };
+            }
             AnyRoute::FrameworkRouter(_) => {} // not reference counted
         }
     }
@@ -481,6 +483,10 @@ impl AnyRoute {
         index_path: &[u8],
         init_ctx: &mut ServerInitContext,
     ) -> JsResult<Option<AnyRoute>> {
+        let _ = (argument, index_path, init_ctx);
+        todo!("blocked_on: bun_jsc::Node::PathLike::from_bun_string, bun_paths::fs::FileSystem::abs/relative, server::AnyRoute unification");
+        #[cfg(any())]
+        {
         if !argument.is_object() {
             return Ok(None);
         }
@@ -551,6 +557,7 @@ impl AnyRoute {
             method: methods,
         });
         Ok(None)
+        }
     }
 
     /// This is the JS representation of an HTMLImportManifest
@@ -560,26 +567,8 @@ impl AnyRoute {
         argument: JSValue,
         init_ctx: &mut ServerInitContext,
     ) -> JsResult<Option<AnyRoute>> {
-        if !argument.is_object() {
-            return Ok(None);
-        }
-
-        let Some(index) = argument.get_optional::<ZigString::Slice>(init_ctx.global, b"index")? else {
-            return Ok(None);
-        };
-
-        let Some(files) = argument.get_array(init_ctx.global, b"files")? else {
-            return Ok(None);
-        };
-        let mut iter = files.array_iterator(init_ctx.global)?;
-        let mut html_route: Option<AnyRoute> = None;
-        while let Some(file_entry) = iter.next()? {
-            if let Some(item) = Self::bundled_html_manifest_item_from_js(file_entry, index.slice(), init_ctx)? {
-                html_route = Some(item);
-            }
-        }
-
-        Ok(html_route)
+        let _ = (argument, init_ctx);
+        todo!("blocked_on: bun_jsc::JSValue::get_optional::<ZigString::Slice>")
     }
 
     pub fn from_options(
@@ -587,6 +576,10 @@ impl AnyRoute {
         headers: Option<&FetchHeaders>,
         path: &mut Node::PathOrFileDescriptor,
     ) -> JsResult<AnyRoute> {
+        let _ = (global, headers, path);
+        todo!("blocked_on: Rc<FileRoute>/Rc<StaticRoute> vs *mut init, Blob::find_or_create_file_from_path disambiguation");
+        #[cfg(any())]
+        {
         // The file/static route doesn't ref it.
         let blob = Blob::find_or_create_file_from_path(path, global, false);
 
@@ -632,22 +625,25 @@ impl AnyRoute {
             &Blob::Any::Blob(blob),
             StaticRoute::Options { server: None, headers },
         )))
+        }
     }
 
     pub fn html_route_from_js(
         argument: JSValue,
         init_ctx: &mut ServerInitContext,
     ) -> JsResult<Option<AnyRoute>> {
-        if let Some(html_bundle) = argument.as_::<HTMLBundle>() {
+        use std::collections::hash_map::Entry as StdEntry;
+        if let Some(html_bundle) = HTMLBundle::from_js(argument) {
             let entry = init_ctx.dedupe_html_bundle_map.entry(html_bundle as *const _);
             // PERF(port): was bun.handleOom — Rust HashMap aborts on OOM
             return Ok(Some(match entry {
-                bun_collections::Entry::Vacant(v) => {
+                StdEntry::Vacant(v) => {
                     let route = html_bundle::Route::init(html_bundle);
-                    v.insert(route.clone());
-                    AnyRoute::Html(route)
+                    let dup = route.dupe_ref();
+                    v.insert(route);
+                    AnyRoute::Html(dup)
                 }
-                bun_collections::Entry::Occupied(o) => AnyRoute::Html(o.get().dupe_ref()),
+                StdEntry::Occupied(o) => AnyRoute::Html(o.get().dupe_ref()),
             }));
         }
 
@@ -669,7 +665,16 @@ impl AnyRoute {
         }
 
         if argument.is_object() {
-            if let Some(dir) = argument.get_optional::<BunString::Slice>(global, b"dir")? {
+            if let Some(_dir_js) = argument.get(global, b"dir")? {
+                // TODO(port): blocked_on bun_jsc::JSValue::get_optional::<ZigString::Slice>
+                // — need typed getter that returns ZigString::Slice for the
+                // StringRefList::track() call below.
+                let _ = init_ctx;
+                return Err(global.throw_invalid_arguments(
+                    format_args!("framework router config not yet ported"),
+                ));
+                #[cfg(any())]
+                {
                 let alloc = &mut init_ctx.js_string_allocations;
                 let relative_root = alloc.track(dir);
 
@@ -718,14 +723,15 @@ impl AnyRoute {
                 return Ok(Some(AnyRoute::FrameworkRouter(FrameworkRouter::TypeIndex::init(
                     u8::try_from(init_ctx.framework_router_list.len() - 1).unwrap(),
                 ))));
+                }
             }
         }
 
-        if let Some(file_route) = FileRoute::from_js(global, argument)? {
-            return Ok(Some(AnyRoute::File(file_route)));
+        if let Some(_file_route) = FileRoute::from_js(global, argument)? {
+            todo!("blocked_on: Rc<FileRoute> from *mut FileRoute (intrusive refcount)");
         }
         match StaticRoute::from_js(global, argument)? {
-            Some(s) => Ok(Some(AnyRoute::Static(s))),
+            Some(_s) => todo!("blocked_on: Rc<StaticRoute> from *mut StaticRoute (intrusive refcount)"),
             None => Ok(None),
         }
     }
@@ -832,7 +838,7 @@ impl ServePlugins {
                             // bump its intrusive refcount before storing so it outlives the
                             // pending state. Write provenance is preserved for the later
                             // `&mut *route` in handle_on_resolve/handle_on_reject.
-                            unsafe { (*route).ref_() };
+                            unsafe { bun_ptr::RefCount::<html_bundle::Route>::ref_(route) };
                             html_bundle_routes.push(route);
                         }
                         ServePluginsCallback::DevServer(server) => {
@@ -858,9 +864,9 @@ impl ServePlugins {
         let ServePluginsState::Unqueued(plugin_list) = &self.state else { unreachable!() };
         let plugin_list: Vec<_> = plugin_list.iter().collect(); // borrow before state mutation
         // PORT NOTE: reshaped for borrowck — clone the slice refs so we can mutate self.state below
-        let bunfig_folder = paths::resolve_path::dirname::<paths::platform::Auto>(
-            global.bun_vm().transpiler.options.bunfig_path,
-        );
+        // TODO(port): blocked_on bun_jsc::VirtualMachine.transpiler.options.bunfig_path —
+        // field path not yet surfaced on the Rust VM stub. Use empty dir as a placeholder.
+        let bunfig_folder: &[u8] = b"";
 
         self.ref_();
         let this_ptr: *const Self = self;
@@ -895,7 +901,8 @@ impl ServePlugins {
                 bunfig_folder_bunstr,
             )
         })?;
-        global.bun_vm().event_loop().exit();
+        // SAFETY: see `enter()` above.
+        unsafe { (*(*global.bun_vm()).event_loop()).exit() };
 
         // handle the case where js synchronously throws an error
         if let Some(e) = global.try_take_exception() {
@@ -911,10 +918,12 @@ impl ServePlugins {
                     jsc::js_promise::Status::Pending => {
                         self.ref_();
                         let promise_value = promise.as_value();
-                        if let ServePluginsState::Pending { promise, .. } = &mut self.state {
-                            promise.strong.set(global, promise_value);
+                        if let ServePluginsState::Pending { promise: _promise, .. } = &mut self.state {
+                            // TODO(port): blocked_on bun_jsc::JSPromiseStrong field `strong` is private
+                            // and there is no `set` accessor. Zig: `promise.strong.set(global, promise_value)`.
+                            let _ = (global, promise_value);
                         }
-                        promise_value.then(global, self as *mut Self, on_resolve_impl, on_reject_impl)?;
+                        promise_value.then(global, self as *mut Self, __jsc_host_on_resolve_impl, __jsc_host_on_reject_impl);
                         return Ok(());
                     }
                     jsc::js_promise::Status::Fulfilled => {
@@ -922,7 +931,9 @@ impl ServePlugins {
                         return Ok(());
                     }
                     jsc::js_promise::Status::Rejected => {
-                        let value = promise.result(global.vm());
+                        // TODO(port): blocked_on bun_jsc::AnyPromise::result — not yet on the
+                        // root `AnyPromise` enum (only on the lifetime-param'd variant).
+                        let value = JSValue::UNDEFINED;
                         self.handle_on_reject(global, value);
                         return Ok(());
                     }
@@ -973,7 +984,7 @@ impl ServePlugins {
             unreachable!()
         };
         drop(plugin); // pending.plugin.deinit()
-        promise.deinit();
+        drop(promise); // Zig: promise.deinit() — Drop on JscStrong releases the slot.
 
         self.state = ServePluginsState::Err;
 

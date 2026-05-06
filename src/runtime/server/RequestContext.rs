@@ -2345,7 +2345,6 @@ where
             debug_assert!(req.server.is_some());
             // SAFETY: BACKREF
             let global_this = unsafe { (*req.server.unwrap()).global_this() };
-            let body_value = resp.get_body_value();
             if let Some(stream) = resp.get_body_readable_stream(global_this) {
                 stream.value.ensure_still_alive();
                 resp.detach_readable_stream(global_this);
@@ -2353,7 +2352,7 @@ where
                 stream.done(global_this);
             }
 
-            *body_value = Body::Value::Used;
+            *resp.get_body_value() = Body::Value::Used;
         }
 
         if req.is_aborted_or_ended() {

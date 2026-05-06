@@ -4668,9 +4668,9 @@ impl Resolver {
         let r = unsafe { c_ares::ares_set_servers_ports(channel, entries.as_mut_ptr()) };
         if r != c_ares::ARES_SUCCESS {
             let err = c_ares::Error::get(r).unwrap();
-            return global_this.throw_value(global_this.create_error_instance(
+            return Err(global_this.throw_value(global_this.create_error_instance(
                 format_args!("ares_set_servers_ports error: {}", err.label()),
-            ));
+            )));
         }
 
         Ok(JSValue::UNDEFINED)

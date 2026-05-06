@@ -648,21 +648,21 @@ pub mod random {
         length: usize,
     ) -> JsResult<u32> {
         if !offset_value.is_number() {
-            return global.throw_invalid_argument_type_value("offset", "number", offset_value);
+            return Err(global.throw_invalid_argument_type_value("offset", "number", offset_value));
         }
         let offset = offset_value.as_number() * (element_size as f64);
 
         let max_length = length.min(MAX_POSSIBLE_LENGTH);
         if offset.is_nan() || offset > (max_length as f64) || offset < 0.0 {
-            return global.throw_range_error(
+            return Err(global.throw_range_error(
                 offset,
                 jsc::RangeErrorOptions {
-                    field_name: "offset",
-                    min: Some(0),
-                    max: Some(i64::try_from(max_length).unwrap()),
+                    field_name: b"offset",
+                    min: 0,
+                    max: i64::try_from(max_length).unwrap(),
                     ..Default::default()
                 },
-            );
+            ));
         }
 
         Ok(offset as u32)

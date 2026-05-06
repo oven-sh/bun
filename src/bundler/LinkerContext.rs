@@ -263,7 +263,7 @@ use bun_js_parser::ast::bundled_ast::BundledAstListExt as _;
 
 // TODO(b2-blocked): method bodies depend on `LinkerGraph` SoA accessors
 // (`graph.files.items_*()`, `graph.ast.items_*()`, `graph.meta.items_*()`),
-// `ThreadPool::Worker`, `generic_path_with_pretty_initialized`, and the gated
+// `crate::thread_pool::Worker`, `generic_path_with_pretty_initialized`, and the gated
 // `linker_context/` submodules. The struct + LinkerOptions + SourceMapData
 // above are real; this impl block un-gates with `LinkerGraph.rs`.
 
@@ -301,7 +301,7 @@ impl<'a> LinkerContext<'a> {
         &mut self,
         bundle: &mut BundleV2,
         entry_points: &mut [Index],
-        server_component_boundaries: ServerComponentBoundary::List,
+        server_component_boundaries: js_ast::server_component_boundary::List,
         reachable: &mut [Index],
     ) -> Result<(), BunError> {
         let _trace = bun::perf::trace("Bundler.CloneLinkerGraph");
@@ -329,14 +329,14 @@ impl<'a> LinkerContext<'a> {
         )?;
         bundle.dynamic_import_entry_points.deinit();
 
-        let runtime_named_exports = &mut self.graph.ast.items_named_exports_mut()[Index::runtime().get() as usize];
+        let runtime_named_exports = &mut self.graph.ast.items_named_exports_mut()[Index::RUNTIME.get() as usize];
 
         self.esm_runtime_ref = runtime_named_exports.get(b"__esm").unwrap().r#ref;
         self.cjs_runtime_ref = runtime_named_exports.get(b"__commonJS").unwrap().r#ref;
         self.promise_all_runtime_ref = runtime_named_exports.get(b"__promiseAll").unwrap().r#ref;
 
         if self.options.output_format == Format::Cjs {
-            self.unbound_module_ref = self.graph.generate_new_symbol(Index::runtime().get(), Symbol::Kind::Unbound, b"module");
+            self.unbound_module_ref = self.graph.generate_new_symbol(Index::RUNTIME.get(), js_ast::ast::symbol::Kind::Unbound, b"module");
         }
 
         if self.options.output_format == Format::Cjs || self.options.output_format == Format::Iife {
@@ -346,7 +346,7 @@ impl<'a> LinkerContext<'a> {
             let meta_flags_list = self.graph.meta.items_flags_mut();
 
             for entry_point in entry_points.iter() {
-                let mut ast_flags: js_ast::BundledAst::Flags = ast_flags_list[entry_point.get() as usize];
+                let mut ast_flags: js_ast::ast::bundled_ast::Flags = ast_flags_list[entry_point.get() as usize];
 
                 // Loaders default to CommonJS when they are the entry point and the output
                 // format is not ESM-compatible since that avoids generating the ESM-to-CJS
@@ -457,7 +457,7 @@ impl<'a> LinkerContext<'a> {
                     Index::part(1).get(),
                     actual_ref,
                     1,
-                    Index::runtime(),
+                    Index::RUNTIME,
                 ).expect("OOM");
             }
         }
@@ -468,7 +468,7 @@ impl<'a> LinkerContext<'a> {
         &mut self,
         bundle: &mut BundleV2,
         entry_points: &mut [Index],
-        server_component_boundaries: ServerComponentBoundary::List,
+        server_component_boundaries: js_ast::server_component_boundary::List,
         reachable: &mut [Index],
     ) -> Result<Box<[Chunk]>, LinkError> {
         self.load(bundle, entry_points, server_component_boundaries, reachable)?;
@@ -494,11 +494,11 @@ impl<'a> LinkerContext<'a> {
             // allocation here — `validate_tla` receives only the reborrowed
             // column slices below and does not itself touch `*self.parse_graph`.
             let parse_graph = unsafe { &mut *self.parse_graph };
-            let import_records_list: &[ImportRecord::List] = self.graph.ast.items_import_records();
+            let import_records_list: &[BabyList<ImportRecord>] = self.graph.ast.items_import_records();
             let tla_keywords = parse_graph.ast.items_top_level_await_keyword();
             let tla_checks = parse_graph.ast.items_tla_check_mut();
             let input_files = parse_graph.input_files.items_source();
-            let flags: &mut [JSMeta::Flags] = self.graph.meta.items_flags_mut();
+            let flags: &mut [crate::ungate_support::js_meta::Flags] = self.graph.meta.items_flags_mut();
             let css_asts: &[Option<*mut css::BundlerStyleSheet>] = self.graph.ast.items_css();
 
             // Process all files in source index order, like esbuild does
@@ -506,7 +506,7 @@ impl<'a> LinkerContext<'a> {
             while (source_index as usize) < self.graph.files.len() {
                 let advance = || source_index += 1;
                 // Skip runtime
-                if source_index == Index::runtime().get() {
+                if source_index == Index::RUNTIME.get() {
                     source_index += 1;
                     continue;
                 }
@@ -645,20 +645,20 @@ impl<'a> LinkerContext<'a> {
                 .sub(offset_of!(BundleV2, linker))
                 .cast::<BundleV2>())
         };
-        let worker = ThreadPool::Worker::get(bundle);
+        let worker = crate::thread_pool::Worker::get(bundle);
         let _guard = scopeguard::guard((), |_| worker.unget());
         match &chunk.content {
-            Chunk::Content::Javascript(_) => {
+            crate::chunk::Content::Javascript(_) => {
                 if let Err(err) = post_process_js_chunk(ctx, worker, chunk, chunk_index) {
                     Output::panic(format_args!("TODO: handle error: {}", err.name()));
                 }
             }
-            Chunk::Content::Css(_) => {
+            crate::chunk::Content::Css(_) => {
                 if let Err(err) = post_process_css_chunk(ctx, worker, chunk) {
                     Output::panic(format_args!("TODO: handle error: {}", err.name()));
                 }
             }
-            Chunk::Content::Html(_) => {
+            crate::chunk::Content::Html(_) => {
                 if let Err(err) = post_process_html_chunk(ctx, worker, chunk) {
                     Output::panic(format_args!("TODO: handle error: {}", err.name()));
                 }
@@ -673,16 +673,16 @@ impl<'a> LinkerContext<'a> {
                 .sub(offset_of!(BundleV2, linker))
                 .cast::<BundleV2>())
         };
-        let worker = ThreadPool::Worker::get(bundle);
+        let worker = crate::thread_pool::Worker::get(bundle);
         let _guard = scopeguard::guard((), |_| worker.unget());
         match &chunk.content {
-            Chunk::Content::Javascript(_) => Self::generate_js_renamer_(ctx, worker, chunk, chunk_index),
-            Chunk::Content::Css(_) => {}
-            Chunk::Content::Html(_) => {}
+            crate::chunk::Content::Javascript(_) => Self::generate_js_renamer_(ctx, worker, chunk, chunk_index),
+            crate::chunk::Content::Css(_) => {}
+            crate::chunk::Content::Html(_) => {}
         }
     }
 
-    fn generate_js_renamer_(ctx: GenerateChunkCtx, worker: &mut ThreadPool::Worker, chunk: &mut Chunk, chunk_index: usize) {
+    fn generate_js_renamer_(ctx: GenerateChunkCtx, worker: &mut crate::thread_pool::Worker, chunk: &mut Chunk, chunk_index: usize) {
         let _ = chunk_index;
         chunk.renamer = ctx.c.rename_symbols_in_chunk(
             worker.allocator,
@@ -694,7 +694,7 @@ impl<'a> LinkerContext<'a> {
     pub fn generate_source_map_for_chunk(
         &mut self,
         isolated_hash: u64,
-        worker: &mut ThreadPool::Worker,
+        worker: &mut crate::thread_pool::Worker,
         results: MultiArrayList<CompileResultForSourceMap>,
         chunk_abs_dir: &[u8],
         can_have_shifts: bool,
@@ -729,7 +729,7 @@ impl<'a> LinkerContext<'a> {
                 source_id_map.put_no_clobber(index, 0)?;
 
                 if path.is_file() {
-                    let rel_path = bun_paths::relative_alloc(worker.allocator, chunk_abs_dir, &path.text)?;
+                    let rel_path = bun_paths::resolve_path::relative_alloc(worker.allocator, chunk_abs_dir, &path.text)?;
                     path.pretty = rel_path;
                 }
 
@@ -751,7 +751,7 @@ impl<'a> LinkerContext<'a> {
                 let mut path = sources[index as usize].path.clone();
 
                 if path.is_file() {
-                    let rel_path = bun_paths::relative_alloc(worker.allocator, chunk_abs_dir, &path.text)?;
+                    let rel_path = bun_paths::resolve_path::relative_alloc(worker.allocator, chunk_abs_dir, &path.text)?;
                     path.pretty = rel_path;
                 }
 
@@ -878,7 +878,7 @@ unsafe fn noop_task_callback(_: *mut ThreadPoolLib::Task) {
     // (`SourceMapDataTask::run_line_offset` / `run_quoted_source_contents`).
     // Fail loudly so a scheduled-but-unwired task can't deadlock the wait-group
     // by silently doing nothing and never calling `finish()`.
-    unreachable!("b2-blocked: SourceMapData task callback (run_line_offset / run_quoted_source_contents are gated with ThreadPool::Worker)")
+    unreachable!("b2-blocked: SourceMapData task callback (run_line_offset / run_quoted_source_contents are gated with crate::thread_pool::Worker)")
 }
 
 pub struct LinkerOptions {
@@ -962,7 +962,7 @@ impl Default for SourceMapDataTask {
             ctx: core::ptr::null_mut(),
             source_index: 0,
             // TODO(b2-blocked): real callback is `Self::run_line_offset`
-            // (gated below with `ThreadPool::Worker`).
+            // (gated below with `crate::thread_pool::Worker`).
             thread_task: ThreadPoolLib::Task {
                 node: ThreadPoolLib::Node::default(),
                 callback: noop_task_callback,
@@ -971,7 +971,7 @@ impl Default for SourceMapDataTask {
     }
 }
 
-// TODO(b2-blocked): bodies depend on `ThreadPool::Worker`, `BundleV2.linker`
+// TODO(b2-blocked): bodies depend on `crate::thread_pool::Worker`, `BundleV2.linker`
 // container_of, and `LinkerGraph` SoA accessors. Un-gates with `ThreadPool.rs`.
 
 impl SourceMapDataTask {
@@ -1000,7 +1000,7 @@ impl SourceMapDataTask {
         let bundle: *const BundleV2 = unsafe {
             (ctx as *const u8).sub(offset_of!(BundleV2, linker)).cast::<BundleV2>()
         };
-        let worker = ThreadPool::Worker::get(unsafe { &*bundle });
+        let worker = crate::thread_pool::Worker::get(unsafe { &*bundle });
         let _wguard = scopeguard::guard((), |_| worker.unget());
         SourceMapData::compute_line_offsets(ctx, worker.allocator, task.source_index);
     }
@@ -1026,7 +1026,7 @@ impl SourceMapDataTask {
         let bundle: *const BundleV2 = unsafe {
             (ctx as *const u8).sub(offset_of!(BundleV2, linker)).cast::<BundleV2>()
         };
-        let worker = ThreadPool::Worker::get(unsafe { &*bundle });
+        let worker = crate::thread_pool::Worker::get(unsafe { &*bundle });
         let _wguard = scopeguard::guard((), |_| worker.unget());
 
         // Use the default allocator when using DevServer and the file
@@ -1061,9 +1061,9 @@ impl SourceMapData {
         // header is not mutated for the duration of these tasks. The write
         // target is the per-source_index slot, addressed by raw pointer —
         // disjoint across concurrent tasks.
-        let line_offset_table: *mut LineOffsetTable::List = unsafe {
+        let line_offset_table: *mut SourceMap::line_offset_table::List = unsafe {
             (*this).graph.files.slice()
-                .items_raw::<LineOffsetTable::List>(FileField::line_offset_table)
+                .items_raw::<SourceMap::line_offset_table::List>(FileField::line_offset_table)
                 .add(source_index as usize)
         };
 
@@ -1212,7 +1212,7 @@ impl<'a> LinkerContext<'a> {
         // the hash. Objects that appear identical but that live in separate files or
         // that live in separate parts in the same file must not be merged. This only
         // needs to be done for JavaScript files, not CSS files.
-        if let Chunk::Content::Javascript(js) = &chunk.content {
+        if let crate::chunk::Content::Javascript(js) = &chunk.content {
             // SAFETY: parse_graph backref; exclusive access via &mut *.
             let sources = unsafe { (*self.parse_graph).input_files.items_source_mut() };
             for part_range in js.parts_in_chunk_in_order.iter() {
@@ -1279,7 +1279,7 @@ impl<'a> LinkerContext<'a> {
         // Include the generated output content in the hash. This excludes the
         // randomly-generated import paths (the unique keys) and only includes the
         // data in the spans between them.
-        if let Chunk::IntermediateOutput::Pieces(pieces) = &chunk.intermediate_output {
+        if let crate::chunk::IntermediateOutput::Pieces(pieces) = &chunk.intermediate_output {
             for piece in pieces.slice() {
                 hasher.write(piece.data());
             }
@@ -1321,7 +1321,7 @@ impl<'a> LinkerContext<'a> {
         tla_checks: &mut [TlaCheck],
         input_files: &[Source],
         import_records: &[ImportRecord],
-        meta_flags: &mut [JSMeta::Flags],
+        meta_flags: &mut [crate::ungate_support::js_meta::Flags],
         ast_import_records: &[BabyList<ImportRecord>],
     ) -> Result<TlaCheck, AllocError> {
         // PORT NOTE: reshaped for borrowck — Zig held &mut tla_checks[source_index] across recursive
@@ -1467,7 +1467,7 @@ impl<'a> LinkerContext<'a> {
             stmts.inside_wrapper_prefix.append_non_dependency(
                 Stmt::alloc(
                     S::Local {
-                        decls: G::Decl::List::from_slice(
+                        decls: BabyList<G::Decl>::from_slice(
                             alloc,
                             &[G::Decl {
                                 binding: Binding::alloc(alloc, B::Identifier { r#ref: namespace_ref }, loc),
@@ -1499,7 +1499,7 @@ impl<'a> LinkerContext<'a> {
                 stmts.inside_wrapper_prefix.append_non_dependency(
                     Stmt::alloc(
                         S::Local {
-                            decls: G::Decl::List::from_slice(
+                            decls: BabyList<G::Decl>::from_slice(
                                 alloc,
                                 &[G::Decl {
                                     binding: Binding::alloc(alloc, B::Identifier { r#ref: namespace_ref }, loc),
@@ -1555,7 +1555,7 @@ impl<'a> LinkerContext<'a> {
         writer: &mut js_printer::BufferWriter,
         out_stmts: &mut [Stmt],
         ast: &JSAst,
-        flags: JSMeta::Flags,
+        flags: crate::ungate_support::js_meta::Flags,
         to_esm_ref: Ref,
         to_commonjs_ref: Ref,
         runtime_require_ref: Option<Ref>,
@@ -1683,7 +1683,7 @@ impl<'a> LinkerContext<'a> {
         }
 
         let all_css_asts: &[Option<*mut css::BundlerStyleSheet>] = self.graph.ast.items_css();
-        let all_symbols: &[Symbol::List] = self.graph.ast.items_symbols();
+        let all_symbols: &[BabyList<Symbol>] = self.graph.ast.items_symbols();
         // SAFETY: parse_graph backref
         let all_sources: &[Source] = unsafe { (*self.parse_graph).input_files.items_source() };
 
@@ -1701,7 +1701,7 @@ impl<'a> LinkerContext<'a> {
                 let symbols = &all_symbols[source_index];
                 for (inner_index, symbol_) in symbols.slice_const().iter().enumerate() {
                     let mut symbol = symbol_;
-                    if symbol.kind == Symbol::Kind::LocalCss {
+                    if symbol.kind == js_ast::ast::symbol::Kind::LocalCss {
                         let r#ref = 'follow: {
                             let mut r#ref = Ref::init(
                                 u32::try_from(inner_index).unwrap(),
@@ -1777,8 +1777,8 @@ impl<'a> LinkerContext<'a> {
         // HTML (and CSS) chunks only reference other chunks through pieces, so
         // recurse on those too.
         // PORT NOTE: reshaped for borrowck — collect piece queries first
-        let piece_queries: Vec<(Chunk::OutputPiece::Query::Kind, u32)> =
-            if let Chunk::IntermediateOutput::Pieces(pieces) = &chunk.intermediate_output {
+        let piece_queries: Vec<(crate::chunk::QueryKind, u32)> =
+            if let crate::chunk::IntermediateOutput::Pieces(pieces) = &chunk.intermediate_output {
                 pieces.slice().iter().map(|p| (p.query.kind, p.query.index)).collect()
             } else {
                 Vec::new()
@@ -1787,7 +1787,7 @@ impl<'a> LinkerContext<'a> {
 
         for (kind, piece_index) in piece_queries {
             match kind {
-                Chunk::OutputPiece::Query::Kind::Asset => {
+                crate::chunk::QueryKind::Asset => {
                     let mut from_chunk_dir = bun_paths::dirname_posix(&final_rel_path).unwrap_or(b"");
                     if from_chunk_dir == b"." {
                         from_chunk_dir = b"";
@@ -1807,10 +1807,10 @@ impl<'a> LinkerContext<'a> {
                         AdditionalFile::SourceIndex(_) => {}
                     }
                 }
-                Chunk::OutputPiece::Query::Kind::Chunk => {
+                crate::chunk::QueryKind::Chunk => {
                     self.append_isolated_hashes_for_imported_chunks(hash, chunks, piece_index, chunk_visit_map);
                 }
-                Chunk::OutputPiece::Query::Kind::Scb => {
+                crate::chunk::QueryKind::Scb => {
                     self.append_isolated_hashes_for_imported_chunks(
                         hash,
                         chunks,
@@ -1818,7 +1818,7 @@ impl<'a> LinkerContext<'a> {
                         chunk_visit_map,
                     );
                 }
-                Chunk::OutputPiece::Query::Kind::None | Chunk::OutputPiece::Query::Kind::HtmlImport => {}
+                crate::chunk::QueryKind::None | crate::chunk::QueryKind::HtmlImport => {}
             }
         }
 
@@ -3455,10 +3455,10 @@ impl<'a> LinkerContext<'a> {
         alloc: &Bump,
         j: &mut StringJoiner,
         count: u32,
-    ) -> Result<Chunk::IntermediateOutput, BunError> {
+    ) -> Result<crate::chunk::IntermediateOutput, BunError> {
         let _trace = bun::perf::trace("Bundler.breakOutputIntoPieces");
 
-        type OutputPiece = Chunk::OutputPiece;
+        type OutputPiece = crate::chunk::OutputPiece;
 
         if !j.contains(&self.unique_key_prefix) {
             // There are like several cases that prohibit this from being checked more trivially, example:
@@ -3466,7 +3466,7 @@ impl<'a> LinkerContext<'a> {
             // 2. require()
             // 3. require.resolve()
             // 4. externals
-            return Ok(Chunk::IntermediateOutput::Joiner(core::mem::take(j)));
+            return Ok(crate::chunk::IntermediateOutput::Joiner(core::mem::take(j)));
         }
 
         // PORT NOTE: Zig had `errdefer j.deinit()` around the initCapacity — Drop handles it.
@@ -3490,11 +3490,11 @@ impl<'a> LinkerContext<'a> {
                 break;
             }
 
-            let kind: Chunk::OutputPiece::Query::Kind = match output[start] {
-                b'A' => Chunk::OutputPiece::Query::Kind::Asset,
-                b'C' => Chunk::OutputPiece::Query::Kind::Chunk,
-                b'S' => Chunk::OutputPiece::Query::Kind::Scb,
-                b'H' => Chunk::OutputPiece::Query::Kind::HtmlImport,
+            let kind: crate::chunk::QueryKind = match output[start] {
+                b'A' => crate::chunk::QueryKind::Asset,
+                b'C' => crate::chunk::QueryKind::Chunk,
+                b'S' => crate::chunk::QueryKind::Scb,
+                b'H' => crate::chunk::QueryKind::HtmlImport,
                 _ => {
                     if cfg!(debug_assertions) {
                         Output::debug_warn(format_args!("Invalid output piece boundary"));
@@ -3519,7 +3519,7 @@ impl<'a> LinkerContext<'a> {
 
             // Validate the boundary
             match kind {
-                Chunk::OutputPiece::Query::Kind::Asset | Chunk::OutputPiece::Query::Kind::Scb => {
+                crate::chunk::QueryKind::Asset | crate::chunk::QueryKind::Scb => {
                     if index >= self.graph.files.len() {
                         if cfg!(debug_assertions) {
                             Output::debug_warn(format_args!("Invalid output piece boundary"));
@@ -3527,7 +3527,7 @@ impl<'a> LinkerContext<'a> {
                         break;
                     }
                 }
-                Chunk::OutputPiece::Query::Kind::Chunk => {
+                crate::chunk::QueryKind::Chunk => {
                     if index >= count as usize {
                         if cfg!(debug_assertions) {
                             Output::debug_warn(format_args!("Invalid output piece boundary"));
@@ -3535,7 +3535,7 @@ impl<'a> LinkerContext<'a> {
                         break;
                     }
                 }
-                Chunk::OutputPiece::Query::Kind::HtmlImport => {
+                crate::chunk::QueryKind::HtmlImport => {
                     // SAFETY: parse_graph backref
                     if index >= unsafe { (*self.parse_graph).html_imports.server_source_indices.len } as usize {
                         if cfg!(debug_assertions) {
@@ -3547,16 +3547,16 @@ impl<'a> LinkerContext<'a> {
                 _ => unreachable!(),
             }
 
-            pieces.push(OutputPiece::init(&output[0..boundary], Chunk::OutputPiece::Query {
+            pieces.push(OutputPiece::init(&output[0..boundary], crate::chunk::Query {
                 kind,
                 index: u32::try_from(index).unwrap(),
             }));
             output = &output[boundary + prefix.len() + 9..];
         }
 
-        pieces.push(OutputPiece::init(output, Chunk::OutputPiece::Query::NONE));
+        pieces.push(OutputPiece::init(output, crate::chunk::Query::NONE));
 
-        Ok(Chunk::IntermediateOutput::Pieces(
+        Ok(crate::chunk::IntermediateOutput::Pieces(
             BabyList::<OutputPiece>::from_owned_slice(pieces.into_boxed_slice()),
         ))
     }

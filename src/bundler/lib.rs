@@ -134,6 +134,19 @@ pub mod linker_context {
     
     #[path = "StaticRouteVisitor.rs"]
     pub mod static_route_visitor;
+
+    // ── Re-exports so `crate::linker_context::{debug, LinkerContext, …}`
+    //    resolves at every submodule call-site (mirrors Zig's `@import("./LinkerContext.zig")`).
+    pub use crate::linker_context_mod::{LinkerContext, GenerateChunkCtx, PendingPartRange};
+    pub use output_file_list_builder::OutputFileList as OutputFileListBuilder;
+    pub use static_route_visitor::StaticRouteVisitor;
+    pub use crate::ungate_support::ChunkMeta;
+    /// `Output.scoped(.LinkerCtx, .visible)` — free fn so `linker_context::debug(format_args!(..))`
+    /// works from sibling modules without re-declaring the scope.
+    #[inline]
+    pub fn debug(args: core::fmt::Arguments<'_>) {
+        bun_core::Output::scoped_write(bun_core::Output::Scope::LinkerCtx, args);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -193,6 +206,11 @@ pub mod options {
     pub use super::OutputFile;
     pub use super::output_file::Value as OutputValue;
     pub use super::output_file::Value as OutputFileValue;
+    /// `OutputFile.init` argument struct (`options.zig:OutputFile.Options`).
+    pub use super::output_file::Options as OutputFileInit;
+    pub use super::output_file::OptionsData as OutputFileData;
+    /// `options.Format` — many ported call-sites spell this `OutputFormat`.
+    pub use bun_options_types::Format as OutputFormat;
     pub type Options<'a> = super::BundleOptions<'a>;
 
     /// `jsc.API.BuildArtifact.OutputKind` (JSBundler.zig:1799). Re-exported by
@@ -362,5 +380,21 @@ pub mod dispatch {
             // SAFETY: owner is a live *mut DevServer per handle invariant.
             unsafe { (self.vtable.is_file_cached)(self.owner, abs_path, side) }
         }
+    }
+
+    /// Bytecode generation hook (jsc::CachedBytecode + jsc::initialize +
+    /// VirtualMachine::set_is_bundler_thread_for_bytecode_cache). Registered
+    /// by runtime at init; null = bytecode disabled.
+    pub static BYTECODE_HOOK: core::sync::atomic::AtomicPtr<BytecodeVTable> =
+        core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+    pub struct BytecodeVTable {
+        pub set_bundler_thread: unsafe fn(bool),
+        pub initialize_jsc: unsafe fn(bool),
+        /// Returns (bytes, source_provider_url_dupe) on success.
+        pub generate: unsafe fn(
+            format: super::options::Format,
+            source: &[u8],
+            source_url: &[u8],
+        ) -> Option<(Box<[u8]>, Box<[u8]>)>,
     }
 }

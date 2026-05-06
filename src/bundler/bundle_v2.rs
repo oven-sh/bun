@@ -1508,18 +1508,20 @@ pub struct PendingImport {
 }
 
 pub struct BundleV2<'a> {
-    pub transpiler: &'a mut Transpiler,
+    // PORT NOTE: raw ptrs — Zig stored `*Transpiler` (and aliased the same
+    // pointer into `ssr_transpiler` when SSR graph isn't separate).
+    pub transpiler: *mut Transpiler<'a>,
     /// When Server Component is enabled, this is used for the client bundles
     /// and `transpiler` is used for the server bundles.
-    pub client_transpiler: Option<&'a mut Transpiler>,
+    pub client_transpiler: Option<NonNull<Transpiler<'a>>>,
     /// See bake.Framework.ServerComponents.separate_ssr_graph
-    pub ssr_transpiler: &'a mut Transpiler,
+    pub ssr_transpiler: *mut Transpiler<'a>,
     /// When Bun Bake is used, the resolved framework is passed here
     pub framework: Option<bake::Framework>,
     pub graph: Graph,
-    pub linker: LinkerContext,
-    pub bun_watcher: Option<NonNull<bun_core::Watcher>>, // TODO(port): lifetime
-    pub plugins: Option<&'a mut jsc_api::JSBundler::Plugin>,
+    pub linker: LinkerContext<'a>,
+    pub bun_watcher: Option<NonNull<()>>, // TODO(port): lifetime — opaque hot_reloader
+    pub plugins: Option<NonNull<jsc_api::JSBundler::Plugin>>,
     pub completion: Option<*mut JSBundleCompletionTask>,
     /// CYCLEBREAK GENUINE: erased bake::DevServer. Populated from
     /// `transpiler.options.dev_server` (now `*const ()`) + the runtime-registered
@@ -1541,7 +1543,7 @@ pub struct BundleV2<'a> {
     pub dynamic_import_entry_points: ArrayHashMap<IndexInt, ()>,
     pub has_on_parse_plugins: bool,
 
-    pub finalizers: Vec<CacheEntry::ExternalFreeFunction>,
+    pub finalizers: Vec<crate::cache::ExternalFreeFunction>,
 
     pub drain_defer_task: DeferredBatchTask,
 
@@ -1567,9 +1569,9 @@ pub struct BundleV2<'a> {
 
 pub struct BakeOptions<'a> {
     pub framework: bake::Framework,
-    pub client_transpiler: &'a mut Transpiler,
-    pub ssr_transpiler: &'a mut Transpiler,
-    pub plugins: Option<&'a mut jsc_api::JSBundler::Plugin>,
+    pub client_transpiler: NonNull<Transpiler<'a>>,
+    pub ssr_transpiler: NonNull<Transpiler<'a>>,
+    pub plugins: Option<NonNull<jsc_api::JSBundler::Plugin>>,
 }
 
 impl<'a> BundleV2<'a> {

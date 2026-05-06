@@ -6823,7 +6823,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             js_ast::ExprData::EArray(mut arr) => {
                 for item in arr.items.slice_mut() {
                     let js_ast::ExprData::EString(mut s) = item.data else {
-                        let _ = self.log.add_error(self.source, item.loc, Self::IMPORT_META_HOT_ACCEPT_ERR);
+                        let _ = self.log.add_error(Some(self.source), item.loc, Self::IMPORT_META_HOT_ACCEPT_ERR);
                         continue;
                     };
                     let Some(d) = self.rewrite_import_meta_hot_accept_string(&mut s, item.loc) else { return };

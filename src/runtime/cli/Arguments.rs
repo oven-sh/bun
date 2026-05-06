@@ -1710,7 +1710,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
             };
         } else if let Some(inspect_flag) = args.option("--inspect-wait") {
             ctx.runtime_options.debugger = if inspect_flag.is_empty() {
-                Command::Debugger::Enable(Command::DebuggerEnable {
+                Debugger::Enable(DebuggerEnable {
                     wait_for_connection: true,
                     ..Default::default()
                 })
@@ -1723,7 +1723,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
             };
         } else if let Some(inspect_flag) = args.option("--inspect-brk") {
             ctx.runtime_options.debugger = if inspect_flag.is_empty() {
-                Command::Debugger::Enable(Command::DebuggerEnable {
+                Debugger::Enable(DebuggerEnable {
                     wait_for_connection: true,
                     set_breakpoint_on_first_line: true,
                     ..Default::default()

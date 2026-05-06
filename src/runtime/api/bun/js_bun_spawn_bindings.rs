@@ -654,7 +654,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     for fd_index in 0..stdio.len() {
         if stdio[fd_index].can_use_memfd(IS_SYNC, fd_index > 0 && max_buffer.is_some()) {
             if stdio[fd_index].use_memfd(fd_index as u32) {
-                jsc_vm.counters.mark(jsc::Counter::SpawnMemfd);
+                jsc_vm.counters.mark(jsc::counters::Field::SpawnMemfd);
             }
         }
     }

@@ -484,19 +484,22 @@ pub fn generate_files(
     Output::flush();
 
     // Start dev server
-    // TODO(port): bun.spawnSync — confirm crate path
-    let start = match crate::process::spawn_sync(&crate::process::SpawnOptions {
-        argv: &[bun_core::self_exe_path()?, b"dev"],
+    let start = match spawn_sync::spawn(&spawn_sync::Options {
+        argv: vec![
+            Box::<[u8]>::from(bun_core::self_exe_path()?),
+            Box::<[u8]>::from(&b"dev"[..]),
+        ],
         envp: None,
-        cwd: bun_fs::FileSystem::instance().top_level_dir,
-        stderr: crate::process::Stdio::Inherit,
-        stdout: crate::process::Stdio::Inherit,
-        stdin: crate::process::Stdio::Inherit,
+        cwd: Box::<[u8]>::from(FileSystem::instance().top_level_dir()),
+        stderr: spawn_sync::SyncStdio::Inherit,
+        stdout: spawn_sync::SyncStdio::Inherit,
+        stdin: spawn_sync::SyncStdio::Inherit,
 
         #[cfg(windows)]
-        windows: crate::process::WindowsOptions {
+        windows: bun_process::WindowsOptions {
             loop_: bun_jsc::EventLoopHandle::init(bun_event_loop::MiniEventLoop::init_global(None, None)),
         },
+        ..Default::default()
     }) {
         Ok(p) => p,
         Err(err) => {
@@ -518,8 +521,8 @@ pub fn generate_files(
                     }
                 }
 
-                if let crate::process::Status::Exited { code, .. } = spawn_result.status {
-                    Global::exit(code);
+                if let bun_process::Status::Exited(exited) = spawn_result.status {
+                    Global::exit(exited.code);
                 }
 
                 Global::crash();

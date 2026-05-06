@@ -1391,8 +1391,14 @@ pub fn version() -> JsResult<BunString> {
     };
     #[cfg(target_os = "linux")]
     let slice: &[u8] = {
-        let uts = bun_sys::posix::uname();
-        let result = bun_str::slice_to_nul(&uts.version);
+        // SAFETY: zeroed POD; uname(2) fills the struct on success
+        let mut uts: libc::utsname = unsafe { core::mem::zeroed() };
+        unsafe { libc::uname(&mut uts) };
+        // SAFETY: c_char[] reinterpreted as u8[]
+        let version = unsafe {
+            core::slice::from_raw_parts(uts.version.as_ptr() as *const u8, uts.version.len())
+        };
+        let result = bun_str::slice_to_nul(version);
         name_buffer[..result.len()].copy_from_slice(result);
         &name_buffer[0..result.len()]
     };

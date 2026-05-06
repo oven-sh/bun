@@ -7,33 +7,54 @@ use bun_collections::{HashMap, StringHashMap, ArrayHashMap};
 use bun_paths::PathBuffer;
 use bun_str::strings;
 use bun_semver::{self as Semver, String, ExternalString};
+use bun_semver::semver_string::{Buf as StringBuf, Builder as StringBuilder, JsonFormatterOptions as JsonOpts};
 use bun_logger as logger;
-use bun_js_parser::Expr;
+use bun_logger::js_ast::{Expr, expr::Data as ExprData};
 use crate::bun_json as JSON;
 
-use bun_install::{
+use crate::{
     self as Install,
-    Bin,
-    Dependency,
+    dependency,
+    dependency::{Dependency, Behavior, Version as DependencyVersion, Tag as DependencyVersionTag, Value as DependencyVersionValue},
+    bin::{Bin, Tag as BinTag},
     DependencyID,
     PackageID,
     PackageManager,
     PackageNameHash,
     Repository,
     Resolution,
+    resolution::{Tag as ResolutionTag, Value as ResolutionValue},
     TruncatedPackageNameHash,
     invalid_package_id,
+    Origin,
     Npm,
 };
-use bun_install::npm::Negatable;
-use bun_install::extract_tarball as ExtractTarball;
-use bun_install::integrity::Integrity;
-use bun_install::lockfile::{
+use crate::bin_real::ToJsonStyle;
+use crate::npm::Negatable;
+use crate::extract_tarball as ExtractTarball;
+use crate::integrity::Integrity;
+use crate::config_version::ConfigVersion;
+use crate::package_manager_real::Options as PackageManagerOptions;
+// PORT NOTE: this file is `crate::lockfile_real::bun_lock`; `super` is the
+// real `Lockfile` module, distinct from the `crate::lockfile` stub.
+use super::{
     Lockfile as BinaryLockfile,
     DependencySlice,
     LoadResult,
+    VersionHashMap,
+    TrustedDependenciesSet,
+    PatchedDep,
+    Package,
+    tree,
 };
-use bun_install::lockfile::package::Meta;
+use super::package::Meta;
+
+// PORT NOTE: Zig `String.arrayHashContext(lockfile, null)` constructs a context
+// keyed off the lockfile's string buffer. The Rust `ArrayHashMap` over
+// `bun_semver::String` keys hashes the handle directly (see CatalogMap), so the
+// context is unit; this shim drops the lockfile arg.
+#[inline]
+fn string_array_hash_context(_lockfile: *const BinaryLockfile, _: Option<()>) -> () { () }
 
 // TODO(port): narrow to a concrete byte-writer trait once bun_io stabilizes.
 // PERF(port): anytype → dyn dispatch — profile in Phase B (Zig used `writer: anytype`;
@@ -75,7 +96,7 @@ impl<'a> TreeDepsSortCtx<'a> {
     pub fn is_less_than(&self, lhs: DependencyID, rhs: DependencyID) -> bool {
         let l = &self.deps_buf[lhs as usize];
         let r = &self.deps_buf[rhs as usize];
-        strings::cmp_strings_asc((), l.name.slice(self.string_buf), r.name.slice(self.string_buf))
+        strings::cmp_strings_asc(&(), l.name.slice(self.string_buf), r.name.slice(self.string_buf))
     }
 }
 
@@ -1129,14 +1150,13 @@ impl Stringifier {
 }
 
 const WORKSPACE_DEPENDENCY_GROUPS: [(&str, Behavior); 4] = [
-    ("dependencies", Behavior { prod: true, ..Behavior::EMPTY }),
-    ("devDependencies", Behavior { dev: true, ..Behavior::EMPTY }),
-    ("optionalDependencies", Behavior { optional: true, ..Behavior::EMPTY }),
-    ("peerDependencies", Behavior { peer: true, ..Behavior::EMPTY }),
+    ("dependencies", Behavior::PROD),
+    ("devDependencies", Behavior::DEV),
+    ("optionalDependencies", Behavior::OPTIONAL),
+    ("peerDependencies", Behavior::PEER),
 ];
-// TODO(port): Behavior is a packed-struct/bitflags in Zig — confirm const construction shape in Phase B.
 
-#[derive(thiserror::Error, Debug, Clone, Copy, Eq, PartialEq, strum::IntoStaticStr)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, strum::IntoStaticStr)]
 pub enum ParseError {
     OutOfMemory,
     InvalidLockfileVersion,
@@ -1184,15 +1204,15 @@ pub struct PkgMap<T> {
     pub map: StringHashMap<T>,
 }
 
-#[derive(thiserror::Error, Debug, Clone, Copy, Eq, PartialEq, strum::IntoStaticStr)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, strum::IntoStaticStr)]
 pub enum ResolveError {
     InvalidPackageKey,
     Unresolvable,
 }
 
 impl<T> PkgMap<T> {
-    pub type Entry = T;
-    // TODO(port): inherent associated types are unstable; Phase B may need to drop this alias.
+    // PORT NOTE: Zig `pub const Entry = T;` — inherent associated types are
+    // unstable in Rust; callers name `T` directly.
 
     pub fn init() -> Self {
         Self { map: StringHashMap::default() }
@@ -1200,8 +1220,13 @@ impl<T> PkgMap<T> {
 
     // deinit → Drop (StringHashMap drops itself)
 
-    pub fn get_or_put(&mut self, name: &[u8]) -> bun_collections::GetOrPutResult<'_, T> {
-        // TODO(port): StringHashMap::get_or_put API in bun_collections
+    pub fn get_or_put(
+        &mut self,
+        name: &[u8],
+    ) -> Result<bun_collections::string_hash_map::GetOrPutResult<'_, T>, bun_alloc::AllocError>
+    where
+        T: Default,
+    {
         self.map.get_or_put(name)
     }
 

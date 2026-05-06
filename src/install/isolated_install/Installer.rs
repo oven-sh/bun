@@ -1241,7 +1241,7 @@ impl Task {
                             dest.relative(&dep_store_path)
                         };
 
-                        let symlinker = Symlinker {
+                        let mut symlinker = Symlinker {
                             dest,
                             target,
                             fallback_junction_target: dep_store_path,
@@ -1895,7 +1895,7 @@ impl<'a> Installer<'a> {
         let mut full_target = AutoAbsPath::init_top_level_dir();
         self.append_store_path(&mut full_target, entry_id);
 
-        let symlinker = Symlinker {
+        let mut symlinker = Symlinker {
             dest: hidden_hoisted_node_modules,
             target,
             fallback_junction_target: full_target,

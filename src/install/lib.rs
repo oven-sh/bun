@@ -668,7 +668,7 @@ pub mod lockfile {
         /// Zig: `Lockfile.meta_hash`.
         pub meta_hash: MetaHash,
         /// Zig: `Lockfile.package_index`.
-        pub package_index: bun_collections::HashMap<PackageNameHash, PackageIndexEntry>,
+        pub package_index: std::collections::HashMap<PackageNameHash, PackageIndexEntry>,
     }
     impl Lockfile {
         /// Port of `Lockfile.initEmpty` (src/install/lockfile.zig). Resets to a
@@ -792,6 +792,9 @@ pub mod lockfile {
         pub dependencies: Vec<ExternalSlice<Dependency>>,
         pub resolutions: Vec<ExternalSlice<PackageID>>,
         pub resolution: Vec<Resolution>,
+        pub meta: Vec<package::Meta>,
+        pub bin: Vec<crate::bin::Bin>,
+        pub scripts: Vec<package::scripts::Scripts>,
     }
     impl PackageList {
         #[inline] pub fn slice(&self) -> &Self { self }
@@ -802,14 +805,59 @@ pub mod lockfile {
         #[inline] pub fn items_dependencies(&self) -> &[ExternalSlice<Dependency>] { &self.dependencies }
         #[inline] pub fn items_resolutions(&self) -> &[ExternalSlice<PackageID>] { &self.resolutions }
         #[inline] pub fn items_resolution(&self) -> &[Resolution] { &self.resolution }
+        #[inline] pub fn items_meta(&self) -> &[package::Meta] { &self.meta }
+        /// Reserve capacity across all column vecs (Zig: `MultiArrayList.ensureUnusedCapacity`).
+        pub fn reserve(&mut self, additional: usize) {
+            self.name.reserve(additional);
+            self.name_hash.reserve(additional);
+            self.dependencies.reserve(additional);
+            self.resolutions.reserve(additional);
+            self.resolution.reserve(additional);
+            self.meta.reserve(additional);
+            self.bin.reserve(additional);
+            self.scripts.reserve(additional);
+        }
+    }
+    /// Per-row push surface for the column-backed `PackageList` stub.
+    /// Mirrors `MultiArrayList<Package>.appendAssumeCapacity` field-set.
+    pub struct PackageListEntry {
+        pub name: bun_semver::String,
+        pub name_hash: PackageNameHash,
+        pub resolution: Resolution,
+        pub dependencies: ExternalSlice<Dependency>,
+        pub resolutions: ExternalSlice<PackageID>,
+        pub meta: package::Meta,
+        pub bin: crate::bin::Bin,
+        pub scripts: package::scripts::Scripts,
+    }
+    impl PackageList {
+        pub fn push(&mut self, e: PackageListEntry) {
+            self.name.push(e.name);
+            self.name_hash.push(e.name_hash);
+            self.dependencies.push(e.dependencies);
+            self.resolutions.push(e.resolutions);
+            self.resolution.push(e.resolution);
+            self.meta.push(e.meta);
+            self.bin.push(e.bin);
+            self.scripts.push(e.scripts);
+        }
     }
     #[derive(Default)] pub struct Buffers {
         pub string_bytes: Vec<u8>,
         pub dependencies: Vec<Dependency>,
         pub resolutions: Vec<PackageID>,
+        pub extern_strings: Vec<bun_semver::ExternalString>,
     }
     #[derive(Default)] pub struct PatchedDep;
-    #[derive(Default)] pub struct LoadStep;
+    /// Port of `Lockfile.LoadResult.Err.step` (src/install/lockfile.zig).
+    #[derive(Clone, Copy, PartialEq, Eq, Default)]
+    pub enum LoadStep {
+        #[default]
+        OpenFile,
+        ReadFile,
+        ParseFile,
+        Migrating,
+    }
 
     /// Port of `Lockfile.LoadResult` (src/install/lockfile.zig). Typed against
     /// the stub `Lockfile` so migration entrypoints (`yarn.rs` / `pnpm.rs` /

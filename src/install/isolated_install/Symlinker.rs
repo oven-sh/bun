@@ -11,7 +11,9 @@ pub struct Symlinker {
 }
 
 impl Symlinker {
-    pub fn symlink(&self) -> bun_sys::Result<()> {
+    // PORT NOTE: `&mut self` (vs Zig `*const`) because `Path::slice_z()` writes
+    // the trailing NUL into its pooled buffer and so requires `&mut`.
+    pub fn symlink(&mut self) -> bun_sys::Result<()> {
         #[cfg(windows)]
         {
             return bun_sys::symlink_or_junction(
@@ -26,13 +28,13 @@ impl Symlinker {
         }
     }
 
-    pub fn ensure_symlink(&self, strategy: Strategy) -> bun_sys::Result<()> {
+    pub fn ensure_symlink(&mut self, strategy: Strategy) -> bun_sys::Result<()> {
         match strategy {
             Strategy::IgnoreFailure => {
                 return match self.symlink() {
                     Ok(()) => Ok(()),
-                    Err(symlink_err) => match symlink_err.errno() {
-                        Errno::NOENT => {
+                    Err(symlink_err) => match symlink_err.get_errno() {
+                        Errno::ENOENT => {
                             let Some(dest_parent) = self.dest.dirname() else {
                                 return Ok(());
                             };
@@ -48,8 +50,8 @@ impl Symlinker {
             Strategy::ExpectMissing => {
                 return match self.symlink() {
                     Ok(()) => Ok(()),
-                    Err(symlink_err1) => match symlink_err1.errno() {
-                        Errno::NOENT => {
+                    Err(symlink_err1) => match symlink_err1.get_errno() {
+                        Errno::ENOENT => {
                             let Some(dest_parent) = self.dest.dirname() else {
                                 return Err(symlink_err1);
                             };
@@ -57,7 +59,7 @@ impl Symlinker {
                             let _ = Fd::cwd().make_path(dest_parent);
                             return self.symlink();
                         }
-                        Errno::EXIST => {
+                        Errno::EEXIST => {
                             let _ = Fd::cwd().delete_tree(self.dest.slice_z());
                             return self.symlink();
                         }
@@ -67,15 +69,15 @@ impl Symlinker {
             }
             Strategy::ExpectExisting => {
                 let mut current_link_buf = bun_paths::path_buffer_pool::get();
-                let mut current_link: &[u8] =
+                let current_link_len =
                     match bun_sys::readlink(self.dest.slice_z(), &mut current_link_buf) {
-                        Ok(res) => res,
+                        Ok(len) => len,
                         Err(readlink_err) => {
-                            return match readlink_err.errno() {
-                                Errno::NOENT => match self.symlink() {
+                            return match readlink_err.get_errno() {
+                                Errno::ENOENT => match self.symlink() {
                                     Ok(()) => Ok(()),
-                                    Err(symlink_err) => match symlink_err.errno() {
-                                        Errno::NOENT => {
+                                    Err(symlink_err) => match symlink_err.get_errno() {
+                                        Errno::ENOENT => {
                                             let Some(dest_parent) = self.dest.dirname() else {
                                                 return Err(symlink_err);
                                             };
@@ -105,7 +107,7 @@ impl Symlinker {
                                     #[cfg(not(windows))]
                                     let is_dir =
                                         if let Some(st) = bun_sys::lstat(self.dest.slice_z()).ok() {
-                                            bun_sys::posix::s_isdir(u32::try_from(st.mode).unwrap())
+                                            bun_sys::posix::s_isdir(st.st_mode as u32)
                                         } else {
                                             false
                                         };
@@ -118,6 +120,7 @@ impl Symlinker {
                             };
                         }
                     };
+                let mut current_link: &[u8] = &current_link_buf[..current_link_len];
 
                 // libuv adds a trailing slash to junctions.
                 current_link = strings::without_trailing_slash(current_link);
@@ -138,8 +141,8 @@ impl Symlinker {
                     // at directories, even if the target no longer exists
                     match bun_sys::rmdir(self.dest.slice_z()) {
                         Ok(()) => {}
-                        Err(err) => match err.errno() {
-                            Errno::PERM => {
+                        Err(err) => match err.get_errno() {
+                            Errno::EPERM => {
                                 let _ = bun_sys::unlink(self.dest.slice_z());
                             }
                             _ => {}

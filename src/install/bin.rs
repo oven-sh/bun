@@ -9,7 +9,7 @@ use bun_paths::resolve_path;
 use bun_paths::platform::Auto as PlatformAuto;
 use bun_semver::{ExternalString, String};
 use bun_str::{strings, w, ZStr};
-use bun_sys::{self as sys, Fd, Mode};
+use bun_sys::{self as sys, Fd, FdExt as _, Mode};
 
 use crate::bun_json;
 use crate::bun_json::ExprAccessors as _;
@@ -90,11 +90,11 @@ impl Bin {
         unsafe {
             match l.tag {
                 Tag::None => true,
-                Tag::File => l.value.file.eql(&r.value.file, l_buf, r_buf),
-                Tag::Dir => l.value.dir.eql(&r.value.dir, l_buf, r_buf),
+                Tag::File => l.value.file.eql(r.value.file, l_buf, r_buf),
+                Tag::Dir => l.value.dir.eql(r.value.dir, l_buf, r_buf),
                 Tag::NamedFile => {
-                    l.value.named_file[0].eql(&r.value.named_file[0], l_buf, r_buf)
-                        && l.value.named_file[1].eql(&r.value.named_file[1], l_buf, r_buf)
+                    l.value.named_file[0].eql(r.value.named_file[0], l_buf, r_buf)
+                        && l.value.named_file[1].eql(r.value.named_file[1], l_buf, r_buf)
                 }
                 Tag::Map => {
                     let l_list = l.value.map.get(l_extern_strings);
@@ -191,14 +191,14 @@ impl Bin {
         extern_strings: &mut Vec<ExternalString>,
     ) -> Result<Bin, AllocError> {
         match bin_expr.data {
-            bun_json::ExprData::EObject(obj) => match obj.properties.len() {
+            bun_json::ExprData::EObject(obj) => match obj.properties.len as usize {
                 0 => {}
                 1 => {
-                    let Some(bin_name) = obj.properties.ptr()[0].key.as_ref().unwrap().as_string()
+                    let Some(bin_name) = obj.properties.slice()[0].key.as_ref().unwrap().as_string()
                     else {
                         return Ok(Bin::default());
                     };
-                    let Some(value) = obj.properties.ptr()[0].value.as_ref().unwrap().as_string()
+                    let Some(value) = obj.properties.slice()[0].value.as_ref().unwrap().as_string()
                     else {
                         return Ok(Bin::default());
                     };
@@ -213,7 +213,7 @@ impl Bin {
                 }
                 _ => {
                     let current_len = extern_strings.len();
-                    let num_props: usize = obj.properties.len() * 2;
+                    let num_props: usize = obj.properties.len as usize * 2;
                     extern_strings
                         .reserve_exact((current_len + num_props).saturating_sub(extern_strings.len()));
                     // PORT NOTE: reshaped for borrowck — Zig wrote into the spare-capacity
@@ -556,7 +556,7 @@ impl<'a> NamesIterator<'a> {
 
             let dir = self.destination_node_modules;
 
-            let joined = resolve_path::join_string_buf::<PlatformAuto>(self.buf.as_mut_slice(), &parts);
+            let joined = resolve_path::join_string_buf::<PlatformAuto>(&mut self.buf[..], &parts);
             let joined_len = joined.len();
             self.buf[joined_len] = 0;
             // SAFETY: buf[joined_len] == 0 written above
@@ -570,7 +570,7 @@ impl<'a> NamesIterator<'a> {
         if let Some(entry) = iter.next().unwrap_or(None) {
             self.i += 1;
             let name = entry.name.slice_u8();
-            Ok(Some(strings::copy(self.buf.as_mut_slice(), name)))
+            Ok(Some(strings::copy(&mut self.buf[..], name)))
         } else {
             self.done = true;
             let dir = self.dir_iterator.take().unwrap().dir();
@@ -590,10 +590,10 @@ impl<'a> NamesIterator<'a> {
                 self.done = true;
                 let base = path::basename(self.package_name.slice(self.string_buffer));
                 if strings::has_prefix(base, b"./") || strings::has_prefix(base, b".\\") {
-                    return Ok(Some(strings::copy(self.buf.as_mut_slice(), &base[2..])));
+                    return Ok(Some(strings::copy(&mut self.buf[..], &base[2..])));
                 }
 
-                Ok(Some(strings::copy(self.buf.as_mut_slice(), base)))
+                Ok(Some(strings::copy(&mut self.buf[..], base)))
             }
             Tag::NamedFile => {
                 if self.i > 0 {
@@ -605,9 +605,9 @@ impl<'a> NamesIterator<'a> {
                 let base =
                     path::basename(unsafe { self.bin.value.named_file }[0].slice(self.string_buffer));
                 if strings::has_prefix(base, b"./") || strings::has_prefix(base, b".\\") {
-                    return Ok(Some(strings::copy(self.buf.as_mut_slice(), &base[2..])));
+                    return Ok(Some(strings::copy(&mut self.buf[..], &base[2..])));
                 }
-                Ok(Some(strings::copy(self.buf.as_mut_slice(), base)))
+                Ok(Some(strings::copy(&mut self.buf[..], base)))
             }
 
             Tag::Dir => self.next_in_dir(),

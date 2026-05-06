@@ -69,6 +69,7 @@ pub enum Callback {
     LocalTarball,
 }
 
+#[derive(Default, Clone, Copy)]
 pub struct DedupeMapEntry {
     pub is_required: bool,
 }

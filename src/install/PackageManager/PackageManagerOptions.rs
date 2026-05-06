@@ -586,13 +586,13 @@ impl Options {
         }
 
         if let Some(retry_count) = env.get(b"BUN_CONFIG_HTTP_RETRY_COUNT") {
-            // TODO(port): std.fmt.parseInt on &[u8] — verify bun_str::strings::parse_int exists
-            if let Some(int) = bun_str::strings::parse_int::<u16>(retry_count, 10) {
+            // PORT NOTE: Zig `parseInt(u16, str, 10) catch null` — `Result` → `.ok()`.
+            if let Ok(int) = bun_str::strings::parse_int::<u16>(retry_count, 10) {
                 self.max_retry_count = int;
             }
         }
 
-        AsyncHTTP::load_env(log, env);
+        bun_http::async_http::load_env(log, env);
 
         if let Some(check_bool) = env.get(b"BUN_CONFIG_SKIP_SAVE_LOCKFILE") {
             self.do_.set(Do::SAVE_LOCKFILE, check_bool == b"0");
@@ -634,7 +634,7 @@ impl Options {
             }
 
             if !cli.token.is_empty() {
-                self.scope.token = cli.token;
+                self.scope.token = cli.token.into();
             }
 
             if cli.no_save {
@@ -716,20 +716,21 @@ impl Options {
                 } else {
                     LogLevel::Verbose
                 };
-                PackageManager::set_verbose_install(true);
+                // SAFETY: main-thread CLI option load — single writer (Zig: `verbose_install = true`).
+                unsafe { super::VERBOSE_INSTALL = true; }
             } else if cli.silent {
                 self.log_level = LogLevel::Silent;
-                PackageManager::set_verbose_install(false);
+                unsafe { super::VERBOSE_INSTALL = false; }
             } else if cli.quiet {
                 self.log_level = LogLevel::Quiet;
-                PackageManager::set_verbose_install(false);
+                unsafe { super::VERBOSE_INSTALL = false; }
             } else {
                 self.log_level = if disable_progress_bar {
                     LogLevel::DefaultNoProgress
                 } else {
                     LogLevel::Default
                 };
-                PackageManager::set_verbose_install(false);
+                unsafe { super::VERBOSE_INSTALL = false; }
             }
 
             if cli.no_verify {
@@ -741,8 +742,9 @@ impl Options {
             }
 
             if let Some(backend) = cli.backend {
-                // TODO(port): PackageInstall.supported_method is a mutable global in Zig
-                PackageInstall::set_supported_method(backend);
+                // SAFETY: main-thread CLI option load — single writer
+                // (Zig: `PackageInstall.supported_method = backend`).
+                unsafe { crate::package_install::SUPPORTED_METHOD = backend; }
             }
 
             // CPU and OS are now parsed as enums in CommandLineArguments, just copy them
@@ -781,11 +783,11 @@ impl Options {
             }
 
             match &cli.patch {
-                CommandLineArguments::Patch::Nothing => {}
-                CommandLineArguments::Patch::Patch => {
+                command_line_arguments::PatchOpts::Nothing => {}
+                command_line_arguments::PatchOpts::Patch => {
                     self.patch_features = PatchFeatures::Patch;
                 }
-                CommandLineArguments::Patch::Commit { patches_dir } => {
+                command_line_arguments::PatchOpts::Commit { patches_dir } => {
                     self.patch_features = PatchFeatures::Commit {
                         patches_dir: *patches_dir,
                     };

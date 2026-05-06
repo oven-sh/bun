@@ -5,7 +5,7 @@ use core::marker::PhantomData;
 use bstr::BStr;
 
 use bun_alloc::AllocError;
-use bun_collections::{ArrayHashMap, MultiArrayList};
+use bun_collections::{ArrayHashMap, MultiArrayElement, MultiArrayList};
 use bun_semver::String as SemverString;
 
 use crate::lockfile::{package, Lockfile};
@@ -54,6 +54,22 @@ impl<T> core::hash::Hash for NewId<T> {
         self.0.hash(state);
     }
 }
+impl<T> Default for NewId<T> {
+    // Zig leaves this undefined; pick the sentinel so accidental use trips
+    // the debug_assert in `get()`.
+    fn default() -> Self {
+        Self::INVALID
+    }
+}
+impl<T> fmt::Debug for NewId<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.0 == Self::MAX {
+            f.write_str("invalid")
+        } else {
+            write!(f, "{}", self.0)
+        }
+    }
+}
 
 impl<T> NewId<T> {
     const MAX: u32 = u32::MAX;
@@ -96,10 +112,11 @@ impl Store {
         maybe_parent_id: entry::Id,
         parent_dedupe: &mut ArrayHashMap<entry::Id, ()>,
     ) -> bool {
+        use entry::EntryListExt as _;
         let mut i: usize = 0;
         let mut len: usize;
 
-        // TODO(port): MultiArrayList column accessor — Zig `.items(.parents)`; assumed `.items_parents()` here.
+        // Zig `.items(.parents)` → derive(MultiArrayElement)-generated `.items_parents()`.
         let entry_parents = self.entries.items_parents();
 
         for &parent_id in entry_parents[id.get() as usize].as_slice() {

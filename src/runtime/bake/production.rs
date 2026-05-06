@@ -1551,8 +1551,9 @@ pub struct PerThread<'a> {
     pub loaded_files: AutoBitSet,
     /// JSArray of JSString, indexed by entry point index (OpaqueFileId)
     // Zig protects/unprotects this manually; PORTING.md mandates Strong for
-    // JSValue struct fields. Strong's Drop releases the GC root.
-    pub all_server_files: bun_jsc::Strong,
+    // JSValue struct fields. `None` mirrors the pre-init `.null` state;
+    // `PerThread::init` fills it. Strong's Drop releases the GC root.
+    pub all_server_files: Option<bun_jsc::Strong>,
 }
 
 /// Sent to other threads for rendering

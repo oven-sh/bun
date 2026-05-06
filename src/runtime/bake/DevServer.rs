@@ -981,7 +981,9 @@ impl DevServer<'_> {
 
 impl DevServer<'_> {
     fn init_server_runtime(&mut self) {
-        let runtime = BunString::static_(crate::bake::bake_body::get_hmr_runtime(bake::Side::Server).code);
+        let runtime = BunString::static_(
+            crate::bake::bake_body::get_hmr_runtime(crate::bake::bake_body::Side::Server).code,
+        );
 
         // SAFETY: vm is JSC_BORROW; vm.global is valid for VM lifetime
         let global = unsafe { &*(*self.vm).global };

@@ -812,7 +812,9 @@ impl BunxCommand {
             v
         };
 
-        this_transpiler.env.map.put(b"PATH", &path)?;
+        env_loader.map.put(b"PATH", &path)?;
+        // SAFETY: `Transpiler::init` always sets `fs` to the process singleton.
+        let fs = unsafe { &mut *this_transpiler.fs };
         // TODO(port): std.fmt.count("{d}", .{uid}) — compute decimal digit count of uid.
         let uid_digits = bun_core::fmt::count_int(uid as i64);
         let bunx_cache_dir: &[u8] =

@@ -308,19 +308,30 @@ fn send_audit_request(
         BStr::new(strings::without_trailing_slash(&pm.options.scope.url.href))
     )
     .expect("unreachable");
-    let url = URL::parse(&url_str);
+    // PORT NOTE: leak to satisfy `URL<'static>` (Zig had no lifetimes).
+    let url_str: &'static [u8] = Box::leak(url_str.into_boxed_slice());
+    let url = URL::parse(url_str);
 
-    let http_proxy = pm.env.get_http_proxy_for(&url);
+    // TODO(port): blocked_on bun_install::PackageManager::env (stub gated).
+    // let http_proxy = pm.env.get_http_proxy_for(&url);
+    let http_proxy: Option<URL<'static>> = None;
+
+    // PORT NOTE: Zig passed `headers.content.ptr.?[0..headers.content.len]`.
+    // SAFETY: `allocate()` succeeded above so `ptr` is non-null when `len > 0`;
+    // the buffer outlives the synchronous request.
+    let headers_buf: &'static [u8] = match headers.content.ptr {
+        Some(p) => unsafe { core::slice::from_raw_parts(p.as_ptr(), headers.content.len) },
+        None => &[],
+    };
 
     // PERF(port): Zig used MutableString with initial capacity 1024.
-    let mut response_buf: Vec<u8> = Vec::with_capacity(1024);
+    let response_buf: &mut MutableString = Box::leak(Box::new(MutableString::init(1024)?));
     let mut req = http::AsyncHTTP::init_sync(
         http::Method::POST,
         url,
         headers.entries,
-        // TODO(port): Zig passes `headers.content.ptr.?[0..headers.content.len]`.
-        headers.content.slice(),
-        &mut response_buf,
+        headers_buf,
+        response_buf as *mut MutableString,
         final_compressed_body,
         http_proxy,
         None,
@@ -329,7 +340,7 @@ fn send_audit_request(
     let res = match req.send_sync() {
         Ok(r) => r,
         Err(err) => {
-            Output::err(err, format_args!("audit request failed"));
+            Output::err(err, "audit request failed", ());
             Global::crash();
         }
     };
@@ -342,7 +353,7 @@ fn send_audit_request(
         Global::crash();
     }
 
-    Ok(Box::<[u8]>::from(response_buf.as_slice()))
+    Ok(Box::<[u8]>::from(response_buf.list.as_slice()))
 }
 
 fn parse_vulnerability(

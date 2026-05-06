@@ -1767,7 +1767,9 @@ impl<'a> Repl<'a> {
             let exc = global.take_exception(err);
             self.set_last_error(exc);
             self.print_js_error(exc);
+            return;
         }
+        let _ = writer.write_all(&buf);
     }
 
     // ========================================================================
@@ -1782,7 +1784,10 @@ impl<'a> Repl<'a> {
         // TODO(port): narrow error set
         self.vm = vm;
         if let Some(v) = vm {
-            self.global = Some(v.global);
+            // SAFETY: `v.global` is the live `*mut JSGlobalObject` for this VM
+            // (never null once initialized); reborrowed for `'a` to mirror Zig's
+            // freely-aliasing `*JSGlobalObject` field.
+            self.global = Some(unsafe { &*v.global });
         }
 
         self.setup_terminal();

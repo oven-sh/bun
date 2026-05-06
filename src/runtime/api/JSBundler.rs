@@ -926,10 +926,9 @@ pub mod js_bundler {
                         };
                     }
                 } else if !source_map_js.is_empty_or_undefined_or_null() {
-                    this.source_map = source_map_js.to_enum::<options::SourceMapOption>(
-                        global_this,
-                        "sourcemap",
-                    )?;
+                    let _ = source_map_js;
+                    this.source_map =
+                        todo!("blocked_on: bun_jsc::FromJsEnum for options::SourceMapOption");
                 }
             }
 

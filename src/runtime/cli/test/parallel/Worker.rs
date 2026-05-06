@@ -118,13 +118,15 @@ impl Worker {
         {
             // `.buffer` extra_fd creates an AF_UNIX socketpair; the parent end is
             // adopted into a usockets `Channel`.
+            // PORT NOTE: SpawnOptions.extra_fds is `Box<[Stdio]>` (owned) in the
+            // Rust port, so the `extra_fd_stdio` field is no longer borrowed here.
             this.extra_fd_stdio = [Stdio::Buffer];
             let options = SpawnOptions {
                 stdin: Stdio::Ignore,
                 stdout: Stdio::Buffer,
                 stderr: Stdio::Buffer,
-                extra_fds: &mut this.extra_fd_stdio,
-                cwd: coord.cwd,
+                extra_fds: vec![Stdio::Buffer].into_boxed_slice(),
+                cwd: coord.cwd.as_bytes().to_vec().into_boxed_slice(),
                 stream: true,
                 // Own pgrp so abortAll can kill(-pid, SIGTERM) the worker and
                 // anything it spawned. PDEATHSIG is the SIGKILL safety net on
@@ -136,21 +138,42 @@ impl Worker {
                 linux_pdeathsig: None,
                 ..Default::default()
             };
-            // TODO(port): spawnProcess returns `!Maybe(Spawned)`; `.unwrap()` here is the
-            // bun_sys::Result → Result conversion, not core::Result::unwrap.
-            let mut spawned =
+            // Zig: `try (try spawnProcess(...)).unwrap()` — outer `?` for the
+            // anyerror, inner map for the bun_sys::Result.
+            let spawned =
                 spawn::spawn_process(&options, coord.argv.as_ptr(), coord.envps[this.idx as usize].as_ptr())?
-                    .unwrap()?;
+                    .map_err(|e| {
+                        Output::err(e, "spawnProcess failed for test worker", ());
+                        bun_core::err!("SpawnFailed")
+                    })?;
+            let stdout = spawned.stdout;
+            let stderr = spawned.stderr;
+            let extra_pipes = spawned.extra_pipes.clone();
             // (Zig `defer spawned.extra_pipes.deinit()` — handled by Drop.)
-            this.process = Some(spawned.to_process(coord.vm.event_loop(), false));
-            if let Some(fd) = spawned.stdout {
-                this.out.reader.start(fd, true).unwrap()?;
+            this.process = Some(spawned.to_process(
+                bun_event_loop::EventLoopHandle::init(coord.vm.event_loop().cast()),
+                false,
+            ));
+            if let Some(fd) = stdout {
+                this.out
+                    .reader
+                    .start(fd, true)
+                    .map_err(|_| bun_core::err!("PipeStartFailed"))?;
             }
-            if let Some(fd) = spawned.stderr {
-                this.err.reader.start(fd, true).unwrap()?;
+            if let Some(fd) = stderr {
+                this.err
+                    .reader
+                    .start(fd, true)
+                    .map_err(|_| bun_core::err!("PipeStartFailed"))?;
             }
-            if !spawned.extra_pipes.is_empty() {
-                if !this.ipc.adopt(coord.vm, spawned.extra_pipes[0].fd()) {
+            if !extra_pipes.is_empty() {
+                // SAFETY: coord.vm backref valid for worker lifetime; adopt()
+                // mutates the loop's socket context (interior mutability in Zig).
+                let vm_mut = unsafe {
+                    &mut *(coord.vm as *const jsc::virtual_machine::VirtualMachine
+                        as *mut jsc::virtual_machine::VirtualMachine)
+                };
+                if !this.ipc.adopt(vm_mut, extra_pipes[0].fd()) {
                     return Err(bun_core::err!("ChannelAdoptFailed"));
                 }
             } else {

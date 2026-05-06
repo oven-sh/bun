@@ -841,12 +841,12 @@ impl Subprocess<'_> {
     ) -> JsResult<JSValue> {
         bun_output::scoped_log!(IPC, "Subprocess#doSend");
 
-        let ipc_data = this.ipc_data.as_mut();
         let context = if this.has_exited() {
             IPC::FromEnum::SubprocessExited
         } else {
             IPC::FromEnum::Subprocess
         };
+        let ipc_data = this.ipc_data.as_mut();
         IPC::do_send(ipc_data, global, call_frame, context)
     }
 

@@ -1191,7 +1191,7 @@ pub fn cron_remove(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
         let job_ref = unsafe { &mut *job };
 
         let promise_value = job_ref.promise.value();
-        job_ref.poll.ref_(VirtualMachine::get());
+        job_ref.poll.ref_(vm_ctx());
         #[cfg(target_os = "macos")]
         job_ref.start_mac();
         #[cfg(windows)]

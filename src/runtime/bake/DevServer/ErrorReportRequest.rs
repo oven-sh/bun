@@ -179,9 +179,21 @@ pub fn parse_id(source_url: &[u8], browser_url: &[u8]) -> Option<SourceMapStore:
     if hex.len() != core::mem::size_of::<u64>() * 2 {
         return None;
     }
-    Some(SourceMapStore::Key::init(
-        DevServer::parse_hex_to_int::<u64>(hex)?,
-    ))
+    Some(SourceMapStore::Key::init(parse_hex_to_int::<u64>(hex)?))
+}
+
+// PORT NOTE: Zig used `std.fmt.parseUnsigned(T, slice, 16)`. Thin local copy of
+// `dev_server_body::parse_hex_to_int` so this module doesn't depend on the
+// still-gated `DevServer.rs` draft. Rust can't size a stack array by a generic
+// `T` without `generic_const_exprs`, so cap at 16 bytes (enough for u128).
+fn parse_hex_to_int<T: Copy>(slice: &[u8]) -> Option<T> {
+    let size = ::core::mem::size_of::<T>();
+    debug_assert!(size <= 16);
+    let mut out = [0u8; 16];
+    let decoded = strings::decode_hex_to_bytes(&mut out[..size], slice).ok()?;
+    debug_assert!(decoded == size);
+    // SAFETY: out[..size] is fully initialized by decode_hex_to_bytes; T: Copy.
+    Some(unsafe { ::core::ptr::read_unaligned(out.as_ptr() as *const T) })
 }
 
 /// Instead of decoding the entire file, just decode the desired section.

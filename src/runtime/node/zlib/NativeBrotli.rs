@@ -107,18 +107,22 @@ impl NativeBrotli {
     ) -> JsResult<Box<Self>> {
         let arguments = callframe.arguments_undef::<1>();
 
-        let mode = arguments[0];
+        let mode = arguments.ptr[0];
         if !mode.is_number() {
-            return global_this.throw_invalid_argument_type_value("mode", "number", mode);
+            return Err(global_this.throw_invalid_argument_type_value("mode", "number", mode));
         }
         let mode_double = mode.as_number();
         if mode_double % 1.0 != 0.0 {
-            return global_this.throw_invalid_argument_type_value("mode", "integer", mode);
+            return Err(global_this.throw_invalid_argument_type_value("mode", "integer", mode));
         }
         let mode_int: i64 = mode_double as i64;
         if mode_int < 8 || mode_int > 9 {
-            return global_this.throw_range_error(mode_int, "mode", 8, 9);
-            // TODO(port): RangeErrorOptions { field_name, min, max } shape
+            return Err(global_this.throw_range_error(mode_int, RangeErrorOptions {
+                field_name: b"mode",
+                min: 8,
+                max: 9,
+                ..Default::default()
+            }));
         }
 
         let mut ptr = Box::new(Self {

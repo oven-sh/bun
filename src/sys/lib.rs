@@ -561,7 +561,10 @@ pub mod dir_iterator {
     }
 
     pub fn iterate(dir: Fd) -> WrappedIterator {
-        WrappedIterator { dir, name_filter: None, state: State::new() }
+        #[cfg(not(windows))]
+        { WrappedIterator { dir, name_filter: None, state: State::new() } }
+        #[cfg(windows)]
+        { WrappedIterator { dir, state: State::new() } }
     }
 }
 

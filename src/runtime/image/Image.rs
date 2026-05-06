@@ -12,9 +12,10 @@ use core::ffi::c_int;
 use core::mem;
 
 use bun_core::base64;
+use bun_core::zstr;
 use bun_jsc::{
     self as jsc, ArrayBuffer, CallFrame, JSGlobalObject, JSPromise, JSValue, JsRef, JsResult,
-    Strong,
+    Strong, JsClass as _, StringJsc as _, SysErrorJsc as _,
 };
 use bun_string::ZigString;
 use crate::webcore::Blob;
@@ -32,6 +33,80 @@ use super::thumbhash;
 pub enum ReadBytesResult {
     Ok(Vec<u8>),
     Err(sys::Error),
+}
+
+// ─── local shims for upstream-missing methods (see PORTING notes) ───────────
+
+// TODO(port): move to <area>_sys
+unsafe extern "C" {
+    /// `JSValue.createBufferWithCtx` (JSValue.zig) — wraps the codec buffer in
+    /// a Node `Buffer` with a custom deallocator. Declared locally until
+    /// `bun_jsc::JSValue` re-exports it.
+    fn JSBuffer__bufferFromPointerAndLengthAndDeinit(
+        global: *const JSGlobalObject,
+        ptr: *mut u8,
+        len: usize,
+        ctx: *mut core::ffi::c_void,
+        deallocator: Option<unsafe extern "C" fn(*mut core::ffi::c_void, *mut core::ffi::c_void)>,
+    ) -> JSValue;
+}
+
+#[inline]
+fn create_buffer_with_ctx(
+    global: &JSGlobalObject,
+    bytes: core::ptr::NonNull<[u8]>,
+    ctx: *mut core::ffi::c_void,
+    free: unsafe extern "C" fn(*mut core::ffi::c_void, *mut core::ffi::c_void),
+) -> JSValue {
+    let len = bytes.len();
+    // SAFETY: `bytes` is owned by the codec; ownership transfers to JS, freed
+    // via `free` when the Buffer is collected.
+    unsafe {
+        JSBuffer__bufferFromPointerAndLengthAndDeinit(
+            global,
+            bytes.as_ptr() as *mut u8,
+            len,
+            ctx,
+            Some(free),
+        )
+    }
+}
+
+/// Lowercase JS-visible name for a `codecs::Format`. Local until `Format`
+/// derives `IntoStaticStr` (variant casing differs from JS).
+#[inline]
+fn format_name(f: codecs::Format) -> &'static str {
+    match f {
+        codecs::Format::Jpeg => "jpeg",
+        codecs::Format::Png => "png",
+        codecs::Format::Webp => "webp",
+        codecs::Format::Heic => "heic",
+        codecs::Format::Avif => "avif",
+        codecs::Format::Bmp => "bmp",
+        codecs::Format::Tiff => "tiff",
+        codecs::Format::Gif => "gif",
+    }
+}
+
+/// Local extension: `JSValue::get_optional_enum::<E>()` until `bun_jsc` exposes it.
+trait GetOptionalEnum {
+    fn get_optional_enum<E: jsc::FromJsEnum>(
+        self,
+        global: &JSGlobalObject,
+        key: &'static str,
+    ) -> JsResult<Option<E>>;
+}
+impl GetOptionalEnum for JSValue {
+    fn get_optional_enum<E: jsc::FromJsEnum>(
+        self,
+        global: &JSGlobalObject,
+        key: &'static str,
+    ) -> JsResult<Option<E>> {
+        match self.get(global, key)? {
+            Some(v) if !v.is_undefined_or_null() => Ok(Some(v.to_enum::<E>(global, key)?)),
+            _ => Ok(None),
+        }
+    }
 }
 
 // `pub const js = jsc.Codegen.JSImage;` and the `fromJS`/`fromJSDirect`/`toJS`

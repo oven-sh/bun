@@ -920,9 +920,9 @@ impl Drop for DevServer<'_> {
 
         {
             let mut r = self.next_bundle.requests.first;
-            while let Some(request) = r {
+            while !r.is_null() {
                 // SAFETY: intrusive list node
-                let request = unsafe { &mut *request };
+                let request = unsafe { &mut *r };
                 debug_assert!(!matches!(request.data.handler, Handler::ServerHandler(_)));
                 let next = request.next;
                 request.data.deref_();
@@ -934,21 +934,23 @@ impl Drop for DevServer<'_> {
         for value in self.source_maps.entries.values_mut() {
             debug_assert!(value.ref_count > 0);
             value.ref_count = 0;
-            value.deinit();
+            // TODO(port): blocked_on: source_map_store::Entry::deinit — Drop handles
+            // owned buffers; explicit deinit was Zig-side allocator free.
         }
-        if self.source_maps.weak_ref_sweep_timer.state == EventLoopTimer::State::ACTIVE {
-            // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime
-            unsafe { (*self.vm).timer.remove(&mut self.source_maps.weak_ref_sweep_timer) };
+        if self.source_maps.weak_ref_sweep_timer.state == EventLoopTimerState::ACTIVE {
+            // TODO(port): blocked_on: bun_jsc::VirtualMachine::timer (field is `()` stub)
+            let _ = &mut self.source_maps.weak_ref_sweep_timer;
         }
 
         for event in &mut self.watcher_atomics.events {
-            event.dirs.clear();
-            event.files.clear();
+            // TODO(port): blocked_on: bun_collections::StringArrayHashMap::clear
+            event.dirs = Default::default();
+            event.files = Default::default();
             event.extra_files.clear();
         }
 
         if let TestingBatchEvents::Enabled(batch) = &mut self.testing_batch_events {
-            drop(std::mem::take(&mut batch.entry_points));
+            drop(std::mem::replace(&mut batch.entry_points, EntryPointList::EMPTY));
         }
 
         debug_assert!(self.magic == Magic::Valid);

@@ -101,8 +101,15 @@ impl ReplCommand {
         // (vm.arena assignment moved below ReplRunner construction to avoid move-after-borrow)
 
         // Configure bundler options
-        b.options.install = ctx.install;
-        b.resolver.opts.install = ctx.install;
+        // PORT NOTE: ctx.install is Option<Box<BunInstall>>; bundler opts hold
+        // Option<&'static BunInstall>. ctx is the process-global ContextData so
+        // the borrow is effectively 'static — extend via raw ptr.
+        let install_ref = ctx
+            .install
+            .as_deref()
+            .map(|p| unsafe { &*(p as *const _) });
+        b.options.install = install_ref;
+        b.resolver.opts.install = install_ref;
         b.resolver.opts.global_cache = ctx.debug.global_cache;
         b.resolver.opts.prefer_offline_install =
             ctx.debug.offline_mode_setting.unwrap_or(OfflineMode::Online) == OfflineMode::Offline;
@@ -111,7 +118,7 @@ impl ReplCommand {
         b.options.global_cache = b.resolver.opts.global_cache;
         b.options.prefer_offline_install = b.resolver.opts.prefer_offline_install;
         b.options.prefer_latest_install = b.resolver.opts.prefer_latest_install;
-        b.resolver.env_loader = b.env;
+        b.resolver.env_loader = NonNull::new(b.env);
         b.options.env.behavior = EnvBehavior::LoadAllWithoutInlining;
         b.options.dead_code_elimination = false; // REPL needs all code
 

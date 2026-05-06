@@ -593,45 +593,57 @@ impl BunxCommand {
 
         // fast path: they're actually using this interchangeably with `bun run`
         // so we use Bun.which to check
-        // SAFETY: initialized by Run.configureEnvForRun
-        // TODO(port): `this_transpiler` was an out-param `undefined` in Zig; configure_env_for_run
-        // should return it by value in Rust.
-        let mut this_transpiler: Transpiler;
+        // PORT NOTE: out-param init — Zig `var this_transpiler: Transpiler = undefined;`.
+        let mut this_transpiler_slot =
+            ::core::mem::MaybeUninit::<Transpiler<'static>>::uninit();
         let mut original_path: &[u8] = b"";
 
         let root_dir_info = Run::configure_env_for_run(
             ctx,
-            &mut this_transpiler,
+            &mut this_transpiler_slot,
             None,
             true,
             true,
         )?;
+        // SAFETY: `configure_env_for_run` returned `Ok`, so the slot is fully
+        // initialized via `MaybeUninit::write`.
+        let this_transpiler = unsafe { this_transpiler_slot.assume_init_mut() };
 
-        Run::configure_path_for_run(
-            ctx,
-            root_dir_info,
-            &mut this_transpiler,
-            &mut original_path,
-            root_dir_info.abs_path,
-            ctx.debug.run_in_bun,
-        )?;
-        this_transpiler.env.map.put(b"npm_command", b"exec").expect("unreachable");
-        this_transpiler.env.map.put(b"npm_lifecycle_event", b"bunx").expect("unreachable");
-        this_transpiler.env.map.put(b"npm_lifecycle_script", opts.package_name).expect("unreachable");
+        // SAFETY: `configure_env_for_run` returns a valid pointer into the
+        // resolver's process-lifetime directory cache.
+        let root_dir_info_ref = unsafe { &*root_dir_info };
+        let force_using_bun = ctx.debug.run_in_bun;
+        {
+            let _ = (&ctx, root_dir_info_ref, &mut original_path, force_using_bun);
+            // TODO(port): `configure_path_for_run` lives only in run_command's
+            // `phase_a_draft` impl. Once promoted to the active impl:
+            //   Run::configure_path_for_run(
+            //       ctx, root_dir_info_ref, this_transpiler,
+            //       Some(&mut original_path), root_dir_info_ref.abs_path,
+            //       force_using_bun,
+            //   )?;
+            todo!("blocked_on: RunCommand::configure_path_for_run");
+        }
+        // SAFETY: `Transpiler::init` always sets `env` (singleton or leaked).
+        let env_loader = unsafe { &mut *this_transpiler.env };
+        env_loader.map.put(b"npm_command", b"exec").expect("unreachable");
+        env_loader.map.put(b"npm_lifecycle_event", b"bunx").expect("unreachable");
+        env_loader.map.put(b"npm_lifecycle_script", opts.package_name).expect("unreachable");
 
         if opts.package_name == b"bun-repl" {
-            this_transpiler.env.map.remove(b"BUN_INSPECT_CONNECT_TO");
-            this_transpiler.env.map.remove(b"BUN_INSPECT_NOTIFY");
-            this_transpiler.env.map.remove(b"BUN_INSPECT");
+            env_loader.map.remove(b"BUN_INSPECT_CONNECT_TO");
+            env_loader.map.remove(b"BUN_INSPECT_NOTIFY");
+            env_loader.map.remove(b"BUN_INSPECT");
         }
 
-        let ignore_cwd: &[u8] = this_transpiler.env.get(b"BUN_WHICH_IGNORE_CWD").unwrap_or(b"");
+        let ignore_cwd: Vec<u8> = env_loader.get(b"BUN_WHICH_IGNORE_CWD").unwrap_or(b"").to_vec();
+        // PORT NOTE: cloned to drop the borrow on `env_loader.map` before mutating it.
 
         if !ignore_cwd.is_empty() {
-            let _ = this_transpiler.env.map.map.swap_remove(b"BUN_WHICH_IGNORE_CWD");
+            env_loader.map.remove(b"BUN_WHICH_IGNORE_CWD");
         }
 
-        let mut path: Vec<u8> = this_transpiler.env.get(b"PATH").unwrap().to_vec();
+        let mut path: Vec<u8> = env_loader.get(b"PATH").unwrap().to_vec();
         // PORT NOTE: reshaped for borrowck — Zig held a borrowed slice into env.map and
         // later overwrote PATH with a new allocation; here we own PATH as a Vec<u8>.
 

@@ -333,12 +333,15 @@ impl FileResponseStream {
                 let adjusted = self.sendfile.remain.min(i32::MAX as u64);
                 let mut off: i64 = i64::try_from(self.sendfile.offset).unwrap();
                 // TODO(port): move to bun_sys::linux — std.os.linux.sendfile
-                let rc = bun_sys::linux::sendfile(
-                    self.sendfile.socket_fd.native(),
-                    self.fd.native(),
-                    &mut off,
-                    adjusted as usize,
-                );
+                // SAFETY: both fds are valid open file descriptors owned by `self`.
+                let rc = unsafe {
+                    bun_sys::linux::sendfile(
+                        self.sendfile.socket_fd.native(),
+                        self.fd.native(),
+                        &mut off,
+                        adjusted as usize,
+                    )
+                };
                 let errno = sys::get_errno(rc);
                 let sent: u64 =
                     u64::try_from((off - i64::try_from(self.sendfile.offset).unwrap()).max(0))

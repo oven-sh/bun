@@ -552,7 +552,9 @@ pub fn tick_queue_with_count(
     vm: &mut VirtualMachine,
     counter: &mut u32,
 ) -> Result<(), JsTerminated> {
-    let global = el.global();
+    // SAFETY: `el.global` is set by VM init before the first tick; live for
+    // the duration of the drain loop (Zig: `this.global`).
+    let global: &JSGlobalObject = unsafe { el.global.expect("EventLoop.global unset").as_ref() };
     let global_vm = global.vm();
 
     #[cfg(debug_assertions)]

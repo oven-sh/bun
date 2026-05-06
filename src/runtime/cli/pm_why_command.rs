@@ -16,8 +16,8 @@ impl PmWhyCommand {
         // but `WhyCommand::exec_from_pm` needs `&mut Command::Context` to reach
         // `ctx.log`. Reacquire the process-global handle (same pointee,
         // single-threaded CLI startup) rather than unsafely reborrowing `_ctx`.
-        let mut ctx = command::get();
-        WhyCommand::exec_from_pm(&mut ctx, pm, positionals)?;
+        let ctx = command::get();
+        WhyCommand::exec_from_pm(ctx, pm, positionals)?;
         Ok(())
     }
 }

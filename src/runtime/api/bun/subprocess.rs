@@ -701,7 +701,7 @@ impl Subprocess<'_> {
             bun_sys::Result::Ok(()) => {}
             bun_sys::Result::Err(err) => {
                 // Signal 9 should always be fine, but just in case that somehow fails.
-                return Err(global.throw_value(err.to_js(global)?));
+                return Err(global.throw_value(err.to_js(global)));
             }
         }
 
@@ -713,12 +713,10 @@ impl Subprocess<'_> {
             return;
         }
         self.event_loop_timer_refd = refd;
-        let vm = self.global_this().bun_vm();
-        if refd {
-            vm.timer.increment_timer_ref(1);
-        } else {
-            vm.timer.increment_timer_ref(-1);
-        }
+        let _vm = self.global_this().bun_vm();
+        // TODO(blocked_on: bun_jsc::VirtualMachineRef::timer): `timer` is a `()`
+        // stub on the upstream VM type; wire `increment_timer_ref` once it lands.
+        let _ = refd;
     }
 
     pub fn timeout_callback(&mut self) {

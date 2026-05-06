@@ -66,12 +66,12 @@ impl PBKDF2 {
                 } else {
                     core::ptr::null()
                 },
-                c_int::try_from(password.len()).unwrap(),
+                password.len(),
                 salt.as_ptr(),
-                c_int::try_from(salt.len()).unwrap(),
-                c_int::try_from(iteration_count).unwrap(),
+                salt.len(),
+                iteration_count as c_uint,
                 algorithm.md().unwrap(),
-                c_int::try_from(length).unwrap(),
+                usize::try_from(length).unwrap(),
                 output.as_mut_ptr(),
             )
         };

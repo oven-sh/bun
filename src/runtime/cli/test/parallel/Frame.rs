@@ -61,6 +61,8 @@ pub struct Frame {
 }
 
 impl Frame {
+    pub const DEFAULT: Self = Self { buf: Vec::new() };
+
     pub fn begin(&mut self, kind: Kind) {
         self.buf.clear();
         // reserve header; payload_len patched in send()

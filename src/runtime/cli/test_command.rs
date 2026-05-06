@@ -1974,7 +1974,7 @@ impl TestCommand {
             }
         }
 
-        let all_test_files = scanner.take_found_test_files().expect("oom");
+        let mut all_test_files = scanner.take_found_test_files().expect("oom");
         let search_count = scanner.search_count;
         drop(scanner);
 
@@ -1995,7 +1995,8 @@ impl TestCommand {
                 }
                 // TODO(port): borrowck — all_test_files ownership vs slicing; Phase B reshape
 
-                let result = match ChangedFilesFilter::filter(&ctx, vm, &all_test_files, changed_since) {
+                // SAFETY: vm is the live VM pointer obtained above; unique here.
+                let result = match ChangedFilesFilter::filter(&ctx, unsafe { &mut *vm }, &mut all_test_files[..], changed_since) {
                     Ok(r) => r,
                     Err(err) => {
                         Output::err(err, format_args!("--changed: unable to determine affected tests"));

@@ -724,8 +724,11 @@ pub mod command {
         }
 
         // bun build --compile entry point
-        if !bun_core::env_var::feature_flag::BUN_BE_BUN::get() {
+        if !bun_core::env_var::feature_flag::BUN_BE_BUN::get().unwrap_or(false) {
             if let Some(graph) = bun_standalone_graph::Graph::from_executable()? {
+                // SAFETY: `from_executable` returns a non-null `*mut Graph` whose
+                // backing storage is process-static (owned by the executable image).
+                let graph: &mut bun_standalone_graph::Graph = unsafe { &mut *graph };
                 let mut offset_for_passthrough: usize = 0;
 
                 let ctx: &mut ContextData = 'brk: {

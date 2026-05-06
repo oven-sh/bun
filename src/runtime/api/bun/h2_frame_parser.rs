@@ -889,7 +889,7 @@ impl Handlers {
         }
         // SAFETY: global_object is JSC_BORROW; outlives Handlers, never null
         let global = unsafe { &*self.global_object };
-        self.vm.event_loop().run_callback(callback, global, JSValue::UNDEFINED, data);
+        unsafe { (*self.vm.event_loop()).run_callback(callback, global, JSValue::UNDEFINED, data) };
         true
     }
 
@@ -902,7 +902,7 @@ impl Handlers {
         let Some(callback) = event.get(this_value) else { return JSValue::ZERO };
         // SAFETY: global_object is JSC_BORROW; outlives Handlers, never null
         let global = unsafe { &*self.global_object };
-        self.vm.event_loop().run_callback_with_result(callback, global, this_value, data)
+        unsafe { (*self.vm.event_loop()).run_callback_with_result(callback, global, this_value, data) }
     }
 
     pub fn from_js(
@@ -912,7 +912,8 @@ impl Handlers {
     ) -> JsResult<Handlers> {
         let mut handlers = Handlers {
             binary_type: BinaryType::Buffer,
-            vm: global_object.bun_vm(),
+            // SAFETY: bun_vm() never returns null; VM outlives every JS object (effectively 'static).
+            vm: unsafe { &*global_object.bun_vm() },
             global_object: global_object as *const _,
         };
 

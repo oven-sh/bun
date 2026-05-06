@@ -1039,15 +1039,16 @@ impl CronRemoveJob {
         } else {
             RemoveState::Done
         };
-        this_ref.poll.unref(VirtualMachine::get());
-        let ev = VirtualMachine::get().event_loop();
+        this_ref.poll.unref(vm_ctx());
+        // SAFETY: per-thread VM singleton; `event_loop()` returns a live `*mut`.
+        let ev = unsafe { &mut *vm_mut().event_loop() };
         ev.enter();
         if let Some(msg) = &this_ref.err_msg {
             let _ = this_ref.promise.reject_with_async_stack(
                 this_ref.global,
-                this_ref
+                Ok(this_ref
                     .global
-                    .create_error_instance(format_args!("{}", bstr::BStr::new(msg))),
+                    .create_error_instance(format_args!("{}", bstr::BStr::new(msg)))),
             );
         } else {
             let _ = this_ref.promise.resolve(this_ref.global, JSValue::UNDEFINED);

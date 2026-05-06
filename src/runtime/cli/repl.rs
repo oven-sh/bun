@@ -1706,16 +1706,20 @@ impl<'a> Repl<'a> {
         self.print_js_error_to(error_value, Output::writer(), self.use_colors);
     }
 
-    fn print_js_error_to(&self, error_value: JSValue, writer: &mut dyn bun_io::Write, enable_colors: bool) {
-        // TODO(port): writer type — Zig uses *std.Io.Writer; using trait object placeholder
+    fn print_js_error_to(&self, error_value: JSValue, writer: &mut bun_core::io::Writer, enable_colors: bool) {
+        // PORT NOTE: Zig writes straight through `*std.Io.Writer`. The Rust
+        // `bun_core::io::Writer` vtable doesn't implement `bun_io::Write`, so
+        // buffer through a `Vec<u8>` (which does) and flush in one shot — REPL
+        // error output is tiny.
         let Some(global) = self.global else { return; };
+        let mut buf: Vec<u8> = Vec::new();
         // Use .Error level for proper error formatting with Bun.inspect
         if jsc::ConsoleObject::format2(
             jsc::ConsoleObject::MessageLevel::Error,
             global,
             &error_value,
             1,
-            writer,
+            &mut buf,
             jsc::ConsoleObject::FormatOptions {
                 enable_colors,
                 add_newline: true,
@@ -1729,9 +1733,11 @@ impl<'a> Repl<'a> {
         .is_err()
         {
             // Formatting the error itself threw — clear it to avoid recursion and show a fallback.
-            global.clear_exception();
+            global_clear_exception(global);
             let _ = writer.write_all(b"error: [failed to format error]\n");
+            return;
         }
+        let _ = writer.write_all(&buf);
     }
 
     /// Format and print a JS value using Bun's console formatter (same as console.log)

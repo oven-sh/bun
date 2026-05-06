@@ -1174,6 +1174,9 @@ fn load_module(
         AnyPromise::Internal(p) => p,
         AnyPromise::Normal(_) => unreachable!(),
     };
+    // SAFETY: `as_any_promise` returns a non-null cell pointer owned by the JSC
+    // heap; unique &mut for `set_handled`/`unwrap` on this thread.
+    let promise = unsafe { &mut *promise };
     promise.set_handled();
     // PORT NOTE: Zig's `*VirtualMachine` is a freely-aliasing mutable pointer.
     // We take `*mut VirtualMachine` (not `&VirtualMachine`) so the provenance
@@ -1199,7 +1202,7 @@ fn load_module(
         }
         Unwrapped::Rejected(err) => {
             // SAFETY: vm is the live per-thread VM; vm.global is live for VM lifetime.
-            Err(unsafe { &*(*vm).global }.throw_value(err).into())
+            Err(js_err(unsafe { &*(*vm).global }.throw_value(err)))
         }
     }
 }
@@ -1324,14 +1327,11 @@ pub extern "C" fn BakeProdResolve(
     let referrer = a_str.to_utf8();
 
     if resolver::is_package_path(specifier.slice()) {
-        let _ = global.throw(
+        let _ = global.throw(format_args!(
             "Non-relative import {} from {} are not allowed in production assets. This is a bug in Bun's bundler",
-            format_args!(
-                "{} {}",
-                bun_core::fmt::quote(specifier.slice()),
-                bun_core::fmt::quote(referrer.slice()),
-            ),
-        );
+            bun_core::fmt::quote(specifier.slice()),
+            bun_core::fmt::quote(referrer.slice()),
+        ));
         return BunString::dead();
     }
 

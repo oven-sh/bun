@@ -740,22 +740,58 @@ pub static DEV_SERVER_VTABLE: bun_bundler::dispatch::DevServerVTable =
         is_file_cached: |p, abs_path, side| {
             // SAFETY: p is a live *mut DevServer per DevServerHandle invariant.
             let dev = unsafe { &mut *p.cast::<DevServer>() };
-            // `bake_types::Side` → `bake_types::Graph` widening matches Zig
-            // (DevServer.zig:2128 takes `bake.Graph`).
-            dev.is_file_cached(abs_path, side.graph()).map(|e| {
+            // Vtable slot already passes `bake_types::Graph` (DevServer.zig:2128
+            // takes `bake.Graph`); no widening needed.
+            dev.is_file_cached(abs_path, side).map(|e| {
                 bun_bundler::bake_types::CacheEntry {
                     // SAFETY: FileKind/CacheKind have identical #[repr(u8)] discriminants.
                     kind: unsafe { core::mem::transmute::<FileKind, _>(e.kind) },
                 }
             })
         },
-        dupe: |p, bytes| {
-            // `dev.allocator().dupe(u8, ..)` — under global mimalloc this is a
-            // plain `Box<[u8]>::from(bytes)`. The DevServer-owned arena
-            // (`allocation_scope`) is debug-only; see PORTING.md §Allocators.
-            // PERF(port): was AllocationScope-tracked dupe.
-            let _ = p;
-            Box::<[u8]>::from(bytes)
+        barrel_needed_exports: |_p| {
+            // DevServer field is `StringArrayHashMap<StringHashMap<()>>` but the
+            // vtable slot expects `*mut StringHashMap<StringHashMap<()>>` —
+            // mismatched container kinds; bundler side must adapt.
+            todo!("blocked_on: bun_bundler::dispatch::DevServerVTable::barrel_needed_exports container kind")
+        },
+        log_for_resolution_failures: |_p, _abs_path, _graph| {
+            todo!("blocked_on: dev_server_body::DevServer::log_for_resolution_failures un-gate")
+        },
+        finalize_bundle: |_p, _bv2, _result| {
+            todo!("blocked_on: dev_server_body::DevServer::finalize_bundle un-gate")
+        },
+        handle_parse_task_failure: |_p, _err, _graph, _abs_path, _log, _bv2| {
+            todo!("blocked_on: dev_server_body::DevServer::handle_parse_task_failure un-gate")
+        },
+        put_or_overwrite_asset: |_p, _path, _contents, _hash| {
+            todo!("blocked_on: dev_server::Assets::put_or_overwrite un-gate")
+        },
+        track_resolution_failure: |_p, _import_source, _specifier, _graph, _loader| {
+            todo!("blocked_on: dev_server_body::DevServer::track_resolution_failure un-gate")
+        },
+        asset_hash: |p, abs_path| {
+            // SAFETY: p is a live *mut DevServer per DevServerHandle invariant.
+            let dev = unsafe { &mut *p.cast::<DevServer>() };
+            let _ = (dev, abs_path);
+            todo!("blocked_on: dev_server::Assets::get_hash un-gate")
+        },
+        current_bundle_start_data: |p| {
+            // SAFETY: p is a live *mut DevServer per DevServerHandle invariant.
+            let dev = unsafe { &mut *p.cast::<DevServer>() };
+            dev.current_bundle
+                .as_mut()
+                .map(|c| c.start_data)
+                .unwrap_or(core::ptr::null_mut())
+        },
+        register_barrel_with_deferrals: |p, path| {
+            // SAFETY: p is a live *mut DevServer per DevServerHandle invariant.
+            let dev = unsafe { &mut *p.cast::<DevServer>() };
+            let _ = dev
+                .barrel_files_with_deferrals
+                .get_or_put(path)
+                .map_err(|_| bun_alloc::out_of_memory());
+            Ok(())
         },
         register_barrel_export: |p, barrel_path, alias| {
             // SAFETY: p is a live *mut DevServer per DevServerHandle invariant.

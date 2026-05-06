@@ -200,18 +200,18 @@ impl UpgradeCommand {
         // gonna have to free memory myself like a goddamn caveman due to a thread safety issue with ArenaAllocator
         // (in Rust: Vec drops automatically; the Zig defer-free is a no-op here)
 
-        let mut header_entries: Headers::Entry::List = Headers::Entry::List::empty();
-        let accept = Headers::Entry {
-            name: Headers::Offset {
+        let mut header_entries: headers::EntryList = headers::EntryList::default();
+        let accept = headers::Entry {
+            name: headers::api::StringPointer {
                 offset: 0,
                 length: u32::try_from(b"Accept".len()).unwrap(),
             },
-            value: Headers::Offset {
+            value: headers::api::StringPointer {
                 offset: u32::try_from(b"Accept".len()).unwrap(),
                 length: u32::try_from(b"application/vnd.github.v3+json".len()).unwrap(),
             },
         };
-        header_entries.push(accept);
+        header_entries.append(accept).expect("oom");
         // defer if SILENT header_entries.deinit() — Drop handles this
 
         // Incase they're using a GitHub proxy in e.g. China
@@ -246,20 +246,22 @@ impl UpgradeCommand {
                     bstr::BStr::new(access_token),
                 )
                 .expect("oom");
-                header_entries.push(Headers::Entry {
-                    name: Headers::Offset {
-                        offset: accept.value.offset + accept.value.length,
-                        length: u32::try_from(b"Authorization".len()).unwrap(),
-                    },
-                    value: Headers::Offset {
-                        offset: u32::try_from(
-                            (accept.value.offset + accept.value.length) as usize
-                                + b"Authorization".len(),
-                        )
-                        .unwrap(),
-                        length: u32::try_from(b"Bearer ".len() + access_token.len()).unwrap(),
-                    },
-                });
+                header_entries
+                    .append(headers::Entry {
+                        name: headers::api::StringPointer {
+                            offset: accept.value.offset + accept.value.length,
+                            length: u32::try_from(b"Authorization".len()).unwrap(),
+                        },
+                        value: headers::api::StringPointer {
+                            offset: u32::try_from(
+                                (accept.value.offset + accept.value.length) as usize
+                                    + b"Authorization".len(),
+                            )
+                            .unwrap(),
+                            length: u32::try_from(b"Bearer ".len() + access_token.len()).unwrap(),
+                        },
+                    })
+                    .expect("oom");
             }
         }
 

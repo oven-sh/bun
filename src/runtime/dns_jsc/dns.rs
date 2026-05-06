@@ -2292,10 +2292,10 @@ pub mod internal {
             sys::Fd::from_native(unsafe { core::mem::transmute::<u32, i32>(machport) }),
             Default::default(),
             // TODO(port): FilePoll generic owner type InternalDNSRequest
-            Async::Owner::new(Async::poll_tag::REQUEST, req as *mut ()),
+            Async::Owner::new(Async::posix_event_loop::poll_tag::REQUEST, req as *mut ()),
         );
         // SAFETY: `poll` is a freshly-allocated hive slot; `loop_.r#loop()` is the live uws loop.
-        let rc = unsafe { (*poll).register(&mut *loop_.r#loop(), Async::Flags::Machport, true) };
+        let rc = unsafe { (*poll).register(&mut *loop_.r#loop(), Async::PollKind::Machport, true) };
 
         if rc.is_err() {
             // TODO(port): FilePoll::deinit(poll, ctx) — hive slot leak until then.
@@ -2374,7 +2374,7 @@ pub mod internal {
                         // SAFETY: file_poll was set in lookup_libinfo before the first callback fires.
                         let poll = (*req).libinfo.file_poll.unwrap().as_mut();
                         poll.fd = sys::Fd::from_native(core::mem::transmute::<u32, i32>(machport));
-                        match poll.register(&mut *Loop::get(), Async::Flags::Machport, true) {
+                        match poll.register(&mut *Loop::get(), Async::PollKind::Machport, true) {
                             sys::Result::Err(_) => {
                                 bun_output::scoped_log!(dns, "libinfoCallback: failed to register poll");
                                 break 'retry;

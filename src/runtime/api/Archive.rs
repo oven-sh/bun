@@ -1537,12 +1537,12 @@ fn extract_to_disk_filtered(
     let _ = cwd.make_path(root);
     let dir_fd: Fd = 'brk: {
         if bun_paths::is_absolute(root) {
-            break 'brk match bun_sys::open_a(root, bun_sys::O::RDONLY | bun_sys::O::DIRECTORY, 0).unwrap_result() {
+            break 'brk match bun_sys::open_a(root, bun_sys::O::RDONLY | bun_sys::O::DIRECTORY, 0) {
                 Ok(fd) => fd,
                 Err(_) => return Err(bun_core::err!("OpenError")),
             };
         } else {
-            break 'brk match bun_sys::openat_a(cwd, root, bun_sys::O::RDONLY | bun_sys::O::DIRECTORY, 0).unwrap_result() {
+            break 'brk match bun_sys::openat_a(cwd, root, bun_sys::O::RDONLY | bun_sys::O::DIRECTORY, 0) {
                 Ok(fd) => fd,
                 Err(_) => return Err(bun_core::err!("OpenError")),
             };

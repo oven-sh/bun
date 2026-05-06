@@ -300,20 +300,23 @@ fn aligned_alloc_size(ptr: *mut u8) -> usize {
     unsafe { mimalloc::mi_malloc_usable_size(ptr.cast()) }
 }
 
-fn vtable_alloc(ptr: *mut c_void, len: usize, alignment: Alignment, _: usize) -> Option<NonNull<u8>> {
+unsafe fn vtable_alloc(ptr: *mut c_void, len: usize, alignment: Alignment, _: usize) -> *mut u8 {
     let this = Borrowed::from_opaque(ptr);
     this.assert_thread_lock();
-    this.aligned_alloc(len, alignment)
+    match this.aligned_alloc(len, alignment) {
+        Some(p) => p.as_ptr(),
+        None => ptr::null_mut(),
+    }
 }
 
-fn vtable_resize(ptr: *mut c_void, buf: &mut [u8], _: Alignment, new_len: usize, _: usize) -> bool {
+unsafe fn vtable_resize(ptr: *mut c_void, buf: &mut [u8], _: Alignment, new_len: usize, _: usize) -> bool {
     let this = Borrowed::from_opaque(ptr);
     this.assert_thread_lock();
     // SAFETY: FFI — buf.ptr was returned by a prior mi_* alloc on this heap (vtable invariant).
     !unsafe { mimalloc::mi_expand(buf.as_mut_ptr().cast(), new_len) }.is_null()
 }
 
-fn vtable_free(_: *mut c_void, buf: &mut [u8], alignment: Alignment, _: usize) {
+unsafe fn vtable_free(_: *mut c_void, buf: &mut [u8], alignment: Alignment, _: usize) {
     // mi_free_size internally just asserts the size
     // so it's faster if we don't pass that value through
     // but its good to have that assertion

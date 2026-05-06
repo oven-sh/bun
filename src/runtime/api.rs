@@ -202,7 +202,32 @@ pub mod bun {
 
     pub mod h2_frame_parser {
         // TODO(b2-blocked): bun_jsc::{Strong,JsRef,AbortSignal,host_fn} — full body in h2_frame_parser_body.
-        pub struct H2FrameParser(());
+        /// Opaque surface — full struct (~5.3k lines) gated in `h2_frame_parser_body`.
+        /// Carries an intrusive ref-count so `socket::NativeCallbacks::H2(IntrusiveRc<_>)`
+        /// type-checks; method bodies are stubs until the JSC-backed body is un-gated.
+        pub struct H2FrameParser {
+            ref_count: bun_ptr::RefCount<H2FrameParser>,
+        }
+        impl bun_ptr::RefCounted for H2FrameParser {
+            type DestructorCtx = ();
+            unsafe fn get_ref_count(this: *mut Self) -> *mut bun_ptr::RefCount<Self> {
+                unsafe { &raw mut (*this).ref_count }
+            }
+            unsafe fn destructor(_this: *mut Self, _ctx: ()) {
+                todo!("blocked_on: h2_frame_parser_body::H2FrameParser::deinit")
+            }
+        }
+        impl H2FrameParser {
+            pub fn on_native_read(&mut self, _data: &[u8]) -> bun_jsc::JsResult<()> {
+                todo!("blocked_on: h2_frame_parser_body::H2FrameParser::on_native_read")
+            }
+            pub fn on_native_writable(&mut self) {
+                todo!("blocked_on: h2_frame_parser_body::H2FrameParser::on_native_writable")
+            }
+            pub fn on_native_close(&mut self) {
+                todo!("blocked_on: h2_frame_parser_body::H2FrameParser::on_native_close")
+            }
+        }
         /// RFC 7540 §6.5.2 setting identifiers.
         #[repr(transparent)]
         #[derive(Clone, Copy, PartialEq, Eq)]

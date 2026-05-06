@@ -247,9 +247,8 @@ unsafe extern "C" {
     ) -> bun_jsc::JsResult<()>;
 }
 
-// TODO(port): these enum types live in bun_bundler::options / bun_cli — import the real ones in
-// Phase B. Placeholders here so control flow reads correctly.
-use bun_bundler::options::{EnvBehavior, OfflineModeSetting};
+use bun_bundler::options::EnvBehavior;
+use bun_options_types::OfflineMode::OfflineMode;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

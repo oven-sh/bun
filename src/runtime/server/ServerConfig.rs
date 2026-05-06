@@ -760,16 +760,16 @@ impl ServerConfig {
                     });
                     continue;
                 } else if value.is_object() {
-                    const METHODS: [http::Method; 9] = [
-                        http::Method::CONNECT,
-                        http::Method::DELETE,
-                        http::Method::GET,
-                        http::Method::HEAD,
-                        http::Method::OPTIONS,
-                        http::Method::PATCH,
-                        http::Method::POST,
-                        http::Method::PUT,
-                        http::Method::TRACE,
+                    const METHODS: [Method; 9] = [
+                        Method::CONNECT,
+                        Method::DELETE,
+                        Method::GET,
+                        Method::HEAD,
+                        Method::OPTIONS,
+                        Method::PATCH,
+                        Method::POST,
+                        Method::PUT,
+                        Method::TRACE,
                     ];
                     let mut found = false;
                     for method in METHODS {

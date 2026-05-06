@@ -991,7 +991,7 @@ fn load_bunfig<const CMD: Command::Tag>(
         // TODO(port): borrow of ctx.log inside guard closure may need reshaping
         ctx.log.level = lvl;
     });
-    ctx.log.level = logger::Log::Level::Warn;
+    ctx.log.level = logger::Level::Warn;
     ctx.debug.loaded_bunfig = true;
     Bunfig::parse::<CMD>(&source, ctx)
 }

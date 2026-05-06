@@ -183,6 +183,11 @@ pub enum SystemErrno {
 impl SystemErrno {
     pub const MAX: i32 = 98;
 
+    /// On FreeBSD `ENOTSUP` is not a distinct errno; libc aliases it to
+    /// `EOPNOTSUPP` (45). Provide the alias so cross-platform call sites that
+    /// match `ENOTSUP` compile.
+    pub const ENOTSUP: SystemErrno = SystemErrno::EOPNOTSUPP;
+
     #[inline]
     const fn from_raw(n: u16) -> SystemErrno {
         debug_assert!((n as i32) < Self::MAX);

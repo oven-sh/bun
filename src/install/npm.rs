@@ -1489,9 +1489,7 @@ pub mod package_manifest {
 
                         if matches!(
                             err.get_errno(),
-                            // PORT NOTE: Zig matched .OPNOTSUPP; on Linux/Windows
-                            // SystemErrno spells it ENOTSUP (same value).
-                            bun_sys::Errno::EEXIST | bun_sys::Errno::ENOTEMPTY | bun_sys::Errno::ENOTSUP
+                            bun_sys::Errno::EEXIST | bun_sys::Errno::ENOTEMPTY | bun_sys::Errno::EOPNOTSUPP
                         ) {
                             // Atomically swap the old file with the new file.
                             bun_sys::renameat2(

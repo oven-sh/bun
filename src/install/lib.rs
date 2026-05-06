@@ -887,10 +887,10 @@ impl PackageManager {
             match Dir::cwd().make_open_path(b"node_modules/.cache", OpenDirOptions::default()) {
                 Ok(dir) => return dir.fd,
                 Err(err) => {
-                    bun_core::Output::pretty_errorln(
+                    bun_core::Output::pretty_errorln(format_args!(
                         "<r><red>error<r>: bun is unable to write files: {}",
-                        (err,),
-                    );
+                        err,
+                    ));
                     bun_core::Global::crash();
                 }
             }

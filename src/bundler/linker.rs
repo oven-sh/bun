@@ -702,7 +702,16 @@ impl Linker {
     ) -> Result<bool, bun_core::Error> {
         let hash_key = self.resolve_result_hash_key(&resolve_result);
 
-        // SAFETY: see `link()`.
+        // SAFETY: single-owner. `resolve_results` / `resolve_queue` are raw
+        // pointers to sibling fields of the owning `Transpiler` (wired via
+        // `addr_of_mut!` in `Transpiler::configure_linker*`). The only caller
+        // is `Transpiler::enqueue_entry_points`, which borrows `&mut
+        // self.linker` for this call and holds no other borrow of
+        // `self.resolve_results` / `self.resolve_queue`, so the `&mut`s
+        // materialized here are exclusive for their lifetime. The two
+        // pointees are disjoint fields, so they do not alias each other
+        // either. Matches Zig `linker.resolve_results.getOrPut` /
+        // `linker.resolve_queue.writeItem` (linker.zig:387-390).
         let resolve_results = unsafe { &mut *self.resolve_results };
         let resolve_queue = unsafe { &mut *self.resolve_queue };
 

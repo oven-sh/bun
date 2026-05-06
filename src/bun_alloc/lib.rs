@@ -1051,6 +1051,14 @@ pub mod heap_breakdown {
             if p.is_null() { None } else { Some(p) }
         }
 
+        #[inline]
+        pub fn malloc_zone_calloc(&self, num_items: usize, size: usize) -> Option<*mut c_void> {
+            // SAFETY: `self` is a live `malloc_zone_t`; `as_mut_ptr` derives a
+            // write-capable pointer through `UnsafeCell`.
+            let p = unsafe { malloc_zone_calloc(self.as_mut_ptr(), num_items, size) };
+            if p.is_null() { None } else { Some(p) }
+        }
+
         /// # Safety
         /// `ptr` must have been allocated by this zone (via `malloc_zone_malloc`
         /// / `malloc_zone_calloc`) and not already freed.

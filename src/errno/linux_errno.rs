@@ -221,6 +221,11 @@ pub enum SystemErrno {
 impl SystemErrno {
     pub const MAX: u16 = 134;
 
+    /// On Linux `EOPNOTSUPP` and `ENOTSUP` share value 95; the enum defines
+    /// only `ENOTSUP`. Provide this alias so cross-platform call sites that
+    /// match Zig's `.OPNOTSUPP` (npm.zig, copy_file) compile against one name.
+    pub const EOPNOTSUPP: SystemErrno = SystemErrno::ENOTSUP;
+
     #[inline]
     const fn from_raw(n: u16) -> SystemErrno {
         debug_assert!(n < Self::MAX);

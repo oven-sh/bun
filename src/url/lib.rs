@@ -169,27 +169,26 @@ pub mod whatwg {
         Some(&slice[..len as usize])
     }
 
-    // PORT NOTE: getters take `&self` and cast through `*mut` for the C ABI — the
-    // C++ side never mutates the WTF::URL on read (see `as_mut_ptr` note above).
-    #[inline]
-    fn as_mut_url(u: &URL) -> *mut URL { u as *const URL as *mut URL }
-
     impl URL {
         pub fn from_string(str: &String) -> Option<core::ptr::NonNull<URL>> {
-            unsafe { URL__fromString(as_mut_ptr(str)) }
+            let mut input = *str;
+            // SAFETY: `input` is a uniquely-owned local; lives for the duration of the call.
+            unsafe { URL__fromString(&mut input) }
         }
         pub fn from_utf8(input: &[u8]) -> Option<core::ptr::NonNull<URL>> {
             Self::from_string(&String::borrow_utf8(input))
         }
+        // SAFETY (all getters below): `self` is a valid opaque `WTF::URL*` handle from C++;
+        // the C++ getters (BunString.cpp) never mutate the URL, so `*const URL` is sound.
         /// Includes the leading '#'.
-        pub fn hash(&self) -> String { unsafe { URL__hash(as_mut_url(self)) } }
+        pub fn hash(&self) -> String { unsafe { URL__hash(self) } }
         /// Exactly the same as `hash`, excluding the leading '#'.
-        pub fn fragment_identifier(&self) -> String { unsafe { URL__fragmentIdentifier(as_mut_url(self)) } }
-        pub fn protocol(&self) -> String { unsafe { URL__protocol(as_mut_url(self)) } }
-        pub fn href(&self) -> String { unsafe { URL__href(as_mut_url(self)) } }
-        pub fn username(&self) -> String { unsafe { URL__username(as_mut_url(self)) } }
-        pub fn password(&self) -> String { unsafe { URL__password(as_mut_url(self)) } }
-        pub fn search(&self) -> String { unsafe { URL__search(as_mut_url(self)) } }
+        pub fn fragment_identifier(&self) -> String { unsafe { URL__fragmentIdentifier(self) } }
+        pub fn protocol(&self) -> String { unsafe { URL__protocol(self) } }
+        pub fn href(&self) -> String { unsafe { URL__href(self) } }
+        pub fn username(&self) -> String { unsafe { URL__username(self) } }
+        pub fn password(&self) -> String { unsafe { URL__password(self) } }
+        pub fn search(&self) -> String { unsafe { URL__search(self) } }
         /// Returns the host WITHOUT the port.
         ///
         /// Note that this does NOT match JS behavior, which returns the host with the port. See
@@ -198,7 +197,7 @@ pub mod whatwg {
         /// ```text
         /// URL("http://example.com:8080").host() => "example.com"
         /// ```
-        pub fn host(&self) -> String { unsafe { URL__host(as_mut_url(self)) } }
+        pub fn host(&self) -> String { unsafe { URL__host(self) } }
         /// Returns the host WITH the port.
         ///
         /// Note that this does NOT match JS behavior which returns the host without the port. See
@@ -207,11 +206,11 @@ pub mod whatwg {
         /// ```text
         /// URL("http://example.com:8080").hostname() => "example.com:8080"
         /// ```
-        pub fn hostname(&self) -> String { unsafe { URL__hostname(as_mut_url(self)) } }
+        pub fn hostname(&self) -> String { unsafe { URL__hostname(self) } }
         /// Returns `u32::MAX` if the port is not set. Otherwise, the result is
         /// guaranteed to be within the `u16` range.
-        pub fn port(&self) -> u32 { unsafe { URL__port(as_mut_url(self)) } }
-        pub fn pathname(&self) -> String { unsafe { URL__pathname(as_mut_url(self)) } }
+        pub fn port(&self) -> u32 { unsafe { URL__port(self) } }
+        pub fn pathname(&self) -> String { unsafe { URL__pathname(self) } }
         pub fn deinit(&mut self) { unsafe { URL__deinit(self) } }
     }
 }

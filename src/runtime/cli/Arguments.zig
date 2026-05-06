@@ -271,19 +271,35 @@ pub fn loadSystemBunfig(allocator: std.mem.Allocator, ctx: Command.Context, comp
         // System config is not project-level, so don't set ctx.debug.loaded_bunfig.
         // loadBunfig dupes `path` onto the allocator, so it's safe for `config_buf`
         // to go out of scope after loadBunfig returns.
-        try loadBunfig(allocator, !result.is_explicit, false, path, ctx, comptime cmd);
+        //
+        // Bunfig errors arrive in two shapes: (1) TOML lexer errors that only
+        // append to ctx.log and return void (handled after this call), and
+        // (2) validation errors (e.g. Bunfig.Parser.addError) that return
+        // `error.@"Invalid Bunfig"`. For an auto-discovered /etc/bunfig.toml,
+        // both paths must warn-and-continue — crashing every package-manager
+        // invocation on the box because of a sysadmin typo is not acceptable.
+        loadBunfig(allocator, !result.is_explicit, false, path, ctx, comptime cmd) catch |err| {
+            if (result.is_explicit) return err;
+            if (ctx.log.hasAny()) ctx.log.print(Output.errorWriter()) catch {};
+            Output.warn("ignoring auto-discovered system bunfig at \"{s}\" ({s})", .{ path, @errorName(err) });
+            // Clear the log so the warning doesn't get re-printed later by
+            // the caller's `ctx.log.print` paths or dumpBuildError.
+            ctx.log.reset();
+            return;
+        };
 
-        // Parse errors (e.g. malformed TOML) are logged to ctx.log without being
-        // propagated as Zig errors, so loadBunfig returns OK even when the config
-        // is unusable. For explicit BUN_SYSTEM_CONFIG — an administrator policy
-        // override — that's fail-open: a typo silently disables the policy while
-        // the process exits 0. Turn a log error into a loud exit so policy typos
-        // are caught immediately. Auto-discovered defaults stay best-effort so a
-        // broken /etc/bunfig.toml doesn't brick every bun invocation on the box.
-        if (result.is_explicit and ctx.log.errors > errors_before) {
+        // TOML parser errors that never return a Zig error land in ctx.log
+        // above. For explicit BUN_SYSTEM_CONFIG fail loudly; for auto-discovered
+        // /etc/bunfig.toml the same warn-and-continue policy applies.
+        if (ctx.log.errors > errors_before) {
+            if (result.is_explicit) {
+                ctx.log.print(Output.errorWriter()) catch {};
+                Output.errGeneric("failed to parse BUN_SYSTEM_CONFIG at \"{s}\"", .{path});
+                Global.exit(1);
+            }
             ctx.log.print(Output.errorWriter()) catch {};
-            Output.errGeneric("failed to parse BUN_SYSTEM_CONFIG at \"{s}\"", .{path});
-            Global.exit(1);
+            Output.warn("ignoring auto-discovered system bunfig at \"{s}\"", .{path});
+            ctx.log.reset();
         }
     }
 }

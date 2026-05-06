@@ -791,5 +791,5 @@ type SymbolMap = bun_logger::symbol::Map;
 //   source:     src/css/printer.zig (581 lines)
 //   confidence: medium
 //   todos:      10
-//   notes:      ctx field lifetime needs Phase-B reshape (raw *const StyleContext); get_written_amt stubbed (write_fmt panics) until bun_io::Write exposes written_len(); write_ident/write_dashed_ident borrowck reshaped by hoisting 'a refs out of css_module before closure
+//   notes:      ctx field lifetime needs Phase-B reshape (raw *const StyleContext); get_written_amt routes through bun_io::Write::written_len(); write_ident/write_dashed_ident borrowck reshaped by hoisting 'a refs out of css_module before closure
 // ──────────────────────────────────────────────────────────────────────────

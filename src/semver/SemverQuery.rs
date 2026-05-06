@@ -965,5 +965,5 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
 //   source:     src/semver/SemverQuery.zig (793 lines)
 //   confidence: medium
 //   todos:      4
-//   notes:      Group.input lifetime faked as 'static; json_stringify needs real JSON escaper; tail NonNull aliases into Box chain (self-referential — moving Group/List invalidates &head fallback path but not the boxed nodes).
+//   notes:      Group.input stored as raw *const [u8] (parser-buffer backref, no lifetime per PORTING.md); json_stringify needs real JSON escaper; tail NonNull aliases into Box chain (self-referential — moving Group/List invalidates &head fallback path but not the boxed nodes).
 // ──────────────────────────────────────────────────────────────────────────

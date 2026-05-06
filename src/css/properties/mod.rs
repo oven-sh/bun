@@ -67,33 +67,6 @@ macro_rules! handler_stub {
     )+};
 }
 
-/// Declares an opaque property-value type so `properties_generated::Property`
-/// can name it while the real definition stays gated in the leaf .rs file.
-/// Derives the minimal trait set the codegen `match` arms touch (none beyond
-/// move/construct — `Property` itself carries no derives).
-macro_rules! prop_value_stub {
-    ($($T:ident),+ $(,)?) => {$(
-        #[derive(Debug, Clone, Default, PartialEq)]
-        pub struct $T;
-        // Protocol surface so `#[derive(CssEql/CssHash/DeepClone)]` on
-        // un-gated aggregates (e.g. `TokenOrValue`) that carry a still-stubbed
-        // payload type-checks. Unit struct → trivial bodies.
-        impl $T {
-            #[inline] pub fn eql(&self, _other: &Self) -> bool { true }
-            #[inline] pub fn hash(&self, _hasher: &mut ::bun_wyhash::Wyhash) {}
-            #[inline] pub fn deep_clone(&self, _bump: &::bun_alloc::Arena) -> Self { Self }
-            // Serialization surface so un-gated `TokenList::to_css` /
-            // `Property::value_to_css` arms that name a still-stubbed payload
-            // type-check. PORTING.md §Forbidden bans silent no-ops here — the
-            // Zig spec has real serialization logic, so fail loudly until the
-            // real leaf un-gates rather than emitting empty output.
-            #[inline] pub fn to_css(&self, _dest: &mut $crate::Printer) -> ::core::result::Result<(), $crate::PrintErr> {
-                todo!(concat!("blocked_on: ", stringify!($T), "::to_css — leaf module still -gated"))
-            }
-        }
-    )+};
-}
-
 // ─── Submodule declarations ────────────────────────────────────────────────
 // (Zig: `pub const X = @import("./X.zig");`)
 //

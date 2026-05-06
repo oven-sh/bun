@@ -235,7 +235,7 @@ impl IncomingBuffer {
 // deinit: ByteList/JSONLineBuffer own their storage and Drop frees it.
 
 #[derive(Copy, Clone, Eq, PartialEq)]
-enum IsInternal {
+pub enum IsInternal {
     Internal,
     External,
 }
@@ -595,7 +595,7 @@ mod json {
             Ok(v) => v,
             Err(JsError::Thrown) => {
                 global_clear_exception(global_this);
-                drop(str);
+                let _ = str; // TODO(port): bun_string::String is Copy; deref handled via scopeguard in Phase B
                 if is_ascii && !was_ascii_string_freed {
                     panic!("Expected ascii string to be freed by ExternalString, but it wasn't. This is a bug in Bun.");
                 }
@@ -603,7 +603,7 @@ mod json {
             }
             Err(JsError::Terminated) => {
                 global_clear_exception(global_this);
-                drop(str);
+                let _ = str; // TODO(port): bun_string::String is Copy; deref handled via scopeguard in Phase B
                 if is_ascii && !was_ascii_string_freed {
                     panic!("Expected ascii string to be freed by ExternalString, but it wasn't. This is a bug in Bun.");
                 }
@@ -612,7 +612,7 @@ mod json {
             Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
         };
 
-        drop(str);
+        let _ = str; // TODO(port): bun_string::String is Copy; deref handled via scopeguard in Phase B
         if is_ascii && !was_ascii_string_freed {
             panic!("Expected ascii string to be freed by ExternalString, but it wasn't. This is a bug in Bun.");
         }
@@ -1864,10 +1864,8 @@ pub fn do_send(
     if handle.is_callable() {
         callback = handle;
         handle = JSValue::UNDEFINED;
-        options_ = JSValue::UNDEFINED;
     } else if options_.is_callable() {
         callback = options_;
-        options_ = JSValue::UNDEFINED;
     } else if !options_.is_undefined() {
         global_object.validate_object("options", options_, Default::default())?;
     }

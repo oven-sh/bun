@@ -1,5 +1,5 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, FormatterTestExt, BigIntCompare, make_formatter};
 use bun_jsc::console_object::Formatter;
 
 use super::DiffFormatter;
@@ -30,7 +30,7 @@ pub fn to_have_been_last_called_with(
     let calls = super::mock::JSMockFunction__getCalls(global, value)?;
     if !calls.js_type().is_array() {
         let mut formatter = super::make_formatter(global);
-        return this.throw_fmt(
+        return this.throw(
             global,
             get_signature("toHaveBeenLastCalledWith", "<green>...expected<r>", false),
             format_args!(
@@ -50,10 +50,10 @@ pub fn to_have_been_last_called_with(
 
         if !last_call_value.js_type().is_array() {
             let mut formatter = super::make_formatter(global);
-            return global.throw(format_args!(
+            return Err(global.throw(format_args!(
                 "Expected value must be a mock function with calls: {}",
                 value.to_fmt(&mut formatter),
-            ));
+            )));
         }
 
         if last_call_value.get_length(global)? != arguments.len() {

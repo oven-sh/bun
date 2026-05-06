@@ -1,5 +1,5 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, FormatterTestExt, BigIntCompare, make_formatter};
 use bun_jsc::console_object::Formatter;
 
 use super::Expect;
@@ -20,7 +20,7 @@ pub fn to_have_length(
     let arguments = arguments_.slice();
 
     if arguments.len() < 1 {
-        return global.throw_invalid_arguments(format_args!("toHaveLength() takes 1 argument"));
+        return Err(global.throw_invalid_arguments(format_args!("toHaveLength() takes 1 argument")));
     }
 
     this.increment_expect_call_counter();
@@ -30,18 +30,18 @@ pub fn to_have_length(
 
     if !value.is_object() && !value.is_string() {
         let mut fmt = super::make_formatter(global);
-        return global.throw(format_args!(
+        return Err(global.throw(format_args!(
             "Received value does not have a length property: {}",
             value.to_fmt(&mut fmt),
-        ));
+        )));
     }
 
     if !expected.is_number() {
         let mut fmt = super::make_formatter(global);
-        return global.throw(format_args!(
+        return Err(global.throw(format_args!(
             "Expected value must be a non-negative integer: {}",
             expected.to_fmt(&mut fmt),
-        ));
+        )));
     }
 
     let expected_length: f64 = expected.as_number();
@@ -51,10 +51,10 @@ pub fn to_have_length(
         || expected_length < 0.0
     {
         let mut fmt = super::make_formatter(global);
-        return global.throw(format_args!(
+        return Err(global.throw(format_args!(
             "Expected value must be a non-negative integer: {}",
             expected.to_fmt(&mut fmt),
-        ));
+        )));
     }
 
     let not = this.flags.not();
@@ -64,15 +64,15 @@ pub fn to_have_length(
 
     if actual_length == f64::INFINITY {
         let mut fmt = super::make_formatter(global);
-        return global.throw(format_args!(
+        return Err(global.throw(format_args!(
             "Received value does not have a length property: {}",
             value.to_fmt(&mut fmt),
-        ));
+        )));
     } else if actual_length.is_nan() {
-        return global.throw(format_args!(
+        return Err(global.throw(format_args!(
             "Received value has non-number length property: {}",
             actual_length,
-        ));
+        )));
     }
 
     if actual_length == expected_length {

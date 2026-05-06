@@ -1,5 +1,5 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, FormatterTestExt, BigIntCompare, make_formatter};
 use bun_jsc::console_object::Formatter;
 use super::Expect;
 use super::get_signature;
@@ -25,10 +25,10 @@ pub fn to_have_been_called_once(
     let calls = super::mock::JSMockFunction__getCalls(global, value)?;
     if !calls.js_type().is_array() {
         let mut formatter = super::make_formatter(global);
-        return global.throw(format_args!(
+        return Err(global.throw(format_args!(
             "Expected value must be a mock function: {}",
             value.to_fmt(&mut formatter),
-        ));
+        )));
     }
 
     let calls_length = calls.get_length(global)?;

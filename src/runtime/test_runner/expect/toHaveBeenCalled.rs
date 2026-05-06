@@ -1,5 +1,5 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, FormatterTestExt, BigIntCompare, make_formatter};
 use bun_jsc::console_object::Formatter;
 use super::Expect;
 
@@ -18,9 +18,9 @@ pub fn to_have_been_called(
     scopeguard::defer! { this.post_match(global); }
 
     if !first_argument.is_undefined() {
-        return global.throw_invalid_arguments(format_args!(
+        return Err(global.throw_invalid_arguments(format_args!(
             "toHaveBeenCalled() must not have an argument"
-        ));
+        )));
     }
 
     let value: JSValue = this.get_value(global, this_value, "toHaveBeenCalled", "")?;
@@ -31,10 +31,10 @@ pub fn to_have_been_called(
     if !calls.js_type().is_array() {
         let formatter = super::make_formatter(global);
         // `defer formatter.deinit()` → Drop
-        return global.throw(format_args!(
+        return Err(global.throw(format_args!(
             "Expected value must be a mock function: {}",
-            value.to_fmt(&formatter)
-        ));
+            value.to_fmt(&mut formatter)
+        )));
     }
 
     let calls_length = calls.get_length(global)?;

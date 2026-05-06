@@ -9,6 +9,7 @@ use bun_string as strings;
 use bun_core::Output;
 use bun_alloc::mimalloc;
 
+#[allow(non_upper_case_globals)]
 bun_core::declare_scope!(ArrayBuffer, visible);
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -56,7 +57,7 @@ unsafe extern "C" {
     ) -> JSValue;
     fn Bun__allocUint8ArrayForCopy(global: *mut JSGlobalObject, len: usize, out: *mut *mut c_void) -> JSValue;
     fn Bun__allocArrayBufferForCopy(global: *mut JSGlobalObject, len: usize, out: *mut *mut c_void) -> JSValue;
-    fn Bun__createUint8ArrayForCopy(global: *mut JSGlobalObject, ptr: *const c_void, len: usize, buffer: bool) -> JSValue;
+    fn Bun__createUint8ArrayForCopy(global: *const JSGlobalObject, ptr: *const c_void, len: usize, buffer: bool) -> JSValue;
     fn Bun__createArrayBufferForCopy(global: *mut JSGlobalObject, ptr: *const c_void, len: usize) -> JSValue;
     fn JSArrayBuffer__fromDefaultAllocator(global: *mut JSGlobalObject, ptr: *mut u8, len: usize) -> JSValue;
     fn Bun__makeArrayBufferWithBytesNoCopy(

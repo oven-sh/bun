@@ -157,9 +157,9 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
         &self,
         before: &[Unit],
         after: &[Unit],
-        /// If false, then don't run a line-level diff first
-        /// to identify the changed areas. If true, then run
-        /// a faster slightly less optimal diff.
+        // If false, then don't run a line-level diff first
+        // to identify the changed areas. If true, then run
+        // a faster slightly less optimal diff.
         check_lines: bool,
     ) -> Result<DiffList<Unit>, DiffError> {
         let deadline = if self.config.diff_timeout == 0 {

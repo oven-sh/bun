@@ -1,5 +1,5 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, FormatterTestExt, BigIntCompare, make_formatter};
 use bun_jsc::console_object::Formatter;
 use bun_str::strings;
 
@@ -20,16 +20,16 @@ pub fn to_start_with(
     let arguments = arguments_.slice();
 
     if arguments.len() < 1 {
-        return global.throw_invalid_arguments(format_args!("toStartWith() requires 1 argument"));
+        return Err(global.throw_invalid_arguments(format_args!("toStartWith() requires 1 argument")));
     }
 
     let expected = arguments[0];
     expected.ensure_still_alive();
 
     if !expected.is_string() {
-        return global.throw(format_args!(
+        return Err(global.throw(format_args!(
             "toStartWith() requires the first argument to be a string"
-        ));
+        )));
     }
 
     let value: JSValue = this.get_value(global, this_value, "toStartWith", "<green>expected<r>")?;

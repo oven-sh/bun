@@ -1,5 +1,5 @@
 use bun_jsc::{CallFrame, ConsoleObject, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, FormatterTestExt, BigIntCompare, make_formatter};
 
 use super::DiffFormatter;
 use super::mock;
@@ -26,7 +26,7 @@ pub fn to_have_been_called_with(
     let calls = super::mock::JSMockFunction__getCalls(global, value)?;
     if !calls.js_type().is_array() {
         let mut formatter = super::make_formatter(global);
-        return this.throw_fmt(
+        return this.throw(
             global,
             Expect::get_signature("toHaveBeenCalledWith", "<green>...expected<r>", false),
             format_args!(
@@ -44,9 +44,9 @@ pub fn to_have_been_called_with(
         while let Some(call_item) = itr.next()? {
             if call_item.is_empty() || !call_item.js_type().is_array() {
                 // This indicates a malformed mock object, which is an internal error.
-                return global.throw(format_args!(
+                return Err(global.throw(format_args!(
                     "Internal error: expected mock call item to be an array of arguments."
-                ));
+                )));
             }
 
             if call_item.get_length(global)? != arguments.len() {

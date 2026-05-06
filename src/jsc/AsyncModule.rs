@@ -33,6 +33,7 @@ use crate::{
     JsResult, ResolvedSource, StrongOptional,
 };
 
+#[allow(non_upper_case_globals)]
 bun_core::declare_scope!(AsyncModule, hidden);
 
 // TODO(port): `opts: anytype` in Zig — accessed only as a field bag. Expressed

@@ -8,26 +8,33 @@ use bun_str::String as BunString;
 
 pub use s3_error::S3Error;
 
+// PORT NOTE: `get_sign_error_message` returns `&'static [u8]` of ASCII literals; reinterpret as
+// `&str` for the `format_args!`-taking `JSGlobalObject::err()` builder.
+#[inline]
+fn msg(bytes: &'static [u8]) -> &'static str {
+    // SAFETY: every value returned by `get_sign_error_message` is an ASCII string literal.
+    unsafe { core::str::from_utf8_unchecked(bytes) }
+}
+
 pub fn get_js_sign_error(err: Error, global_this: &JSGlobalObject) -> JSValue {
-    // TODO(port): verify `JSGlobalObject::ERR(code, fmt, args)` builder API name/shape in bun_jsc
     match err {
         e if e == err!("MissingCredentials") => global_this
-            .ERR(ErrorCode::S3_MISSING_CREDENTIALS, get_sign_error_message(err!("MissingCredentials")))
+            .err(ErrorCode::S3_MISSING_CREDENTIALS, format_args!("{}", msg(get_sign_error_message(err!("MissingCredentials")))))
             .to_js(),
         e if e == err!("InvalidMethod") => global_this
-            .ERR(ErrorCode::S3_INVALID_METHOD, get_sign_error_message(err!("InvalidMethod")))
+            .err(ErrorCode::S3_INVALID_METHOD, format_args!("{}", msg(get_sign_error_message(err!("InvalidMethod")))))
             .to_js(),
         e if e == err!("InvalidPath") => global_this
-            .ERR(ErrorCode::S3_INVALID_PATH, get_sign_error_message(err!("InvalidPath")))
+            .err(ErrorCode::S3_INVALID_PATH, format_args!("{}", msg(get_sign_error_message(err!("InvalidPath")))))
             .to_js(),
         e if e == err!("InvalidEndpoint") => global_this
-            .ERR(ErrorCode::S3_INVALID_ENDPOINT, get_sign_error_message(err!("InvalidEndpoint")))
+            .err(ErrorCode::S3_INVALID_ENDPOINT, format_args!("{}", msg(get_sign_error_message(err!("InvalidEndpoint")))))
             .to_js(),
         e if e == err!("InvalidSessionToken") => global_this
-            .ERR(ErrorCode::S3_INVALID_SESSION_TOKEN, get_sign_error_message(err!("InvalidSessionToken")))
+            .err(ErrorCode::S3_INVALID_SESSION_TOKEN, format_args!("{}", msg(get_sign_error_message(err!("InvalidSessionToken")))))
             .to_js(),
         _ => global_this
-            .ERR(ErrorCode::S3_INVALID_SIGNATURE, get_sign_error_message(err!("SignError")))
+            .err(ErrorCode::S3_INVALID_SIGNATURE, format_args!("{}", msg(get_sign_error_message(err!("SignError")))))
             .to_js(),
     }
 }
@@ -35,22 +42,22 @@ pub fn get_js_sign_error(err: Error, global_this: &JSGlobalObject) -> JSValue {
 pub fn throw_sign_error(err: Error, global_this: &JSGlobalObject) -> JsError {
     match err {
         e if e == err!("MissingCredentials") => global_this
-            .ERR(ErrorCode::S3_MISSING_CREDENTIALS, get_sign_error_message(err!("MissingCredentials")))
+            .err(ErrorCode::S3_MISSING_CREDENTIALS, format_args!("{}", msg(get_sign_error_message(err!("MissingCredentials")))))
             .throw(),
         e if e == err!("InvalidMethod") => global_this
-            .ERR(ErrorCode::S3_INVALID_METHOD, get_sign_error_message(err!("InvalidMethod")))
+            .err(ErrorCode::S3_INVALID_METHOD, format_args!("{}", msg(get_sign_error_message(err!("InvalidMethod")))))
             .throw(),
         e if e == err!("InvalidPath") => global_this
-            .ERR(ErrorCode::S3_INVALID_PATH, get_sign_error_message(err!("InvalidPath")))
+            .err(ErrorCode::S3_INVALID_PATH, format_args!("{}", msg(get_sign_error_message(err!("InvalidPath")))))
             .throw(),
         e if e == err!("InvalidEndpoint") => global_this
-            .ERR(ErrorCode::S3_INVALID_ENDPOINT, get_sign_error_message(err!("InvalidEndpoint")))
+            .err(ErrorCode::S3_INVALID_ENDPOINT, format_args!("{}", msg(get_sign_error_message(err!("InvalidEndpoint")))))
             .throw(),
         e if e == err!("InvalidSessionToken") => global_this
-            .ERR(ErrorCode::S3_INVALID_SESSION_TOKEN, get_sign_error_message(err!("InvalidSessionToken")))
+            .err(ErrorCode::S3_INVALID_SESSION_TOKEN, format_args!("{}", msg(get_sign_error_message(err!("InvalidSessionToken")))))
             .throw(),
         _ => global_this
-            .ERR(ErrorCode::S3_INVALID_SIGNATURE, get_sign_error_message(err!("SignError")))
+            .err(ErrorCode::S3_INVALID_SIGNATURE, format_args!("{}", msg(get_sign_error_message(err!("SignError")))))
             .throw(),
     }
 }

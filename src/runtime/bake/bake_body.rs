@@ -8,7 +8,7 @@ use core::ptr::NonNull;
 use bun_alloc::Arena; // = bumpalo::Bump
 use bun_collections::ArrayHashMap;
 use bun_core::Output;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, ZigString, ZigStringSlice};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsError, JsResult, ZigString, ZigStringSlice};
 use bun_logger as logger;
 // peechy batch 2 landed: `bun_options_types::schema::api` now provides
 // {StringMap, LoaderMap, DotEnvBehavior, SourceMapMode, TransformOptions}.
@@ -62,6 +62,68 @@ fn get_boolean_strict(
     }
 }
 
+/// `JSValue.getBooleanLoose` — local shim until `bun_jsc` grows it.
+fn get_boolean_loose(
+    target: JSValue,
+    global: &JSGlobalObject,
+    property: &[u8],
+) -> JsResult<Option<bool>> {
+    match target.get(global, property)? {
+        Some(v) if !v.is_undefined_or_null() => Ok(Some(v.to_boolean())),
+        _ => Ok(None),
+    }
+}
+
+/// `JSValue.getOptional(JSValue, ..)` — local shim: filters undefined/null.
+fn get_optional_value(
+    target: JSValue,
+    global: &JSGlobalObject,
+    property: &[u8],
+) -> JsResult<Option<JSValue>> {
+    match target.get(global, property)? {
+        Some(v) if !v.is_undefined_or_null() => Ok(Some(v)),
+        _ => Ok(None),
+    }
+}
+
+/// `JSValue.getFunction` — local shim until `bun_jsc` grows it.
+fn get_function(
+    target: JSValue,
+    global: &JSGlobalObject,
+    property: &[u8],
+) -> JsResult<Option<JSValue>> {
+    match target.get(global, property)? {
+        Some(v) if v.is_callable() => Ok(Some(v)),
+        _ => Ok(None),
+    }
+}
+
+/// `bun.schema.api.SourceMapMode.fromJS` — inlined here because the canonical
+/// impl lives in `bun_bundler_jsc::source_map_mode_jsc` (not a dependency of
+/// `bun_runtime`).
+fn source_map_mode_from_js(
+    global: &JSGlobalObject,
+    value: JSValue,
+) -> JsResult<Option<bun_schema::api::SourceMapMode>> {
+    use bun_schema::api::SourceMapMode;
+    if value.is_string() {
+        let str = value.to_slice(global)?;
+        let utf8 = str.slice();
+        if utf8 == b"none" { return Ok(Some(SourceMapMode::None)); }
+        if utf8 == b"inline" { return Ok(Some(SourceMapMode::Inline)); }
+        if utf8 == b"external" { return Ok(Some(SourceMapMode::External)); }
+        if utf8 == b"linked" { return Ok(Some(SourceMapMode::Linked)); }
+    }
+    Ok(None)
+}
+
+/// Convert a `bun_core::Error` into a thrown JS exception in a `JsResult`
+/// context. Mirrors Zig `globalThis.throwError(err, msg)`.
+#[inline]
+fn throw_core_error(global: &JSGlobalObject, e: bun_core::Error, ctx: &'static str) -> JsError {
+    global.throw_error(e, ctx)
+}
+
 /// Erase the `'bump` lifetime of an arena-backed slice. Phase-A convention
 /// (see file-level TODO(port)): `UserOptions.arena` outlives every borrower,
 /// so the bytes are valid for the program-relevant lifetime; Phase B threads
@@ -77,7 +139,9 @@ fn arena_erase<T: ?Sized>(r: &T) -> &'static T {
 /// `bun.getcwdAlloc(arena)` — write cwd into a stack `PathBuffer`, then dupe
 /// into the arena as a NUL-terminated slice.
 fn getcwd_alloc(arena: &Arena) -> Result<&'static ZStr, bun_core::Error> {
-    let mut buf = PathBuffer::ZEROED;
+    // PORT NOTE: `bun_core::getcwd` takes `bun_core::PathBuffer` (distinct
+    // nominal type from `bun_paths::PathBuffer`); use the right one here.
+    let mut buf = bun_core::PathBuffer([0u8; bun_core::MAX_PATH_BYTES]);
     let z = bun_core::getcwd(&mut buf)?;
     Ok(arena_dupe_z(arena, z.as_bytes()))
 }
@@ -129,13 +193,13 @@ impl Drop for UserOptions {
 impl UserOptions {
     /// Currently, this function must run at the top of the event loop.
     // TODO(port): narrow error set
-    pub fn from_js(config: JSValue, global: &JSGlobalObject) -> Result<UserOptions, bun_core::Error> {
+    pub fn from_js(config: JSValue, global: &JSGlobalObject) -> JsResult<UserOptions> {
         let arena = Arena::new();
         // errdefer arena.deinit() — handled by Drop
 
         let mut allocations = StringRefList::EMPTY;
         // errdefer allocations.free() — handled by Drop
-        let mut bundler_options = SplitBundlerOptions::EMPTY;
+        let mut bundler_options = SplitBundlerOptions::default();
 
         if !config.is_object() {
             // Allow users to do `export default { app: 'react' }` for convenience
@@ -143,17 +207,17 @@ impl UserOptions {
                 let bunstr = config.to_bun_string(global)?;
                 let utf8_string = bunstr.to_utf8();
 
-                if strings::eql(utf8_string.byte_slice(), b"react") {
+                if strings::eql(utf8_string.slice(), b"react") {
                     let root = match getcwd_alloc(&arena) {
                         Ok(r) => r,
                         Err(e) => {
                             return Err(global
-                                .throw_error(e, "while querying current working directory")
-                                .into());
+                                .throw_error(e, "while querying current working directory"));
                         }
                     };
 
-                    let framework = Framework::react(&arena)?;
+                    let framework = Framework::react(&arena)
+                        .map_err(|e| throw_core_error(global, e, "Framework::react"))?;
 
                     return Ok(UserOptions {
                         // TODO(port): self-referential — `root`/`framework` borrow `arena`
@@ -166,18 +230,17 @@ impl UserOptions {
                 }
             }
             return Err(global
-                .throw_invalid_arguments(format_args!("'{}' is not an object", API_NAME))
-                .into());
+                .throw_invalid_arguments(format_args!("'{}' is not an object", API_NAME)));
         }
 
-        if let Some(js_options) = config.get_optional::<JSValue>(global, "bundlerOptions")? {
-            if let Some(server_options) = js_options.get_optional::<JSValue>(global, "server")? {
+        if let Some(js_options) = get_optional_value(config, global, b"bundlerOptions")? {
+            if let Some(server_options) = get_optional_value(js_options, global, b"server")? {
                 bundler_options.server = BuildConfigSubset::from_js(global, server_options)?;
             }
-            if let Some(client_options) = js_options.get_optional::<JSValue>(global, "client")? {
+            if let Some(client_options) = get_optional_value(js_options, global, b"client")? {
                 bundler_options.client = BuildConfigSubset::from_js(global, client_options)?;
             }
-            if let Some(ssr_options) = js_options.get_optional::<JSValue>(global, "ssr")? {
+            if let Some(ssr_options) = get_optional_value(js_options, global, b"ssr")? {
                 bundler_options.ssr = BuildConfigSubset::from_js(global, ssr_options)?;
             }
         }
@@ -190,8 +253,7 @@ impl UserOptions {
                         .throw_invalid_arguments(format_args!(
                             "'{}' is missing 'framework'",
                             API_NAME
-                        ))
-                        .into());
+                        )));
                 }
             },
             global,
@@ -200,15 +262,14 @@ impl UserOptions {
             &arena,
         )?;
 
-        let root: &[u8] = if let Some(slice) = config.get_optional::<ZigStringSlice>(global, "root")? {
+        let root: &[u8] = if let Some(slice) = get_optional_slice(config, global, b"root")? {
             allocations.track(slice)
         } else {
             match getcwd_alloc(&arena) {
                 Ok(r) => r.as_bytes(),
                 Err(e) => {
                     return Err(global
-                        .throw_error(e, "while querying current working directory")
-                        .into());
+                        .throw_error(e, "while querying current working directory"));
                 }
             }
         };
@@ -259,12 +320,9 @@ pub struct SplitBundlerOptions {
 }
 
 impl SplitBundlerOptions {
-    pub const EMPTY: SplitBundlerOptions = SplitBundlerOptions {
-        plugin: None,
-        client: BuildConfigSubset::DEFAULT,
-        server: BuildConfigSubset::DEFAULT,
-        ssr: BuildConfigSubset::DEFAULT,
-    };
+    // PORT NOTE: was `pub const EMPTY` — `ArrayHashMap::new()` (inside
+    // `BuildConfigSubset`) is not `const fn`, so this is now a fn-backed
+    // default. Callers updated to `SplitBundlerOptions::default()`.
 
     pub fn parse_plugin_array(
         &mut self,
@@ -297,8 +355,8 @@ impl SplitBundlerOptions {
                 )));
             }
 
-            if let Some(slice) = plugin_config.get_optional::<ZigStringSlice>(global, "name")? {
-                if slice.len() == 0 {
+            if let Some(slice) = get_optional_slice(plugin_config, global, b"name")? {
+                if slice.slice().is_empty() {
                     return Err(global.throw_invalid_arguments(format_args!(
                         "Expected plugin to have a non-empty name"
                     )));
@@ -310,7 +368,7 @@ impl SplitBundlerOptions {
                 )));
             }
 
-            let _function = match plugin_config.get_function(global, "setup")? {
+            let _function = match get_function(plugin_config, global, b"setup")? {
                 Some(f) => f,
                 None => {
                     return Err(global.throw_invalid_arguments(format_args!(
@@ -343,30 +401,14 @@ pub struct BuildConfigSubset {
 }
 
 impl BuildConfigSubset {
-    // TODO(port): const Default — schema types may not be const-constructible
-    pub const DEFAULT: BuildConfigSubset = BuildConfigSubset {
-        loader: None,
-        ignore_dce_annotations: None,
-        conditions: ArrayHashMap::new(),
-        drop: ArrayHashMap::new(),
-        env: bun_schema::api::DotEnvBehavior::_none,
-        env_prefix: None,
-        define: bun_schema::api::StringMap::EMPTY,
-        source_map: bun_schema::api::SourceMapMode::External,
-
-        minify_syntax: None,
-        minify_identifiers: None,
-        minify_whitespace: None,
-    };
-
     pub fn from_js(global: &JSGlobalObject, js_options: JSValue) -> JsResult<BuildConfigSubset> {
-        let mut options = BuildConfigSubset::DEFAULT;
+        let mut options = BuildConfigSubset::default();
 
         'brk: {
-            let Some(val) = js_options.get_optional::<JSValue>(global, "sourcemap")? else {
+            let Some(val) = get_optional_value(js_options, global, b"sourcemap")? else {
                 break 'brk;
             };
-            if let Some(sourcemap) = bun_schema::api::SourceMapMode::from_js(global, val)? {
+            if let Some(sourcemap) = source_map_mode_from_js(global, val)? {
                 options.source_map = sourcemap;
                 break 'brk;
             }
@@ -380,7 +422,7 @@ impl BuildConfigSubset {
         }
 
         'brk: {
-            let Some(minify_options) = js_options.get_optional::<JSValue>(global, "minify")? else {
+            let Some(minify_options) = get_optional_value(js_options, global, b"minify")? else {
                 break 'brk;
             };
             if minify_options.is_boolean() && minify_options.as_boolean() {
@@ -390,13 +432,13 @@ impl BuildConfigSubset {
                 break 'brk;
             }
 
-            if let Some(value) = minify_options.get_boolean_loose(global, "whitespace")? {
+            if let Some(value) = get_boolean_loose(minify_options, global, b"whitespace")? {
                 options.minify_whitespace = Some(value);
             }
-            if let Some(value) = minify_options.get_boolean_loose(global, "syntax")? {
+            if let Some(value) = get_boolean_loose(minify_options, global, b"syntax")? {
                 options.minify_syntax = Some(value);
             }
-            if let Some(value) = minify_options.get_boolean_loose(global, "identifiers")? {
+            if let Some(value) = get_boolean_loose(minify_options, global, b"identifiers")? {
                 options.minify_identifiers = Some(value);
             }
         }
@@ -407,7 +449,22 @@ impl BuildConfigSubset {
 
 impl Default for BuildConfigSubset {
     fn default() -> Self {
-        Self::DEFAULT
+        // PORT NOTE: was `pub const DEFAULT` — `ArrayHashMap::new()` is not
+        // `const fn`, so this lives behind `Default` instead.
+        BuildConfigSubset {
+            loader: None,
+            ignore_dce_annotations: None,
+            conditions: ArrayHashMap::new(),
+            drop: ArrayHashMap::new(),
+            env: bun_schema::api::DotEnvBehavior::_none,
+            env_prefix: None,
+            define: bun_schema::api::StringMap::EMPTY,
+            source_map: bun_schema::api::SourceMapMode::External,
+
+            minify_syntax: None,
+            minify_identifiers: None,
+            minify_whitespace: None,
+        }
     }
 }
 
@@ -417,7 +474,6 @@ impl Default for BuildConfigSubset {
 /// structure is always arena-allocated, usually owned by the arena in `UserOptions`
 ///
 /// Full documentation on these fields is located in the TypeScript definitions.
-#[derive(Clone)]
 pub struct Framework {
     pub is_built_in_react: bool,
     /// Spec (bake.zig:248) is `[]FileSystemRouterType` — a *mutable*
@@ -492,16 +548,23 @@ impl Framework {
                 allow_layouts: true,
             }],
             // .static_routers = arena.alloc_slice_copy(&[b"public"]),
-            built_in_modules: ArrayHashMap::from_entries(
-                arena,
-                &[
-                    b"bun-framework-react/client.tsx" as &[u8],
+            built_in_modules: {
+                // PORT NOTE: was `ArrayHashMap::from_entries(arena, keys, vals)`;
+                // that constructor doesn't exist on the heap-backed
+                // `ArrayHashMap` — build it imperatively. `bun.handleOom`.
+                let keys: [&'static [u8]; 3] = [
+                    b"bun-framework-react/client.tsx",
                     b"bun-framework-react/server.tsx",
                     b"bun-framework-react/ssr.tsx",
-                ],
-                built_in_values,
-            )
-            .unwrap_or_oom(), // bun.handleOom
+                ];
+                let mut m: ArrayHashMap<&'static [u8], BuiltInModule> = ArrayHashMap::new();
+                bun_core::handle_oom(m.ensure_total_capacity(keys.len()));
+                for (k, v) in keys.iter().zip(built_in_values.iter()) {
+                    m.put_assume_capacity(*k, *v);
+                }
+                let _ = arena; // arena param retained for API parity
+                m
+            },
         })
     }
 
@@ -517,7 +580,7 @@ impl Framework {
         resolver: &mut bun_resolver::Resolver,
         file_system_router_types: Vec<FileSystemRouterType>,
     ) -> Result<Framework, bun_core::Error> {
-        let mut fw: Framework = Framework::NONE;
+        let mut fw: Framework = Framework::none();
 
         if !file_system_router_types.is_empty() {
             fw = Self::react(arena)?;

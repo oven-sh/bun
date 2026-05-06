@@ -17,7 +17,7 @@ impl Expect {
         let _post = scopeguard::guard((), |_| this.post_match(global));
 
         let this_value = frame.this();
-        let value: JSValue = this.get_value(global, this_value, b"toBeFalse", b"")?;
+        let value: JSValue = this.get_value(global, this_value, "toBeFalse", "")?;
 
         this.increment_expect_call_counter();
 

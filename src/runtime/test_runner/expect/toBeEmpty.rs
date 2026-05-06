@@ -26,7 +26,6 @@ pub fn to_be_empty(
 
     let not = this.flags.not();
     let mut pass = false;
-    // TODO(port): ConsoleObject.Formatter field init — assumes remaining fields are Default.
     let mut formatter = super::make_formatter(global);
     // `defer formatter.deinit()` — handled by Drop.
 
@@ -39,7 +38,7 @@ pub fn to_be_empty(
 
                 extern "C" fn anything_in_iterator(
                     _: *mut VM,
-                    _: *mut JSGlobalObject,
+                    _: &JSGlobalObject,
                     any_: *mut c_void,
                     _: JSValue,
                 ) {
@@ -54,44 +53,37 @@ pub fn to_be_empty(
                 )?;
                 pass = !any_properties_in_iterator;
             } else {
-                let Some(cell) = value.to_cell() else {
-                    return global.throw_type_error(format_args!(
-                        "Expected value to be a string, object, or iterable"
-                    ));
-                };
-                // const params: <SKIP_EMPTY_NAME, OWN_PROPERTIES_ONLY, INCLUDE_VALUE>
-                let props_iter = bun_jsc::JSPropertyIterator::<false, false, true>::init(
-                    global,
-                    cell.to_object(global),
-                )?;
-                // `defer props_iter.deinit()` — handled by Drop.
-                pass = props_iter.len == 0;
+                // TODO(port): bind `JSPropertyIterator` once API stabilizes.
+                pass = value.is_object_empty(global)?;
             }
         } else {
-            // TODO(port): get_signature must be a `const fn -> &'static str` for concatcp!.
-            const FMT: &str = const_format::concatcp!(
-                Expect::get_signature("toBeEmpty", "", false),
-                "\n\nExpected value to be a string, object, or iterable",
-                "\n\nReceived: <red>{}<r>\n",
-            );
-            return global.throw_pretty(FMT, format_args!("{}", value.to_fmt(&mut formatter)));
+            let signature = Expect::get_signature("toBeEmpty", "", false);
+            return Err(global.throw_pretty(
+                signature,
+                format_args!(
+                    "\n\nExpected value to be a string, object, or iterable\n\nReceived: <red>{}<r>\n",
+                    value.to_fmt(&mut formatter)
+                ),
+            ));
         }
     } else if actual_length.is_nan() {
-        return global.throw(format_args!(
+        return Err(global.throw(format_args!(
             "Received value has non-number length property: {}",
             actual_length
-        ));
+        )));
     } else {
         pass = actual_length == 0.0;
     }
 
     if not && pass {
-        const FMT: &str = const_format::concatcp!(
-            Expect::get_signature("toBeEmpty", "", true),
-            "\n\nExpected value <b>not<r> to be a string, object, or iterable",
-            "\n\nReceived: <red>{}<r>\n",
-        );
-        return global.throw_pretty(FMT, format_args!("{}", value.to_fmt(&mut formatter)));
+        let signature = Expect::get_signature("toBeEmpty", "", true);
+        return Err(global.throw_pretty(
+            signature,
+            format_args!(
+                "\n\nExpected value <b>not<r> to be a string, object, or iterable\n\nReceived: <red>{}<r>\n",
+                value.to_fmt(&mut formatter)
+            ),
+        ));
     }
 
     if not {
@@ -102,26 +94,30 @@ pub fn to_be_empty(
     }
 
     if not {
-        const FMT: &str = const_format::concatcp!(
-            Expect::get_signature("toBeEmpty", "", true),
-            "\n\nExpected value <b>not<r> to be empty",
-            "\n\nReceived: <red>{}<r>\n",
-        );
-        return global.throw_pretty(FMT, format_args!("{}", value.to_fmt(&mut formatter)));
+        let signature = Expect::get_signature("toBeEmpty", "", true);
+        return Err(global.throw_pretty(
+            signature,
+            format_args!(
+                "\n\nExpected value <b>not<r> to be empty\n\nReceived: <red>{}<r>\n",
+                value.to_fmt(&mut formatter)
+            ),
+        ));
     }
 
-    const FMT: &str = const_format::concatcp!(
-        Expect::get_signature("toBeEmpty", "", false),
-        "\n\nExpected value to be empty",
-        "\n\nReceived: <red>{}<r>\n",
-    );
-    global.throw_pretty(FMT, format_args!("{}", value.to_fmt(&mut formatter)))
+    let signature = Expect::get_signature("toBeEmpty", "", false);
+    Err(global.throw_pretty(
+        signature,
+        format_args!(
+            "\n\nExpected value to be empty\n\nReceived: <red>{}<r>\n",
+            value.to_fmt(&mut formatter)
+        ),
+    ))
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/test_runner/expect/toBeEmpty.zig (88 lines)
 //   confidence: medium
-//   todos:      2
-//   notes:      defer postMatch reshaped via scopeguard+raw ptr; throw_pretty/get_signature signatures guessed
+//   todos:      1
+//   notes:      defer postMatch reshaped via scopeguard+raw ptr; JSPropertyIterator path replaced with is_object_empty shim
 // ──────────────────────────────────────────────────────────────────────────

@@ -521,7 +521,7 @@ impl<'a> BunTest<'a> {
             default_concurrent,
             first_last,
             extra_execution_entries: Vec::new(),
-            timer: EventLoopTimer { next: Timespec::EPOCH, tag: EventLoopTimer::Tag::BunTest, ..Default::default() },
+            timer: EventLoopTimer { next: Timespec::EPOCH, tag: EventLoopTimerTag::BunTest, ..Default::default() },
             wants_wakeup: false,
         }
     }
@@ -701,7 +701,7 @@ impl<'a> BunTest<'a> {
         // SAFETY: see BunTestPtr TODO
         let this = unsafe { &mut *(Rc::as_ptr(&this_strong) as *mut BunTest) };
         this.timer.next = Timespec::EPOCH;
-        this.timer.state = EventLoopTimer::State::Pending;
+        this.timer.state = EventLoopTimerState::Pending;
 
         match this.phase {
             Phase::Collection => {}
@@ -1080,7 +1080,7 @@ impl<'a> Drop for BunTest<'a> {
         group_begin!();
         debug::group::end();
 
-        if self.timer.state == EventLoopTimer::State::Active {
+        if self.timer.state == EventLoopTimerState::Active {
             // must remove an active timer to prevent UAF (if the timer were to trigger after BunTest deinit)
             VirtualMachine::get().timer.remove(&mut self.timer);
         }

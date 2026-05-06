@@ -1,5 +1,5 @@
 use core::ffi::c_void;
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, FormatterTestExt, BigIntCompare, make_formatter};
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, VM};
 use bun_jsc::console_object::Formatter;
@@ -47,7 +47,7 @@ pub fn to_be_one_of(
     let arguments = arguments_.slice();
 
     if arguments.len() < 1 {
-        return global_this.throw_invalid_arguments(format_args!("toBeOneOf() takes 1 argument"));
+        return Err(global_this.throw_invalid_arguments(format_args!("toBeOneOf() takes 1 argument")));
     }
 
     this.increment_expect_call_counter();
@@ -79,9 +79,9 @@ pub fn to_be_one_of(
             same_value_iterator,
         )?;
     } else {
-        return global_this.throw(format_args!(
+        return Err(global_this.throw(format_args!(
             "Received value must be an array type, or both received and expected values must be strings."
-        ));
+        )));
     }
 
     if not {

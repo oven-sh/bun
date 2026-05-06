@@ -1,5 +1,5 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, FormatterTestExt, BigIntCompare, make_formatter};
 use bun_jsc::console_object::Formatter;
 use super::DiffFormatter;
 use super::Expect;
@@ -29,7 +29,7 @@ pub fn to_have_been_nth_called_with(
     let calls = super::mock::JSMockFunction__getCalls(global, value)?;
     if !calls.js_type().is_array() {
         let mut formatter = super::make_formatter(global);
-        return this.throw_fmt(
+        return this.throw(
             global,
             Expect::get_signature("toHaveBeenNthCalledWith", "<green>n<r>, <green>...expected<r>", false),
             format_args!(
@@ -40,16 +40,16 @@ pub fn to_have_been_nth_called_with(
     }
 
     if arguments.is_empty() || !arguments[0].is_any_int() {
-        return global.throw_invalid_arguments(format_args!(
+        return Err(global.throw_invalid_arguments(format_args!(
             "toHaveBeenNthCalledWith() requires a positive integer as the first argument"
-        ));
+        )));
     }
     let nth_call_num_i32 = arguments[0].to_int32();
 
     if nth_call_num_i32 <= 0 {
-        return global.throw_invalid_arguments(format_args!(
+        return Err(global.throw_invalid_arguments(format_args!(
             "toHaveBeenNthCalledWith() first argument must be a positive integer"
-        ));
+        )));
     }
     let nth_call_num: u32 = u32::try_from(nth_call_num_i32).unwrap();
 
@@ -62,9 +62,9 @@ pub fn to_have_been_nth_called_with(
         let expected_args = &arguments[1..];
 
         if !nth_call_value.js_type().is_array() {
-            return global.throw(format_args!(
+            return Err(global.throw(format_args!(
                 "Internal error: expected mock call item to be an array of arguments."
-            ));
+            )));
         }
 
         if nth_call_value.get_length(global)? != expected_args.len() {

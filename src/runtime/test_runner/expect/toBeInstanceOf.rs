@@ -1,5 +1,5 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, FormatterTestExt, BigIntCompare, make_formatter};
 use bun_jsc::console_object::Formatter;
 
 use super::Expect;
@@ -17,12 +17,12 @@ pub fn to_be_instance_of(
     let res = (|| -> JsResult<JSValue> {
     let this_value = frame.this();
     // PORT NOTE: collapsed `arguments_old(1)` + ptr/len slice into a single &[JSValue].
-    let arguments: &[JSValue] = frame.arguments_old::<1>();
+    let arguments_ = frame.arguments_old::<1>(); let arguments: &[JSValue] = arguments_.slice();
 
     if arguments.len() < 1 {
-        return global.throw_invalid_arguments(format_args!(
+        return Err(global.throw_invalid_arguments(format_args!(
             "toBeInstanceOf() requires 1 argument"
-        ));
+        )));
     }
 
     this.increment_expect_call_counter();
@@ -31,10 +31,10 @@ pub fn to_be_instance_of(
 
     let expected_value = arguments[0];
     if !expected_value.is_constructor() {
-        return global.throw(format_args!(
+        return Err(global.throw(format_args!(
             "Expected value must be a function: {}",
             expected_value.to_fmt(&mut formatter),
-        ));
+        )));
     }
     expected_value.ensure_still_alive();
 

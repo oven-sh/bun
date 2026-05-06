@@ -1,5 +1,5 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, FormatterTestExt, BigIntCompare, make_formatter};
 use bun_jsc::console_object::Formatter;
 use bun_str::ZigString;
 
@@ -21,7 +21,7 @@ pub fn to_satisfy(this: &mut Expect, global: &JSGlobalObject, frame: &CallFrame)
     let arguments = arguments_.slice();
 
     if arguments.len() < 1 {
-        return global.throw_invalid_arguments(format_args!("toSatisfy() requires 1 argument"));
+        return Err(global.throw_invalid_arguments(format_args!("toSatisfy() requires 1 argument")));
     }
 
     this.increment_expect_call_counter();
@@ -30,13 +30,13 @@ pub fn to_satisfy(this: &mut Expect, global: &JSGlobalObject, frame: &CallFrame)
     predicate.ensure_still_alive();
 
     if !predicate.is_callable() {
-        return global.throw(format_args!("toSatisfy() argument must be a function"));
+        return Err(global.throw(format_args!("toSatisfy() argument must be a function")));
     }
 
     let Some(value) = Expect::js::captured_value_get_cached(this_value) else {
-        return global.throw(format_args!(
+        return Err(global.throw(format_args!(
             "Internal consistency error: the expect(value) was garbage collected but it should not have been!"
-        ));
+        )));
     };
     value.ensure_still_alive();
 

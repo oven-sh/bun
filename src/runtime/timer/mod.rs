@@ -106,6 +106,21 @@ impl TimerHeap {
         let r = unsafe { self.0.delete_min() };
         if r.is_null() { None } else { Some(r) }
     }
+
+    #[inline]
+    pub fn find_max(&self) -> Option<*mut EventLoopTimer> {
+        // SAFETY: all reachable nodes were inserted via `insert()` and remain
+        // live for the heap's lifetime (intrusive invariant maintained by `All`).
+        let r = unsafe { self.0.find_max() };
+        if r.is_null() { None } else { Some(r) }
+    }
+
+    #[inline]
+    pub fn count(&self) -> usize {
+        // SAFETY: all reachable nodes were inserted via `insert()` and remain
+        // live for the heap's lifetime (intrusive invariant maintained by `All`).
+        unsafe { self.0.count() }
+    }
 }
 
 /// i32 is exposed to JavaScript and can be used with clearTimeout, clearInterval, etc.
@@ -129,25 +144,12 @@ impl Maps {
     }
 }
 
-// ─── FakeTimers (subset) ─────────────────────────────────────────────────────
+// ─── FakeTimers ──────────────────────────────────────────────────────────────
 // Real definition lives in `runtime/test_runner/timers/FakeTimers.rs` and
-// depends on `TimerHeap` (defined here — circular at module-declaration
-// time while `test_runner` is still un-declared in lib.rs). The struct
-// shape is identical; `is_active()` is the only method `All` calls.
-//
-// TODO(b2-blocked): once `pub mod test_runner` is declared, replace with
-// `pub use crate::test_runner::timers::fake_timers::FakeTimers;`.
-#[derive(Default)]
-pub struct FakeTimers {
-    active: bool,
-    pub timers: TimerHeap,
-}
-impl FakeTimers {
-    #[inline]
-    pub fn is_active(&self) -> bool {
-        self.active
-    }
-}
+// depends on `TimerHeap` (defined above). Now that `pub mod test_runner` is
+// declared in lib.rs, re-export so `All.fake_timers` and the test_runner
+// host fns see the same nominal type.
+pub use crate::test_runner::timers::fake_timers::FakeTimers;
 
 // ─── DateHeaderTimer / EventLoopDelayMonitor (struct-only) ───────────────────
 // Method bodies (`enable`/`run`) call `vm.timer.*` and `vm.uws_loop()` which

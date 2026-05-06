@@ -225,49 +225,75 @@ pub fn argv() -> impl Iterator<Item = &'static [u8]> {
 /// `bun.Output.debugWarn` — yellow `debug warn:` prefix to stderr in debug
 /// builds, through the Bun output sink (so colour/redirect logic applies),
 /// followed by an explicit flush. Zig output.zig:1189-1194.
+///
+/// Function form takes a runtime `(fmt, args)` pair mirroring Zig
+/// `fn debugWarn(comptime fmt: []const u8, args: anytype)`.
 #[inline]
-pub fn debug_warn(args: core::fmt::Arguments<'_>) {
+pub fn debug_warn(fmt: &str, args: impl FmtTuple) {
     if cfg!(debug_assertions) {
-        pretty_errorln!("<yellow>debug warn<r><d>:<r> {}", args);
+        pretty_errorln!(
+            "<yellow>debug warn<r><d>:<r> {}",
+            pretty_fmt_args(fmt, enable_ansi_colors_stderr(), args),
+        );
         flush();
     }
 }
 
 /// `bun.Output.warn` — yellow `warn:` prefix to stderr.
 #[inline]
-pub fn warn(args: core::fmt::Arguments<'_>) {
-    pretty_errorln!("<r><yellow>warn<r><d>:<r> {}", args);
+pub fn warn(fmt: &str, args: impl FmtTuple) {
+    pretty_errorln!(
+        "<r><yellow>warn<r><d>:<r> {}",
+        pretty_fmt_args(fmt, enable_ansi_colors_stderr(), args),
+    );
 }
 
 /// `bun.Output.note` — blue `note:` prefix to stderr (output.zig:1179).
 #[inline]
-pub fn note(msg: &str) {
-    pretty_errorln!("<blue>note<r><d>:<r> {}", msg);
+pub fn note(fmt: &str, args: impl FmtTuple) {
+    pretty_errorln!(
+        "<blue>note<r><d>:<r> {}",
+        pretty_fmt_args(fmt, enable_ansi_colors_stderr(), args),
+    );
 }
 
 /// Function-form of `Output.debug` (Zig: `pub fn debug(comptime fmt, args)`).
-/// The macro form is `crate::debug!`; this fn variant takes pre-built
-/// `Arguments` for call sites that can't use the macro (e.g. trait objects).
+/// The macro form is `crate::debug!`; this fn variant takes a runtime template
+/// + tuple for call sites that can't use the macro.
 #[inline]
-pub fn debug(args: core::fmt::Arguments<'_>) {
+pub fn debug(fmt: &str, args: impl FmtTuple) {
     if cfg!(debug_assertions) {
-        pretty_errorln!("<d>DEBUG:<r> {}", args);
+        pretty_errorln!(
+            "<d>DEBUG:<r> {}",
+            pretty_fmt_args(fmt, enable_ansi_colors_stderr(), args),
+        );
         flush();
     }
 }
 
-/// Function-form of `Output.prettyErrorln` for callers holding a pre-built
-/// `Arguments` (no `<tag>` rewrite — caller is expected to have already
-/// applied it or to pass plain text). Macro form: `crate::pretty_errorln!`.
-///
-/// NOTE: unlike the macro (and Zig output.zig:1106-1109), this fn form cannot
-/// inspect the comptime template and therefore *always* appends `\n`. Callers
-/// must NOT pass a template that already ends in `\n` or output will contain a
-/// doubled newline. Prefer the `pretty_errorln!` macro where possible.
+/// `Output.prettyErrorln` — function form. Performs `<tag>` → ANSI rewrite on
+/// `fmt` (using stderr's colour state), substitutes `args` at each `{}`
+/// placeholder, writes to stderr, and appends `\n` if `fmt` does not already
+/// end in one. Macro form: `crate::pretty_errorln!`.
 #[inline]
-pub fn pretty_errorln(args: core::fmt::Arguments<'_>) {
-    print_to(Destination::Stderr, args);
-    write_bytes(Destination::Stderr, b"\n");
+pub fn pretty_errorln(fmt: &str, args: impl FmtTuple) {
+    print_to(
+        Destination::Stderr,
+        format_args!("{}", pretty_fmt_args(fmt, enable_ansi_colors_stderr(), args)),
+    );
+    if !fmt.ends_with('\n') {
+        write_bytes(Destination::Stderr, b"\n");
+    }
+}
+
+/// `Output.prettyError` — `<tag>`-rewritten template to stderr without a
+/// trailing newline.
+#[inline]
+pub fn pretty_error(fmt: &str, args: impl FmtTuple) {
+    print_to(
+        Destination::Stderr,
+        format_args!("{}", pretty_fmt_args(fmt, enable_ansi_colors_stderr(), args)),
+    );
 }
 
 /// Test-harness initializer: configure the output sinks without touching the
@@ -1005,23 +1031,32 @@ pub fn raw_error_writer() -> StreamType {
 }
 
 // TODO: investigate migrating this to the buffered one.
-pub fn error_writer() -> *mut io::Writer {
+//
+// TODO(port): these accessors hand out a `&'static mut` to a thread-local
+// `Source` field. The Zig original returned `*Writer` and callers used it
+// briefly. Returning `&'static mut` is *unsound* if two are alive at once, but
+// matches the Zig contract until callers migrate to `with_error_writer(|w| ..)`.
+#[allow(clippy::mut_from_ref)]
+pub fn error_writer() -> &'static mut io::Writer {
     debug_assert!(SOURCE_SET.get());
-    SOURCE.with_borrow_mut(|s| s.error_stream() as *mut _)
-    // TODO(port): self-ref pointer escape — callers should use a `with_error_writer(|w| ...)` API
+    let p: *mut io::Writer = SOURCE.with_borrow_mut(|s| s.error_stream() as *mut _);
+    // SAFETY: pointer escapes the RefCell borrow; see TODO(port) above.
+    unsafe { &mut *p }
 }
 
-pub fn error_writer_buffered() -> *mut io::Writer {
+pub fn error_writer_buffered() -> &'static mut io::Writer {
     debug_assert!(SOURCE_SET.get());
-    SOURCE.with_borrow_mut(|s| s.buffered_error_stream() as *mut _)
-    // TODO(port): self-ref pointer escape — see error_writer()
+    let p: *mut io::Writer = SOURCE.with_borrow_mut(|s| s.buffered_error_stream() as *mut _);
+    // SAFETY: see TODO(port) above.
+    unsafe { &mut *p }
 }
 
 // TODO: investigate returning the buffered_error_stream
-pub fn error_stream() -> *mut io::Writer {
+pub fn error_stream() -> &'static mut io::Writer {
     debug_assert!(SOURCE_SET.get());
-    SOURCE.with_borrow_mut(|s| s.error_stream() as *mut _)
-    // TODO(port): self-ref pointer escape
+    let p: *mut io::Writer = SOURCE.with_borrow_mut(|s| s.error_stream() as *mut _);
+    // SAFETY: see TODO(port) above.
+    unsafe { &mut *p }
 }
 
 pub fn raw_writer() -> StreamType {
@@ -1029,16 +1064,18 @@ pub fn raw_writer() -> StreamType {
     SOURCE.with_borrow(|s| s.raw_stream)
 }
 
-pub fn writer() -> *mut io::Writer {
+pub fn writer() -> &'static mut io::Writer {
     debug_assert!(SOURCE_SET.get());
-    SOURCE.with_borrow_mut(|s| s.stream() as *mut _)
-    // TODO(port): self-ref pointer escape
+    let p: *mut io::Writer = SOURCE.with_borrow_mut(|s| s.stream() as *mut _);
+    // SAFETY: see TODO(port) above.
+    unsafe { &mut *p }
 }
 
-pub fn writer_buffered() -> *mut io::Writer {
+pub fn writer_buffered() -> &'static mut io::Writer {
     debug_assert!(SOURCE_SET.get());
-    SOURCE.with_borrow_mut(|s| s.buffered_stream() as *mut _)
-    // TODO(port): self-ref pointer escape
+    let p: *mut io::Writer = SOURCE.with_borrow_mut(|s| s.buffered_stream() as *mut _);
+    // SAFETY: see TODO(port) above.
+    unsafe { &mut *p }
 }
 
 pub fn reset_terminal() {
@@ -1691,16 +1728,61 @@ pub fn prettyln(args: fmt::Arguments<'_>) {
 /// body so the proc-macro can be tested against it).
 pub use bun_core_macros::pretty_fmt;
 
-/// Runtime `<tag>` → ANSI rewrite returning an owned buffer. Function-form
-/// counterpart of the `pretty_fmt!` macro for call sites that hold a runtime
-/// format string (e.g. crash_handler). Result derefs to `[u8]`.
+/// Input accepted by [`pretty_fmt`]: either a `&str`/`&[u8]` template or a
+/// pre-formatted `&fmt::Arguments<'_>` (which is first rendered to a string
+/// then `<tag>`-rewritten — used by `Custom Inspect`-style call sites that
+/// build the template via `format_args!`).
+pub trait PrettyFmtInput {
+    fn into_pretty_buf(self, is_enabled: bool) -> PrettyBuf;
+}
+impl PrettyFmtInput for &str {
+    #[inline]
+    fn into_pretty_buf(self, is_enabled: bool) -> PrettyBuf {
+        PrettyBuf(pretty_fmt_runtime(self.as_bytes(), is_enabled))
+    }
+}
+impl PrettyFmtInput for &[u8] {
+    #[inline]
+    fn into_pretty_buf(self, is_enabled: bool) -> PrettyBuf {
+        PrettyBuf(pretty_fmt_runtime(self, is_enabled))
+    }
+}
+impl PrettyFmtInput for &fmt::Arguments<'_> {
+    #[inline]
+    fn into_pretty_buf(self, is_enabled: bool) -> PrettyBuf {
+        // Render the `Arguments` first, then rewrite `<tag>` markers.
+        let rendered = std::format!("{}", self);
+        PrettyBuf(pretty_fmt_runtime(rendered.as_bytes(), is_enabled))
+    }
+}
+impl PrettyFmtInput for fmt::Arguments<'_> {
+    #[inline]
+    fn into_pretty_buf(self, is_enabled: bool) -> PrettyBuf {
+        (&self).into_pretty_buf(is_enabled)
+    }
+}
+
+/// `Output.prettyFmt` — runtime `<tag>` → ANSI rewrite. Const-generic
+/// `ENABLE_ANSI_COLORS` mirrors the Zig `comptime is_enabled: bool` parameter
+/// so callers can do `Output::pretty_fmt::<ENABLE_ANSI_COLORS>("…")`.
+///
+/// For a runtime bool (e.g. from `enable_ansi_colors_stderr()`), see
+/// [`pretty_fmt_rt`].
 #[inline]
-pub fn pretty_fmt(fmt: &str, is_enabled: bool) -> PrettyBuf {
-    PrettyBuf(pretty_fmt_runtime(fmt.as_bytes(), is_enabled))
+pub fn pretty_fmt<const ENABLE_ANSI_COLORS: bool>(input: impl PrettyFmtInput) -> PrettyBuf {
+    input.into_pretty_buf(ENABLE_ANSI_COLORS)
+}
+
+/// Runtime-bool form of [`pretty_fmt`] for call sites that don't have a
+/// const-generic colour flag (crash handler, dynamic templates).
+#[inline]
+pub fn pretty_fmt_rt(input: impl PrettyFmtInput, is_enabled: bool) -> PrettyBuf {
+    input.into_pretty_buf(is_enabled)
 }
 
 /// Owned ANSI-rewritten buffer; derefs to `[u8]` so it can be passed to
-/// `write_all(&buf)` directly.
+/// `write_all(&buf)` directly, and implements `Display` so it can be used in
+/// `write!(w, "{}", pretty_fmt::<true>("…"))`.
 #[repr(transparent)]
 pub struct PrettyBuf(pub Vec<u8>);
 impl core::ops::Deref for PrettyBuf {
@@ -1710,56 +1792,149 @@ impl core::ops::Deref for PrettyBuf {
 impl AsRef<[u8]> for PrettyBuf {
     #[inline] fn as_ref(&self) -> &[u8] { &self.0 }
 }
+impl AsRef<str> for PrettyBuf {
+    #[inline]
+    fn as_ref(&self) -> &str {
+        // ANSI sequences + the original (assumed-UTF-8) template are valid UTF-8.
+        core::str::from_utf8(&self.0).unwrap_or("")
+    }
+}
+impl fmt::Display for PrettyBuf {
+    #[inline]
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(core::str::from_utf8(&self.0).unwrap_or(""))
+    }
+}
 
-/// Runtime `<tag>` → ANSI rewrite *with* an `Arguments` payload substituted at
-/// the first `{s}` / `{}` placeholder. Returns a `Display` impl so callers can
-/// `write!(w, "{}", pretty_fmt_args(fmt, true, format_args!(...)))`.
+// ── FmtTuple ──────────────────────────────────────────────────────────────
+// Zig `fn print(comptime fmt: []const u8, args: anytype)` takes a tuple of
+// arguments and substitutes positionals. The Rust port models `args: anytype`
+// as `impl FmtTuple` so call sites can pass `()`, `(a,)`, `(a, b)`, … or a
+// pre-built `fmt::Arguments<'_>` (treated as a single positional).
+
+/// Positional-argument bundle for runtime template substitution.
+pub trait FmtTuple {
+    /// Write the `idx`-th positional into `f`. Returns `false` if `idx` is out
+    /// of range (caller emits the literal `{}` then).
+    fn write_nth(&self, idx: usize, f: &mut dyn fmt::Write) -> Result<bool, fmt::Error>;
+    fn len(&self) -> usize;
+}
+impl FmtTuple for () {
+    #[inline] fn write_nth(&self, _: usize, _: &mut dyn fmt::Write) -> Result<bool, fmt::Error> { Ok(false) }
+    #[inline] fn len(&self) -> usize { 0 }
+}
+impl FmtTuple for fmt::Arguments<'_> {
+    #[inline]
+    fn write_nth(&self, idx: usize, f: &mut dyn fmt::Write) -> Result<bool, fmt::Error> {
+        if idx == 0 { f.write_fmt(*self)?; Ok(true) } else { Ok(false) }
+    }
+    #[inline] fn len(&self) -> usize { 1 }
+}
+impl<T: fmt::Display> FmtTuple for &[T] {
+    fn write_nth(&self, idx: usize, f: &mut dyn fmt::Write) -> Result<bool, fmt::Error> {
+        match self.get(idx) { Some(v) => { write!(f, "{}", v)?; Ok(true) } None => Ok(false) }
+    }
+    #[inline] fn len(&self) -> usize { (*self).len() }
+}
+impl<T: fmt::Display, const N: usize> FmtTuple for &[T; N] {
+    fn write_nth(&self, idx: usize, f: &mut dyn fmt::Write) -> Result<bool, fmt::Error> {
+        match self.get(idx) { Some(v) => { write!(f, "{}", v)?; Ok(true) } None => Ok(false) }
+    }
+    #[inline] fn len(&self) -> usize { N }
+}
+macro_rules! impl_fmt_tuple {
+    ($($idx:tt $T:ident),+) => {
+        impl<$($T: fmt::Display),+> FmtTuple for ($($T,)+) {
+            fn write_nth(&self, idx: usize, f: &mut dyn fmt::Write) -> Result<bool, fmt::Error> {
+                match idx { $( $idx => { write!(f, "{}", self.$idx)?; Ok(true) } )+ _ => Ok(false) }
+            }
+            #[inline] fn len(&self) -> usize { [$($idx),+].len() }
+        }
+    };
+}
+impl_fmt_tuple!(0 A);
+impl_fmt_tuple!(0 A, 1 B);
+impl_fmt_tuple!(0 A, 1 B, 2 C);
+impl_fmt_tuple!(0 A, 1 B, 2 C, 3 D);
+impl_fmt_tuple!(0 A, 1 B, 2 C, 3 D, 4 E);
+impl_fmt_tuple!(0 A, 1 B, 2 C, 3 D, 4 E, 5 F);
+impl_fmt_tuple!(0 A, 1 B, 2 C, 3 D, 4 E, 5 F, 6 G);
+impl_fmt_tuple!(0 A, 1 B, 2 C, 3 D, 4 E, 5 F, 6 G, 7 H);
+
+/// Substitute `{}` / `{s}` / `{d}` / `{any}` / `{f}` placeholders in `template`
+/// with successive entries from `args`. `{{` / `}}` are emitted as literal
+/// braces. Unrecognised specs are passed through verbatim.
+fn substitute_template(
+    template: &[u8],
+    args: &impl FmtTuple,
+    f: &mut dyn fmt::Write,
+) -> fmt::Result {
+    let t = template;
+    let mut i = 0usize;
+    let mut argi = 0usize;
+    while i < t.len() {
+        let b = t[i];
+        if b == b'{' {
+            if i + 1 < t.len() && t[i + 1] == b'{' {
+                f.write_str("{")?;
+                i += 2;
+                continue;
+            }
+            // Find closing '}'.
+            let mut j = i + 1;
+            while j < t.len() && t[j] != b'}' { j += 1; }
+            if j < t.len() {
+                // consume placeholder
+                if args.write_nth(argi, f)? {
+                    argi += 1;
+                }
+                i = j + 1;
+                continue;
+            }
+        } else if b == b'}' && i + 1 < t.len() && t[i + 1] == b'}' {
+            f.write_str("}")?;
+            i += 2;
+            continue;
+        }
+        // SAFETY: template is ASCII/ANSI bytes; emit byte-at-a-time as Latin-1.
+        let mut buf = [0u8; 4];
+        let c = b as char;
+        f.write_str(c.encode_utf8(&mut buf))?;
+        i += 1;
+    }
+    Ok(())
+}
+
+/// `Display` adapter pairing a runtime template with a [`FmtTuple`].
+pub struct TemplateDisplay<'a, A: FmtTuple> {
+    template: std::borrow::Cow<'a, [u8]>,
+    args: A,
+}
+impl<A: FmtTuple> fmt::Display for TemplateDisplay<'_, A> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        substitute_template(&self.template, &self.args, f)
+    }
+}
+
+/// Runtime `<tag>` → ANSI rewrite *with* a positional-argument tuple
+/// substituted at each `{}` / `{s}` / `{d}` placeholder. Returns a `Display`
+/// impl so callers can `write!(w, "{}", pretty_fmt_args(fmt, true, (a, b)))`.
 ///
 /// Port of `Output.prettyFmt` + `print` fused for the dynamic-template case
 /// (crash_handler builds the template at runtime).
-pub fn pretty_fmt_args<'a>(
-    fmt: &'a str,
+pub fn pretty_fmt_args<A: FmtTuple>(
+    fmt: &str,
     is_enabled: bool,
-    args: fmt::Arguments<'a>,
-) -> PrettyFmtArgs<'a> {
-    PrettyFmtArgs { template: pretty_fmt_runtime(fmt.as_bytes(), is_enabled), args }
-}
-
-pub struct PrettyFmtArgs<'a> {
-    template: Vec<u8>,
-    args: fmt::Arguments<'a>,
-}
-impl fmt::Display for PrettyFmtArgs<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Substitute the first `{}` / `{s}` / `{d}` / `{any}` with `self.args`;
-        // pass through everything else verbatim (the Zig comptime version
-        // supported exactly one positional in these crash-handler templates).
-        let t = &self.template;
-        let mut i = 0usize;
-        let mut substituted = false;
-        while i < t.len() {
-            let b = t[i];
-            if b == b'{' && !substituted {
-                // Find closing '}' and skip the spec — we don't interpret it,
-                // the caller pre-formatted via `format_args!`.
-                let start = i;
-                while i < t.len() && t[i] != b'}' { i += 1; }
-                if i < t.len() { i += 1; } // consume '}'
-                f.write_fmt(self.args)?;
-                substituted = true;
-            } else if b == b'{' && substituted {
-                // Literal-ish second placeholder; emit verbatim (rare).
-                f.write_str("{")?;
-                i += 1;
-            } else {
-                // SAFETY: template is ASCII/ANSI bytes.
-                f.write_str(unsafe { core::str::from_utf8_unchecked(&t[i..i + 1]) })?;
-                i += 1;
-            }
-        }
-        Ok(())
+    args: A,
+) -> TemplateDisplay<'static, A> {
+    TemplateDisplay {
+        template: std::borrow::Cow::Owned(pretty_fmt_runtime(fmt.as_bytes(), is_enabled)),
+        args,
     }
 }
+
+/// Legacy name kept for back-compat with crash_handler.
+pub type PrettyFmtArgs<'a> = TemplateDisplay<'a, fmt::Arguments<'a>>;
 
 /// Runtime mirror of Zig `prettyFmt` for testing the proc-macro and for the rare
 /// dynamic case. Produces the same byte sequence the Zig comptime version would.
@@ -2099,9 +2274,17 @@ pub enum Destination {
     Stdout,
 }
 
+/// `Output.printError` — function form. No `<tag>` rewrite; substitutes
+/// positional `args` at each `{}` in `fmt` and writes to stderr.
 #[inline]
-pub fn print_error(args: fmt::Arguments<'_>) {
-    print_to(Destination::Stderr, args);
+pub fn print_error(fmt: &str, args: impl FmtTuple) {
+    print_to(
+        Destination::Stderr,
+        format_args!("{}", TemplateDisplay {
+            template: std::borrow::Cow::Borrowed(fmt.as_bytes()),
+            args,
+        }),
+    );
 }
 
 /// `Output.printErrorln` — function form (the `print_errorln!` macro at crate
@@ -2207,7 +2390,8 @@ macro_rules! debug_warn {
 /// and any `#[derive(strum::IntoStaticStr)]` enum).
 // TODO(port): the comptime-literal fast path (is_comptime_name) is dropped — Phase B can
 // recover it with a proc-macro overload that detects string literals.
-pub fn err(error_name: impl ErrName, args: fmt::Arguments<'_>) {
+pub fn err(error_name: impl ErrName, fmt: &str, args: impl FmtTuple) {
+    let body = pretty_fmt_args(fmt, enable_ansi_colors_stderr(), args);
     if let Some(e) = error_name.as_sys_err_info() {
         // MOVE_DOWN: bun_sys::coreutils_error_map → bun_core (move-in pass).
         if let Some(label) = crate::coreutils_error_map::get(e.errno) {
@@ -2215,14 +2399,14 @@ pub fn err(error_name: impl ErrName, args: fmt::Arguments<'_>) {
                 "<r><red>{}<r><d>:<r> {}: {} <d>({})<r>",
                 bstr::BStr::new(e.tag_name),
                 bstr::BStr::new(label),
-                args,
+                body,
                 e.syscall,
             );
         } else {
             pretty_errorln!(
                 "<r><red>{}<r><d>:<r> {} <d>({})<r>",
                 bstr::BStr::new(e.tag_name),
-                args,
+                body,
                 e.syscall,
             );
         }
@@ -2230,7 +2414,17 @@ pub fn err(error_name: impl ErrName, args: fmt::Arguments<'_>) {
     }
 
     let display_name = error_name.name();
-    pretty_errorln!("<red>{}<r><d>:<r> {}", bstr::BStr::new(display_name), args);
+    pretty_errorln!("<red>{}<r><d>:<r> {}", bstr::BStr::new(display_name), body);
+}
+
+/// `Output.errGeneric` — function form. `<red>error<r>:` prefix to stderr with
+/// a `<tag>`-rewritten template + positional args.
+#[inline]
+pub fn err_generic(fmt: &str, args: impl FmtTuple) {
+    pretty_errorln!(
+        "<r><red>error<r><d>:<r> {}",
+        pretty_fmt_args(fmt, enable_ansi_colors_stderr(), args),
+    );
 }
 
 /// What `err()` needs from a `bun_sys::Error` without naming the type.

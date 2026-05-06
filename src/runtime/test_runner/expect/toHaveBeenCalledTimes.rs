@@ -1,5 +1,5 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, FormatterTestExt, BigIntCompare, make_formatter};
 use bun_jsc::console_object::Formatter;
 use super::Expect;
 use super::get_signature;
@@ -30,16 +30,16 @@ pub fn to_have_been_called_times(
     if !calls.js_type().is_array() {
         let mut formatter = super::make_formatter(global);
         // `defer formatter.deinit()` — handled by Drop.
-        return global.throw(format_args!(
+        return Err(global.throw(format_args!(
             "Expected value must be a mock function: {}",
             value.to_fmt(&mut formatter)
-        ));
+        )));
     }
 
     if arguments.len() < 1 || !arguments[0].is_uint32_as_any_int() {
-        return global.throw_invalid_arguments(format_args!(
+        return Err(global.throw_invalid_arguments(format_args!(
             "toHaveBeenCalledTimes() requires 1 non-negative integer argument"
-        ));
+        )));
     }
 
     let times = arguments[0].coerce::<i32>(global)?;

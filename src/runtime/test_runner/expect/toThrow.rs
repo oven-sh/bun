@@ -1,5 +1,5 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, FormatterTestExt, BigIntCompare, make_formatter};
 use bun_jsc::console_object::Formatter;
 use bun_str::{strings, ZigString};
 
@@ -29,11 +29,11 @@ pub fn to_throw(
             break 'brk JSValue::ZERO;
         }
         if value.is_undefined_or_null() || (!value.is_object() && !value.is_string()) {
-            let mut fmt = Formatter::new(global).quote_strings(true);
-            return global.throw(format_args!(
+            let mut fmt = Formatter::new(global).with_quote_strings(true);
+            return Err(global.throw(format_args!(
                 "Expected value must be string or Error: {}",
                 value.to_fmt(&mut fmt),
-            ));
+            )));
         }
         if value.is_object() {
             if ExpectAny::from_js_direct(value).is_some() {
@@ -72,7 +72,7 @@ pub fn to_throw(
         }
 
         let result: JSValue = result_.unwrap();
-        let mut formatter = Formatter::new(global).quote_strings(true);
+        let mut formatter = Formatter::new(global).with_quote_strings(true);
 
         if expected_value.is_empty() || expected_value.is_undefined() {
             let signature_no_args: &'static str = get_signature("toThrow", "", true);
@@ -246,7 +246,7 @@ pub fn to_throw(
             }
 
             // error: message from received error does not match expected string
-            let mut formatter = Formatter::new(global).quote_strings(true);
+            let mut formatter = Formatter::new(global).with_quote_strings(true);
 
             let signature: &'static str = get_signature("toThrow", "<green>expected<r>", false);
 
@@ -285,7 +285,7 @@ pub fn to_throw(
             }
 
             // error: message from received error does not match expected pattern
-            let mut formatter = Formatter::new(global).quote_strings(true);
+            let mut formatter = Formatter::new(global).with_quote_strings(true);
 
             if let Some(received_message) = received_message_opt {
                 let expected_value_fmt = expected_value.to_fmt(&mut formatter);
@@ -323,7 +323,7 @@ pub fn to_throw(
                 return Ok(JSValue::UNDEFINED);
             }
 
-            let mut formatter = Formatter::new(global).quote_strings(true);
+            let mut formatter = Formatter::new(global).with_quote_strings(true);
             let received_fmt = result.to_fmt(&mut formatter);
             let expected_fmt = expected_value.to_fmt(&mut formatter);
             return this.throw_fmt(
@@ -347,7 +347,7 @@ pub fn to_throw(
             }
 
             // error: message from received error does not match expected error message.
-            let mut formatter = Formatter::new(global).quote_strings(true);
+            let mut formatter = Formatter::new(global).with_quote_strings(true);
 
             if let Some(received_message) = received_message_opt {
                 let expected_fmt = expected_message.to_fmt(&mut formatter);
@@ -375,7 +375,7 @@ pub fn to_throw(
         }
 
         // error: received error not instance of received error constructor
-        let mut formatter = Formatter::new(global).quote_strings(true);
+        let mut formatter = Formatter::new(global).with_quote_strings(true);
         let mut expected_class = ZigString::EMPTY;
         let mut received_class = ZigString::EMPTY;
         expected_value.get_class_name(global, &mut expected_class)?;
@@ -410,7 +410,7 @@ pub fn to_throw(
 
     // did not throw
     let result = return_value_from_function;
-    let mut formatter = Formatter::new(global).quote_strings(true);
+    let mut formatter = Formatter::new(global).with_quote_strings(true);
     // PORT NOTE: Zig `received_line` was concatenated via `++` into each fmt string
     // below; Rust `concat!` only accepts literals so the value is inlined at each site.
     // received_line = "Received function did not throw\nReceived value: <red>{any}<r>\n"

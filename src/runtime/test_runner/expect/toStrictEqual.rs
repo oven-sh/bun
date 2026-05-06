@@ -1,5 +1,5 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, FormatterTestExt, BigIntCompare, make_formatter};
 
 use super::DiffFormatter;
 use super::Expect;
@@ -52,11 +52,11 @@ impl Expect {
         };
 
         if not {
-            let signature = const { Expect::get_signature("toStrictEqual", "<green>expected<r>", true) };
+            let signature = Expect::get_signature("toStrictEqual", "<green>expected<r>", true);
             return this.throw(global, signature, format_args!("\n\n{}\n", diff_formatter));
         }
 
-        let signature = const { Expect::get_signature("toStrictEqual", "<green>expected<r>", false) };
+        let signature = Expect::get_signature("toStrictEqual", "<green>expected<r>", false);
         this.throw(global, signature, format_args!("\n\n{}\n", diff_formatter))
     }
 }

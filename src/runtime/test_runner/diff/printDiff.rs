@@ -60,8 +60,10 @@ pub fn print_diff_main(
         match config.enable_ansi_colors {
             true => write!(
                 writer,
-                const_format::concatcp!("Expected: not ", colors::RED, "{}", colors::RESET),
-                BStr::new(expected_slice)
+                "Expected: not {RED}{}{RESET}",
+                BStr::new(expected_slice),
+                RED = colors::RED,
+                RESET = colors::RESET,
             )?,
             false => write!(writer, "Expected: not {}", BStr::new(expected_slice))?,
         }

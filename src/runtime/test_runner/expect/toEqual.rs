@@ -1,5 +1,5 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, FormatterTestExt, BigIntCompare, make_formatter};
 
 use super::DiffFormatter;
 use super::Expect;
@@ -21,7 +21,7 @@ impl Expect {
         let arguments: &[JSValue] = _arguments.slice();
 
         if arguments.len() < 1 {
-            return global.throw_invalid_arguments(format_args!("toEqual() requires 1 argument"));
+            return Err(global.throw_invalid_arguments(format_args!("toEqual() requires 1 argument")));
         }
 
         this.increment_expect_call_counter();

@@ -1,5 +1,5 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, FormatterTestExt, BigIntCompare, make_formatter};
 use bun_str::ZigString;
 
 use super::Expect;
@@ -15,7 +15,7 @@ pub fn to_match_inline_snapshot(
     scopeguard::defer! { this.post_match(global); }
 
     let this_value = frame.this();
-    let arguments: &[JSValue] = frame.arguments_old::<2>();
+    let arguments_ = frame.arguments_old::<2>(); let arguments: &[JSValue] = arguments_.slice();
 
     this.increment_expect_call_counter();
 

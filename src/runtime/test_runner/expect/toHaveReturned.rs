@@ -1,5 +1,5 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, FormatterTestExt, BigIntCompare, make_formatter};
 
 use super::mock;
 use super::Expect;
@@ -49,18 +49,18 @@ fn to_have_returned_times_fn(
     let expected_success_count: i32 = if mode == Mode::ToHaveReturned {
         if arguments.len() > 0 && !arguments[0].is_undefined() {
             // PERF(port): Zig used comptime `@tagName(mode) ++ "..."`; runtime fmt on error path.
-            return global.throw_invalid_arguments(format_args!(
+            return Err(global.throw_invalid_arguments(format_args!(
                 "{}() must not have an argument",
                 mode.tag_name()
-            ));
+            )));
         }
         1
     } else {
         if arguments.len() < 1 || !arguments[0].is_uint32_as_any_int() {
-            return global.throw_invalid_arguments(format_args!(
+            return Err(global.throw_invalid_arguments(format_args!(
                 "{}() requires 1 non-negative integer argument",
                 mode.tag_name()
-            ));
+            )));
         }
 
         arguments[0].coerce::<i32>(global)?

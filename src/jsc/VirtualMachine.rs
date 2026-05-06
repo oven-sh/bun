@@ -1089,6 +1089,7 @@ fn runtime_hooks() -> Option<&'static RuntimeHooks> {
 }
 
 // TODO(port): move to jsc_sys
+#[allow(improper_ctypes)] // VirtualMachine is opaque to C++; passed as `void*`
 unsafe extern "C" {
     fn ZigGlobalObject__create(
         vm: *mut VirtualMachine,

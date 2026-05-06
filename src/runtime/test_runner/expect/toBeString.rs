@@ -1,5 +1,5 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, FormatterTestExt, BigIntCompare, make_formatter};
 use bun_jsc::console_object::Formatter;
 
 use super::Expect;
@@ -31,7 +31,7 @@ impl Expect {
 
         // Zig: `defer formatter.deinit();` — handled by Drop.
         // TODO(port): Formatter has other defaulted fields in Zig; constructor shape may differ.
-        let mut formatter = Formatter::new(global).quote_strings(true);
+        let mut formatter = Formatter::new(global).with_quote_strings(true);
         let received = value.to_fmt(&mut formatter);
 
         if not {

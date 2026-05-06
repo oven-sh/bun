@@ -22,8 +22,11 @@ use bun_string::String as BunString;
 use crate::virtual_machine::VirtualMachine;
 use crate::{self as jsc, CallFrame, JSGlobalObject, ZigException};
 
+#[allow(non_upper_case_globals)]
 bun_core::declare_scope!(debugger, visible);
+#[allow(non_upper_case_globals)]
 bun_core::declare_scope!(TestReporterAgent, visible);
+#[allow(non_upper_case_globals)]
 bun_core::declare_scope!(LifecycleAgent, visible);
 
 // ──────────────────────────────────────────────────────────────────────────

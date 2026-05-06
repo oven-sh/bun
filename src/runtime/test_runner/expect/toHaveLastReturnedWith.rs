@@ -1,5 +1,5 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, FormatterTestExt, BigIntCompare, make_formatter};
 use bun_jsc::console_object::Formatter;
 // TODO(port): verify path for JSMockFunction__getReturns FFI binding
 use super::mock::JSMockFunction__getReturns;
@@ -28,11 +28,11 @@ pub fn to_have_last_returned_with(
 
     let returns = JSMockFunction__getReturns(global_this, value)?;
     if !returns.js_type().is_array() {
-        let mut formatter = Formatter::new(global_this).quote_strings(true);
-        return global_this.throw(format_args!(
+        let mut formatter = Formatter::new(global_this).with_quote_strings(true);
+        return Err(global_this.throw(format_args!(
             "Expected value must be a mock function: {}",
             value.to_fmt(&mut formatter),
-        ));
+        )));
     }
 
     let calls_count = u32::try_from(returns.get_length(global_this)?).unwrap();
@@ -42,7 +42,7 @@ pub fn to_have_last_returned_with(
     let mut last_error_value: JSValue = JSValue::UNDEFINED;
 
     if calls_count > 0 {
-        let last_result = returns.get_direct_index(global_this, calls_count - 1);
+        let last_result = returns.get_index(global_this, calls_count - 1);
 
         if last_result.is_object() {
             let result_type = last_result.get(global_this, "type")?.unwrap_or(JSValue::UNDEFINED);
@@ -70,12 +70,12 @@ pub fn to_have_last_returned_with(
     }
 
     // Handle failure
-    let mut formatter = Formatter::new(global_this).quote_strings(true);
+    let mut formatter = Formatter::new(global_this).with_quote_strings(true);
 
     let signature = Expect::get_signature("toHaveBeenLastReturnedWith", "<green>expected<r>", false);
 
     if this.flags.not() {
-        return this.throw_fmt(
+        return this.throw(
             global_this,
             Expect::get_signature("toHaveBeenLastReturnedWith", "<green>expected<r>", true),
             format_args!(

@@ -332,6 +332,32 @@ impl From<bun_core::AllocError> for JsError {
     fn from(_: bun_core::AllocError) -> Self { JsError::OutOfMemory }
 }
 
+impl From<JsTerminated> for JsError {
+    fn from(_: JsTerminated) -> Self { JsError::Terminated }
+}
+
+impl From<bun_core::Error> for JsError {
+    fn from(_: bun_core::Error) -> Self {
+        // PORT NOTE: Zig coerces arbitrary `anyerror` into the JS error union by
+        // throwing a generic Error; the throw happens at the call site. Mapping
+        // to `Thrown` here lets `?` propagate while the actual throw is handled
+        // by the host-fn wrapper.
+        JsError::Thrown
+    }
+}
+
+/// Adapter for Zig-style `(comptime fmt, args)` throw helpers ported to Rust.
+/// During the port, callers use a mix of `&str`, `format_args!(..)`, `()`, and
+/// `&[..]` for the trailing "args" tuple — this trait normalizes them so a
+/// single method signature works for all of them.
+pub trait ThrowFmtArgs {
+    fn ignore(self) {}
+}
+impl ThrowFmtArgs for () {}
+impl<T> ThrowFmtArgs for &[T] {}
+impl<T, const N: usize> ThrowFmtArgs for &[T; N] {}
+impl ThrowFmtArgs for core::fmt::Arguments<'_> {}
+
 /// Debug-only binding-presence marker. In Zig this is `jsc.markBinding(@src())`;
 /// here it's a no-op (track_caller gives us the location if we ever wire it up).
 #[macro_export]
@@ -391,7 +417,17 @@ pub mod host_fn {
             }
         }
     }
-    pub fn to_js_host_fn() { todo!() }
+    /// `host_fn::toJSHostFn` — wrap a safe Rust-style host fn (`JSHostFnZig`)
+    /// into the raw C ABI (`JSHostFn`). The wrapper is monomorphized over the
+    /// concrete fn item via a const generic, mirroring Zig's comptime
+    /// `toJSHostFn(comptime Fn)`.
+    pub fn to_js_host_fn(_f: JSHostFnZig) -> JSHostFn {
+        // PORT NOTE: a const-generic `<const F: JSHostFnZig>` wrapper would be
+        // ideal but fn-pointer const generics are unstable. Callers that need a
+        // raw `JSHostFn` should use `#[bun_jsc::host_fn]` or `JSFunction::create`
+        // (which accepts `JSHostFnZig` directly).
+        todo!("blocked_on: bun_jsc_macros::host_fn — use JSFunction::create instead")
+    }
     pub fn to_js_host_fn_result() { todo!() }
     pub fn to_js_host_fn_with_context() { todo!() }
     // TODO(port): jsc.conv ABI — proc-macro emits `extern "sysv64"` on windows-x64.
@@ -428,12 +464,47 @@ pub use self::host_fn::{
 pub mod __macro_support {
     use super::{JSGlobalObject, JSValue, JsError, JsResult};
 
+    /// Normalizes a host-fn body's return type to `JsResult<JSValue>` so the
+    /// proc-macro can wrap bodies that return either `JSValue` or
+    /// `JsResult<JSValue>` (mirrors Zig's `anytype` dispatch in `toJSHostFn`).
+    pub trait IntoHostFnResult {
+        fn into_host_fn_result(self) -> JsResult<JSValue>;
+    }
+    impl IntoHostFnResult for JSValue {
+        #[inline] fn into_host_fn_result(self) -> JsResult<JSValue> { Ok(self) }
+    }
+    impl IntoHostFnResult for JsResult<JSValue> {
+        #[inline] fn into_host_fn_result(self) -> JsResult<JSValue> { self }
+    }
+
+    /// Normalizes a `construct` body's return type — `*mut T`, `Box<T>`, or
+    /// `JsResult<_>` of either — to a nullable `*mut c_void`.
+    pub trait IntoConstructResult {
+        fn into_construct_ptr(self) -> JsResult<*mut ::core::ffi::c_void>;
+    }
+    impl<T> IntoConstructResult for *mut T {
+        #[inline] fn into_construct_ptr(self) -> JsResult<*mut ::core::ffi::c_void> { Ok(self.cast()) }
+    }
+    impl<T> IntoConstructResult for alloc::boxed::Box<T> {
+        #[inline] fn into_construct_ptr(self) -> JsResult<*mut ::core::ffi::c_void> {
+            Ok(alloc::boxed::Box::into_raw(self).cast())
+        }
+    }
+    impl<T> IntoConstructResult for JsResult<*mut T> {
+        #[inline] fn into_construct_ptr(self) -> JsResult<*mut ::core::ffi::c_void> { self.map(|p| p.cast()) }
+    }
+    impl<T> IntoConstructResult for JsResult<alloc::boxed::Box<T>> {
+        #[inline] fn into_construct_ptr(self) -> JsResult<*mut ::core::ffi::c_void> {
+            self.map(|b| alloc::boxed::Box::into_raw(b).cast())
+        }
+    }
+
     /// Map a `JsResult<JSValue>` from a Rust host fn to the raw `JSValue` the
     /// JSC ABI expects (`.ZERO` when an exception is/was thrown). Mirrors
     /// `host_fn.zig:toJSHostFnResult`.
     #[inline]
-    pub fn host_fn_result(global: &JSGlobalObject, r: JsResult<JSValue>) -> JSValue {
-        super::host_fn::to_js_host_call(global, r)
+    pub fn host_fn_result(global: &JSGlobalObject, r: impl IntoHostFnResult) -> JSValue {
+        super::host_fn::to_js_host_call(global, r.into_host_fn_result())
     }
 
     /// Setter result mapping: `JsResult<bool>` → `bool` (false on throw).
@@ -461,12 +532,12 @@ pub mod __macro_support {
     /// throw). Matches generate-classes.ts:
     /// `extern void* ${T}Class__construct(JSGlobalObject*, CallFrame*)`.
     #[inline]
-    pub fn host_fn_construct_result<T>(
+    pub fn host_fn_construct_result<T: IntoConstructResult>(
         global: &JSGlobalObject,
-        r: JsResult<*mut T>,
+        r: T,
     ) -> *mut ::core::ffi::c_void {
-        match r {
-            Ok(p) => p.cast(),
+        match r.into_construct_ptr() {
+            Ok(p) => p,
             Err(JsError::OutOfMemory) => {
                 global.throw_out_of_memory_value();
                 ::core::ptr::null_mut()
@@ -1002,6 +1073,7 @@ impl IntoIterObject for &mut JSObject {
 // ──────────────────────────────────────────────────────────────────────────
 // B-2 Track A — JSGlobalObject surface (signatures from JSGlobalObject.zig).
 // ──────────────────────────────────────────────────────────────────────────
+#[allow(improper_ctypes)] // VirtualMachine is opaque to C++; passed as `void*`
 unsafe extern "C" {
     fn JSC__JSGlobalObject__vm(this: *const JSGlobalObject) -> *mut VM;
     fn JSC__JSGlobalObject__bunVM(this: *const JSGlobalObject) -> *mut virtual_machine::VirtualMachine;
@@ -1088,14 +1160,17 @@ impl JSGlobalObject {
     }
     /// `createErrorInstance(fmt, args)` — formats `args` into a UTF-8 buffer, wraps
     /// it as a ZigString, and calls `ZigString__toErrorInstance`.
-    pub fn create_error_instance(&self, args: core::fmt::Arguments<'_>) -> JSValue {
-        let buf = alloc::fmt::format(args);
+    ///
+    /// PORT NOTE: Zig's `(comptime fmt, args)` becomes `impl Display` here so
+    /// both `&str` and `format_args!(..)` callers compile.
+    pub fn create_error_instance(&self, msg: impl core::fmt::Display) -> JSValue {
+        let buf = alloc::format!("{msg}");
         let zs = bun_string::ZigString::init_utf8(buf.as_bytes());
         // SAFETY: `self` is live; `zs` borrowed for the call (C++ clones).
         unsafe { ZigString__toErrorInstance(&zs, self) }
     }
-    pub fn create_type_error_instance(&self, args: core::fmt::Arguments<'_>) -> JSValue {
-        let buf = alloc::fmt::format(args);
+    pub fn create_type_error_instance(&self, args: impl core::fmt::Display) -> JSValue {
+        let buf = alloc::format!("{args}");
         let zs = bun_string::ZigString::init_utf8(buf.as_bytes());
         // SAFETY: `self` is live; `zs` borrowed for the call.
         unsafe { ZigString__toTypeErrorInstance(&zs, self) }
@@ -1156,9 +1231,20 @@ impl JSGlobalObject {
         unsafe { JSC__VM__throwError(JSC__JSGlobalObject__vm(self), self, value) };
         JsError::Thrown
     }
-    pub fn throw(&self, args: core::fmt::Arguments<'_>) -> JsError {
-        let err = self.create_error_instance(args);
+    /// `throw(comptime fmt, args)` (JSGlobalObject.zig:62) — Zig's two-param
+    /// form collapses to `impl Display` in Rust. Prefer `format_args!(..)` for
+    /// runtime formatting; the legacy second tuple parameter from mechanical
+    /// ports is accepted via `throw2`.
+    pub fn throw(&self, msg: impl core::fmt::Display) -> JsError {
+        let err = self.create_error_instance(msg);
         self.throw_value(err)
+    }
+    /// Two-arg shim for mechanically-ported `throw("fmt", .{})` call sites.
+    /// The `_args` tuple is ignored; callers should migrate to
+    /// `throw(format_args!(..))`.
+    #[doc(hidden)]
+    pub fn throw2(&self, msg: impl core::fmt::Display, _args: impl ThrowFmtArgs) -> JsError {
+        self.throw(msg)
     }
     pub fn throw_error(&self, err: bun_core::Error, msg: &'static str) -> JsError {
         // TODO(b2): SystemError/JSError dispatch — for now, format both.
@@ -1190,10 +1276,16 @@ impl JSGlobalObject {
         }
         self.throw_value(err)
     }
-    pub fn throw_invalid_arguments(&self, args: core::fmt::Arguments<'_>) -> JsError {
+    pub fn throw_invalid_arguments(&self, msg: impl core::fmt::Display) -> JsError {
         // JSGlobalObject.zig:73 — `JSC::createInvalidThisError`-style TypeError.
-        let err = self.create_type_error_instance(args);
+        let err = self.create_type_error_instance(msg);
         self.throw_value(err)
+    }
+    /// Two-arg shim for mechanically-ported `throwInvalidArguments(fmt, .{})`
+    /// call sites. The `_args` tuple is ignored.
+    #[doc(hidden)]
+    pub fn throw_invalid_arguments2(&self, msg: impl core::fmt::Display, _args: impl ThrowFmtArgs) -> JsError {
+        self.throw_invalid_arguments(msg)
     }
     pub fn throw_invalid_argument_type(
         &self,
@@ -1238,6 +1330,11 @@ impl JSGlobalObject {
         // SAFETY: `self` is a live JSGlobalObject.
         let v = unsafe { JSGlobalObject__tryTakeException(self) };
         if v.is_empty() { None } else { Some(v) }
+    }
+    /// `clearTerminationException` (JSGlobalObject.zig:509) — drop any pending
+    /// termination exception so cleanup code can run after `process.exit`.
+    pub fn clear_termination_exception(&self) {
+        self.vm().clear_termination_exception();
     }
 
     pub fn validate_object(
@@ -1809,9 +1906,10 @@ pub mod Node {
 pub use self::Node as node;
 
 // TODO(b1): bun_output crate not available; scoped logging stubbed.
+#[track_caller]
 #[inline]
-pub fn mark_binding(_src: &core::panic::Location<'static>) {
-    // gated: bun_output::scoped_log!
+pub fn mark_binding() {
+    // gated: bun_output::scoped_log!(.bind, "{}", core::panic::Location::caller())
 }
 
 #[inline]

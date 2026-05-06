@@ -145,7 +145,7 @@ impl JSONLineBuffer {
     }
 
     pub fn ensure_unused_capacity(&mut self, additional: usize) {
-        self.data.ensure_unused_capacity(additional);
+        bun_core::handle_oom(self.data.ensure_unused_capacity(additional));
     }
 
     /// Notify the buffer that data was written directly (e.g., via pre-allocated slice).

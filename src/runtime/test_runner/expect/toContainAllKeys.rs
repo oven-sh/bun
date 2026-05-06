@@ -1,5 +1,5 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, FormatterTestExt, BigIntCompare, make_formatter};
 use bun_jsc::console_object::Formatter;
 
 use super::{Expect, get_signature};
@@ -20,9 +20,9 @@ pub fn to_contain_all_keys(
     let arguments = arguments_.slice();
 
     if arguments.len() < 1 {
-        return global.throw_invalid_arguments(format_args!(
+        return Err(global.throw_invalid_arguments(format_args!(
             "toContainAllKeys() takes 1 argument"
-        ));
+        )));
     }
 
     this.increment_expect_call_counter();
@@ -79,7 +79,7 @@ pub fn to_contain_all_keys(
     let expected_fmt = expected.to_fmt(&mut formatter);
     if not {
         let received_fmt = keys.to_fmt(&mut formatter);
-        return this.throw_fmt(
+        return this.throw(
             global,
             get_signature("toContainAllKeys", "<green>expected<r>", true),
             format_args!(
@@ -92,7 +92,7 @@ pub fn to_contain_all_keys(
         );
     }
 
-    this.throw_fmt(
+    this.throw(
         global,
         get_signature("toContainAllKeys", "<green>expected<r>", false),
         format_args!(

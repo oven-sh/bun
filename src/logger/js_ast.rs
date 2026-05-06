@@ -50,6 +50,14 @@ type Str = &'static [u8];
 #[repr(transparent)]
 pub struct StoreRef<T>(NonNull<T>);
 
+// SAFETY: `StoreRef` is a thin pointer into a single-threaded bump arena (Zig
+// `*T`). We assert Send/Sync so payload types embedding `Option<StoreRef<T>>`
+// (e.g. `E::EString::next`) can sit in `static` tables — matches Zig where raw
+// pointers carry no thread-affinity. Callers are responsible for not actually
+// sharing a Store across threads (same contract as the Zig original).
+unsafe impl<T> Send for StoreRef<T> {}
+unsafe impl<T> Sync for StoreRef<T> {}
+
 impl<T> StoreRef<T> {
     #[inline]
     pub const fn from_non_null(p: NonNull<T>) -> Self {

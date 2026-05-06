@@ -596,7 +596,7 @@ impl SavedSourceMap {
         line: Ordinal,
         column: Ordinal,
         source_handling: SourceMap::SourceContentHandling,
-    ) -> Option<SourceMap::mapping::Lookup> {
+    ) -> Option<SourceMap::mapping::Lookup<'_>> {
          // TODO(b2-blocked): bun_sourcemap::{ParseUrl fields, ParsedSourceMap::find_mapping, mapping::Lookup fields}
         {
         let parse = self.get_with_content(

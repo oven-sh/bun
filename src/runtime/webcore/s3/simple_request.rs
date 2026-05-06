@@ -294,15 +294,10 @@ impl S3HttpSimpleTask {
             Callback::ListObjects(callback) => match response.status_code {
                 200 => {
                     if let Some(body) = &this.result.body {
-                        match list_objects::parse_s3_list_objects_result(body.slice()) {
-                            Ok(success) => {
-                                callback(S3ListObjectsResult::Success(success), this.callback_context)?;
-                            }
-                            Err(_) => {
-                                this.error_with_body(ErrorType::Failure)?;
-                                return Ok(());
-                            }
-                        }
+                        // PORT NOTE: parse_s3_list_objects_result is now infallible (alloc-only
+                        // failure modes abort in Rust), so the Zig `catch` arm is unreachable.
+                        let success = list_objects::parse_s3_list_objects_result(body.list.as_slice());
+                        callback(S3ListObjectsResult::Success(success), this.callback_context)?;
                     } else {
                         this.error_with_body(ErrorType::Failure)?;
                     }
@@ -382,7 +377,10 @@ impl S3HttpSimpleTask {
         // (UAF + double-free), so we simply omit it — `this.response_buffer` already holds the
         // body.
         if is_done {
-            let task = this.concurrent_task.from(this as *mut Self, AutoDeinit::ManualDeinit) as *mut ConcurrentTask;
+            // PORT NOTE: compute the raw self-pointer before borrowing `this.concurrent_task`
+            // to avoid a stacked-borrows / aliasing diagnostic on `*this`.
+            let this_ptr = this as *mut Self;
+            let task = this.concurrent_task.from(this_ptr, AutoDeinit::ManualDeinit) as *mut ConcurrentTask;
             // SAFETY: `vm` is the live per-thread VM pointer captured at task creation; event_loop
             // is set during VM init and outlives this task.
             unsafe { (*(*this.vm).event_loop()).enqueue_task_concurrent(task) };
@@ -410,6 +408,13 @@ impl Drop for S3HttpSimpleTask {
     }
 }
 
+// PORT NOTE: callers in `client.rs` / `multipart.rs` were translated with three different
+// names for the request-options struct (`Options`, `S3RequestOptions`, `S3SimpleRequestOptions`)
+// and two for the callback enum. Alias them here so the call sites compile without churn.
+pub type Options<'a> = S3SimpleRequestOptions<'a>;
+pub type S3RequestOptions<'a> = S3SimpleRequestOptions<'a>;
+pub type S3Callback = Callback;
+
 pub struct S3SimpleRequestOptions<'a> {
     // signing options
     pub path: &'a [u8],
@@ -429,13 +434,32 @@ pub struct S3SimpleRequestOptions<'a> {
     pub request_payer: bool,
 }
 
+impl<'a> Default for S3SimpleRequestOptions<'a> {
+    fn default() -> Self {
+        Self {
+            path: b"",
+            method: Method::GET,
+            search_params: None,
+            content_type: None,
+            content_disposition: None,
+            content_encoding: None,
+            body: b"",
+            proxy_url: None,
+            range: None,
+            acl: None,
+            storage_class: None,
+            request_payer: false,
+        }
+    }
+}
+
 pub fn execute_simple_s3_request(
     this: &S3Credentials,
     options: S3SimpleRequestOptions<'_>,
     callback: Callback,
     callback_context: *mut c_void,
 ) -> JsTerminatedResult<()> {
-    let mut result = match this.sign_request(
+    let mut result = match this.sign_request::<false>(
         SignOptions {
             path: options.path,
             method: options.method,
@@ -449,14 +473,13 @@ pub fn execute_simple_s3_request(
             content_md5: None,
             content_type: None,
         },
-        false,
         None,
     ) {
         Ok(r) => r,
         Err(sign_err) => {
             // options.range drops here automatically (Zig: bun.default_allocator.free(range_))
             drop(options.range);
-            let error_code_and_message = get_sign_error_code_and_message(sign_err);
+            let error_code_and_message = get_sign_error_code_and_message(sign_err.into());
             callback.fail(error_code_and_message.code, error_code_and_message.message, callback_context)?;
             return Ok(());
         }
@@ -468,14 +491,14 @@ pub fn execute_simple_s3_request(
             // SAFETY: picohttp::Header is POD; zero-initialized is valid (Zig used `= undefined`).
             unsafe { core::mem::zeroed() };
         if let Some(range_) = &options.range {
-            let _headers = result.mix_with_header(&mut header_buffer, picohttp::Header { name: b"range", value: range_ });
+            let _headers = result.mix_with_header(&mut header_buffer, picohttp::Header::new(b"range", range_));
             break 'brk Headers::from_pico_http_headers(_headers);
         } else {
             if let Some(content_type) = options.content_type {
                 if !content_type.is_empty() {
                     let _headers = result.mix_with_header(
                         &mut header_buffer,
-                        picohttp::Header { name: b"Content-Type", value: content_type },
+                        picohttp::Header::new(b"Content-Type", content_type),
                     );
                     break 'brk Headers::from_pico_http_headers(_headers);
                 }
@@ -538,13 +561,16 @@ pub fn execute_simple_s3_request(
         FetchRedirect::Follow,
         HttpOptions {
             http_proxy,
-            verbose: Some(vm.get_verbose_fetch()),
-            reject_unauthorized: Some(vm.get_tls_reject_unauthorized()),
+            // TODO(b2-blocked): VirtualMachine::{get_verbose_fetch,get_tls_reject_unauthorized}
+            // are gated in bun_jsc; pass `None` to fall back to AsyncHTTP defaults until un-gated.
+            verbose: None,
+            reject_unauthorized: None,
             ..Default::default()
         },
     ));
+    let _ = vm;
     // queue http request
-    HTTPThread::init(&Default::default());
+    bun_http::http_thread::init(&Default::default());
     let mut batch = thread_pool::Batch::default();
     // SAFETY: `http` was initialised by `task.http.write(...)` immediately above.
     unsafe { task.http.assume_init_mut() }.schedule(&mut batch);

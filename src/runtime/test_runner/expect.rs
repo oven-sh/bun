@@ -13,6 +13,8 @@ use super::bun_test::{self, DescribeScope};
 use super::diff_format::DiffFormatter;
 use super::execution::ExpectAssertions;
 use super::jest::Jest;
+#[allow(unused_imports)]
+use super::expect::{JSValueTestExt, JSGlobalObjectTestExt, FormatterTestExt, make_formatter};
 
 // `bun_core::deprecated::js_error_to_write_error` is ``-gated
 // (tier-0 cannot depend on bun_jsc). Inlined here at the use-site tier instead.

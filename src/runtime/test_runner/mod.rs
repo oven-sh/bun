@@ -108,6 +108,20 @@ pub mod expect {
         fn jest_deep_match(self, other: JSValue, global: &JSGlobalObject, replace_props: bool) -> JsResult<bool>;
         fn is_reg_exp(self) -> bool;
         fn as_big_int_compare(self, other: JSValue, global: &JSGlobalObject) -> BigIntCompare;
+        // ── Phase-D shims for matcher drafts (TODO(port): land in bun_jsc) ──
+        fn values(self, global: &JSGlobalObject) -> JsResult<JSValue>;
+        fn keys(self, global: &JSGlobalObject) -> JsResult<JSValue>;
+        fn is_instance_of(self, global: &JSGlobalObject, constructor: JSValue) -> JsResult<bool>;
+        fn has_own_property_value(self, global: &JSGlobalObject, key: JSValue) -> JsResult<bool>;
+        fn is_uint32_as_any_int(self) -> bool;
+        fn is_big_int32(self) -> bool;
+        fn is_constructor(self) -> bool;
+        fn is_object_empty(self, global: &JSGlobalObject) -> JsResult<bool>;
+        fn get_length_if_property_exists_internal(self, global: &JSGlobalObject) -> JsResult<f64>;
+        fn get_if_property_exists_from_path(self, global: &JSGlobalObject, path: JSValue) -> JsResult<JSValue>;
+        fn string_includes(self, global: &JSGlobalObject, needle: JSValue) -> JsResult<bool>;
+        fn to_match(self, global: &JSGlobalObject, value: JSValue) -> JsResult<bool>;
+        fn to_u32(self) -> u32;
     }
     impl JSValueTestExt for JSValue {
         #[inline]
@@ -134,6 +148,60 @@ pub mod expect {
         fn as_big_int_compare(self, _other: JSValue, _global: &JSGlobalObject) -> BigIntCompare {
             // TODO(port): bind `JSBigInt::compareToDouble` / `compare`.
             todo!("blocked_on: bun_jsc::JSValue::as_big_int_compare")
+        }
+        #[inline]
+        fn values(self, _global: &JSGlobalObject) -> JsResult<JSValue> {
+            todo!("blocked_on: bun_jsc::JSValue::values (Object.values)")
+        }
+        #[inline]
+        fn keys(self, _global: &JSGlobalObject) -> JsResult<JSValue> {
+            todo!("blocked_on: bun_jsc::JSValue::keys (Object.keys)")
+        }
+        #[inline]
+        fn is_instance_of(self, _global: &JSGlobalObject, _constructor: JSValue) -> JsResult<bool> {
+            todo!("blocked_on: bun_jsc::JSValue::is_instance_of")
+        }
+        #[inline]
+        fn has_own_property_value(self, global: &JSGlobalObject, key: JSValue) -> JsResult<bool> {
+            Ok(self.get_own_by_value(global, key).is_some())
+        }
+        #[inline]
+        fn is_uint32_as_any_int(self) -> bool {
+            self.is_any_int() && self.to_int32() >= 0
+        }
+        #[inline]
+        fn is_big_int32(self) -> bool {
+            // TODO(port): JSC has a packed BigInt32 representation; until the FFI lands,
+            // treat any BigInt as the heap kind (matchers only branch on parity).
+            false
+        }
+        #[inline]
+        fn is_constructor(self) -> bool {
+            todo!("blocked_on: bun_jsc::JSValue::is_constructor")
+        }
+        #[inline]
+        fn is_object_empty(self, _global: &JSGlobalObject) -> JsResult<bool> {
+            todo!("blocked_on: bun_jsc::JSValue::is_object_empty")
+        }
+        #[inline]
+        fn get_length_if_property_exists_internal(self, _global: &JSGlobalObject) -> JsResult<f64> {
+            todo!("blocked_on: bun_jsc::JSValue::get_length_if_property_exists_internal")
+        }
+        #[inline]
+        fn get_if_property_exists_from_path(self, _global: &JSGlobalObject, _path: JSValue) -> JsResult<JSValue> {
+            todo!("blocked_on: bun_jsc::JSValue::get_if_property_exists_from_path")
+        }
+        #[inline]
+        fn string_includes(self, _global: &JSGlobalObject, _needle: JSValue) -> JsResult<bool> {
+            todo!("blocked_on: bun_jsc::JSValue::string_includes")
+        }
+        #[inline]
+        fn to_match(self, _global: &JSGlobalObject, _value: JSValue) -> JsResult<bool> {
+            todo!("blocked_on: bun_jsc::JSValue::to_match (RegExp test)")
+        }
+        #[inline]
+        fn to_u32(self) -> u32 {
+            self.to_int32() as u32
         }
     }
 
@@ -174,6 +242,18 @@ pub mod expect {
         let mut f = Formatter::new(global);
         f.quote_strings = true;
         f
+    }
+
+    /// Builder-style `.with_quote_strings(bool)` shim — `bun_jsc::Formatter`
+    /// exposes `quote_strings` as a public field, not a chained setter. A
+    /// handful of Phase-A matcher drafts wrote
+    /// `Formatter::new(g).with_quote_strings(true)`.
+    pub trait FormatterTestExt: Sized {
+        fn with_quote_strings(self, b: bool) -> Self;
+    }
+    impl<'a> FormatterTestExt for Formatter<'a> {
+        #[inline]
+        fn with_quote_strings(mut self, b: bool) -> Self { self.quote_strings = b; self }
     }
 
     // ── matcher modules (75) ──────────────────────────────────────────

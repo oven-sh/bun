@@ -30,27 +30,27 @@ pub fn to_be_type_of(
     let arguments = &_arguments.ptr[0.._arguments.len];
 
     if arguments.len() < 1 {
-        return global.throw_invalid_arguments(format_args!("toBeTypeOf() requires 1 argument"));
+        return Err(global.throw_invalid_arguments(format_args!("toBeTypeOf() requires 1 argument")));
     }
 
-    let value: JSValue = this.get_value(global, this_value, b"toBeTypeOf", b"")?;
+    let value: JSValue = this.get_value(global, this_value, "toBeTypeOf", "")?;
 
     let expected = arguments[0];
     expected.ensure_still_alive();
 
     if !expected.is_string() {
-        return global
-            .throw_invalid_arguments(format_args!("toBeTypeOf() requires a string argument"));
+        return Err(global.throw_invalid_arguments(format_args!("toBeTypeOf() requires a string argument")));
     }
 
     let expected_type = expected.to_bun_string(global)?;
     // `defer expected_type.deref()` — handled by Drop on bun_str::String.
     this.increment_expect_call_counter();
 
-    let Some(typeof_) = expected_type.in_map(&JS_TYPE_OF_MAP) else {
-        return global.throw_invalid_arguments(format_args!(
+    let expected_utf8 = expected_type.to_utf8();
+    let Some(typeof_) = JS_TYPE_OF_MAP.get(expected_utf8.slice()).copied() else {
+        return Err(global.throw_invalid_arguments(format_args!(
             "toBeTypeOf() requires a valid type string argument ('function', 'object', 'bigint', 'boolean', 'number', 'string', 'symbol', 'undefined')"
-        ));
+        )));
     };
 
     let not = this.flags.not();
@@ -75,7 +75,7 @@ pub fn to_be_type_of(
     } else if value.is_undefined() {
         what_is_the_type = b"undefined";
     } else {
-        return global.throw(format_args!("Internal consistency error: unknown JSValue type"));
+        return Err(global.throw(format_args!("Internal consistency error: unknown JSValue type")));
     }
 
     pass = typeof_ == what_is_the_type;
@@ -93,7 +93,7 @@ pub fn to_be_type_of(
     let expected_str = expected.to_fmt(&mut formatter);
 
     if not {
-        let signature = get_signature(b"toBeTypeOf", b"", true);
+        let signature = get_signature("toBeTypeOf", "", true);
         return this.throw(
             global,
             signature,
@@ -110,7 +110,7 @@ pub fn to_be_type_of(
         );
     }
 
-    let signature = get_signature(b"toBeTypeOf", b"", false);
+    let signature = get_signature("toBeTypeOf", "", false);
     this.throw(
         global,
         signature,

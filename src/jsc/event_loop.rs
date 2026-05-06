@@ -45,6 +45,7 @@ crate::stub_ty!(
     WorkTask,
 );
 
+#[allow(non_upper_case_globals)]
 bun_core::declare_scope!(EventLoop, hidden);
 
 /// `bun_runtime::api::Timer::ImmediateObject` — forward-declared opaque. The

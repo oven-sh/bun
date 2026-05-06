@@ -1,5 +1,5 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, FormatterTestExt, BigIntCompare, make_formatter};
 use bun_jsc::console_object::Formatter as ConsoleFormatter;
 use bun_core::Output;
 
@@ -29,10 +29,10 @@ pub fn to_have_returned_with(
     let returns = super::mock::JSMockFunction__getReturns(global, value)?;
     if !returns.js_type().is_array() {
         let mut formatter = super::make_formatter(global);
-        return global.throw(format_args!(
+        return Err(global.throw(format_args!(
             "Expected value must be a mock function: {}",
             value.to_fmt(&mut formatter),
-        ));
+        )));
     }
 
     let calls_count = u32::try_from(returns.get_length(global)?).unwrap();
@@ -47,7 +47,7 @@ pub fn to_have_returned_with(
 
     // Check for a pass and collect info for error messages
     for i in 0..calls_count {
-        let result = returns.get_direct_index(global, i as u32);
+        let result = returns.get_index(global, i as u32);
 
         if result.is_object() {
             let result_type = result.get(global, "type")?.unwrap_or(JSValue::UNDEFINED);
@@ -81,7 +81,7 @@ pub fn to_have_returned_with(
     let signature: &str = Expect::get_signature("toHaveReturnedWith", "<green>expected<r>", false);
 
     if this.flags.not() {
-        const NOT_SIGNATURE: &str = Expect::get_signature("toHaveReturnedWith", "<green>expected<r>", true);
+        let NOT_SIGNATURE: &str = Expect::get_signature("toHaveReturnedWith", "<green>expected<r>", true);
         return this.throw_fmt(
             global,
             NOT_SIGNATURE,

@@ -1,5 +1,5 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, FormatterTestExt, BigIntCompare, make_formatter};
 use bun_jsc::console_object::Formatter;
 
 use super::Expect;
@@ -22,7 +22,7 @@ impl Expect {
         let arguments = arguments_.slice();
 
         if arguments.len() < 1 {
-            return global.throw_invalid_arguments(format_args!("toContainValues() takes 1 argument"));
+            return Err(global.throw_invalid_arguments(format_args!("toContainValues() takes 1 argument")));
         }
 
         this.increment_expect_call_counter();
@@ -80,7 +80,7 @@ impl Expect {
             const EXPECTED_LINE: &str = "Expected to not contain: <green>{}<r>\nReceived: <red>{}<r>\n";
             const FMT: &str = concat!("\n\n", "Expected to not contain: <green>{}<r>\nReceived: <red>{}<r>\n");
             let _ = EXPECTED_LINE;
-            return this.throw_fmt(
+            return this.throw(
                 global,
                 Expect::get_signature("toContainValues", "<green>expected<r>", true),
                 format_args!("\n\nExpected to not contain: <green>{}<r>\nReceived: <red>{}<r>\n", expected_fmt, received_fmt),
@@ -95,7 +95,7 @@ impl Expect {
         const RECEIVED_LINE: &str = "Received: <red>{}<r>\n";
         const FMT: &str = concat!("\n\n", "Expected to contain: <green>{}<r>\n", "Received: <red>{}<r>\n");
         let _ = (EXPECTED_LINE, RECEIVED_LINE, FMT);
-        this.throw_fmt(
+        this.throw(
             global,
             Expect::get_signature("toContainValues", "<green>expected<r>", false),
             format_args!("\n\nExpected to contain: <green>{}<r>\nReceived: <red>{}<r>\n", expected_fmt, value_fmt),

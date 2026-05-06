@@ -1,5 +1,5 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, FormatterTestExt, BigIntCompare, make_formatter};
 use bun_jsc::console_object::Formatter;
 
 use super::Expect;
@@ -62,7 +62,7 @@ pub fn to_be_even(
     // `defer formatter.deinit()` — handled by Drop
     let value_fmt = value.to_fmt(&mut formatter);
     if not {
-        let signature = const { Expect::get_signature("toBeEven", "", true) };
+        let signature = Expect::get_signature("toBeEven", "", true);
         return this.throw(
             global_this,
             signature,
@@ -70,7 +70,7 @@ pub fn to_be_even(
         );
     }
 
-    let signature = const { Expect::get_signature("toBeEven", "", false) };
+    let signature = Expect::get_signature("toBeEven", "", false);
     this.throw(
         global_this,
         signature,

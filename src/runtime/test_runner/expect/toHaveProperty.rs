@@ -1,5 +1,5 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, FormatterTestExt, BigIntCompare, make_formatter};
 use bun_jsc::console_object::Formatter as ConsoleFormatter;
 use bun_str::ZigString;
 
@@ -20,9 +20,9 @@ pub fn to_have_property(
     let arguments: &[JSValue] = _arguments.slice();
 
     if arguments.len() < 1 {
-        return global.throw_invalid_arguments(format_args!(
+        return Err(global.throw_invalid_arguments(format_args!(
             "toHaveProperty() requires at least 1 argument"
-        ));
+        )));
     }
 
     this.increment_expect_call_counter();
@@ -42,7 +42,7 @@ pub fn to_have_property(
     )?;
 
     if !expected_property_path.is_string() && !expected_property_path.is_iterable(global)? {
-        return global.throw(format_args!("Expected path must be a string or an array"));
+        return Err(global.throw(format_args!("Expected path must be a string or an array")));
     }
 
     let not = this.flags.not();

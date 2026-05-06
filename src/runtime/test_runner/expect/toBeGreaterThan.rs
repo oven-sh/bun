@@ -1,5 +1,5 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, FormatterTestExt, BigIntCompare, make_formatter};
 use bun_jsc::console_object::Formatter;
 use crate::test_runner::expect::BigIntCompare;
 
@@ -22,8 +22,7 @@ impl Expect {
         let arguments: &[JSValue] = &_arguments.ptr[0.._arguments.len];
 
         if arguments.len() < 1 {
-            return global
-                .throw_invalid_arguments(format_args!("toBeGreaterThan() requires 1 argument"));
+            return Err(global.throw_invalid_arguments(format_args!("toBeGreaterThan() requires 1 argument")));
         }
 
         this.increment_expect_call_counter();
@@ -37,9 +36,9 @@ impl Expect {
         if (!value.is_number() && !value.is_big_int())
             || (!other_value.is_number() && !other_value.is_big_int())
         {
-            return global.throw(format_args!(
+            return Err(global.throw(format_args!(
                 "Expected and actual values must be numbers or bigints"
-            ));
+            )));
         }
 
         let not = this.flags.not();

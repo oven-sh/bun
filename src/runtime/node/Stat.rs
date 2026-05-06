@@ -4,9 +4,71 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_core::Timespec;
 
 // TODO(b2-blocked): swap to `bun_sys::PosixStat` once exported. The Zig
-// `bun.PosixStat` is a uv-shaped stat struct; `bun_sys::Stat` (libc::stat on
-// posix) is layout-compatible enough for the field accessors below.
-pub type PosixStat = bun_sys::Stat;
+// `bun.PosixStat` is a uv-shaped stat struct; mirrored locally until the
+// `bun_sys` crate declares its `PosixStat` module (sibling owns `sys/lib.rs`).
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct PosixStat {
+    pub dev: u64,
+    pub ino: u64,
+    pub mode: u64,
+    pub nlink: u64,
+    pub uid: u64,
+    pub gid: u64,
+    pub rdev: u64,
+    pub size: u64,
+    pub blksize: u64,
+    pub blocks: u64,
+    pub atim: Timespec,
+    pub mtim: Timespec,
+    pub ctim: Timespec,
+    pub birthtim: Timespec,
+}
+
+impl PosixStat {
+    /// Convert platform-specific `bun_sys::Stat` (libc::stat on POSIX) to PosixStat.
+    #[allow(clippy::useless_conversion)]
+    pub fn init(stat_: &bun_sys::Stat) -> PosixStat {
+        #[cfg(unix)]
+        {
+            // C's implicit integer → uint64_t conversion (sign-extend then bitcast),
+            // matching libuv's `uv_stat_t` population.
+            macro_rules! u { ($e:expr) => { ($e as i64 as u64) } }
+            PosixStat {
+                dev: u!(stat_.st_dev),
+                ino: u!(stat_.st_ino),
+                mode: u!(stat_.st_mode),
+                nlink: u!(stat_.st_nlink),
+                uid: u!(stat_.st_uid),
+                gid: u!(stat_.st_gid),
+                rdev: u!(stat_.st_rdev),
+                size: u!(stat_.st_size),
+                blksize: u!(stat_.st_blksize),
+                blocks: u!(stat_.st_blocks),
+                atim: Timespec { sec: stat_.st_atime as i64, nsec: stat_.st_atime_nsec as i64 },
+                mtim: Timespec { sec: stat_.st_mtime as i64, nsec: stat_.st_mtime_nsec as i64 },
+                ctim: Timespec { sec: stat_.st_ctime as i64, nsec: stat_.st_ctime_nsec as i64 },
+                #[cfg(target_os = "linux")]
+                birthtim: Timespec { sec: 0, nsec: 0 },
+                #[cfg(all(unix, not(target_os = "linux")))]
+                birthtim: Timespec {
+                    sec: stat_.st_birthtime as i64,
+                    nsec: stat_.st_birthtime_nsec as i64,
+                },
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = stat_;
+            todo!("blocked_on: bun_sys::PosixStat (windows)")
+        }
+    }
+
+    #[inline] pub fn atime(&self) -> Timespec { self.atim }
+    #[inline] pub fn mtime(&self) -> Timespec { self.mtim }
+    #[inline] pub fn ctime(&self) -> Timespec { self.ctim }
+    #[inline] pub fn birthtime(&self) -> Timespec { self.birthtim }
+}
 
 const MS_PER_S: i64 = 1000;
 const NS_PER_MS: i64 = 1_000_000;
@@ -235,7 +297,7 @@ pub fn create_stats_for_ino(global: &JSGlobalObject, frame: &CallFrame) -> JsRes
     let mut stat_: PosixStat = unsafe { core::mem::zeroed::<PosixStat>() };
     // PORT NOTE: `JSValue::to_uint64_no_truncate` not yet ported; `to_int64` is
     // close enough for the test-only path (negative values clamp to 0 below).
-    stat_.ino = ino_arg.to_int64().max(0) as _;
+    stat_.ino = ino_arg.to_int64().max(0) as u64;
     Stats::init(&stat_, big_arg.to_boolean()).to_js_newly_created(global)
 }
 

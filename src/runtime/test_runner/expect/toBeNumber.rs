@@ -1,5 +1,5 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, FormatterTestExt, BigIntCompare, make_formatter};
 use bun_jsc::console_object::Formatter;
 
 use super::Expect;
@@ -29,7 +29,7 @@ pub fn to_be_number(
 
     let formatter = super::make_formatter(global);
     // `defer formatter.deinit()` → dropped implicitly (impl Drop for Formatter).
-    let received = value.to_fmt(&formatter);
+    let received = value.to_fmt(&mut formatter);
 
     if not {
         let signature = get_signature("toBeNumber", "", true);

@@ -1,7 +1,8 @@
 use std::borrow::Cow;
 
-use bun_jsc::{JSGlobalObject, JSValue, JsResult, ZigString};
-use bun_str::{self as bstr, strings, Utf8Slice};
+use bun_jsc::bun_string_jsc::{create_utf8_for_js, from_js as bstr_from_js};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult};
+use bun_str::{self as bstr, strings, ZigStringSlice as Utf8Slice};
 
 pub struct S3ListObjectsOptions {
     // TODO(port): self-referential — these view fields borrow from the
@@ -20,11 +21,11 @@ pub struct S3ListObjectsOptions {
     // TODO(port): Utf8Slice<'_> lifetime — Zig's ZigString.Slice owns or
     // ref-holds its backing WTFStringImpl; model as 'static here and let
     // Phase B pick the real lifetime / collapse the dual fields.
-    pub _continuation_token: Option<Utf8Slice<'static>>,
-    pub _delimiter: Option<Utf8Slice<'static>>,
-    pub _encoding_type: Option<Utf8Slice<'static>>,
-    pub _prefix: Option<Utf8Slice<'static>>,
-    pub _start_after: Option<Utf8Slice<'static>>,
+    pub _continuation_token: Option<Utf8Slice>,
+    pub _delimiter: Option<Utf8Slice>,
+    pub _encoding_type: Option<Utf8Slice>,
+    pub _prefix: Option<Utf8Slice>,
+    pub _start_after: Option<Utf8Slice>,
 }
 
 // Zig deinit only forwarded to each Utf8Slice field's deinit; Rust handles
@@ -90,62 +91,62 @@ impl<'a> S3ListObjectsV2Result<'a> {
         if let Some(name) = self.name {
             js_result.put(
                 global_object,
-                ZigString::static_(b"name"),
-                bstr::String::create_utf8_for_js(global_object, name)?,
+                b"name",
+                create_utf8_for_js(global_object, name)?,
             );
         }
 
         if let Some(prefix) = self.prefix {
             js_result.put(
                 global_object,
-                ZigString::static_(b"prefix"),
-                bstr::String::create_utf8_for_js(global_object, prefix)?,
+                b"prefix",
+                create_utf8_for_js(global_object, prefix)?,
             );
         }
 
         if let Some(delimiter) = self.delimiter {
             js_result.put(
                 global_object,
-                ZigString::static_(b"delimiter"),
-                bstr::String::create_utf8_for_js(global_object, delimiter)?,
+                b"delimiter",
+                create_utf8_for_js(global_object, delimiter)?,
             );
         }
 
         if let Some(start_after) = self.start_after {
             js_result.put(
                 global_object,
-                ZigString::static_(b"startAfter"),
-                bstr::String::create_utf8_for_js(global_object, start_after)?,
+                b"startAfter",
+                create_utf8_for_js(global_object, start_after)?,
             );
         }
         if let Some(encoding_type) = self.encoding_type {
             js_result.put(
                 global_object,
-                ZigString::static_(b"encodingType"),
-                bstr::String::create_utf8_for_js(global_object, encoding_type)?,
+                b"encodingType",
+                create_utf8_for_js(global_object, encoding_type)?,
             );
         }
 
         if let Some(continuation_token) = self.continuation_token {
             js_result.put(
                 global_object,
-                ZigString::static_(b"continuationToken"),
-                bstr::String::create_utf8_for_js(global_object, continuation_token)?,
+                b"continuationToken",
+                create_utf8_for_js(global_object, continuation_token)?,
             );
         }
 
         if let Some(next_continuation_token) = self.next_continuation_token {
             js_result.put(
                 global_object,
-                ZigString::static_(b"nextContinuationToken"),
-                bstr::String::create_utf8_for_js(global_object, next_continuation_token)?,
+                b"nextContinuationToken",
+                create_utf8_for_js(global_object, next_continuation_token)?,
             );
         }
 
         if let Some(is_truncated) = self.is_truncated {
             js_result.put(
                 global_object,
-                ZigString::static_(b"isTruncated"),
+                b"isTruncated",
                 JSValue::from(is_truncated),
             );
         }
@@ -153,16 +154,16 @@ impl<'a> S3ListObjectsV2Result<'a> {
         if let Some(key_count) = self.key_count {
             js_result.put(
                 global_object,
-                ZigString::static_(b"keyCount"),
-                JSValue::js_number(key_count),
+                b"keyCount",
+                JSValue::js_number(key_count as f64),
             );
         }
 
         if let Some(max_keys) = self.max_keys {
             js_result.put(
                 global_object,
-                ZigString::static_(b"maxKeys"),
-                JSValue::js_number(max_keys),
+                b"maxKeys",
+                JSValue::js_number(max_keys as f64),
             );
         }
 
@@ -173,55 +174,55 @@ impl<'a> S3ListObjectsV2Result<'a> {
                 let object_info = JSValue::create_empty_object(global_object, 0);
                 object_info.put(
                     global_object,
-                    ZigString::static_(b"key"),
-                    bstr::String::create_utf8_for_js(global_object, item.key)?,
+                    b"key",
+                    create_utf8_for_js(global_object, item.key)?,
                 );
 
                 if let Some(etag) = &item.etag {
                     object_info.put(
                         global_object,
-                        ZigString::static_(b"eTag"),
-                        bstr::String::create_utf8_for_js(global_object, etag.as_ref())?,
+                        b"eTag",
+                        create_utf8_for_js(global_object, etag.as_ref())?,
                     );
                 }
 
                 if let Some(checksum_algorithme) = item.checksum_algorithme {
                     object_info.put(
                         global_object,
-                        ZigString::static_(b"checksumAlgorithme"),
-                        bstr::String::create_utf8_for_js(global_object, checksum_algorithme)?,
+                        b"checksumAlgorithme",
+                        create_utf8_for_js(global_object, checksum_algorithme)?,
                     );
                 }
 
                 if let Some(checksum_type) = item.checksum_type {
                     object_info.put(
                         global_object,
-                        ZigString::static_(b"checksumType"),
-                        bstr::String::create_utf8_for_js(global_object, checksum_type)?,
+                        b"checksumType",
+                        create_utf8_for_js(global_object, checksum_type)?,
                     );
                 }
 
                 if let Some(last_modified) = item.last_modified {
                     object_info.put(
                         global_object,
-                        ZigString::static_(b"lastModified"),
-                        bstr::String::create_utf8_for_js(global_object, last_modified)?,
+                        b"lastModified",
+                        create_utf8_for_js(global_object, last_modified)?,
                     );
                 }
 
                 if let Some(object_size) = item.object_size {
                     object_info.put(
                         global_object,
-                        ZigString::static_(b"size"),
-                        JSValue::js_number(object_size),
+                        b"size",
+                        JSValue::js_number(object_size as f64),
                     );
                 }
 
                 if let Some(storage_class) = item.storage_class {
                     object_info.put(
                         global_object,
-                        ZigString::static_(b"storageClass"),
-                        bstr::String::create_utf8_for_js(global_object, storage_class)?,
+                        b"storageClass",
+                        create_utf8_for_js(global_object, storage_class)?,
                     );
                 }
 
@@ -230,26 +231,26 @@ impl<'a> S3ListObjectsV2Result<'a> {
                     if let Some(id) = owner.id {
                         js_owner.put(
                             global_object,
-                            ZigString::static_(b"id"),
-                            bstr::String::create_utf8_for_js(global_object, id)?,
+                            b"id",
+                            create_utf8_for_js(global_object, id)?,
                         );
                     }
 
                     if let Some(display_name) = owner.display_name {
                         js_owner.put(
                             global_object,
-                            ZigString::static_(b"displayName"),
-                            bstr::String::create_utf8_for_js(global_object, display_name)?,
+                            b"displayName",
+                            create_utf8_for_js(global_object, display_name)?,
                         );
                     }
 
-                    object_info.put(global_object, ZigString::static_(b"owner"), js_owner);
+                    object_info.put(global_object, b"owner", js_owner);
                 }
 
                 js_contents.put_index(global_object, u32::try_from(i).unwrap(), object_info)?;
             }
 
-            js_result.put(global_object, ZigString::static_(b"contents"), js_contents);
+            js_result.put(global_object, b"contents", js_contents);
         }
 
         if let Some(common_prefixes) = &self.common_prefixes {
@@ -260,15 +261,15 @@ impl<'a> S3ListObjectsV2Result<'a> {
                 let js_prefix = JSValue::create_empty_object(global_object, 0);
                 js_prefix.put(
                     global_object,
-                    ZigString::static_(b"prefix"),
-                    bstr::String::create_utf8_for_js(global_object, prefix)?,
+                    b"prefix",
+                    create_utf8_for_js(global_object, prefix)?,
                 );
                 js_common_prefixes.put_index(global_object, u32::try_from(i).unwrap(), js_prefix)?;
             }
 
             js_result.put(
                 global_object,
-                ZigString::static_(b"commonPrefixes"),
+                b"commonPrefixes",
                 js_common_prefixes,
             );
         }
@@ -711,7 +712,7 @@ pub fn get_list_objects_options_from_js(
 
     if let Some(val) = list_options.get_truthy(global_this, b"continuationToken")? {
         if val.is_string() {
-            let str = bstr::String::from_js(val, global_this)?;
+            let str = bstr_from_js(val, global_this)?;
 
             // TODO(port): bun_str::String tag accessors (Empty/Dead)
             if !str.is_empty() && !str.is_dead() {
@@ -724,7 +725,7 @@ pub fn get_list_objects_options_from_js(
 
     if let Some(val) = list_options.get_truthy(global_this, b"delimiter")? {
         if val.is_string() {
-            let str = bstr::String::from_js(val, global_this)?;
+            let str = bstr_from_js(val, global_this)?;
 
             if !str.is_empty() && !str.is_dead() {
                 let slice = str.to_utf8();
@@ -736,7 +737,7 @@ pub fn get_list_objects_options_from_js(
 
     if let Some(val) = list_options.get_truthy(global_this, b"encodingType")? {
         if val.is_string() {
-            let str = bstr::String::from_js(val, global_this)?;
+            let str = bstr_from_js(val, global_this)?;
 
             if !str.is_empty() && !str.is_dead() {
                 let slice = str.to_utf8();
@@ -746,8 +747,10 @@ pub fn get_list_objects_options_from_js(
         }
     }
 
-    if let Some(val) = list_options.get_boolean_loose(global_this, b"fetchOwner")? {
-        list_objects_options.fetch_owner = Some(val);
+    // PORT NOTE: `JSValue::get_boolean_loose` is not yet exposed in bun_jsc; emulate via
+    // `get_truthy` + `to_boolean()` (matches Zig getBooleanLoose semantics for truthy values).
+    if let Some(val) = list_options.get_truthy(global_this, b"fetchOwner")? {
+        list_objects_options.fetch_owner = Some(val.to_boolean());
     }
 
     if let Some(val) = list_options.get_truthy(global_this, b"maxKeys")? {
@@ -758,7 +761,7 @@ pub fn get_list_objects_options_from_js(
 
     if let Some(val) = list_options.get_truthy(global_this, b"prefix")? {
         if val.is_string() {
-            let str = bstr::String::from_js(val, global_this)?;
+            let str = bstr_from_js(val, global_this)?;
 
             if !str.is_empty() && !str.is_dead() {
                 let slice = str.to_utf8();
@@ -770,7 +773,7 @@ pub fn get_list_objects_options_from_js(
 
     if let Some(val) = list_options.get_truthy(global_this, b"startAfter")? {
         if val.is_string() {
-            let str = bstr::String::from_js(val, global_this)?;
+            let str = bstr_from_js(val, global_this)?;
 
             if !str.is_empty() && !str.is_dead() {
                 let slice = str.to_utf8();

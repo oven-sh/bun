@@ -22,21 +22,21 @@ impl Expect {
         this.increment_expect_call_counter();
 
         if arguments.len() < 1 {
-            return global.throw_invalid_arguments(format_args!(
+            return Err(global.throw_invalid_arguments(format_args!(
                 "toBeCloseTo() requires at least 1 argument. Expected value must be a number"
-            ));
+            )));
         }
 
         let expected_ = arguments[0];
         if !expected_.is_number() {
-            return global.throw_invalid_argument_type("toBeCloseTo", "expected", "number");
+            return Err(global.throw_invalid_argument_type("toBeCloseTo", "expected", "number"));
         }
 
         let mut precision: f64 = 2.0;
         if arguments.len() > 1 {
             let precision_ = arguments[1];
             if !precision_.is_number() {
-                return global.throw_invalid_argument_type("toBeCloseTo", "precision", "number");
+                return Err(global.throw_invalid_argument_type("toBeCloseTo", "precision", "number"));
             }
 
             precision = precision_.as_number();
@@ -45,7 +45,7 @@ impl Expect {
         let received_: JSValue =
             this.get_value(global, this_value, "toBeCloseTo", "<green>expected<r>, precision")?;
         if !received_.is_number() {
-            return global.throw_invalid_argument_type("expect", "received", "number");
+            return Err(global.throw_invalid_argument_type("expect", "received", "number"));
         }
 
         let mut expected = expected_.as_number();
@@ -63,7 +63,7 @@ impl Expect {
             return Ok(JSValue::UNDEFINED);
         }
 
-        let expected_diff = bun_core::pow(10.0, -precision) / 2.0;
+        let expected_diff = 10.0_f64.powf(-precision) / 2.0;
         let actual_diff = (received - expected).abs();
         let mut pass = actual_diff < expected_diff;
 
@@ -105,7 +105,7 @@ impl Expect {
         // SUFFIX_FMT into the `format_args!` call (or make `throw!` a macro).
         if not {
             let signature = get_signature("toBeCloseTo", "<green>expected<r>, precision", true);
-            return this.throw(
+            return this.throw_fmt(
                 global,
                 signature,
                 SUFFIX_FMT,
@@ -117,7 +117,7 @@ impl Expect {
         }
 
         let signature = get_signature("toBeCloseTo", "<green>expected<r>, precision", false);
-        this.throw(
+        this.throw_fmt(
             global,
             signature,
             SUFFIX_FMT,

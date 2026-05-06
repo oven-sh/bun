@@ -1,9 +1,23 @@
 //! StatFS and BigIntStatFS classes from node:fs
 
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
-// TODO(b2-blocked): swap to `bun_sys::StatFS` once exported.
-#[allow(dead_code)]
-type RawStatFS = bun_sys::Stat;
+// TODO(b2-blocked): swap to `bun_sys::StatFS` once exported. On POSIX this is
+// `libc::statfs`; on Windows it's a uv-shaped struct populated from
+// `GetDiskFreeSpace`.
+#[cfg(unix)]
+pub type RawStatFS = libc::statfs;
+#[cfg(not(unix))]
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct RawStatFS {
+    pub f_type: i64,
+    pub f_bsize: i64,
+    pub f_blocks: i64,
+    pub f_bfree: i64,
+    pub f_bavail: i64,
+    pub f_files: i64,
+    pub f_ffree: i64,
+}
 
 // PORT NOTE: Zig `pub fn StatFSType(comptime big: bool) type` picks the field
 // integer type via `const Int = if (big) i64 else i32;`. Stable Rust const
@@ -83,16 +97,17 @@ macro_rules! define_statfs_type {
                 compile_error!("Unsupported OS");
 
                 // @truncate(@as(i64, @intCast(x))) — @intCast to i64 then @truncate to Int.
-                // PORT NOTE: inner @intCast → i64::try_from(..).unwrap() (debug-asserts
-                // fit, matching Zig); outer @truncate → bare `as $Int` (intentional wrap).
+                // PORT NOTE: platform field types vary (u32/i64/u64); `as i64` matches
+                // Zig's @intCast for the in-range values statfs reports, then `as $Int`
+                // is the @truncate (intentional wrap).
                 Self {
-                    _fstype: i64::try_from(fstype_).unwrap() as $Int,
-                    _bsize: i64::try_from(bsize_).unwrap() as $Int,
-                    _blocks: i64::try_from(blocks_).unwrap() as $Int,
-                    _bfree: i64::try_from(bfree_).unwrap() as $Int,
-                    _bavail: i64::try_from(bavail_).unwrap() as $Int,
-                    _files: i64::try_from(files_).unwrap() as $Int,
-                    _ffree: i64::try_from(ffree_).unwrap() as $Int,
+                    _fstype: (fstype_ as i64) as $Int,
+                    _bsize: (bsize_ as i64) as $Int,
+                    _blocks: (blocks_ as i64) as $Int,
+                    _bfree: (bfree_ as i64) as $Int,
+                    _bavail: (bavail_ as i64) as $Int,
+                    _files: (files_ as i64) as $Int,
+                    _ffree: (ffree_ as i64) as $Int,
                 }
             }
         }

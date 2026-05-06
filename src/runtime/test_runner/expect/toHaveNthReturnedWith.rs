@@ -1,5 +1,5 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, FormatterTestExt, BigIntCompare, make_formatter};
 use bun_jsc::console_object::Formatter;
 
 use super::DiffFormatter;
@@ -22,26 +22,26 @@ pub fn to_have_nth_returned_with(
 
     // Validate n is a number
     if !nth_arg.is_any_int() {
-        return global.throw_invalid_arguments(format_args!(
+        return Err(global.throw_invalid_arguments(format_args!(
             "toHaveNthReturnedWith() first argument must be an integer"
-        ));
+        )));
     }
 
     let n = nth_arg.to_int32();
     if n <= 0 {
-        return global.throw_invalid_arguments(format_args!(
+        return Err(global.throw_invalid_arguments(format_args!(
             "toHaveNthReturnedWith() n must be greater than 0"
-        ));
+        )));
     }
 
     this.increment_expect_call_counter();
     let returns = super::mock::JSMockFunction__getReturns(global, value)?;
     if !returns.js_type().is_array() {
         let mut formatter = super::make_formatter(global);
-        return global.throw(format_args!(
+        return Err(global.throw(format_args!(
             "Expected value must be a mock function: {}",
             value.to_fmt(&mut formatter),
-        ));
+        )));
     }
 
     let calls_count = u32::try_from(returns.get_length(global)?).unwrap();
@@ -55,7 +55,7 @@ pub fn to_have_nth_returned_with(
 
     if index < calls_count {
         nth_call_exists = true;
-        let nth_result = returns.get_direct_index(global, index);
+        let nth_result = returns.get_index(global, index);
         if nth_result.is_object() {
             let result_type = nth_result.get(global, "type")?.unwrap_or(JSValue::UNDEFINED);
             if result_type.is_string() {
@@ -86,7 +86,7 @@ pub fn to_have_nth_returned_with(
     let signature = get_signature("toHaveNthReturnedWith", "<green>n<r>, <green>expected<r>", false);
 
     if this.flags.not() {
-        return this.throw_fmt(
+        return this.throw(
             global,
             get_signature("toHaveNthReturnedWith", "<green>n<r>, <green>expected<r>", true),
             format_args!(

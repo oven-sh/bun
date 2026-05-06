@@ -1,5 +1,5 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, FormatterTestExt, BigIntCompare, make_formatter};
 use bun_jsc::console_object::Formatter;
 use super::Expect;
 use super::get_signature;
@@ -19,7 +19,7 @@ pub fn to_be_array_of_size(
     let arguments = &_arguments.ptr[0.._arguments.len];
 
     if arguments.len() < 1 {
-        return global.throw_invalid_arguments(format_args!("toBeArrayOfSize() requires 1 argument"));
+        return Err(global.throw_invalid_arguments(format_args!("toBeArrayOfSize() requires 1 argument")));
     }
 
     let value: JSValue = this.get_value(global, this_value, "toBeArrayOfSize", "")?;
@@ -28,7 +28,7 @@ pub fn to_be_array_of_size(
     size.ensure_still_alive();
 
     if !size.is_any_int() {
-        return global.throw(format_args!("toBeArrayOfSize() requires the first argument to be a number"));
+        return Err(global.throw(format_args!("toBeArrayOfSize() requires the first argument to be a number")));
     }
 
     this.increment_expect_call_counter();

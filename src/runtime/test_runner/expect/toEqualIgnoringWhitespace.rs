@@ -1,5 +1,5 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, FormatterTestExt, BigIntCompare, make_formatter};
 use bun_jsc::console_object::Formatter;
 use super::Expect;
 
@@ -23,12 +23,12 @@ pub fn to_equal_ignoring_whitespace(
 
     let this_value = frame.this();
     // TODO(port): arguments_old(1) returned a struct with ptr/len; assume &[JSValue] here.
-    let arguments: &[JSValue] = frame.arguments_old::<1>();
+    let arguments_ = frame.arguments_old::<1>(); let arguments: &[JSValue] = arguments_.slice();
 
     if arguments.len() < 1 {
-        return global.throw_invalid_arguments(format_args!(
+        return Err(global.throw_invalid_arguments(format_args!(
             "toEqualIgnoringWhitespace() requires 1 argument"
-        ));
+        )));
     }
 
     this.increment_expect_call_counter();
@@ -38,9 +38,9 @@ pub fn to_equal_ignoring_whitespace(
         this.get_value(global, this_value, "toEqualIgnoringWhitespace", "<green>expected<r>")?;
 
     if !expected.is_string() {
-        return global.throw(format_args!(
+        return Err(global.throw(format_args!(
             "toEqualIgnoringWhitespace() requires argument to be a string"
-        ));
+        )));
     }
 
     let not = this.flags.not();

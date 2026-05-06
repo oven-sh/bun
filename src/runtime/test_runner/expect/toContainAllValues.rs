@@ -1,5 +1,5 @@
 use bun_jsc::console_object::Formatter;
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, FormatterTestExt, BigIntCompare, make_formatter};
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 use super::Expect;
@@ -17,8 +17,7 @@ pub fn to_contain_all_values(
     let arguments = arguments_.slice();
 
     if arguments.len() < 1 {
-        return global
-            .throw_invalid_arguments(format_args!("toContainAllValues() takes 1 argument"));
+        return Err(global.throw_invalid_arguments(format_args!("toContainAllValues() takes 1 argument")));
     }
 
     this.increment_expect_call_counter();
@@ -79,7 +78,7 @@ pub fn to_contain_all_values(
     let expected_fmt = expected.to_fmt(&mut formatter);
     if not {
         let received_fmt = value.to_fmt(&mut formatter);
-        return this.throw_fmt(
+        return this.throw(
             global,
             Expect::get_signature("toContainAllValues", "<green>expected<r>", true),
             format_args!(
@@ -89,7 +88,7 @@ pub fn to_contain_all_values(
         );
     }
 
-    return this.throw_fmt(
+    return this.throw(
         global,
         Expect::get_signature("toContainAllValues", "<green>expected<r>", false),
         format_args!(

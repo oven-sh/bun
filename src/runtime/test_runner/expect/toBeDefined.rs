@@ -15,7 +15,7 @@ pub fn to_be_defined(
     let mut this = scopeguard::guard(this, |this| this.post_match(global));
 
     let this_value = frame.this();
-    let value: JSValue = this.get_value(global, this_value, b"toBeDefined", b"")?;
+    let value: JSValue = this.get_value(global, this_value, "toBeDefined", "")?;
 
     this.increment_expect_call_counter();
 
@@ -35,7 +35,7 @@ pub fn to_be_defined(
     let value_fmt = value.to_fmt(&mut formatter);
     if not {
         // `received_line` const inlined: format_args! requires a literal first arg.
-        let signature = Expect::get_signature(b"toBeDefined", b"", true);
+        let signature = Expect::get_signature("toBeDefined", "", true);
         return this.throw(
             global,
             signature,
@@ -43,7 +43,7 @@ pub fn to_be_defined(
         );
     }
 
-    let signature = Expect::get_signature(b"toBeDefined", b"", false);
+    let signature = Expect::get_signature("toBeDefined", "", false);
     this.throw(
         global,
         signature,

@@ -92,13 +92,14 @@ use bun_jsc::{
 };
 use bun_jsc::ConcurrentTask::{ConcurrentTask, AutoDeinit};
 use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::SysErrorJsc as _;
 use crate::webcore::Blob;
-use crate::webcore::blob::Store as BlobStore;
+use crate::webcore::blob::{Store as BlobStore, StoreRef};
 use bun_aio::KeepAlive;
 use bun_core::{self, Output, ZBox};
 use bun_str::{self as strings, ZigString};
 use bun_str::zig_string::Slice as ZigStringSlice;
-use bun_sys::{self, Fd, Mode};
+use bun_sys::{self, Fd, Mode, FdExt as _};
 use bun_glob as glob;
 use bun_libarchive as libarchive;
 
@@ -133,12 +134,23 @@ impl Default for Compression {
     }
 }
 
-#[bun_jsc::JsClass]
+// TODO(port): #[bun_jsc::JsClass] derive — wire when codegen lands.
 pub struct Archive {
     /// The underlying data for the archive - uses Blob.Store for thread-safe ref counting
-    store: Arc<BlobStore>,
+    store: StoreRef,
     /// Compression settings for this archive
     compress: Compression,
+}
+impl bun_jsc::JsClass for Archive {
+    fn from_js(_value: JSValue) -> Option<*mut Self> {
+        todo!("blocked_on: bun_jsc::Codegen::JSArchive")
+    }
+    fn from_js_direct(_value: JSValue) -> Option<*mut Self> {
+        todo!("blocked_on: bun_jsc::Codegen::JSArchive")
+    }
+    fn to_js(_this: *mut Self, _global: &JSGlobalObject) -> JSValue {
+        todo!("blocked_on: bun_jsc::Codegen::JSArchive")
+    }
 }
 
 impl Archive {
@@ -153,46 +165,19 @@ impl Archive {
     /// Pretty-print for console.log
     pub fn write_format<F, W, const ENABLE_ANSI_COLORS: bool>(
         &self,
-        formatter: &mut F,
-        writer: &mut W,
+        _formatter: &mut F,
+        _writer: &mut W,
     ) -> Result<(), bun_core::Error>
     where
         // TODO(port): narrow to the actual ConsoleObject.Formatter trait once ported
         F: bun_jsc::ConsoleFormatter,
         W: core::fmt::Write,
     {
-        let data = self.store.shared_view();
-
-        write!(
-            writer,
-            "{}",
-            Output::pretty_fmt::<ENABLE_ANSI_COLORS>(&format_args!(
-                "Archive ({}) {{\n",
-                bun_core::fmt::size(data.len(), Default::default())
-            )),
-        )?;
-
-        {
-            formatter.indent_add(1);
-            let _guard = scopeguard::guard((), |_| formatter.indent_saturating_sub(1));
-            // PORT NOTE: reshaped for borrowck — Zig used `defer formatter.indent -|= 1;`
-
-            formatter.write_indent(writer)?;
-            let label = Output::pretty_fmt("<r>files<d>:<r> ", ENABLE_ANSI_COLORS);
-            writer.write_str(core::str::from_utf8(&label).unwrap_or("files: "))?;
-            formatter.print_as(
-                bun_jsc::FormatTag::Double,
-                writer,
-                JSValue::js_number(count_files_in_archive(data) as f64),
-                bun_jsc::JSType::NumberObject,
-                ENABLE_ANSI_COLORS,
-            )?;
-        }
-        writer.write_str("\n")?;
-        formatter.write_indent(writer)?;
-        writer.write_str("}")?;
-        formatter.reset_line();
-        Ok(())
+        // TODO(port): ConsoleFormatter trait surface (indent_add / write_indent /
+        // print_as / reset_line) is not stable yet; restore body once it lands.
+        let _ = self.store.shared_view();
+        let _ = count_files_in_archive;
+        todo!("blocked_on: bun_jsc::ConsoleFormatter")
     }
 }
 
@@ -248,17 +233,18 @@ impl Archive {
     pub fn constructor(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<Box<Archive>> {
         let [data_arg, options_arg] = callframe.arguments_as_array::<2>();
         if data_arg.is_empty() {
-            return global.throw_invalid_arguments("new Archive() requires an argument", &[]);
+            return Err(global.throw_invalid_arguments(format_args!("new Archive() requires an argument")));
         }
 
         // Parse compression options
         let compress = parse_compression_options(global, options_arg)?;
 
         // For Blob/Archive, ref the existing store (zero-copy)
-        if let Some(blob_ptr) = data_arg.as_::<Blob>() {
-            if let Some(store) = blob_ptr.store() {
-                // Arc::clone == store.ref()
-                return Ok(Box::new(Archive { store: Arc::clone(store), compress }));
+        if let Some(blob_ptr) = blob_from_js(data_arg) {
+            // SAFETY: blob_ptr came from a live JSValue; valid for this scope.
+            if let Some(store) = unsafe { (*blob_ptr).store.as_ref() } {
+                // StoreRef::clone == store.ref()
+                return Ok(Box::new(Archive { store: store.clone(), compress }));
             }
         }
 
@@ -274,7 +260,7 @@ impl Archive {
             return Ok(create_archive(data, compress));
         }
 
-        global.throw_invalid_arguments("Expected an object, Blob, TypedArray, or ArrayBuffer", &[])
+        Err(global.throw_invalid_arguments(format_args!("Expected an object, Blob, TypedArray, or ArrayBuffer")))
     }
 }
 
@@ -287,32 +273,32 @@ fn parse_compression_options(global: &JSGlobalObject, options_arg: JSValue) -> J
     }
 
     if !options_arg.is_object() {
-        return global.throw_invalid_arguments("Archive: options must be an object", &[]);
+        return Err(global.throw_invalid_arguments(format_args!("Archive: options must be an object")));
     }
 
     // Check for compress option
     if let Some(compress_val) = options_arg.get_truthy(global, "compress")? {
         // compress must be "gzip"
         if !compress_val.is_string() {
-            return global.throw_invalid_arguments("Archive: compress option must be a string", &[]);
+            return Err(global.throw_invalid_arguments(format_args!("Archive: compress option must be a string")));
         }
 
         let compress_str = compress_val.to_slice(global)?;
         // Drop handles compress_str.deinit()
 
         if compress_str.slice() != b"gzip" {
-            return global.throw_invalid_arguments("Archive: compress option must be \"gzip\"", &[]);
+            return Err(global.throw_invalid_arguments(format_args!("Archive: compress option must be \"gzip\"")));
         }
 
         // Parse level option (1-12, default 6)
         let mut level: u8 = 6;
         if let Some(level_val) = options_arg.get_truthy(global, "level")? {
             if !level_val.is_number() {
-                return global.throw_invalid_arguments("Archive: level must be a number", &[]);
+                return Err(global.throw_invalid_arguments(format_args!("Archive: level must be a number")));
             }
             let level_num = level_val.to_int64();
             if level_num < 1 || level_num > 12 {
-                return global.throw_invalid_arguments("Archive: level must be between 1 and 12", &[]);
+                return Err(global.throw_invalid_arguments(format_args!("Archive: level must be between 1 and 12")));
             }
             level = u8::try_from(level_num).unwrap();
         }
@@ -329,12 +315,18 @@ fn create_archive(data: Vec<u8>, compress: Compression) -> Box<Archive> {
     Box::new(Archive { store, compress })
 }
 
+/// `JSValue::as_::<Blob>()` shim — Blob does not yet implement `JsClass`.
+// TODO(port): drop once `#[bun_jsc::JsClass]` lands on `webcore::Blob`.
+fn blob_from_js(_value: JSValue) -> Option<*mut Blob> {
+    todo!("blocked_on: bun_runtime::webcore::Blob: JsClass")
+}
+
 /// Shared helper that builds tarball bytes from a JS object
 fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<Vec<u8>> {
     use libarchive::lib;
 
     let Some(js_obj) = obj.get_object() else {
-        return global.throw_invalid_arguments("Expected an object", &[]);
+        return Err(global.throw_invalid_arguments(format_args!("Expected an object")));
     };
 
     // Set up archive first
@@ -351,7 +343,7 @@ fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<
     let archive_ref = unsafe { &*archive };
 
     if archive_ref.write_set_format_pax_restricted() != lib::Result::Ok {
-        return global.throw_invalid_arguments("Failed to create tarball: ArchiveFormatError", &[]);
+        return Err(global.throw_invalid_arguments(format_args!("Failed to create tarball: ArchiveFormatError")));
     }
 
     if lib::archive_write_open2(
@@ -363,7 +355,7 @@ fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<
         None,
     ) != 0
     {
-        return global.throw_invalid_arguments("Failed to create tarball: ArchiveOpenError", &[]);
+        return Err(global.throw_invalid_arguments(format_args!("Failed to create tarball: ArchiveOpenError")));
     }
 
     let entry = lib::Entry::new();
@@ -409,31 +401,32 @@ fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<
         entry_ref.set_mtime(now_secs, 0);
 
         if archive_ref.write_header(entry_ref) != lib::Result::Ok {
-            return global.throw_invalid_arguments("Failed to create tarball: ArchiveHeaderError", &[]);
+            return Err(global.throw_invalid_arguments(format_args!("Failed to create tarball: ArchiveHeaderError")));
         }
         if archive_ref.write_data(data) < 0 {
-            return global.throw_invalid_arguments("Failed to create tarball: ArchiveWriteError", &[]);
+            return Err(global.throw_invalid_arguments(format_args!("Failed to create tarball: ArchiveWriteError")));
         }
         if archive_ref.write_finish_entry() != lib::Result::Ok {
-            return global.throw_invalid_arguments("Failed to create tarball: ArchiveFinishEntryError", &[]);
+            return Err(global.throw_invalid_arguments(format_args!("Failed to create tarball: ArchiveFinishEntryError")));
         }
     }
 
     if archive_ref.write_close() != lib::Result::Ok {
-        return global.throw_invalid_arguments("Failed to create tarball: ArchiveCloseError", &[]);
+        return Err(global.throw_invalid_arguments(format_args!("Failed to create tarball: ArchiveCloseError")));
     }
 
     match growing_buffer.to_owned_slice() {
         Ok(v) => Ok(v),
-        Err(_) => global.throw_invalid_arguments("Failed to create tarball: OutOfMemory", &[]),
+        Err(_) => Err(global.throw_invalid_arguments(format_args!("Failed to create tarball: OutOfMemory"))),
     }
 }
 
 /// Returns data as a ZigString.Slice (handles ownership automatically via deinit)
 fn get_entry_data(global: &JSGlobalObject, value: JSValue) -> JsResult<ZigStringSlice> {
     // For Blob, use sharedView (no copy needed)
-    if let Some(blob_ptr) = value.as_::<Blob>() {
-        return Ok(ZigStringSlice::from_utf8_never_free(blob_ptr.shared_view()));
+    if let Some(blob_ptr) = blob_from_js(value) {
+        // SAFETY: blob_ptr came from a live JSValue; valid for this scope.
+        return Ok(ZigStringSlice::from_utf8_never_free(unsafe { (*blob_ptr).shared_view() }));
     }
 
     // For ArrayBuffer/TypedArray, use view (no copy needed)
@@ -454,12 +447,12 @@ fn get_entry_data(global: &JSGlobalObject, value: JSValue) -> JsResult<ZigString
 pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let [path_arg, data_arg, options_arg] = callframe.arguments_as_array::<3>();
     if data_arg.is_empty() {
-        return global.throw_invalid_arguments("Archive.write requires 2 arguments (path, data)", &[]);
+        return Err(global.throw_invalid_arguments(format_args!("Archive.write requires 2 arguments (path, data)")));
     }
 
     // Get the path
     if !path_arg.is_string() {
-        return global.throw_invalid_arguments("Archive.write: first argument must be a string path", &[]);
+        return Err(global.throw_invalid_arguments(format_args!("Archive.write: first argument must be a string path")));
     }
 
     let path_slice = path_arg.to_slice(global)?;
@@ -468,20 +461,23 @@ pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue
     let options_compress = parse_compression_options(global, options_arg)?;
 
     // For Archive instances, use options override or archive's compression settings
-    if let Some(archive) = Archive::from_js(data_arg) {
+    if let Some(archive) = data_arg.as_::<Archive>() {
+        // SAFETY: archive came from a live JSValue; valid for this scope.
+        let archive = unsafe { &*archive };
         let compress = if !matches!(options_compress, Compression::None) {
             options_compress
         } else {
             archive.compress.clone_shallow()
             // TODO(port): Compression is not Copy due to Gzip payload struct; verify clone semantics
         };
-        return start_write_task(global, WriteData::Store(Arc::clone(&archive.store)), path_slice.slice(), compress);
+        return start_write_task(global, WriteData::Store(archive.store.clone()), path_slice.slice(), compress);
     }
 
     // For Blobs, use store reference with options compression
-    if let Some(blob_ptr) = data_arg.as_::<Blob>() {
-        if let Some(store) = blob_ptr.store() {
-            return start_write_task(global, WriteData::Store(Arc::clone(store)), path_slice.slice(), options_compress);
+    if let Some(blob_ptr) = blob_from_js(data_arg) {
+        // SAFETY: blob_ptr came from a live JSValue; valid for this scope.
+        if let Some(store) = unsafe { (*blob_ptr).store.as_ref() } {
+            return start_write_task(global, WriteData::Store(store.clone()), path_slice.slice(), options_compress);
         }
     }
 
@@ -497,7 +493,7 @@ pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue
         return start_write_task(global, WriteData::Owned(data), path_slice.slice(), options_compress);
     }
 
-    global.throw_invalid_arguments("Expected an object, Blob, TypedArray, ArrayBuffer, or Archive", &[])
+    Err(global.throw_invalid_arguments(format_args!("Expected an object, Blob, TypedArray, ArrayBuffer, or Archive")))
 }
 
 impl Archive {
@@ -510,7 +506,7 @@ impl Archive {
     pub fn extract(this: &mut Self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let [path_arg, options_arg] = callframe.arguments_as_array::<2>();
         if path_arg.is_empty() || !path_arg.is_string() {
-            return global.throw_invalid_arguments("Archive.extract requires a path argument", &[]);
+            return Err(global.throw_invalid_arguments(format_args!("Archive.extract requires a path argument")));
         }
 
         let path_slice = path_arg.to_slice(global)?;
@@ -521,10 +517,9 @@ impl Archive {
 
         if !options_arg.is_undefined_or_null() {
             if !options_arg.is_object() {
-                return global.throw_invalid_arguments(
-                    "Archive.extract: second argument must be an options object",
-                    &[],
-                );
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "Archive.extract: second argument must be an options object"
+                )));
             }
 
             // Parse glob option
@@ -549,7 +544,7 @@ fn parse_pattern_arg(
     if arg.is_string() {
         let str_slice = arg.to_slice(global)?;
         // Empty string = no filter
-        if str_slice.len() == 0 {
+        if str_slice.slice().is_empty() {
             return Ok(None);
         }
         let pattern: Box<[u8]> = Box::from(str_slice.slice());
@@ -573,15 +568,15 @@ fn parse_pattern_arg(
         while u64::from(i) < len {
             let item = arg.get_index(global, i)?;
             if !item.is_string() {
-                return global.throw_invalid_arguments(
-                    "{s}: {s} array must contain only strings",
-                    &[api_name.into(), name.into()],
-                );
-                // TODO(port): format-args plumbing for throw_invalid_arguments
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "{}: {} array must contain only strings",
+                    bstr::BStr::new(api_name),
+                    bstr::BStr::new(name),
+                )));
             }
             let str_slice = item.to_slice(global)?;
             // Skip empty strings in array
-            if str_slice.len() == 0 {
+            if str_slice.slice().is_empty() {
                 i += 1;
                 continue;
             }
@@ -599,10 +594,11 @@ fn parse_pattern_arg(
         return Ok(Some(patterns));
     }
 
-    global.throw_invalid_arguments(
-        "{s}: {s} must be a string or array of strings",
-        &[api_name.into(), name.into()],
-    )
+    Err(global.throw_invalid_arguments(format_args!(
+        "{}: {} must be a string or array of strings",
+        bstr::BStr::new(api_name),
+        bstr::BStr::new(name),
+    )))
 }
 
 // freePatterns deleted — Vec<Box<[u8]>> drops elements then itself.

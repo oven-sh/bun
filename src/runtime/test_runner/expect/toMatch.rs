@@ -1,5 +1,5 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, FormatterTestExt, BigIntCompare, make_formatter};
 use bun_jsc::ConsoleObject;
 
 use super::Expect;
@@ -22,7 +22,7 @@ pub fn to_match(
     let arguments: &[JSValue] = frame.arguments();
 
     if arguments.len() < 1 {
-        return global.throw_invalid_arguments(format_args!("toMatch() requires 1 argument"));
+        return Err(global.throw_invalid_arguments(format_args!("toMatch() requires 1 argument")));
     }
 
     this.increment_expect_call_counter();
@@ -33,20 +33,20 @@ pub fn to_match(
 
     let expected_value = arguments[0];
     if !expected_value.is_string() && !expected_value.is_reg_exp() {
-        return global.throw(format_args!(
+        return Err(global.throw(format_args!(
             "Expected value must be a string or regular expression: {}",
             expected_value.to_fmt(&mut formatter),
-        ));
+        )));
     }
     expected_value.ensure_still_alive();
 
     let value: JSValue = this.get_value(global, this_value, "toMatch", "<green>expected<r>")?;
 
     if !value.is_string() {
-        return global.throw(format_args!(
+        return Err(global.throw(format_args!(
             "Received value must be a string: {}",
             value.to_fmt(&mut formatter),
-        ));
+        )));
     }
 
     let not = this.flags.not();

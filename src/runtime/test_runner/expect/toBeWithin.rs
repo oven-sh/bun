@@ -1,5 +1,5 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, FormatterTestExt, BigIntCompare, make_formatter};
 use bun_jsc::console_object::Formatter;
 
 use super::Expect;
@@ -19,9 +19,9 @@ impl Expect {
         let arguments = _arguments.slice();
 
         if arguments.len() < 1 {
-            return global.throw_invalid_arguments(format_args!(
+            return Err(global.throw_invalid_arguments(format_args!(
                 "toBeWithin() requires 2 arguments"
-            ));
+            )));
         }
 
         let value: JSValue = this.get_value(
@@ -35,18 +35,18 @@ impl Expect {
         start_value.ensure_still_alive();
 
         if !start_value.is_number() {
-            return global.throw(format_args!(
+            return Err(global.throw(format_args!(
                 "toBeWithin() requires the first argument to be a number"
-            ));
+            )));
         }
 
         let end_value = arguments[1];
         end_value.ensure_still_alive();
 
         if !end_value.is_number() {
-            return global.throw(format_args!(
+            return Err(global.throw(format_args!(
                 "toBeWithin() requires the second argument to be a number"
-            ));
+            )));
         }
 
         this.increment_expect_call_counter();
@@ -70,9 +70,9 @@ impl Expect {
         let formatter = Formatter::new(global, /* quote_strings */ true);
         // defer formatter.deinit(); — handled by Drop
         // PORT NOTE: reshaped for borrowck — to_fmt takes &Formatter (shared) so three live wrappers coexist
-        let start_fmt = start_value.to_fmt(&formatter);
-        let end_fmt = end_value.to_fmt(&formatter);
-        let received_fmt = value.to_fmt(&formatter);
+        let start_fmt = start_value.to_fmt(&mut formatter);
+        let end_fmt = end_value.to_fmt(&mut formatter);
+        let received_fmt = value.to_fmt(&mut formatter);
 
         if not {
             let signature = Expect::get_signature(

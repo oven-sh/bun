@@ -1,5 +1,5 @@
 use bstr::ByteSlice;
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, FormatterTestExt, BigIntCompare, make_formatter};
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_jsc::console_object::Formatter;
 
@@ -22,9 +22,9 @@ impl Expect {
         let arguments = arguments_.slice();
 
         if arguments.len() < 2 {
-            return global.throw_invalid_arguments(format_args!(
+            return Err(global.throw_invalid_arguments(format_args!(
                 "toIncludeRepeated() requires 2 arguments"
-            ));
+            )));
         }
 
         this.increment_expect_call_counter();
@@ -33,32 +33,32 @@ impl Expect {
         substring.ensure_still_alive();
 
         if !substring.is_string() {
-            return global.throw(format_args!(
+            return Err(global.throw(format_args!(
                 "toIncludeRepeated() requires the first argument to be a string"
-            ));
+            )));
         }
 
         let count = arguments[1];
         count.ensure_still_alive();
 
         if !count.is_any_int() {
-            return global.throw(format_args!(
+            return Err(global.throw(format_args!(
                 "toIncludeRepeated() requires the second argument to be a number"
-            ));
+            )));
         }
 
         let count_as_num = count.to_u32();
 
         let Some(expect_string) = Expect::js::captured_value_get_cached(this_value) else {
-            return global.throw(format_args!(
+            return Err(global.throw(format_args!(
                 "Internal consistency error: the expect(value) was garbage collected but it should not have been!"
-            ));
+            )));
         };
 
         if !expect_string.is_string() {
-            return global.throw(format_args!(
+            return Err(global.throw(format_args!(
                 "toIncludeRepeated() requires the expect(value) to be a string"
-            ));
+            )));
         }
 
         let not = this.flags.not();
@@ -72,9 +72,9 @@ impl Expect {
         let sub_string_as_str = sub_string_as_str_owned.slice();
 
         if sub_string_as_str.is_empty() {
-            return global.throw(format_args!(
+            return Err(global.throw(format_args!(
                 "toIncludeRepeated() requires the first argument to be a non-empty string"
-            ));
+            )));
         }
 
         // std.mem.count(u8, haystack, needle) — non-overlapping occurrence count
@@ -92,9 +92,9 @@ impl Expect {
         // defer formatter.deinit() → handled by Drop
         // PORT NOTE: to_fmt borrows the formatter; three live borrows below would alias under
         // &mut. Using shared & here; Phase B may need interior mutability on Formatter.
-        let expect_string_fmt = expect_string.to_fmt(&formatter);
-        let substring_fmt = substring.to_fmt(&formatter);
-        let times_fmt = count.to_fmt(&formatter);
+        let expect_string_fmt = expect_string.to_fmt(&mut formatter);
+        let substring_fmt = substring.to_fmt(&mut formatter);
+        let times_fmt = count.to_fmt(&mut formatter);
 
         // PORT NOTE: Zig builds `"\n\n" ++ expected_line ++ received_line` at comptime via named
         // consts; Rust `concat!` only accepts literal tokens (not `const` items), so the pieces are

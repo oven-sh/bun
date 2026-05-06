@@ -195,7 +195,7 @@ pub struct RequestContext<ThisServer, const SSL_ENABLED: bool, const DEBUG_MODE:
 impl<ThisServer, const SSL_ENABLED: bool, const DEBUG_MODE: bool, const HTTP3: bool>
     RequestContext<ThisServer, SSL_ENABLED, DEBUG_MODE, HTTP3>
 where
-    ThisServer: ServerLike,
+    ThisServer: ServerLike + 'static,
 {
     pub const IS_H3: bool = HTTP3;
 
@@ -249,6 +249,56 @@ mod NativePromiseContext {
 use crate::server::{AnyRequestContext, FileResponseStream, HTTPStatusText};
 use crate::server::jsc::CallFrame;
 use crate::webcore::{body as Body, s3 as S3, Blob, ReadableStream};
+
+// `Response` doesn't yet implement `JsClass` (codegen-gated). Route the
+// downcast through the codegen stub so the call sites type-check; the stub
+// returns `None` until codegen lands.
+#[inline]
+fn as_response(value: JSValue) -> Option<&'static mut Response> {
+    response::from_js(value).map(|p| unsafe { &mut *p.cast::<Response>() })
+}
+
+// ─── sibling-subtree shims ───────────────────────────────────────────────────
+// These forward to methods that exist in webcore/ but are currently inside
+// impl blocks that fail to compile (codegen gc-slot stubs, opaque AbortSignal,
+// duplicate InternalJSEventCallback). Adapt on this side per phase-d rules.
+mod shim {
+    use super::*;
+
+    #[inline] pub fn response_body_stream(_r: &mut Response, _g: &JSGlobalObject) -> Option<ReadableStream> {
+        todo!("blocked_on: crate::webcore::response::Response::get_body_readable_stream")
+    }
+    #[inline] pub fn response_detach_stream(_r: &mut Response, _g: &JSGlobalObject) {
+        todo!("blocked_on: crate::webcore::response::Response::detach_readable_stream")
+    }
+    #[inline] pub fn signal_aborted(_s: &Arc<AbortSignal>) -> bool {
+        todo!("blocked_on: bun_jsc::AbortSignal::aborted")
+    }
+    #[inline] pub fn signal_fire(_s: &Arc<AbortSignal>, _g: &JSGlobalObject, _r: jsc::CommonAbortReason) {
+        todo!("blocked_on: bun_jsc::AbortSignal::signal")
+    }
+    #[inline] pub fn signal_unref(_s: &Arc<AbortSignal>) {
+        todo!("blocked_on: bun_jsc::AbortSignal::pending_activity_unref")
+    }
+    #[inline] pub fn iec_trigger(_cb: &mut request::InternalJSEventCallback, _ev: request::EventType, _g: &JSGlobalObject) -> bool {
+        todo!("blocked_on: crate::webcore::request::InternalJSEventCallback::trigger")
+    }
+    #[inline] pub fn iec_deinit(_cb: &mut request::InternalJSEventCallback) {
+        todo!("blocked_on: crate::webcore::request::InternalJSEventCallback::deinit")
+    }
+    #[inline] pub fn iec_has_callback(_cb: &request::InternalJSEventCallback) -> bool {
+        todo!("blocked_on: crate::webcore::request::InternalJSEventCallback::has_callback")
+    }
+    #[inline] pub fn byte_stream_unpipe(_s: &ByteStream) {
+        todo!("blocked_on: crate::webcore::streams::ByteStream::unpipe_without_deref")
+    }
+    #[inline] pub fn body_value_unref(_v: &mut Body::Value) {
+        todo!("blocked_on: crate::webcore::body::Value::unref")
+    }
+    #[inline] pub fn request_ensure_url(_r: &mut Request) -> Result<(), ()> {
+        todo!("blocked_on: crate::webcore::request::Request::ensure_url")
+    }
+}
 // `Api::FallbackMessageContainer`/`JsException`/`Problems`/`Fallback::render_backend`
 // live in `bun_options_types::schema::api` + `bun_js_parser::runtime`; both are
 // still being filled in by concurrent ports. The DEBUG_MODE error-page paths
@@ -268,15 +318,16 @@ impl<ThisServer, const SSL_ENABLED: bool, const DEBUG_MODE: bool, const HTTP3: b
     RequestContext<ThisServer, SSL_ENABLED, DEBUG_MODE, HTTP3>
 where
     TransportFor<SSL_ENABLED, HTTP3>: Transport,
-    ThisServer: ServerLike,
+    ThisServer: ServerLike + 'static,
 {
     const RESP_KIND: uws::ResponseKind = uws::ResponseKind::from(SSL_ENABLED, HTTP3);
 
     pub fn set_signal_aborted(&mut self, reason: jsc::CommonAbortReason) {
-        if let Some(signal) = &self.signal {
-            if let Some(server) = self.server {
+        if let Some(_signal) = &self.signal {
+            if let Some(_server) = self.server {
                 // SAFETY: server is valid while RequestContext is alive (BACKREF)
-                signal.signal(unsafe { (*server).global_this() }, reason);
+                let _ = reason;
+                todo!("blocked_on: bun_jsc::AbortSignal::signal");
             }
         }
     }
@@ -287,7 +338,7 @@ where
         }
         if let Some(server) = self.server {
             // SAFETY: BACKREF
-            unsafe { (*server).vm() }.drain_microtasks();
+            unsafe { (*(server as *mut ThisServer)).vm() }.drain_microtasks();
         }
     }
 
@@ -329,7 +380,7 @@ where
     pub fn on_resolve(_global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         ctx_log!("onResolve");
 
-        let arguments = callframe.arguments_old(2);
+        let arguments = callframe.arguments_old::<2>();
         let Some(ctx) = NativePromiseContext::take::<Self>(arguments.ptr[1]) else {
             // The cell's destructor already released the ref (the Promise
             // was collected before a prior microtask turn reached us).
@@ -359,23 +410,20 @@ where
                     "Expected a native Response object, but received a polyfilled Response object. Bun.serve() only supports native Response objects.",
                 );
             } else if !value.is_empty() && !global_this.has_exception() {
-                let mut formatter = jsc::ConsoleObject::Formatter {
-                    global_this,
-                    quote_strings: true,
-                    ..Default::default()
-                };
-                bun_core::err_generic!(
-                    "Expected a Response object, but received '{}'",
-                    value.to_fmt(&mut formatter),
-                );
-                // formatter dropped at scope end (Drop impl)
+                // TODO(port): jsc::ConsoleObject::Formatter has no Default;
+                // JSValue::to_fmt lives on a trait not in scope here. Fall back
+                // to the generic message until those land.
+                let _ = value;
+                bun_core::err_generic!("Expected a Response object");
             } else {
                 bun_core::err_generic!("Expected a Response object");
             }
 
             Output::flush();
             if !global_this.has_exception() {
-                jsc::ConsoleObject::write_trace(&mut writer, global_this);
+                let _ = writer;
+                // TODO(port): write_trace wants `impl bun_io::Write`; Output::error_writer()
+                // returns a raw `*mut Writer`. Skip the JS stack trace for now.
             }
             Output::flush();
         }
@@ -396,7 +444,7 @@ where
             return;
         }
 
-        let Some(response) = value.as_::<Response>() else {
+        let Some(response) = as_response(value) else {
             ctx.render_missing_invalid_response(value);
             return;
         };
@@ -454,7 +502,8 @@ where
         }
         // check if the body is Locked (streaming)
         if let Some(body) = &self.request_body {
-            if matches!(body.value, Body::Value::Locked(_)) {
+            // SAFETY: pooled HiveRef slot is live while held (see deinit()).
+            if matches!(unsafe { body.as_ref() }, Body::Value::Locked(_)) {
                 return false;
             }
         }
@@ -493,7 +542,7 @@ where
             // `init_request_body_value`; it remains live until the final unref
             // returns it to the hive. `drop(NonNull)` is a Copy no-op, so we
             // must call the intrusive refcount decrement explicitly.
-            unsafe { let _ = body.as_mut().unref(); }
+            shim::body_value_unref(unsafe { body.as_mut() });
         }
 
         if let Some(cb) = self.additional_on_abort.take() {
@@ -529,7 +578,7 @@ where
     pub fn on_reject(_global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         ctx_log!("onReject");
 
-        let arguments = callframe.arguments_old(2);
+        let arguments = callframe.arguments_old::<2>();
         let Some(ctx) = NativePromiseContext::take::<Self>(arguments.ptr[1]) else {
             // The cell's destructor already released the ref (the Promise
             // was collected before a prior microtask turn reached us).
@@ -618,7 +667,7 @@ where
                 resp.write_status(b"200 OK");
                 ctx.flags.set_has_written_status(true);
 
-                resp.write_header(b"content-type", MimeType::HTML.value);
+                resp.write_header(b"content-type", &bun_http_types::MimeType::HTML.value);
                 resp.write_header(b"content-encoding", b"gzip");
                 resp.write_header_int(b"content-length", WELCOME_PAGE_HTML_GZ.len() as u64);
                 ctx.end(WELCOME_PAGE_HTML_GZ, ctx.should_close_connection());
@@ -627,7 +676,7 @@ where
             const MISSING_CONTENT: &[u8] =
                 b"Welcome to Bun! To get started, return a Response object.";
             resp.write_status(b"200 OK");
-            resp.write_header(b"content-type", MimeType::TEXT.value);
+            resp.write_header(b"content-type", &bun_http_types::MimeType::TEXT.value);
             resp.write_header_int(b"content-length", MISSING_CONTENT.len() as u64);
             ctx.flags.set_has_written_status(true);
             ctx.end(MISSING_CONTENT, ctx.should_close_connection());
@@ -653,7 +702,7 @@ where
                 // SAFETY: FFI handle
                 unsafe {
                     resp.write_status(b"500 Internal Server Error");
-                    resp.write_header(b"content-type", MimeType::HTML.value);
+                    resp.write_header(b"content-type", &bun_http_types::MimeType::HTML.value);
                 }
             }
         }
@@ -912,24 +961,24 @@ where
                 server: Some(server),
                 defer_deinit_until_callback_completes: should_deinit_context,
                 range: RangeRequest::raw_from_request(&Self::any_request(req)),
-                request_weakref: Request::WeakRef::EMPTY,
+                request_weakref: request::WeakRef::EMPTY,
                 signal: None,
                 cookies: None,
                 flags: Flags::<DEBUG_MODE>::default(),
                 upgrade_context: None,
                 response_jsvalue: JSValue::ZERO,
                 ref_count: 1,
-                response_weakref: Response::WeakRef::EMPTY,
-                blob: WebCore::Blob::Any::Blob(Blob::default()),
+                response_weakref: response::WeakRef::EMPTY,
+                blob: AnyBlob::Blob(Blob::default()),
                 // SAFETY: SendfileContext is POD; matches Zig `= undefined`
                 sendfile: unsafe { core::mem::zeroed() },
-                request_body_readable_stream_ref: WebCore::ReadableStream::Strong::default(),
+                request_body_readable_stream_ref: readable_stream::Strong::default(),
                 request_body: None,
                 request_body_buf: Vec::new(),
                 request_body_content_len: 0,
                 sink: None,
                 byte_stream: None,
-                response_body_readable_stream_ref: WebCore::ReadableStream::Strong::default(),
+                response_body_readable_stream_ref: readable_stream::Strong::default(),
                 pathname: BunString::empty(),
                 response_buf_owned: Vec::new(),
                 additional_on_abort: None,
@@ -959,10 +1008,7 @@ where
         });
 
         if let Some(request) = this.request_weakref.get() {
-            if request
-                .internal_event_callback
-                .trigger(Request::InternalJSEventCallback::EventType::Timeout, global_this)
-            {
+            if shim::iec_trigger(&mut request.internal_event_callback, request::EventType::Timeout, global_this) {
                 any_js_calls = true;
             }
         }
@@ -1014,23 +1060,20 @@ where
 
         if let Some(request) = this.request_weakref.get() {
             request.request_context = AnyRequestContext::NULL;
-            if request
-                .internal_event_callback
-                .trigger(Request::InternalJSEventCallback::EventType::Abort, global_this)
-            {
+            if shim::iec_trigger(&mut request.internal_event_callback, request::EventType::Abort, global_this) {
                 any_js_calls = true;
             }
             // we can already clean this strong refs
-            request.internal_event_callback.deinit();
+            shim::iec_deinit(&mut request.internal_event_callback);
             this.request_weakref.deref();
         }
         // if signal is not aborted, abort the signal
         if let Some(signal) = this.signal.take() {
-            if !signal.aborted() {
-                signal.signal(global_this, jsc::CommonAbortReason::ConnectionClosed);
+            if !shim::signal_aborted(&signal) {
+                shim::signal_fire(&signal, global_this, jsc::CommonAbortReason::ConnectionClosed);
                 any_js_calls = true;
             }
-            signal.pending_activity_unref();
+            shim::signal_unref(&signal);
             drop(signal); // unref
         }
 
@@ -1059,9 +1102,9 @@ where
             }
 
             if let Some(response) = this.response_weakref.get() {
-                if let Some(stream) = response.get_body_readable_stream(global_this) {
+                if let Some(stream) = shim::response_body_stream(response, global_this) {
                     let _keep = jsc::EnsureStillAlive(stream.value);
-                    response.detach_readable_stream(global_this);
+                    shim::response_detach_stream(response, global_this);
                     stream.abort(global_this);
                     any_js_calls = true;
                 }
@@ -1103,16 +1146,16 @@ where
         if let Some(request) = self.request_weakref.get() {
             request.request_context = AnyRequestContext::NULL;
             // we can already clean this strong refs
-            request.internal_event_callback.deinit();
+            shim::iec_deinit(&mut request.internal_event_callback);
             self.request_weakref.deref();
         }
 
         // if signal is not aborted, abort the signal
         if let Some(signal) = self.signal.take() {
-            if self.flags.aborted() && !signal.aborted() {
-                signal.signal(global_this, jsc::CommonAbortReason::ConnectionClosed);
+            if self.flags.aborted() && !shim::signal_aborted(&signal) {
+                shim::signal_fire(&signal, global_this, jsc::CommonAbortReason::ConnectionClosed);
             }
-            signal.pending_activity_unref();
+            shim::signal_unref(&signal);
             drop(signal); // unref
         }
 
@@ -1129,7 +1172,7 @@ where
         if let Some(stream) = self.byte_stream.take() {
             ctx_log!("finalizeWithoutDeinit: stream != null");
             // SAFETY: kept alive by response_body_readable_stream_ref (BORROW_FIELD)
-            unsafe { stream.as_ref().unpipe_without_deref() };
+            shim::byte_stream_unpipe(unsafe { stream.as_ref() });
         }
 
         self.response_body_readable_stream_ref.deinit();
@@ -1251,7 +1294,7 @@ where
         let global_this = unsafe { (*self.server.unwrap()).global_this() };
         let resp = self.resp.unwrap();
 
-        self.blob = WebCore::Blob::Any::Blob(blob);
+        self.blob = AnyBlob::Blob(blob);
         let file = &self.blob.store().unwrap().data.file;
         let mut file_buf = PathBuffer::uninit();
         let auto_close = !matches!(file.pathlike, crate::node::PathLike::Fd(_));
@@ -1281,7 +1324,7 @@ where
                 if auto_close {
                     fd.close();
                 }
-                let Ok(js_err) = err.with_path_like(&file.pathlike).to_js(global_this) else {
+                let Ok(js_err) = err.with_path(&file.pathlike).to_js(global_this) else {
                     return self.render_production_error(500);
                 };
                 return self.run_error_handler(js_err);
@@ -1302,11 +1345,11 @@ where
                     fd.close();
                 }
                 let mut sys = bun_sys::Error {
-                    errno: bun_sys::E::ISDIR as _,
+                    errno: bun_sys::E::EISDIR as _,
                     syscall: bun_sys::Tag::read,
                     ..Default::default()
                 }
-                .with_path_like(&file.pathlike)
+                .with_path(&file.pathlike)
                 .to_system_error();
                 sys.message = BunString::static_("Cannot stream a directory as a response body");
                 return self.run_error_handler(sys.to_error_instance(global_this));
@@ -1315,18 +1358,18 @@ where
         };
 
         let original_size = match &self.blob {
-            WebCore::Blob::Any::Blob(b) => b.size,
+            AnyBlob::Blob(b) => b.size,
             _ => unreachable!(),
         };
-        let stat_size: Blob::SizeType =
-            Blob::SizeType::try_from(stat.size.max(0)).unwrap();
-        if let WebCore::Blob::Any::Blob(b) = &mut self.blob {
+        let stat_size: BlobSizeType =
+            BlobSizeType::try_from(stat.size.max(0)).unwrap();
+        if let AnyBlob::Blob(b) = &mut self.blob {
             b.size = if is_regular { stat_size } else { original_size.min(stat_size) };
         }
 
         self.flags.set_needs_content_length(true);
         let blob_offset = match &self.blob {
-            WebCore::Blob::Any::Blob(b) => b.offset,
+            AnyBlob::Blob(b) => b.offset,
             _ => unreachable!(),
         };
         self.sendfile = SendfileContext {
@@ -1362,13 +1405,13 @@ where
         let user_handles_range = if let Some(r) = self.response_weakref.get() {
             r.status_code() != 200
                 || r.get_init_headers()
-                    .map(|h| h.fast_has(FetchHeaders::Name::ContentRange))
+                    .map(|h| h.fast_has(jsc::HTTPHeaderName::ContentRange))
                     .unwrap_or(false)
         } else {
             false
         };
         let is_whole_file =
-            blob_offset == 0 && (original_size == Blob::MAX_SIZE || original_size == stat_size);
+            blob_offset == 0 && (original_size == crate::webcore::blob::MAX_SIZE || original_size == stat_size);
         // RFC 9110 §14.2: Range is only defined for GET (HEAD mirrors GET's headers).
         let method_allows_range = self.method == Method::GET || self.method == Method::HEAD;
         if is_regular
@@ -1380,8 +1423,8 @@ where
             match self.range.resolve(stat_size) {
                 RangeRequest::Result::None => {}
                 RangeRequest::Result::Satisfiable { start, end } => {
-                    self.sendfile.offset = Blob::SizeType::try_from(start).unwrap();
-                    self.sendfile.remain = Blob::SizeType::try_from(end - start + 1).unwrap();
+                    self.sendfile.offset = BlobSizeType::try_from(start).unwrap();
+                    self.sendfile.remain = BlobSizeType::try_from(end - start + 1).unwrap();
                     self.sendfile.total = stat_size;
                     self.flags.set_needs_content_range(true);
                 }
@@ -1474,7 +1517,7 @@ where
 
         if self.blob.needs_to_read_file() {
             if !self.flags.has_sendfile_ctx() {
-                if let WebCore::Blob::Any::Blob(b) = self.blob {
+                if let AnyBlob::Blob(b) = self.blob {
                     self.do_sendfile(b);
                 }
             }
@@ -1646,7 +1689,7 @@ where
                         // TODO: should this timeout?
                         let body_value = this.response_weakref.get().unwrap().get_body_value();
                         *body_value = Body::Value::Locked(Body::Locked {
-                            readable: WebCore::ReadableStream::Strong::init(stream, global_this),
+                            readable: readable_stream::Strong::init(stream, global_this),
                             global: global_this,
                             ..Default::default()
                         });
@@ -1915,7 +1958,7 @@ where
             // first respect the headers
             if !HTTP3 {
                 if let Some(transfer_encoding) =
-                    headers.fast_get(FetchHeaders::Name::TransferEncoding)
+                    headers.fast_get(jsc::HTTPHeaderName::TransferEncoding)
                 {
                     // fastGet() borrows the header map's StringImpl; renderMetadata() ->
                     // doWriteHeaders() calls fastRemove(.TransferEncoding) and derefs the
@@ -1931,7 +1974,7 @@ where
                     return;
                 }
             }
-            if let Some(content_length) = headers.fast_get(FetchHeaders::Name::ContentLength) {
+            if let Some(content_length) = headers.fast_get(jsc::HTTPHeaderName::ContentLength) {
                 // Parse before renderMetadata(): doWriteHeaders() will fastRemove(.ContentLength)
                 // and deref the FetchHeaders, freeing the borrowed StringImpl.
                 let content_length_str = content_length.to_slice();
@@ -1958,7 +2001,7 @@ where
 
                 // SAFETY: FFI handle
                 unsafe {
-                    if size == Blob::MAX_SIZE {
+                    if size == crate::webcore::blob::MAX_SIZE {
                         resp.write_header_int(b"content-length", 0);
                     } else {
                         resp.write_header_int(b"content-length", size as u64);
@@ -1993,7 +2036,7 @@ where
                 blob.resolve_size();
                 // SAFETY: FFI handle
                 unsafe {
-                    if blob.size == Blob::MAX_SIZE {
+                    if blob.size == crate::webcore::blob::MAX_SIZE {
                         resp.write_header_int(b"content-length", 0);
                     } else {
                         resp.write_header_int(b"content-length", blob.size as u64);
@@ -2059,7 +2102,7 @@ where
             return;
         }
 
-        if let Some(response) = response_value.as_::<Response>() {
+        if let Some(response) = as_response(response_value) {
             ctx.response_jsvalue = response_value;
             ctx.response_jsvalue.ensure_still_alive();
             ctx.flags.set_response_protected(false);
@@ -2123,7 +2166,7 @@ where
                         ctx.render_missing_invalid_response(fulfilled_value);
                         return;
                     }
-                    let Some(response) = fulfilled_value.as_::<Response>() else {
+                    let Some(response) = as_response(fulfilled_value) else {
                         ctx.render_missing_invalid_response(fulfilled_value);
                         return;
                     };
@@ -2218,7 +2261,7 @@ where
     // TODO(port): #[bun_jsc::host_fn] — see note on `on_resolve`.
     pub fn on_resolve_stream(_global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         stream_log!("onResolveStream");
-        let args = callframe.arguments_old(2);
+        let args = callframe.arguments_old::<2>();
         let Some(req) = NativePromiseContext::take::<Self>(args.ptr[args.len - 1]) else {
             return Ok(JSValue::UNDEFINED);
         };
@@ -2230,7 +2273,7 @@ where
     // TODO(port): #[bun_jsc::host_fn] — see note on `on_resolve`.
     pub fn on_reject_stream(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         stream_log!("onRejectStream");
-        let args = callframe.arguments_old(2);
+        let args = callframe.arguments_old::<2>();
         let Some(req) = NativePromiseContext::take::<Self>(args.ptr[args.len - 1]) else {
             return Ok(JSValue::UNDEFINED);
         };
@@ -2302,7 +2345,7 @@ where
                                 // SAFETY: FFI handle
                                 unsafe {
                                     resp.write_status(b"500 Internal Server Error");
-                                    resp.write_header(b"content-type", MimeType::HTML.value);
+                                    resp.write_header(b"content-type", &bun_http_types::MimeType::HTML.value);
                                 }
                             }
                         }
@@ -2385,7 +2428,7 @@ where
                     if let Some(stream) = owned_readable {
                         // response owns the stream, so we hold a strong reference to it
                         this.response_body_readable_stream_ref =
-                            WebCore::ReadableStream::Strong::init(stream, global_this);
+                            readable_stream::Strong::init(stream, global_this);
                         break 'brk Some(stream);
                     }
                     None
@@ -2411,18 +2454,18 @@ where
                     }
 
                     match stream.ptr {
-                        WebCore::ReadableStream::Ptr::Invalid => {
+                        readable_stream::Source::Invalid => {
                             this.response_body_readable_stream_ref.deinit();
                             // Stream is invalid, render empty body
                             this.do_render_blob();
                             return;
                         }
                         // toBlobIfPossible will typically convert .Blob streams, or .File streams into a Blob object, but cannot always.
-                        WebCore::ReadableStream::Ptr::Blob(_)
-                        | WebCore::ReadableStream::Ptr::File(_)
+                        readable_stream::Source::Blob(_)
+                        | readable_stream::Source::File(_)
                         // These are the common scenario:
-                        | WebCore::ReadableStream::Ptr::JavaScript(_)
-                        | WebCore::ReadableStream::Ptr::Direct(_) => {
+                        | readable_stream::Source::JavaScript(_)
+                        | readable_stream::Source::Direct(_) => {
                             if let Some(resp) = this.resp {
                                 let mut pair = StreamPair { stream, this };
                                 // SAFETY: FFI handle
@@ -2433,7 +2476,7 @@ where
                             return;
                         }
 
-                        WebCore::ReadableStream::Ptr::Bytes(byte_stream) => {
+                        readable_stream::Source::Bytes(byte_stream) => {
                             debug_assert!(byte_stream.pipe.ctx.is_null());
                             debug_assert!(this.byte_stream.is_none());
                             if this.resp.is_none() {
@@ -2447,7 +2490,7 @@ where
                             // we can avoid streaming it and just send it all at once.
                             if byte_stream.has_received_last_chunk {
                                 let byte_list = byte_stream.drain();
-                                this.blob = WebCore::Blob::Any::from_array_list(
+                                this.blob = AnyBlob::from_array_list(
                                     byte_list.move_to_list_managed(),
                                 );
                                 this.response_body_readable_stream_ref.deinit();
@@ -2460,7 +2503,7 @@ where
                             // to avoid leaking the Strong.Impl memory
                             this.response_body_readable_stream_ref.deinit();
                             this.response_body_readable_stream_ref =
-                                WebCore::ReadableStream::Strong::init(stream, global_this);
+                                readable_stream::Strong::init(stream, global_this);
 
                             this.byte_stream = Some(NonNull::from(byte_stream));
                             let response_buf = byte_stream.drain();
@@ -2713,7 +2756,7 @@ where
                     } else if let Some(promise) = result.as_any_promise() {
                         self.process_on_error_promise(result, promise, value, status);
                         return;
-                    } else if let Some(response) = result.as_::<Response>() {
+                    } else if let Some(response) = as_response(result) {
                         self.render(response);
                         return;
                     }
@@ -2757,7 +2800,7 @@ where
                     return;
                 }
 
-                let Some(response) = fulfilled_value.as_::<Response>() else {
+                let Some(response) = as_response(fulfilled_value) else {
                     ctx.finish_running_error_handler(value, status);
                     return;
                 };
@@ -2837,8 +2880,8 @@ where
         let mut has_content_disposition = false;
         let mut has_content_range = false;
         if let Some(headers_) = response.swap_init_headers() {
-            has_content_disposition = headers_.fast_has(FetchHeaders::Name::ContentDisposition);
-            has_content_range = headers_.fast_has(FetchHeaders::Name::ContentRange);
+            has_content_disposition = headers_.fast_has(jsc::HTTPHeaderName::ContentDisposition);
+            has_content_range = headers_.fast_has(jsc::HTTPHeaderName::ContentRange);
             // For .slice()-driven ranges, only promote to 206 if the user
             // also set Content-Range (preserves the old contract). For an
             // incoming Range: header (sendfile.total > 0) we always 206.
@@ -2872,7 +2915,7 @@ where
             // do not insert the content type if it is the fallback value
             // we may not know the content-type when streaming
             && (!self.blob.is_detached()
-                || content_type.value.as_ptr() != MimeType::OTHER.value.as_ptr())
+                || content_type.value.as_ptr() != bun_http_types::MimeType::OTHER.value.as_ptr())
         {
             resp.write_header(b"content-type", content_type.value);
         }
@@ -2984,14 +3027,14 @@ where
 
     fn do_write_headers(&mut self, headers: &FetchHeaders) {
         ctx_log!("writeHeaders");
-        headers.fast_remove(FetchHeaders::Name::ContentLength);
-        headers.fast_remove(FetchHeaders::Name::TransferEncoding);
+        headers.fast_remove(jsc::HTTPHeaderName::ContentLength);
+        headers.fast_remove(jsc::HTTPHeaderName::TransferEncoding);
         if HTTP3 {
             // RFC 9114 §4.2: connection-specific fields are malformed.
-            headers.fast_remove(FetchHeaders::Name::Connection);
-            headers.fast_remove(FetchHeaders::Name::KeepAlive);
-            headers.fast_remove(FetchHeaders::Name::ProxyConnection);
-            headers.fast_remove(FetchHeaders::Name::Upgrade);
+            headers.fast_remove(jsc::HTTPHeaderName::Connection);
+            headers.fast_remove(jsc::HTTPHeaderName::KeepAlive);
+            headers.fast_remove(jsc::HTTPHeaderName::ProxyConnection);
+            headers.fast_remove(jsc::HTTPHeaderName::Upgrade);
         }
         if let Some(resp) = self.resp {
             headers.to_uws_response(Self::RESP_KIND, resp);
@@ -3254,7 +3297,7 @@ where
         let this = unsafe { &mut *(ptr as *mut Self) };
         debug_assert!(this.request_body_readable_stream_ref.held.impl_.is_none());
         this.request_body_readable_stream_ref =
-            WebCore::ReadableStream::Strong::init(readable, global_this);
+            readable_stream::Strong::init(readable, global_this);
     }
 
     pub fn on_start_buffering_callback(this: *mut c_void) {
@@ -3325,7 +3368,7 @@ pub struct PathnameFormatter<'a, ThisServer, const SSL: bool, const DBG: bool, c
 impl<'a, ThisServer, const SSL: bool, const DBG: bool, const H3: bool> core::fmt::Display
     for PathnameFormatter<'a, ThisServer, SSL, DBG, H3>
 where
-    ThisServer: ServerLike,
+    ThisServer: ServerLike + 'static,
 {
     fn fmt(&self, writer: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let this = self.ctx;
@@ -3450,7 +3493,7 @@ fn get_content_type(
 
     let content_type: MimeType = 'brk: {
         if let Some(headers_) = headers {
-            if let Some(content) = headers_.fast_get(FetchHeaders::Name::ContentType) {
+            if let Some(content) = headers_.fast_get(jsc::HTTPHeaderName::ContentType) {
                 needs_content_type = false;
 
                 let content_slice = content.to_slice();
@@ -3467,11 +3510,11 @@ fn get_content_type(
         } else if let Some(content) = MimeType::sniff(blob.slice()) {
             content
         } else if blob.was_string() {
-            MimeType::TEXT
+            bun_http_types::MimeType::TEXT
             // TODO: should we get the mime type off of the Blob.Store if it exists?
             // A little wary of doing this right now due to causing some breaking change
         } else {
-            MimeType::OTHER
+            bun_http_types::MimeType::OTHER
         }
     };
 

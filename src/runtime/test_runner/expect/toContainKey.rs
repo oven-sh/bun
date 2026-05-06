@@ -1,5 +1,5 @@
 use bun_jsc::console_object::Formatter;
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, FormatterTestExt, BigIntCompare, make_formatter};
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 use super::Expect;
@@ -20,7 +20,7 @@ impl Expect {
         let arguments = arguments_.slice();
 
         if arguments.len() < 1 {
-            return global.throw_invalid_arguments(format_args!("toContainKey() takes 1 argument"));
+            return Err(global.throw_invalid_arguments(format_args!("toContainKey() takes 1 argument")));
         }
 
         this.increment_expect_call_counter();
@@ -34,10 +34,10 @@ impl Expect {
 
         let not = this.flags.not();
         if !value.is_object() {
-            return global.throw_invalid_arguments(format_args!(
+            return Err(global.throw_invalid_arguments(format_args!(
                 "Expected value must be an object\nReceived: {}",
                 value.to_fmt(&mut formatter),
-            ));
+            )));
         }
 
         let mut pass = value.has_own_property_value(global, expected)?;

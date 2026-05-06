@@ -25,6 +25,7 @@ use crate::{
 use crate::event_loop::{ConcurrentTask, EventLoop};
 use crate::virtual_machine::VirtualMachine;
 
+#[allow(non_upper_case_globals)]
 bun_core::declare_scope!(RuntimeTranspilerStore, hidden);
 
 // ──────────────────────────────────────────────────────────────────────────

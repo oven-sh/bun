@@ -898,6 +898,104 @@ type Str = &'static [u8];
 // TODO(port): lifetime — see module-level note. `Str` is a stand-in for the Zig
 // `[]const u8` struct-field pattern; Phase B should replace with the real type.
 
+/// Phase-A `[]const u8` parameter shim — accepts `&str` / `&[u8]` (any lifetime)
+/// and erases to the crate-wide `Str` (`&'static [u8]`) lie so callers in either
+/// string flavour compile against the same Zig-shaped signatures.
+/// TODO(port): lifetime — remove with `Str` once Phase B threads `'source`.
+pub trait IntoStr {
+    fn into_str(self) -> Str;
+}
+impl IntoStr for &[u8] {
+    #[inline]
+    fn into_str(self) -> Str {
+        // SAFETY: Phase-A lifetime erasure; see module-level OWNERSHIP note.
+        unsafe { core::mem::transmute::<&[u8], &'static [u8]>(self) }
+    }
+}
+impl IntoStr for &str {
+    #[inline]
+    fn into_str(self) -> Str {
+        self.as_bytes().into_str()
+    }
+}
+impl<const N: usize> IntoStr for &[u8; N] {
+    #[inline]
+    fn into_str(self) -> Str {
+        self[..].into_str()
+    }
+}
+
+/// Owned/borrowed → `Cow<'static, [u8]>` for `Data.text`. Superset of the old
+/// `impl Into<Cow<'static, [u8]>>` bound on [`range_data`] that additionally
+/// admits `&'static str` (so `concat!()` literals work) and `&[u8; N]`.
+pub trait IntoText {
+    fn into_text(self) -> Cow<'static, [u8]>;
+}
+impl IntoText for Cow<'static, [u8]> {
+    #[inline]
+    fn into_text(self) -> Cow<'static, [u8]> { self }
+}
+impl IntoText for &'static [u8] {
+    #[inline]
+    fn into_text(self) -> Cow<'static, [u8]> { Cow::Borrowed(self) }
+}
+impl<const N: usize> IntoText for &'static [u8; N] {
+    #[inline]
+    fn into_text(self) -> Cow<'static, [u8]> { Cow::Borrowed(self) }
+}
+impl IntoText for &'static str {
+    #[inline]
+    fn into_text(self) -> Cow<'static, [u8]> { Cow::Borrowed(self.as_bytes()) }
+}
+impl IntoText for Vec<u8> {
+    #[inline]
+    fn into_text(self) -> Cow<'static, [u8]> { Cow::Owned(self) }
+}
+impl IntoText for String {
+    #[inline]
+    fn into_text(self) -> Cow<'static, [u8]> { Cow::Owned(self.into_bytes()) }
+}
+impl IntoText for Box<[u8]> {
+    #[inline]
+    fn into_text(self) -> Cow<'static, [u8]> { Cow::Owned(self.into_vec()) }
+}
+
+/// Sink adapter for [`Log::print`] — lets callers pass either a borrowed
+/// `fmt::Write` impl or the `*mut bun_core::io::Writer` returned by
+/// `Output::error_writer()` (the dominant call shape across the tree).
+pub trait IntoLogWrite {
+    type W: fmt::Write;
+    fn into_log_write(self) -> Self::W;
+}
+impl<'a, W: fmt::Write> IntoLogWrite for &'a mut W {
+    type W = &'a mut W;
+    #[inline]
+    fn into_log_write(self) -> &'a mut W { self }
+}
+/// `fmt::Write` view over a `*mut bun_core::io::Writer`.
+pub struct IoWriterAdapter(*mut bun_core::io::Writer);
+impl fmt::Write for IoWriterAdapter {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        if self.0.is_null() {
+            return Ok(());
+        }
+        // SAFETY: `Output::error_writer()` returns a pointer to a long-lived
+        // adapter header (see bun_core::io::Writer); callers hold it only for
+        // the duration of this `print` call.
+        unsafe { (*self.0).write_all(s.as_bytes()) }.map_err(|_| fmt::Error)
+    }
+}
+impl IntoLogWrite for *mut bun_core::io::Writer {
+    type W = IoWriterAdapter;
+    #[inline]
+    fn into_log_write(self) -> IoWriterAdapter { IoWriterAdapter(self) }
+}
+impl IntoLogWrite for &mut *mut bun_core::io::Writer {
+    type W = IoWriterAdapter;
+    #[inline]
+    fn into_log_write(self) -> IoWriterAdapter { IoWriterAdapter(*self) }
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // Kind
 // ───────────────────────────────────────────────────────────────────────────
@@ -2217,16 +2315,16 @@ impl Log {
     }
 
     #[inline]
-    pub fn add_error_fmt(
+    pub fn add_error_fmt<'a>(
         &mut self,
-        source: Option<&Source>,
+        source: impl Into<Option<&'a Source>>,
         l: Loc,
         args: fmt::Arguments<'_>,
     ) -> Result<(), AllocError> {
         let text = alloc_print(args)?;
         self.add_formatted_msg(
             Kind::Err,
-            source,
+            source.into(),
             Range { loc: l, ..Default::default() },
             text,
             Box::default(),
@@ -2646,11 +2744,12 @@ impl Log {
         )
     }
 
-    pub fn print(&self, to: &mut impl fmt::Write) -> fmt::Result {
+    pub fn print<W: IntoLogWrite>(&self, to: W) -> fmt::Result {
+        let mut w = to.into_log_write();
         if Output::ENABLE_ANSI_COLORS_STDERR.load(core::sync::atomic::Ordering::Relaxed) {
-            self.print_with_enable_ansi_colors::<true>(to)
+            self.print_with_enable_ansi_colors::<true>(&mut w)
         } else {
-            self.print_with_enable_ansi_colors::<false>(to)
+            self.print_with_enable_ansi_colors::<false>(&mut w)
         }
     }
 
@@ -2894,9 +2993,9 @@ impl Source {
         Ok(source)
     }
 
-    pub fn init_path_string(path_string: Str, contents: Str) -> Source {
-        let path = fs::Path::init(path_string);
-        Source { path, contents, ..Default::default() }
+    pub fn init_path_string(path_string: impl IntoStr, contents: impl IntoStr) -> Source {
+        let path = fs::Path::init(path_string.into_str());
+        Source { path, contents: contents.into_str(), ..Default::default() }
     }
 
     pub fn text_for_range(&self, r: Range) -> &[u8] {
@@ -3031,17 +3130,17 @@ impl Source {
 
     pub fn line_col_to_byte_offset(
         source_contents: &[u8],
-        start_line: usize,
-        start_col: usize,
-        line: usize,
-        col: usize,
+        start_line: u64,
+        start_col: u64,
+        line: u64,
+        col: u64,
     ) -> Option<usize> {
         use bun_string::strings::{CodepointIterator, Cursor};
         let iter_ = CodepointIterator::init(source_contents);
         let mut iter = Cursor::default();
 
-        let mut line_count: usize = start_line;
-        let mut column_number: usize = start_col;
+        let mut line_count: u64 = start_line;
+        let mut column_number: u64 = start_col;
 
         let _ = iter_.next(&mut iter);
         loop {
@@ -3086,9 +3185,9 @@ impl Source {
 pub fn range_data(
     source: Option<&Source>,
     r: Range,
-    text: impl Into<Cow<'static, [u8]>>,
+    text: impl IntoText,
 ) -> Data {
-    Data { text: text.into(), location: Location::init_or_null(source, r) }
+    Data { text: text.into_text(), location: Location::init_or_null(source, r) }
 }
 
 // ───────────────────────────────────────────────────────────────────────────

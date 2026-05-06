@@ -40,11 +40,80 @@ impl Buffer {
     #[inline] pub fn slice(&self) -> &[u8] { &[] }
 }
 
-// `jsc.ArgumentsSlice` — opaque iterator over CallFrame args.
+// `jsc.ArgumentsSlice` — cursor over CallFrame args. Mirrors the Zig API
+// (`next` peeks without consuming, `eat` advances, `next_eat` does both).
 // TODO(b2-blocked): swap to `pub use bun_jsc::call_frame::ArgumentsSlice;`.
-#[derive(Default)]
 pub struct ArgumentsSlice {
+    pub remaining: &'static [JSValue],
     pub will_be_async: bool,
+    pub vm: *mut jsc::VirtualMachine,
+}
+impl Default for ArgumentsSlice {
+    fn default() -> Self {
+        Self { remaining: &[], will_be_async: false, vm: core::ptr::null_mut() }
+    }
+}
+impl ArgumentsSlice {
+    /// Peek the current argument without consuming it.
+    #[inline]
+    pub fn next(&self) -> Option<JSValue> {
+        self.remaining.first().copied()
+    }
+    /// Consume the current argument (no-op if empty).
+    #[inline]
+    pub fn eat(&mut self) {
+        if !self.remaining.is_empty() {
+            self.remaining = &self.remaining[1..];
+        }
+    }
+    /// Peek + consume in one step.
+    #[inline]
+    pub fn next_eat(&mut self) -> Option<JSValue> {
+        let v = self.next();
+        if v.is_some() { self.eat(); }
+        v
+    }
+    /// Protect-then-consume — used by callers that need to keep the JS value
+    /// alive across an async boundary.
+    #[inline]
+    pub fn protect_eat_next(&mut self) -> Option<JSValue> {
+        let v = self.next()?;
+        v.protect();
+        self.eat();
+        Some(v)
+    }
+    #[inline]
+    pub fn init(vm: *mut jsc::VirtualMachine, args: &'static [JSValue]) -> Self {
+        Self { remaining: args, will_be_async: false, vm }
+    }
+}
+
+// `Fd::from_js_validated` lives in `bun_sys_jsc::FdJsc`, which is not a
+// dependency of this crate. Provide a thin extension trait so call sites
+// (`Fd::from_js_validated(value, ctx)`) keep their shape.
+// TODO(b2-blocked): swap to `use bun_sys_jsc::FdJsc;` once it is a dep.
+pub trait FdJsc: Sized {
+    fn from_js(value: JSValue) -> Option<Self>;
+    fn from_js_validated(value: JSValue, global: &JSGlobalObject) -> JsResult<Option<Self>>;
+    fn to_js(self, global: &JSGlobalObject) -> JSValue;
+}
+impl FdJsc for Fd {
+    #[inline]
+    fn from_js(value: JSValue) -> Option<Fd> {
+        if !value.is_any_int() { return None; }
+        let fd64 = value.to_int64();
+        if fd64 < 0 || fd64 > i64::from(i32::MAX) { return None; }
+        Some(Fd::from_uv(fd64 as i32))
+    }
+    fn from_js_validated(value: JSValue, global: &JSGlobalObject) -> JsResult<Option<Fd>> {
+        let _ = global;
+        // TODO(b2-blocked): full range/type validation lives in bun_sys_jsc.
+        Ok(Self::from_js(value))
+    }
+    #[inline]
+    fn to_js(self, _global: &JSGlobalObject) -> JSValue {
+        JSValue::js_number_from_int32(self.uv())
+    }
 }
 
 // `bun_sys::PlatformIoVec` not yet exported (B-2 stub crate).
@@ -343,30 +412,20 @@ impl StringOrBuffer {
     }
 
     pub fn to_js(&mut self, ctx: &JSGlobalObject) -> JsResult<JSValue> {
-        match self {
-            Self::ThreadsafeString(str) | Self::String(str) => str.transfer_to_js(ctx),
-            Self::EncodedSlice(encoded_slice) => {
-                let result = bun_str::String::create_utf8_for_js(ctx, encoded_slice.slice());
-                encoded_slice.deinit();
-                *encoded_slice = ZigStringSlice::default();
-                result
-            }
-            Self::Buffer(buffer) => {
-                if !buffer.buffer.value.is_empty() {
-                    return Ok(buffer.buffer.value);
-                }
-                buffer.to_node_buffer(ctx)
-            }
-        }
+        let _ = ctx;
+        // TODO(b2-blocked): SliceWithUnderlyingString::transfer_to_js +
+        // Buffer::to_node_buffer not yet ported.
+        todo!("blocked_on: bun_str::SliceWithUnderlyingString::transfer_to_js")
     }
 
-    pub fn slice(&self) -> &[u8] {
-        match self {
-            Self::String(str) => str.slice(),
-            Self::ThreadsafeString(str) => str.slice(),
-            Self::EncodedSlice(str) => str.slice(),
-            Self::Buffer(str) => str.slice(),
-        }
+    /// Explicit cleanup hook (Zig parity). Ownership is on `Drop`.
+    #[inline]
+    pub fn deinit(&self) {}
+
+    /// Returns the buffer payload if this is `Self::Buffer`.
+    #[inline]
+    pub fn buffer(&self) -> Option<&Buffer> {
+        if let Self::Buffer(b) = self { Some(b) } else { None }
     }
 
     pub fn deinit_and_unprotect(self) {
@@ -821,19 +880,18 @@ impl PathLike {
     }
 }
 
-// Gated: bodies call JSC methods (`.protect()`, `.js_type()`, `arguments.next()`,
-// `Fd::from_js_validated`) and bun_paths/strings fns not yet exported.
-// TODO(b2-blocked): un-gate once bun_jsc + bun_paths::posix_to_win_normalizer land.
+impl Default for PathLike {
+    #[inline]
+    fn default() -> Self {
+        Self::EncodedSlice(ZigStringSlice::EMPTY)
+    }
+}
 
 impl PathLike {
-    pub fn estimated_size(&self) -> usize {
-        match self {
-            Self::String(s) => s.estimated_size(),
-            Self::Buffer(b) => b.slice().len(),
-            Self::ThreadsafeString(_) | Self::SliceWithUnderlyingString(_) => 0,
-            Self::EncodedSlice(s) => s.slice().len(),
-        }
-    }
+    /// Explicit cleanup hook (Zig parity). Ownership is on `Drop`; this is a
+    /// no-op so call sites that spell `path.deinit()` keep compiling.
+    #[inline]
+    pub fn deinit(&self) {}
 
     pub fn to_thread_safe(&mut self) {
         match self {

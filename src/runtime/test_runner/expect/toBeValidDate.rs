@@ -1,5 +1,5 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, FormatterTestExt, BigIntCompare, make_formatter};
 use bun_jsc::console_object::Formatter;
 
 use super::Expect;
@@ -40,7 +40,7 @@ pub fn to_be_valid_date(
     let received = value.to_fmt(&mut formatter);
 
     if not {
-        let signature = const { get_signature("toBeValidDate", "", true) };
+        let signature = get_signature("toBeValidDate", "", true);
         return this.throw(
             global,
             signature,
@@ -48,7 +48,7 @@ pub fn to_be_valid_date(
         );
     }
 
-    let signature = const { get_signature("toBeValidDate", "", false) };
+    let signature = get_signature("toBeValidDate", "", false);
     this.throw(
         global,
         signature,

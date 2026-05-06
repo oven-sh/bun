@@ -243,7 +243,7 @@ pub fn to_bun_string_from_owned_slice(input: Vec<u8>, encoding: Encoding) -> Bun
     match encoding {
         Encoding::Ascii => {
             if strings::is_all_ascii(&input) {
-                return BunString::create_external_globally_allocated_latin1(input);
+                return create_external_globally_allocated_latin1(input);
             }
 
             let (str, chars) = BunString::create_uninitialized_latin1(input.len());
@@ -251,10 +251,12 @@ pub fn to_bun_string_from_owned_slice(input: Vec<u8>, encoding: Encoding) -> Bun
             if str.is_dead() {
                 return str;
             }
+            // SAFETY: chars is a writable buffer of `input.len()` bytes (str is not dead).
+            let chars = unsafe { slice::from_raw_parts_mut(chars, input.len()) };
             strings::copy_latin1_into_ascii(chars, &input);
             str
         }
-        Encoding::Latin1 => BunString::create_external_globally_allocated_latin1(input),
+        Encoding::Latin1 => create_external_globally_allocated_latin1(input),
         Encoding::Buffer | Encoding::Utf8 => {
             let converted = match strings::to_utf16_alloc(&input, false, false) {
                 Ok(v) => v,
@@ -266,11 +268,11 @@ pub fn to_bun_string_from_owned_slice(input: Vec<u8>, encoding: Encoding) -> Bun
 
             if let Some(utf16) = converted {
                 // input dropped at end of scope
-                return BunString::create_external_globally_allocated_utf16(utf16);
+                return create_external_globally_allocated_utf16(utf16);
             }
 
             // If we get here, it means we can safely assume the string is 100% ASCII characters
-            BunString::create_external_globally_allocated_latin1(input)
+            create_external_globally_allocated_latin1(input)
         }
         Encoding::Ucs2 | Encoding::Utf16le => {
             // Avoid incomplete characters - if input length is 0 or odd, handle gracefully
@@ -298,7 +300,7 @@ pub fn to_bun_string_from_owned_slice(input: Vec<u8>, encoding: Encoding) -> Bun
                     input.capacity() / 2,
                 )
             };
-            BunString::create_external_globally_allocated_utf16(as_u16)
+            create_external_globally_allocated_utf16(as_u16)
         }
 
         Encoding::Hex => {
@@ -309,6 +311,8 @@ pub fn to_bun_string_from_owned_slice(input: Vec<u8>, encoding: Encoding) -> Bun
                 return str;
             }
 
+            // SAFETY: chars is a writable buffer of `input.len() * 2` bytes.
+            let chars = unsafe { slice::from_raw_parts_mut(chars, input.len() * 2) };
             let wrote = strings::encode_bytes_to_hex(chars, &input);
 
             // Return an empty string in this case, just like node.
@@ -325,9 +329,11 @@ pub fn to_bun_string_from_owned_slice(input: Vec<u8>, encoding: Encoding) -> Bun
         // appears inconsistent with Node.js.
         Encoding::Base64url => {
             // input dropped at end of scope
-            let (out, chars) =
-                BunString::create_uninitialized_latin1(bun_base64::url_safe_encode_len(&input));
+            let out_len = bun_base64::url_safe_encode_len(&input);
+            let (out, chars) = BunString::create_uninitialized_latin1(out_len);
             if !out.is_dead() {
+                // SAFETY: chars is a writable buffer of `out_len` bytes.
+                let chars = unsafe { slice::from_raw_parts_mut(chars, out_len) };
                 let _ = bun_base64::encode_url_safe(chars, &input);
             }
             out
@@ -340,7 +346,7 @@ pub fn to_bun_string_from_owned_slice(input: Vec<u8>, encoding: Encoding) -> Bun
             let mut to = vec![0u8; to_len];
             let wrote = bun_base64::encode(&mut to, &input);
             to.truncate(wrote);
-            BunString::create_external_globally_allocated_latin1(to)
+            create_external_globally_allocated_latin1(to)
         }
     }
 }
@@ -379,6 +385,8 @@ pub fn to_bun_string_comptime<const ENCODING: u8>(input: &[u8]) -> BunString {
             if str.is_dead() {
                 return str;
             }
+            // SAFETY: chars is a writable buffer of `input.len()` bytes.
+            let chars = unsafe { slice::from_raw_parts_mut(chars, input.len()) };
             strings::copy_latin1_into_ascii(chars, input);
             str
         }
@@ -387,6 +395,8 @@ pub fn to_bun_string_comptime<const ENCODING: u8>(input: &[u8]) -> BunString {
             if str.is_dead() {
                 return str;
             }
+            // SAFETY: chars is a writable buffer of `input.len()` bytes.
+            let chars = unsafe { slice::from_raw_parts_mut(chars, input.len()) };
             chars.copy_from_slice(input);
             str
         }
@@ -396,7 +406,7 @@ pub fn to_bun_string_comptime<const ENCODING: u8>(input: &[u8]) -> BunString {
                 Err(_) => return BunString::dead(),
             };
             if let Some(utf16) = converted {
-                return BunString::create_external_globally_allocated_utf16(utf16);
+                return create_external_globally_allocated_utf16(utf16);
             }
 
             // If we get here, it means we can safely assume the string is 100% ASCII characters
@@ -409,13 +419,14 @@ pub fn to_bun_string_comptime<const ENCODING: u8>(input: &[u8]) -> BunString {
                 return BunString::empty();
             }
 
-            let (str, chars) = BunString::create_uninitialized_utf16(input.len() / 2);
+            let chars_len = input.len() / 2;
+            let (str, chars) = BunString::create_uninitialized_utf16(chars_len);
             if str.is_dead() {
                 return str;
             }
             // SAFETY: chars is a freshly-allocated [u16] buffer; reinterpret as bytes.
             let output_bytes = unsafe {
-                slice::from_raw_parts_mut(chars.as_mut_ptr().cast::<u8>(), chars.len() * 2)
+                slice::from_raw_parts_mut(chars.cast::<u8>(), chars_len * 2)
             };
             let out_len = output_bytes.len();
             output_bytes[out_len - 1] = 0;
@@ -430,6 +441,8 @@ pub fn to_bun_string_comptime<const ENCODING: u8>(input: &[u8]) -> BunString {
                 return str;
             }
 
+            // SAFETY: chars is a writable buffer of `input.len() * 2` bytes.
+            let chars = unsafe { slice::from_raw_parts_mut(chars, input.len() * 2) };
             let wrote = strings::encode_bytes_to_hex(chars, input);
             debug_assert!(wrote == chars.len());
             str
@@ -441,7 +454,7 @@ pub fn to_bun_string_comptime<const ENCODING: u8>(input: &[u8]) -> BunString {
             let mut to = vec![0u8; to_len];
             let wrote = bun_base64::encode_url_safe(&mut to, input);
             to.truncate(wrote);
-            BunString::create_external_globally_allocated_latin1(to)
+            create_external_globally_allocated_latin1(to)
         }
 
         Encoding::Base64 => {
@@ -450,7 +463,7 @@ pub fn to_bun_string_comptime<const ENCODING: u8>(input: &[u8]) -> BunString {
             let mut to = vec![0u8; to_len];
             let wrote = bun_base64::encode(&mut to, input);
             to.truncate(wrote);
-            BunString::create_external_globally_allocated_latin1(to)
+            create_external_globally_allocated_latin1(to)
         }
     }
 }
@@ -663,10 +676,7 @@ pub fn write_u16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bool>(
             // SAFETY: caller guarantees `input[..len]` is valid; only an immutable view is
             // needed here since the output goes through `write_u8` with raw `to`.
             let input_slice = unsafe { slice::from_raw_parts(input, len) };
-            let transcoded = match strings::to_utf8_alloc(input_slice) {
-                Ok(v) => v,
-                Err(_) => return Ok(0),
-            };
+            let transcoded = strings::to_utf8_alloc(input_slice);
             // transcoded dropped at end of scope
             write_u8::<ENCODING>(transcoded.as_ptr(), transcoded.len(), to, to_len)
         }
@@ -770,10 +780,7 @@ pub fn construct_from_u16<const ENCODING: u8>(input: *const u16, len: usize) -> 
     let input_slice = unsafe { slice::from_raw_parts(input, len) };
 
     match encoding_from_u8(ENCODING) {
-        Encoding::Utf8 => match strings::to_utf8_alloc_with_type(input_slice) {
-            Ok(v) => v,
-            Err(_) => Vec::new(),
-        },
+        Encoding::Utf8 => strings::to_utf8_alloc_with_type(input_slice),
         Encoding::Latin1 | Encoding::Buffer | Encoding::Ascii => {
             let mut to = vec![0u8; len];
             strings::copy_u16_into_u8(&mut to, input_slice);
@@ -812,10 +819,7 @@ pub fn construct_from_u16<const ENCODING: u8>(input: *const u16, len: usize) -> 
         Encoding::Base64 | Encoding::Base64url => {
             // very very slow case!
             // shouldn't really happen though
-            let transcoded = match strings::to_utf8_alloc(input_slice) {
-                Ok(v) => v,
-                Err(_) => return Vec::new(),
-            };
+            let transcoded = strings::to_utf8_alloc(input_slice);
             // transcoded dropped at end of scope
             construct_from_u8::<ENCODING>(transcoded.as_ptr(), transcoded.len())
         }

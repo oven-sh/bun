@@ -1,5 +1,5 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, FormatterTestExt, BigIntCompare, make_formatter};
 use bun_jsc::console_object::Formatter;
 use crate::test_runner::expect::BigIntCompare;
 
@@ -18,12 +18,12 @@ pub fn to_be_greater_than_or_equal(
     // restructure if borrowck rejects the overlapping &mut on `this` below.
 
     let this_value = frame.this();
-    let arguments: &[JSValue] = frame.arguments_old::<1>();
+    let arguments_ = frame.arguments_old::<1>(); let arguments: &[JSValue] = arguments_.slice();
 
     if arguments.len() < 1 {
-        return global.throw_invalid_arguments(format_args!(
+        return Err(global.throw_invalid_arguments(format_args!(
             "toBeGreaterThanOrEqual() requires 1 argument"
-        ));
+        )));
     }
 
     this.increment_expect_call_counter();
@@ -37,9 +37,9 @@ pub fn to_be_greater_than_or_equal(
     if (!value.is_number() && !value.is_big_int())
         || (!other_value.is_number() && !other_value.is_big_int())
     {
-        return global.throw(format_args!(
+        return Err(global.throw(format_args!(
             "Expected and actual values must be numbers or bigints"
-        ));
+        )));
     }
 
     let not = this.flags.not();
@@ -74,7 +74,7 @@ pub fn to_be_greater_than_or_equal(
     if not {
         const EXPECTED_LINE: &str = "Expected: not \\>= <green>{}<r>\n";
         const RECEIVED_LINE: &str = "Received: <red>{}<r>\n";
-        let signature = const { get_signature("toBeGreaterThanOrEqual", "<green>expected<r>", true) };
+        let signature = get_signature("toBeGreaterThanOrEqual", "<green>expected<r>", true);
         return this.throw_fmt(
             global,
             signature,
@@ -92,7 +92,7 @@ pub fn to_be_greater_than_or_equal(
 
     const EXPECTED_LINE: &str = "Expected: \\>= <green>{}<r>\n";
     const RECEIVED_LINE: &str = "Received: <red>{}<r>\n";
-    let signature = const { get_signature("toBeGreaterThanOrEqual", "<green>expected<r>", false) };
+    let signature = get_signature("toBeGreaterThanOrEqual", "<green>expected<r>", false);
     this.throw_fmt(
         global,
         signature,

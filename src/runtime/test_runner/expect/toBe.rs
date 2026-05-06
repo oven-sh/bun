@@ -1,5 +1,5 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, FormatterTestExt, BigIntCompare, make_formatter};
 use bun_jsc::console_object::Formatter;
 
 use super::DiffFormatter;
@@ -23,8 +23,7 @@ impl Expect {
         let arguments = arguments_.slice();
 
         if arguments.len() < 1 {
-            return global_this
-                .throw_invalid_arguments(format_args!("toBe() takes 1 argument"));
+            return Err(global_this.throw_invalid_arguments(format_args!("toBe() takes 1 argument")));
         }
 
         this.increment_expect_call_counter();
@@ -61,7 +60,7 @@ impl Expect {
         }
 
         let signature = Expect::get_signature("toBe", "<green>expected<r>", false);
-        if left.deep_equals(right, global_this)? || left.strict_deep_equals(right, global_this)? {
+        if left.jest_deep_equals(right, global_this)? || left.jest_strict_deep_equals(right, global_this)? {
             // Zig builds `fmt` via comptime `++` on `has_custom_label`; Rust format strings must
             // be literals, so branch the call instead.
             if !has_custom_label {
@@ -93,12 +92,7 @@ impl Expect {
         }
 
         if right.is_string() && left.is_string() {
-            let diff_format = DiffFormatter {
-                expected: right,
-                received: left,
-                global_this,
-                not,
-            };
+            let diff_format = DiffFormatter { expected: Some(right), received: Some(left), expected_string: None, received_string: None, global_this, not };
             return this.throw(global_this, signature, format_args!("\n\n{}\n", diff_format));
         }
 

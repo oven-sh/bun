@@ -103,6 +103,62 @@ pub mod package_manager_command;
 // ``-gated, so this is the sole live mount of the file.
 #[path = "test_command.rs"]
 pub mod test_command;
+/// `bun test` support modules (Scanner / ChangedFilesFilter / ParallelRunner).
+/// Mounted here so `test_command.rs` can `use crate::cli::test::scanner` etc.
+/// The heavy bodies inside each file are individually gated where they touch
+/// not-yet-un-gated sibling crates.
+pub mod test {
+    #[path = "Scanner.rs"]
+    pub mod scanner;
+    pub use scanner::Scanner;
+    // ChangedFilesFilter / ParallelRunner are still entangled with the
+    // not-yet-un-gated `bun_bundler::BundleV2` + parallel runner pipe code;
+    // expose stub façades so `test_command` resolves the paths.
+    // TODO(b2-blocked): un-gate once `bun_bundler` and parallel/ compile.
+    #[allow(non_snake_case)]
+    pub mod changed_files_filter {
+        use bun_paths::PathString;
+        pub struct FilterResult {
+            pub test_files: Vec<PathString>,
+            pub module_graph_files: Vec<Box<[u8]>>,
+            pub changed_count: usize,
+            pub total_tests: usize,
+        }
+        pub fn filter<Ctx, Vm, Since>(
+            _ctx: &Ctx,
+            _vm: Vm,
+            _all: &[PathString],
+            _since: &Since,
+        ) -> Result<FilterResult, bun_core::Error> {
+            todo!("blocked_on: bun_bundler::BundleV2 (ChangedFilesFilter)")
+        }
+        pub fn init_watch_trigger() {
+            todo!("blocked_on: bun_bundler::BundleV2 (ChangedFilesFilter)")
+        }
+    }
+    #[allow(non_snake_case)]
+    pub mod parallel_runner {
+        pub fn worker_emit_test_done(_idx: u32, _line: &[u8]) {
+            todo!("blocked_on: crate::cli::test::parallel (ParallelRunner)")
+        }
+        pub fn run_as_worker<R, Vm, Ctx>(
+            _r: &mut R,
+            _vm: Vm,
+            _ctx: &Ctx,
+        ) -> Result<(), bun_core::Error> {
+            todo!("blocked_on: crate::cli::test::parallel (ParallelRunner)")
+        }
+        pub fn run_as_coordinator<R, Vm, F, Ctx, Cov>(
+            _r: &mut R,
+            _vm: Vm,
+            _files: F,
+            _ctx: &Ctx,
+            _cov: &mut Cov,
+        ) -> Result<bool, bun_core::Error> {
+            todo!("blocked_on: crate::cli::test::parallel (ParallelRunner)")
+        }
+    }
+}
 #[path = "Arguments.rs"]
 pub mod arguments;
 pub use arguments as Arguments;

@@ -253,11 +253,10 @@ pub mod npm_registry {
 // PORT STATUS
 //   source:     src/options_types/schema.zig  api.{NpmRegistry, NpmRegistryMap,
 //               BunInstall} + inline `ca` union (lines ~2807–3070)
-//   confidence: high (data shapes) / low (npm_registry::Parser bodies)
-//   todos:      3
+//   confidence: high (data shapes + npm_registry::Parser url-string path)
+//   todos:      2
 //   notes:      Hand-port of the install-config slice of the peechy schema so
-//               bun_ini / bun_install can un-gate. `decode`/`encode` and the
-//               registry-URL Parser stay stubbed pending the schema
-//               Reader/Writer trait + bun_url wiring. Full peechy `.rs`
-//               codegen replaces this file when it lands.
+//               bun_ini / bun_install can un-gate. `decode`/`encode` stay
+//               stubbed pending the schema Reader/Writer trait. Full peechy
+//               `.rs` codegen replaces this file when it lands.
 // ──────────────────────────────────────────────────────────────────────────

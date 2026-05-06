@@ -1741,13 +1741,25 @@ impl<Enc: Encoding> NodeScalar<Enc> {
                 Expr::init(E::Number { value: *value }, pos.loc())
             }
             NodeScalar::String(value) => {
-                // TODO(port): E.String wants &[u8]; for Utf16 this needs transcoding.
-                // Route through `Encoding::key_bytes` (identity for u8, panics
-                // for u16) — same lazy-monomorph behavior as the Zig source.
-                Expr::init(
-                    E::String::init(Enc::key_bytes(value.slice(input))),
-                    pos.loc(),
-                )
+                // Zig: `.init(E.String, .{ .data = value.slice(input) }, pos.loc())`.
+                // `E.String.data` is `[]const u8`, so the Zig source only
+                // type-checks for `unit() == u8`. For `Utf16` we route through
+                // `E::String::init_utf16` instead of mirroring the Zig compile
+                // error (Rust eagerly monomorphizes).
+                let s = value.slice(input);
+                let estring = match Enc::KIND {
+                    EncodingKind::Utf16 => {
+                        // SAFETY: `Enc::Unit == u16` when `KIND == Utf16`;
+                        // reinterpret with the same element count for
+                        // `E::String::init_utf16` (which sets `is_utf16`).
+                        let s16 = unsafe {
+                            core::slice::from_raw_parts(s.as_ptr() as *const u16, s.len())
+                        };
+                        E::String::init_utf16(s16)
+                    }
+                    _ => E::String::init(Enc::key_bytes(s)),
+                };
+                Expr::init(estring, pos.loc())
             }
         }
     }

@@ -421,21 +421,26 @@ impl Blob {
     }
 }
 
-// TODO(port): NewInternalReadFileHandler — generic adapter that erases ctx type.
-pub struct NewInternalReadFileHandler<C, F> {
-    _p: core::marker::PhantomData<(C, F)>,
+/// Carries `Function(ctx, bytes)` at the type level — Zig's
+/// `comptime Function: anytype` becomes a trait impl so `run` can be taken as a
+/// plain `fn(*mut c_void, ReadFileResultType)` thunk, monomorphized per `(C, F)`.
+pub trait InternalReadFileFn<C> {
+    fn call(ctx: *mut C, bytes: read_file::ReadFileResultType);
 }
+
+pub struct NewInternalReadFileHandler<C, F>(core::marker::PhantomData<(C, F)>);
+
 impl<C, F> NewInternalReadFileHandler<C, F>
 where
-    F: Fn(C, read_file::ReadFileResultType),
+    F: InternalReadFileFn<C>,
 {
+    /// Type-erased thunk: `handler` is the `*mut C` ctx that was passed into
+    /// `ReadFile`/`ReadFileUV` cast to `*anyopaque`. Mirrors Zig
+    /// `Function(bun.cast(Context, handler), bytes)`.
     pub fn run(handler: *mut c_void, bytes: read_file::ReadFileResultType) {
-        // SAFETY: handler was created from Box<C>::into_raw by the caller.
-        let ctx: C = unsafe { core::ptr::read(handler.cast()) };
-        // TODO(port): cannot name F as a value here without a fn-pointer; in Zig
-        // this is a comptime fn. Phase B: pass F as a fn pointer.
-        let _ = (ctx, bytes);
-        unimplemented!("NewInternalReadFileHandler::run — comptime fn dispatch");
+        // SAFETY: every call site passes a `*mut C` (Zig `*Handler`) round-tripped
+        // through `*anyopaque`; `bun.cast` is the inverse pointer cast.
+        F::call(handler.cast::<C>(), bytes);
     }
 }
 

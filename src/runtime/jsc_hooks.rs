@@ -2753,7 +2753,12 @@ unsafe fn transpile_virtual_module(
     let virtual_source =
         bun_logger::Source::init_path_string(specifier, source_code_slice.slice());
     let mut log = bun_logger::Log::init();
-    let path = Fs::Path::init(specifier);
+    // SAFETY: `TranspileExtra::path` is typed `'static` for the cross-crate
+    // fn-ptr ABI; the borrow actually lives only for this call (the `extra`
+    // struct is consumed by `transpile_source_code_inner` before
+    // `specifier_slice` drops). Same erasure as `transpile_file` above.
+    let path: Fs::Path<'static> =
+        unsafe { core::mem::transmute::<Fs::Path<'_>, Fs::Path<'static>>(Fs::Path::init(specifier)) };
 
     // Spec :1262-1270 — `loader_ != ._none ? fromAPI(loader_) : loaders.get(ext)
     // orelse (specifier == main ? .js : .file)`.

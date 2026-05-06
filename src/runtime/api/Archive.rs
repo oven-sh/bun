@@ -154,6 +154,8 @@ const _: () = {
         fn __from_js_direct(value: JSValue) -> *mut Archive;
         #[link_name = "Archive__create"]
         fn __create(global: *mut JSGlobalObject, ptr: *mut Archive) -> JSValue;
+        #[link_name = "Archive__getConstructor"]
+        fn __get_constructor(global: *mut JSGlobalObject) -> JSValue;
     }
     #[cfg(not(all(windows, target_arch = "x86_64")))]
     unsafe extern "C" {
@@ -163,6 +165,8 @@ const _: () = {
         fn __from_js_direct(value: JSValue) -> *mut Archive;
         #[link_name = "Archive__create"]
         fn __create(global: *mut JSGlobalObject, ptr: *mut Archive) -> JSValue;
+        #[link_name = "Archive__getConstructor"]
+        fn __get_constructor(global: *mut JSGlobalObject) -> JSValue;
     }
 
     impl bun_jsc::JsClass for Archive {
@@ -181,6 +185,10 @@ const _: () = {
             // SAFETY: `global` is live; ownership of `ptr` transfers to the
             // C++ wrapper (freed via `ArchiveClass__finalize` → `finalize()`).
             unsafe { __create(global as *const _ as *mut _, ptr) }
+        }
+        fn get_constructor(global: &JSGlobalObject) -> JSValue {
+            // SAFETY: `global` is live; codegen extern returns the cached ctor.
+            unsafe { __get_constructor(global as *const _ as *mut _) }
         }
     }
 };

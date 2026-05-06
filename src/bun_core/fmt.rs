@@ -2896,5 +2896,5 @@ fn splat_byte_all(w: &mut impl fmt::Write, byte: u8, count: usize) -> fmt::Resul
 //   source:     src/bun_core/fmt.zig (1851 lines)
 //   confidence: medium
 //   todos:      27
-//   notes:      Output.prettyFmt comptime-format-string expansion stubbed with raw ANSI; format_ip needs Address type + reborrow plumbing; JSX while-else in highlighter matches Zig's (likely buggy) always-break behavior.
+//   notes:      Output.prettyFmt comptime-format-string expansion stubbed with raw ANSI; format_ip takes &impl Display until bun_net Address lands; JSX while-else in highlighter matches Zig's (likely buggy) always-break behavior.
 // ──────────────────────────────────────────────────────────────────────────

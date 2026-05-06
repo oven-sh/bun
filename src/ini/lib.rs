@@ -1501,14 +1501,14 @@ pub fn load_npmrc(
     }
 
     if let Some(public_hoist_pattern_expr) = out.get(b"public-hoist-pattern") {
-        // TODO(b2-blocked): bun_install_types::NodeLinker::PnpmMatcher::from_expr
-        install.public_hoist_pattern = match bun_install_types::NodeLinker::PnpmMatcher::from_expr(
-            public_hoist_pattern_expr,
+        install.public_hoist_pattern = match pnpm_matcher_from_expr(
+            &public_hoist_pattern_expr,
             log,
             source,
+            bump,
         ) {
-            Ok(v) => v,
-            Err(e) if e == bun_core::err!("OutOfMemory") => return Err(AllocError),
+            Ok(v) => Some(v),
+            Err(FromExprError::OutOfMemory) => return Err(AllocError),
             Err(_) => {
                 // error.InvalidRegExp, error.UnexpectedExpr
                 log.reset();
@@ -1518,14 +1518,14 @@ pub fn load_npmrc(
     }
 
     if let Some(hoist_pattern_expr) = out.get(b"hoist-pattern") {
-        // TODO(b2-blocked): bun_install_types::NodeLinker::PnpmMatcher::from_expr
-        install.hoist_pattern = match bun_install_types::NodeLinker::PnpmMatcher::from_expr(
-            hoist_pattern_expr,
+        install.hoist_pattern = match pnpm_matcher_from_expr(
+            &hoist_pattern_expr,
             log,
             source,
+            bump,
         ) {
-            Ok(v) => v,
-            Err(e) if e == bun_core::err!("OutOfMemory") => return Err(AllocError),
+            Ok(v) => Some(v),
+            Err(FromExprError::OutOfMemory) => return Err(AllocError),
             Err(_) => {
                 // error.InvalidRegExp, error.UnexpectedExpr
                 log.reset();

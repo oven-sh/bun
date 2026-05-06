@@ -428,15 +428,12 @@ pub mod stdin_tty {
     }
 }
 
+/// Zig spec (source.zig:357) calls `bun.jsc.VirtualMachine.get().uvLoop()` directly,
+/// which is a T6 dependency. PORTING.md §Forbidden bans dep-cycle fn-ptr hooks, so
+/// the uv loop is taken as a parameter instead; the C++ caller
+/// (`ProcessBindingTTYWrap.cpp`) supplies `defaultGlobalObject()->uvLoop()`.
 #[unsafe(no_mangle)]
-pub extern "C" fn Source__setRawModeStdin(raw: bool) -> c_int {
-    // CYCLEBREAK(hook): `bun_jsc::VirtualMachine::get().uv_loop()` (T6) routed
-    // through `UV_LOOP_HOOK`; bun_runtime registers the fn-ptr at init.
-    let uv_loop_hook = crate::UV_LOOP_HOOK.load(core::sync::atomic::Ordering::Relaxed);
-    debug_assert!(!uv_loop_hook.is_null(), "UV_LOOP_HOOK unset");
-    // SAFETY: hook is `unsafe fn() -> *mut uv::Loop` cast to `*mut ()`.
-    let uv_loop: *mut uv::Loop =
-        unsafe { core::mem::transmute::<*mut (), unsafe fn() -> *mut uv::Loop>(uv_loop_hook)() };
+pub extern "C" fn Source__setRawModeStdin(uv_loop: *mut uv::Loop, raw: bool) -> c_int {
     let tty = match Source::open_tty(uv_loop, Fd::stdin()) {
         bun_sys::Result::Ok(tty) => tty,
         bun_sys::Result::Err(e) => return e.errno as c_int,

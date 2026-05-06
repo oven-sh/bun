@@ -170,16 +170,24 @@ pub fn populate_manifest_cache(
     let _ = manager.schedule_tasks();
 
     if manager.pending_task_count() > 0 {
-        struct RunClosure<'a> {
-            manager: &'a mut PackageManager,
+        struct RunClosure {
+            // PORT NOTE: Zig stores `*PackageManager` non-exclusively;
+            // `sleep_until` also receives this raw pointer, so storing
+            // `&mut PackageManager` here would alias under Stacked Borrows.
+            manager: *mut PackageManager,
             err: Option<bun_core::Error>,
         }
-        impl<'a> RunClosure<'a> {
+        impl RunClosure {
             pub fn is_done(closure: &mut Self) -> bool {
-                if let Err(err) = closure.manager.run_tasks(
+                // SAFETY: `closure.manager` is the raw provenance root set
+                // below; `sleep_until`/`tick_raw` hold no `&mut` across this
+                // callback, so this is the unique live borrow.
+                let manager = unsafe { &mut *closure.manager };
+                let log_level = manager.options.log_level;
+                if let Err(err) = manager.run_tasks(
                     // TODO(port): Zig passed `(comptime *PackageManager, closure.manager)` — the
                     // generic context pair collapses to a single &mut in Rust.
-                    closure.manager,
+                    manager,
                     crate::RunTasksOptions {
                         on_extract: (),
                         on_resolve: (),
@@ -189,13 +197,13 @@ pub fn populate_manifest_cache(
                         manifests_only: true,
                     },
                     true,
-                    closure.manager.options.log_level,
+                    log_level,
                 ) {
                     closure.err = Some(err);
                     return true;
                 }
 
-                closure.manager.pending_task_count() == 0
+                manager.pending_task_count() == 0
             }
         }
 
@@ -210,7 +218,9 @@ pub fn populate_manifest_cache(
         unsafe { PackageManager::sleep_until(mgr, &mut run_closure, RunClosure::is_done) };
 
         if log_level.show_progress() {
-            run_closure.manager.end_progress_bar();
+            // SAFETY: `mgr` is still the live provenance root; `sleep_until`
+            // has returned so no competing borrow exists.
+            unsafe { (*mgr).end_progress_bar() };
             Output::flush();
         }
 

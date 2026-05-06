@@ -74,9 +74,11 @@ pub use crate::waker::Waker;
 pub use crate::closer::Closer;
 use bun_sys::{self as sys, Fd, FdExt, E};
 
-// TODO(port): Zig scope name was `.loop`, which is a Rust keyword. Using `io_loop` here;
-// Phase B should ensure `BUN_DEBUG_loop=1` still maps to this scope.
-bun_core::declare_scope!(io_loop, visible);
+// Zig scope name is `.loop` (io.zig:11). `loop` is a Rust keyword, so the static is
+// named `io_loop` but the runtime tagname is `"loop"` so `BUN_DEBUG_loop=1` works.
+#[allow(non_upper_case_globals)]
+pub static io_loop: bun_core::output::ScopedLogger =
+    bun_core::output::ScopedLogger::new("loop", bun_core::output::Visibility::Visible);
 macro_rules! log {
     ($($args:tt)*) => { bun_core::scoped_log!(io_loop, $($args)*) };
 }
@@ -1005,10 +1007,11 @@ impl Poll {
             unsafe {
                 (vt.on_io_error)(
                     poll,
-                    sys::Error::from_code(
-                        core::mem::transmute::<i32, sys::Errno>(event.data as i32),
-                        sys::Tag::Kevent,
-                    ),
+                    // `event.data` is a kernel-supplied errno; do NOT transmute into the
+                    // closed `sys::Errno` enum (size mismatch on darwin/freebsd where it
+                    // is `#[repr(u16)]`, and UB for unmapped discriminants). Store the
+                    // raw integer via `from_code_int` (Zig: `@enumFromInt(event.data)`).
+                    sys::Error::from_code_int(event.data as core::ffi::c_int, sys::Tag::Kevent),
                 )
             };
         } else {
@@ -1307,11 +1310,6 @@ impl FilePoll {
         }
     }
 }
-
-/// CYCLEBREAK(hook): `bun_jsc::VirtualMachine::get().uv_loop()` for the
-/// Windows-only `Source__setRawModeStdin` C export. `bun_runtime` writes the
-/// fn-ptr at init; null on POSIX (never called there).
-pub static UV_LOOP_HOOK: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
 
 /// CYCLEBREAK(TYPE_ONLY): moved from `bun_runtime::webcore::PathOrFileDescriptor`.
 /// Owned here so `open_for_writing` has no upward dep; runtime re-exports it.

@@ -294,13 +294,19 @@ pub fn install_hoisted_packages(
             struct Closure<'a> {
                 installer: &'a mut PackageInstaller,
                 err: Option<bun_core::Error>,
-                manager: &'a mut PackageManager,
+                // PORT NOTE: raw `*mut` (Zig `*PackageManager`) — `sleep_until`
+                // also receives this pointer, so `&mut` here would alias.
+                manager: *mut PackageManager,
             }
 
             impl<'a> Closure<'a> {
                 pub fn is_done(closure: &mut Self) -> bool {
-                    let pm = &*closure.manager;
-                    if let Err(err) = closure.manager.run_tasks(
+                    // SAFETY: `closure.manager` is the raw provenance root set
+                    // below; `sleep_until`/`tick_raw` hold no `&mut` across
+                    // this callback, so this is the unique live borrow.
+                    let manager = unsafe { &mut *closure.manager };
+                    let log_level = manager.options.log_level;
+                    if let Err(err) = manager.run_tasks(
                         closure.installer,
                         PackageManager::RunTasksCallbacks {
                             on_extract: PackageInstaller::install_enqueued_packages_after_extraction,
@@ -309,7 +315,7 @@ pub fn install_hoisted_packages(
                             on_package_download_error: (),
                         },
                         true,
-                        pm.options.log_level,
+                        log_level,
                     ) {
                         closure.err = Some(err);
                     }
@@ -318,10 +324,10 @@ pub fn install_hoisted_packages(
                         return true;
                     }
 
-                    closure.manager.report_slow_lifecycle_scripts();
+                    manager.report_slow_lifecycle_scripts();
 
-                    if PackageManager::verbose_install() && closure.manager.pending_task_count() > 0 {
-                        let pending_task_count = closure.manager.pending_task_count();
+                    if PackageManager::verbose_install() && manager.pending_task_count() > 0 {
+                        let pending_task_count = manager.pending_task_count();
                         if pending_task_count > 0 && PackageManager::has_enough_time_passed_between_waiting_messages() {
                             Output::pretty_errorln(format_args!(
                                 "<d>[PackageManager]<r> waiting for {} tasks\n",
@@ -330,7 +336,7 @@ pub fn install_hoisted_packages(
                         }
                     }
 
-                    closure.manager.pending_task_count() == 0 && closure.manager.has_no_more_pending_lifecycle_scripts()
+                    manager.pending_task_count() == 0 && manager.has_no_more_pending_lifecycle_scripts()
                 }
             }
 

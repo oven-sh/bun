@@ -414,13 +414,18 @@ pub fn enqueue_dependency_to_root(
 
             // https://github.com/ziglang/zig/issues/19586 — Zig needed a workaround fn-returning-type;
             // in Rust we just declare the closure struct directly.
-            struct Closure<'a> {
+            struct Closure {
                 err: Option<bun_core::Error>,
-                manager: &'a mut PackageManager,
+                // PORT NOTE: raw `*mut` (Zig `*PackageManager`) — `sleep_until`
+                // also receives this pointer, so `&mut` here would alias.
+                manager: *mut PackageManager,
             }
-            impl<'a> Closure<'a> {
+            impl Closure {
                 fn is_done(&mut self) -> bool {
-                    let manager = &mut *self.manager;
+                    // SAFETY: `self.manager` is the raw provenance root set
+                    // below; `sleep_until`/`tick_raw` hold no `&mut` across
+                    // this callback, so this is the unique live borrow.
+                    let manager = unsafe { &mut *self.manager };
                     if manager.pending_task_count() > 0 {
                         if let Err(err) = manager.run_tasks(
                             (),
@@ -442,7 +447,7 @@ pub fn enqueue_dependency_to_root(
                             if PackageManager::has_enough_time_passed_between_waiting_messages() {
                                 Output::pretty_errorln(format_args!(
                                     "<d>[PackageManager]<r> waiting for {} tasks\n",
-                                    self.manager.pending_task_count()
+                                    manager.pending_task_count()
                                 ));
                             }
                         }

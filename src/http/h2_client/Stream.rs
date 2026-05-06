@@ -131,23 +131,11 @@ impl Stream {
         unsafe { &*self.pending_body }
     }
 
-    pub fn rst(&mut self, code: wire::ErrorCode) {
-        if self.rst_done || self.state == State::Closed {
-            return;
-        }
-        self.rst_done = true;
-        self.state = State::Closed;
-        let value: [u8; 4] = (code as u32).to_be_bytes();
-        // SAFETY: `session` is a live backref while this Stream is in `session.streams`.
-        unsafe {
-            (*self.session).write_frame(
-                wire::FrameType::HTTP_FRAME_RST_STREAM,
-                0,
-                self.id,
-                &value,
-            );
-        }
-    }
+    // PORT NOTE: Stream.zig:rst() re-entered the session via the `session`
+    // backref. In Rust that autorefs a second `&mut ClientSession` while
+    // `parse_frames`' `&mut ClientSession` is still live (Stacked-Borrows UB),
+    // so RST is routed through `ClientSession::rst_stream` instead — the
+    // session `&mut` is already in scope at every call site.
 
     pub fn sent_end_stream(&mut self) {
         self.state = match self.state {

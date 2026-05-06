@@ -20,10 +20,8 @@ use crate::source::Source;
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
 
-bun_core::declare_scope!(PipeReader, hidden);
-macro_rules! log {
-    ($($args:tt)*) => { bun_core::scoped_log!(PipeReader, $($args)*) };
-}
+// PipeReader.zig declares no `Output.scoped(.PipeReader, …)` scope; all logging
+// goes through `bun.sys.syslog` (the `SYS` scope) or `libuv::log!`.
 
 // ──────────────────────────────────────────────────────────────────────────
 // BufferedReaderVTable
@@ -545,9 +543,7 @@ impl PosixBufferedReader {
 
     pub fn on_poll(parent: &mut PosixBufferedReader, size_hint: isize, received_hup: bool) {
         let fd = parent.get_fd();
-        // TODO(b2-blocked): bun_sys::syslog — macro calls Scope::log with one arg
-        // (needs two); route through this module's scope until fixed.
-        log!("onPoll({}) = {}", fd, size_hint);
+        bun_sys::syslog!("onPoll({}) = {}", fd, size_hint);
 
         match parent.get_file_type() {
             FileType::NonblockingPipe => {

@@ -94,7 +94,8 @@ pub fn write_request(
 
     if let Some(cap) = session.pending_hpack_enc_capacity {
         session.pending_hpack_enc_capacity = None;
-        session.hpack().set_encoder_max_capacity(cap);
+        // SAFETY: sole live borrow of the HPACK table.
+        unsafe { session.hpack() }.set_encoder_max_capacity(cap);
         encoded.reserve(8);
         encode_hpack_table_size_update(&mut encoded, cap);
     }
@@ -392,8 +393,9 @@ pub fn encode_header(
     // SAFETY: `hpack.encode` writes only into `[len..len+written]`, which is
     // within the just-reserved capacity; bytes in `[0..len]` are initialized.
     let buf = unsafe { core::slice::from_raw_parts_mut(encoded.as_mut_ptr(), encoded.capacity()) };
-    let written = session
-        .hpack()
+    // SAFETY: sole live borrow of the HPACK table; `buf` aliases only
+    // `encode_scratch`, which was moved out of `session` above.
+    let written = unsafe { session.hpack() }
         .encode(name, value, never_index, buf, encoded.len())
         .map_err(|e| bun_core::err!(from e))?;
     // SAFETY: hpack wrote `written` bytes at offset `len`; new_len <= capacity.

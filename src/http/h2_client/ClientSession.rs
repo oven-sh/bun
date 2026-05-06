@@ -160,14 +160,17 @@ impl ClientSession {
         self.registry_index.set(i);
     }
 
+    /// # Safety
+    /// `hpack` is a disjoint FFI heap allocation owned for the session's
+    /// lifetime (init in `create`, freed in `Drop`). Taking `&self` (not
+    /// `&mut self`) lets callers borrow other session fields alongside the
+    /// returned `&mut HPACK`. The caller must ensure no other live `&mut`
+    /// to the HPACK table overlaps the returned borrow — the type system
+    /// cannot enforce this through `&self`, so two `s.hpack()` calls with
+    /// overlapping lifetimes would alias. Marked `unsafe` so each call site
+    /// carries that obligation explicitly.
     #[inline]
-    pub(crate) fn hpack(&self) -> &mut lshpack::HPACK {
-        // SAFETY: `hpack` is a disjoint FFI heap allocation owned for the
-        // session's lifetime (init in `create`, freed in `Drop`). Taking
-        // `&self` (not `&mut self`) lets callers borrow other session fields
-        // alongside the returned `&mut HPACK`; this is sound because no other
-        // path produces a borrow of the HPACK allocation, so the returned
-        // `&mut` is always unique.
+    pub(crate) unsafe fn hpack(&self) -> &mut lshpack::HPACK {
         unsafe { &mut *self.hpack }
     }
 
@@ -176,7 +179,7 @@ impl ClientSession {
     /// `session` backref is not dereferenced while `&mut self` is already
     /// live on the stack — re-entering via the raw backref would form a
     /// second aliased `&mut ClientSession` (Stacked-Borrows UB).
-    fn rst_stream(&mut self, stream: &mut Stream, code: wire::ErrorCode) {
+    pub(crate) fn rst_stream(&mut self, stream: &mut Stream, code: wire::ErrorCode) {
         if stream.rst_done || stream.state == StreamState::Closed {
             return;
         }

@@ -22,7 +22,7 @@ pub struct GetOrPutResult<'a> {
 
 impl PathToSourceIndexMap {
     pub fn get_path(&self, path: &FsPath) -> Option<IndexInt> {
-        self.get(path.text.as_bytes())
+        self.get(path.text)
     }
 
     pub fn get(&self, text: &[u8]) -> Option<IndexInt> {
@@ -30,7 +30,7 @@ impl PathToSourceIndexMap {
     }
 
     pub fn put_path(&mut self, path: &FsPath, value: IndexInt) -> Result<(), bun_alloc::AllocError> {
-        self.put(path.text.as_bytes(), value)
+        self.put(path.text, value)
     }
 
     pub fn put(&mut self, text: &[u8], value: IndexInt) -> Result<(), bun_alloc::AllocError> {
@@ -42,7 +42,7 @@ impl PathToSourceIndexMap {
     }
 
     pub fn get_or_put_path(&mut self, path: &FsPath) -> Result<GetOrPutResult<'_>, bun_alloc::AllocError> {
-        self.get_or_put(path.text.as_bytes())
+        self.get_or_put(path.text)
     }
 
     pub fn get_or_put(&mut self, text: &[u8]) -> Result<GetOrPutResult<'_>, bun_alloc::AllocError> {
@@ -61,7 +61,7 @@ impl PathToSourceIndexMap {
     }
 
     pub fn remove_path(&mut self, path: &FsPath) -> bool {
-        self.remove(path.text.as_bytes())
+        self.remove(path.text)
     }
 }
 

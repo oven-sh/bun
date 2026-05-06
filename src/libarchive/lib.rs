@@ -321,7 +321,7 @@ fn is_symlink_target_safe(
     }
 
     // Get the directory containing the symlink
-    let symlink_dir = bun_paths::dirname(symlink_path);
+    let symlink_dir = bun_paths::dirname_simple(symlink_path);
 
     // Use a fake root to resolve the path and check if it escapes
     let fake_root: &[u8] = b"/packages/";
@@ -508,7 +508,7 @@ impl Archiver {
                     // pathname = sliceTo(remaining[..len :0], 0)
                     let pathname = slice_to_nul(remaining);
                     let dirname =
-                        strings::trim(bun_paths::dirname(pathname), SEP_STR.as_bytes());
+                        strings::trim(bun_paths::dirname_simple(pathname), SEP_STR.as_bytes());
 
                     // SAFETY: entry valid
                     let size: usize =
@@ -789,7 +789,7 @@ impl Archiver {
                                             bun_sys::E::EEXIST | bun_sys::E::ENOTDIR => continue,
                                             _ => {}
                                         }
-                                        let dirname = bun_paths::dirname(path_slice);
+                                        let dirname = bun_paths::dirname_simple(path_slice);
                                         if dirname.is_empty() {
                                             return Err(err.into());
                                         }
@@ -837,7 +837,7 @@ impl Archiver {
                                         bun_sys::E::EACCES
                                         | bun_sys::E::EPERM
                                         | bun_sys::E::ENOENT => {
-                                            let dirname = bun_paths::dirname(path_slice);
+                                            let dirname = bun_paths::dirname_simple(path_slice);
                                             if dirname.is_empty() {
                                                 return Err(err.into());
                                             }
@@ -906,7 +906,7 @@ impl Archiver {
                                         bun_sys::E::EACCES
                                         | bun_sys::E::EPERM
                                         | bun_sys::E::ENOENT => {
-                                            let dirname = bun_paths::dirname(path_slice);
+                                            let dirname = bun_paths::dirname_simple(path_slice);
                                             if dirname.is_empty() {
                                                 return Err(err.into());
                                             }

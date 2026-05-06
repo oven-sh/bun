@@ -112,7 +112,7 @@ impl<'a> PatchFile<'a> {
                     let from_path = ZBox::from_vec_with_nul(file_rename.from_path.to_vec());
                     let to_path = ZBox::from_vec_with_nul(file_rename.to_path.to_vec());
 
-                    let todir = paths::dirname(to_path.as_bytes());
+                    let todir = paths::dirname_simple(to_path.as_bytes());
                     if !todir.is_empty() {
                         let abs_patch_dir = match state.patch_dir_abs_path(patch_dir) {
                             sys::Result::Ok(p) => p,
@@ -139,7 +139,7 @@ impl<'a> PatchFile<'a> {
                 PatchFilePart::FileCreation(file_creation) => {
                     let filepath_z = ZBox::from_vec_with_nul(file_creation.path.to_vec());
                     let filepath = PathString::init(filepath_z.as_bytes());
-                    let filedir = paths::dirname(filepath.slice());
+                    let filedir = paths::dirname_simple(filepath.slice());
                     let mode = file_creation.mode;
 
                     if !filedir.is_empty() {

@@ -457,7 +457,7 @@ impl CompileTarget {
                         if mv.is_err() {
                             if !did_retry {
                                 did_retry = true;
-                                let dirname = path::dirname(dest_z.as_bytes());
+                                let dirname = path::dirname_simple(dest_z.as_bytes());
                                 if !dirname.is_empty() {
                                     let _ = bun_sys::Dir::cwd().make_path(dirname);
                                     continue;

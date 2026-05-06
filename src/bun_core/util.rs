@@ -1123,7 +1123,7 @@ impl<T> Once<T, ()> {
     #[inline] pub fn done(&self) -> bool { self.cell.get().is_some() }
 }
 impl<T, A> Once<T, fn(A) -> T> {
-    pub const fn new(f: fn(A) -> T) -> Self { Self { cell: std::sync::OnceLock::new(), f } }
+    pub const fn with_fn(f: fn(A) -> T) -> Self { Self { cell: std::sync::OnceLock::new(), f } }
     /// Run the stored fn exactly once with `arg`; returns a borrow of the cached
     /// payload. Bound to `&'static self` because every call site is a `static`.
     #[inline]

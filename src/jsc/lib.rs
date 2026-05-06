@@ -2190,7 +2190,7 @@ pub mod webcore {
             /// file-backed `Store`.
             pub fn init_file(
                 pathlike: crate::node::PathOrFileDescriptor,
-                mime_type: Option<&bun_http::MimeType>,
+                mime_type: Option<&bun_http::MimeType::MimeType>,
             ) -> Result<*mut Store, bun_core::AllocError> {
                 let _ = (pathlike, mime_type);
                 // TODO(b2): bun_webcore forward-dep — gated.

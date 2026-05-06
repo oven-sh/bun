@@ -52,7 +52,7 @@ pub struct TemporaryDirectory {
 // However, we want it to be reused! Otherwise a cache is silly.
 //   Error RenameAcrossMountPoints moving react-is to cache dir:
 static GET_TEMPORARY_DIRECTORY_ONCE: bun_core::Once<TemporaryDirectory, fn(&mut PackageManager) -> TemporaryDirectory> =
-    bun_core::Once::new(get_temporary_directory_run);
+    bun_core::Once::with_fn(get_temporary_directory_run);
 
 fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirectory {
     let cache_directory = get_cache_directory(manager);

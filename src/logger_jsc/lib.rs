@@ -18,30 +18,15 @@ use bun_jsc::{
 pub fn msg_from_js(global_object: &JSGlobalObject, file: &'static [u8], err: JSValue) -> JsResult<Msg> {
     let mut zig_exception_holder = jsc::zig_exception::Holder::init();
 
-    let message: bun_string::String = match err.to_error() {
-        Some(value) => {
-            // TODO(b2-blocked): bun_jsc::ZigException field surface (`.message`).
-            // `bun_jsc::zig_exception::Holder::{init, zig_exception}` are now
-            // un-gated, but `bun_jsc::ZigException` itself is still an opaque
-            // `stub_ty!` (layout = `usize`) — the real `#[repr(C)]` struct with
-            // `pub message: bun_string::String` lives in bun_jsc's `_gated`
-            // module. Both the `to_zig_exception` FFI write and the `.message`
-            // read are unsound against the stub layout, so this arm stays
-            // re-gated until bun_jsc un-gates `ZigException.rs`.
-            
-            {
-                value.to_zig_exception(global_object, zig_exception_holder.zig_exception());
-                zig_exception_holder.zig_exception().message
-            }
-            let _ = (value, &mut zig_exception_holder);
-            todo!("logger_jsc::msg_from_js (Error branch) — blocked on bun_jsc::ZigException field surface")
-        }
-        None => err.to_bun_string(global_object)?,
-    };
+    if let Some(value) = err.to_error() {
+        value.to_zig_exception(global_object, zig_exception_holder.zig_exception());
+    } else {
+        zig_exception_holder.zig_exception().message = err.to_bun_string(global_object)?;
+    }
 
     Ok(Msg {
         data: Data {
-            text: Cow::Owned(message.to_owned_slice()),
+            text: Cow::Owned(zig_exception_holder.zig_exception().message.to_owned_slice()),
             location: Some(Location { file, line: 0, column: 0, ..Default::default() }),
         },
         ..Default::default()

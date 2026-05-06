@@ -1218,9 +1218,6 @@ mod _gated_impl {
             }
             // TODO(port): Environment.dump_source mapped to cfg feature; confirm flag name.
 
-            let is_commonjs_module = parse_result.ast.has_commonjs_export_names
-                || parse_result.ast.exports_kind == bun_js_parser::ExportsKind::Cjs;
-
             // SAFETY: per-thread VM.
             if unsafe { (*jsc_vm).is_watcher_enabled() } {
                 // SAFETY: per-thread VM.

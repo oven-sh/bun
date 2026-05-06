@@ -3884,13 +3884,13 @@ impl<'a> LinkerContext<'a> {
 
                 // If this is a .napi addon and it's not node, we need to generate a require() call to the runtime
                 if matches!(expr.data, bun_js_parser::ast::expr::Data::ECall(c)
-                    if matches!(c.target.data, bun_js_parser::ast::expr::Data::ERequireCallTarget(_)))
+                    if matches!(c.target.data, bun_js_parser::ast::expr::Data::ERequireCallTarget))
                     // if it's commonjs, use require()
                     && self.options.output_format != Format::Cjs
                 {
                     self.graph.generate_runtime_symbol_import_and_use(
                         source_index,
-                        crate::Index::part(1u32),
+                        crate::Index::part(1),
                         b"__require",
                         1,
                     )?;

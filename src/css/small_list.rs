@@ -883,9 +883,13 @@ use crate::css_parser as css;
 use crate::properties::text::TextShadow;
 
 // TODO(port): trait bound placeholder — any T with getImage()/withImage()/getFallback()/getNecessaryFallbacks()
-pub fn get_fallbacks_image<T>(this: &mut SmallList<T, 1>, targets: css::targets::Targets) -> BabyList<SmallList<T, 1>>
+pub fn get_fallbacks_image<T>(
+    this: &mut SmallList<T, 1>,
+    allocator: &bun_alloc::Arena,
+    targets: css::targets::Targets,
+) -> BabyList<SmallList<T, 1>>
 where
-    T: css::ImageFallback, // TODO(port): define this trait in css crate
+    T: super::ImageFallback,
 {
     use css::css_values::color::ColorFallbackKind;
     // Determine what vendor prefixes and color fallbacks are needed.

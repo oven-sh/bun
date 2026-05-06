@@ -2,7 +2,7 @@ use core::ffi::{c_char, c_int, c_void};
 use core::marker::{PhantomData, PhantomPinned};
 use core::ptr::NonNull;
 
-
+use bun_core::ZStr;
 
 pub use State as TCCState;
 
@@ -20,8 +20,9 @@ unsafe extern "C" {
     fn tcc_delete(s: *mut TCCState);
     fn tcc_set_lib_path(s: *mut TCCState, path: *const c_char);
     fn tcc_set_error_func(s: *mut TCCState, error_opaque: *mut c_void, error_func: TCCErrorFunc);
-    fn tcc_get_error_func(s: *mut TCCState) -> TCCErrorFunc;
-    fn tcc_get_error_opaque(s: *mut TCCState) -> *mut c_void;
+    // NOTE: tcc_get_error_func / tcc_get_error_opaque were removed from the libtcc public API
+    // (not present in vendor/tinycc/libtcc.h). tcc.zig:10-11 only escapes a link error via lazy
+    // analysis. Do not declare them here — referencing them would fail to link.
     fn tcc_set_options(s: *mut TCCState, str_: *const c_char) -> c_int;
     fn tcc_add_include_path(s: *mut TCCState, pathname: *const c_char) -> c_int;
     fn tcc_add_sysinclude_path(s: *mut TCCState, pathname: *const c_char) -> c_int;
@@ -46,8 +47,10 @@ unsafe extern "C" {
 
 const TCC_OUTPUT_MEMORY: c_int = 1;
 const TCC_OUTPUT_EXE: c_int = 2;
-const TCC_OUTPUT_DLL: c_int = 3;
-const TCC_OUTPUT_OBJ: c_int = 4;
+// NOTE: vendor/tinycc/libtcc.h defines OBJ=3, DLL=4 (Bun's fork swapped vs upstream).
+// tcc.zig:30-31 has these reversed — that is a latent spec bug; match libtcc.h here.
+const TCC_OUTPUT_OBJ: c_int = 3;
+const TCC_OUTPUT_DLL: c_int = 4;
 const TCC_OUTPUT_PREPROCESS: c_int = 5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error, strum::IntoStaticStr)]
@@ -238,17 +241,10 @@ impl State {
         unsafe { tcc_set_error_func(self, opaque, erased) }
     }
 
-    /// Return error/warning callback
-    pub fn get_error_func(&mut self) -> Option<ErrorFunc<c_void>> {
-        // SAFETY: self is a valid *mut TCCState.
-        unsafe { tcc_get_error_func(self) }
-    }
-
-    /// Return error/warning callback opaque pointer
-    pub fn get_error_opaque(&mut self) -> *mut c_void {
-        // SAFETY: self is a valid *mut TCCState.
-        unsafe { tcc_get_error_opaque(self) }
-    }
+    // NOTE: get_error_func / get_error_opaque wrappers removed — the underlying
+    // tcc_get_error_func / tcc_get_error_opaque symbols were dropped from the vendored
+    // libtcc.h and would fail to link if referenced. (tcc.zig:125-131 carries the same
+    // dead wrappers, surviving only via lazy analysis.)
 
     /// Set options as from command line (multiple supported)
     pub fn set_options(&mut self, str_: &ZStr) -> Result<(), Error> {

@@ -63,12 +63,15 @@ pub fn to_contain_any_values(
         }
 
         // handle failure
+        // PORT NOTE: Zig shared one `*Formatter` across both `toFmt` calls; in Rust each
+        // `to_fmt` borrows `&mut Formatter` for the lifetime of the returned adapter, so
+        // allocate a second formatter for the received value.
         let mut formatter = super::make_formatter(global);
+        let mut formatter2 = super::make_formatter(global);
         // `defer formatter.deinit()` — handled by Drop.
-        let value_fmt = value.to_fmt(&mut formatter);
         let expected_fmt = expected.to_fmt(&mut formatter);
+        let value_fmt = value.to_fmt(&mut formatter2);
         if not {
-            let received_fmt = value.to_fmt(&mut formatter);
             return this.throw(
                 global,
                 Expect::get_signature("toContainAnyValues", "<green>expected<r>", true),
@@ -78,7 +81,7 @@ pub fn to_contain_any_values(
                         "Expected to not contain any of the following values: <green>{}<r>\n",
                         "Received: <red>{}<r>\n",
                     ),
-                    expected_fmt, received_fmt,
+                    expected_fmt, value_fmt,
                 ),
             );
         }

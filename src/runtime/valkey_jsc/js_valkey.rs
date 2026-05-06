@@ -2130,13 +2130,11 @@ impl Options {
                     this.tls = valkey::TLS::Custom(ssl_config);
                 } else {
                     return Err(global_object
-                        .throw_invalid_argument_type("tls", "tls", "object")
-                        .into());
+                        .throw_invalid_argument_type("tls", "tls", "object"));
                 }
             } else {
                 return Err(global_object
-                    .throw_invalid_argument_type("tls", "tls", "boolean or object")
-                    .into());
+                    .throw_invalid_argument_type("tls", "tls", "boolean or object"));
             }
         }
 

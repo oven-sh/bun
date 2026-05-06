@@ -340,8 +340,9 @@ impl<T: RefCounted> RefCount<T> {
 
     /// The count is 0 after the destructor is called.
     pub fn assert_no_refs(&self) {
-        if cfg!(feature = "ci_assert") {
-            // TODO(port): bun.Environment.ci_assert → cfg feature name TBD
+        // PORT NOTE: `bun.Environment.ci_assert` → `cfg!(debug_assertions)` (closest analogue;
+        // see baby_list.rs). No `ci_assert` Cargo feature exists.
+        if cfg!(debug_assertions) {
             debug_assert!(self.raw_count.get() == 0);
         }
     }

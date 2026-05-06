@@ -302,25 +302,45 @@ impl<'a> UpgradedDuplex<'a> {
         Ok(array)
     }
 
+    // ── ssl_wrapper::Handlers<*mut Self> trampolines ──────────────────────
+    // SSLWrapper stores `fn(*mut Self, ..)` (not `fn(&mut Self, ..)`), so the
+    // private methods can't coerce directly. These thin shims bridge the
+    // raw-ptr ABI; SAFETY: `ctx` is `self as *mut UpgradedDuplex` set below
+    // and is live for the wrapper's lifetime (wrapper is owned by `self`).
+    fn tramp_on_open(this: *mut UpgradedDuplex<'a>) {
+        unsafe { (*this).on_open() }
+    }
+    fn tramp_on_handshake(this: *mut UpgradedDuplex<'a>, ok: bool, err: us_bun_verify_error_t) {
+        unsafe { (*this).on_handshake(ok, err) }
+    }
+    fn tramp_on_data(this: *mut UpgradedDuplex<'a>, data: &[u8]) {
+        unsafe { (*this).on_data(data) }
+    }
+    fn tramp_on_close(this: *mut UpgradedDuplex<'a>) {
+        unsafe { (*this).on_close() }
+    }
+    fn tramp_write(this: *mut UpgradedDuplex<'a>, data: &[u8]) {
+        unsafe { (*this).internal_write(data) }
+    }
+
+    fn ssl_handlers(&mut self) -> super::ssl_wrapper::Handlers<*mut UpgradedDuplex<'a>> {
+        super::ssl_wrapper::Handlers {
+            ctx: self as *mut UpgradedDuplex,
+            on_open: Self::tramp_on_open,
+            on_handshake: Self::tramp_on_handshake,
+            on_data: Self::tramp_on_data,
+            on_close: Self::tramp_on_close,
+            write: Self::tramp_write,
+        }
+    }
+
     pub fn start_tls(
         &mut self,
         ssl_options: &crate::server::server_config::SSLConfig,
         is_client: bool,
     ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
-        self.wrapper = Some(WrapperType::init(
-            ssl_options,
-            is_client,
-            // TODO(port): confirm SSLWrapper handlers struct shape (ctx + 5 fn ptrs).
-            super::ssl_wrapper::Handlers {
-                ctx: self as *mut UpgradedDuplex,
-                on_open: Self::on_open,
-                on_handshake: Self::on_handshake,
-                on_data: Self::on_data,
-                on_close: Self::on_close,
-                write: Self::internal_write,
-            },
-        )?);
+        self.wrapper = Some(WrapperType::init(ssl_options, is_client, self.ssl_handlers())?);
 
         self.wrapper.as_mut().unwrap().start();
         Ok(())

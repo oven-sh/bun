@@ -353,8 +353,8 @@ impl<'a> GlobalJS<'a> {
         // TODO(port): allocator param dropped (global mimalloc)
     ) -> Result<Box<[Option<*const c_char>]>, bun_core::Error> {
         // TODO(port): narrow error set
-        self.global_this
-            .bun_vm()
+        // SAFETY: bun_vm() is non-null for a Bun-owned global.
+        unsafe { &*self.global_this.bun_vm() }
             .transpiler
             .env
             .map
@@ -365,24 +365,26 @@ impl<'a> GlobalJS<'a> {
     pub fn enqueue_task_concurrent_wait_pid<T>(self, task: T) {
         // TODO(port): jsc::ConcurrentTask::create + jsc::Task::init are FFI helpers
         // `ConcurrentTask` is a *module* re-export in bun_jsc; the type lives inside it.
-        self.global_this
-            .bun_vm_concurrently()
-            .enqueue_task_concurrent(jsc::ConcurrentTask::ConcurrentTask::create(jsc::Task::init(task)));
+        let _ = task;
+        todo!("blocked_on: bun_jsc::JSGlobalObject::bun_vm_concurrently")
     }
 
     #[inline]
     pub fn top_level_dir(self) -> &'a [u8] {
-        self.global_this.bun_vm().transpiler.fs.top_level_dir()
+        // SAFETY: bun_vm() is non-null for a Bun-owned global.
+        unsafe { &*self.global_this.bun_vm() }.transpiler.fs.top_level_dir()
     }
 
     #[inline]
     pub fn env(self) -> &'a bun_dotenv::Loader<'a> {
-        &self.global_this.bun_vm().transpiler.env
+        // SAFETY: bun_vm() is non-null for a Bun-owned global.
+        &unsafe { &*self.global_this.bun_vm() }.transpiler.env
     }
 
     #[inline]
     pub fn platform_event_loop(self) -> &'a PlatformEventLoop {
-        jsc::AbstractVM(self.event_loop_ctx()).platform_event_loop()
+        let _ = self.event_loop_ctx();
+        todo!("blocked_on: bun_jsc::AbstractVM::platform_event_loop")
     }
 
     #[inline]

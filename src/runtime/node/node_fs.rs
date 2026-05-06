@@ -2232,7 +2232,7 @@ pub mod args {
             let mode_arg = arguments.next().unwrap_or(JSValue::UNDEFINED);
             let mode: Mode = match node::mode_from_js(ctx, mode_arg)? {
                 Some(m) => m,
-                None => { return Err(validators::throw_err_invalid_arg_type(ctx, "mode", "number", mode_arg)); }
+                None => { return Err(validators::throw_err_invalid_arg_type(ctx, format_args!("mode"), "number", mode_arg)); }
             };
             arguments.eat();
             Ok(Chmod { path: scopeguard::ScopeGuard::into_inner(path), mode })
@@ -2251,7 +2251,7 @@ pub mod args {
             let fd_value = arguments.next_eat().unwrap_or(JSValue::UNDEFINED);
             let fd = FD::from_js_validated(fd_value, ctx)?.ok_or_else(|| throw_invalid_fd_error(ctx, fd_value))?;
             let mode_arg = arguments.next().unwrap_or(JSValue::UNDEFINED);
-            let mode: Mode = node::mode_from_js(ctx, mode_arg)?.ok_or_else(|| validators::throw_err_invalid_arg_type(ctx, "mode", "number", mode_arg))?;
+            let mode: Mode = node::mode_from_js(ctx, mode_arg)?.ok_or_else(|| validators::throw_err_invalid_arg_type(ctx, format_args!("mode"), "number", mode_arg))?;
             arguments.eat();
             Ok(FChmod { fd, mode })
         }

@@ -2383,8 +2383,10 @@ impl ThreadSafeFunction {
             .swap(DispatchState::Pending as u8, Ordering::SeqCst);
         match prev {
             x if x == DispatchState::Idle as u8 => {
-                self.event_loop
-                    .enqueue_task_concurrent(ConcurrentTask::create_from(self));
+                let self_ptr: *mut Self = self;
+                // SAFETY: event_loop is the live JS-thread loop.
+                unsafe { &*self.event_loop }
+                    .enqueue_task_concurrent(ConcurrentTask::create_from(self_ptr));
             }
             x if x == DispatchState::Running as u8 => {
                 // it will check if it has more work to do

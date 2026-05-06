@@ -219,22 +219,50 @@ impl<'a> ProcessHandle<'a> {
         let _ = state.process_exit(self);
     }
 
-    pub fn event_loop(&self) -> &'static MiniEventLoop<'static> {
+    pub fn event_loop(&self) -> *mut MiniEventLoop<'static> {
         // SAFETY: state backref valid.
         unsafe { (*self.state).event_loop }
     }
 
-    pub fn loop_(&self) -> &bun_aio::Loop {
+    pub fn loop_(&self) -> *mut bun_aio::Loop {
         #[cfg(windows)]
         {
-            // SAFETY: state backref valid.
-            return unsafe { (*self.state).event_loop.loop_.uv_loop };
+            // SAFETY: state backref valid; event_loop is the live MiniEventLoop singleton.
+            return unsafe { (*(*self.state).event_loop).loop_.uv_loop };
         }
         #[cfg(not(windows))]
         {
-            // SAFETY: state backref valid.
-            return unsafe { (*self.state).event_loop.loop_ };
+            // SAFETY: state backref valid; event_loop is the live MiniEventLoop singleton.
+            return unsafe { (*(*self.state).event_loop).loop_ };
         }
+    }
+}
+
+// SAFETY: `this` is the `*mut ProcessHandle` registered via `set_parent`; the
+// reader holds no `&mut ProcessHandle` across the callback (it only holds a
+// `&mut` to the embedded `BufferedReader` field, which is disjoint from the
+// fields touched here per the `BufferedReaderParent` aliasing contract).
+impl<'a> bun_io::pipe_reader::BufferedReaderParent for ProcessHandle<'a> {
+    const HAS_ON_READ_CHUNK: bool = true;
+
+    unsafe fn on_read_chunk(this: *mut Self, chunk: &[u8], has_more: ReadState) -> bool {
+        unsafe { (*this).on_read_chunk(chunk, has_more) }
+    }
+    unsafe fn on_reader_done(this: *mut Self) {
+        unsafe { (*this).on_reader_done() }
+    }
+    unsafe fn on_reader_error(this: *mut Self, err: sys::Error) {
+        unsafe { (*this).on_reader_error(err) }
+    }
+    unsafe fn loop_(this: *mut Self) -> *mut bun_aio::Loop {
+        unsafe { (*this).loop_() }
+    }
+    unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
+        // CYCLEBREAK: bun_io::EventLoopHandle is an opaque `*mut c_void`; hand it
+        // the MiniEventLoop pointer (consumers reinterpret per io/lib.rs note).
+        // TODO(port): once bun_io::EventLoopHandle gains a typed init for the
+        // mini arm, route through it instead of the raw cast.
+        bun_io::EventLoopHandle(unsafe { (*this).event_loop() } as *mut c_void)
     }
 }
 

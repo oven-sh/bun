@@ -239,8 +239,11 @@ macro_rules! extern_crypto_job {
                             unsafe { Self::deinit(this) };
                         });
                         let vm = this.vm;
+                        // SAFETY: `vm` is the singleton JS VM, live for process lifetime.
+                        let global: &JSGlobalObject = unsafe { &*(*vm).global };
 
-                        if vm.is_shutting_down() {
+                        // SAFETY: see above.
+                        if unsafe { (*vm).is_shutting_down() } {
                             return;
                         }
 
@@ -248,21 +251,13 @@ macro_rules! extern_crypto_job {
                             return;
                         };
 
-                        let res: JsResult<()> = jsc::from_js_host_call_generic(vm.global, || {
+                        let res: JsResult<()> = jsc::from_js_host_call_generic(global, || {
                             // SAFETY: ctx is live until `deinit` below; `vm.global` is the VM's
                             // `*mut JSGlobalObject` field (mut provenance) — no const→mut cast needed.
-                            unsafe { ctx_run_from_js(this.ctx, vm.global, callback) };
+                            unsafe { ctx_run_from_js(this.ctx, (*vm).global, callback) };
                         });
                         if let Err(err) = res {
-                            // SAFETY: vm.global is the VM's `*mut JSGlobalObject`;
-                            // non-null while the VM lives.
-                            let global = unsafe { &*vm.global };
-                            let _ = global.report_uncaught_exception(
-                                global
-                                    .take_exception(err)
-                                    .as_exception(global.vm())
-                                    .expect("unreachable"),
-                            );
+                            global.report_active_exception_as_unhandled(err);
                         }
                     }
 
@@ -271,13 +266,13 @@ macro_rules! extern_crypto_job {
                         let mut this = unsafe { Box::from_raw(this) };
                         // SAFETY: ctx is the FFI-owned opaque handle; C++ owns its destructor.
                         unsafe { ctx_deinit(this.ctx) };
-                        this.poll.unref(this.vm);
-                        drop(this.callback.take()); // Strong: Drop deallocates the handle slot.
+                        this.poll.unref(vm_ctx());
+                        this.callback.deinit(); // Strong: deallocates the handle slot.
                         // Box drop frees `this`.
                     }
 
                     pub extern "C" fn schedule(this: &mut Job) {
-                        this.poll.r#ref(this.vm);
+                        this.poll.r#ref(vm_ctx());
                         WorkPool::schedule(&mut this.task);
                     }
                 }

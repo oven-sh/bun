@@ -4571,19 +4571,20 @@ pub fn server_set_app_flags_(
     use_strict_method_validation: bool,
 ) -> JsResult<JSValue> {
     if !server.is_object() {
-        return global.throw(format_args!("Failed to set requireHostHeader: The 'this' value is not a Server."));
+        return Err(global.throw(format_args!("Failed to set requireHostHeader: The 'this' value is not a Server.")));
     }
 
+    // SAFETY: as_ returned a non-null *mut to a live server.
     if let Some(this) = server.as_::<HTTPServer>() {
-        this.set_flags(require_host_header, use_strict_method_validation);
+        unsafe { &mut *this }.set_flags(require_host_header, use_strict_method_validation);
     } else if let Some(this) = server.as_::<HTTPSServer>() {
-        this.set_flags(require_host_header, use_strict_method_validation);
+        unsafe { &mut *this }.set_flags(require_host_header, use_strict_method_validation);
     } else if let Some(this) = server.as_::<DebugHTTPServer>() {
-        this.set_flags(require_host_header, use_strict_method_validation);
+        unsafe { &mut *this }.set_flags(require_host_header, use_strict_method_validation);
     } else if let Some(this) = server.as_::<DebugHTTPSServer>() {
-        this.set_flags(require_host_header, use_strict_method_validation);
+        unsafe { &mut *this }.set_flags(require_host_header, use_strict_method_validation);
     } else {
-        return global.throw(format_args!("Failed to set timeout: The 'this' value is not a Server."));
+        return Err(global.throw(format_args!("Failed to set timeout: The 'this' value is not a Server.")));
     }
     Ok(JSValue::UNDEFINED)
 }
@@ -4594,19 +4595,20 @@ pub fn server_set_max_http_header_size_(
     max_header_size: u64,
 ) -> JsResult<JSValue> {
     if !server.is_object() {
-        return global.throw(format_args!("Failed to set maxHeaderSize: The 'this' value is not a Server."));
+        return Err(global.throw(format_args!("Failed to set maxHeaderSize: The 'this' value is not a Server.")));
     }
 
+    // SAFETY: as_ returned a non-null *mut to a live server.
     if let Some(this) = server.as_::<HTTPServer>() {
-        this.set_max_http_header_size(max_header_size);
+        unsafe { &mut *this }.set_max_http_header_size(max_header_size);
     } else if let Some(this) = server.as_::<HTTPSServer>() {
-        this.set_max_http_header_size(max_header_size);
+        unsafe { &mut *this }.set_max_http_header_size(max_header_size);
     } else if let Some(this) = server.as_::<DebugHTTPServer>() {
-        this.set_max_http_header_size(max_header_size);
+        unsafe { &mut *this }.set_max_http_header_size(max_header_size);
     } else if let Some(this) = server.as_::<DebugHTTPSServer>() {
-        this.set_max_http_header_size(max_header_size);
+        unsafe { &mut *this }.set_max_http_header_size(max_header_size);
     } else {
-        return global.throw(format_args!("Failed to set maxHeaderSize: The 'this' value is not a Server."));
+        return Err(global.throw(format_args!("Failed to set maxHeaderSize: The 'this' value is not a Server.")));
     }
     Ok(JSValue::UNDEFINED)
 }

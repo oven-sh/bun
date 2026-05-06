@@ -30,8 +30,7 @@ impl Expect {
         }
 
         // Zig: `defer formatter.deinit();` — handled by Drop.
-        // TODO(port): Formatter has other defaulted fields in Zig; constructor shape may differ.
-        let mut formatter = Formatter::new(global).with_quote_strings(true);
+        let mut formatter = super::make_formatter(global);
         let received = value.to_fmt(&mut formatter);
 
         if not {

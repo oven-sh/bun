@@ -1510,7 +1510,7 @@ impl NodeHTTPResponse {
             }
             self.on_request_complete();
 
-            Ok(JSValue::js_number_from_u64(bytes.len() as u64))
+            Ok(JSValue::js_number_from_uint64(bytes.len() as u64))
         } else {
             let js_this = if !this_value.is_empty() {
                 this_value

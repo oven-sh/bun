@@ -336,7 +336,12 @@ impl CreateCommand {
 
         let mut progress = Progress::default();
         progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
-        let mut node = match example_tag {
+        // PORT NOTE: reshaped for borrowck — `Progress::start` returns
+        // `&mut Node` borrowing `progress` exclusively for the node's lifetime.
+        // Convert to `*mut` immediately so `progress` and `node` can be used
+        // independently below (matches Zig's pointer semantics; same pattern as
+        // `CreateListExamplesCommand::exec` at the bottom of this file).
+        let node: *mut ProgressNode = match example_tag {
             ExampleTag::JslikeFile => progress.start(
                 ProgressBuf::print(format_args!("Analyzing {}", bstr::BStr::new(template)))?,
                 0,
@@ -346,16 +351,25 @@ impl CreateCommand {
                 0,
             ),
         };
+        // SAFETY: `node` is `&mut progress.root`; both live on this stack frame
+        // for all of `exec`. Laundering through `*mut` decouples the borrowck-
+        // tracked exclusive borrow of `progress` (Node already holds
+        // `*mut Progress` internally).
+        let node: &mut ProgressNode = unsafe { &mut *node };
 
         // alacritty is fast
         if env_loader.map.get(b"ALACRITTY_LOG").is_some() {
             progress.refresh_rate_ns = (bun_core::time::NS_PER_MS * 8) as u64;
         }
 
-        let _refresh_on_exit = scopeguard::guard((), |_| progress.refresh());
-        // PORT NOTE: reshaped for borrowck — original Zig had `defer progress.refresh()`;
-        // we call progress.refresh() at fn exit explicitly because progress is borrowed mutably below.
-        // TODO(port): verify scopeguard borrow doesn't conflict with &mut progress uses below
+        // PORT NOTE: Zig `defer progress.refresh()`. Capture `*mut Progress` so
+        // the guard does not hold an exclusive borrow for the whole fn body;
+        // `progress` is declared earlier so it is still alive when this drops.
+        let progress_ptr: *mut Progress = &mut progress;
+        let _refresh_on_exit = scopeguard::guard(progress_ptr, |p| {
+            // SAFETY: see PORT NOTE above — `progress` outlives this guard.
+            unsafe { (*p).refresh() };
+        });
 
         let mut package_json_contents: MutableString = MutableString::default();
         let mut package_json_file: Option<bun_sys::File> = None;

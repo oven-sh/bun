@@ -79,22 +79,29 @@ impl PackageManagerCommand {
         // TODO(port): `pm.options.log_level != .silent` — blocked_on
         // bun_install::package_manager_real Options::LogLevel un-gate (reconciler-6).
         let not_silent = true;
-        let _ = pm;
-        if matches!(load_lockfile, lockfile::LoadResult::NotFound) {
-            if not_silent {
-                Output::err_generic("Lockfile not found", format_args!(""));
+        let _ = (load_lockfile, pm, not_silent);
+        // PORT NOTE: `bun_install::lockfile::LoadResult` is currently a unit-struct stub
+        // (gated behind `package_manager_real`, reconciler-6) with no `NotFound` / `Err`
+        // variants to match on. Real body preserved under `#[cfg(any())]` until un-gated.
+        todo!("blocked_on: bun_install::lockfile::LoadResult variants (NotFound/Err) — package_manager_real un-gate (reconciler-6)");
+        #[cfg(any())]
+        {
+            if matches!(load_lockfile, lockfile::LoadResult::NotFound) {
+                if not_silent {
+                    Output::err_generic("Lockfile not found", format_args!(""));
+                }
+                Global::exit(1);
             }
-            Global::exit(1);
-        }
 
-        if let lockfile::LoadResult::Err(err) = load_lockfile {
-            if not_silent {
-                Output::err_generic(
-                    "Error loading lockfile: {s}",
-                    format_args!("{}", err.value.name()),
-                );
+            if let lockfile::LoadResult::Err(err) = load_lockfile {
+                if not_silent {
+                    Output::err_generic(
+                        "Error loading lockfile: {s}",
+                        format_args!("{}", err.value.name()),
+                    );
+                }
+                Global::exit(1);
             }
-            Global::exit(1);
         }
     }
 

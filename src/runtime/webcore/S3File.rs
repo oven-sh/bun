@@ -319,7 +319,7 @@ pub fn construct_s3_file_with_s3_credentials_and_options(
     default_storage_class: Option<s3::StorageClass>,
     default_request_payer: bool,
 ) -> JsResult<Blob> {
-    let aws_options = s3::S3Credentials::get_credentials_with_options(
+    let aws_options = <s3::S3Credentials>::get_credentials_with_options(
         default_credentials.clone(),
         default_options,
         options,
@@ -329,11 +329,16 @@ pub fn construct_s3_file_with_s3_credentials_and_options(
         global,
     )?;
 
-    let store = 'brk: {
+    let mut store = 'brk: {
         if aws_options.changed_credentials {
-            break 'brk blob::Store::init_s3(path, None, aws_options.credentials);
+            break 'brk blob::Store::init_s3(path, None, aws_options.credentials).expect("oom");
         } else {
-            break 'brk blob::Store::init_s3_with_referenced_credentials(path, None, default_credentials);
+            break 'brk blob::Store::init_s3_with_referenced_credentials(
+                path,
+                None,
+                Arc::new(default_credentials.clone()),
+            )
+            .expect("oom");
         }
     };
     // errdefer store.deinit() — handled by Drop on early return
@@ -354,13 +359,15 @@ pub fn construct_s3_file_with_s3_credentials_and_options(
                             break 'inner;
                         }
                         blob.content_type_was_set = true;
-                        if let Some(entry) = global.bun_vm().mime_type(str.slice()) {
+                        // SAFETY: bun_vm() returns the live VM raw ptr.
+                        if let Some(entry) = unsafe { (*global.bun_vm()).mime_type(str.slice()) } {
                             blob.content_type = entry.value;
                             break 'inner;
                         }
                         let mut content_type_buf = vec![0u8; slice.len()].into_boxed_slice();
                         // TODO(port): blob.content_type ownership — Zig stores raw slice + allocated flag
                         blob.content_type = strings::copy_lowercase(slice, &mut content_type_buf);
+                        Box::leak(content_type_buf);
                         blob.content_type_allocated = true;
                     }
                 }
@@ -376,7 +383,7 @@ pub fn construct_s3_file_with_s3_credentials(
     options: Option<JSValue>,
     existing_credentials: s3::S3Credentials,
 ) -> JsResult<Blob> {
-    let aws_options = s3::S3Credentials::get_credentials_with_options(
+    let aws_options = <s3::S3Credentials>::get_credentials_with_options(
         existing_credentials,
         Default::default(),
         options,
@@ -404,13 +411,15 @@ pub fn construct_s3_file_with_s3_credentials(
                             break 'inner;
                         }
                         blob.content_type_was_set = true;
-                        if let Some(entry) = global.bun_vm().mime_type(str.slice()) {
+                        // SAFETY: bun_vm() returns the live VM raw ptr.
+                        if let Some(entry) = unsafe { (*global.bun_vm()).mime_type(str.slice()) } {
                             blob.content_type = entry.value;
                             break 'inner;
                         }
                         let mut content_type_buf = vec![0u8; slice.len()].into_boxed_slice();
                         // TODO(port): blob.content_type ownership — Zig stores raw slice + allocated flag
                         blob.content_type = strings::copy_lowercase(slice, &mut content_type_buf);
+                        Box::leak(content_type_buf);
                         blob.content_type_allocated = true;
                     }
                 }

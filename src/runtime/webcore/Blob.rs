@@ -1110,7 +1110,7 @@ impl Blob {
                 || e == bun_core::err!("TooSmall")
                 || e == bun_core::err!("InvalidValue") =>
             {
-                return global_this.throw("Blob.onStructuredCloneDeserialize failed");
+                return Err(global_this.throw("Blob.onStructuredCloneDeserialize failed"));
             }
             Err(e) if e == bun_core::err!("OutOfMemory") => {
                 return global_this.throw_out_of_memory();
@@ -1120,7 +1120,7 @@ impl Blob {
 
         // Advance the pointer by the number of bytes consumed
         // SAFETY: buffer_stream.pos() <= (end - *ptr) by construction; result stays within [*ptr, end].
-        *ptr = unsafe { (*ptr).add(buffer_stream.pos()) };
+        *ptr = unsafe { (*ptr).add(buffer_stream.pos) };
 
         Ok(result)
     }
@@ -1152,10 +1152,15 @@ impl Blob {
         };
         search_params.to_string(&mut converter, URLSearchParamsConverter::convert);
         let store = Store::init(converter.buf);
-        store.mime_type = MimeType::Compact::from(MimeType::Compact::ApplicationXWwwFormUrlencoded).to_mime_type();
+        store.mime_type = bun_http_types::MimeType::Compact::from(
+            bun_http_types::MimeType::Table::from_mime_literal(
+                "application/x-www-form-urlencoded;charset=UTF-8",
+            ),
+        )
+        .to_mime_type();
 
-        let mut blob = Blob::init_with_store(store, global_this);
-        blob.content_type = store.mime_type.value as *const [u8];
+        let mut blob = Blob::init_with_store(store.clone(), global_this);
+        blob.content_type = store.mime_type.value.as_ref() as *const [u8];
         blob.content_type_was_set = true;
         blob
     }

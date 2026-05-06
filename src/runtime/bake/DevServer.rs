@@ -24,7 +24,9 @@ use bun_jsc::{
 };
 use bun_bundler::Graph::InputFileListExt as _;
 use bun_bundler::linker_graph::FileListExt as _;
+use bun_bundler::options_impl::TargetExt as _;
 use bun_js_parser::ast::bundled_ast::BundledAstListExt as _;
+use bun_js_parser::ast::server_component_boundary::ServerComponentBoundarySliceExt as _;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_logger::Log;
 use bun_paths::{self as paths, PathBuffer, MAX_PATH_BYTES};
@@ -41,7 +43,7 @@ use bun_bundler::{self as bundler, options::Loader, BundleV2, Transpiler};
 use bun_http::{Method, MimeType};
 use bun_options_types::{ImportKind, ImportRecord};
 use crate::api::server::StaticRoute;
-use crate::timer::{EventLoopTimer, EventLoopTimerState};
+use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 use crate::api::{AnyServer, HTMLBundle, JSBundler, SavedRequest};
 use crate::server::html_bundle::HTMLBundleRoute;
 use crate::webcore::{Blob, Request as WebRequest, Response};

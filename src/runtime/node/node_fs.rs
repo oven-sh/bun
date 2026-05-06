@@ -215,6 +215,16 @@ fn js_event_loop_ctx() -> bun_aio::EventLoopCtx {
     bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js)
 }
 
+/// Bridge `crate::node::time_like::TimeLike` (= `libc::timespec` on POSIX) to
+/// the `bun_sys::TimeLike { sec, nsec }` shape that `Syscall::utimens` /
+/// `lutimens` / `futimens` now take. Windows goes through libuv (`uv_fs_utime`)
+/// and never reaches the `Syscall::*utimens` arms, so this is POSIX-only.
+#[cfg(not(windows))]
+#[inline]
+fn to_sys_timelike(t: TimeLike) -> bun_sys::TimeLike {
+    bun_sys::TimeLike { sec: t.tv_sec as i64, nsec: t.tv_nsec as i64 }
+}
+
 /// `WorkPoolTask` (aka `bun_threading::thread_pool::Task`) does not derive
 /// `Default` (its `callback` field has no sensible default). Build one with
 /// the intrusive `node` zeroed and the supplied callback. Mirrors Zig's
@@ -6024,7 +6034,12 @@ impl NodeFS {
                 Maybe::Err(sys::Error { errno, syscall: sys::Tag::utime, path: args.path.slice().into(), ..Default::default() })
             } else { Maybe::Ok(()) };
         }
-        match Syscall::utimens(args.path.slice_z(&mut self.sync_error_buf), args.atime, args.mtime) {
+        #[cfg(not(windows))]
+        match Syscall::utimens(
+            args.path.slice_z(&mut self.sync_error_buf),
+            to_sys_timelike(args.atime),
+            to_sys_timelike(args.mtime),
+        ) {
             Maybe::Err(err) => Maybe::Err(err.with_path(args.path.slice())),
             Maybe::Ok(_) => Maybe::Ok(()),
         }
@@ -6040,7 +6055,12 @@ impl NodeFS {
                 Maybe::Err(sys::Error { errno, syscall: sys::Tag::utime, path: args.path.slice().into(), ..Default::default() })
             } else { Maybe::Ok(()) };
         }
-        match Syscall::lutimens(args.path.slice_z(&mut self.sync_error_buf), args.atime, args.mtime) {
+        #[cfg(not(windows))]
+        match Syscall::lutimens(
+            args.path.slice_z(&mut self.sync_error_buf),
+            to_sys_timelike(args.atime),
+            to_sys_timelike(args.mtime),
+        ) {
             Maybe::Err(err) => Maybe::Err(err.with_path(args.path.slice())),
             Maybe::Ok(_) => Maybe::Ok(()),
         }

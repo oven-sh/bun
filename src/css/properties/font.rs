@@ -1118,13 +1118,13 @@ impl FontHandler {
         let variant_caps: Option<FontVariantCaps> = self.variant_caps.take();
 
         if let Some(f) = family.as_mut() {
-            if f.len() > 1 {
+            if f.len > 1 {
                 // Dedupe
                 // PERF(port): was std.heap.stackFallback(664, default_allocator) — profile in Phase B
                 let mut seen: FontFamilyHashMap<()> = Default::default();
 
                 let mut i: usize = 0;
-                while (i as u32) < f.len() {
+                while (i as u32) < f.len {
                     // TODO(port): seen.getOrPut equivalent — using entry API
                     let key = f.at(i).clone();
                     if seen.contains_key(&key) {

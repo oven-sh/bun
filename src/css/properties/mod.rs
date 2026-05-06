@@ -132,7 +132,7 @@ pub mod css_modules;
 // generics) un-gate.
 pub mod custom;
 
-mod properties_generated;
+pub mod properties_generated;
 mod properties_impl;
 
 // ─── Re-exports ────────────────────────────────────────────────────────────

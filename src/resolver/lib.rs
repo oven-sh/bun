@@ -6076,10 +6076,7 @@ impl<'a> Resolver<'a> {
                                         if let Some(d) = self.debug_logs.as_mut() { d.decrease_indent(); }
                                         return MatchResultUnion::NotFound;
                                     }
-                                    let mut builder = Semver::string::Builder::default();
-                                    esm.count(&mut builder);
-                                    builder.allocate().expect("unreachable");
-                                    let cloned = esm.clone_into(&mut builder);
+                                    let (cloned, string_buf) = esm.copy().expect("unreachable");
 
                                     if st == Install::PreinstallState::Extract {
                                         if let Err(enqueue_download_err) = manager.enqueue_package_for_download(
@@ -6101,7 +6098,7 @@ impl<'a> Resolver<'a> {
                                         esm: cloned,
                                         dependency: dependency_version,
                                         resolution_id: resolved_package_id,
-                                        string_buf: builder.allocated_slice(),
+                                        string_buf,
                                         tag: PendingResolutionTag::Download,
                                         ..Default::default()
                                     });
@@ -6453,16 +6450,13 @@ impl<'a> Resolver<'a> {
                     return DependencyToResolve::Resolution(result.resolution);
                 }
                 Install::EnqueueResult::Pending(id) => {
-                    let mut builder = Semver::string::Builder::default();
-                    esm.count(&mut builder);
-                    builder.allocate().expect("unreachable");
-                    let cloned = esm.clone_into(&mut builder);
+                    let (cloned, string_buf) = esm.copy().expect("unreachable");
 
                     return DependencyToResolve::Pending(PendingResolution {
                         esm: cloned,
                         dependency: version,
                         root_dependency_id: id,
-                        string_buf: builder.allocated_slice(),
+                        string_buf,
                         tag: PendingResolutionTag::Resolve,
                         ..Default::default()
                     });

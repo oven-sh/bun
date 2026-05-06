@@ -283,7 +283,7 @@ impl AnimationName {
     pub fn parse(input: &mut Parser) -> css::Result<Self> {
         // PORT NOTE: ported from src/css/properties/animation.zig — `none` keyword,
         // then `<string>`, else `<custom-ident>`.
-        if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
+        if input.try_parse(|i| i.expect_ident_matching(b"none")).is_ok() {
             return Ok(AnimationName::None);
         }
         if let Ok(s) = input.try_parse(|i| i.expect_string()) {
@@ -338,7 +338,7 @@ impl AnimationName {
                     || strings::eql_case_insensitive_ascii(name, b"revert-layer", true)
                 {
                     if css::serializer::serialize_string(name, dest).is_err() {
-                        return dest.add_fmt_error();
+                        return Err(dest.add_fmt_error());
                     }
                     return Ok(());
                 }

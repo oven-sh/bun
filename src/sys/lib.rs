@@ -2523,7 +2523,7 @@ pub fn writev(fd: Fd, vecs: &[PlatformIoVec]) -> Maybe<usize> {
 pub fn readv(fd: Fd, vecs: &[PlatformIoVec]) -> Maybe<usize> {
     #[cfg(debug_assertions)]
     if vecs.is_empty() {
-        bun_core::Output::debug_warn("readv() called with 0 length buffer", format_args!(""));
+        bun_core::Output::debug_warn("readv() called with 0 length buffer");
     }
     #[cfg(unix)]
     {
@@ -2565,7 +2565,7 @@ pub fn readv(fd: Fd, vecs: &[PlatformIoVec]) -> Maybe<usize> {
 pub fn preadv(fd: Fd, vecs: &[PlatformIoVec], position: i64) -> Maybe<usize> {
     #[cfg(debug_assertions)]
     if vecs.is_empty() {
-        bun_core::Output::debug_warn("preadv() called with 0 length buffer", format_args!(""));
+        bun_core::Output::debug_warn("preadv() called with 0 length buffer");
     }
     #[cfg(unix)]
     {

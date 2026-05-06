@@ -257,7 +257,12 @@ impl TrackBreadth {
             return Ok(TrackBreadth::MaxContent);
         }
 
-        Err(location.new_unexpected_token_error(css::Token::Ident(ident)))
+        // SAFETY: arena-owned slice valid for the parser's source lifetime;
+        // erased to 'static to fit `Token::Ident`'s `&'static [u8]` payload
+        // (matches the `src_str` pattern in css_parser.rs).
+        Err(location.new_unexpected_token_error(css::Token::Ident(unsafe {
+            crate::css_parser::src_str(ident)
+        })))
     }
 
     fn parse_flex(input: &mut Parser) -> css::Result<CSSNumber> {
@@ -390,8 +395,8 @@ fn write_ident(name: &[u8], dest: &mut Printer) -> Result<(), PrintErr> {
     if css_module_grid_enabled {
         if let Some(css_module) = &dest.css_module {
             if let Some(last) = css_module.config.pattern.segments.last() {
-                if *last != css::css_modules::Segment::Local {
-                    return dest.add_invalid_css_modules_pattern_in_grid_error();
+                if !matches!(last, css::css_modules::Segment::Local) {
+                    return Err(dest.add_invalid_css_modules_pattern_in_grid_error());
                 }
             }
         }
@@ -471,7 +476,7 @@ impl GridTemplateAreas {
                 Ok(v) => v,
                 Err(()) => {
                     // TODO(port): Zig uses `.{input.newError(.qualified_rule_invalid)}` — anonymous struct shorthand; mapping to Err(..)
-                    return Err(input.new_error(css::BasicParseErrorKind::QualifiedRuleInvalid));
+                    return Err(input.new_error(css::BasicParseErrorKind::qualified_rule_invalid));
                 }
             };
 

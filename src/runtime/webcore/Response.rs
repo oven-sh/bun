@@ -469,7 +469,7 @@ pub fn js_function_get_complete_request_or_response_body_value_as_array_buffer(
     global_object: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JSValue {
-    let arguments = callframe.arguments_old(1);
+    let arguments = callframe.arguments_old::<1>();
     let this_value = arguments.ptr[0];
     if this_value.is_empty_or_undefined_or_null() {
         return JSValue::UNDEFINED;
@@ -477,9 +477,11 @@ pub fn js_function_get_complete_request_or_response_body_value_as_array_buffer(
 
     let body: &mut BodyValue = 'brk: {
         if let Some(response) = this_value.as_::<Response>() {
-            break 'brk &mut response.body.value;
+            // SAFETY: `as_` returned a live `*mut Response` owned by the JS wrapper.
+            break 'brk unsafe { &mut (*response).body.value };
         } else if let Some(request) = this_value.as_::<Request>() {
-            break 'brk request.get_body_value();
+            // SAFETY: `as_` returned a live `*mut Request` owned by the JS wrapper.
+            break 'brk unsafe { &mut *request }.get_body_value();
         }
 
         return JSValue::UNDEFINED;

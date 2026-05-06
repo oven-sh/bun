@@ -1487,7 +1487,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             if self.buffer.write(bytes).is_err() {
                 return Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write));
             }
-        } else if self.buffer.len + len >= self.high_water_mark {
+        } else if self.buffer.len as BlobSizeType + len >= self.high_water_mark {
             // TODO: attempt to write both in a corked buffer?
             if self.buffer.write(bytes).is_err() {
                 return Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write));
@@ -1560,7 +1560,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
                     return Writable::Owned(len);
                 }
             }
-        } else if self.buffer.len + len >= self.high_water_mark {
+        } else if self.buffer.len as BlobSizeType + len >= self.high_water_mark {
             // kinda fast path:
             // - combined chunk is large enough to flush automatically
             // - no backpressure

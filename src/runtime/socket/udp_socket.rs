@@ -1012,7 +1012,7 @@ impl UDPSocket {
         if this.closed {
             return Err(global_this.throw(format_args!("Socket is closed")));
         }
-        let arguments = callframe.arguments_old(1);
+        let arguments = callframe.arguments_old::<1>();
         if arguments.len != 1 {
             return Err(global_this.throw_invalid_arguments(format_args!("Expected 1 argument, got {}", arguments.len)));
         }

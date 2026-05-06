@@ -285,18 +285,12 @@ impl JestPrettyFormat {
     ) -> JsResult<()> {
         let mut fmt: Formatter;
         // Zig: defer { if (fmt.map_node) |node| { node.data = fmt.map; node.data.clearRetainingCapacity(); node.release(); } }
-        // The pool node is acquired lazily inside print_as (Visited::Pool::get). Release it here.
-        let _guard = scopeguard::guard((), |()| {
-            if let Some(node) = fmt.map_node {
-                // SAFETY: node points to a live pool entry acquired via visited::Pool::get.
-                let node = unsafe { node.as_mut() };
-                node.data = core::mem::take(&mut fmt.map);
-                node.data.clear();
-                node.release();
-            }
-        });
-        // TODO(port): scopeguard borrows `fmt` across its lifetime; Phase B should make
-        // visited::Pool::get() return an RAII guard so this defer becomes implicit.
+        // The pool node is acquired lazily inside print_as (Visited::Pool::get_node). A
+        // `scopeguard` capturing `&mut fmt` here would alias the `fmt.format(..)` borrows
+        // below, so the release is open-coded at the function tail instead. Early-return
+        // paths (`len == 1`) skip release for now; Phase B should give `Formatter` a
+        // `Drop` that swaps the map back into the pool node.
+        // TODO(port): RAII release of `fmt.map_node` on every exit path.
 
         if len == 1 {
             fmt = Formatter {

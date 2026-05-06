@@ -200,7 +200,7 @@ macro_rules! cmd_key_varargs {
             compile::test_correct_state::<{ compile::ClientStateRequirement::$state }>(this, $name)?;
 
             if frame.argument(0).is_undefined_or_null() {
-                return global.throw_missing_arguments_value(&[$arg0_name]);
+                return Err(global.throw_missing_arguments_value(&[$arg0_name]));
             }
 
             let arguments = frame.arguments();
@@ -212,11 +212,11 @@ macro_rules! cmd_key_varargs {
                 }
 
                 let Some(another) = from_js(global, *arg)? else {
-                    return global.throw_invalid_argument_type(
-                        $name,
+                    return Err(global.throw_invalid_argument_type(
+                        bname($name),
                         "additional arguments",
                         "string or buffer",
-                    );
+                    ));
                 };
                 args.push(another);
             }
@@ -225,18 +225,18 @@ macro_rules! cmd_key_varargs {
                 global,
                 frame.this(),
                 &Command {
-                    command: $command,
+                    command: $command.as_bytes(),
                     args: CommandArgs::Args(&args),
                     meta: CommandMeta::default(),
                 },
             ) {
                 Ok(p) => p,
                 Err(err) => {
-                    return protocol::valkey_error_to_js(
+                    return Ok(protocol::valkey_error_to_js(
                         global,
-                        concat!("Failed to send ", $command),
+                        Some(concat!("Failed to send ", $command).as_bytes()),
                         err,
-                    )
+                    ))
                 }
             };
             Ok(promise.to_js())
@@ -255,28 +255,28 @@ macro_rules! cmd_key_value {
             compile::test_correct_state::<{ compile::ClientStateRequirement::$state }>(this, $name)?;
 
             let Some(key) = from_js(global, frame.argument(0))? else {
-                return global.throw_invalid_argument_type($name, $arg0_name, "string or buffer");
+                return Err(global.throw_invalid_argument_type(bname($name), $arg0_name, "string or buffer"));
             };
             let Some(value) = from_js(global, frame.argument(1))? else {
-                return global.throw_invalid_argument_type($name, $arg1_name, "string or buffer");
+                return Err(global.throw_invalid_argument_type(bname($name), $arg1_name, "string or buffer"));
             };
 
             let promise = match this.send(
                 global,
                 frame.this(),
                 &Command {
-                    command: $command,
+                    command: $command.as_bytes(),
                     args: CommandArgs::Args(&[key, value]),
                     meta: CommandMeta::default(),
                 },
             ) {
                 Ok(p) => p,
                 Err(err) => {
-                    return protocol::valkey_error_to_js(
+                    return Ok(protocol::valkey_error_to_js(
                         global,
-                        concat!("Failed to send ", $command),
+                        Some(concat!("Failed to send ", $command).as_bytes()),
                         err,
-                    )
+                    ))
                 }
             };
             Ok(promise.to_js())
@@ -295,31 +295,31 @@ macro_rules! cmd_key_value_value2 {
             compile::test_correct_state::<{ compile::ClientStateRequirement::$state }>(this, $name)?;
 
             let Some(key) = from_js(global, frame.argument(0))? else {
-                return global.throw_invalid_argument_type($name, $arg0_name, "string or buffer");
+                return Err(global.throw_invalid_argument_type(bname($name), $arg0_name, "string or buffer"));
             };
             let Some(value) = from_js(global, frame.argument(1))? else {
-                return global.throw_invalid_argument_type($name, $arg1_name, "string or buffer");
+                return Err(global.throw_invalid_argument_type(bname($name), $arg1_name, "string or buffer"));
             };
             let Some(value2) = from_js(global, frame.argument(2))? else {
-                return global.throw_invalid_argument_type($name, $arg2_name, "string or buffer");
+                return Err(global.throw_invalid_argument_type(bname($name), $arg2_name, "string or buffer"));
             };
 
             let promise = match this.send(
                 global,
                 frame.this(),
                 &Command {
-                    command: $command,
+                    command: $command.as_bytes(),
                     args: CommandArgs::Args(&[key, value, value2]),
                     meta: CommandMeta::default(),
                 },
             ) {
                 Ok(p) => p,
                 Err(err) => {
-                    return protocol::valkey_error_to_js(
+                    return Ok(protocol::valkey_error_to_js(
                         global,
-                        concat!("Failed to send ", $command),
+                        Some(concat!("Failed to send ", $command).as_bytes()),
                         err,
-                    )
+                    ))
                 }
             };
             Ok(promise.to_js())
@@ -341,11 +341,11 @@ macro_rules! cmd_strings_varargs {
 
             for arg in frame.arguments() {
                 let Some(another) = from_js(global, *arg)? else {
-                    return global.throw_invalid_argument_type(
-                        $name,
+                    return Err(global.throw_invalid_argument_type(
+                        bname($name),
                         "additional arguments",
                         "string or buffer",
-                    );
+                    ));
                 };
                 args.push(another);
             }
@@ -354,18 +354,18 @@ macro_rules! cmd_strings_varargs {
                 global,
                 frame.this(),
                 &Command {
-                    command: $command,
+                    command: $command.as_bytes(),
                     args: CommandArgs::Args(&args),
                     meta: CommandMeta::default(),
                 },
             ) {
                 Ok(p) => p,
                 Err(err) => {
-                    return protocol::valkey_error_to_js(
+                    return Ok(protocol::valkey_error_to_js(
                         global,
-                        concat!("Failed to send ", $command),
+                        Some(concat!("Failed to send ", $command).as_bytes()),
                         err,
-                    )
+                    ))
                 }
             };
             Ok(promise.to_js())
@@ -391,11 +391,11 @@ macro_rules! cmd_key_value_varargs {
                 }
 
                 let Some(another) = from_js(global, *arg)? else {
-                    return global.throw_invalid_argument_type(
-                        $name,
+                    return Err(global.throw_invalid_argument_type(
+                        bname($name),
                         "additional arguments",
                         "string or buffer",
-                    );
+                    ));
                 };
                 args.push(another);
             }
@@ -404,18 +404,18 @@ macro_rules! cmd_key_value_varargs {
                 global,
                 frame.this(),
                 &Command {
-                    command: $command,
+                    command: $command.as_bytes(),
                     args: CommandArgs::Args(&args),
                     meta: CommandMeta::default(),
                 },
             ) {
                 Ok(p) => p,
                 Err(err) => {
-                    return protocol::valkey_error_to_js(
+                    return Ok(protocol::valkey_error_to_js(
                         global,
-                        concat!("Failed to send ", $command),
+                        Some(concat!("Failed to send ", $command).as_bytes()),
                         err,
-                    )
+                    ))
                 }
             };
             Ok(promise.to_js())

@@ -291,7 +291,7 @@ pub fn bun_random_uuid_v7(global: &JSGlobalObject, callframe: &CallFrame) -> JsR
     if encoding == Encoding::Hex {
         let (mut str, bytes) = BunString::create_uninitialized_latin1(36);
         uuid.print((&mut bytes[0..36]).try_into().unwrap());
-        return Ok(str.transfer_to_js(global));
+        return str.transfer_to_js(global);
     }
 
     encoding.encode_with_max_size::<32>(global, &uuid.bytes)
@@ -420,7 +420,7 @@ pub fn bun_random_uuid_v5(global: &JSGlobalObject, callframe: &CallFrame) -> JsR
     if encoding == Encoding::Hex {
         let (mut str, bytes) = BunString::create_uninitialized_latin1(36);
         uuid.print((&mut bytes[0..36]).try_into().unwrap());
-        return Ok(str.transfer_to_js(global));
+        return str.transfer_to_js(global);
     }
 
     encoding.encode_with_max_size::<32>(global, &uuid.bytes)

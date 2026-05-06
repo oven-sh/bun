@@ -1067,7 +1067,8 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
 
     subprocess.stdin = match Writable::init(
         &mut stdio[0],
-        event_loop,
+        // SAFETY: event_loop points to the live JSC EventLoop for this thread.
+        unsafe { &*event_loop },
         subprocess,
         spawned.stdin,
         &mut promise_for_stream,

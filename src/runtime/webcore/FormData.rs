@@ -236,8 +236,8 @@ impl FormData {
     ) -> Result<JSValue, bun_core::Error> {
         match encoding {
             Encoding::URLEncoded => {
-                let mut str = ZigString::from_utf8(strings::without_utf8_bom(input));
-                let result = DOMFormData::create_from_url_query(global, &mut str);
+                let str = ZigString::from_utf8(strings::without_utf8_bom(input));
+                let result = dom_form_data_shim::create_from_url_query(global, &str);
                 // Check if an exception was thrown (e.g., string too long)
                 if result.is_empty() {
                     return Err(err!("JSError"));

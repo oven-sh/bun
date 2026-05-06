@@ -3095,48 +3095,58 @@ impl DuplexUpgradeContext {
         Box::into_raw(Box::new(init))
     }
 
+    /// Local shim: `bun_uws::NewSocketHandler` has no `from_duplex` (the
+    /// `UpgradedDuplex` type is higher-tier and type-erased there). Wrap the
+    /// pointer in the `InternalSocket::UpgradedDuplex` variant.
+    #[inline(always)]
+    fn duplex_socket(&mut self) -> SocketHandler<true> {
+        SocketHandler::<true>::from_any(uws::InternalSocket::UpgradedDuplex(
+            &mut self.upgrade as *mut UpgradedDuplex<'static> as *mut c_void,
+        ))
+    }
+
     fn on_open(&mut self) {
         self.is_open = true;
-        let socket = SocketHandler::<true>::from_duplex(&mut self.upgrade);
+        let socket = self.duplex_socket();
 
         if let Some(tls) = &mut self.tls {
             // SAFETY: intrusive refcount; single-threaded dispatch.
-            unsafe { tls.as_mut().on_open(socket) };
+            unsafe { (*tls.data.as_ptr()).on_open(socket) };
         }
     }
 
     fn on_data(&mut self, decoded_data: &[u8]) {
-        let socket = SocketHandler::<true>::from_duplex(&mut self.upgrade);
+        let socket = self.duplex_socket();
 
         if let Some(tls) = &mut self.tls {
             // SAFETY: intrusive refcount; single-threaded dispatch.
-            unsafe { tls.as_mut().on_data(socket, decoded_data) };
+            unsafe { (*tls.data.as_ptr()).on_data(socket, decoded_data) };
         }
     }
 
     fn on_handshake(&mut self, success: bool, ssl_error: uws::us_bun_verify_error_t) {
-        let socket = SocketHandler::<true>::from_duplex(&mut self.upgrade);
+        let socket = self.duplex_socket();
 
         if let Some(tls) = &mut self.tls {
             // SAFETY: intrusive refcount; single-threaded dispatch.
-            let _ = unsafe { tls.as_mut().on_handshake(socket, success as i32, ssl_error) };
+            let _ = unsafe { (*tls.data.as_ptr()).on_handshake(socket, success as i32, ssl_error) };
         }
     }
 
     fn on_end(&mut self) {
-        let socket = SocketHandler::<true>::from_duplex(&mut self.upgrade);
+        let socket = self.duplex_socket();
         if let Some(tls) = &mut self.tls {
             // SAFETY: intrusive refcount; single-threaded dispatch.
-            unsafe { tls.as_mut().on_end(socket) };
+            unsafe { (*tls.data.as_ptr()).on_end(socket) };
         }
     }
 
     fn on_writable(&mut self) {
-        let socket = SocketHandler::<true>::from_duplex(&mut self.upgrade);
+        let socket = self.duplex_socket();
 
         if let Some(tls) = &mut self.tls {
             // SAFETY: intrusive refcount; single-threaded dispatch.
-            unsafe { tls.as_mut().on_writable(socket) };
+            unsafe { (*tls.data.as_ptr()).on_writable(socket) };
         }
     }
 
@@ -3144,10 +3154,10 @@ impl DuplexUpgradeContext {
         if self.is_open {
             if let Some(tls) = &mut self.tls {
                 // SAFETY: intrusive refcount; single-threaded dispatch.
-                unsafe { tls.as_mut().handle_error(err_value) };
+                unsafe { (*tls.data.as_ptr()).handle_error(err_value) };
             }
         } else {
-            if let Some(mut tls) = self.tls.take() {
+            if let Some(tls) = self.tls.take() {
                 // Pre-open error (e.g. the duplex emitted non-Buffer data
                 // before the queued `.StartTLS` task ran). `handleConnectError`
                 // → `markInactive` frees `tls.handlers`; null `tls` so the
@@ -3156,7 +3166,7 @@ impl DuplexUpgradeContext {
                 // `getHandlers()` on the freed allocation.
                 // SAFETY: intrusive refcount; single-threaded dispatch.
                 let _ = unsafe {
-                    tls.as_mut()
+                    (*tls.data.as_ptr())
                         .handle_connect_error(sys::SystemErrno::ECONNREFUSED as c_int)
                 };
                 // Zig `tls.deref()` — IntrusiveRc::drop decrements.
@@ -3166,16 +3176,16 @@ impl DuplexUpgradeContext {
     }
 
     fn on_timeout(&mut self) {
-        let socket = SocketHandler::<true>::from_duplex(&mut self.upgrade);
+        let socket = self.duplex_socket();
 
         if let Some(tls) = &mut self.tls {
             // SAFETY: intrusive refcount; single-threaded dispatch.
-            unsafe { tls.as_mut().on_timeout(socket) };
+            unsafe { (*tls.data.as_ptr()).on_timeout(socket) };
         }
     }
 
     fn on_close(&mut self) {
-        let socket = SocketHandler::<true>::from_duplex(&mut self.upgrade);
+        let socket = self.duplex_socket();
 
         if let Some(tls) = self.tls.take() {
             // `tls.onClose` consumes the +1 we hold (its `defer this.deref()`

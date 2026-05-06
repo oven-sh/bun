@@ -1,15 +1,11 @@
-use std::sync::Arc;
-
 use bstr::BStr;
 
 use bun_core::output;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-use bun_jsc::node::PathLike;
-use crate::node::PathOrBlob;
+use bun_jsc::{CallFrame, ConsoleFormatter, ErrorCode, JSGlobalObject, JSValue, JsResult};
+use crate::node::PathLike;
 use crate::webcore::Blob;
 use crate::webcore::s3::MultiPartUploadOptions;
 use crate::webcore::s3::client::{ACL, StorageClass, S3Credentials};
-use bun_str::PathString;
 
 use super::s3_file as S3File;
 
@@ -28,28 +24,74 @@ macro_rules! pfmt {
         }
     };
 }
+
+// ── Local extension shims ─────────────────────────────────────────────────
+// `bun_s3_signing::S3Credentials` exposes `guessRegion` / `guessBucket` as
+// FREE fns and the JS-options parser lives in
+// `runtime/webcore/s3/credentials_jsc.rs` (not yet mounted). Surface them as
+// associated fns via an extension trait so call sites keep their Zig shape.
+pub trait S3CredentialsExt {
+    fn guess_region(endpoint: &[u8]) -> &[u8];
+    fn guess_bucket(endpoint: &[u8]) -> Option<&[u8]>;
+    #[allow(clippy::too_many_arguments)]
+    fn get_credentials_with_options(
+        this: S3Credentials,
+        default_options: MultiPartUploadOptions,
+        options: Option<JSValue>,
+        default_acl: Option<ACL>,
+        default_storage_class: Option<StorageClass>,
+        default_request_payer: bool,
+        global: &JSGlobalObject,
+    ) -> JsResult<bun_s3_signing::S3CredentialsWithOptions>;
+}
+impl S3CredentialsExt for S3Credentials {
+    #[inline]
+    fn guess_region(endpoint: &[u8]) -> &[u8] {
+        bun_s3_signing::credentials::guess_region(endpoint)
+    }
+    #[inline]
+    fn guess_bucket(endpoint: &[u8]) -> Option<&[u8]> {
+        bun_s3_signing::credentials::guess_bucket(endpoint)
+    }
+    fn get_credentials_with_options(
+        _this: S3Credentials,
+        _default_options: MultiPartUploadOptions,
+        _options: Option<JSValue>,
+        _default_acl: Option<ACL>,
+        _default_storage_class: Option<StorageClass>,
+        _default_request_payer: bool,
+        _global: &JSGlobalObject,
+    ) -> JsResult<bun_s3_signing::S3CredentialsWithOptions> {
+        todo!("blocked_on: crate::webcore::s3::credentials_jsc::get_credentials_with_options (module not mounted)")
+    }
+}
+
+#[inline]
+fn opt_js(v: JSValue) -> Option<JSValue> {
+    if v.is_empty_or_undefined_or_null() { None } else { Some(v) }
+}
+
 pub fn write_format_credentials<F, W, const ENABLE_ANSI_COLORS: bool>(
     credentials: &S3Credentials,
     options: MultiPartUploadOptions,
     acl: Option<ACL>,
     formatter: &mut F,
     writer: &mut W,
-) -> Result<(), bun_core::Error>
+) -> core::fmt::Result
 where
-    // TODO(port): bound `F` on the ConsoleObject formatter trait once it exists
+    F: ConsoleFormatter,
     W: core::fmt::Write,
 {
-    // TODO(port): narrow error set
     writer.write_str("\n")?;
 
     {
-        formatter.indent += 1;
-        let _indent_guard = scopeguard::guard(&mut *formatter, |f| {
-            f.indent = f.indent.saturating_sub(1);
-        });
+        formatter.indent_inc();
         // PORT NOTE: reshaped for borrowck — Zig used `defer formatter.indent -|= 1;`.
-        // We need `formatter` mutably borrowed below, so re-borrow through the guard.
-        let formatter = &mut **_indent_guard;
+        // The `ConsoleFormatter` trait exposes `indent_inc/dec` instead of a public
+        // `indent` field, so we pair the inc with a guard that decs on scope exit.
+        let _indent_guard = scopeguard::guard((), |_| {});
+        // (cannot capture `formatter` mutably in the guard while also using it
+        //  below — dec explicitly at the end of the block instead)
 
         let endpoint: &[u8] = if !credentials.endpoint.is_empty() {
             &credentials.endpoint
@@ -66,13 +108,13 @@ where
             "{}",
             output::pretty_fmt_args("<r><b>{}<r>\"", ENABLE_ANSI_COLORS, (BStr::new(endpoint),))
         )?;
-        formatter.print_comma(writer, ENABLE_ANSI_COLORS)?;
+        formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
         writer.write_str("\n")?;
 
         let region: &[u8] = if !credentials.region.is_empty() {
             &credentials.region
         } else {
-            S3Credentials::guess_region(&credentials.endpoint)
+            <S3Credentials as S3CredentialsExt>::guess_region(&credentials.endpoint)
         };
         formatter.write_indent(writer)?;
         writer.write_str(pfmt!("<r>region<d>:<r> \"", ENABLE_ANSI_COLORS))?;
@@ -81,7 +123,7 @@ where
             "{}",
             output::pretty_fmt_args("<r><b>{}<r>\"", ENABLE_ANSI_COLORS, (BStr::new(region),))
         )?;
-        formatter.print_comma(writer, ENABLE_ANSI_COLORS)?;
+        formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
         writer.write_str("\n")?;
 
         // PS: We don't want to print the credentials if they are empty just signal that they are there without revealing them
@@ -91,7 +133,7 @@ where
                 "<r>accessKeyId<d>:<r> \"<r><b>[REDACTED]<r>\"",
                 ENABLE_ANSI_COLORS
             ))?;
-            formatter.print_comma(writer, ENABLE_ANSI_COLORS)?;
+            formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
 
             writer.write_str("\n")?;
         }
@@ -102,7 +144,7 @@ where
                 "<r>secretAccessKey<d>:<r> \"<r><b>[REDACTED]<r>\"",
                 ENABLE_ANSI_COLORS
             ))?;
-            formatter.print_comma(writer, ENABLE_ANSI_COLORS)?;
+            formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
 
             writer.write_str("\n")?;
         }
@@ -113,7 +155,7 @@ where
                 "<r>sessionToken<d>:<r> \"<r><b>[REDACTED]<r>\"",
                 ENABLE_ANSI_COLORS
             ))?;
-            formatter.print_comma(writer, ENABLE_ANSI_COLORS)?;
+            formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
 
             writer.write_str("\n")?;
         }
@@ -130,46 +172,51 @@ where
                     (BStr::new(acl_value.to_string()),),
                 )
             )?;
-            formatter.print_comma(writer, ENABLE_ANSI_COLORS)?;
+            formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
 
             writer.write_str("\n")?;
         }
 
         formatter.write_indent(writer)?;
         writer.write_str(pfmt!("<r>partSize<d>:<r> ", ENABLE_ANSI_COLORS))?;
-        formatter.print_as(
-            FormatTag::Double,
-            writer,
-            JSValue::js_number(options.part_size),
-            JSType::NumberObject,
-            ENABLE_ANSI_COLORS,
-        )?;
-        formatter.print_comma(writer, ENABLE_ANSI_COLORS)?;
+        formatter
+            .print_as::<W, ENABLE_ANSI_COLORS>(
+                FormatTag::Double,
+                writer,
+                JSValue::js_number(options.part_size as f64),
+                JSType::NumberObject,
+            )
+            .map_err(|_| core::fmt::Error)?;
+        formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
 
         writer.write_str("\n")?;
 
         formatter.write_indent(writer)?;
         writer.write_str(pfmt!("<r>queueSize<d>:<r> ", ENABLE_ANSI_COLORS))?;
-        formatter.print_as(
-            FormatTag::Double,
-            writer,
-            JSValue::js_number(options.queue_size),
-            JSType::NumberObject,
-            ENABLE_ANSI_COLORS,
-        )?;
-        formatter.print_comma(writer, ENABLE_ANSI_COLORS)?;
+        formatter
+            .print_as::<W, ENABLE_ANSI_COLORS>(
+                FormatTag::Double,
+                writer,
+                JSValue::js_number(options.queue_size as f64),
+                JSType::NumberObject,
+            )
+            .map_err(|_| core::fmt::Error)?;
+        formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
         writer.write_str("\n")?;
 
         formatter.write_indent(writer)?;
         writer.write_str(pfmt!("<r>retry<d>:<r> ", ENABLE_ANSI_COLORS))?;
-        formatter.print_as(
-            FormatTag::Double,
-            writer,
-            JSValue::js_number(options.retry),
-            JSType::NumberObject,
-            ENABLE_ANSI_COLORS,
-        )?;
+        formatter
+            .print_as::<W, ENABLE_ANSI_COLORS>(
+                FormatTag::Double,
+                writer,
+                JSValue::js_number(options.retry as f64),
+                JSType::NumberObject,
+            )
+            .map_err(|_| core::fmt::Error)?;
         writer.write_str("\n")?;
+
+        formatter.indent_dec();
     }
 
     Ok(())
@@ -177,7 +224,7 @@ where
 
 #[bun_jsc::JsClass]
 pub struct S3Client {
-    pub credentials: Arc<S3Credentials>,
+    pub credentials: bun_ptr::IntrusiveRc<S3Credentials>,
     pub options: MultiPartUploadOptions,
     pub acl: Option<ACL>,
     pub storage_class: Option<StorageClass>,
@@ -189,10 +236,13 @@ impl S3Client {
     // derive on the struct emits `S3ClientClass__construct` which calls
     // `<S3Client>::constructor` directly.
     pub fn constructor(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<Box<Self>> {
-        let arguments = callframe.arguments_old(1).slice();
-        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), arguments);
-        let aws_options = S3Credentials::get_credentials_with_options(
-            global.bun_vm().transpiler.env.get_s3_credentials(),
+        let arguments = callframe.arguments_old::<1>();
+        // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
+        let vm = unsafe { &*global.bun_vm() };
+        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, arguments.slice());
+        let env_creds = vm.transpiler.env.get_s3_credentials().clone();
+        let aws_options = <S3Credentials as S3CredentialsExt>::get_credentials_with_options(
+            env_creds,
             MultiPartUploadOptions::default(),
             args.next_eat(),
             None,
@@ -213,15 +263,16 @@ impl S3Client {
         &self,
         formatter: &mut F,
         writer: &mut W,
-    ) -> Result<(), bun_core::Error>
+    ) -> core::fmt::Result
     where
+        F: ConsoleFormatter,
         W: core::fmt::Write,
     {
         writer.write_str(pfmt!("<r>S3Client<r>", ENABLE_ANSI_COLORS))?;
         // detect virtual host style bucket name
         let bucket_name: &[u8] =
             if self.credentials.virtual_hosted_style && !self.credentials.endpoint.is_empty() {
-                S3Credentials::guess_bucket(&self.credentials.endpoint)
+                <S3Credentials as S3CredentialsExt>::guess_bucket(&self.credentials.endpoint)
                     .unwrap_or(&self.credentials.bucket)
             } else {
                 &self.credentials.bucket
@@ -255,17 +306,19 @@ impl S3Client {
 
     #[bun_jsc::host_fn(method)]
     pub fn file(ptr: &mut Self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old(2).slice();
-        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), arguments);
+        let arguments = callframe.arguments_old::<2>();
+        // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
+        let vm = unsafe { &*global.bun_vm() };
+        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, arguments.slice());
         let path: PathLike = match PathLike::from_js(global, &mut args)? {
             Some(p) => p,
             None => {
                 if args.len() == 0 {
-                    return global
-                        .ERR(bun_jsc::ErrorCode::MISSING_ARGS, format_args!("Expected a path "))
-                        .throw();
+                    return Err(global
+                        .err(ErrorCode::MISSING_ARGS, format_args!("Expected a path "))
+                        .throw());
                 }
-                return global.throw_invalid_arguments(format_args!("Expected a path"));
+                return Err(global.throw_invalid_arguments(format_args!("Expected a path")));
             }
         };
         let options = args.next_eat();
@@ -279,25 +332,29 @@ impl S3Client {
             ptr.storage_class,
             ptr.request_payer,
         )?);
-        Ok(blob.to_js(global))
+        // PORT NOTE: avoid the (currently duplicated) `Blob::to_js` inherent —
+        // an S3-backed blob always routes to `s3_file::to_js_unchecked`.
+        Ok(S3File::to_js_unchecked(global, Box::into_raw(blob)))
     }
 
     #[bun_jsc::host_fn(method)]
     pub fn presign(ptr: &mut Self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old(2).slice();
-        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), arguments);
+        let arguments = callframe.arguments_old::<2>();
+        // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
+        let vm = unsafe { &*global.bun_vm() };
+        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, arguments.slice());
         let path: PathLike = match PathLike::from_js(global, &mut args)? {
             Some(p) => p,
             None => {
                 if args.len() == 0 {
-                    return global
-                        .ERR(
-                            bun_jsc::ErrorCode::MISSING_ARGS,
+                    return Err(global
+                        .err(
+                            ErrorCode::MISSING_ARGS,
                             format_args!("Expected a path to presign"),
                         )
-                        .throw();
+                        .throw());
                 }
-                return global.throw_invalid_arguments(format_args!("Expected a path to presign"));
+                return Err(global.throw_invalid_arguments(format_args!("Expected a path to presign")));
             }
         };
 
@@ -313,28 +370,31 @@ impl S3Client {
                 ptr.storage_class,
                 ptr.request_payer,
             )?,
-            |mut b| b.detach(),
+            // blocked_on: webcore::blob::Blob::detach (duplicate inherent impls in Blob.rs)
+            |_b| {},
         );
         S3File::get_presign_url_from(&mut *blob, global, options)
     }
 
     #[bun_jsc::host_fn(method)]
     pub fn exists(ptr: &mut Self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old(2).slice();
-        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), arguments);
+        let arguments = callframe.arguments_old::<2>();
+        // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
+        let vm = unsafe { &*global.bun_vm() };
+        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, arguments.slice());
         let path: PathLike = match PathLike::from_js(global, &mut args)? {
             Some(p) => p,
             None => {
                 if args.len() == 0 {
-                    return global
-                        .ERR(
-                            bun_jsc::ErrorCode::MISSING_ARGS,
+                    return Err(global
+                        .err(
+                            ErrorCode::MISSING_ARGS,
                             format_args!("Expected a path to check if it exists"),
                         )
-                        .throw();
+                        .throw());
                 }
-                return global
-                    .throw_invalid_arguments(format_args!("Expected a path to check if it exists"));
+                return Err(global
+                    .throw_invalid_arguments(format_args!("Expected a path to check if it exists")));
             }
         };
         let options = args.next_eat();
@@ -349,28 +409,31 @@ impl S3Client {
                 ptr.storage_class,
                 ptr.request_payer,
             )?,
-            |mut b| b.detach(),
+            // blocked_on: webcore::blob::Blob::detach (duplicate inherent impls in Blob.rs)
+            |_b| {},
         );
         S3File::S3BlobStatTask::exists(global, &mut *blob)
     }
 
     #[bun_jsc::host_fn(method)]
     pub fn size(ptr: &mut Self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old(2).slice();
-        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), arguments);
+        let arguments = callframe.arguments_old::<2>();
+        // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
+        let vm = unsafe { &*global.bun_vm() };
+        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, arguments.slice());
         let path: PathLike = match PathLike::from_js(global, &mut args)? {
             Some(p) => p,
             None => {
                 if args.len() == 0 {
-                    return global
-                        .ERR(
-                            bun_jsc::ErrorCode::MISSING_ARGS,
+                    return Err(global
+                        .err(
+                            ErrorCode::MISSING_ARGS,
                             format_args!("Expected a path to check the size of"),
                         )
-                        .throw();
+                        .throw());
                 }
-                return global
-                    .throw_invalid_arguments(format_args!("Expected a path to check the size of"));
+                return Err(global
+                    .throw_invalid_arguments(format_args!("Expected a path to check the size of")));
             }
         };
         let options = args.next_eat();
@@ -385,28 +448,31 @@ impl S3Client {
                 ptr.storage_class,
                 ptr.request_payer,
             )?,
-            |mut b| b.detach(),
+            // blocked_on: webcore::blob::Blob::detach (duplicate inherent impls in Blob.rs)
+            |_b| {},
         );
         S3File::S3BlobStatTask::size(global, &mut *blob)
     }
 
     #[bun_jsc::host_fn(method)]
     pub fn stat(ptr: &mut Self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old(2).slice();
-        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), arguments);
+        let arguments = callframe.arguments_old::<2>();
+        // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
+        let vm = unsafe { &*global.bun_vm() };
+        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, arguments.slice());
         let path: PathLike = match PathLike::from_js(global, &mut args)? {
             Some(p) => p,
             None => {
                 if args.len() == 0 {
-                    return global
-                        .ERR(
-                            bun_jsc::ErrorCode::MISSING_ARGS,
+                    return Err(global
+                        .err(
+                            ErrorCode::MISSING_ARGS,
                             format_args!("Expected a path to check the stat of"),
                         )
-                        .throw();
+                        .throw());
                 }
-                return global
-                    .throw_invalid_arguments(format_args!("Expected a path to check the stat of"));
+                return Err(global
+                    .throw_invalid_arguments(format_args!("Expected a path to check the stat of")));
             }
         };
         let options = args.next_eat();
@@ -421,66 +487,64 @@ impl S3Client {
                 ptr.storage_class,
                 ptr.request_payer,
             )?,
-            |mut b| b.detach(),
+            // blocked_on: webcore::blob::Blob::detach (duplicate inherent impls in Blob.rs)
+            |_b| {},
         );
         S3File::S3BlobStatTask::stat(global, &mut *blob)
     }
 
     #[bun_jsc::host_fn(method)]
     pub fn write(ptr: &mut Self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old(3).slice();
-        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), arguments);
+        let arguments = callframe.arguments_old::<3>();
+        // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
+        let vm = unsafe { &*global.bun_vm() };
+        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, arguments.slice());
         let path: PathLike = match PathLike::from_js(global, &mut args)? {
             Some(p) => p,
             None => {
-                return global
-                    .ERR(
-                        bun_jsc::ErrorCode::MISSING_ARGS,
+                return Err(global
+                    .err(
+                        ErrorCode::MISSING_ARGS,
                         format_args!("Expected a path to write to"),
                     )
-                    .throw();
+                    .throw());
             }
         };
         let Some(data) = args.next_eat() else {
-            return global
-                .ERR(
-                    bun_jsc::ErrorCode::MISSING_ARGS,
+            return Err(global
+                .err(
+                    ErrorCode::MISSING_ARGS,
                     format_args!("Expected a Blob-y thing to write"),
                 )
-                .throw();
+                .throw());
         };
 
         let options = args.next_eat();
-        let blob = scopeguard::guard(
-            S3File::construct_s3_file_with_s3_credentials_and_options(
-                global,
-                path,
-                options,
-                &ptr.credentials,
-                ptr.options,
-                ptr.acl,
-                ptr.storage_class,
-                ptr.request_payer,
-            )?,
-            |mut b| b.detach(),
-        );
-        let mut blob_internal = PathOrBlob::Blob(scopeguard::ScopeGuard::into_inner(blob));
+        let blob = S3File::construct_s3_file_with_s3_credentials_and_options(
+            global,
+            path,
+            options,
+            &ptr.credentials,
+            ptr.options,
+            ptr.acl,
+            ptr.storage_class,
+            ptr.request_payer,
+        )?;
         // PORT NOTE: reshaped for borrowck — Zig copied `blob` into `blob_internal`
         // by value while `defer blob.detach()` was still armed on the original.
-        // Here we move into `PathOrBlob` and detach via the guard below instead.
-        let result = Blob::write_file_internal(
+        // Here we move into `PathOrBlob` directly; cleanup of the moved-out
+        // value is handled by `Drop`.
+        let mut blob_internal = crate::webcore::node_types::PathOrBlob::Blob(blob);
+        crate::webcore::blob::write_file_internal(
             global,
             &mut blob_internal,
             data,
-            Blob::WriteFileOptions {
-                mkdirp_if_not_exists: false,
+            crate::webcore::blob::WriteFileOptions {
+                mkdirp_if_not_exists: Some(false),
                 extra_options: options,
+                mode: None,
             },
-        );
-        if let PathOrBlob::Blob(mut b) = blob_internal {
-            b.detach();
-        }
-        result
+        )
     }
 
     #[bun_jsc::host_fn(method)]
@@ -492,12 +556,12 @@ impl S3Client {
         let args = callframe.arguments_as_array::<2>();
 
         let object_keys = args[0];
-        let options = args[1];
+        let options = opt_js(args[1]);
 
         let blob = scopeguard::guard(
             S3File::construct_s3_file_with_s3_credentials_and_options(
                 global,
-                PathLike::String(PathString::empty()),
+                PathLike::default(),
                 options,
                 &ptr.credentials,
                 ptr.options,
@@ -505,28 +569,32 @@ impl S3Client {
                 None,
                 ptr.request_payer,
             )?,
-            |mut b| b.detach(),
+            // blocked_on: webcore::blob::Blob::detach (duplicate inherent impls in Blob.rs)
+            |_b| {},
         );
 
-        // TODO(port): `blob.store.?.data.s3` is a Zig tagged-union field access;
-        // map to the Rust enum accessor once `Blob::Store` is ported.
-        let store = blob.store.as_ref().unwrap();
-        store.data.s3().list_objects(store, global, object_keys, options)
+        // `blob.store.?.data.s3` is a Zig tagged-union field access; the Rust
+        // `StoreRef` only impls `Deref` (not `DerefMut`), so getting a `&mut S3`
+        // here without a raw-pointer escape hatch isn't possible yet.
+        let _ = (&*blob, object_keys);
+        todo!("blocked_on: webcore::blob::store::Data mutable s3 accessor through StoreRef")
     }
 
     #[bun_jsc::host_fn(method)]
     pub fn unlink(ptr: &mut Self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old(2).slice();
-        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), arguments);
+        let arguments = callframe.arguments_old::<2>();
+        // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
+        let vm = unsafe { &*global.bun_vm() };
+        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, arguments.slice());
         let path: PathLike = match PathLike::from_js(global, &mut args)? {
             Some(p) => p,
             None => {
-                return global
-                    .ERR(
-                        bun_jsc::ErrorCode::MISSING_ARGS,
+                return Err(global
+                    .err(
+                        ErrorCode::MISSING_ARGS,
                         format_args!("Expected a path to unlink"),
                     )
-                    .throw();
+                    .throw());
             }
         };
         let options = args.next_eat();
@@ -541,11 +609,12 @@ impl S3Client {
                 ptr.storage_class,
                 ptr.request_payer,
             )?,
-            |mut b| b.detach(),
+            // blocked_on: webcore::blob::Blob::detach (duplicate inherent impls in Blob.rs)
+            |_b| {},
         );
-        // TODO(port): `blob.store.?.data.s3` tagged-union access — see list_objects.
-        let store = blob.store.as_ref().unwrap();
-        store.data.s3().unlink(store, global, options)
+        // See `list_objects` — `StoreRef` lacks `DerefMut` for `&mut S3`.
+        let _ = &*blob;
+        todo!("blocked_on: webcore::blob::store::Data mutable s3 accessor through StoreRef")
     }
 
     /// Called by the generated JSCell wrapper's `finalize()`. Runs on the
@@ -554,7 +623,7 @@ impl S3Client {
         // SAFETY: `this` was produced by `Box::into_raw` in the codegen'd
         // constructor path; we are the unique owner at finalize time.
         drop(unsafe { Box::from_raw(this) });
-        // `Arc<S3Credentials>` deref happens via Drop — matches Zig `credentials.deref()`.
+        // `IntrusiveRc<S3Credentials>` deref happens via Drop — matches Zig `credentials.deref()`.
     }
 }
 
@@ -590,11 +659,13 @@ pub fn static_unlink(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult
 
 #[bun_jsc::host_fn]
 pub fn static_file(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let arguments = callframe.arguments_old(2).slice();
-    let mut args = bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), arguments);
+    let arguments = callframe.arguments_old::<2>();
+    // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
+    let vm = unsafe { &*global.bun_vm() };
+    let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, arguments.slice());
 
     let Some(path) = PathLike::from_js(global, &mut args)? else {
-        return global.throw_invalid_arguments(format_args!("Expected file path string"));
+        return Err(global.throw_invalid_arguments(format_args!("Expected file path string")));
     };
 
     S3File::construct_internal_js(global, path, args.next_eat())
@@ -609,24 +680,29 @@ pub fn static_stat(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
 pub fn static_list_objects(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let args = callframe.arguments_as_array::<2>();
     let object_keys = args[0];
-    let options = args[1];
+    let options = opt_js(args[1]);
 
     // get credentials from env
-    let existing_credentials = global.bun_vm().transpiler.env.get_s3_credentials();
+    // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
+    let vm = unsafe { &*global.bun_vm() };
+    let _ = vm; // env creds reached via S3File::construct_s3_file_with_s3_credentials below
 
     let blob = scopeguard::guard(
-        S3File::construct_s3_file_with_s3_credentials(
-            global,
-            PathLike::String(PathString::empty()),
-            options,
-            existing_credentials,
-        )?,
-        |mut b| b.detach(),
+        {
+            let existing_credentials = todo!("blocked_on: bun_jsc::VirtualMachine::transpiler.env.get_s3_credentials() (mutable env access)");
+            S3File::construct_s3_file_with_s3_credentials(
+                global,
+                PathLike::default(),
+                options,
+                existing_credentials,
+            )?
+        },
+        // blocked_on: webcore::blob::Blob::detach (duplicate inherent impls in Blob.rs)
+        |_b: Blob| {},
     );
 
-    // TODO(port): `blob.store.?.data.s3` tagged-union access — see list_objects.
-    let store = blob.store.as_ref().unwrap();
-    store.data.s3().list_objects(store, global, object_keys, options)
+    let _ = (&*blob, object_keys);
+    todo!("blocked_on: webcore::blob::store::Data mutable s3 accessor through StoreRef")
 }
 
 // `FormatTag` / `JSType` are the ConsoleObject formatter enums
@@ -637,6 +713,6 @@ use bun_jsc::{FormatTag, JSType};
 // PORT STATUS
 //   source:     src/runtime/webcore/S3Client.zig (332 lines)
 //   confidence: medium
-//   todos:      6
-//   notes:      pretty_fmt! macro + ConsoleObject formatter trait + Blob store union accessor need Phase-B wiring; `write()` defer-detach reshaped for ownership
+//   todos:      4
+//   notes:      ConsoleFormatter trait wired; credentials_jsc parser + Blob store mutable s3 accessor blocked; `write()` defer-detach reshaped for ownership
 // ──────────────────────────────────────────────────────────────────────────

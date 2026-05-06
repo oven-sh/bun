@@ -396,17 +396,19 @@ impl FetchTasklet {
         drop(boxed);
     }
 
-    fn get_current_response(&self) -> Option<&Response> {
+    fn get_current_response(&self) -> Option<*mut Response> {
         // we need a body to resolve the promise when buffering
-        if let Some(response) = self.native_response.as_deref() {
+        if let Some(response) = self.native_response {
             return Some(response);
         }
 
         // if we did not have a direct reference we check if the Weak ref is still alive
         if let Some(response_js) = self.response.get() {
-            if let Some(response) = response_js.as_::<Response>() {
-                return Some(response);
-            }
+            // TODO(b2-blocked): `Response` doesn't impl `JsClass` yet (codegen
+            // wrapper not wired). `JSValue::as_::<Response>()` would resolve
+            // once `#[bun_jsc::JsClass]` lands on `Response`.
+            let _ = response_js;
+            todo!("blocked_on: bun_jsc::JsClass for webcore::Response");
         }
 
         None
@@ -419,8 +421,8 @@ impl FetchTasklet {
             return;
         };
         if let Some(stream) = stream_ref.get(self.global_this) {
-            if let Some(signal) = self.signal.as_ref() {
-                if signal.aborted() {
+            if let Some(signal) = self.signal {
+                if signal_aborted(signal) {
                     stream.abort(self.global_this);
                     return;
                 }

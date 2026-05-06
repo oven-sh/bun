@@ -1270,7 +1270,9 @@ impl<'a> SpawnArgs<'a> {
             // has no PATH). PATH="" (explicit empty) is preserved — that's a
             // deliberate "search nothing" and substituting a default would
             // change argv[0] resolution on existing platforms.
-            path: if let Some(p) = event_loop.env().get(b"PATH") {
+            // SAFETY: `event_loop.env()` returns the long-lived `*mut Loader`
+            // owned by the VM; valid for the lifetime of the spawn args.
+            path: if let Some(p) = unsafe { &*event_loop.env() }.get(b"PATH") {
                 p
             } else if cfg!(unix) {
                 // SAFETY: BUN_DEFAULT_PATH_FOR_SPAWN is a NUL-terminated C string constant.

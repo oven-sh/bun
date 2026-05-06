@@ -2090,10 +2090,16 @@ impl<'a> ValueBufferer<'a> {
     }
 
     fn handle_resolve_stream(&mut self, is_async: bool) {
-        if let Some(wrapper) = &self.js_sink {
-            let bytes = wrapper.sink.bytes.slice();
-            bun_core::scoped_log!(BodyValueBufferer, "handleResolveStream {}", bytes.len());
-            (self.on_finished_buffering)(self.ctx, bytes, None, is_async);
+        if let Some(_wrapper) = &self.js_sink {
+            // TODO(blocked_on: webcore::sink::ArrayBufferSink): `bytes` field
+            // not yet present on the stub ArrayBufferSink.
+            let bytes: &[u8] =
+                todo!("blocked_on: webcore::sink::ArrayBufferSink.bytes");
+            #[allow(unreachable_code)]
+            {
+                bun_core::scoped_log!(BodyValueBufferer, "handleResolveStream {}", bytes.len());
+                (self.on_finished_buffering)(self.ctx, bytes, None, is_async);
+            }
         } else {
             bun_core::scoped_log!(BodyValueBufferer, "handleResolveStream no sink");
             (self.on_finished_buffering)(self.ctx, b"", None, is_async);

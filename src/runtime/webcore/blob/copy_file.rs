@@ -264,7 +264,7 @@ impl<'a> CopyFile<'a> {
         self.read_off += self.offset;
 
         let mut remain: usize = self.max_length as usize;
-        let unknown_size = remain == Blob::MAX_SIZE as usize || remain == 0;
+        let unknown_size = remain == MAX_SIZE as usize || remain == 0;
         if unknown_size {
             // sometimes stat lies
             // let's give it 4096 and see how it goes

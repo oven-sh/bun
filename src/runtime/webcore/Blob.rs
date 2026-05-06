@@ -259,6 +259,10 @@ pub use jsc::codegen::JSBlob as js;
 // explicit because Blob owns custom `finalize`/`to_js` paths (S3File dispatch,
 // ref-counted heap promotion via `Blob::new`) that the derive cannot express.
 const _: () = {
+    // `*mut Blob` is opaque to C++ — only Rust dereferences it. The lint
+    // recurses through `Option<StoreRef>` → `NonNull<Store>` and complains
+    // `Store` lacks `#[repr(C)]`, but `Store` never crosses FFI by value.
+    #[allow(improper_ctypes)]
     #[cfg(all(windows, target_arch = "x86_64"))]
     unsafe extern "sysv64" {
         #[link_name = "Blob__fromJS"]
@@ -270,6 +274,7 @@ const _: () = {
         #[link_name = "Blob__getConstructor"]
         fn __get_constructor(global: *const bun_jsc::JSGlobalObject) -> bun_jsc::JSValue;
     }
+    #[allow(improper_ctypes)]
     #[cfg(not(all(windows, target_arch = "x86_64")))]
     unsafe extern "C" {
         #[link_name = "Blob__fromJS"]

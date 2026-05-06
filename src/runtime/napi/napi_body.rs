@@ -283,6 +283,12 @@ pub struct NapiHandleScope {
     _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
 }
 
+// `crate::ffi::ffi_body` re-declares `NapiHandleScope__{open,close}` locally
+// with `*mut c_void` (it only needs the symbol address for TCC injection and
+// cannot name the private `NapiHandleScope` type). Both declarations are
+// ABI-identical thin pointers; suppress the duplicate-signature lint here as
+// well since which side it fires on depends on module traversal order.
+#[allow(clashing_extern_declarations)]
 unsafe extern "C" {
     pub fn NapiHandleScope__open(env: *mut NapiEnv, escapable: bool) -> *mut NapiHandleScope;
     pub fn NapiHandleScope__close(env: *mut NapiEnv, current: *mut NapiHandleScope);

@@ -91,7 +91,8 @@ pub mod lib {
         fn archive_write_header(a: *mut Archive, entry: *mut Entry) -> Result;
         fn archive_write_data(a: *mut Archive, data: *const c_void, size: usize) -> la_ssize_t;
         fn archive_write_finish_entry(a: *mut Archive) -> Result;
-        fn archive_write_open2_ffi(
+        #[link_name = "archive_write_open2"]
+        fn archive_write_open2_raw(
             a: *mut Archive,
             client_data: *mut c_void,
             open: Option<archive_open_callback>,

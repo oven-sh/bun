@@ -469,18 +469,14 @@ impl ParsedComponent {
             ParsedComponent::LengthPercentage(v) => v.to_css(dest),
             ParsedComponent::Color(v) => v.to_css(dest),
             ParsedComponent::Image(v) => v.to_css(dest),
-            ParsedComponent::Url(_v) => todo!("blocked_on: values::url::Url::to_css un-gate"),
+            ParsedComponent::Url(v) => v.to_css(dest),
             ParsedComponent::Integer(v) => CSSIntegerFns::to_css(v, dest),
             ParsedComponent::Angle(v) => v.to_css(dest),
             ParsedComponent::Time(v) => v.to_css(dest),
             ParsedComponent::Resolution(v) => v.to_css(dest),
-            ParsedComponent::TransformFunction(_v) => todo!("blocked_on: Transform::to_css un-gate"),
-            ParsedComponent::TransformList(_v) => todo!("blocked_on: TransformList::to_css un-gate"),
-            ParsedComponent::CustomIdent(_v) => {
-                // blocked_on: values::ident::CustomIdent::to_css un-gate (Printer::write_ident).
-                // Body once un-gated: `CustomIdentFns::to_css(v, dest)`
-                todo!("blocked_on: values::ident::CustomIdent::to_css un-gate")
-            }
+            ParsedComponent::TransformFunction(v) => v.to_css(dest),
+            ParsedComponent::TransformList(v) => v.to_css(dest),
+            ParsedComponent::CustomIdent(v) => CustomIdentFns::to_css(v, dest),
             ParsedComponent::Literal(v) => {
                 // SAFETY: arena-owned slice valid for the printer's lifetime.
                 let s = unsafe { &*v.v };

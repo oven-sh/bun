@@ -114,11 +114,6 @@ bitflags::bitflags! {
     }
 }
 
-// TODO(b2-ast-D): BundledAst<'arena> is a borrowing slice-view of Ast for bundler perf.
-// The conversions (init/to_ast/empty) need either (a) Clone bounds on heavy fields, or
-// (b) signature changes to consume/produce by value, or (c) arena param + alloc_slice_copy.
-// Struct def is real (downstream bundler::LinkerGraph stores it); methods gated.
-
 impl<'arena> BundledAst<'arena> {
     // TODO(port): Zig `pub const empty = BundledAst.init(Ast.empty);` — cannot be a `const` in Rust
     // because `init` is not const-evaluable. Phase B: consider a `static` via `OnceLock` or make

@@ -352,19 +352,31 @@ impl<'a> MiniEventLoop<'a> {
         }
     }
 
-    // TODO(port): Zig `enqueueTask` uses `comptime field: std.meta.FieldEnum(Context)` + `@field`
-    // to in-place initialize an embedded task field on `ctx` via `Task.New(Context, Callback)`.
-    // This is comptime reflection with no direct Rust equivalent. Phase B: either
-    //   (a) require callers to pass `&mut ctx.field` directly, or
-    //   (b) macro `enqueue_task!(loop, ctx, field, callback)` using `offset_of!`.
+    /// Zig: `enqueueTask(comptime Context, ctx, comptime Callback, comptime field)`.
+    ///
+    /// `comptime field: std.meta.FieldEnum(Context)` + `@field(ctx, name)` is replaced
+    /// per PORTING.md (§reflection) with a caller-supplied `field_offset =
+    /// core::mem::offset_of!(C, <field>)` into the embedded `AnyTaskWithExtraContext`.
+    ///
+    /// PORT NOTE: the Zig body is dead code — it calls `Task.New(Context, Callback)`
+    /// (wrong arity; `New` takes 3 type args) and `this.enqueueJSCTask(...)` (no such
+    /// decl). Zig's lazy analysis lets this compile because no caller exists. The
+    /// faithful port writes to `self.tasks` (the local non-concurrent FIFO), which is
+    /// the only plausible target for a `*JSCTask` push on a MiniEventLoop.
     pub fn enqueue_task<C>(
         &mut self,
-        _ctx: &mut C,
-        // callback: fn(&mut C),
-        // field: <offset into C of AnyTaskWithExtraContext>,
+        ctx: *mut C,
+        callback: fn(*mut C, *mut ()),
+        field_offset: usize,
     ) {
-        // TODO(port): comptime @field reflection — see note above.
-        unimplemented!("enqueue_task: requires macro for intrusive field init");
+        // SAFETY: caller contract — `field_offset == offset_of!(C, <field>)` where
+        // `<field>: AnyTaskWithExtraContext`, and `ctx` is live for the task's duration.
+        let task = unsafe { ctx.cast::<u8>().add(field_offset).cast::<AnyTaskWithExtraContext>() };
+        // Zig: `@field(ctx, name) = TaskType.init(ctx);`
+        // SAFETY: `task` points at a properly aligned `AnyTaskWithExtraContext` field of `*ctx`.
+        unsafe { task.write(New::<C, ()>::init(ctx, callback)) };
+        // Zig: `this.enqueueJSCTask(&@field(ctx, name))` — see PORT NOTE above.
+        self.tasks.write_item(task).expect("unreachable");
     }
 
     pub fn enqueue_task_concurrent(&mut self, task: *mut AnyTaskWithExtraContext) {

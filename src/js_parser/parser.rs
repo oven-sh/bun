@@ -2563,37 +2563,44 @@ pub fn new_lazy_export_ast_impl<'bump>(
     symbols: js_ast::symbol::List,
 ) -> Result<Option<js_ast::Ast>, bun_core::Error> {
     
-    {
-        // TODO(b2-blocked): Parser::to_lazy_export_ast (round-D parse_* methods)
-        let mut temp_log = logger::Log::init();
-        let log = &mut temp_log;
-        let mut parser = Parser {
-            options: opts,
-            bump,
-            lexer: js_lexer::Lexer::init_without_reading(log, source, bump),
-            define,
-            source,
-            log,
-        };
-        let mut result = match parser.to_lazy_export_ast(expr, runtime_api_call, symbols) {
-            Ok(r) => r,
-            Err(err) => {
-                if temp_log.errors == 0 {
-                    log_to_copy_into
-                        .add_range_error(Some(source), parser.lexer.range(), err.name())
-                        .expect("unreachable");
-                }
-                let _ = temp_log.append_to_maybe_recycled(log_to_copy_into, source);
-                return Ok(None);
+    let mut temp_log = logger::Log::init();
+    // Zig held two aliasing `*Log` (parser.log + lexer.log). Rust forbids two
+    // live `&mut Log`, so `Parser.log` is `NonNull` and the unique `&mut` lives
+    // in the lexer. See `Parser::init` for the same pattern.
+    let log_ptr = core::ptr::NonNull::from(&mut temp_log);
+    let mut parser = Parser {
+        options: opts,
+        bump,
+        lexer: js_lexer::Lexer::init_without_reading(&mut temp_log, source, bump),
+        define,
+        source,
+        log: log_ptr,
+    };
+    let result = match parser.to_lazy_export_ast(expr, runtime_api_call, symbols) {
+        Ok(r) => r,
+        Err(err) => {
+            let range = parser.lexer.range();
+            drop(parser);
+            if temp_log.errors == 0 {
+                log_to_copy_into
+                    .add_range_error(Some(source), range, err.name().as_bytes())
+                    .expect("unreachable");
             }
-        };
+            let _ = temp_log.append_to_maybe_recycled(log_to_copy_into, source);
+            return Ok(None);
+        }
+    };
+    drop(parser);
 
-        let _ = temp_log.append_to_maybe_recycled(log_to_copy_into, source);
-        result.ast.has_lazy_export = true;
-        return Ok(Some(result.ast));
+    let _ = temp_log.append_to_maybe_recycled(log_to_copy_into, source);
+    match result {
+        js_ast::Result::Ast(mut ast) => {
+            ast.has_lazy_export = true;
+            Ok(Some(ast))
+        }
+        // `to_lazy_export_ast` always returns `Result::Ast` (no parse pass runs).
+        _ => unreachable!("to_lazy_export_ast returns Result::Ast"),
     }
-    let _ = (bump, define, opts, log_to_copy_into, expr, source, runtime_api_call, symbols);
-    todo!("b2-blocked: Parser::to_lazy_export_ast")
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]

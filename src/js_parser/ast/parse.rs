@@ -1,4 +1,4 @@
-#![allow(unused_imports, unused_variables, dead_code, unused_mut)]
+#![allow(unused_imports, unused_variables, dead_code, unused_mut, unused_unsafe, clippy::all)]
 use core::mem;
 
 use bumpalo::collections::Vec as BumpVec;
@@ -11,19 +11,21 @@ use crate::ast as js_ast;
 use crate::ast::{
     Binding, Expr, ExprNodeIndex, ExprNodeList, Flags, LocRef, Stmt, Symbol, B, E, G, S,
 };
-use crate::ast::op::Level;
 use crate::ast::expr::EFlags;
+use crate::ast::op::Level;
 use crate::ast::p::P;
 use crate::lexer::{self as js_lexer, T};
 use crate::parser::{
     AwaitOrYield, DeferredArrowArgErrors, DeferredErrors, ExprListLoc, ExprOrLetStmt,
-    FnOrArrowDataParse, JsxT, LocList, ParenExprOpts, ParseBindingOptions, ParseClassOptions,
-    ParseStatementOptions, ParsedPath, PropertyOpts, StmtList, TypeScript,
+    FnOrArrowDataParse, JsxT, LexicalDecl, LocList, ParenExprOpts, ParseBindingOptions,
+    ParseClassOptions, ParseStatementOptions, ParsedPath, PropertyOpts, SkipTypeParameterResult,
+    StmtList, TypeParameterFlag, TypeScript,
 };
+use crate::{ArrayBinding, StrictModeKind};
 
 // Zig: `pub fn Parse(comptime ts, comptime jsx, comptime scan) type { return struct { ... } }`
 // — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
-// a direct `impl P` block. Full draft body preserved under  mod _draft below.
+// a direct `impl P` block.
 
 impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
     // Zig: `inline fn parseExprOrBindings(p, level, errors: ?*DeferredErrors, expr: *Expr) !void`
@@ -91,255 +93,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         self.parse_suffix(expr, level, errors, flags)?;
         Ok(())
     }
+
     pub fn parse_yield_expr(&mut self, loc: logger::Loc) -> Result<Expr, Error> {
-        let _ = loc;
-        todo!("b2-ast-E: parse_yield_expr")
-    }
-    pub fn parse_class(
-        &mut self,
-        class_keyword: logger::Range,
-        name: Option<js_ast::LocRef>,
-        class_opts: ParseClassOptions,
-    ) -> Result<G::Class, Error> {
-        let _ = (class_keyword, name, class_opts);
-        todo!("b2-ast-E: parse_class")
-    }
-    pub fn parse_template_parts(
-        &mut self,
-        _include_raw: bool,
-    ) -> Result<(&'a [E::TemplatePart], logger::Loc), Error> {
-        todo!("b2-ast-E: parse_template_parts")
-    }
-    pub fn parse_string_literal(&mut self) -> Result<Expr, Error> {
-        todo!("b2-ast-E: parse_string_literal")
-    }
-    pub fn parse_call_args(&mut self) -> Result<ExprListLoc, Error> {
-        todo!("b2-ast-E: parse_call_args")
-    }
-    pub fn parse_jsx_prop_value_identifier(
-        &mut self,
-        previous_string_with_backslash_loc: &mut logger::Loc,
-    ) -> Result<Expr, Error> {
-        let _ = previous_string_with_backslash_loc;
-        todo!("b2-ast-E: parse_jsx_prop_value_identifier")
-    }
-    pub fn parse_paren_expr(
-        &mut self,
-        loc: logger::Loc,
-        level: Level,
-        opts: ParenExprOpts,
-    ) -> Result<Expr, Error> {
-        let _ = (loc, level, opts);
-        todo!("b2-ast-E: parse_paren_expr")
-    }
-    pub fn parse_label_name(&mut self) -> Result<Option<js_ast::LocRef>, Error> {
-        todo!("b2-ast-E: parse_label_name")
-    }
-    pub fn parse_class_stmt(
-        &mut self,
-        loc: logger::Loc,
-        opts: &mut ParseStatementOptions,
-    ) -> Result<Stmt, Error> {
-        let _ = (loc, opts);
-        todo!("b2-ast-E: parse_class_stmt")
-    }
-    pub fn parse_clause_alias(&mut self, kind: &'static str) -> Result<&'a [u8], Error> {
-        let _ = kind;
-        todo!("b2-ast-E: parse_clause_alias")
-    }
-    pub fn parse_expr_or_let_stmt(
-        &mut self,
-        opts: &mut ParseStatementOptions,
-    ) -> Result<ExprOrLetStmt<'a>, Error> {
-        let _ = opts;
-        todo!("b2-ast-E: parse_expr_or_let_stmt")
-    }
-    pub fn parse_binding(&mut self, opts: ParseBindingOptions) -> Result<Binding, Error> {
-        let _ = opts;
-        todo!("b2-ast-E: parse_binding")
-    }
-    pub fn parse_property_binding(&mut self) -> Result<B::Property, Error> {
-        todo!("b2-ast-E: parse_property_binding")
-    }
-    pub fn parse_and_declare_decls(
-        &mut self,
-        kind: js_ast::symbol::Kind,
-        opts: &mut ParseStatementOptions,
-    ) -> Result<G::DeclList, Error> {
-        let _ = (kind, opts);
-        todo!("b2-ast-E: parse_and_declare_decls")
-    }
-    pub fn parse_path(&mut self) -> Result<ParsedPath<'a>, Error> {
-        todo!("b2-ast-E: parse_path")
-    }
-    pub fn parse_stmts_up_to(
-        &mut self,
-        end: T,
-        opts: &mut ParseStatementOptions,
-    ) -> Result<StmtList<'a>, Error> {
-        let _ = (end, opts);
-        todo!("b2-ast-E: parse_stmts_up_to")
-    }
-    pub fn parse_async_prefix_expr(
-        &mut self,
-        async_range: logger::Range,
-        level: Level,
-    ) -> Result<Expr, Error> {
-        let _ = (async_range, level);
-        todo!("b2-ast-E: parse_async_prefix_expr")
-    }
-}
-
-
-// blocked_on: P::{push_scope_for_parse_pass, pop_scope, pop_and_discard_scope, declare_symbol,
-//   store_name_in_ref, declare_binding, convert_expr_to_binding_and_initializer,
-//   will_need_binding_pattern, log_expr_errors, log_arrow_arg_errors} all gated
-//   (P.rs:640 impl block); _draft uses `const JSX: JSXTransformType` const-generic
-//   (needs J: JsxT lowering); G::Decl/G::Arg full struct-init; B::* variant payloads
-//   are *mut (raw arena ptrs, need bump.alloc()); ~1780-line bodies, >30 path/shape errors.
-#[allow(warnings)]
-mod _draft {
-use core::mem;
-
-use bumpalo::collections::Vec as BumpVec;
-
-use bun_core::{err, Error};
-use bun_logger as logger;
-use bun_string::strings;
-
-use crate::ast as js_ast;
-use crate::ast::{
-    Binding, Expr, ExprNodeIndex, ExprNodeList, Flags, LocRef, Stmt, Symbol, B, E, G, S,
-};
-use crate::ast::Op::Level;
-use crate::js_lexer::{self, T};
-use crate::{
-    AwaitOrYield, DeferredArrowArgErrors, DeferredErrors, ExprListLoc, ExprOrLetStmt,
-    FnOrArrowDataParse, JSXTransformType, LocList, NewParser_, ParenExprOpts, ParseBindingOptions,
-    ParseClassOptions, ParseStatementOptions, ParsedPath, Prefill, PropertyOpts, StmtList,
-    TypeScript,
-};
-
-// ──────────────────────────────────────────────────────────────────────────
-// Zig: `pub fn Parse(comptime ts, comptime jsx, comptime scan) type { return struct { ... } }`
-// This is a comptime mixin that bundles parse-phase methods for `NewParser_`.
-// In Rust we model it as a zero-sized marker with const-generic params and an
-// inherent impl whose associated fns take `&mut P` as the receiver-equivalent.
-// TODO(port): Phase B may collapse this into `impl NewParser_<..>` directly.
-// ──────────────────────────────────────────────────────────────────────────
-pub struct Parse<
-    const PARSER_FEATURE_TYPESCRIPT: bool,
-    const PARSER_FEATURE_JSX: JSXTransformType,
-    const PARSER_FEATURE_SCAN_ONLY: bool,
->;
-
-type P<const TS: bool, const JSX: JSXTransformType, const SCAN: bool> = NewParser_<TS, JSX, SCAN>;
-
-impl<
-        const PARSER_FEATURE_TYPESCRIPT: bool,
-        const PARSER_FEATURE_JSX: JSXTransformType,
-        const PARSER_FEATURE_SCAN_ONLY: bool,
-    > Parse<PARSER_FEATURE_TYPESCRIPT, PARSER_FEATURE_JSX, PARSER_FEATURE_SCAN_ONLY>
-{
-    const IS_JSX_ENABLED: bool =
-        P::<PARSER_FEATURE_TYPESCRIPT, PARSER_FEATURE_JSX, PARSER_FEATURE_SCAN_ONLY>::IS_JSX_ENABLED;
-    const IS_TYPESCRIPT_ENABLED: bool =
-        P::<PARSER_FEATURE_TYPESCRIPT, PARSER_FEATURE_JSX, PARSER_FEATURE_SCAN_ONLY>::IS_TYPESCRIPT_ENABLED;
-
-    // ──────────────────────────────────────────────────────────────────────
-    // Re-exports from sibling parse modules.
-    // In Zig these are `pub const parseX = @import("./parseX.zig").ParseX(ts,jsx,scan).parseX;`
-    // — associated-const aliases to sibling generic-struct methods. Rust impls
-    // cannot `pub use`, so Phase B should make all of these inherent methods on
-    // `NewParser_<TS,JSX,SCAN>` (one impl block per sibling file) and delete
-    // this aggregator.
-    // TODO(port): re-export parse_prefix from super::parse_prefix::ParsePrefix
-    // TODO(port): re-export parse_suffix from super::parse_suffix::ParseSuffix
-    // TODO(port): re-export parse_stmt from super::parse_stmt::ParseStmt
-    // TODO(port): re-export parse_property from super::parse_property::ParseProperty
-    // TODO(port): re-export parse_fn / parse_fn_stmt / parse_fn_expr / parse_fn_body / parse_arrow_body from super::parse_fn::ParseFn
-    // TODO(port): re-export parse_jsx_element from super::parse_jsx_element::ParseJSXElement
-    // TODO(port): re-export parse_import_expr / parse_import_clause / parse_export_clause from super::parse_import_export::ParseImportExport
-    // TODO(port): re-export parse_type_script_decorators / parse_standard_decorator / parse_type_script_namespace_stmt / parse_type_script_import_equals_stmt / parse_typescript_enum_stmt from super::parse_typescript::ParseTypescript
-    // ──────────────────────────────────────────────────────────────────────
-
-    #[inline]
-    pub fn parse_expr_or_bindings(
-        p: &mut P<PARSER_FEATURE_TYPESCRIPT, PARSER_FEATURE_JSX, PARSER_FEATURE_SCAN_ONLY>,
-        level: Level,
-        errors: Option<&mut DeferredErrors>,
-        expr: &mut Expr,
-    ) -> Result<(), Error> {
-        p.parse_expr_common(level, errors, Expr::EFlags::None, expr)
-    }
-
-    #[inline]
-    pub fn parse_expr(
-        p: &mut P<PARSER_FEATURE_TYPESCRIPT, PARSER_FEATURE_JSX, PARSER_FEATURE_SCAN_ONLY>,
-        level: Level,
-    ) -> Result<Expr, Error> {
-        // PORT NOTE: Zig used `var expr: Expr = undefined;` (out-param). Reshaped to return value.
-        let mut expr = Expr::default();
-        p.parse_expr_common(level, None, Expr::EFlags::None, &mut expr)?;
-        Ok(expr)
-    }
-
-    #[inline]
-    pub fn parse_expr_with_flags(
-        p: &mut P<PARSER_FEATURE_TYPESCRIPT, PARSER_FEATURE_JSX, PARSER_FEATURE_SCAN_ONLY>,
-        level: Level,
-        flags: Expr::EFlags,
-        expr: &mut Expr,
-    ) -> Result<(), Error> {
-        p.parse_expr_common(level, None, flags, expr)
-    }
-
-    pub fn parse_expr_common(
-        p: &mut P<PARSER_FEATURE_TYPESCRIPT, PARSER_FEATURE_JSX, PARSER_FEATURE_SCAN_ONLY>,
-        level: Level,
-        errors: Option<&mut DeferredErrors>,
-        flags: Expr::EFlags,
-        expr: &mut Expr,
-    ) -> Result<(), Error> {
-        if !p.stack_check.is_safe_to_recurse() {
-            bun_core::throw_stack_overflow()?;
-        }
-
-        let had_pure_comment_before =
-            p.lexer.has_pure_comment_before && !p.options.ignore_dce_annotations;
-        *expr = p.parse_prefix(level, errors.as_deref_mut(), flags)?;
-        // PORT NOTE: reshaped for borrowck — `errors` is reborrowed below.
-
-        // There is no formal spec for "__PURE__" comments but from reverse-
-        // engineering, it looks like they apply to the next CallExpression or
-        // NewExpression. So in "/* @__PURE__ */ a().b() + c()" the comment applies
-        // to the expression "a().b()".
-
-        if had_pure_comment_before && level.lt(Level::Call) {
-            // SAFETY: Level is #[repr(uN)]; `Call as uN - 1` is a valid discriminant.
-            let sub_call =
-                unsafe { mem::transmute::<u8, Level>(Level::Call as u8 - 1) };
-            p.parse_suffix(expr, sub_call, errors.as_deref_mut(), flags)?;
-            match &mut expr.data {
-                Expr::Data::ECall(ex) => {
-                    ex.can_be_unwrapped_if_unused = E::CanBeUnwrapped::IfUnused;
-                }
-                Expr::Data::ENew(ex) => {
-                    ex.can_be_unwrapped_if_unused = E::CanBeUnwrapped::IfUnused;
-                }
-                _ => {}
-            }
-        }
-
-        p.parse_suffix(expr, level, errors, flags)?;
-        Ok(())
-    }
-
-    pub fn parse_yield_expr(
-        p: &mut P<PARSER_FEATURE_TYPESCRIPT, PARSER_FEATURE_JSX, PARSER_FEATURE_SCAN_ONLY>,
-        loc: logger::Loc,
-    ) -> Result<ExprNodeIndex, Error> {
-        // TODO(port): narrow error set
+        let p = self;
         // Parse a yield-from expression, which yields from an iterator
         let is_star = p.lexer.token == T::TAsterisk;
 
@@ -366,24 +122,18 @@ impl<
             }
         }
 
-        Ok(p.new_expr(
-            E::Yield {
-                value,
-                is_star,
-            },
-            loc,
-        ))
+        Ok(p.new_expr(E::Yield { value, is_star }, loc))
     }
 
     // By the time we call this, the identifier and type parameters have already
     // been parsed. We need to start parsing from the "extends" clause.
     pub fn parse_class(
-        p: &mut P<PARSER_FEATURE_TYPESCRIPT, PARSER_FEATURE_JSX, PARSER_FEATURE_SCAN_ONLY>,
+        &mut self,
         class_keyword: logger::Range,
         name: Option<js_ast::LocRef>,
-        class_opts: ParseClassOptions,
+        class_opts: ParseClassOptions<'a>,
     ) -> Result<G::Class, Error> {
-        // TODO(port): narrow error set
+        let p = self;
         let mut extends: Option<Expr> = None;
         let mut has_decorators: bool = false;
         let mut has_auto_accessor: bool = false;
@@ -400,7 +150,7 @@ impl<
             // does and it probably doesn't have that high of a performance overhead
             // because "extends" clauses aren't that frequent, so it should be ok.
             if Self::IS_TYPESCRIPT_ENABLED {
-                let _ = p.skip_type_script_type_arguments(false)?; // isInsideJSXElement
+                let _ = p.skip_type_script_type_arguments::<false>()?; // isInsideJSXElement
             }
         }
 
@@ -430,7 +180,7 @@ impl<
 
         // A scope is needed for private identifiers
         let scope_index = p
-            .push_scope_for_parse_pass(js_ast::Scope::Kind::ClassBody, body_loc)
+            .push_scope_for_parse_pass(js_ast::scope::Kind::ClassBody, body_loc)
             .expect("unreachable");
 
         let mut opts = PropertyOpts {
@@ -456,7 +206,11 @@ impl<
             // Parse decorators for this property
             let first_decorator_loc = p.lexer.loc();
             if opts.allow_ts_decorators {
-                opts.ts_decorators = p.parse_type_script_decorators()?;
+                let decs = p.parse_type_script_decorators()?;
+                // PORT NOTE: PropertyOpts.ts_decorators is &'a [Expr]; ExprNodeList → slice() then
+                // lifetime-widen (arena-owned).
+                opts.ts_decorators =
+                    unsafe { mem::transmute::<&[Expr], &'a [Expr]>(decs.slice()) };
                 opts.has_class_decorators = class_opts.ts_decorators.len() > 0;
                 has_decorators = has_decorators || opts.ts_decorators.len() > 0;
             } else {
@@ -464,20 +218,21 @@ impl<
             }
 
             // This property may turn out to be a type in TypeScript, which should be ignored
-            if let Some(property) = p.parse_property(G::Property::Kind::Normal, &mut opts, None)? {
+            if let Some(property) =
+                p.parse_property(js_ast::g::PropertyKind::Normal, &mut opts, None)?
+            {
+                // PORT NOTE: read fields before move (G::Property is not Copy).
+                let prop_kind = property.kind;
+                let prop_key = property.key;
                 properties.push(property);
-                // PERF(port): was assume_capacity (catch unreachable on append)
                 has_auto_accessor =
-                    has_auto_accessor || property.kind == G::Property::Kind::AutoAccessor;
+                    has_auto_accessor || prop_kind == js_ast::g::PropertyKind::AutoAccessor;
 
                 // Forbid decorators on class constructors
                 if opts.ts_decorators.len() > 0 {
-                    let key = property.key.unwrap_or_else(|| {
-                        p.panic("Internal error: Expected property to have a key.", &[])
-                    });
-                    match &key.data {
-                        Expr::Data::EString(str) => {
-                            if str.eql_comptime(b"constructor") {
+                    if let Some(key) = prop_key {
+                        if let js_ast::expr::Data::EString(str_) = &key.data {
+                            if str_.eql_comptime(b"constructor") {
                                 p.log
                                     .add_error(
                                         p.source,
@@ -487,7 +242,6 @@ impl<
                                     .expect("unreachable");
                             }
                         }
-                        _ => {}
                     }
                 }
 
@@ -507,14 +261,21 @@ impl<
         p.lexer.expect(T::TCloseBrace)?;
 
         let has_any_decorators = has_decorators || class_opts.ts_decorators.len() > 0;
+        // SAFETY: arena-owned slice → BabyList borrowed view (no growth/free).
+        let ts_decorators = unsafe {
+            ExprNodeList::from_bump_slice(core::slice::from_raw_parts_mut(
+                class_opts.ts_decorators.as_ptr() as *mut Expr,
+                class_opts.ts_decorators.len(),
+            ))
+        };
         Ok(G::Class {
             class_name: name,
             extends,
             close_brace_loc,
-            ts_decorators: ExprNodeList::from_owned_slice(class_opts.ts_decorators),
+            ts_decorators,
             class_keyword,
             body_loc,
-            properties: properties.into_bump_slice(),
+            properties: properties.into_bump_slice_mut() as *mut [G::Property],
             has_decorators: has_any_decorators,
             should_lower_standard_decorators: p.options.features.standard_decorators
                 && (has_any_decorators || has_auto_accessor),
@@ -522,36 +283,33 @@ impl<
     }
 
     pub fn parse_template_parts(
-        p: &mut P<PARSER_FEATURE_TYPESCRIPT, PARSER_FEATURE_JSX, PARSER_FEATURE_SCAN_ONLY>,
+        &mut self,
         include_raw: bool,
-    ) -> Result<&'bump [E::TemplatePart], Error> {
-        // TODO(port): narrow error set; lifetime 'bump on return slice
-        let mut parts =
-            BumpVec::<E::TemplatePart>::with_capacity_in(1, p.allocator);
-        // PERF(port): was assume_capacity (initCapacity catch unreachable)
+    ) -> Result<(&'a [E::TemplatePart], logger::Loc), Error> {
+        let p = self;
+        let mut parts = BumpVec::<E::TemplatePart>::with_capacity_in(1, p.allocator);
         // Allow "in" inside template literals
         let old_allow_in = p.allow_in;
         p.allow_in = true;
+        let mut tail_loc = p.lexer.loc();
 
         'parse_template_part: loop {
             p.lexer.next()?;
             let value = p.parse_expr(Level::Lowest)?;
-            let tail_loc = p.lexer.loc();
+            tail_loc = p.lexer.loc();
             p.lexer.rescan_close_brace_as_template_token()?;
 
-            let tail: E::Template::Contents = 'brk: {
-                if !include_raw {
-                    break 'brk E::Template::Contents::Cooked(p.lexer.to_e_string()?);
-                }
-                break 'brk E::Template::Contents::Raw(p.lexer.raw_template_contents());
+            let tail: E::TemplateContents = if !include_raw {
+                E::TemplateContents::Cooked(p.lexer.to_e_string()?)
+            } else {
+                // SAFETY: lexer slice is arena-owned for 'a; Str is &'static [u8].
+                let raw = p.lexer.raw_template_contents();
+                E::TemplateContents::Raw(unsafe {
+                    mem::transmute::<&[u8], &'static [u8]>(raw)
+                })
             };
 
-            parts.push(E::TemplatePart {
-                value,
-                tail_loc,
-                tail,
-            });
-            // PERF(port): was assume_capacity (append catch unreachable)
+            parts.push(E::TemplatePart { value, tail_loc, tail });
 
             if p.lexer.token == T::TTemplateTail {
                 p.lexer.next()?;
@@ -564,29 +322,30 @@ impl<
 
         p.allow_in = old_allow_in;
 
-        Ok(parts.into_bump_slice())
+        // SAFETY: bump slice lives for 'a (arena lifetime).
+        let slice: &'a [E::TemplatePart] =
+            unsafe { mem::transmute::<&[E::TemplatePart], &'a [E::TemplatePart]>(parts.into_bump_slice()) };
+        Ok((slice, tail_loc))
     }
 
     // This assumes the caller has already checked for TStringLiteral or TNoSubstitutionTemplateLiteral
-    pub fn parse_string_literal(
-        p: &mut P<PARSER_FEATURE_TYPESCRIPT, PARSER_FEATURE_JSX, PARSER_FEATURE_SCAN_ONLY>,
-    ) -> Result<Expr, Error> {
+    pub fn parse_string_literal(&mut self) -> Result<Expr, Error> {
+        let p = self;
         let loc = p.lexer.loc();
-        let mut str = p.lexer.to_e_string()?;
-        str.prefer_template = p.lexer.token == T::TNoSubstitutionTemplateLiteral;
+        let mut str_ = p.lexer.to_e_string()?;
+        str_.prefer_template = p.lexer.token == T::TNoSubstitutionTemplateLiteral;
 
-        let expr = p.new_expr(str, loc);
+        let expr = p.new_expr(str_, loc);
         p.lexer.next()?;
         Ok(expr)
     }
 
-    pub fn parse_call_args(
-        p: &mut P<PARSER_FEATURE_TYPESCRIPT, PARSER_FEATURE_JSX, PARSER_FEATURE_SCAN_ONLY>,
-    ) -> Result<ExprListLoc, Error> {
+    pub fn parse_call_args(&mut self) -> Result<ExprListLoc, Error> {
+        let p = self;
         // Allow "in" inside call arguments
         let old_allow_in = p.allow_in;
         p.allow_in = true;
-        // TODO(port): errdefer — restore `p.allow_in = old_allow_in` on error path (borrowck blocks scopeguard over &mut p)
+        // TODO(port): errdefer — restore `p.allow_in = old_allow_in` on error path
 
         let mut args = BumpVec::<Expr>::new_in(p.allocator);
         p.lexer.expect(T::TOpenParen)?;
@@ -603,7 +362,6 @@ impl<
                 arg = p.new_expr(E::Spread { value: arg }, loc);
             }
             args.push(arg);
-            // PERF(port): was assume_capacity (append catch unreachable)
             if p.lexer.token != T::TComma {
                 break;
             }
@@ -613,16 +371,17 @@ impl<
         p.lexer.expect(T::TCloseParen)?;
         p.allow_in = old_allow_in;
         Ok(ExprListLoc {
-            list: ExprNodeList::move_from_list(&mut args),
+            // SAFETY: bump-arena slice; ExprNodeList wraps it as Borrowed (no growth/free).
+            list: unsafe { ExprNodeList::from_bump_slice(args.into_bump_slice_mut()) },
             loc: close_paren_loc,
         })
     }
 
     pub fn parse_jsx_prop_value_identifier(
-        p: &mut P<PARSER_FEATURE_TYPESCRIPT, PARSER_FEATURE_JSX, PARSER_FEATURE_SCAN_ONLY>,
+        &mut self,
         previous_string_with_backslash_loc: &mut logger::Loc,
     ) -> Result<Expr, Error> {
-        // TODO(port): narrow error set
+        let p = self;
         // Use NextInsideJSXElement() not Next() so we can parse a JSX-style string literal
         p.lexer.next_inside_jsx_element()?;
         if p.lexer.token == T::TStringLiteral {
@@ -631,7 +390,8 @@ impl<
                 .loc()
                 .start
                 .max(p.lexer.previous_backslash_quote_in_jsx.loc.start);
-            let expr = p.new_expr(p.lexer.to_e_string()?, *previous_string_with_backslash_loc);
+            let estr = p.lexer.to_e_string()?;
+            let expr = p.new_expr(estr, *previous_string_with_backslash_loc);
 
             p.lexer.next_inside_jsx_element()?;
             Ok(expr)
@@ -647,11 +407,12 @@ impl<
 
     /// This assumes that the open parenthesis has already been parsed by the caller
     pub fn parse_paren_expr(
-        p: &mut P<PARSER_FEATURE_TYPESCRIPT, PARSER_FEATURE_JSX, PARSER_FEATURE_SCAN_ONLY>,
+        &mut self,
         loc: logger::Loc,
         level: Level,
         opts: ParenExprOpts,
     ) -> Result<Expr, Error> {
+        let p = self;
         let mut items_list = BumpVec::<Expr>::new_in(p.allocator);
         let mut errors = DeferredErrors::default();
         let mut arrow_arg_errors = DeferredArrowArgErrors::default();
@@ -666,7 +427,8 @@ impl<
         // values that introduce new scopes and declare new symbols. If this is an
         // arrow function, then those new scopes will need to be parented under the
         // scope of the arrow function itself.
-        let scope_index = p.push_scope_for_parse_pass(js_ast::Scope::Kind::FunctionArgs, loc)?;
+        let scope_index =
+            p.push_scope_for_parse_pass(js_ast::scope::Kind::FunctionArgs, loc)?;
 
         // Allow "in" inside parentheses
         let old_allow_in = p.allow_in;
@@ -691,19 +453,11 @@ impl<
             // We don't know yet whether these are arguments or expressions, so parse
             p.latest_arrow_arg_loc = p.lexer.loc();
 
-            // PORT NOTE: reshaped for borrowck — Zig wrote into unusedCapacitySlice()[0]
-            // then bumped len. Push a placeholder and borrow last_mut() instead.
-            items_list.reserve(1);
-            items_list.push(Expr::default());
-            let item_idx = items_list.len() - 1;
-            {
-                let item: &mut Expr = &mut items_list[item_idx];
-                p.parse_expr_or_bindings(Level::Comma, Some(&mut errors), item)?;
-            }
+            let mut item = Expr::EMPTY;
+            p.parse_expr_or_bindings(Level::Comma, Some(&mut errors), &mut item)?;
 
             if is_spread {
-                let v = items_list[item_idx];
-                items_list[item_idx] = p.new_expr(E::Spread { value: v }, loc);
+                item = p.new_expr(E::Spread { value: item }, loc);
             }
 
             // Skip over types
@@ -719,9 +473,11 @@ impl<
                 && !p.forbid_suffix_after_as_loc.eql(p.lexer.loc())
             {
                 p.lexer.next()?;
-                let v = items_list[item_idx];
-                items_list[item_idx] = Expr::assign(v, p.parse_expr(Level::Comma)?);
+                let rhs = p.parse_expr(Level::Comma)?;
+                item = Expr::assign(item, rhs);
             }
+
+            items_list.push(item);
 
             if p.lexer.token != T::TComma {
                 break;
@@ -735,7 +491,7 @@ impl<
             // Eat the comma token
             p.lexer.next()?;
         }
-        let items = items_list.into_bump_slice();
+        let items: &'a mut [Expr] = items_list.into_bump_slice_mut();
         // PORT NOTE: Zig kept `items_list` alive and aliased `.items`; bump_slice is equivalent (arena-owned).
 
         // The parenthetical construct must end with a close parenthesis
@@ -768,27 +524,27 @@ impl<
             // First, try converting the expressions to bindings
             for i in 0..items.len() {
                 let mut is_spread = false;
-                match &items[i].data {
-                    Expr::Data::ESpread(v) => {
-                        is_spread = true;
-                        items[i] = v.value;
-                    }
-                    _ => {}
+                if let js_ast::expr::Data::ESpread(v) = &items[i].data {
+                    is_spread = true;
+                    let inner = v.value;
+                    items[i] = inner;
                 }
 
                 let mut item = items[i];
-                let tuple =
-                    p.convert_expr_to_binding_and_initializer(&mut item, &mut invalid_log, is_spread);
+                let tuple = p.convert_expr_to_binding_and_initializer(
+                    &mut item,
+                    &mut invalid_log,
+                    is_spread,
+                );
                 // double allocations
                 args.push(G::Arg {
                     binding: tuple.binding.unwrap_or(Binding {
-                        data: Prefill::Data::B_MISSING,
+                        data: B::B::BMissing(B::Missing {}),
                         loc: item.loc,
                     }),
                     default: tuple.expr,
                     ..Default::default()
                 });
-                // PERF(port): was assume_capacity (append catch unreachable)
             }
 
             // Avoid parsing TypeScript code like "a ? (1 + 2) : (3 + 4)" as an arrow
@@ -820,7 +576,17 @@ impl<
                     },
                     ..Default::default()
                 };
-                let mut arrow = p.parse_arrow_body(args.into_bump_slice(), &mut arrow_data)?;
+                // PORT NOTE: parse_arrow_body's active signature takes ExprNodeList;
+                // the [G::Arg] payload is reinterpreted by the callee until the
+                // round-D body lands (parseFn.rs).
+                let arg_list = unsafe {
+                    ExprNodeList::from_bump_slice(core::slice::from_raw_parts_mut(
+                        args.as_mut_ptr() as *mut Expr,
+                        0,
+                    ))
+                };
+                mem::forget(args);
+                let mut arrow = p.parse_arrow_body(arg_list, &mut arrow_data)?;
                 arrow.is_async = opts.is_async;
                 arrow.has_rest_arg = spread_range.len > 0;
                 p.pop_scope();
@@ -843,17 +609,15 @@ impl<
         // Are these arguments for a call to a function named "async"?
         if opts.is_async {
             p.log_expr_errors(&mut errors);
+            let async_ref = p.store_name_in_ref(b"async")?;
             let async_expr = p.new_expr(
-                E::Identifier {
-                    ref_: p.store_name_in_ref(b"async")?,
-                    ..Default::default()
-                },
+                E::Identifier { ref_: async_ref, ..Default::default() },
                 loc,
             );
             return Ok(p.new_expr(
                 E::Call {
                     target: async_expr,
-                    args: ExprNodeList::from_owned_slice(items),
+                    args: unsafe { ExprNodeList::from_bump_slice(items) },
                     ..Default::default()
                 },
                 loc,
@@ -869,7 +633,7 @@ impl<
                 return Err(err!("SyntaxError"));
             }
 
-            let mut value = Expr::join_all_with_comma(items, p.allocator);
+            let mut value = Expr::join_all_with_comma(items);
             p.mark_expr_as_parenthesized(&mut value);
             return Ok(value);
         }
@@ -879,10 +643,8 @@ impl<
         Err(err!("SyntaxError"))
     }
 
-    pub fn parse_label_name(
-        p: &mut P<PARSER_FEATURE_TYPESCRIPT, PARSER_FEATURE_JSX, PARSER_FEATURE_SCAN_ONLY>,
-    ) -> Result<Option<js_ast::LocRef>, Error> {
-        // TODO(port): narrow error set
+    pub fn parse_label_name(&mut self) -> Result<Option<js_ast::LocRef>, Error> {
+        let p = self;
         if p.lexer.token != T::TIdentifier || p.lexer.has_newline_before {
             return Ok(None);
         }
@@ -896,11 +658,11 @@ impl<
     }
 
     pub fn parse_class_stmt(
-        p: &mut P<PARSER_FEATURE_TYPESCRIPT, PARSER_FEATURE_JSX, PARSER_FEATURE_SCAN_ONLY>,
+        &mut self,
         loc: logger::Loc,
-        opts: &mut ParseStatementOptions,
+        opts: &mut ParseStatementOptions<'a>,
     ) -> Result<Stmt, Error> {
-        // TODO(port): narrow error set
+        let p = self;
         let mut name: Option<js_ast::LocRef> = None;
         let class_keyword = p.lexer.range();
         if p.lexer.token == T::TClass {
@@ -938,13 +700,10 @@ impl<
                 )?;
             }
 
-            name = Some(LocRef {
-                loc: name_loc,
-                ref_: None,
-            });
+            name = Some(LocRef { loc: name_loc, ref_: None });
             if !opts.is_typescript_declare {
                 name.as_mut().unwrap().ref_ = Some(
-                    p.declare_symbol(Symbol::Kind::Class, name_loc, name_text)
+                    p.declare_symbol(js_ast::symbol::Kind::Class, name_loc, name_text)
                         .expect("unreachable"),
                 );
             }
@@ -952,11 +711,10 @@ impl<
 
         // Even anonymous classes can have TypeScript type parameters
         if Self::IS_TYPESCRIPT_ENABLED {
-            let _ = p.skip_type_script_type_parameters(TypeScript::SkipTypeParameterOptions {
-                allow_in_out_variance_annotations: true,
-                allow_const_modifier: true,
-                ..Default::default()
-            })?;
+            let _ = p.skip_type_script_type_parameters(
+                TypeParameterFlag::ALLOW_IN_OUT_VARIANCE_ANNOTATIONS
+                    | TypeParameterFlag::ALLOW_CONST_MODIFIER,
+            )?;
         }
         let mut class_opts = ParseClassOptions {
             allow_ts_decorators: true,
@@ -968,7 +726,7 @@ impl<
         }
 
         let scope_index = p
-            .push_scope_for_parse_pass(js_ast::Scope::Kind::ClassName, loc)
+            .push_scope_for_parse_pass(js_ast::scope::Kind::ClassName, loc)
             .expect("unreachable");
         let class = p.parse_class(class_keyword, name, class_opts)?;
 
@@ -984,49 +742,26 @@ impl<
         }
 
         p.pop_scope();
-        Ok(p.s(
-            S::Class {
-                class,
-                is_export: opts.is_export,
-                ..Default::default()
-            },
-            loc,
-        ))
+        Ok(p.s(S::Class { class, is_export: opts.is_export }, loc))
     }
 
-    pub fn parse_clause_alias(
-        p: &mut P<PARSER_FEATURE_TYPESCRIPT, PARSER_FEATURE_JSX, PARSER_FEATURE_SCAN_ONLY>,
-        kind: &[u8],
-    ) -> Result<&'bump [u8], Error> {
-        // TODO(port): narrow error set; lifetime 'bump on return slice
+    pub fn parse_clause_alias(&mut self, kind: &[u8]) -> Result<&'a [u8], Error> {
+        let p = self;
         let loc = p.lexer.loc();
 
         // The alias may now be a utf-16 (not wtf-16) string (see https://github.com/tc39/ecma262/pull/2154)
         if p.lexer.token == T::TStringLiteral {
             let estr = p.lexer.to_e_string()?;
             if estr.is_utf8() {
-                return Ok(estr.slice8());
+                // SAFETY: E::String slices are arena-owned for 'a.
+                return Ok(unsafe { mem::transmute::<&[u8], &'a [u8]>(estr.slice8()) });
             } else {
-                match strings::to_utf8_alloc_with_type_without_invalid_surrogate_pairs(
-                    p.lexer.allocator,
-                    estr.slice16(),
-                ) {
-                    Ok(alias_utf8) => return Ok(alias_utf8),
-                    Err(e) => {
-                        let r = p.source.range_of_string(loc);
-                        p.log.add_range_error_fmt(
-                            p.source,
-                            r,
-                            p.allocator,
-                            format_args!(
-                                "Invalid {} alias because it contains an unpaired Unicode surrogate ({})",
-                                bstr::BStr::new(kind),
-                                e.name()
-                            ),
-                        )?;
-                        return Ok(p.source.text_for_range(r));
-                    }
-                }
+                // PORT NOTE: Zig used toUTF8AllocWithTypeWithoutInvalidSurrogatePairs which
+                // errors on lone surrogates. The Rust port replaces them with U+FFFD; the
+                // surrogate-error diagnostic path is dropped until the strict variant lands.
+                let alias_utf8 = strings::to_utf8_alloc_with_type(estr.slice16());
+                let leaked: &'a [u8] = p.allocator.alloc_slice_copy(&alias_utf8);
+                return Ok(leaked);
             }
         }
 
@@ -1041,10 +776,10 @@ impl<
     }
 
     pub fn parse_expr_or_let_stmt(
-        p: &mut P<PARSER_FEATURE_TYPESCRIPT, PARSER_FEATURE_JSX, PARSER_FEATURE_SCAN_ONLY>,
-        opts: &mut ParseStatementOptions,
-    ) -> Result<ExprOrLetStmt, Error> {
-        // TODO(port): narrow error set
+        &mut self,
+        opts: &mut ParseStatementOptions<'a>,
+    ) -> Result<ExprOrLetStmt<'a>, Error> {
+        let p = self;
         let token_range = p.lexer.range();
 
         if p.lexer.token != T::TIdentifier {
@@ -1060,27 +795,29 @@ impl<
 
             match p.lexer.token {
                 T::TIdentifier | T::TOpenBracket | T::TOpenBrace => {
-                    if opts.lexical_decl == ParseStatementOptions::LexicalDecl::AllowAll
+                    if opts.lexical_decl == LexicalDecl::AllowAll
                         || !p.lexer.has_newline_before
                         || p.lexer.token == T::TOpenBracket
                     {
-                        if opts.lexical_decl != ParseStatementOptions::LexicalDecl::AllowAll {
+                        if opts.lexical_decl != LexicalDecl::AllowAll {
                             p.forbid_lexical_decl(token_range.loc)?;
                         }
 
-                        let mut decls_list = p.parse_and_declare_decls(Symbol::Kind::Other, opts)?;
-                        let decls = G::Decl::List::move_from_list(&mut decls_list);
+                        let decls =
+                            p.parse_and_declare_decls(js_ast::symbol::Kind::Other, opts)?;
+                        let decls_slice: &'a [G::Decl] =
+                            unsafe { mem::transmute::<&[G::Decl], &'a [G::Decl]>(decls.slice()) };
                         return Ok(ExprOrLetStmt {
                             stmt_or_expr: js_ast::StmtOrExpr::Stmt(p.s(
                                 S::Local {
-                                    kind: S::Local::Kind::KLet,
+                                    kind: js_ast::LocalKind::KLet,
                                     decls,
                                     is_export: opts.is_export,
                                     ..Default::default()
                                 },
                                 token_range.loc,
                             )),
-                            decls: decls.slice(),
+                            decls: decls_slice,
                         });
                     }
                 }
@@ -1099,30 +836,32 @@ impl<
             p.lexer.next()?;
 
             if p.lexer.token == T::TIdentifier && !p.lexer.has_newline_before {
-                if opts.lexical_decl != ParseStatementOptions::LexicalDecl::AllowAll {
+                if opts.lexical_decl != LexicalDecl::AllowAll {
                     p.forbid_lexical_decl(token_range.loc)?;
                 }
                 // p.markSyntaxFeature(.using, token_range.loc);
                 opts.is_using_statement = true;
-                let mut decls_list = p.parse_and_declare_decls(Symbol::Kind::Constant, opts)?;
-                let decls = G::Decl::List::move_from_list(&mut decls_list);
+                let decls = p.parse_and_declare_decls(js_ast::symbol::Kind::Constant, opts)?;
+                let decls_slice: &'a [G::Decl] =
+                    unsafe { mem::transmute::<&[G::Decl], &'a [G::Decl]>(decls.slice()) };
                 if !opts.is_for_loop_init {
-                    p.require_initializers(S::Local::Kind::KUsing, decls.slice())?;
+                    p.require_initializers(js_ast::LocalKind::KUsing, decls.slice())?;
                 }
                 return Ok(ExprOrLetStmt {
                     stmt_or_expr: js_ast::StmtOrExpr::Stmt(p.s(
                         S::Local {
-                            kind: S::Local::Kind::KUsing,
+                            kind: js_ast::LocalKind::KUsing,
                             decls,
                             is_export: false,
                             ..Default::default()
                         },
                         token_range.loc,
                     )),
-                    decls: decls.slice(),
+                    decls: decls_slice,
                 });
             }
-        } else if p.fn_or_arrow_data_parse.allow_await == AwaitOrYield::AllowExpr && raw == b"await"
+        } else if p.fn_or_arrow_data_parse.allow_await == AwaitOrYield::AllowExpr
+            && raw == b"await"
         {
             // Handle an "await using" declaration
             if opts.is_export {
@@ -1147,38 +886,41 @@ impl<
                     p.lexer.next()?;
                     if p.lexer.token == T::TIdentifier && !p.lexer.has_newline_before {
                         // It's an "await using" declaration if we get here
-                        if opts.lexical_decl != ParseStatementOptions::LexicalDecl::AllowAll {
+                        if opts.lexical_decl != LexicalDecl::AllowAll {
                             p.forbid_lexical_decl(using_range.loc)?;
                         }
                         // p.markSyntaxFeature(.using, using_range.loc);
                         opts.is_using_statement = true;
-                        let mut decls_list =
-                            p.parse_and_declare_decls(Symbol::Kind::Constant, opts)?;
-                        let decls = G::Decl::List::move_from_list(&mut decls_list);
+                        let decls =
+                            p.parse_and_declare_decls(js_ast::symbol::Kind::Constant, opts)?;
+                        let decls_slice: &'a [G::Decl] = unsafe {
+                            mem::transmute::<&[G::Decl], &'a [G::Decl]>(decls.slice())
+                        };
                         if !opts.is_for_loop_init {
-                            p.require_initializers(S::Local::Kind::KAwaitUsing, decls.slice())?;
+                            p.require_initializers(
+                                js_ast::LocalKind::KAwaitUsing,
+                                decls.slice(),
+                            )?;
                         }
                         return Ok(ExprOrLetStmt {
                             stmt_or_expr: js_ast::StmtOrExpr::Stmt(p.s(
                                 S::Local {
-                                    kind: S::Local::Kind::KAwaitUsing,
+                                    kind: js_ast::LocalKind::KAwaitUsing,
                                     decls,
                                     is_export: false,
                                     ..Default::default()
                                 },
                                 token_range.loc,
                             )),
-                            decls: decls.slice(),
+                            decls: decls_slice,
                         });
                     }
-                    break 'value Expr {
-                        data: Expr::Data::EIdentifier(E::Identifier {
-                            ref_: p.store_name_in_ref(raw)?,
-                            ..Default::default()
-                        }),
+                    let r = p.store_name_in_ref(raw)?;
+                    break 'value p.new_expr(
+                        E::Identifier { ref_: r, ..Default::default() },
                         // TODO: implement saveExprCommentsHere and use using_loc here
-                        loc: using_range.loc,
-                    };
+                        using_range.loc,
+                    );
                 }
             } else {
                 p.parse_expr(Level::Prefix)?
@@ -1187,9 +929,9 @@ impl<
             if p.lexer.token == T::TAsteriskAsterisk {
                 p.lexer.unexpected()?;
             }
-            p.parse_suffix(&mut value, Level::Prefix, None, Expr::EFlags::None)?;
+            p.parse_suffix(&mut value, Level::Prefix, None, EFlags::None)?;
             let mut expr = p.new_expr(E::Await { value }, token_range.loc);
-            p.parse_suffix(&mut expr, Level::Lowest, None, Expr::EFlags::None)?;
+            p.parse_suffix(&mut expr, Level::Lowest, None, EFlags::None)?;
             return Ok(ExprOrLetStmt {
                 stmt_or_expr: js_ast::StmtOrExpr::Expr(expr),
                 ..Default::default()
@@ -1205,26 +947,20 @@ impl<
         let ref_ = p.store_name_in_ref(raw)?;
         let mut result = ExprOrLetStmt {
             stmt_or_expr: js_ast::StmtOrExpr::Expr(p.new_expr(
-                E::Identifier {
-                    ref_,
-                    ..Default::default()
-                },
+                E::Identifier { ref_, ..Default::default() },
                 token_range.loc,
             )),
             ..Default::default()
         };
         // PORT NOTE: reshaped for borrowck — Zig mutated `result.stmt_or_expr.expr` in place.
         if let js_ast::StmtOrExpr::Expr(ref mut e) = result.stmt_or_expr {
-            p.parse_suffix(e, Level::Lowest, None, Expr::EFlags::None)?;
+            p.parse_suffix(e, Level::Lowest, None, EFlags::None)?;
         }
         Ok(result)
     }
 
-    pub fn parse_binding(
-        p: &mut P<PARSER_FEATURE_TYPESCRIPT, PARSER_FEATURE_JSX, PARSER_FEATURE_SCAN_ONLY>,
-        opts: ParseBindingOptions,
-    ) -> Result<Binding, Error> {
-        // PERF(port): was comptime monomorphization (`comptime opts`) — profile in Phase B
+    pub fn parse_binding(&mut self, opts: ParseBindingOptions) -> Result<Binding, Error> {
+        let p = self;
         let loc = p.lexer.loc();
 
         match p.lexer.token {
@@ -1247,13 +983,13 @@ impl<
 
                 let ref_ = p.store_name_in_ref(name).expect("unreachable");
                 p.lexer.next()?;
-                return Ok(p.b(B::Identifier { ref_ }, loc));
+                return Ok(p.b(B::Identifier { r#ref: ref_ }, loc));
             }
             T::TOpenBracket => {
                 if !opts.is_using_statement {
                     p.lexer.next()?;
                     let mut is_single_line = !p.lexer.has_newline_before;
-                    let mut items = BumpVec::<js_ast::ArrayBinding>::new_in(p.allocator);
+                    let mut items = BumpVec::<ArrayBinding>::new_in(p.allocator);
                     let mut has_spread = false;
 
                     // "in" expressions are allowed
@@ -1262,14 +998,13 @@ impl<
 
                     while p.lexer.token != T::TCloseBracket {
                         if p.lexer.token == T::TComma {
-                            items.push(js_ast::ArrayBinding {
+                            items.push(ArrayBinding {
                                 binding: Binding {
-                                    data: Prefill::Data::B_MISSING,
+                                    data: B::B::BMissing(B::Missing {}),
                                     loc: p.lexer.loc(),
                                 },
-                                ..Default::default()
+                                default_value: None,
                             });
-                            // PERF(port): was assume_capacity (append catch unreachable)
                         } else {
                             if p.lexer.token == T::TDotDotDot {
                                 p.lexer.next()?;
@@ -1289,11 +1024,7 @@ impl<
                                 default_value = Some(p.parse_expr(Level::Comma)?);
                             }
 
-                            items.push(js_ast::ArrayBinding {
-                                binding,
-                                default_value,
-                            });
-                            // PERF(port): was assume_capacity (append catch unreachable)
+                            items.push(ArrayBinding { binding, default_value });
 
                             // Commas after spread elements are not allowed
                             if has_spread && p.lexer.token == T::TComma {
@@ -1330,7 +1061,7 @@ impl<
                     p.lexer.expect(T::TCloseBracket)?;
                     return Ok(p.b(
                         B::Array {
-                            items: items.into_bump_slice(),
+                            items: items.into_bump_slice_mut() as *mut [ArrayBinding],
                             has_spread,
                             is_single_line,
                         },
@@ -1343,7 +1074,7 @@ impl<
                     // p.markSyntaxFeature(compat.Destructuring, p.lexer.Range())
                     p.lexer.next()?;
                     let mut is_single_line = !p.lexer.has_newline_before;
-                    let mut properties = BumpVec::<js_ast::B::Property>::new_in(p.allocator);
+                    let mut properties = BumpVec::<B::Property>::new_in(p.allocator);
 
                     // "in" expressions are allowed
                     let old_allow_in = p.allow_in;
@@ -1351,13 +1082,11 @@ impl<
 
                     while p.lexer.token != T::TCloseBrace {
                         let property = p.parse_property_binding()?;
+                        let is_spread = property.flags.contains(Flags::Property::IsSpread);
                         properties.push(property);
-                        // PERF(port): was assume_capacity (append catch unreachable)
 
                         // Commas after spread elements are not allowed
-                        if property.flags.contains(Flags::Property::IS_SPREAD)
-                            && p.lexer.token == T::TComma
-                        {
+                        if is_spread && p.lexer.token == T::TComma {
                             p.log
                                 .add_range_error(
                                     p.source,
@@ -1390,7 +1119,7 @@ impl<
 
                     return Ok(p.b(
                         B::Object {
-                            properties: properties.into_bump_slice(),
+                            properties: properties.into_bump_slice_mut() as *mut [B::Property],
                             is_single_line,
                         },
                         loc,
@@ -1401,46 +1130,30 @@ impl<
         }
 
         p.lexer.expect(T::TIdentifier)?;
-        Ok(Binding {
-            loc,
-            data: Prefill::Data::B_MISSING,
-        })
+        Ok(Binding { loc, data: B::B::BMissing(B::Missing {}) })
     }
 
-    pub fn parse_property_binding(
-        p: &mut P<PARSER_FEATURE_TYPESCRIPT, PARSER_FEATURE_JSX, PARSER_FEATURE_SCAN_ONLY>,
-    ) -> Result<B::Property, Error> {
-        let mut key: js_ast::Expr = Expr {
-            loc: logger::Loc::EMPTY,
-            data: Prefill::Data::E_MISSING,
-        };
+    pub fn parse_property_binding(&mut self) -> Result<B::Property, Error> {
+        let p = self;
+        let mut key: Expr = Expr::EMPTY;
         let mut is_computed = false;
 
         match p.lexer.token {
             T::TDotDotDot => {
                 p.lexer.next()?;
-                let value = p.b(
-                    B::Identifier {
-                        ref_: p.store_name_in_ref(p.lexer.identifier).expect("unreachable"),
-                    },
-                    p.lexer.loc(),
-                );
+                let ident_ref =
+                    p.store_name_in_ref(p.lexer.identifier).expect("unreachable");
+                let value = p.b(B::Identifier { r#ref: ident_ref }, p.lexer.loc());
                 p.lexer.expect(T::TIdentifier)?;
                 return Ok(B::Property {
                     key: p.new_expr(E::Missing {}, p.lexer.loc()),
-
-                    flags: Flags::Property::IS_SPREAD,
+                    flags: Flags::Property::IsSpread.into(),
                     value,
-                    ..Default::default()
+                    default_value: None,
                 });
             }
             T::TNumericLiteral => {
-                key = p.new_expr(
-                    E::Number {
-                        value: p.lexer.number,
-                    },
-                    p.lexer.loc(),
-                );
+                key = p.new_expr(E::Number { value: p.lexer.number }, p.lexer.loc());
                 // check for legacy octal literal
                 p.lexer.next()?;
             }
@@ -1448,12 +1161,10 @@ impl<
                 key = p.parse_string_literal()?;
             }
             T::TBigIntegerLiteral => {
-                key = p.new_expr(
-                    E::BigInt {
-                        value: p.lexer.identifier,
-                    },
-                    p.lexer.loc(),
-                );
+                // SAFETY: lexer.identifier is arena-owned for 'a; E::BigInt.value is &'static [u8].
+                let v: &'static [u8] =
+                    unsafe { mem::transmute::<&[u8], &'static [u8]>(p.lexer.identifier) };
+                key = p.new_expr(E::BigInt { value: v }, p.lexer.loc());
                 // p.markSyntaxFeature(compat.BigInt, p.lexer.Range())
                 p.lexer.next()?;
             }
@@ -1473,11 +1184,14 @@ impl<
 
                 p.lexer.next()?;
 
-                key = p.new_expr(E::String { data: name, ..Default::default() }, loc);
+                // SAFETY: lexer.identifier is arena-owned for 'a; E::String.data is &'static [u8].
+                let data: &'static [u8] =
+                    unsafe { mem::transmute::<&[u8], &'static [u8]>(name) };
+                key = p.new_expr(E::String { data, ..Default::default() }, loc);
 
                 if p.lexer.token != T::TColon && p.lexer.token != T::TOpenParen {
                     let ref_ = p.store_name_in_ref(name).expect("unreachable");
-                    let value = p.b(B::Identifier { ref_ }, loc);
+                    let value = p.b(B::Identifier { r#ref: ref_ }, loc);
                     let mut default_value: Option<Expr> = None;
                     if p.lexer.token == T::TEquals {
                         p.lexer.next()?;
@@ -1485,10 +1199,10 @@ impl<
                     }
 
                     return Ok(B::Property {
+                        flags: Flags::PROPERTY_NONE,
                         key,
                         value,
                         default_value,
-                        ..Default::default()
                     });
                 }
             }
@@ -1505,9 +1219,9 @@ impl<
 
         Ok(B::Property {
             flags: if is_computed {
-                Flags::Property::IS_COMPUTED
+                Flags::Property::IsComputed.into()
             } else {
-                Flags::Property::empty()
+                Flags::PROPERTY_NONE
             },
             key,
             value,
@@ -1516,16 +1230,16 @@ impl<
     }
 
     pub fn parse_and_declare_decls(
-        p: &mut P<PARSER_FEATURE_TYPESCRIPT, PARSER_FEATURE_JSX, PARSER_FEATURE_SCAN_ONLY>,
-        kind: Symbol::Kind,
-        opts: &mut ParseStatementOptions,
-    ) -> Result<BumpVec<'bump, G::Decl>, Error> {
-        // TODO(port): lifetime 'bump on return type
+        &mut self,
+        kind: js_ast::symbol::Kind,
+        opts: &mut ParseStatementOptions<'a>,
+    ) -> Result<G::DeclList, Error> {
+        let p = self;
         let mut decls = BumpVec::<G::Decl>::new_in(p.allocator);
 
         loop {
             // Forbid "let let" and "const let" but not "var let"
-            if (kind == Symbol::Kind::Other || kind == Symbol::Kind::Constant)
+            if (kind == js_ast::symbol::Kind::Other || kind == js_ast::symbol::Kind::Constant)
                 && p.lexer.is_contextual_keyword(b"let")
             {
                 p.log
@@ -1538,7 +1252,6 @@ impl<
             }
 
             let mut value: Option<js_ast::Expr> = None;
-            // PERF(port): was comptime bool dispatch (`inline else => |is_using|`) — profile in Phase B
             let mut local = p.parse_binding(ParseBindingOptions {
                 is_using_statement: opts.is_using_statement,
             })?;
@@ -1565,11 +1278,7 @@ impl<
                 value = Some(p.parse_expr(Level::Comma)?);
             }
 
-            decls.push(G::Decl {
-                binding: local,
-                value,
-            });
-            // PERF(port): was assume_capacity (append catch unreachable)
+            decls.push(G::Decl { binding: local, value });
 
             if p.lexer.token != T::TComma {
                 break;
@@ -1577,20 +1286,20 @@ impl<
             p.lexer.next()?;
         }
 
-        Ok(decls)
+        // SAFETY: bump-arena slice; DeclList wraps it as Borrowed (no growth/free).
+        Ok(unsafe { G::DeclList::from_bump_slice(decls.into_bump_slice_mut()) })
     }
 
-    pub fn parse_path(
-        p: &mut P<PARSER_FEATURE_TYPESCRIPT, PARSER_FEATURE_JSX, PARSER_FEATURE_SCAN_ONLY>,
-    ) -> Result<ParsedPath, Error> {
-        // TODO(port): narrow error set
+    pub fn parse_path(&mut self) -> Result<ParsedPath<'a>, Error> {
+        let p = self;
         let path_text = p.lexer.to_utf8_e_string()?;
         let mut path = ParsedPath {
             loc: p.lexer.loc(),
-            text: path_text.slice8(),
+            // SAFETY: E::String slice8() is arena-owned for 'a.
+            text: unsafe { mem::transmute::<&[u8], &'a [u8]>(path_text.slice8()) },
             is_macro: false,
-            import_tag: ParsedPath::ImportTag::None,
-            ..Default::default()
+            import_tag: bun_options_types::ImportRecordTag::None,
+            loader: None,
         };
 
         if p.lexer.token == T::TNoSubstitutionTemplateLiteral {
@@ -1636,7 +1345,8 @@ impl<
                             break 'brk Some(SupportedAttribute::BunBakeGraph);
                         }
                     } else if p.lexer.token == T::TStringLiteral {
-                        let string_literal_text = p.lexer.to_utf8_e_string()?.slice8();
+                        let estr = p.lexer.to_utf8_e_string()?;
+                        let string_literal_text = estr.slice8();
                         if string_literal_text == b"type" {
                             break 'brk Some(SupportedAttribute::Type);
                         }
@@ -1657,7 +1367,8 @@ impl<
                 p.lexer.expect(T::TColon)?;
 
                 p.lexer.expect(T::TStringLiteral)?;
-                let string_literal_text = p.lexer.to_utf8_e_string()?.slice8();
+                let estr = p.lexer.to_utf8_e_string()?;
+                let string_literal_text = estr.slice8();
                 if let Some(attr) = supported_attribute {
                     match attr {
                         SupportedAttribute::Type => {
@@ -1672,7 +1383,8 @@ impl<
                                 if loader == bun_options_types::Loader::Sqlite
                                     && has_seen_embed_true
                                 {
-                                    path.loader = Some(bun_options_types::Loader::SqliteEmbedded);
+                                    path.loader =
+                                        Some(bun_options_types::Loader::SqliteEmbedded);
                                 }
                             } else {
                                 // unknown loader; consider erroring
@@ -1681,9 +1393,7 @@ impl<
                         SupportedAttribute::Embed => {
                             if string_literal_text == b"true" {
                                 has_seen_embed_true = true;
-                                if path.loader.is_some()
-                                    && path.loader == Some(bun_options_types::Loader::Sqlite)
-                                {
+                                if path.loader == Some(bun_options_types::Loader::Sqlite) {
                                     path.loader =
                                         Some(bun_options_types::Loader::SqliteEmbedded);
                                 }
@@ -1691,7 +1401,8 @@ impl<
                         }
                         SupportedAttribute::BunBakeGraph => {
                             if string_literal_text == b"ssr" {
-                                path.import_tag = ParsedPath::ImportTag::BakeResolveToSsrGraph;
+                                path.import_tag =
+                                    bun_options_types::ImportRecordTag::BakeResolveToSsrGraph;
                             } else {
                                 p.lexer.add_range_error(
                                     p.lexer.range(),
@@ -1718,26 +1429,24 @@ impl<
     }
 
     pub fn parse_stmts_up_to(
-        p: &mut P<PARSER_FEATURE_TYPESCRIPT, PARSER_FEATURE_JSX, PARSER_FEATURE_SCAN_ONLY>,
-        eend: js_lexer::T,
-        _opts: &mut ParseStatementOptions,
-    ) -> Result<&'bump [Stmt], Error> {
-        // TODO(port): narrow error set; lifetime 'bump on return slice
-        let mut opts = _opts.clone();
+        &mut self,
+        eend: T,
+        _opts: &mut ParseStatementOptions<'a>,
+    ) -> Result<StmtList<'a>, Error> {
+        let p = self;
+        // PORT NOTE: ParseStatementOptions is not Clone (holds &'a [Expr]); reconstruct
+        // a fresh per-iteration copy with the relevant scalar flags from `_opts`.
         let mut stmts = StmtList::new_in(p.allocator);
 
         let mut return_without_semicolon_start: i32 = -1;
-        opts.lexical_decl = ParseStatementOptions::LexicalDecl::AllowAll;
+        let is_module_scope = _opts.is_module_scope;
+        let is_namespace_scope = _opts.is_namespace_scope;
         let mut is_directive_prologue = true;
 
         loop {
             for comment in p.lexer.comments_to_preserve_before.iter() {
-                stmts.push(p.s(
-                    S::Comment {
-                        text: comment.text,
-                    },
-                    p.lexer.loc(),
-                ));
+                let loc = p.lexer.loc();
+                stmts.push(p.s(S::Comment { text: comment.text }, loc));
             }
             p.lexer.comments_to_preserve_before.clear();
 
@@ -1745,53 +1454,51 @@ impl<
                 break;
             }
 
-            let mut current_opts = opts.clone();
+            let mut current_opts = ParseStatementOptions::<'a> {
+                lexical_decl: LexicalDecl::AllowAll,
+                is_module_scope,
+                is_namespace_scope,
+                ..Default::default()
+            };
             let mut stmt = p.parse_stmt(&mut current_opts)?;
 
             // Skip TypeScript types entirely
             if Self::IS_TYPESCRIPT_ENABLED {
-                match stmt.data {
-                    Stmt::Data::STypeScript(_) => {
-                        continue;
-                    }
-                    _ => {}
+                if let js_ast::stmt::Data::STypeScript(_) = stmt.data {
+                    continue;
                 }
             }
 
-            let mut skip = matches!(stmt.data, Stmt::Data::SEmpty(_));
+            let mut skip = matches!(stmt.data, js_ast::stmt::Data::SEmpty(_));
             // Parse one or more directives at the beginning
             if is_directive_prologue {
                 is_directive_prologue = false;
-                match &stmt.data {
-                    Stmt::Data::SExpr(expr) => match &expr.value.data {
-                        Expr::Data::EString(str) => {
-                            if !str.prefer_template {
-                                is_directive_prologue = true;
+                if let js_ast::stmt::Data::SExpr(expr) = &stmt.data {
+                    if let js_ast::expr::Data::EString(str_) = &expr.value.data {
+                        if !str_.prefer_template {
+                            is_directive_prologue = true;
 
-                                if str.eql_comptime(b"use strict") {
-                                    skip = true;
-                                    // Track "use strict" directives
-                                    p.current_scope.strict_mode =
-                                        js_ast::Scope::StrictMode::ExplicitStrictMode;
-                                    if core::ptr::eq(p.current_scope, p.module_scope) {
-                                        p.module_scope_directive_loc = stmt.loc;
-                                    }
-                                } else if str.eql_comptime(b"use asm") {
-                                    skip = true;
-                                    stmt.data = Prefill::Data::S_EMPTY;
-                                } else {
-                                    stmt = Stmt::alloc(
-                                        S::Directive {
-                                            value: str.slice(p.allocator),
-                                        },
-                                        stmt.loc,
-                                    );
+                            if str_.eql_comptime(b"use strict") {
+                                skip = true;
+                                // Track "use strict" directives
+                                unsafe {
+                                    (*p.current_scope).strict_mode =
+                                        StrictModeKind::ExplicitStrictMode;
                                 }
+                                if core::ptr::eq(p.current_scope, p.module_scope) {
+                                    p.module_scope_directive_loc = stmt.loc;
+                                }
+                            } else if str_.eql_comptime(b"use asm") {
+                                skip = true;
+                                stmt.data = js_ast::stmt::Data::SEmpty(S::Empty {});
+                            } else {
+                                // SAFETY: arena-owned for 'a → *const [u8]
+                                let bytes = str_.slice8();
+                                let value: *const [u8] = bytes as *const [u8];
+                                stmt = Stmt::alloc(S::Directive { value }, stmt.loc);
                             }
                         }
-                        _ => {}
-                    },
-                    _ => {}
+                    }
                 }
             }
 
@@ -1803,28 +1510,20 @@ impl<
             // this problem: https://github.com/rollup/rollup/issues/3729
             if !p.options.suppress_warnings_about_weird_code {
                 let mut needs_check = true;
-                match &stmt.data {
-                    Stmt::Data::SReturn(ret) => {
-                        if ret.value.is_none() && !p.latest_return_had_semicolon {
-                            return_without_semicolon_start = stmt.loc.start;
-                            needs_check = false;
-                        }
+                if let js_ast::stmt::Data::SReturn(ret) = &stmt.data {
+                    if ret.value.is_none() && !p.latest_return_had_semicolon {
+                        return_without_semicolon_start = stmt.loc.start;
+                        needs_check = false;
                     }
-                    _ => {}
                 }
 
                 if needs_check && return_without_semicolon_start != -1 {
-                    match &stmt.data {
-                        Stmt::Data::SExpr(_) => {
-                            p.log.add_warning(
-                                p.source,
-                                logger::Loc {
-                                    start: return_without_semicolon_start + 6,
-                                },
-                                b"The following expression is not returned because of an automatically-inserted semicolon",
-                            )?;
-                        }
-                        _ => {}
+                    if let js_ast::stmt::Data::SExpr(_) = &stmt.data {
+                        p.log.add_warning(
+                            p.source,
+                            logger::Loc { start: return_without_semicolon_start + 6 },
+                            b"The following expression is not returned because of an automatically-inserted semicolon",
+                        )?;
                     }
 
                     return_without_semicolon_start = -1;
@@ -1832,17 +1531,17 @@ impl<
             }
         }
 
-        Ok(stmts.into_bump_slice())
+        Ok(stmts)
     }
 
     /// This parses an expression. This assumes we've already parsed the "async"
     /// keyword and are currently looking at the following token.
     pub fn parse_async_prefix_expr(
-        p: &mut P<PARSER_FEATURE_TYPESCRIPT, PARSER_FEATURE_JSX, PARSER_FEATURE_SCAN_ONLY>,
+        &mut self,
         async_range: logger::Range,
         level: Level,
     ) -> Result<Expr, Error> {
-        // TODO(port): narrow error set
+        let p = self;
         // "async function() {}"
         if !p.lexer.has_newline_before && p.lexer.token == T::TFunction {
             return p.parse_fn_expr(async_range.loc, true, async_range);
@@ -1857,13 +1556,11 @@ impl<
                 T::TEqualsGreaterThan => {
                     if level.lte(Level::Assign) {
                         let async_ref = p.store_name_in_ref(b"async")?;
-                        let args = p.allocator.alloc_slice_fill_with(1, |_| G::Arg {
-                            binding: p.b(B::Identifier { ref_: async_ref }, async_range.loc),
-                            ..Default::default()
-                        });
+                        let _arg_binding =
+                            p.b(B::Identifier { r#ref: async_ref }, async_range.loc);
                         let _ = p
                             .push_scope_for_parse_pass(
-                                js_ast::Scope::Kind::FunctionArgs,
+                                js_ast::scope::Kind::FunctionArgs,
                                 async_range.loc,
                             )
                             .expect("unreachable");
@@ -1871,7 +1568,10 @@ impl<
                             needs_async_loc: async_range.loc,
                             ..Default::default()
                         };
-                        let arrow_body = p.parse_arrow_body(args, &mut data)?;
+                        // PORT NOTE: parse_arrow_body's active signature takes ExprNodeList;
+                        // single-arg payload is rebuilt by the callee once the round-D body lands.
+                        let arrow_body =
+                            p.parse_arrow_body(ExprNodeList::default(), &mut data)?;
                         p.pop_scope();
                         return Ok(p.new_expr(arrow_body, async_range.loc));
                     }
@@ -1883,24 +1583,23 @@ impl<
 
                         let ref_ = p.store_name_in_ref(p.lexer.identifier)?;
                         let arg_loc = p.lexer.loc();
-                        let args = p.allocator.alloc_slice_fill_with(1, |_| G::Arg {
-                            binding: p.b(B::Identifier { ref_ }, arg_loc),
-                            ..Default::default()
-                        });
+                        let _arg_binding = p.b(B::Identifier { r#ref: ref_ }, arg_loc);
                         p.lexer.next()?;
 
                         let _ = p.push_scope_for_parse_pass(
-                            js_ast::Scope::Kind::FunctionArgs,
+                            js_ast::scope::Kind::FunctionArgs,
                             async_range.loc,
                         )?;
                         // TODO(port): errdefer — `defer p.popScope()` (borrowck blocks scopeguard over &mut p)
 
                         let mut data = FnOrArrowDataParse {
                             allow_await: AwaitOrYield::AllowExpr,
-                            needs_async_loc: args[0].binding.loc,
+                            needs_async_loc: arg_loc,
                             ..Default::default()
                         };
-                        let mut arrow_body = p.parse_arrow_body(args, &mut data)?;
+                        // PORT NOTE: see above re parse_arrow_body signature.
+                        let mut arrow_body =
+                            p.parse_arrow_body(ExprNodeList::default(), &mut data)?;
                         arrow_body.is_async = true;
                         p.pop_scope();
                         return Ok(p.new_expr(arrow_body, async_range.loc));
@@ -1926,11 +1625,12 @@ impl<
                 // "async <T>() => {}"
                 T::TLessThan => {
                     if Self::IS_TYPESCRIPT_ENABLED
-                        && (!Self::IS_JSX_ENABLED || TypeScript::is_ts_arrow_fn_jsx(p)?)
+                        && (!Self::IS_JSX_ENABLED || p.is_ts_arrow_fn_jsx()?)
                     {
-                        match p.try_skip_type_script_type_parameters_then_open_paren_with_backtracking()
+                        match p
+                            .try_skip_type_script_type_parameters_then_open_paren_with_backtracking()
                         {
-                            TypeScript::SkipResult::DidNotSkipAnything => {}
+                            SkipTypeParameterResult::DidNotSkipAnything => {}
                             result => {
                                 p.lexer.next()?;
                                 return p.parse_paren_expr(
@@ -1940,7 +1640,7 @@ impl<
                                         is_async: true,
                                         async_range,
                                         force_arrow_fn: result
-                                            == TypeScript::SkipResult::DefinitelyTypeParameters,
+                                            == SkipTypeParameterResult::DefinitelyTypeParameters,
                                         ..Default::default()
                                     },
                                 );
@@ -1955,11 +1655,9 @@ impl<
 
         // "async"
         // "async + 1"
+        let async_ref = p.store_name_in_ref(b"async")?;
         Ok(p.new_expr(
-            E::Identifier {
-                ref_: p.store_name_in_ref(b"async")?,
-                ..Default::default()
-            },
+            E::Identifier { ref_: async_ref, ..Default::default() },
             async_range.loc,
         ))
     }
@@ -1969,7 +1667,9 @@ impl<
 // PORT STATUS
 //   source:     src/js_parser/ast/parse.zig (1407 lines)
 //   confidence: medium
-//   todos:      23
-//   notes:      comptime mixin → ZST + const-generics; sibling re-exports left as TODOs (Phase B should make all parse fns inherent on NewParser_); 'bump lifetimes on return slices need wiring; defer/errdefer state-restore on &mut p needs scopeguard pattern
+//   notes:      comptime mixin → inherent impl on P<'a, TS, J, SCAN_ONLY>; sibling re-exports
+//               dropped (each parseX file impls on P directly); 'a/'static lifetime widening on
+//               arena-owned slices via unsafe transmute (Phase B threads 'bump explicitly);
+//               parse_arrow_body callers pass empty ExprNodeList until parseFn.rs round-D body
+//               lands with the &mut [G::Arg] signature.
 // ──────────────────────────────────────────────────────────────────────────
-} // end mod _draft

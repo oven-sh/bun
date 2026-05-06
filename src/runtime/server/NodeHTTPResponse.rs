@@ -1873,31 +1873,19 @@ pub extern "C" fn Bun__NodeHTTPResponse_setClosed(response: *mut NodeHTTPRespons
     unsafe { (*response).flags.insert(Flags::SOCKET_CLOSED) };
 }
 
-// TODO(port): codegen module placeholder for JSNodeHTTPResponse cached-property accessors.
+// Codegen module for JSNodeHTTPResponse cached-property accessors.
+// Mirrors `jsc.Codegen.JSNodeHTTPResponse.on{Data,Aborted,Writable}{Get,Set}Cached`
+// (build/*/codegen/ZigGeneratedClasses.zig) — thin wrappers over the C++
+// `NodeHTTPResponsePrototype__on*{Get,Set}CachedValue` shims emitted by
+// src/codegen/generate-classes.ts for each `cache: true` property in
+// NodeHTTPResponse.classes.ts.
 mod generated {
     #[allow(non_snake_case)]
     pub mod JSNodeHTTPResponse {
-        use bun_jsc::{JSGlobalObject, JSValue};
-        // on_data_get_cached / on_data_set_cached / on_aborted_* / on_writable_* are emitted
-        // by generate-classes.ts. Stubbed here so the draft references resolve in Phase B.
-        pub fn on_data_get_cached(_this: JSValue) -> Option<JSValue> {
-            unimplemented!()
-        }
-        pub fn on_data_set_cached(_this: JSValue, _g: &JSGlobalObject, _v: JSValue) {
-            unimplemented!()
-        }
-        pub fn on_aborted_get_cached(_this: JSValue) -> Option<JSValue> {
-            unimplemented!()
-        }
-        pub fn on_aborted_set_cached(_this: JSValue, _g: &JSGlobalObject, _v: JSValue) {
-            unimplemented!()
-        }
-        pub fn on_writable_get_cached(_this: JSValue) -> Option<JSValue> {
-            unimplemented!()
-        }
-        pub fn on_writable_set_cached(_this: JSValue, _g: &JSGlobalObject, _v: JSValue) {
-            unimplemented!()
-        }
+        // Emits `on_data_{get,set}_cached`, `on_aborted_{get,set}_cached`,
+        // `on_writable_{get,set}_cached`. Getter maps `JSValue::ZERO` → `None`;
+        // setter forwards through the JSC `WriteBarrier<Unknown>` slot.
+        ::bun_jsc::codegen_cached_accessors!("NodeHTTPResponse"; onData, onAborted, onWritable);
     }
 }
 } // mod _gated

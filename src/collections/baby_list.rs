@@ -585,7 +585,7 @@ impl<T> BabyList<T> {
     // as an extension trait on BabyList<T>. Preserved here behind cfg(any()) so the move-in
     // pass can lift the bodies verbatim into bun_css::BabyListCssExt.
     // TODO(b0-genuine): bun_css::generic — needs BabyListCssExt move-in (CYCLEBREAK §css).
-    
+    #[cfg(any())]
     pub fn parse(input: &mut bun_css::Parser) -> bun_css::Result<Self>
     where
         T: bun_css::generic::Parse,
@@ -595,14 +595,14 @@ impl<T> BabyList<T> {
             Err(e) => Err(e),
         }
     }
-    
+    #[cfg(any())]
     pub fn to_css(&self, dest: &mut bun_css::Printer) -> Result<(), bun_css::PrintErr>
     where
         T: bun_css::ToCss,
     {
         bun_css::to_css::from_baby_list::<T>(self, dest)
     }
-    
+    #[cfg(any())]
     pub fn eql(lhs: &Self, rhs: &Self) -> bool
     where
         T: bun_css::generic::Eql,
@@ -744,7 +744,7 @@ impl<T> BabyList<T> {
         #[cfg(debug_assertions)]
         if TRACES_ENABLED {
             if let Origin::Borrowed { trace: Some(trace) } = &self.origin {
-                bun_core::Output::note("borrowed BabyList created here:");
+                bun_core::Output::note("borrowed BabyList created here:", ());
                 bun_core::dump_stack_trace(
                     &trace.trace(),
                     bun_core::DumpStackTraceOptions {

@@ -139,7 +139,8 @@ impl State {
         {
             bun_core::Output::err(
                 "race condition",
-                format_args!("`CriticalSection` first entered here:"),
+                "`CriticalSection` first entered here:",
+                (),
             );
             // Hook-registered: bun_crash_handler::dump_stack_trace (CYCLEBREAK §Debug-hook).
             crate::dump_stored_trace(&self.owner_trace);

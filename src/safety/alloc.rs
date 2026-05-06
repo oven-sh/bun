@@ -1,3 +1,6 @@
+#![cfg(any())]
+// OBSOLETE per PORTING.md §Allocators — Zig allocator-identity checks (`assertEq`,
+// `CheckedAllocator`) replaced by AtomicPtr hooks in `lib.rs`. Draft kept for diff-pass only.
 use core::ffi::c_void;
 use core::fmt;
 

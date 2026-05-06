@@ -490,6 +490,42 @@ pub use bun_errno::{E, S, SystemErrno, get_errno, GetErrno};
 pub type Maybe<T> = core::result::Result<T, Error>;
 pub type Result<T> = core::result::Result<T, Error>;
 
+/// Flags for [`renameat2`]. Port of `bun.sys.RenameAt2Flags` (sys.zig:2472).
+/// On Linux maps to `RENAME_EXCHANGE`/`RENAME_NOREPLACE`; on macOS maps to
+/// `RENAME_SWAP`/`RENAME_EXCL`/`RENAME_NOFOLLOW_ANY`.
+#[derive(Clone, Copy, Default)]
+pub struct Renameat2Flags {
+    pub exchange: bool,
+    pub exclude: bool,
+    pub nofollow: bool,
+}
+
+impl Renameat2Flags {
+    #[inline]
+    pub fn int(self) -> u32 {
+        let mut flags: u32 = 0;
+        #[cfg(target_os = "macos")]
+        {
+            // <sys/stdio.h>: RENAME_SWAP=2, RENAME_EXCL=4, RENAME_NOFOLLOW_ANY=0x10
+            if self.exchange { flags |= 2; }
+            if self.exclude { flags |= 4; }
+            if self.nofollow { flags |= 0x10; }
+        }
+        #[cfg(target_os = "linux")]
+        {
+            if self.exchange { flags |= libc::RENAME_EXCHANGE; }
+            if self.exclude { flags |= libc::RENAME_NOREPLACE; }
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        {
+            if self.exchange { flags |= 1; }
+            if self.exclude { flags |= 2; }
+            let _ = self.nofollow;
+        }
+        flags
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Syscall tag — `enum(u8)` in spec (sys.zig:218-326). Newtype-over-u8 here so
 // the discriminants match Zig's positional ordinals 1:1 for FFI / cross-lang

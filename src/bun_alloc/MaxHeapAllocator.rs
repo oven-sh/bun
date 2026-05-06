@@ -33,8 +33,10 @@ impl Allocator for MaxHeapAllocator {
         Some(self_.array_list.as_mut_ptr())
     }
 
-    fn resize(_: *mut c_void, _buf: &mut [u8], _: usize, _new_len: usize, _: usize) -> bool {
-        unimplemented!("not implemented");
+    fn resize(_: *mut c_void, buf: &mut [u8], _: usize, new_len: usize, _: usize) -> bool {
+        let _ = new_len;
+        let _ = buf;
+        panic!("not implemented");
     }
 
     fn free(_: *mut c_void, _: &mut [u8], _: usize, _: usize) {}

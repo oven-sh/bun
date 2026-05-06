@@ -45,11 +45,38 @@ impl Default for ByteBlobLoader {
 
 pub const TAG: readable_stream::Tag = readable_stream::Tag::Blob;
 
-// TODO(port): Zig `NewSource(@This(), "Blob", onStart, onPull, onCancel, deinit, null, drain,
+// Zig `NewSource(@This(), "Blob", onStart, onPull, onCancel, deinit, null, drain,
 // memoryCost, toBufferedValue)` is a comptime type-returning fn that wires callbacks. In Rust
-// this becomes a generic `ReadableStreamSource<Ctx>` where `Ctx` impls a trait providing these
-// methods. Phase B: define that trait and `impl ReadableStreamSourceContext for ByteBlobLoader`.
+// this becomes a generic `ReadableStreamSource<Ctx>` where `Ctx` impls `SourceContext`.
 pub type Source = ReadableStreamSource<ByteBlobLoader>;
+
+impl readable_stream::SourceContext for ByteBlobLoader {
+    const NAME: &'static str = "Blob";
+    // setRefUnrefFn = null
+    const SUPPORTS_REF: bool = false;
+    crate::source_context_codegen!(
+        BlobInternalReadableStreamSource__create,
+        BlobInternalReadableStreamSourcePrototype__pendingPromiseSetCachedValue,
+        BlobInternalReadableStreamSourcePrototype__onDrainCallbackSetCachedValue,
+        BlobInternalReadableStreamSourcePrototype__onDrainCallbackGetCachedValue
+    );
+
+    fn on_start(&mut self) -> streams::Start { Self::on_start(self) }
+    fn on_pull(&mut self, buf: &mut [u8], view: JSValue) -> streams::Result {
+        Self::on_pull(self, buf, view)
+    }
+    fn on_cancel(&mut self) { Self::on_cancel(self) }
+    fn deinit_fn(&mut self) { Self::deinit(self) }
+    fn drain_internal_buffer(&mut self) -> BabyList<u8> { Self::drain(self) }
+    fn memory_cost_fn(&self) -> usize { Self::memory_cost(self) }
+    fn to_buffered_value(
+        &mut self,
+        global: &JSGlobalObject,
+        action: streams::BufferActionTag,
+    ) -> Option<JsResult<JSValue>> {
+        Some(Self::to_buffered_value(self, global, action))
+    }
+}
 
 impl ByteBlobLoader {
     pub fn parent(&mut self) -> &mut Source {

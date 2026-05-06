@@ -1763,18 +1763,16 @@ pub mod defines_full_draft {
                         log.add_error_fmt(
                             None,
                             logger::Loc::default(),
-                            bump,
-                            format_args!("define key \"{}\" must be a valid identifier", strings::fmt(key)),
+                            format_args!("define key \"{}\" must be a valid identifier", BStr::new(key)),
                         )?;
                     } else {
                         log.add_error_fmt(
                             None,
                             logger::Loc::default(),
-                            bump,
                             format_args!(
                                 "define key \"{}\" contains invalid identifier \"{}\"",
-                                strings::fmt(part),
-                                strings::fmt(value_str)
+                                BStr::new(part),
+                                BStr::new(value_str)
                             ),
                         )?;
                     }
@@ -1785,7 +1783,7 @@ pub mod defines_full_draft {
             // check for nested identifiers
             let mut is_ident = true;
             for part in value_str.split(|&c| c == b'.') {
-                if !js_lexer::is_identifier(part) || js_lexer::Keywords::has(part) {
+                if !js_lexer::is_identifier(part) || js_lexer::Keywords.contains_key(part) {
                     is_ident = false;
                     break;
                 }

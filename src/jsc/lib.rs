@@ -2172,11 +2172,14 @@ pub mod codegen {
     // GENERATED: re-run src/codegen/generate-classes.ts with .rs output
     pub mod js {
         /// Generic accessor for the JSC constructor of a `#[bun_jsc::JsClass]` type.
-        /// Real impl is emitted per-class by codegen; this generic fronts it.
-        pub fn get_constructor<T>(global: &crate::JSGlobalObject) -> crate::JSValue {
-            let _ = global;
-            // TODO(b2): generated per-class — re-run generate-classes.ts with .rs output.
-            todo!("codegen::js::get_constructor")
+        /// The per-class extern (`${TypeName}__getConstructor`) is wired by the
+        /// `#[bun_jsc::JsClass]` proc-macro into [`JsClass::get_constructor`];
+        /// this generic just fronts that trait method (mirrors codegen
+        /// `pub fn getConstructor(global) JSValue` in
+        /// generate-classes.ts:2449).
+        #[inline]
+        pub fn get_constructor<T: crate::JsClass>(global: &crate::JSGlobalObject) -> crate::JSValue {
+            T::get_constructor(global)
         }
     }
 }

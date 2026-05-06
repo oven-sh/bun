@@ -144,40 +144,51 @@ it("backend.url:false forces spawn and throws ERR_METHOD_NOT_IMPLEMENTED", () =>
   expectNotImplementedError(err);
 });
 
-it("backend.url:'ws://...' is NOT blocked by the Windows guard", () => {
+it("backend.url:'ws://...' is NOT blocked by the Windows guard", async () => {
   // The WebSocket connect path (ensureConnected → WebCore::WebSocket)
   // does not touch ChromeProcess.zig's spawn helper, so it must NOT
   // throw ERR_METHOD_NOT_IMPLEMENTED on Windows. The guard was
   // previously too wide and blocked this scenario; make sure it
   // doesn't regress.
   //
-  // The URL points at a port we know isn't listening, so the WebSocket
-  // handshake will fail — but that surfaces as a CDP error later, not
-  // as a constructor-level ERR_METHOD_NOT_IMPLEMENTED. Either the
-  // constructor returns a view (WS handshake still pending) or it
-  // throws a ConnectFailed — neither is the spawn guard.
-  let err: any;
-  let view: any;
-  try {
-    view = new (Bun as any).WebView({
-      backend: { type: "chrome", url: "ws://127.0.0.1:1/devtools/browser/dead" },
-    });
-  } catch (e) {
-    err = e;
-  }
-  if (view) {
-    try {
-      view.close();
-    } catch {}
-    // Sync construction succeeded — that's the happy case for this
-    // test. The point is that construction was NOT blocked by the
-    // Windows guard.
-    return;
-  }
-  // If it threw, it must NOT be the not-implemented error.
-  expect(err).toBeDefined();
-  expect(err.code).not.toBe("ERR_METHOD_NOT_IMPLEMENTED");
-  expect(err.message).not.toMatch(/chrome.*spawn.*not.*yet.*implemented.*windows/i);
+  // Runs in a scrubbed child rather than in-process because
+  // successfully entering the ensureConnected path leaves
+  // Transport::m_mode = WebSocket with the singleton alive — and
+  // updateKeepAlive() on view.close() early-returns without tearing
+  // it down (m_sockRefd was never set by registerView). A subsequent
+  // in-process spawn-forcing test would then short-circuit
+  // ensureSpawned's fast-path on the live singleton and pass its
+  // UNEXPECTED_SUCCESS check. Isolating this test to its own
+  // subprocess makes the other tests immune to ordering.
+  //
+  // The URL points at a port that isn't listening; construction may
+  // succeed synchronously (WS handshake still pending) or throw
+  // ConnectFailed — either is fine. The assertion is just that the
+  // child does NOT see the NotImplementedOnWindows error.
+  const script =
+    "try {" +
+    '  const v = new Bun.WebView({ backend: { type: "chrome", url: "ws://127.0.0.1:1/devtools/browser/dead" } });' +
+    "  try { v.close(); } catch {}" +
+    '  console.log("CONSTRUCTED");' +
+    "} catch (e) {" +
+    "  console.log(e.code);" +
+    "  console.log(e.message);" +
+    "}" +
+    // Force exit — if the WebSocket's internal refcount pinned the
+    // loop, the child would hang otherwise and the parent test would
+    // time out instead of giving a clean verdict.
+    "process.exit(0);";
+  const { stdout, exitCode } = await runInScrubbedChild(script);
+  // Must NOT be the spawn-not-implemented error regardless of which
+  // branch fired.
+  expect(stdout).not.toContain("ERR_METHOD_NOT_IMPLEMENTED");
+  expect(stdout).not.toMatch(/chrome.*spawn.*not.*yet.*implemented.*windows/i);
+  // Sanity: exactly one of (sync construction succeeded) or
+  // (construction threw a non-NotImplemented error) should have
+  // happened. Either "CONSTRUCTED" was logged, or the child logged
+  // an error code that's not ERR_METHOD_NOT_IMPLEMENTED.
+  expect(stdout.includes("CONSTRUCTED") || stdout.includes("ERR_DLOPEN_FAILED")).toBe(true);
+  expect(exitCode).toBe(0);
 });
 
 it("BUN_CHROME_PATH env var does not change the spawn outcome", async () => {

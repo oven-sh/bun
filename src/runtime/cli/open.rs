@@ -8,6 +8,8 @@ use bun_resolver::fs as Fs;
 use bun_str::{strings, ZStr};
 use bun_which::which;
 
+use crate::api::bun::process::sync;
+
 // ──────────────────────────────────────────────────────────────────────────
 
 #[cfg(target_os = "macos")]

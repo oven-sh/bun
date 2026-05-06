@@ -750,8 +750,9 @@ fn print_enhanced_audit_report(
 ) -> Result<u32, bun_alloc::AllocError> {
     let source = logger::Source::init_path_string(b"audit-response.json", response_text);
     let mut log = logger::Log::init();
+    let bump = bun_alloc::Arena::new();
 
-    let expr = match bun_json::parse(&source, &mut log, true) {
+    let expr = match bun_json::parse::<true>(&source, &mut log, &bump) {
         Ok(e) => e,
         Err(_) => {
             let _ = Output::writer().write_all(response_text);

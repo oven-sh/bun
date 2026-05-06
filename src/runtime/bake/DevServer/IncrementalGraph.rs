@@ -1629,7 +1629,7 @@ impl<S: GraphSide> IncrementalGraph<S> {
         self.owner().graph_safety_lock.assert_locked();
 
         if cfg!(feature = "debug_logs") {
-            DevServer::ig_log(format_args!(
+            ig_log!(
                 "traceDependencies(.{}, {}{})",
                 <&'static str>::from(S::SIDE),
                 bun_fmt::quote(&self.bundled_files.keys()[file_index.get() as usize]),
@@ -1638,7 +1638,7 @@ impl<S: GraphSide> IncrementalGraph<S> {
                 } else {
                     ""
                 }
-            ));
+            );
         }
 
         if gts.bits(S::SIDE).is_set(file_index.get() as usize) {

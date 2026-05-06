@@ -5337,6 +5337,9 @@ pub mod fs {
         pub entry_cache: unsafe fn(*const Entry) -> EntryCache,
         pub entry_kind: unsafe fn(*mut Entry, *mut core::ffi::c_void, bool) -> FsEntryKind,
         pub dir_entry_has_comptime_query: unsafe fn(*const DirEntry, &'static [u8]) -> bool,
+        /// Zig: `dir_entry.fd` (fs.zig:121) — cached open directory fd, or
+        /// `bun.invalid_fd` when not retained.
+        pub dir_entry_fd: unsafe fn(*const DirEntry) -> super::Fd,
         pub dir_entry_data: unsafe fn(*const DirEntry) -> *const (),
         /// Snapshot the directory listing's value pointers into `out`.
         /// PERF(port): was `data.iterator()` — collected to flatten the

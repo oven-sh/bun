@@ -754,6 +754,6 @@ pub fn load(
 // PORT STATUS
 //   source:     src/install/lockfile/bun.lockb.zig (640 lines)
 //   confidence: medium
-//   todos:      6
-//   notes:      save() borrowck reshape (StreamType absorbs Writer — single &mut Vec<u8>); z_allocator zeroing semantics deferred; Buffers::write_array/read_array adapted via split_stream! aliasing; Dependency::Context.allocator field dropped; package column iteration blocked on MultiArrayElement derive
+//   todos:      4
+//   notes:      save() borrowck reshape (StreamType absorbs Writer — single &mut Vec<u8>); z_allocator zeroing semantics deferred; Buffers::write_array/read_array adapted via split_stream! aliasing; Dependency::Context.allocator field dropped
 // ──────────────────────────────────────────────────────────────────────────

@@ -778,8 +778,10 @@ pub fn install_isolated_packages(
                                 break 'resolved_pkg_id (ids.pkg_id, false);
                             }
 
-                            let peer_dep_version = &peer_dep.version.value.npm.version;
-                            let res_version = &res.value.npm.version;
+                            // SAFETY: tag was checked == .Npm directly above for both
+                            // `peer_dep.version` and `res`.
+                            let peer_dep_version = unsafe { &peer_dep.version.value.npm.version };
+                            let res_version = unsafe { &res.value.npm.version };
 
                             if !peer_dep_version.satisfies(*res_version, string_buf, string_buf) {
                                 // TODO: add warning!

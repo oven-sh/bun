@@ -277,6 +277,20 @@ impl Store {
     /// `this` must point to a live `Store` originally allocated via `Store::new`
     /// / `Box::new` (i.e. carrying mutable provenance from `Box::into_raw`), and
     /// the caller must own one outstanding reference being released.
+    /// C-ABI trampoline for `bun_jsc::array_buffer::BlobArrayBuffer_deallocator` —
+    /// breaks the `bun_jsc → bun_runtime` forward-dep cycle (same pattern as
+    /// `Bun__Blob__Store__initFile` / `Bun__Blob__sharedView`).
+    ///
+    /// # Safety
+    /// `this` must be non-null and satisfy [`Store::deref`]'s contract.
+    #[unsafe(no_mangle)]
+    pub unsafe extern "C" fn Bun__Blob__Store__deref(this: *mut Store) {
+        // SAFETY: caller (JSC ArrayBuffer deallocator) passes the non-null
+        // `*Store` it stashed as deallocator context; that pointer carries
+        // mutable provenance from `Box::into_raw` and owns one outstanding ref.
+        unsafe { Store::deref(NonNull::new_unchecked(this)) };
+    }
+
     pub unsafe fn deref(this: NonNull<Store>) {
         // SAFETY: place-project to the atomic field without materializing a
         // `&Store`; `AtomicU32` is interior-mutable so `&AtomicU32` here is sound

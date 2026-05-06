@@ -748,7 +748,7 @@ pub use _upload_stream_gated::{S3UploadStreamWrapper, S3UploadStreamWrapperRef, 
 
 /// download a file from s3 chunk by chunk aka streaming (used on readableStream)
 pub fn download_stream(
-    this: &mut S3Credentials,
+    this: &S3Credentials,
     path: &[u8],
     offset: usize,
     size: Option<usize>,
@@ -923,7 +923,7 @@ pub fn download_stream(
 
 /// returns a readable stream that reads from the s3 path
 pub fn readable_stream(
-    this: &mut S3Credentials,
+    this: &S3Credentials,
     path: &[u8],
     offset: usize,
     size: Option<usize>,

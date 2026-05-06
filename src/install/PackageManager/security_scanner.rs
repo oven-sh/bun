@@ -1506,7 +1506,7 @@ impl<'a> SecurityScanSubprocess<'a> {
                 }
                 ErrorCode::ScanFailed => {
                     if let Some(msg) = json_expr.get(b"message") {
-                        if let Some(msg_str) = msg.as_string() {
+                        if let Some(msg_str) = msg.as_string(&bump) {
                             Output::err_generic(
                                 "Security scanner failed: {}",
                                 (BStr::new(msg_str),),
@@ -1592,7 +1592,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         };
 
         let advisories =
-            parse_security_advisories_from_expr(self.manager, advisories_expr, package_paths)?;
+            parse_security_advisories_from_expr(self.manager, advisories_expr, &bump, package_paths)?;
 
         if !status.is_ok() {
             match &status {
@@ -1642,6 +1642,7 @@ impl<'a> SecurityScanSubprocess<'a> {
 fn parse_security_advisories_from_expr(
     manager: &PackageManager,
     advisories_expr: Expr,
+    bump: &bun_alloc::Arena,
     package_paths: &mut ArrayHashMap<PackageID, PackagePath>,
 ) -> Result<Box<[SecurityAdvisory]>, Error> {
     let mut advisories_list: Vec<SecurityAdvisory> = Vec::new();
@@ -1670,7 +1671,7 @@ fn parse_security_advisories_from_expr(
             );
             return Err(err!("MissingPackageField"));
         };
-        let Some(name_str_temp) = name_expr.as_string() else {
+        let Some(name_str_temp) = name_expr.as_string(bump) else {
             Output::err_generic(
                 "Security advisory at index {} 'package' field must be a string",
                 (i,),
@@ -1689,7 +1690,7 @@ fn parse_security_advisories_from_expr(
 
         let desc_str: Option<Box<[u8]>> = if let Some(desc_expr) = item.get(b"description") {
             'blk: {
-                if let Some(str) = desc_expr.as_string() {
+                if let Some(str) = desc_expr.as_string(bump) {
                     // Duplicate the string since asString returns temporary memory
                     break 'blk Some(Box::from(str));
                 }
@@ -1708,7 +1709,7 @@ fn parse_security_advisories_from_expr(
 
         let url_str: Option<Box<[u8]>> = if let Some(url_expr) = item.get(b"url") {
             'blk: {
-                if let Some(str) = url_expr.as_string() {
+                if let Some(str) = url_expr.as_string(bump) {
                     // Duplicate the string since asString returns temporary memory
                     break 'blk Some(Box::from(str));
                 }

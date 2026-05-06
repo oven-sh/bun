@@ -5839,13 +5839,15 @@ impl H2FrameParser {
                 // TODO(port): `NativeCallbacks::H2` carries `IntrusiveRc<api::bun::h2_frame_parser::H2FrameParser>`
                 // (the gated stub type), not this body's `H2FrameParser`. Until the two are unified,
                 // fall back to write-only mode (matches the `attach_native_callback() == false` branch).
-                socket.ref_();
-                this_ref.native_socket = BunSocket::TlsWriteonly(socket as *mut TLSSocket);
+                // SAFETY: `socket` is the live `m_ctx` borrowed from the JS wrapper rooted by `socket_js`.
+                unsafe { (*socket).ref_() };
+                this_ref.native_socket = BunSocket::TlsWriteonly(socket);
                 let _ = this_ref.flush();
             } else if let Some(socket) = JSTCPSocket::from_js(socket_js) {
                 bun_output::scoped_log!(H2FrameParser, "TCPSocket attached");
-                socket.ref_();
-                this_ref.native_socket = BunSocket::TcpWriteonly(socket as *mut TCPSocket);
+                // SAFETY: `socket` is the live `m_ctx` borrowed from the JS wrapper rooted by `socket_js`.
+                unsafe { (*socket).ref_() };
+                this_ref.native_socket = BunSocket::TcpWriteonly(socket);
                 let _ = this_ref.flush();
             }
         }

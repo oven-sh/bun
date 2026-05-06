@@ -46,8 +46,7 @@ fn install(ctx: &mut ContextData) -> Result<(), Error> {
     // before any install work) lives behind the reconciler-6 gate. Until that un-gates,
     // handle `--help` / `-h` here directly so `bun install --help` prints real help text
     // instead of panicking. The remaining install path stays blocked on the gate.
-    for arg in bun::argv().iter().skip(2) {
-        let a = arg.as_bytes();
+    for a in bun::argv().iter().skip(2) {
         if a == b"--help" || a == b"-h" {
             print_help();
             Global::exit(0);
@@ -250,27 +249,22 @@ static INSTALL_PARAMS: LazyLock<Vec<ParamType>> = LazyLock::new(|| {
 
 fn print_help() {
     // template: <b>Usage<r>: <b><green>bun <command><r> <cyan>[flags]<r> <blue>[arguments]<r>
-    let intro_text = "\n\
+    const INTRO_TEXT: &str = "\n\
 <b>Usage<r>: <b><green>bun install<r> <cyan>[flags]<r> <blue>\\<name\\><r><d>@\\<version\\><r>\n\
-<b>Alias<r>: <b><green>bun i<r>\n\
-\n\
-  Install the dependencies listed in package.json.\n\
-\n\
+<b>Alias<r>: <b><green>bun i<r>\n\n\
+\x20 Install the dependencies listed in package.json.\n\n\
 <b>Flags:<r>";
-    let outro_text = "\n\
-\n\
+    const OUTRO_TEXT: &str = "\n\n\
 <b>Examples:<r>\n\
-  <d>Install the dependencies for the current project<r>\n\
-  <b><green>bun install<r>\n\
-\n\
-  <d>Skip devDependencies<r>\n\
-  <b><green>bun install<r> <cyan>--production<r>\n\
-\n\
+\x20 <d>Install the dependencies for the current project<r>\n\
+\x20 <b><green>bun install<r>\n\n\
+\x20 <d>Skip devDependencies<r>\n\
+\x20 <b><green>bun install<r> <cyan>--production<r>\n\n\
 Full documentation is available at <magenta>https://bun.com/docs/cli/install<r>.\n";
 
-    Output::pretty(format_args!("{}", intro_text));
+    Output::pretty(format_args!("{}", INTRO_TEXT));
     clap::simple_help(&INSTALL_PARAMS);
-    Output::pretty(format_args!("{}", outro_text));
+    Output::pretty(format_args!("{}", OUTRO_TEXT));
     Output::flush();
 }
 

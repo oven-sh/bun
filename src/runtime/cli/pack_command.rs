@@ -2003,7 +2003,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
                 }
             };
 
-            let fd = match file.make_libuv_owned_for_syscall(bun_sys::Syscall::Open, bun_sys::OnFail::CloseOnFail).unwrap() {
+            let fd = match file.make_lib_uv_owned_for_syscall(bun_sys::Tag::open, bun_sys::ErrorCase::CloseOnFail) {
                 Ok(fd) => fd,
                 Err(err) => {
                     Output::err(err, "failed to open file: \"{}\"", format_args!("{}", bstr::BStr::new(item.path.as_bytes())));

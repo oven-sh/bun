@@ -84,9 +84,15 @@ impl BuildCommand {
                 define.keys = keys.into_boxed_slice();
                 define.values = values.into_boxed_slice();
             } else {
-                ctx.args.define = Some(options::api::StringMap {
-                    keys: Box::from(compile_define_keys),
-                    values: Box::from(compile_define_values),
+                ctx.args.define = Some(api::StringMap {
+                    keys: compile_define_keys
+                        .iter()
+                        .map(|s| Box::<[u8]>::from(*s))
+                        .collect(),
+                    values: compile_define_values
+                        .iter()
+                        .map(|s| Box::<[u8]>::from(*s))
+                        .collect(),
                 });
             }
         }

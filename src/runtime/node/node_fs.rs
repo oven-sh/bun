@@ -1476,7 +1476,10 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
     fn run_from_js_thread(&mut self) -> Result<(), bun_jsc::JsTerminated> {
         if IS_SHELL {
             // SAFETY: shelltask is set by create_with_shell_task/create_mini and outlives this task
-            unsafe { &mut *self.shelltask }.cp_on_finish(*self.result.get_mut());
+            // Move the result out — `Maybe<ret::Cp>` (= `Maybe<()>`) has a cheap
+            // `Ok(())` placeholder, mirroring Zig which read the union value once.
+            let result = core::mem::replace(self.result.get_mut(), Maybe::Ok(()));
+            unsafe { &mut *self.shelltask }.cp_on_finish(result);
             // SAFETY: self was Box::leak'd in create*(); destroyed exactly once here
             unsafe { Self::destroy(self as *mut Self) };
             return Ok(());
@@ -1490,15 +1493,19 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
         let success = matches!(*self.result.get_mut(), Maybe::Ok(_));
         let promise_value = self.promise.value();
         // SAFETY: sole `&mut JSPromise` borrow in this scope (resolver-style accessor).
-        let promise = unsafe { self.promise.get() };
+        // Captured as a raw pointer because `Self::destroy(self)` runs *before* the
+        // resolve/reject (matching Zig). The `JSPromise` itself lives on the JS heap
+        // and is kept alive past `destroy` by `promise_value.ensure_still_alive()`.
+        let promise: *mut bun_jsc::JSPromise = unsafe { self.promise.get() };
         let result = match self.result.get_mut() {
-            Maybe::Err(err) => match err.to_js_with_async_stack(global_object, promise) {
+            // SAFETY: `promise` is the sole live reference to the heap `JSPromise`.
+            Maybe::Err(err) => match err.to_js_with_async_stack(global_object, unsafe { &*promise }) {
                 Ok(v) => v,
-                Err(e) => return promise.reject(global_object, Ok(global_object.take_exception(e))),
+                Err(e) => return unsafe { &mut *promise }.reject(global_object, Ok(global_object.take_exception(e))),
             },
             Maybe::Ok(res) => match FsReturn::fs_to_js(res, global_object) {
                 Ok(v) => v,
-                Err(e) => return promise.reject(global_object, Ok(global_object.take_exception(e))),
+                Err(e) => return unsafe { &mut *promise }.reject(global_object, Ok(global_object.take_exception(e))),
             },
         };
         promise_value.ensure_still_alive();
@@ -1509,6 +1516,9 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
 
         // SAFETY: self was Box::leak'd in create*(); destroyed exactly once here
         unsafe { Self::destroy(self as *mut Self) };
+        // SAFETY: `promise` points at a GC-rooted JS heap cell (see above), still
+        // valid after `destroy` dropped only the `Strong` wrapper.
+        let promise = unsafe { &mut *promise };
         if success {
             promise.resolve(global_object, result)?;
         } else {
@@ -1637,6 +1647,10 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
             return;
         }
 
+        // Capture lengths *before* re-borrowing the path buffers — `src`/`dest`
+        // are slices into `src_buf`/`dest_buf` and must end their borrow first.
+        let src_len = PathInt::try_from(src.len()).unwrap();
+        let dest_len = PathInt::try_from(dest.len()).unwrap();
         let _ = Self::_cp_async_directory(
             nodefs,
             args.flags,
@@ -1645,9 +1659,9 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
             // `&mut` in `on_subtask_done`.
             *_done,
             &mut src_buf,
-            PathInt::try_from(src.len()).unwrap(),
+            src_len,
             &mut dest_buf,
-            PathInt::try_from(dest.len()).unwrap(),
+            dest_len,
         );
     }
 
@@ -2150,11 +2164,15 @@ impl AsyncReaddirRecursiveTask {
         let success = self.pending_err.is_none();
         let promise_value = self.promise.value();
         // SAFETY: sole `&mut JSPromise` borrow in this scope (resolver-style accessor).
-        let promise = unsafe { self.promise.get() };
+        // Raw-pointer capture: see `AsyncCpTask::run_from_js_thread` for rationale —
+        // `Self::destroy` must run before resolve/reject, and the `JSPromise` cell
+        // outlives the `Strong` wrapper via `promise_value.ensure_still_alive()`.
+        let promise: *mut bun_jsc::JSPromise = unsafe { self.promise.get() };
         let result = if let Some(err) = &mut self.pending_err {
-            match SysErrorAsyncJsc::to_js_with_async_stack(&*err, global_object, promise) {
+            // SAFETY: `promise` is the sole live reference to the heap `JSPromise`.
+            match SysErrorAsyncJsc::to_js_with_async_stack(&*err, global_object, unsafe { &*promise }) {
                 Ok(v) => v,
-                Err(e) => return promise.reject(global_object, Ok(global_object.take_exception(e))),
+                Err(e) => return unsafe { &mut *promise }.reject(global_object, Ok(global_object.take_exception(e))),
             }
         } else {
             let res = match core::mem::replace(&mut self.result_list, ResultListEntryValue::Files(Vec::new())) {
@@ -2164,7 +2182,7 @@ impl AsyncReaddirRecursiveTask {
             };
             match res.to_js(global_object) {
                 Ok(v) => v,
-                Err(e) => return promise.reject(global_object, Ok(global_object.take_exception(e))),
+                Err(e) => return unsafe { &mut *promise }.reject(global_object, Ok(global_object.take_exception(e))),
             }
         };
         promise_value.ensure_still_alive();
@@ -2175,6 +2193,8 @@ impl AsyncReaddirRecursiveTask {
 
         // SAFETY: self was Box::leak'd in create(); destroyed exactly once here
         unsafe { Self::destroy(self as *mut Self) };
+        // SAFETY: GC-rooted JS heap cell, valid past `destroy` (see above).
+        let promise = unsafe { &mut *promise };
         if success {
             promise.resolve(global_object, result)?;
         } else {

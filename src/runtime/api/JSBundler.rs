@@ -357,9 +357,15 @@ pub mod js_bundler {
                 // Must use getKey to return the map's owned key, not the temporary buffer
                 if let Some((key, _)) = self.map.get_key_value(joined) {
                     let key: &[u8] = key.as_ref();
+                    // PORT NOTE: Zig hands back a borrow into `self.map`; Rust's
+                    // `resolver::Result` is `'static`, so extend the lifetime.
+                    // SAFETY: `key` points into `self.map`, which outlives the
+                    // returned `resolver::Result` (FileMap is owned by the Config).
+                    let key_static: &'static [u8] =
+                        unsafe { core::slice::from_raw_parts(key.as_ptr(), key.len()) };
                     return Some(resolver::Result {
                         path_pair: resolver::PathPair {
-                            primary: Fs::Path::init_with_namespace(key, b"file"),
+                            primary: Fs::Path::init_with_namespace(key_static, b"file"),
                             ..Default::default()
                         },
                         module_type: options::ModuleType::Unknown,
@@ -399,7 +405,7 @@ pub mod js_bundler {
             // errdefer this.deinit_and_unprotect() — handled by Drop on error path
             // TODO(port): errdefer — FileMap doesn't impl Drop because deinit_and_unprotect
             // touches JS values; use scopeguard
-            let guard = scopeguard::guard(&mut this, |s| s.deinit_and_unprotect());
+            let mut guard = scopeguard::guard(&mut this, |s| s.deinit_and_unprotect());
 
             let Some(files_obj) = files_value.get_object() else {
                 return Err(global_this.throw_invalid_arguments("Expected files to be an object"));

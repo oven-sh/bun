@@ -433,28 +433,40 @@ fn construct_s3_file_internal(
     global: &JSGlobalObject,
     path: PathLike,
     options: Option<JSValue>,
-) -> JsResult<Box<Blob>> {
+) -> JsResult<*mut Blob> {
     Ok(Blob::new(construct_s3_file_internal_store(global, path, options)?))
 }
 
-pub struct S3BlobStatTask<'a> {
+pub struct S3BlobStatTask {
     promise: bun_jsc::JSPromiseStrong,
-    global: &'a JSGlobalObject,
-    store: Arc<blob::Store>,
-    // TODO(port): lifetime — heap-allocated across async callback; LIFETIMES.tsv says JSC_BORROW (&JSGlobalObject)
+    // TODO(port): lifetime — heap-allocated across async callback; LIFETIMES.tsv says JSC_BORROW (&JSGlobalObject).
+    // Stored as raw `*const` so the struct can outlive the constructing frame.
+    global: *const JSGlobalObject,
+    store: StoreRef,
 }
 
-impl<'a> S3BlobStatTask<'a> {
-    pub fn new(init: S3BlobStatTask<'a>) -> *mut S3BlobStatTask<'a> {
+impl S3BlobStatTask {
+    pub fn new(init: S3BlobStatTask) -> *mut S3BlobStatTask {
         Box::into_raw(Box::new(init))
     }
 
-    pub fn on_s3_exists_resolved(result: s3::S3StatResult, this: *mut S3BlobStatTask<'a>) -> JsResult<()> {
+    /// SAFETY: caller guarantees `self.global` is still live (the VM is single-threaded
+    /// and the callback fires on the same JS thread that created the task).
+    #[inline]
+    unsafe fn global(&self) -> &JSGlobalObject {
+        unsafe { &*self.global }
+    }
+
+    pub fn on_s3_exists_resolved(
+        result: s3::S3StatResult,
+        this: *mut core::ffi::c_void,
+    ) -> Result<(), bun_jsc::JsTerminated> {
         // SAFETY: `this` was allocated via Box::into_raw in `exists`; reconstructing here replaces `defer this.deinit()`
-        let this = unsafe { Box::from_raw(this) };
+        let mut this = unsafe { Box::from_raw(this.cast::<S3BlobStatTask>()) };
+        let global = unsafe { this.global() };
         match result {
             s3::S3StatResult::NotFound(_) => {
-                this.promise.resolve(this.global, JSValue::FALSE)?;
+                this.promise.resolve(global, JSValue::FALSE)?;
             }
             s3::S3StatResult::Success(_) => {
                 // calling .exists() should not prevent it to download a bigger file
@@ -462,68 +474,86 @@ impl<'a> S3BlobStatTask<'a> {
                 // if (this.blob.size == Blob.max_size) {
                 //     this.blob.size = @truncate(stat.size);
                 // }
-                this.promise.resolve(this.global, JSValue::TRUE)?;
+                this.promise.resolve(global, JSValue::TRUE)?;
             }
             s3::S3StatResult::Failure(err) => {
-                this.promise.reject(
-                    this.global,
-                    err.to_js_with_async_stack(this.global, this.store.data.as_s3().path(), unsafe { this.promise.get() }),
-                )?;
+                let value = s3_error_to_js_with_async_stack(
+                    &err,
+                    global,
+                    Some(this.store.data.as_s3().path()),
+                    unsafe { this.promise.get() },
+                );
+                this.promise.reject(global, Ok(value))?;
             }
         }
         Ok(())
     }
 
-    pub fn on_s3_size_resolved(result: s3::S3StatResult, this: *mut S3BlobStatTask<'a>) -> JsResult<()> {
+    pub fn on_s3_size_resolved(
+        result: s3::S3StatResult,
+        this: *mut core::ffi::c_void,
+    ) -> Result<(), bun_jsc::JsTerminated> {
         // SAFETY: `this` was allocated via Box::into_raw in `size`; reconstructing here replaces `defer this.deinit()`
-        let this = unsafe { Box::from_raw(this) };
+        let mut this = unsafe { Box::from_raw(this.cast::<S3BlobStatTask>()) };
+        let global = unsafe { this.global() };
 
         match result {
             s3::S3StatResult::Success(stat_result) => {
-                this.promise.resolve(this.global, JSValue::js_number(stat_result.size))?;
+                this.promise.resolve(global, JSValue::js_number(stat_result.size as f64))?;
             }
             s3::S3StatResult::NotFound(err) | s3::S3StatResult::Failure(err) => {
                 // TODO(port): Zig binds same payload name for .not_found and .failure arms; verify NotFound carries an error payload
-                this.promise.reject(
-                    this.global,
-                    err.to_js_with_async_stack(this.global, this.store.data.as_s3().path(), unsafe { this.promise.get() }),
-                )?;
+                let value = s3_error_to_js_with_async_stack(
+                    &err,
+                    global,
+                    Some(this.store.data.as_s3().path()),
+                    unsafe { this.promise.get() },
+                );
+                this.promise.reject(global, Ok(value))?;
             }
         }
         Ok(())
     }
 
-    pub fn on_s3_stat_resolved(result: s3::S3StatResult, this: *mut S3BlobStatTask<'a>) -> JsResult<()> {
+    pub fn on_s3_stat_resolved(
+        result: s3::S3StatResult,
+        this: *mut core::ffi::c_void,
+    ) -> Result<(), bun_jsc::JsTerminated> {
         // SAFETY: `this` was allocated via Box::into_raw in `stat`; reconstructing here replaces `defer this.deinit()`
-        let this = unsafe { Box::from_raw(this) };
-        let global = this.global;
+        let mut this = unsafe { Box::from_raw(this.cast::<S3BlobStatTask>()) };
+        let global = unsafe { this.global() };
         match result {
             s3::S3StatResult::Success(stat_result) => {
-                this.promise.resolve(
+                let s3_stat = match S3Stat::init(
+                    stat_result.size as u64,
+                    stat_result.etag,
+                    stat_result.content_type,
+                    stat_result.last_modified,
                     global,
-                    S3Stat::init(
-                        stat_result.size as u64,
-                        stat_result.etag,
-                        stat_result.content_type,
-                        stat_result.last_modified,
-                        global,
-                    )?
-                    .to_js(global),
-                )?;
+                ) {
+                    Ok(b) => (*b).to_js(global),
+                    Err(_) => {
+                        return this.promise.reject(global, Err(JsError::Thrown));
+                    }
+                };
+                this.promise.resolve(global, s3_stat)?;
             }
             s3::S3StatResult::NotFound(err) | s3::S3StatResult::Failure(err) => {
-                this.promise.reject(
+                let value = s3_error_to_js_with_async_stack(
+                    &err,
                     global,
-                    err.to_js_with_async_stack(global, this.store.data.as_s3().path(), unsafe { this.promise.get() }),
-                )?;
+                    Some(this.store.data.as_s3().path()),
+                    unsafe { this.promise.get() },
+                );
+                this.promise.reject(global, Ok(value))?;
             }
         }
         Ok(())
     }
 
-    pub fn exists(global: &'a JSGlobalObject, blob: &mut Blob) -> JsResult<JSValue> {
+    pub fn exists(global: &JSGlobalObject, blob: &mut Blob) -> JsResult<JSValue> {
         let this = S3BlobStatTask::new(S3BlobStatTask {
-            promise: JSPromise::Strong::init(global),
+            promise: bun_jsc::JSPromiseStrong::init(global),
             store: blob.store.as_ref().unwrap().clone(),
             global,
         });
@@ -533,23 +563,24 @@ impl<'a> S3BlobStatTask<'a> {
         let s3_store = blob.store.as_ref().unwrap().data.as_s3();
         let credentials = s3_store.get_credentials();
         let path = s3_store.path();
-        let env = &global.bun_vm().transpiler.env;
+        // SAFETY: bun_vm() returns the live VM raw ptr; `transpiler.env` is set during init.
+        let env = unsafe { (*global.bun_vm()).transpiler.env };
 
         s3::stat(
             credentials,
             path,
             // TODO(port): @ptrCast fn pointer — verify s3::stat callback signature matches
-            S3BlobStatTask::on_s3_exists_resolved as _,
-            this as *mut core::ffi::c_void,
-            env.get_http_proxy(true, None, None).map(|proxy| proxy.href),
+            S3BlobStatTask::on_s3_exists_resolved,
+            this.cast::<core::ffi::c_void>(),
+            unsafe { (*env).get_http_proxy(true, None, None) }.map(|proxy| proxy.href),
             s3_store.request_payer,
         )?;
         Ok(promise)
     }
 
-    pub fn stat(global: &'a JSGlobalObject, blob: &mut Blob) -> JsResult<JSValue> {
+    pub fn stat(global: &JSGlobalObject, blob: &mut Blob) -> JsResult<JSValue> {
         let this = S3BlobStatTask::new(S3BlobStatTask {
-            promise: JSPromise::Strong::init(global),
+            promise: bun_jsc::JSPromiseStrong::init(global),
             store: blob.store.as_ref().unwrap().clone(),
             global,
         });
@@ -559,22 +590,23 @@ impl<'a> S3BlobStatTask<'a> {
         let s3_store = blob.store.as_ref().unwrap().data.as_s3();
         let credentials = s3_store.get_credentials();
         let path = s3_store.path();
-        let env = &global.bun_vm().transpiler.env;
+        // SAFETY: bun_vm() returns the live VM raw ptr; `transpiler.env` is set during init.
+        let env = unsafe { (*global.bun_vm()).transpiler.env };
 
         s3::stat(
             credentials,
             path,
-            S3BlobStatTask::on_s3_stat_resolved as _,
-            this as *mut core::ffi::c_void,
-            env.get_http_proxy(true, None, None).map(|proxy| proxy.href),
+            S3BlobStatTask::on_s3_stat_resolved,
+            this.cast::<core::ffi::c_void>(),
+            unsafe { (*env).get_http_proxy(true, None, None) }.map(|proxy| proxy.href),
             s3_store.request_payer,
         )?;
         Ok(promise)
     }
 
-    pub fn size(global: &'a JSGlobalObject, blob: &mut Blob) -> JsResult<JSValue> {
+    pub fn size(global: &JSGlobalObject, blob: &mut Blob) -> JsResult<JSValue> {
         let this = S3BlobStatTask::new(S3BlobStatTask {
-            promise: JSPromise::Strong::init(global),
+            promise: bun_jsc::JSPromiseStrong::init(global),
             store: blob.store.as_ref().unwrap().clone(),
             global,
         });
@@ -584,14 +616,15 @@ impl<'a> S3BlobStatTask<'a> {
         let s3_store = blob.store.as_ref().unwrap().data.as_s3();
         let credentials = s3_store.get_credentials();
         let path = s3_store.path();
-        let env = &global.bun_vm().transpiler.env;
+        // SAFETY: bun_vm() returns the live VM raw ptr; `transpiler.env` is set during init.
+        let env = unsafe { (*global.bun_vm()).transpiler.env };
 
         s3::stat(
             credentials,
             path,
-            S3BlobStatTask::on_s3_size_resolved as _,
-            this as *mut core::ffi::c_void,
-            env.get_http_proxy(true, None, None).map(|proxy| proxy.href),
+            S3BlobStatTask::on_s3_size_resolved,
+            this.cast::<core::ffi::c_void>(),
+            unsafe { (*env).get_http_proxy(true, None, None) }.map(|proxy| proxy.href),
             s3_store.request_payer,
         )?;
         Ok(promise)

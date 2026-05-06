@@ -1174,7 +1174,8 @@ impl Blob {
 
         let mut hex_buf = [0u8; 70];
         let boundary = {
-            let random = global_this.bun_vm().rare_data().next_uuid().bytes;
+            // SAFETY: bun_vm() never returns null for a Bun-owned global.
+            let random = unsafe { (*global_this.bun_vm()).rare_data() }.next_uuid().bytes;
             use std::io::Write;
             let mut cursor = &mut hex_buf[..];
             write!(&mut cursor, "----WebKitFormBoundary{:x?}", &random).expect("unreachable");
@@ -1189,7 +1190,9 @@ impl Blob {
             global_this: global_this,
         };
 
-        form_data.for_each(&mut context, FormDataContext::on_entry);
+        let _ = form_data;
+        todo!("blocked_on: bun_jsc::DOMFormData::for_each");
+        #[allow(unreachable_code)]
         if context.failed {
             // The joiner's Node structs are owned by the (former) arena, but each
             // node's data carries its own owner allocator — heap for non-ASCII
@@ -1204,7 +1207,13 @@ impl Blob {
         context.joiner.push_static(boundary);
         context.joiner.push_static(b"--\r\n");
 
-        let store = Store::init(context.joiner.done());
+        let store = Store::init(
+            context
+                .joiner
+                .done()
+                .map(|b| b.into_vec())
+                .unwrap_or_else(|_| bun_core::out_of_memory()),
+        );
         let mut blob = Blob::init_with_store(store, global_this);
         // Always allocate content_type with the default allocator so deinit() can
         // free it unconditionally.
@@ -1242,7 +1251,8 @@ impl Blob {
 pub extern "C" fn Blob__dupeFromJS(value: JSValue) -> Option<NonNull<Blob>> {
     let this = Blob::from_js(value)?;
     // SAFETY: Blob__dupe returns Box::into_raw of a fresh allocation; never null.
-    Some(unsafe { NonNull::new_unchecked(Blob__dupe(this)) })
+    // SAFETY: `from_js` returns a live heap pointer when Some.
+    Some(unsafe { NonNull::new_unchecked(Blob__dupe(&*this)) })
 }
 
 #[unsafe(no_mangle)]
@@ -1252,9 +1262,9 @@ pub extern "C" fn Blob__setAsFile(this: &mut Blob, path_str: &mut BunString) {
     // This is not 100% correct...
     if let Some(store) = &this.store {
         if let store::Data::Bytes(bytes) = &mut store.data_mut() {
-            if bytes.stored_name.len() == 0 {
-                let utf8 = path_str.to_utf8_bytes();
-                bytes.stored_name = bun_str::PathString::init(utf8);
+            if bytes.stored_name.is_empty() {
+                let utf8 = path_str.to_utf8();
+                bytes.stored_name = bun_str::PathString::init(utf8.slice());
             }
         }
     }
@@ -1283,9 +1293,9 @@ pub fn write_format_for_size<W: core::fmt::Write, const ENABLE_ANSI_COLORS: bool
     writer: &mut W,
 ) -> core::fmt::Result {
     if is_jdom_file {
-        writer.write_str(Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>File<r>"))?;
+        write!(writer, "{}", Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>File<r>"))?;
     } else {
-        writer.write_str(Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>Blob<r>"))?;
+        write!(writer, "{}", Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>Blob<r>"))?;
     }
     write!(
         writer,

@@ -415,7 +415,7 @@ impl CreateCommand {
                             }
                         }
                     },
-                    ExampleTag::GithubRepository => match Example::fetch_from_github(ctx, &mut env_loader, template, &mut progress, &mut node) {
+                    ExampleTag::GithubRepository => match Example::fetch_from_github(ctx, &mut env_loader, template, &mut progress, node) {
                         Ok(b) => b,
                         Err(err) => {
                             if err == bun_core::err!("HTTPForbidden") {
@@ -626,7 +626,7 @@ impl CreateCommand {
                 file_copier_copy(
                     destination_dir,
                     &mut walker_,
-                    &mut node,
+                    node,
                     &mut progress,
                     #[cfg(windows)]
                     (dst_without_trailing_slash.len() + 1),
@@ -1241,10 +1241,23 @@ impl CreateCommand {
                         }
 
                         let value = props.slice()[i].value.unwrap();
+                        // PORT NOTE: `as_property` returns an owned `Query`
+                        // (Copy types backed by an arena `StoreRef`). Borrowck
+                        // ties any `&[u8]` we pull out of it to the `if let`
+                        // scope even though the underlying `EString.data` is
+                        // `&'static [u8]`. Erase the local borrow lifetime via
+                        // raw-pointer round-trip so the task slices can outlive
+                        // the temporary `Query`.
+                        // SAFETY: `s` always points into the JSON arena
+                        // (initialized via `initialize_store()`), which lives
+                        // for the rest of `exec`.
+                        let arena_str = |s: &[u8]| -> &'static [u8] {
+                            unsafe { &*(s as *const [u8]) }
+                        };
                         if let Some(postinstall) = value.as_property(b"postinstall") {
-                            match &postinstall.expr.data {
+                            match postinstall.expr.data {
                                 LExprData::EString(single_task) => {
-                                    postinstall_tasks.push(single_task.data);
+                                    postinstall_tasks.push(arena_str(single_task.data));
                                 }
                                 LExprData::EArray(tasks) => {
                                     let items = tasks.slice();
@@ -1265,7 +1278,7 @@ impl CreateCommand {
                                             //     }
                                             // }
 
-                                            postinstall_tasks.push(task_entry);
+                                            postinstall_tasks.push(arena_str(task_entry));
                                         }
                                     }
                                 }
@@ -1274,14 +1287,14 @@ impl CreateCommand {
                         }
 
                         if let Some(preinstall) = value.as_property(b"preinstall") {
-                            match &preinstall.expr.data {
+                            match preinstall.expr.data {
                                 LExprData::EString(single_task) => {
-                                    preinstall_tasks.push(single_task.data);
+                                    preinstall_tasks.push(arena_str(single_task.data));
                                 }
                                 LExprData::EArray(tasks) => {
                                     for task in tasks.items.slice() {
                                         if let Some(task_entry) = task.as_utf8_string_literal() {
-                                            preinstall_tasks.push(task_entry);
+                                            preinstall_tasks.push(arena_str(task_entry));
                                         }
                                     }
                                 }
@@ -1292,7 +1305,7 @@ impl CreateCommand {
                         if let Some(start) = value.as_property(b"start") {
                             if let Some(start_str) = start.expr.as_utf8_string_literal() {
                                 if !start_str.is_empty() {
-                                    start_command = start_str;
+                                    start_command = arena_str(start_str);
                                 }
                             }
                         }
@@ -1966,6 +1979,11 @@ impl ExampleTag {
 static mut URL_: Option<URL<'static>> = None;
 static mut APP_NAME_BUF: [u8; 512] = [0u8; 512];
 static mut GITHUB_REPOSITORY_URL_BUF: [u8; 1024] = [0u8; 1024];
+// PORT NOTE: Zig used a fn-local `var url_buf: [1024]u8` in `Example.fetch`;
+// hoisted to a `static mut` so the borrowed slice satisfies `URL<'static>` for
+// `AsyncHTTP::init_sync` (single-threaded CLI; same pattern as
+// `GITHUB_REPOSITORY_URL_BUF`).
+static mut NPM_REGISTRY_URL_BUF: [u8; 1024] = [0u8; 1024];
 
 impl Example {
     const EXAMPLES_URL: &'static [u8] = b"https://registry.npmjs.org/bun-examples-all/latest";

@@ -62,6 +62,95 @@ impl ErrorReportRequest {
 }
 pub use crate::bake::dev_server::HmrSocket;
 use crate::bake::dev_server::ResponseLike;
+
+// ── local extension shims for upstream-crate methods missing in Rust port ──
+/// Shim: Zig `JSPromise.Strong.deinit()` — explicit teardown (idempotent).
+trait JsPromiseStrongDeinitExt {
+    fn deinit(&mut self);
+}
+impl JsPromiseStrongDeinitExt for jsc::JSPromiseStrong {
+    fn deinit(&mut self) {
+        // PORT NOTE: `JSPromiseStrong` has no explicit `deinit`; replacing with
+        // an empty value drops the inner `Strong`, mirroring Zig's clear+deinit.
+        *self = jsc::JSPromiseStrong::empty();
+    }
+}
+/// Shim: `bake.Framework` methods that live on the duplicate
+/// `bake_body::Framework` shape — stubbed until the two structs unify.
+trait FrameworkInitTranspilerExt {
+    fn init_transpiler<'a>(
+        &mut self,
+        _arena: &'a Arena,
+        _log: &mut Log,
+        _mode: bake::Mode,
+        _renderer: bake::Graph,
+        _out: &mut ::core::mem::MaybeUninit<Transpiler<'a>>,
+        _opts: &bake::BuildConfigSubset,
+    ) -> Result<(), bun_core::Error>;
+    fn resolve(
+        &self,
+        _server: &mut bun_resolver::Resolver,
+        _client: &mut bun_resolver::Resolver,
+        _arena: &Arena,
+    ) -> Result<bake::Framework, bun_core::Error>;
+}
+impl FrameworkInitTranspilerExt for bake::Framework {
+    fn init_transpiler<'a>(
+        &mut self,
+        _arena: &'a Arena,
+        _log: &mut Log,
+        _mode: bake::Mode,
+        _renderer: bake::Graph,
+        _out: &mut ::core::mem::MaybeUninit<Transpiler<'a>>,
+        _opts: &bake::BuildConfigSubset,
+    ) -> Result<(), bun_core::Error> {
+        todo!("blocked_on: bake::Framework / bake_body::Framework unification (init_transpiler)")
+    }
+    fn resolve(
+        &self,
+        _server: &mut bun_resolver::Resolver,
+        _client: &mut bun_resolver::Resolver,
+        _arena: &Arena,
+    ) -> Result<bake::Framework, bun_core::Error> {
+        todo!("blocked_on: bake::Framework / bake_body::Framework unification (resolve)")
+    }
+}
+/// Shim: `bun_logger::Log::to_js_aggregate_error` (lives in logger_jsc, not yet ported).
+trait LogToJsAggregateErrorExt {
+    fn to_js_aggregate_error(
+        &mut self,
+        _global: &JSGlobalObject,
+        _msg: BunString,
+    ) -> JsResult<JSValue>;
+}
+impl LogToJsAggregateErrorExt for Log {
+    fn to_js_aggregate_error(
+        &mut self,
+        _global: &JSGlobalObject,
+        _msg: BunString,
+    ) -> JsResult<JSValue> {
+        todo!("blocked_on: bun_logger::Log::to_js_aggregate_error")
+    }
+}
+/// Shim: `bake_types::BuiltInModule` accessors (Zig `activeTag` + payload slice).
+trait BuiltInModuleHashExt {
+    fn tag_u8(&self) -> u8;
+    fn data_slice(&self) -> &[u8];
+}
+impl BuiltInModuleHashExt for bun_bundler::bake_types::BuiltInModule {
+    fn tag_u8(&self) -> u8 {
+        match self {
+            bun_bundler::bake_types::BuiltInModule::Code(_) => 0,
+            bun_bundler::bake_types::BuiltInModule::Import(_) => 1,
+        }
+    }
+    fn data_slice(&self) -> &[u8] {
+        match self {
+            bun_bundler::bake_types::BuiltInModule::Code(s)
+            | bun_bundler::bake_types::BuiltInModule::Import(s) => s.as_ref(),
+        }
+    }
+}
 pub use crate::bake::dev_server::HotReloadEvent;
 pub use crate::bake::dev_server::incremental_graph::IncrementalGraph;
 // TODO(port): memory_cost helpers live in the gated draft; stub the two referenced.
@@ -372,7 +461,7 @@ impl DeferredPromise {
 
     pub fn reset(&mut self) {
         self.strong.deinit();
-        self.route_bundle_indices.clear();
+        self.route_bundle_indices.clear_retaining_capacity();
     }
 
     pub fn deinit_idempotently(&mut self) {
@@ -383,7 +472,10 @@ impl DeferredPromise {
 
 /// DevServer is stored on the heap, storing its allocator.
 pub fn init(options: Options) -> JsResult<Box<DevServer>> {
-    bun_core::analytics::Features::DEV_SERVER.saturating_inc();
+    // PORT NOTE: `Features.dev_server +|= 1` (saturating add). AtomicUsize has
+    // no `saturating_inc`; on a 64-bit counter overflow is unreachable, so a
+    // relaxed `fetch_add(1)` is equivalent in practice.
+    bun_core::analytics::Features::DEV_SERVER.fetch_add(1, ::core::sync::atomic::Ordering::Relaxed);
 
     #[cfg(feature = "bake_debugging_features")]
     let dump_dir = if let Some(dir) = options.dump_sources {
@@ -437,13 +529,14 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     // exactly once before `assume_init()` below.
     unsafe {
         w!(magic, Magic::Valid);
-        w!(allocation_scope, AllocationScope::init_default());
+        // PORT NOTE: `bun_alloc::AllocationScope` is a unit struct stub.
+        w!(allocation_scope, AllocationScope);
         w!(root, Box::from(options.root.as_bytes()));
-        w!(vm, options.vm as *const _);
+        w!(vm, options.vm);
         w!(server, None);
-        w!(directory_watchers, DirectoryWatchStore::EMPTY);
-        w!(server_fetch_function_callback, jsc::StrongOptional::EMPTY);
-        w!(server_register_update_callback, jsc::StrongOptional::EMPTY);
+        w!(directory_watchers, DirectoryWatchStore::default());
+        w!(server_fetch_function_callback, jsc::StrongOptional::empty());
+        w!(server_register_update_callback, jsc::StrongOptional::empty());
         w!(generation, 0);
         w!(graph_safety_lock, ThreadLock::init_unlocked());
         w!(dump_dir, dump_dir);
@@ -453,7 +546,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
         w!(emit_memory_visualizer_events, 0);
         w!(
             memory_visualizer_timer,
-            EventLoopTimer::init_paused(EventLoopTimer::Kind::DevServerMemoryVisualizerTick)
+            EventLoopTimer::init_paused(EventLoopTimerTag::DevServerMemoryVisualizerTick)
         );
         w!(
             has_pre_crash_handler,

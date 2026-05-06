@@ -11,10 +11,9 @@ impl Expect {
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        // TODO(port): `defer this.postMatch(global)` — scopeguard::defer! captures `&mut self`
-        // for the whole scope and conflicts with later uses under borrowck. Phase B may need a
-        // raw-ptr guard or to restructure exits.
-        scopeguard::defer! { this.post_match(global); }
+        // defer this.postMatch(globalThis);
+        // PORT NOTE: reshaped for borrowck — move `this` into the guard and access via DerefMut.
+        let mut this = scopeguard::guard(this, |t| t.post_match(global));
 
         let this_value = frame.this();
         // TODO(port): arguments_old(1) API shape — confirm slice accessor on the Rust side.

@@ -112,7 +112,7 @@ fn write_profile_to_file(
     let mut path_buf_os = OSPathBuffer::uninit();
     #[cfg(windows)]
     let output_path_os =
-        bun_str::strings::convert_utf8_to_utf16_in_buffer_z(&mut path_buf_os, path_buf.slice_z());
+        bun_string::strings::convert_utf8_to_utf16_in_buffer_z(&mut path_buf_os, path_buf.slice_z());
     #[cfg(not(windows))]
     let output_path_os = path_buf.slice_z();
     #[cfg(not(windows))]

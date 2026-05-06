@@ -810,7 +810,7 @@ pub fn construct_internal_js(
 
 pub fn to_js_unchecked(global: &JSGlobalObject, this: *mut Blob) -> JSValue {
     // SAFETY: BUN__createJSS3FileUnsafely is an FFI binding that takes ownership of the Blob pointer
-    unsafe { BUN__createJSS3FileUnsafely(global, this) }
+    unsafe { BUN__createJSS3FileUnsafely(global, this.cast::<core::ffi::c_void>()) }
 }
 
 pub fn construct_internal(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<*mut Blob> {

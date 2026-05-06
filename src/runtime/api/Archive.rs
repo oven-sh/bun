@@ -1207,7 +1207,7 @@ enum FilesResult {
 
 // freeEntries deleted — Vec<FileEntry> drops each entry; FileEntry fields drop their boxes.
 
-struct FilesContext {
+pub struct FilesContext {
     store: StoreRef,
     glob_patterns: Option<Vec<Box<[u8]>>>,
     result: FilesResult,

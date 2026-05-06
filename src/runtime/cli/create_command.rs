@@ -2036,7 +2036,7 @@ impl Example {
         let mut examples: Vec<Example> = remote_examples.into_vec();
         {
             // SAFETY: single-threaded CLI access to module-level static path buffer
-            let home_dir_buf = unsafe { &mut HOME_DIR_BUF };
+            let home_dir_buf = unsafe { &mut *(&raw mut HOME_DIR_BUF) };
             let mut folders: [bun_sys::Dir; 3] = [
                 bun_sys::Dir::from_fd(bun_sys::Fd::invalid()),
                 bun_sys::Dir::from_fd(bun_sys::Fd::invalid()),
@@ -2151,7 +2151,7 @@ impl Example {
         }
 
         // SAFETY: single-threaded CLI access to static buffer
-        let url_buf = unsafe { &mut GITHUB_REPOSITORY_URL_BUF };
+        let url_buf = unsafe { &mut *(&raw mut GITHUB_REPOSITORY_URL_BUF) };
         let api_url = URL::parse({
             let mut cursor: &mut [u8] = &mut url_buf[..];
             let cap = cursor.len();
@@ -2283,7 +2283,7 @@ impl Example {
         refresher.refresh();
 
         // SAFETY: single-threaded CLI access to static buffer.
-        let url_buf = unsafe { &mut NPM_REGISTRY_URL_BUF };
+        let url_buf = unsafe { &mut *(&raw mut NPM_REGISTRY_URL_BUF) };
         let mutable = Box::leak(Box::new(MutableString::init(2048)?));
 
         let api_url = URL::parse({

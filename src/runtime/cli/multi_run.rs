@@ -540,7 +540,7 @@ impl AbortHandler {
             // FFI calls with no extra preconditions beyond valid pointers.
             unsafe {
                 let mut action: bun_sys::posix::Sigaction = core::mem::zeroed();
-                action.sa_sigaction = Self::posix_signal_handler as usize;
+                action.sa_sigaction = Self::posix_signal_handler as *const () as usize;
                 libc::sigemptyset(&mut action.sa_mask);
                 action.sa_flags =
                     (libc::SA_SIGINFO | libc::SA_RESTART | libc::SA_RESETHAND) as _;

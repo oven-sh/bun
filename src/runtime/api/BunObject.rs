@@ -16,9 +16,14 @@ pub fn get_public_path_with_asset_prefix<W: core::fmt::Write>(
 
     // PERF(port): bun_url::URL::join_write wants a `bun_io::Write`; route all
     // byte output through a Vec<u8> then forward to the caller's fmt::Write.
+    // Spec writes raw bytes — POSIX paths are arbitrary byte sequences — so use
+    // a lossy conversion rather than silently dropping the whole component.
     #[inline]
     fn write_bytes<W: core::fmt::Write>(w: &mut W, bytes: &[u8]) -> core::fmt::Result {
-        w.write_str(core::str::from_utf8(bytes).unwrap_or(""))
+        match core::str::from_utf8(bytes) {
+            Ok(s) => w.write_str(s),
+            Err(_) => w.write_str(&String::from_utf8_lossy(bytes)),
+        }
     }
 
     let relative_path: &[u8] = if strings::has_prefix(to, dir) {
@@ -86,10 +91,7 @@ pub fn sleep_sync(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsRe
     // Expect at least one argument.  We allow more than one but ignore them; this
     //  is useful for supporting things like `[1, 2].map(sleepSync)`
     if arguments.is_empty() {
-        // TODO(b2): bun_jsc::JSGlobalObject::throw_not_enough_arguments — gated.
-        return Err(global_object.throw_invalid_arguments(format_args!(
-            "Not enough arguments to sleepSync. Expected 1, got 0."
-        )));
+        return Err(global_object.throw_not_enough_arguments("sleepSync", 1, 0));
     }
     let arg = arguments[0];
 

@@ -338,12 +338,12 @@ impl Specificity {
     }
 }
 
-pub fn compute_specificity<Impl: SelectorImpl>(iter: &[GenericComponent<Impl>]) -> u32 {
+pub fn compute_specificity<Impl: BunSelectorImpl>(iter: &[GenericComponent<Impl>]) -> u32 {
     let spec = compute_complex_selector_specificity::<Impl>(iter);
     spec.to_u32()
 }
 
-fn compute_complex_selector_specificity<Impl: SelectorImpl>(iter: &[GenericComponent<Impl>]) -> Specificity {
+fn compute_complex_selector_specificity<Impl: BunSelectorImpl>(iter: &[GenericComponent<Impl>]) -> Specificity {
     let mut specificity = Specificity::default();
     for simple_selector in iter {
         compute_simple_selector_specificity::<Impl>(simple_selector, &mut specificity);
@@ -351,7 +351,7 @@ fn compute_complex_selector_specificity<Impl: SelectorImpl>(iter: &[GenericCompo
     specificity
 }
 
-fn compute_simple_selector_specificity<Impl: SelectorImpl>(
+fn compute_simple_selector_specificity<Impl: BunSelectorImpl>(
     simple_selector: &GenericComponent<Impl>,
     specificity: &mut Specificity,
 ) {

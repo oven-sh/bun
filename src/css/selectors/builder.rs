@@ -17,9 +17,6 @@
 //! is non-trivial. This module encapsulates those details and presents an
 //! easy-to-use API for the parser.
 
-use bumpalo::collections::Vec as BumpVec;
-use bun_alloc::Arena; // re-export of bumpalo::Bump
-
 use crate::SmallList;
 pub use crate::{PrintErr, Printer};
 
@@ -37,7 +34,13 @@ use crate::selector::parser::{
 /// (from left to right). Once the process is complete, callers should invoke
 /// build(), which transforms the contents of the SelectorBuilder into a heap-
 /// allocated Selector and leaves the builder in a drained state.
-pub struct SelectorBuilder<'bump, Impl: ValidSelectorImpl> {
+// PORT NOTE: Zig threaded `allocator: Allocator` and built `components` into
+// an arena `ArrayList`. Phase A: `GenericSelector.components` is a std `Vec`
+// (see parser.rs `// PERF(port): was arena ArrayList`), so the builder uses
+// std `Vec` for the result and drops the `&'bump Arena` field. Phase B
+// re-threads `'bump` once `GenericSelector.components` becomes
+// `bumpalo::collections::Vec<'bump, _>`.
+pub struct SelectorBuilder<Impl: ValidSelectorImpl> {
     /// The entire sequence of simple selectors, from left to right, without combinators.
     ///
     /// We make this large because the result of parsing a selector is fed into a new
@@ -51,24 +54,28 @@ pub struct SelectorBuilder<'bump, Impl: ValidSelectorImpl> {
 
     /// The length of the current compound selector.
     current_len: usize,
-
-    bump: &'bump Arena,
 }
 
-pub struct BuildResult<'bump, Impl: ValidSelectorImpl> {
+pub struct BuildResult<Impl: ValidSelectorImpl> {
     pub specificity_and_flags: SpecificityAndFlags,
-    pub components: BumpVec<'bump, GenericComponent<Impl>>,
+    pub components: Vec<GenericComponent<Impl>>,
 }
 
-impl<'bump, Impl: ValidSelectorImpl> SelectorBuilder<'bump, Impl> {
+impl<Impl: ValidSelectorImpl> Default for SelectorBuilder<Impl> {
     #[inline]
-    pub fn init(bump: &'bump Arena) -> Self {
+    fn default() -> Self {
         Self {
             simple_selectors: SmallList::default(),
             combinators: SmallList::default(),
             current_len: 0,
-            bump,
         }
+    }
+}
+
+impl<Impl: ValidSelectorImpl> SelectorBuilder<Impl> {
+    #[inline]
+    pub fn init() -> Self {
+        Self::default()
     }
 
     /// Returns true if combinators have ever been pushed to this builder.
@@ -112,7 +119,7 @@ impl<'bump, Impl: ValidSelectorImpl> SelectorBuilder<'bump, Impl> {
         parsed_pseudo: bool,
         parsed_slotted: bool,
         parsed_part: bool,
-    ) -> BuildResult<'bump, Impl> {
+    ) -> BuildResult<Impl> {
         let specificity = compute_specificity::<Impl>(self.simple_selectors.slice());
         let mut flags = SelectorFlags::empty();
         if parsed_pseudo { flags |= SelectorFlags::HAS_PSEUDO; }
@@ -139,17 +146,16 @@ impl<'bump, Impl: ValidSelectorImpl> SelectorBuilder<'bump, Impl> {
     pub fn build_with_specificity_and_flags(
         &mut self,
         spec: SpecificityAndFlags,
-    ) -> BuildResult<'bump, Impl> {
-        // PORT NOTE: reshaped for borrowck — capture bump and combinators.len()
+    ) -> BuildResult<Impl> {
+        // PORT NOTE: reshaped for borrowck — capture combinators.len()
         // before borrowing simple_selectors.slice().
-        let bump = self.bump;
         let combinators_len = self.combinators.len();
 
         let (rest, current) =
             split_from_end::<GenericComponent<Impl>>(self.simple_selectors.slice(), self.current_len);
         let combinators = self.combinators.slice();
 
-        let mut components: BumpVec<'bump, GenericComponent<Impl>> = BumpVec::new_in(bump);
+        let mut components: Vec<GenericComponent<Impl>> = Vec::new();
 
         let mut current_simple_selectors_i: usize = 0;
         let mut combinator_i: i64 = i64::try_from(combinators_len).unwrap() - 1;

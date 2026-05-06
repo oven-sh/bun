@@ -1,10 +1,22 @@
-//! Non-blocking buffered reader for one fd, fan-out to multiple shell
-//! "child" listeners (currently only `cat`).
+//! Similar to `IOWriter` but for reading.
+//!
+//! *NOTE* This type is reference counted (via `Arc` in the Rust port). The
+//! Zig version queued deinitialization onto the event loop to prevent bugs;
+//! see the `Drop` impl note for the Rust equivalent.
 
-use bun_sys::Fd;
+#![allow(dead_code)]
+
+use core::cell::UnsafeCell;
+use core::ffi::c_void;
+
+use bun_sys::{self as sys, Fd};
 
 use crate::shell::interpreter::{EventLoopHandle, Interpreter, NodeId};
 use crate::shell::yield_::Yield;
+
+// ──────────────────────────────────────────────────────────────────────────
+// ChildPtr (NodeId-arena port of Zig TaggedPointerUnion<{Cat}>)
+// ──────────────────────────────────────────────────────────────────────────
 
 /// In the NodeId-arena port, listeners are identified by `(NodeId, ReaderTag)`
 /// — the node id of the owning Cmd plus a tag saying which builtin impl to
@@ -22,48 +34,380 @@ pub enum ReaderTag {
     Cat,
 }
 
-pub struct IOReader {
-    pub fd: Fd,
-    pub evtloop: EventLoopHandle,
-    pub readers: Vec<ChildPtr>,
-    // TODO(b2-blocked): bun_io::BufferedReader, FilePoll — gated body.
+/// Spec: IOReader.zig `Readers = SmolList(ChildPtr, 4)`.
+// PERF(port): was inline-4 small-vec — profile in Phase B.
+type Readers = Vec<ChildPtr>;
+
+// ──────────────────────────────────────────────────────────────────────────
+// IOReader
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Spec: IOReader.zig `ReaderImpl = bun.io.BufferedReader`.
+pub type ReaderImpl = bun_io::BufferedReader;
+
+struct State {
+    fd: Fd,
+    reader: ReaderImpl,
+    buf: Vec<u8>,
+    readers: Readers,
+    read: usize,
+    err: Option<sys::SystemError>,
+    evtloop: EventLoopHandle,
+    #[cfg(windows)]
+    is_reading: bool,
+    started: bool,
+    /// Backref so async read callbacks can drive `Yield::run`. See
+    /// `IOWriter::interp`.
+    interp: *mut Interpreter,
 }
 
+pub struct IOReader {
+    state: UnsafeCell<State>,
+}
+
+// SAFETY: shell is single-threaded; `Arc` is used purely for refcounting.
+unsafe impl Send for IOReader {}
+unsafe impl Sync for IOReader {}
+
 impl IOReader {
+    #[inline]
+    fn state(&self) -> &mut State {
+        // SAFETY: single-threaded; matches Zig `*IOReader` model.
+        unsafe { &mut *self.state.get() }
+    }
+
     pub fn init(fd: Fd, evtloop: EventLoopHandle) -> std::sync::Arc<IOReader> {
-        std::sync::Arc::new(IOReader { fd, evtloop, readers: Vec::new() })
+        let mut reader = ReaderImpl::init::<IOReader>();
+        #[cfg(not(windows))]
+        {
+            reader.flags.remove(bun_io::pipe_reader::PosixFlags::CLOSE_HANDLE);
+        }
+        #[cfg(windows)]
+        {
+            reader.source = Some(bun_io::Source::open_file(fd));
+        }
+        let this = std::sync::Arc::new(IOReader {
+            state: UnsafeCell::new(State {
+                fd,
+                reader,
+                buf: Vec::new(),
+                readers: Readers::new(),
+                read: 0,
+                err: None,
+                evtloop,
+                #[cfg(windows)]
+                is_reading: false,
+                started: false,
+                interp: core::ptr::null_mut(),
+            }),
+        });
+        // PORT NOTE: set the parent backref after Arc allocation so the
+        // address is stable.
+        let parent = std::sync::Arc::as_ptr(&this) as *mut IOReader;
+        // SAFETY: single owner; address stable for Arc lifetime.
+        unsafe { (*parent).state().reader.set_parent(parent.cast()) };
+        crate::shell_log!("IOReader(0x{:x}, fd={}) create", parent as usize, fd);
+        this
+    }
+
+    #[inline]
+    pub fn set_interp(&self, interp: *mut Interpreter) {
+        self.state().interp = interp;
+    }
+
+    #[inline]
+    pub fn fd(&self) -> Fd {
+        self.state().fd
+    }
+
+    #[inline]
+    pub fn evtloop(&self) -> EventLoopHandle {
+        self.state().evtloop
+    }
+
+    pub fn memory_cost(&self) -> usize {
+        let s = self.state();
+        core::mem::size_of::<IOReader>()
+            + s.buf.capacity()
+            + s.readers.capacity() * core::mem::size_of::<ChildPtr>()
+    }
+
+    #[inline]
+    fn io_evtloop(&self) -> bun_io::EventLoopHandle {
+        bun_io::EventLoopHandle(self.state().evtloop.0 as *mut c_void)
+    }
+
+    /// Only does things on windows. Spec: IOReader.zig `setReading`.
+    #[inline]
+    fn set_reading(&self, reading: bool) {
+        #[cfg(windows)]
+        {
+            self.state().is_reading = reading;
+        }
+        let _ = reading;
+    }
+
+    /// Idempotent function to start the reading. Spec: IOReader.zig `start`.
+    pub fn start(&self) -> Yield {
+        let s = self.state();
+        s.started = true;
+        #[cfg(not(windows))]
+        {
+            let need_start = match &s.reader.handle {
+                bun_io::pipes::PollOrFd::Closed => true,
+                bun_io::pipes::PollOrFd::Poll(p) => !p.is_registered(),
+                bun_io::pipes::PollOrFd::Fd(_) => true,
+            };
+            if need_start {
+                if let Err(e) = s.reader.start(s.fd, true) {
+                    self.on_reader_error(e);
+                }
+            }
+            return Yield::suspended();
+        }
+        #[cfg(windows)]
+        {
+            if s.is_reading {
+                return Yield::suspended();
+            }
+            s.is_reading = true;
+            if let Err(e) = s.reader.start_with_current_pipe() {
+                self.on_reader_error(e);
+                return Yield::failed();
+            }
+            Yield::suspended()
+        }
+    }
+
+    /// Spec: IOReader.zig `addReader`. Only adds if not already present.
+    pub fn add_reader(&self, reader: ChildPtr) {
+        let s = self.state();
+        if !s.readers.contains(&reader) {
+            s.readers.push(reader);
+        }
+    }
+
+    /// Spec: IOReader.zig `removeReader`.
+    pub fn remove_reader(&self, reader: ChildPtr) {
+        let s = self.state();
+        if let Some(idx) = s.readers.iter().position(|r| *r == reader) {
+            s.readers.swap_remove(idx);
+        }
+    }
+
+    /// Spec: IOReader.zig `onReadChunk` (the `BufferedReader.onReadChunk` hook).
+    fn on_read_chunk_cb(&self, chunk: &[u8], has_more: bun_io::ReadState) -> bool {
+        self.set_reading(false);
+        let s = self.state();
+        let mut i = 0usize;
+        while i < s.readers.len() {
+            let r = s.readers[i];
+            let mut remove = false;
+            self.run_yield(dispatch_read_chunk(r, chunk, &mut remove, s.interp));
+            if remove {
+                s.readers.swap_remove(i);
+            } else {
+                i += 1;
+            }
+        }
+
+        let should_continue = has_more != bun_io::ReadState::Eof;
+        if should_continue && !s.readers.is_empty() {
+            self.set_reading(true);
+            #[cfg(not(windows))]
+            {
+                s.reader.register_poll();
+            }
+            #[cfg(windows)]
+            {
+                if let Err(e) = s.reader.start_with_current_pipe() {
+                    self.on_reader_error(e);
+                    return false;
+                }
+            }
+        }
+        should_continue
+    }
+
+    /// Spec: IOReader.zig `onReaderError`.
+    fn on_reader_error(&self, err: sys::Error) {
+        self.set_reading(false);
+        let s = self.state();
+        s.err = Some(err.to_shell_system_error());
+        // PORT NOTE: reshaped for borrowck — copy out before dispatching.
+        let readers: Vec<ChildPtr> = s.readers.clone();
+        let interp = s.interp;
+        for r in readers {
+            // Spec: `e.ref()` then pass — re-derive a fresh SystemError per
+            // callee instead (see IOWriter.on_error note).
+            let ee = err.to_shell_system_error();
+            self.run_yield(dispatch_reader_done(r, Some(ee), interp));
+        }
+    }
+
+    /// Spec: IOReader.zig `onReaderDone`.
+    fn on_reader_done_cb(&self) {
+        self.set_reading(false);
+        let s = self.state();
+        let readers: Vec<ChildPtr> = s.readers.clone();
+        let interp = s.interp;
+        for r in readers {
+            // Spec: pass `this.err` (ref'd) if set. SystemError isn't Clone in
+            // the Rust port yet, so pass None and let the child consult the
+            // reader's `err` if it cares (Cat doesn't — it only checks errno).
+            // TODO(port): once bun_sys::SystemError grows ref()/Clone, forward
+            // the stored error here.
+            self.run_yield(dispatch_reader_done(r, None, interp));
+        }
+    }
+
+    fn run_yield(&self, y: Yield) {
+        let interp = self.state().interp;
+        if interp.is_null() {
+            debug_assert!(
+                matches!(y, Yield::Done | Yield::Suspended),
+                "IOReader async callback fired without interp backref"
+            );
+            return;
+        }
+        // SAFETY: interp outlives every IOReader. Single-threaded.
+        y.run(unsafe { &mut *interp });
     }
 }
 
-/// Hoisted dispatch for `on_read_chunk` (PORTING.md §Dispatch hot-path).
-pub fn on_read_chunk(_interp: &mut Interpreter, child: ChildPtr, _chunk: &[u8]) -> Yield {
+// ──────────────────────────────────────────────────────────────────────────
+// BufferedReaderParent — wires the bun_io BufferedReader vtable
+// ──────────────────────────────────────────────────────────────────────────
+
+impl bun_io::pipe_reader::BufferedReaderParent for IOReader {
+    const HAS_ON_READ_CHUNK: bool = true;
+    fn on_read_chunk(&mut self, chunk: &[u8], has_more: bun_io::ReadState) -> bool {
+        (*self).on_read_chunk_cb(chunk, has_more)
+    }
+    fn on_reader_done(&mut self) {
+        (*self).on_reader_done_cb();
+    }
+    fn on_reader_error(&mut self, err: sys::Error) {
+        (*self).on_reader_error(err);
+    }
+    fn loop_(&mut self) -> *mut bun_uws_sys::Loop {
+        self.io_evtloop().loop_().cast()
+    }
+    fn event_loop(&mut self) -> bun_io::EventLoopHandle {
+        self.io_evtloop()
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Drop (replaces Zig RefCount.deref → asyncDeinit → asyncDeinitCallback)
+// ──────────────────────────────────────────────────────────────────────────
+
+impl Drop for IOReader {
+    fn drop(&mut self) {
+        // Spec: IOReader.zig `asyncDeinitCallback`. The async hop guarded
+        // against being deref'd from inside a read callback while
+        // BufferedReader is still iterating; with `Arc` the last ref drops
+        // after the callback returns.
+        // TODO(port): revisit if a child callback can drop the last Arc while
+        // BufferedReader is still on the stack — would need the
+        // EventLoopTask hop once the shell EventLoopHandle shim is real.
+        let s = self.state.get_mut();
+        if s.fd != Fd::INVALID {
+            #[cfg(windows)]
+            {
+                // windows reader closes the file descriptor
+                if s.reader.source.is_some()
+                    && !s.reader.source.as_ref().is_some_and(|src| src.is_closed())
+                {
+                    s.reader.close_impl::<false>();
+                }
+            }
+            #[cfg(not(windows))]
+            {
+                // We cleared CLOSE_HANDLE in init(), so reader Drop will not
+                // return the FilePoll to its pool. Do it explicitly (without
+                // closing the fd — we own that and close it ourselves below).
+                if matches!(s.reader.handle, bun_io::pipes::PollOrFd::Poll(_)) {
+                    s.reader
+                        .handle
+                        .close_impl(None, None::<fn(*mut c_void)>, false);
+                }
+                let _ = sys::close(s.fd);
+            }
+        }
+        s.reader.disable_keeping_process_alive(());
+        // `s.reader` Drop handles its own deinit.
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Hoisted dispatch (NodeId-arena port of `IOReaderChildPtr.onReadChunk` /
+// `.onReaderDone`)
+// ──────────────────────────────────────────────────────────────────────────
+
+fn dispatch_read_chunk(
+    child: ChildPtr,
+    chunk: &[u8],
+    remove: &mut bool,
+    interp: *mut Interpreter,
+) -> Yield {
+    if interp.is_null() {
+        return Yield::suspended();
+    }
+    // SAFETY: interp outlives the reader.
+    let interp = unsafe { &mut *interp };
     match child.tag {
-        // TODO(b2-blocked): builtin::cat::Cat::on_read_chunk(interp, child.node, chunk)
-        ReaderTag::Cat => Yield::suspended(),
+        ReaderTag::Cat => crate::shell::builtins::cat::Cat::on_io_reader_chunk(
+            interp, child.node, chunk, remove,
+        ),
+    }
+}
+
+fn dispatch_reader_done(
+    child: ChildPtr,
+    err: Option<sys::SystemError>,
+    interp: *mut Interpreter,
+) -> Yield {
+    if interp.is_null() {
+        return Yield::suspended();
+    }
+    // SAFETY: interp outlives the reader.
+    let interp = unsafe { &mut *interp };
+    match child.tag {
+        ReaderTag::Cat => {
+            crate::shell::builtins::cat::Cat::on_io_reader_done(interp, child.node, err)
+        }
+    }
+}
+
+/// Public hoisted dispatch (kept for parity with `io_writer::on_io_writer_chunk`).
+pub fn on_read_chunk(interp: &mut Interpreter, child: ChildPtr, chunk: &[u8]) -> Yield {
+    let mut remove = false;
+    match child.tag {
+        ReaderTag::Cat => crate::shell::builtins::cat::Cat::on_io_reader_chunk(
+            interp, child.node, chunk, &mut remove,
+        ),
     }
 }
 
 pub fn on_reader_done(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     child: ChildPtr,
-    _err: Option<bun_sys::Error>,
+    err: Option<sys::SystemError>,
 ) -> Yield {
     match child.tag {
-        ReaderTag::Cat => Yield::suspended(),
+        ReaderTag::Cat => {
+            crate::shell::builtins::cat::Cat::on_io_reader_done(interp, child.node, err)
+        }
     }
-}
-
-// The full body (~400 lines: BufferedReader integration, FilePoll registration,
-// add_reader/remove_reader, AsyncDeinitReader) is preserved gated — depends on
-// bun_io::BufferedReader and bun_aio::FilePoll.
-#[cfg(any())]
-mod io_reader_body {
-    include!("IOReader_body_gated.rs");
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
-//   source:     src/shell/IOReader.zig (304 lines)
-//   confidence: low (NodeId ChildPtr scaffolding; reader body gated)
-//   blocked_on: bun_io::BufferedReader, bun_aio::FilePoll
+//   source:     src/shell/IOReader.zig (312 lines)
+//   confidence: medium
+//   notes:      RefCount→Arc; UnsafeCell interior; *mut Interpreter backref
+//               for async callbacks (set_interp must be wired by
+//               interpreter.rs); AsyncDeinit hop folded into Drop;
+//               SystemError ref/Clone pending bun_sys.
 // ──────────────────────────────────────────────────────────────────────────

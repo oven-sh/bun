@@ -1,11 +1,16 @@
 //! `TimerObjectInternals` — fields shared by `TimeoutObject` / `ImmediateObject`.
 //!
-//! B-2 un-gate: struct + `Flags` packed-u32 state machine are real.
-//! `init()`/`cancel()`/`fire()` bodies stay in the gated draft
-//! (`TimerObjectInternals.rs`) — they need `bun_jsc::{JsRef, Debugger,
-//! VirtualMachine}`.
+//! B-2 un-gate: struct + `Flags` packed-u32 state machine are real;
+//! `run_immediate_task()` + helpers (`event_loop_timer`/`ref_`/`deref_`/
+//! `set_enable_keeping_event_loop_alive`/`run`) un-gated for the
+//! `RUN_IMMEDIATE_HOOK` dispatch path. `init()`/`cancel()`/`fire()` bodies
+//! stay in the gated draft (`TimerObjectInternals.rs`).
 
-use super::Kind;
+use core::mem::offset_of;
+
+use crate::jsc::{generated::JSImmediate, Debugger, JSGlobalObject, JSValue, JsRef, VirtualMachine};
+
+use super::{EventLoopTimer, EventLoopTimerState, ImmediateObject, Kind, TimeoutObject, ID};
 
 /// Data that TimerObject and ImmediateObject have in common.
 #[repr(C)]
@@ -13,11 +18,7 @@ pub struct TimerObjectInternals {
     /// Identifier for this timer that is exposed to JavaScript (by `+timer`).
     pub id: i32,
     pub interval: u32, // Zig: u31
-    // TODO(b2-blocked): bun_jsc::JsRef — `crate::jsc` shim has no JsRef; the
-    // tagged-union is `Weak(JSValue) | Strong | Finalized`. Until bun_jsc is
-    // green, store the weak `JSValue` arm directly (the codegen'd `finalize()`
-    // is the only writer of the other arms).
-    pub this_value: crate::jsc::JSValue,
+    pub this_value: JsRef,
     pub flags: Flags,
     /// `bun test --isolate` generation this timer was created in.
     pub generation: u32,
@@ -28,7 +29,7 @@ impl Default for TimerObjectInternals {
         Self {
             id: -1,
             interval: 0,
-            this_value: crate::jsc::JSValue::default(),
+            this_value: JsRef::empty(),
             flags: Flags::default(),
             generation: 0,
         }

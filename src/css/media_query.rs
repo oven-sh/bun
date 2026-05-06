@@ -490,6 +490,25 @@ impl FeatureIdTrait for MediaFeatureId {
         // tag name. `strum::IntoStaticStr` already carries those strings.
         dest.write_str(<&'static str>::from(*self))
     }
+    fn to_css_with_prefix(
+        &self,
+        prefix: &str,
+        dest: &mut Printer,
+    ) -> core::result::Result<(), PrintErr> {
+        match self {
+            // Zig: `-webkit-{s}device-pixel-ratio` — webkit places the
+            // min/max prefix between the vendor prefix and the feature name.
+            MediaFeatureId::WebkitDevicePixelRatio => {
+                dest.write_str("-webkit-")?;
+                dest.write_str(prefix)?;
+                dest.write_str("device-pixel-ratio")
+            }
+            _ => {
+                dest.write_str(prefix)?;
+                FeatureIdTrait::to_css(self, dest)
+            }
+        }
+    }
     fn from_str(s: &[u8]) -> Option<Self> {
         // Zig: `css.DefineEnumProperty(@This()).parse` — case-insensitive
         // ASCII tag-name table. No dependency on the gated `values/` lattice.
@@ -542,6 +561,430 @@ impl FeatureIdTrait for MediaFeatureId {
             b"-moz-device-pixel-ratio" => MozDevicePixelRatio,
         }
     }
+}
+
+// ───────────────────────── to_css / matching ─────────────────────────
+// Un-gated this round so `rules::media::MediaRule::{minify,to_css}` can call
+// `MediaList::{always_matches,never_matches,to_css}`. The serialization tree
+// bottoms out at `MediaFeatureValue::to_css`; the `Length`/`Resolution`/`Ratio`
+// arms there remain `todo!()`-loud until the local `value_shims` are replaced
+// by the real `crate::css_values::{length,resolution,ratio}` types.
+
+impl MediaList {
+    /// Returns whether the media query list always matches.
+    pub fn always_matches(&self) -> bool {
+        // If the media list is empty, it always matches.
+        self.media_queries.is_empty()
+            || self.media_queries.iter().all(MediaQuery::always_matches)
+    }
+
+    /// Returns whether the media query list never matches.
+    pub fn never_matches(&self) -> bool {
+        !self.media_queries.is_empty()
+            && self.media_queries.iter().all(MediaQuery::never_matches)
+    }
+
+    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+        if self.media_queries.is_empty() {
+            return dest.write_str("not all");
+        }
+        let mut first = true;
+        for query in &self.media_queries {
+            if !first {
+                dest.delim(b',', false)?;
+            }
+            first = false;
+            query.to_css(dest)?;
+        }
+        Ok(())
+    }
+}
+
+impl MediaQuery {
+    /// Returns whether the media query is guaranteed to always match.
+    pub fn always_matches(&self) -> bool {
+        self.qualifier.is_none()
+            && matches!(self.media_type, MediaType::All)
+            && self.condition.is_none()
+    }
+
+    /// Returns whether the media query is guaranteed to never match.
+    pub fn never_matches(&self) -> bool {
+        matches!(self.qualifier, Some(Qualifier::Not))
+            && matches!(self.media_type, MediaType::All)
+            && self.condition.is_none()
+    }
+
+    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+        if let Some(qual) = self.qualifier {
+            qual.to_css(dest)?;
+            dest.write_char(b' ')?;
+        }
+
+        match &self.media_type {
+            MediaType::All => {
+                // We need to print "all" if there's a qualifier, or there's
+                // just an empty list of expressions.
+                //
+                // Otherwise, we'd serialize media queries like "(min-width:
+                // 40px)" in "all (min-width: 40px)", which is unexpected.
+                if self.qualifier.is_some() || self.condition.is_none() {
+                    dest.write_str("all")?;
+                }
+            }
+            MediaType::Print => dest.write_str("print")?,
+            MediaType::Screen => dest.write_str("screen")?,
+            MediaType::Custom(desc) => {
+                // SAFETY: arena-owned slice valid for the MediaList lifetime.
+                dest.write_str(unsafe { &**desc })?;
+            }
+        }
+
+        let Some(condition) = &self.condition else { return Ok(()) };
+
+        let needs_parens = if !matches!(self.media_type, MediaType::All) || self.qualifier.is_some()
+        {
+            dest.write_str(" and ")?;
+            matches!(
+                condition,
+                MediaCondition::Operation { operator, .. } if *operator != Operator::And
+            )
+        } else {
+            false
+        };
+
+        to_css_with_parens_if_needed(condition, dest, needs_parens)
+    }
+}
+
+impl Qualifier {
+    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+        // Zig: css.enum_property_util.toCss → lowercase tag name.
+        dest.write_str(<&'static str>::from(*self))
+    }
+}
+
+impl Operator {
+    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+        // Zig: css.enum_property_util.toCss → lowercase tag name.
+        dest.write_str(<&'static str>::from(*self))
+    }
+}
+
+/// Zig: `toCssWithParensIfNeeded` — wraps `v.to_css()` in parentheses when the
+/// caller's grammar position requires it.
+pub fn to_css_with_parens_if_needed<T: ToCss + ?Sized>(
+    v: &T,
+    dest: &mut Printer,
+    needs_parens: bool,
+) -> core::result::Result<(), PrintErr> {
+    if needs_parens {
+        dest.write_char(b'(')?;
+    }
+    v.to_css(dest)?;
+    if needs_parens {
+        dest.write_char(b')')?;
+    }
+    Ok(())
+}
+
+/// Zig: `operationToCss` — serialize `a OP b OP c ...` with per-child parens.
+pub fn operation_to_css<C: QueryCondition + ToCss>(
+    operator: Operator,
+    conditions: &[C],
+    dest: &mut Printer,
+) -> core::result::Result<(), PrintErr> {
+    let first = &conditions[0];
+    to_css_with_parens_if_needed(
+        first,
+        dest,
+        first.needs_parens(Some(operator), &dest.targets),
+    )?;
+    if conditions.len() == 1 {
+        return Ok(());
+    }
+    for item in &conditions[1..] {
+        dest.write_char(b' ')?;
+        operator.to_css(dest)?;
+        dest.write_char(b' ')?;
+        to_css_with_parens_if_needed(
+            item,
+            dest,
+            item.needs_parens(Some(operator), &dest.targets),
+        )?;
+    }
+    Ok(())
+}
+
+impl ToCss for MediaCondition {
+    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+        match self {
+            MediaCondition::Feature(f) => f.to_css(dest),
+            MediaCondition::Not(c) => {
+                dest.write_str("not ")?;
+                to_css_with_parens_if_needed(
+                    &**c,
+                    dest,
+                    c.needs_parens(None, &dest.targets),
+                )
+            }
+            MediaCondition::Operation { operator, conditions } => {
+                operation_to_css(*operator, conditions.as_slice(), dest)
+            }
+        }
+    }
+}
+
+impl QueryCondition for MediaCondition {
+    fn parse_feature(_input: &mut Parser) -> Result<Self> {
+        // blocked_on: MediaFeature::parse (values/ calc lattice)
+        todo!("MediaCondition::parse_feature — gated on QueryFeature::parse")
+    }
+    fn create_negation(condition: Box<Self>) -> Self {
+        MediaCondition::Not(condition)
+    }
+    fn create_operation(operator: Operator, conditions: Vec<Self>) -> Self {
+        MediaCondition::Operation { operator, conditions }
+    }
+    fn parse_style_query(_input: &mut Parser) -> Result<Self> {
+        // Zig: returns input.newErrorForNextToken() — parse path still gated.
+        todo!("MediaCondition::parse_style_query — gated on Parser::new_error_for_next_token")
+    }
+    fn needs_parens(
+        &self,
+        parent_operator: Option<Operator>,
+        targets: &css::targets::Targets,
+    ) -> bool {
+        match self {
+            MediaCondition::Not(_) => true,
+            MediaCondition::Operation { operator, .. } => Some(*operator) != parent_operator,
+            MediaCondition::Feature(f) => f.needs_parens(parent_operator, targets),
+        }
+    }
+}
+
+impl<FeatureId: FeatureIdTrait> QueryFeature<FeatureId> {
+    pub fn needs_parens(
+        &self,
+        parent_operator: Option<Operator>,
+        targets: &css::targets::Targets,
+    ) -> bool {
+        parent_operator != Some(Operator::And)
+            && matches!(self, QueryFeature::Interval { .. })
+            && targets.should_compile_same(css::compat::Feature::MediaIntervalSyntax)
+    }
+
+    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+        dest.write_char(b'(')?;
+
+        match self {
+            QueryFeature::Boolean { name } => {
+                name.to_css(dest)?;
+            }
+            QueryFeature::Plain { name, value } => {
+                name.to_css(dest)?;
+                dest.delim(b':', false)?;
+                value.to_css(dest)?;
+            }
+            QueryFeature::Range { name, operator, value } => {
+                // If range syntax is unsupported, use min/max prefix if possible.
+                if dest
+                    .targets
+                    .should_compile_same(css::compat::Feature::MediaRangeSyntax)
+                {
+                    return write_min_max(*operator, name, value, dest);
+                }
+                name.to_css(dest)?;
+                operator.to_css(dest)?;
+                value.to_css(dest)?;
+            }
+            QueryFeature::Interval {
+                name,
+                start,
+                start_operator,
+                end,
+                end_operator,
+            } => {
+                if dest
+                    .targets
+                    .should_compile_same(css::compat::Feature::MediaIntervalSyntax)
+                {
+                    write_min_max(start_operator.opposite(), name, start, dest)?;
+                    dest.write_str(" and (")?;
+                    return write_min_max(*end_operator, name, end, dest);
+                }
+
+                start.to_css(dest)?;
+                start_operator.to_css(dest)?;
+                name.to_css(dest)?;
+                end_operator.to_css(dest)?;
+                end.to_css(dest)?;
+            }
+        }
+
+        dest.write_char(b')')
+    }
+}
+
+impl<FeatureId: FeatureIdTrait> MediaFeatureName<FeatureId> {
+    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+        match self {
+            MediaFeatureName::Standard(v) => v.to_css(dest),
+            // PORT NOTE: Zig routed through DashedIdentFns.toCss → dest.writeDashedIdent
+            // (handles css-module name rewriting). Printer::write_dashed_ident is
+            // currently `#[cfg(any())]`-gated; emit the raw ident verbatim until
+            // that lands. Custom-media names are not subject to css-module
+            // rewriting in any test fixture today.
+            MediaFeatureName::Custom(d) => {
+                // SAFETY: arena-owned slice valid for the MediaList lifetime.
+                dest.write_ident(unsafe { &*d.v }, false)
+            }
+            MediaFeatureName::Unknown(v) => v.to_css(dest),
+        }
+    }
+
+    pub fn to_css_with_prefix(
+        &self,
+        prefix: &str,
+        dest: &mut Printer,
+    ) -> core::result::Result<(), PrintErr> {
+        match self {
+            MediaFeatureName::Standard(v) => v.to_css_with_prefix(prefix, dest),
+            MediaFeatureName::Custom(d) => {
+                dest.write_str(prefix)?;
+                // SAFETY: arena-owned slice valid for the MediaList lifetime.
+                dest.write_ident(unsafe { &*d.v }, false)
+            }
+            MediaFeatureName::Unknown(v) => {
+                dest.write_str(prefix)?;
+                v.to_css(dest)
+            }
+        }
+    }
+}
+
+impl MediaFeatureComparison {
+    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+        match self {
+            // PORT NOTE(suspect): Zig emits '-' for `Equal` (media_query.zig:1156),
+            // diverging from the spec `=` and from this enum's strum tag. Ported
+            // byte-for-byte; revisit if upstream fixes.
+            MediaFeatureComparison::Equal => dest.delim(b'-', true),
+            MediaFeatureComparison::GreaterThan => dest.delim(b'>', true),
+            MediaFeatureComparison::GreaterThanEqual => {
+                dest.whitespace()?;
+                dest.write_str(">=")?;
+                dest.whitespace()
+            }
+            MediaFeatureComparison::LessThan => dest.delim(b'<', true),
+            MediaFeatureComparison::LessThanEqual => {
+                dest.whitespace()?;
+                dest.write_str("<=")?;
+                dest.whitespace()
+            }
+        }
+    }
+
+    pub fn opposite(self) -> Self {
+        match self {
+            MediaFeatureComparison::GreaterThan => MediaFeatureComparison::LessThan,
+            MediaFeatureComparison::GreaterThanEqual => MediaFeatureComparison::LessThanEqual,
+            MediaFeatureComparison::LessThan => MediaFeatureComparison::GreaterThan,
+            MediaFeatureComparison::LessThanEqual => MediaFeatureComparison::GreaterThanEqual,
+            MediaFeatureComparison::Equal => MediaFeatureComparison::Equal,
+        }
+    }
+}
+
+impl MediaFeatureValue {
+    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+        match self {
+            MediaFeatureValue::Length(_len) => {
+                // blocked_on: crate::css_values::length::Length replacing the
+                // local value_shims::Length stand-in (calc lattice un-gate).
+                todo!("MediaFeatureValue::Length to_css — gated on values::length::Length")
+            }
+            MediaFeatureValue::Number(num) => css::to_css::float32(*num, dest),
+            MediaFeatureValue::Integer(int) => css::to_css::integer(*int, dest),
+            MediaFeatureValue::Boolean(b) => {
+                if *b { dest.write_char(b'1') } else { dest.write_char(b'0') }
+            }
+            MediaFeatureValue::Resolution(_res) => {
+                todo!("MediaFeatureValue::Resolution to_css — gated on values::resolution::Resolution")
+            }
+            MediaFeatureValue::Ratio(_ratio) => {
+                todo!("MediaFeatureValue::Ratio to_css — gated on values::ratio::Ratio")
+            }
+            MediaFeatureValue::Ident(id) => id.to_css(dest),
+            MediaFeatureValue::Env(env) => env.to_css(dest, false),
+        }
+    }
+
+    /// Zig: `addF32` — adjust by `other` for strict-inequality → min/max
+    /// boundary lowering. Consumes `self`.
+    pub fn add_f32(self, other: f32) -> MediaFeatureValue {
+        match self {
+            MediaFeatureValue::Length(_len) => {
+                // Zig: len.add(allocator, Length.px(other)) — calc lattice.
+                todo!("MediaFeatureValue::Length add_f32 — gated on values::length::Length::add")
+            }
+            MediaFeatureValue::Number(num) => MediaFeatureValue::Number(num + other),
+            MediaFeatureValue::Integer(num) => {
+                MediaFeatureValue::Integer(num + if other.is_sign_positive() { 1 } else { -1 })
+            }
+            MediaFeatureValue::Boolean(v) => MediaFeatureValue::Boolean(v),
+            MediaFeatureValue::Resolution(_res) => {
+                todo!("MediaFeatureValue::Resolution add_f32 — gated on values::resolution::Resolution::add_f32")
+            }
+            MediaFeatureValue::Ratio(_ratio) => {
+                todo!("MediaFeatureValue::Ratio add_f32 — gated on values::ratio::Ratio::add_f32")
+            }
+            MediaFeatureValue::Ident(id) => MediaFeatureValue::Ident(id),
+            MediaFeatureValue::Env(env) => MediaFeatureValue::Env(env), // TODO: calc support
+        }
+    }
+}
+
+/// Zig: `writeMinMax` — lower a range/interval comparator to legacy
+/// `min-`/`max-` prefixed plain feature.
+fn write_min_max<FeatureId: FeatureIdTrait>(
+    operator: MediaFeatureComparison,
+    name: &MediaFeatureName<FeatureId>,
+    value: &MediaFeatureValue,
+    dest: &mut Printer,
+) -> core::result::Result<(), PrintErr> {
+    let prefix = match operator {
+        MediaFeatureComparison::GreaterThan | MediaFeatureComparison::GreaterThanEqual => {
+            Some("min-")
+        }
+        MediaFeatureComparison::LessThan | MediaFeatureComparison::LessThanEqual => Some("max-"),
+        MediaFeatureComparison::Equal => None,
+    };
+
+    if let Some(p) = prefix {
+        name.to_css_with_prefix(p, dest)?;
+    } else {
+        name.to_css(dest)?;
+    }
+
+    dest.delim(b':', false)?;
+
+    // PORT NOTE: Zig deepCloned `value` into `dest.allocator` then mutated; here
+    // `MediaFeatureValue: Clone` so we clone-by-value. The `Length`/`Resolution`/
+    // `Ratio` arms of `add_f32` remain `todo!()` until the value-shims are real.
+    let adjusted: Option<MediaFeatureValue> = match operator {
+        MediaFeatureComparison::GreaterThan => Some(value.clone().add_f32(0.001)),
+        MediaFeatureComparison::LessThan => Some(value.clone().add_f32(-0.001)),
+        _ => None,
+    };
+
+    if let Some(val) = adjusted {
+        val.to_css(dest)?;
+    } else {
+        value.to_css(dest)?;
+    }
+
+    dest.write_char(b')')
 }
 
 // ───────────────────────── gated impl bodies ─────────────────────────

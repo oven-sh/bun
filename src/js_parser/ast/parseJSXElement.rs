@@ -39,8 +39,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         // Fragments don't have props
         // Fragments of the form "React.Fragment" are not parsed as fragments.
-        if let JSXTagData::Tag(t) = &tag.data {
-            start_tag = Some(*t);
+        if let Some(t) = tag.data.as_tag() {
+            start_tag = Some(t);
             can_be_inlined = p.options.features.jsx_optimization_inline;
 
             let mut spread_loc: logger::Loc = logger::Loc::EMPTY;

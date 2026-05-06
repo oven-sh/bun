@@ -501,6 +501,16 @@ pub struct JSXTag<'a> {
     pub name: &'a [u8],
 }
 
+// Bridge stub so `parseJSXElement.rs` type-checks while the real body below
+// stays gated (Round-D blockers: ParserLike lexer_mut/source/arena, E::String/
+// E::Dot struct-init shape).
+impl<'a> JSXTag<'a> {
+    #[allow(unused_variables)]
+    pub fn parse<P>(p: &mut P) -> Result<JSXTag<'a>, bun_core::Error> {
+        todo!("JSXTag::parse — gated; see #[cfg(any())] impl below")
+    }
+}
+
 // Round-D: body uses ParserLike methods (lexer_mut/source/arena) not yet on the
 // trait, plus E::String/E::Dot struct-init that doesn't match round-B field set.
 #[cfg(any())]

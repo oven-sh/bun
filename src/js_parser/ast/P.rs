@@ -1165,7 +1165,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         *parts = parts_;
     }
 
-    #[cfg(any())] // blocked_on: Part.symbol_uses keys()/values() (ArrayHashMap returns slices but use_count_estimate type)
     fn clear_symbol_usages_from_dead_part(&mut self, part: &js_ast::Part) {
         let symbol_use_refs = part.symbol_uses.keys();
         let symbol_use_values = part.symbol_uses.values();

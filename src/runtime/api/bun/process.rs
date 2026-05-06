@@ -1761,14 +1761,184 @@ pub type SpawnProcessResult = PosixSpawnResult;
 pub type SpawnProcessResult = WindowsSpawnResult;
 
 // ─── spawn_process bodies + sync runner ──────────────────────────────────────
-// Gated: posix_spawn::{Actions,Attr,spawn,spawnZ} (sibling `spawn` mod),
-// bun_sys::{c::*,socketpair,setsockopt,O,dup2,get_errno,E,Syscall,INVALID_FD}
-// surface, bun_analytics::Features, scopeguard borrow-conflict cleanup. The
-// option/result struct shapes above are the un-gated surface.
-// TODO(b2-blocked): super::spawn (posix_spawn wrappers) + bun_sys C-constant surface.
-#[cfg(any())]
+// Missing `bun_sys` surface (POSIX_SPAWN_* flags, set_close_on_exec,
+// socketpair_for_shell, memfd helpers, pidfd_open, Syscall tags) is shimmed
+// locally in `spawn_sys` so this file stays edit-only while the `bun_sys`
+// crate catches up. All shims call straight through to libc / extern "C".
+#[allow(dead_code)]
+pub(crate) mod spawn_sys {
+    use super::*;
+    use core::ffi::c_int;
+
+    // ── POSIX_SPAWN_* flags (Zig: bun.c.POSIX_SPAWN_*). ──
+    // libc carries the standard ones; the Apple extensions are in `<spawn.h>`
+    // but not exported by the `libc` crate, so define them by value.
+    pub const POSIX_SPAWN_SETSIGDEF: i32 = libc::POSIX_SPAWN_SETSIGDEF as i32;
+    pub const POSIX_SPAWN_SETSIGMASK: i32 = libc::POSIX_SPAWN_SETSIGMASK as i32;
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub const POSIX_SPAWN_SETSID: i32 = libc::POSIX_SPAWN_SETSID as i32;
+    #[cfg(target_os = "macos")]
+    pub const POSIX_SPAWN_CLOEXEC_DEFAULT: i32 = 0x4000; // _POSIX_SPAWN_CLOEXEC_DEFAULT (Apple <spawn.h>)
+    #[cfg(target_os = "macos")]
+    pub const POSIX_SPAWN_SETEXEC: i32 = 0x0040; // POSIX_SPAWN_SETEXEC (Apple <spawn.h>)
+
+    // ── bun.sys.Tag aliases used below. The real Tag enum is `bun_sys::Tag`
+    //    (opaque u16); until the full table lands, use a single placeholder so
+    //    Error::from_code keeps the .syscall slot populated. ──
+    pub const TAG_PIDFD_OPEN: bun_sys::Tag = bun_sys::Tag(0);
+    pub const TAG_SOCKETPAIR: bun_sys::Tag = bun_sys::Tag(0);
+    pub const TAG_FCNTL: bun_sys::Tag = bun_sys::Tag(0);
+    pub const TAG_MEMFD_CREATE: bun_sys::Tag = bun_sys::Tag(0);
+
+    pub const INVALID_FD: Fd = Fd::INVALID;
+
+    // ── set_close_on_exec — fcntl(FD_CLOEXEC). ──
+    #[cfg(unix)]
+    pub fn set_close_on_exec(fd: Fd) -> Maybe<()> {
+        // SAFETY: fcntl(2) on a caller-supplied fd.
+        unsafe {
+            let prev = libc::fcntl(fd.native(), libc::F_GETFD);
+            if prev < 0 {
+                return Err(bun_sys::Error::from_code_int(errno_int(), TAG_FCNTL));
+            }
+            if libc::fcntl(fd.native(), libc::F_SETFD, prev | libc::FD_CLOEXEC) < 0 {
+                return Err(bun_sys::Error::from_code_int(errno_int(), TAG_FCNTL));
+            }
+        }
+        Ok(())
+    }
+
+    // ── socketpair / socketpair_for_shell (Zig: sys.socketpair / sys.socketpairForShell). ──
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub enum SocketpairMode { Blocking, Nonblocking }
+
+    #[cfg(unix)]
+    pub fn socketpair(
+        domain: c_int,
+        socktype: c_int,
+        protocol: c_int,
+        mode: SocketpairMode,
+    ) -> Maybe<[Fd; 2]> {
+        socketpair_impl(domain, socktype, protocol, mode, false)
+    }
+
+    #[cfg(unix)]
+    pub fn socketpair_for_shell(
+        domain: c_int,
+        socktype: c_int,
+        protocol: c_int,
+        mode: SocketpairMode,
+    ) -> Maybe<[Fd; 2]> {
+        socketpair_impl(domain, socktype, protocol, mode, true)
+    }
+
+    #[cfg(unix)]
+    fn socketpair_impl(
+        domain: c_int,
+        socktype: c_int,
+        protocol: c_int,
+        mode: SocketpairMode,
+        for_shell: bool,
+    ) -> Maybe<[Fd; 2]> {
+        let mut fds: [c_int; 2] = [0; 2];
+        // SAFETY: libc socketpair into a 2-int array.
+        let rc = unsafe { libc::socketpair(domain, socktype, protocol, fds.as_mut_ptr()) };
+        if rc != 0 {
+            return Err(bun_sys::Error::from_code_int(errno_int(), TAG_SOCKETPAIR));
+        }
+        let pair = [Fd::from_native(fds[0]), Fd::from_native(fds[1])];
+        // CLOEXEC on the parent-kept end; the child end is dup2'd over.
+        let _ = set_close_on_exec(pair[0]);
+        let _ = set_close_on_exec(pair[1]);
+        if mode == SocketpairMode::Nonblocking {
+            let _ = bun_sys::set_nonblocking(pair[0]);
+            let _ = bun_sys::set_nonblocking(pair[1]);
+        }
+        // SO_NOSIGPIPE: shell semantics want SIGPIPE delivered on stdout close,
+        // so `for_shell` skips the parent-read side.
+        #[cfg(target_os = "macos")]
+        {
+            let on: c_int = 1;
+            // SAFETY: setsockopt on freshly-created socketpair fds.
+            unsafe {
+                if !for_shell {
+                    libc::setsockopt(
+                        fds[0], libc::SOL_SOCKET, libc::SO_NOSIGPIPE,
+                        &on as *const _ as *const c_void, core::mem::size_of::<c_int>() as u32,
+                    );
+                }
+                libc::setsockopt(
+                    fds[1], libc::SOL_SOCKET, libc::SO_NOSIGPIPE,
+                    &on as *const _ as *const c_void, core::mem::size_of::<c_int>() as u32,
+                );
+            }
+        }
+        let _ = for_shell;
+        Ok(pair)
+    }
+
+    // ── memfd helpers (Linux). ──
+    #[cfg(target_os = "linux")]
+    static MEMFD_ENOSYS: AtomicBool = AtomicBool::new(false);
+
+    #[cfg(target_os = "linux")]
+    pub fn can_use_memfd() -> bool {
+        !MEMFD_ENOSYS.load(Ordering::Relaxed)
+    }
+
+    #[derive(Clone, Copy)]
+    pub enum MemfdFlag { CrossProcess, Private }
+
+    #[cfg(target_os = "linux")]
+    pub fn memfd_create(name: &[u8], flag: MemfdFlag) -> Maybe<Fd> {
+        // CrossProcess → no MFD_CLOEXEC (the child needs to inherit it via dup2);
+        // Private → MFD_CLOEXEC.
+        let flags: u32 = match flag {
+            MemfdFlag::CrossProcess => 0,
+            MemfdFlag::Private => libc::MFD_CLOEXEC,
+        };
+        // name is a static byte string with no interior NUL; build a CString once.
+        let cname = std::ffi::CString::new(name).unwrap_or_else(|_| std::ffi::CString::new("bun_memfd").unwrap());
+        // SAFETY: libc memfd_create with a NUL-terminated name.
+        let rc = unsafe { libc::memfd_create(cname.as_ptr(), flags) };
+        if rc < 0 {
+            let e = errno_int();
+            if e == libc::ENOSYS || e == libc::EPERM || e == libc::EACCES {
+                MEMFD_ENOSYS.store(true, Ordering::Relaxed);
+            }
+            return Err(bun_sys::Error::from_code_int(e, TAG_MEMFD_CREATE));
+        }
+        Ok(Fd::from_native(rc))
+    }
+
+    // ── pidfd_open (Linux). ──
+    #[cfg(target_os = "linux")]
+    pub fn pidfd_open(pid: libc::pid_t, flags: u32) -> Maybe<PidFdType> {
+        // SAFETY: raw Linux syscall; SYS_pidfd_open available since 5.3.
+        let rc = unsafe { libc::syscall(libc::SYS_pidfd_open, pid as c_int, flags as c_int) };
+        if rc < 0 {
+            return Err(bun_sys::Error::from_code_int(errno_int(), TAG_PIDFD_OPEN));
+        }
+        Ok(rc as PidFdType)
+    }
+
+    #[inline]
+    pub fn errno_int() -> c_int {
+        // SAFETY: errno_location returns thread-local errno pointer.
+        unsafe { *bun_sys::c::errno_location() }
+    }
+
+    #[inline]
+    pub fn get_errno(rc: isize) -> bun_sys::E {
+        bun_sys::get_errno(rc)
+    }
+}
+
 mod spawn_process_body {
 use super::*;
+use super::spawn_sys;
+use core::ffi::CStr;
+use bun_sys::FdExt as _;
 
 pub fn spawn_process(
     options: &SpawnOptions,
@@ -1791,21 +1961,21 @@ pub fn spawn_process_posix(
     argv: *const *const c_char,
     envp: *const *const c_char,
 ) -> Result<bun_sys::Result<PosixSpawnResult>, bun_core::Error> {
-    bun_analytics::Features::spawn_inc();
+    bun_analytics::features::spawn.fetch_add(1, Ordering::Relaxed);
     let mut actions = PosixSpawnActions::init()?;
     // defer actions.deinit() — Drop
 
     let mut attr = PosixSpawnAttr::init()?;
     // defer attr.deinit() — Drop
 
-    let mut flags: i32 = bun_sys::c::POSIX_SPAWN_SETSIGDEF | bun_sys::c::POSIX_SPAWN_SETSIGMASK;
+    let mut flags: i32 = spawn_sys::POSIX_SPAWN_SETSIGDEF | spawn_sys::POSIX_SPAWN_SETSIGMASK;
 
     #[cfg(target_os = "macos")]
     {
-        flags |= bun_sys::c::POSIX_SPAWN_CLOEXEC_DEFAULT;
+        flags |= spawn_sys::POSIX_SPAWN_CLOEXEC_DEFAULT;
 
         if options.use_execve_on_macos {
-            flags |= bun_sys::c::POSIX_SPAWN_SETEXEC;
+            flags |= spawn_sys::POSIX_SPAWN_SETEXEC;
 
             if matches!(options.stdin, PosixStdio::Buffer)
                 || matches!(options.stdout, PosixStdio::Buffer)
@@ -1823,7 +1993,7 @@ pub fn spawn_process_posix(
         // TODO(port): @hasDecl check — assume present on platforms that define it
         #[cfg(any(target_os = "macos", target_os = "linux"))]
         {
-            flags |= bun_sys::c::POSIX_SPAWN_SETSID;
+            flags |= spawn_sys::POSIX_SPAWN_SETSID;
         }
         attr.detached = true;
     }
@@ -1854,21 +2024,11 @@ pub fn spawn_process_posix(
     let mut extra_fds: Vec<ExtraPipe> = Vec::new();
     // errdefer extra_fds.deinit() — Vec drops on ?
     // PERF(port): was stack-fallback allocator (2048)
+    // PORT NOTE: Zig defers `to_set_cloexec`/`to_close_at_end` cleanup; the
+    // scopeguard form borrow-conflicts with later pushes, so cleanup is run
+    // inline at every return site (LIFO-equivalent for the three exits below).
     let mut to_close_at_end: Vec<Fd> = Vec::new();
     let mut to_set_cloexec: Vec<Fd> = Vec::new();
-    let close_at_end_guard = scopeguard::guard((), |_| {
-        for fd in to_set_cloexec.iter() {
-            let _ = bun_sys::set_close_on_exec(*fd);
-        }
-        for fd in to_close_at_end.iter() {
-            fd.close();
-        }
-    });
-    // TODO(port): scopeguard captures &to_set_cloexec/&to_close_at_end mutably
-    // while they're still pushed to below — Phase B: restructure with a single
-    // struct holding both vecs inside the guard, or run cleanup manually at fn
-    // exit. Leaving // TODO(port): errdefer for now.
-    let _ = close_at_end_guard;
     // TODO(port): errdefer — to_close_on_error closed on any `?` after this point
     let mut to_close_on_error: Vec<Fd> = Vec::new();
 
@@ -1887,7 +2047,7 @@ pub fn spawn_process_posix(
 
     for i in 0..3usize {
         let fileno = Fd::from_native(FdT::try_from(i).unwrap());
-        let flag: u32 = if i == 0 { bun_sys::O::RDONLY } else { bun_sys::O::WRONLY };
+        let flag: u32 = (if i == 0 { bun_sys::O::RDONLY } else { bun_sys::O::WRONLY }) as u32;
 
         match stdio_options[i] {
             PosixStdio::Dup2(dup2) => {

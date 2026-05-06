@@ -300,15 +300,15 @@ pub fn initialize(eval_mode: bool) {
 unsafe extern "C" fn on_jsc_invalid_env_var(name: *const u8, len: usize) {
     // SAFETY: C++ guarantees `name[..len]` is valid for the call.
     let name = unsafe { core::slice::from_raw_parts(name, len) };
-    bun_core::output::err_generic(format_args!(
+    bun_core::err_generic!(
         "invalid JSC environment variable\n\n    <b>{}<r>\n\n\
 For a list of options, see this file:\n\n    \
 https://github.com/oven-sh/webkit/blob/main/Source/JavaScriptCore/runtime/OptionsList.h\n\n\
 Environment variables must be prefixed with \"BUN_JSC_\". This code runs before .env files are loaded, so those won't work here.\n\n\
 Warning: options change between releases of Bun and WebKit without notice. This is not a stable API, you should not rely on it beyond debugging something, and it may be removed entirely in a future version of Bun.",
-        bun_string::fmt::Bytes(name),
-    ));
-    bun_core::global::exit(1);
+        alloc::string::String::from_utf8_lossy(name),
+    );
+    bun_core::exit(1);
 }
 
 // `JSValue` stub — `#[repr(transparent)]` over the encoded 64-bit JSC::JSValue.

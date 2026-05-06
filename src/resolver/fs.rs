@@ -787,10 +787,9 @@ impl RealFS {
     fn platform_temp_dir_compute() -> &'static [u8] {
         // Try TMPDIR, TMP, and TEMP in that order, matching Node.js.
         // https://github.com/nodejs/node/blob/e172be269890702bf2ad06252f2f152e7604d76c/src/node_credentials.cc#L132
-        if let Some(dir) = env_var::TMPDIR
-            .get_not_empty()
-            .or_else(|| env_var::TMP.get_not_empty())
-            .or_else(|| env_var::TEMP.get_not_empty())
+        if let Some(dir) = env_var::TMPDIR::get_not_empty()
+            .or_else(env_var::TMP::get_not_empty)
+            .or_else(env_var::TEMP::get_not_empty)
         {
             if dir.len() > 1 && dir[dir.len() - 1] == SEP {
                 return &dir[0..dir.len() - 1];
@@ -801,33 +800,33 @@ impl RealFS {
         #[cfg(target_os = "windows")]
         {
             // https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-gettemppathw#remarks
-            if let Some(windir) = env_var::SYSTEMROOT.get().or_else(|| env_var::WINDIR.get()) {
+            if let Some(windir) = env_var::SYSTEMROOT::get().or_else(env_var::WINDIR::get) {
                 let mut v = Vec::new();
                 write!(&mut v, "{}\\Temp", BStr::new(strings::without_trailing_slash(windir)))
                     .expect("oom");
-                return Box::leak(v.into_boxed_slice());
+                return DirnameStore::instance().append(&v).expect("oom");
             }
 
-            if let Some(profile) = env_var::HOME.get() {
+            if let Some(profile) = env_var::HOME::get() {
                 let mut buf = PathBuffer::uninit();
                 let parts: [&[u8]; 1] = [b"AppData\\Local\\Temp"];
-                let out = path_handler::join_abs_string_buf(
+                let out = path_handler::join_abs_string_buf::<platform::Loose>(
                     profile,
-                    &mut buf,
+                    &mut buf[..],
                     &parts,
-                    path_handler::Platform::Loose,
                 );
-                return Box::leak(Box::<[u8]>::from(out));
+                return DirnameStore::instance().append(out).expect("oom");
             }
 
             let mut tmp_buf = PathBuffer::uninit();
             // TODO(port): std.posix.getcwd — bun_sys::getcwd
-            let cwd = bun_sys::getcwd(&mut tmp_buf).expect("Failed to get cwd for platformTempDir");
-            let root = bun_paths::windows_filesystem_root(cwd);
+            let n = bun_sys::getcwd(&mut tmp_buf[..]).expect("Failed to get cwd for platformTempDir");
+            let cwd = &tmp_buf[..n];
+            let root = path_handler::windows_filesystem_root(cwd);
             let mut v = Vec::new();
             write!(&mut v, "{}\\Windows\\Temp", BStr::new(strings::without_trailing_slash(root)))
                 .expect("oom");
-            return Box::leak(v.into_boxed_slice());
+            return DirnameStore::instance().append(&v).expect("oom");
         }
         #[cfg(target_os = "macos")]
         {
@@ -852,29 +851,22 @@ impl RealFS {
     }
 
     pub fn tmpdir_path() -> &'static [u8] {
-        env_var::BUN_TMPDIR.get_not_empty().unwrap_or_else(Self::platform_temp_dir)
+        env_var::BUN_TMPDIR::get_not_empty().unwrap_or_else(Self::platform_temp_dir)
     }
 
     pub fn open_tmp_dir(&self) -> Result<bun_sys::Dir, bun_core::Error> {
         #[cfg(windows)]
         {
-            return Ok(bun_sys::open_dir_at_windows_a(
-                Fd::INVALID,
-                Self::tmpdir_path(),
-                bun_sys::OpenDirOptions {
-                    iterable: true,
-                    // we will not delete the temp directory
-                    can_rename_or_delete: false,
-                    read_only: true,
-                    ..Default::default()
-                },
-            )
-            .unwrap()?
-            .std_dir());
+            // TODO(b2-windows): bun_sys::open_dir_at_windows_a + OpenDirOptions{iterable, read_only}
+            return bun_sys::open_dir_absolute(Self::tmpdir_path())
+                .map(bun_sys::Dir::from_fd)
+                .map_err(Into::into);
         }
         #[cfg(not(windows))]
         {
             bun_sys::open_dir_absolute(Self::tmpdir_path())
+                .map(bun_sys::Dir::from_fd)
+                .map_err(Into::into)
         }
     }
 
@@ -882,52 +874,58 @@ impl RealFS {
         &mut self,
         index: allocators::IndexType,
         generation: Generation,
-    ) -> Option<&mut EntriesOption> {
+    ) -> Option<&'static mut EntriesOption> {
+        // PORT NOTE: reshaped for borrowck — `entries.at_index` returns a `'static` borrow
+        // into the BSSMap singleton, decoupled from `&mut self`, so the readdir/error
+        // paths below can re-borrow `self` without overlap.
         let existing = self.entries.at_index(index)?;
         if let EntriesOption::Entries(entries) = existing {
             if entries.generation < generation {
-                let handle = match bun_sys::open_dir_for_iteration(Fd::cwd(), entries.dir).unwrap() {
+                let dir_path = entries.dir;
+                let handle = match bun_sys::open_dir_for_iteration(Fd::cwd(), dir_path) {
                     Ok(h) => h,
                     Err(err) => {
-                        entries.data.clear_and_free();
+                        entries.data.clear();
                         return Some(
-                            self.read_directory_error(entries.dir, err.into())
+                            self.read_directory_error(dir_path, err.into())
                                 .expect("unreachable"),
                         );
                     }
                 };
-                // PORT NOTE: defer handle.close() → handle dropped at end of scope
-                let dir_path = entries.dir;
+                let handle_dir = bun_sys::Dir::from_fd(handle);
+                // PORT NOTE: defer handle.close() → explicit close at exit points below.
+                // SAFETY: `entries.data` borrows the BSSMap singleton; raw-ptr lets us
+                // hand `&mut EntryMap` to `readdir` while still holding `entries` for
+                // the post-read clear/assign (Zig used `*DirEntry` directly).
+                let prev_map_ptr: *mut dir_entry::EntryMap = &mut entries.data;
                 let new_entry = match self.readdir(
                     false,
-                    Some(&mut entries.data),
+                    Some(unsafe { &mut *prev_map_ptr }),
                     dir_path,
                     generation,
-                    handle.std_dir(),
+                    handle_dir,
                     (),
                 ) {
                     Ok(e) => e,
                     Err(err) => {
-                        entries.data.clear_and_free();
-                        drop(handle);
+                        entries.data.clear();
+                        handle_dir.close();
                         return Some(
                             self.read_directory_error(dir_path, err).expect("unreachable"),
                         );
                     }
                 };
-                entries.data.clear_and_free();
+                entries.data.clear();
                 **entries = new_entry;
-                drop(handle);
+                handle_dir.close();
             }
         }
 
-        Some(existing)
-        // PORT NOTE: reshaped for borrowck — re-fetch existing after self borrows above
-        // TODO(port): borrowck — may need to restructure to avoid overlapping &mut self
+        self.entries.at_index(index)
     }
 
     pub fn get_default_temp_dir() -> &'static [u8] {
-        env_var::BUN_TMPDIR.get().unwrap_or_else(Self::platform_temp_dir)
+        env_var::BUN_TMPDIR::get().unwrap_or_else(Self::platform_temp_dir)
     }
 
     pub fn need_to_close_files(&self) -> bool {
@@ -1024,25 +1022,20 @@ impl RealFS {
     pub fn init(cwd: &'static [u8]) -> RealFS {
         let file_limit = Self::adjust_ulimit().expect("unreachable");
 
-        // SAFETY: single init-time access
-        unsafe {
-            if !ENTRIES_OPTION_MAP_LOADED {
-                ENTRIES_OPTION_MAP = Some(EntriesOptionMap::init());
-                ENTRIES_OPTION_MAP_LOADED = true;
-            }
+        // Touch the EntriesOptionMap singleton so it's initialized.
+        let _ = entries_option_map();
 
-            RealFS {
-                entries_mutex: Mutex::new(),
-                entries: ENTRIES_OPTION_MAP.unwrap(),
-                cwd,
-                file_limit,
-                file_quota: file_limit,
-            }
+        RealFS {
+            entries_mutex: Mutex::default(),
+            entries: EntriesMap::new(),
+            cwd,
+            file_limit,
+            file_quota: file_limit,
         }
     }
 }
 
-#[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
+#[derive(strum::IntoStaticStr, Debug)]
 pub enum ModKeyError {
     Unusable,
 }
@@ -1068,7 +1061,7 @@ impl ModKey {
 
         HASH_NAME_BUF.with_borrow_mut(|buf| {
             let mut cursor = &mut buf[..];
-            write!(&mut cursor, "{}-{}", BStr::new(basename), bun_fmt::hex_int_lower(hex_int))
+            write!(&mut cursor, "{}-{:x}", BStr::new(basename), hex_int)
                 .map_err(|_| bun_core::err!("NoSpaceLeft"))?;
             let written = buf.len() - cursor.len();
             // SAFETY: threadlocal buffer outlives caller's use (matches Zig pattern)
@@ -1090,11 +1083,21 @@ impl ModKey {
         bun_wyhash::hash(&hash_bytes)
     }
 
-    pub fn generate(_: &mut RealFS, _: &[u8], file: bun_sys::File) -> Result<ModKey, bun_core::Error> {
+    pub fn generate(_: &mut RealFS, _: &[u8], file: &bun_sys::File) -> Result<ModKey, bun_core::Error> {
         let stat = file.stat()?;
 
         const NS_PER_S: i128 = 1_000_000_000;
-        let seconds = stat.mtime / NS_PER_S;
+        // PORT NOTE: `bun_sys::Stat` is `libc::stat`; Zig's `std.fs.File.stat()` returned a
+        // normalized struct with `mtime: i128` ns. Reconstruct from `st_mtime` (sec) +
+        // `st_mtime_nsec` (ns) where available.
+        #[cfg(target_os = "linux")]
+        let mtime: i128 = (stat.st_mtime as i128) * NS_PER_S + stat.st_mtime_nsec as i128;
+        #[cfg(target_os = "macos")]
+        let mtime: i128 =
+            (stat.st_mtime as i128) * NS_PER_S + stat.st_mtime_nsec as i128;
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        let mtime: i128 = (stat.st_mtime as i128) * NS_PER_S;
+        let seconds = mtime / NS_PER_S;
 
         // We can't detect changes if the file system zeros out the modification time
         if seconds == 0 && NS_PER_S == 0 {
@@ -1106,15 +1109,15 @@ impl ModKey {
         let now_seconds = now / NS_PER_S;
         // PORT NOTE: Zig had `seconds > seconds` (always false) — preserved
         #[allow(clippy::eq_op)]
-        if seconds > seconds || (seconds == now_seconds && stat.mtime > now) {
+        if seconds > seconds || (seconds == now_seconds && mtime > now) {
             return Err(bun_core::err!("Unusable"));
         }
 
         Ok(ModKey {
-            inode: stat.inode,
-            size: stat.size,
-            mtime: stat.mtime,
-            mode: stat.mode,
+            inode: stat.st_ino as u64,
+            size: stat.st_size as u64,
+            mtime,
+            mode: stat.st_mode as u32,
             // .uid = stat.
         })
     }

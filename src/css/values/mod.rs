@@ -50,6 +50,21 @@ pub mod css_modules {
         pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
             *self
         }
+
+        /// Parse a CSS-Modules `from` specifier (`global` | `"<file>"`).
+        // Zig: `Specifier.parse` (properties/css_modules.zig). The full body
+        // lives in the gated `properties::css_modules` leaf; this inline keeps
+        // `DashedIdentReference::parse` (custom.rs) un-gated without pulling
+        // the whole css_modules handler in.
+        pub fn parse(input: &mut crate::Parser) -> crate::Result<Self> {
+            if input.try_parse(|i| i.expect_ident_matching(b"global")).is_ok() {
+                return Ok(Specifier::Global);
+            }
+            let file = input.expect_string()?;
+            // SAFETY: arena-owned slice valid for the parse session (Phase-A
+            // `*const [u8]` lifetime placeholder — see field decl above).
+            Ok(Specifier::File(file as *const [u8]))
+        }
     }
 }
 

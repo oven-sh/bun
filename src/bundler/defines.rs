@@ -45,9 +45,19 @@ fn defines_path() -> fs::Path {
     p
 }
 
-pub type RawDefines = ArrayHashMap<Box<[u8]>, Box<[u8]>>;
+// Zig: `bun.StringArrayHashMap(string)` / `bun.StringArrayHashMap(DefineData)`.
+// Uses the boxed-key wrapper (not raw `ArrayHashMap<Box<[u8]>, _>`) so callers
+// can pass `&[u8]` borrows to `contains` / `get_or_put_value` — required by
+// `options.rs::defines_from_transform_options` and the env-define vtable below.
+pub type RawDefines = StringArrayHashMap<Box<[u8]>>;
 pub type UserDefines = StringHashMap<DefineData>;
-pub type UserDefinesArray = ArrayHashMap<Box<[u8]>, DefineData>;
+pub type UserDefinesArray = StringArrayHashMap<DefineData>;
+
+/// Alias for `Options` so `options.rs` can write `DefineData::init(DefineDataInit { .. })`
+/// (mirrors Zig's anonymous-struct init).
+pub type DefineDataInit<'a> = Options<'a>;
+/// Alias for `ExprData` so `options.rs` can write `DefineValue::EUndefined(..)`.
+pub use bun_js_parser::ExprData as DefineValue;
 
 // ══════════════════════════════════════════════════════════════════════════
 // CYCLEBREAK(b0): vtable instances for `bun_dotenv::DefineStoreVTable`
@@ -59,7 +69,7 @@ pub type UserDefinesArray = ArrayHashMap<Box<[u8]>, DefineData>;
 // ══════════════════════════════════════════════════════════════════════════
 
 /// Backs `to_string: *StringStore` in `Loader.copyForDefine`.
-/// Owner type: `*mut UserDefines` (`StringHashMap<DefineData>`).
+/// Owner type: `*mut UserDefinesArray` (`StringArrayHashMap<DefineData>`).
 pub static ENV_DEFINE_STRING_STORE_VTABLE: bun_dotenv::DefineStoreVTable = bun_dotenv::DefineStoreVTable {
     contains: env_string_store_contains,
     put_string_define: env_string_store_put_string,
@@ -67,35 +77,39 @@ pub static ENV_DEFINE_STRING_STORE_VTABLE: bun_dotenv::DefineStoreVTable = bun_d
 };
 
 unsafe fn env_string_store_contains(owner: *mut (), key: &[u8]) -> bool {
-    // SAFETY: vtable contract — owner is `*mut UserDefines`.
-    unsafe { &*(owner as *const UserDefines) }.contains_key(key)
+    // SAFETY: vtable contract — owner is `*mut UserDefinesArray`.
+    unsafe { &*(owner as *const UserDefinesArray) }.contains_key(key)
 }
 unsafe fn env_string_store_put_string(
     owner: *mut (),
     key: &[u8],
     value: &[u8],
 ) -> Result<(), bun_core::Error> {
-    #[cfg(any())]
-    {
-        // SAFETY: vtable contract — owner is `*mut UserDefines`.
-        let store = unsafe { &mut *(owner as *mut UserDefines) };
-        // Mirrors Zig: allocate an `E.String` slab entry, point Expr::Data at it,
-        // wrap in DefineData::init({can_be_removed_if_unused: true,
-        // call_can_be_unwrapped_if_unused: .if_unused}). Zig used a bump-alloc'd
-        // slab; here we route through the AST node store (`IntoExprData`).
-        let value: ExprData = js_ast::E::EString::utf8(value.to_vec().into_boxed_slice()).into_data_store();
-        let data = DefineData::init(Options {
-            value,
-            can_be_removed_if_unused: true,
-            call_can_be_unwrapped_if_unused: js_ast::E::CallUnwrap::IfUnused,
-            ..Default::default()
-        });
-        store.get_or_put_value(key, data)?;
-        return Ok(());
-    }
-    // TODO(b2-blocked): bun_js_parser::E::EString::utf8 / IntoExprData::into_data_store
-    let _ = (owner, key, value);
-    unimplemented!("b2-blocked: bun_js_parser EString store init")
+    // SAFETY: vtable contract — owner is `*mut UserDefinesArray`.
+    let store = unsafe { &mut *(owner as *mut UserDefinesArray) };
+    // Mirrors Zig: allocate an `E.String` slab entry, point Expr::Data at it,
+    // wrap in DefineData::init({can_be_removed_if_unused: true,
+    // call_can_be_unwrapped_if_unused: .if_unused}). Zig bump-alloc'd both the
+    // `E.String` slab and `key_buf` and never freed them (only `errdefer`); here
+    // the wrapper goes through the AST node store (`IntoExprData::into_data_store`)
+    // and the value bytes are duplicated into a long-lived heap slot since the
+    // vtable contract makes no lifetime guarantee on `value`.
+    // PERF(port): was zero-copy alias into env-map storage — Phase B can thread
+    // the env-map lifetime through and drop this dupe.
+    let owned: &'static [u8] = if value.is_empty() {
+        b""
+    } else {
+        Box::leak(Box::<[u8]>::from(value))
+    };
+    let value: ExprData = js_ast::E::EString::init(owned).into_data_store();
+    let data = DefineData::init(Options {
+        value,
+        can_be_removed_if_unused: true,
+        call_can_be_unwrapped_if_unused: js_ast::E::CallUnwrap::IfUnused,
+        ..Default::default()
+    });
+    store.get_or_put_value(key, data)?;
+    Ok(())
 }
 unsafe fn env_string_store_put_raw(
     owner: *mut (),
@@ -108,7 +122,7 @@ unsafe fn env_string_store_put_raw(
 }
 
 /// Backs `to_json: *JSONStore` in `Loader.copyForDefine`.
-/// Owner type: `*mut StringHashMap<Box<[u8]>>` (raw key→source mapping that
+/// Owner type: `*mut RawDefines` (raw key→source mapping that
 /// `DefineData::from_input` later parses).
 pub static ENV_DEFINE_JSON_STORE_VTABLE: bun_dotenv::DefineStoreVTable = bun_dotenv::DefineStoreVTable {
     contains: env_json_store_contains,
@@ -117,8 +131,8 @@ pub static ENV_DEFINE_JSON_STORE_VTABLE: bun_dotenv::DefineStoreVTable = bun_dot
 };
 
 unsafe fn env_json_store_contains(owner: *mut (), key: &[u8]) -> bool {
-    // SAFETY: vtable contract — owner is `*mut StringHashMap<Box<[u8]>>`.
-    unsafe { &*(owner as *const StringHashMap<Box<[u8]>>) }.contains_key(key)
+    // SAFETY: vtable contract — owner is `*mut RawDefines`.
+    unsafe { &*(owner as *const RawDefines) }.contains_key(key)
 }
 unsafe fn env_json_store_put(
     owner: *mut (),
@@ -127,26 +141,24 @@ unsafe fn env_json_store_put(
 ) -> Result<(), bun_core::Error> {
     // JSON store wants the raw bytes (later fed to DefineData::from_input).
     // SAFETY: vtable contract.
-    let store = unsafe { &mut *(owner as *mut StringHashMap<Box<[u8]>>) };
+    let store = unsafe { &mut *(owner as *mut RawDefines) };
     store.get_or_put_value(key, value.to_vec().into_boxed_slice())?;
     Ok(())
 }
 
-/// Convenience: build a `DefineStoreRef` over a `UserDefines` map.
+/// Convenience: build a `DefineStoreRef` over a `UserDefinesArray` map.
 #[inline]
-pub fn env_define_string_store_ref(store: &mut UserDefines) -> bun_dotenv::DefineStoreRef<'_> {
+pub fn env_define_string_store_ref(store: &mut UserDefinesArray) -> bun_dotenv::DefineStoreRef<'_> {
     bun_dotenv::DefineStoreRef::new(
-        store as *mut UserDefines as *mut (),
+        store as *mut UserDefinesArray as *mut (),
         &ENV_DEFINE_STRING_STORE_VTABLE,
     )
 }
 /// Convenience: build a `DefineStoreRef` over a raw JSON-string map.
 #[inline]
-pub fn env_define_json_store_ref(
-    store: &mut StringHashMap<Box<[u8]>>,
-) -> bun_dotenv::DefineStoreRef<'_> {
+pub fn env_define_json_store_ref(store: &mut RawDefines) -> bun_dotenv::DefineStoreRef<'_> {
     bun_dotenv::DefineStoreRef::new(
-        store as *mut StringHashMap<Box<[u8]>> as *mut (),
+        store as *mut RawDefines as *mut (),
         &ENV_DEFINE_JSON_STORE_VTABLE,
     )
 }

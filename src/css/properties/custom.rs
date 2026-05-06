@@ -202,13 +202,6 @@ mod ext {
     }
 }
 
-// blocked_on: `LightDarkOwned` lives in `values::color::gated_full_impl` (the
-// 3.5k-line Colorspace/Interpolate lattice gated on `color_generated` landing).
-// The trait body is trivial — it just forwards to the inherent
-// `UnresolvedColor::light_dark_owned` below — so re-gate the impl until the
-// trait surfaces at module scope. Callers (`ColorFallbackKind::get_color`)
-// are themselves inside `gated_full_impl`, so no live path is broken.
-#[cfg(any())]
 impl css_values::color::LightDarkOwned for UnresolvedColor {
     #[inline]
     fn light_dark_owned(light: Self, dark: Self) -> Self {

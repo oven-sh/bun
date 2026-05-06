@@ -23,7 +23,12 @@ use bun_threading::{thread_pool as ThreadPoolLib, Mutex};
 #[allow(unused_imports)]
 use crate::cache::{self as CacheSet, Contents, Entry as CacheEntry, ExternalFreeFunction};
 use crate::linker_context_mod::StmtList;
-use crate::options::Target;
+// PORT NOTE: `crate::options::Target` is the lower-tier `bun_options_types`
+// enum (re-exported for downstream crates); `BundleOptions.target` is the
+// file-backed `options_impl::Target`. Compare against the latter so
+// `primary.options.target == target` type-checks. The two enums collapse in
+// Phase B-3 (see lib.rs `pub mod options` shadow note).
+use crate::options_impl::Target;
 use crate::parse_task::{ContentsOrFd, ParseTask, ParseTaskStage};
 use crate::transpiler::Transpiler;
 use crate::BundleV2;

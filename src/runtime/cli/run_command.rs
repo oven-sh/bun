@@ -156,7 +156,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         pretty!("{}", INTRO_TEXT);
         Output::flush();
-        bun_clap::simple_help(crate::cli::arguments::RUN_ONLY_PARAMS.as_slice());
+        bun_clap::simple_help(crate::cli::arguments::RUN_PARAMS.as_slice());
         prettyln!("\n");
         pretty!("{}", OUTRO_TEXT);
         Output::flush();
@@ -583,6 +583,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                     return Err(err);
                 }
                 Ok(None) => {
+                    // TODO(b2): `ctx.log.print(Output.errorWriter())` — same
+                    // writer-shim wart as the `Err` arm above; route the
+                    // buffered resolver diagnostics once the shim lands.
                     pretty_errorln!("error loading current directory");
                     Output::flush();
                     return Err(bun_core::err!("CouldntReadCurrentDirectory"));
@@ -914,13 +917,19 @@ impl Run {
         vm.exit_handler.dispatch_on_exit();
         vm.is_shutting_down = true;
 
-        if let Some(rare) = vm.rare_data.as_mut() {
-            // Make sure we run new cleanup hooks introduced by running cleanup hooks
-            while !rare.cleanup_hooks.is_empty() {
-                let hooks = std::mem::take(&mut rare.cleanup_hooks);
-                for hook in hooks {
-                    hook.execute();
-                }
+        // Make sure we run new cleanup hooks introduced by running cleanup hooks.
+        // PORT NOTE: re-derive `rare_data` each outer iteration and drop the
+        // `&mut` before `hook.execute()` — a NAPI cleanup hook may re-enter via
+        // `napi_add_env_cleanup_hook` → `RareData::push_cleanup_hook`, which
+        // takes a fresh `&mut RareData`; holding the outer borrow across that
+        // call would alias under Stacked Borrows.
+        loop {
+            let hooks = match vm.rare_data.as_mut() {
+                Some(r) if !r.cleanup_hooks.is_empty() => std::mem::take(&mut r.cleanup_hooks),
+                _ => break,
+            };
+            for hook in hooks {
+                hook.execute();
             }
         }
     }
@@ -1241,13 +1250,53 @@ impl RunCommand {
             return Ok(true);
         }
 
+        // ── setup (unconditional — zig:1694-1699) ───────────────────────────
+        // PORT NOTE: out-param init — Zig: `var this_transpiler: Transpiler
+        // = undefined;`. `Transpiler` is NOT all-zero-valid POD (holds
+        // `&Arena`/`Box`/enum fields), so use `MaybeUninit` and let
+        // `configure_env_for_run` `.write()` the whole struct (PORTING.md
+        // §std.mem.zeroes).
+        let mut this_transpiler =
+            ::core::mem::MaybeUninit::<Transpiler<'static>>::uninit();
+        let root_dir_info = Self::configure_env_for_run(
+            ctx,
+            &mut this_transpiler,
+            None,
+            log_errors,
+            false,
+        )?;
+        // SAFETY: `configure_env_for_run` returned `Ok`, so the slot is
+        // fully initialized via `MaybeUninit::write`.
+        let this_transpiler = unsafe { this_transpiler.assume_init_mut() };
+        // TODO(b2-blocked): `configure_path_for_run` — bun-node fake-exe
+        // creation + PATH stitching; preserved in phase_a_draft.
+        #[cfg(any())]
+        Self::configure_path_for_run(
+            ctx,
+            root_dir_info,
+            &mut this_transpiler,
+            None,
+            unsafe { (*root_dir_info).abs_path },
+            ctx.debug.run_in_bun,
+        )?;
+        // SAFETY: `Transpiler::init` always sets `env`.
+        let env_loader: &mut DotEnv::Loader<'static> = unsafe { &mut *this_transpiler.env };
+        env_loader.map.put(b"npm_command", b"run-script").expect("unreachable");
+
+        // SAFETY: `read_dir_info` returned non-null; resolver-cache lifetime.
+        let root_dir = unsafe { &*root_dir_info };
+
         // ── empty command → print help ──────────────────────────────────────
         if target_name.is_empty() {
-            // TODO(b2-blocked): `root_dir_info.enclosing_package_json` —
-            // needs `configure_env_for_run` (Transpiler + DirInfo). For now
-            // print the generic help.
-            Self::print_help(None);
-            Output::flush();
+            if root_dir.enclosing_package_json.is_some() {
+                // TODO(port): pass `package_json` once `print_help` takes
+                // `Option<&PackageJSON>` (script-listing section).
+                Self::print_help(Some(&()));
+            } else {
+                Self::print_help(None);
+                prettyln!("\n<r><yellow>No package.json found.<r>\n");
+                Output::flush();
+            }
             return Ok(true);
         }
 
@@ -1258,40 +1307,6 @@ impl RunCommand {
 
         // ── package.json script lookup ──────────────────────────────────────
         if !skip_script_check {
-            // PORT NOTE: out-param init — Zig: `var this_transpiler: Transpiler
-            // = undefined;`. `Transpiler` is NOT all-zero-valid POD (holds
-            // `&Arena`/`Box`/enum fields), so use `MaybeUninit` and let
-            // `configure_env_for_run` `.write()` the whole struct (PORTING.md
-            // §std.mem.zeroes).
-            let mut this_transpiler =
-                ::core::mem::MaybeUninit::<Transpiler<'static>>::uninit();
-            let root_dir_info = Self::configure_env_for_run(
-                ctx,
-                &mut this_transpiler,
-                None,
-                log_errors,
-                false,
-            )?;
-            // SAFETY: `configure_env_for_run` returned `Ok`, so the slot is
-            // fully initialized via `MaybeUninit::write`.
-            let this_transpiler = unsafe { this_transpiler.assume_init_mut() };
-            // TODO(b2-blocked): `configure_path_for_run` — bun-node fake-exe
-            // creation + PATH stitching; preserved in phase_a_draft.
-            #[cfg(any())]
-            Self::configure_path_for_run(
-                ctx,
-                root_dir_info,
-                &mut this_transpiler,
-                None,
-                unsafe { (*root_dir_info).abs_path },
-                ctx.debug.run_in_bun,
-            )?;
-            // SAFETY: `Transpiler::init` always sets `env`.
-            let env_loader: &mut DotEnv::Loader<'static> = unsafe { &mut *this_transpiler.env };
-            env_loader.map.put(b"npm_command", b"run-script").expect("unreachable");
-
-            // SAFETY: `read_dir_info` returned non-null; resolver-cache lifetime.
-            let root_dir = unsafe { &*root_dir_info };
             if let Some(package_json) = root_dir.enclosing_package_json {
                 if let Some(scripts) = package_json.scripts.as_deref() {
                     if let Some(&script_content) = scripts.get(target_name) {

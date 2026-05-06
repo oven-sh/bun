@@ -82,6 +82,11 @@ macro_rules! prop_value_stub {
             #[inline] pub fn eql(&self, _other: &Self) -> bool { true }
             #[inline] pub fn hash(&self, _hasher: &mut ::bun_wyhash::Wyhash11) {}
             #[inline] pub fn deep_clone(&self, _bump: &::bun_alloc::Arena) -> Self { Self }
+            // Serialization surface so un-gated `TokenList::to_css` /
+            // `Property::value_to_css` arms that name a still-stubbed payload
+            // type-check. Unit struct → no output (matches Zig zero-value
+            // round-trip until the real leaf un-gates).
+            #[inline] pub fn to_css(&self, _dest: &mut $crate::Printer) -> ::core::result::Result<(), $crate::PrintErr> { Ok(()) }
         }
     )+};
 }
@@ -139,14 +144,11 @@ pub mod transform;
 pub mod transition;
 pub mod ui;
 
-// `css_modules`: data-only stub for `Composes`/`Specifier` so
-// `css_parser::gated_shims` can later flip to `crate::properties::css_modules`.
-gated_prop!(css_modules, {
-    /// `composes:` declaration value (CSS Modules).
-    #[derive(Debug, Default, Clone, PartialEq)]
-    pub struct Composes;
-    pub use crate::values::css_modules::Specifier;
-});
+// `css_modules`: un-gated — real `Composes` payload (names/from/loc/
+// cssparser_loc) + `Specifier` enum (Global/ImportRecordIndex) live in
+// `css_modules.rs`. `Composes::to_css` stays internally `#[cfg(any())]`-gated
+// on `CustomIdent::to_css` (Printer::write_ident).
+pub mod css_modules;
 
 // `custom`: un-gated — real data types (TokenList / TokenOrValue /
 // CustomProperty / CustomPropertyName / UnparsedProperty / EnvironmentVariable

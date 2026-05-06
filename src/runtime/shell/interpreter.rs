@@ -383,7 +383,7 @@ impl ShellErr {
         bun_core::pretty_errorln!(
             "<r><red>error<r>: Failed due to error: <b>bunsh: {}: {}<r>",
             e,
-            bstr::BStr::new(e.path()),
+            bstr::BStr::new(&e.path[..]),
         );
         bun_core::Global::exit(1);
     }

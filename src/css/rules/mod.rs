@@ -46,6 +46,13 @@ gated_rule!(custom_media, {
         pub fn to_css(&self, _dest: &mut Printer) -> Result<(), PrintErr> {
             todo!("blocked_on: rules/custom_media.rs un-gate")
         }
+        pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+            Self {
+                name: self.name.deep_clone(bump),
+                query: super::dc::media_list(&self.query, bump),
+                loc: self.loc,
+            }
+        }
     }
 });
 pub mod namespace;

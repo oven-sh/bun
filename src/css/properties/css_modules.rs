@@ -1,14 +1,14 @@
 use crate as css;
-use crate::Printer;
+use crate::css_parser::Parser;
+use crate::printer::Printer;
 use crate::PrintErr;
 
-use crate::css_values::ident::CustomIdent;
-use crate::css_values::ident::CustomIdentList;
-use crate::css_values::ident::CustomIdentFns;
+use crate::css_values::ident::{CustomIdent, CustomIdentList};
 
 use crate::dependencies::Location;
 
 use bun_alloc::Arena; // bumpalo::Bump re-export (CSS is an AST/arena crate)
+use bun_wyhash::Wyhash11 as Wyhash;
 
 /// A value for the [composes](https://github.com/css-modules/css-modules/#dependencies) property from CSS modules.
 pub struct Composes {
@@ -22,16 +22,16 @@ pub struct Composes {
 }
 
 impl Composes {
-    pub fn parse(input: &mut css::Parser) -> css::Result<Composes> {
+    pub fn parse(input: &mut Parser) -> css::Result<Composes> {
         let loc = input.position();
         let loc2 = input.current_source_location();
         let mut names = CustomIdentList::default();
-        while let Some(name) = input.try_parse(Self::parse_one_ident).ok() {
-            names.push(name);
+        while let Ok(name) = input.try_parse(Self::parse_one_ident) {
+            names.append(name);
         }
 
         if names.len() == 0 {
-            return Err(input.new_custom_error(css::ParserError::InvalidDeclaration));
+            return Err(input.new_custom_error(css::ParserError::invalid_declaration));
         }
 
         let from = if input
@@ -53,7 +53,11 @@ impl Composes {
         })
     }
 
+    // blocked_on: values::ident::CustomIdent::to_css un-gate (Printer::write_ident).
+    // Body once un-gated is the verbatim Zig loop below.
+    #[cfg(any())]
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+        use crate::css_values::ident::CustomIdentFns;
         let mut first = true;
         for name in self.names.slice() {
             if first {
@@ -71,10 +75,12 @@ impl Composes {
         Ok(())
     }
 
-    fn parse_one_ident(input: &mut css::Parser) -> css::Result<CustomIdent> {
+    fn parse_one_ident(input: &mut Parser) -> css::Result<CustomIdent> {
         let name: CustomIdent = CustomIdent::parse(input)?;
 
-        if bun_str::strings::eql_case_insensitive_ascii(name.v, b"from", true) {
+        // SAFETY: `CustomIdent.v` is an arena-owned slice valid for the parse session.
+        let v = unsafe { &*name.v };
+        if bun_string::strings::eql_case_insensitive_ascii_check_length(v, b"from") {
             return Err(input.new_error_for_next_token());
         }
 
@@ -82,19 +88,45 @@ impl Composes {
     }
 
     pub fn deep_clone(&self, bump: &Arena) -> Self {
-        // TODO(port): css.implementDeepClone uses @typeInfo field reflection — replace with #[derive] or hand-impl in Phase B
-        css::implement_deep_clone(self, bump)
+        // PORT NOTE: Zig `css.implementDeepClone` is comptime field reflection.
+        // `CustomIdent` is `Copy` (arena-ptr payload), so an element-wise copy
+        // into a fresh `SmallList` is the deep clone.
+        let mut names = CustomIdentList::default();
+        for name in self.names.slice() {
+            names.append(*name);
+        }
+        Composes {
+            names,
+            from: self.from.as_ref().map(|f| f.deep_clone(bump)),
+            loc: self.loc,
+            cssparser_loc: self.cssparser_loc,
+        }
     }
 
     pub fn eql(lhs: &Self, rhs: &Self) -> bool {
-        // TODO(port): css.implementEql uses @typeInfo field reflection — replace with #[derive(PartialEq)] in Phase B
-        css::implement_eql(lhs, rhs)
+        // PORT NOTE: Zig `css.implementEql` is comptime field reflection.
+        if lhs.names.len() != rhs.names.len() {
+            return false;
+        }
+        for (a, b) in lhs.names.slice().iter().zip(rhs.names.slice().iter()) {
+            // SAFETY: arena-owned slices valid for the parse session.
+            if unsafe { &*a.v } != unsafe { &*b.v } {
+                return false;
+            }
+        }
+        match (&lhs.from, &rhs.from) {
+            (None, None) => {}
+            (Some(a), Some(b)) if Specifier::eql(a, b) => {}
+            _ => return false,
+        }
+        lhs.loc == rhs.loc && lhs.cssparser_loc == rhs.cssparser_loc
     }
 }
 
 /// Defines where the class names referenced in the `composes` property are located.
 ///
 /// See [Composes](Composes).
+#[derive(Debug, Clone, Copy)]
 pub enum Specifier {
     /// The referenced name is global.
     Global,
@@ -106,20 +138,31 @@ pub enum Specifier {
 
 impl Specifier {
     pub fn eql(lhs: &Self, rhs: &Self) -> bool {
-        // TODO(port): css.implementEql uses @typeInfo reflection — replace with #[derive(PartialEq)] in Phase B
-        css::implement_eql(lhs, rhs)
+        // PORT NOTE: Zig `css.implementEql` (variant-wise reflection) → hand-match.
+        match (lhs, rhs) {
+            (Specifier::Global, Specifier::Global) => true,
+            (Specifier::ImportRecordIndex(a), Specifier::ImportRecordIndex(b)) => a == b,
+            _ => false,
+        }
     }
 
-    pub fn parse(input: &mut css::Parser) -> css::Result<Specifier> {
+    pub fn parse(input: &mut Parser) -> css::Result<Specifier> {
         let start_position = input.position();
-        if let Some(file) = input.try_parse(css::Parser::expect_url_or_string).ok() {
-            let import_record_index =
-                input.add_import_record(file, start_position, bun_options_types::ImportKind::Composes)?;
+        if let Ok(file) = input.try_parse(|i| {
+            let s = i.expect_url_or_string()?;
+            // SAFETY: `s` borrows the parser source/arena which outlives the
+            // `add_import_record` call. Detach the borrow so `input` is reusable
+            // (same trick as `css_parser::src_str` — Token payloads are arena-static).
+            Ok::<&'static [u8], _>(unsafe { &*(s as *const [u8]) })
+        }) {
+            let import_record_index = input.add_import_record(
+                file,
+                start_position,
+                bun_options_types::ImportKind::Composes,
+            )?;
             return Ok(Specifier::ImportRecordIndex(import_record_index));
         }
-        if let Some(e) = input.expect_ident_matching(b"global").err() {
-            return Err(e);
-        }
+        input.expect_ident_matching(b"global")?;
         Ok(Specifier::Global)
     }
 
@@ -128,30 +171,40 @@ impl Specifier {
             Specifier::Global => dest.write_str(b"global"),
             Specifier::ImportRecordIndex(import_record_index) => {
                 let url = dest.get_import_record_url(*import_record_index)?;
-                let Ok(()) = css::serializer::serialize_string(url, dest) else {
-                    return dest.add_fmt_error();
-                };
+                // SAFETY: `url` borrows printer-owned import-record storage
+                // which outlives the `serialize_string` call. Detach so `dest`
+                // is reborrowable as the `WriteAll` sink.
+                let url: &[u8] = unsafe { &*(url as *const [u8]) };
+                if css::serializer::serialize_string(url, dest).is_err() {
+                    return Err(dest.add_fmt_error());
+                }
                 Ok(())
             }
             // .source_index => {},
         }
     }
 
-    pub fn deep_clone(&self, bump: &Arena) -> Self {
-        // TODO(port): css.implementDeepClone uses @typeInfo reflection — replace with #[derive(Clone)] in Phase B
-        css::implement_deep_clone(self, bump)
+    pub fn deep_clone(&self, _bump: &Arena) -> Self {
+        // PORT NOTE: Zig `css.implementDeepClone` — variants are `Copy`.
+        *self
     }
 
-    pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
-        // TODO(port): css.implementHash uses @typeInfo reflection — replace with #[derive(Hash)] in Phase B
-        css::implement_hash(self, hasher)
+    pub fn hash(&self, hasher: &mut Wyhash) {
+        // PORT NOTE: Zig `css.implementHash` (variant-wise reflection) → hand-match.
+        match self {
+            Specifier::Global => hasher.update(&0u32.to_ne_bytes()),
+            Specifier::ImportRecordIndex(i) => {
+                hasher.update(&1u32.to_ne_bytes());
+                hasher.update(&i.to_ne_bytes());
+            }
+        }
     }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/css/properties/css_modules.zig (138 lines)
-//   confidence: medium
-//   todos:      5
-//   notes:      implement_{eql,deep_clone,hash} are comptime-reflection helpers — Phase B should replace with derives; css::Result<T> assumed to be Result<T, ParseError>
+//   confidence: high
+//   todos:      1
+//   notes:      Composes::to_css gated on CustomIdent::to_css (Printer::write_ident); implement_{eql,deep_clone,hash} hand-expanded (comptime-reflection helpers); css::Result<T> = Result<T, ParseError>
 // ──────────────────────────────────────────────────────────────────────────

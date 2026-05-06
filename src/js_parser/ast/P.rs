@@ -553,9 +553,9 @@ pub struct P<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> {
     //     Expression , AssignmentExpression
     //
     pub after_arrow_body_loc: logger::Loc,
-    pub import_transposer: ImportTransposer<'a, TYPESCRIPT, J, SCAN_ONLY>,
-    pub require_transposer: RequireTransposer<'a, TYPESCRIPT, J, SCAN_ONLY>,
-    pub require_resolve_transposer: RequireResolveTransposer<'a, TYPESCRIPT, J, SCAN_ONLY>,
+    pub import_transposer: ImportTransposer<'a>,
+    pub require_transposer: RequireTransposer<'a>,
+    pub require_resolve_transposer: RequireResolveTransposer<'a>,
 
     pub const_values: js_ast::ast::ConstValuesMap,
 
@@ -595,17 +595,106 @@ pub struct P<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> {
     pub decorator_class_name: Option<&'a [u8]>,
 }
 
-// Transposer type aliases (Zig: `const ImportTransposer = ExpressionTransposer(P, ..., P.transposeImport);`)
-// PORT NOTE: ExpressionTransposer is a comptime fn-returning-type in Zig that
-// captures `*P`. Rust models the context as an arena-allocated raw self-pointer
-// cell (`TransposerCtx`); the cell is null after `P::init` and wired to `&mut P`
-// in `prepare_for_visit_pass` (after the parser is in its final location, before
-// any visit-pass `maybe_transpose_if` call).
-#[repr(transparent)]
-pub struct TransposerCtx(pub *mut core::ffi::c_void);
-pub type ImportTransposer<'a> = ExpressionTransposer<'a, TransposerCtx, TransposeState>;
-pub type RequireTransposer<'a> = ExpressionTransposer<'a, TransposerCtx, TransposeState>;
-pub type RequireResolveTransposer<'a> = ExpressionTransposer<'a, TransposerCtx, Expr>;
+// Transposer helpers (Zig: `const ImportTransposer = ExpressionTransposer(P, ..., P.transposeImport);`)
+//
+// PORT NOTE: Zig's `ExpressionTransposer` is a comptime type-generator that
+// captures `*P` and recursively pushes `import()` / `require()` / `require.resolve()`
+// through `?:` arms. Routing that through `crate::ExpressionTransposer` would
+// require materialising `&mut P` while a `&mut self` borrow of the transposer
+// field (a sub-range of `P`) is still live on the `maybe_transpose_if` frame —
+// an aliased-`&mut` shape PORTING.md forbids. Instead the recursion lives as
+// inherent `P` methods (`maybe_transpose_if_{import,require,require_resolve}`)
+// so the only live `&mut` is the caller's `&mut P`.
+//
+// The structs below are thin by-value shims kept so existing
+// `p.import_transposer.maybe_transpose_if(..)` call sites in visitExpr.rs keep
+// compiling; their methods take `self` (Copy) — the field is *read*, not
+// mutably borrowed, before `&mut P` is formed, so no `&mut`-overlap exists.
+// The raw `*mut P` they carry is refreshed at the start of `prepare_for_visit_pass`;
+// callers should migrate to the inherent `P` methods which need no raw pointer.
+pub struct ImportTransposer<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>(
+    pub(crate) *mut core::ffi::c_void,
+    core::marker::PhantomData<(&'a (), fn() -> J)>,
+);
+impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> Clone
+    for ImportTransposer<'a, TYPESCRIPT, J, SCAN_ONLY>
+{
+    fn clone(&self) -> Self { *self }
+}
+impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> Copy
+    for ImportTransposer<'a, TYPESCRIPT, J, SCAN_ONLY>
+{
+}
+impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
+    ImportTransposer<'a, TYPESCRIPT, J, SCAN_ONLY>
+{
+    const fn dangling() -> Self {
+        Self(core::ptr::null_mut(), core::marker::PhantomData)
+    }
+    pub fn maybe_transpose_if(self, arg: Expr, state: TransposeState) -> Expr {
+        debug_assert!(!self.0.is_null(), "transposer not wired (prepare_for_visit_pass)");
+        // SAFETY: `self` was copied out of `p.import_transposer` by value; no
+        // borrow of any `P` field is live here. `self.0` was set to
+        // `addr_of_mut!(*p)` in `prepare_for_visit_pass` for the visit-pass `P`.
+        // `transpose_import` does not touch the transposer fields.
+        let p = unsafe { &mut *(self.0 as *mut P<'a, TYPESCRIPT, J, SCAN_ONLY>) };
+        p.maybe_transpose_if_import(arg, &state)
+    }
+}
+
+pub struct RequireTransposer<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>(
+    pub(crate) *mut core::ffi::c_void,
+    core::marker::PhantomData<(&'a (), fn() -> J)>,
+);
+impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> Clone
+    for RequireTransposer<'a, TYPESCRIPT, J, SCAN_ONLY>
+{
+    fn clone(&self) -> Self { *self }
+}
+impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> Copy
+    for RequireTransposer<'a, TYPESCRIPT, J, SCAN_ONLY>
+{
+}
+impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
+    RequireTransposer<'a, TYPESCRIPT, J, SCAN_ONLY>
+{
+    const fn dangling() -> Self {
+        Self(core::ptr::null_mut(), core::marker::PhantomData)
+    }
+    pub fn transpose_known_to_be_if(self, arg: Expr, state: TransposeState) -> Expr {
+        debug_assert!(!self.0.is_null(), "transposer not wired (prepare_for_visit_pass)");
+        // SAFETY: see `ImportTransposer::maybe_transpose_if`.
+        let p = unsafe { &mut *(self.0 as *mut P<'a, TYPESCRIPT, J, SCAN_ONLY>) };
+        p.transpose_known_to_be_if_require(arg, &state)
+    }
+}
+
+pub struct RequireResolveTransposer<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>(
+    pub(crate) *mut core::ffi::c_void,
+    core::marker::PhantomData<(&'a (), fn() -> J)>,
+);
+impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> Clone
+    for RequireResolveTransposer<'a, TYPESCRIPT, J, SCAN_ONLY>
+{
+    fn clone(&self) -> Self { *self }
+}
+impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> Copy
+    for RequireResolveTransposer<'a, TYPESCRIPT, J, SCAN_ONLY>
+{
+}
+impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
+    RequireResolveTransposer<'a, TYPESCRIPT, J, SCAN_ONLY>
+{
+    const fn dangling() -> Self {
+        Self(core::ptr::null_mut(), core::marker::PhantomData)
+    }
+    pub fn transpose_known_to_be_if(self, arg: Expr, state: Expr) -> Expr {
+        debug_assert!(!self.0.is_null(), "transposer not wired (prepare_for_visit_pass)");
+        // SAFETY: see `ImportTransposer::maybe_transpose_if`.
+        let p = unsafe { &mut *(self.0 as *mut P<'a, TYPESCRIPT, J, SCAN_ONLY>) };
+        p.transpose_known_to_be_if_require_resolve(arg, state)
+    }
+}
 
 // Zig: `const Binding2ExprWrapper = struct { pub const Namespace = Binding.ToExpr(P, P.wrapIdentifierNamespace); ... }`
 // TODO(port): Binding.ToExpr(P, fn) is a comptime type-generator; needs a Rust trait/closure in Phase B.
@@ -2461,14 +2550,17 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
     pub fn prepare_for_visit_pass(&mut self) -> Result<(), bun_core::Error> {
         {
-            // Wire the ExpressionTransposer self-referential context now that
-            // `self` is in its final location (Zig: `ImportTransposer.init(this)`
-            // etc. at the tail of `P.init`; Rust defers to here because `init`
-            // returns `Self` by value and would invalidate any earlier `*mut Self`).
-            let self_ptr = self as *mut Self as *mut core::ffi::c_void;
-            self.import_transposer.context.0 = self_ptr;
-            self.require_transposer.context.0 = self_ptr;
-            self.require_resolve_transposer.context.0 = self_ptr;
+            // Wire the transposer compat-shim self-pointer now that `self` is
+            // in its final location (Zig: `ImportTransposer.init(this)` etc. at
+            // the tail of `P.init`; Rust defers to here because `init` returns
+            // `Self` by value and would invalidate any earlier `*mut Self`).
+            // The shims take `self` by value (Copy), so no `&mut field` is held
+            // across the later `&mut P` reborrow. Prefer calling
+            // `P::maybe_transpose_if_*` directly — those need no raw pointer.
+            let self_ptr = core::ptr::addr_of_mut!(*self) as *mut core::ffi::c_void;
+            self.import_transposer.0 = self_ptr;
+            self.require_transposer.0 = self_ptr;
+            self.require_resolve_transposer.0 = self_ptr;
         }
         {
             // Compact `scopes_in_order` (parse pass leaves None holes from
@@ -7601,47 +7693,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             },
             to_expr_wrapper_namespace: (), // Binding2ExprWrapper.Namespace — Phase-B placeholder
             to_expr_wrapper_hoisted: (),   // Binding2ExprWrapper.Hoisted — Phase-B placeholder
-            // ExpressionTransposer in Zig captures `*P`. The context cell is
-            // null here (P is still under construction); `prepare_for_visit_pass`
-            // writes `self as *mut Self` into each cell before any transposer
-            // call. Visitors below cast back to `&mut Self` and dispatch to the
-            // real `transpose_*` methods (Zig: P.transposeImport/Require/RequireResolve).
-            import_transposer: ExpressionTransposer::init(
-                allocator.alloc(TransposerCtx(core::ptr::null_mut())),
-                |ctx, arg, state| {
-                    debug_assert!(!ctx.0.is_null(), "transposer ctx not wired (prepare_for_visit_pass)");
-                    // SAFETY: ctx.0 set to `self as *mut Self` in prepare_for_visit_pass;
-                    // matches Zig's self-referential `*P` capture. The transposer
-                    // field (a sibling of the borrowed parser state) is not
-                    // accessed reentrantly by `transpose_import`.
-                    let p = unsafe { &mut *(ctx.0 as *mut Self) };
-                    p.transpose_import(arg, &state)
-                },
-            ),
-            require_transposer: ExpressionTransposer::init(
-                allocator.alloc(TransposerCtx(core::ptr::null_mut())),
-                |ctx, arg, state| {
-                    debug_assert!(!ctx.0.is_null(), "transposer ctx not wired (prepare_for_visit_pass)");
-                    // SAFETY: ctx.0 set to `self as *mut Self` in prepare_for_visit_pass;
-                    // matches Zig's self-referential `*P` capture. The transposer
-                    // field (a sibling of the borrowed parser state) is not
-                    // accessed reentrantly by `transpose_require`.
-                    let p = unsafe { &mut *(ctx.0 as *mut Self) };
-                    p.transpose_require(arg, &state)
-                },
-            ),
-            require_resolve_transposer: ExpressionTransposer::init(
-                allocator.alloc(TransposerCtx(core::ptr::null_mut())),
-                |ctx, arg, state| {
-                    debug_assert!(!ctx.0.is_null(), "transposer ctx not wired (prepare_for_visit_pass)");
-                    // SAFETY: ctx.0 set to `self as *mut Self` in prepare_for_visit_pass;
-                    // matches Zig's self-referential `*P` capture. The transposer
-                    // field (a sibling of the borrowed parser state) is not
-                    // accessed reentrantly by `transpose_require_resolve`.
-                    let p = unsafe { &mut *(ctx.0 as *mut Self) };
-                    p.transpose_require_resolve(arg, state)
-                },
-            ),
+            // Zig's ExpressionTransposer captures `*P`; in Rust the recursion
+            // lives as inherent `P::maybe_transpose_if_*` methods (no aliased
+            // `&mut`). These compat-shim fields start dangling and are wired in
+            // `prepare_for_visit_pass` once `self` is at its final address.
+            import_transposer: ImportTransposer::dangling(),
+            require_transposer: RequireTransposer::dangling(),
+            require_resolve_transposer: RequireResolveTransposer::dangling(),
             source,
             // Zig: `MacroState.init(allocator)` leaves `prepend_stmts = undefined`;
             // Rust cannot leave a `&'a mut Vec<Stmt>` uninitialized, so allocate

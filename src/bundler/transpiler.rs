@@ -74,9 +74,8 @@ pub struct Transpiler<'a> {
 
     // B-2 un-gated: real `crate::linker::Linker` so
     // `ModuleLoader::transpile_source_code` (jsc_hooks.rs) can call
-    // `transpiler.linker.link()` / read `import_counter`. `set_log`/
-    // `set_allocator` still skip the `linker.log`/`linker.allocator` write
-    // until `configure_linker` wires the back-pointers.
+    // `transpiler.linker.link()` / read `import_counter`. Back-pointers wired
+    // by `configure_linker` below; `set_log` keeps `linker.log` in sync.
     pub linker: crate::linker::Linker,
     pub timer: SystemTimer,
     // TODO(port): lifetime — Zig stored `&DotEnv.Loader` (global singleton).

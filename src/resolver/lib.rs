@@ -697,12 +697,55 @@ pub mod fs {
         }
     }
 
-    /// Port of `FileSystem.DirEntry` namespace items (`EntryMap`, `Err`).
+    // PORT NOTE: `BSSList::append` requires `ValueType: Clone` (its overflow path
+    // retries with a copy). `Mutex`/`StringOrTinyString` aren't `Clone`, but for a
+    // freshly-constructed `Entry` (the only thing ever appended) a field-wise copy
+    // with a fresh `Mutex` is semantically equivalent to Zig's by-value move.
+    impl Clone for Entry {
+        fn clone(&self) -> Self {
+            Self {
+                cache: self.cache,
+                dir: self.dir,
+                base_: strings::StringOrTinyString::init(self.base_.slice()),
+                base_lowercase_: strings::StringOrTinyString::init(self.base_lowercase_.slice()),
+                mutex: Mutex::default(),
+                need_stat: self.need_stat,
+                abs_path: self.abs_path,
+            }
+        }
+    }
+
+    /// Port of `FileSystem.DirEntry` namespace items (`EntryMap`, `EntryStore`, `Err`).
     pub mod dir_entry {
         use super::Entry;
 
         /// Port of `DirEntry.EntryMap` (`bun.StringHashMap(*Entry)`).
         pub type EntryMap = bun_collections::StringHashMap<*mut Entry>;
+
+        // PORT NOTE: Zig `BSSList(_COUNT)` → Rust `BSSList<{_COUNT * 2}>` (pre-transformed).
+        // `Preallocate.Counts.files = 4096` → `4096 * 2 = 8192`.
+        /// Backing storage type for `EntryStore` (`allocators.BSSList<Entry, files>`).
+        pub type EntryStoreBacking = bun_alloc::BSSList<Entry, 8192>;
+
+        // Per-monomorphization singleton storage — Zig kept `var instance` inside the
+        // generic; Rust emits it at the declare site via `bss_list!` (returns `*mut`).
+        bun_alloc::bss_list! { pub entry_store_backing : Entry, 8192 }
+
+        /// Port of `DirEntry.EntryStore` (`allocators.BSSList<Entry, files>`).
+        /// ZST handle resolving to the `entry_store_backing()` singleton.
+        pub struct EntryStore(());
+        impl EntryStore {
+            #[inline]
+            pub fn instance() -> &'static mut EntryStoreBacking {
+                // SAFETY: `entry_store_backing()` returns the raw `*mut` singleton (Zig `*Self`);
+                // the singleton serializes all mutation through its internal `mutex`.
+                unsafe { &mut *entry_store_backing() }
+            }
+            pub fn append(value: Entry) -> core::result::Result<*mut Entry, bun_core::Error> {
+                let r = Self::instance().append(value).map_err(|_| bun_core::err!("OutOfMemory"))?;
+                Ok(r as *mut Entry)
+            }
+        }
 
         /// Port of `DirEntry.Err`.
         #[derive(Clone, Copy)]
@@ -710,6 +753,63 @@ pub mod fs {
             pub original_err: bun_core::Error,
             pub canonical_error: bun_core::Error,
         }
+    }
+
+    /// Trait abstraction for the `comptime Iterator: type, iterator: Iterator` pattern
+    /// in `addEntry`/`readdir` (Zig used a duck-typed `iterator.next(*Entry, FD)`).
+    pub trait DirEntryIterator {
+        const IS_VOID: bool = false;
+        fn next(&self, entry: &mut Entry, fd: Fd);
+    }
+
+    impl DirEntryIterator for () {
+        const IS_VOID: bool = true;
+        fn next(&self, _entry: &mut Entry, _fd: Fd) {}
+    }
+
+    impl<T: DirEntryIterator + ?Sized> DirEntryIterator for &T {
+        const IS_VOID: bool = T::IS_VOID;
+        #[inline]
+        fn next(&self, entry: &mut Entry, fd: Fd) { (**self).next(entry, fd) }
+    }
+
+    // `StringOrTinyString::init*_append_if_needed` needs an `Appender`; route the
+    // ZST `FilenameStore` handle through to the backing `BSSStringList` singleton.
+    impl strings::Appender for &FilenameStore {
+        fn append(&mut self, s: &[u8]) -> core::result::Result<&[u8], bun_alloc::AllocError> {
+            // SAFETY: `filename_store_backing()` returns the raw `*mut` singleton; serialized
+            // by its internal mutex.
+            let out = unsafe { &mut *filename_store_backing() }.append(s)?;
+            // SAFETY: `out` borrows the 'static singleton; re-erase the artificially-short
+            // `&mut self` borrow.
+            Ok(unsafe { core::slice::from_raw_parts(out.as_ptr(), out.len()) })
+        }
+        fn append_lower_case(&mut self, s: &[u8]) -> core::result::Result<&[u8], bun_alloc::AllocError> {
+            // SAFETY: see `append`.
+            let out = unsafe { &mut *filename_store_backing() }.append_lower_case(s)?;
+            // SAFETY: see `append`.
+            Ok(unsafe { core::slice::from_raw_parts(out.as_ptr(), out.len()) })
+        }
+    }
+
+    // Port of `threadlocal var temp_entries_option: EntriesOption = undefined` —
+    // `read_directory*` returns a pointer into this when the entry-cache is
+    // disabled or the path is `mark_not_found`.
+    thread_local! {
+        static TEMP_ENTRIES_OPTION: core::cell::UnsafeCell<core::mem::MaybeUninit<EntriesOption>> =
+            const { core::cell::UnsafeCell::new(core::mem::MaybeUninit::uninit()) };
+    }
+
+    fn temp_entries_option_write(value: EntriesOption) -> &'static mut EntriesOption {
+        TEMP_ENTRIES_OPTION.with(|slot| {
+            // SAFETY: threadlocal storage; single-threaded per-slot access by construction.
+            let slot = unsafe { &mut *slot.get() };
+            slot.write(value);
+            // SAFETY: just wrote; threadlocal storage outlives caller (matches Zig
+            // `&temp_entries_option`). Re-erase to 'static for the BSSMap-shaped
+            // `&'static mut EntriesOption` return type.
+            unsafe { &mut *slot.as_mut_ptr() }
+        })
     }
 
     /// Port of `FileSystem.DirEntry` in `fs.zig`.

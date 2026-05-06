@@ -12,6 +12,7 @@ export const meta = {
 
 const MAX_ROUNDS = (args && args.max_rounds) || 6;
 const MAX_FILES = (args && args.max_files) || 250;
+const PREFIX_RE = (args && args.prefix) || ""; // shard regex e.g. "src/runtime/"
 
 const SURVEY_S = {
   type: "object",
@@ -97,8 +98,9 @@ Group by file. Return {files:[{file, n, sites:[{line, msg, fn}]}], total}. Skip 
     return { rounds: round, done: true, history };
   }
 
+  const re = PREFIX_RE ? new RegExp("^(" + PREFIX_RE + ")") : null;
   const files = survey.files
-    .filter(f => f.n > 0 && !f.file.includes("phase_c_exports"))
+    .filter(f => f.n > 0 && !f.file.includes("phase_c_exports") && (!re || re.test(f.file)))
     .sort((a, b) => {
       const sa = seen[a.file] || 0,
         sb = seen[b.file] || 0;

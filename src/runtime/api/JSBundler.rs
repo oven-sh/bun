@@ -24,39 +24,9 @@ use bun_string::MutableString;
 
 bun_output::declare_scope!(Transpiler, visible);
 
-// PORT NOTE: `CompileTarget.fromJS` / `.fromSlice` live in `bundler_jsc/options_jsc.zig`
-// (re-exported onto the type via `pub const fromJS = @import(...)`). `bun_bundler_jsc`
-// is not a dependency of `bun_runtime`, so the bodies are duplicated here.
-fn compile_target_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<CompileTarget> {
-    let slice = value.to_slice(global)?;
-    if !slice.slice().starts_with(b"bun-") {
-        return Err(global.throw_invalid_arguments(
-            format_args!(
-                "Expected compile target to start with 'bun-', got {}",
-                bstr::BStr::new(slice.slice())
-            ),
-        ));
-    }
-    compile_target_from_slice(global, slice.slice())
-}
-
-fn compile_target_from_slice(
-    global: &JSGlobalObject,
-    slice_with_bun_prefix: &[u8],
-) -> JsResult<CompileTarget> {
-    let slice = &slice_with_bun_prefix[b"bun-".len()..];
-    let Ok(target_parsed) = CompileTarget::try_from(slice) else {
-        return Err(global.throw_invalid_arguments(
-            format_args!("Unknown compile target: {}", bstr::BStr::new(slice_with_bun_prefix)),
-        ));
-    };
-    if !target_parsed.is_supported() {
-        return Err(global.throw_invalid_arguments(
-            format_args!("Unsupported compile target: {}", bstr::BStr::new(slice_with_bun_prefix)),
-        ));
-    }
-    Ok(target_parsed)
-}
+// `CompileTarget.fromJS` / `.fromSlice` are JSC-aware option parsers shared
+// with the CLI build path; live in `bun_bundler_jsc::options_jsc`.
+use bun_bundler_jsc::options_jsc::{compile_target_from_js, compile_target_from_slice};
 
 pub mod js_bundler {
     use super::*;
@@ -65,115 +35,6 @@ pub mod js_bundler {
     use bun_sys::FdExt;
 
     type OwnedString = MutableString;
-
-    // ── Local shims for `bun_jsc::JSValue` accessors not yet upstream. ──
-    /// `JSValue.getOptional(ZigString.Slice, ..)` — local shim until `bun_jsc` grows it.
-    fn get_optional_slice(
-        target: JSValue,
-        global: &JSGlobalObject,
-        property: &[u8],
-    ) -> JsResult<Option<bun_string::ZigStringSlice>> {
-        match target.get(global, property)? {
-            Some(v) if !v.is_undefined_or_null() => Ok(Some(v.to_slice(global)?)),
-            _ => Ok(None),
-        }
-    }
-
-    /// `JSValue.getFunction` — local shim until `bun_jsc` grows it.
-    fn get_function(
-        target: JSValue,
-        global: &JSGlobalObject,
-        property: &[u8],
-    ) -> JsResult<Option<JSValue>> {
-        match target.get(global, property)? {
-            Some(v) if v.is_callable() => Ok(Some(v)),
-            _ => Ok(None),
-        }
-    }
-
-    /// `JSValue.getOwn` with `&str` key — local shim wrapping `bun_str::String`.
-    #[inline]
-    fn get_own_str(
-        target: JSValue,
-        global: &JSGlobalObject,
-        property: &'static str,
-    ) -> JsResult<Option<JSValue>> {
-        target.get_own(global, &BunString::static_str(property))
-    }
-
-    /// `JSValue.getOwnObject` — local shim until `bun_jsc` grows it.
-    fn get_own_object(
-        target: JSValue,
-        global: &JSGlobalObject,
-        property: &'static str,
-    ) -> JsResult<Option<*mut JSObject>> {
-        match target.get_own_truthy(global, property)? {
-            Some(v) => Ok(v.get_object()),
-            None => Ok(None),
-        }
-    }
-
-    /// `JSValue.getOwnArray` — local shim until `bun_jsc` grows it.
-    fn get_own_array(
-        target: JSValue,
-        global: &JSGlobalObject,
-        property: &'static str,
-    ) -> JsResult<Option<JSValue>> {
-        match target.get_own_truthy(global, property)? {
-            Some(v) if v.is_cell() && v.js_type().is_array() => Ok(Some(v)),
-            _ => Ok(None),
-        }
-    }
-
-    /// `JSValue.getBooleanStrict` — local shim until `bun_jsc` grows it.
-    fn get_boolean_strict(
-        target: JSValue,
-        global: &JSGlobalObject,
-        property: &'static str,
-    ) -> JsResult<Option<bool>> {
-        match target.get(global, property)? {
-            Some(v) if v.is_boolean() => Ok(Some(v.to_boolean())),
-            _ => Ok(None),
-        }
-    }
-
-    /// `JSValue.toEnumFromMap` — local shim until `bun_jsc` grows it.
-    /// Mirrors JSValue.zig `toEnumFromMap`: validates `is_string`, looks up
-    /// via the supplied phf map, and throws "must be one of …" on miss.
-    fn to_enum_from_map<E: Copy>(
-        target: JSValue,
-        global: &JSGlobalObject,
-        property_name: &'static str,
-        map: &'static phf::Map<&'static [u8], E>,
-        one_of: &'static str,
-    ) -> JsResult<E> {
-        if !target.is_string() {
-            return Err(global.throw_invalid_arguments(
-                format_args!("{} must be a string", property_name),
-            ));
-        }
-        match jsc::comptime_string_map_jsc::from_js(map, global, target)? {
-            Some(v) => Ok(v),
-            None => Err(global.throw_invalid_arguments(
-                format_args!("{} must be one of {}", property_name, one_of),
-            )),
-        }
-    }
-
-    /// `JSValue.getOptionalEnum` — local shim until `bun_jsc` grows it.
-    /// Zig: `getTruthy` then `toEnum`.
-    fn get_optional_enum_from_map<E: Copy>(
-        target: JSValue,
-        global: &JSGlobalObject,
-        property_name: &'static str,
-        map: &'static phf::Map<&'static [u8], E>,
-        one_of: &'static str,
-    ) -> JsResult<Option<E>> {
-        match target.get_truthy(global, property_name)? {
-            Some(v) => Ok(Some(to_enum_from_map(v, global, property_name, map, one_of)?)),
-            None => Ok(None),
-        }
-    }
 
     /// `options::JSX::Runtime` → `api::JsxRuntime` (only the reverse `From`
     /// exists upstream).

@@ -616,6 +616,13 @@ pub trait CAresRecordType: Sized {
     const SYSCALL: &'static str;
     /// `"pending_{TYPE_NAME}_cache_cares"` — used to reach the matching HiveArray on `Resolver`.
     const CACHE_FIELD: PendingCacheField;
+    /// `@field(NSType, "ns_t_" ++ TYPE_NAME)` — the DNS RR type passed to `ares_query`.
+    const NS_TYPE: c_ares::NSType;
+    /// `cares_type.callbackWrapper(TYPE_NAME, ResolveInfoRequest(..), onCaresComplete)` —
+    /// the `ares_callback` thunk that parses raw reply bytes for this record type
+    /// and forwards to `ResolveInfoRequest<Self>::on_cares_complete`. Used as
+    /// `ResolveHandler::raw_callback` for the generic `Channel::resolve` dispatch.
+    const RAW_CALLBACK: unsafe extern "C" fn(*mut c_void, c_int, c_int, *mut u8, c_int);
     fn to_js_response(&mut self, global: &JSGlobalObject, type_name: &'static str) -> JsResult<JSValue>;
     /// Free a c-ares-allocated reply struct (`ares_free_data` / `ares_free_hostent`).
     /// SAFETY: `this` must be the pointer c-ares handed to the callback; not aliased.
@@ -4700,14 +4707,10 @@ impl Resolver {
             node.udp_port = port;
             node.tcp_port = port;
 
-            // SAFETY: FFI; `address_buffer` is NUL-terminated above; the shadow `addr`
-            // field has space for in6_addr. `dst` is `addr_of_mut!` over the local
-            // `node` cast through the layout-shadow — `*mut → *mut` type-erasure with
-            // write provenance from `&mut node`. No `*const → *mut` cast here.
-            let addr_dst: *mut c_void = unsafe {
-                ptr::addr_of_mut!((*(&mut node as *mut _ as *mut AddrPortNodeShadow)).addr)
-            }
-            .cast();
+            // SAFETY: FFI; `address_buffer` is NUL-terminated above; `addr_mut_ptr()`
+            // yields a `*mut c_void` over the in_addr/in6_addr union (16 bytes —
+            // enough for in6_addr) with write provenance from `&mut node`.
+            let addr_dst: *mut c_void = node.addr_mut_ptr();
             if unsafe { c_ares::ares_inet_pton(af, address_buffer.as_ptr() as *const c_char, addr_dst) } != 1 {
                 return Err(jsc::Error::INVALID_IP_ADDRESS.throw(
                     global_this,

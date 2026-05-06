@@ -624,19 +624,21 @@ impl Route {
                         has_content_disposition: false,
                     });
 
-                    if this_html_route.is_none()
-                        && output_files[i].output_kind == bundler_options::OutputKind::EntryPoint
-                        && output_files[i].loader == Loader::Html
-                    {
-                        this_html_route = Some(std::rc::Rc::clone(&static_route));
-                    }
-
                     let mut route_path: &[u8] = &output_files[i].dest_path;
                     // The route path gets cloned inside of appendStaticRoute.
                     if strings::has_prefix(route_path, b"./")
                         || strings::has_prefix(route_path, b".\\")
                     {
                         route_path = &route_path[1..];
+                    }
+
+                    if this_html_route.is_none()
+                        && output_files[i].output_kind == bundler_options::OutputKind::EntryPoint
+                        && output_files[i].loader == Loader::Html
+                    {
+                        // Defer registration so we retain unique ownership for `clone()`.
+                        this_html_route = Some((static_route, Box::<[u8]>::from(route_path)));
+                        continue;
                     }
 
                     bun_core::handle_oom(server.append_static_route(
@@ -646,16 +648,19 @@ impl Route {
                     ));
                 }
 
-                let html_route = this_html_route.unwrap_or_else(|| {
+                let (mut html_route, html_route_path) = this_html_route.unwrap_or_else(|| {
                     panic!("Internal assertion failure: HTML entry point not found in HTMLBundle.")
                 });
-                // SAFETY: `html_route` is held alive by both this `Rc` clone and the
-                // route table; `StaticRoute::clone` only mutates `self.blob` to
-                // normalize it in-place, and the route table is not yet serving so
-                // no concurrent reader exists on the JS thread.
-                let html_route_clone = bun_core::handle_oom(unsafe {
-                    (*(std::rc::Rc::as_ptr(&html_route) as *mut StaticRoute)).clone(global_this)
-                });
+                let html_route_clone = bun_core::handle_oom(
+                    std::rc::Rc::get_mut(&mut html_route)
+                        .expect("sole Rc owner before registration")
+                        .clone(global_this),
+                );
+                bun_core::handle_oom(server.append_static_route(
+                    &html_route_path,
+                    AnyRoute::Static(html_route),
+                    MethodOptional::Any,
+                ));
                 self.state = State::Html(html_route_clone);
 
                 if !bun_core::handle_oom(server.reload_static_routes()) {

@@ -42,26 +42,7 @@ impl core::fmt::Display for PrettyStr {
     }
 }
 
-// ── Local FFI shims for JSC C-API symbols not yet re-exported via `bun_jsc::c_api`.
-// The full `javascript_core_c_api.rs` module is ``-gated in bun_jsc;
-// declare just the two we need here. Types match `bun_jsc::C::JSObjectRef` etc.
-// TODO(port): drop once `bun_jsc::c_api` re-exports the full C-API surface.
-#[allow(deprecated)] // `bun_jsc::C` (the JSC C-API opaque-ref typedefs) is
-                     // deprecated upstream but still the only home for
-                     // `JSObjectRef`/`JSValueRef`/`ExceptionRef`; this shim
-                     // is exactly the legacy C-API boundary it describes.
-mod capi_ext {
-    use bun_jsc::{C, JSGlobalObject};
-    unsafe extern "C" {
-        pub fn JSObjectGetProxyTarget(object: C::JSObjectRef) -> C::JSObjectRef;
-        pub fn JSObjectGetPropertyAtIndex(
-            ctx: *const JSGlobalObject,
-            object: C::JSObjectRef,
-            property_index: core::ffi::c_uint,
-            exception: C::ExceptionRef,
-        ) -> C::JSValueRef;
-    }
-}
+use bun_jsc::c_api::{JSObjectGetPropertyAtIndex, JSObjectGetProxyTarget};
 
 /// Port of Zig `JSLexer.isLatin1Identifier([]const u16, …)` — the generic in
 /// `js_lexer.rs` only covers the `[u8]` case today. Kept local to avoid
@@ -399,7 +380,7 @@ impl JestPrettyFormat {
         }
 
         if options.flush {
-            // TODO(port): writer.flush()
+            let _ = writer.flush();
         }
 
         // Mirrors Zig `defer { node.data = fmt.map; node.data.clearRetainingCapacity(); node.release(); }`
@@ -697,7 +678,7 @@ impl Tag {
             // SAFETY: `value` is a GlobalProxy cell (checked above); JSC C-API
             // returns the wrapped target object (never null for a live proxy).
             return Tag::get(
-                JSValue::c(unsafe { capi_ext::JSObjectGetProxyTarget(value.as_object_ref()) }),
+                JSValue::c(unsafe { JSObjectGetProxyTarget(value.as_object_ref()) }),
                 global_this,
             );
         }
@@ -1400,9 +1381,9 @@ impl<'a> Formatter<'a> {
                                 self.write_indent(writer.ctx).expect("unreachable");
                             }
                         }
-                        self.indent = self.indent.saturating_sub(1);
                         self.reset_line();
                         writer.write_all(b"}\n");
+                        self.indent = self.indent.saturating_sub(1);
                         return Ok(());
                     }
 

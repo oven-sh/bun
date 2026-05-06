@@ -1113,14 +1113,14 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         #[cfg(unix)]
         pty_slave_fd: match terminal_info.as_ref() {
             // SAFETY: `ti.terminal` is the live `IntrusiveRc<Terminal>` raw ptr from above.
-            Some(ti) => unsafe { terminal_impl(ti.terminal) }.get_slave_fd().native(),
+            Some(ti) => unsafe { (*ti.terminal).get_slave_fd() }.native(),
             None => -1,
         },
         #[cfg(windows)]
         pseudoconsole: existing_terminal
             .or_else(|| terminal_info.as_ref().map(|ti| ti.terminal))
-            // SAFETY: see `terminal_impl` doc; ptr is from a live wrapper / IntrusiveRc.
-            .and_then(|t| unsafe { terminal_impl(t) }.get_pseudoconsole()),
+            // SAFETY: ptr is from a live wrapper / IntrusiveRc populated above.
+            .and_then(|t| unsafe { (*t).get_pseudoconsole() }),
 
         #[cfg(windows)]
         windows: spawn::WindowsOptions {
@@ -1398,7 +1398,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         // SAFETY: `info.terminal` is the live `IntrusiveRc<Terminal>` raw ptr
         // populated above; spawn succeeded so the child holds its own copy of
         // the slave fd.
-        unsafe { terminal_impl(info.terminal) }.close_slave_fd();
+        unsafe { (*info.terminal).close_slave_fd() };
         subprocess.flags.insert(Subprocess::Flags::OWNS_TERMINAL);
     }
     // existing_terminal: don't close slave_fd - user manages lifecycle and can reuse

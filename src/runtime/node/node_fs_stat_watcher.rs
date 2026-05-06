@@ -308,6 +308,29 @@ mod js {
 }
 
 impl StatWatcher {
+    /// Spec `RareData.nodeFSStatWatcherScheduler`. Body lives here (high tier)
+    /// because `StatWatcherScheduler` cannot be named from `bun_jsc::rare_data`
+    /// without a crate cycle; the slot in `RareData` is an erased
+    /// `Option<NonNull<c_void>>` (§Dispatch).
+    fn lazy_scheduler(vm: &mut VirtualMachine) -> IntrusiveArc<StatWatcherScheduler> {
+        let slot = vm.rare_data().node_fs_stat_watcher_scheduler_slot();
+        let raw = match *slot {
+            Some(p) => p.as_ptr().cast::<StatWatcherScheduler>(),
+            None => {
+                let arc = StatWatcherScheduler::init(vm);
+                let raw = arc.into_raw(); // VM owns this ref forever (Zig: never deref'd)
+                *vm.rare_data().node_fs_stat_watcher_scheduler_slot() =
+                    core::ptr::NonNull::new(raw.cast());
+                raw
+            }
+        };
+        // SAFETY: `raw` was produced by `IntrusiveArc::into_raw` above (or on a
+        // prior call) and the VM ref keeps it alive; bump the count for the
+        // caller's `dupeRef()`.
+        unsafe { (*raw).ref_() };
+        unsafe { IntrusiveArc::from_raw(raw) }
+    }
+
     pub fn ref_(&self) {
         // TODO(port): IntrusiveArc::ref_
         self.ref_count.fetch_add(1, Ordering::Relaxed);

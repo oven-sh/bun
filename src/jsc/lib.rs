@@ -2672,23 +2672,27 @@ pub trait SysErrorJsc {
     fn throw(&self, global: &JSGlobalObject) -> JsError;
 }
 impl SysErrorJsc for bun_sys::Error {
+    /// `bun.sys.Error.toSystemError()` (src/sys/Error.zig:toSystemError).
+    ///
+    /// The full errno→code/message/path/syscall/dest/fd mapping is implemented
+    /// once in `bun_sys::Error::to_system_error()` (returning the lower-tier
+    /// `bun_sys::SystemError`, which has the same field set but is not
+    /// `#[repr(C)]`). This impl re-packs that result into the FFI-layout
+    /// [`SystemError`] expected by `SystemError__toErrorInstance`.
     fn to_system_error(&self) -> SystemError {
-        // TODO(b2): full field mapping (path/syscall/dest) — see src/sys/Error.zig.
+        let sys = bun_sys::Error::to_system_error(self);
         SystemError {
-            errno: self.errno as core::ffi::c_int,
-            code: bun_string::String::EMPTY,
-            message: bun_string::String::EMPTY,
-            path: bun_string::String::EMPTY,
-            syscall: bun_string::String::EMPTY,
-            hostname: bun_string::String::EMPTY,
-            fd: -1,
-            dest: bun_string::String::EMPTY,
+            errno: sys.errno,
+            code: sys.code,
+            message: sys.message,
+            path: sys.path,
+            syscall: sys.syscall,
+            hostname: sys.hostname,
+            fd: sys.fd,
+            dest: sys.dest,
         }
     }
     fn to_js(&self, global: &JSGlobalObject) -> JSValue {
-        // UFCS: bun_sys::Error has its own inherent `to_system_error()`
-        // returning `bun_sys::SystemError` (different type); we want the trait
-        // method that returns the jsc-layout `SystemError` defined above.
         <Self as SysErrorJsc>::to_system_error(self).to_error_instance(global)
     }
     fn throw(&self, global: &JSGlobalObject) -> JsError {
@@ -2853,11 +2857,16 @@ pub const INIT_TIMESTAMP: JSTimeType = (1u64 << 52) - 1;
 // TODO(port): Zig u52 — Rust has no u52. Using u64.
 pub type JSTimeType = u64;
 
+/// `jsc.zig:245 toJSTime(sec, nsec)`. Zig: `@intCast` (safety-checked sign
+/// cast) into `u64`, then `@truncate(u52)`. Compute in `i128` first so the
+/// `sec * 1000` widening cannot overflow `isize`, then cast to `u64` (matching
+/// `@intCast` for non-negative inputs) before masking to 52 bits (`@truncate`).
 pub fn to_js_time(sec: isize, nsec: isize) -> JSTimeType {
-    const NS_PER_MS: isize = 1_000_000;
-    const MS_PER_S: isize = 1_000;
-    let millisec: u64 = u64::try_from(nsec / NS_PER_MS).unwrap();
-    ((u64::try_from(sec * MS_PER_S).unwrap() + millisec) & ((1u64 << 52) - 1)) as JSTimeType
+    const NS_PER_MS: i128 = 1_000_000;
+    const MS_PER_S: i128 = 1_000;
+    let millisec = (nsec as i128) / NS_PER_MS;
+    let total = (sec as i128) * MS_PER_S + millisec;
+    (total as u64) & ((1u64 << 52) - 1)
 }
 
 pub const MAX_SAFE_INTEGER: i64 = 9007199254740991;

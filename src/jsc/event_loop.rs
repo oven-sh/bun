@@ -59,8 +59,13 @@ pub struct EventLoop {
     ///   - immediate_tasks: tasks that will run on the current tick
     ///
     /// Having two queues avoids infinite loops creating by calling `setImmediate` in a `setImmediate` callback.
-    pub immediate_tasks: Vec<*mut ImmediateObject>,
-    pub next_immediate_tasks: Vec<*mut ImmediateObject>,
+    ///
+    /// PORT NOTE (§Dispatch): payload is `*mut ()` — the real
+    /// `bun_runtime::timer::ImmediateObject` lives in the higher-tier crate
+    /// (cycle). Low tier stores the erased pointer; the high-tier hook
+    /// installed via [`set_run_immediate_hook`] casts it back.
+    pub immediate_tasks: Vec<*mut ()>,
+    pub next_immediate_tasks: Vec<*mut ()>,
 
     pub concurrent_tasks: ConcurrentQueue,
     // TODO(port): lifetime — *JSGlobalObject backref owned by VM
@@ -80,8 +85,13 @@ pub struct EventLoop {
     pub debug: Debug,
     pub entered_event_loop_count: isize,
     pub concurrent_ref: AtomicI32,
-    // std.atomic.Value(?*Timer.WTFTimer) — atomic nullable pointer
-    pub imminent_gc_timer: AtomicPtr<WTFTimer>,
+    /// `std.atomic.Value(?*Timer.WTFTimer)` — atomic nullable pointer.
+    ///
+    /// PORT NOTE (§Dispatch): payload is `*mut ()` — the real
+    /// `bun_runtime::timer::WTFTimer` lives in the higher-tier crate (cycle).
+    /// Low tier stores the erased pointer; the high-tier hook installed via
+    /// [`set_run_wtf_timer_hook`] casts it back.
+    pub imminent_gc_timer: AtomicPtr<()>,
 
     #[cfg(unix)]
     // TODO(port): lifetime — ?*PosixSignalHandle (boxed, process-lifetime)
@@ -210,12 +220,16 @@ pub fn set_tick_queue_hook(f: TickQueueFn) {
 fn tick_queue_with_count(el: &mut EventLoop, vm: *mut VirtualMachine, counter: &mut u32) -> Result<(), JsTerminated> {
     let p = TICK_QUEUE_HOOK.load(Ordering::Acquire);
     if p.is_null() {
-        // No high-tier dispatcher registered (e.g. unit tests) — drain without
-        // running. PERF(port): was inline switch — direct calls per arm in
-        // `bun_runtime::run_tasks`; this fallback is cold.
-        while el.tasks.read_item().is_some() {
-            *counter += 1;
-        }
+        // No high-tier dispatcher registered yet — leave queued tasks in place
+        // so they can run once the hook is installed. Draining here would
+        // silently drop every Task (state-destroying no-op); be loud instead so
+        // a missing `set_tick_queue_hook` registration surfaces immediately.
+        debug_assert!(
+            el.tasks.readable_length() == 0,
+            "TICK_QUEUE_HOOK not installed but {} task(s) queued — \
+             bun_runtime must call set_tick_queue_hook() at startup",
+            el.tasks.readable_length(),
+        );
         return Ok(());
     }
     // SAFETY: `p` was stored from a `TickQueueFn` (same layout).

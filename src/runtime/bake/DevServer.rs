@@ -146,10 +146,10 @@ trait LogToJsAggregateErrorExt {
 impl LogToJsAggregateErrorExt for Log {
     fn to_js_aggregate_error(
         &mut self,
-        _global: &JSGlobalObject,
-        _msg: BunString,
+        global: &JSGlobalObject,
+        msg: BunString,
     ) -> JsResult<JSValue> {
-        todo!("blocked_on: bun_logger::Log::to_js_aggregate_error")
+        bun_logger_jsc::log_to_js_aggregate_error(self, global, msg)
     }
 }
 pub use crate::bake::dev_server::HotReloadEvent;
@@ -332,7 +332,7 @@ pub enum TestingBatchEvents {
 pub struct CurrentBundle<'a> {
     pub bv2: Box<BundleV2<'a>>,
     /// Information BundleV2 needs to finalize the bundle
-    pub start_data: bundler::bundle_v2::__phase_a_draft::DevServerInput,
+    pub start_data: bundler::bundle_v2::DevServerInput,
     /// Started when the bundle was queued
     pub timer: Instant, // TODO(port): std.time.Timer → Instant; .read() becomes .elapsed()
     /// If any files in this bundle were due to hot-reloading, some extra work

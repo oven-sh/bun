@@ -19,7 +19,7 @@ use crate::Subcommand;
 use crate::GetJsonResult as WorkspacePackageJsonCacheResult;
 use crate::lockfile::{self, Lockfile, Package};
 use crate::lockfile_real::bun_lock as TextLockfile;
-use crate::lockfile_real::package::{Diff, DiffSummary};
+use crate::lockfile_real::package::Diff;
 use crate::package_install::Summary as PackageInstallSummary;
 use crate::PackageManager;
 use crate::package_manager::{Options, WorkspaceFilter};

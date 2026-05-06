@@ -2152,11 +2152,28 @@ pub fn pack<const FOR_PUBLISH: bool>(
                 &package_version,
                 &mut dest_buf[..],
             );
-            let _ = (abs_tarball_dest, &publish_script, &postpublish_script, &this_transpiler);
-            return Ok(Some(todo!(
-                "blocked_on: bun_install::PackageManager reborrow for Publish::Context (dry-run)"
-            )));
-            // TODO(port): Publish::Context field shapes
+            // PORT NOTE: `manager`/`command_ctx` reborrowed via raw pointer —
+            // Zig freely aliased `*PackageManager`/`*ContextData` between
+            // `pack::Context` and `Publish::Context`; both are process-lifetime
+            // singletons (see `cli::command::GLOBAL_CLI_CTX`).
+            // SAFETY: pointers came from `&mut` and outlive the returned value.
+            return Ok(Some(Publish::Context {
+                manager: unsafe { &mut *manager_ptr },
+                command_ctx: unsafe { &mut *(ctx.command_ctx as *mut _) },
+                package_name: package_name.into(),
+                package_version: package_version.into(),
+                abs_tarball_path: ZStr::boxed(abs_tarball_dest.as_bytes()),
+                tarball_bytes: Box::new([]),
+                shasum: [0u8; sha::SHA1::DIGEST],
+                integrity: [0u8; sha::SHA512::DIGEST],
+                uses_workspaces: false,
+                publish_script,
+                postpublish_script,
+                // SAFETY: `Transpiler::env` is set by `configure_env_for_run` and
+                // points at the process-singleton loader (`&'static`).
+                script_env: Some(unsafe { &mut *this_transpiler.env }),
+                normalized_pkg_info: Box::new([]),
+            }));
         }
 
         return Ok(None);
@@ -2514,19 +2531,25 @@ pub fn pack<const FOR_PUBLISH: bool>(
     }
 
     if FOR_PUBLISH {
-        let _ = (
-            abs_tarball_dest,
-            tarball_bytes,
+        // SAFETY: see dry-run construction above — `manager`/`command_ctx` are
+        // process-lifetime singletons aliased exactly as Zig's `*T` did.
+        return Ok(Some(Publish::Context {
+            manager: unsafe { &mut *manager_ptr },
+            command_ctx: unsafe { &mut *(ctx.command_ctx as *mut _) },
+            package_name: package_name.into(),
+            package_version: package_version.into(),
+            abs_tarball_path: ZStr::boxed(abs_tarball_dest.as_bytes()),
+            tarball_bytes: tarball_bytes.into_boxed_slice(),
             shasum,
             integrity,
-            &publish_script,
-            &postpublish_script,
-            normalized_pkg_info,
-            &this_transpiler,
-        );
-        return Ok(Some(todo!(
-            "blocked_on: bun_install::PackageManager reborrow for Publish::Context"
-        )));
+            uses_workspaces: false,
+            publish_script,
+            postpublish_script,
+            // SAFETY: `Transpiler::env` is set by `configure_env_for_run` and
+            // points at the process-singleton loader (`&'static`).
+            script_env: Some(unsafe { &mut *this_transpiler.env }),
+            normalized_pkg_info: normalized_pkg_info.unwrap_or_default(),
+        }));
     }
 
     Ok(None)

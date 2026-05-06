@@ -46,10 +46,6 @@ pub use yield_::Yield;
 // `bun_shell_parser` crate so `Interpreter::parse` can compile without the
 // (still-draft) JSC bridge below. This file keeps the JSC-coupled half
 // (ShellErr, GlobalJS/Mini, shell_cmd_from_js, ShellSrcBuilder, TestingAPIs).
-//
-// The Phase-A inline drafts of these types further down in this file are
-// ``-gated as `__phase_a_draft_*` modules — preserved for
-// reference until this file is itself un-gated in `mod.rs`.
 pub use bun_shell_parser::parse::{
     assert_special_char, ast, escape_8bit, escape_bun_str, escape_utf16, has_eq_sign,
     is_valid_var_name, needs_escape_bunstr, needs_escape_utf16, needs_escape_utf8_ascii_latin1,

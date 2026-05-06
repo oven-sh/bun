@@ -18,6 +18,9 @@ pub use braces::{has_eq_sign, CharIter, InputChar, ShellCharIter, ShellCharIterS
 #[path = "parse.rs"]
 pub mod parse;
 
+#[path = "json_fmt.rs"]
+pub mod json_fmt;
+
 pub use parse::{
     assert_special_char, ast, ast as AST, escape_8bit, escape_bun_str, escape_utf16,
     is_valid_var_name, needs_escape_bunstr, needs_escape_utf16, needs_escape_utf8_ascii_latin1,

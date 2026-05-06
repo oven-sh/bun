@@ -393,18 +393,18 @@ pub mod js_bundler {
                 let property_value = files_iter.value;
 
                 // Parse the value as BlobOrStringOrBuffer using async mode for thread safety
-                let blob_or_string: jsc::node::BlobOrStringOrBuffer = {
-                    let _ = property_value;
-                    todo!("blocked_on: bun_jsc::Node::BlobOrStringOrBuffer::from_js_async")
-                };
-                #[allow(unreachable_code)]
-                if false {
-                    return Err(global_this.throw_invalid_arguments(
-                        "Expected file content to be a string, Blob, File, TypedArray, or ArrayBuffer",
-                    ));
-                }
-                // errdefer blob_or_string.deinitAndUnprotect() — handled below via scopeguard if needed
-                // TODO(port): errdefer for blob_or_string
+                let mut blob_or_string =
+                    match crate::node::BlobOrStringOrBuffer::from_js_async(global_this, property_value)? {
+                        Some(v) => v,
+                        None => {
+                            return Err(global_this.throw_invalid_arguments(
+                                "Expected file content to be a string, Blob, File, TypedArray, or ArrayBuffer",
+                            ));
+                        }
+                    };
+                // errdefer blob_or_string.deinitAndUnprotect()
+                let mut blob_guard =
+                    scopeguard::guard(&mut blob_or_string, |b| b.deinit_and_unprotect());
 
                 // Clone the key since we need to own it
                 let mut key = prop.to_owned_slice();

@@ -2641,9 +2641,7 @@ impl DevServer<'_> {
             for key in entry_points.set.keys() {
                 trigger_files.push(BunString::clone_utf8(key));
             }
-            let _ = (agent, &trigger_files);
-            todo!("blocked_on: bun_jsc::debugger::BunFrontendDevServerAgent::notify_bundle_start");
-            #[allow(unreachable_code)]
+            agent.notify_bundle_start(self.inspector_server_id, &trigger_files);
             for s in &mut trigger_files {
                 s.deref();
             }

@@ -4,13 +4,11 @@ use core::marker::{PhantomData, PhantomPinned};
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
-use crate::{JSGlobalObject, JSValue, VirtualMachineRef as VirtualMachine};
+use crate::{CommonAbortReason, JSGlobalObject, JSValue, VirtualMachineRef as VirtualMachine};
 use bun_event_loop::EventLoopTimer::{
-    EventLoopTimer, IntrusiveField, State as TimerState, Tag as TimerTag, TimerFlags,
+    EventLoopTimer, InHeap, IntrusiveField, State as TimerState, Tag as TimerTag, TimerFlags,
     Timespec as ElTimespec,
 };
-
-use crate::CommonAbortReason;
 
 /// Opaque FFI handle to WebCore::AbortSignal (C++ side owns layout & refcount).
 ///

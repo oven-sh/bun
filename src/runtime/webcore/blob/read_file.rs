@@ -134,7 +134,19 @@ pub enum ReadFileResultType {
     Err(SystemError),
 }
 
-pub type ReadFileTask = WorkTask<ReadFile>;
+pub type ReadFileTask = bun_jsc::work_task::WorkTask<ReadFile>;
+
+impl bun_jsc::work_task::WorkTaskContext for ReadFile {
+    const TASK_TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ReadFileTask;
+    fn run(this: *mut Self, task: *mut bun_jsc::work_task::WorkTask<Self>) {
+        // SAFETY: WorkTask::run_from_thread_pool guarantees `this` is live.
+        unsafe { (*this).run(task) }
+    }
+    fn then(this: *mut Self, global: &jsc::JSGlobalObject) -> Result<(), jsc::JsTerminated> {
+        // SAFETY: `this` was Box::into_raw'd by the WorkTask flow; consumed here.
+        ReadFile::then(unsafe { Box::from_raw(this) }, global)
+    }
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // ReadFile

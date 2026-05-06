@@ -535,35 +535,6 @@ impl<W: fmt::Write + ?Sized> Write for FmtAdapter<'_, W> {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// IoFmtBridge — bun_io::Write → core::fmt::Write bridge (reverse of FmtAdapter)
-// ════════════════════════════════════════════════════════════════════════════
-
-/// Wrap a byte-level [`Write`] sink so it can be passed where a
-/// `core::fmt::Write` is expected. Reverse direction of [`FmtAdapter`].
-///
-/// Used by formatter callbacks (`Response::write_format` etc.) that take a
-/// generic `W: core::fmt::Write` but are driven from a byte-oriented printer.
-/// I/O errors from the underlying sink are flattened into `fmt::Error` (the
-/// `core::fmt` machinery has no payload-carrying error type).
-pub struct IoFmtBridge<'a, W: ?Sized> {
-    inner: &'a mut W,
-}
-
-impl<'a, W: Write + ?Sized> IoFmtBridge<'a, W> {
-    #[inline]
-    pub fn new(inner: &'a mut W) -> Self {
-        Self { inner }
-    }
-}
-
-impl<W: Write + ?Sized> fmt::Write for IoFmtBridge<'_, W> {
-    #[inline]
-    fn write_str(&mut self, s: &str) -> fmt::Result {
-        self.inner.write_all(s.as_bytes()).map_err(|_| fmt::Error)
-    }
-}
-
-// ════════════════════════════════════════════════════════════════════════════
 
 #[cfg(test)]
 mod tests {

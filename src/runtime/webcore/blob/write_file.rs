@@ -39,7 +39,18 @@ pub enum WriteFileResultType {
 pub type WriteFileOnWriteFileCallback =
     fn(ctx: *mut c_void, count: WriteFileResultType) -> Result<(), JsTerminated>;
 
-pub type WriteFileTask = WorkTask<WriteFile>;
+pub type WriteFileTask = bun_jsc::work_task::WorkTask<WriteFile>;
+
+impl bun_jsc::work_task::WorkTaskContext for WriteFile {
+    const TASK_TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::WriteFileTask;
+    fn run(this: *mut Self, task: *mut bun_jsc::work_task::WorkTask<Self>) {
+        // SAFETY: WorkTask::run_from_thread_pool guarantees `this` is live.
+        unsafe { (*this).run(task) }
+    }
+    fn then(this: *mut Self, global: &jsc::JSGlobalObject) -> Result<(), JsTerminated> {
+        WriteFile::then(this, global)
+    }
+}
 
 pub struct WriteFile {
     pub file_blob: Blob,

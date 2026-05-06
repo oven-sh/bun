@@ -40,7 +40,7 @@ pub mod write;
 // Byte-level `Write` trait + helpers (Zig `std.Io.Writer` surface). Downstream
 // crates name these as `bun_io::Write` / `bun_io::BufWriter` /
 // `bun_io::FmtAdapter` / `bun_io::Result`.
-pub use write::{BufWriter, DiscardingWriter, FixedBufferStream, FmtAdapter, IntLe, IoFmtBridge, Result, Write};
+pub use write::{BufWriter, DiscardingWriter, FixedBufferStream, FmtAdapter, IntLe, Result, Write};
 
 pub use pipes::{FileType, ReadState};
 #[allow(non_snake_case)]

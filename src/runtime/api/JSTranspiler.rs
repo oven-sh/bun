@@ -1263,8 +1263,8 @@ impl JSTranspiler {
             return Err(global.throw_value(log_ref.to_js(global, "Parse error")?));
         }
 
-        let exports_label = JscZigString::init(b"exports");
-        let imports_label = JscZigString::init(b"imports");
+        let exports_label = ZigString::static_(b"exports");
+        let imports_label = ZigString::static_(b"imports");
         let named_imports_value = named_imports_to_js(
             global,
             parse_result.ast.import_records.slice(),
@@ -1277,10 +1277,13 @@ impl JSTranspiler {
         self.transpiler.set_log(&mut self.config.log);
         self.transpiler.allocator = prev_allocator;
 
-        let _ = (exports_label, imports_label);
-        // TODO(port): `JSValue::create_object2` — bun_jsc lacks this helper.
-        let _ = (named_imports_value, named_exports_value);
-        todo!("blocked_on: bun_jsc::JSValue::create_object2")
+        JSValue::create_object2(
+            global,
+            &imports_label,
+            &exports_label,
+            named_imports_value,
+            named_exports_value,
+        )
     }
 
     #[bun_jsc::host_fn(method)]

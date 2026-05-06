@@ -659,7 +659,8 @@ impl<'a> Parser<'a> {
         let mut before = BumpVec::<js_ast::Part>::new_in(p.allocator);
         let mut after = BumpVec::<js_ast::Part>::new_in(p.allocator);
         let mut parts = BumpVec::<js_ast::Part>::new_in(p.allocator);
-        // (defer after.deinit()/before.deinit() — handled by Drop on bumpalo Vec, which is a no-op)
+        // (defer after.deinit()/before.deinit() — Zig only frees the backing buffer; element
+        // ownership is transferred into `parts` below via bitwise copy + set_len(0).)
 
         if p.options.bundle {
             // The bundler requires a part for generated module wrappers. This
@@ -998,7 +999,10 @@ impl<'a> Parser<'a> {
                             import_record_index: deferred_import.import_record_id,
                             namespace_ref: deferred_import.namespace.ref_.unwrap(),
                             default_name: None,
-                            items: core::ptr::slice_from_raw_parts_mut(core::ptr::null_mut(), 0),
+                            items: core::ptr::slice_from_raw_parts_mut(
+                                core::ptr::NonNull::<js_ast::ClauseItem>::dangling().as_ptr(),
+                                0,
+                            ),
                             is_single_line: false,
                         },
                         deferred_import.namespace.loc,
@@ -1955,6 +1959,14 @@ impl<'a> Parser<'a> {
                         after_len,
                     );
                 }
+            }
+            // SAFETY: ownership of the `Part` elements has been bitwise-moved into `parts`
+            // above. `bumpalo::collections::Vec::drop` runs element destructors, so we must
+            // logically empty the source vecs to avoid double-free of `Part`'s heap-owning
+            // fields (BabyList / ArrayHashMap). The backing storage itself is bump-allocated.
+            unsafe {
+                before.set_len(0);
+                after.set_len(0);
             }
         }
 

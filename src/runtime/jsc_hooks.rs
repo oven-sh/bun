@@ -1509,39 +1509,34 @@ fn transpile_source_code_inner(
             // TODO(b2-cycle): `vm.bun_watcher.addFile` — ImportWatcher gated.
 
             // Spec :805-823 — `export default <path string>`.
-            // TODO(b2-blocked): `bun_string::String::create_utf8_for_js` is a
-            // tier-6 (jsc) ctor not yet exposed; `JSValue` is `stub_ty!`.
-            #[cfg(any())]
-            {
-                use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
-                let value = if !unsafe { (*jsc_vm).origin.is_empty() } {
-                    // TODO(b2-cycle): `api::Bun::get_public_path` — gated.
-                    bun_string::String::create_utf8_for_js(
-                        unsafe { &*global_object },
-                        path.text,
-                    )?
-                } else {
-                    bun_string::String::create_utf8_for_js(
-                        unsafe { &*global_object },
-                        path.text,
-                    )?
-                };
-                return Ok(ResolvedSource {
-                    jsvalue_for_export: value,
-                    specifier: input_specifier.dupe_ref(),
-                    source_url: create_if_different(input_specifier, path.text),
-                    tag: ResolvedSourceTag::ExportDefaultObject,
-                    ..Default::default()
-                });
+            use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
+            if global_object.is_null() {
+                return Err(bun_core::err!("NotSupported"));
             }
-            // Spec ModuleLoader.zig:817-823 returns
-            // `tag = .export_default_object` with `jsvalue_for_export = <path
-            // JSString>`. Until `create_utf8_for_js` un-gates, fail closed —
-            // PORTING.md §Forbidden: an empty `ResolvedSource::default()` here
-            // is a silent-no-op (importing a file-loader asset would yield an
-            // empty JS module instead of the path string).
-            #[allow(unreachable_code)]
-            Err(bun_core::err!("NotSupported"))
+            // PORT NOTE: tier-6 ctor lives in `bun_jsc::bun_string_jsc` (not on
+            // `bun_string::String`, which is tier-2); calls
+            // `BunString__createUTF8ForJS` under the hood.
+            // SAFETY: null-checked above; `global_object` is the live per-thread
+            // `JSGlobalObject` for the FFI call.
+            let global = unsafe { &*global_object };
+            let value = if !unsafe { (*jsc_vm).origin.is_empty() } {
+                // TODO(b2-cycle): `api::Bun::get_public_path` — gated. Spec
+                // rewrites `path.text` against `vm.origin`; until that lands
+                // emit the absolute path verbatim (matches the `origin.is_empty()`
+                // branch).
+                bun_jsc::bun_string_jsc::create_utf8_for_js(global, path.text)
+                    .map_err(|_| bun_core::err!("JSError"))?
+            } else {
+                bun_jsc::bun_string_jsc::create_utf8_for_js(global, path.text)
+                    .map_err(|_| bun_core::err!("JSError"))?
+            };
+            Ok(ResolvedSource {
+                jsvalue_for_export: value,
+                specifier: input_specifier.dupe_ref(),
+                source_url: create_if_different(input_specifier, path.text),
+                tag: ResolvedSourceTag::ExportDefaultObject,
+                ..Default::default()
+            })
         }
     }
 }
@@ -1868,6 +1863,121 @@ unsafe fn get_hardcoded_module_hook(
             true
         }
         None => false,
+    }
+}
+
+/// `LoaderHooks::resolve_embedded_node_file` body — port of
+/// `ModuleLoader.resolveEmbeddedFile` (spec ModuleLoader.zig:33-71) for the
+/// `process.dlopen()`-on-a-compiled-executable path. Extracts an embedded
+/// `.node` addon from the standalone module graph to a real on-disk temp file
+/// and writes the resulting path back into `*in_out_str`
+/// (`bun.String.cloneUTF8(result)`).
+///
+/// # Safety
+/// `vm` is the live per-thread VM; `in_out_str` is a valid in/out
+/// `bun.String*` (C++ ABI, BunProcess.cpp). Caller (`Bun__resolveEmbeddedNodeFile`
+/// in `bun_jsc::module_loader`) has already checked
+/// `vm.standalone_module_graph.is_some()`.
+unsafe fn resolve_embedded_node_file_hook(
+    vm: *mut VirtualMachine,
+    in_out_str: *mut bun_string::String,
+) -> bool {
+    // Spec ModuleLoader.zig:1334-1337 — `in_out_str.toUTF8()` + `path_buffer_pool.get()`.
+    // SAFETY: per fn contract — `in_out_str` is a valid `bun.String*`.
+    let input_path_utf8 = unsafe { (*in_out_str).to_utf8() };
+    let input_path = input_path_utf8.slice();
+    // Spec ModuleLoader.zig:34 — `if (input_path.len == 0) return null`.
+    if input_path.is_empty() {
+        return false;
+    }
+
+    // Spec ModuleLoader.zig:35-36 — `vm.standalone_module_graph orelse return
+    // null` + `graph.find(input_path) orelse return null`.
+    //
+    // `vm.standalone_module_graph` is `Option<NonNull<c_void>>` and the
+    // concrete `StandaloneModuleGraph`/`File` types live in
+    // `bun_standalone_graph`, which is not yet a `bun_runtime` dep.
+    // TODO(b2-blocked): un-gate once `bun_standalone_graph.workspace = true`
+    // lands in `src/runtime/Cargo.toml` (same blocker as the standalone-graph
+    // probe in `fetch_builtin_module` above).
+    #[cfg(any())]
+    {
+        extern crate bun_standalone_graph;
+        use bun_standalone_graph::StandaloneModuleGraph;
+
+        // SAFETY: per fn contract — caller checked `is_some()`.
+        let graph = unsafe { (*vm).standalone_module_graph }
+            .expect("caller checked standalone_module_graph.is_some()")
+            .as_ptr()
+            .cast::<StandaloneModuleGraph>();
+        // SAFETY: graph is the live process-global standalone module graph.
+        let Some(file) = (unsafe { &mut *graph }).find(input_path) else {
+            return false;
+        };
+        let file_name: &[u8] = file.name;
+        let file_contents: &[u8] = file.contents.as_bytes();
+
+        // Spec ModuleLoader.zig:43-45 — `tmpname("node", buf, bun.hash(file.name))`.
+        let mut tmpname_buf = bun_paths::path_buffer_pool::get();
+        let Ok(tmpfilename) =
+            Fs::FileSystem::tmpname(b"node", &mut tmpname_buf[..], bun_wyhash::hash(file_name))
+        else {
+            return false;
+        };
+
+        // Spec ModuleLoader.zig:47 — `bun.fs.FileSystem.instance.tmpdir()`.
+        let Ok(tmpdir) = Fs::FileSystem::instance().tmpdir() else {
+            return false;
+        };
+        let tmpdir_fd: bun_sys::Fd = tmpdir.fd;
+
+        // Spec ModuleLoader.zig:50-51 — `bun.Tmpfile.create(tmpdir, tmpfilename)`.
+        let Ok(tmpfile) = bun_sys::Tmpfile::create(tmpdir_fd, tmpfilename) else {
+            return false;
+        };
+        let tmpfile_fd = tmpfile.fd;
+        let _close = scopeguard::guard((), |_| {
+            let _ = bun_sys::close(tmpfile_fd);
+        });
+
+        // Spec ModuleLoader.zig:53-67 — `NodeFS.writeFileWithPathBuffer(.{ .data
+        // = .encoded_slice(file.contents), .dirfd = tmpdir, .file = .{ .fd =
+        // tmpfile.fd }, .encoding = .buffer })`.
+        // CYCLEBREAK MOVE_DOWN: NodeFS::writeFileWithPathBuffer → bun_sys.
+        let mut scratch = bun_paths::path_buffer_pool::get();
+        if bun_sys::write_file_with_path_buffer(
+            &mut scratch,
+            bun_sys::WriteFileArgs {
+                data: bun_sys::WriteFileData::Buffer { buffer: file_contents },
+                encoding: bun_sys::WriteFileEncoding::Buffer,
+                dirfd: tmpdir_fd,
+                file: bun_sys::PathOrFileDescriptor::Fd(tmpfile_fd),
+                ..Default::default()
+            },
+        )
+        .is_err()
+        {
+            return false;
+        }
+
+        // Spec ModuleLoader.zig:69 — `joinAbsStringBuf(RealFS.tmpdirPath(),
+        // path_buf, &.{tmpfilename}, .auto)`.
+        let mut path_buf = bun_paths::path_buffer_pool::get();
+        let result = bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
+            Fs::RealFS::tmpdir_path(),
+            &mut path_buf[..],
+            &[tmpfilename.as_bytes()],
+        );
+
+        // Spec ModuleLoader.zig:1339-1340 — `in_out_str.* = bun.String.cloneUTF8(result)`.
+        // SAFETY: per fn contract.
+        unsafe { *in_out_str = bun_string::String::clone_utf8(result) };
+        return true;
+    }
+    #[cfg_attr(not(any()), allow(unreachable_code))]
+    {
+        let _ = (vm, input_path);
+        false
     }
 }
 
@@ -2350,6 +2460,7 @@ pub static LOADER_HOOKS_INSTANCE: LoaderHooks = LoaderHooks {
     transpile_source_code,
     fetch_builtin_module,
     get_hardcoded_module: get_hardcoded_module_hook,
+    resolve_embedded_node_file: resolve_embedded_node_file_hook,
     transpile_file,
     resolve: resolve_hook,
 };

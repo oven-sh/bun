@@ -64,33 +64,316 @@ pub mod walker_skippable;
 // `std.fs.Dir.Entry.Kind` — same set as `bun_core::FileKind`.
 pub use bun_core::FileKind as EntryKind;
 
-// TODO(b2-blocked): `bun.DirIterator` lives in `bun_runtime::node::dir_iterator`
-// (T6). Per PORTING.md §Dispatch this is the cold-path vtable case: low-tier
-// owns the interface, high-tier installs an impl. Until then, stub the surface
-// `walker_skippable` (and `bun_glob`) need.
+// `bun.DirIterator` — ported from `src/runtime/node/dir_iterator.zig`.
+//
+// This is copied from std.fs.Dir.Iterator. Differences:
+// - returns errors in `bun_sys::Result` (preserves errno + syscall tag)
+// - doesn't mark BADF as unreachable
+// - entry name is owned (`Name`) in OS-native encoding, NUL-terminated
+// - Windows uses the `.u16` path (`NewWrappedIterator(.u16)` in Zig)
+//
+// The high-tier `bun_runtime::node::dir_iterator` shares this surface; the
+// readdir loop lives here so `walker_skippable` / `bun_glob` / resolver can
+// iterate without pulling `bun_runtime` up-tier.
 pub mod dir_iterator {
-    use super::{EntryKind, Fd};
+    use super::{EntryKind, Error, Fd, Result, Tag};
     use bun_paths::OSPathChar;
+
+    const BUF_SIZE: usize = 8192;
 
     /// Native-encoding directory entry returned by `WrappedIterator::next()`.
     pub struct IteratorResult {
         pub name: Name,
         pub kind: EntryKind,
     }
+
     /// Length-known, NUL-terminated entry name in OS-native encoding.
+    /// Backing storage is `[name..., 0]`; `slice()` excludes the trailing NUL.
     pub struct Name(Vec<OSPathChar>);
     impl Name {
-        #[inline] pub fn as_slice(&self) -> &[OSPathChar] { &self.0 }
+        #[inline]
+        fn from_slice(s: &[OSPathChar]) -> Name {
+            let mut v = Vec::with_capacity(s.len() + 1);
+            v.extend_from_slice(s);
+            v.push(0);
+            Name(v)
+        }
+        /// Zig: `name.slice()` — borrow the name as `&[OSPathChar]` (no NUL).
+        #[inline] pub fn slice(&self) -> &[OSPathChar] { &self.0[..self.0.len() - 1] }
+        #[inline] pub fn as_slice(&self) -> &[OSPathChar] { self.slice() }
+        /// Zig: `name.sliceAssumeZ()` — `[:0]const u8` on POSIX.
+        #[cfg(not(windows))]
         #[inline] pub fn as_zstr(&self) -> &bun_core::ZStr {
-            // SAFETY: `0` always pushed as terminator on construction (T6 impl).
-            // Stub: unreachable until `iterate` is wired.
-            unsafe { bun_core::ZStr::from_raw(self.0.as_ptr().cast(), self.0.len()) }
+            // SAFETY: trailing NUL pushed in `from_slice`.
+            unsafe { bun_core::ZStr::from_raw(self.0.as_ptr(), self.0.len() - 1) }
+        }
+        #[cfg(windows)]
+        #[inline] pub fn as_zstr(&self) -> &bun_core::WStr {
+            // SAFETY: trailing NUL pushed in `from_slice`.
+            unsafe { bun_core::WStr::from_raw(self.0.as_ptr(), self.0.len() - 1) }
         }
     }
 
-    impl Name {
-        /// Zig: `name.slice()` — borrow the name as `&[OSPathChar]` (no NUL).
-        #[inline] pub fn slice(&self) -> &[OSPathChar] { &self.0 }
+    // 8-byte alignment matches `@alignOf(linux.dirent64)` / Darwin dirent /
+    // FILE_DIRECTORY_INFORMATION's LONGLONG-boundary requirement.
+    #[repr(C, align(8))]
+    struct AlignedBuf([u8; BUF_SIZE]);
+
+    /// `posix.DT.* → Entry.Kind` (Linux/Darwin/FreeBSD share the BSD `DT_*` values).
+    #[cfg(unix)]
+    #[inline]
+    fn kind_from_dt(dt: u8) -> EntryKind {
+        match dt {
+            libc::DT_BLK  => EntryKind::BlockDevice,
+            libc::DT_CHR  => EntryKind::CharacterDevice,
+            libc::DT_DIR  => EntryKind::Directory,
+            libc::DT_FIFO => EntryKind::NamedPipe,
+            libc::DT_LNK  => EntryKind::SymLink,
+            libc::DT_REG  => EntryKind::File,
+            libc::DT_SOCK => EntryKind::UnixDomainSocket,
+            #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+            libc::DT_WHT  => EntryKind::Whiteout,
+            // DT_UNKNOWN: some filesystems (bind mounts, FUSE, NFS) don't
+            // provide d_type. Callers should lstatat() to resolve when needed.
+            _ => EntryKind::Unknown,
+        }
+    }
+
+    // ── Linux ────────────────────────────────────────────────────────────
+    #[cfg(target_os = "linux")]
+    struct State {
+        buf: Box<AlignedBuf>,
+        index: usize,
+        end_index: usize,
+    }
+    #[cfg(target_os = "linux")]
+    impl State {
+        #[inline] fn new() -> State {
+            State { buf: Box::new(AlignedBuf([0u8; BUF_SIZE])), index: 0, end_index: 0 }
+        }
+        fn next(&mut self, dir: Fd) -> Result<Option<IteratorResult>> {
+            loop {
+                if self.index >= self.end_index {
+                    // glibc doesn't expose getdents64; go straight to the syscall
+                    // (matches Zig's `linux.getdents64` raw-syscall path).
+                    // SAFETY: buf is valid for BUF_SIZE bytes; fd is a plain c_int.
+                    let rc = unsafe {
+                        libc::syscall(
+                            libc::SYS_getdents64,
+                            dir.native() as libc::c_long,
+                            self.buf.0.as_mut_ptr(),
+                            BUF_SIZE,
+                        )
+                    };
+                    if rc < 0 {
+                        return Err(Error::from_code_int(super::last_errno(), Tag::getdents64));
+                    }
+                    if rc == 0 { return Ok(None); }
+                    self.index = 0;
+                    self.end_index = rc as usize;
+                }
+                // struct linux_dirent64 { u64 d_ino; i64 d_off; u16 d_reclen;
+                //                         u8 d_type; char d_name[]; }
+                let base = self.index;
+                let p = self.buf.0.as_ptr();
+                // SAFETY: kernel guarantees a complete record fits in [base..end_index).
+                let reclen = unsafe {
+                    core::ptr::read_unaligned(p.add(base + 16) as *const u16)
+                } as usize;
+                let d_type = unsafe { *p.add(base + 18) };
+                self.index = base + reclen;
+
+                // d_name is NUL-terminated within the record.
+                let name_ptr = unsafe { p.add(base + 19) };
+                let max = reclen.saturating_sub(19);
+                let mut len = 0usize;
+                // SAFETY: name_ptr[..max] lies inside the record.
+                while len < max && unsafe { *name_ptr.add(len) } != 0 { len += 1; }
+                let name = unsafe { core::slice::from_raw_parts(name_ptr, len) };
+
+                // skip . and .. entries
+                if name == b"." || name == b".." { continue; }
+
+                return Ok(Some(IteratorResult {
+                    name: Name::from_slice(name),
+                    kind: kind_from_dt(d_type),
+                }));
+            }
+        }
+    }
+
+    // ── macOS ────────────────────────────────────────────────────────────
+    #[cfg(target_os = "macos")]
+    struct State {
+        buf: Box<AlignedBuf>,
+        seek: i64,
+        index: usize,
+        end_index: usize,
+        received_eof: bool,
+    }
+    #[cfg(target_os = "macos")]
+    impl State {
+        #[inline] fn new() -> State {
+            State {
+                buf: Box::new(AlignedBuf([0u8; BUF_SIZE])),
+                seek: 0, index: 0, end_index: 0, received_eof: false,
+            }
+        }
+        fn next(&mut self, dir: Fd) -> Result<Option<IteratorResult>> {
+            unsafe extern "C" {
+                // Private libsystem symbol; same one Zig's `posix.system.__getdirentries64` hits.
+                fn __getdirentries64(
+                    fd: libc::c_int, buf: *mut u8, nbytes: usize, basep: *mut i64,
+                ) -> isize;
+            }
+            loop {
+                if self.index >= self.end_index {
+                    if self.received_eof { return Ok(None); }
+
+                    // getdirentries64() writes to the last 4 bytes of the
+                    // buffer to indicate EOF. If that value is not zero, we
+                    // have reached the end of the directory and can skip the
+                    // extra syscall.
+                    // https://github.com/apple-oss-distributions/xnu/blob/94d3b452840153a99b38a3a9659680b2a006908e/bsd/vfs/vfs_syscalls.c#L10444-L10470
+                    const GETDIRENTRIES64_EXTENDED_BUFSIZE: usize = 1024;
+                    const _: () = assert!(BUF_SIZE >= GETDIRENTRIES64_EXTENDED_BUFSIZE);
+                    self.received_eof = false;
+                    // Always zero the bytes where the flag will be written so
+                    // we don't confuse garbage with EOF.
+                    self.buf.0[BUF_SIZE - 4..].copy_from_slice(&[0, 0, 0, 0]);
+
+                    // SAFETY: buf is valid for BUF_SIZE bytes; seek is a valid *mut i64.
+                    let rc = unsafe {
+                        __getdirentries64(dir.native(), self.buf.0.as_mut_ptr(), BUF_SIZE, &mut self.seek)
+                    };
+                    if rc < 1 {
+                        if rc == 0 {
+                            self.received_eof = true;
+                            return Ok(None);
+                        }
+                        return Err(Error::from_code_int(super::last_errno(), Tag::getdirentries64));
+                    }
+                    self.index = 0;
+                    self.end_index = rc as usize;
+                    let flag = u32::from_ne_bytes(
+                        self.buf.0[BUF_SIZE - 4..].try_into().unwrap()
+                    );
+                    self.received_eof = self.end_index <= (BUF_SIZE - 4) && flag == 1;
+                }
+                // Darwin `struct dirent` (64-bit ino):
+                //   u64 d_ino; u64 d_seekoff; u16 d_reclen; u16 d_namlen;
+                //   u8 d_type; char d_name[];
+                let base = self.index;
+                let p = self.buf.0.as_ptr();
+                // SAFETY: kernel guarantees a complete record fits in [base..end_index).
+                let d_ino = unsafe {
+                    core::ptr::read_unaligned(p.add(base) as *const u64)
+                };
+                let reclen = unsafe {
+                    core::ptr::read_unaligned(p.add(base + 16) as *const u16)
+                } as usize;
+                let namlen = unsafe {
+                    core::ptr::read_unaligned(p.add(base + 18) as *const u16)
+                } as usize;
+                let d_type = unsafe { *p.add(base + 20) };
+                self.index = base + reclen;
+
+                let name = unsafe {
+                    core::slice::from_raw_parts(p.add(base + 21), namlen)
+                };
+
+                if name == b"." || name == b".." || d_ino == 0 { continue; }
+
+                return Ok(Some(IteratorResult {
+                    name: Name::from_slice(name),
+                    kind: kind_from_dt(d_type),
+                }));
+            }
+        }
+    }
+
+    // ── FreeBSD ──────────────────────────────────────────────────────────
+    #[cfg(target_os = "freebsd")]
+    struct State {
+        buf: Box<AlignedBuf>,
+        index: usize,
+        end_index: usize,
+    }
+    #[cfg(target_os = "freebsd")]
+    impl State {
+        #[inline] fn new() -> State {
+            State { buf: Box::new(AlignedBuf([0u8; BUF_SIZE])), index: 0, end_index: 0 }
+        }
+        fn next(&mut self, dir: Fd) -> Result<Option<IteratorResult>> {
+            unsafe extern "C" {
+                fn getdents(fd: libc::c_int, buf: *mut u8, nbytes: usize) -> isize;
+            }
+            loop {
+                if self.index >= self.end_index {
+                    // SAFETY: buf is valid for BUF_SIZE bytes.
+                    let rc = unsafe { getdents(dir.native(), self.buf.0.as_mut_ptr(), BUF_SIZE) };
+                    if rc < 0 {
+                        let e = super::last_errno();
+                        // FreeBSD reports ENOENT when iterating an unlinked
+                        // but still-open directory.
+                        if e == libc::ENOENT { return Ok(None); }
+                        return Err(Error::from_code_int(e, Tag::getdents64));
+                    }
+                    if rc == 0 { return Ok(None); }
+                    self.index = 0;
+                    self.end_index = rc as usize;
+                }
+                // FreeBSD 12+ `struct dirent` (ino64):
+                //   u64 d_fileno; i64 d_off; u16 d_reclen; u8 d_type; u8 pad0;
+                //   u16 d_namlen; u16 pad1; char d_name[];
+                let base = self.index;
+                let p = self.buf.0.as_ptr();
+                let fileno = unsafe { core::ptr::read_unaligned(p.add(base) as *const u64) };
+                let reclen = unsafe {
+                    core::ptr::read_unaligned(p.add(base + 16) as *const u16)
+                } as usize;
+                let d_type = unsafe { *p.add(base + 18) };
+                let namlen = unsafe {
+                    core::ptr::read_unaligned(p.add(base + 20) as *const u16)
+                } as usize;
+                self.index = base + reclen;
+
+                let name = unsafe {
+                    core::slice::from_raw_parts(p.add(base + 24), namlen)
+                };
+
+                if name == b"." || name == b".." || fileno == 0 { continue; }
+
+                return Ok(Some(IteratorResult {
+                    name: Name::from_slice(name),
+                    kind: kind_from_dt(d_type),
+                }));
+            }
+        }
+    }
+
+    // ── Windows ──────────────────────────────────────────────────────────
+    #[cfg(windows)]
+    struct State {
+        // PORT NOTE: `NtQueryDirectoryFile` + `FILE_DIRECTORY_INFORMATION`
+        // walk. Full impl lands with the NT/kernel32/libuv triad in
+        // `lib_draft_b1.rs` (b2-windows); see dir_iterator.zig:233-417.
+        _buf: Box<AlignedBuf>,
+        _index: usize,
+        _end_index: usize,
+        _first: bool,
+    }
+    #[cfg(windows)]
+    impl State {
+        #[inline] fn new() -> State {
+            State {
+                _buf: Box::new(AlignedBuf([0u8; BUF_SIZE])),
+                _index: 0, _end_index: 0, _first: true,
+            }
+        }
+        fn next(&mut self, _dir: Fd) -> Result<Option<IteratorResult>> {
+            todo!("b2-windows: NtQueryDirectoryFile loop (lib_draft_b1.rs)")
+        }
     }
 
     /// `DirIterator.NewWrappedIterator(if windows .u16 else .u8)`
@@ -98,8 +381,9 @@ pub mod dir_iterator {
         dir: Fd,
         // Windows: NtQueryDirectoryFile filter (UNICODE_STRING). On POSIX,
         // ignored (kernel readdir has no name filter; callers post-filter).
+        #[allow(dead_code)]
         name_filter: Option<Vec<u16>>,
-        // TODO(b2-blocked): platform-specific readdir state (DIR* / HANDLE+buf).
+        state: State,
     }
     impl WrappedIterator {
         #[inline] pub fn dir(&self) -> Fd { self.dir }
@@ -109,13 +393,19 @@ pub mod dir_iterator {
         pub fn set_name_filter(&mut self, filter: Option<&[u16]>) {
             self.name_filter = filter.map(|f| f.to_vec());
         }
-        pub fn next(&mut self) -> super::Result<Option<IteratorResult>> {
-            todo!("b2-blocked: bun_runtime::node::dir_iterator (T6) — vtable install pending")
+        /// Memory such as file names referenced in this returned entry becomes
+        /// invalid with subsequent calls to `next`, as well as when this `Dir`
+        /// is deinitialized.
+        // PORT NOTE: `Name` owns its buffer here (heap copy of d_name), so the
+        // Zig invalidation note is conservative; kept for API parity.
+        #[inline]
+        pub fn next(&mut self) -> Result<Option<IteratorResult>> {
+            self.state.next(self.dir)
         }
     }
 
     pub fn iterate(dir: Fd) -> WrappedIterator {
-        WrappedIterator { dir, name_filter: None }
+        WrappedIterator { dir, name_filter: None, state: State::new() }
     }
 }
 
@@ -529,7 +819,8 @@ mod posix_impl {
         // simplicity. Stack-local, no heap.
         let mut buf = [0u8; bun_core::MAX_PATH_BYTES];
         if sub_path.len() >= buf.len() {
-            return Err(Error::from_code_int(E::ENAMETOOLONG as _, Tag::mkdirat).with_path(sub_path));
+            // sys.zig:809 — `mkdiratZ` tags as `.mkdir`; keep consistent here.
+            return Err(Error::from_code_int(E::ENAMETOOLONG as _, Tag::mkdir).with_path(sub_path));
         }
         buf[..sub_path.len()].copy_from_slice(sub_path);
         let mut end = sub_path.len();
@@ -696,7 +987,8 @@ mod posix_impl {
     }
     #[cfg(all(unix, not(target_os = "linux")))]
     pub fn linkat_tmpfile(_tmpfd: Fd, _dirfd: Fd, name: &ZStr) -> Maybe<()> {
-        Err(Error::from_code_int(libc::EOPNOTSUPP, Tag::linkat).with_path(name.as_bytes()))
+        // sys.zig:4010 — `linkatTmpfile` tags as `.link` (matches Linux arm).
+        Err(Error::from_code_int(libc::EOPNOTSUPP, Tag::link).with_path(name.as_bytes()))
     }
     pub fn symlinkat(target: &ZStr, dirfd: Fd, dest: &ZStr) -> Maybe<()> {
         check_p!(unsafe { libc::symlinkat(target.as_ptr(), dirfd.native(), dest.as_ptr()) }, Tag::symlinkat, dest);

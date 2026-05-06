@@ -22,6 +22,21 @@ pub struct TransformList {
     pub v: Vec<Transform>,
 }
 
+// PORT NOTE: split out of the gated parse/to_css `impl TransformList` below
+// (B-2 round 15) — `TransformHandler` only needs deep_clone/eql.
+impl TransformList {
+    pub fn deep_clone(&self, _bump: &Bump) -> Self {
+        // TODO(port): css.implementDeepClone reflection — `Transform`/`TransformList`
+        // are `Clone`-via-derive (Vec + POD payloads); arena-aware DeepClone trait
+        // lands crate-wide in Phase B.
+        self.clone()
+    }
+
+    pub fn eql(&self, other: &Self) -> bool {
+        self == other
+    }
+}
+
 #[cfg(any())] // blocked_on: Parser::allocator() + Transform::parse + Printer::new signature + Printer field access
 impl TransformList {
     pub fn parse(input: &mut Parser<'_>) -> Result<Self> {
@@ -83,19 +98,6 @@ impl TransformList {
             item.to_css(dest)?;
         }
         Ok(())
-    }
-
-    pub fn deep_clone(&self, bump: &Bump) -> Self {
-        // TODO(port): css.implementDeepClone reflection — replace with crate-wide DeepClone derive
-        let mut v = Vec::with_capacity(self.v.len());
-        for item in self.v.iter() {
-            v.push(item.deep_clone(bump));
-        }
-        Self { v }
-    }
-
-    pub fn eql(&self, other: &Self) -> bool {
-        self == other
     }
 }
 
@@ -746,7 +748,13 @@ impl Translate {
         Ok(())
     }
 
-    pub fn to_transform(&self, bump: &Bump) -> Transform {
+}
+
+// PORT NOTE: split out of the gated parse/to_css `impl Translate` above (B-2
+// round 15) — these don't depend on Parser/Printer surface and are needed by
+// `TransformHandler`.
+impl Translate {
+    pub fn to_transform(&self, _bump: &Bump) -> Transform {
         match self {
             Translate::None => Transform::Translate3d {
                 x: LengthPercentage::zero(),
@@ -754,9 +762,9 @@ impl Translate {
                 z: Length::zero(),
             },
             Translate::Xyz { x, y, z } => Transform::Translate3d {
-                x: x.deep_clone(bump),
-                y: y.deep_clone(bump),
-                z: z.deep_clone(bump),
+                x: x.clone(),
+                y: y.clone(),
+                z: z.clone(),
             },
         }
     }
@@ -865,13 +873,18 @@ impl Rotate {
         self.angle.to_css(dest)
     }
 
+}
+
+// PORT NOTE: split out of the gated parse/to_css `impl Rotate` above (B-2
+// round 15) — needed by `TransformHandler`.
+impl Rotate {
     /// Converts the rotation to a transform function.
-    pub fn to_transform(&self, bump: &Bump) -> Transform {
+    pub fn to_transform(&self, _bump: &Bump) -> Transform {
         Transform::Rotate3d {
             x: self.x,
             y: self.y,
             z: self.z,
-            angle: self.angle.deep_clone(bump),
+            angle: self.angle,
         }
     }
 
@@ -946,7 +959,12 @@ impl Scale {
         Ok(())
     }
 
-    pub fn to_transform(&self, bump: &Bump) -> Transform {
+}
+
+// PORT NOTE: split out of the gated parse/to_css `impl Scale` above (B-2
+// round 15) — needed by `TransformHandler`.
+impl Scale {
+    pub fn to_transform(&self, _bump: &Bump) -> Transform {
         match self {
             Scale::None => Transform::Scale3d {
                 x: NumberOrPercentage::Number(1.0),
@@ -954,9 +972,9 @@ impl Scale {
                 z: NumberOrPercentage::Number(1.0),
             },
             Scale::Xyz { x, y, z } => Transform::Scale3d {
-                x: x.deep_clone(bump),
-                y: y.deep_clone(bump),
-                z: z.deep_clone(bump),
+                x: x.clone(),
+                y: y.clone(),
+                z: z.clone(),
             },
         }
     }

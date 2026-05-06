@@ -514,6 +514,15 @@ impl Length {
         self.clone()
     }
 
+    /// Zig: `Length.eql` — structural equality. `derive(PartialEq)` already
+    /// recurses through `Box<Calc<Length>>`, so this is a thin forwarder kept
+    /// so call sites ported verbatim from Zig (`.eql(&other)`) resolve without
+    /// pulling `CalcValue` into scope.
+    #[inline]
+    pub fn eql(&self, other: &Self) -> bool {
+        self == other
+    }
+
     // Zig `deinit` → Drop on Box<Calc<Length>> handles this.
 
     pub fn parse(input: &mut Parser) -> CssResult<Length> {

@@ -3379,14 +3379,21 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         self.scopes_in_order.truncate(scope_index);
 
         // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-        let children = &mut unsafe { &mut *parent }.children;
+        let children = &unsafe { &*parent }.children;
         // Remove the last child from the parent scope
         let last = children.len - 1;
         if children.slice()[last as usize].as_ptr() != to_discard {
             self.panic("Internal error", format_args!(""));
         }
 
-        let _ = children.pop();
+        // PORT NOTE (spec parity): Zig P.zig:2700-2707 does `var children =
+        // parent.children;` (a *value copy* of the BabyList header) then
+        // `_ = children.pop();` — the pop mutates only the local copy, so
+        // `parent.children` is left unchanged (contrast `discardScopesUpTo`
+        // which writes back via `defer scope.children = children`). The
+        // discarded scope therefore remains in `parent.children` and is later
+        // visited by `hoistSymbols`/`computeCharacterFrequency` recursion.
+        // Match spec: only assert above, do not actually pop.
     }
 
     #[cfg(any())] // blocked_on: S::Import field set; MacroState::RefData; ParsedPath fields; ImportItemForNamespaceMap API
@@ -5753,17 +5760,24 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         let value = define_data.value.expect("value_for_define on valueless DefineData");
         match value {
             js_ast::ExprData::EIdentifier(id) => {
+                // Spec P.zig:5510: `define_data.original_name().?` — identifier
+                // defines always carry a name; `.?` panics on null. Match the
+                // contract so `handle_identifier`'s trailing `find_symbol`
+                // rebind runs against the *resolved* scope ref, not the
+                // define-time ref silently passed through with `None`.
+                let original_name: &[u8] = define_data
+                    .original_name
+                    .as_deref()
+                    .expect("identifier define must have original_name");
                 // SAFETY: `define_data` borrows `p.define: &'a Define`; the boxed
                 // `original_name` lives for `'a`. Erase the local borrow lifetime
                 // to satisfy `handle_identifier`'s `Option<&'a [u8]>` param.
-                let original_name: Option<&'a [u8]> = define_data
-                    .original_name
-                    .as_deref()
-                    .map(|s| unsafe { core::mem::transmute::<&[u8], &'a [u8]>(s) });
+                let original_name: &'a [u8] =
+                    unsafe { core::mem::transmute::<&[u8], &'a [u8]>(original_name) };
                 return self.handle_identifier(
                     loc,
                     id,
-                    original_name,
+                    Some(original_name),
                     IdentifierOpts::new()
                         .with_assign_target(assign_target)
                         .with_is_delete_target(is_delete_target)
@@ -7527,10 +7541,23 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
         // PORT NOTE: BumpVec<'a, T> can't be moved into a global-allocator BabyList;
         // wrap the bump-backed storage as a Borrowed BabyList (Drop is no-op).
-        // SAFETY: bump-arena storage lives for 'a, which outlives the Ast.
-        let symbols = unsafe { js_ast::symbol::List::from_bump_slice(self.symbols.as_mut_slice()) };
-        // SAFETY: same — `parts` is a BumpVec<'a, Part>.
-        let parts_list = unsafe { BabyList::<js_ast::Part>::from_bump_slice(parts.as_mut_slice()) };
+        // Spec P.zig:6695-6696 uses `moveFromList`, which transfers storage and
+        // *zeroes the source*. Mirror that move-and-zero with
+        // `mem::replace(.., new_in)` + `into_bump_slice_mut()` so the leftover
+        // BumpVec is empty when `P`/the caller's `parts` drops — `Part` carries
+        // owning fields (`symbol_uses`, `declared_symbols`,
+        // `import_record_indices`) and aliasing the live BumpVec slice (the old
+        // `as_mut_slice()` shape) double-dropped them once the parser fell out
+        // of scope. Same fix `ImportRecordList::move_to_baby_list` applies.
+        let symbols_slice: &'a mut [js_ast::Symbol] =
+            core::mem::replace(&mut self.symbols, BumpVec::new_in(allocator)).into_bump_slice_mut();
+        // SAFETY: bump-arena storage lives for 'a, which outlives the Ast;
+        // Borrowed origin → BabyList::drop is a no-op.
+        let symbols = unsafe { js_ast::symbol::List::from_bump_slice(symbols_slice) };
+        let parts_slice: &'a mut [js_ast::Part] =
+            core::mem::replace(parts, BumpVec::new_in(allocator)).into_bump_slice_mut();
+        // SAFETY: same — `parts` was a BumpVec<'a, Part>; now leaked into the arena.
+        let parts_list = unsafe { BabyList::<js_ast::Part>::from_bump_slice(parts_slice) };
         // Spec P.zig:6697: `ImportRecord.List.moveFromList(&p.import_records)`.
         // Round-G fix: use the dedicated adapter so the parser-side list is
         // left empty (Zig move-and-zero) and the BumpVec is leaked into the

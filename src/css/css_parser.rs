@@ -1903,16 +1903,9 @@ impl<'a, T: CustomAtRuleParser> AtRuleParser for NestedRuleParser<'a, T> {
                 Ok(())
             }
             AtRulePrelude::Layer(mut layer) => {
-                let name = if layer.len() == 0 {
-                    None
-                } else if layer.len() == 1 {
-                    // PORT NOTE: Zig copied the first slot; SmallList<T> has
-                    // no `Clone` (LayerName isn't Clone). Own it via swap_remove
-                    // — `layer` is consumed by the match arm anyway.
-                    Some(layer.swap_remove(0))
-                } else {
+                if layer.len() > 1 {
                     return Err(input.new_error(BasicParseErrorKind::at_rule_body_invalid));
-                };
+                }
 
                 // blocked_on: `LayerName: Clone` — `on_layer_rule` /
                 // `push_to_enclosing_layer` want by-value clones; the Zig
@@ -1920,7 +1913,22 @@ impl<'a, T: CustomAtRuleParser> AtRuleParser for NestedRuleParser<'a, T> {
                 // shallow `Clone` (or `deep_clone(&Arena)` is threaded), the
                 // bundler layer-tracking hooks stay gated.
                 #[cfg(any())] {
+                // Must observe `layer` BEFORE `swap_remove` drains it below —
+                // Zig's `prelude.layer.at(0).*` is a copy, so its
+                // `onLayerRule(&prelude.layer)` still sees the 1-element list.
                 T::on_layer_rule(this.at_rule_parser, &layer);
+                }
+
+                // PORT NOTE: Zig copied the first slot; SmallList<T> has
+                // no `Clone` (LayerName isn't Clone). Own it via swap_remove
+                // — `layer` is consumed by the match arm anyway.
+                let name = if layer.len() == 1 {
+                    Some(layer.swap_remove(0))
+                } else {
+                    None
+                };
+
+                #[cfg(any())] {
                 let old_len = T::enclosing_layer_length(this.at_rule_parser);
                 if let Some(ref n) = name {
                     T::push_to_enclosing_layer(this.at_rule_parser, n.clone());

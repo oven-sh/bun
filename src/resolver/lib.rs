@@ -2758,10 +2758,51 @@ mod options {
         }
     }
 
-    // TODO(b2-blocked): real per-target main-field tables (bundler/options.zig).
+    // Port of `bundler/options.zig` `Target.DefaultMainFields`.
+    //
+    // These are the per-target default `--main-fields` orderings. `BundleOptions.main_fields`
+    // is initialised to alias one of these slices (see options.zig:1712 / 2022), and the
+    // resolver's `auto_main` heuristic at `load_as_main_field` compares the *pointer* of
+    // `opts.main_fields` against `DEFAULT_MAIN_FIELDS.get(opts.target)` to detect whether the
+    // user explicitly set a main-fields list. The previous `&[]` stub made that check always
+    // false, silently disabling the module-vs-main dual-resolution path.
     pub struct TargetMainFields;
+
+    // Note that this means if a package specifies "module" and "main", the ES6
+    // module will not be selected. This means tree shaking will not work when
+    // targeting node environments.
+    //
+    // Some packages incorrectly treat the "module" field as "code for the browser". It
+    // actually means "code for ES6 environments" which includes both node and the browser.
+    //
+    // For example, the package "@firebase/app" prints a warning on startup about
+    // the bundler incorrectly using code meant for the browser if the bundler
+    // selects the "module" field instead of the "main" field.
+    //
+    // This is unfortunate but it's a problem on the side of those packages.
+    // They won't work correctly with other popular bundlers (with node as a target) anyway.
+    static DEFAULT_MAIN_FIELDS_NODE: &[&[u8]] = &[b"main", b"module"];
+
+    // Note that this means if a package specifies "main", "module", and
+    // "browser" then "browser" will win out over "module". This is the
+    // same behavior as webpack: https://github.com/webpack/webpack/issues/4674.
+    //
+    // This is deliberate because the presence of the "browser" field is a
+    // good signal that this should be preferred. Some older packages might only use CJS in their "browser"
+    // but in such a case they probably don't have any ESM files anyway.
+    static DEFAULT_MAIN_FIELDS_BROWSER: &[&[u8]] = &[b"browser", b"module", b"jsnext:main", b"main"];
+    static DEFAULT_MAIN_FIELDS_BUN: &[&[u8]] = &[b"module", b"main", b"jsnext:main"];
+
     impl TargetMainFields {
-        pub fn get(&self, _t: Target) -> &'static [&'static [u8]] { &[] }
+        pub fn get(&self, t: Target) -> &'static [&'static [u8]] {
+            match t {
+                Target::Node => DEFAULT_MAIN_FIELDS_NODE,
+                Target::Browser => DEFAULT_MAIN_FIELDS_BROWSER,
+                Target::Bun | Target::BunMacro | Target::BakeServerComponentsSsr => {
+                    DEFAULT_MAIN_FIELDS_BUN
+                }
+            }
+        }
     }
     pub const DEFAULT_MAIN_FIELDS: TargetMainFields = TargetMainFields;
 }

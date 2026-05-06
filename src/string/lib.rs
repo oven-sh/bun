@@ -568,6 +568,68 @@ impl Default for String {
 unsafe impl Send for String {}
 unsafe impl Sync for String {}
 
+// ──────────────────────────────────────────────────────────────────────────
+// `OwnedString` — RAII `defer s.deref()`.
+//
+// `String` is intentionally `#[derive(Copy)]` so it stays bit-identical to the
+// C++ `BunString` for FFI by-value passing (matching Zig's value-type
+// `bun.String`). That precludes `impl Drop for String`. Instead, sites that
+// receive a +1 ref (any `clone*`/`create*`/`to_bun_string` constructor) wrap
+// it in `OwnedString` to get scope-exit `deref()` — the Rust spelling of Zig's
+// pervasive `defer s.deref()`.
+//
+// Prefer this over ad-hoc `scopeguard::guard(s, |s| s.deref())` so the
+// pattern is greppable and `?`-early-returns can't skip the release.
+// ──────────────────────────────────────────────────────────────────────────
+#[repr(transparent)]
+pub struct OwnedString(String);
+
+impl OwnedString {
+    #[inline]
+    pub const fn new(s: String) -> Self {
+        Self(s)
+    }
+    /// Disarm: return the inner `String` without `deref()`ing it (transfers
+    /// the +1 to the caller — Zig's "no defer, returned by value").
+    #[inline]
+    pub fn into_inner(self) -> String {
+        let s = self.0;
+        core::mem::forget(self);
+        s
+    }
+    /// Borrow the inner `String` by value (it's `Copy`) without bumping the
+    /// refcount. Do NOT `deref()` the result.
+    #[inline]
+    pub fn get(&self) -> String {
+        self.0
+    }
+}
+impl core::ops::Deref for OwnedString {
+    type Target = String;
+    #[inline]
+    fn deref(&self) -> &String {
+        &self.0
+    }
+}
+impl core::ops::DerefMut for OwnedString {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut String {
+        &mut self.0
+    }
+}
+impl Drop for OwnedString {
+    #[inline]
+    fn drop(&mut self) {
+        self.0.deref();
+    }
+}
+impl From<String> for OwnedString {
+    #[inline]
+    fn from(s: String) -> Self {
+        Self(s)
+    }
+}
+
 impl core::fmt::Display for String {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let s = self.to_utf8_without_ref();

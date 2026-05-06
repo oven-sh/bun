@@ -173,7 +173,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     fn find_shell_impl(path: &[u8], cwd: &[u8], path_buf: &mut PathBuffer) -> Option<usize> {
         #[cfg(windows)]
         {
-            let _ = (path, cwd, path_buf);
+            let _ = (path, cwd);
             const WIN: &[u8] = b"C:\\Windows\\System32\\cmd.exe";
             path_buf[..WIN.len()].copy_from_slice(WIN);
             return Some(WIN.len());
@@ -1442,6 +1442,12 @@ impl RunCommand {
             return Ok(true);
         }
 
+        // TODO(b2-blocked): `bun feedback` — when `ctx.filters.is_empty() &&
+        // !ctx.workspaces && Cli::cmd() == AutoCommand && target_name ==
+        // b"feedback"`, dispatch to `Self::bun_feedback(ctx)` (run_command.zig
+        // :1921-1925). Blocked on `cli::Cli::cmd()` being available in this
+        // tier; the impl is preserved in `phase_a_draft::bun_feedback`.
+
         if log_errors {
             let default_loader = Self::default_loader_for(target_name);
             if default_loader.map(Loader::is_javascript_like_or_json).unwrap_or(false)
@@ -1653,17 +1659,21 @@ impl RunCommand {
         let normalized: Box<[u8]> = if paths::is_absolute(&filename) {
             filename
         } else {
+            // PORT NOTE (run_command.zig:1976-1984): the spec writes
+            // `path_buf[cwd.len] = std.fs.path.sep_posix` (always `/`, NOT the
+            // platform separator) and then runs the result through
+            // `resolve_path.joinAbsStringBuf(.., .loose)` to collapse `.`/`..`.
             let mut cwd_buf = PathBuffer::uninit();
             let cwd = bun_core::getcwd(&mut cwd_buf)?;
-            let cwd_bytes = cwd.as_bytes();
-            let mut joined = Vec::with_capacity(cwd_bytes.len() + 1 + filename.len());
-            joined.extend_from_slice(cwd_bytes);
-            joined.push(paths::SEP);
-            joined.extend_from_slice(&filename);
-            // TODO(port): `resolve_path::join_abs_string_buf` for `..`/`.`
-            // normalisation (loose style). Phase B once the free fn is
-            // re-exported at `bun_paths::` root.
-            joined.into_boxed_slice()
+            let cwd_len = cwd.as_bytes().len();
+            cwd_buf[cwd_len] = b'/';
+            let mut out_buf = PathBuffer::uninit();
+            let joined = paths::resolve_path::join_abs_string_buf::<paths::platform::Loose>(
+                &cwd_buf[..cwd_len + 1],
+                &mut out_buf.0,
+                &[&filename],
+            );
+            joined.to_vec().into_boxed_slice()
         };
 
         // PORT NOTE (run_command.zig:1987-1992): this arm calls `Run.boot`

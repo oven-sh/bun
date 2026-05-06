@@ -659,6 +659,7 @@ pub mod analyze_transpiled_module {
 pub struct RuntimeTranspilerCacheVTable {
     pub put: unsafe fn(owner: *mut (), output: &[u8], source_map: &[u8], module_info: &[u8]),
 }
+#[derive(Clone, Copy)]
 pub struct RuntimeTranspilerCacheRef {
     pub owner: *mut (),
     pub vtable: &'static RuntimeTranspilerCacheVTable,

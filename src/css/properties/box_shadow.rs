@@ -129,11 +129,12 @@ impl BoxShadow {
         dest.write_char(b' ')?;
         self.y_offset.to_css(dest)?;
 
-        if !self.blur.eql(&Length::zero()) || !self.spread.eql(&Length::zero()) {
+        // PORT NOTE: Zig `Length.eql` → Rust `PartialEq` (see values/length.rs).
+        if self.blur != Length::zero() || self.spread != Length::zero() {
             dest.write_char(b' ')?;
             self.blur.to_css(dest)?;
 
-            if !self.spread.eql(&Length::zero()) {
+            if self.spread != Length::zero() {
                 dest.write_char(b' ')?;
                 self.spread.to_css(dest)?;
             }
@@ -161,12 +162,13 @@ impl BoxShadow {
     }
 
     pub fn eql(&self, rhs: &Self) -> bool {
-        // PORT NOTE: Zig css.implementEql iterated @typeInfo fields. Expanded explicitly.
+        // PORT NOTE: Zig css.implementEql iterated @typeInfo fields. Expanded
+        // explicitly. `Length` Zig `eql` → Rust `PartialEq` (values/length.rs).
         self.color.eql(&rhs.color)
-            && self.x_offset.eql(&rhs.x_offset)
-            && self.y_offset.eql(&rhs.y_offset)
-            && self.blur.eql(&rhs.blur)
-            && self.spread.eql(&rhs.spread)
+            && self.x_offset == rhs.x_offset
+            && self.y_offset == rhs.y_offset
+            && self.blur == rhs.blur
+            && self.spread == rhs.spread
             && self.inset == rhs.inset
     }
 

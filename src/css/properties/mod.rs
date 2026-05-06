@@ -234,110 +234,69 @@ mod generic_registrations {
         }
     }
 
-    // ── crate::properties::* leaves with inherent parse/to_css ──
+    // ── crate::properties::* leaves with REAL inherent parse/to_css ──
+    // NOTE: types deriving `css::DefineEnumProperty` already get
+    // `generics::{Parse,ParseWithOptions,ToCss}` from the derive — listing
+    // them here would conflict (E0119). Only hand-rolled / `DeriveParse` /
+    // `DeriveToCss` payloads remain.
     impl_generic_parse_tocss!(
         // align
-        align::AlignContent,
-        align::AlignItems,
-        align::AlignSelf,
         align::Gap,
-        align::GapValue,
         align::JustifyContent,
         align::JustifyItems,
         align::JustifySelf,
         align::PlaceContent,
         align::PlaceItems,
         align::PlaceSelf,
-        // background
+        // border_image
+        border_image::BorderImageRepeat,
+        // css_modules
+        css_modules::Composes,
+        // overflow
+        overflow::Overflow,
+        // position
+        position::Position,
+        // PropertyId (used as `SmallList<PropertyId, 1>` for `transition-property`)
+        properties_generated::PropertyId,
+    );
+
+    // ── leaves whose inherent `parse`/`to_css` are still `#[cfg(any())]`-gated.
+    //    The trait impls compile (so `Property::{parse,value_to_css}` are real
+    //    functions); calling them panics with the gated-type name. Move a type
+    //    up to the block above when its inherent body un-gates.
+    impl_generic_parse_tocss!(@stub
         background::Background,
-        background::BackgroundAttachment,
-        background::BackgroundClip,
-        background::BackgroundOrigin,
         background::BackgroundPosition,
         background::BackgroundRepeat,
         background::BackgroundSize,
-        // border (non-shorthand leaves)
-        border::LineStyle,
-        border::BorderSideWidth,
-        // border_image / border_radius
         border_image::BorderImage,
-        border_image::BorderImageRepeat,
         border_image::BorderImageSlice,
         border_image::BorderImageSideWidth,
         border_radius::BorderRadius,
-        // box_shadow
         box_shadow::BoxShadow,
-        // css_modules
-        css_modules::Composes,
-        // display
         display::Display,
-        display::Visibility,
-        // flex
-        flex::BoxAlign,
-        flex::BoxDirection,
-        flex::BoxLines,
-        flex::BoxOrient,
-        flex::BoxPack,
         flex::Flex,
-        flex::FlexDirection,
         flex::FlexFlow,
-        flex::FlexItemAlign,
-        flex::FlexLinePack,
-        flex::FlexPack,
-        flex::FlexWrap,
-        // font
         font::Font,
         font::FontFamily,
         font::FontSize,
         font::FontStretch,
         font::FontStyle,
-        font::FontVariantCaps,
         font::FontWeight,
         font::LineHeight,
-        // masking
-        masking::GeometryBox,
         masking::Mask,
         masking::MaskBorder,
-        masking::MaskBorderMode,
-        masking::MaskClip,
-        masking::MaskComposite,
-        masking::MaskMode,
-        masking::MaskType,
-        masking::WebKitMaskComposite,
-        masking::WebKitMaskSourceType,
-        // outline
-        outline::OutlineStyle,
-        // overflow
-        overflow::Overflow,
-        overflow::OverflowKeyword,
-        overflow::TextOverflow,
-        // position
-        position::Position,
-        // size
         size::AspectRatio,
         size::BoxSizing,
         size::MaxSize,
         size::Size,
-        // text
-        text::Direction,
         text::TextShadow,
-        // transform
-        transform::BackfaceVisibility,
-        transform::Perspective,
         transform::Rotate,
         transform::Scale,
-        transform::TransformBox,
         transform::TransformList,
-        transform::TransformStyle,
         transform::Translate,
-        // transition
         transition::Transition,
-        // ui
         ui::ColorScheme,
-        // wide keyword (`all:`)
-        super::CSSWideKeyword,
-        // PropertyId (used as `SmallList<PropertyId, 1>` for `transition-property`)
-        properties_generated::PropertyId,
     );
 
     // `GenericBorder<S, P>` covers Border / BorderTop / … / Outline. The

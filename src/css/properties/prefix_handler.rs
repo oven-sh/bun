@@ -38,24 +38,33 @@ impl FallbackHandler {
 
         let allocator = dest.bump();
 
+        // PORT NOTE: Zig's `inline for` over `std.meta.fields(FallbackHandler)` dispatched
+        // each (field, Property variant) pair via a single generic body using `@field` /
+        // `@unionInit` + `css.generic.{deepClone,isCompatible,hasGetFallbacks}`. Rust has
+        // no field reflection and the generic-trait surface (`DeepClone`/`IsCompatible`/
+        // `get_fallbacks` on `SmallList<TextShadow,1>`) is still partially gated, so we
+        // expand each pair via a macro that takes per-type closures for those three ops.
+        // This keeps the *control flow* identical while letting each payload type use its
+        // own inherent methods until the trait lattice un-gates.
         macro_rules! handle_unprefixed {
-            ($self_field:ident, $Variant:ident) => {
+            (
+                $self_field:ident,
+                $Variant:ident,
+                deep_clone = $dc:expr,
+                fallbacks  = $fb:expr,
+                is_compat  = $ic:expr
+            ) => {
                 if let Property::$Variant(payload) = property {
-                    let mut val = css::generic::deep_clone(payload, allocator);
+                    let mut val = ($dc)(payload, allocator);
 
                     if $self_field.is_none() {
-                        let mut fallbacks = val.get_fallbacks(allocator, context.targets);
                         // PORT NOTE: `has_fallbacks` only used in the vendor-prefixed branch in Zig.
-                        let _has_fallbacks = !fallbacks.is_empty();
-
-                        for fallback in fallbacks.drain() {
-                            dest.push(Property::$Variant(fallback));
-                        }
+                        ($fb)(&mut val, allocator, context.targets, dest);
                     }
 
                     if $self_field.is_none()
                         || (context.targets.browsers.is_some()
-                            && !val.is_compatible(context.targets.browsers.unwrap()))
+                            && !($ic)(&val, context.targets.browsers.unwrap()))
                     {
                         *$self_field = Some(dest.len());
                         dest.push(Property::$Variant(val));
@@ -71,48 +80,6 @@ impl FallbackHandler {
             };
         }
 
-        macro_rules! handle_prefixed {
-            ($self_field:ident, $Variant:ident, $FeatureVariant:ident) => {
-                if let Property::$Variant((payload, prefix)) = property {
-                    let mut val = css::generic::deep_clone(payload, allocator);
-                    let mut prefix = *prefix;
-
-                    if $self_field.is_none() {
-                        let mut fallbacks = val.get_fallbacks(allocator, context.targets);
-                        let has_fallbacks = !fallbacks.is_empty();
-
-                        for fallback in fallbacks.drain() {
-                            dest.push(Property::$Variant((fallback, prefix)));
-                        }
-                        // TODO(port): Zig source reads `@field(property, field.name[1])` here,
-                        // which indexes the *field name string* (a bug) and would mutate through
-                        // `*const Property`. Ported as the apparent intent: if fallbacks were
-                        // emitted and the incoming prefix contains `.none`, narrow to `.none`.
-                        // Verify against lightningcss upstream in Phase B.
-                        if has_fallbacks && prefix.contains(VendorPrefix::NONE) {
-                            prefix = VendorPrefix::NONE;
-                        }
-                    }
-
-                    if $self_field.is_none()
-                        || (context.targets.browsers.is_some()
-                            && !val.is_compatible(context.targets.browsers.unwrap()))
-                    {
-                        *$self_field = Some(dest.len());
-                        dest.push(Property::$Variant((val, prefix)));
-                    } else if let Some(index) = *$self_field {
-                        dest[index] = Property::$Variant((val, prefix));
-                    } else {
-                        drop(val);
-                    }
-
-                    return true;
-                }
-                // suppress unused-macro-input warning when this arm is the only prefixed one
-                let _ = Feature::$FeatureVariant;
-            };
-        }
-
         // PORT NOTE: reshaped for borrowck — pre-borrow each self.<field> as &mut so the
         // macro body can both read and assign it without re-borrowing `self`.
         let this = &mut *self;
@@ -120,11 +87,37 @@ impl FallbackHandler {
         let text_shadow = &mut this.text_shadow;
 
         // PropertyIdTag::Color has no vendor prefix.
-        handle_unprefixed!(color, Color);
+        handle_unprefixed!(
+            color, Color,
+            deep_clone = |c: &css::css_values::color::CssColor, a| c.deep_clone(a),
+            fallbacks = |v: &mut css::css_values::color::CssColor, a: &bun_alloc::Arena, t, d: &mut css::DeclarationList| {
+                let fbs = v.get_fallbacks(a, t);
+                for fb in fbs.to_owned_slice().into_vec() {
+                    d.push(Property::Color(fb));
+                }
+            },
+            is_compat = |v: &css::css_values::color::CssColor, b| v.is_compatible(b)
+        );
         // PropertyIdTag::TextShadow has no vendor prefix.
-        // TODO(port): confirm `PropertyIdTag::has_vendor_prefix(TextShadow)` is false; the Zig
-        // computed this at comptime. If it is actually prefixed, swap to `handle_prefixed!`.
-        handle_unprefixed!(text_shadow, TextShadow);
+        // TODO(port): `SmallList<TextShadow,1>` lacks `get_fallbacks`/`is_compatible` until
+        // `small_list::fallbacks_gated` un-gates. Mirror Zig's "no `getFallbacks` decl"
+        // path (skip fallback emission) and hand-roll per-element compat.
+        handle_unprefixed!(
+            text_shadow, TextShadow,
+            deep_clone = |l: &css::SmallList<css::css_properties::text::TextShadow, 1>, a: &bun_alloc::Arena| {
+                let mut out = css::SmallList::<css::css_properties::text::TextShadow, 1>::init_capacity(l.len());
+                for s in l.slice() { out.append(s.deep_clone(a)); }
+                out
+            },
+            fallbacks = |_v: &mut css::SmallList<css::css_properties::text::TextShadow, 1>, _a, _t, _d: &mut css::DeclarationList| {
+                // blocked_on: small_list::get_fallbacks_text_shadow un-gate
+            },
+            is_compat = |_v: &css::SmallList<css::css_properties::text::TextShadow, 1>, _b| {
+                // blocked_on: TextShadow::is_compatible un-gate (text.rs) — always-true
+                // matches Zig fallback when no `isCompatible` decl exists.
+                true
+            }
+        );
 
         if let Property::Unparsed(val) = property {
             let val: &UnparsedProperty = val;
@@ -165,7 +158,11 @@ impl FallbackHandler {
                 return false;
             };
 
+            // TODO(port): re-enable once `PropertyHandlerContext::add_unparsed_fallbacks`
+            // un-gates (blocked on `SupportsCondition::eql` in context.rs).
+            #[cfg(any())]
             context.add_unparsed_fallbacks(&mut unparsed);
+            let _ = &mut unparsed;
             if let Some(i) = *index {
                 dest[i] = Property::Unparsed(unparsed);
             } else {

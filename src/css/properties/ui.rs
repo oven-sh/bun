@@ -2,7 +2,7 @@
 use crate as css;
 
 use css::css_properties::Property;
-use css::{Printer, PrintErr, SmallList};
+use css::{Printer, PrintErr, PropertyHandlerContext, SmallList};
 
 use css::css_values::number::CSSNumber;
 #[allow(unused_imports)]

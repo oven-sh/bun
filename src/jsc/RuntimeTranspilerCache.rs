@@ -838,16 +838,17 @@ impl RuntimeTranspilerCache {
         // `is_utf8()` instead. Zig's `.utf8` arm borrowed `source_code.byteSlice()`
         // without copying; `OutputCode::Utf8` here owns a `Box<[u8]>`, so we
         // copy. PERF(port): add a borrowed `OutputCode` variant in Phase B.
+        //
+        // Zig: `else => .{ .string = source_code }` — by-value copy, **no**
+        // `dupeRef()` and **no** matching `deref()`. `BunString` is `Copy` and
+        // `OutputCode` has no `Drop`, so `*source_code` here is the same
+        // refcount-neutral borrow. (A previous revision did `dupe_ref()` +
+        // scopeguard `deref()`, which was balanced but redundant.)
         let output_code: OutputCode = if source_code.is_utf8() {
             OutputCode::Utf8(Box::from(source_code.byte_slice()))
         } else {
-            OutputCode::String(source_code.dupe_ref())
+            OutputCode::String(*source_code)
         };
-        let _output_code_guard = scopeguard::guard((), |_| {
-            if let OutputCode::String(s) = &output_code {
-                s.deref();
-            }
-        });
 
         let cache_file_path = Self::get_cache_file_path(&mut cache_file_path_buf, input_hash)?;
         bun_core::scoped_log!(

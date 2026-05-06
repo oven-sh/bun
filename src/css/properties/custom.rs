@@ -9,10 +9,11 @@
 // `EnvironmentVariableName::{parse, to_css}`, `Function::to_css`,
 // `CustomProperty::parse`, `UnparsedProperty::parse` are now real.
 //
-// A few leaf calls (Url::parse/to_css, DashedIdentReference::parse_with_options/
-// to_css, CustomIdent::to_css) are still `#[cfg(any())]`-gated in *other*
-// files; those bodies are inlined verbatim under `mod ext` below so the hub
-// compiles without touching `values/{url,ident}.rs`. Remaining internal
+// A few leaf calls (Url::parse/to_css, CustomIdent::to_css) are still
+// `#[cfg(any())]`-gated in *other* files; those bodies are inlined verbatim
+// under `mod ext` below so the hub compiles without touching
+// `values/{url,ident}.rs`. `DashedIdentReference::{parse_with_options,to_css}`
+// are now real and forwarded directly. Remaining internal
 // `#[cfg(any())]` gates carry `blocked_on:` notes for the next round
 // (ComponentParser un-gate from `values::color::gated_full_impl`;
 // `properties::animation` un-gate; `get_fallback` chain).

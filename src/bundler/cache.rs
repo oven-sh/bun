@@ -78,7 +78,56 @@ impl RuntimeTranspilerCache {
     pub fn set_disabled(v: bool) {
         DISABLED.store(v, Ordering::Relaxed);
     }
+
+    /// Spec: src/jsc/RuntimeTranspilerCache.zig:683 `put`.
+    ///
+    /// Bundler-tier body stores the printer output on `self` (Zig:
+    /// `bun.String.cloneLatin1` → owned bytes here per the MOVE_DOWN note at
+    /// the top of this block). The disk-persist tail (`toFile(...)`) lives in
+    /// T6 (`src/jsc/RuntimeTranspilerCache.rs::to_file`) — it pulls in
+    /// `bun.String`/`bun_sys::Dir` and the cache-dir resolver, none of which
+    /// belong below T6. Zig swallows `toFile` errors, so omitting it here is
+    /// observationally the "write failed" path; the in-memory `output_code`
+    /// hand-off to T6 (RuntimeTranspilerStore reads `cache.output_code.take()`)
+    /// is preserved.
+    pub fn put(&mut self, output_code_bytes: &[u8], sourcemap: &[u8], esm_record: &[u8]) {
+        if self.input_hash.is_none() || Self::disabled() {
+            return;
+        }
+        debug_assert!(self.entry.is_none());
+        self.output_code = Some(Box::<[u8]>::from(output_code_bytes));
+        // `toFile(self.input_byte_length.?, self.input_hash.?, self.features_hash.?,
+        //   sourcemap, esm_record, output_code, self.exports_kind)` — T6.
+        let _ = (sourcemap, esm_record);
+    }
+
+    /// Erase a live `*mut Self` into the js_printer dispatch handle so
+    /// `js_printer::Options.runtime_transpiler_cache` can call back without
+    /// naming this crate. See CYCLEBREAK.md §Dispatch.
+    #[inline]
+    pub fn as_printer_ref(
+        this: core::ptr::NonNull<Self>,
+    ) -> bun_js_printer::RuntimeTranspilerCacheRef {
+        bun_js_printer::RuntimeTranspilerCacheRef {
+            owner: this.as_ptr().cast::<()>(),
+            vtable: &RUNTIME_TRANSPILER_CACHE_VTABLE,
+        }
+    }
 }
+
+/// SAFETY: `owner` was produced by `RuntimeTranspilerCache::as_printer_ref`
+/// from a `NonNull<RuntimeTranspilerCache>` that outlives the print call;
+/// js_printer invokes this at most once, after all writer output is flushed.
+unsafe fn rtc_vtable_put(owner: *mut (), output: &[u8], source_map: &[u8], module_info: &[u8]) {
+    unsafe { (*owner.cast::<RuntimeTranspilerCache>()).put(output, source_map, module_info) }
+}
+
+/// Bundler-tier vtable for `js_printer::RuntimeTranspilerCacheRef`. T6 may
+/// supply its own (with the `to_file` disk write) when it constructs the ref
+/// directly; this one backs the bundler's `ParseResult.runtime_transpiler_cache`
+/// round-trip.
+pub static RUNTIME_TRANSPILER_CACHE_VTABLE: bun_js_printer::RuntimeTranspilerCacheVTable =
+    bun_js_printer::RuntimeTranspilerCacheVTable { put: rtc_vtable_put };
 
 /// Mirrors `RuntimeTranspilerCache.ModuleType` (RuntimeTranspilerCache.zig:399).
 ///

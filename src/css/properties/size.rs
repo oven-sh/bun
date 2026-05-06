@@ -134,6 +134,11 @@ impl Size {
         }
     }
 
+}
+
+// PORT NOTE: split out of the gated `impl Size` above (B-2 round 15) — these
+// don't depend on `parse`/`to_css` surface and are needed by `SizeHandler`.
+impl Size {
     pub fn is_compatible(&self, browsers: css::targets::Browsers) -> bool {
         use css::compat::Feature as F;
         match self {
@@ -161,9 +166,10 @@ impl Size {
         }
     }
 
-    pub fn deep_clone(&self, bump: &Bump) -> Self {
-        // TODO(port): css.implementDeepClone — comptime field-walk; map to DeepClone trait/derive.
-        css::implement_deep_clone(self, bump)
+    pub fn deep_clone(&self, _bump: &Bump) -> Self {
+        // TODO(port): css.implementDeepClone — comptime field-walk; `Size` carries
+        // only `LengthPercentage`/`VendorPrefix` payloads, both `Clone`-via-derive.
+        self.clone()
     }
 
     pub fn eql(lhs: &Self, rhs: &Self) -> bool {
@@ -274,6 +280,11 @@ impl MaxSize {
         }
     }
 
+}
+
+// PORT NOTE: split out of the gated `impl MaxSize` above (B-2 round 15) — these
+// don't depend on `parse`/`to_css` surface and are needed by `SizeHandler`.
+impl MaxSize {
     pub fn is_compatible(&self, browsers: css::targets::Browsers) -> bool {
         use css::compat::Feature as F;
         match self {
@@ -301,9 +312,10 @@ impl MaxSize {
         }
     }
 
-    pub fn deep_clone(&self, bump: &Bump) -> Self {
-        // TODO(port): css.implementDeepClone — comptime field-walk; map to DeepClone trait/derive.
-        css::implement_deep_clone(self, bump)
+    pub fn deep_clone(&self, _bump: &Bump) -> Self {
+        // TODO(port): css.implementDeepClone — comptime field-walk; `MaxSize` carries
+        // only `LengthPercentage`/`VendorPrefix` payloads, both `Clone`-via-derive.
+        self.clone()
     }
 
     pub fn eql(lhs: &Self, rhs: &Self) -> bool {
@@ -432,30 +444,10 @@ pub struct SizeHandler {
     pub category: PropertyCategory,
 }
 
-impl SizeHandler {
-    // No-op stubs so `DeclarationHandler` compiles; real bodies are gated below.
-    #[inline]
-    pub fn handle_property(
-        &mut self,
-        _property: &Property,
-        _dest: &mut DeclarationList<'_>,
-        _context: &mut PropertyHandlerContext<'_>,
-    ) -> bool {
-        false
-    }
-    #[inline]
-    pub fn finalize(
-        &mut self,
-        _dest: &mut DeclarationList<'_>,
-        _context: &mut PropertyHandlerContext<'_>,
-    ) {
-    }
-}
-
-#[cfg(any())] // blocked_on: prefixes::Feature method names + Property variant payloads + UnparsedProperty surface
-mod size_handler_body {
-use super::*;
-use css::Feature;
+// PORT NOTE: un-gated B-2 round 15 — Property variants + prefixes::Feature +
+// UnparsedProperty surface are real now. `context.allocator` was dropped from
+// PropertyHandlerContext; the arena is recovered via `dest.bump()`.
+use css::compat::Feature;
 
 // ─── helper macros (Zig used `inline fn` + `comptime []const u8` field names + @field/@unionInit) ───
 //
@@ -478,23 +470,25 @@ macro_rules! property_helper {
             $this.flush($dest, $context);
         }
 
-        $this.$field = Some($value.deep_clone($context.allocator));
+        $this.$field = Some($value.deep_clone($dest.bump()));
         $this.category = $category;
         $this.has_any = true;
     }};
 }
 
 macro_rules! logical_unparsed_helper {
-    ($this:expr, $property:expr, $unparsed:expr, $physical_id:expr, $physical_flag:expr, $logical_supported:expr, $dest:expr, $context:expr) => {{
+    ($this:expr, $unparsed:expr, $physical_id:expr, $physical_flag:expr, $logical_supported:expr, $dest:expr, $context:expr) => {{
+        let bump = $dest.bump();
         if $logical_supported {
             $this.flushed_properties.insert(
-                SizeProperty::try_from_property_id_tag(PropertyIdTag::from(&$unparsed.property_id))
-                    .unwrap(),
+                SizeProperty::try_from_property_id_tag($unparsed.property_id.tag()).unwrap(),
             );
-            $dest.push($property.deep_clone($context.allocator));
+            // PORT NOTE: Zig pushed `property.deepClone(allocator)`; the matched
+            // payload is `Unparsed`, so reconstruct directly.
+            $dest.push(Property::Unparsed($unparsed.deep_clone(bump)));
         } else {
             $dest.push(Property::Unparsed(
-                $unparsed.with_property_id($context.allocator, $physical_id),
+                $unparsed.with_property_id(bump, $physical_id),
             ));
             $this.flushed_properties.insert($physical_flag);
         }
@@ -564,7 +558,7 @@ macro_rules! flush_property_helper {
                 }
                 _ => {}
             }
-            $dest.push(Property::$prop_variant(val.deep_clone($context.allocator)));
+            $dest.push(Property::$prop_variant(val));
             $this.flushed_properties.insert($prop_flag);
         }
     }};
@@ -650,7 +644,7 @@ impl SizeHandler {
             Property::MaxInlineSize(v) => {
                 property_helper!(self, max_inline_size, MaxSize, v, PropertyCategory::Logical, dest, context)
             }
-            Property::Unparsed(unparsed) => match PropertyIdTag::from(&unparsed.property_id) {
+            Property::Unparsed(unparsed) => match unparsed.property_id.tag() {
                 PropertyIdTag::Width
                 | PropertyIdTag::Height
                 | PropertyIdTag::MinWidth
@@ -658,16 +652,13 @@ impl SizeHandler {
                 | PropertyIdTag::MinHeight
                 | PropertyIdTag::MaxHeight => {
                     self.flushed_properties.insert(
-                        SizeProperty::try_from_property_id_tag(PropertyIdTag::from(
-                            &unparsed.property_id,
-                        ))
-                        .unwrap(),
+                        SizeProperty::try_from_property_id_tag(unparsed.property_id.tag()).unwrap(),
                     );
-                    dest.push(property.deep_clone(context.allocator));
+                    let bump = dest.bump();
+                    dest.push(Property::Unparsed(unparsed.deep_clone(bump)));
                 }
                 PropertyIdTag::BlockSize => logical_unparsed_helper!(
                     self,
-                    property,
                     unparsed,
                     PropertyId::Height,
                     SizeProperty::HEIGHT,
@@ -677,7 +668,6 @@ impl SizeHandler {
                 ),
                 PropertyIdTag::MinBlockSize => logical_unparsed_helper!(
                     self,
-                    property,
                     unparsed,
                     PropertyId::MinHeight,
                     SizeProperty::MIN_HEIGHT,
@@ -687,7 +677,6 @@ impl SizeHandler {
                 ),
                 PropertyIdTag::MaxBlockSize => logical_unparsed_helper!(
                     self,
-                    property,
                     unparsed,
                     PropertyId::MaxHeight,
                     SizeProperty::MAX_HEIGHT,
@@ -697,7 +686,6 @@ impl SizeHandler {
                 ),
                 PropertyIdTag::InlineSize => logical_unparsed_helper!(
                     self,
-                    property,
                     unparsed,
                     PropertyId::Width,
                     SizeProperty::WIDTH,
@@ -707,7 +695,6 @@ impl SizeHandler {
                 ),
                 PropertyIdTag::MinInlineSize => logical_unparsed_helper!(
                     self,
-                    property,
                     unparsed,
                     PropertyId::MinWidth,
                     SizeProperty::MIN_WIDTH,
@@ -717,7 +704,6 @@ impl SizeHandler {
                 ),
                 PropertyIdTag::MaxInlineSize => logical_unparsed_helper!(
                     self,
-                    property,
                     unparsed,
                     PropertyId::MaxWidth,
                     SizeProperty::MAX_WIDTH,
@@ -816,5 +802,3 @@ impl SizeHandler {
 //   todos:      10
 //   notes:      Heavy comptime reflection (@field/@unionInit/@tagName, ComptimeStringMap case-insensitive) replaced with macro_rules! + explicit matches; css::Result/Printer/Property variant names assumed; implement_deep_clone/EnumProperty trait stubs need Phase-B wiring.
 // ──────────────────────────────────────────────────────────────────────────
-
-} // mod size_handler_body

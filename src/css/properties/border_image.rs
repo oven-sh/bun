@@ -499,12 +499,12 @@ impl BorderImageHandler {
         }
 
         macro_rules! property_helper {
-            ($self:expr, $field:ident, $val:expr, $d:expr, $ctx:expr) => {{
+            ($self:expr, $field:ident, $val:expr, $d:expr, $ctx:expr, $is_compat:expr) => {{
                 if $self.vendor_prefix != VendorPrefix::NONE {
                     $self.flush($d, $ctx);
                 }
 
-                flush_helper!($self, $d, $ctx, $field, $val);
+                flush_helper!($self, $d, $ctx, $field, $val, $is_compat);
 
                 $self.vendor_prefix = VendorPrefix::NONE;
                 $self.$field = Some($val.deep_clone(allocator));
@@ -513,20 +513,20 @@ impl BorderImageHandler {
         }
 
         match property {
-            Property::BorderImageSource(val) => property_helper!(self, source, val, dest, context),
-            Property::BorderImageSlice(val) => property_helper!(self, slice, val, dest, context),
-            Property::BorderImageWidth(val) => property_helper!(self, width, val, dest, context),
-            Property::BorderImageOutset(val) => property_helper!(self, outset, val, dest, context),
-            Property::BorderImageRepeat(val) => property_helper!(self, repeat, val, dest, context),
+            Property::BorderImageSource(val) => property_helper!(self, source, val, dest, context, Image::is_compatible),
+            Property::BorderImageSlice(val) => property_helper!(self, slice, val, dest, context, BorderImageSlice::is_compatible),
+            Property::BorderImageWidth(val) => property_helper!(self, width, val, dest, context, rect_side_width_is_compatible),
+            Property::BorderImageOutset(val) => property_helper!(self, outset, val, dest, context, rect_length_or_number_is_compatible),
+            Property::BorderImageRepeat(val) => property_helper!(self, repeat, val, dest, context, BorderImageRepeat::is_compatible),
             Property::BorderImage(_val) => {
                 let val = &_val.0;
                 let vp = _val.1;
 
-                flush_helper!(self, dest, context, source, &val.source);
-                flush_helper!(self, dest, context, slice, &val.slice);
-                flush_helper!(self, dest, context, width, &val.width);
-                flush_helper!(self, dest, context, outset, &val.outset);
-                flush_helper!(self, dest, context, repeat, &val.repeat);
+                flush_helper!(self, dest, context, source, &val.source, Image::is_compatible);
+                flush_helper!(self, dest, context, slice, &val.slice, BorderImageSlice::is_compatible);
+                flush_helper!(self, dest, context, width, &val.width, rect_side_width_is_compatible);
+                flush_helper!(self, dest, context, outset, &val.outset, rect_length_or_number_is_compatible);
+                flush_helper!(self, dest, context, repeat, &val.repeat, BorderImageRepeat::is_compatible);
 
                 self.source = Some(val.source.deep_clone(allocator));
                 self.slice = Some(val.slice.deep_clone(allocator));
@@ -548,7 +548,11 @@ impl BorderImageHandler {
                         unparsed.deep_clone(allocator)
                     };
 
+                    // TODO(port): re-enable once `PropertyHandlerContext::add_unparsed_fallbacks`
+                    // un-gates (blocked on `SupportsCondition::eql` in context.rs).
+                    #[cfg(any())]
                     context.add_unparsed_fallbacks(&mut unparsed_clone);
+                    let _ = &mut unparsed_clone;
                     self.flushed_properties.insert(
                         BorderImageProperty::try_from_property_id(unparsed_clone.property_id.tag()).unwrap(),
                     );
@@ -616,8 +620,8 @@ impl BorderImageHandler {
             if prefix.contains(VendorPrefix::NONE) && !border_image.slice.fill {
                 prefix = context.targets.prefixes(self.vendor_prefix, css::prefixes::Feature::BorderImage);
                 if self.flushed_properties.is_empty() {
-                    let mut fallbacks = border_image.get_fallbacks(allocator, context.targets);
-                    for fallback in fallbacks.drain() {
+                    let fallbacks = border_image.get_fallbacks(allocator, context.targets);
+                    for fallback in fallbacks.to_owned_slice().into_vec() {
                         // Match prefix of fallback. e.g. -webkit-linear-gradient
                         // can only be used in -webkit-border-image, not -moz-border-image.
                         // However, if border-image is unprefixed, gradients can still be.
@@ -640,7 +644,7 @@ impl BorderImageHandler {
         } else {
             if let Some(mut_source) = &mut source {
                 if !self.flushed_properties.contains(BorderImageProperty::BORDER_IMAGE_SOURCE) {
-                    for fallback in mut_source.get_fallbacks(allocator, context.targets).drain() {
+                    for fallback in mut_source.get_fallbacks(allocator, context.targets).to_owned_slice().into_vec() {
                         dest.push(Property::BorderImageSource(fallback));
                     }
                 }

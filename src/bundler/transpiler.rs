@@ -1353,7 +1353,12 @@ impl<'a> Transpiler<'a> {
 // ══════════════════════════════════════════════════════════════════════════
 
 use bun_js_printer as js_printer;
-use crate::analyze_transpiled_module;
+// PORT NOTE: `module_info` threads the *printer's* `analyze_transpiled_module::ModuleInfo`
+// (the producer), not `crate::analyze_transpiled_module::ModuleInfo` (the
+// richer consumer-side mirror). The two were CYCLEBREAK siblings; the print
+// path only ever fills the printer-owned one and hands its serialized bytes to
+// T6, so unify on the printer type here. Spec: transpiler.zig:663.
+use js_printer::analyze_transpiled_module;
 
 /// Map the bundler-local `Target` (options.rs:489) to the lower-tier
 /// `bun_options_types::BundleEnums::Target` consumed by `js_printer::Options`.

@@ -169,48 +169,49 @@ use style::StyleRule;
 // (below) dispatches via method-syntax so it picks up the inherent impl.
 //
 // PORT NOTE: most leaf rules can't use `#[derive(DeepClone)]` directly yet
-// because several field types still lack an arena-aware `deep_clone(&self,
-// &Arena) -> Self` (their owners are outside `rules/`): `DeclarationBlock<'_>`
-// (declaration.rs gated on `Property: DeepClone`), `MediaList` /
-// `QueryFeature` (media_query.rs gated bodies), `SelectorList` (selectors/
-// parser.rs uses no-arg `deep_clone()`), `Property` (properties_generated).
-// Until those land, the leaf bodies hand-roll the field walk and route the
-// blocked fields through the `dc::*` passthroughs below — each of which is
-// the real port body where possible, and otherwise `todo!()`s with the
-// blocker named so any caller that un-gates first fails loudly (PORTING.md
-// §Forbidden: silent no-op). Once an upstream type grows its own
+// because two field types still lack an arena-aware `deep_clone(&self,
+// &Arena) -> Self`: `SelectorList` (selectors/parser.rs uses no-arg
+// `deep_clone()`) and `Property` (properties_generated.rs — per-variant body
+// gated on leaf_value_traits). `MediaList` / `QueryFeature` /
+// `DeclarationBlock` now route to their real arena-aware impls. The leaf
+// bodies hand-roll the field walk and route the remaining blocked fields
+// through the `dc::*` passthroughs below. Once an upstream type grows its own
 // `deep_clone(&self, &Arena)`, swap the `dc::foo(&x, bump)` call for
 // `x.deep_clone(bump)` and delete the helper.
 pub(super) mod dc {
     use bun_alloc::Arena;
 
-    /// `DeclarationBlock::deep_clone` — gated in declaration.rs on
-    /// `Property: DeepClone`.
+    /// `DeclarationBlock::deep_clone` — real port body inlined here (the
+    /// canonical impl in declaration.rs is gated on `Property: DeepClone`).
+    /// Field-walk over both `DeclarationList`s, routing each `Property`
+    /// through `dc::property` so the only remaining bottleneck is the
+    /// per-variant `Property::deep_clone` body.
     #[inline]
     pub fn decl_block(
         this: &crate::DeclarationBlock<'static>,
         bump: &Arena,
     ) -> crate::DeclarationBlock<'static> {
-        #[cfg(any())]
-        return this.deep_clone(bump);
-        #[cfg(not(any()))]
-        {
-            let _ = (this, bump);
-            todo!("blocked_on: DeclarationBlock::deep_clone — Property: DeepClone (properties_generated)")
+        // 'bump-erasure: `DeclarationBlock` currently lives on `'static`
+        // crate-wide (see declaration.rs `parse` + rules/style.rs `minify`);
+        // collapses when `CssRule<'bump, R>` re-threads the arena lifetime.
+        let bump: &'static Arena = unsafe { &*(bump as *const Arena) };
+        crate::DeclarationBlock {
+            important_declarations: bun_alloc::ArenaVec::from_iter_in(
+                this.important_declarations.iter().map(|p| property(p, bump)),
+                bump,
+            ),
+            declarations: bun_alloc::ArenaVec::from_iter_in(
+                this.declarations.iter().map(|p| property(p, bump)),
+                bump,
+            ),
         }
     }
 
-    /// `MediaList::deep_clone` — no arena-aware impl yet (media_query.rs
-    /// `__impl_bodies` is gated). All payloads are arena-borrowed slices /
-    /// `Copy` so `Clone` is a faithful deep clone today.
+    /// `MediaList::deep_clone` — routes to the real arena-aware impl in
+    /// media_query.rs (element-wise walk of `media_queries`).
     #[inline]
-    pub fn media_list(this: &crate::media_query::MediaList, _bump: &Arena) -> crate::media_query::MediaList {
-        // PORT NOTE: Zig `css.implementDeepClone` on `MediaList` walks
-        // `media_queries: ArrayList(MediaQuery)`. Every leaf payload is either
-        // `Copy` or an arena-owned `[]const u8` (identity copy under the
-        // generics.zig "const strings" rule), so `#[derive(Clone)]` is
-        // semantically equivalent until `'bump` is threaded.
-        this.clone()
+    pub fn media_list(this: &crate::media_query::MediaList, bump: &Arena) -> crate::media_query::MediaList {
+        this.deep_clone(bump)
     }
 
     /// `SelectorList::deep_clone` — selectors/parser.rs intentionally drops
@@ -224,32 +225,33 @@ pub(super) mod dc {
         this.deep_clone()
     }
 
-    /// `QueryFeature<F>::deep_clone` — no arena-aware impl yet; `Clone` is
-    /// faithful for the same reason as `media_list` above.
+    /// `QueryFeature<F>::deep_clone` — routes to the real arena-aware impl in
+    /// media_query.rs (variant-wise walk recursing into `MediaFeatureValue`).
     #[inline]
     pub fn query_feature<F>(
         this: &crate::media_query::QueryFeature<F>,
-        _bump: &Arena,
+        bump: &Arena,
     ) -> crate::media_query::QueryFeature<F>
     where
-        F: crate::media_query::FeatureIdTrait + Clone,
+        F: crate::media_query::FeatureIdTrait,
     {
-        this.clone()
+        this.deep_clone(bump)
     }
 
-    /// `Property::deep_clone` — gated on the per-variant `DeepClone` derives in
-    /// `properties_generated.rs`.
+    /// `Property::deep_clone` — routes to the real inherent
+    /// `Property::deep_clone` in properties_generated.rs. That body is the
+    /// faithful per-variant port (.zig:6307-6558) but is `#[cfg(any())]`-gated
+    /// on `leaf_value_traits`; the `todo!()` arm below names the blocker so
+    /// callers fail loudly until it un-gates (PORTING.md §Forbidden: silent
+    /// no-op).
     #[inline]
     pub fn property(this: &crate::properties::Property, bump: &Arena) -> crate::properties::Property {
         #[cfg(any())]
-        {
-            use crate::generics::DeepClone as _;
-            return this.deep_clone(bump);
-        }
+        return this.deep_clone(bump);
         #[cfg(not(any()))]
         {
             let _ = (this, bump);
-            todo!("blocked_on: Property: DeepClone (properties_generated)")
+            todo!("blocked_on: Property::deep_clone — leaf_value_traits (properties_generated.rs)")
         }
     }
 }

@@ -375,8 +375,8 @@ impl ZigString {
             return Ok(v);
         }
 
-        let mut list: Vec<u8> = Vec::new();
-        list = if self.is_16bit() {
+        let list: Vec<u8> = Vec::new();
+        let mut list = if self.is_16bit() {
             strings::to_utf8_list_with_type(list, self.utf16_slice_aligned())?
         } else {
             strings::allocate_latin1_into_utf8_with_list(list, 0, self.slice())?
@@ -394,22 +394,22 @@ impl ZigString {
         Ok(list)
     }
 
-    pub fn to_owned_slice_z(&self) -> Result<Box<ZStr>, AllocError> {
-        // TODO(port): owned NUL-terminated slice type — using Box<ZStr> placeholder
+    pub fn to_owned_slice_z(&self) -> Result<bun_core::ZBox, AllocError> {
         if self.is_utf8() {
-            return Ok(ZStr::from_bytes(self.slice()));
+            let mut v = self.slice().to_vec();
+            v.push(0);
+            return Ok(bun_core::ZBox::from_vec_with_nul(v));
         }
 
-        let mut list: Vec<u8> = Vec::new();
-        list = if self.is_16bit() {
+        let list: Vec<u8> = Vec::new();
+        let mut list = if self.is_16bit() {
             strings::to_utf8_list_with_type(list, self.utf16_slice_aligned())?
         } else {
             strings::allocate_latin1_into_utf8_with_list(list, 0, self.slice())?
         };
 
         list.push(0);
-        // TODO(port): list.toOwnedSliceSentinel(0) — verify ZStr::from_vec_with_nul semantics
-        Ok(ZStr::from_vec_with_nul(list))
+        Ok(bun_core::ZBox::from_vec_with_nul(list))
     }
 
     pub fn trunc(&self, len: usize) -> ZigString {
@@ -483,11 +483,11 @@ impl ZigString {
         self.len == 0
     }
 
-    pub fn from_string_pointer(ptr: StringPointer, buf: &[u8]) -> ZigString {
+    pub fn from_string_pointer(ptr: bun_string::StringPointer, buf: &[u8]) -> ZigString {
         // PORT NOTE: reshaped from out-param `to: *ZigString` to return value
         ZigString {
-            len: ptr.length,
-            _unsafe_ptr_do_not_use: buf[ptr.offset..][..ptr.length].as_ptr(),
+            len: ptr.length as usize,
+            _unsafe_ptr_do_not_use: buf[ptr.offset as usize..][..ptr.length as usize].as_ptr(),
         }
     }
 
@@ -499,7 +499,7 @@ impl ZigString {
     }
 
     pub fn cmp_desc(a: &ZigString, b: &ZigString) -> bool {
-        strings::cmp_strings_desc(a.slice(), b.slice())
+        strings::cmp_strings_desc(&(), a.slice(), b.slice())
     }
 
     pub fn sort_asc(slice_: &mut [ZigString]) {
@@ -509,7 +509,7 @@ impl ZigString {
     }
 
     pub fn cmp_asc(a: &ZigString, b: &ZigString) -> bool {
-        strings::cmp_strings_asc(a.slice(), b.slice())
+        strings::cmp_strings_asc(&(), a.slice(), b.slice())
     }
 
     #[inline]

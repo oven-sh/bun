@@ -241,17 +241,17 @@ impl ColorFallbackKind {
 // (the `From<X> for Y` matrix chains) lands — without it this body has ~80
 // unsatisfied-trait-bound errors that cannot be locally resolved.
 #[cfg(any())]
-#[allow(dead_code, unused_imports, unused_variables, unused_mut, unreachable_code)]
+#[cfg(any())]
+#[allow(dead_code, unused_imports, unused_variables)]
 mod gated_full_impl {
-use crate as css;
-use crate::values::angle::Angle;
-use crate::values::calc::Calc;
-use crate::values::number::CSSNumberFns;
-use crate::values::percentage::Percentage;
-use crate::{PrintErr, Printer, Result as CssResult};
+use bun_css as css;
+use bun_css::css_values::angle::Angle;
+use bun_css::css_values::calc::Calc;
+use bun_css::css_values::number::CSSNumberFns;
+use bun_css::css_values::percentage::Percentage;
+use bun_css::{PrintErr, Printer, Result as CssResult};
 
-use super::super::color_generated::generated_color_conversions;
-use super::*;
+use super::color_generated::generated_color_conversions;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Colorspace traits (replaces Zig comptime mixins: DefineColorspace,

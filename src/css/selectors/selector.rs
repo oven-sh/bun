@@ -803,10 +803,10 @@ pub mod serialize {
     ) -> Result<(), PrintErr> {
         match component {
             Component::Combinator(c) => return serialize_combinator(c, dest),
-            Component::AttributeInNoNamespace(v) => {
+            Component::AttributeInNoNamespace { local_name, operator, value, case_sensitivity, .. } => {
                 dest.write_char(b'[')?;
-                css::css_values::ident::IdentFns::to_css(&v.local_name, dest)?;
-                v.operator.to_css(dest)?;
+                css::css_values::ident::IdentFns::to_css(local_name, dest)?;
+                operator.to_css(dest)?;
 
                 // blocked_on: `css_parser::to_css::string` (gated on Printer::new
                 // arena-signature reshape). The minify-path picks the shorter of
@@ -842,9 +842,9 @@ pub mod serialize {
                     CSSStringFns::to_css(&v.value, dest)?;
                 }
                 #[cfg(not(any()))]
-                CSSStringFns::to_css(&v.value, dest)?;
+                CSSStringFns::to_css(value, dest)?;
 
-                match v.case_sensitivity {
+                match case_sensitivity {
                     parser::attrs::ParsedCaseSensitivity::CaseSensitive
                     | parser::attrs::ParsedCaseSensitivity::AsciiCaseInsensitiveIfInHtmlElementInHtmlDocument => {}
                     parser::attrs::ParsedCaseSensitivity::AsciiCaseInsensitive => dest.write_str(b" i")?,
@@ -874,7 +874,7 @@ pub mod serialize {
                         dest.write_str(b":not(")?;
                     }
                     Component::Any { vendor_prefix, .. } => {
-                        let vp = dest.vendor_prefix.or(*vendor_prefix);
+                        let vp = dest.vendor_prefix.or_(*vendor_prefix);
                         if vp.contains(VendorPrefix::WEBKIT) || vp.contains(VendorPrefix::MOZ) {
                             dest.write_char(b':')?;
                             vp.to_css(dest)?;
@@ -913,11 +913,18 @@ pub mod serialize {
             }
             Component::Class(class) => {
                 dest.write_char(b'.')?;
-                return dest.write_ident_or_ref(*class, dest.css_module.is_some());
+                // PORT NOTE: `Printer::write_ident_or_ref` is `#[cfg(any())]`-
+                // gated (blocked_on css_modules pattern.write closure-arity).
+                // Inline its non-CSS-modules path: lookup → serialize.
+                let s = dest.lookup_ident_or_ref(*class);
+                return css::serializer::serialize_identifier(s, dest)
+                    .map_err(|_| PrintErr::CSSPrintError);
             }
             Component::Id(id) => {
                 dest.write_char(b'#')?;
-                return dest.write_ident_or_ref(*id, dest.css_module.is_some());
+                let s = dest.lookup_ident_or_ref(*id);
+                return css::serializer::serialize_identifier(s, dest)
+                    .map_err(|_| PrintErr::CSSPrintError);
             }
             Component::Host(selector) => {
                 dest.write_str(b":host")?;
@@ -991,10 +998,9 @@ pub mod serialize {
                 }
                 return dest.write_str(b")");
             }
-            PseudoClass::Dir(d) => {
-                let dir = d.direction;
+            PseudoClass::Dir { direction } => {
                 dest.write_str(b":dir(")?;
-                dir.to_css(dest)?;
+                direction.to_css(dest)?;
                 return dest.write_str(b")");
             }
             _ => {}

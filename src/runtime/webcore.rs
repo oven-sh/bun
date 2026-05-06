@@ -280,7 +280,10 @@ pub use request::Request;
 
 #[path = "webcore/ReadableStream.rs"]
 pub mod readable_stream;
-pub use readable_stream::{ReadableStream, Tag as ReadableStreamTag, Source as ReadableStreamSource};
+pub use readable_stream::{
+    NewSource as ReadableStreamNewSource, ReadableStream, Source as ReadableStreamSource,
+    SourceContext as ReadableStreamSourceContext, Tag as ReadableStreamTag,
+};
 
 #[path = "webcore/FileReader.rs"]
 pub mod file_reader;

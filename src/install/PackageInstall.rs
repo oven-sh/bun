@@ -2029,14 +2029,25 @@ impl<'a> PackageInstall<'a> {
                 }
             });
 
-            let dest_dir_path = match bun_sys::get_fd_path(Fd::from_std_dir(dest_dir), &mut dest_buf) {
+            let dest_dir_path = match sys::get_fd_path(dest_dir.fd(), &mut dest_buf) {
                 Ok(p) => p,
-                Err(err) => return InstallResult::fail(err, Step::LinkingDependency, None),
+                Err(err) => return InstallResult::fail(err.into(), Step::LinkingDependency, None),
             };
 
-            let target = path::relative(dest_dir_path, to_path);
-            if let Err(err) = sys::symlinkat(target, dest_dir.fd(), dest) {
-                return InstallResult::fail(err, Step::LinkingDependency, None);
+            let target = path::resolve_path::relative(dest_dir_path, to_path);
+            // PORT NOTE: `symlinkat` takes `&ZStr` for both target and dest; build NUL-terminated
+            // copies in stack buffers (Zig used `std.posix.symlinkat` which does this internally).
+            let mut target_buf = PathBuffer::uninit();
+            target_buf[..target.len()].copy_from_slice(target);
+            target_buf[target.len()] = 0;
+            // SAFETY: NUL written above.
+            let target_z = unsafe { ZStr::from_raw(target_buf.as_ptr(), target.len()) };
+            let mut dest_name_buf = [0u8; 512];
+            dest_name_buf[..dest.len()].copy_from_slice(dest);
+            // SAFETY: zero-initialized; NUL at [dest.len()].
+            let dest_z = unsafe { ZStr::from_raw(dest_name_buf.as_ptr(), dest.len()) };
+            if let Err(err) = sys::symlinkat(target_z, dest_dir.fd(), dest_z) {
+                return InstallResult::fail(err.into(), Step::LinkingDependency, None);
             }
         }
 
@@ -2099,15 +2110,14 @@ impl<'a> PackageInstall<'a> {
                                 ZStr::from_raw(buf.as_ptr(), subpath_len + 1 + b"package.json".len())
                             };
                             break 'package_json_exists sys::exists_at(
-                                Fd::from_std_dir(self.cache_dir),
+                                self.cache_dir.fd(),
                                 subpath,
                             );
                         }
                         _ => sys::directory_exists_at(
-                            Fd::from_std_dir(self.cache_dir),
+                            self.cache_dir.fd(),
                             self.cache_dir_subpath,
                         )
-                        .unwrap()
                         .unwrap_or(false),
                     };
                     if exists {

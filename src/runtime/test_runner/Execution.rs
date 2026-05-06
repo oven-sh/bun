@@ -899,15 +899,15 @@ enum AdvanceStatus {
 }
 
 fn step_group_one(
-    buntest_strong: BunTestPtr,
+    buntest_strong: &BunTestPtr,
     global_this: &JSGlobalObject,
     group: NonNull<ConcurrentGroup>,
     now: &mut Timespec,
 ) -> JsResult<AdvanceStatus> {
     let buntest = buntest_strong.get();
     let mut final_status = AdvanceStatus::Done;
-    let concurrent_limit = if let Some(reporter) = buntest.reporter.as_ref() {
-        reporter.jest.max_concurrency
+    let concurrent_limit: usize = if let Some(reporter) = buntest.reporter.as_ref() {
+        reporter.jest.max_concurrency as usize
     } else {
         debug_assert!(false); // probably can't get here because reporter is only set null when the file is exited
         20

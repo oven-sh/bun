@@ -1277,7 +1277,7 @@ impl PathLike {
             }
             Ok(Self::ThreadsafeString(sliced))
         } else {
-            let mut sliced = str.to_slice();
+            let mut sliced = BunStringSliceExt::to_slice_with_underlying(str);
             // errdefer sliced.deinit() — Drop handles this.
 
             // Validate the UTF-8 byte length after conversion, since the path

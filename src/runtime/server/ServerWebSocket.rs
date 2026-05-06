@@ -1614,7 +1614,9 @@ impl ServerWebSocket {
         }
 
         // Get the JSValue directly from C++
-        Ok(self.websocket().get_topics_as_js_array(global_this))
+        let _ = global_this;
+        let _ = self.websocket();
+        todo!("blocked_on: bun_uws_sys::AnyWebSocket::get_topics_as_js_array")
     }
 
     #[bun_jsc::host_fn(getter)]

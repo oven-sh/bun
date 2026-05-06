@@ -556,7 +556,7 @@ impl<'a> State<'a> {
                 )?;
             }
         }
-        self.draw_buf.extend_from_slice(Output::SYNCHRONIZED_END);
+        self.draw_buf.extend_from_slice(Output::SYNCHRONIZED_END.as_bytes());
         self.last_lines_written = 0;
         for &c in &self.draw_buf {
             if c == b'\n' {

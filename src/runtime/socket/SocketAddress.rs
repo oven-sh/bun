@@ -602,7 +602,7 @@ impl SocketAddress {
             port: JSValue,
             flowlabel: JSValue,
         }
-        impl bun_jsc::PojoFields for ToJson {
+        impl bun_jsc::js_object::PojoFields for ToJson {
             const FIELD_COUNT: usize = 4;
             fn put_fields(
                 &self,

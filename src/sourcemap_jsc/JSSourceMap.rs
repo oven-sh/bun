@@ -75,7 +75,8 @@ fn find_source_map(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
 
     let source_url = source_url_slice.slice();
 
-    let vm = global.bun_vm();
+    // SAFETY: `bun_vm()` returns the live per-thread VM for a Bun-owned global.
+    let vm = unsafe { &mut *global.bun_vm() };
     let Some(source_map) = vm.source_mappings().get(source_url) else {
         return Ok(JSValue::UNDEFINED);
     };

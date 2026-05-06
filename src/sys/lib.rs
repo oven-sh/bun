@@ -166,6 +166,7 @@ pub mod libuv_error_map;
 #[path = "SignalCode.rs"] pub mod signal_code;
 pub use signal_code::SignalCode;
 pub mod tmp;
+pub use tmp::Tmpfile;
 // `windows/mod.rs` is `#![cfg(windows)]`-gated internally; on POSIX this
 // declares an empty module so `bun_sys::windows::*` paths still resolve under
 // `#[cfg(windows)]` arms in dependents.
@@ -1124,6 +1125,24 @@ impl File {
         }
         Ok(())
     }
+    /// `std.fs.File.preadAll` — loop `pread()` from `offset` until `buf` is
+    /// full or EOF. Returns total bytes read (may be `< buf.len()` on EOF).
+    pub fn pread_all(&self, buf: &mut [u8], offset: u64) -> Maybe<usize> {
+        let mut off = offset as i64;
+        let mut total: usize = 0;
+        while total < buf.len() {
+            let n = pread(self.handle, &mut buf[total..], off)?;
+            if n == 0 { break; }
+            total += n;
+            off += n as i64;
+        }
+        Ok(total)
+    }
+    /// `std.fs.File.seekTo` — `lseek(SEEK_SET)`.
+    #[inline]
+    pub fn seek_to(&self, offset: u64) -> Maybe<()> {
+        set_file_offset(self.handle, offset)
+    }
     pub fn stat(&self) -> Maybe<Stat> { fstat(self.handle) }
     pub fn close(self) -> Maybe<()> { close(self.handle) }
     /// `bun.sys.File.readFrom` — open + read + close.
@@ -1145,6 +1164,63 @@ impl File {
     /// `File.bufferedWriter()` — `std.io.BufferedWriter` wrapping this fd.
     pub fn buffered_writer(&self) -> std::io::BufWriter<FileWriter> {
         std::io::BufWriter::new(FileWriter(self.handle))
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// `bun.PlatformIOVecConst` / `bun.platformIOVecConstCreate` — POSIX
+// `iovec_const` (= `struct iovec` with the writev contract that `base` is
+// not written through). On Windows the Zig original aliases `uv_buf_t`;
+// that arm lands with the libuv triad in `lib_draft_b1.rs`.
+// Layout matches `libc::iovec` (`{ *void, usize }`) so a `&[PlatformIoVecConst]`
+// can be passed straight to `pwritev(2)`.
+// ──────────────────────────────────────────────────────────────────────────
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct PlatformIoVecConst {
+    pub base: *const u8,
+    pub len: usize,
+}
+#[cfg(unix)]
+const _: () = assert!(
+    core::mem::size_of::<PlatformIoVecConst>() == core::mem::size_of::<libc::iovec>()
+        && core::mem::align_of::<PlatformIoVecConst>() == core::mem::align_of::<libc::iovec>()
+);
+
+#[inline]
+pub fn platform_iovec_const_create(buf: &[u8]) -> PlatformIoVecConst {
+    PlatformIoVecConst { base: buf.as_ptr(), len: buf.len() }
+}
+
+/// `bun.sys.pwritev` — gather-write at `offset`. Returns bytes written
+/// (may be less than the sum of `vecs` lengths on a short write).
+pub fn pwritev(fd: Fd, vecs: &[PlatformIoVecConst], offset: i64) -> Maybe<usize> {
+    #[cfg(unix)]
+    {
+        // SAFETY: `PlatformIoVecConst` is layout-compatible with `libc::iovec`
+        // (asserted above); `pwritev(2)` only reads through `iov_base`.
+        loop {
+            let rc = unsafe {
+                libc::pwritev(
+                    fd.native(),
+                    vecs.as_ptr().cast::<libc::iovec>(),
+                    vecs.len() as core::ffi::c_int,
+                    offset,
+                )
+            };
+            if rc < 0 {
+                let e = last_errno();
+                if e == libc::EINTR { continue; }
+                return Err(Error::from_code_int(e, Tag::pwrite));
+            }
+            return Ok(rc as usize);
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        // TODO(b2-windows): route through `uv_fs_write` with `uv_buf_t[]`.
+        let _ = (fd, vecs, offset);
+        Err(Error::from_code_int(libc::ENOSYS, Tag::pwrite))
     }
 }
 

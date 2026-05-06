@@ -636,7 +636,7 @@ impl IntermediateOutput {
                                             }
                                             QueryKind::Asset => shift
                                                 .before
-                                                .advance(unique_key_for_additional_files[index]),
+                                                .advance(&unique_key_for_additional_files[index]),
                                             _ => {}
                                         }
                                         shift.after.advance(content);
@@ -663,14 +663,16 @@ impl IntermediateOutput {
                             let file_path: &[u8] = match piece.query.kind() {
                                 QueryKind::Asset => 'brk: {
                                     let files = &additional_files[index];
-                                    debug_assert!(files.len() > 0);
+                                    debug_assert!(files.len > 0);
 
-                                    let output_file = files.last().unwrap().output_file;
+                                    let output_file = additional_output_file_index(
+                                        files.slice().last().unwrap(),
+                                    );
 
                                     if ENABLE_SOURCE_MAP_SHIFTS {
                                         shift
                                             .before
-                                            .advance(unique_key_for_additional_files[index]);
+                                            .advance(&unique_key_for_additional_files[index]);
                                     }
 
                                     break 'brk &graph.additional_output_files.as_slice()
@@ -733,7 +735,7 @@ impl IntermediateOutput {
                             // verify ownership; for now cast through raw ptr.
                             // SAFETY: file_path points into mutable bundler-owned storage in Zig.
                             unsafe {
-                                bun_paths::platform_to_posix_in_place::<u8>(
+                                bun_paths::resolve_path::platform_to_posix_in_place::<u8>(
                                     core::slice::from_raw_parts_mut(
                                         file_path.as_ptr() as *mut u8,
                                         file_path.len(),
@@ -745,12 +747,13 @@ impl IntermediateOutput {
                                 if from_chunk_dir.is_empty() || force_absolute_path {
                                     file_path
                                 } else {
-                                    bun_paths::relative_platform_buf(
-                                        &mut relative_platform_buf,
+                                    bun_paths::resolve_path::relative_platform_buf::<
+                                        bun_paths::platform::Posix,
+                                        false,
+                                    >(
+                                        &mut relative_platform_buf[..],
                                         from_chunk_dir,
                                         file_path,
-                                        bun_paths::Platform::Posix,
-                                        false,
                                     )
                                 },
                             );
@@ -828,10 +831,12 @@ impl IntermediateOutput {
                         )
                         .ok();
 
-                        break 'brk joiner.done_with_end(allocator, &debug_id_fmt)?;
+                        let _ = allocator; // PORT NOTE: StringJoiner::done* allocates from global mimalloc; allocator token is plumbing-only.
+                        break 'brk joiner.done_with_end(&debug_id_fmt)?;
                     }
 
-                    break 'brk joiner.done(allocator)?;
+                    let _ = allocator;
+                    break 'brk joiner.done()?;
                 };
 
                 Ok(CodeResult {
@@ -1061,7 +1066,7 @@ pub enum CssImportOrderKind {
     #[strum(serialize = "layers")]
     Layers(Layers),
     #[strum(serialize = "external_path")]
-    ExternalPath(bun_fs::Path),
+    ExternalPath(bun_fs::Path<'static>),
     #[strum(serialize = "source_index")]
     SourceIndex(Index),
 }

@@ -9,7 +9,7 @@ use core::ptr::NonNull;
 use std::io::Write as _;
 
 use bumpalo::Bump;
-use crate::ExpressionTransposer;
+use crate::parser::ExpressionTransposer;
 
 use bun_alloc::Arena;
 use bun_collections::{BabyList, HashMap, ArrayHashMap, StringHashMap};

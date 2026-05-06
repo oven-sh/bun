@@ -341,6 +341,391 @@ pub enum CleanupState {
     RuntimeCleaned,
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+// Construction / standalone-exec entrypoints
+// ────────────────────────────────────────────────────────────────────────────
+
+impl ShellArgs {
+    /// Spec: interpreter.zig `ShellArgs.init` — fresh arena + zeroed AST.
+    /// Heap-allocated (returned as `Box`) because the interpreter stores
+    /// `Box<ShellArgs>` and state nodes hold `*const ast::*` into the arena;
+    /// the box must not move once `parse()` has filled `script_ast`.
+    pub fn init() -> Box<ShellArgs> {
+        Box::new(ShellArgs {
+            __arena: bun_alloc::Arena::new(),
+            // Zig: `.script_ast = undefined` — overwritten by `parse()` before
+            // `run()`. An empty stmt list is a safe placeholder.
+            script_ast: ast::Script { stmts: &[] as *const [ast::Stmt] },
+        })
+    }
+
+    #[inline]
+    pub fn arena(&self) -> &bun_alloc::Arena {
+        &self.__arena
+    }
+}
+
+/// `shell.Result(T)` — Zig's `union(enum) { result: T, err: ShellErr }`.
+/// Only used by the construction path (`Interpreter::init`).
+pub type ShellResult<T> = Result<T, ShellErr>;
+
+impl ShellErr {
+    /// Spec: shell.zig `ShellErr.throwMini` — print to stderr and exit(1).
+    /// Used on the `MiniEventLoop` (no-JSC) path where there is no global
+    /// object to throw into.
+    #[cold]
+    pub fn throw_mini(self) -> ! {
+        // PORT NOTE: Zig's `ShellErr` is a 4-variant tagged union (sys / custom
+        // / invalid_arguments / todo) whose `throwMini` formats each arm. The
+        // Rust port currently only carries the `.sys` payload (see `mod.rs`),
+        // so this is the `.sys` arm: `bunsh: {message}: {path}`.
+        let e = &self.0;
+        bun_core::pretty_errorln!(
+            "<r><red>error<r>: Failed due to error: <b>bunsh: {}: {}<r>",
+            e,
+            bstr::BStr::new(e.path()),
+        );
+        bun_core::Global::exit(1);
+    }
+}
+
+impl Interpreter {
+    /// Spec: interpreter.zig `ThisInterpreter.parse` — lex `src` (ASCII or
+    /// Unicode), build a `Parser`, and return the root `ast::Script`. Tokens
+    /// and AST nodes are bump-allocated into `arena`.
+    ///
+    /// On lex error, `out_lex_err` is populated and `ParseError::Lex` returned
+    /// so the caller can `combineErrors()` for diagnostics; on parse error
+    /// `out_parse_err` is populated likewise.
+    // TODO(b2-blocked): bun_shell_parser — `LexerAscii`/`LexerUnicode`/`Parser`
+    // live in `shell_body.rs` (gated). Body preserved verbatim below; until
+    // un-gated this returns `ParseUnavailable` so the standalone-shell path
+    // surfaces a clear error instead of UB-walking an empty AST.
+    #[allow(unused_variables)]
+    pub fn parse(
+        arena: &bun_alloc::Arena,
+        src: &[u8],
+        jsobjs: &[crate::jsc::JSValue],
+        out_lex_err: &mut Option<Box<[u8]>>,
+        out_parse_err: &mut Option<Box<[u8]>>,
+    ) -> Result<ast::Script, bun_core::Error> {
+        #[cfg(any())]
+        {
+            use crate::shell::shell_body::{LexerAscii, LexerUnicode, ParseError, Parser};
+            let jsobjs_len = jsobjs.len() as u32;
+            let lex_result = if bun_str::is_all_ascii(src) {
+                let mut lexer = LexerAscii::new(arena, src, &[], jsobjs_len);
+                lexer.lex()?;
+                lexer.get_result()
+            } else {
+                let mut lexer = LexerUnicode::new(arena, src, &[], jsobjs_len);
+                lexer.lex()?;
+                lexer.get_result()
+            };
+            if !lex_result.errors.is_empty() {
+                *out_lex_err = Some(lex_result.combine_errors(arena));
+                return Err(ParseError::Lex.into());
+            }
+            let mut parser = Parser::new(arena, lex_result, jsobjs)?;
+            match parser.parse() {
+                Ok(ast) => Ok(ast),
+                Err(e) => {
+                    *out_parse_err = Some(parser.combine_errors());
+                    Err(e)
+                }
+            }
+        }
+        #[cfg(not(any()))]
+        Err(bun_core::err!("ParseUnavailable"))
+    }
+
+    /// Spec: interpreter.zig `ThisInterpreter.init` + `initImpl`.
+    ///
+    /// Builds the root `ShellExecEnv` (export env from the event loop's
+    /// `DotEnv::Loader`, cwd from `getcwd()`, cwd_fd from `open(O_DIRECTORY)`),
+    /// dups stdin into an `IOReader`, and heap-allocates the interpreter.
+    /// stdout/stderr stay `.pipe` here — `setup_io_before_run()` (called from
+    /// `run()`) upgrades them to real `IOWriter`s unless `quiet` was set.
+    ///
+    /// On success the returned box owns `shargs`; on error `shargs` is
+    /// dropped (Zig: `defer shargs.deinit()` in the caller).
+    ///
+    /// PORT NOTE: `allocator` parameter dropped (always global mimalloc).
+    /// `ctx` is stored for `bun run` argv access from builtins (Zig
+    /// `command_ctx`); held as a raw pointer because the interpreter outlives
+    /// any single `&mut ContextData` borrow.
+    pub fn init(
+        ctx: *mut bun_options_types::Context::ContextData,
+        event_loop: EventLoopHandle,
+        shargs: Box<ShellArgs>,
+        jsobjs: *mut [crate::jsc::JSValue],
+        export_env_: Option<EnvMap>,
+        cwd_: Option<&[u8]>,
+        mini_env: Option<&mut bun_dotenv::Loader<'_>>,
+    ) -> ShellResult<Box<Interpreter>> {
+        // ── export_env ─────────────────────────────────────────────────────
+        // Zig: on `.js` event loop, take `export_env_` (or empty); on `.mini`,
+        // populate from the loop's `DotEnv::Loader`.
+        let export_env = if let Some(e) = export_env_ {
+            e
+        } else if let Some(env_loader) = mini_env {
+            // PORT NOTE: Zig reads `event_loop.env()`. The Rust
+            // `EventLoopHandle` shim (opaque usize) can't dereference into the
+            // loop yet, so the caller passes the loader explicitly. Same data,
+            // different plumbing — drop the extra arg once `EventLoopHandle`
+            // becomes the real `bun_event_loop::EventLoopHandle`.
+            let mut export_env = EnvMap::init_with_capacity(env_loader.map.map.count());
+            let mut iter = env_loader.iterator();
+            while let Some(entry) = iter.next() {
+                let key = crate::shell::EnvStr::init_slice(&entry.key_ptr[..]);
+                let value = crate::shell::EnvStr::init_slice(&entry.value_ptr.value[..]);
+                export_env.insert(key, value);
+            }
+            export_env
+        } else {
+            EnvMap::init()
+        };
+
+        // ── cwd / cwd_fd ───────────────────────────────────────────────────
+        // Hoisted PathBuffer so the error's borrowed `.path` stays valid until
+        // we've converted it to an owned `ShellErr` (Zig hoists for the same
+        // reason).
+        let mut pathbuf = bun_paths::PathBuffer::uninit();
+        let cwd_len = match bun_sys::getcwd(&mut pathbuf[..]) {
+            Ok(n) => n,
+            Err(e) => return Err(ShellErr::new_sys(e)),
+        };
+        // NUL-terminate for `open()` and so `__cwd` matches Zig's `[:0]` shape
+        // (downstream `cwd()` strips the trailing 0).
+        pathbuf[cwd_len] = 0;
+        // SAFETY: getcwd wrote `cwd_len` bytes + we wrote the NUL at [cwd_len].
+        let cwd_z = unsafe { bun_core::ZStr::from_raw(pathbuf.as_ptr(), cwd_len) };
+
+        let cwd_fd = match bun_sys::open(cwd_z, bun_sys::O::DIRECTORY | bun_sys::O::RDONLY, 0) {
+            Ok(fd) => fd,
+            Err(e) => return Err(ShellErr::new_sys(e)),
+        };
+
+        let mut cwd_arr = Vec::with_capacity(cwd_len + 1);
+        cwd_arr.extend_from_slice(&pathbuf[..cwd_len + 1]);
+        debug_assert_eq!(*cwd_arr.last().unwrap(), 0);
+
+        // ── stdin ──────────────────────────────────────────────────────────
+        log!("Duping stdin");
+        let stdin_fd_res = if bun_core::output::stdio::is_stdin_null() {
+            // Zig `bun.sys.openNullDevice()`.
+            #[cfg(unix)]
+            {
+                bun_sys::open(
+                    // SAFETY: static C string with NUL.
+                    unsafe { bun_core::ZStr::from_raw(b"/dev/null\0".as_ptr(), 9) },
+                    bun_sys::O::RDONLY,
+                    0,
+                )
+            }
+            #[cfg(windows)]
+            {
+                bun_sys::open(
+                    unsafe { bun_core::ZStr::from_raw(b"NUL\0".as_ptr(), 3) },
+                    bun_sys::O::RDONLY,
+                    0,
+                )
+            }
+        } else {
+            bun_sys::dup(Fd::stdin())
+        };
+        let stdin_fd = match stdin_fd_res {
+            Ok(fd) => fd,
+            Err(e) => {
+                closefd(cwd_fd);
+                return Err(ShellErr::new_sys(e));
+            }
+        };
+
+        let stdin_reader = IOReader::init(stdin_fd, event_loop);
+
+        // ── assemble ───────────────────────────────────────────────────────
+        let mut interpreter = Box::new(Interpreter {
+            nodes: Vec::new(),
+            free_list: Vec::new(),
+            event_loop,
+            args: shargs,
+            jsobjs,
+            root_shell: ShellExecEnv {
+                kind: ShellExecEnvKind::Normal,
+                _buffered_stdout: Bufio::default(),
+                _buffered_stderr: Bufio::default(),
+                shell_env: EnvMap::init(),
+                cmd_local_env: EnvMap::init(),
+                export_env,
+                __prev_cwd: cwd_arr.clone(),
+                __cwd: cwd_arr,
+                cwd_fd,
+                async_pids: SmolList::default(),
+            },
+            root_io: IO {
+                stdin: crate::shell::io::InKind::Fd(stdin_reader),
+                // By default stdout/stderr should be IOWriters on dup'd
+                // stdout/stderr, but if the user later calls `.setQuiet(true)`
+                // that work is wasted. So they start as `.pipe` and `run()`
+                // upgrades them via `setup_io_before_run()` if `!quiet`.
+                stdout: crate::shell::io::OutKind::Pipe,
+                stderr: crate::shell::io::OutKind::Pipe,
+            },
+            has_pending_activity: AtomicU32::new(0),
+            started: AtomicBool::new(false),
+            keep_alive: bun_aio::KeepAlive::default(),
+            async_commands_executing: 0,
+            global_this: core::ptr::null_mut(),
+            flags: InterpreterFlags::default(),
+            exit_code: None,
+            this_jsvalue: crate::jsc::JSValue::ZERO,
+            cleanup_state: CleanupState::NeedsFullCleanup,
+            estimated_size_for_gc: 0,
+            last_err: None,
+        });
+        // PORT NOTE: Zig stores `command_ctx` on the struct; the Rust struct
+        // doesn't have that field yet (no builtin reads it). Preserve the
+        // pointer for when `which`/argv builtins land.
+        let _ = ctx;
+
+        // ── optional cwd override (Zig `init` tail) ────────────────────────
+        if let Some(_c) = cwd_ {
+            // TODO(b2-blocked): `ShellExecEnv::change_cwd_impl` — depends on
+            // ResolvePath join_buf + openat(O_DIRECTORY) cleanup ordering.
+            // Until then the override is a no-op (root_shell.__cwd already
+            // holds process cwd; `bun run` always passes the same dir).
+            #[cfg(any())]
+            if let Err(e) = interpreter.root_shell.change_cwd_impl(&mut *interpreter, _c, true) {
+                drop(interpreter); // root_io / root_shell drop close fds
+                return Err(ShellErr::new_sys(e));
+            }
+        }
+
+        Ok(interpreter)
+    }
+
+    /// Spec: interpreter.zig `#deinitFromExec` — full teardown for the
+    /// standalone (`MiniEventLoop`) path. Drops root IO refcounts, frees the
+    /// root shell env, and consumes the box.
+    fn deinit_from_exec(mut self: Box<Self>) {
+        log!("deinit interpreter");
+        self.this_jsvalue = crate::jsc::JSValue::ZERO;
+        // `root_io` holds `Arc<IOReader>`/`Arc<IOWriter>`; replacing with
+        // default drops the refs (Zig: `root_io.deref()`).
+        self.root_io = IO::default();
+        closefd(self.root_shell.cwd_fd);
+        // EnvMap / Vec / Bufio drop on box drop (Zig: `deinitImpl(false, true)`).
+        // `vm_args_utf8` not yet on the Rust struct.
+    }
+
+    /// Spec: interpreter.zig `initAndRunFromSource`.
+    ///
+    /// Standalone-shell entrypoint for `bun run <script>` / `bun exec` when
+    /// `--shell=bun`: parse `src`, construct an interpreter on a
+    /// `MiniEventLoop`, drive it to completion via `mini.tick()`, and return
+    /// the script's exit code. `path_for_errors` is only used in diagnostics.
+    ///
+    /// On any init/parse/run error this prints to stderr and `exit(1)`s
+    /// directly (matching Zig); the `Result` only carries lexer/parser
+    /// errors that escaped without a diagnostic (Zig `return err`).
+    pub fn init_and_run_from_source(
+        ctx: &mut bun_options_types::Context::ContextData,
+        mini: &'static mut bun_event_loop::MiniEventLoop::MiniEventLoop<'static>,
+        path_for_errors: &[u8],
+        src: &[u8],
+        cwd: Option<&[u8]>,
+    ) -> Result<ExitCode, bun_core::Error> {
+        bun_analytics::features::standalone_shell.fetch_add(1, Ordering::Relaxed);
+
+        let mut shargs = ShellArgs::init();
+
+        // ── parse ──────────────────────────────────────────────────────────
+        let mut out_lex_err: Option<Box<[u8]>> = None;
+        let mut out_parse_err: Option<Box<[u8]>> = None;
+        let script = match Self::parse(
+            shargs.arena(),
+            src,
+            &[],
+            &mut out_lex_err,
+            &mut out_parse_err,
+        ) {
+            Ok(s) => s,
+            Err(err) => {
+                if let Some(lex) = out_lex_err {
+                    bun_core::pretty_errorln!(
+                        "<r><red>error<r>: Failed to run script <b>{}<r> due to error <b>{}<r>",
+                        bstr::BStr::new(path_for_errors),
+                        bstr::BStr::new(&lex[..]),
+                    );
+                    bun_core::Global::exit(1);
+                }
+                if let Some(perr) = out_parse_err {
+                    bun_core::pretty_errorln!(
+                        "<r><red>error<r>: Failed to run script <b>{}<r> due to error <b>{}<r>",
+                        bstr::BStr::new(path_for_errors),
+                        bstr::BStr::new(&perr[..]),
+                    );
+                    bun_core::Global::exit(1);
+                }
+                return Err(err);
+            }
+        };
+        shargs.script_ast = script;
+
+        // ── init ───────────────────────────────────────────────────────────
+        // PORT NOTE: Zig passes `.{ .mini = mini }` as the `EventLoopHandle`.
+        // The Rust shell still uses an opaque `usize` shim for the handle (see
+        // `EventLoopHandle` below), so we erase the pointer and forward the
+        // loader separately. Swap to `bun_event_loop::EventLoopHandle::init_mini`
+        // once the shim is replaced.
+        let evtloop = EventLoopHandle(mini as *mut _ as usize);
+        // SAFETY: `mini.env` was set by `init_global()`; pointer is
+        // thread-lifetime singleton.
+        let env_loader = mini.env.map(|p| unsafe { &mut *p.as_ptr() });
+        let mut interp = match Self::init(
+            ctx as *mut _,
+            evtloop,
+            shargs,
+            &mut [] as *mut [crate::jsc::JSValue],
+            None,
+            cwd,
+            env_loader,
+        ) {
+            Ok(i) => i,
+            Err(e) => e.throw_mini(),
+        };
+
+        // ── run ────────────────────────────────────────────────────────────
+        interp.exit_code = Some(1);
+        if let Err(e) = interp.run() {
+            interp.deinit_from_exec();
+            bun_core::output::err(
+                e,
+                format_args!("Failed to run script <b>{}<r>", bstr::BStr::new(path_for_errors)),
+            );
+            bun_core::Global::exit(1);
+        }
+
+        // ── tick until done ────────────────────────────────────────────────
+        // Zig: `mini.tick(&is_done, IsDone.isDone)` where `isDone` reads
+        // `interp.flags.done`. The `is_done` closure captures a raw pointer so
+        // borrowck doesn't see an overlap with `tick`'s `&mut self` on `mini`.
+        let interp_ptr: *const Interpreter = &*interp;
+        mini.tick(core::ptr::null_mut(), |_ctx| {
+            // SAFETY: `interp` lives in this stack frame for the whole tick
+            // loop; `flags` is plain data (no interior mutation contention on
+            // the mini path — all mutation happens inside tasks `tick` drains
+            // synchronously).
+            unsafe { (*interp_ptr).flags.done() }
+        });
+
+        let code = interp.exit_code.expect("exit_code set by finish()");
+        interp.deinit_from_exec();
+        Ok(code)
+    }
+}
+
 impl Interpreter {
     // ── arena management ───────────────────────────────────────────────────
 

@@ -1017,7 +1017,7 @@ impl PackageJSON {
                             // import of "foo", but that's actually not a bug. Or arguably it's a
                             // bug in Browserify but we have to replicate this bug because packages
                             // do this in the wild.
-                            let key: Box<[u8]> = Box::from(r_fs.normalize(_key_str));
+                            let key: Box<[u8]> = r_fs.normalize(_key_str);
 
                             match &value.data {
                                 js_ast::ExprData::EString(str) => {
@@ -1358,9 +1358,10 @@ impl PackageJSON {
             identifier_name: json_source.identifier_name.clone(),
             index: json_source.index,
         };
-        // See SAFETY note on `contents_static` above — leak the backing buffer now
-        // that ownership has conceptually moved into `package_json.source.contents`.
-        core::mem::forget(entry_contents);
+        // See SAFETY note on `contents_static` above — move ownership of the
+        // backing buffer into the returned struct (replaces the prior
+        // `mem::forget`, forbidden per docs/PORTING.md §Forbidden patterns).
+        package_json.source_contents = entry_contents;
         Some(package_json)
     }
 }

@@ -2160,16 +2160,20 @@ impl H2FrameParser {
 
         // try to send as much as we can until we reach backpressure or until we can't flush anymore
         while self.outbound_queue_size > 0 && something_was_flushed {
-            // PORT NOTE: reshaped for borrowck — StreamResumableIterator borrows self mutably
+            // PORT NOTE: StreamResumableIterator stores a raw *mut and only borrows self briefly
+            // inside next(), so passing the raw pointer here avoids holding a long-lived &mut.
             let self_ptr = self as *mut Self;
-            // SAFETY: self_ptr = self as *mut Self on the line above; reshaped for borrowck, no other live &mut to *self exists across this iterator
-            let mut it = StreamResumableIterator::init(unsafe { &mut *self_ptr });
+            let mut it = StreamResumableIterator::init(self_ptr);
             something_was_flushed = false;
             while let Some(stream) = it.next() {
-                // SAFETY: stream is a *mut Stream from self.streams (Box::into_raw); valid while the map entry exists
+                // SAFETY: stream is a *mut Stream from self.streams (Box::into_raw); valid while the
+                // map entry exists. Separate heap allocation from `self`, so no aliasing with the
+                // &mut Self reborrow below.
                 let stream = unsafe { &mut *stream };
                 // reach backpressure
-                // SAFETY: self_ptr = self as *mut Self; iterator holds disjoint borrow of streams map only
+                // SAFETY: self_ptr = self as *mut Self above; the iterator holds only a raw pointer
+                // (no live &mut), and `stream` points into a disjoint Box, so this is the sole
+                // exclusive borrow of *self for the duration of the call.
                 let result = stream.flush_queue(unsafe { &mut *self_ptr }, &mut written);
                 match result {
                     FlushState::Flushed => something_was_flushed = true,

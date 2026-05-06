@@ -65,6 +65,9 @@ pub fn compute_chunks(
 
     // SAFETY: `parse_graph` is a backref into `BundleV2.graph`, valid for the link step.
     let parse_graph = unsafe { &*this.parse_graph };
+    // SAFETY: `bump` is a backref into `BundleV2.graph.allocator`, valid for the link step.
+    // Hoisted as a raw deref so the loop can hold disjoint &mut borrows into `this.graph`.
+    let allocator: &Arena = unsafe { &*this.graph.bump };
 
     let entry_source_indices = this.graph.entry_points.items_source_index();
     let css_asts = this.graph.ast.items_css();

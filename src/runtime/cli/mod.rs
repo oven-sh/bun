@@ -935,10 +935,12 @@ pub mod command {
                 return bun_create(log);
             }
             Tag::UpgradeCommand => {
+                // SAFETY: single-threaded startup (see RunAsNodeCommand arm).
                 let ctx = unsafe { &mut *init(Tag::UpgradeCommand, log)? };
                 return super::upgrade_command::UpgradeCommand::exec(ctx);
             }
             Tag::ExecCommand => {
+                // SAFETY: single-threaded startup (see RunAsNodeCommand arm).
                 let ctx = unsafe { &mut *init(Tag::ExecCommand, log)? };
                 if ctx.positionals.len() > 1 {
                     super::exec_command::ExecCommand::exec(ctx)?;
@@ -948,6 +950,7 @@ pub mod command {
             }
             Tag::FuzzilliCommand => {
                 if bun_core::Environment::ENABLE_FUZZILLI {
+                    // SAFETY: single-threaded startup (see RunAsNodeCommand arm).
                     let ctx = unsafe { &mut *init(Tag::FuzzilliCommand, log)? };
                     return super::fuzzilli_command::FuzzilliCommand::exec(ctx);
                 }

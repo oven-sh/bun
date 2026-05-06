@@ -1047,12 +1047,7 @@ pub fn generate_entry_point_tail_js(
                                         export_item.alias_loc,
                                     )),
                                     kind: G::Property::Kind::Get,
-                                    flags: js_ast::Flags::Property::init(
-                                        js_ast::Flags::PropertyInit {
-                                            is_method: true,
-                                            ..Default::default()
-                                        },
-                                    ),
+                                    flags: js_ast::Flags::Property::IsMethod.into(),
                                     ..Default::default()
                                 });
                             }

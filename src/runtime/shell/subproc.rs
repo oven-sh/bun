@@ -33,7 +33,7 @@ pub use util::Stdio as StdioReexport;
 // pub const ShellSubprocessMini = NewShellSubprocess(.mini);
 
 #[cfg(windows)]
-pub type StdioResult = WindowsSpawnResult::StdioResult;
+pub type StdioResult = WindowsStdioResult;
 #[cfg(not(windows))]
 pub type StdioResult = Option<Fd>;
 

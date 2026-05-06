@@ -4,9 +4,11 @@ use bstr::BStr;
 
 use bun_core::output;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-use bun_jsc::node::{PathLike, PathOrBlob};
+use bun_jsc::node::PathLike;
+use crate::node::PathOrBlob;
 use crate::webcore::Blob;
-use crate::s3::{self as S3, MultiPartUploadOptions, ACL, StorageClass, S3Credentials};
+use crate::webcore::s3::MultiPartUploadOptions;
+use crate::webcore::s3::client::{ACL, StorageClass, S3Credentials};
 use bun_str::PathString;
 
 use super::s3_file as S3File;

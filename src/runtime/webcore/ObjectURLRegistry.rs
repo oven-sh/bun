@@ -1,24 +1,23 @@
 use std::sync::OnceLock;
 
 use bun_collections::HashMap;
-use bun_core::UUID; // TODO(port): verify crate for bun.UUID
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, VirtualMachine};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, VirtualMachine, UUID};
 use bun_str as strings;
-use bun_threading::Mutex;
+use bun_threading::Guarded;
 
 use crate::webcore::Blob;
 
 // PORT NOTE: reshaped for borrowck — Zig had separate `lock: bun.Mutex` and
 // `map: AutoHashMap` fields with manual lock()/unlock() around every access.
-// In Rust the map is wrapped directly in the Mutex.
+// In Rust the map is wrapped in a `Guarded` (mutex + value).
 pub struct ObjectURLRegistry {
-    map: Mutex<HashMap<UUID, Box<Entry>>>,
+    map: Guarded<HashMap<UUID, Box<Entry>>>,
 }
 
 impl Default for ObjectURLRegistry {
     fn default() -> Self {
         Self {
-            map: Mutex::new(HashMap::default()),
+            map: Guarded::init(HashMap::default()),
         }
     }
 }

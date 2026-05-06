@@ -84,6 +84,8 @@ pub mod unsafe_object;
 pub mod json5_object;
 #[path = "api/YAMLObject.rs"]
 pub mod yaml_object;
+#[path = "api/csrf_jsc.rs"]
+pub mod csrf_jsc;
 #[path = "api/glob.rs"]
 pub mod glob;
 

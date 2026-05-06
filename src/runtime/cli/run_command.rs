@@ -1865,11 +1865,17 @@ use bun_core::{self as core, env_var, fmt as bun_fmt, Environment, Global, Outpu
 use bun_dotenv as DotEnv;
 use bun_http as http;
 use bun_jsc as jsc;
-use bun_md as md;
+// TODO(b2-blocked): `bun_md` is a workspace crate but not yet a dep of
+// `bun_runtime`. The markdown render path is preserved verbatim below; once
+// `bun_md` is wired into `runtime/Cargo.toml` swap this stub back to
+// `use bun_md as md;`.
+mod md {
+    pub use super::md_stub::*;
+}
 use bun_paths::{self as resolve_path, PathBuffer, WPathBuffer, DELIMITER, MAX_PATH_BYTES, SEP};
 use bun_resolver::dir_info::DirInfo;
 use bun_resolver::package_json::PackageJSON;
-use bun_schema::api;
+use bun_options_types::schema::api;
 use bun_str::{strings, ZStr};
 use bun_sys::{self as sys, Fd};
 use bun_threading::Channel;

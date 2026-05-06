@@ -1162,7 +1162,26 @@ pub struct CronJob {
 
 pub mod js {
     // Codegen-backed accessors. .classes.ts wrapper stays generated C++.
-    pub use bun_jsc::codegen::JSCronJob::*;
+    // TODO(b2-blocked): bun_jsc::codegen::JSCronJob — generate-classes.ts has
+    // not yet emitted the Rust per-class accessor module. Until it does, stub
+    // the cached-slot accessors used below so the file type-checks; they panic
+    // if reached at runtime.
+    use super::{JSGlobalObject, JSValue};
+    pub fn callback_get_cached(_this: JSValue) -> Option<JSValue> {
+        todo!("blocked_on: bun_jsc::codegen::JSCronJob")
+    }
+    pub fn callback_set_cached(_this: JSValue, _global: &JSGlobalObject, _v: JSValue) {
+        todo!("blocked_on: bun_jsc::codegen::JSCronJob")
+    }
+    pub fn cron_set_cached(_this: JSValue, _global: &JSGlobalObject, _v: JSValue) {
+        todo!("blocked_on: bun_jsc::codegen::JSCronJob")
+    }
+    pub fn pending_promise_get_cached(_this: JSValue) -> Option<JSValue> {
+        todo!("blocked_on: bun_jsc::codegen::JSCronJob")
+    }
+    pub fn pending_promise_set_cached(_this: JSValue, _global: &JSGlobalObject, _v: JSValue) {
+        todo!("blocked_on: bun_jsc::codegen::JSCronJob")
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, core::marker::ConstParamTy)]

@@ -1757,10 +1757,10 @@ mod bun_bun_js {
         ) -> Result<(), bun_core::Error> {
             todo!("blocked_on: bun_js::Run::boot (higher-tier crate)")
         }
-        pub fn boot_standalone(
+        pub fn boot_standalone<G>(
             _ctx: Context,
             _entry: &[u8],
-            _graph: &bun_standalone_graph::StandaloneModuleGraph,
+            _graph: G,
         ) -> Result<(), bun_core::Error> {
             todo!("blocked_on: bun_js::Run::boot_standalone (higher-tier crate)")
         }

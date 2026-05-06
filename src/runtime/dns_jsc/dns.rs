@@ -883,13 +883,16 @@ pub struct GetAddrInfoRequest {
     pub cache: CacheConfig,
     pub head: DNSLookup,
     pub tail: *mut DNSLookup, // INTRUSIVE
-    pub task: ThreadPool::Task,
+    pub task: thread_pool::Task,
 }
 
 pub mod get_addr_info_request {
     use super::*;
 
-    pub type Task = jsc::WorkTask<GetAddrInfoRequest>;
+    // TODO(port): WorkTask is currently an opaque stub in `bun_jsc`; restore the
+    // generic `WorkTask<GetAddrInfoRequest>` parameter once the real type is
+    // un-gated.
+    pub type Task = jsc::WorkTask;
 
     pub struct PendingCacheKey {
         pub hash: u64,

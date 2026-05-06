@@ -21,7 +21,7 @@ use crate::shell::{self as sh, EnvMap, IOWriter, Yield};
 use bun_spawn::{self, Status};
 use crate::api::bun::process::{Process, Rusage, SpawnOptions};
 #[cfg(windows)]
-use crate::api::bun::process::{WindowsSpawnOptions, WindowsSpawnResult, WindowsOptions};
+use crate::api::bun::process::{WindowsSpawnOptions, WindowsSpawnResult, WindowsStdioResult, WindowsOptions};
 use bun_sys::{self, Fd};
 use enumset::{EnumSet, EnumSetType};
 use strum::IntoStaticStr;

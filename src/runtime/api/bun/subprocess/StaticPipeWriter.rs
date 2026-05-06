@@ -304,7 +304,7 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
 
 /// Zig: `fn _deinit(this: *This) void` — the `RefCount` destructor callback.
 /// `bun.destroy(this)` (the heap free) is handled by `IntrusiveRc` after `drop` returns.
-impl<P> Drop for StaticPipeWriter<P> {
+impl<P: StaticPipeWriterProcess> Drop for StaticPipeWriter<P> {
     fn drop(&mut self) {
         self.writer.end();
         self.source.detach();

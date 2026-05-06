@@ -3015,9 +3015,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // this happens - but limit it to only warn once.
         if self.should_add_timeout_handler_for_warning() {
             // We need to pass it a pointer, any pointer should do.
+            // SAFETY: the user-data pointer is an opaque sentinel — `on_timeout_for_idle_warn`
+            // ignores it and reads the static directly. `AtomicBool::as_ptr` yields a `*mut`
+            // with interior-mutability provenance, so no `&T as *const _ as *mut _` cast is needed.
             resp.on_timeout::<c_void>(
                 |p, _resp| Self::on_timeout_for_idle_warn(p, None),
-                Self::did_send_idletimeout_warning_once() as *const _ as *mut c_void,
+                Self::did_send_idletimeout_warning_once().as_ptr() as *mut c_void,
             );
         }
 

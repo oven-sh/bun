@@ -845,12 +845,13 @@ where
                         };
 
                         if affected_len > 0 && !IS_KQUEUE {
-                            // SAFETY: see kqueue arm above — single-threaded JS thread.
-                            if let Some(existing) = unsafe { rfs.entries.get(file_path) } {
+                            if let Some(existing) = rfs.entries.get(file_path) {
+                                let existing =
+                                    existing as *mut Fs::EntriesOption as *mut core::ffi::c_void;
                                 self.put_tombstone(file_path, existing);
-                                entries_option = Some(existing);
+                                entries_option = Some(existing as *mut Fs::EntriesOption);
                             } else if let Some(existing) = self.get_tombstone(file_path) {
-                                entries_option = Some(existing);
+                                entries_option = Some(existing as *mut Fs::EntriesOption);
                             }
                         }
 

@@ -722,16 +722,10 @@ pub trait LoaderExt: Copy {
     // pub const fromJS — deleted: see PORTING.md "*_jsc alias" rule.
     // TODO(port): move to *_jsc — bun_bundler_jsc::options_jsc::loader_from_js
 
-    // PORT NOTE: spelling-aliases for the canonical `is_typescript` /
-    // `is_javascript_like*` (acronym-collapsing rule). Kept so existing
-    // intra-crate callers (transpiler.rs / postProcessJSChunk.rs) compile until
-    // a B-3 sweep renames them.
-    #[inline]
-    fn is_type_script(self) -> bool;
-    #[inline]
-    fn is_java_script_like(self) -> bool;
-    #[inline]
-    fn is_java_script_like_or_json(self) -> bool;
+    // PORT NOTE: `is_type_script` / `is_java_script_like*` spelling-aliases
+    // moved to inherent `impl Loader` in `bun_options_types::BundleEnums` so
+    // cross-crate callers (bun_jsc / bun_runtime) resolve them without a trait
+    // import.
 
     // TODO(port): `obj: anytype` — Zig duck-typed `.get(ext) -> Option<Loader>`.
     // Monomorphized to the only concrete map type callers pass (`LoaderHashTable`);
@@ -774,13 +768,6 @@ impl LoaderExt for Loader {
             }
         }
     }
-
-    #[inline]
-    fn is_type_script(self) -> bool { self.is_typescript() }
-    #[inline]
-    fn is_java_script_like(self) -> bool { self.is_javascript_like() }
-    #[inline]
-    fn is_java_script_like_or_json(self) -> bool { self.is_javascript_like_or_json() }
 
     fn from_mime_type(mime_type: bun_http::MimeType) -> Loader {
         if mime_type.value.starts_with(b"application/javascript-jsx") {

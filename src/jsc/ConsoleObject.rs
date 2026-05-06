@@ -4425,7 +4425,14 @@ pub mod formatter {
                         let count_without_children =
                             props_iter.len - usize::from(children_prop.is_some());
 
+                        // PORT NOTE: Zig reads `props_iter.i` (the post-yield
+                        // counter) directly off the iterator struct. The Rust
+                        // `JSPropertyIterator` keeps that field private, so we
+                        // mirror it locally — incremented on every successful
+                        // yield, exactly as `JSPropertyIterator.zig:next` does.
+                        let mut props_i: usize = 0;
                         while let Some(prop) = props_iter.next()? {
+                            props_i += 1;
                             if prop.eql_comptime(b"children") {
                                 continue;
                             }
@@ -4438,10 +4445,13 @@ pub mod formatter {
                             if needs_space { writer.space(); }
                             needs_space = false;
 
+                            // TODO(port): `bun.String.trunc(128)` — `bun_string::String`
+                            // has no `trunc` yet. Prop names are short in practice;
+                            // print untruncated until the helper lands.
                             writer.print(format_args!(
                                 "{}{}{}={}",
                                 pf!("<r><blue>"),
-                                prop.trunc(128),
+                                prop,
                                 pf!("<d>"),
                                 pf!("<r>")
                             ));
@@ -4466,18 +4476,18 @@ pub mod formatter {
                                     // count_without_children is necessary to prevent
                                     // printing an extra newline if there are children
                                     // and one prop and the child prop is the last prop
-                                    props_iter.i + 1 < count_without_children
+                                    props_i + 1 < count_without_children
                                     // 3 is arbitrary but basically
                                     //  <input type="text" value="foo" />
                                     //  ^ should be one line
                                     // <input type="text" value="foo" bar="true" baz={false} />
                                     //  ^ should be multiple lines
-                                    && props_iter.i > 3
+                                    && props_i > 3
                                 )
                             {
                                 writer.write_all(b"\n");
                                 self.write_indent(writer.ctx).expect("unreachable");
-                            } else if props_iter.i + 1 < count_without_children {
+                            } else if props_i + 1 < count_without_children {
                                 writer.space();
                             }
                         }

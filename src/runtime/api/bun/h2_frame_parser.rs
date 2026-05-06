@@ -1016,9 +1016,12 @@ impl StreamResumableIterator {
     pub fn next(&mut self) -> Option<*mut Stream> {
         // TODO(port): Zig HashMap.iterator() exposes raw bucket index; bun_collections::HashMap
         // must expose a resumable bucket-index iterator. Stub here.
-        // SAFETY: `parser` was derived from a live `&mut H2FrameParser` at `init` time; the parser
-        // outlives this iterator and no other `&mut` to it is materialized for the duration of this
-        // short borrow (callers interleave `next()` with their own parser accesses, never overlapping).
+        // SAFETY: `parser` was derived from a live `&mut H2FrameParser` at `init` time and the
+        // parser outlives this iterator. CONTRACT: callers must NOT access the parser through the
+        // original `&mut` between `next()` calls — under Stacked Borrows a write-retag of the
+        // original `&mut` would pop this raw pointer's SharedReadWrite tag and make the deref below
+        // UB. Callers must route every in-loop parser access through a reborrow of the SAME `*mut`
+        // they passed to `init()` (see flush_stream_queue / emit_*_to_all_streams / detach_from_js).
         let streams = unsafe { &mut (*self.parser).streams };
         let mut it = streams.iterator();
         if it.index() > it.capacity() || self.index > it.capacity() {

@@ -908,13 +908,15 @@ pub fn generate_entry_point_tail_js(
 
                             // Exports of imports need EImportIdentifier in case they need to be re-
                             // written to a property access later on
-                            if c.graph
-                                .symbols
-                                .get(resolved_export.data.import_ref)
-                                .unwrap()
+                            // SAFETY: symbol::Map::get returns a non-null `*mut Symbol` for a valid ref.
+                            if unsafe {
+                                (*c.graph
+                                    .symbols
+                                    .get(resolved_export.data.import_ref)
+                                    .unwrap())
                                 .namespace_alias
                                 .is_some()
-                            {
+                            } {
                                 let temp_ref = cjs_export_copies[i];
 
                                 // Create both a local variable and an export clause for that variable.

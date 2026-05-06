@@ -9,7 +9,8 @@ use bun_uws as uws;
 use bun_aio::KeepAlive;
 use bun_boringssl as BoringSSL;
 use bun_collections::{HashMap, StringMap, OffsetByteList};
-use crate::jsc::EventLoopTimer;
+use crate::jsc::{EventLoopTimer, EventLoopTimerState};
+use bun_aio::{EventLoopCtx, AllocatorType};
 use crate::jsc::webcore::AutoFlusher;
 
 use crate::postgres::data_cell as DataCell;
@@ -247,10 +248,10 @@ impl PostgresSQLConnection {
     }
 
     pub fn disable_connection_timeout(&mut self) {
-        if self.timer.state == EventLoopTimer::State::ACTIVE {
-            unsafe { self.vm() }.timer.remove(&mut self.timer);
+        if self.timer.state == EventLoopTimerState::ACTIVE {
+            unsafe { self.vm() }.timer().remove(&mut self.timer);
         }
-        self.timer.state = EventLoopTimer::State::CANCELLED;
+        self.timer.state = EventLoopTimerState::CANCELLED;
     }
 
     pub fn reset_connection_timeout(&mut self) {
@@ -259,15 +260,15 @@ impl PostgresSQLConnection {
             return;
         }
         let interval = self.get_timeout_interval();
-        if self.timer.state == EventLoopTimer::State::ACTIVE {
-            unsafe { self.vm() }.timer.remove(&mut self.timer);
+        if self.timer.state == EventLoopTimerState::ACTIVE {
+            unsafe { self.vm() }.timer().remove(&mut self.timer);
         }
         if interval == 0 {
             return;
         }
 
-        self.timer.next = bun_core::timespec::ms_from_now(bun_core::timespec::Mode::AllowMockedTime, i64::from(interval));
-        unsafe { self.vm() }.timer.insert(&mut self.timer);
+        self.timer.next = bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::AllowMockedTime, i64::from(interval));
+        unsafe { self.vm() }.timer().insert(&mut self.timer);
     }
 
     // TODO(b2-blocked): #[crate::jsc::host_fn(getter)] proc-macro attr
@@ -334,19 +335,19 @@ impl PostgresSQLConnection {
         if self.max_lifetime_interval_ms == 0 {
             return;
         }
-        if self.max_lifetime_timer.state == EventLoopTimer::State::ACTIVE {
+        if self.max_lifetime_timer.state == EventLoopTimerState::ACTIVE {
             return;
         }
 
         self.max_lifetime_timer.next =
-            bun_core::timespec::ms_from_now(bun_core::timespec::Mode::AllowMockedTime, i64::from(self.max_lifetime_interval_ms));
-        unsafe { self.vm() }.timer.insert(&mut self.max_lifetime_timer);
+            bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::AllowMockedTime, i64::from(self.max_lifetime_interval_ms));
+        unsafe { self.vm() }.timer().insert(&mut self.max_lifetime_timer);
     }
 
     pub fn on_connection_timeout(&mut self) {
         debug!("onConnectionTimeout");
 
-        self.timer.state = EventLoopTimer::State::FIRED;
+        self.timer.state = EventLoopTimerState::FIRED;
         if self.flags.is_processing_data {
             return;
         }
@@ -395,7 +396,7 @@ impl PostgresSQLConnection {
 
     pub fn on_max_lifetime_timeout(&mut self) {
         debug!("onMaxLifetimeTimeout");
-        self.max_lifetime_timer.state = EventLoopTimer::State::FIRED;
+        self.max_lifetime_timer.state = EventLoopTimerState::FIRED;
         if self.status == Status::Failed {
             return;
         }
@@ -419,7 +420,7 @@ impl PostgresSQLConnection {
     }
 
     // TODO(b2-blocked): #[crate::jsc::host_call] proc-macro attr
-    pub extern fn has_pending_activity(this: *mut Self) -> bool {
+    pub extern "C" fn has_pending_activity(this: *mut Self) -> bool {
         // SAFETY: called on GC thread; reads only atomic field.
         unsafe { (*this).pending_activity_count.load(Ordering::Acquire) > 0 }
     }
@@ -872,11 +873,17 @@ pub fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
         // through the per-VM weak `SSLContextCache` so every connection in the
         // pool — and every reconnect — shares one `SSL_CTX*` per distinct
         // config instead of building a fresh one per `PostgresSQLConnection`.
-        let mut err: uws::create_bun_socket_error_t = uws::create_bun_socket_error_t::None;
+        let mut err: uws::create_bun_socket_error_t = uws::create_bun_socket_error_t::none;
         secure = vm.rare_data().ssl_ctx_cache().get_or_create_opts(tls_config.as_usockets_for_client_verification(), &mut err);
         if secure.is_none() {
             drop(tls_config);
-            return global_object.throw_value(err.to_js(global_object));
+            // TODO(port): Zig `err.toJS(globalObject)` — `to_js` lives as an extension
+            // in the runtime _jsc crate and isn't reachable from sql_jsc; throw the
+            // static message instead.
+            return Err(global_object.throw(format_args!(
+                "{}",
+                core::str::from_utf8(err.message().unwrap_or(b"Failed to create SSL context")).unwrap_or("Failed to create SSL context")
+            )));
         }
     }
     // Covers `try arguments[7/8].toBunString()` and the null-byte rejection
@@ -933,7 +940,7 @@ pub fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
         path = b.append(_path.slice());
         drop(_path);
 
-        break 'brk b.allocated_slice();
+        break 'brk b.move_to_slice();
     };
     // TODO(port): username/password/database/options/path now borrow from `options_buf`;
     // when stored in the struct below they become raw `*const [u8]` (self-referential).
@@ -1191,11 +1198,11 @@ impl PostgresSQLConnection {
     }
 
     pub fn stop_timers(&mut self) {
-        if self.timer.state == EventLoopTimer::State::ACTIVE {
-            unsafe { self.vm() }.timer.remove(&mut self.timer);
+        if self.timer.state == EventLoopTimerState::ACTIVE {
+            unsafe { self.vm() }.timer().remove(&mut self.timer);
         }
-        if self.max_lifetime_timer.state == EventLoopTimer::State::ACTIVE {
-            unsafe { self.vm() }.timer.remove(&mut self.max_lifetime_timer);
+        if self.max_lifetime_timer.state == EventLoopTimerState::ACTIVE {
+            unsafe { self.vm() }.timer().remove(&mut self.max_lifetime_timer);
         }
     }
 

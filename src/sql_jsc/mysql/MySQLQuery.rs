@@ -310,17 +310,18 @@ impl MySQLQuery {
         }
         let query_str = self.query.to_utf8();
         let writer = connection.get_writer();
-        if self.statement.is_none() {
-            let stmt = Rc::new(MySQLStatement {
+        if self.statement.is_null() {
+            // Zig: `bun.new(MySQLStatement, .{ .signature = .empty(), .status = .parsing, .ref_count = .initExactRefs(1) })`.
+            // `Box::into_raw` yields a heap allocation with intrusive ref_count == 1
+            // (the `Default` impl sets `ref_count = Cell::new(1)`).
+            let stmt = Box::into_raw(Box::new(MySQLStatement {
                 signature: Signature::empty(),
                 status: my_sql_statement::Status::Parsing,
-                // TODO(port): Zig sets intrusive `ref_count = .initExactRefs(1)`; with `Rc` the
-                // single owner here gives strong_count == 1 implicitly.
                 ..Default::default()
-            });
-            self.statement = Some(stmt);
+            }));
+            self.statement = stmt;
         }
-        mysql_request::execute_query(query_str.as_slice(), writer)?;
+        mysql_request::execute_query(query_str.slice(), writer)?;
 
         self.status = Status::Running;
         Ok(())

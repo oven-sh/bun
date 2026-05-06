@@ -730,7 +730,7 @@ mod boring_extra {
 /// the ALPN protocol list for `offer`, and enables SCT/OCSP stapling. Called
 /// from `on_open` for every TLS socket — must run even when the hostname is an
 /// IP literal (with empty SNI) so ALPN is still advertised.
-pub(crate) fn configure_http_client_with_alpn(
+pub fn configure_http_client_with_alpn(
     ssl: *mut boringssl::c::SSL,
     hostname: *const core::ffi::c_char,
     offer: AlpnOffer,

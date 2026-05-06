@@ -97,15 +97,30 @@ impl JSMySQLConnection {
     /// which carries no aliasing/validity invariant.
     #[inline]
     pub unsafe fn deref(this: *mut Self) {
-        let n = (*this).ref_count.get() - 1;
-        (*this).ref_count.set(n);
-        if n == 0 {
-            // Count hit 0; `this` came from `Box::into_raw` in
-            // `create_instance`, so we are the unique owner here. `deinit`
-            // takes ownership back via `Box::from_raw` (mirrors Zig
-            // `bun.destroy(this)`).
-            Self::deinit(this);
+        // SAFETY: see fn-level contract — `this` is a live `Box::into_raw` ptr.
+        unsafe {
+            let n = (*this).ref_count.get() - 1;
+            (*this).ref_count.set(n);
+            if n == 0 {
+                // Count hit 0; `this` came from `Box::into_raw` in
+                // `create_instance`, so we are the unique owner here. `deinit`
+                // takes ownership back via `Box::from_raw` (mirrors Zig
+                // `bun.destroy(this)`).
+                Self::deinit(this);
+            }
         }
+    }
+
+    /// Short-lived `&mut VirtualMachine` for the few `vm.timer()` callers
+    /// (jsc shim's `timer()` is `&mut self`). The VM is a JS-thread singleton;
+    /// we never hold two `&mut` to it at once in this module.
+    ///
+    /// SAFETY: `self.vm` is `&'static`; the cast reborrows the same singleton
+    /// the JS thread already owns. Do not call while another `&mut VirtualMachine`
+    /// is live in this frame.
+    #[inline]
+    fn vm_mut(&self) -> &mut VirtualMachine {
+        unsafe { &mut *(self.vm as *const VirtualMachine as *mut VirtualMachine) }
     }
 
     pub fn on_auto_flush(&mut self) -> bool {

@@ -1097,11 +1097,12 @@ impl<const SSL: bool> HTTPClient<SSL> {
         let ssl_options: SSLConfig = match &me.ssl_config {
             Some(config) => (**config).clone(),
             // TODO(port): SSLConfig clone — Zig copies by value (`config.*`).
-            None => SSLConfig {
-                reject_unauthorized: 0, // We verify manually
-                request_cert: 1,
-                ..Default::default()
-            },
+            None => {
+                let mut c = SSLConfig::default();
+                c.reject_unauthorized = 0; // We verify manually
+                c.request_cert = 1;
+                c
+            }
         };
 
         // Start TLS handshake
@@ -1353,7 +1354,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
                 }
                 len if len == b"Sec-WebSocket-Extensions".len() => {
                     if strings::eql_case_insensitive_ascii(
-                        header.name,
+                        header.name(),
                         b"Sec-WebSocket-Extensions",
                         false,
                     ) {
@@ -1369,7 +1370,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
                             return;
                         }
                         // This is a simplified parser. A full parser would handle multiple extensions and quoted values.
-                        for ext_str in header.value.split(|b| *b == b',') {
+                        for ext_str in header.value().split(|b| *b == b',') {
                             let mut ext_it = trim_ws(ext_str).split(|b| *b == b';');
                             let ext_name = trim_ws(ext_it.next().unwrap_or(b""));
                             if ext_name == b"permessage-deflate" {

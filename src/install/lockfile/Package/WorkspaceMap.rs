@@ -184,15 +184,15 @@ impl WorkspaceMap {
             }
 
             let abs_package_json_path: &ZStr = resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
-                source.path.name.dir(),
+                source.path.name.dir,
                 filepath_buf,
                 &[input_path.as_bytes(), b"package.json"],
             );
 
             // skip root package.json
             if strings::eql_long(
-                path::dirname(abs_package_json_path.as_bytes(), path::Platform::Auto),
-                source.path.name.dir(),
+                resolve_path::dirname::<path::platform::Auto>(abs_package_json_path.as_bytes()),
+                source.path.name.dir,
                 true,
             ) {
                 continue;

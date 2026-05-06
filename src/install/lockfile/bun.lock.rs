@@ -944,7 +944,7 @@ impl Stringifier {
                 any = true;
             }
             writer.write_all(b" \"cpu\": ")?;
-            Negatable::<Npm::Architecture>::to_json(meta.arch, &mut bun_io::FmtWriter(writer))
+            Negatable::<Npm::Architecture>::to_json(meta.arch, &mut FmtBridge(writer))
                 .map_err(|_| bun_core::err!("WriteFailed"))?;
         }
 
@@ -2402,7 +2402,7 @@ fn dependency_resolution_failure(
 fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>(
     lockfile: &mut BinaryLockfile,
     obj: &Expr,
-    buf: &mut String::Buf,
+    buf: &mut StringBuf,
     log: &mut logger::Log,
     source: &logger::Source,
     optional_peers_buf: &mut HashMap<u64, ()>,

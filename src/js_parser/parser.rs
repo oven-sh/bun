@@ -10,13 +10,10 @@ use bun_core::Output;
 use bun_logger as logger;
 use bun_options_types::import_record::{ImportKind, ImportRecord};
 use bun_string::strings;
-// TODO(port): MUST be `bun_wyhash::Wyhash` (Zig `std.hash.Wyhash`, not Bun's
-// `Wyhash11`). `hash_for_runtime_transpiler` (runtime.zig:272) hashes with the
-// stdlib variant, so on-disk RuntimeTranspilerCache keys won't match the Zig
-// build until the real `Wyhash` is ported into `bun_wyhash`. Aliased for now so
-// every signature below already spells `Wyhash` and flips atomically once
-// `bun_wyhash::Wyhash` lands. blocked_on: bun_wyhash::Wyhash (std.hash.Wyhash port).
-use bun_wyhash::Wyhash11 as Wyhash;
+// Zig `std.hash.Wyhash` (final4 variant) — used by `hash_for_runtime_transpiler`
+// (runtime.zig:272) and `ReactRefresh.HookContext` (parser.zig:1140). NOT
+// interchangeable with `bun_wyhash::Wyhash11`.
+use bun_wyhash::Wyhash;
 
 // Re-exports (mirrors the Zig `pub const X = @import(...)` block at the bottom).
 // Round-C: stub the still-gated submodules so the helper *types* in this file
@@ -37,7 +34,7 @@ pub mod options {
     pub use bun_options_types::BundleEnums::ModuleType;
     #[allow(non_snake_case)]
     pub mod JSX {
-        use bun_wyhash::Wyhash11 as Wyhash;
+        use bun_wyhash::Wyhash;
 
         /// Port of `bundler/options.zig` `JSX.Pragma`.
         ///
@@ -101,7 +98,7 @@ pub mod options {
             }
         }
         impl Pragma {
-            pub fn hash_for_runtime_transpiler(&self, hasher: &mut bun_wyhash::Wyhash11) {
+            pub fn hash_for_runtime_transpiler(&self, hasher: &mut Wyhash) {
                 for factory in self.factory.iter() { hasher.update(factory); }
                 for fragment in self.fragment.iter() { hasher.update(fragment); }
                 hasher.update(&self.import_source.development);

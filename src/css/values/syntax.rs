@@ -1,6 +1,28 @@
 use crate::css_parser as css;
 use crate::css_parser::{CssResult, ParserError, PrintErr, Printer, Token};
-use crate::values::number::{CSSInteger, CSSNumber};
+use crate::values::angle::Angle;
+use crate::values::color::CssColor;
+use crate::values::ident::{CustomIdent, CustomIdentFns, Ident};
+use crate::values::image::Image;
+use crate::values::length::{Length, LengthPercentage};
+use crate::values::number::{CSSInteger, CSSIntegerFns, CSSNumber, CSSNumberFns};
+use crate::values::percentage::Percentage;
+use crate::values::resolution::Resolution;
+use crate::values::time::Time;
+use crate::values::url::Url;
+use crate::properties::custom::TokenList;
+use crate::properties::transform::TransformList;
+
+// blocked_on: properties::transform un-gate — `Transform` is not in the
+// `prop_value_stub!(transform, …)` list (only `TransformList` is), so the real
+// `crate::properties::transform::Transform` type does not exist while the leaf
+// `.rs` is `gated_prop!`-ed. Mirror property.rs's local-stub pattern: alias to
+// the ZST `TransformList` stub so the enum variant compiles, swap to the real
+// type when transform.rs un-gates.
+#[cfg(any())]
+use crate::properties::transform::Transform;
+#[cfg(not(any()))]
+type Transform = crate::properties::transform::TransformList;
 
 use bun_string::strings;
 

@@ -5068,12 +5068,91 @@ impl NodeFS {
         let mut to_buf = PathBuffer::uninit();
         #[cfg(windows)]
         {
-            // TODO(port): full Windows symlink body — see node_fs.zig:5943-6015.
-            // - autodetect link_type via directoryExistsAt on resolved target
-            // - preprocessSymlinkDestination (junction → abs+long-prefix, abs → long-prefix, all → backslashes)
-            // - Syscall.symlinkUV with UV_FS_SYMLINK_DIR/JUNCTION
-            let _ = &mut to_buf;
-            return Maybe::<ret::Symlink>::todo(); // TODO(port): windows symlink
+            // node_fs.zig:5943-6014.
+            const UV_FS_SYMLINK_DIR: c_int = 0x0001;
+            const UV_FS_SYMLINK_JUNCTION: c_int = 0x0002;
+            #[derive(Clone, Copy, PartialEq, Eq)]
+            enum ResolvedLinkType { File, Dir, Junction }
+
+            let target_path = args.target_path.slice();
+            let new_path = args.new_path.slice();
+            // Note: to_buf and sync_error_buf hold intermediate states, but the
+            // ending state is:
+            //    - new_path is in &sync_error_buf
+            //    - target_path is in &to_buf
+
+            // Stat target if unspecified.
+            let resolved_link_type: ResolvedLinkType = match args.link_type {
+                args::SymlinkLinkType::File => ResolvedLinkType::File,
+                args::SymlinkLinkType::Dir => ResolvedLinkType::Dir,
+                args::SymlinkLinkType::Junction => ResolvedLinkType::Junction,
+                args::SymlinkLinkType::Unspecified => 'auto_detect: {
+                    let cwd = match sys::getcwd(&mut to_buf) {
+                        Maybe::Ok(c) => c,
+                        Maybe::Err(_) => panic!("failed to resolve current working directory"),
+                    };
+                    let dir = bun_core::dirname(new_path).unwrap_or(new_path);
+                    let src_len = paths::resolve_path::join_abs_string_buf::<paths::platform::Windows>(
+                        cwd,
+                        &mut self.sync_error_buf[..],
+                        &[dir, target_path],
+                    ).len();
+                    self.sync_error_buf[src_len] = 0;
+                    // SAFETY: NUL just written at [src_len].
+                    let src_z = unsafe { ZStr::from_raw(self.sync_error_buf.as_ptr(), src_len) };
+                    break 'auto_detect match sys::directory_exists_at(FD::INVALID, src_z) {
+                        Maybe::Err(_) => ResolvedLinkType::File,
+                        Maybe::Ok(is_dir) => if is_dir { ResolvedLinkType::Dir } else { ResolvedLinkType::File },
+                    };
+                }
+            };
+            // preprocessSymlinkDestination
+            // - junctions: make absolute with long path prefix
+            // - absolute paths: add long path prefix
+            // - all: no forward slashes
+            let processed_target: &ZStr = 'target: {
+                if resolved_link_type == ResolvedLinkType::Junction {
+                    // this is similar to the `const src` above, but these cases
+                    // are mutually exclusive, so it isn't repeating any work.
+                    let cwd = match sys::getcwd(&mut to_buf) {
+                        Maybe::Ok(c) => c,
+                        Maybe::Err(_) => panic!("failed to resolve current working directory"),
+                    };
+                    let dir = bun_core::dirname(new_path).unwrap_or(new_path);
+                    let target_len = paths::resolve_path::join_abs_string_buf::<paths::platform::Windows>(
+                        cwd,
+                        &mut self.sync_error_buf[4..],
+                        &[dir, target_path],
+                    ).len();
+                    self.sync_error_buf[0..4].copy_from_slice(&paths::windows::LONG_PATH_PREFIX_U8);
+                    self.sync_error_buf[4 + target_len] = 0;
+                    // SAFETY: NUL written; bytes [0..4+target_len] initialised above.
+                    break 'target unsafe { ZStr::from_raw(self.sync_error_buf.as_ptr(), 4 + target_len) };
+                }
+                if paths::is_absolute(target_path) {
+                    // This normalizes slashes and adds the long path prefix
+                    break 'target args.target_path.slice_z_with_force_copy::<true>(&mut self.sync_error_buf);
+                }
+                self.sync_error_buf[..target_path.len()].copy_from_slice(target_path);
+                self.sync_error_buf[target_path.len()] = 0;
+                paths::resolve_path::dangerously_convert_path_to_windows_in_place::<u8>(
+                    &mut self.sync_error_buf[..target_path.len()],
+                );
+                // SAFETY: NUL written at [target_path.len()].
+                break 'target unsafe { ZStr::from_raw(self.sync_error_buf.as_ptr(), target_path.len()) };
+            };
+            return match Syscall::symlink_uv(
+                processed_target,
+                args.new_path.slice_z(&mut to_buf),
+                match resolved_link_type {
+                    ResolvedLinkType::File => 0,
+                    ResolvedLinkType::Dir => UV_FS_SYMLINK_DIR,
+                    ResolvedLinkType::Junction => UV_FS_SYMLINK_JUNCTION,
+                },
+            ) {
+                Maybe::Err(err) => Maybe::Err(err.with_path_dest(args.target_path.slice(), args.new_path.slice())),
+                Maybe::Ok(result) => Maybe::Ok(result),
+            };
         }
         #[cfg(not(windows))]
         match Syscall::symlink(

@@ -268,7 +268,10 @@ impl Linker {
     ) -> Result<(), bun_core::Error> {
         // SAFETY: `Transpiler` outlives all `link()` calls and is the sole owner
         // of the pointees; raw-ptr aliasing matches the Zig `*BundleOptions` etc.
-        let opts = unsafe { &mut *self.options };
+        // `opts` is `&` (not `&mut`) because `generate_import_path` also derives
+        // `&*self.options`, which would invalidate an exclusive borrow under
+        // Stacked Borrows. We only read `target` / `rewrite_jest_for_tests`.
+        let opts = unsafe { &*self.options };
         let log = unsafe { &mut *self.log };
 
         let source_dir = file_path.source_dir();

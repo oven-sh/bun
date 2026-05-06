@@ -4546,18 +4546,17 @@ impl<'a> Resolver<'a> {
                             if let Some(exports_map) = package_json.exports.as_ref() {
                                 // The condition set is determined by the kind of import
                                 let mut module_type = package_json.module_type;
-                                let mut esmodule = ESModule {
-                                    conditions: match kind {
-                                        ast::ImportKind::Require | ast::ImportKind::RequireResolve => self.opts.conditions.require.clone().expect("oom"),
-                                        ast::ImportKind::At | ast::ImportKind::AtConditional => self.opts.conditions.style.clone().expect("oom"),
-                                        _ => self.opts.conditions.import.clone().expect("oom"),
-                                    },
-                                    // allocator dropped
-                                    // SAFETY: PORT — detach the `&mut DebugLogs` borrow from `self`
-                                    // so `self.handle_esm_resolution` can re-borrow `*self` between
-                                    // `esmodule.resolve` calls (Zig held both as raw `*DebugLogs`).
-                                    debug_logs: self.debug_logs.as_mut().map(|d| unsafe { &mut *(d as *mut _) }),
-                                    module_type: &mut module_type,
+                                // PORT NOTE: reshaped for borrowck — Zig held a single `ESModule`
+                                // with a raw `*DebugLogs` across both `resolve` calls and the
+                                // intervening `handle_esm_resolution`. In Rust, keeping the
+                                // `ESModule` (which holds `&mut self.debug_logs`) alive across a
+                                // `&mut self` call is aliased-&mut UB. Build a fresh short-lived
+                                // `ESModule` per `resolve` call so its borrow ends before
+                                // `self.handle_esm_resolution` re-borrows `self`.
+                                let conditions = match kind {
+                                    ast::ImportKind::Require | ast::ImportKind::RequireResolve => self.opts.conditions.require.clone().expect("oom"),
+                                    ast::ImportKind::At | ast::ImportKind::AtConditional => self.opts.conditions.style.clone().expect("oom"),
+                                    _ => self.opts.conditions.import.clone().expect("oom"),
                                 };
 
                                 // Resolve against the path "/", then join it with the absolute
@@ -4567,9 +4566,14 @@ impl<'a> Resolver<'a> {
                                 // paths. We also want to avoid any "%" characters in the absolute
                                 // directory path accidentally being interpreted as URL escapes.
                                 {
-                                    let esm_resolution = esmodule.resolve(b"/", esm.subpath, &exports_map.root);
-                                    // PORT NOTE: drop `esmodule` (which mut-borrows `self.debug_logs`)
-                                    // before calling `&mut self` methods below.
+                                    // PERF(port): extra conditions clone vs Zig — profile in Phase B.
+                                    let esm_resolution = ESModule {
+                                        conditions: conditions.clone().expect("oom"),
+                                        debug_logs: self.debug_logs.as_mut(),
+                                        module_type: &mut module_type,
+                                    }
+                                    .resolve(b"/", esm.subpath, &exports_map.root);
+                                    // ESModule temporary dropped here; `self` is unborrowed.
 
                                     if let Some(result) = self.handle_esm_resolution(esm_resolution, abs_package_path, kind, package_json, esm.subpath) {
                                         let mut result_copy = result;
@@ -4599,7 +4603,12 @@ impl<'a> Resolver<'a> {
                                 // We limit this behavior just to ".js" files.
                                 let extname = bun_paths::extension(esm.subpath);
                                 if extname == b".js" && esm.subpath.len() > 3 {
-                                    let esm_resolution = esmodule.resolve(b"/", &esm.subpath[0..esm.subpath.len() - 3], &exports_map.root);
+                                    let esm_resolution = ESModule {
+                                        conditions,
+                                        debug_logs: self.debug_logs.as_mut(),
+                                        module_type: &mut module_type,
+                                    }
+                                    .resolve(b"/", &esm.subpath[0..esm.subpath.len() - 3], &exports_map.root);
                                     if let Some(result) = self.handle_esm_resolution(esm_resolution, abs_package_path, kind, package_json, esm.subpath) {
                                         let mut result_copy = result;
                                         result_copy.is_node_module = true;

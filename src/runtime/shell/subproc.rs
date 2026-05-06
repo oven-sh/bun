@@ -41,6 +41,15 @@ fn out_kind_str(k: OutKind) -> &'static str {
     }
 }
 
+/// Mutably borrow through an `Arc<T>` allocation. Shell is single-threaded;
+/// mirrors Zig's intrusive `*PipeReader` mutation through any alias.
+/// SAFETY: caller must ensure no overlapping `&`/`&mut` to `T` is live.
+#[inline]
+unsafe fn arc_mut<T>(a: &Arc<T>) -> &mut T {
+    // SAFETY: caller contract.
+    unsafe { &mut *(Arc::as_ptr(a) as *mut T) }
+}
+
 /// Local helper: `ReadState` → tag-name string for logs.
 #[inline]
 fn read_state_str(s: ReadState) -> &'static str {

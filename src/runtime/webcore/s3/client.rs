@@ -887,9 +887,9 @@ pub fn download_stream(
         bun_http::FetchRedirect::Follow,
         bun_http::async_http::Options {
             http_proxy,
-            verbose: Some(task.vm.get_verbose_fetch()),
+            verbose: Some(verbose),
             signals: Some(task.signals),
-            reject_unauthorized: Some(task.vm.get_tls_reject_unauthorized()),
+            reject_unauthorized: Some(reject_unauthorized),
             ..Default::default()
         },
     );

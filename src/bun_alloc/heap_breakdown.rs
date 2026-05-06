@@ -1,4 +1,3 @@
-#![cfg(any())] // CYCLEBREAK draft — re-gated per MASS-UNGATE (bun_alloc → bun_core/sys/runtime back-edge); MOVE_DOWN pending
 use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::marker::{PhantomData, PhantomPinned};
 use std::sync::OnceLock;

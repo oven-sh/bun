@@ -1,4 +1,3 @@
-#![cfg(any())] // CYCLEBREAK draft — re-gated per MASS-UNGATE (bun_alloc → bun_core/sys/runtime back-edge); MOVE_DOWN pending
 use core::ffi::c_void;
 
 use crate::mimalloc;

@@ -1,4 +1,3 @@
-#![cfg(any())] // CYCLEBREAK draft — re-gated per MASS-UNGATE (bun_alloc → bun_core/sys/runtime back-edge); MOVE_DOWN pending
 //! When cloning large amounts of data potentially multiple times, we can
 //! leverage copy-on-write memory to avoid actually copying the data. To do that
 //! on Linux, we need to use a memfd, which is a Linux-specific feature.

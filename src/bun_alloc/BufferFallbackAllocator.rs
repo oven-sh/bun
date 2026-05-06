@@ -1,4 +1,3 @@
-#![cfg(any())] // CYCLEBREAK draft — re-gated per MASS-UNGATE (bun_alloc → bun_core/sys/runtime back-edge); MOVE_DOWN pending
 //! An allocator that attempts to allocate from a provided buffer first,
 //! falling back to another allocator when the buffer is exhausted.
 //! Unlike `std.heap.StackFallbackAllocator`, this does not own the buffer.

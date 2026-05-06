@@ -1,4 +1,3 @@
-#![cfg(any())] // CYCLEBREAK draft — re-gated per MASS-UNGATE (bun_alloc → bun_core/sys/runtime back-edge); MOVE_DOWN pending
 //! AllocationScope wraps another allocator, providing leak and invalid free assertions.
 //! It also allows measuring how much memory a scope has allocated.
 

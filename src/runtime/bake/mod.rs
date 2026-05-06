@@ -202,33 +202,14 @@ pub use bake_body::StringRefList;
 pub mod framework_router {
     use bun_collections::{ArrayHashMap, StringArrayHashMap};
 
-    /// Metadata for route files is specified out of line: in DevServer it is an
-    /// `IncrementalGraph(.server).FileIndex`; in production build it is an
-    /// entrypoint index.
-    #[repr(transparent)]
-    #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
-    pub struct OpaqueFileId(pub u32);
-    impl OpaqueFileId {
-        #[inline] pub const fn init(v: u32) -> Self { Self(v) }
-        #[inline] pub const fn get(self) -> u32 { self.0 }
-    }
-    // TODO(port): `bun.GenericIndex.Optional` is a packed sentinel
-    // (`maxInt = none`); `Option<T>` changes layout. Fine for non-FFI fields.
-    pub type OpaqueFileIdOptional = Option<OpaqueFileId>;
-
-    /// `FrameworkRouter.Route.Index` — `bun.GenericIndex(u31, Route)`.
-    #[repr(transparent)]
-    #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
-    pub struct RouteIndex(pub u32);
-    impl RouteIndex {
-        #[inline] pub const fn init(v: u32) -> Self { Self(v) }
-        #[inline] pub const fn get(self) -> u32 { self.0 }
-    }
-
-    /// `FrameworkRouter.Type.Index` — `enum(u8) { _ }`.
-    #[repr(transparent)]
-    #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
-    pub struct TypeIndex(pub u8);
+    // PORT NOTE: these were keystone stubs duplicating the real defs in
+    // `framework_router_body` (FrameworkRouter.rs). The `InsertionHandler`
+    // trait — re-exported below — is defined against the body types, so the
+    // duplicate stubs caused E0053 in implementers. Re-export the canonical
+    // body types instead so `framework_router::X` ≡ `framework_router_body::X`.
+    pub use super::framework_router_body::{
+        FileKind, OpaqueFileId, OpaqueFileIdOptional, RouteIndex, TinyLog, TypeIndex,
+    };
 
     /// `FrameworkRouter.Style` — routing convention (`.nextjs-pages` etc).
     /// Full enum body in gated `FrameworkRouter.rs`; variants named for
@@ -239,13 +220,6 @@ pub mod framework_router {
         NextjsAppUi,
         NextjsAppRoutes,
         // TODO(b2-blocked): JavaScriptDefined(jsc::Strong) — needs bun_jsc.
-    }
-
-    /// `FrameworkRouter.Route.FileKind`.
-    #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-    pub enum FileKind {
-        Page,
-        Layout,
     }
 
     /// `FrameworkRouter.Route` — one node in the route tree. Full body (with

@@ -4034,8 +4034,19 @@ impl<'a> BundleV2<'a> {
         self.graph.ast.ensure_unused_capacity(2)?;
         self.graph.input_files.ensure_unused_capacity(2)?;
 
-        let server_source = bake::SERVER_VIRTUAL_SOURCE;
-        let client_source = bake::CLIENT_VIRTUAL_SOURCE;
+        // PORT NOTE: Zig copied `bake.server_virtual_source` by value. The Rust
+        // statics are `LazyLock<Source>` and `Source` is not `Clone`, so rebuild
+        // an owned `Source` from the static's clonable fields (`path`, `index`).
+        let server_source = bun_logger::Source {
+            path: bake::SERVER_VIRTUAL_SOURCE.path.clone(),
+            index: bake::SERVER_VIRTUAL_SOURCE.index,
+            ..Default::default()
+        };
+        let client_source = bun_logger::Source {
+            path: bake::CLIENT_VIRTUAL_SOURCE.path.clone(),
+            index: bake::CLIENT_VIRTUAL_SOURCE.index,
+            ..Default::default()
+        };
 
         self.graph.input_files.append(crate::Graph::InputFile {
             source: server_source,

@@ -176,7 +176,10 @@ macro_rules! extern_crypto_job {
                         let vm = global.bun_vm();
                         let job = Box::into_raw(Box::new(Job {
                             vm,
-                            task: WorkPoolTask { callback: Self::run_task },
+                            task: WorkPoolTask {
+                                node: Default::default(),
+                                callback: Self::run_task,
+                            },
                             // SAFETY: any_task is overwritten immediately below before any use.
                             any_task: unsafe { core::mem::zeroed() },
                             poll: KeepAlive::default(),

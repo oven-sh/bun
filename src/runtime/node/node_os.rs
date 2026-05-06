@@ -1270,47 +1270,47 @@ pub fn set_process_priority_impl(pid: i32, priority: i32) -> bun_sys::E {
     unsafe { core::mem::transmute(errcode as c_int) }
 }
 
-pub fn set_priority1(global: &JSGlobalObject, pid: i32, priority: i32) -> Result<(), bun_core::Error> {
+pub fn set_priority1(global: &JSGlobalObject, pid: i32, priority: i32) -> JsResult<()> {
     let errcode = set_process_priority_impl(pid, priority);
     match errcode {
-        bun_sys::E::SRCH => {
+        bun_sys::E::ESRCH => {
             let err = SystemError {
                 message: BunString::static_("no such process"),
                 code: BunString::static_("ESRCH"),
                 #[cfg(not(windows))]
-                errno: -(bun_sys::posix::E::SRCH as c_int),
+                errno: -(bun_sys::posix::E::ESRCH as c_int),
                 #[cfg(windows)]
                 errno: libuv::UV_ESRCH,
                 syscall: BunString::static_("uv_os_getpriority"),
-                ..Default::default()
+                ..system_error_default()
             };
-            global.throw_value(err.to_error_instance_with_info_object(global))
+            Err(global.throw_value(err.to_error_instance_with_info_object(global)))
         }
-        bun_sys::E::ACCES => {
+        bun_sys::E::EACCES => {
             let err = SystemError {
                 message: BunString::static_("permission denied"),
                 code: BunString::static_("EACCES"),
                 #[cfg(not(windows))]
-                errno: -(bun_sys::posix::E::ACCES as c_int),
+                errno: -(bun_sys::posix::E::EACCES as c_int),
                 #[cfg(windows)]
                 errno: libuv::UV_EACCES,
                 syscall: BunString::static_("uv_os_getpriority"),
-                ..Default::default()
+                ..system_error_default()
             };
-            global.throw_value(err.to_error_instance_with_info_object(global))
+            Err(global.throw_value(err.to_error_instance_with_info_object(global)))
         }
-        bun_sys::E::PERM => {
+        bun_sys::E::EPERM => {
             let err = SystemError {
                 message: BunString::static_("operation not permitted"),
                 code: BunString::static_("EPERM"),
                 #[cfg(not(windows))]
-                errno: -(bun_sys::posix::E::SRCH as c_int),
+                errno: -(bun_sys::posix::E::ESRCH as c_int),
                 #[cfg(windows)]
                 errno: libuv::UV_ESRCH,
                 syscall: BunString::static_("uv_os_getpriority"),
-                ..Default::default()
+                ..system_error_default()
             };
-            global.throw_value(err.to_error_instance_with_info_object(global))
+            Err(global.throw_value(err.to_error_instance_with_info_object(global)))
         }
         _ => {
             // no other error codes can be emitted
@@ -1319,7 +1319,7 @@ pub fn set_priority1(global: &JSGlobalObject, pid: i32, priority: i32) -> Result
     }
 }
 
-pub fn set_priority2(global: &JSGlobalObject, priority: i32) -> Result<(), bun_core::Error> {
+pub fn set_priority2(global: &JSGlobalObject, priority: i32) -> JsResult<()> {
     set_priority1(global, 0, priority)
 }
 

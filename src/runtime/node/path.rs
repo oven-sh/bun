@@ -1725,7 +1725,7 @@ pub fn join(
         // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
         validate_string(global_object, path_ptr, format_args!("paths[{}]", i))?;
         let path_zstr = path_ptr.get_zig_string(global_object)?;
-        if path_zstr.len() > 0 {
+        if path_zstr.len > 0 {
             owned.push(path_zstr.to_slice());
         } else {
             // push empty placeholder so indices match (not strictly needed)
@@ -2179,7 +2179,7 @@ pub fn normalize(
     // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
     validate_string(global_object, path_ptr, format_args!("path"))?;
     let path_zstr = path_ptr.get_zig_string(global_object)?;
-    let len = path_zstr.len();
+    let len = path_zstr.len;
     if len == 0 {
         return BunString::create_utf8_for_js(global_object, CHAR_STR_DOT);
     }
@@ -2508,7 +2508,7 @@ pub fn parse(
     crate::node::validators_impl::validate_string(global_object, path_ptr, format_args!("path"))?;
 
     let path_zstr = path_ptr.get_zig_string(global_object)?;
-    if path_zstr.len() == 0 {
+    if path_zstr.len == 0 {
         return PathParsed::<u8>::default().to_js_object(global_object);
     }
 

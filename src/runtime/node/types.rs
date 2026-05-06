@@ -1520,11 +1520,11 @@ impl FileSystemFlags {
                 );
             }
             // it's definitely wrong when the string is super long
-            else if str.len() > 12 {
-                return ctx.throw_invalid_arguments(
-                    "Invalid flag '{any}'. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags",
-                    format_args!("{}", str),
-                );
+            else if str.len > 12 {
+                return Err(ctx.throw_invalid_arguments(format_args!(
+                    "Invalid flag '{}'. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags",
+                    str
+                )));
             }
 
             let flags: Option<i32> = 'brk: {

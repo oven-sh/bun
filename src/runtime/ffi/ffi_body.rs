@@ -1496,7 +1496,7 @@ impl FFI {
 
         let mut arraylist: Vec<u8> = Vec::new();
 
-        function.base_name = Some(ZStr::from_static(b"my_callback_function\0"));
+        function.base_name = Some(ZBox::from_bytes(b"my_callback_function"));
 
         if function
             .print_callback_source_code(None, None, &mut arraylist)
@@ -1504,7 +1504,7 @@ impl FFI {
         {
             return ZigString::init(b"Error while printing code").to_error_instance(global);
         }
-        ZigString::init(&arraylist).to_js(global)
+        jsc::bun_string_jsc::create_utf8_for_js(global, &arraylist).unwrap_or(JSValue::ZERO)
     }
 
     pub fn print(

@@ -511,17 +511,17 @@ impl NodeHTTPResponse {
         true
     }
 
-    pub fn maybe_stop_reading_body(&mut self, vm: &VirtualMachine, this_value: JSValue) {
+    pub fn maybe_stop_reading_body(&mut self, vm: &mut VirtualMachine, this_value: JSValue) {
         self.upgrade_context.reset(); // we can discard the upgrade context now
 
         if (self.flags.contains(Flags::UPGRADED)
             || self.flags.contains(Flags::SOCKET_CLOSED)
             || self.flags.contains(Flags::ENDED))
-            && (self.body_read_ref.has() || self.body_read_state == BodyReadState::Pending)
+            && (self.body_read_ref.has || self.body_read_state == BodyReadState::Pending)
             && (!self.flags.contains(Flags::HAS_CUSTOM_ON_DATA)
                 || js::on_data_get_cached(this_value).is_none())
         {
-            let had_ref = self.body_read_ref.has();
+            let had_ref = self.body_read_ref.has;
             if !self.flags.contains(Flags::UPGRADED) && !self.flags.contains(Flags::SOCKET_CLOSED) {
                 scoped_log!(NodeHTTPResponse, "clearOnData");
                 if let Some(raw_response) = &self.raw_response {

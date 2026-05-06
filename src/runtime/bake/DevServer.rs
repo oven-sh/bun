@@ -4316,16 +4316,24 @@ pub fn dump_bundle(
         &[<&'static str>::from(graph).as_bytes(), rel_path],
     )[1..];
     // TODO(port): std.fs.Dir.makeOpenPath / createFile — use bun_sys
-    let mut inner_dir = dump_dir.make_open_path(paths::resolve_path::dirname::<paths::platform::Auto>(name))?;
+    let mut inner_dir = dump_dir.make_open_path(
+        paths::resolve_path::dirname::<paths::platform::Auto>(name),
+        Default::default(),
+    )?;
 
-    let file = inner_dir.create_file(paths::basename(name))?;
-    let mut file_buffer = [0u8; 1024];
-    let mut bufw = file.buffered_writer(&mut file_buffer);
+    // PORT NOTE: std.fs.Dir.createFile -> openat(CREAT|TRUNC|WRONLY).
+    let file = sys::File::openat(
+        inner_dir.fd,
+        paths::basename(name),
+        sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC,
+        0o664,
+    )?;
+    let mut bufw = file.buffered_writer();
 
     if !strings::has_suffix_comptime(rel_path, b".map") {
         write!(
             bufw,
-            "// {:?} bundled for {}\n",
+            "// {} bundled for {}\n",
             bun_core::fmt::quote(rel_path),
             <&'static str>::from(graph),
         )?;
@@ -4420,11 +4428,10 @@ impl DevServer<'_> {
         };
         debug_assert!(dev.magic == Magic::Valid);
         dev.emit_memory_visualizer_message();
-        timer.state = EventLoopTimer::State::FIRED;
+        timer.state = crate::timer::event_loop_timer::State::FIRED;
         // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime
-        unsafe { &*dev.vm }
-            .timer
-            .update(timer, &bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::AllowMockedTime, 1000));
+        let _ = (timer, dev.vm);
+        todo!("blocked_on: bun_jsc::VirtualMachine::timer (field is `()` placeholder)");
     }
 
     pub fn emit_memory_visualizer_message_if_needed(&mut self) {
@@ -4463,17 +4470,19 @@ impl DevServer<'_> {
             system_used: u32,
             system_total: u32,
         }
-        let cost = self.memory_cost_detailed();
+        let _cost = self.memory_cost_detailed();
         let system_total = crate::node::os::totalmem();
+        // TODO(b2-blocked): `memory_cost_detailed` returns `()` placeholder until
+        // `dev_server::memory_cost_body` is un-gated. Emit zeros so the wire shape stays.
         let fields = Fields {
-            incremental_graph_client: cost.incremental_graph_client as u32,
-            incremental_graph_server: cost.incremental_graph_server as u32,
-            js_code: cost.js_code as u32,
-            source_maps: cost.source_maps as u32,
-            assets: cost.assets as u32,
-            other: cost.other as u32,
-            devserver_tracked: if AllocationScope::ENABLED {
-                self.allocation_scope.stats().total_memory_allocated as u32
+            incremental_graph_client: 0,
+            incremental_graph_server: 0,
+            js_code: 0,
+            source_maps: 0,
+            assets: 0,
+            other: 0,
+            devserver_tracked: if ALLOCATION_SCOPE_ENABLED {
+                todo!("blocked_on: bun_alloc::AllocationScope::stats")
             } else {
                 0
             },
@@ -4498,15 +4507,12 @@ impl DevServer<'_> {
                 debug_assert!(value.ref_count > 0);
                 payload.extend_from_slice(&key.get().to_ne_bytes());
                 payload.extend_from_slice(&value.ref_count.to_le_bytes());
-                if let Some(entry) = self.source_maps.locate_weak_ref(*key) {
-                    payload.extend_from_slice(&entry.ref_.count.to_le_bytes());
-                    // floats are easier to decode in JS
-                    payload.extend_from_slice(&(entry.ref_.expire as f64).to_ne_bytes());
-                } else {
-                    payload.extend_from_slice(&0u32.to_le_bytes());
-                }
-                payload.extend_from_slice(&(value.files.len() as u32).to_le_bytes());
-                payload.extend_from_slice(&value.overlapping_memory_cost.to_le_bytes());
+                // TODO(b2-blocked): `SourceMapStore::locate_weak_ref` + `Entry.overlapping_memory_cost`
+                // live in the gated `source_map_store_body`; emit zero placeholders so wire stays in sync.
+                let _ = value;
+                payload.extend_from_slice(&0u32.to_le_bytes());
+                payload.extend_from_slice(&0u32.to_le_bytes());
+                payload.extend_from_slice(&0u32.to_le_bytes());
             }
         }
         Ok(())

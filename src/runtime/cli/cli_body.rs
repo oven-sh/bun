@@ -1634,7 +1634,6 @@ To create a React project using Vite, run
 
 Then select \"React\" from the list of frameworks.
 ",
-                format_args!(""),
             );
             Global::exit(1);
         }

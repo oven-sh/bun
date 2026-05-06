@@ -2805,12 +2805,7 @@ impl Blob {
         JSValue::from(bun_sys::S::ISREG(file.mode) || bun_sys::S::ISFIFO(file.mode))
     }
 
-    pub fn is_s3(&self) -> bool {
-        if let Some(store) = &self.store {
-            return matches!(store.data, Store::Data::S3(_));
-        }
-        false
-    }
+    // is_s3: defined once above (near is_bun_file); duplicate removed to fix E0034.
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -4265,12 +4260,7 @@ impl Blob {
         }
     }
 
-    pub fn needs_to_read_file(&self) -> bool {
-        self.store
-            .as_ref()
-            .map(|s| matches!(s.data, Store::Data::File(_)))
-            .unwrap_or(false)
-    }
+    // needs_to_read_file: defined once above; duplicate removed to fix E0034.
 }
 
 pub use crate::webcore::Lifetime as BlobLifetime;

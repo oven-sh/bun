@@ -469,7 +469,7 @@ impl ServerConfig {
 // `bun_jsc` is a dep of bun_runtime.
 // TODO(b2-blocked): bun_jsc method surface.
 
-mod _gated_from_js {
+pub mod _gated_from_js {
 use super::*;
 use crate::server::jsc::{CallFrame, JSPropertyIterator, JsError};
 use bun_core::fmt as bun_fmt;

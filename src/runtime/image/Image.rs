@@ -825,8 +825,13 @@ pub fn get_backend(global: &JSGlobalObject, _: JSValue, _: JSValue) -> JsResult<
 }
 
 pub fn set_backend(_: JSValue, global: &JSGlobalObject, value: JSValue) -> bool {
-    let _ = (global, value);
-    todo!("blocked_on: bun_jsc::FromJsEnum impl for codecs::Backend")
+    match value.to_enum::<codecs::Backend>(global, "Bun.Image.backend") {
+        Ok(b) => {
+            codecs::BACKEND.store(b as u8, core::sync::atomic::Ordering::Relaxed);
+            true
+        }
+        Err(_) => false,
+    }
 }
 
 // ───────────── static `Bun.Image.fromClipboard()` / `.hasClipboardImage()` ──

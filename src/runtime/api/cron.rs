@@ -1964,8 +1964,8 @@ fn spawn_cmd_generic<T: SpawnCmdTarget>(
         }
     }
 
-    // SAFETY: per-thread VM singleton.
-    let ev_handle = EventLoopHandle::init(unsafe { vm_mut() }.event_loop());
+    // SAFETY: per-thread VM singleton; `event_loop()` returns a live `*mut`.
+    let ev_handle = EventLoopHandle::init(unsafe { &*vm_mut().event_loop() });
     let process = spawned.to_process(ev_handle, false);
     *this.process_slot() = Some(process);
     // TODO(port): `Process::set_exit_handler` now takes `(owner, &'static

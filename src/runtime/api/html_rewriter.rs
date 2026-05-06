@@ -1483,7 +1483,7 @@ impl TextChunk {
             self.text_chunk,
             content_slice.slice(),
             content_options.map_or(false, |o| o.html),
-        )
+        ) }
         .is_err()
         {
             return create_lolhtml_error(global_object);
@@ -1543,7 +1543,7 @@ impl TextChunk {
         }
         // SAFETY: self.text_chunk is non-null (checked above) and valid for the
         // duration of the lol-html callback.
-        BunString::create_utf8_for_js(global, unsafe { lolhtml::TextChunk::get_content(self.text_chunk) }.slice())
+        bun_string_jsc::create_utf8_for_js(global, unsafe { lolhtml::TextChunk::get_content(self.text_chunk) }.slice())
     }
 
     #[bun_jsc::host_fn(getter)]

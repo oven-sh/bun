@@ -26,17 +26,17 @@ bun_output::declare_scope!(UpgradedDuplex, visible);
 
 pub struct UpgradedDuplex<'a> {
     pub wrapper: Option<WrapperType<'a>>,
-    pub origin: Strong, // any duplex
+    pub origin: StrongOptional, // any duplex
     // JSC_BORROW per LIFETIMES.tsv — rust_type verbatim.
     pub global: Option<&'a JSGlobalObject>,
     pub ssl_error: CertError,
     // JSC_BORROW per LIFETIMES.tsv — rust_type verbatim.
     pub vm: &'a VirtualMachine,
     pub handlers: Handlers,
-    pub on_data_callback: Strong,
-    pub on_end_callback: Strong,
-    pub on_writable_callback: Strong,
-    pub on_close_callback: Strong,
+    pub on_data_callback: StrongOptional,
+    pub on_end_callback: StrongOptional,
+    pub on_writable_callback: StrongOptional,
+    pub on_close_callback: StrongOptional,
     pub event_loop_timer: EventLoopTimer,
     pub current_timeout: u32,
 }

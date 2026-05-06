@@ -1595,6 +1595,7 @@ impl napi_async_work {
     }
 
     fn run(&mut self) {
+        let self_ptr: *mut Self = self;
         if let Err(state) = self.status.compare_exchange(
             AsyncWorkStatus::Pending as u32,
             AsyncWorkStatus::Started as u32,
@@ -1602,8 +1603,9 @@ impl napi_async_work {
             Ordering::SeqCst,
         ) {
             if state == AsyncWorkStatus::Cancelled as u32 {
-                self.event_loop
-                    .enqueue_task_concurrent(self.concurrent_task.from(self, AutoDeinit::ManualDeinit));
+                // SAFETY: event_loop is the live JS-thread loop.
+                unsafe { &*self.event_loop }
+                    .enqueue_task_concurrent(self.concurrent_task.from(self_ptr, AutoDeinit::ManualDeinit));
                 return;
             }
         }
@@ -1611,8 +1613,9 @@ impl napi_async_work {
         self.status
             .store(AsyncWorkStatus::Completed as u32, Ordering::SeqCst);
 
-        self.event_loop
-            .enqueue_task_concurrent(self.concurrent_task.from(self, AutoDeinit::ManualDeinit));
+        // SAFETY: event_loop is the live JS-thread loop.
+        unsafe { &*self.event_loop }
+            .enqueue_task_concurrent(self.concurrent_task.from(self_ptr, AutoDeinit::ManualDeinit));
     }
 
     pub fn cancel(&mut self) -> bool {

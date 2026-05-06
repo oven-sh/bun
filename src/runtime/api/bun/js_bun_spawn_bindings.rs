@@ -80,6 +80,22 @@ fn timespec_order_ignore_epoch(a: &Timespec, b: &Timespec) -> core::cmp::Orderin
     a.order(b)
 }
 
+/// Convert a `bun_sys::SystemError` (T1 stub shape) into the C-ABI
+/// `bun_jsc::SystemError` and materialize a JS Error instance.
+fn sys_system_error_to_js(err: bun_sys::SystemError, global: &JSGlobalObject) -> JSValue {
+    let jsc_err = SystemError {
+        errno: err.errno,
+        code: err.code,
+        message: err.message,
+        path: err.path,
+        syscall: err.syscall,
+        hostname: err.hostname,
+        fd: err.fd,
+        dest: err.dest,
+    };
+    jsc_err.to_error_instance(global)
+}
+
 /// `Terminal.CreateResult` — full struct gated behind `bun_terminal_body`. Stub
 /// the shape used by `spawn_maybe_sync` so the parsing path type-checks.
 pub struct TerminalCreateResult {

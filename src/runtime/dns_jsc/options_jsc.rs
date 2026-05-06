@@ -251,7 +251,7 @@ pub fn address_to_js(
         Ok(s) => s,
         Err(_) => return Err(global.throw_out_of_memory()),
     };
-    Ok(str.transfer_to_js(global))
+    str.transfer_to_js(global)
 }
 
 pub fn addr_info_to_js_array(addr_info: &libc::addrinfo, global: &JSGlobalObject) -> JsResult<JSValue> {

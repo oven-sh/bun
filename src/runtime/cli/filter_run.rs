@@ -738,9 +738,8 @@ pub fn run_scripts_with_filter(ctx: Command::Context) -> Result<core::convert::I
     // SAFETY: configure_env_for_run fully initializes the out-param on Ok.
     let mut this_transpiler = unsafe { this_transpiler.assume_init() };
 
-    let pattern_refs: Vec<&[u8]> = patterns.iter().map(|p| p.as_ref()).collect();
     let mut package_json_iter =
-        FilterArg::PackageFilterIterator::init(&pattern_refs, resolve_root)?;
+        FilterArg::PackageFilterIterator::init(&patterns, resolve_root)?;
     // defer package_json_iter.deinit() — handled by Drop
 
     // Get list of packages that match the configuration

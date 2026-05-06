@@ -18,8 +18,9 @@ use bun_io::{BufferedReader, ReadState, StreamingWriter, WriteStatus};
 use crate::node::StringOrBuffer;
 use bun_jsc::{
     self as jsc, CallFrame, EventLoopHandle, JSGlobalObject, JSValue, JsRef, JsResult,
-    MarkedArrayBuffer, ZigString, ZigStringSlice,
+    MarkedArrayBuffer, ZigStringSlice,
 };
+use bun_string::ZigString;
 use bun_sys::{self as sys, Fd};
 
 #[cfg(windows)]

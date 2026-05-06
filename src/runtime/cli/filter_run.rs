@@ -205,7 +205,7 @@ macro_rules! fmt {
 
 struct State<'a> {
     handles: Box<[ProcessHandle<'a>]>,
-    event_loop: &'static MiniEventLoop,
+    event_loop: &'static MiniEventLoop<'static>,
     remaining_scripts: usize,
     // buffer for batched output
     draw_buf: Vec<u8>,

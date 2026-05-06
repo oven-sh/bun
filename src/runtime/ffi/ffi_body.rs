@@ -3097,11 +3097,11 @@ impl CompilerRT {
 }
 
 struct MyFunctionSStructWorkAround {
-    jsvalue_to_int64: extern "C" fn(JSValue) -> i64,
-    jsvalue_to_uint64: extern "C" fn(JSValue) -> u64,
-    int64_to_jsvalue: extern "C" fn(*mut JSGlobalObject, i64) -> JSValue,
-    uint64_to_jsvalue: extern "C" fn(*mut JSGlobalObject, u64) -> JSValue,
-    bun_call: extern "C" fn(
+    jsvalue_to_int64: unsafe extern "C" fn(JSValue) -> i64,
+    jsvalue_to_uint64: unsafe extern "C" fn(JSValue) -> u64,
+    int64_to_jsvalue: unsafe extern "C" fn(*mut JSGlobalObject, i64) -> JSValue,
+    uint64_to_jsvalue: unsafe extern "C" fn(*mut JSGlobalObject, u64) -> JSValue,
+    bun_call: unsafe extern "C" fn(
         // TODO(port): @TypeOf(jsc.C.JSObjectCallAsFunction) signature
         ctx: *mut c_void,
         function: *mut c_void,
@@ -3114,11 +3114,11 @@ struct MyFunctionSStructWorkAround {
 
 // TODO(port): JSValue.exposed_to_ffi — these are static fn ptrs from headers
 static WORKAROUND: MyFunctionSStructWorkAround = MyFunctionSStructWorkAround {
-    jsvalue_to_int64: jsc::exposed_to_ffi::JSVALUE_TO_INT64,
-    jsvalue_to_uint64: jsc::exposed_to_ffi::JSVALUE_TO_UINT64,
-    int64_to_jsvalue: jsc::exposed_to_ffi::INT64_TO_JSVALUE,
-    uint64_to_jsvalue: jsc::exposed_to_ffi::UINT64_TO_JSVALUE,
-    bun_call: jsc::c::JSObjectCallAsFunction,
+    jsvalue_to_int64: exposed_to_ffi::JSVALUE_TO_INT64,
+    jsvalue_to_uint64: exposed_to_ffi::JSVALUE_TO_UINT64,
+    int64_to_jsvalue: exposed_to_ffi::INT64_TO_JSVALUE,
+    uint64_to_jsvalue: exposed_to_ffi::UINT64_TO_JSVALUE,
+    bun_call: exposed_to_ffi::JSObjectCallAsFunction,
 };
 
 // ─── exports ────────────────────────────────────────────────────────────────

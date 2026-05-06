@@ -395,7 +395,7 @@ impl ByteStream {
         if let Some(mut action) = self.buffer_action.take() {
             let global = self.parent().global_this;
             // TODO: properly propagate exception upwards
-            let _ = action.reject(global, streams::Err::AbortReason(streams::AbortReason::UserAbort));
+            let _ = action.reject(global, streams::StreamError::AbortReason(jsc::CommonAbortReason::UserAbort));
             self.buffer_action = None;
         }
     }

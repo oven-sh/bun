@@ -25,6 +25,28 @@ bun_output::declare_scope!(napi, visible);
 
 const TODO_EXCEPTION: jsc::c_api::ExceptionRef = ptr::null_mut();
 
+// Local extern declarations for JavaScriptCore C API symbols not yet surfaced
+// through the active `jsc::c_api` module (the full `javascript_core_c_api.rs`
+// is still gated). Signatures mirror `<JavaScriptCore/JSObjectRef.h>` /
+// `<JavaScriptCore/JSTypedArray.h>`.
+unsafe extern "C" {
+    fn JSObjectGetPrototype(
+        ctx: *mut JSGlobalObject,
+        object: jsc::c_api::JSObjectRef,
+    ) -> jsc::c_api::JSValueRef;
+    fn JSObjectGetTypedArrayBuffer(
+        ctx: *mut JSGlobalObject,
+        object: jsc::c_api::JSObjectRef,
+        exception: jsc::c_api::ExceptionRef,
+    ) -> jsc::c_api::JSObjectRef;
+    fn JSObjectMakeDate(
+        ctx: *mut JSGlobalObject,
+        argument_count: usize,
+        arguments: *const jsc::c_api::JSValueRef,
+        exception: jsc::c_api::ExceptionRef,
+    ) -> jsc::c_api::JSObjectRef;
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // NapiEnv
 // ──────────────────────────────────────────────────────────────────────────

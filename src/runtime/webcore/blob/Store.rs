@@ -8,10 +8,13 @@ use bun_http_types::MimeType::MimeType;
 use crate::webcore::jsc::{JSGlobalObject, JSPromise, JSValue, JsResult};
 use bun_str::{strings, PathString, ZigString};
 use crate::webcore::node_types::{self as node, PathLike, PathOrFileDescriptor};
+use crate::node::types::PathOrFileDescriptorSerializeTag;
+use crate::node::fs as node_fs;
 use crate::webcore::s3_stub::{
     self as s3, MultiPartUploadOptions, S3Credentials, S3CredentialsWithOptions, S3DeleteResult,
     S3ListObjectsOptions, S3ListObjectsResult, ACL, StorageClass,
 };
+use crate::webcore::s3::client as s3_client;
 use bun_url::URL;
 
 use super::{Blob, SizeType};

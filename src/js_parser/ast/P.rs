@@ -8345,10 +8345,13 @@ pub fn null_expr_data() -> js_ast::ExprData {
 pub fn null_stmt_data() -> js_ast::StmtData {
     js_ast::StmtData::SEmpty(S::Empty {})
 }
- // TODO(b2-blocked): ExprData::EString wants StoreRef<EString>; EString is !Sync (NonNull rope ptrs) so a `static` Prefill won't compile. Needs either a Sync wrapper around the prefill constants or `ExprData::EString` to accept by-value for the const-string fast path.
 #[inline]
 pub fn key_expr_data() -> js_ast::ExprData {
-    js_ast::ExprData::EString(&Prefill::string::KEY)
+    // PORT NOTE: Zig's `&Prefill.String.Key` was a `*E.String` to a static.
+    // `ExprData::EString` now wraps a `StoreRef<EString>`; allocate a fresh
+    // store node from the prefill constant on each call (callers are JSX-only
+    // and infrequent — see js_ast::expr::IntoExprData for `EString`).
+    <E::String as js_ast::expr::IntoExprData>::into_expr_data(E::String::init(b"key"))
 }
 #[inline]
 pub fn null_value_expr() -> js_ast::ExprData {

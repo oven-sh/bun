@@ -385,16 +385,31 @@ impl<'a> MiniEventLoop<'a> {
         unsafe { (*self.loop_).wakeup() };
     }
 
-    // TODO(port): same comptime-reflection problem as `enqueue_task` (uses `@field` +
-    // `Task.New(Context, ParentContext, Callback)`). Phase B: macro.
+    /// Zig: `enqueueTaskConcurrentWithExtraCtx(comptime Context, comptime ParentContext,
+    /// ctx, comptime Callback, comptime field)`.
+    ///
+    /// `comptime field: std.meta.FieldEnum(Context)` + `@field(ctx, name)` is replaced
+    /// per PORTING.md (§reflection) with a caller-supplied `field_offset =
+    /// core::mem::offset_of!(C, <field>)` into the embedded `AnyTaskWithExtraContext`.
     pub fn enqueue_task_concurrent_with_extra_ctx<C, P>(
         &mut self,
-        _ctx: &mut C,
-        // callback: fn(&mut C, &mut P),
-        // field: <offset into C of AnyTaskWithExtraContext>,
+        ctx: *mut C,
+        callback: fn(*mut C, *mut P),
+        field_offset: usize,
     ) {
-        // TODO(port): comptime @field reflection — see note above.
-        unimplemented!("enqueue_task_concurrent_with_extra_ctx: requires macro for intrusive field init");
+        // Zig: jsc.markBinding(@src()) — debug-only source marker; no Rust equivalent needed.
+        // SAFETY: caller contract — `field_offset == offset_of!(C, <field>)` where
+        // `<field>: AnyTaskWithExtraContext`, and `ctx` outlives the queued task
+        // (intrusive node; ownership stays with caller).
+        let task = unsafe { ctx.cast::<u8>().add(field_offset).cast::<AnyTaskWithExtraContext>() };
+        // Zig: `@field(ctx, name) = TaskType.init(ctx);`
+        // SAFETY: `task` points at a properly aligned `AnyTaskWithExtraContext` field of `*ctx`.
+        unsafe { task.write(New::<C, P>::init(ctx, callback)) };
+
+        self.concurrent_tasks.push(task);
+
+        // SAFETY: `loop_` is the live C-owned uws loop set in `init()`.
+        unsafe { (*self.loop_).wakeup() };
     }
 
     /// Returns an erased `*mut webcore::blob::Store`. Callers in tier-6 cast back.

@@ -200,80 +200,80 @@ impl WindowsWatcher {
     // crate::Watcher (64KB+ buffers; avoid moving). Zig sig: `fn init(this, root) !void`.
     pub fn init(&mut self, root: &[u8]) -> Result<(), bun_core::Error> {
         use bun_string::strings::paths;
-            let mut pathbuf = WPathBuffer::uninit();
-            let wpath = paths::to_nt_path(&mut pathbuf, root);
-            let path_len_bytes: u16 = (wpath.len() * 2) as u16;
-            let mut nt_name = w::UNICODE_STRING {
-                Length: path_len_bytes,
-                MaximumLength: path_len_bytes,
-                Buffer: wpath.as_ptr() as *mut u16,
-            };
-            let mut attr = w::OBJECT_ATTRIBUTES {
-                Length: size_of::<w::OBJECT_ATTRIBUTES>() as u32,
-                RootDirectory: ptr::null_mut(),
-                Attributes: 0, // Note we do not use OBJ_CASE_INSENSITIVE here.
-                ObjectName: &mut nt_name,
-                SecurityDescriptor: ptr::null_mut(),
-                SecurityQualityOfService: ptr::null_mut(),
-            };
-            let mut handle: HANDLE = w::INVALID_HANDLE_VALUE;
-            let mut io: w::IO_STATUS_BLOCK = unsafe {
-                // SAFETY: IO_STATUS_BLOCK is a #[repr(C)] POD output parameter; NtCreateFile
-                // writes it before any read.
-                core::mem::zeroed()
-            };
-            // SAFETY: all pointer params point to valid stack locals for the duration of the call.
-            let rc = unsafe {
-                w::ntdll::NtCreateFile(
-                    &mut handle,
-                    w::FILE_LIST_DIRECTORY,
-                    &mut attr,
-                    &mut io,
-                    ptr::null_mut(),
-                    0,
-                    w::FILE_SHARE_READ | w::FILE_SHARE_WRITE | w::FILE_SHARE_DELETE,
-                    w::FILE_OPEN,
-                    w::FILE_DIRECTORY_FILE | w::FILE_OPEN_FOR_BACKUP_INTENT,
-                    ptr::null_mut(),
-                    0,
-                )
-            };
+        let mut pathbuf = WPathBuffer::uninit();
+        let wpath = paths::to_nt_path(&mut pathbuf, root);
+        let path_len_bytes: u16 = (wpath.len() * 2) as u16;
+        let mut nt_name = w::UNICODE_STRING {
+            Length: path_len_bytes,
+            MaximumLength: path_len_bytes,
+            Buffer: wpath.as_ptr() as *mut u16,
+        };
+        let mut attr = w::OBJECT_ATTRIBUTES {
+            Length: size_of::<w::OBJECT_ATTRIBUTES>() as u32,
+            RootDirectory: ptr::null_mut(),
+            Attributes: 0, // Note we do not use OBJ_CASE_INSENSITIVE here.
+            ObjectName: &mut nt_name,
+            SecurityDescriptor: ptr::null_mut(),
+            SecurityQualityOfService: ptr::null_mut(),
+        };
+        let mut handle: HANDLE = w::INVALID_HANDLE_VALUE;
+        let mut io: w::IO_STATUS_BLOCK = unsafe {
+            // SAFETY: IO_STATUS_BLOCK is a #[repr(C)] POD output parameter; NtCreateFile
+            // writes it before any read.
+            core::mem::zeroed()
+        };
+        // SAFETY: all pointer params point to valid stack locals for the duration of the call.
+        let rc = unsafe {
+            w::ntdll::NtCreateFile(
+                &mut handle,
+                w::FILE_LIST_DIRECTORY,
+                &mut attr,
+                &mut io,
+                ptr::null_mut(),
+                0,
+                w::FILE_SHARE_READ | w::FILE_SHARE_WRITE | w::FILE_SHARE_DELETE,
+                w::FILE_OPEN,
+                w::FILE_DIRECTORY_FILE | w::FILE_OPEN_FOR_BACKUP_INTENT,
+                ptr::null_mut(),
+                0,
+            )
+        };
 
-            if rc != w::NTSTATUS::SUCCESS {
-                let err = w::Win32Error::from_nt_status(rc);
-                bun_core::scoped_log!(
-                    watcher,
-                    "failed to open directory for watching: {}",
-                    err.0
-                );
-                return Err(Error::CreateFileFailed.into());
-            }
-            let handle_guard = scopeguard::guard(handle, |h| unsafe {
-                // SAFETY: handle was successfully opened by NtCreateFile above.
-                let _ = w::CloseHandle(h);
-            });
+        if rc != w::NTSTATUS::SUCCESS {
+            let err = w::Win32Error::from_nt_status(rc);
+            bun_core::scoped_log!(
+                watcher,
+                "failed to open directory for watching: {}",
+                err.0
+            );
+            return Err(Error::CreateFileFailed.into());
+        }
+        let handle_guard = scopeguard::guard(handle, |h| unsafe {
+            // SAFETY: handle was successfully opened by NtCreateFile above.
+            let _ = w::CloseHandle(h);
+        });
 
-            self.iocp = w::CreateIoCompletionPort(*handle_guard, ptr::null_mut(), 0, 1)
-                .map_err(|_| bun_core::Error::from(Error::IocpFailed))?;
-            let iocp_guard = scopeguard::guard(self.iocp, |h| unsafe {
-                // SAFETY: iocp handle was successfully created above.
-                let _ = w::CloseHandle(h);
-            });
+        self.iocp = w::CreateIoCompletionPort(*handle_guard, ptr::null_mut(), 0, 1)
+            .map_err(|_| bun_core::Error::from(Error::IocpFailed))?;
+        let iocp_guard = scopeguard::guard(self.iocp, |h| unsafe {
+            // SAFETY: iocp handle was successfully created above.
+            let _ = w::CloseHandle(h);
+        });
 
-            self.watcher = DirWatcher {
-                // SAFETY: all-zero is a valid OVERLAPPED (#[repr(C)] POD; kernel treats zero as "no event/offset").
-                overlapped: unsafe { core::mem::zeroed::<w::OVERLAPPED>() },
-                // SAFETY: buf is an output buffer filled by ReadDirectoryChangesW before read.
-                buf: unsafe { core::mem::MaybeUninit::uninit().assume_init() },
-                dir_handle: *handle_guard,
-            };
+        self.watcher = DirWatcher {
+            // SAFETY: all-zero is a valid OVERLAPPED (#[repr(C)] POD; kernel treats zero as "no event/offset").
+            overlapped: unsafe { core::mem::zeroed::<w::OVERLAPPED>() },
+            // SAFETY: buf is an output buffer filled by ReadDirectoryChangesW before read.
+            buf: unsafe { core::mem::MaybeUninit::uninit().assume_init() },
+            dir_handle: *handle_guard,
+        };
 
-            self.buf[..root.len()].copy_from_slice(root);
-            let needs_slash = root.is_empty() || !paths::char_is_any_slash(root[root.len() - 1]);
-            if needs_slash {
-                self.buf[root.len()] = b'\\';
-            }
-            self.base_idx = if needs_slash { root.len() + 1 } else { root.len() };
+        self.buf[..root.len()].copy_from_slice(root);
+        let needs_slash = root.is_empty() || !paths::char_is_any_slash(root[root.len() - 1]);
+        if needs_slash {
+            self.buf[root.len()] = b'\\';
+        }
+        self.base_idx = if needs_slash { root.len() + 1 } else { root.len() };
 
         // disarm errdefer guards on success
         scopeguard::ScopeGuard::into_inner(iocp_guard);

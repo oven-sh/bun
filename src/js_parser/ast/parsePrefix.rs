@@ -261,27 +261,24 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // Handle the start of an arrow expression
         if p.lexer.token == T::TEqualsGreaterThan && level.lte(Level::Assign) {
             let ref_ = p.store_name_in_ref(name).expect("unreachable");
-             // blocked_on: parse_arrow_body args type — parseFn.rs stub takes ExprNodeList; Zig is []G.Arg.
-            {
-                // PORT NOTE: reshaped for borrowck — build binding before borrowing allocator.
-                // `Arg` is non-Copy (owns BabyList) → use fill_iter instead of alloc_slice_copy.
-                let binding = p.b(B::Identifier { ref_ }, loc);
-                let args = p.allocator.alloc_slice_fill_iter([Arg { binding, ..Default::default() }]);
+            // PORT NOTE: reshaped for borrowck — build binding before borrowing allocator.
+            // `Arg` is non-Copy (owns BabyList) → use fill_iter instead of alloc_slice_copy.
+            let binding = p.b(B::Identifier { r#ref: ref_ }, loc);
+            let args = p
+                .allocator
+                .alloc_slice_fill_iter([Arg { binding, ..Default::default() }]);
 
-                let _ = p
-                    .push_scope_for_parse_pass(scope::Kind::FunctionArgs, loc)
-                    .expect("unreachable");
-                // PORT NOTE: Zig `defer p.popScope()` — reshaped so pop_scope runs before `?` propagates
-                let mut fn_or_arrow_data = FnOrArrowDataParse {
-                    needs_async_loc: loc,
-                    ..Default::default()
-                };
-                let arrow_result = p.parse_arrow_body(args, &mut fn_or_arrow_data);
-                p.pop_scope();
-                return Ok(p.new_expr(arrow_result?, loc));
-            }
-            let _ = ref_;
-            todo!("b2-ast-E: single-ident arrow body — parseFn.rs::parse_arrow_body args-type mismatch");
+            let _ = p
+                .push_scope_for_parse_pass(scope::Kind::FunctionArgs, loc)
+                .expect("unreachable");
+            // PORT NOTE: Zig `defer p.popScope()` — reshaped so pop_scope runs before `?` propagates
+            let mut fn_or_arrow_data = FnOrArrowDataParse {
+                needs_async_loc: loc,
+                ..Default::default()
+            };
+            let arrow_result = p.parse_arrow_body(args, &mut fn_or_arrow_data);
+            p.pop_scope();
+            return Ok(p.new_expr(arrow_result?, loc));
         }
 
         let ref_ = p.store_name_in_ref(name).expect("unreachable");

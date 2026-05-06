@@ -258,7 +258,7 @@ pub fn generate_code_for_lazy_export(
                                     }
                                 } else if matches!(
                                     compose.from.as_ref().unwrap(),
-                                    bun_css::Specifier::Global
+                                    CssSpecifier::Global
                                 ) {
                                     // E.g.: `composes: foo from global`
                                     //

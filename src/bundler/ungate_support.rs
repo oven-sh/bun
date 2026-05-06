@@ -90,7 +90,7 @@ pub mod bun_css {
             pub local_scope: bun_collections::StringArrayHashMap<()>,
         }
         impl BundlerStyleSheet {
-            pub fn empty(_allocator: &bun_alloc::Arena) -> Self {
+            pub fn empty() -> Self {
                 Self::default()
             }
             /// css_parser.zig:3238 `parseBundler` — without `bun_css` there is

@@ -1319,13 +1319,13 @@ fn get_code_for_parse_task_without_plugins(
 // `get_code_for_parse_task_without_plugins`.
 
 #[allow(clippy::too_many_arguments)]
-fn get_code_for_parse_task(
+fn get_code_for_parse_task<'b>(
     task: &mut ParseTask,
     log: &mut Log,
-    transpiler: &mut Transpiler,
-    resolver: &mut Resolver,
+    transpiler: &mut Transpiler<'b>,
+    resolver: &mut Resolver<'b>,
     bump: &Bump,
-    file_path: &mut Fs::Path,
+    file_path: &mut Fs::Path<'b>,
     loader: &mut Loader,
     from_plugin: &mut bool,
 ) -> core::result::Result<CacheEntry, AnyError> {

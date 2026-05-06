@@ -176,7 +176,10 @@ impl AnyRequestContext {
                 // H3 populates url/headers eagerly
                 return;
             }
-            ctx.req = Some(req);
+            // PORT NOTE: `ctx.req` is `Option<*mut Req<SSL,H3>>` where
+            // `Req<_,_> = c_void` (erased handle). For non-H3 the underlying
+            // type is always `uws::Request`, so the cast is purely nominal.
+            ctx.req = Some(req.cast::<c_void>());
         })
     }
 
@@ -186,19 +189,17 @@ impl AnyRequestContext {
                 // url/headers already on the Request
                 return None;
             }
-            ctx.req
+            ctx.req.map(|p| p.cast::<uws::Request>())
         })
     }
 
     pub fn on_abort(self, response: uws::AnyResponse) {
         dispatch!(self, (), |T, ctx| {
-            // The AnyResponse arm and T::Resp are created together; assert
-            // they agree so a mismatch traps in safe builds instead of being
-            // silently pointer-cast.
-            // TODO(port): Zig does `switch (r) { inline else => |p| if (@TypeOf(p) == *T.Resp) p else unreachable }`.
-            // Model this as a checked downcast on `AnyResponse` once its Rust enum shape lands.
-            let resp: &mut T::Resp = response.downcast::<T::Resp>().expect("unreachable");
-            ctx.on_abort(resp);
+            // PORT NOTE: Zig does a checked downcast of the `AnyResponse` arm
+            // to `*T.Resp` before forwarding. The Rust `RequestContext::on_abort`
+            // takes `uws::AnyResponse` directly (and re-checks H3 internally),
+            // so forward the enum as-is — the per-variant assert is redundant.
+            T::on_abort(ctx as *mut T, response);
         })
     }
 

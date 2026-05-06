@@ -516,10 +516,10 @@ impl StringOrBuffer {
                 return Self::from_js_maybe_async(global, value, is_async, allow_string_object);
             }
 
-            let out = str.encode(encoding);
-            global.vm().deprecated_report_extra_memory(out.len());
+            let out = str.to_zig_string().encode(encoding.into());
+            vm_report_extra_memory(global, out.len());
 
-            return Ok(Some(Self::EncodedSlice(ZigStringSlice::from_owned(out))));
+            return Ok(Some(Self::EncodedSlice(ZigStringSlice::init_owned(out))));
         }
 
         Ok(None)

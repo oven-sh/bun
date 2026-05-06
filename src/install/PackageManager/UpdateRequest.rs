@@ -3,7 +3,7 @@ use std::io::Write as _;
 use bun_core::{Global, Output};
 use bun_logger::{self as logger, Log, Loc};
 use bun_str::strings;
-use bun_semver::{SlicedString, String as SemverString};
+use bun_semver::{SlicedString, String as SemverString, string::Builder as StringBuilder};
 use bun_js_parser as js_ast;
 
 use bun_install::{
@@ -48,7 +48,7 @@ impl UpdateRequest {
     pub fn matches(&self, dependency: &Dependency, string_buf: &[u8]) -> bool {
         self.name_hash
             == if self.name.is_empty() {
-                SemverString::Builder::string_hash(dependency.version.literal.slice(string_buf))
+                StringBuilder::string_hash(dependency.version.literal.slice(string_buf))
             } else {
                 dependency.name_hash
             }
@@ -63,12 +63,12 @@ impl UpdateRequest {
     }
 
     /// If `self.package_id` is not `invalid_package_id`, it must be less than `lockfile.packages.len`.
-    pub fn get_name_in_lockfile<'a>(&'a self, lockfile: &Lockfile) -> Option<&'a [u8]> {
+    pub fn get_name_in_lockfile<'a>(&'a self, lockfile: &'a Lockfile) -> Option<&'a [u8]> {
         if self.package_id == INVALID_PACKAGE_ID {
             None
         } else {
             // TODO(port): MultiArrayList column accessor — Zig: lockfile.packages.items(.name)[id]
-            Some(lockfile.packages.items_name()[usize::from(self.package_id)].slice(self.version_buf))
+            Some(lockfile.packages.items_name()[self.package_id as usize].slice(self.version_buf))
         }
     }
 
@@ -77,7 +77,7 @@ impl UpdateRequest {
     ///
     /// `self` needs to be a pointer! If `self` is a copy and the name returned from
     /// resolved_name is inlined, you will return a pointer to stack memory.
-    pub fn get_resolved_name<'a>(&'a self, lockfile: &Lockfile) -> &'a [u8] {
+    pub fn get_resolved_name<'a>(&'a self, lockfile: &'a Lockfile) -> &'a [u8] {
         if self.is_aliased {
             self.name
         } else if let Some(name) = self.get_name_in_lockfile(lockfile) {
@@ -120,11 +120,11 @@ impl UpdateRequest {
                 // buffer of `input.len` bytes is always sufficient. Previously this was a
                 // fixed `[2048]u8` stack array which overflowed for longer positionals.
                 let mut temp = vec![0u8; input.len()];
-                // TODO(port): std.mem.replace(u8, input, "\\\\", "/", temp) — returns replacement count
-                let len = bun_str::mem::replace(&input, b"\\\\", b"/", &mut temp);
+                // std.mem.replace(u8, input, "\\\\", "/", temp) — returns replacement count
+                let len = strings::replace(&input, b"\\\\", b"/", &mut temp);
                 let new_len = input.len() - len;
                 let input2 = &mut temp[..new_len];
-                bun_paths::platform_to_posix_in_place(input2);
+                bun_paths::resolve_path::platform_to_posix_in_place(input2);
                 input[..new_len].copy_from_slice(input2);
                 input.truncate(new_len);
             }
@@ -155,10 +155,10 @@ impl UpdateRequest {
                 value = &input[input.len()..];
             } else if input.len() > 1 {
                 if let Some(at) = strings::index_of_char(&input[1..], b'@') {
-                    let name = &input[0..usize::from(at) + 1];
+                    let name = &input[0..at as usize + 1];
                     if strings::is_npm_package_name(name) {
                         alias = Some(name);
-                        value = &input[usize::from(at) + 2..];
+                        value = &input[at as usize + 2..];
                     }
                 }
             }
@@ -170,18 +170,18 @@ impl UpdateRequest {
                 } else {
                     placeholder
                 },
-                alias.map(|name| SemverString::Builder::string_hash(name)),
+                alias.map(|name| StringBuilder::string_hash(name)),
                 value,
                 None,
                 &mut SlicedString::init(input, value),
-                log,
+                Some(log),
                 pm.as_deref_mut(),
             ) else {
                 if fatal {
-                    Output::err_generic(format_args!(
+                    Output::err_generic(
                         "unrecognised dependency format: {}",
-                        bstr::BStr::new(positional)
-                    ));
+                        format_args!("{}", bstr::BStr::new(positional)),
+                    );
                 } else {
                     log.add_error_fmt(
                         None,
@@ -203,27 +203,28 @@ impl UpdateRequest {
                     input,
                     None,
                     &mut SlicedString::init(input, input),
-                    log,
+                    Some(log),
                     pm.as_deref_mut(),
                 ) {
                     alias = None;
                     version = ver;
                 }
             }
+            // SAFETY: union field access guarded by `version.tag` discriminant.
             if match version.tag {
-                dependency::version::Tag::DistTag => {
-                    version.value.dist_tag.name.eql(&placeholder, input, input)
-                }
-                dependency::version::Tag::Npm => {
-                    version.value.npm.name.eql(&placeholder, input, input)
-                }
+                dependency::version::Tag::DistTag => unsafe {
+                    version.value.dist_tag.name.eql(placeholder, input, input)
+                },
+                dependency::version::Tag::Npm => unsafe {
+                    version.value.npm.name.eql(placeholder, input, input)
+                },
                 _ => false,
             } {
                 if fatal {
-                    Output::err_generic(format_args!(
+                    Output::err_generic(
                         "unrecognised dependency format: {}",
-                        bstr::BStr::new(positional)
-                    ));
+                        format_args!("{}", bstr::BStr::new(positional)),
+                    );
                 } else {
                     log.add_error_fmt(
                         None,
@@ -246,15 +247,16 @@ impl UpdateRequest {
             if let Some(name) = alias {
                 request.is_aliased = true;
                 request.name = Box::leak(Box::<[u8]>::from(name));
-                request.name_hash = SemverString::Builder::string_hash(name);
+                request.name_hash = StringBuilder::string_hash(name);
             } else if request.version.tag == dependency::version::Tag::Github
-                && request.version.value.github.committish.is_empty()
+                // SAFETY: union field access guarded by `tag == Github`.
+                && unsafe { request.version.value.github.committish.is_empty() }
             {
                 request.name_hash =
-                    SemverString::Builder::string_hash(request.version.literal.slice(input));
+                    StringBuilder::string_hash(request.version.literal.slice(input));
             } else {
                 request.name_hash =
-                    SemverString::Builder::string_hash(request.version.literal.slice(input));
+                    StringBuilder::string_hash(request.version.literal.slice(input));
             }
 
             for prev in update_requests.iter() {
@@ -269,10 +271,8 @@ impl UpdateRequest {
     }
 }
 
-pub use bun_install::package_manager::CommandLineArguments;
+pub use bun_install::package_manager::command_line_arguments as CommandLineArguments;
 pub use bun_install::package_manager::Options;
-pub use bun_install::package_manager::PackageInstaller;
-pub use bun_install::package_manager::PackageJSONEditor;
 pub use bun_install::package_manager::Subcommand;
 
 // ──────────────────────────────────────────────────────────────────────────

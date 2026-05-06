@@ -73,6 +73,27 @@ impl Default for Dependency {
 }
 
 impl Dependency {
+    /// Forwards to the module-level `is_tarball` (Zig: `Dependency.isTarball`).
+    #[inline]
+    pub fn is_tarball(dependency: &[u8]) -> bool {
+        is_tarball(dependency)
+    }
+
+    /// Forwards to the module-level `parse_with_optional_tag`
+    /// (Zig: `Dependency.parseWithOptionalTag`).
+    #[inline]
+    pub fn parse_with_optional_tag(
+        alias: String,
+        alias_hash: Option<PackageNameHash>,
+        dependency: &[u8],
+        tag: Option<version::Tag>,
+        sliced: &SlicedString,
+        log: Option<&mut logger::Log>,
+        package_manager: Option<&mut PackageManager>,
+    ) -> Option<Version> {
+        parse_with_optional_tag(alias, alias_hash, dependency, tag, sliced, log, package_manager)
+    }
+
     /// Sorting order for dependencies is:
     /// 1. [ `peerDependencies`, `optionalDependencies`, `devDependencies`, `dependencies` ]
     /// 2. name ASC

@@ -1897,7 +1897,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             }
         };
         // `buffer` Drop frees.
-        if matches!(&buffer, jsc::node::BlobOrStringOrBuffer::Blob(b) if b.needs_to_read_file()) {
+        if matches!(&buffer, BlobOrStringOrBuffer::Blob(b) if b.needs_to_read_file()) {
             let _ = global.throw("File blob not supported yet in this function.", ());
             return WriteResult::Fail;
         }

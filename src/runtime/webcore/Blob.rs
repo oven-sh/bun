@@ -39,6 +39,46 @@ pub use store as Store_;
 #[path = "blob/write_file.rs"] pub mod write_file;
  #[path = "blob/copy_file.rs"]  pub mod copy_file;
 
+// `blob/read_file.rs` self-gates with `#![cfg(any())]` (heavy bun_io/ThreadPool
+// deps), which cfg's out the `mod` *item itself* — so `read_file::` is an
+// unresolved path everywhere. Body.rs / Image.rs / this file only need the
+// public result types, so re-declare a thin module with those until the real
+// body un-gates (at which point the `#![cfg(any())]` removal makes the
+// `#[path]`-decl above win and this becomes a duplicate to delete).
+#[allow(dead_code)]
+pub mod read_file {
+    use super::SizeType;
+    use bun_jsc::SystemError;
+
+    /// Zig: `ReadFile.Read` payload handed to the on-read callback.
+    pub struct ReadFileRead {
+        // TODO(port): Zig `[]u8` owned-if-`is_temporary`; modeled as Vec for
+        // uniform ownership on the Rust side.
+        pub buf: Vec<u8>,
+        pub is_temporary: bool,
+        pub total_size: SizeType,
+    }
+
+    /// Zig: `SystemError.Maybe(ReadFileRead)`
+    pub enum ReadFileResultType {
+        Result(ReadFileRead),
+        Err(SystemError),
+    }
+}
+
+/// Result delivered to `ReadBytesHandler::on_read_bytes`.
+pub enum ReadBytesResult {
+    /// global-allocator-owned by the callback.
+    Ok(Vec<u8>),
+    Err(bun_jsc::SystemError),
+}
+
+/// Trait extracted from the Zig `comptime Handler: type` pattern in
+/// `read_bytes_to_handler` — the body only requires `on_read_bytes`.
+pub trait ReadBytesHandler {
+    fn on_read_bytes(&mut self, result: ReadBytesResult);
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Blob struct
 // ──────────────────────────────────────────────────────────────────────────
@@ -86,6 +126,15 @@ pub struct Blob {
 
 pub type Ref = bun_ptr::ExternalShared<Blob>;
 
+// SAFETY: `Blob` holds raw pointers (`content_type: *const [u8]`,
+// `global_this: *const JSGlobalObject`) which default to `!Send`/`!Sync`. The
+// Zig original moves `Blob` across threads under `ObjectURLRegistry`'s mutex
+// and via the work-pool read/write tasks; the pointee data is either
+// `'static`/heap-owned (content_type) or an opaque JSC handle only ever
+// dereferenced on its owning JS thread. Matching Zig semantics here.
+unsafe impl Send for Blob {}
+unsafe impl Sync for Blob {}
+
 /// Max int of double precision
 /// ~4.5 petabytes is probably enough for awhile
 /// We want to avoid coercing to a BigInt because that's a heap allocation
@@ -125,6 +174,8 @@ const _: () = {
         fn __from_js_direct(value: bun_jsc::JSValue) -> *mut Blob;
         #[link_name = "Blob__create"]
         fn __create(global: *const bun_jsc::JSGlobalObject, ptr: *mut Blob) -> bun_jsc::JSValue;
+        #[link_name = "Blob__getConstructor"]
+        fn __get_constructor(global: *const bun_jsc::JSGlobalObject) -> bun_jsc::JSValue;
     }
     #[cfg(not(all(windows, target_arch = "x86_64")))]
     unsafe extern "C" {
@@ -134,6 +185,8 @@ const _: () = {
         fn __from_js_direct(value: bun_jsc::JSValue) -> *mut Blob;
         #[link_name = "Blob__create"]
         fn __create(global: *const bun_jsc::JSGlobalObject, ptr: *mut Blob) -> bun_jsc::JSValue;
+        #[link_name = "Blob__getConstructor"]
+        fn __get_constructor(global: *const bun_jsc::JSGlobalObject) -> bun_jsc::JSValue;
     }
 
     impl bun_jsc::JsClass for Blob {
@@ -154,6 +207,11 @@ const _: () = {
             // SAFETY: `global` is live; ownership of `ptr` transfers to the
             // C++ wrapper (freed via `BlobClass__finalize`).
             unsafe { __create(global, ptr) }
+        }
+        fn get_constructor(global: &bun_jsc::JSGlobalObject) -> bun_jsc::JSValue {
+            // SAFETY: `global` is a live JSC global; C++ reads its cached
+            // structure/constructor table.
+            unsafe { __get_constructor(global) }
         }
     }
 };
@@ -337,7 +395,13 @@ impl Blob {
 
 mod _jsc_gated {
 use super::*;
+use super::read_file;
 use crate::node as node;
+use crate::image::Image;
+use bun_str::string_joiner::StringJoiner;
+// `crate::webcore::jsc` glob-reexports `bun_jsc::*` but the double-glob loses
+// `JsTerminatedResult`; alias it locally (same shape as bun_jsc::event_loop).
+type JsTerminatedResult<T> = Result<T, bun_jsc::JsTerminated>;
 use crate::webcore::s3_file as S3File;
 use crate::webcore::s3::client as s3_client;
 use crate::webcore::s3::simple_request::S3UploadResult;
@@ -348,7 +412,7 @@ use super::write_file as write_file_mod;
 use super::write_file::{WriteFilePromise, WriteFileWaitFromLockedValueTask};
 
 impl Blob {
-    pub fn do_read_from_s3<F>(&mut self, global: &JSGlobalObject) -> jsc::JsTerminatedResult<JSValue>
+    pub fn do_read_from_s3<F>(&mut self, global: &JSGlobalObject) -> JsTerminatedResult<JSValue>
     where
         F: Fn(&mut Blob, &JSGlobalObject, &mut [u8], Lifetime) -> JSValue + 'static,
     {
@@ -371,6 +435,10 @@ impl Blob {
     {
         debug!("doReadFile");
 
+        let _ = global;
+        todo!("blocked_on: read_file::NewReadFileHandler / read_file::ReadFile (gated in blob/read_file.rs)");
+        #[cfg(any())] // preserved for when blob/read_file.rs un-gates
+        {
         // TODO(port): NewReadFileHandler<F> is a generic struct from read_file.rs.
         type Handler<F> = NewReadFileHandler<F>;
 
@@ -428,6 +496,7 @@ impl Blob {
             debug!("doReadFile: read_file_task scheduled");
             promise_value
         }
+        } // end cfg(any())
     }
 }
 
@@ -454,13 +523,6 @@ where
     }
 }
 
-/// Result delivered to `Handler::on_read_bytes`.
-pub enum ReadBytesResult {
-    /// global-allocator-owned by the callback.
-    Ok(Vec<u8>),
-    Err(jsc::SystemError),
-}
-
 impl Blob {
     /// Read this Blob's bytes — file (`ReadFile`/`ReadFileUV`), S3 (`S3.download`),
     /// or in-memory — and deliver them to `Handler::on_read_bytes(ctx, result)` on the
@@ -478,10 +540,10 @@ impl Blob {
         &mut self,
         ctx: &mut H,
         global: &JSGlobalObject,
-    ) -> jsc::JsTerminatedResult<()> {
+    ) -> JsTerminatedResult<()> {
         if self.needs_to_read_file() {
             // TODO(port): inline Adapter struct mapping ReadFileResultType → ReadBytesResult.
-            return self.do_read_file_internal(ctx, |c, r| {
+            self.do_read_file_internal(ctx, |c, r| {
                 H::on_read_bytes(
                     c,
                     match r {
@@ -492,6 +554,7 @@ impl Blob {
                     },
                 );
             }, global);
+            return Ok(());
         }
         if self.is_s3() {
             // TODO(port): heap-allocate a Task { ctx, blob, poll, vm } and pass
@@ -535,6 +598,10 @@ impl Blob {
         function: fn(H, read_file::ReadFileResultType),
         global: &JSGlobalObject,
     ) {
+        let _ = (ctx, function, global);
+        todo!("blocked_on: read_file::ReadFile / ReadFileTask / ReadFileUV (gated in blob/read_file.rs)");
+        #[cfg(any())] // preserved for when blob/read_file.rs un-gates
+        {
         #[cfg(windows)]
         {
             return read_file::ReadFileUV::start(
@@ -558,13 +625,8 @@ impl Blob {
             let read_file_task = read_file::ReadFileTask::create_on_js_thread(global, file_read);
             read_file_task.schedule();
         }
+        } // end cfg(any())
     }
-}
-
-/// Trait extracted from the Zig `comptime Handler: type` pattern in
-/// `read_bytes_to_handler` — the body only requires `on_read_bytes`.
-pub trait ReadBytesHandler {
-    fn on_read_bytes(&mut self, result: ReadBytesResult);
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -572,7 +634,7 @@ pub trait ReadBytesHandler {
 // ──────────────────────────────────────────────────────────────────────────
 
 struct FormDataContext {
-    joiner: bun_core::StringJoiner,
+    joiner: StringJoiner,
     boundary: *const [u8], // borrowed; outlives the joiner
     failed: bool,
     global_this: *const JSGlobalObject,
@@ -632,7 +694,7 @@ impl FormDataContext {
                             // TODO: make this async + lazy
                             let res = node::fs::NodeFS::read_file(
                                 global_this.bun_vm().node_fs(),
-                                node::fs::ReadFileArgs {
+                                node::fs::args::ReadFile {
                                     encoding: node::Encoding::Buffer,
                                     path: file.pathlike.clone(),
                                     offset: blob.offset,
@@ -772,24 +834,21 @@ fn write_float<W: bun_io::Write>(value: f64, writer: &mut W) -> Result<(), bun_c
     writer.write_all(&value.to_ne_bytes())
 }
 
-fn read_float<R: bun_io::Read>(reader: &mut R) -> Result<f64, bun_core::Error> {
+fn read_float<B: AsRef<[u8]>>(reader: &mut bun_io::FixedBufferStream<B>) -> Result<f64, bun_core::Error> {
     let mut bytes_buf = [0u8; core::mem::size_of::<f64>()];
-    reader.read_slice_all(&mut bytes_buf)?;
+    reader.read_exact(&mut bytes_buf)?;
     Ok(f64::from_ne_bytes(bytes_buf))
 }
 
-fn read_slice<R: bun_io::Read>(reader: &mut R, len: usize) -> Result<Vec<u8>, bun_core::Error> {
+fn read_slice<B: AsRef<[u8]>>(reader: &mut bun_io::FixedBufferStream<B>, len: usize) -> Result<Vec<u8>, bun_core::Error> {
     let mut slice = vec![0u8; len];
-    let n = reader.read(&mut slice)?;
-    if n != len {
-        return Err(bun_core::err!("TooSmall"));
-    }
+    reader.read_exact(&mut slice).map_err(|_| bun_core::err!("TooSmall"))?;
     Ok(slice)
 }
 
-fn _on_structured_clone_deserialize<R: bun_io::Read>(
+fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
     global_this: &JSGlobalObject,
-    reader: &mut R,
+    reader: &mut bun_io::FixedBufferStream<B>,
 ) -> Result<JSValue, bun_core::Error> {
     let version = reader.read_int_le::<u8>()?;
     let offset = reader.read_int_le::<u64>()?;

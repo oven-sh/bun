@@ -563,6 +563,14 @@ pub mod lockfile {
     pub use bun_semver::StringBuilder;
     #[derive(Default)] pub struct Lockfile {
         pub buffers: Buffers,
+        pub packages: PackageList,
+    }
+    /// Stub: `MultiArrayList<Package>` column accessor surface for
+    /// `UpdateRequest::get_name_in_lockfile`. Real body in `lockfile.rs`
+    /// (gated behind `package_manager_real`, reconciler-6).
+    #[derive(Default)] pub struct PackageList;
+    impl PackageList {
+        pub fn items_name(&self) -> &[bun_semver::String] { &[] }
     }
     #[derive(Default)] pub struct Buffers {
         pub string_bytes: Vec<u8>,
@@ -686,27 +694,8 @@ pub mod package_manager {
     #[derive(Clone, Copy)]
     pub enum ManifestLoad { LoadFromMemory, LoadFromDisk, LoadFromMemoryFallbackToDisk }
 
-    /// Stub: `WorkspacePackageJSONCache`
-    /// (src/install/PackageManager/WorkspacePackageJSONCache.zig).
-    pub mod workspace_package_json_cache {
-        #[derive(Default)]
-        pub struct MapEntry {
-            pub root: bun_logger::js_ast::Expr,
-            pub source: bun_logger::Source,
-            pub indentation: bun_js_printer::Indentation,
-        }
-        #[derive(Default, Clone, Copy)]
-        pub struct GetJsonOptions {
-            pub guess_indentation: bool,
-        }
-        pub enum GetJsonResult<'a> {
-            Entry(&'a mut MapEntry),
-            ReadErr(bun_core::Error),
-            ParseErr(bun_core::Error),
-        }
-    }
     pub use workspace_package_json_cache::MapEntry as WorkspacePackageJsonCacheEntry;
-    pub use workspace_package_json_cache::{GetJsonOptions, GetJsonResult};
+    pub use workspace_package_json_cache::{GetJSONOptions as GetJsonOptions, GetResult as GetJsonResult};
 
     /// Stub: real body lives in `PackageManager/CommandLineArguments.rs`,
     /// gated behind `package_manager_real` (`#![cfg(any())]` reconciler-6).

@@ -625,10 +625,30 @@ pub mod webcore {
             let p = unsafe { Blob__fromJS(value) };
             if p.is_null() { None } else { Some(p as *mut Self) }
         }
+        fn from_js_direct(value: JSValue) -> Option<*mut Self> {
+            // SAFETY: codegen extern; caller has already checked `is_cell()`.
+            let p = unsafe { Blob__fromJSDirect(value) };
+            if p.is_null() { None } else { Some(p as *mut Self) }
+        }
+        fn to_js(self, global: &JSGlobalObject) -> JSValue {
+            // PORT NOTE: opaque shim is zero-sized; real callers go through
+            // `bun_runtime::webcore::Blob::to_js` which boxes and hands the
+            // pointer to `Blob__create`. This path exists only to satisfy the
+            // trait — SQL callers never construct a `Blob` by value.
+            let _ = global;
+            // SAFETY: never called on the opaque shim (zero-sized, no state).
+            unsafe { core::hint::unreachable_unchecked() }
+        }
+        fn get_constructor(global: &JSGlobalObject) -> JSValue {
+            // SAFETY: `global` is live; codegen extern returns the cached ctor.
+            unsafe { Blob__getConstructor(global.as_mut_ptr()) }
+        }
     }
 
     unsafe extern "C" {
         fn Blob__fromJS(value: JSValue) -> *mut c_void;
+        fn Blob__fromJSDirect(value: JSValue) -> *mut c_void;
+        fn Blob__getConstructor(global: *mut JSGlobalObject) -> JSValue;
         fn Bun__Blob__needsToReadFile(this: *const c_void) -> bool;
         fn Bun__Blob__sharedView(this: *const c_void, out_len: *mut usize) -> *const u8;
     }
@@ -708,7 +728,14 @@ pub mod codegen {
         ($payload:ty, $create:ident, $from_js:ident, $from_js_direct:ident, impl_js_class) => {
             js_class_fns!($payload, $create, $from_js, $from_js_direct);
             impl crate::jsc::JsClass for $payload {
+                fn to_js(self, g: &JSGlobalObject) -> JSValue {
+                    // Ownership transfers to the C++ wrapper (freed via
+                    // `${T}Class__finalize`); box and hand off the raw ptr.
+                    to_js(::std::boxed::Box::into_raw(::std::boxed::Box::new(self)), g)
+                }
                 fn from_js(v: JSValue) -> Option<*mut Self> { from_js(v) }
+                fn from_js_direct(v: JSValue) -> Option<*mut Self> { from_js_direct(v) }
+                fn get_constructor(g: &JSGlobalObject) -> JSValue { get_constructor(g) }
             }
         };
     }

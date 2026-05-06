@@ -1654,14 +1654,14 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
         }
 
         if let Some(script) = args.option(b"--print") {
-            ctx.runtime_options.eval.script = script;
+            ctx.runtime_options.eval.script = script.into();
             ctx.runtime_options.eval.eval_and_print = true;
         } else if let Some(script) = args.option(b"--eval") {
-            ctx.runtime_options.eval.script = script;
+            ctx.runtime_options.eval.script = script.into();
         }
         ctx.runtime_options.if_present = args.flag(b"--if-present");
         ctx.runtime_options.smol = args.flag(b"--smol");
-        ctx.runtime_options.preconnect = args.options(b"--fetch-preconnect");
+        ctx.runtime_options.preconnect = args.options(b"--fetch-preconnect").iter().map(|s| Box::<[u8]>::from(*s)).collect();
         ctx.runtime_options.experimental_http2_fetch = args.flag(b"--experimental-http2-fetch");
         ctx.runtime_options.experimental_http3_fetch = args.flag(b"--experimental-http3-fetch");
         ctx.runtime_options.expose_gc = args.flag(b"--expose-gc");

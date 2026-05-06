@@ -2441,10 +2441,10 @@ impl Example {
 
         if let Some(q) = examples_object.as_property(b"examples") {
             if q.expr.data.is_e_object() {
-                let count = q.expr.data.e_object().properties.len();
+                let count = q.expr.data.e_object().unwrap().properties.len();
 
                 let mut list: Box<[Example]> = (0..count).map(|_| Example::default()).collect();
-                for (i, property) in q.expr.data.e_object().properties.slice().iter().enumerate() {
+                for (i, property) in q.expr.data.e_object().unwrap().properties.slice().iter().enumerate() {
                     let name = property.key.unwrap().data.e_string().data;
                     list[i] = Example {
                         name: if let Some(slash) = bun_str::strings::index_of_char(name, b'/') {

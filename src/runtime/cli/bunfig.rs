@@ -1271,7 +1271,7 @@ mod phase_a_draft {
             }
         }
 
-        fn phase_a_install(&mut self, install_obj: &Expr) -> Result<(), bun_core::Error> {
+        pub(super) fn phase_a_install(&mut self, install_obj: &Expr) -> Result<(), bun_core::Error> {
             let install: &mut api::BunInstall = self.ctx.install.as_deref_mut().unwrap();
 
             if let Some(cafile) = expr_get(install_obj, b"cafile") {

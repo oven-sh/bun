@@ -147,7 +147,7 @@ pub fn encode(
             width,
             height,
             fmt,
-            opts.quality,
+            i32::from(opts.quality),
             core::ptr::null_mut(),
             &mut len,
         )
@@ -165,7 +165,7 @@ pub fn encode(
             width,
             height,
             fmt,
-            opts.quality,
+            i32::from(opts.quality),
             out.as_mut_ptr(),
             &mut len,
         )

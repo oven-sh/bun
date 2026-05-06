@@ -217,7 +217,7 @@ impl PmPkgCommand {
         let pkg = Self::load_package_json(ctx, &path)?;
 
         if !matches!(pkg.root.data, ExprData::EObject(_)) {
-            Output::err_generic(format_args!("package.json root must be an object"));
+            Output::err_generic("package.json root must be an object", ());
             Global::exit(1);
         }
 

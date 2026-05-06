@@ -9,7 +9,9 @@ use bun_jsc::ConcurrentTask::ConcurrentTask;
 use bun_paths::Platform;
 use bun_str::strings;
 
-use crate::bake::dev_server::{DevServer, EntryPointList, FileKind, MessageId};
+use crate::bake::dev_server::{
+    DevServer, EntryPointList, FileKind, HmrTopic, Magic, MessageId, TestingBatchEvents,
+};
 
 /// This task informs the DevServer's thread about new files to be bundled.
 ///

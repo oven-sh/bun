@@ -490,21 +490,18 @@ impl InstallCompletionsCommand {
                 _ => unreachable!(),
             }
 
-            Output::pretty_errorln(
+            pretty_errorln!(
                 "<r><red>error:<r> Could not find a directory to install completions in.\n",
-                format_args!(""),
             );
 
             if shell == Shell::Zsh {
-                Output::pretty_errorln(
+                pretty_errorln!(
                     "\nzsh tip: One of the directories in $fpath might work. If you use oh-my-zsh, try mkdir $HOME/.oh-my-zsh/completions; and bun completions again\n.",
-                    format_args!(""),
                 );
             }
 
-            Output::print_errorln(
+            print_errorln!(
                 "Please either pipe it:\n   bun completions > /to/a/file\n\n Or pass a directory:\n\n   bun completions /my/completions/dir\n",
-                format_args!(""),
             );
             Global::exit(fail_exit_code);
         };

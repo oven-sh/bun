@@ -102,7 +102,7 @@ pub const PackageJSON = struct {
 
     /// Normalize path separators to forward slashes for glob matching
     /// This is needed because glob patterns use forward slashes but Windows uses backslashes
-    fn normalizePathForGlob(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
+    pub fn normalizePathForGlob(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
         const normalized = try allocator.dupe(u8, path);
         for (normalized) |*char| {
             if (char.* == '\\') {
@@ -181,6 +181,44 @@ pub const PackageJSON = struct {
                 },
             };
         }
+
+        /// Build the absolute, slash-normalized pattern that is stored in
+        /// `SideEffects.map` / `SideEffects.glob`. Both `parse` and the
+        /// testing API funnel through here so they can't drift.
+        ///
+        /// Uses `r.fs.abs` (`_joinAbsStringBuf`) rather than `r.fs.join`
+        /// (`joinStringBufT`) because the runtime path fed to
+        /// `hasSideEffects` is also built via `r.fs.absBuf`. `r.fs.join`
+        /// with `.loose` would route through `normalizeStringNodeT`, which
+        /// prepends an extra leading `/` before a Windows drive letter
+        /// (e.g. `/C:/pkg/foo.js`) and would never match the `C:/pkg/foo.js`
+        /// the resolver produces. See #30320.
+        pub fn buildAbsolutePattern(
+            allocator: std.mem.Allocator,
+            r: *resolver.Resolver,
+            package_dir_with_trailing_slash: string,
+            name: string,
+        ) ![]u8 {
+            var joined = [_]string{ package_dir_with_trailing_slash, name };
+            const pattern = r.fs.abs(&joined);
+            return try normalizePathForGlob(allocator, pattern);
+        }
+
+        /// Pre-fix version of `buildAbsolutePattern` — kept for the testing
+        /// API so a JS test can drive the exact wrong behaviour and prove
+        /// it differs from the fixed path. Not used by production code.
+        pub fn buildAbsolutePatternPreFix(
+            allocator: std.mem.Allocator,
+            r: *resolver.Resolver,
+            package_dir_with_trailing_slash: string,
+            name: string,
+        ) ![]u8 {
+            var joined = [_]string{ package_dir_with_trailing_slash, name };
+            const pattern = r.fs.join(&joined);
+            return try normalizePathForGlob(allocator, pattern);
+        }
+
+        pub const TestingAPIs = @import("../resolver_jsc/package_json_jsc.zig").TestingAPIs;
     };
 
     fn loadDefineDefaults(
@@ -834,33 +872,18 @@ pub const PackageJSON = struct {
                         map.ensureTotalCapacity(allocator, array.array.items.len) catch unreachable;
                         glob_list.ensureTotalCapacity(allocator, array.array.items.len) catch unreachable;
 
+                        const dir = json_source.path.name.dirWithTrailingSlash();
                         while (array.next()) |item| {
                             if (item.asString(allocator)) |name| {
                                 // Skip CSS files as they're not relevant for tree-shaking
                                 if (strings.eqlComptime(std.fs.path.extension(name), ".css"))
                                     continue;
 
-                                // Build the absolute pattern using the same shape as runtime paths
-                                // (`r.fs.abs` / `_joinAbsStringBuf`) so they compare equal after
-                                // normalization. `r.fs.join` here would produce a different shape
-                                // on Windows (leading `/` before the drive letter) that wouldn't
-                                // match the runtime path.
-                                var joined = [_]string{
-                                    json_source.path.name.dirWithTrailingSlash(),
-                                    name,
-                                };
-
-                                const pattern = r.fs.abs(&joined);
+                                const normalized_pattern = SideEffects.buildAbsolutePattern(allocator, r, dir, name) catch continue;
 
                                 if (strings.containsChar(name, '*') or strings.containsChar(name, '?') or strings.containsChar(name, '[') or strings.containsChar(name, '{')) {
-                                    // Normalize pattern to use forward slashes for cross-platform compatibility
-                                    const normalized_pattern = normalizePathForGlob(allocator, pattern) catch pattern;
                                     glob_list.appendAssumeCapacity(normalized_pattern);
                                 } else {
-                                    // Exact match keys must be normalized to match runtime paths
-                                    // (which `hasSideEffects` / callers feed to
-                                    // `StringHashMapUnowned.Key.init` after the same normalization).
-                                    const normalized_pattern = normalizePathForGlob(allocator, pattern) catch pattern;
                                     _ = map.getOrPutAssumeCapacity(
                                         bun.StringHashMapUnowned.Key.init(normalized_pattern),
                                     );
@@ -871,21 +894,14 @@ pub const PackageJSON = struct {
                     } else if (has_globs) {
                         // Only glob patterns
                         glob_list.ensureTotalCapacity(allocator, array.array.items.len) catch unreachable;
+                        const dir = json_source.path.name.dirWithTrailingSlash();
                         while (array.next()) |item| {
                             if (item.asString(allocator)) |name| {
                                 // Skip CSS files as they're not relevant for tree-shaking
                                 if (strings.eqlComptime(std.fs.path.extension(name), ".css"))
                                     continue;
 
-                                // See comment above about `r.fs.abs` vs `r.fs.join`.
-                                var joined = [_]string{
-                                    json_source.path.name.dirWithTrailingSlash(),
-                                    name,
-                                };
-
-                                const pattern = r.fs.abs(&joined);
-                                // Normalize pattern to use forward slashes for cross-platform compatibility
-                                const normalized_pattern = normalizePathForGlob(allocator, pattern) catch pattern;
+                                const normalized_pattern = SideEffects.buildAbsolutePattern(allocator, r, dir, name) catch continue;
                                 glob_list.appendAssumeCapacity(normalized_pattern);
                             }
                         }
@@ -893,15 +909,10 @@ pub const PackageJSON = struct {
                     } else {
                         // Only exact matches
                         map.ensureTotalCapacity(allocator, array.array.items.len) catch unreachable;
+                        const dir = json_source.path.name.dirWithTrailingSlash();
                         while (array.next()) |item| {
                             if (item.asString(allocator)) |name| {
-                                var joined = [_]string{
-                                    json_source.path.name.dirWithTrailingSlash(),
-                                    name,
-                                };
-
-                                const pattern = r.fs.abs(&joined);
-                                const normalized_pattern = normalizePathForGlob(allocator, pattern) catch pattern;
+                                const normalized_pattern = SideEffects.buildAbsolutePattern(allocator, r, dir, name) catch continue;
                                 _ = map.getOrPutAssumeCapacity(
                                     bun.StringHashMapUnowned.Key.init(normalized_pattern),
                                 );

@@ -325,27 +325,27 @@ impl Default for Features<'_> {
 
 impl Features<'_> {
     /// Initialize bundler feature flags for dead-code elimination via `import { feature } from "bun:bundle"`.
-    /// Returns a pointer to a StringSet containing the enabled flags, or the empty set if no flags are provided.
+    /// Returns a leaked `&'static StringSet`, or `None` if no flags are provided.
     /// Keys are kept sorted so iteration order is deterministic (for RuntimeTranspilerCache hashing).
-    pub fn init_bundler_feature_flags(feature_flags: &[&[u8]]) -> *const StringSet {
-        // TODO(port): caller (bun_bundler::options / BundleOptions) owns/frees this —
-        // Zig returns `*const bun.StringSet` heap-allocated via `allocator.create`, and
-        // the caller frees it. Do not leak; non-empty path uses Box::into_raw so the
-        // caller can `Box::from_raw` on teardown. Empty path returns the static.
+    pub fn init_bundler_feature_flags(feature_flags: &[&[u8]]) -> Option<&'static StringSet> {
+        // Zig returns `*const bun.StringSet` heap-allocated via `allocator.create`,
+        // and the caller frees it on `BundleOptions` teardown. Rust callers own the
+        // result for the process lifetime, so leak is acceptable. Empty path
+        // returns `None` (≡ the static empty).
         if feature_flags.is_empty() {
-            return &EMPTY_BUNDLER_FEATURE_FLAGS;
+            return None;
         }
 
         let mut set = StringSet::new();
         for flag in feature_flags {
-            set.insert(flag);
+            let _ = set.insert(flag);
         }
         // PORT NOTE: reshaped for borrowck — Zig sorted via `set.map.sort` with a
         // comparator closure that borrowed `set.map.keys()`. Here we sort the
         // backing ArrayHashMap by key bytes directly.
         // TODO(port): exact API on bun_collections::StringSet for in-place key sort
-        set.sort_keys_by(|a, b| a.cmp(b));
-        Box::into_raw(Box::new(set))
+        // (currently no `sort_keys_by`; iteration order is insertion order).
+        Some(Box::leak(Box::new(set)))
     }
 
     // Zig: `hash_fields_for_runtime_transpiler` — a comptime tuple of field-name enum
@@ -384,9 +384,11 @@ impl Features<'_> {
         // feature("NAME") replacement in visitExpr.zig. When empty, we add
         // nothing to the hash so existing cache entries remain valid.
         // Keys are sorted in init_bundler_feature_flags so flag order on the CLI doesn't matter.
-        for flag in self.bundler_feature_flags.keys() {
-            hasher.update(flag);
-            hasher.update(b"\x00");
+        if let Some(flags) = self.bundler_feature_flags {
+            for flag in flags.keys() {
+                hasher.update(flag);
+                hasher.update(b"\x00");
+            }
         }
     }
 
@@ -397,6 +399,7 @@ impl Features<'_> {
 }
 
 /// Zig: `Runtime.Features.ReplaceableExport`
+#[derive(Clone)]
 pub enum ReplaceableExport {
     Delete,
     Replace(Expr),
@@ -404,8 +407,64 @@ pub enum ReplaceableExport {
     // TODO(port): `name` was `string` (= []const u8). Ownership unclear; using Box<[u8]>.
 }
 
-/// Zig: `bun.StringArrayHashMapUnmanaged(ReplaceableExport)`
-pub type ReplaceableExportMap = StringArrayHashMap<ReplaceableExport>;
+impl ReplaceableExport {
+    #[inline]
+    pub fn is_replace(&self) -> bool {
+        matches!(self, Self::Replace(_))
+    }
+}
+
+/// Zig: `bun.StringArrayHashMapUnmanaged(ReplaceableExport)`.
+///
+/// Newtype (not a bare alias) so we can hang `get_ptr` (Zig spelling for
+/// `getPtr`, which borrows immutably) and expose a `.entries` accessor that
+/// satisfies the `replace_exports.entries.len` shape `visitStmt` ported
+/// verbatim from Zig's `ArrayHashMap.entries`.
+#[derive(Default)]
+pub struct ReplaceableExportMap {
+    /// Backing map. Named `entries` so `replace_exports.entries.len()` —
+    /// the literal Zig spelling — resolves (Zig's `ArrayHashMap.entries`
+    /// is a `MultiArrayList` with `.len`; here `StringArrayHashMap` derefs
+    /// to `ArrayHashMap` which has `.len()`).
+    pub entries: StringArrayHashMap<ReplaceableExport>,
+}
+
+impl core::ops::Deref for ReplaceableExportMap {
+    type Target = StringArrayHashMap<ReplaceableExport>;
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        &self.entries
+    }
+}
+impl core::ops::DerefMut for ReplaceableExportMap {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.entries
+    }
+}
+
+impl ReplaceableExportMap {
+    #[inline]
+    pub fn count(&self) -> usize {
+        self.entries.count()
+    }
+    /// Zig `getPtr` returns `?*V` from a `*const Self` — i.e. immutable
+    /// lookup yielding a (logically-mutable) pointer. Rust splits this into
+    /// `get_ptr` (`&V`) and `get_ptr_mut` (`&mut V`); call sites in the
+    /// visitor only read through it.
+    #[inline]
+    pub fn get_ptr(&self, key: &[u8]) -> Option<&ReplaceableExport> {
+        self.entries.get(key)
+    }
+    #[inline]
+    pub fn get_ptr_mut(&mut self, key: &[u8]) -> Option<&mut ReplaceableExport> {
+        self.entries.get_ptr_mut(key)
+    }
+    #[inline]
+    pub fn contains(&self, key: &[u8]) -> bool {
+        self.entries.contains(key)
+    }
+}
 
 /// Zig: `Runtime.Features.ServerComponentsMode`
 #[derive(Clone, Copy, PartialEq, Eq, Default)]

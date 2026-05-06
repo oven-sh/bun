@@ -605,9 +605,28 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     where
         T: js_ast::expr::IntoExprData,
     {
-        // TODO(port): SCAN_ONLY branch scans E::Call args for require("...") —
-        // un-gates with the full impl block below (needs as_e_call accessor).
-        Expr::init(t, loc)
+        // PORT NOTE: Zig's `comptime Type == E.Call` check is done post-init by
+        // matching on the constructed `Data` (Rust has no comptime type-eq).
+        // Semantically equivalent — the import-record side-effect is order-
+        // independent of `Expr.init`'s Store allocation.
+        let expr = Expr::init(t, loc);
+        if SCAN_ONLY {
+            if let js_ast::ExprData::ECall(call) = expr.data {
+                if let js_ast::ExprData::EIdentifier(ident) = call.target.data {
+                    // is this a require("something")
+                    if self.load_name_from_ref(ident.ref_) == b"require" && call.args.len == 1 {
+                        if let js_ast::ExprData::EString(s) = call.args.at(0).data {
+                            let _ = self.add_import_record(
+                                ImportKind::Require,
+                                loc,
+                                s.string(self.allocator).expect("unreachable"),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        expr
     }
 
     #[inline]
@@ -1679,13 +1698,18 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 .set(bun_options_types::import_record::Flags::IS_INTERNAL, is_internal);
         }
         // Zig: `nonUniqueNameString` = MutableString.ensureValidIdentifier(nonUniqueNameStringBase()).
-        // TODO(port): wire `bun_string::MutableString::ensure_valid_identifier` once it lands as
-        // a bump-arena variant; for now use the base which is already a JS-safe identifier for
-        // every runtime/jest path that reaches here.
-        let import_path_identifier = self.import_records.items()[import_record_i as usize]
-            .path
-            .name
-            .non_unique_name_string_base();
+        // Render the sanitized-identifier formatter into the bump arena (same
+        // pattern as `transpose_require` above).
+        let import_path_identifier: &'a [u8] = {
+            use core::fmt::Write as _;
+            let base = self.import_records.items()[import_record_i as usize]
+                .path
+                .name
+                .non_unique_name_string_base();
+            let mut buf = bumpalo::collections::String::new_in(allocator);
+            write!(&mut buf, "{}", bun_core::fmt::fmt_identifier(base)).expect("unreachable");
+            buf.into_bump_str().as_bytes()
+        };
         let mut namespace_identifier =
             BumpVec::with_capacity_in(import_path_identifier.len() + prefix.len(), allocator);
         namespace_identifier.extend_from_slice(prefix);
@@ -6407,6 +6431,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     }
 
     #[cfg(any())] // blocked_on: js_ast::Ast::TsEnumsMap path; StringHashMap::put_assume_capacity_no_clobber; ts::Data variants — only caller is to_ast
+    #[cfg(any())] // superseded by the round-G un-gate copy below (see `to_ast` impl block)
     pub fn compute_ts_enums_map(&self, allocator: &'a Bump) -> Result<js_ast::Ast::TsEnumsMap, bun_core::Error> {
         // When hot module reloading is enabled, we disable enum inlining
         // to avoid making the HMR graph more complicated.
@@ -6482,19 +6507,23 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         if call.args.len == 0 {
             return;
         }
-        match &call.args.at(0).data {
-            js_ast::ExprData::EString(str_) => {
+        // PORT NOTE: match `data` by value (it is `Copy`) so the `StoreRef<_>`
+        // payloads bind owned + `mut`, letting `to_utf8` mutate the EString in
+        // place and `arr.items.slice_mut()` write through `DerefMut` — same
+        // arena slots Zig's `*E.String` / `*E.Array` captures wrote to.
+        match call.args.at(0).data {
+            js_ast::ExprData::EString(mut str_) => {
                 let loc = call.args.at(0).loc;
-                let Some(d) = self.rewrite_import_meta_hot_accept_string(str_, loc) else { return };
+                let Some(d) = self.rewrite_import_meta_hot_accept_string(&mut str_, loc) else { return };
                 call.args.mut_(0).data = d;
             }
-            js_ast::ExprData::EArray(arr) => {
+            js_ast::ExprData::EArray(mut arr) => {
                 for item in arr.items.slice_mut() {
-                    let js_ast::ExprData::EString(s) = &item.data else {
+                    let js_ast::ExprData::EString(mut s) = item.data else {
                         let _ = self.log.add_error(self.source, item.loc, Self::IMPORT_META_HOT_ACCEPT_ERR);
                         continue;
                     };
-                    let Some(d) = self.rewrite_import_meta_hot_accept_string(s, item.loc) else { return };
+                    let Some(d) = self.rewrite_import_meta_hot_accept_string(&mut s, item.loc) else { return };
                     item.data = d;
                 }
             }
@@ -6505,7 +6534,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     }
 
     #[cfg(any())] // reconciler-6 re-gate: ResolvedSpecifierStringIndex; Path.pretty
-    fn rewrite_import_meta_hot_accept_string(&mut self, str_: &E::String, loc: logger::Loc) -> Option<js_ast::ExprData> {
+    fn rewrite_import_meta_hot_accept_string(&mut self, str_: &mut E::String, loc: logger::Loc) -> Option<js_ast::ExprData> {
         let _ = str_.to_utf8(self.allocator);
         let specifier = str_.data;
 

@@ -27,8 +27,8 @@ pub mod HTMLScanner;
 #[path = "OutputFile.rs"]
 pub mod output_file;
 pub mod cache;
-#[cfg(any())]
-pub mod ThreadPool;
+#[path = "ThreadPool.rs"]
+pub mod thread_pool;
 pub mod entry_points;
 #[cfg(any())]
 pub mod AstBuilder;
@@ -166,8 +166,8 @@ pub use parse_task::ParseTask;
 /// above; types and modules occupy separate namespaces so both resolve.
 pub use ungate_support::entry_point::EntryPoint;
 pub use defines::Define;
-/// Stub: see gated `ThreadPool` module.
-pub struct ThreadPool(());
+/// Real `ThreadPool` (un-gated B-2). See `thread_pool` module.
+pub use thread_pool::{ThreadPool, Worker};
 /// Stub: defined in gated `bundle_v2` module (`bundle_v2.zig:AdditionalFile`).
 pub enum AdditionalFile {
     SourceIndex(u32),

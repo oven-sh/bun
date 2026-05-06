@@ -1,17 +1,42 @@
+//! CSS font properties.
+//!
+//! Ported from `src/css/properties/font.zig`.
+//
+// ─── B-2 round 9 status ────────────────────────────────────────────────────
+// Module un-gated from `gated_prop!` so the *data types* (FontWeight /
+// AbsoluteFontWeight / FontSize / AbsoluteFontSize / RelativeFontSize /
+// FontStretch / FontStretchKeyword / FontFamily / GenericFontFamily /
+// FontStyle / FontVariantCaps / LineHeight / Font / VerticalAlign /
+// VerticalAlignKeyword / FontProperty / FontHandler) are real and referenced
+// by `properties_generated.rs`, `declaration.rs`, and
+// `rules/{font_face,font_palette_values}.rs`.
+//
+// Most `parse` / `to_css` *bodies* remain `#[cfg(any())]`-gated below
+// because they bottom out on still-unported leaf surface (DeriveParse /
+// DeriveToCss proc-macros, EnumProperty derive over strum, BabyList::parse,
+// parse_utility::parse_string, generics::is_compatible blanket). Each gate
+// carries a `blocked_on:` note so the next round can lift bodies as their
+// deps land.
+
+#![allow(unused_imports, dead_code)]
+
 use crate::css_parser as css;
+use crate::compat::Feature;
+use crate::error::ParserError;
+use crate::printer::Printer;
+use crate::PrintErr;
 
-use css::Printer;
-use css::PrintErr;
-
-use css::css_values;
-use css_values::length::LengthPercentage;
-use css::css_values::number::CSSNumber;
-use css::css_values::number::CSSNumberFns;
-use css::css_values::percentage::Percentage;
-use css::css_values::angle::Angle;
+use crate::values as css_values;
+use css_values::angle::Angle;
+use css_values::length::{LengthPercentage, LengthValue};
+use css_values::number::{CSSNumber, CSSNumberFns};
+use css_values::percentage::{DimensionPercentage, Percentage};
 
 use bun_collections::BabyList;
-use bun_alloc::Arena as Bump;
+use bun_string::strings;
+
+type CssResult<T> = css::CssResult<T>;
+type PrintResult<T> = core::result::Result<T, PrintErr>;
 
 /// A value for the [font-weight](https://www.w3.org/TR/css-fonts-4/#font-weight-prop) property.
 #[derive(Clone, PartialEq)]
@@ -27,13 +52,13 @@ pub enum FontWeight {
 
 impl FontWeight {
     // TODO: implement this
-    // TODO(port): css.DeriveParse(@This()).parse → #[derive(Parse)]
-    pub fn parse(input: &mut css::Parser) -> css::Result<Self> {
-        css::derive_parse::<Self>(input)
+    #[cfg(any())] // blocked_on: css::DeriveParse(@This()).parse → #[derive(Parse)]
+    pub fn parse(input: &mut css::Parser) -> CssResult<Self> {
+        css::DeriveParse::parse(input)
     }
-    // TODO(port): css.DeriveToCss(@This()).toCss → #[derive(ToCss)]
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        css::derive_to_css(self, dest)
+    #[cfg(any())] // blocked_on: css::DeriveToCss(@This()).toCss → #[derive(ToCss)]
+    pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
+        css::DeriveToCss::to_css(self, dest)
     }
 
     #[inline]
@@ -67,12 +92,12 @@ pub enum AbsoluteFontWeight {
 }
 
 impl AbsoluteFontWeight {
-    // TODO(port): css.DeriveParse(@This()).parse → #[derive(Parse)]
-    pub fn parse(input: &mut css::Parser) -> css::Result<Self> {
-        css::derive_parse::<Self>(input)
+    #[cfg(any())] // blocked_on: css::DeriveParse(@This()).parse → #[derive(Parse)]
+    pub fn parse(input: &mut css::Parser) -> CssResult<Self> {
+        css::DeriveParse::parse(input)
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
         match self {
             AbsoluteFontWeight::Weight(weight) => CSSNumberFns::to_css(weight, dest),
             AbsoluteFontWeight::Normal => dest.write_str(if dest.minify { "400" } else { "normal" }),
@@ -85,7 +110,7 @@ impl AbsoluteFontWeight {
             // Older browsers only supported 100, 200, 300, ...900 rather than arbitrary values.
             AbsoluteFontWeight::Weight(val) => {
                 if !((*val >= 100.0 && *val <= 900.0) && (*val % 100.0) == 0.0) {
-                    css::Feature::FontWeightNumber.is_compatible(browsers)
+                    Feature::FontWeightNumber.is_compatible(browsers)
                 } else {
                     true
                 }
@@ -114,24 +139,22 @@ pub enum FontSize {
 }
 
 impl FontSize {
-    // TODO(port): css.DeriveParse / css.DeriveToCss → #[derive(Parse, ToCss)]
-    pub fn parse(input: &mut css::Parser) -> css::Result<Self> {
-        css::derive_parse::<Self>(input)
+    #[cfg(any())] // blocked_on: css::DeriveParse / css::DeriveToCss → #[derive(Parse, ToCss)]
+    pub fn parse(input: &mut css::Parser) -> CssResult<Self> {
+        css::DeriveParse::parse(input)
     }
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        css::derive_to_css(self, dest)
+    #[cfg(any())] // blocked_on: #[derive(ToCss)]
+    pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
+        css::DeriveToCss::to_css(self, dest)
     }
 
+    #[cfg(any())] // blocked_on: DimensionPercentage::is_compatible bound (D: IsCompatible)
     pub fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
         match self {
             FontSize::Length(l) => match l {
-                LengthPercentage::Dimension(d) => match d {
-                    // TODO(port): exact LengthValue::Rem variant name
-                    css_values::length::LengthValue::Rem(_) => {
-                        css::Feature::FontSizeRem.is_compatible(browsers)
-                    }
-                    _ => l.is_compatible(browsers),
-                },
+                DimensionPercentage::Dimension(LengthValue::Rem(_)) => {
+                    Feature::FontSizeRem.is_compatible(browsers)
+                }
                 _ => l.is_compatible(browsers),
             },
             FontSize::Absolute(a) => a.is_compatible(browsers),
@@ -177,17 +200,18 @@ pub enum AbsoluteFontSize {
 }
 
 impl AbsoluteFontSize {
-    // TODO(port): DefineEnumProperty: eql/hash/parse/toCss/deepClone — derives above + crate::define_enum_property!
-    pub fn parse(input: &mut css::Parser) -> css::Result<Self> {
-        css::define_enum_property::parse::<Self>(input)
+    // TODO(port): DefineEnumProperty: eql/hash/parse/toCss/deepClone — derives above + crate::enum_property_util
+    #[cfg(any())] // blocked_on: EnumProperty impl (from_ascii_case_insensitive)
+    pub fn parse(input: &mut css::Parser) -> CssResult<Self> {
+        css::enum_property_util::parse::<Self>(input)
     }
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        css::define_enum_property::to_css(self, dest)
+    pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
+        css::enum_property_util::to_css(self, dest)
     }
 
     pub fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
         match self {
-            AbsoluteFontSize::XxxLarge => css::Feature::FontSizeXXXLarge.is_compatible(browsers),
+            AbsoluteFontSize::XxxLarge => Feature::FontSizeXXXLarge.is_compatible(browsers),
             _ => true,
         }
     }
@@ -207,11 +231,12 @@ pub enum RelativeFontSize {
 }
 
 impl RelativeFontSize {
-    pub fn parse(input: &mut css::Parser) -> css::Result<Self> {
-        css::define_enum_property::parse::<Self>(input)
+    #[cfg(any())] // blocked_on: EnumProperty impl (from_ascii_case_insensitive)
+    pub fn parse(input: &mut css::Parser) -> CssResult<Self> {
+        css::enum_property_util::parse::<Self>(input)
     }
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        css::define_enum_property::to_css(self, dest)
+    pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
+        css::enum_property_util::to_css(self, dest)
     }
 }
 
@@ -226,12 +251,13 @@ pub enum FontStretch {
 
 impl FontStretch {
     // TODO: implement this
-    // TODO(port): css.DeriveParse(@This()).parse → #[derive(Parse)]
-    pub fn parse(input: &mut css::Parser) -> css::Result<Self> {
-        css::derive_parse::<Self>(input)
+    #[cfg(any())] // blocked_on: css::DeriveParse(@This()).parse → #[derive(Parse)]
+    pub fn parse(input: &mut css::Parser) -> CssResult<Self> {
+        css::DeriveParse::parse(input)
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    #[cfg(any())] // blocked_on: Percentage::to_css un-gate
+    pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
         if dest.minify {
             let percentage: Percentage = self.into_percentage();
             return percentage.to_css(dest);
@@ -252,7 +278,7 @@ impl FontStretch {
 
     pub fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
         match self {
-            FontStretch::Percentage(_) => css::Feature::FontStretchPercentage.is_compatible(browsers),
+            FontStretch::Percentage(_) => Feature::FontStretchPercentage.is_compatible(browsers),
             FontStretch::Keyword(_) => true,
         }
     }
@@ -303,11 +329,12 @@ pub enum FontStretchKeyword {
 }
 
 impl FontStretchKeyword {
-    pub fn parse(input: &mut css::Parser) -> css::Result<Self> {
-        css::define_enum_property::parse::<Self>(input)
+    #[cfg(any())] // blocked_on: EnumProperty impl (from_ascii_case_insensitive)
+    pub fn parse(input: &mut css::Parser) -> CssResult<Self> {
+        css::enum_property_util::parse::<Self>(input)
     }
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        css::define_enum_property::to_css(self, dest)
+    pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
+        css::enum_property_util::to_css(self, dest)
     }
 
     #[inline]
@@ -332,23 +359,27 @@ impl FontStretchKeyword {
 }
 
 /// A value for the [font-family](https://www.w3.org/TR/css-fonts-4/#font-family-prop) property.
-#[derive(Clone, PartialEq, Eq, Hash)]
 pub enum FontFamily {
     /// A generic family name.
     Generic(GenericFontFamily),
     /// A custom family name.
     // TODO(port): arena-backed slice — should be &'bump [u8] once 'bump lifetime is threaded in Phase B
-    // TODO(port): with *const [u8] the derived PartialEq/Eq/Hash compare by pointer; Zig's custom
-    // HashContext hashes/compares by content (Wyhash over bytes) — provide manual impls in Phase B.
+    // PORT NOTE: with *const [u8] derived PartialEq/Eq/Hash would compare by pointer; Zig's custom
+    // HashContext hashes/compares by content (Wyhash over bytes) — provide manual impls below.
     FamilyName(*const [u8]),
 }
 
 // TODO(port): Zig defined `pub fn HashMap(comptime V: type) type` wrapping std.ArrayHashMapUnmanaged
 // with a custom Wyhash hasher over the family-name bytes. Module-level alias (inherent assoc types are nightly-only).
+#[cfg(any())] // blocked_on: ArrayHashMap key trait bounds for FontFamily
 pub type FontFamilyHashMap<V> = bun_collections::ArrayHashMap<FontFamily, V>;
 
 impl FontFamily {
-    pub fn parse(input: &mut css::Parser) -> css::Result<Self> {
+    #[cfg(any())]
+    // blocked_on: Parser::expect_string/expect_ident lifetime detachment +
+    // GenericFontFamily::parse (EnumProperty impl) + bumpalo::collections::Vec
+    // arena threading (`input.allocator()` → &Bump).
+    pub fn parse(input: &mut css::Parser) -> CssResult<Self> {
         if let Ok(value) = input.try_parse(css::Parser::expect_string) {
             // arena-owned: parser slice lives for 'bump
             return Ok(FontFamily::FamilyName(value as *const [u8]));
@@ -383,11 +414,12 @@ impl FontFamily {
         Ok(FontFamily::FamilyName(final_value))
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    #[cfg(any())]
+    // blocked_on: GenericFontFamily::parse (EnumProperty), parse_utility::parse_string,
+    // serializer::serialize_string writer trait.
+    pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
         match self {
-            FontFamily::Generic(val) => {
-                val.to_css(dest)
-            }
+            FontFamily::Generic(val) => val.to_css(dest),
             FontFamily::FamilyName(val_ptr) => {
                 // SAFETY: arena-owned slice valid for 'bump (parser/printer arena outlives FontFamily)
                 let val: &[u8] = unsafe { &**val_ptr };
@@ -397,14 +429,14 @@ impl FontFamily {
 
                 if !val.is_empty()
                     && !css::parse_utility::parse_string::<GenericFontFamily>(
-                        dest.allocator(),
+                        dest.allocator,
                         val,
                         GenericFontFamily::parse,
                     )
                     .is_ok()
                 {
                     // AST crate: std.Io.Writer.Allocating on dest.allocator (arena) → bumpalo Vec
-                    let mut id = bumpalo::collections::Vec::<u8>::new_in(dest.allocator());
+                    let mut id = bumpalo::collections::Vec::<u8>::new_in(dest.allocator);
                     let mut first = true;
                     for slice in val.split(|b| *b == b' ') {
                         if first {
@@ -413,16 +445,16 @@ impl FontFamily {
                             id.push(b' ');
                         }
                         if css::serializer::serialize_identifier(slice, &mut id).is_err() {
-                            return dest.add_fmt_error();
+                            return Err(dest.add_fmt_error());
                         }
                     }
                     if id.len() < val.len() + 2 {
-                        return dest.write_str_bytes(&id);
+                        return dest.write_str(&id[..]);
                     }
                 }
                 match css::serializer::serialize_string(val, dest) {
                     Ok(()) => Ok(()),
-                    Err(_) => dest.add_fmt_error(),
+                    Err(_) => Err(dest.add_fmt_error()),
                 }
             }
         }
@@ -435,9 +467,35 @@ impl FontFamily {
         }
     }
 
-    // eql → derived PartialEq
-    // deepClone → derived Clone
-    // hash → derived Hash
+    // eql / hash / deepClone — see manual impls below
+}
+
+// PORT NOTE: Zig's `css.implementEql` / `css.implementHash` walked fields by
+// reflection and compared/hashed `[]const u8` by *content*. With `*const [u8]`
+// in Rust, derived `PartialEq`/`Hash` would compare pointers, so hand-roll.
+impl PartialEq for FontFamily {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (FontFamily::Generic(a), FontFamily::Generic(b)) => a == b,
+            (FontFamily::FamilyName(a), FontFamily::FamilyName(b)) => {
+                // SAFETY: arena-owned slices valid for the parse session.
+                unsafe { (&**a).eq(&**b) }
+            }
+            _ => false,
+        }
+    }
+}
+impl Eq for FontFamily {}
+
+impl Clone for FontFamily {
+    fn clone(&self) -> Self {
+        // PORT NOTE: shallow — arena slice pointers are `Copy`; matches Zig's
+        // implicit struct copy. `deepClone` would re-alloc the slice in 'bump.
+        match self {
+            FontFamily::Generic(g) => FontFamily::Generic(*g),
+            FontFamily::FamilyName(n) => FontFamily::FamilyName(*n),
+        }
+    }
 }
 
 /// A [generic font family](https://www.w3.org/TR/css-fonts-4/#generic-font-families) name,
@@ -497,29 +555,28 @@ pub enum GenericFontFamily {
 }
 
 impl GenericFontFamily {
-    pub fn parse(input: &mut css::Parser) -> css::Result<Self> {
-        css::define_enum_property::parse::<Self>(input)
+    #[cfg(any())] // blocked_on: EnumProperty impl (from_ascii_case_insensitive)
+    pub fn parse(input: &mut css::Parser) -> CssResult<Self> {
+        css::enum_property_util::parse::<Self>(input)
     }
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        css::define_enum_property::to_css(self, dest)
+    pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
+        css::enum_property_util::to_css(self, dest)
     }
 
     pub fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
         match self {
-            GenericFontFamily::SystemUi => css::Feature::FontFamilySystemUi.is_compatible(browsers),
+            GenericFontFamily::SystemUi => Feature::FontFamilySystemUi.is_compatible(browsers),
             GenericFontFamily::UiSerif
             | GenericFontFamily::UiSansSerif
             | GenericFontFamily::UiMonospace
-            | GenericFontFamily::UiRounded => {
-                css::Feature::ExtendedSystemFonts.is_compatible(browsers)
-            }
+            | GenericFontFamily::UiRounded => Feature::ExtendedSystemFonts.is_compatible(browsers),
             _ => true,
         }
     }
 }
 
 /// A value for the [font-style](https://www.w3.org/TR/css-fonts-4/#font-style-prop) property.
-#[derive(Clone, PartialEq)]
+#[derive(Clone, Copy, PartialEq)]
 pub enum FontStyle {
     /// Normal font style.
     Normal,
@@ -534,33 +591,37 @@ impl FontStyle {
         FontStyle::Normal
     }
 
-    pub fn parse(input: &mut css::Parser) -> css::Result<FontStyle> {
+    #[cfg(any())]
+    // blocked_on: Angle::parse + Parser::expect_ident lifetime detachment for
+    // Token::Ident error payload (arena 'static cast).
+    pub fn parse(input: &mut css::Parser) -> CssResult<FontStyle> {
         let location = input.current_source_location();
         let ident = input.expect_ident()?;
         // todo_stuff.match_ignore_ascii_case
-        if bun_str::strings::eql_case_insensitive_ascii_check_length(b"normal", ident) {
+        if strings::eql_case_insensitive_ascii_check_length(b"normal", ident) {
             Ok(FontStyle::Normal)
-        } else if bun_str::strings::eql_case_insensitive_ascii_check_length(b"italic", ident) {
+        } else if strings::eql_case_insensitive_ascii_check_length(b"italic", ident) {
             Ok(FontStyle::Italic)
-        } else if bun_str::strings::eql_case_insensitive_ascii_check_length(b"oblique", ident) {
+        } else if strings::eql_case_insensitive_ascii_check_length(b"oblique", ident) {
             let angle = input
                 .try_parse(Angle::parse)
                 .unwrap_or(FontStyle::default_oblique_angle());
             Ok(FontStyle::Oblique(angle))
         } else {
             //
-            Err(location.new_unexpected_token_error(css::Token::Ident(ident)))
+            Err(location.new_unexpected_token_error(crate::Token::Ident(ident)))
         }
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    #[cfg(any())] // blocked_on: Angle::to_css
+    pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
         match self {
             FontStyle::Normal => dest.write_str("normal"),
             FontStyle::Italic => dest.write_str("italic"),
             FontStyle::Oblique(angle) => {
                 dest.write_str("oblique")?;
                 if *angle != FontStyle::default_oblique_angle() {
-                    dest.write_char(' ')?;
+                    dest.write_char(b' ')?;
                     angle.to_css(dest)?;
                 }
                 Ok(())
@@ -572,7 +633,7 @@ impl FontStyle {
         match self {
             FontStyle::Oblique(angle) => {
                 if *angle != FontStyle::default_oblique_angle() {
-                    css::Feature::FontStyleObliqueAngle.is_compatible(browsers)
+                    Feature::FontStyleObliqueAngle.is_compatible(browsers)
                 } else {
                     true
                 }
@@ -617,11 +678,12 @@ pub enum FontVariantCaps {
 }
 
 impl FontVariantCaps {
-    pub fn parse(input: &mut css::Parser) -> css::Result<Self> {
-        css::define_enum_property::parse::<Self>(input)
+    #[cfg(any())] // blocked_on: EnumProperty impl (from_ascii_case_insensitive)
+    pub fn parse(input: &mut css::Parser) -> CssResult<Self> {
+        css::enum_property_util::parse::<Self>(input)
     }
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        css::define_enum_property::to_css(self, dest)
+    pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
+        css::enum_property_util::to_css(self, dest)
     }
 
     pub fn default() -> FontVariantCaps {
@@ -632,10 +694,11 @@ impl FontVariantCaps {
         matches!(self, FontVariantCaps::Normal | FontVariantCaps::SmallCaps)
     }
 
-    pub fn parse_css2(input: &mut css::Parser) -> css::Result<FontVariantCaps> {
+    #[cfg(any())] // blocked_on: FontVariantCaps::parse
+    pub fn parse_css2(input: &mut css::Parser) -> CssResult<FontVariantCaps> {
         let value = FontVariantCaps::parse(input)?;
         if !value.is_css2() {
-            return Err(input.new_custom_error(css::ParserError::InvalidValue));
+            return Err(input.new_custom_error(ParserError::invalid_value));
         }
         Ok(value)
     }
@@ -657,14 +720,16 @@ pub enum LineHeight {
 }
 
 impl LineHeight {
-    // TODO(port): css.DeriveParse / css.DeriveToCss → #[derive(Parse, ToCss)]
-    pub fn parse(input: &mut css::Parser) -> css::Result<Self> {
-        css::derive_parse::<Self>(input)
+    #[cfg(any())] // blocked_on: css::DeriveParse / css::DeriveToCss → #[derive(Parse, ToCss)]
+    pub fn parse(input: &mut css::Parser) -> CssResult<Self> {
+        css::DeriveParse::parse(input)
     }
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        css::derive_to_css(self, dest)
+    #[cfg(any())] // blocked_on: #[derive(ToCss)]
+    pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
+        css::DeriveToCss::to_css(self, dest)
     }
 
+    #[cfg(any())] // blocked_on: DimensionPercentage::is_compatible bound
     pub fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
         match self {
             LineHeight::Length(l) => l.is_compatible(browsers),
@@ -681,7 +746,9 @@ impl LineHeight {
 }
 
 /// A value for the [font](https://www.w3.org/TR/css-fonts-4/#font-prop) shorthand property.
-#[derive(Clone, PartialEq)]
+// PORT NOTE: no `#[derive(Clone, PartialEq)]` — `BabyList<T>` derives neither.
+// Zig's `eql`/`deepClone` were reflection-based (`css.implementEql` / `css.
+// implementDeepClone`); Phase B provides those via the generics blanket.
 pub struct Font {
     /// The font family.
     pub family: BabyList<FontFamily>,
@@ -704,17 +771,20 @@ impl Font {
 
     // TODO(port): PropertyFieldMap was a comptime anon-struct mapping field names → PropertyIdTag,
     // consumed by DefineShorthand reflection. Represent as a const array for Phase B codegen.
-    pub const PROPERTY_FIELD_MAP: &'static [(&'static str, css::PropertyIdTag)] = &[
-        ("family", css::PropertyIdTag::FontFamily),
-        ("size", css::PropertyIdTag::FontSize),
-        ("style", css::PropertyIdTag::FontStyle),
-        ("weight", css::PropertyIdTag::FontWeight),
-        ("stretch", css::PropertyIdTag::FontStretch),
-        ("line_height", css::PropertyIdTag::LineHeight),
-        ("variant_caps", css::PropertyIdTag::FontVariantCaps),
+    pub const PROPERTY_FIELD_MAP: &'static [(&'static str, crate::properties::PropertyIdTag)] = &[
+        ("family", crate::properties::PropertyIdTag::FontFamily),
+        ("size", crate::properties::PropertyIdTag::FontSize),
+        ("style", crate::properties::PropertyIdTag::FontStyle),
+        ("weight", crate::properties::PropertyIdTag::FontWeight),
+        ("stretch", crate::properties::PropertyIdTag::FontStretch),
+        ("line_height", crate::properties::PropertyIdTag::LineHeight),
+        ("variant_caps", crate::properties::PropertyIdTag::FontVariantCaps),
     ];
 
-    pub fn parse(input: &mut css::Parser) -> css::Result<Font> {
+    #[cfg(any())]
+    // blocked_on: FontStyle/FontWeight/FontVariantCaps/FontStretchKeyword/
+    // FontSize/LineHeight ::parse + BabyList::<FontFamily>::parse.
+    pub fn parse(input: &mut css::Parser) -> CssResult<Font> {
         let mut style: Option<FontStyle> = None;
         let mut weight: Option<FontWeight> = None;
         let mut stretch: Option<FontStretch> = None;
@@ -724,7 +794,7 @@ impl Font {
 
         loop {
             // Skip "normal" since it is valid for several properties, but we don't know which ones it will be used for yet.
-            if input.try_parse(|i| i.expect_ident_matching("normal")).is_ok() {
+            if input.try_parse(|i| i.expect_ident_matching(b"normal")).is_ok() {
                 count += 1;
                 continue;
             }
@@ -767,15 +837,15 @@ impl Font {
         }
 
         if count > 4 {
-            return Err(input.new_custom_error(css::ParserError::InvalidDeclaration));
+            return Err(input.new_custom_error(ParserError::invalid_declaration));
         }
 
         let final_size = match size {
             Some(s) => s,
-            None => return Err(input.new_custom_error(css::ParserError::InvalidDeclaration)),
+            None => return Err(input.new_custom_error(ParserError::invalid_declaration)),
         };
 
-        let line_height = if input.try_parse(|i| i.expect_delim('/')).is_ok() {
+        let line_height = if input.try_parse(|i| i.expect_delim(b'/')).is_ok() {
             Some(LineHeight::parse(input)?)
         } else {
             None
@@ -794,48 +864,51 @@ impl Font {
         })
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    #[cfg(any())]
+    // blocked_on: FontStyle/FontVariantCaps/FontWeight/FontStretch/FontSize/
+    // LineHeight/FontFamily ::to_css.
+    pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
         if self.style != FontStyle::default() {
             self.style.to_css(dest)?;
-            dest.write_char(' ')?;
+            dest.write_char(b' ')?;
         }
 
         if self.variant_caps != FontVariantCaps::default() {
             self.variant_caps.to_css(dest)?;
-            dest.write_char(' ')?;
+            dest.write_char(b' ')?;
         }
 
         if self.weight != FontWeight::default() {
             self.weight.to_css(dest)?;
-            dest.write_char(' ')?;
+            dest.write_char(b' ')?;
         }
 
         if self.stretch != FontStretch::default() {
             self.stretch.to_css(dest)?;
-            dest.write_char(' ')?;
+            dest.write_char(b' ')?;
         }
 
         self.size.to_css(dest)?;
 
         if self.line_height != LineHeight::default() {
-            dest.delim('/', true)?;
+            dest.delim(b'/', true)?;
             self.line_height.to_css(dest)?;
         }
 
-        dest.write_char(' ')?;
+        dest.write_char(b' ')?;
 
-        let len = self.family.len();
+        let len = self.family.len() as usize;
         for (idx, val) in self.family.slice_const().iter().enumerate() {
             val.to_css(dest)?;
             if idx < len - 1 {
-                dest.delim(',', false)?;
+                dest.delim(b',', false)?;
             }
         }
         Ok(())
     }
 
-    // eql → derived PartialEq
-    // deepClone → derived Clone
+    // eql → css::implementEql (Phase B generics blanket)
+    // deepClone → css::implementDeepClone (Phase B generics blanket)
 }
 
 /// A value for the [vertical align](https://drafts.csswg.org/css2/#propdef-vertical-align) property.
@@ -879,11 +952,12 @@ pub enum VerticalAlignKeyword {
 }
 
 impl VerticalAlignKeyword {
-    pub fn parse(input: &mut css::Parser) -> css::Result<Self> {
-        css::define_enum_property::parse::<Self>(input)
+    #[cfg(any())] // blocked_on: EnumProperty impl (from_ascii_case_insensitive)
+    pub fn parse(input: &mut css::Parser) -> CssResult<Self> {
+        css::enum_property_util::parse::<Self>(input)
     }
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        css::define_enum_property::to_css(self, dest)
+    pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
+        css::enum_property_util::to_css(self, dest)
     }
 }
 
@@ -904,17 +978,18 @@ bitflags::bitflags! {
 impl FontProperty {
     const FONT: FontProperty = FontProperty::all();
 
-    pub fn try_from_property_id(property_id: css::PropertyIdTag) -> Option<FontProperty> {
+    pub fn try_from_property_id(property_id: crate::properties::PropertyIdTag) -> Option<FontProperty> {
         // TODO(port): Zig used `inline for` over std.meta.fields + @field; expanded by hand
+        use crate::properties::PropertyIdTag;
         match property_id {
-            css::PropertyIdTag::FontFamily => Some(FontProperty::FONT_FAMILY),
-            css::PropertyIdTag::FontSize => Some(FontProperty::FONT_SIZE),
-            css::PropertyIdTag::FontStyle => Some(FontProperty::FONT_STYLE),
-            css::PropertyIdTag::FontWeight => Some(FontProperty::FONT_WEIGHT),
-            css::PropertyIdTag::FontStretch => Some(FontProperty::FONT_STRETCH),
-            css::PropertyIdTag::LineHeight => Some(FontProperty::LINE_HEIGHT),
-            css::PropertyIdTag::FontVariantCaps => Some(FontProperty::FONT_VARIANT_CAPS),
-            css::PropertyIdTag::Font => Some(FontProperty::FONT),
+            PropertyIdTag::FontFamily => Some(FontProperty::FONT_FAMILY),
+            PropertyIdTag::FontSize => Some(FontProperty::FONT_SIZE),
+            PropertyIdTag::FontStyle => Some(FontProperty::FONT_STYLE),
+            PropertyIdTag::FontWeight => Some(FontProperty::FONT_WEIGHT),
+            PropertyIdTag::FontStretch => Some(FontProperty::FONT_STRETCH),
+            PropertyIdTag::LineHeight => Some(FontProperty::LINE_HEIGHT),
+            PropertyIdTag::FontVariantCaps => Some(FontProperty::FONT_VARIANT_CAPS),
+            PropertyIdTag::Font => Some(FontProperty::FONT),
             _ => None,
         }
     }
@@ -933,73 +1008,85 @@ pub struct FontHandler {
     has_any: bool,
 }
 
-// TODO(port): Zig used `comptime prop: []const u8` + @field for property_helper / flush_helper / push.
-// No Rust equivalent for field-name reflection — expanded as macro_rules! over (handler_field, Property variant, FontProperty flag).
-macro_rules! flush_helper {
-    ($this:expr, $dest:expr, $context:expr, $field:ident, $val:expr) => {{
-        if $this.$field.is_some()
-            && $this.$field.as_ref().unwrap() != $val
-            && $context.targets.browsers.is_some()
-            && !css::generic::is_compatible($val, $context.targets.browsers.unwrap())
-        {
-            $this.flush($dest, $context);
-        }
-    }};
-}
-
-macro_rules! property_helper {
-    ($this:expr, $dest:expr, $context:expr, $field:ident, $val:expr) => {{
-        flush_helper!($this, $dest, $context, $field, $val);
-        // TODO(port): css.generic.deepClone(.., context.allocator) — arena-aware clone in Phase B
-        $this.$field = Some($val.clone());
-        $this.has_any = true;
-    }};
-}
-
-macro_rules! push_prop {
-    ($this:expr, $decls:expr, $ctx:expr, Font, $val:expr) => {{
-        // PERF(port): was dest.append(ctx.allocator, ..) on arena-backed list
-        $decls.push(css::Property::Font($val));
-        $this.flushed_properties.insert(FontProperty::FONT);
-    }};
-    ($this:expr, $decls:expr, $ctx:expr, $variant:ident, $flag:ident, $val:expr) => {{
-        $decls.push(css::Property::$variant($val));
-        $this.flushed_properties.insert(FontProperty::$flag);
-    }};
-}
-
 impl FontHandler {
+    // PORT NOTE: real `handle_property`/`finalize` bodies remain gated below.
+    // The handler stub surface here matches `handler_stub!` so
+    // `DeclarationHandler` (declaration.rs) compiles unchanged.
+    #[cfg(not(any()))]
+    #[inline]
     pub fn handle_property(
         &mut self,
-        property: &css::Property,
-        dest: &mut css::DeclarationList,
-        context: &mut css::PropertyHandlerContext,
+        _property: &crate::properties::Property,
+        _dest: &mut crate::DeclarationList<'_>,
+        _context: &mut crate::PropertyHandlerContext<'_>,
     ) -> bool {
+        false
+    }
+    #[cfg(not(any()))]
+    #[inline]
+    pub fn finalize(
+        &mut self,
+        _dest: &mut crate::DeclarationList<'_>,
+        _context: &mut crate::PropertyHandlerContext<'_>,
+    ) {
+    }
+
+    #[cfg(any())]
+    // blocked_on: generics::is_compatible/eql/deepClone blankets,
+    // PropertyHandlerContext::allocator(), DeclarationList::push,
+    // Property::Font*/Unparsed payloads, FontFamilyHashMap.
+    pub fn handle_property(
+        &mut self,
+        property: &crate::properties::Property,
+        dest: &mut crate::DeclarationList<'_>,
+        context: &mut crate::PropertyHandlerContext<'_>,
+    ) -> bool {
+        use crate::properties::Property;
+
+        // TODO(port): Zig used `comptime prop: []const u8` + @field for property_helper / flush_helper / push.
+        // No Rust equivalent for field-name reflection — expanded as macro_rules! over (handler_field, Property variant, FontProperty flag).
+        macro_rules! flush_helper {
+            ($this:expr, $field:ident, $val:expr) => {{
+                if $this.$field.is_some()
+                    && $this.$field.as_ref().unwrap() != $val
+                    && context.targets.browsers.is_some()
+                    && !crate::generic::is_compatible($val, context.targets.browsers.unwrap())
+                {
+                    $this.flush(dest, context);
+                }
+            }};
+        }
+
+        macro_rules! property_helper {
+            ($this:expr, $field:ident, $val:expr) => {{
+                flush_helper!($this, $field, $val);
+                // TODO(port): css.generic.deepClone(.., context.allocator) — arena-aware clone in Phase B
+                $this.$field = Some($val.clone());
+                $this.has_any = true;
+            }};
+        }
+
         match property {
-            css::Property::FontFamily(val) => property_helper!(self, dest, context, family, val),
-            css::Property::FontSize(val) => property_helper!(self, dest, context, size, val),
-            css::Property::FontStyle(val) => property_helper!(self, dest, context, style, val),
-            css::Property::FontWeight(val) => property_helper!(self, dest, context, weight, val),
-            css::Property::FontStretch(val) => property_helper!(self, dest, context, stretch, val),
-            css::Property::FontVariantCaps(val) => {
-                property_helper!(self, dest, context, variant_caps, val)
-            }
-            css::Property::LineHeight(val) => {
-                property_helper!(self, dest, context, line_height, val)
-            }
-            css::Property::Font(val) => {
-                flush_helper!(self, dest, context, family, &val.family);
-                flush_helper!(self, dest, context, size, &val.size);
-                flush_helper!(self, dest, context, style, &val.style);
-                flush_helper!(self, dest, context, weight, &val.weight);
-                flush_helper!(self, dest, context, stretch, &val.stretch);
-                flush_helper!(self, dest, context, line_height, &val.line_height);
-                flush_helper!(self, dest, context, variant_caps, &val.variant_caps);
+            Property::FontFamily(val) => property_helper!(self, family, val),
+            Property::FontSize(val) => property_helper!(self, size, val),
+            Property::FontStyle(val) => property_helper!(self, style, val),
+            Property::FontWeight(val) => property_helper!(self, weight, val),
+            Property::FontStretch(val) => property_helper!(self, stretch, val),
+            Property::FontVariantCaps(val) => property_helper!(self, variant_caps, val),
+            Property::LineHeight(val) => property_helper!(self, line_height, val),
+            Property::Font(val) => {
+                flush_helper!(self, family, &val.family);
+                flush_helper!(self, size, &val.size);
+                flush_helper!(self, style, &val.style);
+                flush_helper!(self, weight, &val.weight);
+                flush_helper!(self, stretch, &val.stretch);
+                flush_helper!(self, line_height, &val.line_height);
+                flush_helper!(self, variant_caps, &val.variant_caps);
 
                 // TODO(port): css.generic.deepClone with context.allocator — arena-aware clone in Phase B
                 self.family = Some(val.family.clone());
                 self.size = Some(val.size.clone());
-                self.style = Some(val.style.clone());
+                self.style = Some(val.style);
                 self.weight = Some(val.weight.clone());
                 self.stretch = Some(val.stretch.clone());
                 self.line_height = Some(val.line_height.clone());
@@ -1007,11 +1094,12 @@ impl FontHandler {
                 self.has_any = true;
                 // TODO: reset other properties
             }
-            css::Property::Unparsed(val) => {
-                if is_font_property(val.property_id) {
+            Property::Unparsed(val) => {
+                if is_font_property(&val.property_id) {
                     self.flush(dest, context);
-                    self.flushed_properties
-                        .insert(FontProperty::try_from_property_id(val.property_id).unwrap());
+                    self.flushed_properties.insert(
+                        FontProperty::try_from_property_id(val.property_id.tag()).unwrap(),
+                    );
                     // PERF(port): was dest.append(context.allocator, property.*) on arena
                     dest.push(property.clone());
                 } else {
@@ -1024,20 +1112,38 @@ impl FontHandler {
         true
     }
 
+    #[cfg(any())]
     pub fn finalize(
         &mut self,
-        decls: &mut css::DeclarationList,
-        context: &mut css::PropertyHandlerContext,
+        decls: &mut crate::DeclarationList<'_>,
+        context: &mut crate::PropertyHandlerContext<'_>,
     ) {
         self.flush(decls, context);
         self.flushed_properties = FontProperty::empty();
     }
 
+    #[cfg(any())]
+    // blocked_on: FontFamilyHashMap, PropertyHandlerContext::allocator(),
+    // BabyList::ordered_remove/insert/at, generics::is_compatible.
     fn flush(
         &mut self,
-        decls: &mut css::DeclarationList,
-        context: &mut css::PropertyHandlerContext,
+        decls: &mut crate::DeclarationList<'_>,
+        context: &mut crate::PropertyHandlerContext<'_>,
     ) {
+        use crate::properties::Property;
+
+        macro_rules! push_prop {
+            (Font, $val:expr) => {{
+                // PERF(port): was dest.append(ctx.allocator, ..) on arena-backed list
+                decls.push(Property::Font($val));
+                self.flushed_properties.insert(FontProperty::FONT);
+            }};
+            ($variant:ident, $flag:ident, $val:expr) => {{
+                decls.push(Property::$variant($val));
+                self.flushed_properties.insert(FontProperty::$flag);
+            }};
+        }
+
         if !self.has_any {
             return;
         }
@@ -1047,9 +1153,8 @@ impl FontHandler {
         let mut family: Option<BabyList<FontFamily>> = self.family.take();
         if !self.flushed_properties.contains(FontProperty::FONT_FAMILY) {
             family = compatible_font_family(
-                context.allocator(),
                 family,
-                !context.targets.should_compile_same(css::Feature::FontFamilySystemUi),
+                !context.targets.should_compile_same(Feature::FontFamilySystemUi),
             );
         }
 
@@ -1067,7 +1172,7 @@ impl FontHandler {
                 let mut seen: FontFamilyHashMap<()> = Default::default();
 
                 let mut i: usize = 0;
-                while i < f.len() {
+                while (i as u32) < f.len() {
                     // TODO(port): seen.getOrPut equivalent — using entry API
                     let key = f.at(i).clone();
                     if seen.contains_key(&key) {
@@ -1081,12 +1186,12 @@ impl FontHandler {
         }
 
         if let (
-            Some(family_v),
-            Some(size_v),
-            Some(style_v),
-            Some(weight_v),
-            Some(stretch_v),
-            Some(line_height_v),
+            Some(_),
+            Some(_),
+            Some(_),
+            Some(_),
+            Some(_),
+            Some(_),
             Some(variant_caps_v),
         ) = (
             family.as_ref(),
@@ -1099,9 +1204,6 @@ impl FontHandler {
         ) {
             let caps = *variant_caps_v;
             push_prop!(
-                self,
-                decls,
-                context,
                 Font,
                 Font {
                     family: family.unwrap(),
@@ -1113,41 +1215,39 @@ impl FontHandler {
                     variant_caps: if caps.is_css2() { caps } else { FontVariantCaps::default() },
                 }
             );
-            // PORT NOTE: reshaped for borrowck — Zig used .? on each Option after the all-some check
-            let _ = (family_v, size_v, style_v, weight_v, stretch_v, line_height_v);
 
             // The `font` property only accepts CSS 2.1 values for font-variant caps.
             // If we have a CSS 3+ value, we need to add a separate property.
             if !caps.is_css2() {
-                push_prop!(self, decls, context, FontVariantCaps, FONT_VARIANT_CAPS, caps);
+                push_prop!(FontVariantCaps, FONT_VARIANT_CAPS, caps);
             }
         } else {
             if let Some(val) = family {
-                push_prop!(self, decls, context, FontFamily, FONT_FAMILY, val);
+                push_prop!(FontFamily, FONT_FAMILY, val);
             }
 
             if let Some(val) = size {
-                push_prop!(self, decls, context, FontSize, FONT_SIZE, val);
+                push_prop!(FontSize, FONT_SIZE, val);
             }
 
             if let Some(val) = style {
-                push_prop!(self, decls, context, FontStyle, FONT_STYLE, val);
+                push_prop!(FontStyle, FONT_STYLE, val);
             }
 
             if let Some(val) = variant_caps {
-                push_prop!(self, decls, context, FontVariantCaps, FONT_VARIANT_CAPS, val);
+                push_prop!(FontVariantCaps, FONT_VARIANT_CAPS, val);
             }
 
             if let Some(val) = weight {
-                push_prop!(self, decls, context, FontWeight, FONT_WEIGHT, val);
+                push_prop!(FontWeight, FONT_WEIGHT, val);
             }
 
             if let Some(val) = stretch {
-                push_prop!(self, decls, context, FontStretch, FONT_STRETCH, val);
+                push_prop!(FontStretch, FONT_STRETCH, val);
             }
 
             if let Some(val) = line_height {
-                push_prop!(self, decls, context, LineHeight, LINE_HEIGHT, val);
+                push_prop!(LineHeight, LINE_HEIGHT, val);
             }
         }
     }
@@ -1172,9 +1272,10 @@ const DEFAULT_SYSTEM_FONTS: &[&[u8]] = &[
     b"Helvetica Neue",
 ];
 
+#[cfg(any())]
+// blocked_on: BabyList::insert allocator threading + arena Bump param.
 #[inline]
 fn compatible_font_family(
-    bump: &Bump,
     _family: Option<BabyList<FontFamily>>,
     is_supported: bool,
 ) -> Option<BabyList<FontFamily>> {
@@ -1188,7 +1289,7 @@ fn compatible_font_family(
             if is_system_ui(v) {
                 for (j, name) in DEFAULT_SYSTEM_FONTS.iter().enumerate() {
                     // TODO(port): families.insert(allocator, idx, val) — BabyList::insert with arena
-                    families.insert(bump, i + j + 1, FontFamily::FamilyName(*name as *const [u8]));
+                    let _ = families.insert(i + j + 1, FontFamily::FamilyName(*name as *const [u8]));
                 }
                 break;
             }
@@ -1199,17 +1300,18 @@ fn compatible_font_family(
 }
 
 #[inline]
-fn is_font_property(property_id: css::PropertyId) -> bool {
+fn is_font_property(property_id: &crate::properties::PropertyId) -> bool {
+    use crate::properties::PropertyId;
     matches!(
         property_id,
-        css::PropertyId::FontFamily
-            | css::PropertyId::FontSize
-            | css::PropertyId::FontStyle
-            | css::PropertyId::FontWeight
-            | css::PropertyId::FontStretch
-            | css::PropertyId::FontVariantCaps
-            | css::PropertyId::LineHeight
-            | css::PropertyId::Font
+        PropertyId::FontFamily
+            | PropertyId::FontSize
+            | PropertyId::FontStyle
+            | PropertyId::FontWeight
+            | PropertyId::FontStretch
+            | PropertyId::FontVariantCaps
+            | PropertyId::LineHeight
+            | PropertyId::Font
     )
 }
 
@@ -1218,5 +1320,12 @@ fn is_font_property(property_id: css::PropertyId) -> bool {
 //   source:     src/css/properties/font.zig (1061 lines)
 //   confidence: medium
 //   todos:      27
-//   notes:      DeriveParse/DeriveToCss/DefineEnumProperty are comptime-reflection — need proc-macro derives; FontFamily.FamilyName is arena-owned *const [u8] (thread 'bump in Phase B; derived Eq/Hash are pointer-based, need content-based impls); FontHandler @field helpers expanded via macro_rules!; css::Result assumed to be std-Result-shaped for `?`.
+//   notes:      module un-gated; all data types real; parse/to_css/handle_property/
+//               flush bodies internally gated on DeriveParse/DeriveToCss proc-
+//               macros + EnumProperty from_ascii_case_insensitive impls +
+//               generics::IsCompatible blanket + parse_utility::parse_string +
+//               BabyList parse/insert allocator threading. FontFamily.FamilyName
+//               is arena-owned *const [u8] (thread 'bump in Phase B; manual
+//               PartialEq/Clone compare/copy by content/pointer-shallow);
+//               FontHandler @field helpers expanded via macro_rules!.
 // ──────────────────────────────────────────────────────────────────────────

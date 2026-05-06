@@ -136,13 +136,12 @@ gated_prop!(flex, {
         FlexPack, FlexItemAlign, FlexLinePack,
     );
 });
-gated_prop!(font, {
-    handler_stub!(FontHandler);
-    prop_value_stub!(
-        FontWeight, FontSize, FontStretch, FontFamily,
-        FontStyle, FontVariantCaps, LineHeight, Font,
-    );
-});
+// `font`: un-gated — real data types (FontWeight / FontSize / FontStretch /
+// FontFamily / FontStyle / FontVariantCaps / LineHeight / Font / FontHandler)
+// live in `font.rs`. parse/to_css/handle_property bodies remain internally
+// `#[cfg(any())]`-gated there until DeriveParse/DeriveToCss proc-macros +
+// EnumProperty derive land.
+pub mod font;
 gated_prop!(grid);
 gated_prop!(list);
 gated_prop!(margin_padding, {

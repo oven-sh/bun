@@ -750,6 +750,32 @@ mod tests {
         }
     }
 
+    /// Exhaustive: every slot in the per-platform table round-trips through
+    /// `from_errno → name()` and matches the table entry, and the table covers
+    /// the full Zig `SystemErrno` range (not just the 1..34 POSIX-common subset).
+    #[test]
+    fn errno_table_full_range() {
+        // Slot 0 is the SUCCESS hole.
+        assert_eq!(SYSTEM_ERRNO_NAMES[0], "SUCCESS");
+        assert_eq!(system_errno_name(0), None);
+        for (i, &name) in SYSTEM_ERRNO_NAMES.iter().enumerate().skip(1) {
+            assert_eq!(system_errno_name(i as i32), Some(name), "slot {i}");
+            assert_eq!(Error::from_errno(i as i32).name(), name, "slot {i}");
+        }
+        // One past the end → Unexpected.
+        assert_eq!(Error::from_errno(SYSTEM_ERRNO_NAMES.len() as i32), Error::UNEXPECTED);
+
+        // Spot-check the last entry on each platform against the Zig source.
+        #[cfg(any(target_os = "linux", target_family = "wasm"))]
+        assert_eq!(SYSTEM_ERRNO_NAMES[133], "EHWPOISON");
+        #[cfg(windows)]
+        assert_eq!(SYSTEM_ERRNO_NAMES[137], "EFTYPE");
+        #[cfg(target_os = "macos")]
+        assert_eq!(SYSTEM_ERRNO_NAMES[106], "EQFULL");
+        #[cfg(target_os = "freebsd")]
+        assert_eq!(SYSTEM_ERRNO_NAMES[97], "EINTEGRITY");
+    }
+
     #[test]
     fn coreutils_map() {
         assert_eq!(coreutils_error_map::get(2), Some("No such file or directory"));
@@ -781,5 +807,9 @@ mod tests {
 //   notes:      Error is #[repr(transparent)] NonZeroU16 string-interned;
 //               err!() yields distinct comparable codes; name() round-trips.
 //               errno_map / coreutils_error_map are cfg-gated per target_os
-//               (tables duplicated from bun_errno because of the dep cycle).
+//               (tables duplicated from bun_errno because of the dep cycle;
+//               const-asserted to match SystemErrno cardinality per platform).
+//               VERIFIED: per-platform tables cover full SystemErrno range
+//               (linux=134, win=138, darwin=107, freebsd=98); macOS/BSD
+//               errno 11→EDEADLK / 35→EAGAIN swap is correct vs *_errno.zig.
 // ──────────────────────────────────────────────────────────────────────────

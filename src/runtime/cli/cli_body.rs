@@ -945,17 +945,15 @@ pub mod command {
                 ctx.args.target = Some(api::Target::Bun);
 
                 if ctx.parallel || ctx.sequential {
-                    if let Err(err) = multi_run::run(&mut ctx) {
-                        Output::pretty_errorln(format_args!("<r><red>error<r>: {}", err.name()));
-                        Global::exit(1);
-                    }
+                    let Err(err) = multi_run::run(&mut ctx);
+                    Output::pretty_errorln(format_args!("<r><red>error<r>: {}", err.name()));
+                    Global::exit(1);
                 }
 
                 if !ctx.filters.is_empty() || ctx.workspaces {
-                    if let Err(err) = filter_run::run_scripts_with_filter(ctx) {
-                        Output::pretty_errorln(format_args!("<r><red>error<r>: {}", err.name()));
-                        Global::exit(1);
-                    }
+                    let Err(err) = filter_run::run_scripts_with_filter(ctx);
+                    Output::pretty_errorln(format_args!("<r><red>error<r>: {}", err.name()));
+                    Global::exit(1);
                 }
 
                 if !ctx.positionals.is_empty() {
@@ -990,17 +988,15 @@ pub mod command {
                 ctx.args.target = Some(api::Target::Bun);
 
                 if ctx.parallel || ctx.sequential {
-                    if let Err(err) = multi_run::run(&mut ctx) {
-                        Output::pretty_errorln(format_args!("<r><red>error<r>: {}", err.name()));
-                        Global::exit(1);
-                    }
+                    let Err(err) = multi_run::run(&mut ctx);
+                    Output::pretty_errorln(format_args!("<r><red>error<r>: {}", err.name()));
+                    Global::exit(1);
                 }
 
                 if !ctx.filters.is_empty() || ctx.workspaces {
-                    if let Err(err) = filter_run::run_scripts_with_filter(ctx) {
-                        Output::pretty_errorln(format_args!("<r><red>error<r>: {}", err.name()));
-                        Global::exit(1);
-                    }
+                    let Err(err) = filter_run::run_scripts_with_filter(ctx);
+                    Output::pretty_errorln(format_args!("<r><red>error<r>: {}", err.name()));
+                    Global::exit(1);
                 }
 
                 if !ctx.runtime_options.eval.script.is_empty() {

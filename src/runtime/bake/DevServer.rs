@@ -755,10 +755,10 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     dev.graph_safety_lock.lock();
     // PORT NOTE: capture the raw `dev_ptr` so the guard closure doesn't hold a
     // unique borrow of `dev` for the rest of the function (Zig `defer` had no
-    // aliasing check). `dev_ptr` is live for the whole fn body.
-    // SAFETY: `dev_ptr` points into the `Box` we own; the guard runs before
-    // `dev` is moved out via `Ok(dev)` (dropping `_unlock` first via
-    // `ScopeGuard::into_inner` below).
+    // aliasing check).
+    // SAFETY: `dev_ptr` points into the `Box`ed heap allocation, which is never
+    // freed in this fn (only the `Box` handle moves on `Ok(dev)`); the guard
+    // runs at scope exit while that allocation is still live.
     let _unlock = scopeguard::guard((), move |_| unsafe { (*dev_ptr).graph_safety_lock.unlock() });
 
     if let Err(err) = dev.bun_watcher.start() {

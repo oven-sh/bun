@@ -397,6 +397,12 @@ pub mod deferred_request {
 }
 pub use deferred_request::DeferredRequest;
 
+// PORT NOTE: `init` lives in the Phase-A body draft (`../DevServer.rs` →
+// `super::dev_server_body`). Re-export so callers that name
+// `crate::bake::dev_server::init` (the canonical path) resolve until the two
+// `DevServer` shapes are unified.
+pub use super::dev_server_body::init;
+
 #[derive(Default)]
 pub struct DeferredPromise {
     pub strong: jsc::JSPromiseStrong,

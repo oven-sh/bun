@@ -171,7 +171,7 @@ fn data_url_response(data_url_: DataURL, global_this: &JSGlobalObject) -> JSValu
     let data = match data_url.decode_data() {
         Ok(d) => d,
         Err(_) => {
-            let err = global_this.create_error("failed to fetch the data URL");
+            let err = global_this.create_error_instance("{}", format_args!("failed to fetch the data URL"));
             return JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                 global_this,
                 err,
@@ -182,19 +182,23 @@ fn data_url_response(data_url_: DataURL, global_this: &JSGlobalObject) -> JSValu
 
     let mut allocated = false;
     let mime_type = MimeType::MimeType::init(data_url.mime_type, true, Some(&mut allocated));
-    blob.content_type = mime_type.value;
+    // PORT NOTE: `mime_type.value` is `Cow<'static, [u8]>`; Blob.content_type is `*const [u8]`.
+    blob.content_type = match mime_type.value {
+        std::borrow::Cow::Borrowed(s) => s as *const [u8],
+        std::borrow::Cow::Owned(v) => Box::leak(v.into_boxed_slice()) as *const [u8],
+    };
     if allocated {
         blob.content_type_allocated = true;
     }
 
     let response = Box::new(Response::init(
-        Response::Init {
+        response::Init {
             status_code: 200,
-            status_text: BunString::create_atom_ascii("OK"),
+            status_text: BunString::create_atom(b"OK"),
             ..Default::default()
         },
         Body {
-            value: Body::Value::Blob(blob),
+            value: BodyValue::Blob(blob),
         },
         data_url.url.dupe_ref(),
         false,

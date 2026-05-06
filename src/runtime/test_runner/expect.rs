@@ -223,8 +223,16 @@ impl Expect {
             sequence.expect_call_count = sequence.expect_call_count.saturating_add(1);
         } else {
             // in concurrent group or otherwise failed to get the sequence; increment the expect call count in the reporter directly
-            if let Some(reporter) = buntest.reporter.as_mut() {
-                reporter.summary().expectations = reporter.summary().expectations.saturating_add(1);
+            if let Some(reporter) = buntest.reporter {
+                // SAFETY: Zig source mutates `reporter.summary()` directly; the
+                // `Option<&CommandLineReporter>` field is conceptually `*CommandLineReporter`
+                // (Zig `*CommandLineReporter`) — interior-mutability shim until
+                // bun_test stores it as `*mut`.
+                let reporter = reporter as *const _ as *mut crate::cli::test_command::CommandLineReporter;
+                unsafe {
+                    let s = (*reporter).summary();
+                    s.expectations = s.expectations.saturating_add(1);
+                }
             }
         }
     }

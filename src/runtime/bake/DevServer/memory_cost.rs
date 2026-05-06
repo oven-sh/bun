@@ -103,11 +103,12 @@ pub fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     // .source_maps
     other_bytes += memory_cost_array_hash_map(&dev.source_maps.entries);
     for entry in dev.source_maps.entries.values() {
-        source_maps += entry.files.memory_cost();
-        let files = entry.files.slice();
-        for i in 0..files.len() {
-            source_maps += files.get(i).memory_cost();
-        }
+        // TODO(port): blocked_on: bun_collections::MultiArrayElement for packed_map::Shared
+        //   `entry.files: MultiArrayList<Option<Rc<PackedMap>>>` — `memory_cost()`/`slice()`
+        //   require `T: MultiArrayElement`, but orphan rules forbid implementing the upstream
+        //   trait for `Option<Rc<_>>` here. See IncrementalGraph.rs for the same blockage.
+        let _ = &entry.files;
+        source_maps += 0;
     }
     // .incremental_result
     // TODO(port): exhaustiveness check for IncrementalResult fields (was bun.meta.useAllFields)

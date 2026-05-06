@@ -858,23 +858,25 @@ impl<'a> BunTest<'a> {
         let this: *mut BunTest = this_strong.as_ptr();
         // SAFETY: `this` derived from `UnsafeCell::get`; single-threaded; each
         // deref is a point-use that does not span a re-entrant `.get()`.
+        // SAFETY: `vm.global` is the live per-thread global; non-null after VM init.
+        let global = unsafe { &*vm.global };
         unsafe {
-            (*this).timer.next = Timespec::EPOCH;
-            (*this).timer.state = EventLoopTimerState::Pending;
+            (*this).timer.next = ElTimespec::EPOCH;
+            (*this).timer.state = EventLoopTimerState::PENDING;
 
             match (*this).phase {
                 Phase::Collection => {}
                 Phase::Execution => {
-                    if let Err(e) = (*this).execution.handle_timeout(vm.global) {
-                        (*this).on_uncaught_exception(vm.global, Some(vm.global.take_exception(e)), false, RefDataValue::Done);
+                    if let Err(e) = (*this).execution.handle_timeout(global) {
+                        (*this).on_uncaught_exception(global, Some(global.take_exception(e)), false, RefDataValue::Done);
                     }
                 }
                 Phase::Done => {}
             }
         }
-        if let Err(e) = Self::run(this_strong.clone(), vm.global) {
+        if let Err(e) = Self::run(this_strong.clone(), global) {
             // SAFETY: re-derive after `run` returned; no `&mut` was held across it.
-            unsafe { (*this).on_uncaught_exception(vm.global, Some(vm.global.take_exception(e)), false, RefDataValue::Done) };
+            unsafe { (*this).on_uncaught_exception(global, Some(global.take_exception(e)), false, RefDataValue::Done) };
         }
     }
 

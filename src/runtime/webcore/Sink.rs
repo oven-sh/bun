@@ -187,9 +187,7 @@ impl UTF8Fallback {
 
             strings::replace_latin1_with_utf8(&mut buf[..str_.len()]);
             // SAFETY: borrowed view is consumed by `write_fn` before `buf` drops.
-            let borrowed = ManuallyDrop::into_inner(unsafe {
-                ByteList::from_borrowed_slice_dangerous(&buf[..str_.len()])
-            });
+            let borrowed = unsafe { ByteList::from_borrowed_slice_dangerous(&buf[..str_.len()]) };
             if input.is_done() {
                 let result = write_fn(ctx, streams::Result::TemporaryAndDone(borrowed));
                 return result;
@@ -241,9 +239,8 @@ impl UTF8Fallback {
             debug_assert!(copied.written as usize <= Self::STACK_SIZE);
             debug_assert!(copied.read as usize <= Self::STACK_SIZE);
             // SAFETY: borrowed view is consumed by `write_fn` before `buf` drops.
-            let borrowed = ManuallyDrop::into_inner(unsafe {
-                ByteList::from_borrowed_slice_dangerous(&buf[..copied.written as usize])
-            });
+            let borrowed =
+                unsafe { ByteList::from_borrowed_slice_dangerous(&buf[..copied.written as usize]) };
             if input.is_done() {
                 let result = write_fn(ctx, streams::Result::TemporaryAndDone(borrowed));
                 return result;

@@ -150,7 +150,7 @@ pub fn download_slice(
 }
 
 pub fn delete(
-    this: &mut S3Credentials,
+    this: &S3Credentials,
     path: &[u8],
     callback: fn(S3DeleteResult, *mut c_void) -> JsTerminatedResult<()>,
     callback_context: *mut c_void,
@@ -173,7 +173,7 @@ pub fn delete(
 }
 
 pub fn list_objects(
-    this: &mut S3Credentials,
+    this: &S3Credentials,
     list_options: S3ListObjectsOptions,
     callback: fn(S3ListObjectsResult, *mut c_void) -> JsTerminatedResult<()>,
     callback_context: *mut c_void,
@@ -183,7 +183,10 @@ pub fn list_objects(
 
     search_params.append_slice(b"?");
 
-    if let Some(continuation_token) = &list_options.continuation_token {
+    if let Some(continuation_token_ptr) = list_options.continuation_token {
+        // SAFETY: `continuation_token` borrows from `list_options._continuation_token`
+        // which is kept alive for the duration of this call.
+        let continuation_token = unsafe { &*continuation_token_ptr };
         let mut buff = vec![0u8; continuation_token.len() * 3];
         let encoded =
             encode_uri_component::<true>(continuation_token, &mut buff).expect("unreachable");
@@ -193,7 +196,9 @@ pub fn list_objects(
         ));
     }
 
-    if let Some(delimiter) = &list_options.delimiter {
+    if let Some(delimiter_ptr) = list_options.delimiter {
+        // SAFETY: borrows from `list_options._delimiter` (alive for this call).
+        let delimiter = unsafe { &*delimiter_ptr };
         let mut buff = vec![0u8; delimiter.len() * 3];
         let encoded = encode_uri_component::<true>(delimiter, &mut buff).expect("unreachable");
 
@@ -358,7 +363,7 @@ pub fn list_objects(
 }
 
 pub fn upload(
-    this: &mut S3Credentials,
+    this: &S3Credentials,
     path: &[u8],
     content: &[u8],
     content_type: Option<&[u8]>,
@@ -641,7 +646,7 @@ impl Drop for S3UploadStreamWrapper {
 
 /// consumes the readable stream and upload to s3
 pub fn upload_stream(
-    this: &mut S3Credentials,
+    this: &S3Credentials,
     path: &[u8],
     readable_stream: ReadableStream,
     global_this: &JSGlobalObject,

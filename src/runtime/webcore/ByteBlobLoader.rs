@@ -120,9 +120,8 @@ impl ByteBlobLoader {
     }
 
     pub fn on_start(&mut self) -> streams::Start {
-        // PORT NOTE: `streams::BlobSizeType` is u32 but `blob::SizeType` is u64; clamp to u32::MAX
-        // (chunk_size is already capped at 2 MiB in `setup` so this never truncates).
-        streams::Start::ChunkSize(self.chunk_size.min(u32::MAX as u64) as u32)
+        // `streams::BlobSizeType` and `blob::SizeType` are both u64 in the Rust port.
+        streams::Start::ChunkSize(self.chunk_size)
     }
 
     pub fn on_pull(&mut self, buffer: &mut [u8], array: JSValue) -> streams::Result {

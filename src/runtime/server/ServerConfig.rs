@@ -690,7 +690,7 @@ impl ServerConfig {
 
         if let Some(static_) = get_routes_object(global, arg)? {
             let Some(static_obj) = static_.get_object() else {
-                return global.throw_invalid_arguments(
+                return Err(global.throw_invalid_arguments(
                     "Bun.serve() expects 'routes' to be an object shaped like:\n\n\
                      \x20 {\n\
                      \x20   \"/path\": {\n\
@@ -701,9 +701,10 @@ impl ServerConfig {
                      \x20   \"/path3/:param1/:param2\": (req) => new Response(\"Hello\")\n\
                      \x20 }\n\n\
                      Learn more at https://bun.com/docs/api/http",
-                    &[],
-                );
+                ));
             };
+            // SAFETY: get_object() returned Some, so the pointer is a live JSObject.
+            let static_obj = unsafe { &*static_obj };
             args.had_routes_object = true;
 
             let mut iter = JSPropertyIterator::init(
@@ -712,13 +713,14 @@ impl ServerConfig {
                 bun_jsc::JSPropertyIteratorOptions {
                     skip_empty_name: true,
                     include_value: true,
+                    ..Default::default()
                 },
             )?;
             // iter drops at scope end
 
-            let mut init_ctx_ = AnyRoute::ServerInitContext {
-                // TODO(port): Zig used std.heap.ArenaAllocator here; bake consumes it.
-                arena: bun_alloc::Arena::new(),
+            let mut init_ctx_ = super::super::server_body::ServerInitContext {
+                // TODO(port): Zig used std.heap.ArenaAllocator here; ServerInitContext
+                // dropped its `arena` field in the Rust port (bake owns it instead).
                 dedupe_html_bundle_map: Default::default(),
                 framework_router_list: Vec::new(),
                 js_string_allocations: Default::default(), // .empty

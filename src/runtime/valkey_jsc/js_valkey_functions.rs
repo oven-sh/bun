@@ -67,38 +67,38 @@ const fn bname(b: &'static [u8]) -> &'static str {
 // ──────────────────────────────────────────────────────────────────────────
 
 fn require_not_subscriber(this: &JSValkeyClient, function_name: &[u8]) -> JsResult<()> {
-    const FMT_STRING: &str =
-        "RedisClient.prototype.{} cannot be called while in subscriber mode.";
-
     if this.is_subscriber() {
-        // TODO(port): ERR(.REDIS_INVALID_STATE, ...) macro equivalent
-        return this
-            .global_object
-            .err_redis_invalid_state(format_args!(
-                "RedisClient.prototype.{} cannot be called while in subscriber mode.",
-                bstr::BStr::new(function_name)
-            ))
-            .throw();
+        // Zig: `this.globalObject.ERR(.REDIS_INVALID_STATE, fmt, .{function_name}).throw()`
+        // SAFETY: `global_object` is set at construction and outlives the client.
+        let global = unsafe { &*this.global_object };
+        return Err(global
+            .err(
+                ErrorCode::REDIS_INVALID_STATE,
+                format_args!(
+                    "RedisClient.prototype.{} cannot be called while in subscriber mode.",
+                    bstr::BStr::new(function_name)
+                ),
+            )
+            .throw());
     }
-    let _ = FMT_STRING;
     Ok(())
 }
 
 fn require_subscriber(this: &JSValkeyClient, function_name: &[u8]) -> JsResult<()> {
-    const FMT_STRING: &str =
-        "RedisClient.prototype.{} can only be called while in subscriber mode.";
-
     if !this.is_subscriber() {
-        // TODO(port): ERR(.REDIS_INVALID_STATE, ...) macro equivalent
-        return this
-            .global_object
-            .err_redis_invalid_state(format_args!(
-                "RedisClient.prototype.{} can only be called while in subscriber mode.",
-                bstr::BStr::new(function_name)
-            ))
-            .throw();
+        // Zig: `this.globalObject.ERR(.REDIS_INVALID_STATE, fmt, .{function_name}).throw()`
+        // SAFETY: `global_object` is set at construction and outlives the client.
+        let global = unsafe { &*this.global_object };
+        return Err(global
+            .err(
+                ErrorCode::REDIS_INVALID_STATE,
+                format_args!(
+                    "RedisClient.prototype.{} can only be called while in subscriber mode.",
+                    bstr::BStr::new(function_name)
+                ),
+            )
+            .throw());
     }
-    let _ = FMT_STRING;
     Ok(())
 }
 
@@ -110,7 +110,8 @@ fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<JSArgumen
     if value.is_number() {
         // Allow numbers to be passed as strings.
         let str = value.to_js_string(global)?;
-        return JSArgument::from_js_maybe_file(global, str.to_js(), true);
+        // SAFETY: `to_js_string` returns a non-null `*mut JSString` on Ok.
+        return JSArgument::from_js_maybe_file(global, unsafe { (*str).to_js() }, true);
     }
 
     JSArgument::from_js_maybe_file(global, value, false)

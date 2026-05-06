@@ -314,14 +314,38 @@ impl Request {
 
 mod _jsc_gated {
 use super::*;
+use bun_jsc::StringJsc as _;
+use bun_http_jsc::method_jsc::MethodJsc as _;
+use bun_http_jsc::fetch_enums_jsc::{fetch_cache_mode_to_js, fetch_redirect_to_js, fetch_request_mode_to_js};
+use crate::webcore::blob::ZigStringBlobExt as _;
+
+/// Local extension: `JSValue::get_optional_enum::<E>()` until `bun_jsc` exposes it.
+trait GetOptionalEnum {
+    fn get_optional_enum<E: bun_jsc::FromJsEnum>(
+        self,
+        global: &JSGlobalObject,
+        key: &'static str,
+    ) -> JsResult<Option<E>>;
+}
+impl GetOptionalEnum for JSValue {
+    fn get_optional_enum<E: bun_jsc::FromJsEnum>(
+        self,
+        global: &JSGlobalObject,
+        key: &'static str,
+    ) -> JsResult<Option<E>> {
+        match self.get(global, key)? {
+            Some(v) if !v.is_undefined_or_null() => Ok(Some(v.to_enum::<E>(global, key)?)),
+            _ => Ok(None),
+        }
+    }
+}
 
 impl Request {
     pub fn memory_cost(&self) -> usize {
         core::mem::size_of::<Request>()
             + self.request_context.memory_cost()
             + self.url.byte_slice().len()
-            + self.body.value().memory_cost()
-        // TODO(port): `self.body.value()` — see Arc<BodyValue> mutation note above
+            + self.body.memory_cost()
     }
 }
 

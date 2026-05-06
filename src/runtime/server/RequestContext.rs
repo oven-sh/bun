@@ -2557,11 +2557,12 @@ where
         let global_this = unsafe { (*this.server.unwrap()).global_this() };
         match value {
             Body::Value::Error(err_ref) => {
+                let js_err = err_ref.to_js(global_this);
                 let _ = value.use_();
                 if this.is_aborted_or_ended() {
                     return;
                 }
-                this.run_error_handler(err_ref.to_js(global_this));
+                this.run_error_handler(js_err);
                 return;
             }
             // .InlineBlob,
@@ -2921,6 +2922,7 @@ where
             {
                 self.flags.set_has_called_error_handler(true);
                 let result = on_error
+                    .get()
                     .call(
                         server.global_this(),
                         server.js_value().try_get().unwrap_or(JSValue::UNDEFINED),
@@ -3309,9 +3311,7 @@ where
 
             // SAFETY: from_borrowed_slice_dangerous returns a ManuallyDrop
             // wrapper; ownership of `chunk` stays with the caller.
-            let borrowed = core::mem::ManuallyDrop::into_inner(unsafe {
-                ByteList::from_borrowed_slice_dangerous(chunk)
-            });
+            let borrowed = unsafe { ByteList::from_borrowed_slice_dangerous(chunk) };
             if !last {
                 let readable_stream::Source::Bytes(bytes_ptr) = readable.ptr else {
                     return;

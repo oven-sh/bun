@@ -510,7 +510,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 } else {
                     raw
                 };
-                let hostz = bstr::ZBox::from_bytes(clean);
+                let hostz = bun_core::ZBox::from_bytes(clean);
                 // SAFETY: `ZBox` guarantees a trailing NUL and contains no
                 // interior NUL (host bytes were `[` stripped slice).
                 let host_c = unsafe {
@@ -1513,10 +1513,10 @@ impl<const SSL: bool> NewSocket<SSL> {
     }
 
     #[bun_jsc::host_fn(setter)]
-    pub fn set_data(this: &mut Self, global: &JSGlobalObject, value: JSValue) -> bool {
+    pub fn set_data(this: &mut Self, global: &JSGlobalObject, value: JSValue) -> JsResult<bool> {
         log!("setData()");
         Self::data_set_cached(this.get_this_value(global), global, value);
-        true
+        Ok(true)
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -1546,7 +1546,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 .sub(core::mem::offset_of!(Listener, handlers))
                 .cast::<Listener>()
         };
-        l.strong_self.get()
+        l.strong_self.get().unwrap_or(JSValue::UNDEFINED)
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -1968,8 +1968,19 @@ impl<const SSL: bool> NewSocket<SSL> {
             // slower-path: clone the data, do one write.
             self.buffered_data_for_node_net
                 .append_slice(buffer.slice());
-            // PORT NOTE: reshaped for borrowck — capture slice ptr/len before write.
-            let rc = self.write_maybe_corked(self.buffered_data_for_node_net.slice());
+            // PORT NOTE: reshaped for borrowck — capture slice ptr/len before
+            // the `&mut self` write call (raw slice, no aliasing through
+            // `&self.buffered_data_for_node_net` while `write_maybe_corked`
+            // holds `&mut self`).
+            // SAFETY: ptr/len snapshot a live BabyList allocation; `write_maybe_corked`
+            // does not touch `buffered_data_for_node_net`.
+            let buf_slice: &[u8] = unsafe {
+                core::slice::from_raw_parts(
+                    self.buffered_data_for_node_net.ptr.as_ptr(),
+                    self.buffered_data_for_node_net.len as usize,
+                )
+            };
+            let rc = self.write_maybe_corked(buf_slice);
             if rc > 0 {
                 let wrote_u: usize = usize::try_from(rc.max(0)).unwrap();
                 // did we write everything?
@@ -2231,8 +2242,18 @@ impl<const SSL: bool> NewSocket<SSL> {
 
     fn internal_flush(&mut self) {
         if self.buffered_data_for_node_net.len > 0 {
+            // PORT NOTE: reshaped for borrowck — raw ptr/len snapshot so
+            // `do_socket_write(&mut self, ..)` doesn't alias the field borrow.
+            // SAFETY: ptr/len snapshot a live BabyList allocation; `do_socket_write`
+            // does not touch `buffered_data_for_node_net`.
+            let buf_slice: &[u8] = unsafe {
+                core::slice::from_raw_parts(
+                    self.buffered_data_for_node_net.ptr.as_ptr(),
+                    self.buffered_data_for_node_net.len as usize,
+                )
+            };
             let written: usize = usize::try_from(
-                self.do_socket_write(self.buffered_data_for_node_net.slice())
+                self.do_socket_write(buf_slice)
                     .max(0),
             )
             .unwrap();
@@ -2486,7 +2507,11 @@ impl<const SSL: bool> NewSocket<SSL> {
         // is live across the read/writes below (single-threaded event loop,
         // and `from_js` cannot reenter this socket's handlers).
         let prev_mode = unsafe { (*p).mode };
-        let handlers = Handlers::from_js(global, socket_obj, prev_mode == super::SocketMode::Server)?;
+        // SAFETY: JSC_BORROW — `JSGlobalObject` is process-lifetime; `Handlers`
+        // stores `&'static` per the Zig contract.
+        let global_static: &'static JSGlobalObject =
+            unsafe { core::mem::transmute::<&JSGlobalObject, &'static JSGlobalObject>(global) };
+        let handlers = Handlers::from_js(global_static, socket_obj, prev_mode == super::SocketMode::Server)?;
         // Preserve runtime state across the struct assignment. `Handlers.fromJS` returns a
         // fresh struct with `active_connections = 0` and `mode` limited to `.server`/`.client`,
         // but this socket (and any in-flight callback scope) still holds references that were
@@ -2664,12 +2689,16 @@ impl<const SSL: bool> NewSocket<SSL> {
             // Per-VM weak cache: `tls:true` and `{servername}`-only hit
             // the same CTX as `Bun.connect`; an inline CA dedupes across
             // every upgradeTLS that names it.
-            // SAFETY: per-thread VM singleton.
-            *owned_ctx = match unsafe { &mut *VirtualMachine::get() }
-                .rare_data()
-                .ssl_ctx_cache()
-                .get_or_create(cfg, &mut create_err)
-            {
+            // TODO(port): `RareData::ssl_ctx_cache()` returns the upstream
+            // `high_tier::SSLContextCache` opaque stub — the real
+            // `runtime::api::bun::SSLContextCache::get_or_create` can't be
+            // reached until rare_data swaps in the concrete type.
+            let _ = (cfg as *mut SSLConfig, &mut create_err);
+            *owned_ctx = match {
+                todo!("blocked_on: bun_jsc::rare_data::SSLContextCache::get_or_create");
+                #[allow(unreachable_code)]
+                None::<*mut SSL_CTX>
+            } {
                 Some(c) => Some(c as *mut SSL_CTX),
                 None => {
                     // us_ssl_ctx_from_options only sets *err for the CA/cipher
@@ -2753,9 +2782,13 @@ impl<const SSL: bool> NewSocket<SSL> {
         // `InternalSocket::Connected` above; `owned_ssl_ctx` is the +1 ref
         // taken from SecureContext/ssl_ctx_cache and never null here.
         let new_raw: NonNull<uws::us_socket_t> = match unsafe {
+            // `adopt_tls` lives on `bun_uws_sys::us_socket_t` and takes the
+            // sys-level `SocketGroup`/`SocketKind`; `bun_uws::SocketGroup` is a
+            // separate `#[repr(C)]` mirror of the same C struct, so cast through
+            // raw pointer (layout-identical FFI handles).
             (*raw_socket).adopt_tls(
-                group,
-                uws::SocketKind::BunSocketTls,
+                &mut *(group as *mut uws::SocketGroup as *mut bun_uws_sys::SocketGroup),
+                bun_uws_sys::SocketKind::BunSocketTls,
                 &mut *((*tls_ptr).owned_ssl_ctx.unwrap()),
                 sni,
                 core::mem::size_of::<*mut c_void>() as i32,
@@ -3026,6 +3059,50 @@ impl<const SSL: bool> NewSocket<SSL> {
 
 pub type TCPSocket = NewSocket<false>;
 pub type TLSSocket = NewSocket<true>;
+
+// ── JsClass impls (manual — `#[bun_jsc::JsClass]` derive can't handle the
+// const-generic split into two codegen classes `JSTCPSocket` / `JSTLSSocket`).
+// Mirrors `impl_js_class_codegen!` in `src/runtime/api.rs`.
+macro_rules! impl_socket_js_class {
+    ($ty:ty, $name:ident) => {
+        const _: () = {
+            unsafe extern "C" {
+                #[link_name = concat!(stringify!($name), "__fromJS")]
+                fn __from_js(value: JSValue) -> *mut $ty;
+                #[link_name = concat!(stringify!($name), "__fromJSDirect")]
+                fn __from_js_direct(value: JSValue) -> *mut $ty;
+                #[link_name = concat!(stringify!($name), "__create")]
+                fn __create(global: *mut JSGlobalObject, ptr: *mut $ty) -> JSValue;
+                #[link_name = concat!(stringify!($name), "__getConstructor")]
+                fn __get_constructor(global: *mut JSGlobalObject) -> JSValue;
+            }
+            impl bun_jsc::JsClass for $ty {
+                fn from_js(value: JSValue) -> Option<*mut Self> {
+                    // SAFETY: pure FFI downcast; null on type mismatch.
+                    let p = unsafe { __from_js(value) };
+                    if p.is_null() { None } else { Some(p) }
+                }
+                fn from_js_direct(value: JSValue) -> Option<*mut Self> {
+                    // SAFETY: exact-structure FFI downcast; null on miss.
+                    let p = unsafe { __from_js_direct(value) };
+                    if p.is_null() { None } else { Some(p) }
+                }
+                fn to_js(self, global: &JSGlobalObject) -> JSValue {
+                    let ptr = Box::into_raw(Box::new(self));
+                    // SAFETY: ownership of `ptr` transfers to the C++ wrapper
+                    // (freed via `${typeName}Class__finalize`).
+                    unsafe { __create(global.as_ptr(), ptr) }
+                }
+                fn get_constructor(global: &JSGlobalObject) -> JSValue {
+                    // SAFETY: codegen extern returns the cached ctor.
+                    unsafe { __get_constructor(global.as_ptr()) }
+                }
+            }
+        };
+    };
+}
+impl_socket_js_class!(TCPSocket, TCPSocket);
+impl_socket_js_class!(TLSSocket, TLSSocket);
 
 // ──────────────────────────────────────────────────────────────────────────
 // NativeCallbacks — direct callbacks on HTTP2 when available
@@ -3407,7 +3484,10 @@ pub fn js_upgrade_duplex_to_tls(
     // allocations (not embedded in a Listener). The mode field on Handlers
     // controls lifecycle (markInactive expects a Listener parent when .server).
     // The TLS direction (client vs server) is controlled by DuplexUpgradeContext.mode.
-    let handlers = Handlers::from_js(global, socket_obj, false)?;
+    // SAFETY: JSC_BORROW — `JSGlobalObject` is process-lifetime.
+    let global_static: &'static JSGlobalObject =
+        unsafe { core::mem::transmute::<&JSGlobalObject, &'static JSGlobalObject>(global) };
+    let handlers = Handlers::from_js(global_static, socket_obj, false)?;
     // PORT NOTE: Zig `handlers.deinit()` → `Drop for Handlers`.
     let mut handlers_guard = scopeguard::guard(Some(handlers), |h| {
         drop(h);
@@ -3626,9 +3706,11 @@ pub fn js_is_named_pipe_socket(global: &JSGlobalObject, callframe: &CallFrame) -
     }
     let socket = arguments.ptr[0];
     if let Some(this) = socket.as_::<TCPSocket>() {
-        return Ok(JSValue::from(this.socket.is_named_pipe()));
+        // SAFETY: `as_` returned a non-null `*mut TCPSocket` owned by the JS wrapper.
+        return Ok(JSValue::from(unsafe { &*this }.socket.is_named_pipe()));
     } else if let Some(this) = socket.as_::<TLSSocket>() {
-        return Ok(JSValue::from(this.socket.is_named_pipe()));
+        // SAFETY: see above.
+        return Ok(JSValue::from(unsafe { &*this }.socket.is_named_pipe()));
     }
     Ok(JSValue::FALSE)
 }
@@ -3643,9 +3725,11 @@ pub fn js_get_buffered_amount(global: &JSGlobalObject, callframe: &CallFrame) ->
     }
     let socket = arguments.ptr[0];
     if let Some(this) = socket.as_::<TCPSocket>() {
-        return Ok(JSValue::js_number(this.buffered_data_for_node_net.len as f64));
+        // SAFETY: `as_` returned a non-null `*mut TCPSocket` owned by the JS wrapper.
+        return Ok(JSValue::js_number(unsafe { &*this }.buffered_data_for_node_net.len as f64));
     } else if let Some(this) = socket.as_::<TLSSocket>() {
-        return Ok(JSValue::js_number(this.buffered_data_for_node_net.len as f64));
+        // SAFETY: see above.
+        return Ok(JSValue::js_number(unsafe { &*this }.buffered_data_for_node_net.len as f64));
     }
     Ok(JSValue::js_number(0.0))
 }
@@ -3692,6 +3776,8 @@ pub fn js_set_socket_options(global: &JSGlobalObject, callframe: &CallFrame) -> 
     let Some(socket) = arguments[0].as_::<TCPSocket>() else {
         return Err(global.throw("Expected a SocketTCP instance"));
     };
+    // SAFETY: `as_` returned a non-null `*mut TCPSocket` owned by the JS wrapper.
+    let socket: &TCPSocket = unsafe { &*socket };
 
     let is_for_send_buffer = arguments[1].to_int32() == 1;
     let is_for_recv_buffer = arguments[1].to_int32() == 2;

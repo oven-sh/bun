@@ -346,6 +346,7 @@ impl UploadPart {
             2048 - w.len()
         };
         let search_params = &params_buffer[..written];
+        let callback_context: *mut c_void = self as *mut Self as *mut c_void;
         execute_simple_s3_request(
             &ctx.credentials,
             s3_simple_request::S3RequestOptions {
@@ -358,7 +359,7 @@ impl UploadPart {
                 ..Default::default()
             },
             s3_simple_request::S3Callback::Part(Self::on_part_response),
-            self as *mut Self as *mut c_void,
+            callback_context,
         )
     }
 

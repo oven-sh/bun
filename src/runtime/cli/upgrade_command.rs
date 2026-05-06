@@ -192,7 +192,7 @@ impl UpgradeCommand {
     pub fn get_latest_version<const SILENT: bool>(
         env_loader: &mut DotEnv::Loader,
         refresher: Option<&mut Progress::Progress>,
-        progress: Option<&mut Progress::Node>,
+        mut progress: Option<&mut Progress::Node>,
         use_profile: bool,
     ) -> Result<Option<Version>, bun_core::Error> {
         // TODO(port): narrow error set

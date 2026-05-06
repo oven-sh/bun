@@ -4110,14 +4110,16 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         if self.vm.aggressive_garbage_collection == jsc::virtual_machine::GCLevel::Aggressive {
             self.vm.auto_garbage_collect();
         } else {
-            self.vm.event_loop().perform_gc();
+            // SAFETY: event_loop() returns a live *mut EventLoop owned by the VM.
+            unsafe { (*self.vm.event_loop()).perform_gc() };
         }
 
         route_list_value
     }
 
     pub fn on_client_error_callback(&mut self, socket: &mut uws::Socket, error_code: u8, raw_packet: &[u8]) {
-        if let Some(callback) = self.on_clienterror.get() {
+        let callback = self.on_clienterror.get();
+        {
             let is_ssl = SSL;
             let global = unsafe { &*self.global_this };
             let node_socket = match jsc::from_js_host_call(global, || unsafe {
@@ -4130,12 +4132,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 return;
             }
 
-            let error_code_value = JSValue::js_number(error_code);
+            let error_code_value = JSValue::js_number(error_code as f64);
             let raw_packet_value = match ArrayBuffer::create_buffer(global, raw_packet) {
                 Ok(v) => v,
                 Err(_) => return, // TODO: properly propagate exception upwards
             };
-            let event_loop = global.bun_vm().event_loop();
+            // SAFETY: bun_vm()/event_loop() return live raw pointers tied to the global.
+            let event_loop = unsafe { &mut *(*global.bun_vm()).event_loop() };
             event_loop.enter();
             let _exit_guard = scopeguard::guard((), |_| event_loop.exit());
             if let Err(err) = callback.call(
@@ -4172,7 +4175,7 @@ impl Drop for SavedRequest<'_> {
     fn drop(&mut self) {
         // js_request: Strong impls Drop (deallocates HandleSlot); do not double-free here.
         // Only the intrusive-refcount deref on ctx is a non-field-ownership side effect.
-        self.ctx.deref_();
+        self.ctx.deref();
     }
 }
 

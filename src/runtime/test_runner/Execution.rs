@@ -96,6 +96,11 @@ impl ConcurrentGroup {
     pub fn sequences<'a>(&self, execution: &'a mut Execution) -> &'a mut [ExecutionSequence] {
         &mut execution.sequences[self.sequence_start..self.sequence_end]
     }
+
+    /// Immutable view of [`Self::sequences`] for read-only callers (e.g. debug dumps).
+    pub fn sequences_const<'a>(&self, execution: &'a Execution) -> &'a [ExecutionSequence] {
+        &execution.sequences[self.sequence_start..self.sequence_end]
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

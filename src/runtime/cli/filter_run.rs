@@ -106,10 +106,22 @@ impl<'a> ProcessHandle<'a> {
             // TODO(port): scopeguard closure captures &mut state.env across the calls below;
             // borrowck will require reshaping in Phase B (raw ptr capture or split borrow).
             let envp = state.env.map.create_null_delimited_env_map()?;
-            break 'brk spawn::spawn_process(&handle.options, &argv, &envp)?.unwrap()?;
+            break 'brk spawn::spawn_process(
+                &handle.options,
+                argv.as_ptr(),
+                envp.as_ptr() as *const *const c_char,
+            )?
+            .map_err(bun_core::Error::from)?;
             // `_guard` drops here (or on `?` above), restoring PATH — matches Zig `defer`.
         };
-        let process = spawned.to_process(state.event_loop, false);
+        let stdout_fd = spawned.stdout;
+        let stderr_fd = spawned.stderr;
+        let process = spawned.to_process(
+            bun_event_loop::EventLoopHandle::init_mini(
+                state.event_loop as *const _ as *mut _,
+            ),
+            false,
+        );
 
         handle.stdout.set_parent(handle);
         handle.stderr.set_parent(handle);

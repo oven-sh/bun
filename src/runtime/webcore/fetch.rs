@@ -278,7 +278,7 @@ fn data_url_response(data_url_: DataURL, global_this: &JSGlobalObject) -> JSValu
         blob.content_type_allocated = true;
     }
 
-    let response = Box::new(Response::init(
+    let mut response = Box::new(Response::init(
         response::Init {
             status_code: 200,
             status_text: BunString::create_atom(b"OK"),
@@ -1679,20 +1679,23 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                         original_size.min(stat_size)
                     };
 
+                    // PORT NOTE: `http::SendFile` fields are `usize`; blob sizes/offsets
+                    // are `blob::SizeType` (u64). Zig's `@intCast` ↔ `as usize` here.
                     http_body = HTTPRequestBody::Sendfile(http::SendFile {
                         fd: opened_fd,
-                        remain: body.any_blob().blob().offset + original_size,
-                        offset: body.any_blob().blob().offset,
-                        content_size: blob_size,
+                        remain: (body.any_blob().blob().offset + original_size) as usize,
+                        offset: body.any_blob().blob().offset as usize,
+                        content_size: blob_size as usize,
                     });
 
                     if bun_sys::S::ISREG(stat.st_mode) {
+                        let stat_size_usize = stat_size as usize;
                         let sf = http_body.sendfile_mut();
-                        sf.offset = sf.offset.min(stat_size);
+                        sf.offset = sf.offset.min(stat_size_usize);
                         sf.remain = sf
                             .remain
                             .max(sf.offset)
-                            .min(stat_size)
+                            .min(stat_size_usize)
                             .saturating_sub(sf.offset);
                     }
                     body.detach();
@@ -1884,7 +1887,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     #[cfg(debug_assertions)]
     let initial_body_reference_count: usize = {
         if let Some(store) = body.store() {
-            store.ref_count.load(core::sync::atomic::Ordering::Relaxed)
+            store.ref_count.load(core::sync::atomic::Ordering::Relaxed) as usize
         } else {
             0
         }
@@ -1987,7 +1990,7 @@ impl<'a> S3StreamWrapper<'a> {
     ) -> Result<(), bun_jsc::JsTerminated> {
         // SAFETY: self_ was created via Box::into_raw in fetch_impl; we reclaim
         // ownership here exactly once on the resolve callback.
-        let self_ = unsafe { Box::from_raw(self_) };
+        let mut self_ = unsafe { Box::from_raw(self_) };
         let global = self_.global;
         // PORT NOTE: `defer bun.destroy(self)` + `defer free(url_proxy_buffer)` →
         // Box<Self> and Box<[u8]> Drop at end of scope.

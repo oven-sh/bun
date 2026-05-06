@@ -9,7 +9,9 @@ use crate::webcore::blob::{self, Blob};
 use crate::webcore::blob::store::StoreRef;
 use crate::webcore::s3::client as s3;
 use crate::webcore::s3_client::S3CredentialsExt as _;
+#[allow(unused_imports)]
 use crate::webcore::s3::error_jsc::s3_error_to_js_with_async_stack;
+use crate::webcore::s3::error_jsc::S3ErrorJsc as _;
 use bun_str::strings;
 
 // Local front for `bun_core::pretty_fmt!` that accepts a runtime / const-

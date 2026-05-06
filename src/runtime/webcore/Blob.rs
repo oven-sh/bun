@@ -2411,7 +2411,8 @@ pub fn jsdom_file_construct_(
                     bun_str::PathString::init(name_value_str.to_utf8().slice()),
                 )),
                 ref_count: AtomicU32::new(1),
-                ..Default::default()
+                mime_type: bun_http_types::MimeType::NONE,
+                is_all_ascii: None,
             })));
         }
     }
@@ -2523,7 +2524,7 @@ pub fn construct_bun_file(
                         blob.content_type_was_set = true;
                         // SAFETY: bun_vm() never returns null for a Bun-owned global.
                         if let Some(entry) = unsafe { (*global_object.bun_vm()).mime_type(str.slice()) } {
-                            blob.content_type = entry.value as *const [u8];
+                            blob.content_type = entry.value.as_ref() as *const [u8];
                             break 'inner;
                         }
                         let mut content_type_buf = vec![0u8; slice.len()];
@@ -2771,9 +2772,10 @@ impl S3BlobDownloadTask {
         let credentials = s3_store.get_credentials();
         let path = s3_store.path();
 
+        let _ = env;
         todo!("blocked_on: bun_aio::KeepAlive::ref_(EventLoopCtx) from VirtualMachine");
         #[allow(unreachable_code)]
-        let proxy = env.get_http_proxy(true, None, None).map(|p| p.href);
+        let proxy: Option<&[u8]> = None;
 
         // Adapter: S3 download callback ABI takes `*mut c_void` context — cast
         // back to the boxed task.
@@ -2869,7 +2871,7 @@ impl Blob {
 
                         // SAFETY: bun_vm() never returns null for a Bun-owned global.
                         if let Some(mime) = unsafe { (*global_this.bun_vm()).mime_type(slice) } {
-                            self.content_type = mime.value as *const [u8];
+                            self.content_type = mime.value.as_ref() as *const [u8];
                         } else {
                             let mut buf = vec![0u8; slice.len()];
                             strings::copy_lowercase(slice, &mut buf);

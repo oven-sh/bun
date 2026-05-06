@@ -18,6 +18,7 @@ use crate::webcore::s3::client::{
     S3ListObjectsOptions, S3ListObjectsResult, ACL, StorageClass,
 };
 use crate::webcore::s3::client as s3_client;
+use crate::webcore::s3::error_jsc::S3ErrorJsc as _;
 use bun_url::URL;
 
 use super::{Blob, SizeType};
@@ -579,13 +580,15 @@ impl File {
                     _ => ZigString::from_utf8(path_like.slice()).to_slice_clone()?,
                 };
                 // TODO(port): jsc.Node.fs.Async.unlink.create — second arg is `undefined` in Zig
+                // SAFETY: `bun_vm()` returns the live per-global VM pointer; the
+                // task is created on the JS thread that owns it.
                 node_fs::async_::Unlink::create(
                     global_this,
                     /* undefined */ Default::default(),
                     node_fs::args::Unlink {
                         path: PathLike::EncodedSlice(encoded_slice),
                     },
-                    global_this.bun_vm(),
+                    unsafe { &mut *global_this.bun_vm() },
                 )
             }
             PathOrFileDescriptor::Fd(_) => Ok(JSPromise::resolved_promise_value(

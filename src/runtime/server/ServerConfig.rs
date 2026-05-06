@@ -1302,7 +1302,7 @@ impl ServerConfig {
                 let hostname = args.base_url.hostname;
                 let needs_brackets: bool =
                     strings::is_ipv6_address(hostname) && hostname[0] != b'[';
-                // original_base_uri freed when overwritten below (Box drop)
+                // original base_uri kept alive via mem::replace below until reparse completes
                 let pathname = strings::trim_leading_char(args.base_url.pathname, b'/');
                 let mut buf: Vec<u8> = Vec::new();
                 if needs_brackets {
@@ -1348,9 +1348,14 @@ impl ServerConfig {
                         );
                     }
                 }
-                args.base_uri = buf.into_boxed_slice();
-
-                args.base_url = URL::parse(&args.base_uri);
+                // Zig: `const original_base_uri = args.base_uri; defer free(original_base_uri);`
+                // Keep the previous allocation alive across the reparse — `hostname`
+                // / `pathname` above (and args.base_url's fields) still borrow into it.
+                let prev_base_uri =
+                    core::mem::replace(&mut args.base_uri, buf.into_boxed_slice());
+                // SAFETY: see parse_base_url_static; new base_uri now owns the bytes.
+                args.base_url = unsafe { parse_base_url_static(&args.base_uri) };
+                drop(prev_base_uri);
             }
         } else {
             let hostname: &[u8] = if has_hostname {
@@ -1418,17 +1423,20 @@ impl ServerConfig {
                 ));
             }
 
-            args.base_url = URL::parse(&args.base_uri);
+            // SAFETY: base_url borrows into base_uri's heap allocation; reset on error below.
+            args.base_url = unsafe { parse_base_url_static(&args.base_uri) };
         }
 
         // I don't think there's a case where this can happen
         // but let's check anyway, just in case
         if args.base_url.hostname.is_empty() {
+            args.base_url = URL::default();
             args.base_uri = Box::default();
             return Err(global.throw_invalid_arguments("baseURI must have a hostname"));
         }
 
         if !args.base_url.username.is_empty() || !args.base_url.password.is_empty() {
+            args.base_url = URL::default();
             args.base_uri = Box::default();
             return Err(global
                 .throw_invalid_arguments("baseURI can't have a username or password"));

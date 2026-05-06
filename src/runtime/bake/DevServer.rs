@@ -132,25 +132,6 @@ impl LogToJsAggregateErrorExt for Log {
         todo!("blocked_on: bun_logger::Log::to_js_aggregate_error")
     }
 }
-/// Shim: `bake_types::BuiltInModule` accessors (Zig `activeTag` + payload slice).
-trait BuiltInModuleHashExt {
-    fn tag_u8(&self) -> u8;
-    fn data_slice(&self) -> &[u8];
-}
-impl BuiltInModuleHashExt for bun_bundler::bake_types::BuiltInModule {
-    fn tag_u8(&self) -> u8 {
-        match self {
-            bun_bundler::bake_types::BuiltInModule::Code(_) => 0,
-            bun_bundler::bake_types::BuiltInModule::Import(_) => 1,
-        }
-    }
-    fn data_slice(&self) -> &[u8] {
-        match self {
-            bun_bundler::bake_types::BuiltInModule::Code(s)
-            | bun_bundler::bake_types::BuiltInModule::Import(s) => s.as_ref(),
-        }
-    }
-}
 pub use crate::bake::dev_server::HotReloadEvent;
 pub use crate::bake::dev_server::incremental_graph::IncrementalGraph;
 // TODO(port): memory_cost helpers live in the gated draft; stub the two referenced.
@@ -880,7 +861,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     if let Some(rfr) = &dev.framework.react_fast_refresh {
         debug_assert!(
             dev.client_graph.insert_stale(&rfr.import_source, false)?
-                == IncrementalGraph::<{ bake::Side::Client }>::REACT_REFRESH_INDEX
+                == incremental_graph::FileIndex::<{ bake::Side::Client }>(0) // Zig: react_refresh_index = .init(0)
         );
     }
 
@@ -914,7 +895,8 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
                 .insert_stale_extra(&fsr.entry_server, false, true)?;
 
             types.push(framework_router::Type {
-                abs_root: strings::without_trailing_slash(entry.abs_path).into(),
+                // SAFETY: `read_dir_info_ignore_error` returns a live `*const DirInfo`.
+                abs_root: strings::without_trailing_slash(unsafe { &(*entry).abs_path }).into(),
                 prefix: fsr.prefix.clone().into(),
                 ignore_underscores: fsr.ignore_underscores,
                 ignore_dirs: fsr
@@ -2041,7 +2023,7 @@ impl DevServer<'_> {
         let url = url_bunstr.to_utf8();
 
         // Extract pathname from URL (remove protocol, host, query, hash)
-        let pathname = extract_pathname_from_url(url.byte_slice());
+        let pathname = extract_pathname_from_url(url.slice());
 
         // Create params JSValue
         // TODO: lazy structure caching since we are making these objects a lot
@@ -2455,7 +2437,12 @@ impl DeferredRequest<'_> {
     fn __deinit(&mut self) {
         deferred_request::debug_log_dr!("DeferredRequest(0x{:x}) deinitImpl", self as *const _ as usize);
         match &mut self.handler {
-            Handler::ServerHandler(saved) => { saved.js_request.deinit(); }
+            Handler::ServerHandler(saved) => {
+                // PORT NOTE: `jsc::Strong::deinit()` is the explicit-teardown
+                // alias on `Strong` (Strong.rs:131); `SavedRequest::js_request`
+                // is `Strong`, so call it directly.
+                saved.js_request.deinit();
+            }
             Handler::BundledHtmlPage(_) | Handler::Aborted => {}
         }
         // PORT NOTE: SavedRequest::deinit added in src/runtime/server/mod.rs
@@ -2524,7 +2511,8 @@ impl DevServer<'_> {
         let alloc = heap.allocator();
         // TODO(port): ASTMemoryAllocator scope — bake is an AST crate; arena threading required
         let ast_memory_allocator = alloc.alloc(bun_js_parser::ASTMemoryAllocator::default());
-        let _ast_scope = ast_memory_allocator.enter(alloc);
+        let _ast_scope = ast_memory_allocator.enter();
+        let _ = alloc; // PORT NOTE: `enter()` no longer takes the arena (T1 stub).
 
         let bv2 = BundleV2::init(
             &mut self.server_transpiler,

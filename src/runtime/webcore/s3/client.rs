@@ -27,6 +27,7 @@ pub mod error_jsc;
 pub use error_jsc::throw_sign_error;
 pub use error_jsc::get_js_sign_error;
 pub use error_jsc::s3_error_to_js;
+pub use error_jsc::S3ErrorJsc;
 
 pub use bun_s3_signing::credentials::S3Credentials;
 pub use bun_s3_signing::credentials::S3CredentialsWithOptions;

@@ -269,7 +269,7 @@ impl Drop for State {
                 break;
             }
             Output::pretty_errorln(format_args!("- {:p}, len {}, at:", *key, value.len));
-            dump_stack_trace(value.allocated_at.trace(), TRACE_LIMITS);
+            dump_stack_trace(&value.allocated_at.trace(), TRACE_LIMITS.clone());
             let extra = &value.extra;
             if let Some(extra_vtable) = extra.vtable {
                 // SAFETY: `*key` is the original allocation base pointer for `value.len` bytes and

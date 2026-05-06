@@ -41,8 +41,20 @@ pub struct ErrorReportRequest {
     body: uws::BodyReaderMixin<ErrorReportRequest>,
 }
 
+impl BodyReaderHandler for ErrorReportRequest {
+    const MIXIN_OFFSET: usize = core::mem::offset_of!(ErrorReportRequest, body);
+
+    fn on_body(&mut self, body: &[u8], resp: AnyResponse) -> Result<(), bun_core::Error> {
+        ErrorReportRequest::run_with_body(self, body, resp)
+    }
+
+    fn on_error(&mut self) {
+        ErrorReportRequest::finalize(self as *mut ErrorReportRequest);
+    }
+}
+
 impl ErrorReportRequest {
-    pub fn run(dev: &mut DevServer, _req: &mut Request, resp: impl uws::Response) {
+    pub fn run(dev: &mut DevServer, _req: &mut Request, mut resp: impl BodyResponse) {
         let ctx = Box::into_raw(Box::new(ErrorReportRequest {
             dev: NonNull::from(dev),
             body: uws::BodyReaderMixin::init(),
@@ -50,8 +62,8 @@ impl ErrorReportRequest {
         // SAFETY: ctx was just allocated and is non-null; dev/server are live.
         unsafe {
             (*ctx).dev().server.as_mut().unwrap().on_pending_request();
-            (*ctx).body.read_body(resp);
         }
+        uws::BodyReaderMixin::<ErrorReportRequest>::read_body(ctx, &mut resp);
     }
 
     pub fn finalize(ctx: *mut ErrorReportRequest) {

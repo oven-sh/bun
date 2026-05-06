@@ -101,13 +101,14 @@ impl crate::webcore::body::BodyOwnerJs for Request {
     }
 }
 
+// BodyMixin(@This()) — in Rust, BodyMixin is a trait impl'd for Request;
+// these become trait methods (get_text/get_bytes/get_body/get_body_used/
+// get_json/get_array_buffer/get_blob/get_form_data/get_blob_without_call_frame).
+//
 // Override `get_body_readable_stream` so the BodyMixin default methods
 // (get_text/get_json/etc.) actually see the cached stream. The trait default
 // returns `None`; without this override the `@hasDecl(Type, "getBodyReadableStream")`
 // paths in Body.zig are silently dead.
-// TODO(b2-blocked): merge with the stub `impl BodyMixin for Request {}` above
-// once the gated `BodyMixin` trait replaces the stub.
-
 impl BodyMixin for Request {
     fn get_body_value(&mut self) -> &mut BodyValue {
         Request::get_body_value(self)

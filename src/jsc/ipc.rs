@@ -1146,10 +1146,15 @@ impl SendQueue {
     }
 
     pub fn update_ref(&mut self, global: &JSGlobalObject) {
+        let _ = global;
+        // PORT NOTE: KeepAlive::{ref_,unref} take an `EventLoopCtx` (aio cycle-
+        // break vtable), not `&VirtualMachine`. The Zig anytype dispatch is
+        // routed through `bun_aio::get_vm_ctx` which `bun_runtime` registers.
+        let ctx = bun_aio::get_vm_ctx(bun_aio::AllocatorType::Js);
         if self.should_ref() {
-            self.keep_alive.ref_(global.bun_vm());
+            self.keep_alive.ref_(ctx);
         } else {
-            self.keep_alive.unref(global.bun_vm());
+            self.keep_alive.unref(ctx);
         }
     }
 
@@ -1731,9 +1736,10 @@ pub fn do_send(
     if status == SerializeAndSendResult::Failure {
         let ex =
             global_object.create_type_error_instance(format_args!("process.send() failed"));
-        ex.put(
+        JSValue::put_zig_string(
+            ex,
             global_object,
-            ZigString::static_(b"syscall"),
+            &ZigString::static_(b"syscall"),
             crate::bun_string_jsc::to_js(&BunString::static_(b"write"), global_object)?,
         );
         return do_send_err(global_object, callback, ex, from);
@@ -1800,7 +1806,7 @@ fn handle_ipc_message(
         if let DecodedIPCMessage::Data(msg_data) = &message {
             let msg_data = *msg_data;
             if msg_data.is_object() {
-                let cmd = match msg_data.fast_get(global_this, jsc::BuiltinName::Cmd) {
+                let cmd = match msg_data.fast_get(global_this, jsc::BuiltinName::cmd) {
                     Err(_) => {
                         global_this.clear_exception();
                         break 'handle_message;
@@ -1875,8 +1881,9 @@ fn handle_ipc_message(
                 };
                 vm.event_loop().enter();
                 // TODO(port): errdefer — scopeguard for event_loop().exit()
-                // FD.toJS — encode_windows() exposes the user-visible numeric fd.
-                let fd_js = JSValue::js_number_from_int32(fd.encode_windows() as i32);
+                // FD.toJS — `uv()` is the user-visible numeric fd on both
+                // platforms (posix == native, windows == uv_file).
+                let fd_js = JSValue::js_number_from_int32(fd.uv());
                 let res = ipc_parse(global_this, target, msg_data, fd_js);
                 if let Err(e) = res {
                     // ack written already, that's okay.

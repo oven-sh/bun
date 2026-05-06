@@ -1,10 +1,13 @@
 use core::ffi::c_void;
 use std::io::Write as _;
+#[cfg(any())]
 use std::rc::Rc;
 
 use bun_collections::ByteList;
 use bun_core::MutableString;
+#[allow(unused_imports)]
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, VirtualMachine};
+#[cfg(any())]
 use bun_str as strings;
 
 // Re-exports (thin aliases matching the Zig file's top-level `pub const X = @import(...)`)

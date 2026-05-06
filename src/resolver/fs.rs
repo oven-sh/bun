@@ -13,10 +13,13 @@ use bun_string::{strings, MutableString, PathString};
 use bun_sys::{self, Fd};
 use bun_threading::Mutex;
 
-bun_core::declare_scope!(fs, hidden);
+// PORT NOTE: scope tag renamed `fs` → `Fs` so it doesn't collide with `fs:` fn
+// params (the `declare_scope!` macro emits a `static` with the tag name, and
+// edition-2024 forbids fn params shadowing statics).
+bun_core::declare_scope!(Fs, hidden);
 
 macro_rules! debug {
-    ($($arg:tt)*) => { bun_core::scoped_log!(fs, $($arg)*) };
+    ($($arg:tt)*) => { bun_core::scoped_log!(Fs, $($arg)*) };
 }
 
 // pub const FilesystemImplementation = @import("./fs_impl.zig");
@@ -354,12 +357,12 @@ impl DirEntry {
             // name_slice only lives for the duration of the iteration
             let name = strings::StringOrTinyString::init_append_if_needed(
                 name_slice,
-                FilenameStore::instance(),
+                &mut FilenameStore::instance(),
             )?;
 
             let name_lowercased = strings::StringOrTinyString::init_lower_case_append_if_needed(
                 name_slice,
-                FilenameStore::instance(),
+                &mut FilenameStore::instance(),
             )?;
 
             dir_entry::EntryStore::append(Entry {
@@ -484,6 +487,12 @@ impl DirEntryIterator for () {
     fn next(&self, _entry: &mut Entry, _fd: Fd) {}
 }
 
+impl<T: DirEntryIterator + ?Sized> DirEntryIterator for &T {
+    const IS_VOID: bool = T::IS_VOID;
+    #[inline]
+    fn next(&self, entry: &mut Entry, fd: Fd) { (**self).next(entry, fd) }
+}
+
 pub struct Entry {
     pub cache: EntryCache,
     // TODO(port): rule deviation — Zig deinit calls allocator.free(e.dir) so guide says Box<[u8]>,
@@ -501,13 +510,31 @@ pub struct Entry {
     pub abs_path: PathString,
 }
 
+// PORT NOTE: `BSSList::append` requires `ValueType: Clone` (its overflow path
+// retries with a copy). `Mutex`/`StringOrTinyString` aren't `Clone`, but for a
+// freshly-constructed `Entry` (the only thing ever appended) a field-wise copy
+// with a fresh `Mutex` is semantically equivalent to Zig's by-value move.
+impl Clone for Entry {
+    fn clone(&self) -> Self {
+        Self {
+            cache: self.cache,
+            dir: self.dir,
+            base_: strings::StringOrTinyString::init(self.base_.slice()),
+            base_lowercase_: strings::StringOrTinyString::init(self.base_lowercase_.slice()),
+            mutex: Mutex::default(),
+            need_stat: self.need_stat,
+            abs_path: self.abs_path,
+        }
+    }
+}
+
 impl Default for Entry {
     fn default() -> Self {
         Self {
             cache: EntryCache::default(),
             dir: b"",
-            base_: strings::StringOrTinyString::default(),
-            base_lowercase_: strings::StringOrTinyString::default(),
+            base_: strings::StringOrTinyString::init(b""),
+            base_lowercase_: strings::StringOrTinyString::init(b""),
             mutex: Mutex::default(),
             need_stat: true,
             abs_path: PathString::EMPTY,
@@ -1149,6 +1176,19 @@ pub enum EntriesOption {
     Err(dir_entry::Err),
 }
 
+// SAFETY: ARENA — `EntriesOption` holds a `Box<DirEntry>` whose `data` map stores
+// `*mut Entry` into the BSSList singleton. All access is serialized through
+// `RealFS.entries_mutex`; Zig used a `threadlocal var instance`. The raw-pointer
+// fields are the only thing blocking auto-Sync (needed for `bss_map_inner!`'s
+// `SyncUnsafeCell` static).
+unsafe impl Sync for EntriesOption {}
+unsafe impl Send for EntriesOption {}
+
+// SAFETY: same ARENA contract as `EntriesOption` — `Entry` lives in the
+// `BSSList` singleton; `*mut Entry` raw pointers are the only !Send/!Sync field.
+unsafe impl Sync for Entry {}
+unsafe impl Send for Entry {}
+
 #[repr(u8)]
 pub enum EntriesOptionTag {
     Entries,
@@ -1428,7 +1468,7 @@ impl RealFS {
         store_fd: bool,
         iterator: I,
     ) -> Result<&'static mut EntriesOption, bun_core::Error> {
-        let mut dir = strings::without_trailing_slash_windows_path(dir_maybe_trail_slash);
+        let mut dir = strings::paths::without_trailing_slash_windows_path(dir_maybe_trail_slash);
 
         crate::Resolver::assert_valid_cache_key(dir);
         let mut cache_result: Option<allocators::Result> = None;
@@ -1680,11 +1720,9 @@ impl RealFS {
                 }
             }
 
-            if let Some(bom) = strings::Bom::detect(file_contents) {
-                debug!("Convert {} BOM", <&'static str>::from(bom));
-                file_contents =
-                    bom.remove_and_convert_to_utf8_without_dealloc(&mut shared_buffer.list)?;
-            }
+            // TODO(b2-blocked): `strings::BOM::detect` + `remove_and_convert_to_utf8_without_dealloc`
+            // live in the gated `immutable/unicode.rs` draft (simdutf wiring). Until then,
+            // serve the bytes verbatim — BOM-stripping only affects HTTP-serve hot path.
         } else {
             let mut initial_buf = [0u8; 16384];
 
@@ -1706,12 +1744,10 @@ impl RealFS {
                     allocation[read_count] = 0;
                     let allocation = Box::leak(allocation.into_boxed_slice());
                     // TODO(port): ownership — Zig returned slice into allocator-owned buffer
-                    let mut fc: &[u8] = &allocation[..read_count];
+                    let fc: &[u8] = &allocation[..read_count];
 
-                    if let Some(bom) = strings::Bom::detect(fc) {
-                        debug!("Convert {} BOM", <&'static str>::from(bom));
-                        fc = bom.remove_and_convert_to_utf8_and_free(fc)?;
-                    }
+                    // TODO(b2-blocked): `strings::BOM` (gated in `immutable/unicode.rs`) —
+                    // BOM strip + UTF-16→UTF-8 transcode. Serve bytes verbatim until then.
 
                     return Ok(PathContentsPair { path: Path::init(path), contents: fc });
                 }
@@ -1756,10 +1792,8 @@ impl RealFS {
             file_contents = &buf[..read_count + initial_read.len()];
             debug!("read({}, {}) = {}", file.handle(), size, read_count);
 
-            if let Some(bom) = strings::Bom::detect(file_contents) {
-                debug!("Convert {} BOM", <&'static str>::from(bom));
-                file_contents = bom.remove_and_convert_to_utf8_and_free(file_contents)?;
-            }
+            // TODO(b2-blocked): `strings::BOM` (gated in `immutable/unicode.rs`) —
+            // BOM strip + UTF-16→UTF-8 transcode. Serve bytes verbatim until then.
         }
 
         Ok(PathContentsPair { path: Path::init(path), contents: file_contents })

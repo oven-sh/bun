@@ -697,6 +697,70 @@ pub mod command {
                 // + Command::Context (both gated on options_types::Context::Default).
                 todo!("Command::start dispatch for PackageManagerCommand (body gated; use --help)");
             }
+            Tag::RunAsNodeCommand => {
+                // SAFETY: `init` writes the process-global `CONTEXT_DATA` once
+                // during single-threaded startup; we are that startup thread.
+                let ctx = unsafe { &mut *init(tag, log)? };
+                return run_command::RunCommand::exec_as_if_node(ctx);
+            }
+            Tag::AutoCommand | Tag::RunCommand => {
+                // SAFETY: see RunAsNodeCommand arm above.
+                let ctx = match init(tag, log) {
+                    Ok(p) => unsafe { &mut *p },
+                    Err(e) => {
+                        // Zig: AutoCommand swallows `error.MissingEntryPoint`
+                        // and prints help; everything else propagates.
+                        if tag == Tag::AutoCommand
+                            && matches!(e, bun_core::Error::MissingEntryPoint)
+                        {
+                            return HelpCommand::exec();
+                        }
+                        return Err(e);
+                    }
+                };
+                ctx.args.target = bun_options_types::schema::api::Target::Bun;
+
+                // TODO(b2-blocked): MultiRun / FilterRun (`--parallel`,
+                // `--filter`, `--workspaces`) — needs `multi_run.rs` /
+                // `filter_run.rs` un-gated.
+                #[cfg(any())]
+                if ctx.parallel || ctx.sequential {
+                    return MultiRun::run(ctx);
+                }
+                #[cfg(any())]
+                if !ctx.filters.is_empty() || ctx.workspaces {
+                    return FilterRun::run_scripts_with_filter(ctx);
+                }
+
+                if tag == Tag::AutoCommand && !ctx.runtime_options.eval.script.is_empty() {
+                    return run_command::RunCommand::exec_eval(ctx);
+                }
+
+                // TODO(b2-blocked): `.lockb` extension → `bun ./bun.lockb`
+                // (Lockfile::Printer); see cli_body.rs.
+
+                if !ctx.positionals.is_empty() {
+                    let cfg = run_command::ExecCfg {
+                        bin_dirs_only: tag == Tag::AutoCommand,
+                        log_errors: tag != Tag::AutoCommand
+                            || !ctx.runtime_options.if_present,
+                        allow_fast_run_for_extensions: tag == Tag::AutoCommand,
+                    };
+                    if run_command::RunCommand::exec_with_cfg(ctx, cfg)? {
+                        return Ok(());
+                    }
+                    if tag == Tag::RunCommand {
+                        Global::exit(1);
+                    }
+                    return Ok(());
+                }
+
+                if tag == Tag::AutoCommand {
+                    Output::flush();
+                    return HelpCommand::exec();
+                }
+                return Ok(());
+            }
             // TODO(b2-blocked): remaining arms — see cli_body.rs::command::start
             _ => todo!("Command::start dispatch for {:?}", tag),
         }

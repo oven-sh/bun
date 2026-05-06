@@ -541,8 +541,21 @@ fn is_selector_unused(
     for component in selector.components.iter() {
         match component {
             Component::Class(ident) | Component::Id(ident) => {
-                let actual_ident = (*ident).as_original_string(symbols);
-                if unused_symbols.contains_key(actual_ident) {
+                // PORT NOTE: `IdentOrRef::as_original_string` is
+                // `#[cfg(any())]`-gated (blocked_on bun_logger::symbol::List::at
+                // + Symbol.original_name). Inline the ident arm; the ref arm
+                // (CSS-modules symbol-table lookup) is unreachable until
+                // `Parser::add_symbol_for_name` un-gates (see
+                // `SelectorParser::new_local_identifier`).
+                let actual_ident: &[u8] = match (*ident).as_ident() {
+                    // SAFETY: arena-owned slice (Phase-A `'static` placeholder).
+                    Some(i) => unsafe { &*i.v },
+                    None => {
+                        let _ = symbols;
+                        continue; // blocked_on: as_original_string ref arm
+                    }
+                };
+                if unused_symbols.contains_key(&actual_ident) {
                     return true;
                 }
             }
@@ -572,6 +585,20 @@ fn is_selector_unused(
 /// Note that we have two serialization modules, one from lightningcss and one from servo.
 ///
 /// This is because it actually uses both implementations. This is confusing.
+/// `Printer::lookup_ident_or_ref` shim. The real method is `#[cfg(any())]`-
+/// gated (blocked_on `Printer::lookup_symbol`). Inline the ident arm; the ref
+/// arm falls back to `IdentOrRef::debug_ident()` (the symbol-table path is
+/// only reachable under CSS-modules, which is itself gated upstream — see
+/// `SelectorParser::new_local_identifier`).
+#[inline]
+fn lookup_ident_or_ref(_dest: &Printer, ident: css::css_values::ident::IdentOrRef) -> &'static [u8] {
+    match ident.as_ident() {
+        // SAFETY: arena-owned slice (Phase-A `'static` placeholder).
+        Some(i) => unsafe { &*i.v },
+        None => ident.debug_ident(),
+    }
+}
+
 pub mod serialize {
     use super::*;
 
@@ -916,13 +943,13 @@ pub mod serialize {
                 // PORT NOTE: `Printer::write_ident_or_ref` is `#[cfg(any())]`-
                 // gated (blocked_on css_modules pattern.write closure-arity).
                 // Inline its non-CSS-modules path: lookup → serialize.
-                let s = dest.lookup_ident_or_ref(*class);
+                let s = lookup_ident_or_ref(dest, *class);
                 return css::serializer::serialize_identifier(s, dest)
                     .map_err(|_| PrintErr::CSSPrintError);
             }
             Component::Id(id) => {
                 dest.write_char(b'#')?;
-                let s = dest.lookup_ident_or_ref(*id);
+                let s = lookup_ident_or_ref(dest, *id);
                 return css::serializer::serialize_identifier(s, dest)
                     .map_err(|_| PrintErr::CSSPrintError);
             }
@@ -930,14 +957,18 @@ pub mod serialize {
                 dest.write_str(b":host")?;
                 if let Some(sel) = selector {
                     dest.write_char(b'(')?;
-                    serialize_selector(sel, dest, dest.context(), false)?;
+                    // PORT NOTE: reshaped for borrowck — `dest.context()` borrows
+                    // `*dest` immutably while `serialize_selector` needs `&mut`.
+                    let ctx = dest.context().map(|c| c as *const _);
+                    serialize_selector(sel, dest, ctx.map(|c| unsafe { &*c }), false)?;
                     dest.write_char(b')')?;
                 }
                 return Ok(());
             }
             Component::Slotted(selector) => {
                 dest.write_str(b"::slotted(")?;
-                serialize_selector(selector, dest, dest.context(), false)?;
+                let ctx = dest.context().map(|c| c as *const _);
+                serialize_selector(selector, dest, ctx.map(|c| unsafe { &*c }), false)?;
                 dest.write_char(b')')?;
             }
             // Component::Nth(nth_data) => {
@@ -993,7 +1024,7 @@ pub mod serialize {
                         dest.delim(b',', false)?;
                     }
                     if css::serializer::serialize_identifier(lang, dest).is_err() {
-                        return dest.add_fmt_error();
+                        return Err(dest.add_fmt_error());
                     }
                 }
                 return dest.write_str(b")");
@@ -1409,7 +1440,7 @@ pub mod tocss_servo {
                 match compound[0] {
                     Component::ExplicitAnyNamespace
                     | Component::ExplicitNoNamespace
-                    | Component::Namespace(_) => (false, 1),
+                    | Component::Namespace { .. } => (false, 1),
                     Component::DefaultNamespace(_) => (true, 1),
                     _ => (true, 0),
                 }
@@ -1512,12 +1543,12 @@ pub mod tocss_servo {
             }
             Component::Id(s) => {
                 dest.write_char(b'#')?;
-                let str = dest.lookup_ident_or_ref(*s);
+                let str = lookup_ident_or_ref(dest, *s);
                 dest.write_str(str)?;
             }
             Component::Class(s) => {
                 dest.write_char(b'.')?;
-                let str = dest.lookup_ident_or_ref(*s);
+                let str = lookup_ident_or_ref(dest, *s);
                 dest.write_str(str)?;
             }
             Component::LocalName(local_name) => {
@@ -1534,21 +1565,21 @@ pub mod tocss_servo {
             Component::ExplicitAnyNamespace => {
                 dest.write_str(b"*|")?;
             }
-            Component::Namespace(ns) => {
-                IdentFns::to_css(&ns.prefix, dest)?;
+            Component::Namespace { prefix, .. } => {
+                IdentFns::to_css(prefix, dest)?;
                 dest.write_char(b'|')?;
             }
-            Component::AttributeInNoNamespaceExists(v) => {
+            Component::AttributeInNoNamespaceExists { local_name, .. } => {
                 dest.write_char(b'[')?;
-                IdentFns::to_css(&v.local_name, dest)?;
+                IdentFns::to_css(local_name, dest)?;
                 dest.write_char(b']')?;
             }
-            Component::AttributeInNoNamespace(v) => {
+            Component::AttributeInNoNamespace { local_name, operator, value, case_sensitivity, .. } => {
                 dest.write_char(b'[')?;
-                IdentFns::to_css(&v.local_name, dest)?;
-                v.operator.to_css(dest)?;
-                CSSStringFns::to_css(&v.value, dest)?;
-                match v.case_sensitivity {
+                IdentFns::to_css(local_name, dest)?;
+                operator.to_css(dest)?;
+                CSSStringFns::to_css(value, dest)?;
+                match case_sensitivity {
                     parser::attrs::ParsedCaseSensitivity::CaseSensitive
                     | parser::attrs::ParsedCaseSensitivity::AsciiCaseInsensitiveIfInHtmlElementInHtmlDocument => {}
                     parser::attrs::ParsedCaseSensitivity::AsciiCaseInsensitive => dest.write_str(b" i")?,
@@ -1578,8 +1609,8 @@ pub mod tocss_servo {
                 }
             }
             Component::Nth(nth_data) => {
-                nth_data.write_start(dest, nth_data.is_function())?;
-                if nth_data.is_function() {
+                nth_data.write_start(dest, nth_data.is_function)?;
+                if nth_data.is_function {
                     nth_data.write_affine(dest)?;
                     dest.write_char(b')')?;
                 }
@@ -1687,11 +1718,11 @@ fn has_type_selector(selector: &parser::Selector) -> bool {
     let mut iter = selector.iter_raw_match_order();
     let first = iter.next();
 
-    if is_namespace(first.as_ref()) {
-        return is_type_selector(iter.next().as_ref());
+    if is_namespace(first) {
+        return is_type_selector(iter.next());
     }
 
-    is_type_selector(first.as_ref())
+    is_type_selector(first)
 }
 
 fn is_namespace(component: Option<&parser::Component>) -> bool {
@@ -1700,7 +1731,7 @@ fn is_namespace(component: Option<&parser::Component>) -> bool {
             c,
             Component::ExplicitAnyNamespace
                 | Component::ExplicitNoNamespace
-                | Component::Namespace(_)
+                | Component::Namespace { .. }
                 | Component::DefaultNamespace(_)
         );
     }

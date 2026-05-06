@@ -643,9 +643,9 @@ pub fn simple_print_param(param: &Param<Help>) -> Result<(), bun_core::Error> {
     Output::pretty(format_args!("\n"));
     if let Some(s) = param.names.short {
         if param.takes_value != Values::None && param.names.long.is_none() {
-            Output::pretty(format_args!("  <cyan>-{}<r><d><cyan>=\\<val\\><r>", s as char));
+            bun_core::pretty!("  <cyan>-{}<r><d><cyan>=\\<val\\><r>", s as char);
         } else {
-            Output::pretty(format_args!("  <cyan>-{}<r>", s as char));
+            bun_core::pretty!("  <cyan>-{}<r>", s as char);
         }
     } else {
         Output::pretty(format_args!("    "));
@@ -658,9 +658,9 @@ pub fn simple_print_param(param: &Param<Help>) -> Result<(), bun_core::Error> {
         }
 
         if param.takes_value != Values::None {
-            Output::pretty(format_args!("<cyan>--{}<r><d><cyan>=\\<val\\><r>", bstr::BStr::new(l)));
+            bun_core::pretty!("<cyan>--{}<r><d><cyan>=\\<val\\><r>", bstr::BStr::new(l));
         } else {
-            Output::pretty(format_args!("<cyan>--{}<r>", bstr::BStr::new(l)));
+            bun_core::pretty!("<cyan>--{}<r>", bstr::BStr::new(l));
         }
     } else {
         Output::pretty(format_args!("    "));
@@ -699,10 +699,14 @@ pub fn simple_help(params: &[Param<Help>]) {
         let spaces_after = vec![b' '; num_spaces_after];
 
         simple_print_param(param).expect("unreachable");
+        // Zig's `Output.pretty` rewrites `<tag>` markers comptime-in-the-format-string;
+        // `desc_text` is a runtime value, so route it through the runtime rewriter so
+        // help-table rows don't print literal `<r>` / `<cyan>`.
+        let desc = Output::pretty_fmt_runtime(desc_text, Output::enable_ansi_colors_stdout());
         Output::pretty(format_args!(
             "  {}  {}",
             bstr::BStr::new(&spaces_after),
-            bstr::BStr::new(desc_text)
+            bstr::BStr::new(&desc),
         ));
     }
 }
@@ -745,11 +749,14 @@ pub fn simple_help_bun_top_level(params: &'static [Param<Help>]) {
                 let total_len = flags_len + value_len;
                 let num_spaces_after = MAX_SPACING - total_len;
 
-                // Zig: Output.pretty(space_buf[0..n] ++ desc_text, .{})
+                // Zig: Output.pretty(space_buf[0..n] ++ desc_text, .{}) — the concat
+                // is the *format string*, so `<tag>` markers inside `desc_text` are
+                // rewritten. Mirror that with the runtime rewriter.
+                let desc = Output::pretty_fmt_runtime(desc_text, Output::enable_ansi_colors_stdout());
                 Output::pretty(format_args!(
                     "{}{}",
                     bstr::BStr::new(&SPACE_BUF[0..num_spaces_after]),
-                    bstr::BStr::new(desc_text)
+                    bstr::BStr::new(&desc),
                 ));
             }
         }

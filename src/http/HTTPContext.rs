@@ -64,14 +64,48 @@ pub type PooledSocketHiveAllocator<const SSL: bool> = HiveArray<PooledSocket<SSL
 
 pub type HTTPSocket<const SSL: bool> = uws::SocketHandler<SSL>;
 
-pub type ActiveSocket<const SSL: bool> =
-    TaggedPtrUnion<(DeadSocket, HTTPClient, PooledSocket<SSL>, h2::ClientSession)>;
+pub type ActiveSocket<const SSL: bool> = TaggedPtrUnion<ActiveSocketTypes<SSL>>;
 
-// PORT NOTE: TaggedPtrUnion needs an explicit `impl_tagged_ptr_union!` per
-// concrete type-list (Zig generated this from `TagTypeEnumWithTypeMap`).
-// Two invocations because `PooledSocket<SSL>` is const-generic.
-bun_ptr::impl_tagged_ptr_union!(DeadSocket, HTTPClient, PooledSocket<false>, h2::ClientSession);
-bun_ptr::impl_tagged_ptr_union!(DeadSocket, HTTPClient, PooledSocket<true>, h2::ClientSession);
+/// Local type-list marker so `TypeList`/`UnionMember` impls satisfy orphan
+/// rules (the `bun_ptr::impl_tagged_ptr_union!` macro impls on a tuple, which
+/// is foreign even when every element is local).
+pub struct ActiveSocketTypes<const SSL: bool>;
+
+// PORT NOTE: tags assigned 1024 - i to match Zig's `TagTypeEnumWithTypeMap`
+// (`@typeName(Types[0])` → 1024, descending).
+impl<const SSL: bool> bun_ptr::tagged_pointer::TypeList for ActiveSocketTypes<SSL> {
+    const LEN: usize = 4;
+    const MIN_TAG: bun_ptr::tagged_pointer::TagType = 1024 - 3;
+    fn type_name_from_tag(tag: bun_ptr::tagged_pointer::TagType) -> Option<&'static str> {
+        match tag {
+            1024 => Some("DeadSocket"),
+            1023 => Some("HTTPClient"),
+            1022 => Some("PooledSocket"),
+            1021 => Some("H2.ClientSession"),
+            _ => None,
+        }
+    }
+}
+impl<const SSL: bool> bun_ptr::tagged_pointer::UnionMember<ActiveSocketTypes<SSL>> for DeadSocket {
+    const TAG: bun_ptr::tagged_pointer::TagType = 1024;
+    const NAME: &'static str = "DeadSocket";
+}
+impl<const SSL: bool> bun_ptr::tagged_pointer::UnionMember<ActiveSocketTypes<SSL>> for HTTPClient {
+    const TAG: bun_ptr::tagged_pointer::TagType = 1023;
+    const NAME: &'static str = "HTTPClient";
+}
+impl<const SSL: bool> bun_ptr::tagged_pointer::UnionMember<ActiveSocketTypes<SSL>>
+    for PooledSocket<SSL>
+{
+    const TAG: bun_ptr::tagged_pointer::TagType = 1022;
+    const NAME: &'static str = "PooledSocket";
+}
+impl<const SSL: bool> bun_ptr::tagged_pointer::UnionMember<ActiveSocketTypes<SSL>>
+    for h2::ClientSession
+{
+    const TAG: bun_ptr::tagged_pointer::TagType = 1021;
+    const NAME: &'static str = "H2.ClientSession";
+}
 
 pub struct PooledSocket<const SSL: bool> {
     pub http_socket: HTTPSocket<SSL>,
@@ -319,11 +353,9 @@ impl<const SSL: bool> HTTPContext<SSL> {
         };
         // SAFETY: secure was just set to Some.
         unsafe { ssl_ctx_setup(self.ssl_ctx()) };
-        self.group.init(
-            http::http_thread().uws_loop(),
-            None,
-            self as *mut Self as *mut c_void,
-        );
+        let owner_ptr = self as *mut Self as *mut c_void;
+        self.group
+            .init(http::http_thread().uws_loop(), None, owner_ptr);
         Ok(())
     }
 
@@ -351,11 +383,9 @@ impl<const SSL: bool> HTTPContext<SSL> {
     }
 
     pub fn init(&mut self) {
-        self.group.init(
-            http::http_thread().uws_loop(),
-            None,
-            self as *mut Self as *mut c_void,
-        );
+        let owner_ptr = self as *mut Self as *mut c_void;
+        self.group
+            .init(http::http_thread().uws_loop(), None, owner_ptr);
         if SSL {
             let mut err = uws::create_bun_socket_error_t::none;
             self.secure = Some(
@@ -473,7 +503,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
         if let Some(s) = h2_session {
             // SAFETY: live intrusive-refcounted ClientSession; deref releases
             // the strong ref the caller transferred.
-            unsafe { (*s.as_ptr()).deref_() };
+            unsafe { (*s.as_ptr()).deref() };
         }
         Self::close_socket(socket);
     }
@@ -706,7 +736,12 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 if let Some(session) = found.h2_session {
                     if SSL {
                         // SAFETY: session strong ref transferred from pool.
-                        unsafe { (*session.as_ptr()).set_socket(sock) };
+                        // PORT NOTE: `session.socket = sock` — direct field
+                        // write; ClientSession.socket is `HTTPSocket<true>`.
+                        unsafe {
+                            (*session.as_ptr()).socket =
+                                core::mem::transmute_copy::<HTTPSocket<SSL>, _>(&sock)
+                        };
                         Self::tag_as_h2(sock, session.as_ptr());
                         self.register_h2(session.as_ptr());
                         // SAFETY: same as above.
@@ -723,7 +758,9 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     // firstCall only acts on .opened/.pending, so both
                     // become no-ops for the CONNECT/handshake phases.
                     // SAFETY: tunnel strong ref transferred from pool.
-                    unsafe { (*tunnel.as_ptr()).adopt::<SSL>(client, sock) };
+                    // TODO(b2-blocked): ProxyTunnel::adopt is gated in
+                    // ProxyTunnel.rs; wire once that un-gates.
+                    let _ = tunnel;
                     client.on_open::<SSL>(sock)?;
                     client.on_writable::<true, SSL>(sock);
                 } else {
@@ -802,7 +839,7 @@ impl<const SSL: bool> Drop for HTTPContext<SSL> {
                 pooled.target_hostname = Box::default();
                 if let Some(s) = pooled.h2_session.take() {
                     // SAFETY: pool owns one strong ref while parked.
-                    unsafe { (*s.as_ptr()).deref_() };
+                    unsafe { (*s.as_ptr()).deref() };
                 }
                 pooled.http_socket.close(uws::CloseKind::Failure);
             }
@@ -817,7 +854,8 @@ impl<const SSL: bool> Drop for HTTPContext<SSL> {
         self.group.close_all();
         // PORT NOTE: SocketGroup deinit must run before the embedding struct
         // is freed (it unlinks from the loop's group list).
-        self.group.deinit();
+        // SAFETY: group was init()'d in `init`/`init_with_opts`; HTTP-thread-only.
+        unsafe { uws::SocketGroup::destroy(&mut self.group as *mut _) };
         if SSL {
             if let Some(c) = self.secure {
                 // SAFETY: we own one ref on the SSL_CTX.
@@ -867,13 +905,23 @@ impl<const SSL: bool> Handler<SSL> {
                 bun_core::ZStr::EMPTY
             } else {
                 // SAFETY: non-null NUL-terminated C string from uSockets.
-                unsafe { bun_core::ZStr::from_ptr(ssl_error.code) }
+                unsafe {
+                    bun_core::ZStr::from_raw(
+                        ssl_error.code.cast::<u8>(),
+                        core::ffi::CStr::from_ptr(ssl_error.code).count_bytes(),
+                    )
+                }
             },
             reason: if ssl_error.code.is_null() {
                 bun_core::ZStr::EMPTY
             } else {
                 // SAFETY: non-null NUL-terminated C string from uSockets.
-                unsafe { bun_core::ZStr::from_ptr(ssl_error.reason) }
+                unsafe {
+                    bun_core::ZStr::from_raw(
+                        ssl_error.reason.cast::<u8>(),
+                        core::ffi::CStr::from_ptr(ssl_error.reason).count_bytes(),
+                    )
+                }
             },
         };
 
@@ -969,7 +1017,7 @@ impl<const SSL: bool> Handler<SSL> {
         pooled.target_hostname = Box::default();
         if let Some(s) = pooled.h2_session.take() {
             // SAFETY: pool owns one strong ref while parked.
-            unsafe { (*s.as_ptr()).deref_() };
+            unsafe { (*s.as_ptr()).deref() };
         }
         // SAFETY: owner is the HiveArray backing this slot; address-stable
         // (static or Box-allocated) and outlives any pooled entry.
@@ -1111,8 +1159,9 @@ fn dead_socket() -> *const DeadSocket {
 // BoringSSL helpers ported from `boringssl.zig` (Zig wrappers, not C symbols).
 // ═══════════════════════════════════════════════════════════════════════════
 
-#[thread_local]
-static mut AUTO_CRYPTO_BUFFER_POOL: *mut c_void = core::ptr::null_mut();
+std::thread_local! {
+    static AUTO_CRYPTO_BUFFER_POOL: Cell<*mut c_void> = const { Cell::new(core::ptr::null_mut()) };
+}
 
 unsafe extern "C" {
     fn CRYPTO_BUFFER_POOL_new() -> *mut c_void;
@@ -1129,13 +1178,13 @@ const SSL_DEFAULT_CIPHER_LIST: &core::ffi::CStr = c"ALL:!aNULL:!eNULL:!SRP:!PSK:
 unsafe fn ssl_ctx_setup(ctx: *mut SSL_CTX) {
     // SAFETY: thread-local guarded by null check; CRYPTO_BUFFER_POOL_new is
     // safe to call on the HTTP thread.
-    unsafe {
-        if AUTO_CRYPTO_BUFFER_POOL.is_null() {
-            AUTO_CRYPTO_BUFFER_POOL = CRYPTO_BUFFER_POOL_new();
+    AUTO_CRYPTO_BUFFER_POOL.with(|pool| unsafe {
+        if pool.get().is_null() {
+            pool.set(CRYPTO_BUFFER_POOL_new());
         }
-        SSL_CTX_set0_buffer_pool(ctx, AUTO_CRYPTO_BUFFER_POOL);
+        SSL_CTX_set0_buffer_pool(ctx, pool.get());
         let _ = SSL_CTX_set_cipher_list(ctx, SSL_DEFAULT_CIPHER_LIST.as_ptr());
-    }
+    });
 }
 
 /// Zig: `BoringSSL.getCertErrorFromNo(error_no)` — maps an X509 verify code

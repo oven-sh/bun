@@ -162,32 +162,32 @@ impl Image {
             }
         {
             if let Some(legacy) = prefix_image.get_legacy_webkit(allocator) {
-                res.push(legacy);
+                res.append(legacy);
             }
         }
 
         // Standard syntax, with prefixes.
         if prefixes.contains(VendorPrefix::WEBKIT) {
-            res.push(prefix_image.get_prefixed(allocator, css::VendorPrefix::WEBKIT));
+            res.append(prefix_image.get_prefixed(allocator, css::VendorPrefix::WEBKIT));
         }
 
         if prefixes.contains(VendorPrefix::MOZ) {
-            res.push(prefix_image.get_prefixed(allocator, css::VendorPrefix::MOZ));
+            res.append(prefix_image.get_prefixed(allocator, css::VendorPrefix::MOZ));
         }
 
         if prefixes.contains(VendorPrefix::O) {
-            res.push(prefix_image.get_prefixed(allocator, css::VendorPrefix::O));
+            res.append(prefix_image.get_prefixed(allocator, css::VendorPrefix::O));
         }
 
         if prefixes.contains(VendorPrefix::NONE) {
             // Unprefixed, rgb fallback.
             if let Some(r) = rgb {
-                res.push(r);
+                res.append(r);
             }
 
             // P3 fallback.
             if fallbacks.contains(ColorFallbackKind::P3) {
-                res.push(self.get_fallback(allocator, ColorFallbackKind::P3));
+                res.append(self.get_fallback(allocator, ColorFallbackKind::P3));
             }
 
             // Convert original to lab if needed (e.g. if oklab is not supported but lab is).
@@ -221,6 +221,9 @@ impl Image {
 
     // TODO(port): `css.DeriveParse(@This()).parse` — hand-expanded: try each
     // variant in Zig field order (none/url/gradient/image-set).
+    // blocked_on: `Url::parse` (gated on `Parser::add_import_record`). The
+    // gradient/image-set arms are real; the url arm un-gates with url.rs.
+    #[cfg(any())]
     pub fn parse(input: &mut css::Parser) -> Result<Image> {
         if input.try_parse(|i| i.expect_ident_matching(b"none")).is_ok() {
             return Ok(Image::None);
@@ -233,12 +236,34 @@ impl Image {
         }
         ImageSet::parse(input).map(Image::ImageSet)
     }
+    #[cfg(not(any()))]
+    pub fn parse(input: &mut css::Parser) -> Result<Image> {
+        if input.try_parse(|i| i.expect_ident_matching(b"none")).is_ok() {
+            return Ok(Image::None);
+        }
+        // Url::parse blocked_on Parser::add_import_record — skip arm for now.
+        if let Ok(g) = input.try_parse(Gradient::parse) {
+            return Ok(Image::Gradient(Box::new(g)));
+        }
+        ImageSet::parse(input).map(Image::ImageSet)
+    }
 
     // TODO(port): `css.DeriveToCss(@This()).toCss` — hand-expanded.
+    // blocked_on: `Url::to_css` (gated on Printer::print_import_record path).
+    #[cfg(any())]
     pub fn to_css(&self, dest: &mut css::Printer) -> core::result::Result<(), css::PrintErr> {
         match self {
             Image::None => dest.write_str(b"none"),
             Image::Url(u) => u.to_css(dest),
+            Image::Gradient(g) => g.to_css(dest),
+            Image::ImageSet(s) => s.to_css(dest),
+        }
+    }
+    #[cfg(not(any()))]
+    pub fn to_css(&self, dest: &mut css::Printer) -> core::result::Result<(), css::PrintErr> {
+        match self {
+            Image::None => dest.write_str(b"none"),
+            Image::Url(_) => todo!("Image::Url::to_css — blocked on values::url::Url::to_css un-gate"),
             Image::Gradient(g) => g.to_css(dest),
             Image::ImageSet(s) => s.to_css(dest),
         }
@@ -267,10 +292,9 @@ pub struct ImageSet {
 impl ImageSet {
     pub fn parse(input: &mut css::Parser) -> Result<ImageSet> {
         let location = input.current_source_location();
-        let f = match input.expect_function() {
-            Result::Ok(v) => v,
-            Result::Err(e) => return Result::Err(e),
-        };
+        // SAFETY: borrow detached (Phase-A `'static` placeholder, see
+        // `css_parser::src_str`) so `input` is reusable below.
+        let f: &'static [u8] = unsafe { &*(input.expect_function()? as *const [u8]) };
         let vendor_prefix = 'vendor_prefix: {
             // todo_stuff.match_ignore_ascii_case
             if strings::eql_case_insensitive_ascii_check_length(b"image-set", f) {

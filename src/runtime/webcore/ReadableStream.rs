@@ -120,13 +120,12 @@ unsafe extern "C" {
     ) -> JSValue;
     // PORT NOTE: `globalThis.queueMicrotask(cb, ...)` — used by `NewSource::on_js_close`.
     // Declared locally because the inline `JSGlobalObject` shim in `bun_jsc` doesn't yet
-    // re-export `queue_microtask`. The C++ symbol lives in ZigGlobalObject.cpp.
-    fn JSGlobalObject__queueMicrotaskJob(
+    // re-export `queue_microtask`. C++ symbol: bindings.cpp `JSC__JSGlobalObject__queueMicrotaskJob`.
+    fn JSC__JSGlobalObject__queueMicrotaskJob(
         global: *const JSGlobalObject,
         function: JSValue,
         first: JSValue,
         second: JSValue,
-        third: JSValue,
     );
 }
 
@@ -700,10 +699,9 @@ impl<C: SourceContext> NewSource<C> {
         if let Some(cb) = this.close_jsvalue.try_swap() {
             // SAFETY: global_this stored from a live `&JSGlobalObject`; outlives the close.
             unsafe {
-                JSGlobalObject__queueMicrotaskJob(
+                JSC__JSGlobalObject__queueMicrotaskJob(
                     this.global_this,
                     cb,
-                    JSValue::ZERO,
                     JSValue::ZERO,
                     JSValue::ZERO,
                 );

@@ -34,21 +34,37 @@ pub trait GradientPosition: Sized + Clone + PartialEq {
     fn is_percentage_with_value(&self, v: f32) -> bool;
 }
 
-impl<D> GradientPosition for DimensionPercentage<D>
-where
-    D: Clone + PartialEq + super::protocol::Parse + super::protocol::ToCss
-        + super::protocol::Zero + super::protocol::TrySign,
-{
-    #[inline]
-    fn parse(input: &mut Parser) -> Result<Self> { DimensionPercentage::<D>::parse(input) }
-    #[inline]
-    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        DimensionPercentage::<D>::to_css(self, dest)
-    }
-    #[inline]
-    fn is_percentage_with_value(&self, v: f32) -> bool {
-        matches!(self, DimensionPercentage::Percentage(p) if p.v == v)
-    }
+// Only two `D` instantiations exist (`LengthValue` / `Angle`); both already
+// satisfy `DimensionPercentage<D>: CalcValue` in `calc.rs`. A blanket impl
+// would need to re-state that bound; concrete impls are simpler and match
+// the Zig monomorphization sites exactly.
+macro_rules! impl_gradient_position {
+    ($ty:ty) => {
+        impl GradientPosition for $ty {
+            #[inline]
+            fn parse(input: &mut Parser) -> Result<Self> { <$ty>::parse(input) }
+            #[inline]
+            fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+                <$ty>::to_css(self, dest)
+            }
+            #[inline]
+            fn is_percentage_with_value(&self, v: f32) -> bool {
+                matches!(self, DimensionPercentage::Percentage(p) if p.v == v)
+            }
+        }
+    };
+}
+impl_gradient_position!(LengthPercentage);
+impl_gradient_position!(AnglePercentage);
+
+/// Detach a parser-arena-borrowed slice to the Phase-A `'static` placeholder
+/// (same trick as `css_parser::src_str` — Token payloads are arena-static).
+/// SAFETY: caller must guarantee `s` borrows `Parser::input.tokenizer.src`
+/// (true for all `expect_function`/`expect_ident` returns); the returned
+/// `'static` is a Phase-A lie that becomes `&'bump [u8]` once `'bump` threads.
+#[inline]
+unsafe fn src_str(s: &[u8]) -> &'static [u8] {
+    unsafe { &*(s as *const [u8]) }
 }
 
 /// Side-keyword protocol for `WebKitGradientPointComponent<S>` (instantiated
@@ -100,10 +116,8 @@ pub enum Gradient {
 impl Gradient {
     pub fn parse(input: &mut css::Parser) -> Result<Gradient> {
         let location = input.current_source_location();
-        let func = match input.expect_function() {
-            Ok(vv) => vv,
-            Err(e) => return Err(e),
-        };
+        // SAFETY: see `src_str` — borrow detached so `input` is reusable below.
+        let func = unsafe { src_str(input.expect_function()?) };
         input.parse_nested_block(|input_: &mut css::Parser| -> Result<Gradient> {
             // TODO(port): bun.ComptimeEnumMap(...).getAnyCase — case-insensitive perfect hash.
             // Using a chain of case-insensitive comparisons for now; Phase B can swap to phf.
@@ -146,7 +160,7 @@ impl Gradient {
             } else if strings::eql_case_insensitive_ascii_check_length(func, b"-webkit-gradient") {
                 Ok(Gradient::WebkitGradient(WebKitGradient::parse(input_)?))
             } else {
-                Err(location.new_unexpected_token_error(css::Token::Ident(func)))
+                Err(location.new_unexpected_token_error(Token::Ident(func)))
             }
         })
     }
@@ -394,7 +408,7 @@ impl LinearGradient {
             }
 
             if let Err(_) = serialize_items::<LengthPercentage>(&flipped_items, dest) {
-                return dest.add_fmt_error();
+                return Err(dest.add_fmt_error());
             }
         } else {
             if !self.direction.eql(&LineDirection::Vertical(VerticalPositionKeyword::Bottom))
@@ -405,7 +419,7 @@ impl LinearGradient {
             }
 
             if let Err(_) = serialize_items::<LengthPercentage>(&self.items, dest) {
-                return dest.add_fmt_error();
+                return Err(dest.add_fmt_error());
             }
         }
         Ok(())
@@ -728,10 +742,8 @@ pub enum WebKitGradient {
 impl WebKitGradient {
     pub fn parse(input: &mut css::Parser) -> Result<WebKitGradient> {
         let location = input.current_source_location();
-        let ident = match input.expect_ident() {
-            Ok(vv) => vv,
-            Err(e) => return Err(e),
-        };
+        // SAFETY: see `src_str` — borrow detached so `input` is reusable below.
+        let ident = unsafe { src_str(input.expect_ident()?) };
         input.expect_comma()?;
 
         // todo_stuff.match_ignore_ascii_case
@@ -762,7 +774,7 @@ impl WebKitGradient {
                 stops,
             }))
         } else {
-            Err(location.new_unexpected_token_error(css::Token::Ident(ident)))
+            Err(location.new_unexpected_token_error(Token::Ident(ident)))
         }
     }
 
@@ -1008,8 +1020,8 @@ impl LineDirection {
             LineDirection::Horizontal(k) => {
                 if dest.minify {
                     dest.write_str(match k {
-                        HorizontalPositionKeyword::Left => b"270deg",
-                        HorizontalPositionKeyword::Right => b"90deg",
+                        HorizontalPositionKeyword::Left => &b"270deg"[..],
+                        HorizontalPositionKeyword::Right => &b"90deg"[..],
                     })
                 } else {
                     if !is_prefixed {
@@ -1021,8 +1033,8 @@ impl LineDirection {
             LineDirection::Vertical(k) => {
                 if dest.minify {
                     dest.write_str(match k {
-                        VerticalPositionKeyword::Top => b"0deg",
-                        VerticalPositionKeyword::Bottom => b"180deg",
+                        VerticalPositionKeyword::Top => &b"0deg"[..],
+                        VerticalPositionKeyword::Bottom => &b"180deg"[..],
                     })
                 } else {
                     if !is_prefixed {
@@ -1270,10 +1282,8 @@ pub struct WebKitColorStop {
 impl WebKitColorStop {
     pub fn parse(input: &mut css::Parser) -> Result<WebKitColorStop> {
         let location = input.current_source_location();
-        let function = match input.expect_function() {
-            Ok(vv) => vv,
-            Err(e) => return Err(e),
-        };
+        // SAFETY: see `src_str` — borrow detached so `input` is reusable below.
+        let function = unsafe { src_str(input.expect_function()?) };
         input.parse_nested_block(|i: &mut css::Parser| -> Result<WebKitColorStop> {
             // todo_stuff.match_ignore_ascii_case
             let position: f32 = if strings::eql_case_insensitive_ascii_check_length(function, b"color-stop") {
@@ -1285,7 +1295,7 @@ impl WebKitColorStop {
             } else if strings::eql_case_insensitive_ascii_check_length(function, b"to") {
                 1.0
             } else {
-                return Err(location.new_unexpected_token_error(css::Token::Ident(function)));
+                return Err(location.new_unexpected_token_error(Token::Ident(function)));
             };
             let color = CssColor::parse(i)?;
             Ok(WebKitColorStop { color, position })
@@ -1469,12 +1479,29 @@ pub enum ShapeExtent {
     FarthestCorner,
 }
 
+impl EnumProperty for ShapeExtent {
+    fn from_ascii_case_insensitive(ident: &[u8]) -> Option<Self> {
+        // todo_stuff.match_ignore_ascii_case
+        if strings::eql_case_insensitive_ascii_check_length(ident, b"closest-side") {
+            Some(ShapeExtent::ClosestSide)
+        } else if strings::eql_case_insensitive_ascii_check_length(ident, b"farthest-side") {
+            Some(ShapeExtent::FarthestSide)
+        } else if strings::eql_case_insensitive_ascii_check_length(ident, b"closest-corner") {
+            Some(ShapeExtent::ClosestCorner)
+        } else if strings::eql_case_insensitive_ascii_check_length(ident, b"farthest-corner") {
+            Some(ShapeExtent::FarthestCorner)
+        } else {
+            None
+        }
+    }
+}
+
 impl ShapeExtent {
     pub fn eql(&self, other: &ShapeExtent) -> bool {
         *self == *other
     }
 
-    pub fn as_str(&self) -> &'static [u8] {
+    pub fn as_str(&self) -> &'static str {
         crate::css_parser::enum_property_util::as_str(self)
     }
 

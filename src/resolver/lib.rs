@@ -1377,7 +1377,19 @@ mod strings {
     }
     #[inline]
     pub fn path_contains_node_modules_folder(p: &[u8]) -> bool {
-        index_of(p, b"node_modules").is_some()
+        // Spec: src/string/immutable/paths.zig:340-342 — separator-bounded
+        // segment match (`SEP_STR ++ "node_modules" ++ SEP_STR`), not a bare
+        // substring. Avoids false positives on `my_node_modules/` etc.
+        index_of(
+            p,
+            const_format::concatcp!(
+                super::bun_paths::SEP_STR,
+                "node_modules",
+                super::bun_paths::SEP_STR
+            )
+            .as_bytes(),
+        )
+        .is_some()
     }
     #[inline]
     pub fn without_leading_path_separator(p: &[u8]) -> &[u8] {
@@ -2430,21 +2442,42 @@ impl<'a> Resolver<'a> {
     pub fn flush_debug_logs(&mut self, flush_mode: FlushMode) -> core::result::Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         if let Some(debug) = self.debug_logs.as_mut() {
-            // PORT NOTE: bun_logger takes `Str = &'static [u8]` (Zig allocated into the Log
-            // arena). Leak the accumulated `what` buffer; the Log owns it for the program
-            // lifetime in debug-logging builds only.
-            let what: &'static [u8] =
-                Box::leak(core::mem::take(&mut debug.what).into_boxed_slice());
-            let notes = core::mem::take(&mut debug.notes).into_boxed_slice();
+            // PORT NOTE: spec resolver.zig:650-658 — only consume `what`/`notes` inside
+            // the arm that actually emits, so the success-at-non-verbose path touches
+            // nothing. `add_range_debug_with_notes`/`add_verbose_with_notes` take
+            // `&'static [u8]`; bypass them and build the `Msg` directly so the Log owns
+            // the `what` buffer via `Data.text: Cow::Owned` (no `Box::leak`, PORTING.md
+            // §Forbidden). The `should_print` gate mirrors the bypassed wrappers.
             if flush_mode == FlushMode::Fail {
-                self.log.add_range_debug_with_notes(
-                    None,
-                    logger::Range { loc: logger::Loc::default(), ..Default::default() },
-                    what,
-                    notes,
-                )?;
+                if logger::Kind::Debug.should_print(self.log.level) {
+                    let what = core::mem::take(&mut debug.what);
+                    let notes = core::mem::take(&mut debug.notes).into_boxed_slice();
+                    self.log.add_msg(Msg {
+                        kind: logger::Kind::Debug,
+                        data: logger::range_data(
+                            None,
+                            logger::Range { loc: logger::Loc::default(), ..Default::default() },
+                            what,
+                        ),
+                        notes,
+                        ..Default::default()
+                    })?;
+                }
             } else if (self.log.level as u32) <= (logger::Level::Verbose as u32) {
-                self.log.add_verbose_with_notes(None, logger::Loc::EMPTY, what, notes)?;
+                if logger::Kind::Verbose.should_print(self.log.level) {
+                    let what = core::mem::take(&mut debug.what);
+                    let notes = core::mem::take(&mut debug.notes).into_boxed_slice();
+                    self.log.add_msg(Msg {
+                        kind: logger::Kind::Verbose,
+                        data: logger::range_data(
+                            None,
+                            logger::Range { loc: logger::Loc::EMPTY, ..Default::default() },
+                            what,
+                        ),
+                        notes,
+                        ..Default::default()
+                    })?;
+                }
             }
         }
         Ok(())
@@ -2985,8 +3018,12 @@ impl<'a> Resolver<'a> {
                             buf[out_len] = 0;
                             // SAFETY: buf[out_len] == 0 written above
                             let span = unsafe { bun_core::ZStr::from_raw(buf.as_ptr(), out_len) };
-                            // TODO(port): std.fs.openFileAbsoluteZ → bun_sys::open
-                            let file = bun_sys::open(span, bun_sys::O::RDONLY, 0).unwrap();
+                            // Spec resolver.zig:1099 uses `try std.fs.openFileAbsoluteZ`,
+                            // which propagates I/O errors so `resolveAndAutoInstall` can
+                            // return them as `Result.Union.failure`. Mirror that — never
+                            // panic on EACCES/EMFILE/ELOOP here.
+                            let file = bun_sys::open(span, bun_sys::O::RDONLY, 0)
+                                .map_err(Into::<bun_core::Error>::into)?;
                             query.entry.cache.fd = file;
                             Fs::FileSystem::set_max_fd(file.native());
                         }
@@ -3939,7 +3976,13 @@ impl<'a> Resolver<'a> {
                                         path_pair: PathPair { primary: Path::init(package_json.source.path.text), secondary: None },
                                         dirname_fd: pkg_dir_info.get_file_descriptor(),
                                         file_fd: FD::INVALID,
-                                        is_node_module: strings::contains(package_json.source.path.text, b"node_modules"),
+                                        // Spec resolver.zig:1930 — `Path.isNodeModule()` checks
+                                        // `lastIndexOf(name.dir, SEP++"node_modules"++SEP)`, i.e. a
+                                        // separator-bounded directory component on `name.dir` (not a
+                                        // bare substring of the full text). `bun_logger::fs::Path`
+                                        // doesn't carry that method, so re-derive via the resolver's
+                                        // `Path` (already done one line up for `path_pair.primary`).
+                                        is_node_module: Path::init(package_json.source.path.text).is_node_module(),
                                         package_json: Some(package_json as *const _),
                                         dir_info: Some(dir_info as *const _),
                                         ..Default::default()

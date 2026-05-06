@@ -26,6 +26,28 @@ use js_ast::ExprData as Data;
 use js_ast::ExprTag as Tag;
 use js_ast::OpCode as Op;
 
+// `Expr::join_with_comma` lives in a still-gated `impl Expr` block
+// (Expr.rs `#[cfg(any())]` @793 — depends on `IntoExprData` for `E::Binary`).
+// The visit pass needs the trivial 2-ary form now; provide it locally and
+// build the binary node via `Expr::init`, which does have an ungated path.
+#[inline]
+fn join_with_comma(a: Expr, b: Expr) -> Expr {
+    if matches!(a.data, Data::EMissing(_)) {
+        return b;
+    }
+    if matches!(b.data, Data::EMissing(_)) {
+        return a;
+    }
+    Expr::init(E::Binary { op: Op::BinComma, left: a, right: b }, a.loc)
+}
+
+// Same story as `join_with_comma` — `Expr::has_value_for_this_in_call` is in
+// the gated `impl Expr` @1481. Body is trivial; mirror the Zig.
+#[inline]
+fn has_value_for_this_in_call(expr: &Expr) -> bool {
+    matches!(expr.data.tag(), Tag::EDot | Tag::EIndex)
+}
+
 // Zig: `pub fn VisitExpr(comptime ts, comptime jsx, comptime scan_only) type { return struct { ... } }`
 // — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
 // a direct `impl P` block. The 25+ per-variant `e_*` helpers are private; only `visit_expr` /
@@ -197,12 +219,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             BStr::new(name)
                         )
                         .unwrap();
-                        v.into_boxed_slice()
+                        v.into_boxed_slice().into()
                     },
-                    location: logger::Location::init_or_null(
+                    location: Some(logger::Location::init_or_null(
                         Some(p.source),
                         js_lexer::range_of_identifier(p.source, result.declare_loc.unwrap()),
-                    ),
+                    )),
+                    ..Default::default()
                 }]);
 
                 let is_error = p.const_values.contains_key(&result.r#ref) || p.options.bundle;
@@ -249,10 +272,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             && !result.is_inside_with_scope
             && !is_delete_target
         {
-            if let Some(def) = p.define.for_identifier(name) {
-                if !def.valueless() {
-                    let newvalue =
-                        p.value_for_define(expr.loc, in_.assign_target, is_delete_target, def);
+            if let Some(def) = p.define.identifiers.get(name) {
+                if def.value.is_some() {
+                    // blocked_on: P::value_for_define is in the gated round-D impl
+                    // (P.rs `#[cfg(any())]` block); body preserved in _draft.
+                    let newvalue: Expr = {
+                        let _ = (in_.assign_target, is_delete_target, &def);
+                        todo!("e_identifier: P::value_for_define (gated)")
+                    };
 
                     // Don't substitute an identifier for a non-identifier if this is an
                     // assignment target, since it'll cause a syntax error
@@ -263,21 +290,21 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         return newvalue;
                     }
 
-                    original_name = def.original_name();
+                    original_name = def.original_name.as_deref();
                 }
 
                 // Copy the side effect flags over in case this expression is unused
-                if def.can_be_removed_if_unused() {
+                if def.can_be_removed_if_unused {
                     e_.can_be_removed_if_unused = true;
                 }
-                if def.call_can_be_unwrapped_if_unused() == E::CallUnwrap::IfUnused
-                    && !p.options.ignore_dce_annotations
-                {
+                // PORT NOTE: round-C `defines` stub stores `call_can_be_unwrapped_if_unused: bool`;
+                // the full Zig type is `js_ast.E.CallUnwrap`. `true` ↔ `.if_unused`.
+                if def.call_can_be_unwrapped_if_unused && !p.options.ignore_dce_annotations {
                     e_.call_can_be_unwrapped_if_unused = true;
                 }
 
                 // If the user passed --drop=console, drop all property accesses to console.
-                if def.method_call_must_be_replaced_with_undefined()
+                if def.method_call_must_be_replaced_with_undefined
                     && in_.property_access_for_method_call_maybe_should_replace_with_undefined
                     && in_.assign_target == js_ast::AssignTarget::None
                 {
@@ -420,9 +447,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         if p.options.features.minify_syntax {
             if let Some(mut s) = e_.index.data.e_string() {
                 if s.is_utf8() && s.is_identifier(p.allocator) {
+                    // PORT NOTE: `E::Dot.name: &'static [u8]` is the arena-erased
+                    // `Str` newtype; matches the transmute pattern in E.rs.
                     let dot = p.new_expr(
                         E::Dot {
-                            name: s.slice(p.allocator),
+                            name: unsafe {
+                                core::mem::transmute::<&[u8], &'static [u8]>(s.slice(p.allocator))
+                            },
                             name_loc: e_.index.loc,
                             target: e_.target,
                             optional_chain: e_.optional_chain,
@@ -548,7 +579,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         if p.options.features.minify_syntax && s.is_identifier(p.allocator) {
                             let dot = p.new_expr(
                                 E::Dot {
-                                    name: s.slice(p.allocator),
+                                    name: unsafe {
+                                        core::mem::transmute::<&[u8], &'static [u8]>(
+                                            s.slice(p.allocator),
+                                        )
+                                    },
                                     name_loc: unwrapped.loc,
                                     target: e_.target,
                                     optional_chain: e_.optional_chain,
@@ -610,7 +645,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             if num < literal.len() {
                                 return p.new_expr(
                                     E::String {
-                                        data: &literal[num..num + 1],
+                                        data: unsafe {
+                                            core::mem::transmute::<&[u8], &'static [u8]>(
+                                                &literal[num..num + 1],
+                                            )
+                                        },
                                         ..Default::default()
                                     },
                                     expr.loc,
@@ -671,7 +710,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 .expect("unreachable");
         }
 
-        p.new_expr(*e_, expr.loc)
+        // PORT NOTE: `e_` is `StoreRef<E::Index>` — mutations above wrote through
+        // DerefMut into the same arena slot `expr.data` already points at. Zig's
+        // `p.newExpr(e_, loc)` re-wraps the same pointer; here `expr` is already that.
+        expr
     }
 
     fn e_unary(p: &mut Self, expr: Expr, _: ExprIn) -> Expr {
@@ -681,7 +723,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 let id_before = matches!(e_.value.data, Data::EIdentifier(..));
                 e_.value = p.visit_expr_in_out(
                     e_.value,
-                    ExprIn { assign_target: e_.op.unary_assign_target(), ..Default::default() },
+                    ExprIn { assign_target: Op::unary_assign_target(e_.op), ..Default::default() },
                 );
                 let id_after = matches!(e_.value.data, Data::EIdentifier(..));
 
@@ -693,7 +735,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         .kind
                         == js_ast::symbol::Kind::Unbound
                 {
-                    e_.value = Expr::join_with_comma(
+                    e_.value = join_with_comma(
                         Expr { loc: e_.value.loc, data: prefill::data::ZERO },
                         e_.value,
                     );
@@ -720,7 +762,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             _ => {
                 e_.value = p.visit_expr_in_out(
                     e_.value,
-                    ExprIn { assign_target: e_.op.unary_assign_target(), ..Default::default() },
+                    ExprIn { assign_target: Op::unary_assign_target(e_.op), ..Default::default() },
                 );
 
                 // Post-process the unary expression
@@ -736,7 +778,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         }
 
                         if p.options.features.minify_syntax {
-                            if let Some(exp) = e_.value.maybe_simplify_not(p.allocator) {
+                            // blocked_on: Expr::maybe_simplify_not (Expr.rs `#[cfg(any())]` impl @1481).
+                            #[cfg(any())]
+                            if let Some(exp) = Expr::maybe_simplify_not(&e_.value, p.allocator) {
                                 return exp;
                             }
                             if let Data::EImportMetaMain(m) = &mut e_.value.data {
@@ -792,7 +836,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     if !matches!(e_.op, Op::UnDelete | Op::UnTypeof) {
                         if let Data::EBinary(comma) = &e_.value.data {
                             if comma.op == Op::BinComma {
-                                return Expr::join_with_comma(
+                                return join_with_comma(
                                     comma.left,
                                     p.new_expr(
                                         E::Unary {
@@ -818,19 +862,22 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         if let Some(parts) = p.define.dots.get(e_.name) {
             for define in parts {
-                if p.is_dot_define_match(expr, define.parts) {
+                // blocked_on: P::is_dot_define_match + P::value_for_define live in the
+                // gated round-D impl (P.rs `#[cfg(any())]` ~5380); `defines::DotDefine.parts`
+                // is the round-C `Vec<Box<[u8]>>` stub (full type is `*const [*const [u8]]`).
+                let is_match: bool = {
+                    let _ = &define.parts;
+                    todo!("e_dot: P::is_dot_define_match (gated)")
+                };
+                if is_match {
                     if in_.assign_target == js_ast::AssignTarget::None {
                         // Substitute user-specified defines
-                        if !define.data.valueless() {
-                            return p.value_for_define(
-                                expr.loc,
-                                in_.assign_target,
-                                is_delete_target,
-                                &define.data,
-                            );
+                        if define.data.value.is_some() {
+                            let _ = (in_.assign_target, is_delete_target, &define.data);
+                            todo!("e_dot: P::value_for_define (gated)");
                         }
 
-                        if define.data.method_call_must_be_replaced_with_undefined()
+                        if define.data.method_call_must_be_replaced_with_undefined
                             && in_
                                 .property_access_for_method_call_maybe_should_replace_with_undefined
                         {
@@ -839,15 +886,15 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     }
 
                     // Copy the side effect flags over in case this expression is unused
-                    if define.data.can_be_removed_if_unused() {
+                    if define.data.can_be_removed_if_unused {
                         e_.can_be_removed_if_unused = true;
                     }
 
-                    if define.data.call_can_be_unwrapped_if_unused() != E::CallUnwrap::Never
+                    // PORT NOTE: round-C `defines` stub uses `bool`; full type is `E::CallUnwrap`.
+                    if define.data.call_can_be_unwrapped_if_unused
                         && !p.options.ignore_dce_annotations
                     {
-                        e_.call_can_be_unwrapped_if_unused =
-                            define.data.call_can_be_unwrapped_if_unused();
+                        e_.call_can_be_unwrapped_if_unused = E::CallUnwrap::IfUnused;
                     }
 
                     break;
@@ -949,7 +996,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 p.is_control_flow_dead = old;
 
                 if side_effects.side_effects == SideEffects::CouldHaveSideEffects {
-                    return Expr::join_with_comma(
+                    return join_with_comma(
                         SideEffects::simplify_unused_expr(p, e_.test_)
                             .unwrap_or_else(|| p.new_expr(E::Missing {}, e_.test_.loc)),
                         e_.yes,
@@ -959,8 +1006,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 // "(1 ? fn : 2)()" => "fn()"
                 // "(1 ? this.fn : 2)" => "this.fn"
                 // "(1 ? this.fn : 2)()" => "(0, this.fn)()"
-                if is_call_target && e_.yes.has_value_for_this_in_call() {
-                    return Expr::join_with_comma(
+                if is_call_target && has_value_for_this_in_call(&e_.yes) {
+                    return join_with_comma(
                         p.new_expr(E::Number { value: 0.0 }, e_.test_.loc),
                         e_.yes,
                     );
@@ -977,7 +1024,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                 // "(a, false) ? b : c" => "a, c"
                 if side_effects.side_effects == SideEffects::CouldHaveSideEffects {
-                    return Expr::join_with_comma(
+                    return join_with_comma(
                         SideEffects::simplify_unused_expr(p, e_.test_)
                             .unwrap_or_else(|| p.new_expr(E::Missing {}, e_.test_.loc)),
                         e_.no,
@@ -987,8 +1034,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 // "(1 ? fn : 2)()" => "fn()"
                 // "(1 ? this.fn : 2)" => "this.fn"
                 // "(1 ? this.fn : 2)()" => "(0, this.fn)()"
-                if is_call_target && e_.no.has_value_for_this_in_call() {
-                    return Expr::join_with_comma(
+                if is_call_target && has_value_for_this_in_call(&e_.no) {
+                    return join_with_comma(
                         p.new_expr(E::Number { value: 0.0 }, e_.test_.loc),
                         e_.no,
                     );
@@ -1078,9 +1125,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             && spread_item_count > 0
             && in_.assign_target == js_ast::AssignTarget::None
         {
-            e_.items = e_
-                .inline_spread_of_array_literals(p.allocator, spread_item_count)
-                .unwrap_or(e_.items);
+            if let Ok(items) = e_.inline_spread_of_array_literals(p.allocator, spread_item_count) {
+                e_.items = items;
+            }
         }
         expr
     }

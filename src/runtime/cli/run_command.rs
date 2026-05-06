@@ -838,6 +838,35 @@ impl RunCommand {
         todo!("RunCommand::exec stdin path — bun_sys::File::stdin gated")
     }
 
+    /// Port of `cli.zig`'s `@"bun --eval --print"` — synthetic `cwd/[eval]`
+    /// entry point + boot. `Arguments::parse` has already stashed the script
+    /// in `ctx.runtime_options.eval.script`. Public so `Command::start` can
+    /// route the `-e`/`-p` AutoCommand path here without re-implementing the
+    /// path-buffer dance.
+    pub fn exec_eval(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
+        // Zig: `ctx.passthrough = concat(ctx.positionals, ctx.passthrough)`.
+        // PORT NOTE: prepend positionals into the existing passthrough vec
+        // (cold path, single allocation).
+        if !ctx.positionals.is_empty() {
+            let mut merged: Vec<Box<[u8]>> =
+                Vec::with_capacity(ctx.positionals.len() + ctx.passthrough.len());
+            merged.extend(ctx.positionals.iter().cloned());
+            merged.append(&mut ctx.passthrough);
+            ctx.passthrough = merged;
+        }
+
+        let mut entry_point_buf = [0u8; MAX_PATH_BYTES + EVAL_TRIGGER.len()];
+        let mut cwd_buf = PathBuffer::uninit();
+        let cwd = bun_core::getcwd(&mut cwd_buf)?;
+        let cwd_bytes = cwd.as_bytes();
+        let cwd_len = cwd_bytes.len();
+        entry_point_buf[..cwd_len].copy_from_slice(cwd_bytes);
+        entry_point_buf[cwd_len..cwd_len + EVAL_TRIGGER.len()].copy_from_slice(EVAL_TRIGGER);
+        let entry: Box<[u8]> =
+            entry_point_buf[..cwd_len + EVAL_TRIGGER.len()].to_vec().into_boxed_slice();
+        Self::boot(ctx, entry, None)
+    }
+
     /// `node` argv0 emulation. Port of `execAsIfNode`.
     pub fn exec_as_if_node(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
         // SAFETY: single-threaded CLI startup; `PRETEND_TO_BE_NODE` is set in

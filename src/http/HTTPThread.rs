@@ -317,14 +317,13 @@ impl HttpThread {
     ) -> Result<Option<crate::HTTPSocket<IS_SSL>>, bun_core::Error>
     // TODO(port): narrow error set
     {
-        if client.unix_socket_path.length() > 0 {
-            // PORT NOTE: borrowck — slice() borrows `client`; copy out before passing &mut client.
-            let path: &[u8] = unsafe {
-                core::slice::from_raw_parts(
-                    client.unix_socket_path.slice().as_ptr(),
-                    client.unix_socket_path.length(),
-                )
-            };
+        let unix_path = client.unix_socket_path.slice();
+        if !unix_path.is_empty() {
+            // PORT NOTE: borrowck — slice() borrows `client`; copy out the
+            // pointer/len before passing &mut client.
+            // SAFETY: unix_socket_path borrows storage that outlives this call.
+            let path: &[u8] =
+                unsafe { core::slice::from_raw_parts(unix_path.as_ptr(), unix_path.len()) };
             return self.context::<IS_SSL>().connect_socket(client, path);
         }
 
@@ -678,7 +677,9 @@ impl HttpThread {
         self.drain_queued_http_response_body_drains();
         self.drain_queued_writes();
         self.drain_queued_shutdowns();
-        h3::PendingConnect::drain_resolved();
+        // TODO(b2-blocked): h3::PendingConnect::drain_resolved is gated in
+        // h3_client/PendingConnect.rs; wire once that un-gates.
+        // h3::PendingConnect::drain_resolved();
 
         for http in self.queued_threadlocal_proxy_derefs.drain(..) {
             // SAFETY: pointer was queued by schedule_proxy_deref on this thread; still live.

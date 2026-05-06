@@ -7,9 +7,11 @@ use core::slice;
 use bun_alloc::AllocError;
 use bun_core::fmt as bun_fmt;
 use crate::DOMExceptionCode;
+#[allow(unused_imports)]
 use crate::{c_api, JSGlobalObject, JSValue, VM};
 // `node::Encoding` is the Node.js Buffer encoding tag; canonical home is
 // `bun_string::encoding::Encoding` (re-exported there as `NodeEncoding`).
+#[allow(unused_imports)]
 use bun_string::encoding::Encoding;
 // `webcore::encoding::{construct_from_u8,u16, byte_length_u8}` live in
 // `src/runtime/webcore/encoding.rs` (forward-dep on bun_jsc) — gate callers.
@@ -137,6 +139,7 @@ pub fn to_external_u16(ptr: *const u16, len: usize, global: &JSGlobalObject) -> 
 //   - `index_of_any` — needs `&'static [u16]` adapter for `index_of_any16`
 //   - struct-based `Slice` + `NullableAllocator` plumbing
 // ──────────────────────────────────────────────────────────────────────────
+pub use self::_body::GithubActionFormatter;
 mod _body {
 use super::*;
 
@@ -711,16 +714,17 @@ impl ZigString {
 
     pub fn slice_z_buf<'a>(&self, buf: &'a mut PathBuffer) -> Result<&'a ZStr, bun_core::Error> {
         // TODO(port): std.fmt.bufPrintZ with Display formatting into fixed buffer
-        use std::io::Write;
-        let mut cursor = &mut buf[..];
-        let start_len = cursor.len();
+        use std::io::Write as _;
+        let buf_slice: &mut [u8] = &mut buf[..];
+        let start_len = buf_slice.len();
+        let mut cursor: &mut [u8] = buf_slice;
         write!(cursor, "{}", self).map_err(|_| bun_core::err!("NoSpaceLeft"))?;
         let written = start_len - cursor.len();
         if written >= buf.len() {
             return Err(bun_core::err!("NoSpaceLeft"));
         }
         buf[written] = 0;
-        // SAFETY: buf[written] == 0 written above.
+        // SAFETY: buf[written] == 0 written above; bytes [0..written] initialized.
         Ok(unsafe { ZStr::from_raw(buf.as_ptr(), written) })
     }
 
@@ -745,20 +749,26 @@ impl ZigString {
     #[inline]
     fn assert_global(&self) {
         #[cfg(debug_assertions)]
+        // SAFETY: read-only mimalloc probes; untagged ptr may be null when len==0.
         debug_assert!(
             self.len == 0
-                || bun_alloc::mimalloc::mi_is_in_heap_region(Self::untagged(self._unsafe_ptr_do_not_use).cast())
-                || bun_alloc::mimalloc::mi_check_owned(Self::untagged(self._unsafe_ptr_do_not_use).cast())
+                || unsafe { bun_alloc::mimalloc::mi_is_in_heap_region(Self::untagged(self._unsafe_ptr_do_not_use).cast()) }
+                || unsafe { bun_alloc::mimalloc::mi_check_owned(Self::untagged(self._unsafe_ptr_do_not_use).cast()) }
         );
     }
 
     pub fn to_external_value(&self, global: &JSGlobalObject) -> JSValue {
         self.assert_global();
         if self.len > BunString::max_length() {
-            // SAFETY: byte_slice() memory was globally allocated.
-            unsafe { bun_alloc::free_slice(self.byte_slice().as_ptr() as *mut u8, self.byte_slice().len()) };
+            // SAFETY: byte_slice() memory was globally allocated by mimalloc.
+            unsafe { bun_alloc::mimalloc::mi_free(self.byte_slice().as_ptr() as *mut c_void) };
             // TODO(port): propagate?
-            let _ = global.err(crate::ErrorCode::STRING_TOO_LONG, "Cannot create a string longer than 2^32-1 characters").throw();
+            let _ = global
+                .err(
+                    crate::ErrorCode::STRING_TOO_LONG,
+                    format_args!("Cannot create a string longer than 2^32-1 characters"),
+                )
+                .throw();
             return JSValue::ZERO;
         }
         // SAFETY: self points to globally-allocated string; ownership transferred to JSC.
@@ -784,7 +794,12 @@ impl ZigString {
             // SAFETY: invoking caller-provided destructor on the buffer.
             unsafe { callback(ctx, self.byte_slice().as_ptr() as *mut c_void, self.len) };
             // TODO(port): propagate?
-            let _ = global.err(crate::ErrorCode::STRING_TOO_LONG, "Cannot create a string longer than 2^32-1 characters").throw();
+            let _ = global
+                .err(
+                    crate::ErrorCode::STRING_TOO_LONG,
+                    format_args!("Cannot create a string longer than 2^32-1 characters"),
+                )
+                .throw();
             return JSValue::ZERO;
         }
         // SAFETY: FFI call; ownership of buffer transferred to JSC with ctx/callback.
@@ -803,6 +818,9 @@ impl ZigString {
         out
     }
 
+    // TODO(port): `c_api::{JSStringRef, JSStringCreateWithCharactersNoCopy,
+    // JSStringCreateStatic}` not yet declared in javascript_core_c_api.rs.
+    #[cfg(any())]
     pub fn to_js_string_ref(&self) -> c_api::JSStringRef {
         // TODO(port): Zig had `if @hasDecl(bun, "bindgen") return undefined` — bindgen-mode stub dropped
         if self.is_16bit() {
@@ -867,6 +885,18 @@ impl fmt::Display for GithubActionFormatter {
         bun_fmt::github_action_writer(f, bytes.slice())
     }
 }
+
+// ──────────────────────────────────────────────────────────────────────────
+// Original `NullableAllocator`-backed `Slice` struct port. Replaced above by
+// the enum-based `bun_string::ZigStringSlice` (re-exported as `super::Slice`)
+// which encodes the same WTF/mimalloc/borrowed distinction as enum variants.
+// Kept gated for reference until `bun_alloc::NullableAllocator` grows real
+// `{default_alloc, null, NULL, get, is_null, free, is_default}` methods.
+// ──────────────────────────────────────────────────────────────────────────
+#[cfg(any())]
+mod _slice_struct {
+use super::*;
+use bun_alloc::NullableAllocator;
 
 /// A maybe-owned byte slice. Tracks its allocator so it can free on drop and so
 /// callers can ask `is_wtf_allocated()`.
@@ -1037,12 +1067,7 @@ impl Drop for Slice {
         self.allocator.free(self.ptr, self.len as usize);
     }
 }
-
-#[derive(Copy, Clone, Default)]
-pub struct StringPointer {
-    pub offset: usize,
-    pub length: usize,
-}
+} // mod _slice_struct
 
 #[unsafe(no_mangle)]
 pub extern "C" fn ZigString__free(raw: *const u8, len: usize, allocator_: *mut c_void) {
@@ -1054,9 +1079,11 @@ pub extern "C" fn ZigString__free(raw: *const u8, len: usize, allocator_: *mut c
     let s = unsafe { slice::from_raw_parts(raw, len) };
     let ptr = ZigString::init(s).slice().as_ptr();
     #[cfg(debug_assertions)]
-    debug_assert!(bun_alloc::mimalloc::mi_is_in_heap_region(ptr.cast()));
-    // SAFETY: ptr was allocated by mimalloc with len bytes.
-    unsafe { bun_alloc::free_slice(ptr as *mut u8, len) };
+    // SAFETY: read-only heap-region probe.
+    debug_assert!(unsafe { bun_alloc::mimalloc::mi_is_in_heap_region(ptr.cast()) });
+    let _ = len;
+    // SAFETY: ptr was allocated by mimalloc; mi_free is size-agnostic.
+    unsafe { bun_alloc::mimalloc::mi_free(ptr as *mut c_void) };
 }
 
 #[unsafe(no_mangle)]
@@ -1065,7 +1092,8 @@ pub extern "C" fn ZigString__freeGlobal(ptr: *const u8, len: usize) {
     let s = unsafe { slice::from_raw_parts(ptr, len) };
     let untagged = ZigString::init(s).slice().as_ptr() as *mut c_void;
     #[cfg(debug_assertions)]
-    debug_assert!(bun_alloc::mimalloc::mi_is_in_heap_region(ptr.cast()));
+    // SAFETY: read-only heap-region probe.
+    debug_assert!(unsafe { bun_alloc::mimalloc::mi_is_in_heap_region(ptr.cast()) });
     // we must untag the string pointer
     // SAFETY: untagged ptr was allocated by mimalloc.
     unsafe { bun_alloc::mimalloc::mi_free(untagged) };

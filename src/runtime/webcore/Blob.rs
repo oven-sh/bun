@@ -4549,6 +4549,378 @@ impl Blob {
 } // mod _jsc_gated
 
 // ──────────────────────────────────────────────────────────────────────────
+// Un-gated core constructors / JS bridging (B-2 round: init_with_store / to_js
+// / construct_bun_file / find_or_create_file_from_path). These were lifted
+// out of `_jsc_gated` so `Bun.file` / `Bun.stdin` / `Bun.stdout` / `Bun.stderr`
+// callers in BunObject/ReadableStream/Archive/server resolve.
+// ──────────────────────────────────────────────────────────────────────────
+
+// FFI: S3-backed Blob → JS wrapper. Declared locally because `webcore::s3_file`
+// is not yet a wired module; the C++ symbol is already linked.
+unsafe extern "C" {
+    fn BUN__createJSS3FileUnsafely(global: *const JSGlobalObject, blob: *mut Blob) -> JSValue;
+}
+
+impl Blob {
+    /// Construct a Blob viewing an existing `Store`. Accepts both `Box<Store>`
+    /// (from `Store::new` / `Store::init*`) and `Arc<Store>` (cloned refs) —
+    /// callers across the tree pass either depending on which constructor they
+    /// hit, and `From<Box<T>> for Arc<T>` covers the former.
+    pub fn init_with_store<S: Into<Arc<Store>>>(store: S, global_this: &JSGlobalObject) -> Blob {
+        let store: Arc<Store> = store.into();
+        let size = store.size();
+        // PORT NOTE: `MimeType::value` is `Cow<'static, [u8]>`; the raw slice
+        // pointer is stable for the life of `store` (either 'static or backed
+        // by the Arc'd heap allocation we hold below).
+        let content_type: *const [u8] = if let store::Data::File(ref f) = store.data {
+            f.mime_type.value.as_ref() as *const [u8]
+        } else {
+            b"" as &'static [u8] as *const [u8]
+        };
+        Blob {
+            size,
+            store: Some(store),
+            content_type,
+            global_this: global_this as *const _ as *mut _,
+            ..Default::default()
+        }
+    }
+
+    pub fn init_empty(global_this: &JSGlobalObject) -> Blob {
+        Blob {
+            size: 0,
+            store: None,
+            content_type: b"" as &'static [u8] as *const [u8],
+            global_this: global_this as *const _ as *mut _,
+            ..Default::default()
+        }
+    }
+
+    pub fn is_detached(&self) -> bool {
+        self.store.is_none()
+    }
+
+    fn calculate_estimated_byte_size(&mut self) {
+        // in-memory size. not the size on disk.
+        let mut size: usize = core::mem::size_of::<Blob>();
+
+        if let Some(store) = &self.store {
+            size += core::mem::size_of::<Store>();
+            match &store.data {
+                store::Data::Bytes(bytes) => {
+                    size += bytes.stored_name.estimated_size();
+                    size += if self.size != MAX_SIZE { self.size as usize } else { bytes.len() as usize };
+                }
+                store::Data::File(file) => size += file.pathlike.estimated_size(),
+                store::Data::S3(s3) => size += s3.estimated_size(),
+            }
+        }
+
+        self.reported_estimated_size = size
+            + (self.content_type_slice().len() * (self.content_type_allocated as usize))
+            + self.name.byte_slice().len();
+    }
+
+    pub fn estimated_size(&self) -> usize {
+        self.reported_estimated_size
+    }
+
+    /// This does not duplicate
+    /// This creates a new view
+    /// and increments the reference count
+    pub fn dupe(&self) -> Blob {
+        self.dupe_with_content_type(false)
+    }
+
+    pub fn dupe_with_content_type(&self, _include_content_type: bool) -> Blob {
+        // PORT NOTE: Zig does `this.store.?.ref()` then bitwise-copies the struct.
+        // With Arc, cloning the Option<Arc<Store>> achieves the ref bump.
+        let mut duped = Blob {
+            reported_estimated_size: self.reported_estimated_size,
+            size: self.size,
+            offset: self.offset,
+            store: self.store.clone(),
+            content_type: self.content_type,
+            content_type_allocated: self.content_type_allocated,
+            content_type_was_set: self.content_type_was_set,
+            charset: self.charset,
+            is_jsdom_file: self.is_jsdom_file,
+            ref_count: bun_ptr::RawRefCount::init(0), // setNotHeapAllocated
+            global_this: self.global_this,
+            last_modified: self.last_modified,
+            name: self.name.dupe_ref(),
+        };
+        // If the source's content_type is heap-allocated, the bitwise copy above
+        // aliases the same allocation. Take our own copy so freeing one side
+        // doesn't dangle the other.
+        if duped.content_type_allocated {
+            let copy = self.content_type_slice().to_vec().into_boxed_slice();
+            duped.content_type = Box::into_raw(copy);
+        }
+        duped
+    }
+
+    pub fn to_js(&mut self, global_object: &JSGlobalObject) -> JSValue {
+        // if cfg!(debug_assertions) { debug_assert!(self.is_heap_allocated()); }
+        self.calculate_estimated_byte_size();
+
+        if self.is_s3() {
+            // SAFETY: `self` is a heap-allocated *mut Blob (see `Blob::new`); the
+            // C++ side wraps it in a JSS3File without taking a second ref.
+            return unsafe { BUN__createJSS3FileUnsafely(global_object, self as *mut Blob) };
+        }
+
+        // codegen stub takes an erased `*mut ()`; cast through the heap pointer.
+        js::to_js_unchecked(global_object, self as *mut Blob as *mut ())
+    }
+
+    /// `Bun.file(pathOrFd)` core: wrap a path-or-fd in a `Store::File` and
+    /// return a Blob viewing it. Runtime `check_s3` matches the call shape used
+    /// by `server_body.rs` / `fetch.rs` (the `_jsc_gated` draft used a const
+    /// generic — collapsed here since it only guards a string prefix check).
+    pub fn find_or_create_file_from_path(
+        path_or_fd: &mut PathOrFileDescriptor,
+        global_this: &JSGlobalObject,
+        check_s3: bool,
+    ) -> Blob {
+        // ─── S3 (`s3://…`) branch ──────────────────────────────────────────
+        // TODO(b2-blocked): bun_s3 / Store::init_s3 — `Store::init_s3` is gated
+        // in `blob/Store.rs` and `transpiler.env.get_s3_credentials()` is not
+        // yet on the VM surface. Re-gated until both land; this only short-
+        // circuits the `s3://` prefix, the file path below is unaffected.
+        #[cfg(any())]
+        if check_s3 {
+            if let PathOrFileDescriptor::Path(ref p) = path_or_fd {
+                if p.slice().starts_with(b"s3://") {
+                    let credentials = global_this.bun_vm().transpiler.env.get_s3_credentials();
+                    let copy = core::mem::replace(
+                        path_or_fd,
+                        PathOrFileDescriptor::Path(crate::webcore::node_types::PathLike::String(
+                            bun_str::PathString::default(),
+                        )),
+                    );
+                    return Blob::init_with_store(
+                        Store::init_s3(copy.into_path(), None, credentials).expect("oom"),
+                        global_this,
+                    );
+                }
+            }
+        }
+        let _ = check_s3;
+
+        let path: PathOrFileDescriptor = match path_or_fd {
+            PathOrFileDescriptor::Path(_) => {
+                #[allow(unused_mut)]
+                let mut slice = path_or_fd.path_slice();
+
+                #[cfg(windows)]
+                if slice == b"/dev/null" {
+                    *path_or_fd = PathOrFileDescriptor::Path(
+                        crate::webcore::node_types::PathLike::String(
+                            bun_str::PathString::init(b"\\\\.\\NUL"),
+                        ),
+                    );
+                    slice = path_or_fd.path_slice();
+                }
+
+                // TODO(b2-blocked): standalone_module_graph — VM field is an
+                // opaque `Option<NonNull<c_void>>` until the graph type is
+                // ported; cannot `.find(slice)` on it yet. Re-gated.
+                #[cfg(any())]
+                if let Some(graph) = global_this.bun_vm().standalone_module_graph {
+                    if let Some(file) = graph.find(slice) {
+                        return file.blob(global_this).dupe();
+                    }
+                }
+                let _ = slice;
+
+                path_or_fd.to_thread_safe();
+                core::mem::replace(
+                    path_or_fd,
+                    PathOrFileDescriptor::Path(crate::webcore::node_types::PathLike::String(
+                        bun_str::PathString::default(),
+                    )),
+                )
+            }
+            PathOrFileDescriptor::Fd(fd) => {
+                // TODO(b2-blocked): rare_data().{stdin,stdout,stderr}() return
+                // `&Arc<high_tier::BlobStore>` (an opaque stub in
+                // `bun_jsc::rare_data`), not `Arc<webcore::blob::Store>`. The
+                // type unification is a cross-crate change (rare_data.rs +
+                // webcore.rs); re-gated until that lands. Falls through to a
+                // plain fd-backed `Store::File` below, which is behaviourally
+                // correct (just misses the cached-store fast path).
+                #[cfg(any())]
+                if let Some(tag) = fd.stdio_tag() {
+                    let vm = global_this.bun_vm();
+                    let store = match tag {
+                        bun_sys::StdioTag::StdIn => vm.rare_data().stdin(),
+                        bun_sys::StdioTag::StdErr => vm.rare_data().stderr(),
+                        bun_sys::StdioTag::StdOut => vm.rare_data().stdout(),
+                    };
+                    return Blob::init_with_store(store.clone(), global_this);
+                }
+                PathOrFileDescriptor::Fd(*fd)
+            }
+        };
+
+        // PORT NOTE: `Store::init_file` is `#[cfg(any())]`-gated in
+        // `blob/Store.rs`; inline its body here so the file-backed path works
+        // without touching that file.
+        let mime_type = if let PathOrFileDescriptor::Path(ref p) = path {
+            let sliced = p.slice();
+            if sliced.is_empty() {
+                None
+            } else {
+                let ext = strings::trim(bun_paths::extension(sliced), b".");
+                bun_http_types::MimeType::by_extension_no_default(ext)
+            }
+        } else {
+            None
+        };
+        let store = Store::new(Store {
+            data: store::Data::File(store::File::init(path, mime_type)),
+            mime_type: bun_http_types::MimeType::NONE,
+            ref_count: AtomicU32::new(1),
+            is_all_ascii: None,
+        });
+        Blob::init_with_store(store, global_this)
+    }
+}
+
+// ─── node_types stub augmentation ────────────────────────────────────────────
+// `crate::webcore::node_types::{PathOrFileDescriptor, PathLike}` are minimal
+// shape-stubs (see webcore.rs) used by `Store`. The real
+// `crate::node::PathOrFileDescriptor` carries `from_js`/`to_thread_safe`/…
+// but is a *distinct type*. Until the two are unified (TODO in webcore.rs),
+// add the handful of methods `find_or_create_file_from_path` needs here —
+// inherent impls on a same-crate type are allowed from any module.
+impl PathOrFileDescriptor {
+    #[inline]
+    pub fn path_slice(&self) -> &[u8] {
+        match self {
+            Self::Path(p) => p.slice(),
+            Self::Fd(_) => b"",
+        }
+    }
+    #[inline]
+    pub fn to_thread_safe(&mut self) {
+        // The stub `PathLike` borrows either a `PathString` or a `Vec<u8>`;
+        // neither is GC-backed, so there is nothing to protect. The real
+        // `crate::node::PathLike::to_thread_safe` upgrades a JSC slice to an
+        // owned WTF string — that variant doesn't exist on the stub.
+    }
+}
+
+/// `Bun.file(pathOrFd, options?)` — entry point referenced by
+/// `BunObject::export_callbacks!{ file => … }`.
+// TODO(b2-blocked): #[bun_jsc::host_fn]
+pub fn construct_bun_file(
+    global_object: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    let vm = global_object.bun_vm();
+    let arguments = callframe.arguments_old::<2>();
+    let arguments_slice = arguments.slice();
+    let mut args = jsc::ArgumentsSlice::init(vm, arguments_slice);
+
+    // TODO(b2-blocked): node_types unification — `PathOrFileDescriptor::from_js`
+    // exists on `crate::node::PathOrFileDescriptor` but Store::File::pathlike is
+    // typed as the `crate::webcore::node_types` stub. The two enums are
+    // shape-distinct (real `PathLike` carries a JSC-backed `SliceWithUnderlying`
+    // variant the stub lacks), so a `From` impl can't be written from this file
+    // alone. Un-gate once webcore.rs swaps `node_types` to a re-export of
+    // `crate::node::types`.
+    #[cfg(any())]
+    {
+        let mut path = PathOrFileDescriptor::from_js(global_object, &mut args)?.ok_or_else(|| {
+            global_object.throw_invalid_arguments(format_args!(
+                "Expected file path string or file descriptor"
+            ))
+        })?;
+        let options = if arguments_slice.len() >= 2 { Some(arguments_slice[1]) } else { None };
+
+        if let PathOrFileDescriptor::Path(ref p) = path {
+            if p.slice().starts_with(b"s3://") {
+                return crate::webcore::s3_file::construct_internal_js(
+                    global_object,
+                    p.clone(),
+                    options,
+                );
+            }
+        }
+        let _path_cleanup = scopeguard::guard((), |_| path.deinit_and_unprotect());
+
+        let mut blob = Blob::find_or_create_file_from_path(&mut path, global_object, false);
+
+        if let Some(opts) = options {
+            if opts.is_object() {
+                if let Some(file_type) = opts.get_truthy(global_object, b"type")? {
+                    'inner: {
+                        if file_type.is_string() {
+                            let str = file_type.to_slice(global_object)?;
+                            let slice = str.slice();
+                            if !strings::is_all_ascii(slice) {
+                                break 'inner;
+                            }
+                            blob.content_type_was_set = true;
+                            // PORT NOTE: `vm.mime_type()` lookup skipped — current
+                            // VM stub is `todo!()` and requires `&mut`. Always
+                            // heap-dupe the lowercased type; revisit when the
+                            // mime cache is wired.
+                            let mut content_type_buf = vec![0u8; slice.len()];
+                            strings::copy_lowercase(slice, &mut content_type_buf);
+                            blob.content_type = Box::into_raw(content_type_buf.into_boxed_slice());
+                            blob.content_type_allocated = true;
+                        }
+                    }
+                }
+                if let Some(last_modified) = opts.get_truthy(global_object, b"lastModified")? {
+                    blob.last_modified = last_modified.coerce::<f64>(global_object)?;
+                }
+            }
+        }
+
+        let ptr = Blob::new(blob);
+        // SAFETY: ptr was just produced by Box::into_raw in Blob::new.
+        return Ok(unsafe { (*ptr).to_js(global_object) });
+    }
+    #[allow(unreachable_code)]
+    {
+        let _ = (vm, &mut args, arguments_slice);
+        unreachable!(
+            "construct_bun_file: blocked on webcore::node_types ↔ crate::node::types unification"
+        );
+    }
+}
+
+/// `Bun.write(dest, src, options?)` — entry point.
+// TODO(b2-blocked): #[bun_jsc::host_fn]
+pub fn write_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    // TODO(b2-blocked): write_file_internal — depends on `WriteFilePromise`,
+    // `write_file::WriteFile{,Windows,Task}`, `S3.upload`, `node::fs::mkdirp`,
+    // and `Body::Value::from_js` which all live in the `_jsc_gated` block
+    // above. The state-machine types themselves are real (see
+    // `blob/write_file.rs`, un-gated), but the glue that threads a JSPromise
+    // through them is not. Un-gate by lifting `write_file_internal` +
+    // `write_file_with_source_destination` once those land.
+    #[cfg(any())]
+    {
+        let arguments = callframe.arguments_old::<3>();
+        let arguments_slice = arguments.slice();
+        let mut args = jsc::ArgumentsSlice::init(global_this.bun_vm(), arguments_slice);
+        return write_file_internal(
+            global_this,
+            &mut args,
+            arguments_slice.get(2).copied(),
+            false,
+        );
+    }
+    let _ = (global_this, callframe);
+    unreachable!("write_file: blocked on write_file_internal JSPromise glue (see _jsc_gated)")
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // Any (AnyBlob)
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -4806,7 +5178,6 @@ impl Any {
         }
     }
 
-    // TODO(b2-blocked): Blob::is_detached gated in _jsc_gated.
     pub fn is_detached(&self) -> bool {
         match self {
             Any::Blob(blob) => blob.is_detached(),

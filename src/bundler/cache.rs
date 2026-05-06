@@ -1,12 +1,12 @@
 use core::ffi::c_void;
-use core::mem::ManuallyDrop;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_alloc::Arena as Bump;
-use bun_core::{self, feature_flags, Global, Output};
+use bun_core::{self, feature_flags, Global, Output, ZStr};
 use bun_interchange::json_parser;
 use bun_js_parser::{self as js_parser, ast as js_ast};
 use bun_logger as logger;
+use bun_resolver::fs as fs_mod;
 use bun_string::{strings, MutableString};
 use bun_sys::{self, Fd};
 
@@ -174,39 +174,66 @@ impl Default for ExternalFreeFunction {
     }
 }
 
+/// Port of `Fs.Entry` (cache.zig:19). `contents` is a lifetime-erased slice
+/// (`string` in Zig) that may borrow:
+///   • the per-thread `shared_buffer` (when `use_shared_buffer`),
+///   • a `Box::leak`ed allocation owned by this entry (default-allocator path),
+///   • native-plugin memory freed via `external_free_function`, or
+///   • static/arena bytes the caller keeps alive.
+/// Ownership is **manual** (`deinit`), matching Zig — callers thread `Entry`
+/// through `logger::Source.contents: &'static [u8]` and free explicitly.
 pub struct Entry {
-    // `contents` is either allocator-owned (freed here) OR native-plugin-owned
-    // (freed via `external_free_function`). Wrapped in `ManuallyDrop` so `Drop`
-    // can dispatch on `external_free_function` without `mem::forget`
-    // (PORTING.md §Forbidden).
-    contents: ManuallyDrop<Box<[u8]>>,
+    pub contents: &'static [u8],
     pub fd: Fd,
     /// When `contents` comes from a native plugin, this field is populated
     /// with information on how to free it.
     pub external_free_function: ExternalFreeFunction,
 }
 
-impl Drop for Entry {
-    fn drop(&mut self) {
-        if let Some(func) = self.external_free_function.function {
-            // SAFETY: ctx/function pair was supplied together by the native plugin
-            unsafe { func(self.external_free_function.ctx) };
-            // `contents` aliases plugin-owned memory; do NOT drop the Box.
-        } else {
-            // SAFETY: `contents` is allocator-owned in this branch and not yet dropped.
-            unsafe { ManuallyDrop::drop(&mut self.contents) };
-        }
+impl Default for Entry {
+    fn default() -> Self {
+        Entry { contents: b"", fd: Fd::INVALID, external_free_function: ExternalFreeFunction::NONE }
     }
 }
 
 impl Entry {
+    /// Convenience: take ownership of a heap buffer, leak it into the
+    /// lifetime-erased `contents` slot. `deinit` reconstitutes and frees it.
     pub fn new(contents: Box<[u8]>, fd: Fd, external_free_function: ExternalFreeFunction) -> Entry {
-        Entry { contents: ManuallyDrop::new(contents), fd, external_free_function }
+        // PORT NOTE: Zig stored an allocator+slice pair; Rust leaks the Box
+        // and reclaims it in `deinit` to keep `contents` a plain `&[u8]`
+        // assignable to `logger::Source.contents`.
+        let contents: &'static [u8] =
+            if contents.is_empty() { b"" } else { Box::leak(contents) };
+        Entry { contents, fd, external_free_function }
     }
 
     #[inline]
     pub fn contents(&self) -> &[u8] {
-        &self.contents
+        self.contents
+    }
+
+    /// Port of `Entry.deinit` (cache.zig:39). NOT `Drop` — Zig callers free
+    /// explicitly (and frequently hand `contents` off to a `Source` that
+    /// outlives the `Entry`).
+    pub fn deinit(&mut self) {
+        if let Some(func) = self.external_free_function.function {
+            // SAFETY: ctx/function pair was supplied together by the native plugin.
+            unsafe { func(self.external_free_function.ctx) };
+        } else if !self.contents.is_empty() {
+            // SAFETY: ARENA — `contents` was produced by `Box::leak` in
+            // `Entry::new` / `read_file*`; reconstructing the Box matches Zig's
+            // `allocator.free(entry.contents)`. Callers that stored a borrowed
+            // (shared-buffer / static) slice must NOT call `deinit` — same
+            // contract as the Zig original.
+            unsafe {
+                drop(Box::<[u8]>::from_raw(core::ptr::slice_from_raw_parts_mut(
+                    self.contents.as_ptr() as *mut u8,
+                    self.contents.len(),
+                )));
+            }
+            self.contents = b"";
+        }
     }
 }
 
@@ -259,11 +286,16 @@ impl Fs {
     // the auto-drop of `shared_buffer` / `macro_shared_buffer`.
 }
 
-#[cfg(any())]
-// TODO(b2-blocked): bun_resolver::fs::FileSystem — `_fs: &mut fs_mod::FileSystem`
-// param + `bun_sys::File`/`openat_a`/`open_file` surface. The full `bun.fs` lives
-// in `bun_resolver` (cycle with bundler).
+// ── un-gated B-2 ──────────────────────────────────────────────────────────
+// `bun_resolver::fs::RealFS::read_file_with_handle{,_and_allocator}` is still
+// in the gated `fs_full` draft. The bodies below open + read via `bun_sys`
+// directly (which is exactly what the resolver method would do) so the
+// transpiler/ParseTask paths un-block without waiting on that crate.
+//
+// `RealFS::need_to_close_files()` is the only resolver call we actually need
+// and is live on the inline `bun_resolver::fs::RealFS`.
 impl Fs {
+    /// Read `path` into the caller's `shared` buffer (HMR / dev-server path).
     pub fn read_file_shared(
         &mut self,
         _fs: &mut fs_mod::FileSystem,
@@ -271,202 +303,200 @@ impl Fs {
         cached_file_descriptor: Option<Fd>,
         shared: &mut MutableString,
     ) -> Result<Entry, bun_core::Error> {
-        // TODO(port): narrow error set
-        let rfs = &mut _fs.fs;
+        let rfs = &_fs.fs;
 
-        // TODO(port): Zig used `std.fs.File`; map to bun_sys::File / Fd. seekTo / openFileAbsoluteZ
-        // need bun_sys equivalents.
         let file_handle: bun_sys::File = if let Some(fd) = cached_file_descriptor {
-            let handle = bun_sys::File::from_fd(fd);
-            handle.seek_to(0)?;
-            handle
+            // `try handle.seekTo(0)` — rewind a cached fd before re-reading.
+            bun_sys::lseek(fd, 0, libc::SEEK_SET).map_err(bun_core::Error::from)?;
+            bun_sys::File::from_fd(fd)
         } else {
-            bun_sys::open_file_absolute_z(path, bun_sys::OpenFlags::READ_ONLY)?
+            bun_sys::open_file_absolute_z(path, bun_sys::OpenFlags::READ_ONLY)
+                .map_err(bun_core::Error::from)?
         };
 
         let will_close = rfs.need_to_close_files() && cached_file_descriptor.is_none();
-        let file_handle = scopeguard::guard(file_handle, |fh| {
+        let fd = file_handle.handle();
+        let file_handle = scopeguard::guard(file_handle, move |fh| {
             if will_close {
-                fh.close();
+                let _ = fh.close();
             }
         });
 
-        let file = if self.stream {
-            match rfs.read_file_with_handle(path.as_bytes(), None, &*file_handle, true, shared, true) {
-                Ok(f) => f,
+        let contents =
+            match Self::read_handle_into(&file_handle, path.as_bytes(), true, shared, self.stream) {
+                Ok(c) => c,
                 Err(err) => {
                     if cfg!(debug_assertions) {
                         Output::print_error(format_args!(
                             "{}: readFile error -- {}",
                             bstr::BStr::new(path.as_bytes()),
-                            err.name()
+                            bstr::BStr::new(err.name()),
                         ));
                     }
                     return Err(err);
                 }
-            }
-        } else {
-            match rfs.read_file_with_handle(path.as_bytes(), None, &*file_handle, true, shared, false) {
-                Ok(f) => f,
-                Err(err) => {
-                    if cfg!(debug_assertions) {
-                        Output::print_error(format_args!(
-                            "{}: readFile error -- {}",
-                            bstr::BStr::new(path.as_bytes()),
-                            err.name()
-                        ));
-                    }
-                    return Err(err);
-                }
-            }
-        };
+            };
 
         Ok(Entry {
-            contents: file.contents,
-            fd: if feature_flags::STORE_FILE_DESCRIPTORS {
-                file_handle.fd()
-            } else {
-                // TODO(port): Zig used `0` here; map to Fd::from_raw(0) or Fd::INVALID
-                Fd::INVALID
-            },
+            contents,
+            fd: if feature_flags::STORE_FILE_DESCRIPTORS { fd } else { Fd::INVALID },
             external_free_function: ExternalFreeFunction::NONE,
         })
     }
 
-    pub fn read_file<const USE_SHARED_BUFFER: bool>(
+    pub fn read_file(
         &mut self,
         _fs: &mut fs_mod::FileSystem,
         path: &[u8],
         dirname_fd: Fd,
+        use_shared_buffer: bool,
         _file_handle: Option<Fd>,
     ) -> Result<Entry, bun_core::Error> {
-        self.read_file_with_allocator::<USE_SHARED_BUFFER>(_fs, path, dirname_fd, _file_handle)
+        self.read_file_with_allocator(_fs, path, dirname_fd, use_shared_buffer, _file_handle)
     }
 
-    pub fn read_file_with_allocator<const USE_SHARED_BUFFER: bool>(
+    /// Port of `Fs.readFileWithAllocator` (cache.zig:146).
+    ///
+    /// PORT NOTE: `comptime use_shared_buffer` is taken at runtime — the live
+    /// callers (`ParseTask::get_code_for_parse_task_without_plugins`,
+    /// `Transpiler::parse`) pass a value computed from runtime state, and the
+    /// resolver's CYCLEBREAK `FsCache` forward-decl already pinned this shape.
+    /// PERF(port): re-monomorphize once both callers stabilize.
+    ///
+    /// PORT NOTE: `allocator` is dropped — Zig forwarded it to
+    /// `readFileWithHandleAndAllocator`; the only effect was choosing which
+    /// heap owns the non-shared-buffer read. The Rust path always allocates
+    /// from the global heap (via `Box::leak`); arena callers can pass through
+    /// the resolver's bump-backed forward-decl instead.
+    pub fn read_file_with_allocator(
         &mut self,
         _fs: &mut fs_mod::FileSystem,
         path: &[u8],
         dirname_fd: Fd,
+        use_shared_buffer: bool,
         _file_handle: Option<Fd>,
     ) -> Result<Entry, bun_core::Error> {
-        // TODO(port): narrow error set
-        // TODO(port): Zig took `allocator: std.mem.Allocator` and forwarded it to
-        // `readFileWithHandleAndAllocator`. In-file caller passes `bun.default_allocator`,
-        // so the param is dropped here; Phase B: confirm no external caller passes an arena.
-        let rfs = &mut _fs.fs;
+        let rfs = &_fs.fs;
 
-        // TODO(port): Zig used `std.fs.File` + `.stdFile()`; using bun_sys::File here.
         // PORT NOTE: reshaped — Zig declared `file_handle = undefined` then assigned on each
         // branch; restructured into a single let-expression to avoid `mem::zeroed()` on a
         // type that may have niche (NonZero) fields.
         let file_handle: bun_sys::File = if let Some(f) = _file_handle {
-            let handle = f.std_file();
-            handle.seek_to(0)?;
-            handle
+            bun_sys::lseek(f, 0, libc::SEEK_SET).map_err(bun_core::Error::from)?;
+            bun_sys::File::from_fd(f)
         } else if feature_flags::STORE_FILE_DESCRIPTORS && dirname_fd.is_valid() {
-            'brk: {
-                match bun_sys::openat_a(dirname_fd, bun_paths::basename(path), bun_sys::O::RDONLY, 0)
-                    .unwrap_result()
-                {
-                    Ok(fd) => fd,
-                    Err(err) if err == bun_core::err!("ENOENT") => {
-                        let handle = bun_sys::open_file(path, bun_sys::OpenFlags::READ_ONLY)?;
-                        Output::pretty_errorln(format_args!(
-                            "<r><d>Internal error: directory mismatch for directory \"{}\", fd {}<r>. You don't need to do anything, but this indicates a bug.",
-                            bstr::BStr::new(path),
-                            dirname_fd,
-                        ));
-                        break 'brk Fd::from_std_file(handle);
-                    }
-                    Err(err) => return Err(err),
+            match bun_sys::openat_a(dirname_fd, bun_paths::basename(path), bun_sys::O::RDONLY, 0) {
+                Ok(fd) => bun_sys::File::from_fd(fd),
+                Err(err) if err.get_errno() == bun_sys::E::ENOENT => {
+                    let handle = bun_sys::open_file(path, bun_sys::OpenFlags::READ_ONLY)
+                        .map_err(bun_core::Error::from)?;
+                    Output::pretty_errorln(format_args!(
+                        "<r><d>Internal error: directory mismatch for directory \"{}\", fd {}<r>. You don't need to do anything, but this indicates a bug.",
+                        bstr::BStr::new(path),
+                        dirname_fd,
+                    ));
+                    handle
                 }
+                Err(err) => return Err(err.into()),
             }
-            .std_file()
         } else {
-            bun_sys::open_file(path, bun_sys::OpenFlags::READ_ONLY)?
+            bun_sys::open_file(path, bun_sys::OpenFlags::READ_ONLY)
+                .map_err(bun_core::Error::from)?
         };
 
+        let fd = file_handle.handle();
+
         #[cfg(not(windows))] // skip on Windows because NTCreateFile will do it.
-        bun_output::scoped_log!(
-            fs,
-            "openat({}, {}) = {}",
-            dirname_fd,
-            bstr::BStr::new(path),
-            Fd::from_std_file(&file_handle)
-        );
+        bun_core::scoped_log!(fs, "openat({}, {}) = {}", dirname_fd, bstr::BStr::new(path), fd);
 
         let will_close = rfs.need_to_close_files() && _file_handle.is_none();
         let file_handle = scopeguard::guard(file_handle, move |fh| {
             if will_close {
-                bun_output::scoped_log!(
-                    fs,
-                    "readFileWithAllocator close({})",
-                    fs_mod::print_handle(fh.fd())
-                );
-                fh.close();
+                bun_core::scoped_log!(fs, "readFileWithAllocator close({})", fh.handle());
+                let _ = fh.close();
             }
         });
 
-        // PORT NOTE: reshaped for borrowck — capture `stream` scalar before borrowing the
-        // shared buffer. `self` and `_fs` are disjoint params, so `shared` (&mut into self)
-        // does not conflict with `rfs` (&mut into _fs).
+        // PORT NOTE: reshaped for borrowck — capture `stream` scalar before borrowing
+        // the shared buffer.
         let stream = self.stream;
         let shared = self.shared_buffer();
 
-        let file = if stream {
-            match rfs.read_file_with_handle_and_allocator(
-                path,
-                None,
-                &*file_handle,
-                USE_SHARED_BUFFER,
-                shared,
-                true,
-            ) {
-                Ok(f) => f,
+        let contents =
+            match Self::read_handle_into(&file_handle, path, use_shared_buffer, shared, stream) {
+                Ok(c) => c,
                 Err(err) => {
                     if cfg!(debug_assertions) {
                         Output::print_error(format_args!(
                             "{}: readFile error -- {}",
                             bstr::BStr::new(path),
-                            err.name()
+                            bstr::BStr::new(err.name()),
                         ));
                     }
                     return Err(err);
                 }
-            }
-        } else {
-            match rfs.read_file_with_handle_and_allocator(
-                path,
-                None,
-                &*file_handle,
-                USE_SHARED_BUFFER,
-                shared,
-                false,
-            ) {
-                Ok(f) => f,
-                Err(err) => {
-                    if cfg!(debug_assertions) {
-                        Output::print_error(format_args!(
-                            "{}: readFile error -- {}",
-                            bstr::BStr::new(path),
-                            err.name()
-                        ));
-                    }
-                    return Err(err);
-                }
-            }
-        };
+            };
 
         Ok(Entry {
-            contents: file.contents,
-            fd: if feature_flags::STORE_FILE_DESCRIPTORS && !will_close {
-                Fd::from_std_file(&*file_handle)
-            } else {
-                Fd::INVALID
-            },
+            contents,
+            fd: if feature_flags::STORE_FILE_DESCRIPTORS && !will_close { fd } else { Fd::INVALID },
             external_free_function: ExternalFreeFunction::NONE,
         })
+    }
+
+    /// Inlined subset of `RealFS.readFileWithHandleAndAllocator` (fs.zig:1564) —
+    /// the resolver's port of that method is still in the gated `fs_full` module,
+    /// so we go to `bun_sys` directly. Returns a `'static` slice per the `Entry`
+    /// contract above (borrows `shared_buffer` when `use_shared_buffer`, else a
+    /// `Box::leak`).
+    // TODO(port): switch back to `rfs.read_file_with_handle_and_allocator` once
+    // `bun_resolver::fs_full` un-gates; this drops the BOM-strip / pread-loop
+    // refinements that path carries.
+    fn read_handle_into(
+        file: &bun_sys::File,
+        _path: &[u8],
+        use_shared_buffer: bool,
+        shared: &mut MutableString,
+        _stream: bool,
+    ) -> Result<&'static [u8], bun_core::Error> {
+        if use_shared_buffer {
+            shared.reset();
+            let size = file.get_end_pos().map_err(bun_core::Error::from)?;
+            if size == 0 {
+                // SAFETY: ARENA — the empty slice into `shared.list` is what Zig
+                // returned; callers treat it as borrowed-until-reset.
+                return Ok(b"");
+            }
+            shared.list.reserve(size + 1);
+            // SAFETY: capacity reserved above; `read_all` writes initialized bytes
+            // and we set_len to exactly the count returned.
+            let n = unsafe {
+                let dst = core::slice::from_raw_parts_mut(
+                    shared.list.as_mut_ptr(),
+                    shared.list.capacity(),
+                );
+                let n = file.read_all(dst).map_err(bun_core::Error::from)?;
+                shared.list.set_len(n);
+                n
+            };
+            // Sentinel NUL past len when capacity allows (matches fs.zig:1671).
+            if shared.list.capacity() > n {
+                // SAFETY: capacity > len, so writing one byte past len is in-bounds.
+                unsafe { *shared.list.as_mut_ptr().add(n) = 0 };
+            }
+            // SAFETY: ARENA — lifetime-erase the borrow of `shared.list`. Zig
+            // hands this slice straight to `logger::Source.contents`; the
+            // caller owns `shared` and resets it via `reset_shared_buffer`
+            // before reuse.
+            Ok(unsafe { core::slice::from_raw_parts(shared.list.as_ptr(), n) })
+        } else {
+            let bytes = file.read_to_end().map_err(bun_core::Error::from)?;
+            if bytes.is_empty() {
+                return Ok(b"");
+            }
+            // SAFETY: see `Entry::deinit` — reclaimed there via `Box::from_raw`.
+            Ok(Box::leak(bytes.into_boxed_slice()))
+        }
     }
 }
 

@@ -56,12 +56,40 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     pub fn parse_expr_common(
         &mut self,
         level: Level,
-        errors: Option<&mut DeferredErrors>,
+        mut errors: Option<&mut DeferredErrors>,
         flags: EFlags,
         expr: &mut Expr,
     ) -> Result<(), Error> {
-        let _ = (level, errors, flags, expr);
-        todo!("b2-ast-E: parse_expr_common")
+        if !self.stack_check.is_safe_to_recurse() {
+            return Err(err!("StackOverflow"));
+        }
+
+        let had_pure_comment_before =
+            self.lexer.has_pure_comment_before && !self.options.ignore_dce_annotations;
+        *expr = self.parse_prefix(level, errors.as_deref_mut(), flags)?;
+        // PORT NOTE: reshaped for borrowck — `errors` is reborrowed via as_deref_mut
+        // for each call site instead of Zig's single pointer pass-through.
+
+        // There is no formal spec for "__PURE__" comments but from reverse-
+        // engineering, it looks like they apply to the next CallExpression or
+        // NewExpression. So in "/* @__PURE__ */ a().b() + c()" the comment applies
+        // to the expression "a().b()".
+
+        if had_pure_comment_before && level.lt(Level::Call) {
+            self.parse_suffix(expr, Level::Call.sub(1), errors.as_deref_mut(), flags)?;
+            match &mut expr.data {
+                js_ast::expr::Data::ECall(ex) => {
+                    ex.can_be_unwrapped_if_unused = js_ast::CanBeUnwrapped::IfUnused;
+                }
+                js_ast::expr::Data::ENew(ex) => {
+                    ex.can_be_unwrapped_if_unused = js_ast::CanBeUnwrapped::IfUnused;
+                }
+                _ => {}
+            }
+        }
+
+        self.parse_suffix(expr, level, errors, flags)?;
+        Ok(())
     }
     pub fn parse_yield_expr(&mut self, loc: logger::Loc) -> Result<Expr, Error> {
         let _ = loc;

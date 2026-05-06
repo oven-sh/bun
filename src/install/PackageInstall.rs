@@ -546,13 +546,15 @@ impl UninstallTask {
             PackageManager::get().wake();
         });
 
-        let Some(dirname) = bun_paths::dirname(&uninstall_task.absolute_path) else {
+        let dirname =
+            path::resolve_path::dirname::<path::platform::Auto>(&uninstall_task.absolute_path);
+        if dirname.is_empty() {
             Output::debug_warn(format_args!(
                 "Unexpectedly failed to get dirname of {}",
                 bstr::BStr::new(&uninstall_task.absolute_path)
             ));
             return;
-        };
+        }
         let basename = bun_paths::basename(&uninstall_task.absolute_path);
 
         let dir = match open_dir_a(Dir::cwd(), dirname) {
@@ -1220,7 +1222,7 @@ impl<'a> PackageInstall<'a> {
                         return Err(bun_core::err!("NameTooLong"));
                     }
 
-                    to_copy_into1[..entry.path.len()].copy_from_slice(entry.path);
+                    to_copy_into1[..entry.path.len()].copy_from_slice(entry.path.as_slice());
                     head1[entry.path.len() + (head1.len() - to_copy_into1.len())] = 0;
                     // SAFETY: NUL written above.
                     let dest = unsafe {
@@ -1230,7 +1232,7 @@ impl<'a> PackageInstall<'a> {
                         )
                     };
 
-                    to_copy_into2[..entry.path.len()].copy_from_slice(entry.path);
+                    to_copy_into2[..entry.path.len()].copy_from_slice(entry.path.as_slice());
                     head2[entry.path.len() + (head1.len() - to_copy_into2.len())] = 0;
                     // SAFETY: NUL written above.
                     let src = unsafe {
@@ -1479,7 +1481,7 @@ impl<'a> PackageInstall<'a> {
                         return Err(bun_core::err!("NameTooLong"));
                     }
 
-                    to_copy_into1[..entry.path.len()].copy_from_slice(entry.path);
+                    to_copy_into1[..entry.path.len()].copy_from_slice(entry.path.as_slice());
                     head1[entry.path.len() + (head1.len() - to_copy_into1.len())] = 0;
                     // SAFETY: head1[len] == 0 written immediately above.
                     let dest = unsafe {
@@ -1489,7 +1491,7 @@ impl<'a> PackageInstall<'a> {
                         )
                     };
 
-                    to_copy_into2[..entry.path.len()].copy_from_slice(entry.path);
+                    to_copy_into2[..entry.path.len()].copy_from_slice(entry.path.as_slice());
                     head2[entry.path.len() + (head1.len() - to_copy_into2.len())] = 0;
                     // SAFETY: head2[len] == 0 written immediately above.
                     let src = unsafe {
@@ -1502,7 +1504,7 @@ impl<'a> PackageInstall<'a> {
                     queue.push(HardLinkWindowsInstallTask::init(
                         src.as_slice(),
                         dest.as_slice(),
-                        entry.basename,
+                        entry.basename.as_slice(),
                     ));
                     real_file_count += 1;
                 }
@@ -1877,6 +1879,7 @@ impl<'a> PackageInstall<'a> {
         }
     }
 
+    #[cfg(windows)]
     pub fn is_dangling_windows_bin_link(node_mod_fd: Fd, path: &[u16], temp_buffer: &mut [u8]) -> bool {
         use crate::windows_shim::BinLinkingShim as WinBinLinkingShim;
         let bin_path = 'bin_path: {
@@ -2298,7 +2301,7 @@ impl<'a> PackageInstall<'a> {
 
 // ───────────────────────────── imports note ─────────────────────────────
 // Walker: src/sys/walker_skippable.zig
-type Walker = bun_sys::walker_skippable::Walker;
+type Walker = walker_skippable::Walker;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

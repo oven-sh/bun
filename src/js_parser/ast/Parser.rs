@@ -18,7 +18,7 @@ use crate::ast::g::Decl;
 use crate::ast::p::P;
 use crate::{self as js_parser, DeclaredSymbol, StmtList};
 use crate::parser::{
-    Jest, JsxNone, JsxReact, ParseStatementOptions, Runtime, RuntimeFeatures, RuntimeImports,
+    Jest, JsxNone, JsxReact, JsxT, ParseStatementOptions, Runtime, RuntimeFeatures, RuntimeImports,
     ScanPassResult, SideEffects, WrapMode,
 };
 
@@ -216,17 +216,45 @@ impl<'a> Parser<'a> {
     }
 }
 
-// ── live `Parser::parse` / `Parser::scan_imports` symbols (round-E unblock) ──
-// Bodies forward to the gated `_parse`/`_scan_imports` once `P`'s full method
-// surface (`init`/`parse_stmts_up_to`/`prepare_for_visit_pass`/`to_ast`) lands.
-// Downstream crates (bundler/cache, interchange/json) only need the symbol to
-// type-check; calling these before round-D un-gate panics with a clear message.
+// ── live `Parser::parse` / `Parser::scan_imports` symbols ────────────────
+// `parse()` is the real const-generic dispatcher (Zig: `if (ts && jsx.parse)
+// _parse(TSXParser) else …`). `_parse` carries the correct `<const TS, JX>`
+// shape but its body is blocked on `P::{init, prepare_for_visit_pass,
+// append_part, to_ast, …}` (gated in P.rs); the full ported body is preserved
+// per-method-gated in the impl block below and replaces this stub once that
+// surface lands.
 impl<'a> Parser<'a> {
-    // TODO(b2-ast-round-D): replace body with the real cfg-gated dispatcher
-    // below once `P::init`/`parse_stmts_up_to`/`to_ast` are live.
     pub fn parse(&mut self) -> Result<js_ast::Result, Error> {
-        let _ = (&self.options, &self.lexer);
-        todo!("Parser::parse — blocked on P method surface (b2-ast-round-D)")
+        // TODO(port): narrow error set
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.options.ts = true;
+            self.options.jsx.parse = true;
+            return self._parse::<true, JsxReact>();
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if self.options.ts && self.options.jsx.parse {
+                self._parse::<true, JsxReact>()
+            } else if self.options.ts {
+                self._parse::<true, JsxNone>()
+            } else if self.options.jsx.parse {
+                self._parse::<false, JsxReact>()
+            } else {
+                self._parse::<false, JsxNone>()
+            }
+        }
+    }
+
+    // Dispatcher target with the real const-generic shape (Zig comptime
+    // `NewParser_(ts, jsx, false)`). Body blocked on P.rs round-D gate; see the
+    // `#[cfg(any())] fn _parse` below for the full ported body.
+    fn _parse<const TS: bool, JX: JsxT>(&mut self) -> Result<js_ast::Result, Error> {
+        let _ = (TS, JX::KIND, &self.options, &self.lexer);
+        todo!(
+            "Parser::_parse — blocked on P::{{init, prepare_for_visit_pass, append_part, to_ast}} (P.rs round-D gate)"
+        )
     }
 
     // TODO(b2-ast-round-D): replace body with `_scan_imports::<...>()` dispatch
@@ -237,11 +265,12 @@ impl<'a> Parser<'a> {
     }
 }
 
-// Round-D: parse()/analyze()/_parse()/scan_imports() drive the full P method
-// surface (init/prepare_for_visit_pass/to_ast) which is gated. Struct + named
-// instantiations stay live so downstream crates can name `Parser<'a>`.
-#[cfg(any())]
+// Round-D: analyze()/_parse()/scan_imports()/to_lazy_export_ast() drive the
+// full P method surface (init/prepare_for_visit_pass/to_ast) which is still
+// gated in P.rs. Each is per-method gated; `parse()`/`has_bun_pragma()` above
+// stay live.
 impl<'a> Parser<'a> {
+    #[cfg(any())] // blocked_on: _scan_imports (P::init / parse_stmts_up_to gated)
     pub fn scan_imports(&mut self, scan_pass: &mut ScanPassResult) -> Result<(), Error> {
         if self.options.ts && self.options.jsx.parse {
             self._scan_imports::<TSXImportScanner>(scan_pass)
@@ -254,16 +283,24 @@ impl<'a> Parser<'a> {
         }
     }
 
-    // TODO(port): `P` needs a trait bound covering init/parse_stmts_up_to/add_import_record/etc.
-    // In Zig these are the NewParser(...) instantiations; Phase B should define `trait ParserImpl`.
-    fn _scan_imports<P>(&mut self, scan_pass: &mut ScanPassResult) -> Result<(), Error> {
-        let mut p = P::init(
+    #[cfg(any())] // blocked_on: P::init / parse_stmts_up_to / add_import_record (P.rs gated)
+    fn _scan_imports<const TS: bool, JX: JsxT>(
+        &mut self,
+        scan_pass: &mut ScanPassResult,
+    ) -> Result<(), Error> {
+        type Pi<'a, const TS: bool, JX> = P<'a, TS, JX, true>;
+        let mut p = Pi::<TS, JX>::init(
             self.bump,
-            self.log,
+            // SAFETY: `log` was created from the `&'a mut Log` passed to
+            // `Parser::init`; the unique borrow is being handed off to `P`
+            // (which also receives the lexer). Matches Zig's two-`*Log` model.
+            unsafe { &mut *self.log.as_ptr() },
             self.source,
             self.define,
-            self.lexer,
-            self.options,
+            // SAFETY: Zig moves the lexer/options by value into the inner
+            // parser; `Parser` is not reused after `_scan_imports`.
+            unsafe { core::ptr::read(&self.lexer) },
+            unsafe { core::ptr::read(&self.options) },
         )?;
         p.import_records = &mut scan_pass.import_records;
         p.named_imports = &mut scan_pass.named_imports;
@@ -271,7 +308,7 @@ impl<'a> Parser<'a> {
         // The problem with our scan pass approach is type-only imports.
         // We don't have accurate symbol counts.
         // So we don't have a good way to distinguish between a type-only import and not.
-        if P::PARSER_FEATURES.typescript {
+        if TS {
             p.parse_pass_symbol_uses = &mut scan_pass.used_symbols;
         }
 
@@ -295,7 +332,7 @@ impl<'a> Parser<'a> {
         }
 
         //
-        if P::PARSER_FEATURES.typescript {
+        if TS {
             for import_record in scan_pass.import_records.as_mut_slice() {
                 // Mark everything as unused
                 // Except:
@@ -343,6 +380,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
+    #[cfg(any())] // blocked_on: P::init / prepare_for_visit_pass / to_ast (P.rs gated)
     pub fn to_lazy_export_ast(
         &mut self,
         expr: Expr,
@@ -418,29 +456,7 @@ impl<'a> Parser<'a> {
         Ok(js_ast::Result::Ast(p.to_ast(&mut parts, exports_kind, WrapMode::None, b"")?))
     }
 
-    pub fn parse(&mut self) -> Result<js_ast::Result, Error> {
-        // TODO(port): narrow error set
-        #[cfg(target_arch = "wasm32")]
-        {
-            self.options.ts = true;
-            self.options.jsx.parse = true;
-            return self._parse::<TSXParser>();
-        }
-
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            if self.options.ts && self.options.jsx.parse {
-                self._parse::<TSXParser>()
-            } else if self.options.ts {
-                self._parse::<TypeScriptParser>()
-            } else if self.options.jsx.parse {
-                self._parse::<JSXParser>()
-            } else {
-                self._parse::<JavaScriptParser>()
-            }
-        }
-    }
-
+    #[cfg(any())] // blocked_on: P::init / parse_stmts_up_to / prepare_for_visit_pass / append_part (P.rs gated)
     pub fn analyze(
         &mut self,
         context: *mut c_void,

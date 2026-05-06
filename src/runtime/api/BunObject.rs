@@ -883,22 +883,23 @@ pub fn braces(
         let mut parser = Braces::Parser::init(&lexer_output.tokens[..], &arena);
         let ast_node = match parser.parse() {
             Ok(v) => v,
-            Err(err) => return global.throw_error(err, "failed to parse braces"),
+            Err(err) => return Err(global.throw_error(err.into(), "failed to parse braces")),
         };
         // TODO(port): std.json.fmt — bun_json crate not yet ported
         let str: Vec<u8> = {
             let _ = &ast_node;
             todo!("blocked_on: bun_json::fmt")
         };
-        let mut bun_str = BunString::from_bytes(&str);
-        return Ok(bun_str.to_js(global));
+        let bun_str = BunString::from_bytes(&str);
+        return bun_str.to_js(global);
     }
 
     if expansion_count == 0 {
-        return Ok(BunString::to_js_array(global, &[brace_str]));
+        return bun_string_jsc::to_js_array(global, &[brace_str]);
     }
 
     // Non-AST crate: result containers use plain Vec (arena is only for Braces::* internals).
+    let expansion_count = expansion_count as usize;
     let mut expanded_strings: Vec<Vec<u8>> = Vec::with_capacity(expansion_count);
     for _ in 0..expansion_count {
         expanded_strings.push(Vec::new());
@@ -906,14 +907,15 @@ pub fn braces(
 
     match Braces::expand(
         &arena,
-        &lexer_output.tokens[..],
+        &mut lexer_output.tokens[..],
         &mut expanded_strings,
         lexer_output.contains_nested,
     ) {
         Ok(()) => {}
-        Err(e) if e == bun_core::err!("OutOfMemory") => return Err(e.into()),
         Err(_) => {
-            return global.throw_pretty("Unexpected token while expanding braces", format_args!(""))
+            return Err(
+                global.throw_pretty("Unexpected token while expanding braces", format_args!("")),
+            )
         }
     }
 
@@ -922,7 +924,7 @@ pub fn braces(
         out_strings.push(BunString::from_bytes(&expanded_strings[i][..]));
     }
 
-    Ok(BunString::to_js_array(global, &out_strings[..]))
+    bun_string_jsc::to_js_array(global, &out_strings[..])
 }
 
 #[bun_jsc::host_fn]

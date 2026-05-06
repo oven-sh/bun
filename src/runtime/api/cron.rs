@@ -1331,7 +1331,7 @@ impl CronJob {
     /// has settled, so onPromiseReject can still read pendingPromise from
     /// the wrapper and pass the real Promise to unhandledRejection.
     fn maybe_downgrade(&mut self) {
-        if self.stopped && !self.pending_ref && !self.this_value.is_finalized() {
+        if self.stopped && !self.pending_ref && !matches!(self.this_value, JsRef::Finalized) {
             self.this_value.downgrade();
         }
     }
@@ -1347,12 +1347,12 @@ impl CronJob {
     }
 
     /// Idempotent — every step checks its own state.
-    fn stop_internal(&mut self, vm: &VirtualMachine) {
+    fn stop_internal(&mut self, _vm: &VirtualMachine) {
         self.stopped = true;
-        if self.event_loop_timer.state == EventLoopTimer::State::ACTIVE {
-            vm.timer.remove(&mut self.event_loop_timer);
+        if self.event_loop_timer.state == EventLoopTimerState::ACTIVE {
+            timer_all().remove(&mut self.event_loop_timer);
         }
-        self.poll_ref.unref(vm);
+        self.poll_ref.unref(vm_ctx());
         self.maybe_downgrade();
     }
 
@@ -1372,7 +1372,7 @@ impl CronJob {
         // and clearAllForVM(.teardown) can release pending_ref.
         if this_ref.in_fire || this_ref.pending_ref {
             this_ref.stopped = true;
-            this_ref.poll_ref.unref(vm);
+            this_ref.poll_ref.unref(vm_ctx());
             return;
         }
         this_ref.stop_internal(vm);

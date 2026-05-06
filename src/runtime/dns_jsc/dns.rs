@@ -312,11 +312,17 @@ pub mod lib_c {
         // SAFETY: request was just Box::into_raw'd in init() and is exclusively owned here.
         let promise_value = unsafe { (*request).head.promise.value() };
 
-        let io = get_addr_info_request::Task::create_on_js_thread(global_this, request);
-        io.schedule();
-        this.request_sent(global_this.bun_vm());
-
-        promise_value
+        // TODO(port): `get_addr_info_request::Task` is `jsc::WorkTask`, which is
+        // generic over `WorkTaskContext` and takes `&Context` — the
+        // `GetAddrInfoRequest` impl and the non-generic alias are not yet
+        // wired up upstream.
+        let _ = (global_this, request);
+        todo!("blocked_on: bun_jsc::WorkTask::<GetAddrInfoRequest>::create_on_js_thread");
+        #[allow(unreachable_code)]
+        {
+            this.request_sent(this.vm());
+            promise_value
+        }
     }
 
     #[cfg(windows)]

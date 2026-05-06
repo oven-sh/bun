@@ -1031,10 +1031,11 @@ impl DevServer<'_> {
 
     /// Deferred one tick so that the server can be up faster
     fn scan_initial_routes(&mut self) -> Result<(), bun_core::Error> {
-        self.router.scan_all(
-            &mut self.server_transpiler.resolver,
-            FrameworkRouter::InsertionContext::wrap::<DevServer>(self),
-        )?;
+        // TODO(port): blocked_on: framework_router::FrameworkRouter::scan_all —
+        // the keystone `FrameworkRouter` in mod.rs has no `scan_all`; the body
+        // version (`framework_router_body::FrameworkRouter`) is a distinct type.
+        let _ = &mut self.server_transpiler.resolver;
+        let _ = &mut self.router;
 
         self.server_graph.ensure_stale_bit_capacity(true)?;
         self.client_graph.ensure_stale_bit_capacity(true)?;

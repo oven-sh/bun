@@ -888,15 +888,18 @@ pub mod command {
                 AuditCommand::exec(ctx)?;
             }
             Tag::WhyCommand => {
-                let ctx = init::<{ Tag::WhyCommand }>(log)?;
-                WhyCommand::exec(ctx)?;
+                let mut ctx = init::<{ Tag::WhyCommand }>(log)?;
+                WhyCommand::exec(&mut ctx)?;
                 return Ok(());
             }
             Tag::BunxCommand => {
-                let ctx = init::<{ Tag::BunxCommand }>(log)?;
+                let mut ctx = init::<{ Tag::BunxCommand }>(log)?;
                 // SAFETY: IS_BUNX_EXE set during which() before any threads
                 let start_idx = if unsafe { IS_BUNX_EXE } { 0 } else { 1 };
-                BunxCommand::exec(ctx, &bun::argv()[start_idx..])?;
+                let bunx_argv: Vec<&'static ZStr> = (start_idx..bun::argv().len())
+                    .map(|i| bun::argv().get(i).unwrap())
+                    .collect();
+                BunxCommand::exec(&mut ctx, &bunx_argv)?;
                 return Ok(());
             }
             Tag::ReplCommand => {
@@ -921,7 +924,7 @@ pub mod command {
             }
             Tag::PackageManagerCommand => {
                 let ctx = init::<{ Tag::PackageManagerCommand }>(log)?;
-                PackageManagerCommand::exec(ctx)?;
+                PackageManagerCommand::exec(&ctx)?;
                 return Ok(());
             }
             Tag::TestCommand => {

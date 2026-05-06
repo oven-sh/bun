@@ -112,7 +112,10 @@ impl Default for ReactFastRefresh {
 /// `bake.Framework.FileSystemRouterType`. Full body (with `Style` enum and
 /// `from_js`) lives in the gated `bake_body.rs` draft; only the field set
 /// DevServer touches is named here.
-#[derive(Clone)]
+// PORT NOTE: dropped `#[derive(Clone)]` — `framework_router::Style` is now the
+// body enum (carries `JavascriptDefined(jsc::Strong)`, not `Clone`). Spec
+// `Style` has a `deinit()` (FrameworkRouter.zig), so it was never trivially
+// copyable.
 pub struct FileSystemRouterType {
     pub root: Cow<'static, [u8]>,
     pub prefix: Cow<'static, [u8]>,

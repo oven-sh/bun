@@ -113,7 +113,19 @@ impl GetOptionalEnum for JSValue {
 // re-exports are provided by `#[bun_jsc::JsClass]` codegen — see PORTING.md
 // §JSC types. `js.sourceJSSetCached` / `js.sourceJSGetCached` are likewise
 // codegen'd cached-property accessors on the wrapper.
-// TODO(port): verify codegen accessor names (`source_js_set_cached` / `source_js_get_cached`).
+// TODO(port): the cached-slot accessors are emitted by `.classes.ts` codegen
+// (Image.classes.ts → `sourceJS` cached value) but the Rust codegen doesn't
+// surface them yet. Stubbed here so call sites type-check.
+impl Image {
+    #[inline]
+    fn source_js_set_cached(_this: JSValue, _global: &JSGlobalObject, _value: JSValue) {
+        todo!("blocked_on: bun_jsc::JsClass cached-value accessor codegen (sourceJSSetCached)")
+    }
+    #[inline]
+    fn source_js_get_cached(_this: JSValue) -> Option<JSValue> {
+        todo!("blocked_on: bun_jsc::JsClass cached-value accessor codegen (sourceJSGetCached)")
+    }
+}
 
 #[bun_jsc::JsClass]
 pub struct Image {

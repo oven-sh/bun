@@ -22,7 +22,7 @@ pub struct SocketAddress {
     // NOTE: not C.sockaddr_storage b/c it's _huge_. we need >= 28 bytes for sockaddr_in6,
     // but sockaddr_storage is 128 bytes.
     /// @internal
-    _addr: sockaddr,
+    pub _addr: sockaddr,
     /// Cached address in presentation format. Prevents repeated conversion between
     /// strings and bytes.
     ///

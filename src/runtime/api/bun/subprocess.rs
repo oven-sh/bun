@@ -976,11 +976,14 @@ impl Subprocess<'_> {
         // For now we run them at the end and at early-return sites manually.
 
         if self.event_loop_timer.state == EventLoopTimerState::ACTIVE {
-            jsc_vm.timer.remove(&mut self.event_loop_timer);
+            // TODO(blocked_on: bun_jsc::VirtualMachineRef::timer): `timer` is a `()`
+            // stub on the upstream VM type; wire `remove` once it lands.
+            let _ = &mut self.event_loop_timer;
         }
         self.set_event_loop_timer_refd(false);
 
-        jsc_vm.on_subprocess_exit(process);
+        // SAFETY: `jsc_vm` is the live VM owning `global_this`; mutator-thread only.
+        unsafe { (*jsc_vm).on_subprocess_exit(process as *const Process as *mut c_void) };
 
         #[cfg(windows)]
         if self.flags.contains(Flags::OWNS_TERMINAL) {

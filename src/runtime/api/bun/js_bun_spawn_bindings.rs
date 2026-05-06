@@ -486,10 +486,9 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
 
             if let Some(on_exit_) = args.get_truthy(global_this, "onExit")? {
                 if !on_exit_.is_cell() || !on_exit_.is_callable() {
-                    return global_this.throw_invalid_arguments(
+                    return Err(global_this.throw_invalid_arguments(
                         "onExit must be a function or undefined",
-                        format_args!(""),
-                    );
+                    ));
                 }
 
                 on_exit_callback = if IS_SYNC {

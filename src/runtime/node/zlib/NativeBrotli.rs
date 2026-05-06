@@ -169,30 +169,29 @@ impl NativeBrotli {
     ) -> JsResult<JSValue> {
         let arguments = callframe.arguments_undef::<3>();
         let this_value = callframe.this();
-        if arguments.len() != 3 {
-            return global_this
-                .err(ErrorCode::MISSING_ARGS, "init(params, writeResult, writeCallback)")
-                .throw();
-            // TODO(port): globalThis.ERR(.MISSING_ARGS, fmt, args) macro shape
+        if arguments.len != 3 {
+            return Err(global_this
+                .err(ErrorCode::MISSING_ARGS, format_args!("init(params, writeResult, writeCallback)"))
+                .throw());
         }
 
         // this does not get gc'd because it is stored in the JS object's
         // `this._writeState`. and the JS object is tied to the native handle
         // as `_handle[owner_symbol]`.
-        let write_result = arguments[1]
+        let write_result = arguments.ptr[1]
             .as_array_buffer(global_this)
             .unwrap()
             .as_u32()
             .as_mut_ptr();
         let write_callback =
-            validators::validate_function(global_this, "writeCallback", arguments[2])?;
+            validators::validate_function(global_this, b"writeCallback", arguments.ptr[2])?;
 
         this.write_result = NonNull::new(write_result);
 
         js::write_callback_set_cached(
             this_value,
             global_this,
-            write_callback.with_async_context_if_needed(global_this),
+            with_async_context_if_needed(write_callback, global_this),
         );
 
         let mut err = this.stream.init();
@@ -201,7 +200,7 @@ impl NativeBrotli {
             return Ok(JSValue::FALSE);
         }
 
-        let params_ = arguments[0].as_array_buffer(global_this).unwrap().as_u32();
+        let params_ = arguments.ptr[0].as_array_buffer(global_this).unwrap().as_u32();
 
         for (i, &d) in params_.iter().enumerate() {
             // (d == -1) {

@@ -150,7 +150,10 @@ impl ReplCommand {
             vm,
             arena,
             entry_path: repl_path,
-            eval_script: &ctx.runtime_options.eval.script,
+            // PORT NOTE: ctx is the process-global ContextData; extend the
+            // borrow past the local reborrow lifetime via raw ptr (the runner
+            // never outlives ctx — global_exit() is `!`).
+            eval_script: unsafe { &*(&*ctx.runtime_options.eval.script as *const [u8]) },
             eval_and_print: ctx.runtime_options.eval.eval_and_print,
         };
         // TODO(port): @constCast(&arena) — vm.arena stores a *mut Arena pointing at runner.arena;

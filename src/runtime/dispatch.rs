@@ -1031,7 +1031,21 @@ pub fn install_dispatch_hooks() {
 
     // bun_jsc::RUN_TASK_HOOK / TICK_QUEUE_HOOK → tick_queue_with_count.
     bun_jsc::set_run_task_hook(tick_queue_with_count);
-    bun_jsc::event_loop::set_tick_queue_hook(tick_queue_with_count);
+    bun_jsc::event_loop::set_tick_queue_hook(tick_queue_hook_adapter);
+}
+
+/// `TICK_QUEUE_HOOK` body — adapt the upstream `fn(*mut VM, &mut u32)` shape
+/// to [`tick_queue_with_count`]. The hook passes only `vm`; recover the
+/// per-thread `EventLoop` from it (Zig: `vm.eventLoop()`).
+fn tick_queue_hook_adapter(
+    vm: *mut bun_jsc::virtual_machine::VirtualMachine,
+    counter: &mut u32,
+) -> Result<(), JsTerminated> {
+    // SAFETY: hook contract — `vm` is the live per-thread VM; `event_loop()`
+    // returns the owned `EventLoop` field. No other `&mut` to either is held
+    // across this call (the only caller is `EventLoop::tick`).
+    let (el, vm_ref) = unsafe { (&mut *(*vm).event_loop(), &mut *vm) };
+    tick_queue_with_count(el, vm_ref, counter)
 }
 
 // ──────────────────────────────────────────────────────────────────────────

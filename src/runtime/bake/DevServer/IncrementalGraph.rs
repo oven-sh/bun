@@ -2233,7 +2233,7 @@ impl IncrementalGraph<Server> {
     ) -> Result<(), bun_core::Error> {
         self.owner().graph_safety_lock.assert_locked();
         for path in paths {
-            let Some(index) = self.bundled_files.get_index(path) else {
+            let Some(index) = self.get_index_by_slice(path) else {
                 continue;
             };
             self.stale_files.set(index);

@@ -140,7 +140,7 @@ impl Worker {
             };
             // Zig: `try (try spawnProcess(...)).unwrap()` — outer `?` for the
             // anyerror, inner map for the bun_sys::Result.
-            let spawned =
+            let mut spawned =
                 spawn::spawn_process(&options, coord.argv.as_ptr(), coord.envps[this.idx as usize].as_ptr())?
                     .map_err(|e| {
                         Output::err(e, "spawnProcess failed for test worker", ());
@@ -148,8 +148,8 @@ impl Worker {
                     })?;
             let stdout = spawned.stdout;
             let stderr = spawned.stderr;
-            let extra_pipes = spawned.extra_pipes.clone();
             // (Zig `defer spawned.extra_pipes.deinit()` — handled by Drop.)
+            let extra_pipes = core::mem::take(&mut spawned.extra_pipes);
             this.process = Some(spawned.to_process(
                 bun_event_loop::EventLoopHandle::init(coord.vm.event_loop().cast()),
                 false,

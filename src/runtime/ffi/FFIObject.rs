@@ -207,10 +207,10 @@ pub mod reader {
     fn addr_from_args(global_object: &JSGlobalObject, arguments: &[JSValue]) -> JsResult<usize> {
         // PORT NOTE: hoisted from repeated inline checks; identical body in every reader.
         if arguments.is_empty() || !arguments[0].is_number() {
-            return global_object.throw_invalid_arguments(format_args!("Expected a pointer"));
+            return Err(global_object.throw_invalid_arguments(format_args!("Expected a pointer")));
         }
         let off = if arguments.len() > 1 {
-            usize::try_from(arguments[1].to::<i32>()).unwrap()
+            usize::try_from(arguments[1].to_int32()).unwrap()
         } else {
             0usize
         };

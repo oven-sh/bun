@@ -52,7 +52,7 @@ pub fn set_default_auto_select_family(global: &JSGlobalObject) -> JSValue {
         }
         let arg = arguments.slice()[0];
         if !arg.is_boolean() {
-            return global.throw_invalid_arguments(format_args!("autoSelectFamilyDefault"));
+            return Err(global.throw_invalid_arguments(format_args!("autoSelectFamilyDefault")));
         }
         let value = arg.to_boolean();
         AUTO_SELECT_FAMILY_DEFAULT.store(value, Ordering::Relaxed);

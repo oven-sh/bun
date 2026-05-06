@@ -1074,7 +1074,7 @@ pub fn scan_imports_and_exports(
                                 part_index as u32,
                                 col_ref!(exports_refs)[other_id],
                                 1,
-                                js_ast::Index::source(other_source_index as usize),
+                                Index::source(other_source_index),
                             )?;
                         }
                     }
@@ -1086,7 +1086,7 @@ pub fn scan_imports_and_exports(
                             part_index as u32,
                             col_ref!(exports_refs)[id],
                             1,
-                            js_ast::Index::source(source_index as usize),
+                            Index::source(source_index),
                         )?;
                         col!(ast_flags_list)[id].insert(AstFlags::USES_EXPORTS_REF);
                         col!(import_records_list)[id].slice_mut()[*import_record_index as usize]
@@ -1318,7 +1318,7 @@ impl ExportStarContext {
                     *gop.value_ptr = ExportData {
                         data: ImportTracker {
                             import_ref: name.ref_,
-                            source_index: js_ast::Index::source(other_source_index as usize),
+                            source_index: Index::source(other_source_index),
                             name_loc: name.alias_loc,
                         },
                         ..Default::default()

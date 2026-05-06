@@ -87,6 +87,35 @@ pub fn prepare_css_asts_for_chunk(task: *mut ThreadPoolLib::Task) {
     );
 }
 
+/// `ImportRecord.path` is `bun_paths::fs::Path<'static>`; `CssImportOrderKind::ExternalPath`
+/// holds `crate::bun_fs::Path<'static>` (= `bun_resolver::fs::Path`). Both are field-identical
+/// CYCLEBREAK mirrors of Zig `Fs.Path`. Re-construct field-by-field rather than transmute
+/// non-`repr(C)` structs. Inverse of `findImportedFilesInCSSOrder::fs_path_from_import_record`.
+#[cfg(feature = "css")]
+#[inline]
+fn import_record_path_from_fs(p: &Path<'static>) -> bun_paths::fs::Path<'static> {
+    bun_paths::fs::Path {
+        pretty: p.pretty,
+        text: p.text,
+        namespace: p.namespace,
+        name: bun_paths::fs::PathName {
+            base: p.name.base,
+            dir: p.name.dir,
+            ext: p.name.ext,
+            filename: p.name.filename,
+        },
+        is_disabled: p.is_disabled,
+        is_symlink: p.is_symlink,
+    }
+}
+
+#[cfg(not(feature = "css"))]
+fn prepare_css_asts_for_chunk_impl(_c: &mut LinkerContext, _chunk: &mut Chunk, _bump: &Bump) {
+    // CSS chunk preparation is unreachable without `feature = "css"` — the
+    // loader dispatch never produces CSS chunks.
+}
+
+#[cfg(feature = "css")]
 fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bump: &Bump) {
     // PORT NOTE: `c.parse_graph` is a raw `*mut Graph`; deref once for the
     // SoA column accessors. Safe — the parse graph outlives all link tasks.

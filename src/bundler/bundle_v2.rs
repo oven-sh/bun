@@ -4293,7 +4293,7 @@ impl<'a> BundleV2<'a> {
                 target
             };
 
-            resolve_task.jsx = resolve_result.jsx.clone();
+            resolve_task.jsx = resolve_result.jsx.clone().into();
             resolve_task.jsx.development = match transpiler.options.force_node_env {
                 options::ForceNodeEnv::Development => true,
                 options::ForceNodeEnv::Production => false,

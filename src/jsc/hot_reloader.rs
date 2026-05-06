@@ -96,16 +96,22 @@ impl ImportWatcher {
         hash: bun_watcher::HashType,
         loader: bun_bundler::options::Loader,
         dir_fd: Fd,
-        package_json: Option<&mut bun_resolver::PackageJSON>,
+        // PORT NOTE: bun_watcher::PackageJSON is an opaque forward-decl (CYCLEBREAK);
+        // callers cast from `&bun_resolver::PackageJSON`.
+        package_json: Option<&'static bun_watcher::PackageJSON>,
     ) -> bun_sys::Result<()> {
-         // TODO(b2-blocked): bun_watcher::Watcher::add_file
         match self {
-            ImportWatcher::Hot(watcher) | ImportWatcher::Watch(watcher) => return watcher
-                .add_file::<COPY_FILE_PATH>(fd, file_path, hash, loader, dir_fd, package_json),
-            ImportWatcher::None => {}
+            ImportWatcher::Hot(watcher) | ImportWatcher::Watch(watcher) => watcher
+                .add_file::<COPY_FILE_PATH>(
+                    fd,
+                    file_path,
+                    hash,
+                    bun_watcher::Loader(loader as u8),
+                    dir_fd,
+                    package_json,
+                ),
+            ImportWatcher::None => Ok(()),
         }
-        let _ = (fd, file_path, hash, loader, dir_fd, package_json);
-        Ok(())
     }
 }
 

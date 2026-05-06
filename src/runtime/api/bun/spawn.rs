@@ -878,8 +878,7 @@ pub mod posix_spawn {
                 Errno::SUCCESS => {
                     return sys::Result::Ok(WaitPidResult {
                         pid: pid_t::try_from(rc).unwrap(),
-                        // SAFETY: c_int and u32 are same size
-                        status: unsafe { core::mem::transmute::<c_int, u32>(status) },
+                        status: status as u32,
                     });
                 }
                 Errno::INTR => continue,

@@ -128,13 +128,11 @@ impl WindowsNamedPipe {
     }
 
     fn on_read_alloc(&mut self, suggested_size: usize) -> &mut [u8] {
-        let mut available = self.incoming.unused_capacity_slice();
-        if available.len() < suggested_size {
-            // PORT NOTE: reshaped for borrowck — drop borrow before mut call
-            drop(available);
+        // PORT NOTE: reshaped for borrowck — check len, grow, then take the final borrow once.
+        if self.incoming.unused_capacity_slice().len() < suggested_size {
             bun_core::handle_oom(self.incoming.ensure_unused_capacity(suggested_size));
-            available = self.incoming.unused_capacity_slice();
         }
+        let available = self.incoming.unused_capacity_slice();
         // SAFETY: `available` is the unused-capacity tail of `incoming`; slicing to
         // `suggested_size` is in-bounds because we just ensured at least that much.
         // `MaybeUninit<u8>` has the same layout as `u8`; the libuv read callback

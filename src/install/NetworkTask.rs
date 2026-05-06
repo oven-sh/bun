@@ -327,7 +327,7 @@ impl NetworkTask {
 
             if tmp.tag() == bun_str::Tag::Dead {
                 if !is_optional {
-                    pm.log.add_error_fmt(
+                    pm.log_mut().add_error_fmt(
                         None,
                         logger::Loc::EMPTY,
                         format_args!(
@@ -337,7 +337,7 @@ impl NetworkTask {
                         ),
                     )?;
                 } else {
-                    pm.log.add_warning_fmt(
+                    pm.log_mut().add_warning_fmt(
                         None,
                         logger::Loc::EMPTY,
                         format_args!(
@@ -352,7 +352,7 @@ impl NetworkTask {
 
             if !(tmp.has_prefix_comptime(b"https://") || tmp.has_prefix_comptime(b"http://")) {
                 if !is_optional {
-                    pm.log.add_error_fmt(
+                    pm.log_mut().add_error_fmt(
                         None,
                         logger::Loc::EMPTY,
                         format_args!(
@@ -361,7 +361,7 @@ impl NetworkTask {
                         ),
                     )?;
                 } else {
-                    pm.log.add_warning_fmt(
+                    pm.log_mut().add_warning_fmt(
                         None,
                         logger::Loc::EMPTY,
                         format_args!(
@@ -575,7 +575,7 @@ impl NetworkTask {
         }
 
         if !(self.url_buf.starts_with(b"https://") || self.url_buf.starts_with(b"http://")) {
-            pm.log.add_error_fmt(
+            pm.log_mut().add_error_fmt(
                 None,
                 logger::Loc::EMPTY,
                 format_args!(

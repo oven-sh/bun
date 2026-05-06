@@ -1298,7 +1298,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     if C::IS_PACKAGE_INSTALLER {
                         // TODO(dylan-conway) most likely don't need to call this now that the package isn't appended, but
                         // keeping just in case for now
-                        PackageInstaller::from_ctx_mut(extract_ctx)
+                        C::as_package_installer(extract_ctx)
                             .fix_cached_lockfile_package_slices();
 
                         C::on_extract_package_installer(
@@ -1318,17 +1318,17 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     &mut package_id,
                     git_checkout.dependency_id,
                     resolution,
-                    &mut task.data.git_checkout,
+                    &task.data.git_checkout,
                     log_level,
                 ) {
                     'handle_pkg: {
                         let mut any_root = false;
-                        let Some(dependency_list_entry) = manager.task_queue.get_mut(&task.id)
-                        else {
-                            break 'handle_pkg;
+                        let dependency_list: TaskCallbackList = {
+                            let Some(entry) = manager.task_queue.get_mut(&task.id) else {
+                                break 'handle_pkg;
+                            };
+                            core::mem::take(entry)
                         };
-                        let dependency_list =
-                            core::mem::take(dependency_list_entry.value_ptr);
 
                         // Zig: `defer { dependency_list.deinit(); if (any_root) callbacks.onResolve(extract_ctx); }`
                         let any_root_ptr: *mut bool = &mut any_root;
@@ -1344,29 +1344,32 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             }
                         });
 
-                        for dep in dependency_list.iter() {
+                        for dep in dependency_list.into_iter() {
                             match dep {
                                 bun_install::TaskCallbackContext::Dependency(id)
                                 | bun_install::TaskCallbackContext::RootDependency(id) => {
-                                    let id = *id;
-                                    let repo = &mut manager.lockfile.buffers.dependencies
+                                    let repo = manager.lockfile.buffers.dependencies
                                         [id as usize]
                                         .version
                                         .value
                                         .git_mut();
-                                    repo.resolved = pkg.resolution.value.git().resolved;
+                                    // SAFETY: `pkg.resolution.value` is a Zig `extern union`;
+                                    // `Tag::Git` was checked when the resolution was set.
+                                    repo.resolved = unsafe { pkg.resolution.value.git }.resolved;
                                     repo.package_name = pkg.name;
                                     manager.process_dependency_list_item(
                                         dep,
-                                        any_root,
+                                        Some(any_root),
                                         install_peer,
                                     )?;
                                 }
                                 _ => {
                                     // if it's a node_module folder to install, handle that after we process all the dependencies within the onExtract callback.
-                                    dependency_list_entry
-                                        .value_ptr
-                                        .push(dep.clone());
+                                    manager
+                                        .task_queue
+                                        .get_mut(&task.id)
+                                        .unwrap()
+                                        .push(dep);
                                 }
                             }
                         }

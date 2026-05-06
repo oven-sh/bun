@@ -908,7 +908,11 @@ pub fn save_lockfile(
     if cfg!(debug_assertions) {
         if !matches!(load_result, LoadResult::NotFound) {
             if load_result.loaded_from_text_lockfile() {
-                if !this.lockfile.eql(lockfile_before_install, packages_len_before_install)? {
+                if !this
+                    .lockfile
+                    .eql(lockfile_before_install, packages_len_before_install)
+                    .unwrap_or(true)
+                {
                     Output::panic(format_args!("Lockfile non-deterministic after saving"));
                 }
             } else {
@@ -943,7 +947,7 @@ pub fn update_lockfile_if_needed(
             let slice = manager.lockfile.packages.slice();
             for meta in slice.items_meta_mut() {
                 // these are possibly updated later, but need to make sure non are zero
-                meta.set_has_install_script(lockfile::HasInstallScript::False);
+                meta.set_has_install_script(false);
             }
         }
     }

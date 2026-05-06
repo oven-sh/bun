@@ -426,8 +426,9 @@ pub fn migrate_npm_lockfile<'a>(
             let pkg_name = package_name_from_path(pkg_path);
             if version_prop.is_some() && !pkg_name.is_empty() {
                 // construct registry url
-                let registry = Install::PackageManager::scope_for_package_name(manager, pkg_name);
-                let href = registry.url.href;
+                let href: &[u8] = manager.options.scope.url.href;
+                // TODO(port): blocked_on: PackageManager::scope_for_package_name disambiguation
+                // (two impls in scope until package_manager_real un-gates).
                 let mut count: usize = 0;
                 count += href.len() + pkg_name.len() + b"/-/".len();
                 if pkg_name[0] == b'@' {
@@ -665,7 +666,7 @@ pub fn migrate_npm_lockfile<'a>(
                 break 'bin Bin {
                     tag: bin::Tag::Map,
                     _padding_tag: [0; 3],
-                    value: bin::Value::init_map(ExternalStringList { off, len, _marker: core::marker::PhantomData }),
+                    value: bin::Value::init_map(ExternalStringList::new(off, len)),
                 };
             }
         } else {
@@ -867,16 +868,10 @@ pub fn migrate_npm_lockfile<'a>(
                         debug_assert!(len == (deps_cursor - dependencies_start) as u32);
                     }
                     unsafe {
-                        *dependencies_list_col.add(package_idx as usize) = ExternalSlice {
-                            off: dependencies_start as u32,
-                            len,
-                            _marker: core::marker::PhantomData,
-                        };
-                        *resolution_list_col.add(package_idx as usize) = ExternalSlice {
-                            off: resolutions_start as u32,
-                            len,
-                            _marker: core::marker::PhantomData,
-                        };
+                        *dependencies_list_col.add(package_idx as usize) =
+                            ExternalSlice::new(dependencies_start as u32, len);
+                        *resolution_list_col.add(package_idx as usize) =
+                            ExternalSlice::new(resolutions_start as u32, len);
                     }
                 }
                 package_idx += 1;
@@ -1078,7 +1073,7 @@ pub fn migrate_npm_lockfile<'a>(
                                                         tag,
                                                         &dep_resolved_sliced,
                                                         Some(log),
-                                                        Some(manager),
+                                                        Some(manager as &mut dyn dependency::NpmAliasRegistry),
                                                     ).ok_or(err!("InvalidNPMLockfile"))?;
                                                     res_version_tag = parsed.tag;
                                                     // SAFETY: tag-guarded union access

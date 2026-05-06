@@ -26,9 +26,13 @@ use std::io::Write as _;
 use std::sync::atomic::Ordering;
 
 use bun_core::{fast_random, fmt as bun_fmt, Environment, Global, Output};
-use bun_collections::{ArrayHashMap, DynamicBitSet, DynamicBitSetList, HashMap, LinearFifo, StringArrayHashMap};
+use bun_collections::{
+    ArrayHashMap, DynamicBitSet, DynamicBitSetList, DynamicBitSetUnmanaged, HashMap, LinearFifo,
+    StringArrayHashMap,
+};
+use bun_collections::linear_fifo::DynamicBuffer;
 use bun_alloc::AllocError;
-use bun_paths::{self as paths, AbsPath, AutoRelPath, PathBuffer, RelPath};
+use bun_paths::{self as paths, AutoAbsPath as AbsPath, AutoRelPath, PathBuffer, RelPath};
 use bun_sys::{self as sys, Fd};
 use bun_wyhash::{Wyhash, Wyhash11};
 use bun_semver as semver;
@@ -36,16 +40,20 @@ use bun_logger as logger;
 use bstr::BStr;
 
 use crate::analytics;
-use crate::bun_progress::Progress;
+use crate::bun_progress::{Node as ProgressNode, Progress};
 use crate::bun_bunfig::Arguments as Command;
 use crate::{
     self as install, DependencyID, PackageID, PackageInstall, PackageNameHash, Resolution,
-    invalid_dependency_id, invalid_package_id,
+    RunTasksCallbacks, invalid_dependency_id, invalid_package_id,
 };
-use crate::lockfile::{Lockfile, Tree};
+use crate::lockfile::{self, Lockfile};
+use crate::lockfile::tree::is_filtered_dependency_or_workspace;
 use crate::package_manager::{PackageManager, WorkspaceFilter};
 use crate::package_manager_real::ProgressStrings;
-use store::{Entry as StoreEntry, Node as StoreNode};
+use store::{
+    Entry as StoreEntry, EntryListExt as _, EntrySliceExt as _, Node as StoreNode,
+    NodeListExt as _, NodeSliceExt as _,
+};
 
 bun_output::declare_scope!(IsolatedInstall, visible);
 macro_rules! log {

@@ -234,8 +234,17 @@ pub fn install_hoisted_packages(
             // construction of those fields.
             let _ = parts;
 
+            // SAFETY: `mgr_ptr` is the provenance root for every `this` access
+            // in this fn (see shadow-reborrow at top). `PackageInstaller`
+            // stores `&'a mut PackageManager` (Zig: non-exclusive `*PM`); the
+            // body below also reborrows `*mgr_ptr` for `pending_task_count` /
+            // `run_tasks` / lifecycle ticks. Under Stacked Borrows the
+            // installer's `&mut` and those reborrows alias — Phase B must
+            // retype `PackageInstaller.manager` as `*mut PackageManager`
+            // (LIFETIMES.tsv: BACKREF). For now derive both from `mgr_ptr` so
+            // the code compiles with the spec's call shape intact.
             break 'brk PackageInstaller {
-                manager: this,
+                manager: unsafe { &mut *mgr_ptr },
                 // TODO(port): blocked_on lockfile stub/real unification
                 // (reconciler-6) — `PackageInstaller::{options, lockfile,
                 // metas, bins, names, pkg_name_hashes, resolutions,
@@ -300,6 +309,12 @@ pub fn install_hoisted_packages(
         installer.node_modules.path.push(SEP);
 
         // `defer installer.deinit()` — handled by Drop.
+
+        // Re-derive `this` from the raw root so post-construction accesses
+        // don't trip "use of moved value" on the borrow handed to
+        // `installer.manager`. SAFETY: see the BACKREF note on the
+        // `PackageInstaller { manager: ... }` initialiser above.
+        let this = unsafe { &mut *mgr_ptr };
 
         // PORT NOTE: `Lockfile.Tree.Iterator(.node_modules).init(this.lockfile)`.
         // The real iterator (`lockfile_real::tree::Iterator`) is typed against

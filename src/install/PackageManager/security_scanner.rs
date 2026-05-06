@@ -11,7 +11,6 @@ use bun_collections::ArrayHashMap;
 use bun_core::{self, err, Error, Output};
 use crate::bun_fs::FileSystem;
 use crate::bun_json::ExprAccessors as _;
-use bun_paths::fs::Path as FsPath;
 use bun_install::{
     invalid_dependency_id, invalid_package_id, DependencyID, PackageID, PackageManager,
 };
@@ -1246,18 +1245,20 @@ impl<'a> SecurityScanSubprocess<'a> {
         self.has_process_exited && self.remaining_fds == 0
     }
 
-    pub fn event_loop(&self) -> &AnyEventLoop {
+    pub fn event_loop(&self) -> &AnyEventLoop<'static> {
         &self.manager.event_loop
     }
 
     pub fn loop_(&mut self) -> *mut AsyncLoop {
         #[cfg(windows)]
         {
-            return self.manager.event_loop.loop_().uv_loop;
+            // TODO(port): Windows path needs `uv_loop` projection once
+            // `AnyEventLoop::loop_` returns the uv handle wrapper.
+            return self.manager.event_loop.loop_().cast();
         }
         #[cfg(not(windows))]
         {
-            self.manager.event_loop.loop_()
+            self.manager.event_loop.loop_().cast()
         }
     }
 

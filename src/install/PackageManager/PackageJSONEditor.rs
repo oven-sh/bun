@@ -6,10 +6,13 @@ use bun_logger as logger;
 use bun_semver as semver;
 use bun_str::strings;
 
-use bun_install::Dependency;
-use bun_install::dependency::Behavior;
-use bun_install::invalid_package_id;
-use bun_install::package_manager::{PackageManager, PackageUpdateInfo, UpdateRequest};
+use bun_install::dependency::{self, Behavior};
+use bun_install::{resolution, Dependency, INVALID_PACKAGE_ID};
+
+use super::package_manager_options::{Do, Enable};
+use super::{PackageManager, PackageUpdateInfo, Subcommand, UpdateRequest};
+
+type ExprDisabler = js_ast::ast::expr::Disabler;
 
 const DEPENDENCY_GROUPS: &[(&[u8], Behavior)] = &[
     (b"optionalDependencies", Behavior::OPTIONAL),
@@ -25,6 +28,29 @@ pub struct EditOptions {
     pub before_install: bool,
 }
 
+/// Leak a freshly-allocated byte buffer to obtain a `'static` slice for
+/// storage in `E::EString.data` (the AST `Str` alias is `&'static [u8]` until
+/// Phase B threads `'bump`). Mirrors Zig's `allocator.dupe(u8, ...)` against
+/// the leaked-singleton `manager.allocator`.
+#[inline]
+fn leak_str(bytes: Vec<u8>) -> &'static [u8] {
+    Box::leak(bytes.into_boxed_slice())
+}
+#[inline]
+fn leak_dup(bytes: &[u8]) -> &'static [u8] {
+    Box::leak(Box::<[u8]>::from(bytes))
+}
+
+/// Shallow-copy a `G::Property` for the JSON-editing path. Only `key`/`value`
+/// (both `Option<Expr>`, `Copy`) are populated by the JSON parser; the rest
+/// (`ts_decorators`, `class_static_block`, …) are always default for parsed
+/// `package.json` and would be discarded by Zig's bitwise `@memcpy` + arena
+/// reset anyway.
+#[inline]
+fn copy_property(p: &G::Property) -> G::Property {
+    G::Property { key: p.key, value: p.value, ..G::Property::default() }
+}
+
 pub fn edit_patched_dependencies(
     manager: &mut PackageManager,
     package_json: &mut Expr,
@@ -32,33 +58,32 @@ pub fn edit_patched_dependencies(
     patchfile_path: &[u8],
 ) -> Result<(), bun_alloc::AllocError> {
     let _ = manager;
+    let bump = bun_alloc::Arena::new();
     // const pkg_to_patch = manager.
-    let mut patched_dependencies = 'brk: {
-        if let Some(query) = package_json.as_property(b"patchedDependencies") {
-            if let js_ast::ExprData::EObject(obj) = &query.expr.data {
-                break 'brk (**obj).clone();
+    let mut patched_dependencies = E::Object::default();
+    if let Some(query) = package_json.as_property(b"patchedDependencies") {
+        if let js_ast::ExprData::EObject(obj) = &query.expr.data {
+            for p in obj.properties.slice() {
+                patched_dependencies.properties.append(copy_property(p))?;
             }
         }
-        E::Object::default()
-    };
+    }
 
     let patchfile_expr = Expr::init(
-        E::String {
-            data: Box::<[u8]>::from(patchfile_path),
-        },
+        E::EString::init(leak_dup(patchfile_path)),
         logger::Loc::EMPTY,
-    )
-    .clone_expr()?;
+    );
 
-    patched_dependencies.put(patch_key, patchfile_expr)?;
+    patched_dependencies.put(&bump, leak_dup(patch_key), patchfile_expr)?;
 
-    // TODO(port): package_json.data.e_object — direct variant field access; assumes EObject
     package_json
         .data
         .e_object_mut()
+        .unwrap()
         .put(
+            &bump,
             b"patchedDependencies",
-            Expr::init(patched_dependencies, logger::Loc::EMPTY).clone_expr()?,
+            Expr::init(patched_dependencies, logger::Loc::EMPTY),
         )?;
     Ok(())
 }
@@ -69,18 +94,18 @@ pub fn edit_trusted_dependencies(
 ) -> Result<(), bun_alloc::AllocError> {
     let mut len = names_to_add.len();
 
-    let original_trusted_dependencies = 'brk: {
+    let original_trusted_dependencies: Vec<Expr> = 'brk: {
         if let Some(query) = package_json.as_property(TRUSTED_DEPENDENCIES_STRING) {
             if let js_ast::ExprData::EArray(arr) = &query.expr.data {
-                break 'brk (**arr).clone();
+                break 'brk arr.items.slice().to_vec();
             }
         }
-        E::Array::default()
+        Vec::new()
     };
 
     for i in 0..names_to_add.len() {
         let name = &names_to_add[i];
-        for item in original_trusted_dependencies.items.slice() {
+        for item in original_trusted_dependencies.iter() {
             if let js_ast::ExprData::EString(s) = &item.data {
                 if s.eql_bytes(name) {
                     names_to_add.swap(i, len - 1);
@@ -94,7 +119,9 @@ pub fn edit_trusted_dependencies(
     let mut trusted_dependencies: &[Expr] = &[];
     if let Some(query) = package_json.as_property(TRUSTED_DEPENDENCIES_STRING) {
         if let js_ast::ExprData::EArray(arr) = &query.expr.data {
-            trusted_dependencies = arr.items.slice();
+            // SAFETY: `arr` is a `StoreRef` into the AST arena which outlives
+            // this function; lifetime erased per Phase-A `Str` convention.
+            trusted_dependencies = unsafe { &*(arr.items.slice() as *const [Expr]) };
         }
     }
 
@@ -102,7 +129,7 @@ pub fn edit_trusted_dependencies(
     let new_trusted_deps: js_ast::ExprNodeList = {
         let mut deps = vec![Expr::EMPTY; trusted_dependencies.len() + trusted_dependencies_to_add]
             .into_boxed_slice();
-        deps[0..trusted_dependencies.len()].clone_from_slice(trusted_dependencies);
+        deps[0..trusted_dependencies.len()].copy_from_slice(trusted_dependencies);
         // tail already initialized to Expr::EMPTY by vec!
 
         for name in &names_to_add[0..len] {
@@ -122,12 +149,9 @@ pub fn edit_trusted_dependencies(
                 i -= 1;
                 if matches!(deps[i].data, js_ast::ExprData::EMissing(_)) {
                     deps[i] = Expr::init(
-                        E::String {
-                            data: name.clone(),
-                        },
+                        E::EString::init(leak_dup(name)),
                         logger::Loc::EMPTY,
-                    )
-                    .clone_expr()?;
+                    );
                     break;
                 }
             }
@@ -142,7 +166,7 @@ pub fn edit_trusted_dependencies(
     };
 
     let mut needs_new_trusted_dependencies_list = true;
-    let trusted_dependencies_array: Expr = 'brk: {
+    let mut trusted_dependencies_array: Expr = 'brk: {
         if let Some(query) = package_json.as_property(TRUSTED_DEPENDENCIES_STRING) {
             if matches!(query.expr.data, js_ast::ExprData::EArray(_)) {
                 needs_new_trusted_dependencies_list = false;
@@ -152,61 +176,56 @@ pub fn edit_trusted_dependencies(
 
         Expr::init(
             E::Array {
-                items: new_trusted_deps.clone(),
+                items: js_ast::ExprNodeList::from_slice(new_trusted_deps.slice())?,
                 ..Default::default()
             },
             logger::Loc::EMPTY,
         )
     };
 
-    if trusted_dependencies_to_add > 0 && new_trusted_deps.len() > 0 {
-        // TODO(port): direct e_array field access — assumes EArray variant
-        let arr = trusted_dependencies_array.data.e_array_mut();
+    if trusted_dependencies_to_add > 0 && new_trusted_deps.len > 0 {
+        let arr = trusted_dependencies_array.data.e_array_mut().unwrap();
         arr.items = new_trusted_deps;
         arr.alphabetize_strings();
     }
 
     if !matches!(package_json.data, js_ast::ExprData::EObject(_))
-        || package_json.data.e_object().properties.len() == 0
+        || package_json.data.e_object().unwrap().properties.len == 0
     {
-        let mut root_properties = vec![G::Property::default(); 1].into_boxed_slice();
-        root_properties[0] = G::Property {
+        let mut root_properties: Vec<G::Property> = Vec::with_capacity(1);
+        root_properties.push(G::Property {
             key: Some(Expr::init(
-                E::String {
-                    data: Box::<[u8]>::from(TRUSTED_DEPENDENCIES_STRING),
-                },
+                E::EString::init(TRUSTED_DEPENDENCIES_STRING),
                 logger::Loc::EMPTY,
             )),
             value: Some(trusted_dependencies_array),
             ..Default::default()
-        };
+        });
 
         *package_json = Expr::init(
             E::Object {
-                properties: G::Property::List::from_owned_slice(root_properties),
+                properties: G::PropertyList::move_from_list(root_properties),
                 ..Default::default()
             },
             logger::Loc::EMPTY,
         );
     } else if needs_new_trusted_dependencies_list {
-        let old_len = package_json.data.e_object().properties.len();
-        let mut root_properties = vec![G::Property::default(); old_len + 1].into_boxed_slice();
-        root_properties[0..old_len]
-            .clone_from_slice(package_json.data.e_object().properties.slice());
-        let last = root_properties.len() - 1;
-        root_properties[last] = G::Property {
+        let old_props = package_json.data.e_object().unwrap().properties.slice();
+        let mut root_properties: Vec<G::Property> = Vec::with_capacity(old_props.len() + 1);
+        for p in old_props {
+            root_properties.push(copy_property(p));
+        }
+        root_properties.push(G::Property {
             key: Some(Expr::init(
-                E::String {
-                    data: Box::<[u8]>::from(TRUSTED_DEPENDENCIES_STRING),
-                },
+                E::EString::init(TRUSTED_DEPENDENCIES_STRING),
                 logger::Loc::EMPTY,
             )),
             value: Some(trusted_dependencies_array),
             ..Default::default()
-        };
+        });
         *package_json = Expr::init(
             E::Object {
-                properties: G::Property::List::from_owned_slice(root_properties),
+                properties: G::PropertyList::move_from_list(root_properties),
                 ..Default::default()
             },
             logger::Loc::EMPTY,
@@ -226,17 +245,17 @@ pub fn edit_update_no_args(
     // using data store is going to result in undefined memory issues as
     // the store is cleared in some workspace situations. the solution
     // is to always avoid the store
-    Expr::Disabler::disable();
-    let _guard = scopeguard::guard((), |_| Expr::Disabler::enable());
+    ExprDisabler::disable();
+    let _guard = scopeguard::guard((), |_| ExprDisabler::enable());
 
     for group in DEPENDENCY_GROUPS {
         let group_str = group.0;
 
-        if let Some(root) = current_package_json.as_property(group_str) {
+        if let Some(mut root) = current_package_json.as_property(group_str) {
             if matches!(root.expr.data, js_ast::ExprData::EObject(_)) {
                 if options.before_install {
                     // set each npm dependency to latest
-                    for dep in root.expr.data.e_object_mut().properties.slice_mut() {
+                    for dep in root.expr.data.e_object_mut().unwrap().properties.slice_mut() {
                         let Some(key) = &dep.key else { continue };
                         if !matches!(key.data, js_ast::ExprData::EString(_)) {
                             continue;
@@ -247,35 +266,35 @@ pub fn edit_update_no_args(
                         }
 
                         let version_literal = value
-                            .as_string_cloned()?
+                            .as_utf8_string_literal()
                             .unwrap_or_else(|| bun_core::out_of_memory());
-                        let mut tag = Dependency::Version::Tag::infer(&version_literal);
+                        let mut tag = dependency::Tag::infer(version_literal);
 
                         // only updating dependencies with npm versions, dist-tags if `--latest`, and catalog versions.
-                        if tag != Dependency::Version::Tag::Npm
-                            && (tag != Dependency::Version::Tag::DistTag
-                                || !manager.options.do_.update_to_latest)
-                            && tag != Dependency::Version::Tag::Catalog
+                        if tag != dependency::Tag::Npm
+                            && (tag != dependency::Tag::DistTag
+                                || !manager.options.do_.contains(Do::UPDATE_TO_LATEST))
+                            && tag != dependency::Tag::Catalog
                         {
                             continue;
                         }
 
                         let mut alias_at_index: Option<usize> = None;
-                        if strings::trim(&version_literal, strings::WHITESPACE_CHARS)
+                        if strings::trim(version_literal, &strings::WHITESPACE_CHARS)
                             .starts_with(b"npm:")
                         {
                             // negative because the real package might have a scope
                             // e.g. "dep": "npm:@foo/bar@1.2.3"
                             if let Some(at_index) =
-                                strings::last_index_of_char(&version_literal, b'@')
+                                strings::last_index_of_char(version_literal, b'@')
                             {
-                                tag = Dependency::Version::Tag::infer(
+                                tag = dependency::Tag::infer(
                                     &version_literal[at_index + 1..],
                                 );
-                                if tag != Dependency::Version::Tag::Npm
-                                    && (tag != Dependency::Version::Tag::DistTag
-                                        || !manager.options.do_.update_to_latest)
-                                    && tag != Dependency::Version::Tag::Catalog
+                                if tag != dependency::Tag::Npm
+                                    && (tag != dependency::Tag::DistTag
+                                        || !manager.options.do_.contains(Do::UPDATE_TO_LATEST))
+                                    && tag != dependency::Tag::Catalog
                                 {
                                     continue;
                                 }
@@ -283,8 +302,11 @@ pub fn edit_update_no_args(
                             }
                         }
 
-                        let key_str = key.as_string_cloned()?.expect("unreachable");
-                        let entry = manager.updating_packages.get_or_put(key_str);
+                        let key_str = key.as_utf8_string_literal().expect("unreachable");
+                        // PORT NOTE: reshaped for borrowck — capture the literal as an owned
+                        // copy before borrowing `manager.updating_packages` mutably.
+                        let version_literal_owned = Box::<[u8]>::from(version_literal);
+                        let entry = manager.updating_packages.get_or_put(key_str)?;
 
                         // If a dependency is present in more than one dependency group, only one of it's versions
                         // will be updated. The group is determined by the order of `dependency_groups`, the same
@@ -294,15 +316,16 @@ pub fn edit_update_no_args(
                         }
 
                         *entry.value_ptr = PackageUpdateInfo {
-                            original_version_literal: version_literal.clone(),
+                            original_version_literal: version_literal_owned,
                             is_alias: alias_at_index.is_some(),
                             original_version_string_buf: Box::default(),
                             original_version: None,
                         };
 
-                        if manager.options.do_.update_to_latest {
+                        if manager.options.do_.contains(Do::UPDATE_TO_LATEST) {
                             // is it an aliased package
-                            let temp_version: Box<[u8]> = if let Some(at_index) = alias_at_index {
+                            let temp_version: &'static [u8] = if let Some(at_index) = alias_at_index
+                            {
                                 let mut v = Vec::new();
                                 write!(
                                     &mut v,
@@ -310,33 +333,33 @@ pub fn edit_update_no_args(
                                     bstr::BStr::new(&version_literal[0..at_index])
                                 )
                                 .unwrap();
-                                v.into_boxed_slice()
+                                leak_str(v)
                             } else {
-                                Box::<[u8]>::from(&b"latest"[..])
+                                b"latest"
                             };
 
-                            dep.value = Some(Expr::allocate(
-                                E::String { data: temp_version },
+                            dep.value = Some(Expr::init(
+                                E::EString::init(temp_version),
                                 logger::Loc::EMPTY,
                             ));
                         }
                     }
                 } else {
-                    let lockfile = &manager.lockfile;
+                    let lockfile = &*manager.lockfile;
                     let string_buf = lockfile.buffers.string_bytes.as_slice();
                     let workspace_package_id =
                         lockfile.get_workspace_package_id(manager.workspace_name_hash);
                     let packages = lockfile.packages.slice();
                     let resolutions = packages.items_resolution();
-                    let deps = &packages.items_dependencies()[workspace_package_id as usize];
+                    let deps = packages.items_dependencies()[workspace_package_id as usize];
                     let resolution_ids =
-                        &packages.items_resolutions()[workspace_package_id as usize];
+                        packages.items_resolutions()[workspace_package_id as usize];
                     let workspace_deps: &[Dependency] =
                         deps.get(lockfile.buffers.dependencies.as_slice());
                     let workspace_resolution_ids =
                         resolution_ids.get(lockfile.buffers.resolutions.as_slice());
 
-                    for dep in root.expr.data.e_object_mut().properties.slice_mut() {
+                    for dep in root.expr.data.e_object_mut().unwrap().properties.slice_mut() {
                         let Some(key) = &dep.key else { continue };
                         if !matches!(key.data, js_ast::ExprData::EString(_)) {
                             continue;
@@ -346,26 +369,31 @@ pub fn edit_update_no_args(
                             continue;
                         }
 
-                        let key_str = key.as_string().unwrap_or_else(|| bun_core::out_of_memory());
+                        let key_str = key
+                            .as_utf8_string_literal()
+                            .unwrap_or_else(|| bun_core::out_of_memory());
 
                         'updated: {
                             // fetchSwapRemove because we want to update the first dependency with a matching
                             // name, or none at all
                             if let Some(entry) =
-                                manager.updating_packages.fetch_swap_remove(&key_str)
+                                manager.updating_packages.fetch_swap_remove(key_str)
                             {
                                 let is_alias = entry.value.is_alias;
-                                let dep_name = &entry.key;
-                                debug_assert_eq!(workspace_deps.len(), workspace_resolution_ids.len());
+                                let dep_name = &*entry.key;
+                                debug_assert_eq!(
+                                    workspace_deps.len(),
+                                    workspace_resolution_ids.len()
+                                );
                                 for (workspace_dep, &package_id) in
                                     workspace_deps.iter().zip(workspace_resolution_ids)
                                 {
-                                    if package_id == invalid_package_id {
+                                    if package_id == INVALID_PACKAGE_ID {
                                         continue;
                                     }
 
                                     let resolution = &resolutions[package_id as usize];
-                                    if resolution.tag != bun_install::Resolution::Tag::Npm {
+                                    if resolution.tag != resolution::Tag::Npm {
                                         continue;
                                     }
 
@@ -377,24 +405,26 @@ pub fn edit_update_no_args(
                                     let resolved_version = manager
                                         .lockfile
                                         .resolve_catalog_dependency(workspace_dep)
-                                        .unwrap_or_else(|| workspace_dep.version.clone());
+                                        .unwrap_or(&workspace_dep.version);
                                     if let Some(npm_version) = resolved_version.npm() {
                                         // It's possible we inserted a dependency that won't update (version is an exact version).
                                         // If we find one, skip to keep the original version literal.
-                                        if !manager.options.do_.update_to_latest
+                                        if !manager.options.do_.contains(Do::UPDATE_TO_LATEST)
                                             && npm_version.version.is_exact()
                                         {
                                             break 'updated;
                                         }
                                     }
 
-                                    let new_version: Box<[u8]> = 'new_version: {
-                                        let version_fmt =
-                                            resolution.value.npm.version.fmt(string_buf);
+                                    let new_version: Vec<u8> = 'new_version: {
+                                        // SAFETY: `resolution.tag == Npm` checked above.
+                                        let version_fmt = unsafe {
+                                            resolution.value.npm.version.fmt(string_buf)
+                                        };
                                         if options.exact_versions {
                                             let mut v = Vec::new();
                                             write!(&mut v, "{}", version_fmt).unwrap();
-                                            break 'new_version v.into_boxed_slice();
+                                            break 'new_version v;
                                         }
 
                                         let version_literal: &[u8] = 'version_literal: {
@@ -431,7 +461,7 @@ pub fn edit_update_no_args(
                                                 write!(&mut v, "^{}", version_fmt).unwrap()
                                             }
                                         }
-                                        v.into_boxed_slice()
+                                        v
                                     };
 
                                     if is_alias {
@@ -451,10 +481,8 @@ pub fn edit_update_no_args(
                                                 bstr::BStr::new(&new_version)
                                             )
                                             .unwrap();
-                                            dep.value = Some(Expr::allocate(
-                                                E::String {
-                                                    data: v.into_boxed_slice(),
-                                                },
+                                            dep.value = Some(Expr::init(
+                                                E::EString::init(leak_str(v)),
                                                 logger::Loc::EMPTY,
                                             ));
                                             break 'updated;
@@ -463,8 +491,8 @@ pub fn edit_update_no_args(
                                         // fallthrough and replace entire version.
                                     }
 
-                                    dep.value = Some(Expr::allocate(
-                                        E::String { data: new_version },
+                                    dep.value = Some(Expr::init(
+                                        E::EString::init(leak_str(new_version)),
                                         logger::Loc::EMPTY,
                                     ));
                                     break 'updated;
@@ -492,12 +520,12 @@ pub fn edit(
     // using data store is going to result in undefined memory issues as
     // the store is cleared in some workspace situations. the solution
     // is to always avoid the store
-    Expr::Disabler::disable();
-    let _guard = scopeguard::guard((), |_| Expr::Disabler::enable());
+    ExprDisabler::disable();
+    let _guard = scopeguard::guard((), |_| ExprDisabler::enable());
 
     let mut remaining = updates.len();
     let mut replacing: usize = 0;
-    let only_add_missing = manager.options.enable.only_missing;
+    let only_add_missing = manager.options.enable.contains(Enable::ONLY_MISSING);
 
     // There are three possible scenarios here
     // 1. There is no "dependencies" (or equivalent list) or it is empty
@@ -505,17 +533,17 @@ pub fn edit(
     // 3. There is a "dependencies" (or equivalent list), and the package name exists in multiple lists
     // Try to use the existing spot in the dependencies list if possible
     {
-        let original_trusted_dependencies = 'brk: {
+        let original_trusted_dependencies: Vec<Expr> = 'brk: {
             if !options.add_trusted_dependencies {
-                break 'brk E::Array::default();
+                break 'brk Vec::new();
             }
             if let Some(query) = current_package_json.as_property(TRUSTED_DEPENDENCIES_STRING) {
                 if let js_ast::ExprData::EArray(arr) = &query.expr.data {
                     // not modifying
-                    break 'brk (**arr).clone();
+                    break 'brk arr.items.slice().to_vec();
                 }
             }
-            E::Array::default()
+            Vec::new()
         };
 
         if options.add_trusted_dependencies {
@@ -524,7 +552,7 @@ pub fn edit(
             while i > 0 {
                 i -= 1;
                 let trusted_package_name = &manager.trusted_deps_to_add_to_package_json[i];
-                for item in original_trusted_dependencies.items.slice() {
+                for item in original_trusted_dependencies.iter() {
                     if let js_ast::ExprData::EString(s) = &item.data {
                         if s.eql_bytes(trusted_package_name) {
                             // PORT NOTE: reshaped for borrowck — drop return value (was allocator.free)
@@ -551,58 +579,47 @@ pub fn edit(
 
                             if let Some(value) = query.expr.as_property(name) {
                                 if matches!(value.expr.data, js_ast::ExprData::EString(_)) {
-                                    if request.package_id != invalid_package_id
+                                    if request.package_id != INVALID_PACKAGE_ID
                                         && strings::eql_long(list, dependency_list, true)
                                     {
                                         replacing += 1;
                                     } else {
-                                        if manager.subcommand == bun_install::Subcommand::Update
+                                        if manager.subcommand == Subcommand::Update
                                             && options.before_install
                                         {
                                             'add_packages_to_update: {
                                                 let Some(version_literal) =
-                                                    value.expr.as_string_cloned()?
+                                                    value.expr.as_utf8_string_literal()
                                                 else {
                                                     break 'add_packages_to_update;
                                                 };
-                                                let mut tag = Dependency::Version::Tag::infer(
-                                                    &version_literal,
-                                                );
+                                                let mut tag =
+                                                    dependency::Tag::infer(version_literal);
 
-                                                if tag != Dependency::Version::Tag::Npm
-                                                    && tag != Dependency::Version::Tag::DistTag
+                                                if tag != dependency::Tag::Npm
+                                                    && tag != dependency::Tag::DistTag
                                                 {
-                                                    break 'add_packages_to_update;
-                                                }
-
-                                                let entry = manager
-                                                    .updating_packages
-                                                    .get_or_put(Box::<[u8]>::from(name));
-
-                                                // first come, first serve
-                                                if entry.found_existing {
                                                     break 'add_packages_to_update;
                                                 }
 
                                                 let mut is_alias = false;
                                                 if strings::trim(
-                                                    &version_literal,
-                                                    strings::WHITESPACE_CHARS,
+                                                    version_literal,
+                                                    &strings::WHITESPACE_CHARS,
                                                 )
                                                 .starts_with(b"npm:")
                                                 {
                                                     if let Some(at_index) =
                                                         strings::last_index_of_char(
-                                                            &version_literal,
+                                                            version_literal,
                                                             b'@',
                                                         )
                                                     {
-                                                        tag = Dependency::Version::Tag::infer(
+                                                        tag = dependency::Tag::infer(
                                                             &version_literal[at_index + 1..],
                                                         );
-                                                        if tag != Dependency::Version::Tag::Npm
-                                                            && tag
-                                                                != Dependency::Version::Tag::DistTag
+                                                        if tag != dependency::Tag::Npm
+                                                            && tag != dependency::Tag::DistTag
                                                         {
                                                             break 'add_packages_to_update;
                                                         }
@@ -610,8 +627,20 @@ pub fn edit(
                                                     }
                                                 }
 
+                                                let version_literal_owned =
+                                                    Box::<[u8]>::from(version_literal);
+                                                let entry = manager
+                                                    .updating_packages
+                                                    .get_or_put(name)?;
+
+                                                // first come, first serve
+                                                if entry.found_existing {
+                                                    break 'add_packages_to_update;
+                                                }
+
                                                 *entry.value_ptr = PackageUpdateInfo {
-                                                    original_version_literal: version_literal,
+                                                    original_version_literal:
+                                                        version_literal_owned,
                                                     is_alias,
                                                     original_version_string_buf: Box::default(),
                                                     original_version: None,
@@ -619,9 +648,9 @@ pub fn edit(
                                             }
                                         }
                                         if !only_add_missing {
-                                            // TODO(port): e_string is Option<*mut E::String> on UpdateRequest
-                                            request.e_string =
-                                                Some(value.expr.data.e_string_ptr());
+                                            request.e_string = Some(
+                                                value.expr.data.e_string().unwrap().as_ptr(),
+                                            );
                                             remaining -= 1;
                                         } else {
                                             let last = updates.len() - 1;
@@ -636,19 +665,22 @@ pub fn edit(
                                 }
                                 break;
                             } else {
-                                if request.version.tag == Dependency::Version::Tag::Github
-                                    || request.version.tag == Dependency::Version::Tag::Git
+                                if request.version.tag == dependency::Tag::Github
+                                    || request.version.tag == dependency::Tag::Git
                                 {
-                                    for item in query.expr.data.e_object().properties.slice() {
+                                    for item in
+                                        query.expr.data.e_object().unwrap().properties.slice()
+                                    {
                                         if let Some(v) = &item.value {
                                             let url = request
                                                 .version
                                                 .literal
-                                                .slice(&request.version_buf);
+                                                .slice(request.version_buf);
                                             if let js_ast::ExprData::EString(s) = &v.data {
                                                 if s.eql_bytes(url) {
-                                                    request.e_string =
-                                                        Some(v.data.e_string_ptr());
+                                                    request.e_string = Some(
+                                                        v.data.e_string().unwrap().as_ptr(),
+                                                    );
                                                     remaining -= 1;
                                                     break;
                                                 }
@@ -666,25 +698,29 @@ pub fn edit(
     }
 
     if remaining != 0 {
-        let mut dependencies: &[G::Property] = &[];
-        if let Some(query) = current_package_json.as_property(dependency_list) {
-            if let js_ast::ExprData::EObject(obj) = &query.expr.data {
-                dependencies = obj.properties.slice();
+        let mut new_dependencies: Vec<G::Property> = {
+            let mut dependencies: Vec<G::Property> = Vec::new();
+            if let Some(query) = current_package_json.as_property(dependency_list) {
+                if let js_ast::ExprData::EObject(obj) = &query.expr.data {
+                    for p in obj.properties.slice() {
+                        dependencies.push(copy_property(p));
+                    }
+                }
             }
-        }
-
-        let mut new_dependencies: Vec<G::Property> =
-            Vec::with_capacity(dependencies.len() + remaining - replacing);
-        new_dependencies.resize(dependencies.len() + remaining - replacing, G::Property::default());
-
-        new_dependencies[..dependencies.len()].clone_from_slice(dependencies);
-        // tail already initialized to G::Property::default() by resize
+            let target = dependencies.len() + remaining - replacing;
+            while dependencies.len() < target {
+                dependencies.push(G::Property::default());
+            }
+            dependencies
+        };
 
         let mut trusted_dependencies: &[Expr] = &[];
         if options.add_trusted_dependencies {
             if let Some(query) = current_package_json.as_property(TRUSTED_DEPENDENCIES_STRING) {
                 if let js_ast::ExprData::EArray(arr) = &query.expr.data {
-                    trusted_dependencies = arr.items.slice();
+                    // SAFETY: arena-backed slice; see note in `edit_trusted_dependencies`.
+                    trusted_dependencies =
+                        unsafe { &*(arr.items.slice() as *const [Expr]) };
                 }
             }
         }
@@ -692,13 +728,13 @@ pub fn edit(
         let trusted_dependencies_to_add = manager.trusted_deps_to_add_to_package_json.len();
         let new_trusted_deps: js_ast::ExprNodeList = 'brk: {
             if !options.add_trusted_dependencies || trusted_dependencies_to_add == 0 {
-                break 'brk js_ast::ExprNodeList::EMPTY;
+                break 'brk js_ast::ExprNodeList::default();
             }
 
             let mut deps =
                 vec![Expr::EMPTY; trusted_dependencies.len() + trusted_dependencies_to_add]
                     .into_boxed_slice();
-            deps[0..trusted_dependencies.len()].clone_from_slice(trusted_dependencies);
+            deps[0..trusted_dependencies.len()].copy_from_slice(trusted_dependencies);
             // tail already initialized to Expr::EMPTY
 
             for package_name in &manager.trusted_deps_to_add_to_package_json {
@@ -717,10 +753,8 @@ pub fn edit(
                 while i > 0 {
                     i -= 1;
                     if matches!(deps[i].data, js_ast::ExprData::EMissing(_)) {
-                        deps[i] = Expr::allocate(
-                            E::String {
-                                data: package_name.clone(),
-                            },
+                        deps[i] = Expr::init(
+                            E::EString::init(leak_dup(package_name)),
                             logger::Loc::EMPTY,
                         );
                         break;
@@ -745,11 +779,11 @@ pub fn edit(
             while k < new_dependencies.len() {
                 if let Some(key) = &new_dependencies[k].key {
                     let name = request.get_name();
-                    if !key.data.e_string().eql_bytes(name) {
+                    if !key.data.e_string().unwrap().eql_bytes(name) {
                         k += 1;
                         continue;
                     }
-                    if request.package_id == invalid_package_id {
+                    if request.package_id == INVALID_PACKAGE_ID {
                         // Duplicate dependency (e.g., "react" in both "dependencies" and
                         // "optionalDependencies"). Remove the old dependency.
                         new_dependencies[k] = G::Property::default();
@@ -759,18 +793,14 @@ pub fn edit(
                     }
                 }
 
-                new_dependencies[k].key = Some(Expr::allocate(
-                    E::String {
-                        data: Box::<[u8]>::from(request.get_resolved_name(&manager.lockfile)),
-                    },
+                new_dependencies[k].key = Some(Expr::init(
+                    E::EString::init(leak_dup(request.get_resolved_name(&manager.lockfile))),
                     logger::Loc::EMPTY,
                 ));
 
-                new_dependencies[k].value = Some(Expr::allocate(
-                    E::String {
-                        // we set it later
-                        data: Box::default(),
-                    },
+                new_dependencies[k].value = Some(Expr::init(
+                    // we set it later
+                    E::EString::init(b""),
                     logger::Loc::EMPTY,
                 ));
 
@@ -780,7 +810,9 @@ pub fn edit(
                         .as_ref()
                         .unwrap()
                         .data
-                        .e_string_ptr(),
+                        .e_string()
+                        .unwrap()
+                        .as_ptr(),
                 );
                 break;
             }
@@ -794,7 +826,7 @@ pub fn edit(
         }
 
         let mut needs_new_dependency_list = true;
-        let dependencies_object: Expr = 'brk: {
+        let mut dependencies_object: Expr = 'brk: {
             if let Some(query) = current_package_json.as_property(dependency_list) {
                 if matches!(query.expr.data, js_ast::ExprData::EObject(_)) {
                     needs_new_dependency_list = false;
@@ -802,24 +834,25 @@ pub fn edit(
                 }
             }
 
-            Expr::allocate(
+            Expr::init(
                 E::Object {
-                    properties: G::Property::List::EMPTY,
+                    properties: G::PropertyList::default(),
                     ..Default::default()
                 },
                 logger::Loc::EMPTY,
             )
         };
 
-        // TODO(port): direct e_object field access — assumes EObject variant
-        dependencies_object.data.e_object_mut().properties =
-            G::Property::List::move_from_list(&mut new_dependencies);
-        if dependencies_object.data.e_object().properties.len() > 1 {
-            dependencies_object.data.e_object_mut().alphabetize_properties();
+        {
+            let obj = dependencies_object.data.e_object_mut().unwrap();
+            obj.properties = G::PropertyList::move_from_list(new_dependencies);
+            if obj.properties.len > 1 {
+                obj.alphabetize_properties();
+            }
         }
 
         let mut needs_new_trusted_dependencies_list = true;
-        let trusted_dependencies_array: Expr = 'brk: {
+        let mut trusted_dependencies_array: Expr = 'brk: {
             if !options.add_trusted_dependencies || trusted_dependencies_to_add == 0 {
                 needs_new_trusted_dependencies_list = false;
                 break 'brk Expr::EMPTY;
@@ -831,9 +864,9 @@ pub fn edit(
                 }
             }
 
-            Expr::allocate(
+            Expr::init(
                 E::Array {
-                    items: new_trusted_deps.clone(),
+                    items: js_ast::ExprNodeList::from_slice(new_trusted_deps.slice())?,
                     ..Default::default()
                 },
                 logger::Loc::EMPTY,
@@ -841,100 +874,90 @@ pub fn edit(
         };
 
         if options.add_trusted_dependencies && trusted_dependencies_to_add > 0 {
-            let arr = trusted_dependencies_array.data.e_array_mut();
+            let arr = trusted_dependencies_array.data.e_array_mut().unwrap();
             arr.items = new_trusted_deps;
-            if arr.items.len() > 1 {
+            if arr.items.len > 1 {
                 arr.alphabetize_strings();
             }
         }
 
         if !matches!(current_package_json.data, js_ast::ExprData::EObject(_))
-            || current_package_json.data.e_object().properties.len() == 0
+            || current_package_json.data.e_object().unwrap().properties.len == 0
         {
             let n = if options.add_trusted_dependencies { 2 } else { 1 };
-            let mut root_properties = vec![G::Property::default(); n].into_boxed_slice();
-            root_properties[0] = G::Property {
-                key: Some(Expr::allocate(
-                    E::String {
-                        data: Box::<[u8]>::from(dependency_list),
-                    },
+            let mut root_properties: Vec<G::Property> = Vec::with_capacity(n);
+            root_properties.push(G::Property {
+                key: Some(Expr::init(
+                    E::EString::init(leak_dup(dependency_list)),
                     logger::Loc::EMPTY,
                 )),
                 value: Some(dependencies_object),
                 ..Default::default()
-            };
+            });
 
             if options.add_trusted_dependencies {
-                root_properties[1] = G::Property {
-                    key: Some(Expr::allocate(
-                        E::String {
-                            data: Box::<[u8]>::from(TRUSTED_DEPENDENCIES_STRING),
-                        },
+                root_properties.push(G::Property {
+                    key: Some(Expr::init(
+                        E::EString::init(TRUSTED_DEPENDENCIES_STRING),
                         logger::Loc::EMPTY,
                     )),
                     value: Some(trusted_dependencies_array),
                     ..Default::default()
-                };
+                });
             }
 
-            *current_package_json = Expr::allocate(
+            *current_package_json = Expr::init(
                 E::Object {
-                    properties: G::Property::List::from_owned_slice(root_properties),
+                    properties: G::PropertyList::move_from_list(root_properties),
                     ..Default::default()
                 },
                 logger::Loc::EMPTY,
             );
         } else {
             if needs_new_dependency_list && needs_new_trusted_dependencies_list {
-                let old_len = current_package_json.data.e_object().properties.len();
-                let mut root_properties =
-                    vec![G::Property::default(); old_len + 2].into_boxed_slice();
-                root_properties[0..old_len]
-                    .clone_from_slice(current_package_json.data.e_object().properties.slice());
-                let rlen = root_properties.len();
-                root_properties[rlen - 2] = G::Property {
-                    key: Some(Expr::allocate(
-                        E::String {
-                            data: Box::<[u8]>::from(dependency_list),
-                        },
+                let old_props = current_package_json.data.e_object().unwrap().properties.slice();
+                let mut root_properties: Vec<G::Property> =
+                    Vec::with_capacity(old_props.len() + 2);
+                for p in old_props {
+                    root_properties.push(copy_property(p));
+                }
+                root_properties.push(G::Property {
+                    key: Some(Expr::init(
+                        E::EString::init(leak_dup(dependency_list)),
                         logger::Loc::EMPTY,
                     )),
                     value: Some(dependencies_object),
                     ..Default::default()
-                };
-                root_properties[rlen - 1] = G::Property {
-                    key: Some(Expr::allocate(
-                        E::String {
-                            data: Box::<[u8]>::from(TRUSTED_DEPENDENCIES_STRING),
-                        },
+                });
+                root_properties.push(G::Property {
+                    key: Some(Expr::init(
+                        E::EString::init(TRUSTED_DEPENDENCIES_STRING),
                         logger::Loc::EMPTY,
                     )),
                     value: Some(trusted_dependencies_array),
                     ..Default::default()
-                };
-                *current_package_json = Expr::allocate(
+                });
+                *current_package_json = Expr::init(
                     E::Object {
-                        properties: G::Property::List::from_owned_slice(root_properties),
+                        properties: G::PropertyList::move_from_list(root_properties),
                         ..Default::default()
                     },
                     logger::Loc::EMPTY,
                 );
             } else if needs_new_dependency_list || needs_new_trusted_dependencies_list {
-                let old_len = current_package_json.data.e_object().properties.len();
-                let mut root_properties =
-                    vec![G::Property::default(); old_len + 1].into_boxed_slice();
-                root_properties[0..old_len]
-                    .clone_from_slice(current_package_json.data.e_object().properties.slice());
-                let last = root_properties.len() - 1;
-                root_properties[last] = G::Property {
-                    key: Some(Expr::allocate(
-                        E::String {
-                            data: if needs_new_dependency_list {
-                                Box::<[u8]>::from(dependency_list)
-                            } else {
-                                Box::<[u8]>::from(TRUSTED_DEPENDENCIES_STRING)
-                            },
-                        },
+                let old_props = current_package_json.data.e_object().unwrap().properties.slice();
+                let mut root_properties: Vec<G::Property> =
+                    Vec::with_capacity(old_props.len() + 1);
+                for p in old_props {
+                    root_properties.push(copy_property(p));
+                }
+                root_properties.push(G::Property {
+                    key: Some(Expr::init(
+                        E::EString::init(if needs_new_dependency_list {
+                            leak_dup(dependency_list)
+                        } else {
+                            TRUSTED_DEPENDENCIES_STRING
+                        }),
                         logger::Loc::EMPTY,
                     )),
                     value: Some(if needs_new_dependency_list {
@@ -943,10 +966,10 @@ pub fn edit(
                         trusted_dependencies_array
                     }),
                     ..Default::default()
-                };
-                *current_package_json = Expr::allocate(
+                });
+                *current_package_json = Expr::init(
                     E::Object {
-                        properties: G::Property::List::from_owned_slice(root_properties),
+                        properties: G::PropertyList::move_from_list(root_properties),
                         ..Default::default()
                     },
                     logger::Loc::EMPTY,
@@ -964,14 +987,15 @@ pub fn edit(
         if let Some(e_string) = request.e_string {
             // SAFETY: `e_string` is a `*mut E::EString` into the thread-local Expr Store/arena,
             // captured at one of two provenance sites:
-            //   (a) the freshly `Expr::allocate`d empty value string in `new_dependencies` (the
-            //       `e_string_ptr()` call inside the `while k < new_dependencies.len()` loop), or
+            //   (a) the freshly `Expr::init`ed empty value string in `new_dependencies` (the
+            //       `e_string().unwrap().as_ptr()` call inside the `while k < new_dependencies.len()`
+            //       loop), or
             //   (b) a *pre-existing* arena slot from the parsed `current_package_json` input tree
-            //       (`value.expr.data.e_string_ptr()` / `v.data.e_string_ptr()` in the earlier
+            //       (`value.expr.data.e_string()` / `v.data.e_string()` in the earlier
             //       dependency-group scan; Zig:447 / Zig:467).
             // In both cases the arena slot is pinned for the duration of `edit`: the thread-local
-            // Store is held live by `Expr::Disabler::disable()` taken at function entry, and the
-            // `*current_package_json = Expr::allocate(...)` reassignments above only overwrite a
+            // Store is held live by `ExprDisabler::disable()` taken at function entry, and the
+            // `*current_package_json = Expr::init(...)` reassignments above only overwrite a
             // Copy `Expr` handle — they never reset the arena. The Expr tree only references the
             // slot via `StoreRef` (a Copy `NonNull`), and no `&`/`&mut` derived from a `StoreRef`
             // to the same `E::EString` is live inside this loop body, so this is the sole mutable
@@ -979,58 +1003,57 @@ pub fn edit(
             // pattern.
             let e_string = unsafe { &mut *e_string };
             if request.package_id as usize >= resolutions.len()
-                || resolutions[request.package_id as usize].tag
-                    == bun_install::Resolution::Tag::Uninitialized
+                || resolutions[request.package_id as usize].tag == resolution::Tag::Uninitialized
             {
                 e_string.data = 'uninitialized: {
-                    if manager.subcommand == bun_install::Subcommand::Update
-                        && manager.options.do_.update_to_latest
+                    if manager.subcommand == Subcommand::Update
+                        && manager.options.do_.contains(Do::UPDATE_TO_LATEST)
                     {
-                        break 'uninitialized Box::<[u8]>::from(&b"latest"[..]);
+                        break 'uninitialized b"latest" as &'static [u8];
                     }
 
-                    if manager.subcommand != bun_install::Subcommand::Update
+                    if manager.subcommand != Subcommand::Update
                         || !options.before_install
                         || e_string.is_blank()
-                        || request.version.tag == Dependency::Version::Tag::Npm
+                        || request.version.tag == dependency::Tag::Npm
                     {
                         break 'uninitialized match request.version.tag {
-                            Dependency::Version::Tag::Uninitialized => {
-                                Box::<[u8]>::from(&b"latest"[..])
-                            }
-                            _ => Box::<[u8]>::from(
-                                request.version.literal.slice(&request.version_buf),
+                            dependency::Tag::Uninitialized => b"latest" as &'static [u8],
+                            _ => leak_dup(
+                                request.version.literal.slice(request.version_buf),
                             ),
                         };
                     } else {
-                        // TODO(port): re-assigning own data; clone to satisfy borrowck
-                        break 'uninitialized e_string.data.clone();
+                        break 'uninitialized e_string.data;
                     }
                 };
 
                 continue;
             }
             e_string.data = match resolutions[request.package_id as usize].tag {
-                bun_install::Resolution::Tag::Npm => 'npm: {
-                    if manager.subcommand == bun_install::Subcommand::Update
-                        && (request.version.tag == Dependency::Version::Tag::DistTag
-                            || request.version.tag == Dependency::Version::Tag::Npm)
+                resolution::Tag::Npm => 'npm: {
+                    if manager.subcommand == Subcommand::Update
+                        && (request.version.tag == dependency::Tag::DistTag
+                            || request.version.tag == dependency::Tag::Npm)
                     {
                         if let Some(entry) =
-                            manager.updating_packages.fetch_swap_remove(&request.name)
+                            manager.updating_packages.fetch_swap_remove(request.name)
                         {
                             let mut alias_at_index: Option<usize> = None;
 
-                            let new_version: Box<[u8]> = 'new_version: {
-                                let version_fmt = resolutions[request.package_id as usize]
-                                    .value
-                                    .npm
-                                    .version
-                                    .fmt(manager.lockfile.buffers.string_bytes.as_slice());
+                            let new_version: Vec<u8> = 'new_version: {
+                                // SAFETY: `tag == Npm` matched above.
+                                let version_fmt = unsafe {
+                                    resolutions[request.package_id as usize]
+                                        .value
+                                        .npm
+                                        .version
+                                        .fmt(manager.lockfile.buffers.string_bytes.as_slice())
+                                };
                                 if options.exact_versions {
                                     let mut v = Vec::new();
                                     write!(&mut v, "{}", version_fmt).unwrap();
-                                    break 'new_version v.into_boxed_slice();
+                                    break 'new_version v;
                                 }
 
                                 let version_literal: &[u8] = 'version_literal: {
@@ -1067,7 +1090,7 @@ pub fn edit(
                                         write!(&mut v, "^{}", version_fmt).unwrap()
                                     }
                                 }
-                                v.into_boxed_slice()
+                                v
                             };
 
                             let _ = alias_at_index;
@@ -1086,24 +1109,28 @@ pub fn edit(
                                         bstr::BStr::new(&new_version)
                                     )
                                     .unwrap();
-                                    break 'npm v.into_boxed_slice();
+                                    break 'npm leak_str(v);
                                 }
                             }
 
-                            break 'npm new_version;
+                            break 'npm leak_str(new_version);
                         }
                     }
-                    if request.version.tag == Dependency::Version::Tag::DistTag
-                        || (manager.subcommand == bun_install::Subcommand::Update
-                            && request.version.tag == Dependency::Version::Tag::Npm
-                            && !request.version.value.npm.version.is_exact())
+                    if request.version.tag == dependency::Tag::DistTag
+                        || (manager.subcommand == Subcommand::Update
+                            && request.version.tag == dependency::Tag::Npm
+                            // SAFETY: `tag == Npm` checked just above.
+                            && unsafe { !request.version.value.npm.version.is_exact() })
                     {
-                        let new_version: Box<[u8]> = {
-                            let version_fmt = resolutions[request.package_id as usize]
-                                .value
-                                .npm
-                                .version
-                                .fmt(&request.version_buf);
+                        let new_version: Vec<u8> = {
+                            // SAFETY: `tag == Npm` matched at the top of this arm.
+                            let version_fmt = unsafe {
+                                resolutions[request.package_id as usize]
+                                    .value
+                                    .npm
+                                    .version
+                                    .fmt(request.version_buf)
+                            };
                             let mut v = Vec::new();
                             if options.exact_versions {
                                 write!(&mut v, "{}", version_fmt).unwrap();
@@ -1111,14 +1138,16 @@ pub fn edit(
                                 write!(&mut v, "^{}", version_fmt).unwrap();
                             }
                             // PERF(port): was comptime bool dispatch — profile in Phase B
-                            v.into_boxed_slice()
+                            v
                         };
 
-                        if request.version.tag == Dependency::Version::Tag::Npm
-                            && request.version.value.npm.is_alias
+                        if request.version.tag == dependency::Tag::Npm
+                            // SAFETY: `tag == Npm` checked above.
+                            && unsafe { request.version.value.npm.is_alias }
                         {
-                            let dep_literal = request.version.literal.slice(&request.version_buf);
+                            let dep_literal = request.version.literal.slice(request.version_buf);
                             if let Some(at_index) = strings::index_of_char(dep_literal, b'@') {
+                                let at_index = at_index as usize;
                                 let mut v = Vec::new();
                                 write!(
                                     &mut v,
@@ -1127,18 +1156,18 @@ pub fn edit(
                                     bstr::BStr::new(&new_version)
                                 )
                                 .unwrap();
-                                break 'npm v.into_boxed_slice();
+                                break 'npm leak_str(v);
                             }
                         }
 
-                        break 'npm new_version;
+                        break 'npm leak_str(new_version);
                     }
 
-                    Box::<[u8]>::from(request.version.literal.slice(&request.version_buf))
+                    leak_dup(request.version.literal.slice(request.version_buf))
                 }
 
-                bun_install::Resolution::Tag::Workspace => Box::<[u8]>::from(&b"workspace:*"[..]),
-                _ => Box::<[u8]>::from(request.version.literal.slice(&request.version_buf)),
+                resolution::Tag::Workspace => b"workspace:*",
+                _ => leak_dup(request.version.literal.slice(request.version_buf)),
             };
         }
     }
@@ -1152,5 +1181,5 @@ const TRUSTED_DEPENDENCIES_STRING: &[u8] = b"trustedDependencies";
 //   source:     src/install/PackageManager/PackageJSONEditor.zig (799 lines)
 //   confidence: medium
 //   todos:      8
-//   notes:      Expr/E/G API surface (e_object_mut/e_string_ptr/allocate/init) assumed; UpdateRequest.e_string raw ptr semantics and *[]UpdateRequest shrinking need Phase B review; heavy borrowck reshaping likely needed around manager.lockfile + manager.updating_packages aliasing
+//   notes:      AST EString.data is `'static [u8]` (Phase-A); owned strings are `Box::leak`ed (matches Zig leaked-singleton allocator). G::Property is non-Clone (`@memcpy` ported as key/value-only copy via `copy_property`). UpdateRequest.e_string raw-ptr deferred-write pattern + *[]UpdateRequest in-place shrink need Phase-B review. resolve_catalog_dependency stubbed on lockfile until lockfile_real un-gates.
 // ──────────────────────────────────────────────────────────────────────────

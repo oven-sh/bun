@@ -1195,6 +1195,11 @@ pub mod lockfile {
         pub fn loaded_from_text_lockfile(&self) -> bool {
             matches!(self, LoadResult::Ok(ok) if ok.format == Format::Text)
         }
+        /// Port of `LoadResult.loadedFromBinaryLockfile` (src/install/lockfile.zig).
+        #[inline]
+        pub fn loaded_from_binary_lockfile(&self) -> bool {
+            matches!(self, LoadResult::Ok(ok) if ok.format == Format::Binary)
+        }
         /// Port of `LoadResult.migratedFromNpm` (src/install/lockfile.zig).
         #[inline]
         pub fn migrated_from_npm(&self) -> bool {
@@ -2075,13 +2080,50 @@ impl RootPackageId {
     pub patched_dependencies_to_remove: bun_collections::ArrayHashMap<u64, ()>,
     /// Zig: `any_failed_to_install: bool = false`.
     pub any_failed_to_install: bool,
+    /// Zig: `async_network_task_queue: AsyncNetworkTaskQueue` -- see stub type below.
+    pub async_network_task_queue: AsyncNetworkTaskQueueStub,
+    /// Zig: `preallocated_resolve_tasks: PreallocatedTaskStore` (HiveArray.Fallback) -- see stub.
+    pub preallocated_resolve_tasks: PreallocatedResolveTasksStub,
+}
+/// Stub `AsyncNetworkTaskQueue` -- the real type is
+/// `UnboundedQueue<network_task::NetworkTask>` (PackageManager.rs:347), but the
+/// stub `PackageManager` cannot name `network_task::NetworkTask` without a
+/// type-level cycle through this module. The HTTP-thread `push` is recorded
+/// only so `NetworkTask::notify` type-checks; the real queue drain happens in
+/// `package_manager_real`.
+#[derive(Default)] pub struct AsyncNetworkTaskQueueStub;
+impl AsyncNetworkTaskQueueStub {
+    #[inline] pub fn push<T>(&self, _item: *mut T) {
+        todo!("blocked_on: bun_install reconciler -- unify crate::PackageManager with package_manager_real::PackageManager so async_network_task_queue is the real UnboundedQueue<NetworkTask>")
+    }
+}
+/// Stub `PreallocatedTaskStore` (HiveArray<Task,64>.Fallback). `put()` returns
+/// the slot to the pool in the real impl; stub records the call site only.
+#[derive(Default)] pub struct PreallocatedResolveTasksStub;
+impl PreallocatedResolveTasksStub {
+    #[inline] pub fn put<T>(&mut self, _value: *mut T) {}
 }
 impl PackageManager {
     /// Zig field-access `manager.log` derefs the borrowed `*logger.Log`.
-    /// SAFETY: `log` is non-null after `init()`; mirrors Zig's non-optional `*Log`.
+    /// SAFETY: `log` is non-null after `init()`; mirrors Zig non-optional `*Log`.
     #[inline]
     pub fn log_mut(&self) -> &mut bun_logger::Log {
         unsafe { self.log.unwrap().as_mut() }
+    }
+    /// Port of `PackageManager.httpProxy` (PackageManager.zig) -- forwards to
+    /// the env loader. Stub returns `None` until `package_manager_real`
+    /// unifies and the env loader is wired through.
+    #[inline]
+    pub fn http_proxy(&self, _url: &bun_url::URL<'_>) -> Option<bun_url::URL<'static>> {
+        // TODO(port): route through `self.env().get_http_proxy_for(url)` once
+        // the stub `env` is `&mut`-accessible from a `&self` borrow.
+        None
+    }
+    /// Port of `PackageManager.tlsRejectUnauthorized` (PackageManager.zig).
+    #[inline]
+    pub fn tls_reject_unauthorized(&self) -> bool {
+        // TODO(port): route through `self.env().get_tls_reject_unauthorized()`.
+        true
     }
 }
 
@@ -2138,6 +2180,74 @@ impl PackageManager {
         _authorization: network_task::Authorization,
     ) -> Result<Option<*mut network_task::NetworkTask>, bun_core::Error> {
         todo!("blocked_on: bun_install::package_manager_real un-gate (reconciler-6) — run_tasks::generate_network_task_for_tarball")
+    }
+
+    /// Port of `directories.isFolderInCache`
+    /// (src/install/PackageManager/PackageManagerDirectories.zig). Real body in
+    /// `package_manager_real::package_manager_directories::is_folder_in_cache`;
+    /// that impl types against the real `PackageManager` so the stub forwards
+    /// once the two structs unify.
+    pub fn is_folder_in_cache(&mut self, _folder_path: &bun_core::ZStr) -> bool {
+        todo!("blocked_on: bun_install::package_manager_real un-gate (reconciler-6) — package_manager_directories::is_folder_in_cache")
+    }
+
+    /// Port of `directories.cachedGitFolderNamePrintAuto`. Real body in
+    /// `package_manager_real::package_manager_directories`.
+    pub fn cached_git_folder_name_print_auto(
+        &self,
+        _repository: &repository::Repository,
+        _patch_hash: Option<u64>,
+    ) -> &'static bun_core::ZStr {
+        todo!("blocked_on: bun_install::package_manager_real un-gate (reconciler-6) — package_manager_directories::cached_git_folder_name_print_auto")
+    }
+
+    /// Port of `directories.cachedGitHubFolderNamePrintAuto`. Real body in
+    /// `package_manager_real::package_manager_directories`.
+    pub fn cached_github_folder_name_print_auto(
+        &self,
+        _repository: &repository::Repository,
+        _patch_hash: Option<u64>,
+    ) -> &'static bun_core::ZStr {
+        todo!("blocked_on: bun_install::package_manager_real un-gate (reconciler-6) — package_manager_directories::cached_github_folder_name_print_auto")
+    }
+
+    /// Port of `directories.cachedNPMPackageFolderName`. Real body in
+    /// `package_manager_real::package_manager_directories`.
+    pub fn cached_npm_package_folder_name(
+        &self,
+        _name: &[u8],
+        _version: bun_semver::Version,
+        _patch_hash: Option<u64>,
+    ) -> &'static bun_core::ZStr {
+        todo!("blocked_on: bun_install::package_manager_real un-gate (reconciler-6) — package_manager_directories::cached_npm_package_folder_name")
+    }
+
+    /// Port of `directories.cachedTarballFolderName`. Real body in
+    /// `package_manager_real::package_manager_directories`.
+    pub fn cached_tarball_folder_name(
+        &self,
+        _url: bun_semver::String,
+        _patch_hash: Option<u64>,
+    ) -> &'static bun_core::ZStr {
+        todo!("blocked_on: bun_install::package_manager_real un-gate (reconciler-6) — package_manager_directories::cached_tarball_folder_name")
+    }
+
+    /// Port of `PackageManager.ensureTempNodeGypScript`
+    /// (src/install/PackageManager.zig:451). Real body in
+    /// `package_manager_real::PackageManager::ensure_temp_node_gyp_script`.
+    pub fn ensure_temp_node_gyp_script(&mut self) -> Result<(), bun_core::Error> {
+        todo!("blocked_on: bun_install::package_manager_real un-gate (reconciler-6) — PackageManager::ensure_temp_node_gyp_script")
+    }
+
+    /// Port of `PackageManager.configureEnvForScripts`
+    /// (src/install/PackageManager.zig:310). Real body in
+    /// `package_manager_real::PackageManager::configure_env_for_scripts`.
+    pub fn configure_env_for_scripts(
+        &mut self,
+        _ctx: package_manager_real::Command::Context<'_>,
+        _log_level: package_manager::Options::LogLevel,
+    ) -> Result<&mut bun_transpiler::Transpiler<'static>, bun_core::Error> {
+        todo!("blocked_on: bun_install::package_manager_real un-gate (reconciler-6) — PackageManager::configure_env_for_scripts")
     }
 }
 #[derive(Default)] pub struct PackageManagerOptionsStub {
@@ -2293,6 +2403,14 @@ pub struct PackageManagerTmpDirStub {
 #[derive(Default)] pub struct LifecycleScriptSubprocess;
 #[derive(Default)] pub struct SecurityScanSubprocess;
 #[derive(Default)] pub struct PackageInstall;
+impl PackageInstall {
+    /// Port of `PackageInstall.supported_method` (src/install/PackageInstall.zig).
+    /// Platform-dependent default file-copy backend; the real value is computed
+    /// once via `clonefile`/`ioctl(FICLONE)` probes in `package_install.rs`.
+    pub fn supported_method() -> crate::package_install::Method {
+        crate::package_install::Method::default()
+    }
+}
 #[derive(Default)] pub struct Store;
 #[derive(Default)] pub struct FileCopier;
 #[derive(Default)] pub struct PatchTask {
@@ -2300,6 +2418,18 @@ pub struct PackageManagerTmpDirStub {
     /// Zig: `next: ?*PatchTask = null` (src/install/patch_install.zig:31) —
     /// intrusive link for `PatchTaskQueue` (`UnboundedQueue(PatchTask, .next)`).
     pub next: *mut PatchTask,
+}
+impl PatchTask {
+    /// Port of `PatchTask.newApplyPatchHash` (src/install/patch_install.zig).
+    /// Real body in `patch_install::PatchTask::new_apply_patch_hash`.
+    pub fn new_apply_patch_hash(
+        _manager: &mut PackageManager,
+        _pkg_id: PackageID,
+        _contents_hash: u64,
+        _name_and_version_hash: u64,
+    ) -> Self {
+        todo!("blocked_on: patch_install::PatchTask stub-unification (reconciler-6)")
+    }
 }
 // SAFETY: `next` is the sole intrusive link and is only ever read/written via
 // these accessors by `UnboundedQueue<PatchTask>`. Mirrors Zig's

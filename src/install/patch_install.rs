@@ -255,6 +255,15 @@ impl<'a> PatchTask<'a> {
             let dep_id = state.dependency_id;
 
             let pkg: Package = manager.lockfile.packages.get(pkg_id);
+            // PORT NOTE: `Package` is not `Copy` in the Rust port; capture the
+            // scalar fields we need after `determine_preinstall_state` consumes
+            // it (Zig's `packages.get()` returns by-value-copy).
+            let pkg_meta_id = pkg.meta.id;
+            let pkg_name = pkg.name;
+            let pkg_resolution_tag = pkg.resolution.tag;
+            // SAFETY: `tag == Npm` is checked below before this is used.
+            let pkg_npm_version = unsafe { pkg.resolution.value.npm.version };
+            let name_and_version_hash = calc_hash.name_and_version_hash;
 
             let mut out_name_and_version_hash: Option<u64> = None;
             let mut out_patchfile_hash: Option<u64> = None;
@@ -263,7 +272,7 @@ impl<'a> PatchTask<'a> {
             // by-pointer alongside `*PackageManager`). Route through a raw pointer to break the
             // overlapping borrow until the lockfile is split out of the stub.
             let lockfile_ptr: *mut Lockfile = &mut manager.lockfile;
-            manager.set_preinstall_state(pkg.meta.id, unsafe { &*lockfile_ptr }, PreinstallState::Unknown);
+            manager.set_preinstall_state(pkg_meta_id, unsafe { &*lockfile_ptr }, PreinstallState::Unknown);
             match manager.determine_preinstall_state(
                 pkg,
                 unsafe { &mut *lockfile_ptr },
@@ -275,25 +284,26 @@ impl<'a> PatchTask<'a> {
                     bun_output::scoped_log!(
                         InstallPatch,
                         "pkg: {} done",
-                        BStr::new(pkg.name.slice(&manager.lockfile.buffers.string_bytes))
+                        BStr::new(pkg_name.slice(&manager.lockfile.buffers.string_bytes))
                     );
                 }
                 PreinstallState::Extract => {
                     bun_output::scoped_log!(
                         InstallPatch,
                         "pkg: {} extract",
-                        BStr::new(pkg.name.slice(&manager.lockfile.buffers.string_bytes))
+                        BStr::new(pkg_name.slice(&manager.lockfile.buffers.string_bytes))
                     );
 
                     let task_id = TaskId::for_npm_package(
-                        manager.lockfile.str(&pkg.name),
-                        pkg.resolution.value.npm.version,
+                        manager.lockfile.str(&pkg_name),
+                        pkg_npm_version,
                     );
                     debug_assert!(!manager.network_dedupe_map.contains_key(&task_id));
 
                     let is_required = manager.lockfile.buffers.dependencies[dep_id as usize]
                         .behavior
                         .is_required();
+                    let pkg_again: Package = manager.lockfile.packages.get(pkg_id);
                     let network_task = manager
                         .generate_network_task_for_tarball(
                             // TODO: not just npm package
@@ -301,17 +311,17 @@ impl<'a> PatchTask<'a> {
                             url,
                             is_required,
                             dep_id,
-                            &pkg,
-                            Some(calc_hash.name_and_version_hash),
-                            match pkg.resolution.tag {
+                            &pkg_again,
+                            Some(name_and_version_hash),
+                            match pkg_resolution_tag {
                                 crate::resolution::Tag::Npm => Authorization::AllowAuthorization,
                                 _ => Authorization::NoAuthorization,
                             },
                         )?
                         .unwrap_or_else(|| unreachable!());
-                    if manager.get_preinstall_state(pkg.meta.id) == PreinstallState::Extract {
+                    if manager.get_preinstall_state(pkg_meta_id) == PreinstallState::Extract {
                         manager.set_preinstall_state(
-                            pkg.meta.id,
+                            pkg_meta_id,
                             unsafe { &*lockfile_ptr },
                             PreinstallState::Extracting,
                         );
@@ -322,17 +332,17 @@ impl<'a> PatchTask<'a> {
                     bun_output::scoped_log!(
                         InstallPatch,
                         "pkg: {} apply patch",
-                        BStr::new(pkg.name.slice(&manager.lockfile.buffers.string_bytes))
+                        BStr::new(pkg_name.slice(&manager.lockfile.buffers.string_bytes))
                     );
                     let patch_task = PatchTask::new_apply_patch_hash(
                         manager,
-                        pkg.meta.id,
+                        pkg_meta_id,
                         hash,
-                        calc_hash.name_and_version_hash,
+                        name_and_version_hash,
                     );
-                    if manager.get_preinstall_state(pkg.meta.id) == PreinstallState::ApplyPatch {
+                    if manager.get_preinstall_state(pkg_meta_id) == PreinstallState::ApplyPatch {
                         manager.set_preinstall_state(
-                            pkg.meta.id,
+                            pkg_meta_id,
                             unsafe { &*lockfile_ptr },
                             PreinstallState::ApplyingPatch,
                         );
@@ -731,7 +741,7 @@ impl<'a> PatchTask<'a> {
                 result: None,
                 logger: Log::init(),
             }),
-            manager,
+            manager: &*manager,
             project_dir: FileSystem::instance().top_level_dir(),
             task: ThreadPoolTask {
                 node: ThreadPoolNode::default(),
@@ -753,15 +763,15 @@ impl<'a> PatchTask<'a> {
         let pkg_name = pkg_manager.lockfile.packages.items_name()[pkg_id as usize];
         // TODO(port): MultiArrayList column accessor naming (`items(.name)` → `items_name()`).
 
-        let resolution = &pkg_manager.lockfile.packages.items_resolution()[pkg_id as usize];
-
-        let mut folder_path_buf = PathBuffer::uninit();
         // PORT NOTE: borrowck — `compute_cache_dir_and_subpath` borrows `&mut self` while
         // `pkg_name.slice(..)` and `resolution` borrow `pkg_manager.lockfile` immutably. Clone
         // the slice/resolution out first.
         let pkg_name_slice =
             pkg_name.slice(&pkg_manager.lockfile.buffers.string_bytes).to_vec();
-        let resolution_clone = resolution.clone();
+        let resolution_clone =
+            pkg_manager.lockfile.packages.items_resolution()[pkg_id as usize].clone();
+
+        let mut folder_path_buf = PathBuffer::uninit();
         let stuff = pkg_manager.compute_cache_dir_and_subpath(
             &pkg_name_slice,
             &resolution_clone,
@@ -806,7 +816,7 @@ impl<'a> PatchTask<'a> {
                 task_id: None,
                 install_context: None,
             }),
-            manager: pkg_manager,
+            manager: &*pkg_manager,
             project_dir: FileSystem::instance().top_level_dir(),
             task: ThreadPoolTask {
                 node: ThreadPoolNode::default(),

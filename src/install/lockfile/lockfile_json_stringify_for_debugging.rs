@@ -268,7 +268,9 @@ where
 
             let (relative_path, depth) =
                 tree::relative_path_and_depth::<{ IteratorPathStyle::NodeModules }>(
-                    this,
+                    this.buffers.trees.as_slice(),
+                    this.buffers.dependencies.as_slice(),
+                    this.buffers.string_bytes.as_slice(),
                     u32::try_from(tree_id).unwrap(),
                     &mut path_buf,
                     &mut depth_buf,

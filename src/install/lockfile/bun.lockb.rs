@@ -537,7 +537,7 @@ pub fn load(
                     .zip(override_versions_external.iter())
                 {
                     let mut context = dependency::Context {
-                        log,
+                        log: &mut *log,
                         buffer: string_bytes,
                         package_manager: manager.as_deref_mut(),
                     };
@@ -620,7 +620,7 @@ pub fn load(
                 debug_assert_eq!(default_dep_names.len(), default_deps.len());
                 for (dep_name, dep) in default_dep_names.iter().zip(default_deps.iter()) {
                     let mut context = dependency::Context {
-                        log,
+                        log: &mut *log,
                         buffer: string_bytes,
                         package_manager: manager.as_deref_mut(),
                     };

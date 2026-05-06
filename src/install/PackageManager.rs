@@ -1513,28 +1513,38 @@ pub fn init(
                     // SAFETY: ROOT_PACKAGE_JSON_PATH_BUF is a process-global only touched on main thread
                     let json_path = unsafe {
                         bun_sys::get_fd_path(
-                            Fd::from_std_file(&*json_file_guard),
+                            json_file_guard.handle,
                             &mut ROOT_PACKAGE_JSON_PATH_BUF,
                         )?
                     };
                     let json_source =
-                        logger::Source::init_path_string(json_path, &json_buf[..json_len]);
+                        logger::Source::init_path_string(&*json_path, &json_buf[..json_len]);
                     initialize_store();
-                    let json =
-                        crate::bun_json::parse_package_json_utf8(&json_source, ctx.log, /* allocator */)?;
+                    // Zig threads `ctx.allocator`; the Rust JSON parser takes a bump arena.
+                    let json_arena = bun_alloc::Arena::new();
+                    // SAFETY: `ctx.log` is a borrow of the CLI's `Log`; valid for the
+                    // duration of `init()` (set by `Command::create()` before any install
+                    // entry point runs).
+                    let json = crate::bun_json::parse_package_json_utf8(
+                        &json_source,
+                        unsafe { &mut *ctx.log },
+                        &json_arena,
+                    )?;
                     if subcommand == Subcommand::Pm {
-                        if let Ok(Some(name)) = json.get_string_cloned("name") {
-                            root_package_json_name_at_time_of_init = name;
+                        use crate::bun_json::ExprAccessors;
+                        if let Some(name) = json.get(b"name").and_then(|e| e.as_string()) {
+                            root_package_json_name_at_time_of_init = Box::<[u8]>::from(name);
                         }
                     }
 
-                    if let Some(prop) = json.as_property("workspaces") {
-                        let json_array = match prop.expr.data {
-                            bun_js_parser::ExprData::EArray(arr) => arr,
-                            bun_js_parser::ExprData::EObject(obj) => {
-                                if let Some(packages) = obj.get("packages") {
+                    use crate::bun_json::{ExprAccessors, ExprData};
+                    if let Some(prop) = json.as_property(b"workspaces") {
+                        let mut json_array = match prop.expr.data {
+                            ExprData::EArray(arr) => arr,
+                            ExprData::EObject(obj) => {
+                                if let Some(packages) = obj.get().get(b"packages") {
                                     match packages.data {
-                                        bun_js_parser::ExprData::EArray(arr) => arr,
+                                        ExprData::EArray(arr) => arr,
                                         _ => break,
                                     }
                                 } else {
@@ -1547,7 +1557,7 @@ pub fn init(
                         let _ = match workspace_names.process_names_array(
                             &mut workspace_package_json_cache,
                             &mut log,
-                            json_array,
+                            &mut *json_array,
                             &json_source,
                             prop.loc,
                             None,

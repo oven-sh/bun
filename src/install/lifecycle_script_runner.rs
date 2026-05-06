@@ -699,7 +699,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         bun_output::scoped_log!(
             Script,
             "{} - {} finished {}",
-            bstr::BStr::new(self.package_name),
+            bstr::BStr::new(&self.package_name),
             bstr::BStr::new(self.script_name()),
             status
         );
@@ -714,16 +714,21 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         self.ensure_not_in_heap();
 
         match status {
-            Status::Exited(exit) => {
+            Status::Exited { code, .. } => {
                 let maybe_duration = self.timer.as_mut().map(|t| t.read());
 
-                if exit.code > 0 {
+                if code > 0 {
                     if self.optional {
                         if let Some(ctx) = &self.ctx {
-                            ctx.installer.store.entries.items_step()[ctx.entry_id.get()]
-                                .store(Step::Done, Ordering::Release);
-                            ctx.installer
-                                .on_task_complete(ctx.entry_id, CompleteState::Skipped);
+                            // SAFETY: `installer` outlives every subprocess and is
+                            // single-threaded across the lifecycle-script callbacks.
+                            unsafe {
+                                (*ctx.installer).store.entries.items_step()
+                                    [ctx.entry_id.get() as usize]
+                                    .store(Step::Done as u32, Ordering::Release);
+                                (*ctx.installer)
+                                    .on_task_complete(ctx.entry_id, CompleteState::Skipped);
+                            }
                         }
                         self.decrement_pending_script_tasks();
                         self.deinit_and_delete_package();
@@ -733,41 +738,44 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     Output::pretty_errorln(format_args!(
                         "<r><red>error<r><d>:<r> <b>{}<r> script from \"<b>{}<r>\" exited with {}<r>",
                         bstr::BStr::new(self.script_name()),
-                        bstr::BStr::new(self.package_name),
-                        exit.code,
+                        bstr::BStr::new(&self.package_name),
+                        code,
                     ));
                     // SAFETY: `self` was created by `Self::new` (Box::into_raw); uniquely owned here.
                     unsafe { Self::destroy(self as *mut Self) };
                     Output::flush();
-                    Global::exit(exit.code);
+                    Global::exit(code as u32);
                 }
 
-                if !self.foreground && self.manager.scripts_node.is_some() {
+                if !self.foreground && self.manager().scripts_node.is_some() {
+                    // SAFETY: `scripts_node` is `Some(NonNull)`; the underlying
+                    // `Progress.Node` lives on the caller's stack for the
+                    // duration of the install loop (Zig: `?*Progress.Node`).
+                    let scripts_node = unsafe { self.manager().scripts_node.unwrap().as_mut() };
                     // .monotonic is okay because because this value is only used by hoisted
                     // installs, which only use this type on the main thread.
-                    if self.manager.finished_installing.load(Ordering::Relaxed) {
-                        self.manager.scripts_node.as_ref().unwrap().complete_one();
+                    if self.manager().finished_installing.load(Ordering::Relaxed) {
+                        scripts_node.complete_one();
                     } else {
                         // .monotonic because this is what `completeOne` does. This is the same
                         // as `completeOne` but doesn't update the parent.
-                        // TODO(port): Zig used `@atomicRmw(usize, &node.unprotected_completed_items, .Add, 1, .monotonic)`.
-                        // Model `unprotected_completed_items` as `AtomicUsize` in Phase B.
-                        self.manager
-                            .scripts_node
-                            .as_ref()
-                            .unwrap()
-                            .unprotected_completed_items
-                            .fetch_add(1, Ordering::Relaxed);
+                        // TODO(port): Zig used `@atomicRmw(usize, &node.unprotected_completed_items, .Add, 1, .monotonic)`;
+                        // the stub `bun_progress::Node` is non-atomic & has no parent, so the
+                        // detached-parent path collapses to `complete_one()` until the real
+                        // `std.Progress` port lands.
+                        scripts_node.complete_one();
                     }
                 }
 
                 if let Some(nanos) = maybe_duration {
                     if nanos > MIN_MILLISECONDS_TO_LOG * bun_core::time::NS_PER_MS {
-                        self.manager.lifecycle_script_time_log.append_concurrent(
+                        self.manager_mut().lifecycle_script_time_log.append_concurrent(
                             // TODO(port): Zig passed `manager.lockfile.allocator`; allocator param
                             // dropped per §Allocators (non-AST crate).
-                            PackageManager::LifecycleScriptTimeLogEntry {
-                                package_name: self.package_name,
+                            LifecycleScriptTimeLogEntry {
+                                // TODO(port): lifetime — borrows lockfile string buffer; Phase-A
+                                // placeholder uses `'static` on the entry.
+                                package_name: Box::leak(self.package_name.clone()),
                                 script_id: self.current_script_index,
                                 duration: nanos,
                             },
@@ -779,11 +787,14 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     match self.current_script_index {
                         // preinstall
                         0 => {
-                            let previous_step = ctx.installer.store.entries.items_step()
-                                [ctx.entry_id.get()]
-                            .swap(Step::Binaries, Ordering::Release);
-                            debug_assert!(previous_step == Step::RunPreinstall);
-                            ctx.installer.start_task(ctx.entry_id);
+                            // SAFETY: see above (`installer` outlives every subprocess).
+                            unsafe {
+                                let previous_step = (*ctx.installer).store.entries.items_step()
+                                    [ctx.entry_id.get() as usize]
+                                    .swap(Step::Binaries as u32, Ordering::Release);
+                                debug_assert!(previous_step == Step::RunPreinstall as u32);
+                                (*ctx.installer).start_task(ctx.entry_id);
+                            }
                             self.decrement_pending_script_tasks();
                             // SAFETY: `self` was created by `Self::new` (Box::into_raw); uniquely owned here.
                             unsafe { Self::destroy(self as *mut Self) };
@@ -808,11 +819,13 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                                 u8::try_from(new_script_index).unwrap(),
                             )
                         } {
-                            Output::err_generic(format_args!(
+                            Output::err_generic(
                                 "Failed to run script <b>{}<r> due to error <b>{}<r>",
-                                bstr::BStr::new(LockfileScripts::NAMES[new_script_index]),
-                                err.name(),
-                            ));
+                                (
+                                    bstr::BStr::new(LockfileScripts::NAMES[new_script_index]),
+                                    err.name(),
+                                ),
+                            );
                             Global::exit(1);
                         }
                         return;
@@ -822,21 +835,26 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 if PackageManager::verbose_install() {
                     Output::pretty_errorln(format_args!(
                         "<r><d>[Scripts]<r> Finished scripts for <b>{}<r>",
-                        bun_core::fmt::quote(self.package_name),
+                        bun_core::fmt::quote(&self.package_name),
                     ));
                 }
 
                 if let Some(ctx) = &self.ctx {
-                    let previous_step = ctx.installer.store.entries.items_step()
-                        [ctx.entry_id.get()]
-                    .swap(Step::Done, Ordering::Release);
-                    if bun_core::Environment::CI_ASSERT {
-                        debug_assert!(self.current_script_index != 0);
-                        debug_assert!(previous_step == Step::RunPostInstallAndPrePostPrepare);
+                    // SAFETY: see above (`installer` outlives every subprocess).
+                    unsafe {
+                        let previous_step = (*ctx.installer).store.entries.items_step()
+                            [ctx.entry_id.get() as usize]
+                            .swap(Step::Done as u32, Ordering::Release);
+                        if bun_core::Environment::CI_ASSERT {
+                            debug_assert!(self.current_script_index != 0);
+                            debug_assert!(
+                                previous_step == Step::RunPostInstallAndPrePostPrepare as u32
+                            );
+                        }
+                        let _ = previous_step;
+                        (*ctx.installer)
+                            .on_task_complete(ctx.entry_id, CompleteState::Success);
                     }
-                    let _ = previous_step;
-                    ctx.installer
-                        .on_task_complete(ctx.entry_id, CompleteState::Success);
                 }
 
                 // the last script finished
@@ -844,26 +862,31 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 // SAFETY: `self` was created by `Self::new` (Box::into_raw); uniquely owned here.
                 unsafe { Self::destroy(self as *mut Self) };
             }
-            Status::Signaled(signal) => {
+            Status::Signaled(signal_code) => {
                 self.print_output();
-                let signal_code = bun_core::SignalCode::from(signal);
 
                 Output::pretty_errorln(format_args!(
-                    "<r><red>error<r><d>:<r> <b>{}<r> script from \"<b>{}<r>\" terminated by {}<r>",
+                    "<r><red>error<r><d>:<r> <b>{}<r> script from \"<b>{}<r>\" terminated by {:?}<r>",
                     bstr::BStr::new(self.script_name()),
-                    bstr::BStr::new(self.package_name),
-                    signal_code.fmt(Output::enable_ansi_colors_stderr()),
+                    bstr::BStr::new(&self.package_name),
+                    // TODO(port): Zig used `signal_code.fmt(enable_ansi_colors_stderr())`;
+                    // `SignalCode` has no colored formatter at this tier yet.
+                    signal_code,
                 ));
 
-                Global::raise_ignoring_panic_handler(signal);
+                Global::raise_ignoring_panic_handler(signal_code);
             }
             Status::Err(err) => {
                 if self.optional {
                     if let Some(ctx) = &self.ctx {
-                        ctx.installer.store.entries.items_step()[ctx.entry_id.get()]
-                            .store(Step::Done, Ordering::Release);
-                        ctx.installer
-                            .on_task_complete(ctx.entry_id, CompleteState::Skipped);
+                        // SAFETY: see above (`installer` outlives every subprocess).
+                        unsafe {
+                            (*ctx.installer).store.entries.items_step()
+                                [ctx.entry_id.get() as usize]
+                                .store(Step::Done as u32, Ordering::Release);
+                            (*ctx.installer)
+                                .on_task_complete(ctx.entry_id, CompleteState::Skipped);
+                        }
                     }
                     self.decrement_pending_script_tasks();
                     self.deinit_and_delete_package();
@@ -873,7 +896,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 Output::pretty_errorln(format_args!(
                     "<r><red>error<r>: Failed to run <b>{}<r> script from \"<b>{}<r>\" due to\n{}",
                     bstr::BStr::new(self.script_name()),
-                    bstr::BStr::new(self.package_name),
+                    bstr::BStr::new(&self.package_name),
                     err,
                 ));
                 // SAFETY: `self` was created by `Self::new` (Box::into_raw); uniquely owned here.
@@ -885,7 +908,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 Output::panic(format_args!(
                     "<r><red>error<r>: Failed to run <b>{}<r> script from \"<b>{}<r>\" due to unexpected status\n{}",
                     bstr::BStr::new(self.script_name()),
-                    bstr::BStr::new(self.package_name),
+                    bstr::BStr::new(&self.package_name),
                     status,
                 ));
             }
@@ -920,10 +943,11 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             drop(process);
         }
 
-        // TODO(port): OutputReader::deinit — if BufferedReader has Drop, the assignment below
-        // handles it. Keeping explicit deinit calls to mirror Zig until Phase B confirms.
-        self.stdout.deinit();
-        self.stderr.deinit();
+        // PORT NOTE: Zig called `OutputReader.deinit()` here; the Rust
+        // `PosixBufferedReader` has no `deinit` (cleanup is `close()` + drop of
+        // the owned `Vec`). The reassignment below drops the old buffers.
+        self.stdout.close();
+        self.stderr.close();
         self.stdout = OutputReader::init::<Self>();
         self.stderr = OutputReader::init::<Self>();
     }

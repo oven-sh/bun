@@ -568,13 +568,15 @@ impl<'a> PackageInstaller<'a> {
                 let (rel_path, _) = lockfile::tree::relative_path_and_depth::<
                     { lockfile::tree::IteratorPathStyle::NodeModules },
                 >(
-                    lockfile,
+                    lockfile.buffers.trees.as_slice(),
+                    lockfile.buffers.dependencies.as_slice(),
+                    lockfile.buffers.string_bytes.as_slice(),
                     u32::try_from(tree_id).unwrap(),
                     &mut node_modules_rel_path_buf,
                     &mut depth_buf,
                 );
 
-                self.node_modules.path.extend_from_slice(rel_path);
+                self.node_modules.path.extend_from_slice(rel_path.as_bytes());
 
                 self.link_tree_bins(
                     u32::try_from(tree_id).unwrap(),

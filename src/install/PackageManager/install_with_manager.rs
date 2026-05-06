@@ -689,7 +689,7 @@ pub fn install_with_manager(
             );
 
             if is_subcommand_to_run_scanner {
-                match security_scanner::perform_security_scan_after_resolution(manager, &ctx, original_cwd) {
+                match security_scanner::perform_security_scan_after_resolution(manager, ctx, original_cwd) {
                     Err(err) => {
                         match err {
                             e if e == bun_core::err!("SecurityScannerInWorkspace") => {

@@ -1322,38 +1322,38 @@ impl Diff {
                         );
                         package_json_path.append(b"package.json");
 
-                        let Ok(source_owned) =
-                            File::to_source(package_json_path.slice_z(), Default::default())
-                                .unwrap_result()
-                        else {
-                            break 'update_mapping false;
-                        };
-                        let source = &source_owned;
-
+                        // TODO(port): `bun.sys.File.toSource` was removed from
+                        // T1 (`bun_sys`) because `logger::Source` lives in T2.
+                        // Route through the workspace cache's path-based getter
+                        // instead, which both reads and parses.
                         let mut workspace_pkg = Package::<SemverIntType>::default();
 
-                        let Ok(json) = pm
+                        let json_entry = match pm
                             .workspace_package_json_cache
-                            .get_with_source(log, source, Default::default())
-                            .unwrap_result()
-                        else {
-                            break 'update_mapping false;
+                            .get_with_path(log, package_json_path.slice(), Default::default())
+                            .unwrap()
+                        {
+                            Ok(entry) => entry,
+                            Err(_) => break 'update_mapping false,
                         };
+                        let source = &json_entry.source;
 
                         let mut resolver: () = ();
-                        workspace_pkg.parse_with_json::<(), { Features::WORKSPACE }>(
+                        workspace_pkg.parse_with_json::<()>(
                             to_lockfile,
                             pm,
                             log,
                             source,
-                            json.root,
+                            json_entry.root,
                             &mut resolver,
+                            Features::WORKSPACE,
                         )?;
 
                         to_deps =
                             to.dependencies.get(to_lockfile.buffers.dependencies.as_slice());
 
-                        let mut from_pkg = from_lockfile.packages.get(from_resolutions[i]);
+                        let mut from_pkg =
+                            from_lockfile.packages.get(from_resolutions[i] as usize);
                         let diff = Self::generate(
                             pm,
                             log,
@@ -1403,10 +1403,10 @@ impl Diff {
 
         if from.resolution.tag != ResolutionTag::Root {
             // PERF(port): was `inline for` over Lockfile.Scripts.names — profile in Phase B
-            for hook in lockfile::Scripts::NAMES {
-                // TODO(port): @field reflection. Phase B: add `Scripts::field(name) -> &String`.
-                if !to.scripts.field(hook).eql(
-                    from.scripts.field(hook),
+            for (to_hook, from_hook) in to.scripts.hooks().iter().zip(from.scripts.hooks().iter()) {
+                if !String::eql(
+                    to_hook,
+                    from_hook,
                     to_lockfile.buffers.string_bytes.as_slice(),
                     from_lockfile.buffers.string_bytes.as_slice(),
                 ) {
@@ -1445,10 +1445,10 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
     ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         initialize_store();
-        let json = match crate::bun_json::parse_package_json_utf8(source, log) {
+        let json = match crate::bun_json::parse_package_json_utf8(source, log, Default::default()) {
             Ok(j) => j,
             Err(err) => {
-                let _ = log.print(Output::error_writer());
+                let _ = log.print(&mut Output::error_writer());
                 Output::pretty_errorln(format_args!(
                     "<r><red>{}<r> parsing package.json in <b>\"{}\"<r>",
                     err.name(),
@@ -1517,18 +1517,20 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
 
         let mut dependency_version = Dependency::parse_with_optional_tag(
             external_alias.value,
-            external_alias.hash,
+            Some(external_alias.hash),
             sliced.slice,
             tag,
             &sliced,
-            log,
-            pm,
+            Some(log),
+            Some(pm),
         )
         .unwrap_or_default();
         let mut workspace_range: Option<semver::query::Group> = None;
+        #[allow(non_snake_case)]
+        let FEATURES = features;
         let name_hash = match dependency_version.tag {
             dependency::version::Tag::Npm => {
-                String::Builder::string_hash(dependency_version.value.npm.name.slice(buf))
+                semver::string::Builder::string_hash(dependency_version.value.npm.name.slice(buf))
             }
             dependency::version::Tag::Workspace => {
                 if strings::has_prefix(sliced.slice, b"workspace:") {
@@ -1541,10 +1543,12 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
                             let at = strings::last_index_of_char(input, b'@').unwrap_or(0);
                             if at > 0 {
                                 workspace_range = Some(
-                                    semver::query::parse(&input[at + 1..], sliced)
+                                    semver::query::parse(&input[at as usize + 1..], sliced)
                                         .unwrap_or_else(|_| bun_core::out_of_memory()),
                                 );
-                                break 'brk String::Builder::string_hash(&input[0..at]);
+                                break 'brk semver::string::Builder::string_hash(
+                                    &input[0..at as usize],
+                                );
                             }
                             workspace_range = Some(
                                 semver::query::parse(input, sliced)
@@ -1563,8 +1567,8 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
         let mut workspace_path: Option<String> = None;
         let mut workspace_version = workspace_ver;
         if tag.is_none() {
-            workspace_path = lockfile.workspace_paths.get(name_hash);
-            workspace_version = lockfile.workspace_versions.get(name_hash);
+            workspace_path = lockfile.workspace_paths.get(&name_hash).copied();
+            workspace_version = lockfile.workspace_versions.get(&name_hash).copied();
         }
 
         if tag.is_some() {
@@ -1577,14 +1581,13 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
         match dependency_version.tag {
             dependency::version::Tag::Folder => {
                 let relative = resolve_path::relative(
-                    FileSystem::instance().top_level_dir,
-                    resolve_path::join_abs_string(
-                        FileSystem::instance().top_level_dir,
+                    FileSystem::instance().top_level_dir(),
+                    resolve_path::join_abs_string::<path::platform::Auto>(
+                        FileSystem::instance().top_level_dir(),
                         &[
                             source.path.name.dir,
                             dependency_version.value.folder.slice(buf),
                         ],
-                        path::Platform::Auto,
                     ),
                 );
                 // if relative is empty, we are linking the package to itself
@@ -1598,14 +1601,14 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
                         && npm.version.satisfies(workspace_version.unwrap(), buf, buf)
                     {
                         let path = workspace_path.unwrap().sliced(buf);
-                        if let Some(dep) = Dependency::parse_with_tag(
+                        if let Some(dep) = dependency::parse_with_tag(
                             external_alias.value,
-                            external_alias.hash,
+                            Some(external_alias.hash),
                             path.slice,
                             dependency::version::Tag::Workspace,
                             &path,
-                            log,
-                            pm,
+                            Some(log),
+                            Some(pm),
                         ) {
                             dependency_version.tag = dep.tag;
                             dependency_version.value = dep.value;
@@ -1706,7 +1709,7 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
                             if match package_dep.version.tag {
                                 // `dependencies` & `workspaces` defined within the same `package.json`
                                 dependency::version::Tag::Npm => {
-                                    String::Builder::string_hash(
+                                    semver::string::Builder::string_hash(
                                         package_dep.realname().slice(buf),
                                     ) == name_hash
                                         && package_dep
@@ -1719,7 +1722,7 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
                                 // `workspace:*`
                                 dependency::version::Tag::Workspace => {
                                     found_matching_workspace
-                                        && String::Builder::string_hash(
+                                        && semver::string::Builder::string_hash(
                                             package_dep.realname().slice(buf),
                                         ) == name_hash
                                 }
@@ -1735,7 +1738,7 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
                             &mut package_dependencies[0..dependencies_count as usize]
                         {
                             if package_dep.version.tag == dependency::version::Tag::Workspace
-                                && String::Builder::string_hash(
+                                && semver::string::Builder::string_hash(
                                     package_dep.realname().slice(buf),
                                 ) == name_hash
                             {
@@ -1992,7 +1995,7 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
                             let key = prop.key.unwrap().as_string().expect("unreachable");
                             // PERF(port): was assume_capacity
                             optional_peer_dependencies.put_assume_capacity(
-                                String::Builder::string_hash(key),
+                                semver::string::Builder::string_hash(key),
                                 key,
                             );
                             // Reserve space for a synthesised entry. If the
@@ -2156,7 +2159,7 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
                                 .as_mut()
                                 .unwrap()
                                 .put_assume_capacity(
-                                    String::Builder::string_hash(name)
+                                    semver::string::Builder::string_hash(name)
                                         as TruncatedPackageNameHash,
                                     (),
                                 );
@@ -2441,7 +2444,7 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
                 {
                     // workspace names from their package jsons. duplicates not allowed
                     let gop = seen_workspace_names.get_or_put(
-                        String::Builder::string_hash(&entry.name)
+                        semver::string::Builder::string_hash(&entry.name)
                             as TruncatedPackageNameHash,
                     )?;
                     if gop.found_existing {

@@ -1405,7 +1405,8 @@ impl Lockfile {
             workspace_filters,
             packages_to_install,
             pending_optional_peers: Default::default(),
-            ..Default::default()
+            list: Default::default(),
+            sort_buf: Default::default(),
         };
         // TODO(port): Tree::Builder field set may differ; verify in Phase B.
 
@@ -2600,12 +2601,14 @@ impl Lockfile {
         let mut i: usize = 0;
         for l_tree in l.buffers.trees.iter() {
             let (rel_path, _) = tree::relative_path_and_depth::<{ tree::IteratorPathStyle::PkgPath }>(
-                l,
+                l.buffers.trees.as_slice(),
+                l.buffers.dependencies.as_slice(),
+                l.buffers.string_bytes.as_slice(),
                 l_tree.id,
                 &mut path_buf,
                 &mut depth_buf,
             );
-            let tree_path: Box<[u8]> = Box::<[u8]>::from(rel_path);
+            let tree_path: Box<[u8]> = Box::<[u8]>::from(rel_path.as_bytes());
             let tree_path_ptr: *const [u8] = &*tree_path;
             tree_paths.push(tree_path);
             for &l_dep_id in l_tree.dependencies.get(l_hoisted_deps) {
@@ -2628,12 +2631,14 @@ impl Lockfile {
         i = 0;
         for r_tree in r.buffers.trees.iter() {
             let (rel_path, _) = tree::relative_path_and_depth::<{ tree::IteratorPathStyle::PkgPath }>(
-                r,
+                r.buffers.trees.as_slice(),
+                r.buffers.dependencies.as_slice(),
+                r.buffers.string_bytes.as_slice(),
                 r_tree.id,
                 &mut path_buf,
                 &mut depth_buf,
             );
-            let tree_path: Box<[u8]> = Box::<[u8]>::from(rel_path);
+            let tree_path: Box<[u8]> = Box::<[u8]>::from(rel_path.as_bytes());
             let tree_path_ptr: *const [u8] = &*tree_path;
             tree_paths.push(tree_path);
             for &r_dep_id in r_tree.dependencies.get(r_hoisted_deps) {

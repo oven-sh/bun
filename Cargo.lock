@@ -1151,6 +1151,7 @@ dependencies = [
  "bun_core",
  "bun_dotenv",
  "bun_event_loop",
+ "bun_hash",
  "bun_http",
  "bun_install",
  "bun_io",

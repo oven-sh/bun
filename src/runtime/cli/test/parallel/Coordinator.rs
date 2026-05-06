@@ -446,12 +446,12 @@ impl<'a> Coordinator<'a> {
             // masked by the rest of the suite passing: abort the whole run so
             // the exit status reflects the crash. SIGKILL is treated as a
             // regular failure (commonly the OOM killer or the user).
-            let panicked = is_panic_status(status);
-            self.account_crash(idx, status);
+            let panicked = is_panic_status(&status);
+            self.account_crash(idx, &status);
             Output::flush();
             w.inflight = None;
             if panicked {
-                self.abort_on_worker_panic(idx, status);
+                self.abort_on_worker_panic(idx, &status);
             }
         }
 
@@ -468,7 +468,7 @@ impl<'a> Coordinator<'a> {
                     respawned = true;
                 }
                 Err(e) => {
-                    Output::err(e, format_args!("failed to respawn test worker"));
+                    Output::err(e, "failed to respawn test worker", ());
                 }
             }
         }

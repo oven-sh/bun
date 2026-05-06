@@ -407,14 +407,14 @@ impl Glob {
         };
 
         incr_pending_activity_flag(&self.has_pending_activity);
-        let task = match WalkTask::create(global_this, glob_walker, &self.has_pending_activity) {
+        let _task = match WalkTask::create(global_this, glob_walker, &self.has_pending_activity) {
             Ok(t) => t,
             Err(_) => {
                 decr_pending_activity_flag(&self.has_pending_activity);
                 // TODO(port): Zig also called `globWalker.deinit(true); alloc.destroy(globWalker)` here.
                 // In Rust, `glob_walker` was moved into `WalkTask::create`; if create() fails it must
                 // drop it internally. Verify bun_jsc::ConcurrentPromiseTask::create_on_js_thread.
-                return global_this.throw_out_of_memory();
+                return Err(global_this.throw_out_of_memory());
             }
         };
         // TODO(port): lifetime — WalkTask<'a> borrows &self.has_pending_activity and
@@ -422,9 +422,11 @@ impl Glob {
         // Phase B: likely needs raw `*const AtomicUsize` / `*const JSGlobalObject`
         // despite LIFETIMES.tsv classification, since the task is heap-allocated and
         // kept alive by hasPendingActivity().
-        task.schedule();
-
-        Ok(task.promise.value())
+        //
+        // `bun_jsc::ConcurrentPromiseTask` is currently a non-generic `stub_ty!`
+        // placeholder with no `schedule()` / `.promise` — restore once the real
+        // generic task type is re-exported.
+        todo!("blocked_on: bun_jsc::ConcurrentPromiseTask::schedule / .promise")
     }
 
     #[bun_jsc::host_fn(method)]

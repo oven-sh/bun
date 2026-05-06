@@ -3,11 +3,12 @@ use core::ptr::NonNull;
 use bun_collections::HashMap;
 use bun_core::{feature_flags, Output};
 use bun_str::strings;
-use bun_uws::{AnyWebSocket, Opcode};
+use bun_uws::AnyWebSocket;
+use bun_uws_sys::{Opcode, SendStatus};
 
 use crate::timer::EventLoopTimerState;
 
-use super::source_map_store::{self, SourceMapStore};
+use super::source_map_store::{self, RemoveOrUpgradeMode};
 use super::{
     ConsoleLogKind, DevServer, HmrTopic, IncomingMessageId, MessageId, RouteBundle,
 };

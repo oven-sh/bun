@@ -220,6 +220,23 @@ fn out_w() -> &'static mut bun_core::io::Writer {
     unsafe { &mut *Output::writer() }
 }
 
+/// Local shim: `bun_io::Write` over the vtable-erased `bun_core::io::Writer`
+/// (stderr/stdout). Upstream `bun_core::io::Writer` does not implement
+/// `bun_io::Write`; this bridges the two without an upstream edit so
+/// `splat_byte_all` / `coverage::Text::write_format_with_values` can take the
+/// console writer directly.
+struct CoreIoWriteAdapter<'a>(&'a mut bun_core::io::Writer);
+impl bun_io::Write for CoreIoWriteAdapter<'_> {
+    #[inline]
+    fn write_all(&mut self, bytes: &[u8]) -> bun_io::Result<()> {
+        self.0.write_all(bytes)
+    }
+    #[inline]
+    fn flush(&mut self) -> bun_io::Result<()> {
+        self.0.flush()
+    }
+}
+
 // Remaining TODOs:
 // - Add stdout/stderr to the JUnit report
 // - Add timestamp field to the JUnit report

@@ -16,9 +16,10 @@ use bun_str::string_joiner::StringJoiner;
 use bun_sourcemap::{self as source_map, SourceMapState};
 
 use crate::bake::{self as bake, Side};
-use crate::bake::dev_server::{self, ChunkKind, DevServer, packed_map};
+use crate::bake::dev_server::{self, ChunkKind, DevServer};
 use crate::bake::dev_server_body::{DevAllocator, dump_bundle};
-use crate::timer::EventLoopTimer;
+use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
+use super::packed_map_body as packed_map;
 
 // PORT NOTE: Zig `mapLog = DevServer.mapLog` — reuse DevServer's existing scope so
 // `BUN_DEBUG_<scope>=1` enables both call sites; do NOT re-declare a new scope here.

@@ -1443,23 +1443,18 @@ fn get_optional_string(
     Ok(Some(arena_erase(allocations.track(str.to_utf8()))))
 }
 
-pub struct HmrRuntime {
-    pub code: &'static ZStr,
-    /// The number of lines in the HMR runtime. This is used for sourcemap
-    /// generation, where the first n lines are skipped. In release, these
-    /// are always precalculated.
-    pub line_count: u32,
-}
+// PORT NOTE: `HmrRuntime` is defined canonically in the parent `bake/mod.rs`
+// (struct with `code: &'static ZStr` + `line_count`); re-export so callers
+// using `bake_body::HmrRuntime` see the same nominal type.
+pub use super::HmrRuntime;
 
-impl HmrRuntime {
-    pub fn init(code: &'static ZStr) -> HmrRuntime {
-        HmrRuntime {
-            code,
-            line_count: u32::try_from(
-                code.as_bytes().iter().filter(|&&b| b == b'\n').count(),
-            )
-            .unwrap(),
-        }
+fn hmr_runtime_init(code: &'static ZStr) -> HmrRuntime {
+    HmrRuntime {
+        code,
+        line_count: u32::try_from(
+            code.as_bytes().iter().filter(|&&b| b == b'\n').count(),
+        )
+        .unwrap(),
     }
 }
 
@@ -1472,11 +1467,11 @@ pub fn get_hmr_runtime(side: Side) -> HmrRuntime {
     {
         match side {
             // TODO(port): @embedFile yields [:0]const u8; include_bytes! lacks NUL
-            Side::Client => HmrRuntime::init(
+            Side::Client => hmr_runtime_init(
                 // SAFETY: codegen emits NUL-terminated bytes (verify in Phase B)
                 unsafe { ZStr::from_bytes_unchecked(include_bytes!("bake-codegen/bake.client.js")) },
             ),
-            Side::Server => HmrRuntime::init(
+            Side::Server => hmr_runtime_init(
                 // SAFETY: codegen emits NUL-terminated bytes (verify in Phase B)
                 unsafe { ZStr::from_bytes_unchecked(include_bytes!("bake-codegen/bake.server.js")) },
             ),
@@ -1505,7 +1500,7 @@ pub fn get_hmr_runtime(side: Side) -> HmrRuntime {
         }
         static CLIENT: OnceLock<Box<[u8]>> = OnceLock::new();
         static SERVER: OnceLock<Box<[u8]>> = OnceLock::new();
-        HmrRuntime::init(match side {
+        hmr_runtime_init(match side {
             Side::Client => nul_terminate(
                 bun_core::runtime_embed_file!(bun_core::EmbedKind::CodegenEager, "bake.client.js"),
                 &CLIENT,

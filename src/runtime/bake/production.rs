@@ -352,11 +352,14 @@ pub fn build_with_vm(
     // defer config_entry_point_string.deref() — Drop handles deref
 
     let Some(config_promise) =
-        JSModuleLoader::load_and_evaluate_module(global, &config_entry_point_string)
+        JSModuleLoader::load_and_evaluate_module_ptr(vm.global, Some(&config_entry_point_string))
     else {
         debug_assert!(global.has_exception());
         return Err(bun_core::err!("JSError"));
     };
+    // SAFETY: load_and_evaluate_module_ptr returned a non-null cell pointer owned
+    // by the JSC heap; unique &mut for `set_handled`/`unwrap` on this thread.
+    let config_promise = unsafe { config_promise.as_ptr().as_mut().unwrap() };
 
     config_promise.set_handled();
     vm.wait_for_promise(AnyPromise::Internal(config_promise));

@@ -235,7 +235,7 @@ impl Assets {
         self.refs[index.get()] -= dec_count;
         if self.refs[index.get()] == 0 {
             // SAFETY: value is a live intrusively-refcounted StaticRoute we hold one ref to.
-            unsafe { (*self.files.values()[index.get()]).deref() };
+            unsafe { StaticRoute::deref_(self.files.values()[index.get()]) };
             self.files.swap_remove_at(index.get());
             let _ = self.refs.swap_remove(index.get());
             // `swap_remove` moved the entry that was at the old last index into

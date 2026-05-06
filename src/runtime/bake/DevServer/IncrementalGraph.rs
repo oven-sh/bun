@@ -852,10 +852,17 @@ impl IncrementalGraph<Client> {
     }
 
     fn unpack_at(&self, idx: usize) -> ClientFile {
-        // PORT NOTE: reshaped — `ClientFilePacked` is not `Copy`/`Clone`; clone the
-        // inner `ClientFile` (which is `Clone`) directly.
-        let packed = &self.bundled_files.values()[idx];
-        packed.unsafe_packed_data.clone()
+        // PORT NOTE: reshaped — `ClientFilePacked` is not `Copy`/`Clone`; rebuild
+        // the `ClientFile` by cloning its fields.
+        let f = &self.bundled_files.values()[idx].unsafe_packed_data;
+        ClientFile {
+            content: f.content.clone(),
+            source_map: f.source_map.clone(),
+            html_route_bundle_index: f.html_route_bundle_index,
+            failed: f.failed,
+            is_hmr_root: f.is_hmr_root,
+            is_special_framework_file: f.is_special_framework_file,
+        }
     }
 
     pub fn html_route_bundle_index(&self, index: FileIndex) -> RouteBundleIndex {

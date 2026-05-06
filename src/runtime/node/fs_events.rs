@@ -841,7 +841,8 @@ impl FSEventsLoop {
             }
         }
         // PORT NOTE: reshaped for borrowck — see register_watcher
-        self.enqueue_task_concurrent(Task::new(self, FSEventsLoop::_schedule));
+        let task = Task::new(self, FSEventsLoop::_schedule);
+        self.enqueue_task_concurrent(task);
     }
 
     // Runs on CF loop to close the loop

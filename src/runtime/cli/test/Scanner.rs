@@ -189,8 +189,12 @@ impl<'a> Scanner<'a> {
                     continue;
                 };
                 let child_dir = bun_sys::Dir::from_fd(child_fd);
-                let path2 = self.fs.dirname_store.append(&self.open_dir_buf[..path2_len])?;
-                FileSystem::set_max_fd(child_dir.fd);
+                let path2 = self
+                    .fs
+                    .dirname_store
+                    .append_slice(&self.open_dir_buf[..path2_len])
+                    .map_err(|_| ScanError::OutOfMemory)?;
+                FileSystem::set_max_fd(child_dir.fd.native());
                 let _ = self
                     .read_dir_with_name(path2, Some(child_dir))
                     .map_err(|_| ScanError::OutOfMemory)?;

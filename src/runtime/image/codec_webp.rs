@@ -2,8 +2,10 @@
 //! Dispatch lives in codecs.rs; this file is the codec body.
 
 use core::ffi::{c_int, c_void};
+use core::ptr::NonNull;
 
 use super::codecs;
+use crate::encoded_wrap_free;
 
 // TODO(port): move to libwebp_sys (or runtime_sys) — extern fns left in place for Phase A.
 unsafe extern "C" {

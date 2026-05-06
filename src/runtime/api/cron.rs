@@ -42,7 +42,10 @@ use bun_resolver::fs::{FileSystem, RealFS};
 // not at the `spawn` module root). Alias `process` as `spawn` so the
 // `spawn::spawn_process(...)` call site below resolves.
 use crate::api::bun::process::{self as spawn, Process, Rusage, SpawnOptions, Status};
-use crate::timer::EventLoopTimer;
+use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
+use bun_jsc::JsClass as _;
+use bun_io::pipe_reader::BufferedReaderParent;
+use bun_sys::FdDirExt as _;
 use bun_str::{self as strings, ZStr};
 // Owned NUL-terminated string (Zig `[:0]u8` allocation) — `bun_str` exposes the
 // borrowed `ZStr` only; the heap-backed counterpart is `bun_core::ZBox`.

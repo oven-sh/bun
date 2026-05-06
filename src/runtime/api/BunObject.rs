@@ -2364,6 +2364,29 @@ pub extern "C" fn Bun__reportError(global_object: *mut JSGlobalObject, err: JSVa
 pub mod JSZlib {
     use super::*;
     use bun_libdeflate_sys::libdeflate as bun_libdeflate;
+    use bun_jsc::{ComptimeStringMapExt as _, ZigStringJsc as _};
+
+    /// Local shim: libdeflate's `Status` has no `Into<&str>` upstream.
+    #[inline]
+    fn libdeflate_status_str(s: bun_libdeflate::Status) -> &'static str {
+        match s {
+            bun_libdeflate::Status::Success => "success",
+            bun_libdeflate::Status::BadData => "bad data",
+            bun_libdeflate::Status::ShortOutput => "short output",
+            bun_libdeflate::Status::InsufficientSpace => "insufficient space",
+        }
+    }
+
+    /// Local shim for Zig's `list.allocatedSlice()` — exposes the full
+    /// `[0..capacity)` window as `&mut [u8]` for libdeflate to write into.
+    /// SAFETY: caller must `set_len()` to the bytes actually written before
+    /// reading; the uninitialized tail is treated as scratch space.
+    #[inline]
+    unsafe fn allocated_slice(list: &mut Vec<u8>) -> &mut [u8] {
+        // SAFETY: ptr is valid for `capacity` bytes; libdeflate writes raw
+        // bytes and the caller fixes up `len` afterwards.
+        unsafe { core::slice::from_raw_parts_mut(list.as_mut_ptr(), list.capacity()) }
+    }
 
     #[unsafe(no_mangle)]
     pub extern "C" fn reader_deallocator(_: *mut c_void, ctx: *mut c_void) {

@@ -201,7 +201,7 @@ pub fn run_as_coordinator(
     vm.run_with_api_lock(&mut coord, Coordinator::drive);
 
     if ctx.test_options.reporters.junit {
-        if let Some(outfile) = ctx.test_options.reporter_outfile {
+        if let Some(outfile) = ctx.test_options.reporter_outfile.as_deref() {
             aggregate::merge_junit_fragments(&mut coord, outfile, reporter.summary());
         }
     }

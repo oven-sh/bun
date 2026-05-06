@@ -1317,6 +1317,24 @@ impl RunCommand {
         true
     }
 
+    /// Port of `configurePATHForRun` (run_command.zig). Prepends workspace
+    /// `.bin` dirs + `BUN_WHICH_IGNORE_CWD` to `PATH` and writes the original
+    /// PATH back through `original_path`.
+    ///
+    /// Real body lives in `phase_a_draft::configure_path_for_run` (depends on
+    /// `configure_path_for_run_with_package_json_dir`, still draft-only).
+    #[allow(unused_variables)]
+    pub fn configure_path_for_run(
+        ctx: &mut ContextData,
+        root_dir_info: *mut DirInfo,
+        this_transpiler: &mut Transpiler<'static>,
+        original_path: Option<&mut &[u8]>,
+        cwd: &[u8],
+        force_using_bun: bool,
+    ) -> Result<(), bun_core::Error> {
+        todo!("blocked_on: RunCommand::configure_path_for_run (phase_a_draft)")
+    }
+
     /// Dispatch `bun run <target>`: classify as file path vs. package.json
     /// script, then either boot the VM or spawn the script.
     ///

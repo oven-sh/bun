@@ -5637,7 +5637,10 @@ fn bundle_new_route_js_function_impl(
     };
 
     let rbi = ctx.route_bundle_index;
-    ensure_route_is_bundled(ctx.dev, rbi, &mut ctx)?;
+    // SAFETY: `ctx.dev` aliases the same DevServer; Zig passed both freely.
+    // Reborrow via raw ptr to satisfy borrowck while ctx is also &mut-borrowed.
+    let dev_ptr: *mut DevServer = ctx.dev;
+    ensure_route_is_bundled(unsafe { &mut *dev_ptr }, rbi, &mut ctx)?;
 
     let array = JSValue::create_empty_array(global, 2)?;
 

@@ -1412,7 +1412,8 @@ pub extern "C" fn napi_resolve_deferred(
     let deferred_box = unsafe { Box::from_raw(deferred) };
     // `deferred_box` drops at scope exit (deinit + free).
     let resolution = resolution_.get();
-    let prom = deferred_box.get();
+    // SAFETY: `deferred_box` holds a live JSPromise strong ref.
+    let prom = unsafe { deferred_box.get() };
     if prom.resolve(env.to_js(), resolution).is_err() {
         return NapiEnv::set_last_error(Some(env), NapiStatus::pending_exception);
     }

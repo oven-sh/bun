@@ -358,29 +358,29 @@ fn cpus_impl_linux(global_this: &JSGlobalObject) -> Result<JSValue, OsError> {
         let cpu = values.get_index(global_this, cpu_index as u32)?;
 
         let mut path_buf = [0u8; 128];
-        let path = {
+        let path: &ZStr = {
             let mut cursor = &mut path_buf[..];
-            write!(cursor, "/sys/devices/system/cpu/cpu{}/cpufreq/scaling_cur_freq", cpu_index)
+            write!(cursor, "/sys/devices/system/cpu/cpu{}/cpufreq/scaling_cur_freq\0", cpu_index)
                 .map_err(|_| bun_core::err!("fmt"))?;
             let remaining = cursor.len();
             let written = path_buf.len() - remaining;
-            &path_buf[..written]
+            // SAFETY: we wrote a NUL terminator at path_buf[written-1]
+            unsafe { ZStr::from_raw(path_buf.as_ptr(), written - 1) }
         };
         if let Ok(file) = bun_sys::File::open(path, bun_sys::O::RDONLY, 0) {
             // file closed on Drop
 
-            let read = bun_sys::File::from(file).read_to_end_with_array_list(&mut file_buf, bun_sys::SizeHint::ProbablySmall).unwrap()?;
-            let contents = &file_buf[0..read];
+            let contents = file.read_to_end_with_array_list(&mut file_buf, bun_sys::SizeHint::ProbablySmall)?;
 
             let digits = trim_bytes(contents, b" \n");
             let speed = parse_u64(digits).unwrap_or(0) / 1000;
 
-            cpu.put(global_this, ZigString::static_("speed"), JSValue::js_number(speed));
+            cpu.put(global_this, b"speed", JSValue::js_number(speed as f64));
 
             file_buf.clear();
         } else {
             // Initialize CPU speed to 0
-            cpu.put(global_this, ZigString::static_("speed"), JSValue::js_number(0));
+            cpu.put(global_this, b"speed", JSValue::js_number(0.0));
         }
     }
 

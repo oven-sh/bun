@@ -1440,11 +1440,12 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>
     }
 
     fn bun_getcompletes(log: &mut logger::Log) -> Result<(), bun_core::Error> {
+        use run_command::Filter as CompletionKind;
         let ctx = init::<{ Tag::GetCompletionsCommand }>(log)?;
-        let mut filter = ctx.positionals;
+        let mut filter: &[Box<[u8]>] = &ctx.positionals;
 
         for (i, item) in filter.iter().enumerate() {
-            if *item == b"getcompletes" {
+            if &**item == b"getcompletes" {
                 if i + 1 < filter.len() {
                     filter = &filter[i + 1..];
                 } else {
@@ -1458,46 +1459,42 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>
         let mut completions = ShellCompletions::ShellCompletions::default();
 
         if filter.is_empty() {
-            completions = RunCommand::completions(
-                ctx,
+            completions = RunCommand::completions::<{ CompletionKind::All }>(
+                &ctx,
                 Some(DEFAULT_COMPLETIONS_LIST),
                 REJECT_LIST,
-                RunCommand::CompletionKind::All,
             )?;
-        } else if filter[0] == b"s" {
+        } else if &*filter[0] == b"s" {
             completions =
-                RunCommand::completions(ctx, None, REJECT_LIST, RunCommand::CompletionKind::Script)?;
-        } else if filter[0] == b"i" {
-            completions = RunCommand::completions(
-                ctx,
+                RunCommand::completions::<{ CompletionKind::Script }>(&ctx, None, REJECT_LIST)?;
+        } else if &*filter[0] == b"i" {
+            completions = RunCommand::completions::<{ CompletionKind::ScriptExclude }>(
+                &ctx,
                 Some(DEFAULT_COMPLETIONS_LIST),
                 REJECT_LIST,
-                RunCommand::CompletionKind::ScriptExclude,
             )?;
-        } else if filter[0] == b"b" {
+        } else if &*filter[0] == b"b" {
             completions =
-                RunCommand::completions(ctx, None, REJECT_LIST, RunCommand::CompletionKind::Bin)?;
-        } else if filter[0] == b"r" {
+                RunCommand::completions::<{ CompletionKind::Bin }>(&ctx, None, REJECT_LIST)?;
+        } else if &*filter[0] == b"r" {
             completions =
-                RunCommand::completions(ctx, None, REJECT_LIST, RunCommand::CompletionKind::All)?;
-        } else if filter[0] == b"g" {
-            completions = RunCommand::completions(
-                ctx,
+                RunCommand::completions::<{ CompletionKind::All }>(&ctx, None, REJECT_LIST)?;
+        } else if &*filter[0] == b"g" {
+            completions = RunCommand::completions::<{ CompletionKind::AllPlusBunJs }>(
+                &ctx,
                 None,
                 REJECT_LIST,
-                RunCommand::CompletionKind::AllPlusBunJs,
             )?;
-        } else if filter[0] == b"j" {
+        } else if &*filter[0] == b"j" {
             completions =
-                RunCommand::completions(ctx, None, REJECT_LIST, RunCommand::CompletionKind::BunJs)?;
-        } else if filter[0] == b"z" {
-            completions = RunCommand::completions(
-                ctx,
+                RunCommand::completions::<{ CompletionKind::BunJs }>(&ctx, None, REJECT_LIST)?;
+        } else if &*filter[0] == b"z" {
+            completions = RunCommand::completions::<{ CompletionKind::ScriptAndDescriptions }>(
+                &ctx,
                 None,
                 REJECT_LIST,
-                RunCommand::CompletionKind::ScriptAndDescriptions,
             )?;
-        } else if filter[0] == b"a" {
+        } else if &*filter[0] == b"a" {
             use add_completions::FirstLetter;
 
             'outer: {

@@ -226,7 +226,7 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                         },
                     );
 
-                    chunk.content.css.asts[i] = BundlerStyleSheet {
+                    css.asts[i] = BundlerStyleSheet {
                         rules: 'rules: {
                             let mut rules = BundlerCssRuleList::new_in(bump);
                             let mut import_rule = ImportRule::from_url_and_import_record_idx(
@@ -254,9 +254,9 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                         // SAFETY: asts[idx] is Some for source_index entries (invariant of imports_in_chunk_in_order)
                         let original_stylesheet =
                             unsafe { &*asts[source_index.get()].expect("css ast present") };
-                        chunk.content.css.asts[i] = original_stylesheet.clone();
+                        css.asts[i] = original_stylesheet.clone();
                         // TODO(port): Zig used a struct copy (shallow); .clone() may deep-copy — verify BundlerStyleSheet semantics
-                        break 'ast &mut chunk.content.css.asts[i];
+                        break 'ast &mut css.asts[i];
                     };
 
                     {

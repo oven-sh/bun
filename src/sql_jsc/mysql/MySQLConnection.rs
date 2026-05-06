@@ -1465,61 +1465,64 @@ pub struct Reader {
     pub connection: *mut MySQLConnection,
 }
 
-impl Reader {
-    #[inline]
-    fn conn(self) -> &'static mut MySQLConnection {
-        // SAFETY: self.connection points at a live MySQLConnection for the
-        // duration of the read call (NewReader is constructed by
-        // `MySQLConnection::buffered_reader(&mut self)` and not stored). The
-        // 'static lifetime decouples the returned borrow from `self` (matches
-        // Zig's `*MySQLConnection` field which has no lifetime).
-        unsafe { &mut *self.connection }
-    }
-}
-
+// PORT NOTE (aliasing): `Reader` is constructed from `&mut MySQLConnection`
+// and then threaded through `process_packets(&mut self, reader)` — i.e. the
+// raw `*mut` and a live `&mut self` coexist. Materializing a whole-struct
+// `&mut MySQLConnection` here would alias that `&mut self` (Stacked Borrows
+// UB). Instead each method below dereferences only the specific field(s) it
+// touches via `(*self.connection).field`, matching `Writer` above and Zig's
+// freely-aliasing `*MySQLConnection` semantics.
 impl ReaderContext for Reader {
     fn mark_message_start(self) {
-        let c = self.conn();
-        c.last_message_start = c.read_buffer.head;
+        // SAFETY: self.connection points at a live MySQLConnection for the
+        // duration of the read call (NewReader is constructed by
+        // `MySQLConnection::buffered_reader(&mut self)` and not stored).
+        unsafe { (*self.connection).last_message_start = (*self.connection).read_buffer.head };
     }
 
     fn set_offset_from_start(self, offset: usize) {
-        let c = self.conn();
-        c.read_buffer.head = c.last_message_start + (offset as u32);
+        // SAFETY: see `mark_message_start`.
+        unsafe {
+            (*self.connection).read_buffer.head =
+                (*self.connection).last_message_start + (offset as u32);
+        }
     }
 
     fn peek(&self) -> &[u8] {
-        // SAFETY: see `Reader::conn`.
+        // SAFETY: see `mark_message_start`.
         unsafe { (*self.connection).read_buffer.remaining() }
     }
 
     fn skip(self, count: isize) {
-        let c = self.conn();
+        // SAFETY: see `mark_message_start`. Borrow only `read_buffer`.
+        let rb = unsafe { &mut (*self.connection).read_buffer };
         if count < 0 {
             let abs_count = count.unsigned_abs();
-            if abs_count > c.read_buffer.head as usize {
-                c.read_buffer.head = 0;
+            if abs_count > rb.head as usize {
+                rb.head = 0;
                 return;
             }
-            c.read_buffer.head -= u32::try_from(abs_count).unwrap();
+            rb.head -= u32::try_from(abs_count).unwrap();
             return;
         }
 
         let ucount: usize = usize::try_from(count).unwrap();
-        if c.read_buffer.head as usize + ucount > c.read_buffer.byte_list.len as usize {
-            c.read_buffer.head = c.read_buffer.byte_list.len;
+        if rb.head as usize + ucount > rb.byte_list.len as usize {
+            rb.head = rb.byte_list.len;
             return;
         }
 
-        c.read_buffer.head += u32::try_from(ucount).unwrap();
+        rb.head += u32::try_from(ucount).unwrap();
     }
 
     fn ensure_capacity(self, count: usize) -> bool {
-        self.conn().read_buffer.remaining().len() >= count
+        // SAFETY: see `mark_message_start`.
+        unsafe { (*self.connection).read_buffer.remaining().len() >= count }
     }
 
     fn read(self, count: usize) -> Result<Data, AnyMySQLError> {
-        let remaining = self.conn().read_buffer.remaining();
+        // SAFETY: see `mark_message_start`.
+        let remaining = unsafe { (*self.connection).read_buffer.remaining() };
         if remaining.len() < count {
             return Err(AnyMySQLError::ShortRead);
         }
@@ -1531,7 +1534,8 @@ impl ReaderContext for Reader {
     }
 
     fn read_z(self) -> Result<Data, AnyMySQLError> {
-        let remaining = self.conn().read_buffer.remaining();
+        // SAFETY: see `mark_message_start`.
+        let remaining = unsafe { (*self.connection).read_buffer.remaining() };
         if let Some(zero) = bun_core::strings::index_of_char(remaining, 0) {
             let slice = &remaining[0..zero as usize] as *const [u8];
             self.skip(isize::try_from(zero + 1).unwrap());

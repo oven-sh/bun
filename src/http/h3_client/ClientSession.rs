@@ -206,20 +206,24 @@ impl ClientSession {
     /// port-reuse race where a pooled session goes stale between the
     /// `matches()` check and the first stream open.
     pub fn retry_or_fail(&mut self, stream: *mut Stream, err: bun_core::Error) {
+        // PORT NOTE: reshaped for Stacked Borrows like `fail` below — `detach()`
+        // re-derives `&mut HTTPClient` from the same raw ptr to null `h3`, which
+        // would invalidate any `&mut HTTPClient` held across it. Hold the raw
+        // `client_ptr` across `detach` and only form `&mut` afterward.
         // SAFETY: caller passes a live Stream from self.pending.
         let st = unsafe { &mut *stream };
         let Some(client_ptr) = st.client else {
             return self.fail(stream, err);
         };
         // SAFETY: stream.client is a live backref while the stream is attached.
-        let client = unsafe { &mut *client_ptr.as_ptr() };
-        if client.flags.h3_retried || st.is_streaming_body {
+        if unsafe { (*client_ptr.as_ptr()).flags.h3_retried } || st.is_streaming_body {
             return self.fail(stream, err);
         }
         let Some(ctx) = ClientContext::get() else {
             return self.fail(stream, err);
         };
-        client.flags.h3_retried = true;
+        // SAFETY: same backref as above; short-lived write before detach().
+        unsafe { (*client_ptr.as_ptr()).flags.h3_retried = true };
         // The old session is dead from our perspective; make sure connect()
         // can't pick it again.
         self.closed = true;
@@ -234,6 +238,10 @@ impl ClientSession {
         );
         st.abort();
         self.detach(stream);
+        // SAFETY: HTTPClient outlives its h3 Stream; detach() nulled client.h3 but
+        // the client itself is alive. Formed only after detach() so its Unique tag
+        // is not invalidated by detach()'s aliasing write.
+        let client = unsafe { &mut *client_ptr.as_ptr() };
         if !ctx.connect(client, &host, port) {
             client.fail_from_h2(err);
         }

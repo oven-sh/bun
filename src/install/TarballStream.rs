@@ -791,12 +791,12 @@ impl TarballStream {
     }
 
     fn finish(&mut self) {
-        // PORT NOTE: reshaped for borrowck — capture raw pointers to
-        // `extract_task`/`network_task`/`package_manager` because `self` is
-        // dropped (Box::from_raw) mid-function. See TODO at struct decl.
-        let task: *mut Task = self.extract_task as *mut Task;
+        // Fields are already raw pointers (see struct PORT NOTE), so copying
+        // them out before `Box::from_raw(self)` is just a pointer copy — no
+        // reborrow of `&mut Task` is ever materialised from a stored `&mut`.
+        let task: *mut Task = self.extract_task;
         let network: *mut NetworkTask = self.network_task;
-        let manager: *const PackageManager = self.package_manager as *const PackageManager;
+        let manager: *const PackageManager = self.package_manager;
 
         self.close_output_file();
 

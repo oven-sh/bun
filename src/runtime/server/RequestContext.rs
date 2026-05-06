@@ -294,11 +294,13 @@ mod shim {
     #[inline] pub fn iec_has_callback(cb: &request::InternalJSEventCallback) -> bool {
         cb.has_callback()
     }
-    #[inline] pub fn byte_stream_unpipe(s: &ByteStream) {
-        // SAFETY: unpipe only nulls two `Option` fields; no drop side effects.
-        // Shim signature is `&` to avoid an `&mut` borrow at the lone call site
-        // (which holds a shared ref through the byte_stream NonNull).
-        unsafe { &mut *(s as *const ByteStream as *mut ByteStream) }.unpipe_without_deref()
+    #[inline] pub fn byte_stream_unpipe(mut s: NonNull<ByteStream>) {
+        // SAFETY: the lone caller has just `take()`n the pointer out of
+        // `self.byte_stream`, so no other borrow of the ByteStream is live;
+        // the allocation is kept alive by `response_body_readable_stream_ref`.
+        // `unpipe_without_deref` only nulls two `Option` fields (no drop side
+        // effects), matching Zig's `stream.unpipeWithoutDeref()` on `*ByteStream`.
+        unsafe { s.as_mut() }.unpipe_without_deref()
     }
     #[inline] pub fn body_value_unref(v: &mut Body::Value) {
         // SAFETY: every `Body::Value` reachable from `RequestContext.request_body`

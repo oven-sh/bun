@@ -137,8 +137,9 @@ macro_rules! extern_crypto_job {
                         };
 
                         let res: JsResult<()> = jsc::from_js_host_call_generic(vm.global, || {
-                            // SAFETY: ctx is live until `deinit` below.
-                            unsafe { ctx_run_from_js(this.ctx, vm.global as *const _ as *mut _, callback) };
+                            // SAFETY: ctx is live until `deinit` below; `vm.global` is the VM's
+                            // `*mut JSGlobalObject` field (mut provenance) — no const→mut cast needed.
+                            unsafe { ctx_run_from_js(this.ctx, vm.global, callback) };
                         });
                         if let Err(err) = res {
                             let _ = vm.global.report_uncaught_exception(

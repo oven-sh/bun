@@ -763,7 +763,9 @@ pub struct CommandLineReporter {
     pub last_dot: u32,
     pub prev_file: u64,
     pub repeat_count: u32,
-    pub last_printed_dot: bool,
+    /// Interior-mut: written from `BunTestRoot::on_before_print` via `&CommandLineReporter`
+    /// (Zig stores `?*CommandLineReporter` and freely mutates; Rust holds `&'a CommandLineReporter`).
+    pub last_printed_dot: core::cell::Cell<bool>,
 
     /// When running as a `--parallel` worker, this is the coordinator-assigned
     /// index of the file currently being executed. While set, per-test output
@@ -1134,7 +1136,7 @@ impl CommandLineReporter {
                     bun_test::BasicResult::Pending => { let _ = writer.write_all(&Output::pretty_fmt("<r><d>.<r>", colors)); }
                     bun_test::BasicResult::Fail => { let _ = writer.write_all(&Output::pretty_fmt("<r><red>.<r>", colors)); }
                 }
-                buntest.reporter.as_mut().unwrap().last_printed_dot = true;
+                buntest.reporter.as_ref().unwrap().last_printed_dot.set(true);
             } else if basic != bun_test::BasicResult::Fail
                 && (buntest.reporter.is_some() && buntest.reporter.as_ref().unwrap().reporters.only_failures)
             {

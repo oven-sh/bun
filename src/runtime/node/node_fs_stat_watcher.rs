@@ -59,11 +59,18 @@ impl StatWatcherScheduler {
         // TODO(port): IntrusiveArc::ref_ — ThreadSafeRefCount.ref
         self.ref_count.fetch_add(1, Ordering::Relaxed);
     }
-    pub fn deref(&self) {
+    /// # Safety
+    /// `this` must point to a live `Self` (Box-allocated by `init`). Caller must
+    /// own one outstanding ref. Takes a raw `*mut` (not `&self`) because at
+    /// refcount-zero this deallocates the storage; deriving `*mut` from `&self`
+    /// and freeing through it would be UB. Mirrors Zig `ThreadSafeRefCount.deref(*T)`.
+    pub unsafe fn deref(this: *mut Self) {
         // TODO(port): IntrusiveArc::deref — ThreadSafeRefCount.deref → calls deinit() at 0
-        if self.ref_count.fetch_sub(1, Ordering::AcqRel) == 1 {
-            // SAFETY: last reference; matches Zig ThreadSafeRefCount semantics
-            unsafe { Self::deinit(self as *const Self as *mut Self) };
+        // SAFETY: `this` is live per caller contract; ref_count is atomic (interior-mutable).
+        if unsafe { (*this).ref_count.fetch_sub(1, Ordering::AcqRel) } == 1 {
+            // SAFETY: last reference; matches Zig ThreadSafeRefCount semantics. No `&Self`
+            // is materialized across the dealloc — raw-ptr-only access.
+            unsafe { Self::deinit(this) };
         }
     }
 

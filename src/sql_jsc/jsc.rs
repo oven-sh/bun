@@ -738,7 +738,8 @@ pub mod codegen {
             pub fn get_constructor(global: &JSGlobalObject) -> JSValue {
                 // SAFETY: `global` is a live JSGlobalObject; the codegen symbol
                 // is emitted alongside the JS class wrapper and never null.
-                unsafe { $extern_name(global as *const _ as *mut _) }
+                // `as_mut_ptr` is sound via `UnsafeCell` (interior mutability).
+                unsafe { $extern_name(global.as_mut_ptr()) }
             }
         };
     }

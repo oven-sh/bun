@@ -359,9 +359,14 @@ const ARCHIVE_EXTRACT_SAFE_WRITES: c_int = 0x40000;
 // ───────────────────────────────────────────────────────────────────────────
 
 /// Opaque libarchive `struct archive` handle. Always used behind `*mut Archive`.
+///
+/// `_p` is wrapped in `UnsafeCell` so the type is `!Freeze`: libarchive mutates
+/// the C-side state through every call, and the Zig spec passes `*Archive`
+/// (mutable) everywhere. Without `UnsafeCell`, deriving a `*mut` from `&Archive`
+/// and letting C write through it is UB.
 #[repr(C)]
 pub struct Archive {
-    _p: [u8; 0],
+    _p: UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
@@ -471,7 +476,10 @@ unsafe extern "C" {
 
 #[inline(always)]
 fn p(a: &Archive) -> *mut Archive {
-    a as *const Archive as *mut Archive
+    // SAFETY: `Archive` is an opaque zero-sized FFI marker whose real storage
+    // lives on the C heap. `_p: UnsafeCell<_>` at offset 0 grants interior
+    // mutability, so a `*mut` derived from `&Archive` carries write provenance.
+    a._p.get() as *mut Archive
 }
 
 impl Archive {
@@ -677,7 +685,7 @@ impl Archive {
 
     pub fn write_header(&self, entry: &ArchiveEntry) -> ArchiveResult {
         // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_write_header(p(self), entry as *const _ as *mut _) }
+        unsafe { archive_write_header(p(self), ep(entry)) }
     }
 
     pub fn write_data(&self, data: &[u8]) -> isize {
@@ -814,7 +822,7 @@ impl Archive {
     }
     pub fn read_next_header2(&self, entry: &ArchiveEntry) -> ArchiveResult {
         // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_read_next_header2(p(self), entry as *const _ as *mut _) }
+        unsafe { archive_read_next_header2(p(self), ep(entry)) }
     }
 
     pub fn next(&self, offset: &mut i64) -> Option<Block> {
@@ -1028,9 +1036,13 @@ pub struct Block {
 // ───────────────────────────────────────────────────────────────────────────
 
 /// Opaque libarchive `struct archive_entry` handle.
+///
+/// `_p` is wrapped in `UnsafeCell` so the type is `!Freeze`: libarchive mutates
+/// entry state through setters and `archive_read_next_header2`. The Zig spec
+/// passes `*Entry` (mutable) — without `UnsafeCell`, `&ArchiveEntry → *mut` is UB.
 #[repr(C)]
 pub struct ArchiveEntry {
-    _p: [u8; 0],
+    _p: UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 

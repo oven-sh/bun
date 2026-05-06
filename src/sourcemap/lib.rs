@@ -443,26 +443,33 @@ pub struct DevServerSourceMapData {
 
 // TODO(port): move to <area>_sys
 unsafe extern "C" {
+    // Both C++ accessors are read-only (`provider->source()` /
+    // `provider->sourceMapJSON()`). Taking `*const` avoids casting away
+    // const from the `&self` borrow below; any interior mutation lives behind
+    // the FFI boundary in C++-owned storage that Rust has no provenance over
+    // (this type is an opaque ZST marker).
     fn DevServerSourceProvider__getSourceSlice(
-        this: *mut DevServerSourceProvider,
+        this: *const DevServerSourceProvider,
     ) -> bun_str::String;
     fn DevServerSourceProvider__getSourceMapJSON(
-        this: *mut DevServerSourceProvider,
+        this: *const DevServerSourceProvider,
     ) -> DevServerSourceMapData;
 }
 
 impl DevServerSourceProvider {
     pub fn get_source_slice(&self) -> bun_str::String {
-        // SAFETY: opaque FFI handle
-        unsafe { DevServerSourceProvider__getSourceSlice(self as *const _ as *mut _) }
+        // SAFETY: opaque FFI handle; address-only pass-through, callee does not
+        // write Rust-visible memory.
+        unsafe { DevServerSourceProvider__getSourceSlice(self) }
     }
     pub fn get_source_map_json_raw(&self) -> DevServerSourceMapData {
-        // SAFETY: opaque FFI handle
-        unsafe { DevServerSourceProvider__getSourceMapJSON(self as *const _ as *mut _) }
+        // SAFETY: opaque FFI handle; address-only pass-through, callee does not
+        // write Rust-visible memory.
+        unsafe { DevServerSourceProvider__getSourceMapJSON(self) }
     }
 
     pub fn to_source_content_ptr(&self) -> SourceContentPtr {
-        SourceContentPtr::from_dev_server_provider(self as *const _ as *mut _)
+        SourceContentPtr::from_dev_server_provider(self)
     }
 
     /// The last two arguments to this specify loading hints

@@ -276,9 +276,11 @@ impl JSSourceMap {
         let name = this.mapping_name_to_js(global, &mapping)?;
         let source = this.source_name_to_js(global, &mapping)?;
         // SAFETY: C++ FFI; arguments are valid JSValues and a live JSGlobalObject.
+        // `as_ptr()` derives `*mut` via the struct's `UnsafeCell` interior, so the
+        // C++ callee may mutate the global without laundering a read-only pointer.
         Ok(unsafe {
             Bun__createNodeModuleSourceMapOriginObject(
-                global as *const _ as *mut JSGlobalObject,
+                global.as_ptr(),
                 name,
                 JSValue::js_number(mapping.original.lines.zero_based() as f64),
                 JSValue::js_number(mapping.original.columns.zero_based() as f64),
@@ -305,9 +307,11 @@ impl JSSourceMap {
         let name = this.mapping_name_to_js(global, &mapping)?;
         let source = this.source_name_to_js(global, &mapping)?;
         // SAFETY: C++ FFI; arguments are valid JSValues and a live JSGlobalObject.
+        // `as_ptr()` derives `*mut` via the struct's `UnsafeCell` interior, so the
+        // C++ callee may mutate the global without laundering a read-only pointer.
         Ok(unsafe {
             Bun__createNodeModuleSourceMapEntryObject(
-                global as *const _ as *mut JSGlobalObject,
+                global.as_ptr(),
                 JSValue::js_number(mapping.generated.lines.zero_based() as f64),
                 JSValue::js_number(mapping.generated.columns.zero_based() as f64),
                 JSValue::js_number(mapping.original.lines.zero_based() as f64),

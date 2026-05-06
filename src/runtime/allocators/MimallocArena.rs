@@ -123,23 +123,26 @@ impl<'a> Borrowed<'a> {
 
     fn from_opaque(ptr: *mut c_void) -> Self {
         // SAFETY: ptr was produced by `Borrowed::allocator()` above as
-        // `self.heap as *const _ as *mut c_void`; cast back to the same type.
+        // `self.heap.as_ptr().cast::<c_void>()`; cast back to the same type. Non-null by
+        // construction (mi_heap_new/mi_heap_main never yield null here).
         #[cfg(feature = "ci_assert")]
-        { Borrowed { heap: unsafe { &*(ptr as *const DebugHeap) } } }
+        { Borrowed { heap: unsafe { NonNull::new_unchecked(ptr.cast::<DebugHeap>()) }, _lt: PhantomData } }
         #[cfg(not(feature = "ci_assert"))]
-        { Borrowed { heap: unsafe { &*(ptr as *const mimalloc::Heap) } } }
+        { Borrowed { heap: unsafe { NonNull::new_unchecked(ptr.cast::<mimalloc::Heap>()) }, _lt: PhantomData } }
     }
 
     fn get_mimalloc_heap(self) -> *mut mimalloc::Heap {
         #[cfg(feature = "ci_assert")]
-        { self.heap.inner.as_ptr() }
+        // SAFETY: `heap` points at a live DebugHeap for `'a`; we only read the `inner` field.
+        { unsafe { (*self.heap.as_ptr()).inner.as_ptr() } }
         #[cfg(not(feature = "ci_assert"))]
-        { self.heap as *const mimalloc::Heap as *mut mimalloc::Heap }
+        { self.heap.as_ptr() }
     }
 
     fn assert_thread_lock(self) {
         #[cfg(feature = "ci_assert")]
-        self.heap.thread_lock.assert_locked();
+        // SAFETY: `heap` points at a live DebugHeap for `'a`; `assert_locked` takes `&self`.
+        unsafe { (*self.heap.as_ptr()).thread_lock.assert_locked() };
     }
 
     fn aligned_alloc(self, len: usize, alignment: Alignment) -> Option<NonNull<u8>> {
@@ -177,9 +180,9 @@ impl<'a> Borrowed<'a> {
 }
 
 #[cfg(feature = "ci_assert")]
-type BorrowedHeap<'a> = &'a DebugHeap;
+type BorrowedHeap = NonNull<DebugHeap>;
 #[cfg(not(feature = "ci_assert"))]
-type BorrowedHeap<'a> = &'a mimalloc::Heap;
+type BorrowedHeap = NonNull<mimalloc::Heap>;
 
 struct DebugHeap {
     inner: NonNull<mimalloc::Heap>,

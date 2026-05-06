@@ -159,7 +159,7 @@ impl SourceContentPtr {
         (self.0 >> Self::DATA_SHIFT) & Self::DATA_MASK
     }
 
-    pub fn from_provider(p: *mut SourceProviderMap) -> SourceContentPtr {
+    pub fn from_provider(p: *const SourceProviderMap) -> SourceContentPtr {
         Self::new(
             SourceMapLoadHint::None,
             SourceProviderKind::Zig,
@@ -175,7 +175,7 @@ impl SourceContentPtr {
         )
     }
 
-    pub fn from_dev_server_provider(p: *mut DevServerSourceProvider) -> SourceContentPtr {
+    pub fn from_dev_server_provider(p: *const DevServerSourceProvider) -> SourceContentPtr {
         Self::new(
             SourceMapLoadHint::None,
             SourceProviderKind::DevServer,

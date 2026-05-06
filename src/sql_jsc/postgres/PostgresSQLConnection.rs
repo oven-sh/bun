@@ -2260,7 +2260,8 @@ impl PostgresSQLConnection {
                                 return Err(AnyPostgresError::SASL_SIGNATURE_INVALID_BASE64);
                             }
                         };
-                        sasl.compute_salted_password(&server_salt_decoded_base64, iteration_count, password)?;
+                        sasl.compute_salted_password(&server_salt_decoded_base64, iteration_count, password)
+                            .map_err(|_| AnyPostgresError::PBKDFD2)?;
                         drop(server_salt_decoded_base64);
 
                         let mut auth_string: Vec<u8> = Vec::new();
@@ -2277,7 +2278,8 @@ impl PostgresSQLConnection {
                                 bstr::BStr::new(unsafe { &*cont.r }),
                             );
                         }
-                        sasl.compute_server_signature(&auth_string)?;
+                        sasl.compute_server_signature(&auth_string)
+                            .map_err(|_| AnyPostgresError::InvalidServerSignature)?;
 
                         let client_key = sasl.client_key();
                         let client_key_signature = sasl.client_key_signature(&client_key, &auth_string);

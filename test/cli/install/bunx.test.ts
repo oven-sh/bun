@@ -1149,7 +1149,7 @@ describe("package name aliases", () => {
     const paths = urls.map(u => new URL(u).pathname);
     // The manifest request must be for the real package, and must never hit
     // the squatter package name.
-    expect(paths).toContain("/@anthropic-ai%2fclaude-code");
+    expect(paths).toContain("/@anthropic-ai%2Fclaude-code");
     expect(paths).not.toContain("/claude");
     // Install fails because the mock registry 404s; that's fine, we only care
     // about which manifest was requested.

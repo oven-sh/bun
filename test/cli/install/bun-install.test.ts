@@ -642,7 +642,7 @@ describe.concurrent("bun-install", () => {
   it("should handle @scoped authentication", async () => {
     await withContext(defaultOpts, async ctx => {
       let seen_token = false;
-      const url = `${ctx.registry_url}@foo%2fbar`;
+      const url = `${ctx.registry_url}@foo%2Fbar`;
       const urls: string[] = [];
       setContextHandler(ctx, async request => {
         expect(request.method).toBe("GET");
@@ -3202,7 +3202,7 @@ describe.concurrent("bun-install", () => {
         "1 package installed",
       ]);
       expect(await exited).toBe(0);
-      expect(urls.sort()).toEqual([`${ctx.registry_url}@barn%2fmoo`, `${ctx.registry_url}@barn/moo-0.1.0.tgz`]);
+      expect(urls.sort()).toEqual([`${ctx.registry_url}@barn%2Fmoo`, `${ctx.registry_url}@barn/moo-0.1.0.tgz`]);
       expect(ctx.requested).toBe(2);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "@barn", "moo"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "@barn"))).toEqual(["moo"]);
@@ -3337,7 +3337,7 @@ describe.concurrent("bun-install", () => {
       ]);
       expect(await exited1).toBe(0);
       expect(urls.sort()).toEqual([
-        `${ctx.registry_url}@barn%2fmoo`,
+        `${ctx.registry_url}@barn%2Fmoo`,
         `${ctx.registry_url}@barn/moo-0.1.0.tgz`,
         `${ctx.registry_url}bar`,
         `${ctx.registry_url}bar-0.0.2.tgz`,

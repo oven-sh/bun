@@ -171,7 +171,7 @@ pub const DependencyUrlFormatter = struct {
         var remain = this.url;
         while (strings.indexOfChar(remain, '/')) |slash| {
             try writer.writeAll(remain[0..slash]);
-            try writer.writeAll("%2f");
+            try writer.writeAll("%2F");
             remain = remain[slash + 1 ..];
         }
         try writer.writeAll(remain);

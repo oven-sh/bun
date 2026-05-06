@@ -82,7 +82,7 @@ function defaultHandler(): Response {
 
 /**
  * Extract the test ID prefix from a URL path.
- * URL format: /test-123/package-name or /test-123/@scope%2fpackage-name
+ * URL format: /test-123/package-name or /test-123/@scope%2Fpackage-name
  */
 function extractTestPrefix(url: string): { prefix: string; remainingPath: string } | null {
   const urlObj = new URL(url);
@@ -171,7 +171,7 @@ export function dummyRegistryForContext(
   let retryCountsByURL = new Map<string, number>();
   const _handler: Handler = async request => {
     urls.push(request.url);
-    const url = request.url.replaceAll("%2f", "/");
+    const url = request.url.replaceAll("%2f", "/").replaceAll("%2F", "/");
 
     let status = 200;
 
@@ -247,7 +247,7 @@ export function dummyRegistry(
   let retryCountsByURL = new Map<string, number>();
   const _handler: Handler = async request => {
     urls.push(request.url);
-    const url = request.url.replaceAll("%2f", "/");
+    const url = request.url.replaceAll("%2f", "/").replaceAll("%2F", "/");
 
     let status = 200;
 

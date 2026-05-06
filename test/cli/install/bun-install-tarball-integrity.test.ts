@@ -613,7 +613,7 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("tarball download fai
       const urls: string[] = [];
       let tarballStatus = 200;
       setContextHandler(ctx, async request => {
-        const url = request.url.replaceAll("%2f", "/");
+        const url = request.url.replaceAll("%2f", "/").replaceAll("%2F", "/");
         urls.push(url);
         if (url.endsWith(".tgz")) {
           if (tarballStatus !== 200) {

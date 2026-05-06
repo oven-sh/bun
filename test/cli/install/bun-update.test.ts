@@ -201,7 +201,7 @@ for (const { input } of [{ input: { baz: "~0.0.3", moo: "~0.1.0" } }]) {
     ]);
     expect(await exited1).toBe(0);
     expect(urls.sort()).toEqual([
-      `${root_url}/@barn%2fmoo`,
+      `${root_url}/@barn%2Fmoo`,
       `${root_url}/@barn/moo-0.1.0.tgz`,
       `${root_url}/baz`,
       `${root_url}/baz-0.0.3.tgz`,
@@ -264,7 +264,7 @@ for (const { input } of [{ input: { baz: "~0.0.3", moo: "~0.1.0" } }]) {
     }
     expect(await exited2).toBe(0);
     expect(urls.sort()).toEqual([
-      `${root_url}/@barn%2fmoo`,
+      `${root_url}/@barn%2Fmoo`,
       `${root_url}/@barn/moo-0.1.0.tgz`,
       `${root_url}/baz`,
       tilde ? `${root_url}/baz-0.0.5.tgz` : `${root_url}/baz-0.0.3.tgz`,

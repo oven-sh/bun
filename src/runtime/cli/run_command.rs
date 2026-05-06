@@ -2851,18 +2851,22 @@ impl RunCommand {
                 let _ = sys::Dir::cwd().delete_tree(Self::BUN_NODE_DIR.as_bytes());
             }
             const PATHS: [&str; 2] = [
-                const_format::concatcp!(RunCommand::BUN_NODE_DIR, "/node"),
-                const_format::concatcp!(RunCommand::BUN_NODE_DIR, "/bun"),
+                const_format::concatcp!(RunCommand::BUN_NODE_DIR, "/node\0"),
+                const_format::concatcp!(RunCommand::BUN_NODE_DIR, "/bun\0"),
             ];
+            const BUN_NODE_DIR_Z: &str =
+                const_format::concatcp!(RunCommand::BUN_NODE_DIR, "\0");
             for p in PATHS {
                 let mut retried = false;
                 loop {
                     'inner: {
-                        // SAFETY: argv0 is a valid NUL-terminated C string
-                        let target = unsafe { ZStr::from_ptr(argv0.cast()) };
+                        // SAFETY: argv0 is a valid NUL-terminated C string.
+                        let target = unsafe {
+                            let cstr = CStr::from_ptr(argv0);
+                            ZStr::from_raw(cstr.as_ptr().cast(), cstr.to_bytes().len())
+                        };
                         // SAFETY: PATHS entries are NUL-terminated string literals.
-                        let link =
-                            unsafe { ZStr::from_raw(p.as_ptr(), p.len()) };
+                        let link = unsafe { ZStr::from_raw(p.as_ptr(), p.len() - 1) };
                         if let sys::Result::Err(err) = sys::symlink(target, link) {
                             if err.get_errno() == sys::Errno::EXIST {
                                 break 'inner;
@@ -2872,11 +2876,11 @@ impl RunCommand {
                             }
 
                             // Zig: std.fs.makeDirAbsoluteZ(BUN_NODE_DIR) — best-effort.
-                            // SAFETY: BUN_NODE_DIR is a NUL-terminated literal.
+                            // SAFETY: BUN_NODE_DIR_Z is a NUL-terminated literal.
                             let dir_z = unsafe {
                                 ZStr::from_raw(
-                                    Self::BUN_NODE_DIR.as_ptr(),
-                                    Self::BUN_NODE_DIR.len(),
+                                    BUN_NODE_DIR_Z.as_ptr(),
+                                    BUN_NODE_DIR_Z.len() - 1,
                                 )
                             };
                             let _ = sys::mkdir(dir_z, 0o755);
@@ -2942,8 +2946,8 @@ impl RunCommand {
             {
                 let dir_slice_u8 = strings::utf16_le_to_utf8_alloc(&target_path_buffer[..dir_slice_len])
                     .expect("oom");
-                let _ = sys::delete_tree_absolute(&dir_slice_u8);
-                sys::make_dir_absolute(&dir_slice_u8).expect("huh?");
+                let _ = sys::Dir::cwd().delete_tree(&dir_slice_u8);
+                sys::Dir::cwd().make_path(&dir_slice_u8).expect("huh?");
             }
 
             let image_path = sys::windows::exe_path_w();

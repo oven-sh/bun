@@ -199,7 +199,7 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         source: Source,
     ) -> IntrusiveRc<Self> {
         let this = Box::into_raw(Box::new(Self {
-            ref_count: Cell::new(1),
+            ref_count: RefCount::init(),
             writer: IOWriter::<P>::default(),
             stdio_result: result,
             source,

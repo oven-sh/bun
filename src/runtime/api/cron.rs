@@ -557,10 +557,12 @@ impl CronRegisterJob {
         drop(plist_path);
     }
 
-    // -- JS entry point --
+}
 
-    #[bun_jsc::host_fn]
-    pub fn cron_register(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+// -- JS entry point -- (free fn: `#[host_fn]` Free shim calls bare `cron_register(..)`)
+
+#[bun_jsc::host_fn]
+pub fn cron_register(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let args = frame.arguments_as_array::<3>();
 
         // In-process callback cron: Bun.cron(schedule, handler)

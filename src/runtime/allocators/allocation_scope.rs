@@ -452,17 +452,17 @@ impl<'a, A: GenericAllocator> Borrowed<'a, A> {
         // Zig: `if (Allocator == std.mem.Allocator) ?BorrowedAllocator else BorrowedAllocator`
         // TODO(port): type-equality dispatch on `A == StdAllocator` has no direct Rust spelling.
         // Phase B: specialize via a sealed trait or split into two inherent fns per concrete `A`.
-        parent_alloc: Option<crate::Borrowed<A>>,
+        parent_alloc: Option<BorrowedAlloc<A>>,
     ) -> Self {
         #[cfg(feature = "alloc_scopes")]
         let state: &'a State = 'blk: {
             debug_assert!(
-                std_alloc.vtable() == &VTABLE,
+                core::ptr::eq(std_alloc.vtable, &VTABLE),
                 "allocator is not an allocation scope (has vtable {:p})",
-                std_alloc.vtable(),
+                std_alloc.vtable,
             );
             // SAFETY: vtable check above proves `std_alloc.ptr` is a `*State` we boxed in `init`.
-            break 'blk unsafe { &*(std_alloc.ptr() as *const State) };
+            break 'blk unsafe { &*(std_alloc.ptr as *const State) };
         };
 
         #[cfg(feature = "alloc_scopes")]

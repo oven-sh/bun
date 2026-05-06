@@ -1,22 +1,30 @@
 use core::mem;
-use std::rc::Rc;
+use core::ptr::NonNull;
 
 use bun_core::output;
-use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{self as jsc, event_loop::EventLoop, JSGlobalObject, JSValue, JsResult};
 use bun_sys::{self, Fd};
 
-use bun_ptr::CowString;
-use bun_spawn::Stdio;
+use bun_io::max_buf::MaxBuf;
+use bun_ptr::IntrusiveRc;
+use bun_ptr::cow_slice::CowSlice;
+use crate::api::bun_spawn::stdio::Stdio;
 use crate::webcore::blob::SizeType as BlobSizeType;
 use crate::webcore::ReadableStream;
 
-use super::{MaxBuf, PipeReader, StdioResult, Subprocess};
+use super::subprocess_pipe_reader::PipeReader;
+use super::{StdioResult, Subprocess};
+
+// `bun.ptr.CowString` — the Zig-shaped owned/borrowed byte slice (has
+// `init_owned` / `length` / `take_slice`). Distinct from the std `Cow` alias
+// re-exported at `bun_ptr::CowString`.
+pub type CowString = CowSlice<u8>;
 
 pub enum Readable {
     Fd(Fd),
     Memfd(Fd),
-    // LIFETIMES.tsv: SHARED → Rc<PipeReader> (PipeReader has intrusive RefCount; detach() → deref()).
-    Pipe(Rc<PipeReader>),
+    // LIFETIMES.tsv: SHARED → IntrusiveRc<PipeReader> (PipeReader has intrusive RefCount; detach() → deref()).
+    Pipe(IntrusiveRc<PipeReader>),
     Inherit,
     Ignore,
     Closed,

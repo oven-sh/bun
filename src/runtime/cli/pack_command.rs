@@ -24,7 +24,9 @@ type CowString = CowSlice<u8>;
 use bun_semver as Semver;
 use bun_sha_hmac::sha;
 use bun_str::{ZStr, strings};
-use bun_sys::{self, dir_iterator as DirIterator, Fd, File, Dir};
+use bun_sys::{self, dir_iterator as DirIterator, Fd, FdExt as _, File, Dir};
+use bun_glob::matcher::MatchResult as GlobMatchResult;
+use bun_paths::resolve_path;
 use crate::cli::run_command::RunCommand;
 
 // type aliases matching Zig `string`/`stringZ`

@@ -822,14 +822,13 @@ impl<'a> Repl<'a> {
 
             // Install SIGINT handler
             // TODO(port): wrap std.posix.Sigaction in bun_sys
-            let act = bun_sys::posix::Sigaction {
-                handler: bun_sys::posix::SigHandler::Handler(sigint_handler),
-                mask: bun_sys::posix::sigemptyset(),
-                flags: 0,
-            };
-            // SAFETY: act is valid for the duration of the call
+            // SAFETY: zeroed `sigaction` is a valid empty mask + null restorer; we set
+            // sa_sigaction/sa_flags below. `act` is valid for the duration of the call.
             unsafe {
-                bun_sys::posix::sigaction(bun_sys::posix::SIG::INT, &act, core::ptr::null_mut());
+                let mut act: bun_sys::posix::Sigaction = core::mem::zeroed();
+                act.sa_sigaction = sigint_handler as usize;
+                act.sa_flags = 0;
+                bun_sys::posix::sigaction(libc::SIGINT, &act, core::ptr::null_mut());
             }
         }
         // On Windows, ENABLE_PROCESSED_INPUT is already set so Ctrl+C works

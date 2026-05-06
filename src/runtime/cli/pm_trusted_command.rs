@@ -301,7 +301,7 @@ impl TrustCommand {
             let _node_modules_path_save = node_modules_path.save();
             node_modules_path.append(node_modules.relative_path);
 
-            let node_modules_dir = match bun_sys::open_dir(bun_sys::Fd::cwd(), node_modules.relative_path) {
+            let node_modules_dir = match bun_sys::open_dir_at(bun_sys::Fd::cwd(), node_modules.relative_path) {
                 Ok(d) => d,
                 Err(e) if e == bun_core::err!("ENOENT") => continue,
                 Err(e) => return Err(e.into()),

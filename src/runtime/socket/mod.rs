@@ -11,6 +11,7 @@
 
 #[path = "socket_body.rs"]
 mod socket_body; // full Phase-A draft of socket.zig
+pub use socket_body::NativeCallbacks;
 
 #[path = "SocketAddress.rs"]
 pub mod socket_address;

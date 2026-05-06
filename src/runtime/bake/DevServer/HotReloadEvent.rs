@@ -9,8 +9,8 @@ use bun_jsc::ConcurrentTask;
 use bun_paths::Platform;
 use bun_str::strings;
 
-use crate::dev_server::directory_watch_store::{self, DirectoryWatchStore};
-use crate::dev_server::{DevServer, EntryPointList, MessageId};
+use crate::bake::dev_server::directory_watch_store::{self, DirectoryWatchStore};
+use crate::bake::dev_server::{DevServer, EntryPointList, MessageId};
 
 /// This task informs the DevServer's thread about new files to be bundled.
 ///

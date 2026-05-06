@@ -3525,14 +3525,16 @@ impl RunCommand {
         if FILTER == Filter::Bin || FILTER == Filter::All || FILTER == Filter::AllPlusBunJs {
             for bin_path in this_transpiler.resolver.bin_dirs() {
                 if let Some(bin_dir) = this_transpiler.resolver.read_dir_info(bin_path).ok().flatten() {
-                    if let Some(entries) = bin_dir.get_entries_const() {
+                    // SAFETY: resolver cache owns the DirInfo for the process lifetime.
+                    if let Some(entries) = unsafe { &*bin_dir }.get_entries_const() {
                         PATH_BUF.with_borrow_mut(|path_buf| -> Result<(), bun_core::Error> {
                             let mut iter = entries.data.iter();
                             let mut has_copied = false;
                             let mut dir_slice_len: usize = 0;
                             while let Some(entry) = iter.next() {
                                 let value = entry.value;
-                                if value.kind(&this_transpiler.fs.fs, true) == bun_resolver::fs::EntryKind::File {
+                                // SAFETY: `Transpiler::fs` is the non-null process-static singleton.
+                                if value.kind(unsafe { &(*this_transpiler.fs).fs }, true) == bun_resolver::fs::EntryKind::File {
                                     if !has_copied {
                                         path_buf[..value.dir.len()].copy_from_slice(value.dir);
                                         dir_slice_len = value.dir.len();
@@ -3554,8 +3556,9 @@ impl RunCommand {
                                         continue;
                                     }
                                     // we need to dupe because the string pay point to a pointer that only exists in the current scope
+                                    // SAFETY: `Transpiler::fs` is the non-null process-static singleton.
                                     let Ok(appended) =
-                                        this_transpiler.fs.filename_store.append(base)
+                                        unsafe { (*this_transpiler.fs).filename_store }.append_slice(base)
                                     else {
                                         continue;
                                     };

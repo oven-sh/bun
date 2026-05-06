@@ -3765,7 +3765,7 @@ impl Blob {
                 blob = Blob::init(Vec::new(), global_this);
             }
             _ => {
-                blob = Blob::get(global_this, args[0], false, true)?;
+                blob = Blob::get::<false, true>(global_this, args[0])?;
 
                 if args.len() > 1 {
                     let options = args[1];
@@ -5109,19 +5109,9 @@ impl Blob {
 // shape-stubs (see webcore.rs) used by `Store`. The real
 // `crate::node::PathOrFileDescriptor` carries `from_js`/`to_thread_safe`/…
 // but is a *distinct type*. Until the two are unified (TODO in webcore.rs),
-// add the handful of methods `find_or_create_file_from_path` needs here —
-// inherent impls on a same-crate type are allowed from any module.
-impl PathOrFileDescriptor {
-    #[inline]
-    pub fn path_slice(&self) -> &[u8] {
-        match self {
-            Self::Path(p) => p.slice(),
-            Self::Fd(_) => b"",
-        }
-    }
-    // `to_thread_safe` now lives on the real `crate::node::types::PathOrFileDescriptor`
-    // (webcore::node_types is a re-export); the local stub override is removed.
-}
+// `path_slice` / `to_thread_safe` now live on the canonical stub impl in
+// `crate::webcore::node_types` (webcore.rs); the local duplicates were
+// removed to resolve E0034.
 
 /// `Bun.file(pathOrFd, options?)` — entry point referenced by
 /// `BunObject::export_callbacks!{ file => … }`.

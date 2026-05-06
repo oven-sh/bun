@@ -1192,23 +1192,24 @@ impl ServerConfig {
                             if ssl_config
                                 .server_name
                                 .as_deref()
-                                .map(|s| s.as_bytes())
+                                .map(|s| s.to_bytes())
                                 .unwrap_or(b"\0")[0]
                                 == 0
                             {
                                 drop(ssl_config);
-                                return global.throw_invalid_arguments(
+                                return Err(global.throw_invalid_arguments(
                                     "SNI tls object must have a serverName",
-                                    &[],
-                                );
-                            }
-                            if args.sni.is_none() {
-                                args.sni = Some(BabyList::with_capacity(
-                                    (value_iter.len - 1) as usize,
                                 ));
                             }
+                            if args.sni.is_none() {
+                                args.sni = Some(bun_core::handle_oom(BabyList::init_capacity(
+                                    (value_iter.len - 1) as usize,
+                                )));
+                            }
 
-                            args.sni.as_mut().unwrap().push(ssl_config);
+                            bun_core::handle_oom(
+                                args.sni.as_mut().unwrap().append(ssl_config),
+                            );
                         }
                     }
                 }
@@ -1238,18 +1239,17 @@ impl ServerConfig {
 
         if args.h3 {
             if args.ssl_config.is_none() {
-                return global
-                    .throw_invalid_arguments("HTTP/3 requires 'tls' to be set", &[]);
+                return Err(global
+                    .throw_invalid_arguments("HTTP/3 requires 'tls' to be set"));
             }
         } else if !args.h1 {
-            return global
-                .throw_invalid_arguments("Cannot disable h1 without enabling h3", &[]);
+            return Err(global
+                .throw_invalid_arguments("Cannot disable h1 without enabling h3"));
         }
         if !args.h1 && matches!(args.address, Address::Unix(_)) {
-            return global.throw_invalid_arguments(
+            return Err(global.throw_invalid_arguments(
                 "Cannot disable h1 with a unix socket — HTTP/3 over AF_UNIX is not supported",
-                &[],
-            );
+            ));
         }
 
         // ---- base_uri / base_url normalization ----

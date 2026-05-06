@@ -1056,7 +1056,7 @@ impl Value {
             ));
         }
 
-        let blob = match Blob::get(global_this, value, true, false) {
+        let blob = match Blob::get::<true, false>(global_this, value) {
             Ok(b) => b,
             Err(_err) => {
                 if !global_this.has_exception() {

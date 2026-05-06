@@ -1020,8 +1020,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         if let Some(options) = options_object {
             if let Some(signal_) = options.get(global_this, "signal")? {
                 if !signal_.is_undefined() {
-                    if let Some(signal__) = signal_.as_::<AbortSignal>() {
-                        break 'extract_signal Some(signal__.ref_());
+                    if let Some(signal__) = signal_.as_abort_signal() {
+                        // SAFETY: as_abort_signal returns a live AbortSignal*; ref_ bumps refcount.
+                        break 'extract_signal NonNull::new(unsafe { (*signal__).ref_() });
                     }
                 }
             }
@@ -1033,8 +1034,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         }
 
         if let Some(req) = request.as_deref() {
-            if let Some(signal_) = req.signal {
-                break 'extract_signal Some(signal_.ref_());
+            if let Some(signal_) = &req.signal {
+                break 'extract_signal NonNull::new(signal_.ref_());
             }
             break 'extract_signal None;
         }
@@ -1045,8 +1046,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     break 'extract_signal None;
                 }
 
-                if let Some(signal__) = signal_.as_::<AbortSignal>() {
-                    break 'extract_signal Some(signal__.ref_());
+                if let Some(signal__) = signal_.as_abort_signal() {
+                    // SAFETY: as_abort_signal returns a live AbortSignal*; ref_ bumps refcount.
+                    break 'extract_signal NonNull::new(unsafe { (*signal__).ref_() });
                 }
             }
         }

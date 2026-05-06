@@ -3819,18 +3819,33 @@ impl<'a> LinkerContext<'a> {
         // now instead of earlier because we need the whole bundle to be present.
         //
         // PORT NOTE: the CSS-module path (`BundlerStyleSheet.{local_scope,composes}`)
-        // is gated upstream — `crate::bun_css::BundlerStyleSheet` is a unit stub
-        // until `bun_css` un-gates the real type. The full Visitor port lives in
-        // `linker_context/generateCodeForLazyExport.rs` (still module-gated in
-        // `lib.rs::linker_context`); when `bun_css::BundlerStyleSheet` lands the
-        // module un-gates and this branch becomes
-        //   `crate::linker_context::generate_code_for_lazy_export::populate_css_stub_exports(self, css_ast, part, source_index)?;`
-        if let Some(_css_ast) = self.graph.ast.items_css()[source_index as usize] {
-            
-            {
-                crate::linker_context::generate_code_for_lazy_export::populate_css_stub_exports(
-                    self, _css_ast, part, source_index,
-                )?;
+        // walks `bun_css::CssRef` / `composes` / `LocalEntry` to synthesize an
+        // `E::Object` of `{ name: \`${ref} ...\` }` per local class. The full
+        // Visitor port lives in `linker_context/generateCodeForLazyExport.rs`
+        // (Phase-A draft, still type-gated on `bun_css::{CssRef,Specifier,
+        // ComposesMap}`); until those land this branch performs the spec's
+        // entry checks and the `local_scope.count() == 0` early-out, which is
+        // the only reachable path while `bun_css` is feature-stubbed.
+        if let Some(css_ast) = self.graph.ast.items_css()[source_index as usize] {
+            // SAFETY: `part.stmts` is a non-empty arena slice (checked above).
+            let stmt: Stmt = unsafe { (*part.stmts)[0] };
+            if !matches!(stmt.data, bun_js_parser::ast::stmt::Data::SLazyExport(_)) {
+                panic!("Internal error: expected top-level lazy export statement");
+            }
+            // SAFETY: `css_ast` is a `*mut BundlerStyleSheet` pointing into the
+            // graph's arena-backed AST column; valid for the link pass.
+            let css_ast = unsafe { &mut *css_ast };
+            'out: {
+                if css_ast.local_scope.count() == 0 {
+                    break 'out;
+                }
+                // TODO(port): full `composes`/`local_scope` Visitor — blocked on
+                // `bun_css::{CssRef, Specifier, ComposesMap, LocalEntry}` un-gate.
+                // The Visitor body is ported verbatim in
+                // `linker_context/generateCodeForLazyExport.rs::generate_code_for_lazy_export`;
+                // wire it through here once those types resolve.
+                let _ = stmt;
+                break 'out;
             }
         }
 

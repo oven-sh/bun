@@ -2924,12 +2924,442 @@ pub fn open_file_read_only(path: &[u8]) -> Maybe<Fd> {
 pub fn openat_read_only(dir: Fd, path: &[u8]) -> Maybe<Fd> {
     openat_a(dir, path, O::RDONLY | O::CLOEXEC, 0)
 }
-/// `openatWindows` — Windows-only NtCreateFile wrapper. On POSIX this is a
-/// `@compileError`; provided as a stub so `#[cfg(windows)]` arms type-check.
+// ──────────────────────────────────────────────────────────────────────────
+// `openatWindows` family — sys.zig:1217-1490. Maps POSIX-style `O::*` flags
+// onto an `NtCreateFile` call (or `openDirAtWindows` when `O_DIRECTORY` is
+// set). On POSIX this is a `@compileError` in Zig; the surface is gated.
+// ──────────────────────────────────────────────────────────────────────────
+
+#[cfg(windows)]
+const FILE_SHARE: u32 = bun_windows_sys::FILE_SHARE_READ
+    | bun_windows_sys::FILE_SHARE_WRITE
+    | bun_windows_sys::FILE_SHARE_DELETE;
+
+/// sys.zig:1217 `WindowsOpenDirOptions`.
+#[cfg(windows)]
+#[derive(Clone, Copy, Default)]
+pub struct WindowsOpenDirOptions {
+    pub iterable: bool,
+    pub no_follow: bool,
+    pub can_rename_or_delete: bool,
+    pub op: WindowsOpenDirOp,
+    pub read_only: bool,
+}
+#[cfg(windows)]
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub enum WindowsOpenDirOp {
+    #[default] OnlyOpen,
+    OnlyCreate,
+    OpenOrCreate,
+}
+
+/// sys.zig:1457 `NtCreateFileOptions`.
+#[cfg(windows)]
+#[derive(Clone, Copy)]
+pub struct NtCreateFileOptions {
+    pub access_mask: u32,
+    pub disposition: u32,
+    pub options: u32,
+    pub attributes: u32,
+    pub sharing_mode: u32,
+}
+#[cfg(windows)]
+impl Default for NtCreateFileOptions {
+    fn default() -> Self {
+        Self {
+            access_mask: 0,
+            disposition: 0,
+            options: 0,
+            attributes: bun_windows_sys::FILE_ATTRIBUTE_NORMAL,
+            sharing_mode: FILE_SHARE,
+        }
+    }
+}
+
+/// sys.zig:1129 `normalizePathWindows` — convert a (possibly relative) path
+/// into an NT object path suitable for `NtCreateFile` against `dir_fd`.
+/// PORT NOTE: u16-only here; the u8 entry points pre-convert via
+/// `bun_str::strings::to_nt_path` and call this with the resulting wide slice.
+#[cfg(windows)]
+fn normalize_path_windows<'a>(
+    dir_fd: Fd,
+    path: &[u16],
+    buf: &'a mut [u16],
+) -> Maybe<&'a bun_core::WStr> {
+    use bun_core::WStr;
+    let too_long = || Error::from_code(E::ENAMETOOLONG, Tag::open);
+
+    if bun_paths::is_absolute_windows_wtf16(path) {
+        // Absolute → add `\??\` (idempotent if already present), normalize
+        // separators/`..` and NUL-terminate.
+        let nt = bun_str::strings::to_nt_path16(buf, path);
+        return Ok(nt);
+    }
+
+    // Relative path with no separators or `.` can be passed straight through
+    // to `NtCreateFile` against `RootDirectory`.
+    if !path.iter().any(|&c| c == b'\\' as u16 || c == b'/' as u16 || c == b'.' as u16) {
+        if path.len() >= buf.len() { return Err(too_long()); }
+        buf[..path.len()].copy_from_slice(path);
+        buf[path.len()] = 0;
+        // SAFETY: NUL written at buf[path.len()].
+        return Ok(unsafe { WStr::from_raw(buf.as_ptr(), path.len()) });
+    }
+
+    // Otherwise: resolve `dir_fd` to its full path, join, normalize.
+    let base_fd = if dir_fd.is_valid() { dir_fd.cast() } else { Fd::cwd().cast() };
+    let mut base_buf = bun_paths::w_path_buffer_pool::get();
+    let base = match windows::GetFinalPathNameByHandle(
+        base_fd,
+        Default::default(),
+        &mut base_buf.0[..],
+    ) {
+        Ok(p) => p,
+        Err(_) => return Err(Error::from_code(E::EBADF, Tag::open)),
+    };
+
+    // Strip a leading drive letter (`C:`) on the relative part (sys.zig:1204).
+    let mut rel = path;
+    if rel.len() >= 2 && bun_paths::is_drive_letter_t::<u16>(rel[0]) && rel[1] == b':' as u16 {
+        rel = &rel[2..];
+    }
+
+    let mut joined = bun_paths::w_path_buffer_pool::get();
+    let joined_len = base.len() + 1 + rel.len();
+    if joined_len > joined.0.len() { return Err(too_long()); }
+    joined.0[..base.len()].copy_from_slice(base);
+    joined.0[base.len()] = b'\\' as u16;
+    joined.0[base.len() + 1..joined_len].copy_from_slice(rel);
+    let nt = bun_str::strings::to_nt_path16(buf, &joined.0[..joined_len]);
+    Ok(nt)
+}
+
+/// sys.zig:1382 — open a `\\.\…` device path via kernel32 `CreateFileW`
+/// (NtCreateFile cannot open device paths).
+#[cfg(windows)]
+fn open_windows_device_path(
+    path: &bun_core::WStr,
+    desired_access: u32,
+    creation_disposition: u32,
+    flags_and_attributes: u32,
+) -> Maybe<Fd> {
+    use bun_windows_sys::externs as w;
+    // SAFETY: path is NUL-terminated UTF-16.
+    let rc = unsafe {
+        w::CreateFileW(
+            path.as_ptr(),
+            desired_access,
+            FILE_SHARE,
+            core::ptr::null_mut(),
+            creation_disposition,
+            flags_and_attributes,
+            core::ptr::null_mut(),
+        )
+    };
+    if rc == bun_windows_sys::INVALID_HANDLE_VALUE {
+        let errno = windows::Win32Error::get()
+            .to_system_errno()
+            .unwrap_or(E::EUNKNOWN);
+        return Err(Error::from_code(errno, Tag::open));
+    }
+    Ok(Fd::from_native(rc))
+}
+
+/// sys.zig:1231 `openDirAtWindowsNtPath` — `NtCreateFile` with
+/// `FILE_DIRECTORY_FILE`.
+#[cfg(windows)]
+pub fn open_dir_at_windows_nt_path(
+    dir_fd: Fd,
+    path: &bun_core::WStr,
+    options: WindowsOpenDirOptions,
+) -> Maybe<Fd> {
+    use bun_windows_sys::externs as w;
+    let base_flags = w::STANDARD_RIGHTS_READ | w::FILE_READ_ATTRIBUTES | w::FILE_READ_EA
+        | w::SYNCHRONIZE | w::FILE_TRAVERSE;
+    let iterable_flag: u32 = if options.iterable { w::FILE_LIST_DIRECTORY } else { 0 };
+    let rename_flag: u32 = if options.can_rename_or_delete { w::DELETE } else { 0 };
+    let read_only_flag: u32 =
+        if options.read_only { 0 } else { w::FILE_ADD_FILE | w::FILE_ADD_SUBDIRECTORY };
+    let flags = iterable_flag | base_flags | rename_flag | read_only_flag;
+    let open_reparse: u32 = if options.no_follow { w::FILE_OPEN_REPARSE_POINT } else { 0 };
+
+    // NtCreateFile seems to not function on device paths. Since it is
+    // absolute, it can just use CreateFileW.
+    let p = path.as_slice();
+    if p.len() >= 4
+        && p[0] == b'\\' as u16 && p[1] == b'\\' as u16
+        && p[2] == b'.' as u16 && p[3] == b'\\' as u16
+    {
+        return open_windows_device_path(
+            path,
+            flags,
+            if options.op != WindowsOpenDirOp::OnlyOpen { w::FILE_OPEN_IF } else { w::FILE_OPEN },
+            w::FILE_DIRECTORY_FILE | w::FILE_SYNCHRONOUS_IO_NONALERT
+                | windows::FILE_OPEN_FOR_BACKUP_INTENT | open_reparse,
+        );
+    }
+
+    let path_len_bytes = (p.len() * 2) as u16;
+    let mut nt_name = w::UNICODE_STRING {
+        Length: path_len_bytes,
+        MaximumLength: path_len_bytes,
+        Buffer: p.as_ptr() as *mut u16,
+    };
+    let mut attr = w::OBJECT_ATTRIBUTES {
+        Length: core::mem::size_of::<w::OBJECT_ATTRIBUTES>() as u32,
+        RootDirectory: if bun_paths::is_absolute_windows_wtf16(p) {
+            core::ptr::null_mut()
+        } else if dir_fd.is_valid() {
+            dir_fd.cast()
+        } else {
+            Fd::cwd().cast()
+        },
+        Attributes: 0, // Note we do not use OBJ_CASE_INSENSITIVE here.
+        ObjectName: &mut nt_name,
+        SecurityDescriptor: core::ptr::null_mut(),
+        SecurityQualityOfService: core::ptr::null_mut(),
+    };
+    let mut fd: w::HANDLE = bun_windows_sys::INVALID_HANDLE_VALUE;
+    // SAFETY: all-zero is a valid IO_STATUS_BLOCK.
+    let mut io: w::IO_STATUS_BLOCK = unsafe { core::mem::zeroed() };
+    // SAFETY: FFI; all pointer args valid for the call.
+    let rc = unsafe {
+        w::ntdll::NtCreateFile(
+            &mut fd,
+            flags,
+            &mut attr,
+            &mut io,
+            core::ptr::null_mut(),
+            0,
+            FILE_SHARE,
+            match options.op {
+                WindowsOpenDirOp::OnlyOpen => w::FILE_OPEN,
+                WindowsOpenDirOp::OnlyCreate => w::FILE_CREATE,
+                WindowsOpenDirOp::OpenOrCreate => w::FILE_OPEN_IF,
+            },
+            w::FILE_DIRECTORY_FILE | w::FILE_SYNCHRONOUS_IO_NONALERT
+                | windows::FILE_OPEN_FOR_BACKUP_INTENT | open_reparse,
+            core::ptr::null_mut(),
+            0,
+        )
+    };
+    match windows::Win32Error::from_nt_status(rc) {
+        windows::Win32Error::SUCCESS => Ok(Fd::from_native(fd)),
+        code => Err(Error::from_code(
+            code.to_system_errno().unwrap_or(E::EUNKNOWN),
+            Tag::open,
+        )),
+    }
+}
+
+/// sys.zig:1467 `openFileAtWindowsNtPath`.
+///
+/// For this function to open an absolute path, it must start with `\??\`.
+/// Otherwise you need a reference file descriptor; the "invalid_fd" file
+/// descriptor signifies that the current working directory should be used.
+#[cfg(windows)]
+pub fn open_file_at_windows_nt_path(
+    dir: Fd,
+    path: &bun_core::WStr,
+    options: NtCreateFileOptions,
+) -> Maybe<Fd> {
+    use bun_windows_sys::externs as w;
+    let p = path.as_slice();
+    let mut result: w::HANDLE = core::ptr::null_mut();
+    let path_len_bytes = match u16::try_from(p.len() * 2) {
+        Ok(v) => v,
+        Err(_) => return Err(Error::from_code(E::ENOMEM, Tag::open)),
+    };
+    let mut nt_name = w::UNICODE_STRING {
+        Length: path_len_bytes,
+        MaximumLength: path_len_bytes,
+        Buffer: p.as_ptr() as *mut u16,
+    };
+    let has_nt_prefix = p.len() >= 4
+        && p[0] == b'\\' as u16 && p[1] == b'?' as u16
+        && p[2] == b'?' as u16 && p[3] == b'\\' as u16;
+    let mut attr = w::OBJECT_ATTRIBUTES {
+        Length: core::mem::size_of::<w::OBJECT_ATTRIBUTES>() as u32,
+        // [ObjectName] must be a fully qualified file specification or the
+        // name of a device object, unless it is the name of a file relative
+        // to the directory specified by RootDirectory.
+        ObjectName: &mut nt_name,
+        RootDirectory: if has_nt_prefix {
+            core::ptr::null_mut()
+        } else if dir.is_valid() {
+            dir.cast()
+        } else {
+            Fd::cwd().cast()
+        },
+        Attributes: 0, // Note we do not use OBJ_CASE_INSENSITIVE here.
+        SecurityDescriptor: core::ptr::null_mut(),
+        SecurityQualityOfService: core::ptr::null_mut(),
+    };
+    // SAFETY: all-zero is a valid IO_STATUS_BLOCK.
+    let mut io: w::IO_STATUS_BLOCK = unsafe { core::mem::zeroed() };
+
+    let mut attributes = options.attributes;
+    loop {
+        // SAFETY: FFI; all pointer args valid for the call.
+        let rc = unsafe {
+            w::ntdll::NtCreateFile(
+                &mut result,
+                options.access_mask,
+                &mut attr,
+                &mut io,
+                core::ptr::null_mut(),
+                attributes,
+                options.sharing_mode,
+                options.disposition,
+                options.options,
+                core::ptr::null_mut(),
+                0,
+            )
+        };
+
+        if rc == w::NTSTATUS::ACCESS_DENIED
+            && attributes == w::FILE_ATTRIBUTE_NORMAL
+            && (options.access_mask & (w::GENERIC_READ | w::GENERIC_WRITE)) == w::GENERIC_WRITE
+        {
+            // > If CREATE_ALWAYS and FILE_ATTRIBUTE_NORMAL are specified,
+            // > CreateFile fails and sets the last error to ERROR_ACCESS_DENIED
+            // > if the file exists and has the FILE_ATTRIBUTE_HIDDEN or
+            // > FILE_ATTRIBUTE_SYSTEM attribute. To avoid the error, specify
+            // > the same attributes as the existing file.
+            //
+            // The above also applies to NtCreateFile. We retry, but only when
+            // the file was opened for writing.
+            //
+            // See https://github.com/oven-sh/bun/issues/6820
+            //     https://github.com/libuv/libuv/pull/3380
+            attributes = w::FILE_ATTRIBUTE_HIDDEN;
+            continue;
+        }
+
+        return match windows::Win32Error::from_nt_status(rc) {
+            windows::Win32Error::SUCCESS => {
+                if (options.access_mask & w::FILE_APPEND_DATA) != 0 {
+                    // https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-setfilepointerex
+                    // SAFETY: FFI; result is a valid handle.
+                    if unsafe {
+                        w::SetFilePointerEx(result, 0, core::ptr::null_mut(), w::FILE_END)
+                    } == 0 {
+                        return Err(Error::from_code(E::EUNKNOWN, Tag::SetFilePointerEx));
+                    }
+                }
+                Ok(Fd::from_native(result))
+            }
+            code => Err(Error::from_code(
+                code.to_system_errno().unwrap_or(E::EUNKNOWN),
+                Tag::open,
+            )),
+        };
+    }
+}
+
+#[cfg(windows)]
+pub fn open_dir_at_windows(dir_fd: Fd, path: &[u16], options: WindowsOpenDirOptions) -> Maybe<Fd> {
+    let mut wbuf = bun_paths::w_path_buffer_pool::get();
+    let norm = normalize_path_windows(dir_fd, path, &mut wbuf.0[..])?;
+    open_dir_at_windows_nt_path(dir_fd, norm, options)
+}
+#[cfg(windows)]
+#[inline(never)]
+pub fn open_dir_at_windows_a(dir_fd: Fd, path: &[u8], options: WindowsOpenDirOptions) -> Maybe<Fd> {
+    let mut wbuf = bun_paths::w_path_buffer_pool::get();
+    let nt = bun_str::strings::to_nt_path(&mut wbuf.0[..], path);
+    // PORT NOTE: re-borrow as &[u16] then re-normalize for the relative case.
+    let mut buf2 = bun_paths::w_path_buffer_pool::get();
+    let norm = normalize_path_windows(dir_fd, nt.as_slice(), &mut buf2.0[..])?;
+    open_dir_at_windows_nt_path(dir_fd, norm, options)
+}
+#[cfg(windows)]
+pub fn open_file_at_windows(dir_fd: Fd, path: &[u16], opts: NtCreateFileOptions) -> Maybe<Fd> {
+    let mut wbuf = bun_paths::w_path_buffer_pool::get();
+    let norm = normalize_path_windows(dir_fd, path, &mut wbuf.0[..])?;
+    open_file_at_windows_nt_path(dir_fd, norm, opts)
+}
+
+/// sys.zig:1608 `openatWindowsTMaybeNormalize` — POSIX-flag → NtCreateFile
+/// translation.
+#[cfg(windows)]
+fn openat_windows_impl(
+    dir: Fd,
+    norm: &bun_core::WStr,
+    flags: i32,
+    perm: Mode,
+) -> Maybe<Fd> {
+    use bun_windows_sys::externs as w;
+    if (flags & O::DIRECTORY) != 0 {
+        // We interpret `O_PATH` as meaning "no iteration".
+        return open_dir_at_windows_nt_path(dir, norm, WindowsOpenDirOptions {
+            iterable: (flags & O::PATH) == 0,
+            no_follow: (flags & O::NOFOLLOW) != 0,
+            can_rename_or_delete: false,
+            ..Default::default()
+        });
+    }
+
+    let nonblock = (flags & O::NONBLOCK) != 0;
+    let overwrite = (flags & O::WRONLY) != 0 && (flags & O::APPEND) == 0;
+
+    let mut access_mask: u32 = w::READ_CONTROL | w::FILE_WRITE_ATTRIBUTES | w::SYNCHRONIZE;
+    if (flags & O::RDWR) != 0 {
+        access_mask |= w::GENERIC_READ | w::GENERIC_WRITE;
+    } else if (flags & O::APPEND) != 0 {
+        access_mask |= w::GENERIC_WRITE | w::FILE_APPEND_DATA;
+    } else if (flags & O::WRONLY) != 0 {
+        access_mask |= w::GENERIC_WRITE;
+    } else {
+        access_mask |= w::GENERIC_READ;
+    }
+
+    let disposition: u32 = 'blk: {
+        if (flags & O::CREAT) != 0 {
+            if (flags & O::EXCL) != 0 { break 'blk w::FILE_CREATE; }
+            break 'blk if overwrite { w::FILE_OVERWRITE_IF } else { w::FILE_OPEN_IF };
+        }
+        if overwrite { w::FILE_OVERWRITE } else { w::FILE_OPEN }
+    };
+
+    let blocking_flag: u32 = if !nonblock { w::FILE_SYNCHRONOUS_IO_NONALERT } else { 0 };
+    let follow = (flags & O::NOFOLLOW) == 0;
+    let opts: u32 = if follow {
+        blocking_flag
+    } else {
+        w::FILE_OPEN_REPARSE_POINT
+    };
+
+    let mut attributes: u32 = w::FILE_ATTRIBUTE_NORMAL;
+    if (flags & O::CREAT) != 0 && (perm & 0x80) == 0 && perm != 0 {
+        attributes |= w::FILE_ATTRIBUTE_READONLY;
+    }
+
+    open_file_at_windows_nt_path(dir, norm, NtCreateFileOptions {
+        access_mask,
+        disposition,
+        options: opts,
+        attributes,
+        ..Default::default()
+    })
+}
+
+/// sys.zig:1685 `openatWindows` — UTF-16 input.
 #[cfg(windows)]
 pub fn openat_windows(dir: Fd, path: &[u16], flags: i32, perm: Mode) -> Maybe<Fd> {
-    let _ = (dir, path, flags, perm);
-    todo!("b2-windows: openat_windows (NtCreateFile path in lib_draft_b1.rs)")
+    let mut wbuf = bun_paths::w_path_buffer_pool::get();
+    let norm = normalize_path_windows(dir, path, &mut wbuf.0[..])?;
+    openat_windows_impl(dir, norm, flags, perm)
+}
+/// sys.zig:1690 `openatWindowsA` — UTF-8 input.
+#[cfg(windows)]
+#[inline(never)]
+pub fn openat_windows_a(dir: Fd, path: &[u8], flags: i32, perm: Mode) -> Maybe<Fd> {
+    let mut wbuf = bun_paths::w_path_buffer_pool::get();
+    let nt = bun_str::strings::to_nt_path(&mut wbuf.0[..], path);
+    let mut buf2 = bun_paths::w_path_buffer_pool::get();
+    let norm = normalize_path_windows(dir, nt.as_slice(), &mut buf2.0[..])?;
+    openat_windows_impl(dir, norm, flags, perm)
 }
 
 // ── existence checks ──

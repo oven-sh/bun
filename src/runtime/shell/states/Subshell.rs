@@ -99,6 +99,27 @@ impl Subshell {
         }
     }
 
+    /// Spec: Subshell.zig `onIOWriterChunk` (lines 163-174).
+    pub fn on_io_writer_chunk(
+        interp: &mut Interpreter,
+        this: NodeId,
+        _written: usize,
+        err: Option<bun_sys::SystemError>,
+    ) -> Yield {
+        debug_assert!(matches!(
+            interp.as_subshell(this).state,
+            SubshellState::WaitWriteErr
+        ));
+        // Spec just `e.deref()` — Drop handles that.
+        drop(err);
+        let (parent, exit) = {
+            let me = interp.as_subshell_mut(this);
+            me.state = SubshellState::Done;
+            (me.base.parent, me.exit_code)
+        };
+        interp.child_done(parent, this, exit)
+    }
+
     pub fn child_done(
         interp: &mut Interpreter,
         this: NodeId,

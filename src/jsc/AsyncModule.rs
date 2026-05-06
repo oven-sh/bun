@@ -1157,7 +1157,14 @@ mod _gated_impl {
                 )?;
             }
             self.parse_result = parse_result;
-            let parse_result = &self.parse_result;
+            // PORT NOTE: `print_with_source_map` consumes `ParseResult` by
+            // value (it moves `ast` into `print_ast`). Hoist the post-print
+            // reads (`is_commonjs_module` / `input_fd`) above the move so we
+            // can `mem::take` instead of cloning.
+            let is_commonjs_module = self.parse_result.ast.has_commonjs_export_names
+                || self.parse_result.ast.exports_kind == bun_js_parser::ExportsKind::Cjs;
+            let input_fd = self.parse_result.input_fd;
+            let parse_result = core::mem::take(&mut self.parse_result);
 
             // PORT NOTE: `VirtualMachine.source_code_printer` is a thread-local
             // `?*BufferPrinter` (see `SOURCE_CODE_PRINTER`); Zig dereferenced

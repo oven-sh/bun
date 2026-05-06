@@ -850,19 +850,34 @@ pub trait GetFallbacks<const N: usize>: Sized {
 /// `properties::background::Background`.
 pub trait ImageFallback: Sized {
     fn get_image(&self) -> &crate::values::image::Image;
-    fn with_image(&self, image: crate::values::image::Image) -> Self;
-    fn get_fallback(&self, kind: crate::values::color::ColorFallbackKind) -> Self;
+    fn with_image(&self, allocator: &bun_alloc::Arena, image: crate::values::image::Image) -> Self;
+    fn get_fallback(&self, allocator: &bun_alloc::Arena, kind: crate::values::color::ColorFallbackKind) -> Self;
     fn get_necessary_fallbacks(
         &self,
         targets: crate::targets::Targets,
     ) -> crate::values::color::ColorFallbackKind;
 }
 
+impl<T: ImageFallback> SmallList<T, 1> {
+    /// Port of Zig `SmallList(T, N).getFallbacks` for the `@hasDecl(T, "getImage")`
+    /// branch. The TextShadow branch is `get_fallbacks_text_shadow`.
+    #[inline]
+    pub fn get_fallbacks(
+        &mut self,
+        allocator: &bun_alloc::Arena,
+        targets: crate::targets::Targets,
+    ) -> BabyList<SmallList<T, 1>> {
+        fallbacks_gated::get_fallbacks_image(self, allocator, targets)
+    }
+}
+
 // `get_fallbacks_image` / `get_fallbacks_text_shadow` depend on still-gated
 // values::color, properties::text, css_parser::ImageFallback. Re-enable with
 // those modules.
 
-mod fallbacks_gated {
+pub use fallbacks_gated::{get_fallbacks_image, get_fallbacks_text_shadow};
+
+pub mod fallbacks_gated {
 use super::*;
 use crate::css_parser as css;
 use crate::properties::text::TextShadow;

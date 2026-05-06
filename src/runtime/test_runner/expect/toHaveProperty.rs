@@ -69,7 +69,11 @@ pub fn to_have_property(
     }
 
     // handle failure
+    // PORT NOTE: Zig shares one `*Formatter` across both `to_fmt` calls; in Rust each `to_fmt`
+    // takes `&mut Formatter`, so use a second formatter for the second value (matches toBe.rs /
+    // toInclude.rs / toStartWith.rs).
     let mut formatter = super::make_formatter(global);
+    let mut formatter2 = super::make_formatter(global);
     // `defer formatter.deinit()` — handled by Drop.
     if not {
         if expected_property.is_some() {
@@ -82,7 +86,7 @@ pub fn to_have_property(
                     format_args!(
                         "\n\nExpected path: <green>{}<r>\n\nExpected value: not <green>{}<r>\n",
                         expected_property_path.to_fmt(&mut formatter),
-                        expected_property.unwrap().to_fmt(&mut formatter),
+                        expected_property.unwrap().to_fmt(&mut formatter2),
                     ),
                 );
             }
@@ -95,7 +99,7 @@ pub fn to_have_property(
             format_args!(
                 "\n\nExpected path: not <green>{}<r>\n\nReceived value: <red>{}<r>\n",
                 expected_property_path.to_fmt(&mut formatter),
-                received_property.to_fmt(&mut formatter),
+                received_property.to_fmt(&mut formatter2),
             ),
         );
     }

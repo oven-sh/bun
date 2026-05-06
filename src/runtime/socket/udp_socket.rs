@@ -513,7 +513,15 @@ impl UDPSocket {
         // Without this, failed config parsing or bind would leave the wrapper
         // pinned forever by the Strong handle and leak. This is idempotent, so
         // it is safe even if onClose() already downgraded via socket.close().
-        let guard = scopeguard::guard((), |_| {
+        //
+        // Capture the raw pointer (Copy) and re-derive `&mut` inside the closure
+        // so borrowck does not see `this` as held across the guard's lifetime.
+        let guard = scopeguard::guard(this_ptr, |ptr| {
+            // SAFETY: `ptr` came from `Box::into_raw` above and ownership has been
+            // transferred to the JS wrapper; the guard only fires on the early-return
+            // error paths below, on the same stack frame, so the allocation is live
+            // and we hold the only mutable reference.
+            let this = unsafe { &mut *ptr };
             this.closed = true;
             if let Some(socket) = this.socket.take() {
                 // SAFETY: socket created by uws::udp::Socket::create; valid until close().
@@ -521,8 +529,6 @@ impl UDPSocket {
             }
             this.this_value.downgrade();
         });
-        // TODO(port): errdefer — scopeguard captures `&mut *this_ptr` by closure; verify borrowck
-        // in Phase B (may need to re-derive `&mut` from `this_ptr` inside the closure).
 
         // PORT NOTE: `JsClass::to_js(self)` boxes by value, but we already own
         // the heap allocation in `this_ptr` and need to keep that exact pointer

@@ -1261,9 +1261,7 @@ impl JSValkeyClient {
             return;
         }
 
-        let vm = self.client.vm;
-
-        if vm.is_shutting_down() {
+        if self.vm().is_shutting_down() {
             #[cold]
             fn cold() {}
             cold();
@@ -1272,12 +1270,12 @@ impl JSValkeyClient {
 
         // Ref to keep this alive during the reconnection
         self.ref_();
-        let _d = scopeguard::guard((), |_| self.deref());
+        let _d = deref_guard(self);
 
         // Ref the poll to keep event loop alive during connection
         self.poll_ref.disable();
         self.poll_ref = KeepAlive::default();
-        self.poll_ref.ref_(vm);
+        self.poll_ref.ref_(vm_event_loop_ctx());
 
         if let Err(err) = self.connect() {
             self.fail_with_js_value(

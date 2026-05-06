@@ -4241,14 +4241,15 @@ impl DevServer<'_> {
         // Match the render path against the router
         let mut params: framework_router::MatchedParams = Default::default();
         if let Some(route_index) = self.router.match_slow(render_path, &mut params) {
+            let route_bundle_index = self
+                .get_or_put_route_bundle(route_bundle::UnresolvedIndex::Framework(route_index))
+                .expect("oom");
             let mut ctx = RequestEnsureRouteBundledCtx {
-                dev: self,
+                dev: self as *mut DevServer<'_>,
                 req: ReqOrSaved::Saved(saved_request),
                 resp,
                 kind: deferred_request::HandlerKind::ServerHandler,
-                route_bundle_index: self
-                    .get_or_put_route_bundle(route_bundle::UnresolvedIndex::Framework(route_index))
-                    .expect("oom"),
+                route_bundle_index,
             };
             let rbi = ctx.route_bundle_index;
             // Found a matching route, bundle it and handle the request
@@ -4274,14 +4275,15 @@ impl DevServer<'_> {
         req: &mut Request,
         resp: AnyResponse,
     ) -> Result<(), AllocError> {
+        let route_bundle_index = self
+            .get_or_put_route_bundle(route_bundle::UnresolvedIndex::Html(html))
+            .map_err(|_| AllocError)?;
         let mut ctx = RequestEnsureRouteBundledCtx {
-            dev: self,
+            dev: self as *mut DevServer<'_>,
             req: ReqOrSaved::Req(req),
             resp,
             kind: deferred_request::HandlerKind::BundledHtmlPage,
-            route_bundle_index: self
-                .get_or_put_route_bundle(route_bundle::UnresolvedIndex::Html(html))
-                .map_err(|_| AllocError)?,
+            route_bundle_index,
         };
         let rbi = ctx.route_bundle_index;
         match ensure_route_is_bundled(self, rbi, &mut ctx) {

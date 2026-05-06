@@ -30,6 +30,7 @@ use bun_uws::{self as uws, AnyResponse, AnyWebSocket, Opcode, ResponseKind, WebS
 use bun_uws_sys as uws_sys;
 use crate::bake::{self as bake};
 use crate::bake::dev_server::DevServer;
+use crate::bake::framework_router as FrameworkRouter;
 use bun_paths::fs::FileSystem;
 use bun_standalone_graph::StandaloneModuleGraph;
 use bun_jsc::uuid::UUID;
@@ -509,17 +510,25 @@ impl AnyRoute {
                     );
                 }
 
-                init_ctx.framework_router_list.push(bake::Framework::FileSystemRouterType {
-                    root: relative_root,
+                init_ctx.framework_router_list.push(bake::FileSystemRouterType {
+                    root: std::borrow::Cow::Owned(relative_root.to_vec()),
                     style,
                     // trim the /*
-                    prefix: if path.len() == 2 { b"/" } else { &path[0..path.len() - 2] },
+                    prefix: std::borrow::Cow::Owned(
+                        if path.len() == 2 { b"/" as &[u8] } else { &path[0..path.len() - 2] }.to_vec(),
+                    ),
                     // TODO: customizable framework option.
-                    entry_client: b"bun-framework-react/client.tsx",
-                    entry_server: b"bun-framework-react/server.tsx",
+                    entry_client: Some(std::borrow::Cow::Borrowed(b"bun-framework-react/client.tsx")),
+                    entry_server: std::borrow::Cow::Borrowed(b"bun-framework-react/server.tsx"),
                     ignore_underscores: true,
-                    ignore_dirs: &[b"node_modules", b".git"],
-                    extensions: &[b".tsx", b".jsx"],
+                    ignore_dirs: vec![
+                        std::borrow::Cow::Borrowed(b"node_modules" as &[u8]),
+                        std::borrow::Cow::Borrowed(b".git" as &[u8]),
+                    ],
+                    extensions: vec![
+                        std::borrow::Cow::Borrowed(b".tsx" as &[u8]),
+                        std::borrow::Cow::Borrowed(b".jsx" as &[u8]),
+                    ],
                     allow_layouts: true,
                 });
 
@@ -531,7 +540,7 @@ impl AnyRoute {
                     );
                 }
                 return Ok(Some(AnyRoute::FrameworkRouter(FrameworkRouter::TypeIndex::init(
-                    u32::try_from(init_ctx.framework_router_list.len() - 1).unwrap(),
+                    u8::try_from(init_ctx.framework_router_list.len() - 1).unwrap(),
                 ))));
             }
         }
@@ -923,7 +932,7 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
 
     pub plugins: Option<Rc<ServePlugins>>,
 
-    pub dev_server: Option<Box<DevServer::DevServer>>,
+    pub dev_server: Option<Box<DevServer>>,
 
     /// These associate a route to the index in RouteList.cpp.
     /// User routes may get applied multiple times due to SNI.
@@ -1770,8 +1779,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // TODO(port): Request::cloneInto out-param pattern — reshape to return value
             request_.clone_into(&mut existing_request, ctx, false)?;
         } else {
+            // Local shim — `JSValueGetType` lives in the gated `jsc::_gated::c_api` and is
+            // not re-exported through `jsc::C`. Declare the FFI here so we don't depend on
+            // the upstream module path.
+            unsafe extern "C" {
+                fn JSValueGetType(ctx: *mut JSGlobalObject, value: jsc::C::JSValueRef) -> c_int;
+            }
             // SAFETY: FFI call into JSC C API; ctx is a live JSGlobalObject and first_arg is a valid JSValueRef
-            let js_type = unsafe { jsc::C::JSValueGetType(ctx as *const _ as *mut _, first_arg.as_ref()) } as usize;
+            let js_type = unsafe { JSValueGetType(ctx as *const _ as *mut _, first_arg.as_ref()) } as usize;
             let fetch_error = Fetch::FETCH_TYPE_ERROR_STRINGS
                 .get(js_type)
                 .copied()

@@ -382,6 +382,25 @@ pub use route_bundle::RouteBundle;
 pub use serialized_failure::SerializedFailure;
 pub use source_map_store::SourceMapStore;
 
+/// Local stand-in for the unported `bun_uws::ResponseLike` trait — Zig's
+/// `resp: anytype` modeled as a generic bound. Method shapes mirror
+/// `bun_uws_sys::Response<SSL>` so the `R`-generic bodies type-check.
+// TODO(port): replace with `bun_uws::ResponseLike` once it lands upstream.
+pub trait ResponseLike {
+    fn write_status(&mut self, status: &[u8]);
+    fn end(&mut self, data: &[u8], close_connection: bool);
+    fn as_any_response(&mut self) -> bun_uws::AnyResponse;
+    fn get_remote_socket_info(&mut self) -> Option<bun_uws::SocketAddress>;
+    fn upgrade<D>(
+        &mut self,
+        data: D,
+        sec_web_socket_key: &[u8],
+        sec_web_socket_protocol: &[u8],
+        sec_web_socket_extensions: &[u8],
+        ctx: &mut bun_uws::WebSocketUpgradeContext,
+    );
+}
+
 /// `DevServer.HmrSocket` — per-WebSocket state. Full body (open/close/message
 /// handlers) gated in `HmrSocket.rs` (heavy `bun_uws` + jsc dep).
 pub struct HmrSocket {

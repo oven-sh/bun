@@ -230,6 +230,8 @@ impl Type {
 #[repr(transparent)]
 pub struct TypeIndex(u8);
 impl TypeIndex {
+    /// Zig: `@typeInfo(FrameworkRouter.Type.Index).@"enum".tag_type` upper bound.
+    pub const MAX: u8 = u8::MAX;
     #[inline]
     pub const fn init(v: u8) -> Self {
         Self(v)

@@ -1550,7 +1550,7 @@ impl RunCommand {
                     Self::run_binary_without_bunx_path(
                         ctx,
                         stored,
-                        destination.as_ptr() as *const c_char,
+                        destination.as_ptr() as *const ::core::ffi::c_char,
                         top_level_dir,
                         env_loader,
                         &passthrough,
@@ -1912,6 +1912,23 @@ use bun_which::which;
 
 use crate::cli::list_of_yarn_commands as yarn_commands;
 use crate::shell_completions::ShellCompletions;
+
+/// Stand-in for the higher-tier `bun.js` `Run` entry points (mirrors the shim
+/// in `cli_body.rs`). The real implementation lives in a crate that depends on
+/// `bun_runtime`; this keeps the Phase-A draft compiling until dispatch is
+/// rewired through `super::Run::boot`.
+mod bun_bun_js {
+    #[allow(non_snake_case)]
+    pub mod Run {
+        pub fn boot(
+            _ctx: impl ::core::any::Any,
+            _entry: impl ::core::any::Any,
+            _loader: Option<bun_bundler::options::Loader>,
+        ) -> Result<(), bun_core::Error> {
+            todo!("blocked_on: bun_js::Run::boot (higher-tier crate)")
+        }
+    }
+}
 
 /// Port of `bun.pathLiteral` — returns the literal as-is on POSIX, with
 /// `/` rewritten to `\` on Windows. Local because `bun_paths` does not (yet)
@@ -2432,7 +2449,7 @@ impl RunCommand {
         env: &mut DotEnv::Loader,
         passthrough: &[&[u8]],
         original_script_for_bun_run: Option<&[u8]>,
-    ) -> Result<core::convert::Infallible, bun_core::Error> {
+    ) -> Result<::core::convert::Infallible, bun_core::Error> {
         // Attempt to find a ".bunx" file on disk, and run it, skipping the
         // wrapper exe.  we build the full exe path even though we could do
         // a relative lookup, because in the case we do find it, we have to
@@ -2499,7 +2516,7 @@ impl RunCommand {
         env: &mut DotEnv::Loader,
         passthrough: &[&[u8]],
         original_script_for_bun_run: Option<&[u8]>,
-    ) -> Result<core::convert::Infallible, bun_core::Error> {
+    ) -> Result<::core::convert::Infallible, bun_core::Error> {
         let argv_ = [executable];
         let mut argv: Vec<&[u8]> = argv_.to_vec();
 
@@ -2544,7 +2561,7 @@ impl RunCommand {
                             let exec_z = unsafe { ZStr::from_raw(executable.as_ptr(), executable.len()) };
                             match sys::stat(exec_z) {
                                 sys::Result::Ok(stat) => {
-                                    if sys::S::isdir(stat.mode) {
+                                    if sys::S::ISDIR(stat.mode) {
                                         Output::pretty_errorln(
                                             "<r><red>error<r>: Failed to run directory \"<b>{}<r>\"\n",
                                             (bstr::BStr::new(Self::basename_or_bun(executable)),),
@@ -2633,7 +2650,7 @@ impl RunCommand {
                                         && ((code == 1
                                             && original_script_for_bun_run.unwrap() == b"test")
                                             || (code == 2
-                                                && strings::eql_any(
+                                                && strings::eql_any_comptime(
                                                     original_script_for_bun_run.unwrap(),
                                                     &[b"install", b"kill", b"link"],
                                                 )
@@ -3050,13 +3067,13 @@ impl RunCommand {
                 // > "yarn/1.22.4 npm/? node/v12.16.3 darwin x64",
                 const_format::concatcp!(
                     "bun/",
-                    Global::PACKAGE_JSON_VERSION,
+                    Global::package_json_version,
                     " npm/? node/v",
                     Environment::REPORTED_NODEJS_VERSION,
                     " ",
-                    Global::OS_NAME,
+                    Global::os_name,
                     " ",
-                    Global::ARCH_NAME
+                    Global::arch_name
                 )
                 .as_bytes(),
             )
@@ -3129,7 +3146,7 @@ impl RunCommand {
         }
 
         let bun_node_exe = Self::bun_node_file_utf8()?;
-        let bun_node_dir_win = bun_paths::Dirname::dirname::<u8>(bun_node_exe.as_bytes())
+        let bun_node_dir_win = bun_core::util::dirname(bun_node_exe.as_bytes())
             .ok_or(bun_core::err!("FailedToGetTempPath"))?;
         let found_node = this_transpiler
             .env
@@ -3336,7 +3353,7 @@ impl RunCommand {
                             let mut dir_slice_len: usize = 0;
                             while let Some(entry) = iter.next() {
                                 let value = entry.value;
-                                if value.kind(&this_transpiler.fs.fs, true) == bun_fs::EntryKind::File {
+                                if value.kind(&this_transpiler.fs.fs, true) == bun_resolver::fs::EntryKind::File {
                                     if !has_copied {
                                         path_buf[..value.dir.len()].copy_from_slice(value.dir);
                                         dir_slice_len = value.dir.len();
@@ -3395,7 +3412,7 @@ impl RunCommand {
                             && !strings::contains(name, b".d.ts")
                             && !strings::contains(name, b".d.mts")
                             && !strings::contains(name, b".d.cts")
-                            && value.kind(&this_transpiler.fs.fs, true) == bun_fs::EntryKind::File
+                            && value.kind(&this_transpiler.fs.fs, true) == bun_resolver::fs::EntryKind::File
                         {
                             let Ok(appended) = this_transpiler.fs.filename_store.append(name) else {
                                 continue;
@@ -3422,7 +3439,7 @@ impl RunCommand {
 
                     let mut max_description_len: usize = 20;
                     if let Some(max) = this_transpiler.env.get(b"MAX_DESCRIPTION_LEN") {
-                        if let Some(max_len) = core::str::from_utf8(max)
+                        if let Some(max_len) = ::core::str::from_utf8(max)
                             .ok()
                             .and_then(|s| s.parse::<usize>().ok())
                         {
@@ -3543,7 +3560,7 @@ impl RunCommand {
 
         Output::pretty("<b>Flags:<r>", ());
 
-        bun_core::clap::simple_help(&Arguments::RUN_PARAMS);
+        bun_clap::simple_help(crate::cli::arguments::RUN_PARAMS.as_slice());
         Output::pretty(const_format::concatcp!("\n\n", EXAMPLES_TEXT), ());
 
         if let Some(pkg) = package_json {
@@ -3651,7 +3668,7 @@ impl RunCommand {
                 // SAFETY: field is fully overwritten by AsyncHTTP::init immediately below
                 // before any read.
                 // TODO(port): MaybeUninit pattern
-                async_http: unsafe { core::mem::zeroed() },
+                async_http: unsafe { ::core::mem::zeroed() },
                 response_buffer,
                 url: raw_url,
                 done: &done_channel,
@@ -3693,7 +3710,7 @@ impl RunCommand {
         // Second pass: walk completed downloads, write successful
         // bodies to temp files, populate out_map. All disk I/O is done
         // AFTER every network request has settled.
-        let tmpdir = bun_fs::FileSystem::RealFS::tmpdir_path();
+        let tmpdir = bun_resolver::fs::RealFS::tmpdir_path();
         for d in downloads.iter_mut() {
             if d.async_http.err.is_some() {
                 continue;
@@ -3767,7 +3784,7 @@ impl RunCommand {
     /// Null-terminate `path` on the stack and unlink it. Never allocates.
     fn unlink_staged_path(path: &[u8]) {
         let mut buf = PathBuffer::uninit();
-        let _ = sys::unlink(bun_paths::z(path, &mut buf));
+        let _ = sys::unlink(bun_paths::resolve_path::z(path, &mut buf));
     }
 
     /// Read a markdown file, render it to ANSI, print to stdout, and exit.
@@ -3793,7 +3810,7 @@ impl RunCommand {
             // directly. Honor COLUMNS so piped output and tests can
             // pin a width.
             if let Some(env) = bun_core::getenv_z(b"COLUMNS") {
-                if let Some(n) = core::str::from_utf8(env).ok().and_then(|s| s.parse::<u16>().ok()) {
+                if let Some(n) = ::core::str::from_utf8(env).ok().and_then(|s| s.parse::<u16>().ok()) {
                     if n > 0 {
                         break 'brk n;
                     }
@@ -3801,19 +3818,19 @@ impl RunCommand {
             }
             #[cfg(unix)]
             {
-                // SAFETY: all-zero is a valid Winsize (#[repr(C)] POD).
-                let mut size: sys::posix::Winsize = unsafe { core::mem::zeroed() };
+                // SAFETY: all-zero is a valid winsize (#[repr(C)] POD).
+                let mut size: libc::winsize = unsafe { ::core::mem::zeroed() };
                 // SAFETY: ioctl with valid winsize ptr
                 if unsafe {
-                    sys::posix::ioctl(
-                        sys::posix::STDOUT_FILENO,
-                        sys::posix::TIOCGWINSZ,
-                        &mut size as *mut _ as usize,
+                    libc::ioctl(
+                        libc::STDOUT_FILENO,
+                        libc::TIOCGWINSZ,
+                        &mut size as *mut libc::winsize,
                     )
                 } == 0
                 {
-                    if size.col > 0 {
-                        break 'brk size.col;
+                    if size.ws_col > 0 {
+                        break 'brk size.ws_col;
                     }
                 }
             }
@@ -3864,7 +3881,7 @@ impl RunCommand {
                 sys::Result::Ok(c) => c,
                 sys::Result::Err(_) => break 'blk path,
             };
-            bun_paths::join_abs_string_buf(cwd, &mut base_buf, &[path], bun_paths::Style::Auto)
+            bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(cwd, &mut base_buf, &[path])
         };
         let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(abs_md_path);
         // When dirname returns empty (bare filename + getcwd failed), fall
@@ -3920,13 +3937,13 @@ impl RunCommand {
         loader: Option<options::Loader>,
     ) -> bool {
         let resolved_loader: Option<options::Loader> =
-            loader.or_else(|| options::default_loaders().get(bun_paths::extension(path)).copied());
+            loader.or_else(|| options::DEFAULT_LOADERS.get(bun_paths::extension(path)).copied());
         if let Some(l) = resolved_loader {
             if l == options::Loader::Md {
                 Self::render_markdown_file_and_exit(path);
             }
         }
-        Global::configure_allocator(&bun_core::AllocatorConfig { long_running: true });
+        Global::configure_allocator(Global::AllocatorConfiguration { long_running: true, ..Default::default() });
         let Ok(dup) = Box::<[u8]>::try_from(path) else { return false };
         // TODO(port): Box::try_from doesn't exist; use to_vec().into_boxed_slice()
         if let Err(err) = bun_bun_js::Run::boot(ctx, dup, loader) {
@@ -3957,7 +3974,7 @@ impl RunCommand {
         {
             let opened = 'brk: {
                 if bun_paths::is_absolute(script_name_to_search) {
-                    let mut win_resolver = resolve_path::PosixToWinNormalizer::default();
+                    let mut win_resolver = bun_paths::resolve_path::PosixToWinNormalizer::default();
                     let mut resolved = win_resolver
                         .resolve_cwd(script_name_to_search)
                         .expect("Could not resolve path");
@@ -3966,7 +3983,7 @@ impl RunCommand {
                         resolved =
                             resolve_path::normalize_string(resolved, false, bun_paths::Style::Windows);
                     }
-                    break 'brk bun_core::open_file(resolved, bun_core::OpenMode::ReadOnly);
+                    break 'brk sys::open_file(resolved, sys::OpenFlags::READ_ONLY);
                 } else if !script_name_to_search.starts_with(b"..")
                     && script_name_to_search[0] != b'~'
                 {
@@ -3977,19 +3994,18 @@ impl RunCommand {
                         unsafe { ZStr::from_raw(script_name_buf.as_ptr(), file_path.len()) }
                     };
 
-                    break 'brk bun_core::open_file_z(file_path_z, bun_core::OpenMode::ReadOnly);
+                    break 'brk sys::open_file_absolute_z(file_path_z, sys::OpenFlags::READ_ONLY);
                 } else {
                     let mut path_buf_2 = PathBuffer::uninit();
                     let Ok(cwd) = bun_core::getcwd(&mut path_buf_2) else { return false };
                     let cwd_len = cwd.len();
                     path_buf_2[cwd_len] = SEP;
                     let parts = [script_name_to_search];
-                    file_path = resolve_path::join_abs_string_buf(
+                    file_path = bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
                         &path_buf_2[..cwd_len + 1],
                         &mut script_name_buf,
                         &parts,
-                        bun_paths::Style::Auto,
-                    );
+                        );
                     if file_path.is_empty() {
                         return false;
                     }
@@ -3997,12 +4013,12 @@ impl RunCommand {
                     script_name_buf[fp_len] = 0;
                     // SAFETY: NUL written above
                     let file_path_z = unsafe { ZStr::from_raw(script_name_buf.as_ptr(), fp_len) };
-                    break 'brk bun_core::open_file_z(file_path_z, bun_core::OpenMode::ReadOnly);
+                    break 'brk sys::open_file_absolute_z(file_path_z, sys::OpenFlags::READ_ONLY);
                 }
             };
             let Ok(std_file) = opened else { return false };
             let Ok(file) = Fd::from_std_file(std_file)
-                .make_libuv_owned_for_syscall(sys::Syscall::Open, sys::OnFail::CloseOnFail)
+                .make_libuv_owned_for_syscall(sys::Tag::open, sys::ErrorCase::CloseOnFail)
                 .unwrap_result()
             else {
                 return false;
@@ -4014,19 +4030,19 @@ impl RunCommand {
             match sys::fstat(file) {
                 sys::Result::Ok(stat) => {
                     // directories cannot be run. if only there was a faster way to check this
-                    if sys::S::isdir(u32::try_from(stat.mode).unwrap()) {
+                    if sys::S::ISDIR(u32::try_from(stat.mode).unwrap()) {
                         return false;
                     }
                 }
                 sys::Result::Err(_) => return false,
             }
 
-            Global::configure_allocator(&bun_core::AllocatorConfig { long_running: true });
+            Global::configure_allocator(Global::AllocatorConfiguration { long_running: true, ..Default::default() });
 
             absolute_script_path = 'brk: {
                 #[cfg(not(windows))]
                 {
-                    let Ok(p) = bun_core::get_fd_path(file, &mut script_name_buf) else {
+                    let Ok(p) = sys::get_fd_path(file, &mut script_name_buf) else {
                         return false;
                     };
                     break 'brk Some(Box::from(p));
@@ -4035,7 +4051,7 @@ impl RunCommand {
                 #[cfg(windows)]
                 {
                     let mut fd_path_buf = PathBuffer::uninit();
-                    let Ok(p) = bun_core::get_fd_path(file, &mut fd_path_buf) else {
+                    let Ok(p) = sys::get_fd_path(file, &mut fd_path_buf) else {
                         return false;
                     };
                     break 'brk Some(Box::from(p));
@@ -4076,7 +4092,7 @@ impl RunCommand {
             skip_script_check = true;
         } else if cfg.allow_fast_run_for_extensions {
             let ext = bun_paths::extension(target_name);
-            let default_loader = options::default_loaders().get(ext).copied();
+            let default_loader = options::DEFAULT_LOADERS.get(ext).copied();
             if default_loader.is_some()
                 && (default_loader.unwrap().can_be_run_by_bun()
                     || default_loader.unwrap() == options::Loader::Md)
@@ -4148,9 +4164,7 @@ impl RunCommand {
 
             const TRIGGER: &[u8] = path_literal!(b"/[stdin]", b"\\[stdin]");
             let mut entry_point_buf = [0u8; MAX_PATH_BYTES + TRIGGER.len()];
-            // TODO(port): std.posix.getcwd → bun_sys
-            let cwd = sys::getcwd_buf(&mut entry_point_buf[..MAX_PATH_BYTES])?;
-            let cwd_len = cwd.len();
+            let cwd_len = sys::getcwd(&mut entry_point_buf[..MAX_PATH_BYTES])?;
             entry_point_buf[cwd_len..cwd_len + TRIGGER.len()].copy_from_slice(TRIGGER);
             let entry_path = &entry_point_buf[..cwd_len + TRIGGER.len()];
 
@@ -4162,7 +4176,7 @@ impl RunCommand {
             // TODO(port): ctx mutability
 
             let dup: Box<[u8]> = entry_path.to_vec().into_boxed_slice();
-            if let Err(err) = bun_bun_js::Run::boot(ctx, dup, None) {
+            if let Err(err) = super::Run::boot(ctx, dup, None) {
                 let _ = ctx.log.print(Output::error_writer());
 
                 Output::pretty_errorln(
@@ -4186,7 +4200,7 @@ impl RunCommand {
                             "Found matching script `{}`",
                             bstr::BStr::new(script_content)
                         );
-                        Global::configure_allocator(&bun_core::AllocatorConfig { long_running: false });
+                        Global::configure_allocator(Global::AllocatorConfiguration { long_running: false, ..Default::default() });
                         this_transpiler
                             .env
                             .map
@@ -4204,7 +4218,7 @@ impl RunCommand {
                         let package_json_path =
                             root_dir_info.enclosing_package_json.unwrap().source.path.text;
                         let package_json_dir = strings::without_trailing_slash(
-                            strings::without_suffix(package_json_path, b"package.json"),
+                            strings::without_suffix_comptime(package_json_path, b"package.json"),
                         );
                         bun_output::scoped_log!(
                             RUN,
@@ -4279,14 +4293,14 @@ impl RunCommand {
                 .resolve(
                     this_transpiler.fs.top_level_dir,
                     target_name,
-                    bun_resolver::Kind::EntryPointRun,
+                    bun_options_types::ImportKind::EntryPointRun,
                 )
                 .or_else(|_| {
                     let joined: Vec<u8> = [b"./".as_slice(), target_name].concat();
                     this_transpiler.resolver.resolve(
                         this_transpiler.fs.top_level_dir,
                         &joined,
-                        bun_resolver::Kind::EntryPointRun,
+                        bun_options_types::ImportKind::EntryPointRun,
                     )
                 });
             this_transpiler.resolver.opts.preserve_symlinks = preserve_symlinks;
@@ -4302,7 +4316,7 @@ impl RunCommand {
                     .loaders
                     .get(path.name.ext)
                     .copied()
-                    .or_else(|| options::default_loaders().get(path.name.ext).copied())
+                    .or_else(|| options::DEFAULT_LOADERS.get(path.name.ext).copied())
                     .unwrap_or(options::Loader::Tsx);
                 if loader.can_be_run_by_bun()
                     || loader == options::Loader::Html
@@ -4399,7 +4413,7 @@ impl RunCommand {
                         // SAFETY: borrow into thread-local PATH_BUF; consumed (copied via
                         // dirname_store.append) before PATH_BUF is reused.
                         // TODO(port): lifetime — borrow into thread-local; Zig copied via dirname_store below
-                        unsafe { core::mem::transmute::<&ZStr, &'static ZStr>(d) }
+                        unsafe { ::core::mem::transmute::<&ZStr, &'static ZStr>(d) }
                     })
             });
             if let Some(destination) = dest {
@@ -4447,7 +4461,7 @@ impl RunCommand {
                 );
             } else {
                 let ext = bun_paths::extension(target_name);
-                let default_loader = options::default_loaders().get(ext).copied();
+                let default_loader = options::DEFAULT_LOADERS.get(ext).copied();
                 if (default_loader.is_some() && default_loader.unwrap().is_java_script_like_or_json())
                     || (!target_name.is_empty()
                         && (target_name[0] == b'.'

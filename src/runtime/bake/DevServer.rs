@@ -53,6 +53,7 @@ impl ErrorReportRequest {
     }
 }
 pub use crate::bake::dev_server::HmrSocket;
+use crate::bake::dev_server::ResponseLike;
 pub use crate::bake::dev_server::HotReloadEvent;
 pub use crate::bake::dev_server::incremental_graph::IncrementalGraph;
 // TODO(port): memory_cost helpers live in the gated draft; stub the two referenced.
@@ -184,7 +185,7 @@ pub struct CurrentBundle<'a> {
     /// After a bundle finishes, these requests will be continued, either
     /// calling their handler on success or sending the error page on failure.
     /// Owned by `deferred_request_pool` in DevServer.
-    pub requests: deferred_request::List,
+    pub requests: deferred_request::List<'a>,
     /// Resolution failures are grouped by incremental graph file index.
     /// Unlike parse failures (`handleParseTaskFailure`), the resolution
     /// failures can be created asynchronously, and out of order.
@@ -195,14 +196,14 @@ pub struct CurrentBundle<'a> {
     pub promise: DeferredPromise,
 }
 
-pub struct NextBundle {
+pub struct NextBundle<'a> {
     /// A list of `RouteBundle`s which have active requests to bundle it.
     pub route_queue: ArrayHashMap<route_bundle::Index, ()>,
     /// If a reload event exists and should be drained. The information
     /// for this watch event is in one of the `watch_events`
     pub reload_event: Option<*mut HotReloadEvent>, // BORROW_FIELD: ptr into dev.watcher_atomics.events[]
     /// The list of requests that are blocked on this bundle.
-    pub requests: deferred_request::List,
+    pub requests: deferred_request::List<'a>,
 
     pub promise: DeferredPromise,
 }
@@ -310,8 +311,8 @@ pub struct DevServer<'a> {
     /// When `current_bundle` is non-null and new requests to bundle come in,
     /// those are temporaried here. When the current bundle is finished, it
     /// will immediately enqueue this.
-    pub next_bundle: NextBundle,
-    pub deferred_request_pool: HiveArray<deferred_request::Node, { DeferredRequest::MAX_PREALLOCATED }>,
+    pub next_bundle: NextBundle<'a>,
+    pub deferred_request_pool: HiveArray<deferred_request::Node<'a>, { DeferredRequest::MAX_PREALLOCATED }>,
     /// UWS can handle closing the websocket connections themselves
     pub active_websocket_connections: HashMap<*mut HmrSocket, ()>,
 
@@ -1408,20 +1409,20 @@ fn ensure_route_is_bundled<Ctx: EnsureRouteCtx>(
                                     .as_ref()
                                     .unwrap()
                                     .get_or_load_plugins(
-                                        crate::server::server_body::ServePluginsCallback::DevServer(dev),
+                                        crate::server::ServePluginsCallback::DevServer(dev),
                                     )
                                 {
-                                    crate::server::server_body::GetOrStartLoadResult::Pending => {
+                                    crate::server::GetOrStartLoadResult::Pending => {
                                         dev.plugin_state = PluginState::Pending;
                                         plugin = PluginState::Pending;
                                         continue 'plugin;
                                     }
-                                    crate::server::server_body::GetOrStartLoadResult::Err => {
+                                    crate::server::GetOrStartLoadResult::Err => {
                                         dev.plugin_state = PluginState::Err;
                                         plugin = PluginState::Err;
                                         continue 'plugin;
                                     }
-                                    crate::server::server_body::GetOrStartLoadResult::Ready(ready) => {
+                                    crate::server::GetOrStartLoadResult::Ready(ready) => {
                                         dev.plugin_state = PluginState::Loaded;
                                         dev.bundler_options.plugin = ready;
                                     }
@@ -3470,7 +3471,7 @@ pub fn finalize_bundle(
                 // Build and send the source chunk
                 dev.client_graph.take_js_bundle_to_list(
                     &mut hot_update_payload,
-                    &incremental_graph::TakeOptions {
+                    &incremental_graph::TakeJSBundleOptionsClient {
                         kind: ChunkKind::HmrChunk,
                         script_id,
                         console_log: dev.should_receive_console_log_from_browser(),
@@ -3777,13 +3778,13 @@ impl DevServer<'_> {
             match graph {
                 bake::Graph::Server => self
                     .server_graph
-                    .insert_failure(incremental_graph::FailureKey::AbsPath, abs_path, log, false)?,
+                    .insert_failure(incremental_graph::InsertFailureKey::AbsPath(abs_path), log, false)?,
                 bake::Graph::Ssr => self
                     .server_graph
-                    .insert_failure(incremental_graph::FailureKey::AbsPath, abs_path, log, true)?,
+                    .insert_failure(incremental_graph::InsertFailureKey::AbsPath(abs_path), log, true)?,
                 bake::Graph::Client => self
                     .client_graph
-                    .insert_failure(incremental_graph::FailureKey::AbsPath, abs_path, log, false)?,
+                    .insert_failure(incremental_graph::InsertFailureKey::AbsPath(abs_path), log, false)?,
             }
         }
         Ok(())
@@ -3894,14 +3895,14 @@ pub enum OpaqueFileIdOrOptional {
 
 fn on_request<R>(dev: &mut DevServer, req: &mut Request, resp: &mut R)
 where
-    R: uws::ResponseLike, // TODO(port): resp: anytype
+    R: ResponseLike, // TODO(port): resp: anytype — bun_uws::ResponseLike once upstream lands
 {
     let mut params: framework_router::MatchedParams = Default::default();
     if let Some(route_index) = dev.router.match_slow(req.url(), &mut params) {
         let mut ctx = RequestEnsureRouteBundledCtx {
             dev,
             req: ReqOrSaved::Req(req),
-            resp: AnyResponse::init(resp),
+            resp: resp.as_any_response(),
             kind: deferred_request::HandlerKind::ServerHandler,
             route_bundle_index: dev
                 .get_or_put_route_bundle(route_bundle::UnresolvedIndex::Framework(route_index))
@@ -3919,7 +3920,7 @@ where
     }
 
     if !dev.server.as_ref().unwrap().config().on_request.is_empty() {
-        dev.server.as_ref().unwrap().on_request(req, AnyResponse::init(resp));
+        dev.server.as_ref().unwrap().on_request(req, resp.as_any_response());
         return;
     }
 
@@ -4213,9 +4214,9 @@ impl DevServer<'_> {
     }
 }
 
-fn send_built_in_not_found<R: uws::ResponseLike>(resp: R) {
-    let message = "404 Not Found";
-    resp.write_status("404 Not Found");
+fn send_built_in_not_found<R: ResponseLike>(resp: &mut R) {
+    let message = b"404 Not Found";
+    resp.write_status(b"404 Not Found");
     resp.end(message, true);
 }
 
@@ -4637,14 +4638,15 @@ impl DevServer<'_> {
         upgrade_ctx: &mut WebSocketUpgradeContext,
         id: usize,
     ) where
-        R: uws::ResponseLike,
+        R: ResponseLike, // TODO(port): bun_uws::ResponseLike once upstream lands
     {
         debug_assert!(id == 0);
 
         let dw = HmrSocket::new(self, res);
-        self.active_websocket_connections.put(dw, ()).expect("oom");
-        let _ = res.upgrade::<*mut HmrSocket>(
-            dw,
+        let dw_ptr: *mut HmrSocket = Box::into_raw(dw);
+        self.active_websocket_connections.put(dw_ptr, ()).expect("oom");
+        res.upgrade::<*mut HmrSocket>(
+            dw_ptr,
             req.header("sec-websocket-key").unwrap_or(b""),
             req.header("sec-websocket-protocol").unwrap_or(b""),
             req.header("sec-websocket-extension").unwrap_or(b""),

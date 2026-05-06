@@ -49,7 +49,7 @@ pub fn parse(
 
     let input_slice = input_value.to_slice(global)?;
     let source = logger::Source::init_path_string(b"input.jsonc", input_slice.slice());
-    let parse_result = match json::parse_tsconfig(&source, &mut log, &arena, true) {
+    let parse_result = match json::parse_ts_config::<true>(&source, &mut log, &arena) {
         Ok(v) => v,
         Err(e) => {
             if e == err!(StackOverflow) {

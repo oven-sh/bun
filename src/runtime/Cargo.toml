@@ -82,3 +82,9 @@ bun_which.workspace = true
 bun_wyhash.workspace = true
 bun_zlib.workspace = true
 bun_zstd.workspace = true
+
+[features]
+default = []
+# Enables Bun.color() and CSS-typed Maybe helpers. Off by default so that
+# `cargo build -p bun_bin` does not pull bun_css into the dep graph.
+css = ["dep:bun_css", "bun_bundler/css"]

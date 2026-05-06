@@ -1173,7 +1173,7 @@ impl SourceMapData {
 }
 
 #[derive(Clone)]
-struct MatchImport {
+pub struct MatchImport {
     alias: *const [u8], // TODO(port): lifetime — Zig string borrowed from AST arena
     kind: MatchImportKind,
     namespace_ref: Ref,
@@ -1200,7 +1200,7 @@ impl Default for MatchImport {
 }
 
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
-enum MatchImportKind {
+pub enum MatchImportKind {
     /// The import is either external or undefined
     #[default]
     Ignore,
@@ -3043,7 +3043,7 @@ impl<'a> LinkerContext<'a> {
                         for &dep in deps {
                             re_exports.push(Dependency {
                                 part_index: dep,
-                                source_index: tracker.source_index,
+                                source_index: Index::init(tracker.source_index.get()),
                             });
                             // PERF(port): was assume_capacity
                         }
@@ -3821,7 +3821,7 @@ impl<'a> LinkerContext<'a> {
                     0,
                     module_ref,
                     1,
-                    Index::init(source_index),
+                    crate::Index::init(source_index),
                 )?;
 
                 // If this is a .napi addon and it's not node, we need to generate a require() call to the runtime
@@ -3961,30 +3961,13 @@ impl<'a> LinkerContext<'a> {
         let resolved_exports = &mut self.graph.meta.items_resolved_exports_mut()[source_index as usize];
         resolved_exports.put(alias, crate::ExportData {
             data: ImportTracker {
-                source_index: Index::init(source_index),
+                source_index: crate::Index::init(source_index),
                 import_ref: r#ref,
                 ..Default::default()
             },
             ..Default::default()
         })?;
         Ok((r#ref, part_index))
-    }
-}
-
-// `MatchImport` field-wise eq — `alias: *const [u8]` cannot derive `PartialEq`
-// (raw fat pointer eq is identity-only and we want value-eq on the matched
-// fields, matching Zig's struct compare which ignores `alias`/`namespace_ref`
-// for the ambiguity check anyway).
-impl PartialEq for MatchImport {
-    fn eq(&self, other: &Self) -> bool {
-        self.kind == other.kind
-            && self.source_index == other.source_index
-            && self.name_loc.start == other.name_loc.start
-            && self.other_source_index == other.other_source_index
-            && self.other_name_loc.start == other.other_name_loc.start
-            && self.r#ref == other.r#ref
-            && self.namespace_ref == other.namespace_ref
-            && core::ptr::eq(self.alias, other.alias)
     }
 }
 

@@ -404,6 +404,8 @@ unsafe fn load_preloads(
         });
 
         // ── wait ────────────────────────────────────────────────────────
+        #[cfg(any())] // TODO(b2-cycle): HMR `pending_internal_promise` swap loop (spec VirtualMachine.zig:2248-2261) — un-gate with `hot_reloader.rs` / ImportWatcher. Until then, fall through to the non-watcher `wait_for_promise` path below.
+        {
         // SAFETY: per fn contract.
         if unsafe { (*vm).is_watcher_enabled() } {
             // pending_internal_promise can change if hot module reloading is
@@ -430,6 +432,15 @@ unsafe fn load_preloads(
                 }
             }
         } else {
+            // SAFETY: `el` is the live per-thread event loop.
+            unsafe { (*(*vm).event_loop()).perform_gc() };
+            // SAFETY: per fn contract — short-lived `&mut *vm`; `promise` is a
+            // live protected JSC heap cell.
+            unsafe { (*vm).wait_for_promise(AnyPromise::Internal(promise)) };
+        }
+        } // end #[cfg(any())]
+        // PORT NOTE: non-watcher fallback while the HMR loop above is gated.
+        {
             // SAFETY: `el` is the live per-thread event loop.
             unsafe { (*(*vm).event_loop()).perform_gc() };
             // SAFETY: per fn contract — short-lived `&mut *vm`; `promise` is a

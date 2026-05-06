@@ -1475,9 +1475,16 @@ impl<'a> Transpiler<'a> {
                                         Some(prop.value.unwrap());
                                     continue;
                                 }
-                                *visited.value_ptr = i as u32;
+                                // PORT NOTE: spec transpiler.zig:1030-1071
+                                // writes at `i` and shrinks to `count`, leaving
+                                // holes when `"default"` / duplicates `continue`
+                                // — a latent spec bug. Write densely at `count`
+                                // (and store `count` in the checker) so
+                                // `truncate(count)` / `[..count]` keep the
+                                // actually-populated entries.
+                                *visited.value_ptr = count as u32;
 
-                                symbols[i] = js_ast::Symbol {
+                                symbols[count] = js_ast::Symbol {
                                     original_name: match bun_string::MutableString::ensure_valid_identifier(name) {
                                         // Spec transpiler.zig:1049 calls
                                         // `MutableString.ensureValidIdentifier(name, allocator)`
@@ -1497,8 +1504,8 @@ impl<'a> Transpiler<'a> {
                                     ..Default::default()
                                 };
 
-                                let ref_ = js_ast::Ref::init(i as u32, 0, false);
-                                decls[i] = js_ast::G::Decl {
+                                let ref_ = js_ast::Ref::init(count as u32, 0, false);
+                                decls[count] = js_ast::G::Decl {
                                     binding: js_ast::Binding::alloc(
                                         allocator,
                                         js_ast::ast::b::Identifier { r#ref: ref_ },
@@ -1506,7 +1513,7 @@ impl<'a> Transpiler<'a> {
                                     ),
                                     value: Some(prop.value.unwrap()),
                                 };
-                                export_clauses[i] = js_ast::ClauseItem {
+                                export_clauses[count] = js_ast::ClauseItem {
                                     name: js_ast::LocRef { ref_: Some(ref_), loc: key_loc },
                                     alias: name as *const [u8],
                                     alias_loc: key_loc,
@@ -3463,9 +3470,16 @@ impl<'a> Transpiler<'a> {
                                         Some(prop.value.clone().unwrap());
                                     continue;
                                 }
-                                *visited.value_ptr = i as u32;
+                                // PORT NOTE: spec transpiler.zig:1030-1071
+                                // writes at `i` and shrinks to `count`, leaving
+                                // holes when `"default"` / duplicates `continue`
+                                // — a latent spec bug. Write densely at `count`
+                                // (and store `count` in the checker) so
+                                // `truncate(count)` / `[..count]` keep the
+                                // actually-populated entries.
+                                *visited.value_ptr = count as u32;
 
-                                symbols[i] = js_ast::Symbol {
+                                symbols[count] = js_ast::Symbol {
                                     original_name: match MutableString::ensure_valid_identifier(
                                         name, allocator,
                                     ) {
@@ -3475,8 +3489,8 @@ impl<'a> Transpiler<'a> {
                                     ..Default::default()
                                 };
 
-                                let r#ref = Ref::init(i as u32, 0, false);
-                                decls[i] = js_ast::G::Decl {
+                                let r#ref = Ref::init(count as u32, 0, false);
+                                decls[count] = js_ast::G::Decl {
                                     binding: js_ast::Binding::alloc(
                                         allocator,
                                         js_ast::B::Identifier { r#ref },
@@ -3484,7 +3498,7 @@ impl<'a> Transpiler<'a> {
                                     ),
                                     value: Some(prop.value.clone().unwrap()),
                                 };
-                                export_clauses[i] = js_ast::ClauseItem {
+                                export_clauses[count] = js_ast::ClauseItem {
                                     name: js_ast::LocRef {
                                         r#ref,
                                         loc: prop.key.as_ref().unwrap().loc,

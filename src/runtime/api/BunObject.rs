@@ -475,8 +475,9 @@ pub mod bun_object {
     // ABI matches `LazyPropertyCallback` for the property variants.
 
     macro_rules! export_callbacks {
-        ($( $name:ident => $target:path ),* $(,)?) => {
+        ($( $(#[$attr:meta])* $name:ident => $target:path ),* $(,)?) => {
             $(
+                $(#[$attr])*
                 #[unsafe(no_mangle)]
                 pub extern "C" fn ${concat(BunObject_callback_, $name)}(
                     g: *mut JSGlobalObject,
@@ -510,7 +511,12 @@ pub mod bun_object {
     export_callbacks! {
         allocUnsafe => super::alloc_unsafe,
         build => JSBundler::build_fn,
+        // phase-c: bun_css feature-gated off the bun_bin path; Bun.color()
+        // export only emitted when the `css` feature is enabled.
+        #[cfg(feature = "css")]
         color => bun_css::CssColor::js_function_color,
+        #[cfg(not(feature = "css"))]
+        color => super::color_unsupported,
         connect => host_fn::wrap_static_method!(api::Listener, connect, false),
         createParsedShellScript => crate::shell::ParsedShellScript::create_parsed_shell_script,
         createShellInterpreter => crate::shell::Interpreter::create_shell_interpreter,

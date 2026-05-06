@@ -297,9 +297,8 @@ pub mod lib_uv_backend {
         // SAFETY: holder is a valid heap allocation
         unsafe {
             (*holder).task = jsc::AnyTask::new::<Holder>(Holder::run, holder);
-            (*this)
-                .head
-                .global_this
+            // SAFETY: JSGlobalObject outlives the request.
+            (*(*this).head.global_this)
                 .bun_vm()
                 .enqueue_task(jsc::Task::init(&mut (*holder).task));
         }
@@ -366,7 +365,7 @@ pub mod lib_uv_backend {
                     if (*request).cache.pending_cache() {
                         (*resolver).drain_pending_host_native(
                             (*request).cache.pos_in_pending(),
-                            (*request).head.global_this,
+                            &*(*request).head.global_this,
                             rc.int(),
                             GetAddrInfo::Result::Any::Addrinfo(ptr::null_mut()),
                         );
@@ -377,7 +376,7 @@ pub mod lib_uv_backend {
                 // + `Box::from_raw` would double-Drop `DNSLookup` (impls Drop).
                 let owned = *Box::from_raw(request);
                 let mut head = owned.head;
-                head.process_get_addr_info_native(rc.int(), ptr::null_mut());
+                DNSLookup::process_get_addr_info_native(&mut head, rc.int(), ptr::null_mut());
                 return Ok(promise);
             }
             promise
@@ -553,7 +552,7 @@ impl<T: CAresRecordType> ResolveInfoRequest<T> {
             // + `Box::from_raw` would double-Drop `CAresLookup<T>` (impls Drop).
             let owned = *Box::from_raw(this);
             let mut head = owned.head;
-            head.process_resolve(err_, timeout, result);
+            CAresLookup::<T>::process_resolve(&mut head, err_, timeout, result);
         }
     }
 }
@@ -667,7 +666,7 @@ impl GetHostByAddrInfoRequest {
             // + `Box::from_raw` would double-Drop `CAresReverse` (impls Drop).
             let owned = *Box::from_raw(this);
             let mut head = owned.head;
-            head.process_resolve(err_, timeout, result);
+            CAresReverse::process_resolve(&mut head, err_, timeout, result);
         }
     }
 }
@@ -863,7 +862,7 @@ impl GetNameInfoRequest {
             // + `Box::from_raw` would double-Drop `CAresNameInfo` (impls Drop).
             let owned = *Box::from_raw(this);
             let mut head = owned.head;
-            head.process_resolve(err_, timeout, result);
+            CAresNameInfo::process_resolve(&mut head, err_, timeout, result);
         }
     }
 }

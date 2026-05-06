@@ -500,7 +500,15 @@ pub const InstallCompletionsCommand = struct {
                 const contents = buf[0..read];
 
                 // Do they possibly have it in the file already?
-                if (strings.contains(contents, completions_path) or strings.contains(contents, "# bun completions\n")) {
+                // Match the absolute path we'd write, the "# bun completions" marker
+                // we'd write above it, or any existing reference to the _bun file
+                // under a .bun directory — this catches hand-edited variants using
+                // `$HOME`, `${HOME}`, or `~` instead of a hardcoded home path
+                // (see https://github.com/oven-sh/bun/issues/30335).
+                if (strings.contains(contents, completions_path) or
+                    strings.contains(contents, "# bun completions\n") or
+                    strings.contains(contents, "/.bun/_bun"))
+                {
                     break :brk false;
                 }
 

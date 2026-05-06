@@ -143,7 +143,7 @@ impl ObjectURLRegistry {
             return;
         };
         let map = self.map.lock();
-        let _ = map.remove(&uuid);
+        let _ = map.remove(&uuid.bytes);
         // Box<Entry> dropped here (was `entry.value.deinit()` in Zig)
         self.map.unlock();
     }
@@ -153,7 +153,7 @@ impl ObjectURLRegistry {
             return false;
         };
         let map = self.map.lock();
-        let result = map.contains_key(&uuid);
+        let result = map.contains_key(&uuid.bytes);
         self.map.unlock();
         result
     }
@@ -176,11 +176,13 @@ pub fn bun_create_object_url(
         return global_object.throw_not_enough_arguments("createObjectURL", 1, arguments.len);
     }
     let Some(blob) = arguments.ptr[0].as_::<Blob>() else {
-        return global_object
-            .throw_invalid_arguments(format_args!("createObjectURL expects a Blob object"));
+        return Err(global_object
+            .throw_invalid_arguments(format_args!("createObjectURL expects a Blob object")));
     };
     let registry = ObjectURLRegistry::singleton();
-    let uuid = registry.register(global_object.bun_vm(), blob);
+    // SAFETY: `JSValue::as_::<Blob>()` returns a non-null `*mut Blob` backed by
+    // the JS object's wrapped native cell, valid for the duration of this call.
+    let uuid = registry.register(global_object.bun_vm(), unsafe { &*blob });
     let str = bun_str::String::create_format(format_args!("blob:{}", uuid));
     Ok(str.transfer_to_js(global_object))
 }
@@ -197,8 +199,8 @@ pub fn bun_revoke_object_url(
         return global_object.throw_not_enough_arguments("revokeObjectURL", 1, arguments.len);
     }
     if !arguments.ptr[0].is_string() {
-        return global_object
-            .throw_invalid_arguments(format_args!("revokeObjectURL expects a string"));
+        return Err(global_object
+            .throw_invalid_arguments(format_args!("revokeObjectURL expects a string")));
     }
     let str = arguments.ptr[0]
         .to_bun_string(global_object)

@@ -1372,8 +1372,10 @@ pub mod package_manifest {
             // This needs many more call sites, doesn't have much impact on this location.
             let mut realpath_buf = bun_paths::PathBuffer::uninit();
             #[cfg(windows)]
+            let tmpdir_stub = PackageManager::get().get_temporary_directory();
+            #[cfg(windows)]
             let path_to_use_for_opening_file = bun_paths::join_abs_string_buf_z(
-                PackageManager::get().get_temporary_directory().path,
+                &tmpdir_stub.path,
                 &mut realpath_buf,
                 &[tmp_path.as_bytes()],
                 bun_paths::Style::Auto,
@@ -1487,9 +1489,20 @@ pub mod package_manifest {
                             let _ = bun_sys::unlinkat(tmpdir, tmp_path);
                         });
 
+                        // Zig (npm.zig:1128) matches `.OPNOTSUPP`, which on
+                        // Darwin is errno **45** (collapsed with NOTSUP). The
+                        // Rust `Errno::EOPNOTSUPP` resolves to 102 on Darwin,
+                        // so match `ENOTSUP` as well to keep the macOS
+                        // `renameat2(.exchange)` fallback reachable. On
+                        // Linux/FreeBSD the two names alias the same value;
+                        // the redundant arm is intentional.
+                        #[allow(unreachable_patterns)]
                         if matches!(
                             err.get_errno(),
-                            bun_sys::Errno::EEXIST | bun_sys::Errno::ENOTEMPTY | bun_sys::Errno::EOPNOTSUPP
+                            bun_sys::Errno::EEXIST
+                                | bun_sys::Errno::ENOTEMPTY
+                                | bun_sys::Errno::ENOTSUP
+                                | bun_sys::Errno::EOPNOTSUPP
                         ) {
                             // Atomically swap the old file with the new file.
                             bun_sys::renameat2(
@@ -2200,13 +2213,11 @@ impl PackageManifest {
         is_extended_manifest: bool,
     ) -> Result<Option<PackageManifest>, Error> {
         // TODO(port): narrow error set
-        // SAFETY: Phase-A `logger::Str` is `&'static [u8]`; Source borrows the
-        // caller's buffers for the duration of this function only. Erase the
-        // lifetime to satisfy the field type until §Forbidden lifetime cleanup.
-        let source = logger::Source::init_path_string(
-            unsafe { core::mem::transmute::<&[u8], &'static [u8]>(expected_name) },
-            unsafe { core::mem::transmute::<&[u8], &'static [u8]>(json_buffer) },
-        );
+        // `logger::Source::init_path_string` accepts borrowed `&[u8]` via
+        // `IntoStr`; the Source only lives for the duration of this function,
+        // so pass the caller's buffers through directly without manufacturing
+        // `'static` references here (PORTING.md §Forbidden lifetime extension).
+        let source = logger::Source::init_path_string(expected_name, json_buffer);
         initialize_store();
         // TODO(port): bun.ast.Stmt.Data.Store.memory_allocator.?.pop() — Zig
         // pushed/popped the AST arena around the parse so the JSON AST is

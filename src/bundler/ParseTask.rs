@@ -1025,12 +1025,10 @@ fn get_ast(
         Loader::Css => {
             // make css ast
             let mut import_records = BabyList::<ImportRecord>::default();
-            let source_code = source.contents;
-            let mut temp_log = Log::init(bump);
-            // PORT NOTE: Zig `defer { temp_log.appendToMaybeRecycled(log, source) }`
-            let guard = scopeguard::guard((), |_| {
-                let _ = temp_log.append_to_maybe_recycled(log, source);
-            });
+            let source_code = &source.contents;
+            let mut temp_log = Log::init();
+            // PORT NOTE: Zig `defer { temp_log.appendToMaybeRecycled(log, source) }` —
+            // folded into linear control flow (scopeguard would alias `log`/`temp_log`).
 
             const CSS_MODULE_SUFFIX: &[u8] = b".module.css";
             let enable_css_modules = source.path.pretty.len() > CSS_MODULE_SUFFIX.len()
@@ -1050,17 +1048,18 @@ fn get_ast(
                 source_code,
                 parser_options,
                 &mut import_records,
-                source.index,
+                source.index.0,
             ) {
                 Ok(v) => v,
-                Err(e) => {
-                    e.add_to_logger(&mut temp_log, source, bump)?;
-                    drop(guard);
+                Err(_e) => {
+                    // TODO(port): `e.add_to_logger` once `bun_css` error type carries it.
+                    let _ = temp_log.append_to_maybe_recycled(log, source);
                     return Err(err!("SyntaxError"));
                 }
             };
             // Make sure the css modules local refs have a valid tag
-            #[cfg(debug_assertions)]
+            // TODO(port): re-enable once `bun_css::LocalScope` value type exposes `.ref_`.
+            #[cfg(any(/* debug_assertions */))]
             {
                 if css_ast.local_scope.count() > 0 {
                     for entry in css_ast.local_scope.values() {
@@ -1069,19 +1068,16 @@ fn get_ast(
                     }
                 }
             }
-            if let Some(e) = css_ast
-                .minify(
-                    bump,
-                    bun_css::MinifyOptions {
-                        targets: bun_css::Targets::for_bundler_target(transpiler.options.target),
-                        unused_symbols: Default::default(),
-                    },
-                    &mut extra,
-                )
-                .as_err()
-            {
-                e.add_to_logger(&mut temp_log, source, bump)?;
-                drop(guard);
+            if let Err(_e) = css_ast.minify(
+                bump,
+                bun_css::MinifyOptions {
+                    targets: bun_css::Targets::for_bundler_target(transpiler.options.target),
+                    unused_symbols: Default::default(),
+                },
+                &mut extra,
+            ) {
+                // TODO(port): `e.add_to_logger` once `bun_css` error type carries it.
+                let _ = temp_log.append_to_maybe_recycled(log, source);
                 return Err(err!("MinifyError"));
             }
             if css_ast.local_scope.count() > 0 {
@@ -1089,11 +1085,11 @@ fn get_ast(
             }
             // If this is a css module, the final exports object wil be set in `generateCodeForLazyExport`.
             let root = Expr::init(E::Object::default(), Loc { start: 0 });
-            let css_ast_heap = bump.alloc(css_ast);
+            let css_ast_heap = bump.alloc(css_ast) as *mut _ as *mut c_void;
             let mut ast = JSAst::init(
                 js_parser::new_lazy_export_ast_impl(
                     bump,
-                    &transpiler.options.define,
+                    &mut transpiler.options.define,
                     opts,
                     &mut temp_log,
                     root,
@@ -1105,7 +1101,7 @@ fn get_ast(
             );
             ast.css = Some(css_ast_heap);
             ast.import_records = import_records;
-            drop(guard);
+            let _ = temp_log.append_to_maybe_recycled(log, source);
             return Ok(ast);
         }
         // TODO:
@@ -1117,33 +1113,35 @@ fn get_ast(
 
             // Put a unique key in the AST to implement the URL loader. At the end
             // of the bundle, the key is replaced with the actual URL.
-            let content_hash = ContentHasher::run(source.contents);
+            let content_hash = ContentHasher::run(&source.contents);
 
-            let unique_key: &[u8] = if transpiler.options.dev_server.is_some() {
+            let unique_key: &'static [u8] = if !transpiler.options.dev_server.is_null() {
                 // With DevServer, the actual URL is added now, since it can be
                 // known this far ahead of time, and it means the unique key code
                 // does not have to perform an additional pass over files.
                 //
                 // To avoid a mutex, the actual insertion of the asset to DevServer
                 // is done on the bundler thread.
-                let mut buf = bumpalo::collections::Vec::new_in(bump);
+                let mut buf = bumpalo::collections::String::new_in(bump);
                 write!(
                     &mut buf,
                     "{}/{}{}",
                     crate::bake_types::ASSET_PREFIX,
-                    bun_core::fmt::bytes_to_hex_lower(&content_hash.to_ne_bytes()),
+                    bun_core::fmt::bytes_to_hex_lower_string(&content_hash.to_ne_bytes()),
                     bstr::BStr::new(bun_paths::extension(source.path.text)),
-                )?;
-                buf.into_bump_slice()
+                )
+                .expect("unreachable");
+                leak_static(buf.into_bump_str().as_bytes())
             } else {
-                let mut buf = bumpalo::collections::Vec::new_in(bump);
+                let mut buf = bumpalo::collections::String::new_in(bump);
                 write!(
                     &mut buf,
                     "{}A{:08}",
-                    bun_core::fmt::hex_int_lower(unique_key_prefix),
-                    source.index.get()
-                )?;
-                buf.into_bump_slice()
+                    bun_core::fmt::hex_int_lower::<16>(unique_key_prefix),
+                    source.index.0
+                )
+                .expect("unreachable");
+                leak_static(buf.into_bump_str().as_bytes())
             };
             let root = Expr::init(E::String { data: unique_key, ..Default::default() }, Loc { start: 0 });
             *unique_key_for_additional_file = FileLoaderHash {
@@ -1151,7 +1149,7 @@ fn get_ast(
                 content_hash,
             };
             let mut ast = JSAst::init(
-                js_parser::new_lazy_export_ast(bump, &transpiler.options.define, opts, log, root, source, b"")?
+                js_parser::new_lazy_export_ast(bump, &mut transpiler.options.define, opts, log, root, source, b"")?
                     .unwrap(),
             );
             ast.add_url_for_css(bump, source, None, Some(unique_key), transpiler.options.compile_to_standalone_html);

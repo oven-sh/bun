@@ -2126,7 +2126,7 @@ impl<'a> BundleV2<'a> {
         *entry.value_ptr = source_index.get();
         self.graph.ast.append(JSAst::empty());
 
-        self.graph.input_files.append(Graph::InputFile {
+        self.graph.input_files.append(crate::Graph::InputFile {
             source: Logger::Source {
                 path,
                 contents: b"",
@@ -2187,7 +2187,7 @@ impl<'a> BundleV2<'a> {
         *entry.value_ptr = source_index.get();
         self.graph.ast.append(JSAst::empty());
 
-        self.graph.input_files.append(Graph::InputFile {
+        self.graph.input_files.append(crate::Graph::InputFile {
             source: Logger::Source {
                 path: path.clone(),
                 contents: b"",
@@ -2541,7 +2541,7 @@ impl<'a> BundleV2<'a> {
     fn enqueue_entry_points_common(&mut self) -> Result<(), Error> {
         // Add the runtime
         let rt = ParseTask::get_runtime_source(self.transpiler.options.target);
-        self.graph.input_files.append(Graph::InputFile {
+        self.graph.input_files.append(crate::Graph::InputFile {
             source: rt.source,
             loader: Loader::Js,
             side_effects: _resolver::SideEffects::NoSideEffectsPureData,
@@ -2605,10 +2605,10 @@ impl<'a> BundleV2<'a> {
         let scbs = self.graph.server_component_boundaries.list.slice();
         let named_exports_array = self.graph.ast.items_named_exports();
 
-        let id_string = server.new_expr(E::String { data: b"id" });
-        let name_string = server.new_expr(E::String { data: b"name" });
-        let chunks_string = server.new_expr(E::String { data: b"chunks" });
-        let specifier_string = server.new_expr(E::String { data: b"specifier" });
+        let id_string = server.new_expr(E::EString { data: b"id", ..Default::default() });
+        let name_string = server.new_expr(E::EString { data: b"name", ..Default::default() });
+        let chunks_string = server.new_expr(E::EString { data: b"chunks", ..Default::default() });
+        let specifier_string = server.new_expr(E::EString { data: b"specifier", ..Default::default() });
         let empty_array = server.new_expr(E::Array::default());
 
         for ((r#use, source_id), ssr_index) in scbs.items_use_directive().iter()
@@ -2637,25 +2637,25 @@ impl<'a> BundleV2<'a> {
                 }
 
                 let client_path = server.new_expr(E::String {
-                    data: alloc.alloc_fmt(format_args!("{:x}S{:08}", self.unique_key, source_id)),
+                    data: alloc.alloc_str(&format!("{:x}S{:08}", self.unique_key, source_id)),
                 });
                 let ssr_path = server.new_expr(E::String {
-                    data: alloc.alloc_fmt(format_args!("{:x}S{:08}", self.unique_key, ssr_index)),
+                    data: alloc.alloc_str(&format!("{:x}S{:08}", self.unique_key, ssr_index)),
                 });
 
                 debug_assert_eq!(keys.len(), client_manifest_items.len());
                 for (export_name_string, client_item) in keys.iter().zip(client_manifest_items.iter_mut()) {
-                    let server_key_string = alloc.alloc_fmt(format_args!(
+                    let server_key_string = alloc.alloc_str(&format!(
                         "{:x}S{:08}#{}",
                         self.unique_key, source_id, bstr::BStr::new(export_name_string)
                     ));
-                    let export_name = server.new_expr(E::String { data: export_name_string });
+                    let export_name = server.new_expr(E::EString { data: export_name_string, ..Default::default() });
 
                     // write dependencies on the underlying module, not the proxy
                     server_manifest_props.push(G::Property {
-                        key: Some(server.new_expr(E::String { data: server_key_string })),
+                        key: Some(server.new_expr(E::EString { data: server_key_string, ..Default::default() })),
                         value: Some(server.new_expr(E::Object {
-                            properties: G::Property::List::from_slice(alloc, &[
+                            properties: js_ast::ast::g::PropertyList::from_slice(alloc, &[
                                 G::Property { key: Some(id_string), value: Some(client_path), ..Default::default() },
                                 G::Property { key: Some(name_string), value: Some(export_name), ..Default::default() },
                                 G::Property { key: Some(chunks_string), value: Some(empty_array), ..Default::default() },
@@ -2667,7 +2667,7 @@ impl<'a> BundleV2<'a> {
                     *client_item = G::Property {
                         key: Some(export_name),
                         value: Some(server.new_expr(E::Object {
-                            properties: G::Property::List::from_slice(alloc, &[
+                            properties: js_ast::ast::g::PropertyList::from_slice(alloc, &[
                                 G::Property { key: Some(name_string), value: Some(export_name), ..Default::default() },
                                 G::Property { key: Some(specifier_string), value: Some(ssr_path), ..Default::default() },
                             ])?,
@@ -2680,7 +2680,7 @@ impl<'a> BundleV2<'a> {
                 client_manifest_props.push(G::Property {
                     key: Some(client_path),
                     value: Some(server.new_expr(E::Object {
-                        properties: G::Property::List::from_owned_slice(client_manifest_items),
+                        properties: js_ast::ast::g::PropertyList::from_owned_slice(client_manifest_items),
                         ..Default::default()
                     })),
                     ..Default::default()
@@ -2692,12 +2692,12 @@ impl<'a> BundleV2<'a> {
 
         server.append_stmt(S::Local {
             kind: js_ast::ast::s::LocalKind::Const,
-            decls: G::Decl::List::from_slice(alloc, &[G::Decl {
+            decls: js_ast::ast::g::DeclList::from_slice(alloc, &[G::Decl {
                 binding: Binding::alloc(alloc, js_ast::ast::b::Identifier {
-                    r#ref: server.new_symbol(Symbol::Kind::Other, b"serverManifest")?,
+                    r#ref: server.new_symbol(js_ast::ast::symbol::Kind::Other, b"serverManifest")?,
                 }, Logger::Loc::EMPTY),
                 value: Some(server.new_expr(E::Object {
-                    properties: G::Property::List::move_from_list(&mut server_manifest_props),
+                    properties: js_ast::ast::g::PropertyList::move_from_list(&mut server_manifest_props),
                     ..Default::default()
                 })),
             }])?,
@@ -2706,12 +2706,12 @@ impl<'a> BundleV2<'a> {
         })?;
         server.append_stmt(S::Local {
             kind: js_ast::ast::s::LocalKind::Const,
-            decls: G::Decl::List::from_slice(alloc, &[G::Decl {
+            decls: js_ast::ast::g::DeclList::from_slice(alloc, &[G::Decl {
                 binding: Binding::alloc(alloc, js_ast::ast::b::Identifier {
-                    r#ref: server.new_symbol(Symbol::Kind::Other, b"ssrManifest")?,
+                    r#ref: server.new_symbol(js_ast::ast::symbol::Kind::Other, b"ssrManifest")?,
                 }, Logger::Loc::EMPTY),
                 value: Some(server.new_expr(E::Object {
-                    properties: G::Property::List::move_from_list(&mut client_manifest_props),
+                    properties: js_ast::ast::g::PropertyList::move_from_list(&mut client_manifest_props),
                     ..Default::default()
                 })),
             }])?,
@@ -2734,7 +2734,7 @@ impl<'a> BundleV2<'a> {
         let source_index = Index::init(u32::try_from(self.graph.ast.len()).unwrap());
         self.graph.ast.append(JSAst::empty());
 
-        self.graph.input_files.append(Graph::InputFile {
+        self.graph.input_files.append(crate::Graph::InputFile {
             source: source.clone(),
             loader,
             side_effects: loader.side_effects(),
@@ -2774,7 +2774,7 @@ impl<'a> BundleV2<'a> {
         let source_index = Index::init(u32::try_from(self.graph.ast.len()).unwrap());
         self.graph.ast.append(JSAst::empty());
 
-        self.graph.input_files.append(Graph::InputFile {
+        self.graph.input_files.append(crate::Graph::InputFile {
             source: source.clone(),
             loader,
             side_effects: loader.side_effects(),
@@ -2830,7 +2830,7 @@ impl<'a> BundleV2<'a> {
         let mut new_source = source_without_index;
         let source_index = self.graph.input_files.len();
         new_source.index = Index::init(source_index);
-        self.graph.input_files.append(Graph::InputFile {
+        self.graph.input_files.append(crate::Graph::InputFile {
             source: new_source.clone(),
             loader: Loader::Js,
             side_effects: _resolver::SideEffects::HasSideEffects,
@@ -2875,7 +2875,7 @@ impl<'a> BundleV2<'a> {
         for source_index in reachable_files {
             let records: &[ImportRecord] = import_records[source_index.get() as usize].slice();
             for record in records {
-                if !record.source_index.is_valid() && record.tag == ImportRecord::Tag::None {
+                if !record.source_index.is_valid() && record.tag == bun_options_types::import_record::Tag::None {
                     let path = &record.path.text;
                     // External dependency
                     if !path.is_empty()
@@ -3172,11 +3172,11 @@ impl<'a> BundleV2<'a> {
                             template.placeholder.ext = &template.placeholder.ext[1..];
                         }
 
-                        if template.needs(PathTemplate::Field::Hash) {
+                        if template.needs(options::PlaceholderField::Hash) {
                             template.placeholder.hash = Some(content_hashes_for_additional_files[index]);
                         }
 
-                        if template.needs(PathTemplate::Field::Target) {
+                        if template.needs(options::PlaceholderField::Target) {
                             template.placeholder.target = <&'static str>::from(target).as_bytes();
                         }
                         break 'brk {
@@ -3216,38 +3216,35 @@ impl<'a> BundleV2<'a> {
     }
 
     pub fn on_load_async(&mut self, load: &mut jsc_api::JSBundler::Load) {
-        match self.r#loop() {
-            EventLoop::Js(jsc_event_loop) => {
-                jsc_event_loop.enqueue_task_concurrent(bun_event_loop::ConcurrentTask::from_callback(load, on_load_from_js_loop));
-            }
-            EventLoop::Mini(mini) => {
-                mini.enqueue_task_concurrent_with_extra_ctx::<jsc_api::JSBundler::Load, BundleV2>(
-                    load,
-                    Self::on_load,
-                    // TODO(port): .task field selector
-                );
-            }
+        // CYCLEBREAK GENUINE: `linker.r#loop` is an erased `Option<NonNull<()>>`;
+        // the Js/Mini discriminant is owned by T6. With a JS completion task we
+        // can route through its event loop; otherwise (CLI/Mini) call inline.
+        if let Some(completion) = self.completion {
+            // SAFETY: completion is a valid backref while bundle is running.
+            unsafe { &(*completion).jsc_event_loop }.enqueue_task_concurrent(
+                bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(load, on_load_from_js_loop),
+            );
+        } else {
+            Self::on_load(load, self);
         }
     }
 
     pub fn on_resolve_async(&mut self, resolve: &mut jsc_api::JSBundler::Resolve) {
-        match self.r#loop() {
-            EventLoop::Js(jsc_event_loop) => {
-                jsc_event_loop.enqueue_task_concurrent(bun_event_loop::ConcurrentTask::from_callback(resolve, on_resolve_from_js_loop));
-            }
-            EventLoop::Mini(mini) => {
-                mini.enqueue_task_concurrent_with_extra_ctx::<jsc_api::JSBundler::Resolve, BundleV2>(
-                    resolve,
-                    Self::on_resolve,
-                    // TODO(port): .task field selector
-                );
-            }
+        // CYCLEBREAK GENUINE: see `on_load_async`.
+        if let Some(completion) = self.completion {
+            // SAFETY: completion is a valid backref while bundle is running.
+            unsafe { &(*completion).jsc_event_loop }.enqueue_task_concurrent(
+                bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(resolve, on_resolve_from_js_loop),
+            );
+        } else {
+            Self::on_resolve(resolve, self);
         }
     }
 }
 
 pub fn on_load_from_js_loop(load: &mut jsc_api::JSBundler::Load) {
-    BundleV2::on_load(load, load.bv2);
+    // SAFETY: `bv2` is a live backref set in `Load::init`.
+    BundleV2::on_load(load, unsafe { &mut *load.bv2 });
 }
 
 impl<'a> BundleV2<'a> {
@@ -3372,7 +3369,8 @@ impl<'a> BundleV2<'a> {
 }
 
 pub fn on_resolve_from_js_loop(resolve: &mut jsc_api::JSBundler::Resolve) {
-    BundleV2::on_resolve(resolve, resolve.bv2);
+    // SAFETY: `bv2` is a live backref set in `Resolve::init`.
+    BundleV2::on_resolve(resolve, unsafe { &mut *resolve.bv2 });
 }
 
 impl<'a> BundleV2<'a> {
@@ -3463,7 +3461,7 @@ impl<'a> BundleV2<'a> {
                         this.graph.ast.append(JSAst::empty());
                         let loader = path.loader(&this.transpiler.options.loaders).unwrap_or(Loader::File);
 
-                        this.graph.input_files.append(Graph::InputFile {
+                        this.graph.input_files.append(crate::Graph::InputFile {
                             source: Logger::Source {
                                 path: path.clone(),
                                 contents: b"",
@@ -4147,13 +4145,13 @@ impl<'a> BundleV2<'a> {
         let server_source = bake::SERVER_VIRTUAL_SOURCE;
         let client_source = bake::CLIENT_VIRTUAL_SOURCE;
 
-        self.graph.input_files.append(Graph::InputFile {
+        self.graph.input_files.append(crate::Graph::InputFile {
             source: server_source,
             loader: Loader::Js,
             side_effects: _resolver::SideEffects::NoSideEffectsPureData,
             ..Default::default()
         }); // PERF(port): was assume_capacity
-        self.graph.input_files.append(Graph::InputFile {
+        self.graph.input_files.append(crate::Graph::InputFile {
             source: client_source,
             loader: Loader::Js,
             side_effects: _resolver::SideEffects::NoSideEffectsPureData,
@@ -4255,7 +4253,7 @@ impl<'a> BundleV2<'a> {
         let mut estimated_resolve_queue_count: usize = 0;
         for import_record in ctx.import_records.slice_mut() {
             if import_record.flags.is_internal {
-                import_record.tag = ImportRecord::Tag::Runtime;
+                import_record.tag = bun_options_types::import_record::Tag::Runtime;
                 import_record.source_index = Index::RUNTIME;
             }
 
@@ -4317,7 +4315,7 @@ impl<'a> BundleV2<'a> {
 
             if import_record.path.text == b"bun:wrap" {
                 import_record.path.namespace = b"bun";
-                import_record.tag = ImportRecord::Tag::Runtime;
+                import_record.tag = bun_options_types::import_record::Tag::Runtime;
                 import_record.path.text = b"wrap".into();
                 import_record.source_index = Index::RUNTIME;
                 continue;
@@ -4370,7 +4368,7 @@ impl<'a> BundleV2<'a> {
             }
 
             let (transpiler, bake_graph, target): (&mut Transpiler, bake::Graph, options::Target) =
-                if import_record.tag == ImportRecord::Tag::BakeResolveToSsrGraph {
+                if import_record.tag == bun_options_types::import_record::Tag::BakeResolveToSsrGraph {
                     if self.framework.is_none() {
                         self.log_for_resolution_failures(&source.path.text, bake::Graph::Ssr).add_error_fmt(
                             Some(source),
@@ -4625,7 +4623,7 @@ impl<'a> BundleV2<'a> {
                             let hash = dev_server.asset_hash(&path.text).expect("cached asset not found");
                             import_record.path.text = path.text.clone();
                             import_record.path.namespace = b"file";
-                            import_record.path.pretty = self.allocator().alloc_fmt(format_args!(
+                            import_record.path.pretty = self.allocator().alloc_str(&format!(
                                 "{}/{}{}",
                                 bake_types::ASSET_PREFIX,
                                 bun_string::fmt::hex_bytes_lower(bytemuck::bytes_of(&hash)),
@@ -4745,7 +4743,7 @@ impl<'a> BundleV2<'a> {
 
             if !existing.found_existing {
                 let new_task: &mut ParseTask = value;
-                let mut new_input_file = Graph::InputFile {
+                let mut new_input_file = crate::Graph::InputFile {
                     source: Logger::Source::init_empty_file(&new_task.path.text),
                     side_effects: new_task.side_effects,
                     secondary_path: if let Some(secondary_path) = &new_task.secondary_path_for_commonjs_interop {
@@ -4881,7 +4879,7 @@ impl<'a> BundleV2<'a> {
         let mut js_parser_options = bun_js_parser::Parser::Options::init(self.transpiler_for_target(target).options.jsx.clone(), Loader::Html);
         js_parser_options.bundle = true;
 
-        let unique_key = self.allocator().alloc_fmt(format_args!(
+        let unique_key = self.allocator().alloc_str(&format!(
             "{:x}H{:08}",
             self.unique_key,
             graph.html_imports.server_source_indices.len(),
@@ -4894,13 +4892,13 @@ impl<'a> BundleV2<'a> {
             transpiler.options.define,
             js_parser_options,
             transpiler.log,
-            Expr::init(E::String { data: unique_key }, Logger::Loc::EMPTY),
+            Expr::init(E::EString { data: unique_key, ..Default::default() }, Logger::Loc::EMPTY),
             &empty_html_file_source,
             // We replace this runtime API call's ref later via .link on the Symbol.
             b"__jsonParse",
         )?.unwrap());
 
-        let fake_input_file = Graph::InputFile {
+        let fake_input_file = crate::Graph::InputFile {
             source: empty_html_file_source,
             side_effects: _resolver::SideEffects::NoSideEffectsPureData,
             ..Default::default()

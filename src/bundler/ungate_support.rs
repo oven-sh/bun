@@ -403,19 +403,6 @@ pub mod bun_renamer {
         Number(Box<bun_js_printer::renamer::NumberRenamer>),
         Minify(Box<bun_js_printer::renamer::MinifyRenamer>),
     }
-    impl ChunkRenamer {
-        pub fn as_renamer(&mut self) -> bun_js_printer::renamer::Renamer<'_, 'static> {
-            match self {
-                ChunkRenamer::None => unreachable!("Chunk.renamer accessed before assignment"),
-                ChunkRenamer::Number(r) => r.to_renamer(),
-                // PORT NOTE: `MinifyRenamer::to_renamer` consumes `Box<Self>`;
-                // build the borrowed view directly here instead.
-                ChunkRenamer::Minify(r) => {
-                    bun_js_printer::renamer::Renamer::MinifyRenamer(core::mem::take(r))
-                }
-            }
-        }
-    }
 }
 
 /// `HTMLImportManifest` — bundler-calling-convention adapter over the real

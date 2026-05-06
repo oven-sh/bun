@@ -767,7 +767,10 @@ impl From<AuthType> for &'static str {
 }
 pub struct PackageManagerTmpDirStub {
     pub handle: bun_sys::Fd,
-    pub path: &'static [u8],
+    /// Owned copy of `PackageManager.temp_directory_path`. The stub is a
+    /// by-value snapshot, so it cannot safely borrow from `&mut self`; clone
+    /// the bytes instead of manufacturing a `&'static` (PORTING.md §Forbidden).
+    pub path: Box<[u8]>,
     pub name: &'static [u8],
 }
 #[derive(Default)] pub struct FolderResolution;
@@ -905,15 +908,11 @@ impl PackageManager {
     /// file fails, fall back to `<cache>/.tmp`.
     pub fn get_temporary_directory(&mut self) -> PackageManagerTmpDirStub {
         if let Some(fd) = self.temp_directory_ {
-            // SAFETY: temp_directory_path is set whenever temp_directory_ is.
-            // Leak as 'static — PackageManager is process-lifetime.
-            let path: &'static [u8] = unsafe {
-                core::slice::from_raw_parts(
-                    self.temp_directory_path.as_ptr(),
-                    self.temp_directory_path.len(),
-                )
+            return PackageManagerTmpDirStub {
+                handle: fd,
+                path: self.temp_directory_path.clone().into_boxed_slice(),
+                name: b".tmp",
             };
-            return PackageManagerTmpDirStub { handle: fd, path, name: b".tmp" };
         }
 
         use bun_sys::{Dir, OpenDirOptions};
@@ -948,14 +947,11 @@ impl PackageManager {
         self.temp_directory_path = path;
         self.temp_directory_ = Some(tempdir.fd);
 
-        // SAFETY: temp_directory_path lives as long as PackageManager (process-lifetime).
-        let path_ref: &'static [u8] = unsafe {
-            core::slice::from_raw_parts(
-                self.temp_directory_path.as_ptr(),
-                self.temp_directory_path.len(),
-            )
-        };
-        PackageManagerTmpDirStub { handle: tempdir.fd, path: path_ref, name: b".tmp" }
+        PackageManagerTmpDirStub {
+            handle: tempdir.fd,
+            path: self.temp_directory_path.clone().into_boxed_slice(),
+            name: b".tmp",
+        }
     }
 }
 #[derive(Clone, Copy, Default, PartialEq, Eq)]

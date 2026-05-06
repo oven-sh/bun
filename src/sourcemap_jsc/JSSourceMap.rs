@@ -261,7 +261,7 @@ impl JSSourceMap {
 
     // TODO(b2-blocked): bun_jsc::host_fn — `#[bun_jsc::host_fn(method)]`
     pub fn find_origin(
-        this: &mut Self,
+        this: &Self,
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -291,7 +291,7 @@ impl JSSourceMap {
 
     // TODO(b2-blocked): bun_jsc::host_fn — `#[bun_jsc::host_fn(method)]`
     pub fn find_entry(
-        this: &mut Self,
+        this: &Self,
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {

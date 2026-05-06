@@ -882,6 +882,34 @@ impl<C: SourceContext> NewSource<C> {
     pub fn memory_cost(&self) -> usize {
         self.context.memory_cost_fn() + core::mem::size_of::<Self>()
     }
+
+    /// `bun.TrivialDeinit(@This())` — drops the heap allocation. Called from
+    /// context `deinit` (e.g. `ByteStream::finalize` → `parent().deinit()`).
+    /// SAFETY: `self` must have been produced by [`Self::new`] (i.e. `Box::new`)
+    /// and must not be used after this call.
+    pub unsafe fn deinit(&mut self) {
+        // SAFETY: see fn-level doc — caller guarantees Box provenance.
+        drop(unsafe { Box::from_raw(self as *mut Self) });
+    }
+}
+
+// ─── local extension shim: `JSValue::withAsyncContextIfNeeded` ───────────────
+// `bun_jsc::JSValue` doesn't yet re-export this; bind the C++ symbol locally
+// (same pattern as `runtime/api/cron.rs` / `h2_frame_parser.rs`).
+trait JSValueAsyncContextExt {
+    fn with_async_context_if_needed(self, global: &JSGlobalObject) -> JSValue;
+}
+impl JSValueAsyncContextExt for JSValue {
+    fn with_async_context_if_needed(self, global: &JSGlobalObject) -> JSValue {
+        unsafe extern "C" {
+            fn AsyncContextFrame__withAsyncContextIfNeeded(
+                global: *const JSGlobalObject,
+                callback: JSValue,
+            ) -> JSValue;
+        }
+        // SAFETY: FFI into JSC bindings; `global` is a valid &JSGlobalObject.
+        unsafe { AsyncContextFrame__withAsyncContextIfNeeded(global, self) }
+    }
 }
 
 // Aliases wired to .classes.ts codegen entries (Zig: `pub const drainFromJS = JSReadableStreamSource.drain;` etc.)
@@ -895,6 +923,7 @@ impl<C: SourceContext> NewSource<C> {
 
 pub mod js_readable_stream_source {
     use super::*;
+    use super::JSValueAsyncContextExt as _;
 
     // TODO(port): #[bun_jsc::host_fn(method)]
     pub fn pull<C: SourceContext>(

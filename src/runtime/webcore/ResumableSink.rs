@@ -249,16 +249,18 @@ impl<'a, Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<'a, J
         _this: &mut Self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
-        this_value: JSValue,
     ) -> JsResult<JSValue> {
         bun_jsc::mark_binding!();
+        // PORT NOTE: Zig signature carries `this_value: jsc.JSValue` as a 4th
+        // param injected by the codegen shim. The Rust `#[host_fn(method)]`
+        // macro only forwards `(&mut Self, &JSGlobalObject, &CallFrame)`, so
+        // pull the JS `this` from the callframe instead — same value.
+        let this_value = callframe.this();
         let args = callframe.arguments();
 
         if args.len() < 2 {
-            return Err(global_this.throw_invalid_arguments(
-                "ResumableSink.setHandlers requires at least 2 arguments",
-                &[],
-            ));
+            return Err(global_this
+                .throw_invalid_arguments("ResumableSink.setHandlers requires at least 2 arguments"));
         }
 
         let ondrain = args[0];

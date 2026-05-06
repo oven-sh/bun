@@ -74,6 +74,14 @@ pub mod expect {
     pub use super::expect_core::mock;
     pub use super::diff_format::DiffFormatter;
 
+    /// `Expect.js.*GetCached` / `*SetCached` accessors (Zig: `Expect.js.capturedValueGetCached`
+    /// etc., generate-classes.ts `cache: true` slots from jest.classes.ts:226). Exposed as a
+    /// sibling `js` module so matcher drafts can write `super::js::captured_value_get_cached(..)`
+    /// — `Expect::js::..` does not resolve in Rust (no inherent associated modules).
+    pub mod js {
+        ::bun_jsc::codegen_cached_accessors!("Expect"; capturedValue, resultValue);
+    }
+
     /// Free-fn alias for `Expect::get_signature` — many Phase-A matcher
     /// drafts imported it as a path item (`use super::get_signature`),
     /// which Rust does not allow for associated fns. Thin shim keeps the

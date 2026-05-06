@@ -3014,10 +3014,12 @@ where
 
         let (content_type, needs_content_type, content_type_needs_free) =
             get_content_type(response.get_init_headers_mut(), &self.blob);
-        let _ct_guard = scopeguard::guard((), |_| {
-            if content_type_needs_free {
-                content_type.deinit();
-            }
+        // PORT NOTE: Zig `defer if (content_type_needs_free) content_type.deinit()`.
+        // `MimeType` owns a `Cow<'static, [u8]>`; Drop handles the owned case.
+        // Hold the value past all reads below, then let it drop at scope end.
+        let _ct_guard = scopeguard::guard(content_type_needs_free, |_needs| {
+            // Drop of `content_type` (moved into closure capture below would
+            // change borrow lifetimes); rely on natural end-of-scope drop.
         });
         let mut has_content_disposition = false;
         let mut has_content_range = false;

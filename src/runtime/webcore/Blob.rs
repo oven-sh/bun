@@ -501,6 +501,17 @@ use crate::api::archive::Archive;
 // alias the module so `write_file_mod::WriteFile{,Task,Windows,Promise}` resolve.
 use super::write_file as write_file_mod;
 use super::write_file::{WriteFilePromise, WriteFileWaitFromLockedValueTask};
+use bun_jsc::SysErrorJsc as _;
+
+/// Local shim for `bun_jsc::dom_form_data::FormDataEntry` — that module is
+/// `#![cfg(any())]`-gated upstream and `bun_jsc::DOMFormData` is currently a
+/// `stub_ty!` opaque struct, so the associated-type path
+/// `jsc::DOMFormData::FormDataEntry` cannot resolve. Mirrors Zig
+/// `jsc.DOMFormData.FormDataEntry` (`union(enum) { string, file }`).
+pub enum FormDataEntry<'a> {
+    String(ZigString),
+    File { blob: &'a mut Blob, filename: ZigString },
+}
 
 impl Blob {
     pub fn do_read_from_s3<F>(&mut self, global: &JSGlobalObject) -> JsTerminatedResult<JSValue>

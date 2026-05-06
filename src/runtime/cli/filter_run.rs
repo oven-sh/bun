@@ -1021,7 +1021,7 @@ pub fn run_scripts_with_filter(ctx: Command::Context) -> Result<core::convert::I
         if handle.remaining_dependencies == 0 {
             if handle.start().is_err() {
                 // todo this should probably happen in "start"
-                Output::pretty_errorln("<r><red>error<r>: Failed to start process", ());
+                Output::pretty_errorln("<r><red>error<r>: Failed to start process");
                 Global::exit(1);
             }
         }

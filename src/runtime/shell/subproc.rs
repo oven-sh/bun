@@ -544,11 +544,16 @@ impl ShellSubprocess {
 
         let mut spawn_result = spawn_result;
 
+        // PORT NOTE: Stdio impls Drop, so move out via mem::replace instead of clone.
+        let stdio0 = core::mem::replace(&mut stdio_guard[0], Stdio::Ignore);
+        let stdio1 = core::mem::replace(&mut stdio_guard[1], Stdio::Ignore);
+        let stdio2 = core::mem::replace(&mut stdio_guard[2], Stdio::Ignore);
+
         let subprocess: *mut Subprocess = Box::into_raw(Box::new(Subprocess {
             event_loop,
             process: spawn_result.to_process(event_loop, IS_SYNC),
             stdin: match Writable::init(
-                stdio_guard[0].clone(),
+                stdio0,
                 event_loop,
                 core::ptr::null_mut(), // filled below; see TODO
                 spawn_result.stdin,
@@ -560,7 +565,7 @@ impl ShellSubprocess {
             },
             stdout: Readable::init(
                 OutKind::Stdout,
-                stdio_guard[1].clone(),
+                stdio1,
                 shellio.stdout.clone(),
                 event_loop,
                 core::ptr::null_mut(),
@@ -570,7 +575,7 @@ impl ShellSubprocess {
             ),
             stderr: Readable::init(
                 OutKind::Stderr,
-                stdio_guard[2].clone(),
+                stdio2,
                 shellio.stderr.clone(),
                 event_loop,
                 core::ptr::null_mut(),

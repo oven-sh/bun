@@ -102,7 +102,9 @@ fn to_sys_time_like(t: super::time_like::TimeLike) -> sys::TimeLike { t }
 mod ConcurrentTask {
     pub use bun_event_loop::ConcurrentTask::ConcurrentTask;
     #[inline] pub fn create(task: bun_jsc::Task) -> *mut ConcurrentTask { ConcurrentTask::create(task) }
-    #[inline] pub fn create_from<T>(task: T) -> *mut ConcurrentTask { ConcurrentTask::create_from(task) }
+    #[inline] pub fn create_from<T: bun_event_loop::Taskable>(task: *mut T) -> *mut ConcurrentTask {
+        ConcurrentTask::create_from(task)
+    }
     #[inline] pub fn from_callback<T>(
         ptr: *mut T,
         cb: fn(*mut T) -> core::result::Result<(), *mut ()>,

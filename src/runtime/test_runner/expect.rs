@@ -1767,7 +1767,7 @@ impl ExpectStatic {
         )
     }
 
-    fn create_asymmetric_matcher_with_flags<T: AsymmetricMatcherClass>(
+    fn create_asymmetric_matcher_with_flags<T: AsymmetricMatcherClass + 'static>(
         this: &Self,
         global_this: &JSGlobalObject,
         call_frame: &CallFrame,
@@ -1775,10 +1775,11 @@ impl ExpectStatic {
         //const this: *ExpectStatic = ExpectStatic.fromJS(callFrame.this());
         let instance_jsvalue = T::call(global_this, call_frame)?;
         if !instance_jsvalue.is_empty() && !instance_jsvalue.is_any_error() {
-            let Some(instance) = T::from_js(instance_jsvalue) else {
+            let Some(instance) = T::from_js_ptr(instance_jsvalue) else {
                 return Err(global_this.throw_out_of_memory());
             };
-            *instance.flags_mut() = this.flags;
+            // SAFETY: from_js_ptr returns the live m_ctx payload owned by instance_jsvalue.
+            unsafe { *(*instance).flags_mut() = this.flags };
         }
         Ok(instance_jsvalue)
     }

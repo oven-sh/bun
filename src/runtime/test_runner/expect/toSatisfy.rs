@@ -33,7 +33,7 @@ pub fn to_satisfy(this: &mut Expect, global: &JSGlobalObject, frame: &CallFrame)
         return Err(global.throw(format_args!("toSatisfy() argument must be a function")));
     }
 
-    let Some(value) = Expect::js::captured_value_get_cached(this_value) else {
+    let Some(value) = super::js::captured_value_get_cached(this_value) else {
         return Err(global.throw(format_args!(
             "Internal consistency error: the expect(value) was garbage collected but it should not have been!"
         )));
@@ -45,7 +45,7 @@ pub fn to_satisfy(this: &mut Expect, global: &JSGlobalObject, frame: &CallFrame)
         Err(e) => {
             let err = global.take_exception(e);
             let fmt = ZigString::init(b"toSatisfy() predicate threw an exception");
-            return global.throw_value(global.create_aggregate_error(&[err], &fmt)?);
+            return Err(global.throw_value(global.create_aggregate_error(&[err], &fmt)?));
         }
     };
 

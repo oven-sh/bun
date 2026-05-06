@@ -115,7 +115,7 @@ pub fn to_have_last_returned_with(
             expected_string: None,
             expected: Some(expected),
             received: Some(last_return_value),
-            global_this,
+            global_this: Some(global_this),
             not: false,
         };
         return this.throw(global_this, signature, format_args!("\n\n{}\n", diff_format));

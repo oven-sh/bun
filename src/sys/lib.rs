@@ -1106,6 +1106,18 @@ mod posix_impl {
             break rc;
         }
     }}}
+    // `errnoSysFP` (runtime/node.zig:296) — attaches BOTH `.fd` and `.path`.
+    macro_rules! check_fp { ($rc:expr, $tag:expr, $fd:expr, $path:expr) => {{
+        loop {
+            let rc = $rc;
+            if rc < 0 {
+                let e = last_errno();
+                if e == libc::EINTR { continue; }
+                return Err(Error::from_code_int(e, $tag).with_fd($fd).with_path($path.as_bytes()));
+            }
+            break rc;
+        }
+    }}}
     // Single-shot: no EINTR retry (Darwin `$NOCANCEL` arms).
     macro_rules! check_once { ($rc:expr, $tag:expr) => {{
         let rc = $rc;

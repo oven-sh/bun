@@ -61,7 +61,10 @@ impl<'a, 'bump> core::fmt::Display for DebugFmt<'a, 'bump> {
             None,
             &symbols,
         );
-        match self.0.to_css(&mut printer) {
+        let res = self.0.to_css(&mut printer);
+        // Release the printer's `&mut arraylist` borrow before reading it back.
+        drop(printer);
+        match res {
             Ok(()) => {}
             Err(e) => {
                 return write!(

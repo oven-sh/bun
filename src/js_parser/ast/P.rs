@@ -4670,10 +4670,17 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         }
 
         if !part_stmts.is_empty() {
-            let final_stmts = part_stmts.into_bump_slice();
+            // SAFETY: `into_bump_slice_mut` leaks the BumpVec into the arena and
+            // returns the unique `&'a mut [T]` for that allocation. We compute
+            // `can_be_removed_if_unused` while the `&mut` is live (reborrowed as
+            // shared), then decay it to a raw `*mut` for storage in `Part` so no
+            // outstanding `&mut` aliases the stored pointer afterwards.
+            let final_stmts = part_stmts.into_bump_slice_mut();
+            let can_be_removed_if_unused = self.stmts_can_be_removed_if_unused(&*final_stmts);
+            let final_stmts: *mut [Stmt] = final_stmts;
 
             parts.push(js_ast::Part {
-                stmts: final_stmts as *const [Stmt] as *mut [Stmt],
+                stmts: final_stmts,
                 symbol_uses: core::mem::take(&mut self.symbol_uses),
                 import_symbol_property_uses: core::mem::take(&mut self.import_symbol_property_uses),
                 declared_symbols: self.declared_symbols.to_owned_slice(),
@@ -4684,9 +4691,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     );
                     BabyList::<u32>::from_owned_slice(v.as_slice().to_vec().into_boxed_slice())
                 },
+                // SAFETY: fresh bump allocation, uniquely owned by the new Part.
                 scopes: core::mem::replace(&mut self.scopes_for_current_part, BumpVec::new_in(self.allocator))
-                    .into_bump_slice() as *const [*mut js_ast::Scope] as *mut [*mut js_ast::Scope],
-                can_be_removed_if_unused: self.stmts_can_be_removed_if_unused(final_stmts),
+                    .into_bump_slice_mut() as *mut [*mut js_ast::Scope],
+                can_be_removed_if_unused,
                 tag: if self.had_commonjs_named_exports_this_visit {
                     crate::PartTag::CommonjsNamedExport
                 } else {

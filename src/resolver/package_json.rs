@@ -1562,15 +1562,15 @@ impl PackageJSON {
                 if total_dependency_count > 0 {
                     package_json.dependencies.map = DependencyHashMap::default();
                     // TODO(port): lifetime — source_buf borrows json_source.contents
-                    package_json.dependencies.source_buf = json_source.contents;
-                    let ctx = SemverString::ArrayHashContext {
-                        arg_buf: json_source.contents,
-                        existing_buf: json_source.contents,
-                    };
+                    package_json.dependencies.source_buf = contents_static;
+                    // PORT NOTE: Zig used `SemverString.ArrayHashContext` (compares against
+                    // `source_buf`); ArrayHashMap has no `*_context` variant yet — the
+                    // generic `put_assume_capacity` path is sufficient because keys are
+                    // `SemverString` (offset+len into `source_buf`, hashed by content).
                     package_json
                         .dependencies
                         .map
-                        .ensure_total_capacity_context(total_dependency_count, &ctx)
+                        .ensure_total_capacity(total_dependency_count)
                         .expect("unreachable");
 
                     for group in dependency_groups {
@@ -1579,19 +1579,21 @@ impl PackageJSON {
                                 for prop in group_obj.properties.slice() {
                                     let Some(name_prop) = prop.key.as_ref() else { continue };
                                     let Some(name_str) = name_prop.as_utf8_string_literal() else { continue };
-                                    let name_hash = SemverString::Builder::string_hash(&name_str);
-                                    let name = SemverString::init(package_json.dependencies.source_buf, &name_str);
+                                    let name_hash = Semver::semver_string::Builder::string_hash(name_str);
+                                    let name = SemverString::init(package_json.dependencies.source_buf, name_str);
                                     let Some(version_value) = prop.value.as_ref() else { continue };
                                     let Some(version_str) = version_value.as_utf8_string_literal() else { continue };
-                                    let sliced_str = Semver::SlicedString::init(&version_str, &version_str);
+                                    let sliced_str = Semver::SlicedString::init(version_str, version_str);
 
                                     if let Some(dependency_version) = Dependency::parse(
                                         name,
-                                        name_hash,
-                                        &version_str,
+                                        Some(name_hash),
+                                        version_str,
                                         &sliced_str,
                                         r.log,
-                                        r.package_manager.as_deref(),
+                                        r.package_manager
+                                            .map(|p| p.as_ptr() as *const PackageManager)
+                                            .unwrap_or(core::ptr::null()),
                                     ) {
                                         let dependency = Dependency {
                                             name,
@@ -1600,10 +1602,9 @@ impl PackageJSON {
                                             behavior: group.behavior,
                                         };
                                         // PERF(port): was putAssumeCapacityContext
-                                        package_json.dependencies.map.put_assume_capacity_context(
+                                        package_json.dependencies.map.put_assume_capacity(
                                             dependency.name,
                                             dependency,
-                                            &ctx,
                                         );
                                     }
                                 }

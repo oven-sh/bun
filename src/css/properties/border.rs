@@ -141,15 +141,20 @@ where
     }
 }
 
- // blocked_on: CssColor::get_fallbacks + S: DeepClone — fallback path
 impl<S, const P: u8> GenericBorder<S, P>
 where
-    S: css::generic::Parse + css::generic::ToCss + Default + PartialEq,
+    S: css::generic::Parse
+        + css::generic::ToCss
+        + Default
+        + PartialEq
+        + for<'b> css::generics::DeepClone<'b>
+        + css::generics::CssEql,
 {
     fn get_fallbacks(&mut self, allocator: &Bump, targets: Targets) -> SmallList<Self, 2> {
+        use css::generics::DeepClone as _;
         let fallbacks = self.color.get_fallbacks(allocator, targets);
         // PERF(port): was arena bulk-free (fallbacks.deinit) — profile in Phase B
-        let mut out: SmallList<Self, 2> = SmallList::init_capacity(allocator, fallbacks.len());
+        let mut out: SmallList<Self, 2> = SmallList::init_capacity(fallbacks.len());
         out.set_len(fallbacks.len());
 
         debug_assert_eq!(fallbacks.slice().len(), out.slice_mut().len());
@@ -726,6 +731,7 @@ pub struct BorderHandler {
 // Real `handle_property`/`finalize` bodies live in `border_handler_body` below.
 mod border_handler_body {
 use super::*;
+use crate::generics::{DeepClone, CssEql};
 // ──────────────────────────────────────────────────────────────────────────
 // FlushContext + flush_category! (Zig: nested struct with inline fns and
 // extensive comptime string-dispatch)

@@ -311,7 +311,7 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
 
             input = args[0].to_slice(global)?;
 
-            let mut parser_input = css::ParserInput::new(input.slice());
+            let mut parser_input = css::ParserInput::new(input.slice(), &arena);
             let mut parser = css::Parser::new(
                 &mut parser_input,
                 None,

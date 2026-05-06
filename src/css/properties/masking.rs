@@ -99,12 +99,13 @@ pub enum BasicShape {
 }
 
 /// An [`inset()`](https://www.w3.org/TR/css-shapes-1/#funcdef-inset) rectangle shape.
-// TODO(port): non-pub in Zig — confirm visibility
-struct InsetRect {
+// Zig declares this `const` (file-private) but it's reachable via `pub enum BasicShape::Inset`,
+// so Rust requires `pub` here — Zig has no private-in-public lint.
+pub struct InsetRect {
     /// The rectangle.
-    rect: Rect<LengthPercentage>,
+    pub rect: Rect<LengthPercentage>,
     /// A corner radius for the rectangle.
-    radius: BorderRadius,
+    pub radius: BorderRadius,
 }
 
 /// A [`circle()`](https://www.w3.org/TR/css-shapes-1/#funcdef-circle) shape.

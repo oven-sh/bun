@@ -36,7 +36,7 @@ pub fn msg_from_js(global_object: &JSGlobalObject, file: &'static [u8], err: JSV
 pub fn msg_to_js(this: Msg, global_object: &JSGlobalObject) -> JsResult<JSValue> {
     match this.metadata {
         Metadata::Build => BuildMessage::create(global_object, this),
-        Metadata::Resolve(_) => ResolveMessage::create(global_object, this, bun_string::String::empty()),
+        Metadata::Resolve(_) => ResolveMessage::create(global_object, &this, b""),
     }
 }
 
@@ -68,7 +68,7 @@ pub fn log_to_js(this: &Log, global: &JSGlobalObject, message: &[u8]) -> JsResul
             Ok(match msg.metadata {
                 Metadata::Build => BuildMessage::create(global, msg)?,
                 Metadata::Resolve(_) => {
-                    ResolveMessage::create(global, msg, bun_string::String::empty())?
+                    ResolveMessage::create(global, &msg, b"")?
                 }
             })
         }
@@ -77,7 +77,8 @@ pub fn log_to_js(this: &Log, global: &JSGlobalObject, message: &[u8]) -> JsResul
                 errors_stack[i] = match msg.metadata {
                     Metadata::Build => BuildMessage::create(global, msg.clone()?)?,
                     Metadata::Resolve(_) => {
-                        ResolveMessage::create(global, msg.clone()?, bun_string::String::empty())?
+                        // `msg` is `&Msg`; `create` clones internally.
+                        ResolveMessage::create(global, msg, b"")?
                     }
                 };
             }

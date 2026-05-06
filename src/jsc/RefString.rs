@@ -84,20 +84,25 @@ impl RefString {
     // TODO(port): revisit ownership in Phase B — intrusive refcount via
     // WTF::StringImpl; may become `impl Drop` if `RefString` ends up `Box`-owned.
     pub unsafe fn destroy(this: *mut RefString) {
-        if let Some(on_before_deinit) = (*this).on_before_deinit {
-            // SAFETY: Zig does `this.ctx.?` — caller guarantees `ctx` is set
-            // whenever `on_before_deinit` is set.
-            on_before_deinit((*this).ctx.unwrap().as_ptr(), this);
-        }
+        // SAFETY: caller contract — `this` is the unique live pointer to a
+        // `Box<RefString>`-allocated value whose `ptr`/`len` describe a
+        // `Box<[u8]>`-allocated buffer. All raw derefs and `from_raw` calls
+        // below operate on those owned allocations.
+        unsafe {
+            if let Some(on_before_deinit) = (*this).on_before_deinit {
+                // Zig does `this.ctx.?` — caller guarantees `ctx` is set
+                // whenever `on_before_deinit` is set.
+                on_before_deinit((*this).ctx.unwrap().as_ptr(), this);
+            }
 
-        // `allocator.free(this.leak())` — reconstitute the owned byte slice and drop it.
-        // SAFETY: `ptr`/`len` describe a heap allocation owned by this RefString.
-        drop(Box::from_raw(core::slice::from_raw_parts_mut(
-            (*this).ptr as *mut u8,
-            (*this).len,
-        )));
-        // `allocator.destroy(this)`
-        drop(Box::from_raw(this));
+            // `allocator.free(this.leak())` — reconstitute the owned byte slice and drop it.
+            drop(Box::from_raw(core::slice::from_raw_parts_mut(
+                (*this).ptr as *mut u8,
+                (*this).len,
+            )));
+            // `allocator.destroy(this)`
+            drop(Box::from_raw(this));
+        }
     }
 }
 

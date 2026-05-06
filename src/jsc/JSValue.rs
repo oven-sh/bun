@@ -1218,6 +1218,39 @@ impl JSValue {
             JSC__JSValue__forEachPropertyNonIndexed(self, global, ctx, callback)
         })
     }
+    /// `JSValue.forEachPropertyOrdered` (JSValue.zig:105) — like
+    /// [`for_each_property`](Self::for_each_property) but visits keys in
+    /// stable enumeration order (used by `console.log` with
+    /// `ordered_properties`).
+    pub fn for_each_property_ordered(
+        self,
+        global: &JSGlobalObject,
+        ctx: *mut c_void,
+        callback: ForEachPropertyCallback,
+    ) -> JsResult<()> {
+        unsafe extern "C" {
+            fn JSC__JSValue__forEachPropertyOrdered(
+                this: JSValue,
+                global: *const JSGlobalObject,
+                ctx: *mut c_void,
+                callback: ForEachPropertyCallback,
+            );
+        }
+        // SAFETY: `global` is live; `callback` has C ABI.
+        host_fn::from_js_host_call_generic(global, || unsafe {
+            JSC__JSValue__forEachPropertyOrdered(self, global, ctx, callback)
+        })
+    }
+    /// `JSValue.isBuffer` (JSValue.zig:492) — `instanceof Buffer` check via
+    /// the C++ `JSBuffer__isBuffer` shim. Asserts `self` is a cell.
+    pub fn is_buffer(self, global: &JSGlobalObject) -> bool {
+        debug_assert!(self.is_cell());
+        unsafe extern "C" {
+            fn JSBuffer__isBuffer(global: *const JSGlobalObject, value: JSValue) -> bool;
+        }
+        // SAFETY: `global` is live; `self` is a valid encoded JSValue.
+        unsafe { JSBuffer__isBuffer(global, self) }
+    }
     /// `JSValue.getDirectIndex` (JSValue.zig:65) — read the `i`th indexed
     /// own-property slot directly (no prototype walk, no getters). Returns
     /// the empty value for holes.

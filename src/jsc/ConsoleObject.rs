@@ -2449,6 +2449,55 @@ pub mod formatter {
             *self.estimated_line_length = self.estimated_line_length.saturating_add(len);
         }
 
+        /// Mirror of `Formatter::reset_line` routed through the borrowed
+        /// `estimated_line_length`. Takes the current `Formatter::indent` by
+        /// value so the caller can pass `self.indent` (a disjoint field
+        /// borrow) while this `WrappedWriter` is live.
+        pub fn reset_line(&mut self, indent: u32) {
+            *self.estimated_line_length = (indent as usize) * 2;
+        }
+
+        /// Mirror of `Formatter::good_time_for_a_new_line` routed through the
+        /// borrowed `estimated_line_length`.
+        pub fn good_time_for_a_new_line(&mut self, indent: u32) -> bool {
+            if *self.estimated_line_length > 80 {
+                self.reset_line(indent);
+                return true;
+            }
+            false
+        }
+
+        /// Mirror of `Formatter::print_comma` routed through the wrapped
+        /// `ctx` writer + borrowed `estimated_line_length`.
+        pub fn print_comma<const ENABLE_ANSI_COLORS: bool>(&mut self) {
+            if self
+                .ctx
+                .write_all(pfmt!("<r><d>,<r>", ENABLE_ANSI_COLORS).as_bytes())
+                .is_err()
+            {
+                self.failed = true;
+            }
+            *self.estimated_line_length += 1;
+        }
+
+        /// Mirror of `Formatter::write_indent` routed through the wrapped
+        /// `ctx` writer. Takes the current `Formatter::indent` by value.
+        pub fn write_indent(&mut self, indent: u32) {
+            let mut total_remain: u32 = indent;
+            while total_remain > 0 {
+                let written: u8 = total_remain.min(32) as u8;
+                if self
+                    .ctx
+                    .write_all(&INDENTATION_BUF[0..(written as usize) * 2])
+                    .is_err()
+                {
+                    self.failed = true;
+                    return;
+                }
+                total_remain = total_remain.saturating_sub(u32::from(written));
+            }
+        }
+
         pub fn print(&mut self, args: core::fmt::Arguments<'_>) {
             if self.ctx.write_fmt(args).is_err() {
                 self.failed = true;
@@ -4987,7 +5036,40 @@ pub mod formatter {
         )* };
     }
     float_elem!(f32, f64);
-    // TODO(port): impl TypedArrayElement for bun_core::f16 once that type lands.
+    // `bun_core::f16` widens losslessly to `f64` via `From`, so reuse the
+    // float printing path. Kept out of the `float_elem!` macro because the
+    // macro expands `f64::from(self)` and `f16` is a foreign newtype, not a
+    // primitive — but the body is identical.
+    impl TypedArrayElement for bun_core::f16 {
+        const IS_BIGINT: bool = false;
+        const IS_FLOAT: bool = true;
+        type Display = bun_core::fmt::DoubleFormatter;
+        fn display(self) -> Self::Display { bun_core::fmt::double(f64::from(self)) }
+    }
+
+    /// Port of Zig `@tagName(arrayBuffer.typed_array_type)` — `JSType` is a
+    /// newtype-const (not a Rust `enum`), so there is no derived stringifier.
+    /// Covers every typed-array-ish `JSType` (`isTypedArrayOrArrayBuffer`).
+    fn typed_array_type_name(t: jsc::JSType) -> &'static [u8] {
+        use jsc::JSType as T;
+        match t {
+            T::ArrayBuffer => b"ArrayBuffer",
+            T::Int8Array => b"Int8Array",
+            T::Uint8Array => b"Uint8Array",
+            T::Uint8ClampedArray => b"Uint8ClampedArray",
+            T::Int16Array => b"Int16Array",
+            T::Uint16Array => b"Uint16Array",
+            T::Int32Array => b"Int32Array",
+            T::Uint32Array => b"Uint32Array",
+            T::Float16Array => b"Float16Array",
+            T::Float32Array => b"Float32Array",
+            T::Float64Array => b"Float64Array",
+            T::BigInt64Array => b"BigInt64Array",
+            T::BigUint64Array => b"BigUint64Array",
+            T::DataView => b"DataView",
+            _ => b"TypedArray",
+        }
+    }
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -5198,12 +5280,16 @@ pub extern "C" fn Bun__ConsoleObject__takeHeapSnapshot(
     _len: usize,
 ) {
     // TODO: this does an extra JSONStringify and we don't need it to!
-    // TODO(phase-c): `JSGlobalObject::generate_heap_snapshot` lives in the
-    // gated `JSGlobalObject.rs` impl; emit `undefined` until it un-gates.
-    let snapshot: [JSValue; 1] = [{
-         { global_this.generate_heap_snapshot() }
-        #[cfg(any())] { let _ = global_this; JSValue::UNDEFINED }
-    }];
+    // PORT NOTE: `JSGlobalObject::generate_heap_snapshot` lives in the gated
+    // `JSGlobalObject.rs` impl block (`#![cfg(any())]`), so call the FFI
+    // export directly until that module un-gates.
+    extern "C" {
+        fn JSC__JSGlobalObject__generateHeapSnapshot(this: *const JSGlobalObject) -> JSValue;
+    }
+    // SAFETY: `global_this` is a live `JSGlobalObject*`; C++ side has no extra
+    // preconditions.
+    let snapshot: [JSValue; 1] =
+        [unsafe { JSC__JSGlobalObject__generateHeapSnapshot(global_this) }];
     // SAFETY: re-entry into our own host shim with a stack-local args slice.
     unsafe {
         message_with_type_and_level(

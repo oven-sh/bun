@@ -2702,32 +2702,50 @@ impl VirtualMachine {
             .get()
             .expect("source_code_printer not initialized");
 
-        let result = ModuleLoader::transpile_source_code(
-            guard.0,
-            lr.specifier,
-            referrer_clone.slice(),
-            specifier,
-            lr.path,
-            lr.loader.unwrap_or(if lr.is_main {
+        // PORT NOTE: Zig passes path/loader/module_type/printer/promise_ptr as
+        // positional params to `transpileSourceCode`; the §Dispatch shim takes
+        // them bundled as `TranspileExtra` behind `args.extra` (see
+        // ModuleLoader.rs `TranspileArgs`).
+        let mut extra = ModuleLoader::TranspileExtra {
+            // SAFETY: `lr.path` borrows from `specifier_clone` (and the VM's
+            // resolver caches), both of which outlive the synchronous
+            // `transpile_source_code` call below; `TranspileExtra` declares
+            // `'static` only because it crosses the §Dispatch boundary as
+            // `*mut c_void` — the hook never retains the borrow.
+            path: unsafe {
+                core::mem::transmute::<
+                    bun_resolver::fs::Path<'_>,
+                    bun_resolver::fs::Path<'static>,
+                >(lr.path)
+            },
+            loader: lr.loader.unwrap_or(if lr.is_main {
                 bun_bundler::options::Loader::Js
             } else {
                 bun_bundler::options::Loader::File
             }),
             module_type,
-            log,
-            lr.virtual_source,
-            None,
-            // SAFETY: `printer` is a leaked Box; live for thread lifetime.
-            unsafe { &mut *printer.as_ptr() },
-            global_object,
+            source_code_printer: printer.as_ptr(),
+            // Spec: `null` — `fetchWithoutOnLoadPlugins` forbids the async path.
+            promise_ptr: core::ptr::null_mut(),
+        };
+        let args = ModuleLoader::TranspileArgs {
+            specifier: lr.specifier,
+            referrer: referrer_clone.slice(),
+            input_specifier: specifier,
+            log: log as *mut logger::Log,
+            virtual_source: lr.virtual_source,
+            global_object: global_object as *const JSGlobalObject as *mut JSGlobalObject,
             flags,
-        );
+            extra: (&mut extra as *mut ModuleLoader::TranspileExtra).cast::<c_void>(),
+        };
+        let mut ret = ErrorableResolvedSource::ok(ResolvedSource::default());
+        let ok = ModuleLoader::transpile_source_code(guard.0, &args, &mut ret);
 
-        if result.is_err() && flags == FetchFlags::PrintSource {
+        if !ok && flags == FetchFlags::PrintSource {
             guard.1 = true; // errdefer
         }
         drop(blob_to_deinit);
-        result
+        ret.unwrap()
     }
 
     /// Spec VirtualMachine.zig:1724 `_resolve`.
@@ -2776,7 +2794,7 @@ impl VirtualMachine {
         is_esm: bool,
         is_user_require_resolve: bool,
     ) -> JsResult<()> {
-        const MAX_LEN: u32 = (bun_paths::MAX_PATH_BYTES as f64 * 1.5) as u32;
+        const MAX_LEN: usize = (bun_paths::MAX_PATH_BYTES as f64 * 1.5) as usize;
         if IS_A_FILE_PATH && specifier.length() > MAX_LEN {
             let specifier_utf8 = specifier.to_utf8();
             let source_utf8 = source.to_utf8();
@@ -2787,12 +2805,12 @@ impl VirtualMachine {
             } else {
                 bun_options_types::ImportKind::Require
             };
-            let printed = crate::ResolveMessage::fmt(
+            let printed = bun_core::handle_oom(crate::ResolveMessage::fmt(
                 specifier_utf8.slice(),
                 source_utf8.slice(),
                 bun_core::err!("NameTooLong"),
-                import_kind,
-            );
+                import_kind.into(),
+            ));
             let msg = logger::Msg {
                 data: logger::range_data(None, logger::Range::NONE, printed),
                 ..Default::default()
@@ -2822,7 +2840,7 @@ impl VirtualMachine {
             *res = ErrorableString::ok(if is_user_require_resolve && hardcoded.node_builtin {
                 specifier.dupe_ref()
             } else {
-                bun_string::String::init(hardcoded.path)
+                bun_string::String::init(hardcoded.path.as_bytes())
             });
             return Ok(());
         }

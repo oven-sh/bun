@@ -3029,8 +3029,9 @@ pub fn finalize_bundle(
             );
         }
         while let Some(node) = current_bundle.requests.pop_first() {
-            // SAFETY: pop_first returns a live `*mut Node<T>` from the intrusive list.
-            let req = unsafe { &mut (*node).data };
+            // SAFETY: pop_first returns a live `*mut Node<T>`; `data` was
+            // initialized by `defer_request`.
+            let req = unsafe { (*node).data.assume_init_mut() };
             req.abort();
             req.deref_();
         }
@@ -3674,9 +3675,11 @@ pub fn finalize_bundle(
 
         while let Some(node) = current_bundle.requests.pop_first() {
             // SAFETY: `pop_first` hands back ownership of the intrusive node;
-            // it stays alive until `deref_()` releases it below.
-            let req = unsafe { &mut (*node).data };
-            let _deref = scopeguard::guard((), |_| req.deref_());
+            // `data` was initialized by `defer_request`.
+            let req = unsafe { (*node).data.assume_init_mut() };
+            let req_ptr = req as *mut DeferredRequest<'_>;
+            // SAFETY: the node stays alive until `deref_()` releases it below.
+            let _deref = scopeguard::guard((), move |_| unsafe { (*req_ptr).deref_() });
 
             let rb = dev.route_bundle_ptr(req.route_bundle_index);
             rb.server_state = route_bundle::State::PossibleBundlingFailures;
@@ -3762,7 +3765,8 @@ pub fn finalize_bundle(
                         let first = current_bundle.requests.first;
                         if !first.is_null() {
                             // SAFETY: first is an intrusive list node valid while current_bundle.requests holds it
-                            break 'rbi unsafe { &*first }.data.route_bundle_index;
+                            // SAFETY: `data` was initialized by `defer_request`.
+                            break 'rbi unsafe { (*first).data.assume_init_ref() }.route_bundle_index;
                         }
                         let route_bundle_indices = current_bundle.promise.route_bundle_indices.keys();
                         if route_bundle_indices.is_empty() {
@@ -3816,9 +3820,10 @@ pub fn finalize_bundle(
     {
         let mut node = current_bundle.requests.first;
         while !node.is_null() {
-            // SAFETY: node is an intrusive list node valid while current_bundle.requests holds it
+            // SAFETY: node is an intrusive list node valid while current_bundle.requests holds it;
+            // `data` was initialized by `defer_request`.
             let n = unsafe { &*node };
-            let rb = dev.route_bundle_ptr(n.data.route_bundle_index);
+            let rb = dev.route_bundle_ptr(unsafe { n.data.assume_init_ref() }.route_bundle_index);
             rb.server_state = route_bundle::State::Loaded;
             node = n.next;
         }
@@ -3837,9 +3842,11 @@ pub fn finalize_bundle(
 
     while let Some(node) = current_bundle.requests.pop_first() {
         // SAFETY: `pop_first` hands back ownership of the intrusive node;
-        // it stays alive until `deref_()` releases it below.
-        let req = unsafe { &mut (*node).data };
-        let _deref = scopeguard::guard((), |_| req.deref_());
+        // `data` was initialized by `defer_request`.
+        let req = unsafe { (*node).data.assume_init_mut() };
+        let req_ptr = req as *mut DeferredRequest<'_>;
+        // SAFETY: the node stays alive until `deref_()` releases it below.
+        let _deref = scopeguard::guard((), move |_| unsafe { (*req_ptr).deref_() });
 
         let rb = dev.route_bundle_ptr(req.route_bundle_index);
         rb.server_state = route_bundle::State::Loaded;
@@ -5366,10 +5373,12 @@ impl DevServer<'_> {
     pub fn on_plugins_rejected(&mut self) -> Result<(), bun_core::Error> {
         self.plugin_state = PluginState::Err;
         while let Some(item) = self.next_bundle.requests.pop_first() {
-            // SAFETY: `pop_first` returns a valid `*mut Node<DeferredRequest>`.
+            // SAFETY: `pop_first` returns a valid `*mut Node<DeferredRequest>`;
+            // `data` was initialized by `defer_request`.
             unsafe {
-                (*item).data.abort();
-                (*item).data.deref_();
+                let d = (*item).data.assume_init_mut();
+                d.abort();
+                d.deref_();
             }
         }
         self.next_bundle.route_queue.clear_retaining_capacity();

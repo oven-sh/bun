@@ -5466,7 +5466,7 @@ impl Any {
                 jsc::AnyPromise::Normal(p) => {
                     unsafe { (*p).resolve(global_this, value) }?;
                 }
-                jsc::AnyPromise::Internal(p) => unsafe { (*p).resolve(global_this, value) },
+                jsc::AnyPromise::Internal(p) => unsafe { (*p).resolve(global_this, value) }?,
             },
             Err(e) => {
                 let err = global_this.take_exception(e);
@@ -5474,7 +5474,7 @@ impl Any {
                     jsc::AnyPromise::Normal(p) => {
                         unsafe { (*p).reject(global_this, Ok(err)) }?;
                     }
-                    jsc::AnyPromise::Internal(p) => unsafe { (*p).reject(global_this, err) },
+                    jsc::AnyPromise::Internal(p) => unsafe { (*p).reject(global_this, Ok(err)) }?,
                 }
             }
         }

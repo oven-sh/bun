@@ -187,7 +187,10 @@ impl SubscriptionCtx {
         let parent_this = self.parent().this_value.try_get().expect("unreachable");
         let value_js =
             ParentJS::gc_get(ParentJS::SubscriptionCallbackMap, parent_this).unwrap();
-        JSMap::from_js(value_js).unwrap()
+        // SAFETY: `from_js` returns a non-null heap cell when the slot was set
+        // by `init()`; treated as `&mut` for the duration of the call (single
+        // JS thread).
+        unsafe { JSMap::from_js(value_js).unwrap().as_mut() }
     }
 
     /// Get the total number of channels that this subscription context is subscribed to.
@@ -233,7 +236,7 @@ impl SubscriptionCtx {
         global_object: &JSGlobalObject,
         channel_name: JSValue,
         callback: JSValue,
-    ) -> Result<Option<usize>, bun_core::Error> {
+    ) -> JsResult<Option<usize>> {
         // TODO(port): narrow error set
         let map = self.subscription_callback_map();
 
@@ -273,7 +276,7 @@ impl SubscriptionCtx {
             map.set(global_object, channel_name, updated_array)?;
         }
 
-        Ok(Some(new_length))
+        Ok(Some(new_length as usize))
     }
 
     /// Add a handler for receiving messages on a specific channel

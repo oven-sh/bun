@@ -2638,10 +2638,18 @@ impl TestCommand {
             // Determine if this file should run tests concurrently based on glob pattern
             let should_run_concurrent = reporter.jest.should_file_run_concurrently(file_id);
             bun_test_root.enter_file(file_id, reporter, should_run_concurrent, first_last);
-            let _exit_file = scopeguard::guard((), |_| { bun_test_root.exit_file(); });
-            // TODO(port): borrowck — guard captures bun_test_root; Phase B reshape
+            let bun_test_root_ptr: *mut bun_test::BunTestRoot = bun_test_root;
+            // SAFETY: `bun_test_root` is `&'static mut` from `Jest::runner()`;
+            // raw-ptr escape mirrors Zig `defer bun_test_root.exitFile()` so the
+            // closure does not hold a borrowck lock on it for the loop body.
+            let _exit_file = scopeguard::guard((), move |_| unsafe { (*bun_test_root_ptr).exit_file(); });
 
-            reporter.jest.current_file.set(file_title, file_prefix, repeat_count, repeat_index, reporter);
+            // SAFETY: `set()` reads only `reporter.{worker_ipc_file_idx, reporters}`
+            // and writes only `current_file` — disjoint fields. Raw-ptr split
+            // mirrors Zig's freely-aliasing `*CommandLineReporter`.
+            unsafe {
+                (*reporter_ptr).jest.current_file.set(file_title, file_prefix, repeat_count, repeat_index, &mut *reporter_ptr);
+            }
 
             bun_output::scoped_log!(bun_test, "loadEntryPointForTestRunner(\"{}\")", bstr::BStr::new(file_path));
             // PORT NOTE: bun.jsc.Jest.bun_test.debug.group.log → local declare_scope!(bun_test).
@@ -2688,7 +2696,7 @@ impl TestCommand {
 
             'blk: {
                 // Check if bun_test is available and has tests to run
-                let Some(mut buntest_strong) = bun_test_root.clone_active_file() else {
+                let Some(buntest_strong) = bun_test_root.clone_active_file() else {
                     debug_assert!(false);
                     break 'blk;
                 };
@@ -2698,7 +2706,10 @@ impl TestCommand {
                 if buntest.result_queue.readable_length() == 0 {
                     buntest.add_result(bun_test::ResultMsg::Start);
                 }
-                bun_test::BunTest::run(buntest_strong, vm.global()).map_err(|_| bun_core::err!(JSError))?;
+                // `BunTestPtr` is `Rc<BunTestCell>`; clone (refcount++) so the
+                // local `buntest_strong` survives for the post-run drain loop and
+                // the explicit `drop` below (Zig's `defer buntest_strong.deinit()`).
+                bun_test::BunTest::run(buntest_strong.clone(), vm.global()).map_err(|_| bun_core::err!(JSError))?;
 
                 // Process event loop while bun_test tests are running
                 // SAFETY: see above.

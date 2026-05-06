@@ -139,7 +139,7 @@ impl<'a> Scanner<'a> {
             debug_assert!(entry.relative_dir.is_valid());
             #[cfg(not(windows))]
             {
-                let dir = entry.relative_dir.std_dir();
+                let dir = entry.relative_dir;
 
                 let parts2: [&[u8]; 2] = [entry.dir_path, entry.name.slice()];
                 let path2 = self.fs.abs_buf(&parts2, &mut self.open_dir_buf);
@@ -153,9 +153,16 @@ impl<'a> Scanner<'a> {
                         name_len,
                     )
                 };
-                let Ok(child_dir) = bun_sys::open_dir(dir, path_z) else {
+                // bun.openDir → sys.openat(dir, pathZ, O.DIRECTORY|O.CLOEXEC|O.RDONLY, 0)
+                let Ok(child_fd) = bun_sys::openat(
+                    dir,
+                    path_z,
+                    bun_sys::O::DIRECTORY | bun_sys::O::CLOEXEC | bun_sys::O::RDONLY,
+                    0,
+                ) else {
                     continue;
                 };
+                let child_dir = bun_sys::Dir::from_fd(child_fd);
                 let path2 = self.fs.dirname_store.append(&self.open_dir_buf[..path2_len])?;
                 FileSystem::set_max_fd(child_dir.fd);
                 let _ = self
@@ -247,7 +254,7 @@ impl<'a> Scanner<'a> {
         if self.path_ignore_patterns.is_empty() {
             return false;
         }
-        let rel_path = bun_paths::relative(self.fs.top_level_dir, abs_path);
+        let rel_path = bun_paths::resolve_path::relative(self.fs.top_level_dir, abs_path);
 
         // Build rel_path + '/' once. rel_path is a relative path from the project
         // root; 4096 bytes covers any sane test directory depth (POSIX PATH_MAX).
@@ -344,7 +351,7 @@ impl<'a> Scanner<'a> {
                 let path = self.fs.abs_buf(&parts, &mut self.open_dir_buf);
 
                 if !self.does_absolute_path_match_filter(path) {
-                    let rel_path = bun_paths::relative(self.fs.top_level_dir, path);
+                    let rel_path = bun_paths::resolve_path::relative(self.fs.top_level_dir, path);
                     if !self.does_path_match_filter(rel_path) {
                         return;
                     }

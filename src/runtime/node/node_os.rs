@@ -945,8 +945,10 @@ pub fn network_interfaces_posix(global_this: &JSGlobalObject) -> JsResult<JSValu
         interface.put(global_this, ZigString::static_("internal"), JSValue::from(is_loopback(iface)));
 
         // scopeid <number> The numeric IPv6 scope ID (only specified when family is IPv6)
-        if addr.family() as c_int == bun_sys::posix::AF::INET6 {
-            interface.put(global_this, ZigString::static_("scopeid"), JSValue::js_number(addr.in6().sa.scope_id));
+        if addr.family() as c_int == libc::AF_INET6 {
+            // SAFETY: family checked; storage is sockaddr_in6-sized
+            let scope_id = unsafe { (*(addr.as_sockaddr() as *const libc::sockaddr_in6)).sin6_scope_id };
+            interface.put(global_this, ZigString::static_("scopeid"), JSValue::js_number(scope_id));
         }
 
         // Does this entry already exist?

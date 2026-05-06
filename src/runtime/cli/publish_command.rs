@@ -1160,7 +1160,7 @@ impl PublishCommand {
 
         let integrity_fmt = {
             let mut v = Vec::new();
-            write!(&mut v, "{}", bun_fmt::integrity(integrity, bun_fmt::IntegrityFormat::Full))?;
+            write!(&mut v, "{}", bun_fmt::integrity::<false>(integrity))?;
             v.into_boxed_slice()
         };
 

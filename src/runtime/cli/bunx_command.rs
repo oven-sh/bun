@@ -443,7 +443,7 @@ impl BunxCommand {
                 let _ = target_package_json.close();
                 // If delete fails, oh well. Hope installation takes care of it.
                 // TODO(port): Zig used std.fs.cwd().deleteTree; map to bun_sys recursive rm.
-                let _ = bun_sys::delete_tree(Fd::cwd(), tempdir_name);
+                let _ = bun_sys::Dir::cwd().delete_tree(tempdir_name);
                 return Err(bun_core::err!("NeedToInstall"));
             }
             let _ = target_package_json.close();
@@ -558,7 +558,7 @@ impl BunxCommand {
             b"tsc"
         } else if &*update_request.name == b"@anthropic-ai/claude-code" {
             b"claude"
-        } else if update_request.version.tag == bun_semver::VersionTag::Github {
+        } else if update_request.version.tag == VersionTag::Github {
             update_request.version.value.github.repo.slice(&update_request.version_buf)
         } else if let Some(index) = strings::last_index_of_char(&update_request.name, b'/') {
             initial_bin_name_is_a_guess = true;
@@ -639,8 +639,8 @@ impl BunxCommand {
             #[cfg(not(windows))]
             const BANNED_PATH_CHARS: &[u8] = b":";
 
-            let has_banned_char = strings::index_any(&update_request.name, BANNED_PATH_CHARS).is_some()
-                || strings::index_any(display_version, BANNED_PATH_CHARS).is_some();
+            let has_banned_char = strings::index_of_any(&update_request.name, BANNED_PATH_CHARS).is_some()
+                || strings::index_of_any(display_version, BANNED_PATH_CHARS).is_some();
 
             let mut v = Vec::new();
             if has_banned_char {

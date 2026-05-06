@@ -3878,11 +3878,11 @@ impl Resolver {
 
 macro_rules! resolve_record_fn {
     ($global:ident, $method:ident, $jsname:literal, $ty:ty, $allow_empty:expr) => {
-        #[host_fn]
+        // JSC-ABI shim emitted by `export_host_fn!` at module scope (see `global_resolve`).
         pub fn $global(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
             let vm = global_this.bun_vm();
             let resolver = vm.rare_data().global_dns_resolver(vm);
-            resolver.$method(global_this, callframe)
+            Self::$method(resolver, global_this, callframe)
         }
 
         #[host_fn(method)]

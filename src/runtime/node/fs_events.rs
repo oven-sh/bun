@@ -325,16 +325,13 @@ fn init_library() {
         });
     }
 
-    // SAFETY: path is a NUL-terminated CStr literal; dlopen is sound to call from any thread
-    let fsevents_cs_handle = unsafe {
-        bun_sys::dlopen(
-            c"/System/Library/Frameworks/CoreServices.framework/Versions/A/CoreServices",
-            bun_sys::DlopenFlags::LAZY | bun_sys::DlopenFlags::LOCAL,
-        )
-    };
-    if fsevents_cs_handle.is_null() {
+    let fsevents_cs_handle = bun_sys::dlopen(
+        zstr!("/System/Library/Frameworks/CoreServices.framework/Versions/A/CoreServices"),
+        bun_sys::RTLD::LAZY | bun_sys::RTLD::LOCAL,
+    );
+    let Some(fsevents_cs_handle) = fsevents_cs_handle else {
         panic!("Cannot Load CoreServices");
-    }
+    };
 
     // SAFETY: only called under FSEVENTS_MUTEX
     unsafe {
@@ -364,8 +361,8 @@ pub struct FSEventsLoop {
     pub signal_source: CFRunLoopSourceRef,
     pub mutex: Mutex,
     pub loop_: CFRunLoopRef,
-    pub sem: Semaphore,
-    pub thread: Thread,
+    sem: Semaphore,
+    pub thread: Option<std::thread::JoinHandle<()>>,
     pub tasks: UnboundedQueue<ConcurrentTask>,
     pub watchers: BabyList<Option<NonNull<FSEventsWatcher>>>,
     pub watcher_count: u32,

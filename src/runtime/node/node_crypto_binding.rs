@@ -946,22 +946,23 @@ impl Scrypt {
 
         // SAFETY: password/salt/key are valid slices for the given lengths.
         let res = unsafe {
-            boringssl::EVP_PBE_scrypt(
+            boringssl::c::EVP_PBE_scrypt(
                 password.as_ptr(),
                 password.len(),
                 salt.as_ptr(),
                 salt.len(),
-                self.n,
-                self.r,
-                self.p,
-                self.maxmem,
+                u64::from(self.n),
+                u64::from(self.r),
+                u64::from(self.p),
+                self.maxmem as usize,
                 key.as_mut_ptr(),
                 key.len(),
             )
         };
 
         if res == 0 {
-            self.err = Some(boringssl::ERR_peek_last_error());
+            // SAFETY: FFI; ERR_peek_last_error has no preconditions.
+            self.err = Some(unsafe { boringssl::c::ERR_peek_last_error() });
             return;
         }
     }
@@ -1000,7 +1001,7 @@ impl CryptoJobCtx for Scrypt {
                 let mut buf = [0u8; 256];
                 // SAFETY: buf is a valid 256-byte buffer.
                 let msg = unsafe {
-                    boringssl::ERR_error_string_n(err, buf.as_mut_ptr().cast(), buf.len())
+                    boringssl::c::ERR_error_string_n(err, buf.as_mut_ptr().cast(), buf.len())
                 };
                 let exception = global
                     .err_crypto_operation_failed(format_args!(
@@ -1056,8 +1057,9 @@ fn pbkdf2_sync(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult
     };
 
     if !data.run(output.slice()) {
-        let err = create_crypto_error(global_this, boringssl::ERR_get_error());
-        boringssl::ERR_clear_error();
+        // SAFETY: FFI; ERR_get_error / ERR_clear_error have no preconditions.
+        let err = create_crypto_error(global_this, unsafe { boringssl::c::ERR_get_error() });
+        unsafe { boringssl::c::ERR_clear_error() };
         return global_this.throw_value(err);
     }
 

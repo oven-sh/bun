@@ -1591,7 +1591,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
                 opts.port = match strings::parse_int::<u16>(port_str, 10) {
                     Ok(v) => Some(v),
                     Err(_) => {
-                        Output::err_fmt(bun_core::fmt::out_of_range(port_str, bun_core::fmt::OutOfRangeOpts {
+                        Output::err_fmt(bun_core::fmt::out_of_range(port_str, bun_core::fmt::OutOfRangeOptions {
                             field_name: "--port",
                             min: 0,
                             max: u16::MAX as i64,

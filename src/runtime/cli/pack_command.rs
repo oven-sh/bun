@@ -1448,9 +1448,9 @@ pub fn pack<const FOR_PUBLISH: bool>(
     let mut json = match manager.workspace_package_json_cache.get_with_path(
         &mut manager.log,
         abs_package_json_path,
-        bun_install::WorkspacePackageJSONCache::GetOptions { guess_indentation: true },
+        WorkspacePackageJSONCache::GetJSONOptions { guess_indentation: true, ..Default::default() },
     ) {
-        bun_install::GetJsonResult::ReadErr(err) => {
+        WorkspacePackageJSONCache::GetResult::ReadErr(err) => {
             Output::err(err, "failed to read package.json: {}", format_args!("{}", bstr::BStr::new(abs_package_json_path.as_bytes())));
             Global::crash();
         }

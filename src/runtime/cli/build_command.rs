@@ -315,8 +315,8 @@ impl BuildCommand {
             };
 
             // TODO(port): std.posix.toPosixPath — NUL-terminate path into a stack buffer
-            let dir = match bun_sys::open_dir_for_path(path) {
-                Ok(d) => Fd::from_std_dir(d),
+            let dir = match bun_sys::open_dir_at(Fd::cwd(), path) {
+                Ok(d) => d,
                 Err(err) => {
                     Output::pretty_errorln(
                         "<r><red>{}<r> opening root directory {}",

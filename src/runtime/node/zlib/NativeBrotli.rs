@@ -93,12 +93,15 @@ pub struct NativeBrotli {
 
 // `const impl = CompressionStream(@This())` — Zig mixin that provides
 // write / runFromJSThread / writeSync / reset / close / setOnError /
-// getOnError / finalize / emitError. In Rust this is a generic trait impl:
-impl CompressionStream for NativeBrotli {}
-// TODO(port): CompressionStream trait surface (see node_zlib_binding.rs).
+// getOnError / finalize / emitError. In Rust these are generic associated
+// fns on `CompressionStream::<NativeBrotli>` (see node_zlib_binding.rs).
+// TODO(port): expose via inherent-looking methods so .classes.ts codegen can resolve them.
 
 impl NativeBrotli {
-    #[bun_jsc::host_fn]
+    // PORT NOTE: no `#[bun_jsc::host_fn]` — the free-fn shim it emits calls
+    // a bare `constructor(...)` which cannot resolve inside an `impl` block.
+    // The `#[bun_jsc::JsClass]` derive already emits the construct shim that
+    // calls `<Self>::constructor(__g, __f)`.
     pub fn constructor(
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
@@ -190,7 +193,7 @@ impl NativeBrotli {
 
         let mut err = this.stream.init();
         if err.is_error() {
-            <Self as CompressionStream>::emit_error(this, global_this, this_value, err);
+            CompressionStream::<Self>::emit_error(this, global_this, this_value, err);
             return Ok(JSValue::FALSE);
         }
 

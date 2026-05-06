@@ -784,41 +784,17 @@ impl UpgradeCommand {
                     // xattrs are used for codesigning
                     // it'd be easy to mess that up
                     let unzip_argv: [&[u8]; 4] = [
-                        bun_str::as_byte_slice(unzip_exe),
+                        unzip_exe.as_bytes(),
                         b"-q",
                         b"-o",
                         tmpname,
                     ];
 
-                    // TODO(port): Zig used std.process.Child here directly; PORTING.md bans std::process — use bun_core::spawn_sync
-                    let unzip_result = match bun_core::spawn_sync(&bun_core::SpawnOptions {
-                        argv: &unzip_argv,
-                        envp: None,
-                        cwd: &tmpdir_path_buf[..tmpdir_path_len],
-                        stdin: bun_core::Stdio::Inherit,
-                        stdout: bun_core::Stdio::Inherit,
-                        stderr: bun_core::Stdio::Inherit,
-                        ..Default::default()
-                    }) {
-                        Ok(r) => r,
-                        Err(err) => {
-                            let _ = save_dir.delete_file_z(tmpname);
-                            Output::pretty_errorln(format_args!(
-                                "<r><red>error:<r> Failed to spawn unzip due to {}.",
-                                err.name()
-                            ));
-                            Global::exit(1);
-                        }
-                    };
-
-                    if unzip_result.status.exited() != 0 {
-                        Output::pretty_errorln(format_args!(
-                            "<r><red>Unzip failed<r> (exit code: {})",
-                            unzip_result.status.exited()
-                        ));
-                        let _ = save_dir.delete_file_z(tmpname);
-                        Global::exit(1);
-                    }
+                    // TODO(port): Zig used std.process.Child here directly; PORTING.md bans
+                    // std::process. The buffered/cwd-aware spawn_sync helper is not yet
+                    // available at this layer.
+                    let _ = (&unzip_argv, &tmpdir_path_buf[..tmpdir_path_len], &save_dir);
+                    todo!("blocked_on: bun_core::spawn_sync (std.process.Child port)");
                 }
                 #[cfg(windows)]
                 {

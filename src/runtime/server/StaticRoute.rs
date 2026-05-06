@@ -65,7 +65,9 @@ impl StaticRoute {
 mod _gated {
 use super::*;
 use bun_core::Error;
-use bun_http_types::{ETag, Method};
+use bun_http::Method;
+use bun_http_types::ETag;
+use bun_http_types::ETag::StringPointer;
 use crate::server::write_status;
 use crate::webcore::body::Value as BodyValue;
 use crate::webcore::Response;

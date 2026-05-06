@@ -881,7 +881,7 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
 
     pub plugins: Option<Rc<ServePlugins>>,
 
-    pub dev_server: Option<Box<DevServer>>,
+    pub dev_server: Option<Box<DevServer::DevServer>>,
 
     /// These associate a route to the index in RouteList.cpp.
     /// User routes may get applied multiple times due to SNI.
@@ -1197,7 +1197,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         return global.throw_invalid_arguments(format_args!("upgrade options must be an object"));
                     }
 
-                    if let Some(headers_value) = opts.fast_get(global, jsc::CommonProperty::Data)? {
+                    if let Some(headers_value) = opts.fast_get(global, jsc::BuiltinName::data)? {
                         data_value = headers_value;
                     }
 
@@ -1205,7 +1205,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         return Err(JsError::Thrown);
                     }
 
-                    if let Some(headers_value) = opts.fast_get(global, jsc::CommonProperty::Headers)? {
+                    if let Some(headers_value) = opts.fast_get(global, jsc::BuiltinName::headers)? {
                         if headers_value.is_empty_or_undefined_or_null() {
                             break 'getter;
                         }
@@ -1371,7 +1371,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     return global.throw_invalid_arguments(format_args!("upgrade options must be an object"));
                 }
 
-                if let Some(headers_value) = opts.fast_get(global, jsc::CommonProperty::Data)? {
+                if let Some(headers_value) = opts.fast_get(global, jsc::BuiltinName::data)? {
                     data_value = headers_value;
                 }
 
@@ -1379,7 +1379,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     return Err(JsError::Thrown);
                 }
 
-                if let Some(headers_value) = opts.fast_get(global, jsc::CommonProperty::Headers)? {
+                if let Some(headers_value) = opts.fast_get(global, jsc::BuiltinName::headers)? {
                     if headers_value.is_empty_or_undefined_or_null() {
                         break 'getter;
                     }

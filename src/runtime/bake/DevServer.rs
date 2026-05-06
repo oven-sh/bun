@@ -608,9 +608,9 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     let mut dev: Box<DevServer> = unsafe { dev_uninit.assume_init() };
     let dev_ptr: *mut DevServer = &mut *dev;
 
-    debug_assert!(core::ptr::eq(dev.server_graph.owner(), &*dev));
-    debug_assert!(core::ptr::eq(dev.client_graph.owner(), &*dev));
-    debug_assert!(core::ptr::eq(dev.directory_watchers.owner(), &*dev));
+    debug_assert!(::core::ptr::eq(dev.server_graph.owner(), &*dev));
+    debug_assert!(::core::ptr::eq(dev.client_graph.owner(), &*dev));
+    debug_assert!(::core::ptr::eq(dev.directory_watchers.owner(), &*dev));
 
     dev.graph_safety_lock.lock();
     let _unlock = scopeguard::guard((), |_| dev.graph_safety_lock.unlock());
@@ -634,8 +634,8 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
         dev.ssr_transpiler.resolver.watcher = dev.bun_watcher.get_resolve_watcher();
     }
 
-    debug_assert!(dev.server_transpiler.resolver.opts.target != bundler::Target::Browser);
-    debug_assert!(dev.client_transpiler.resolver.opts.target == bundler::Target::Browser);
+    debug_assert!(dev.server_transpiler.resolver.opts.target != bundler::options::Target::Browser);
+    debug_assert!(dev.client_transpiler.resolver.opts.target == bundler::options::Target::Browser);
 
     dev.framework = match dev.framework.resolve(
         &mut dev.server_transpiler.resolver,
@@ -667,8 +667,8 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
             .unwrap()
             .unwrap_or_else(|e| Output::panic(format_args!("unhandled {}", e)));
             bun_core::write_any_to_hasher(&mut h, &stat.mtime());
-            h.update(bake::get_hmr_runtime(bake::Side::Client).code);
-            h.update(bake::get_hmr_runtime(bake::Side::Server).code);
+            h.update(crate::bake::bake_body::get_hmr_runtime(bake::Side::Client).code);
+            h.update(crate::bake::bake_body::get_hmr_runtime(bake::Side::Server).code);
         } else {
             h.update(Environment::GIT_SHA_SHORT.as_bytes());
         }
@@ -934,7 +934,7 @@ impl DevServer<'_> {
 
 impl DevServer<'_> {
     fn init_server_runtime(&mut self) {
-        let runtime = BunString::static_(bake::get_hmr_runtime(bake::Side::Server).code);
+        let runtime = BunString::static_(crate::bake::bake_body::get_hmr_runtime(bake::Side::Server).code);
 
         // SAFETY: vm is JSC_BORROW; vm.global is valid for VM lifetime
         let global = unsafe { &*(*self.vm).global };

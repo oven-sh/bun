@@ -104,9 +104,26 @@ impl StandaloneModuleGraph {
 }
 
 // TODO(port): Zig `targetBasePublicPath(target, comptime suffix: [:0]const u8) [:0]const u8`
-// concatenates at comptime via `++`. A runtime `suffix: &str` parameter cannot be
-// const-concatenated. Phase B: expose as `macro_rules! target_base_public_path { ($target:expr, $suffix:literal) => ... }`
-// using `const_format::concatcp!`. No runtime variant — all Zig callers pass a literal.
+// concatenates at comptime via `++`. A runtime `suffix: &[u8]` parameter cannot be
+// const-concatenated. All Zig callers pass either `""` or `"root/"`, so the runtime
+// variant special-cases those two literals.
+pub fn target_base_public_path(
+    target: bun_core::Environment::OperatingSystem,
+    suffix: &'static [u8],
+) -> &'static [u8] {
+    match target {
+        bun_core::Environment::OperatingSystem::Windows => match suffix {
+            b"" => b"B:/~BUN/",
+            b"root/" => b"B:/~BUN/root/",
+            _ => unreachable!("target_base_public_path: unsupported suffix literal"),
+        },
+        _ => match suffix {
+            b"" => b"/$bunfs/",
+            b"root/" => b"/$bunfs/root/",
+            _ => unreachable!("target_base_public_path: unsupported suffix literal"),
+        },
+    }
+}
 
 pub fn is_bun_standalone_file_path_canonicalized(str_: &[u8]) -> bool {
     str_.starts_with(BASE_PATH.as_bytes())

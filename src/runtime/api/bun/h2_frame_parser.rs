@@ -1340,7 +1340,7 @@ pub struct H2FrameParser {
     hpack: Option<Box<lshpack::HPACK>>,
 
     has_nonnative_backpressure: bool,
-    ref_count: Cell<u32>, // intrusive RefCount
+    ref_count: bun_ptr::RefCount<Self>, // intrusive — bun.ptr.RefCount(@This(), "ref_count", deinit, .{})
 
     auto_flusher: AutoFlusher,
     padding_strategy: PaddingStrategy,

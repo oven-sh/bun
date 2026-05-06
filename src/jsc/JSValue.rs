@@ -259,6 +259,20 @@ impl JSValue {
         // SAFETY: `global` is a live JSGlobalObject for the duration of the call.
         unsafe { JSC__JSValue__createEmptyObjectWithNullPrototype(global) }
     }
+    /// `JSValue.createObject2` (JSValue.zig:536) — `{ [key1]: value1, [key2]: value2 }`.
+    pub fn create_object2(
+        global: &JSGlobalObject,
+        key1: &bun_string::ZigString,
+        key2: &bun_string::ZigString,
+        value1: JSValue,
+        value2: JSValue,
+    ) -> JsResult<JSValue> {
+        host_fn::from_js_host_call_generic(global, || unsafe {
+            // SAFETY: all pointers borrow live locals for the call duration; C++
+            // clones the key strings into JSC heap.
+            JSC__JSValue__createObject2(global, key1, key2, value1, value2)
+        })
+    }
     pub fn create_empty_array(global: &JSGlobalObject, len: usize) -> JsResult<JSValue> {
         // SAFETY: `global` is a live JSGlobalObject for the duration of the call.
         let v = unsafe { JSC__JSValue__createEmptyArray(global, len) };

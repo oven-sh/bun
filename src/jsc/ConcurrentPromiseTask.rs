@@ -12,7 +12,7 @@ use bun_threading::{WorkPool, WorkPoolTask};
 pub trait ConcurrentPromiseTaskContext {
     fn run(&mut self);
     // TODO(port): narrow error set — Zig is `bun.JSTerminated!void`
-    fn then(&mut self, promise: JSPromise) -> Result<(), bun_jsc::JsTerminated>;
+    fn then(&mut self, promise: &mut JSPromise) -> Result<(), bun_jsc::JsTerminated>;
 }
 
 /// A generic task that runs work on a thread pool and resolves a JavaScript Promise with the result.

@@ -437,14 +437,14 @@ impl Listener {
 
         listener_allocated.set(false); // ownership now on `this`; deinit handles cleanup
         scopeguard::ScopeGuard::into_inner(cleanup);
-        let this_value = todo!("blocked_on: bun_jsc::JsClass::to_js for Listener (consumes self)");
-        #[allow(unreachable_code)]
-        {
-            this_ref.strong_self.set(global, this_value);
-            this_ref.poll_ref.ref_(vm_event_loop_ctx());
+        // SAFETY: `global` is live; ownership of `this` (Box::into_raw'd above)
+        // transfers to the C++ wrapper (freed via `ListenerClass__finalize` →
+        // `Listener::finalize` → `deinit`).
+        let this_value = unsafe { Listener__create(global.as_mut_ptr(), this) };
+        this_ref.strong_self.set(global, this_value);
+        this_ref.poll_ref.ref_(vm_event_loop_ctx());
 
-            Ok(this_value)
-        }
+        Ok(this_value)
     }
 
     // PORT NOTE: no #[bun_jsc::host_fn] — JsClass codegen emits the constructor shim.

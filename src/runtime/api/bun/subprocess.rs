@@ -171,51 +171,116 @@ pub struct Subprocess<'a> {
     pub exited_due_to_maxbuf: Option<MaxBuf::Kind>,
 }
 
-// `..Default::default()` is used by `js_bun_spawn_bindings::spawn_maybe_sync` to
-// fill the address-independent tail fields. The "real" non-defaultable fields
-// (`process`, `ref_count`, …) are always supplied explicitly there, so the
-// values returned here for them are never observed — but Rust still requires
-// `default()` to construct *something*. `process: ManuallyDrop<Arc<Process>>`
-// has no cheap placeholder, so this stays a `todo!()` until Process gains a
-// stub constructor or the call site stops using struct-update syntax.
-impl<'a> Default for Subprocess<'a> {
-    fn default() -> Self {
-        todo!("blocked_on: bun_process::Process default — js_bun_spawn_bindings should fill all fields explicitly")
-    }
-}
+// PORT NOTE: a `Default` impl for `Subprocess` was scaffolded here in Phase A
+// to support `..Default::default()` struct-update syntax in
+// `js_bun_spawn_bindings::spawn_maybe_sync`. That call site now fills every
+// field explicitly (see PORT NOTE there), so the impl is dead and has been
+// removed — `ManuallyDrop<Arc<Process>>` has no sound placeholder anyway.
 
 // ── local extension shims for upstream types missing methods ────────────────
-// `JSValue::push` exists in JSValue.zig but not yet in bun_jsc::JSValue.
+// `JSValue::push` exists in JSValue.zig but not yet in bun_jsc::JSValue. Wrap
+// the same `JSC__JSValue__push` extern the Zig codegen calls.
 trait JsValuePushExt {
     fn push(self, global: &JSGlobalObject, value: JSValue) -> JsResult<()>;
 }
 impl JsValuePushExt for JSValue {
-    fn push(self, _global: &JSGlobalObject, _value: JSValue) -> JsResult<()> {
-        todo!("blocked_on: bun_jsc::JSValue::push")
+    fn push(self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
+        unsafe extern "C" {
+            fn JSC__JSValue__push(value: JSValue, global: *const JSGlobalObject, out: JSValue);
+        }
+        // SAFETY: `self` is an array cell (callers create it via
+        // `create_empty_array`); `global` is live; FFI may run JS (allocation).
+        unsafe { JSC__JSValue__push(self, global, value) };
+        if global.has_exception() {
+            return Err(jsc::JsError::Thrown);
+        }
+        Ok(())
     }
 }
 
-// `bun_jsc::AnyPromise` (lib.rs enum stub) lacks resolve/reject; the real impls
-// live on `bun_jsc::any_promise::AnyPromise`. Shim until the stub is replaced.
+// `bun_jsc::AnyPromise` (the crate-root raw-pointer enum) lacks
+// resolve/reject; the lifetime-carrying `bun_jsc::any_promise::AnyPromise`
+// has them but `JSValue::as_any_promise()` returns the former. Bridge via the
+// underlying `JSPromise` (JSInternalPromise is a transparent alias of it).
 trait AnyPromiseExt {
     fn resolve(self, global: &JSGlobalObject, value: JSValue);
     fn reject_with_async_stack(self, global: &JSGlobalObject, value: JSValue);
 }
 impl AnyPromiseExt for bun_jsc::AnyPromise {
-    fn resolve(self, _global: &JSGlobalObject, _value: JSValue) {
-        todo!("blocked_on: bun_jsc::AnyPromise::resolve")
+    fn resolve(self, global: &JSGlobalObject, value: JSValue) {
+        let p: *mut JSPromise = match self {
+            bun_jsc::AnyPromise::Normal(p) => p,
+            // JSInternalPromise is `pub use JSPromise as JSInternalPromise`.
+            bun_jsc::AnyPromise::Internal(p) => p,
+        };
+        // SAFETY: `as_any_promise()` only returns non-null GC cells.
+        let _ = unsafe { (*p).resolve(global, value) };
     }
-    fn reject_with_async_stack(self, _global: &JSGlobalObject, _value: JSValue) {
-        todo!("blocked_on: bun_jsc::AnyPromise::reject_with_async_stack")
+    fn reject_with_async_stack(self, global: &JSGlobalObject, value: JSValue) {
+        let p: *mut JSPromise = match self {
+            bun_jsc::AnyPromise::Normal(p) => p,
+            bun_jsc::AnyPromise::Internal(p) => p,
+        };
+        // SAFETY: `as_any_promise()` only returns non-null GC cells.
+        let _ = unsafe { (*p).reject_with_async_stack(global, Ok(value)) };
     }
 }
 
 /// Parse a JS value into a `bun_sys::SignalCode` (number or signal-name string).
-/// Local shim — `bun_sys::SignalCode` has no `from_js` because bun_sys can't
-/// depend on bun_jsc.
-fn signal_code_from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<SignalCode> {
-    let _ = (value, global);
-    todo!("blocked_on: bun_sys::SignalCode::from_js")
+///
+/// Local port of `src/sys_jsc/signal_code_jsc.zig::fromJS` — `bun_sys_jsc` is
+/// not a dependency of `bun_runtime`, and its `from_js` uses crate-local JSC
+/// shim types that aren't `bun_jsc::{JSValue,JSGlobalObject}`.
+fn signal_code_from_js(arg: JSValue, global_this: &JSGlobalObject) -> JsResult<SignalCode> {
+    if let Some(sig64) = arg.get_number() {
+        // Node does this:
+        if sig64.is_nan() {
+            return Ok(SignalCode::DEFAULT);
+        }
+
+        // This matches node behavior, minus some details with the error messages: https://gist.github.com/Jarred-Sumner/23ba38682bf9d84dff2f67eb35c42ab6
+        if sig64.is_infinite() || sig64.trunc() != sig64 {
+            return Err(global_this.throw_invalid_arguments(format_args!("Unknown signal")));
+        }
+
+        if sig64 < 0.0 {
+            return Err(
+                global_this.throw_invalid_arguments(format_args!("Invalid signal: must be >= 0")),
+            );
+        }
+
+        if sig64 > 31.0 {
+            return Err(
+                global_this.throw_invalid_arguments(format_args!("Invalid signal: must be < 32")),
+            );
+        }
+
+        return Ok(SignalCode(sig64 as u8));
+    } else if arg.is_string() {
+        // SAFETY: `is_string()` ⇒ `as_string()` returns a non-null JSString cell.
+        if unsafe { (*arg.as_string()).length() } == 0 {
+            return Ok(SignalCode::DEFAULT);
+        }
+        // `arg.toEnum(global, "signal", SignalCode)` — phf lookup against the
+        // SignalCode name map (Zig's `ComptimeEnumMap(SignalCode)`).
+        let str = arg.to_bun_string(global_this)?;
+        let utf8 = str.to_utf8();
+        let hit = bun_sys::signal_code::MAP.get(utf8.slice()).copied();
+        drop(utf8);
+        drop(str);
+        return match hit {
+            Some(code) => Ok(code),
+            None => Err(global_this.throw_invalid_arguments(format_args!(
+                "signal must be one of the SignalCode names"
+            ))),
+        };
+    } else if !arg.is_empty_or_undefined_or_null() {
+        return Err(global_this.throw_invalid_arguments(format_args!(
+            "Invalid signal: must be a string or an integer"
+        )));
+    }
+
+    Ok(SignalCode::DEFAULT)
 }
 
 // Intrusive ref-count: bun.ptr.RefCount(@This(), "ref_count", deinit, .{})

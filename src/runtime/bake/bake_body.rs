@@ -145,7 +145,7 @@ fn getcwd_alloc(arena: &Arena) -> Result<&'static ZStr, bun_core::Error> {
 /// `arena.dupeZ(u8, bytes)` — copy `bytes` + trailing NUL into the bump arena.
 /// Returns `&'static ZStr` per the file-level Phase-A `'static` convention
 /// (arena-backed; lifetime erased — see TODO(port) at top of file).
-fn arena_dupe_z(arena: &Arena, bytes: &[u8]) -> &'static ZStr {
+pub(crate) fn arena_dupe_z(arena: &Arena, bytes: &[u8]) -> &'static ZStr {
     let buf: &mut [u8] = arena.alloc_slice_fill_default(bytes.len() + 1);
     buf[..bytes.len()].copy_from_slice(bytes);
     buf[bytes.len()] = 0;

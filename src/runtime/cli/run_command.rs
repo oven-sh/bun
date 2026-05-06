@@ -1355,13 +1355,289 @@ impl RunCommand {
         true
     }
 
-    /// Port of `configurePATHForRun` (run_command.zig). Prepends workspace
-    /// `.bin` dirs + `BUN_WHICH_IGNORE_CWD` to `PATH` and writes the original
+    // This path is almost always a path to a user directory. So it cannot be
+    // inlined like our uses of /tmp. On Windows use `GetTempPathW` /
+    // `RealFS.platformTempDir` instead — this const is POSIX-only and
+    // referencing it on Windows is a compile error (mirrors Zig's
+    // `@compileError` arm).
+    #[cfg(not(windows))]
+    pub const BUN_NODE_DIR: &'static str = const_format::concatcp!(
+        if cfg!(target_os = "macos") {
+            "/private/tmp"
+        } else if cfg!(target_os = "android") {
+            "/data/local/tmp"
+        } else {
+            "/tmp"
+        },
+        if !cfg!(debug_assertions) {
+            const_format::concatcp!(
+                "/bun-node",
+                if Environment::GIT_SHA_SHORT.len() > 0 {
+                    const_format::concatcp!("-", Environment::GIT_SHA_SHORT)
+                } else {
+                    ""
+                }
+            )
+        } else {
+            "/bun-node-debug"
+        }
+    );
+
+    /// Port of `bunNodeFileUtf8` (run_command.zig). Returns the path to the
+    /// fake `node` shim that points back at the running `bun` binary.
+    pub fn bun_node_file_utf8() -> Result<&'static ZStr, bun_core::Error> {
+        #[cfg(not(windows))]
+        {
+            const BUN_NODE_DIR_Z: &str = const_format::concatcp!(RunCommand::BUN_NODE_DIR, "\0");
+            // SAFETY: BUN_NODE_DIR_Z is a NUL-terminated &'static str literal.
+            Ok(unsafe { ZStr::from_raw(BUN_NODE_DIR_Z.as_ptr(), BUN_NODE_DIR_Z.len() - 1) })
+        }
+        #[cfg(windows)]
+        {
+            let mut temp_path_buffer = WPathBuffer::uninit();
+            let mut target_path_buffer = PathBuffer::uninit();
+            let len = sys::windows::GetTempPathW(
+                u32::try_from(temp_path_buffer.len()).unwrap(),
+                temp_path_buffer.as_mut_ptr(),
+            );
+            if len == 0 {
+                return Err(bun_core::err!("FailedToGetTempPath"));
+            }
+
+            let converted = strings::convert_utf16_to_utf8_in_buffer(
+                &mut target_path_buffer,
+                &temp_path_buffer[..len as usize],
+            )?;
+
+            const FILE_NAME: &str = const_format::concatcp!(
+                "bun-node",
+                if Environment::GIT_SHA_SHORT.len() > 0 {
+                    const_format::concatcp!("-", Environment::GIT_SHA_SHORT)
+                } else {
+                    ""
+                },
+                "\\node.exe"
+            );
+            let conv_len = converted.len();
+            target_path_buffer[conv_len..conv_len + FILE_NAME.len()]
+                .copy_from_slice(FILE_NAME.as_bytes());
+            target_path_buffer[conv_len + FILE_NAME.len()] = 0;
+
+            // Zig: `allocator.dupeZ` — process-lifetime, never freed.
+            let owned = bun_str::ZStr::from_bytes(&target_path_buffer[..conv_len + FILE_NAME.len()]);
+            // PORT NOTE: process-lifetime path string (one-shot per CLI run).
+            Ok(&*Box::leak(owned))
+        }
+    }
+
+    /// Port of `createFakeTemporaryNodeExecutable` (run_command.zig). Creates
+    /// `<tmp>/bun-node*/node` and `<tmp>/bun-node*/bun` symlinks (or hard
+    /// links on Windows) pointing at the running `bun` binary, then appends
+    /// that directory to `path` so child processes resolve `node` to bun.
+    pub fn create_fake_temporary_node_executable(
+        path: &mut Vec<u8>,
+        optional_bun_path: &mut &[u8],
+    ) -> Result<(), bun_core::Error> {
+        // If we are already running as "node", the path should exist
+        // SAFETY: PRETEND_TO_BE_NODE is a process-startup flag (single-threaded write).
+        if unsafe { cli::PRETEND_TO_BE_NODE } {
+            return Ok(());
+        }
+
+        #[cfg(unix)]
+        {
+            use ::core::ffi::{c_char, CStr};
+
+            let mut argv0: *const c_char = optional_bun_path.as_ptr() as *const c_char;
+
+            // if we are already an absolute path, use that
+            // if the user started the application via a shebang, it's likely
+            // that the path is absolute already
+            // PORT NOTE: `bun_core::argv()` returns an `Argv` wrapper; `.get(0)`
+            // yields `&'static ZStr` (NUL-terminated, process-lifetime).
+            let argv0_slice = bun_core::argv().get(0).map(|z| z.as_bytes()).unwrap_or(b"");
+            if argv0_slice.first() == Some(&b'/') {
+                *optional_bun_path = argv0_slice;
+                argv0 = argv0_slice.as_ptr() as *const c_char;
+            } else if optional_bun_path.is_empty() {
+                // otherwise, ask the OS for the absolute path
+                let self_ = bun_core::self_exe_path()?;
+                if !self_.is_empty() {
+                    argv0 = self_.as_ptr() as *const c_char;
+                    *optional_bun_path = self_.as_bytes();
+                }
+            }
+
+            if optional_bun_path.is_empty() {
+                argv0 = argv0_slice.as_ptr() as *const c_char;
+            }
+
+            #[cfg(debug_assertions)]
+            {
+                // Zig: std.fs.deleteTreeAbsolute(BUN_NODE_DIR) — best-effort.
+                let _ = sys::Dir::cwd().delete_tree(Self::BUN_NODE_DIR.as_bytes());
+            }
+            const PATHS: [&str; 2] = [
+                const_format::concatcp!(RunCommand::BUN_NODE_DIR, "/node\0"),
+                const_format::concatcp!(RunCommand::BUN_NODE_DIR, "/bun\0"),
+            ];
+            const BUN_NODE_DIR_Z: &str = const_format::concatcp!(RunCommand::BUN_NODE_DIR, "\0");
+            for p in PATHS {
+                let mut retried = false;
+                'retry: loop {
+                    'inner: {
+                        // SAFETY: argv0 is a valid NUL-terminated C string
+                        // (points at argv[0], `self_exe_path`, or `optional_bun_path`).
+                        let target = unsafe {
+                            let cstr = CStr::from_ptr(argv0);
+                            ZStr::from_raw(cstr.as_ptr().cast(), cstr.to_bytes().len())
+                        };
+                        // SAFETY: PATHS entries are NUL-terminated string literals.
+                        let link = unsafe { ZStr::from_raw(p.as_ptr(), p.len() - 1) };
+                        if let Err(err) = sys::symlink(target, link) {
+                            if err.get_errno() == sys::E::EEXIST {
+                                break 'inner;
+                            }
+                            if retried {
+                                return Ok(());
+                            }
+
+                            // Zig: std.fs.makeDirAbsoluteZ(BUN_NODE_DIR) — best-effort.
+                            // SAFETY: BUN_NODE_DIR_Z is a NUL-terminated literal.
+                            let dir_z = unsafe {
+                                ZStr::from_raw(BUN_NODE_DIR_Z.as_ptr(), BUN_NODE_DIR_Z.len() - 1)
+                            };
+                            let _ = sys::mkdir(dir_z, 0o755);
+
+                            retried = true;
+                            continue 'retry;
+                        }
+                    }
+                    break;
+                }
+            }
+            if !path.is_empty() && path[path.len() - 1] != DELIMITER {
+                path.push(DELIMITER);
+            }
+
+            // The reason for the extra delim is because we are going to append
+            // the system PATH later on. this is done by the caller, and explains
+            // why we are adding bun_node_dir to the end of the path slice rather
+            // than the start.
+            path.extend_from_slice(Self::BUN_NODE_DIR.as_bytes());
+            path.push(DELIMITER);
+            let _ = argv0;
+        }
+        #[cfg(windows)]
+        {
+            let mut target_path_buffer = WPathBuffer::uninit();
+
+            let prefix = bun_str::w!("\\??\\");
+
+            let len = sys::windows::GetTempPathW(
+                u32::try_from(target_path_buffer.len() - prefix.len()).unwrap(),
+                // SAFETY: prefix.len() < target_path_buffer.len(); pointer stays in bounds.
+                unsafe { target_path_buffer.as_mut_ptr().add(prefix.len()) },
+            );
+            if len == 0 {
+                Output::debug(
+                    "Failed to create temporary node dir: {}",
+                    (sys::windows::get_last_error_tag(),),
+                );
+                return Ok(());
+            }
+            let len = len as usize;
+
+            target_path_buffer[..prefix.len()].copy_from_slice(prefix);
+
+            const DIR_NAME: &str = if cfg!(debug_assertions) {
+                "bun-node-debug"
+            } else {
+                const_format::concatcp!(
+                    "bun-node",
+                    if Environment::GIT_SHA_SHORT.len() > 0 {
+                        const_format::concatcp!("-", Environment::GIT_SHA_SHORT)
+                    } else {
+                        ""
+                    }
+                )
+            };
+            let dir_name_w = bun_str::w!(DIR_NAME);
+            target_path_buffer[prefix.len() + len..prefix.len() + len + dir_name_w.len()]
+                .copy_from_slice(dir_name_w);
+            let dir_slice_len = prefix.len() + len + dir_name_w.len();
+
+            #[cfg(debug_assertions)]
+            {
+                let dir_slice_u8 =
+                    strings::utf16_le_to_utf8_alloc(&target_path_buffer[..dir_slice_len])
+                        .expect("oom");
+                let _ = sys::Dir::cwd().delete_tree(&dir_slice_u8);
+                sys::Dir::cwd().make_path(&dir_slice_u8).expect("huh?");
+            }
+
+            let image_path = sys::windows::exe_path_w();
+            for name in [bun_str::w!("node.exe"), bun_str::w!("bun.exe")] {
+                // file_name = dir_name ++ "\\" ++ name ++ "\x00"
+                let mut off = prefix.len() + len;
+                target_path_buffer[off..off + dir_name_w.len()].copy_from_slice(dir_name_w);
+                off += dir_name_w.len();
+                target_path_buffer[off] = b'\\' as u16;
+                off += 1;
+                target_path_buffer[off..off + name.len()].copy_from_slice(name);
+                off += name.len();
+                target_path_buffer[off] = 0;
+
+                let file_slice = &target_path_buffer[..off];
+
+                if sys::windows::CreateHardLinkW(
+                    file_slice.as_ptr(),
+                    image_path.as_ptr(),
+                    core::ptr::null_mut(),
+                ) == 0
+                {
+                    match sys::windows::get_last_error() {
+                        sys::windows::Error::ALREADY_EXISTS => {}
+                        _ => {
+                            {
+                                debug_assert!(target_path_buffer[dir_slice_len] == b'\\' as u16);
+                                target_path_buffer[dir_slice_len] = 0;
+                                let _ = sys::mkdir_w(&target_path_buffer[..dir_slice_len], 0);
+                                target_path_buffer[dir_slice_len] = b'\\' as u16;
+                            }
+
+                            if sys::windows::CreateHardLinkW(
+                                file_slice.as_ptr(),
+                                image_path.as_ptr(),
+                                core::ptr::null_mut(),
+                            ) == 0
+                            {
+                                return Ok(());
+                            }
+                        }
+                    }
+                }
+            }
+            if !path.is_empty() && path[path.len() - 1] != DELIMITER {
+                path.push(DELIMITER);
+            }
+
+            // The reason for the extra delim is because we are going to append
+            // the system PATH later on. this is done by the caller, and explains
+            // why we are adding bun_node_dir to the end of the path slice rather
+            // than the start.
+            strings::to_utf8_append_to_list(
+                path,
+                &target_path_buffer[prefix.len()..dir_slice_len],
+            )?;
+            path.push(DELIMITER);
+        }
+        Ok(())
+    }
+
+    /// Port of `configurePathForRun` (run_command.zig). Prepends workspace
+    /// `.bin` dirs + the bun-node shim dir to `PATH` and writes the original
     /// PATH back through `original_path`.
-    ///
-    /// Real body lives in `phase_a_draft::configure_path_for_run` (depends on
-    /// `configure_path_for_run_with_package_json_dir`, still draft-only).
-    #[allow(unused_variables)]
     pub fn configure_path_for_run(
         ctx: &mut ContextData,
         root_dir_info: *mut DirInfo,
@@ -1370,7 +1646,32 @@ impl RunCommand {
         cwd: &[u8],
         force_using_bun: bool,
     ) -> Result<(), bun_core::Error> {
-        todo!("blocked_on: RunCommand::configure_path_for_run (phase_a_draft)")
+        let mut package_json_dir: &[u8] = b"";
+
+        // SAFETY: resolver cache owns the DirInfo for the process lifetime.
+        let root_dir = unsafe { &*root_dir_info };
+        if let Some(package_json) = root_dir.enclosing_package_json {
+            if root_dir.package_json.is_none() {
+                // no trailing slash
+                package_json_dir =
+                    strings::without_trailing_slash(package_json.source.path.name.dir);
+            }
+        }
+
+        let new_path = Self::configure_path_for_run_with_package_json_dir(
+            ctx,
+            package_json_dir,
+            this_transpiler,
+            original_path,
+            cwd,
+            force_using_bun,
+        )?;
+        // SAFETY: `Transpiler::env` is a non-null process-lifetime `*mut Loader`.
+        unsafe { &mut *this_transpiler.env }
+            .map
+            .put(b"PATH", &new_path)
+            .unwrap_or_oom();
+        Ok(())
     }
 
     /// Port of `configurePathForRunWithPackageJsonDir` (run_command.zig).
@@ -1378,18 +1679,131 @@ impl RunCommand {
     /// (plus `package_json_dir` and the bun-node shim dir) prepended, returns
     /// it as an owned buffer, and writes the original PATH out via
     /// `original_path`.
-    ///
-    /// Real body lives in `phase_a_draft::configure_path_for_run_with_package_json_dir`.
-    #[allow(unused_variables)]
     pub fn configure_path_for_run_with_package_json_dir(
-        ctx: &mut ContextData,
+        _ctx: &mut ContextData,
         package_json_dir: &[u8],
         this_transpiler: &mut Transpiler<'static>,
         original_path: Option<&mut &[u8]>,
         cwd: &[u8],
         force_using_bun: bool,
     ) -> Result<Vec<u8>, bun_core::Error> {
-        todo!("blocked_on: RunCommand::configure_path_for_run_with_package_json_dir (phase_a_draft)")
+        // SAFETY: `Transpiler::init` always sets `env` (process-lifetime singleton).
+        let env_loader = unsafe { &mut *this_transpiler.env };
+        // PORT NOTE: detach the lifetime — env-map values live for the process
+        // (Zig returned a raw `[]const u8`); the subsequent `&mut` borrow for
+        // `load_node_js_config` would otherwise conflict with `path`/`*op`.
+        let path: &[u8] = match env_loader.get(b"PATH") {
+            // SAFETY: env-map storage is process-lifetime (see DotEnv::Map).
+            Some(p) => unsafe { ::core::slice::from_raw_parts(p.as_ptr(), p.len()) },
+            None => b"",
+        };
+        if let Some(op) = original_path {
+            *op = path;
+        }
+
+        let bun_node_exe = Self::bun_node_file_utf8()?;
+        let bun_node_dir_win = bun_core::util::dirname(bun_node_exe.as_bytes())
+            .ok_or(bun_core::err!("FailedToGetTempPath"))?;
+        let found_node = env_loader
+            .load_node_js_config(
+                bun_paths::fs::FileSystem::instance(),
+                if force_using_bun { bun_node_exe.as_bytes() } else { b"" },
+            )
+            .unwrap_or(false);
+
+        let mut needs_to_force_bun = force_using_bun || !found_node;
+        let mut optional_bun_self_path: &[u8] = b"";
+
+        let mut new_path_len: usize = path.len() + 2;
+
+        if !package_json_dir.is_empty() {
+            new_path_len += package_json_dir.len() + 1;
+        }
+
+        {
+            let mut remain = cwd;
+            while let Some(i) = strings::last_index_of_char(remain, SEP) {
+                new_path_len += strings::without_trailing_slash(remain).len()
+                    + b"node_modules.bin".len()
+                    + 1
+                    + 2; // +2 for path separators, +1 for path delimiter
+                remain = &remain[..i];
+            }
+            // Zig `else` clause runs once after the loop ends naturally
+            new_path_len += strings::without_trailing_slash(remain).len()
+                + b"node_modules.bin".len()
+                + 1
+                + 2; // +2 for path separators, +1 for path delimiter
+        }
+
+        if needs_to_force_bun {
+            new_path_len += bun_node_dir_win.len() + 1;
+        }
+
+        let mut new_path: Vec<u8> = Vec::with_capacity(new_path_len);
+
+        if needs_to_force_bun {
+            match Self::create_fake_temporary_node_executable(
+                &mut new_path,
+                &mut optional_bun_self_path,
+            ) {
+                Ok(()) => {}
+                Err(e) if e == bun_core::err!("OutOfMemory") => bun_core::out_of_memory(),
+                Err(other) => panic!(
+                    "unexpected error from createFakeTemporaryNodeExecutable: {}",
+                    other.name()
+                ),
+            }
+
+            if !force_using_bun {
+                // SAFETY: `Transpiler::env` is a non-null process-lifetime `*mut Loader`.
+                let env_mut = unsafe { &mut *this_transpiler.env };
+                env_mut
+                    .map
+                    .put(b"NODE", bun_node_exe.as_bytes())
+                    .unwrap_or_oom();
+                env_mut
+                    .map
+                    .put(b"npm_node_execpath", bun_node_exe.as_bytes())
+                    .unwrap_or_oom();
+                env_mut
+                    .map
+                    .put(b"npm_execpath", optional_bun_self_path)
+                    .unwrap_or_oom();
+            }
+
+            needs_to_force_bun = false;
+        }
+        let _ = needs_to_force_bun;
+
+        {
+            if !package_json_dir.is_empty() {
+                new_path.extend_from_slice(package_json_dir);
+                new_path.push(DELIMITER);
+            }
+
+            let mut remain = cwd;
+            while let Some(i) = strings::last_index_of_char(remain, SEP) {
+                new_path.extend_from_slice(strings::without_trailing_slash(remain));
+                new_path.extend_from_slice(path_literal!(
+                    b"/node_modules/.bin",
+                    b"\\node_modules\\.bin"
+                ));
+                new_path.push(DELIMITER);
+                remain = &remain[..i];
+            }
+            // Zig `else` clause runs once after loop ends naturally
+            new_path.extend_from_slice(strings::without_trailing_slash(remain));
+            new_path.extend_from_slice(path_literal!(
+                b"/node_modules/.bin",
+                b"\\node_modules\\.bin"
+            ));
+            new_path.push(DELIMITER);
+
+            new_path.extend_from_slice(path);
+        }
+
+        Ok(new_path)
     }
 
     /// Port of `runBinary` (run_command.zig). Spawns `executable` with the

@@ -1,6 +1,6 @@
-//! B-2 un-gate support — types and crate aliases extracted from the gated
-//! `bundle_v2::__phase_a_draft` so `Chunk.rs` / `LinkerContext.rs` /
-//! `ParseTask.rs` / `Graph.rs` can compile against real surfaces.
+//! B-2 un-gate support — types and crate aliases extracted from `bundle_v2`
+//! so `Chunk.rs` / `LinkerContext.rs` / `ParseTask.rs` / `Graph.rs` can
+//! compile against real surfaces.
 //!
 //! These are pure value types with no T6 deps. Once `bundle_v2.rs` un-gates
 //! its draft body it re-exports from here; nothing here owns behavior that

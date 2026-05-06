@@ -54,6 +54,12 @@ use crate::webcore::streams::NetworkSink;
 use crate::webcore::ReadableStream;
 use crate::webcore::readable_stream::Strong as ReadableStreamStrong;
 use crate::webcore::readable_stream::Source as ReadableStreamPtr;
+use crate::webcore::sink::SinkSignal;
+use crate::webcore::s3::multipart::State as MultiPartUploadState;
+use crate::webcore::BlobSizeType;
+use bun_aio::KeepAlive;
+use bun_collections::IntegerBitSet;
+use bun_io::StreamBuffer;
 
 bun_core::declare_scope!(S3UploadStream, visible);
 

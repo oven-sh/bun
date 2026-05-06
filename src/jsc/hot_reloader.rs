@@ -686,8 +686,7 @@ where
         unsafe { CLEAR_SCREEN = clear_screen_flag };
         // PORT NOTE: bun_watcher::FileSystem is a CYCLEBREAK forward-decl carrying only
         // `top_level_dir`; bridge from the resolver's full FileSystem here.
-        let watcher_fs: &'static bun_watcher::FileSystem =
-            Box::leak(Box::new(bun_watcher::FileSystem { top_level_dir: fs.top_level_dir }));
+        let watcher_fs = watcher_fs_shim(fs);
         let mut watcher = match Watcher::init(reloader, watcher_fs) {
             Ok(w) => w,
             Err(err) => {

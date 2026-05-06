@@ -4,14 +4,18 @@ use std::io::Write as _;
 use bun_core::{self as bun, Output};
 use bun_logger as logger;
 use bun_str::strings;
-use bun_threading::ThreadPool;
+use bun_threading::thread_pool::{self as thread_pool, Batch as ThreadPoolBatch};
 use bun_http::{self as http, AsyncHTTP};
-use crate::bun_fs::FileSystem;
 
 use bun_install::{
-    DependencyID, ExtractTarball, NetworkTask, Npm, PackageID, PackageManifestError, PatchTask,
-    Repository, Store, TarballStream, INVALID_PACKAGE_ID,
+    DependencyID, ExtractTarball, NetworkTask, PackageID, PackageManifestError,
+    Repository, INVALID_PACKAGE_ID,
 };
+use crate::npm;
+use crate::extract_tarball;
+use crate::tarball_stream::TarballStream;
+use crate::patch_install::{self, PatchTask, Callback as PatchTaskCallback};
+use crate::network_task::Callback as NetworkTaskCallback;
 // `Task::Id` etc. are namespaced types in Zig (`PackageManagerTask.Id`); import
 // the *module* under the `Task` name so `Task::Id` resolves as a path.
 use bun_install::package_manager_task as Task;
@@ -20,11 +24,14 @@ use crate::network_task::{Authorization, ForTarballError};
 use crate::package_manifest_map::Value as ManifestEntry;
 use bun_core::fmt::PathSep;
 
-use super::{PackageInstaller, PackageManager, ProgressStrings};
+use super::{PackageInstaller, PackageManager, ProgressStrings, Subcommand, TaskCallbackList};
+use super::{directories, enqueue};
 // `Options::LogLevel` etc. are namespaced types in Zig (`PackageManager.Options.LogLevel`);
 // import the *module* under the `Options` name so `Options::LogLevel` resolves as a path
 // (matches the `Task` module-alias pattern above and `CommandLineArguments.rs`).
 use super::package_manager_options as Options;
+use super::package_manager_options::{Do, Enable};
+use crate::isolated_install::store as Store;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Callbacks trait
@@ -97,6 +104,14 @@ pub trait RunTasksCallbacks {
     }
 
     fn on_resolve(_ctx: &mut Self::Ctx) {
+        unreachable!()
+    }
+
+    /// Reinterpret `&mut Self::Ctx` as `&mut PackageInstaller` — only valid
+    /// when `IS_PACKAGE_INSTALLER` is true (Zig: `Ctx == *PackageInstaller`
+    /// comptime check). Default body is unreachable; the `PackageInstaller`
+    /// impl overrides it with an identity cast.
+    fn as_package_installer<'a>(_ctx: &'a mut Self::Ctx) -> &'a mut PackageInstaller<'a> {
         unreachable!()
     }
 }

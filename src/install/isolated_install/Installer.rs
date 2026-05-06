@@ -119,11 +119,11 @@ impl<'a> Installer<'a> {
         if let Some(removed) = self.manager.task_queue.fetch_remove(task_id) {
             let store = self.store;
 
-            let node_pkg_ids = store.nodes.items().pkg_id;
+            let node_pkg_ids = store.nodes.items_pkg_id();
 
             let entries = store.entries.slice();
-            let entry_steps = entries.items().step;
-            let entry_node_ids = entries.items().node_id;
+            let entry_steps = entries.items_step();
+            let entry_node_ids = entries.items_node_id();
 
             let pkgs = self.lockfile.packages.slice();
             let pkg_names = pkgs.items_name();
@@ -175,7 +175,7 @@ impl<'a> Installer<'a> {
         if let Some(removed) = self.manager.task_queue.fetch_remove(task_id) {
             let callbacks = removed.value;
 
-            let entry_steps = self.store.entries.items().step;
+            let entry_steps = self.store.entries.items_step();
             for install_ctx in callbacks.as_slice() {
                 let entry_id = install_ctx.isolated_package_install_context;
                 entry_steps[entry_id.get()].store(Step::Done, Ordering::Relaxed);
@@ -206,9 +206,9 @@ impl<'a> Installer<'a> {
         log: &mut Log,
     ) {
         let store = self.store;
-        let entry_node_ids = store.entries.items().node_id;
+        let entry_node_ids = store.entries.items_node_id();
         let node_id = entry_node_ids[entry_id.get()];
-        let node_pkg_ids = store.nodes.items().pkg_id;
+        let node_pkg_ids = store.nodes.items_pkg_id();
         let pkg_id = node_pkg_ids[node_id.get()];
         let mut patch_task = install::PatchTask::new_apply_patch_hash(
             self.manager,
@@ -234,10 +234,10 @@ impl<'a> Installer<'a> {
         let string_buf = self.lockfile.buffers.string_bytes.as_slice();
 
         let entries = self.store.entries.slice();
-        let entry_node_ids = entries.items().node_id;
+        let entry_node_ids = entries.items_node_id();
 
         let nodes = self.store.nodes.slice();
-        let node_pkg_ids = nodes.items().pkg_id;
+        let node_pkg_ids = nodes.items_pkg_id();
 
         let pkgs = self.lockfile.packages.slice();
         let pkg_names = pkgs.items_name();
@@ -366,14 +366,14 @@ impl<'a> Installer<'a> {
 
         if !self.is_task_blocked(entry_id, &mut parent_dedupe) {
             // .monotonic is okay because the task isn't running right now.
-            self.store.entries.items().step[entry_id.get()]
+            self.store.entries.items_step()[entry_id.get()]
                 .store(Step::SymlinkDependencyBinaries, Ordering::Relaxed);
             self.start_task(entry_id);
             return;
         }
 
         // .monotonic is okay because the task isn't running right now.
-        self.store.entries.items().step[entry_id.get()].store(Step::Blocked, Ordering::Relaxed);
+        self.store.entries.items_step()[entry_id.get()].store(Step::Blocked, Ordering::Relaxed);
     }
 
     /// Called from both the main thread (via `onTaskBlocked` and `resumeUnblockedTasks`) and the
@@ -384,8 +384,8 @@ impl<'a> Installer<'a> {
         parent_dedupe: &mut ArrayHashMap<StoreEntryId, ()>,
     ) -> bool {
         let entries = self.store.entries.slice();
-        let entry_deps = entries.items().dependencies;
-        let entry_steps = entries.items().step;
+        let entry_deps = entries.items_dependencies();
+        let entry_steps = entries.items_step();
 
         let deps = &entry_deps[entry_id.get()];
         for dep in deps.slice() {
@@ -406,7 +406,7 @@ impl<'a> Installer<'a> {
             // .monotonic is okay because we should have already synchronized with the completed
             // task thread by virtue of popping from the `UnboundedQueue`.
             bun_core::assert_with_location(
-                self.store.entries.items().step[entry_id.get()].load(Ordering::Relaxed)
+                self.store.entries.items_step()[entry_id.get()].load(Ordering::Relaxed)
                     == Step::Done,
                 core::panic::Location::caller(),
             );
@@ -426,8 +426,8 @@ impl<'a> Installer<'a> {
                 break 'state (StoreNodeId::ROOT, CompleteState::Skipped);
             }
 
-            let node_id = self.store.entries.items().node_id[entry_id.get()];
-            let dep_id = nodes.items().dep_id[node_id.get()];
+            let node_id = self.store.entries.items_node_id()[entry_id.get()];
+            let dep_id = nodes.items_dep_id()[node_id.get()];
 
             if dep_id == invalid_dependency_id {
                 // should be coverd by `entry_id == .root` above, but
@@ -458,7 +458,7 @@ impl<'a> Installer<'a> {
             }
         }
 
-        let pkg_id = nodes.items().pkg_id[node_id.get()];
+        let pkg_id = nodes.items_pkg_id()[node_id.get()];
 
         let is_duplicate = self.installed.is_set(pkg_id);
         self.summary.success += (!is_duplicate) as u32;
@@ -473,7 +473,7 @@ impl<'a> Installer<'a> {
     // `entry_steps[entry_id.get()].store(.symlink_dependency_binaries, .monotonic)`
     pub fn resume_unblocked_tasks(&mut self) {
         let entries = self.store.entries.slice();
-        let entry_steps = entries.items().step;
+        let entry_steps = entries.items_step();
 
         let mut parent_dedupe: ArrayHashMap<StoreEntryId, ()> = ArrayHashMap::default();
 
@@ -653,7 +653,7 @@ impl Task {
 
         // SAFETY: installer outlives all tasks (BACKREF)
         let installer = unsafe { &*self.installer };
-        installer.store.entries.items().step[self.entry_id.get()]
+        installer.store.entries.items_step()[self.entry_id.get()]
             .store(next_step, Ordering::Release);
 
         next_step
@@ -699,15 +699,15 @@ impl Task {
         let pkg_script_lists = pkgs.items_scripts();
 
         let entries = installer.store.entries.slice();
-        let entry_node_ids = entries.items().node_id;
-        let entry_dependencies = entries.items().dependencies;
-        let entry_steps = entries.items().step;
-        let entry_scripts = entries.items().scripts;
-        let entry_hoisted = entries.items().hoisted;
+        let entry_node_ids = entries.items_node_id();
+        let entry_dependencies = entries.items_dependencies();
+        let entry_steps = entries.items_step();
+        let entry_scripts = entries.items_scripts();
+        let entry_hoisted = entries.items_hoisted();
 
         let nodes = installer.store.nodes.slice();
-        let node_pkg_ids = nodes.items().pkg_id;
-        let node_dep_ids = nodes.items().dep_id;
+        let node_pkg_ids = nodes.items_pkg_id();
+        let node_dep_ids = nodes.items_dep_id();
 
         let node_id = entry_node_ids[self.entry_id.get()];
         let pkg_id = node_pkg_ids[node_id.get()];
@@ -1715,7 +1715,7 @@ impl Task {
                         // SAFETY: this Task is the sole owner of its `entry_id`'s
                         // `scripts` slot; read-only check.
                         unsafe {
-                            (*installer.store.entries.items().scripts[this.entry_id.get()].get())
+                            (*installer.store.entries.items_scripts()[this.entry_id.get()].get())
                                 .is_some()
                         },
                         core::panic::Location::caller(),
@@ -1729,7 +1729,7 @@ impl Task {
                 if Environment::CI_ASSERT {
                     // .monotonic is okay because this should have been set by this thread.
                     bun_core::assert_with_location(
-                        installer.store.entries.items().step[this.entry_id.get()]
+                        installer.store.entries.items_step()[this.entry_id.get()]
                             .load(Ordering::Relaxed)
                             == Step::Done,
                         core::panic::Location::caller(),
@@ -1743,7 +1743,7 @@ impl Task {
                 if Environment::CI_ASSERT {
                     // .monotonic is okay because this should have been set by this thread.
                     bun_core::assert_with_location(
-                        installer.store.entries.items().step[this.entry_id.get()]
+                        installer.store.entries.items_step()[this.entry_id.get()]
                             .load(Ordering::Relaxed)
                             == Step::CheckIfBlocked,
                         core::panic::Location::caller(),
@@ -1757,13 +1757,13 @@ impl Task {
                 if Environment::CI_ASSERT {
                     // .monotonic is okay because this should have been set by this thread.
                     bun_core::assert_with_location(
-                        installer.store.entries.items().step[this.entry_id.get()]
+                        installer.store.entries.items_step()[this.entry_id.get()]
                             .load(Ordering::Relaxed)
                             != Step::Done,
                         core::panic::Location::caller(),
                     );
                 }
-                installer.store.entries.items().step[this.entry_id.get()]
+                installer.store.entries.items_step()[this.entry_id.get()]
                     .store(Step::Done, Ordering::Release);
                 this.result = Result::Err(err);
                 installer.task_queue.push(this);
@@ -1866,8 +1866,8 @@ impl<'a> Installer<'a> {
     pub fn link_to_hidden_node_modules(&self, entry_id: StoreEntryId) {
         let string_buf = self.lockfile.buffers.string_bytes.as_slice();
 
-        let node_id = self.store.entries.items().node_id[entry_id.get()];
-        let pkg_id = self.store.nodes.items().pkg_id[node_id.get()];
+        let node_id = self.store.entries.items_node_id()[entry_id.get()];
+        let pkg_id = self.store.nodes.items_pkg_id()[node_id.get()];
         let pkg_name = self.lockfile.packages.items_name()[pkg_id];
 
         let mut hidden_hoisted_node_modules = AutoPath::init();
@@ -1976,12 +1976,12 @@ impl<'a> Installer<'a> {
         let extern_string_buf = lockfile.buffers.extern_strings.as_slice();
 
         let entries = store.entries.slice();
-        let entry_node_ids: &[StoreNodeId] = entries.items().node_id;
-        let entry_deps = entries.items().dependencies;
+        let entry_node_ids: &[StoreNodeId] = entries.items_node_id();
+        let entry_deps = entries.items_dependencies();
 
         let nodes = store.nodes.slice();
-        let node_pkg_ids = nodes.items().pkg_id;
-        let node_dep_ids = nodes.items().dep_id;
+        let node_pkg_ids = nodes.items_pkg_id();
+        let node_dep_ids = nodes.items_dep_id();
 
         let pkgs = lockfile.packages.slice();
         let pkg_name_hashes = pkgs.items_name_hash();
@@ -2095,7 +2095,7 @@ impl<'a> Installer<'a> {
         if self.global_store_path.is_none() {
             return false;
         }
-        self.store.entries.items().entry_hash[entry_id.get()] != 0
+        self.store.entries.items_entry_hash()[entry_id.get()] != 0
     }
 
     /// Absolute path to the global virtual-store directory for `entry_id`:
@@ -2297,10 +2297,10 @@ impl<'a> Installer<'a> {
         let string_buf = self.lockfile.buffers.string_bytes.as_slice();
 
         let entries = self.store.entries.slice();
-        let entry_node_ids = entries.items().node_id;
+        let entry_node_ids = entries.items_node_id();
 
         let nodes = self.store.nodes.slice();
-        let node_pkg_ids = nodes.items().pkg_id;
+        let node_pkg_ids = nodes.items_pkg_id();
 
         let pkgs = self.lockfile.packages.slice();
         let pkg_resolutions = pkgs.items_resolution();
@@ -2355,8 +2355,8 @@ impl<'a> Installer<'a> {
     ) {
         if self.entry_uses_global_store(entry_id) {
             let string_buf = self.lockfile.buffers.string_bytes.as_slice();
-            let node_id = self.store.entries.items().node_id[entry_id.get()];
-            let pkg_id = self.store.nodes.items().pkg_id[node_id.get()];
+            let node_id = self.store.entries.items_node_id()[entry_id.get()];
+            let pkg_id = self.store.nodes.items_pkg_id()[node_id.get()];
             let pkg_name = self.lockfile.packages.items_name()[pkg_id];
             self.append_global_store_entry_path(buf, entry_id, which);
             buf.append(b"node_modules");
@@ -2370,11 +2370,11 @@ impl<'a> Installer<'a> {
         let string_buf = self.lockfile.buffers.string_bytes.as_slice();
 
         let entries = self.store.entries.slice();
-        let entry_node_ids = entries.items().node_id;
+        let entry_node_ids = entries.items_node_id();
 
         let nodes = self.store.nodes.slice();
-        let node_pkg_ids = nodes.items().pkg_id;
-        let node_dep_ids = nodes.items().dep_id;
+        let node_pkg_ids = nodes.items_pkg_id();
+        let node_dep_ids = nodes.items_dep_id();
         // let node_peers = nodes.items().peers;
 
         let pkgs = self.lockfile.packages.slice();

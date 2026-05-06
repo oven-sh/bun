@@ -11,6 +11,35 @@ use crate::{Features, PackageManager, PackageNameHash};
 use crate::repository::Repository;
 
 // ──────────────────────────────────────────────────────────────────────────
+// NpmAliasRegistry — abstracts over the two `PackageManager` types (stub at
+// `crate::PackageManager` and real at `crate::package_manager_real::PackageManager`)
+// so `parse_with_tag` can record `npm:` aliases without depending on either
+// concrete struct. Zig threads `*PackageManager` directly; Rust splits the
+// type during the port, so we expose only the one method `parse` actually
+// touches (`known_npm_aliases.put`).
+// ──────────────────────────────────────────────────────────────────────────
+
+pub trait NpmAliasRegistry {
+    fn record_npm_alias(&mut self, hash: PackageNameHash, version: &Version);
+}
+
+impl NpmAliasRegistry for PackageManager {
+    #[inline]
+    fn record_npm_alias(&mut self, hash: PackageNameHash, _version: &Version) {
+        // Stub PM stores `()` per `lib.rs` field type.
+        self.known_npm_aliases.insert(hash, ());
+    }
+}
+
+impl NpmAliasRegistry for crate::package_manager_real::PackageManager {
+    #[inline]
+    fn record_npm_alias(&mut self, hash: PackageNameHash, version: &Version) {
+        // Real PM stores the parsed `Version` (Zig: `pm.known_npm_aliases.put(hash, result)`).
+        self.known_npm_aliases.insert(hash, Clone::clone(version));
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // URI
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -93,15 +122,20 @@ impl Dependency {
 
     /// Forwards to the module-level `parse_with_optional_tag`
     /// (Zig: `Dependency.parseWithOptionalTag`).
+    ///
+    /// `alias_hash`, `log`, and `package_manager` accept either the bare value
+    /// (`u64` / `&mut Log` / `&mut PackageManager`) or `Option<_>` — Zig callers
+    /// pass both forms (`null` vs pointer) and the port keeps that ergonomics
+    /// via `impl Into<Option<_>>`.
     #[inline]
-    pub fn parse_with_optional_tag(
+    pub fn parse_with_optional_tag<'a, 'b>(
         alias: String,
-        alias_hash: Option<PackageNameHash>,
+        alias_hash: impl Into<Option<PackageNameHash>>,
         dependency: &[u8],
         tag: Option<version::Tag>,
         sliced: &SlicedString,
-        log: Option<&mut logger::Log>,
-        package_manager: Option<&mut PackageManager>,
+        log: impl Into<Option<&'a mut logger::Log>>,
+        package_manager: impl Into<Option<&'b mut PackageManager>>,
     ) -> Option<Version> {
         parse_with_optional_tag(alias, alias_hash, dependency, tag, sliced, log, package_manager)
     }
@@ -112,7 +146,7 @@ impl Dependency {
     /// "name" must be ASC so that later, when we rebuild the lockfile
     /// we insert it back in reverse order without an extra sorting pass
     pub fn is_less_than(string_buf: &[u8], lhs: &Dependency, rhs: &Dependency) -> bool {
-        let behavior = lhs.behavior.cmp(rhs.behavior);
+        let behavior = lhs.behavior.cmp(&rhs.behavior);
         if behavior != Ordering::Equal {
             return behavior == Ordering::Less;
         }

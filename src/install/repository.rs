@@ -9,9 +9,10 @@ use bun_alloc::AllocError;
 use bun_core::{self, err, Error};
 use bun_paths::{self as Path, PathBuffer};
 use bun_semver::String;
+use bun_semver::string::Buf as StringBuf;
 use bun_str::strings;
 #[allow(unused_imports)]
-use bun_sys::File;
+use bun_sys::{File, FdDirExt};
 
 use crate::dependency as Dependency;
 use crate::dependency::StringBuilderLike;

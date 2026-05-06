@@ -85,7 +85,24 @@ pub enum AnyEventLoop<'a> {
 // Inherent associated types are unstable in Rust, so expose at module level.
 pub type Task = AnyTaskWithExtraContext;
 
+impl<'a> Default for AnyEventLoop<'a> {
+    /// Stub default for `#[derive(Default)]` containers (e.g. the
+    /// `bun_install::PackageManager` stub). Real consumers always overwrite
+    /// this via `init()` / `js_current()` before use.
+    fn default() -> Self {
+        AnyEventLoop::Mini(MiniEventLoop::init())
+    }
+}
+
 impl<'a> AnyEventLoop<'a> {
+    /// Alias for [`r#loop`](Self::r#loop) so callers that already spell
+    /// `event_loop.loop_()` (Zig: `eventLoop().loop()`) compile without the
+    /// raw-identifier escape. Returns the underlying uws/libuv loop pointer.
+    #[inline]
+    pub fn loop_(&mut self) -> *mut UwsLoop {
+        self.r#loop()
+    }
+
     pub fn iteration_number(&self) -> u64 {
         match self {
             // SAFETY: vtable populated by runtime; owner is the erased EventLoop ptr.

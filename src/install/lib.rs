@@ -71,64 +71,14 @@ pub(crate) mod bun_fs {
     pub use bun_sys::fs::*;
 }
 
-/// `bun_progress` → port of the slice of `std.Progress` that `bun install`
-/// touches. Zig's `std.Progress` drives an ANSI spinner on a background
-/// thread; Bun never actually shows it (stderr is owned by `bun.Output`),
-/// it only threads `*Node` handles around for `setEstimatedTotalItems` /
-/// `completeOne`. Model `Node` as a value-type counter (Zig `Progress.Node`
-/// is `extern struct { index: OptionalIndex }` — also a small value type),
-/// and have `start` hand back a fresh detached node. Real CLI rendering, if
-/// ever wired, lives in `bun_cli`.
+/// `bun_progress` → re-export of the real `bun_core::Progress` (snapshot of
+/// pre-0.13 `std.Progress`). The earlier value-type counter shim was dropped
+/// once `ProgressStrings.rs`, `hoisted_install.rs`, `runTasks.rs` etc. started
+/// touching the full surface (`supports_ansi_escape_codes`, public `root`,
+/// `unprotected_*` atomics, `&mut Node` from `start()`); keeping a parallel
+/// type here just bifurcated `Node` identity across the crate.
 pub(crate) mod bun_progress {
-    #[derive(Default)]
-    pub struct Progress {
-        root: Node,
-    }
-    #[derive(Default, Clone, Copy)]
-    pub struct Node {
-        /// `std.Progress.Node.unprotected_estimated_total_items`
-        pub estimated_total_items: usize,
-        /// `std.Progress.Node.unprotected_completed_items`
-        pub completed_items: usize,
-    }
-    impl Progress {
-        /// Zig: `std.Progress.start(name, estimated_total_items) *Node` —
-        /// initialises the root node and returns it. Gated callers
-        /// (`hoisted_install.rs`, `isolated_install.rs`) bind the result by
-        /// value and immediately spawn children off it, so return `Node`
-        /// rather than `&mut Node` to avoid the aliasing the Zig API never
-        /// had (Zig's `*Node` is a non-exclusive pointer).
-        pub fn start(&mut self, _name: &str, estimated_total_items: usize) -> Node {
-            self.root = Node { estimated_total_items, completed_items: 0 };
-            self.root
-        }
-        /// Zig: `std.Progress.refresh()` — repaint. Bun's stderr is owned by
-        /// `bun.Output`, so this is a no-op here (matches the
-        /// `supports_ansi_escape_codes == false` path in std.Progress).
-        pub fn refresh(&mut self) {}
-        /// Zig: `std.Progress.maybeRefresh()` — debounced repaint. Same no-op
-        /// rationale as `refresh()`.
-        pub fn maybe_refresh(&mut self) {}
-    }
-    impl Node {
-        /// Zig: `Node.start(name, estimated_total_items) *Node` — spawn a
-        /// child node. Detached (non-rendering) parents return a fresh
-        /// detached child; mirror that.
-        pub fn start(&mut self, _name: &str, estimated_total_items: usize) -> Node {
-            Node { estimated_total_items, completed_items: 0 }
-        }
-        pub fn set_estimated_total_items(&mut self, count: usize) {
-            self.estimated_total_items = count;
-        }
-        pub fn complete_one(&mut self) {
-            self.completed_items += 1;
-        }
-        pub fn set_completed_items(&mut self, count: usize) {
-            self.completed_items = count;
-        }
-        pub fn end(&mut self) {}
-        pub fn activate(&mut self) {}
-    }
+    pub use bun_core::Progress::{Node, Progress};
 }
 
 /// `bun_bunfig` → config-loading entrypoint; install only needs the

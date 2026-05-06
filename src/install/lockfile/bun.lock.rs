@@ -59,6 +59,14 @@ impl core::fmt::Write for FmtBridge<'_> {
         self.0.write_all(s.as_bytes()).map_err(|_| core::fmt::Error)
     }
 }
+/// `Bin::to_json` indent callback typed against `FmtBridge` (Zig passed
+/// `Stringifier.writeIndent` directly; here the writer types differ).
+fn write_indent_fmt(w: &mut FmtBridge<'_>, indent: &mut u32) -> core::fmt::Result {
+    for _ in 0..*indent {
+        w.write_str("  ")?;
+    }
+    Ok(())
+}
 
 // PORT NOTE: Zig `String.arrayHashContext(lockfile, null)` constructs a context
 // keyed off the lockfile's string buffer. The Rust `ArrayHashMap` over
@@ -591,7 +599,15 @@ impl Stringifier {
                                 })?;
 
                                 // TODO(dylan-conway) move this to "workspaces" object
-                                pkg_bin.to_json(ToJsonStyle::SingleLine, (), buf, extern_strings, writer, &Self::write_indent)?;
+                                pkg_bin
+                                    .to_json::<_, { ToJsonStyle::SingleLine }>(
+                                        None,
+                                        buf,
+                                        extern_strings,
+                                        &mut FmtBridge(writer),
+                                        write_indent_fmt,
+                                    )
+                                    .map_err(|_| bun_core::err!("WriteFailed"))?;
 
                                 writer.write_all(b" }]")?;
                             } else {
@@ -959,7 +975,14 @@ impl Stringifier {
             } else {
                 b" \"bin\": "
             })?;
-            bin.to_json(ToJsonStyle::SingleLine, (), buf, extern_strings, writer, &Self::write_indent)?;
+            bin.to_json::<_, { ToJsonStyle::SingleLine }>(
+                None,
+                buf,
+                extern_strings,
+                &mut FmtBridge(writer),
+                write_indent_fmt,
+            )
+            .map_err(|_| bun_core::err!("WriteFailed"))?;
         }
 
         if any {
@@ -1044,7 +1067,14 @@ impl Stringifier {
                 } else {
                     writer.write_all(b"\"bin\": ")?;
                 }
-                bin.to_json(ToJsonStyle::MultiLine, indent, buf, extern_strings, writer, &Self::write_indent)?;
+                bin.to_json::<_, { ToJsonStyle::MultiLine }>(
+                    Some(indent),
+                    buf,
+                    extern_strings,
+                    &mut FmtBridge(writer),
+                    write_indent_fmt,
+                )
+                .map_err(|_| bun_core::err!("WriteFailed"))?;
             }
 
             any = true;

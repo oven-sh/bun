@@ -60,9 +60,9 @@ impl ExtractTarball {
         // the hash stored in the lockfile is forwarded via this.integrity and verified
         // above, preventing a compromised server from silently swapping the tarball.
         match self.resolution.tag {
-            Resolution::Tag::Github
-            | Resolution::Tag::RemoteTarball
-            | Resolution::Tag::LocalTarball => {
+            ResolutionTag::Github
+            | ResolutionTag::RemoteTarball
+            | ResolutionTag::LocalTarball => {
                 if self.integrity.tag.is_supported() {
                     // Re-installing with an existing lockfile: integrity was already
                     // verified above, propagate the known value to ExtractData so that
@@ -92,7 +92,13 @@ pub fn build_url(
         full_name_,
         version,
         string_buf,
-        |args| FileSystem::instance().dirname_store.print(args),
+        // Zig: `FileSystem.DirnameStore.print(fmt, args)` formats then interns.
+        // The Rust `DirnameStore` exposes only `append`; format to a temporary
+        // String and intern the bytes.
+        |args| {
+            let s = std::fmt::format(args);
+            FileSystem::instance().dirname_store().append(s.as_bytes())
+        },
     )
 }
 
@@ -112,7 +118,7 @@ pub fn build_url_with_printer<R, E>(
     let mut name = full_name;
     if name[0] == b'@' {
         if let Some(i) = strings::index_of_char(name, b'/') {
-            name = &name[i + 1..];
+            name = &name[i as usize + 1..];
         }
     }
 
@@ -176,7 +182,9 @@ thread_local! {
 }
 
 pub fn uses_streaming_extraction() -> bool {
-    !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_STREAMING_INSTALL.get()
+    !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_STREAMING_INSTALL
+        .get()
+        .unwrap_or(false)
 }
 
 impl ExtractTarball {
@@ -205,7 +213,7 @@ impl ExtractTarball {
                 }
             } else if tmp[0] == b'@' {
                 if let Some(i) = strings::index_of_char(tmp, b'/') {
-                    tmp = &tmp[i + 1..];
+                    tmp = &tmp[i as usize + 1..];
                 }
             }
 
@@ -234,7 +242,7 @@ impl ExtractTarball {
         let mut resolved: &[u8] = b"";
         let tmpname = FileSystem::tmpname(
             &basename[0..basename.len().min(32)],
-            tmpname_buf.as_bytes_mut(),
+            &mut tmpname_buf.0,
             bun_core::fast_random(),
         )?;
         {

@@ -3,11 +3,12 @@
 //! linker mode without depending on the full package manager.
 
 #[repr(u8)]
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
 pub enum NodeLinker {
     // If workspaces are used: isolated
     // If not: hoisted
     // Used when nodeLinker is absent from package.json/bun.lock/bun.lockb
+    #[default]
     Auto,
 
     Hoisted,

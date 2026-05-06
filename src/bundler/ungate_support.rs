@@ -146,44 +146,55 @@ pub mod bun_css {
         pub struct PrinterOptions;
         pub struct Printer;
     }
-    /// Lifetime-erased `LayerName` for `Chunk::Layers`. The real
-    /// `bun_css::rules::layer::LayerName<'bump>` borrows the arena; until
-    /// `Chunk` threads `'bump`, this owns its parts.
-    pub struct LayerName {
-        pub v: BabyList<Box<[u8]>>,
-    }
-    // PORT NOTE: `BabyList<T>` has no blanket `Clone`; manual deep-clone via
-    // `BabyList::from_slice` (matches Zig `deepCloneInfallible`). OOM on a
-    // tiny layer-name list is unrecoverable — `handle_oom`.
-    impl Clone for LayerName {
-        fn clone(&self) -> Self {
-            Self { v: bun_core::handle_oom(BabyList::from_slice(self.v.slice())) }
+    /// `LayerName` for `Chunk::Layers`. With `feature = "css"` this is the
+    /// real `bun_css::css_parser::LayerName` (its `'bump` lifetime is already
+    /// laundered to `'static` in `rules/layer.rs`, so no thread needed here).
+    /// Without the feature, the `no_css` shadow below provides a
+    /// type-compatible owning stand-in so `Chunk` / `Layers` still build.
+    #[cfg(feature = "css")]
+    pub use ::bun_css::css_parser::LayerName;
+    #[cfg(not(feature = "css"))]
+    pub use self::no_css_layer::LayerName;
+    #[cfg(not(feature = "css"))]
+    mod no_css_layer {
+        use bun_collections::BabyList;
+
+        pub struct LayerName {
+            pub v: BabyList<Box<[u8]>>,
         }
-    }
-    impl LayerName {
-        /// Mirror of `bun_css::LayerName::eql` for the lifetime-erased shadow
-        /// type. Compares each dot-segment by bytes.
-        pub fn eql(&self, rhs: &LayerName) -> bool {
-            if self.v.len != rhs.v.len {
-                return false;
+        // PORT NOTE: `BabyList<T>` has no blanket `Clone`; manual deep-clone via
+        // `BabyList::from_slice` (matches Zig `deepCloneInfallible`). OOM on a
+        // tiny layer-name list is unrecoverable — `handle_oom`.
+        impl Clone for LayerName {
+            fn clone(&self) -> Self {
+                Self { v: bun_core::handle_oom(BabyList::from_slice(self.v.slice())) }
             }
-            for (l, r) in self.v.slice().iter().zip(rhs.v.slice()) {
-                if **l != **r {
+        }
+        impl LayerName {
+            /// Mirror of `bun_css::LayerName::eql` for the lifetime-erased shadow
+            /// type. Compares each dot-segment by bytes.
+            pub fn eql(&self, rhs: &LayerName) -> bool {
+                if self.v.len != rhs.v.len {
                     return false;
                 }
-            }
-            true
-        }
-    }
-    impl core::fmt::Display for LayerName {
-        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-            for (i, part) in self.v.slice().iter().enumerate() {
-                if i > 0 {
-                    f.write_str(".")?;
+                for (l, r) in self.v.slice().iter().zip(rhs.v.slice()) {
+                    if **l != **r {
+                        return false;
+                    }
                 }
-                f.write_str(&String::from_utf8_lossy(part))?;
+                true
             }
-            Ok(())
+        }
+        impl core::fmt::Display for LayerName {
+            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                for (i, part) in self.v.slice().iter().enumerate() {
+                    if i > 0 {
+                        f.write_str(".")?;
+                    }
+                    f.write_str(&String::from_utf8_lossy(part))?;
+                }
+                Ok(())
+            }
         }
     }
 }

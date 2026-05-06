@@ -40,6 +40,16 @@ impl PartialEq for LayerName {
 }
 impl Eq for LayerName {}
 
+// PORT NOTE: trait `Clone` (not just inherent `deep_clone`) so the bundler's
+// `Chunk::Layers::to_owned` can `deep_clone_with(|l| l.clone())`. Segments are
+// arena-borrowed `&'static [u8]` (Copy), so this is the same shallow
+// `SmallList` copy as `deep_clone` / `clone_with_import_records`.
+impl Clone for LayerName {
+    fn clone(&self) -> Self {
+        LayerName { v: self.v.clone() }
+    }
+}
+
 impl LayerName {
     pub fn clone_with_import_records(
         &self,

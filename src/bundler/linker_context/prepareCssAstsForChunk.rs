@@ -272,8 +272,21 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                                         )
                                     },
                                 }),
-                                Some(&c.mangled_props),
-                                &c.graph.symbols,
+                                // CYCLEBREAK: `LocalsResultsMap` = `ArrayHashMap<bun_logger::Ref, *const [u8]>`;
+                                // `c.mangled_props` is `ArrayHashMap<bun_js_parser::Ref, Box<[u8]>>`. Both `Ref`s
+                                // are newtype-`u64` and `Box<[u8]>` / `*const [u8]` are both `(ptr, len)` fat
+                                // pointers — same layout, used read-only by the printer.
+                                Some(unsafe {
+                                    &*(&c.mangled_props as *const _ as *const LocalsResultsMap)
+                                }),
+                                // CYCLEBREAK: `to_css` takes `&bun_logger::symbol::Map`; `c.graph.symbols`
+                                // is `bun_js_parser::ast::symbol::Map`. Both are
+                                // `{ symbols_for_source: NestedList }` (`UnsafeCell<T>` is
+                                // `repr(transparent)`), so layouts match — bridge by pointer cast.
+                                unsafe {
+                                    &*(&c.graph.symbols as *const _
+                                        as *const bun_logger::symbol::Map)
+                                },
                             ) {
                                 Ok(v) => v,
                                 Err(e) => {
@@ -462,7 +475,11 @@ fn wrap_rules_with_conditions(
         // Generate "@layer" wrappers. Note that empty "@layer" rules still have
         // a side effect (they set the layer order) so they cannot be removed.
         if let Some(l) = &item.layer {
-            let layer = l.v.clone();
+            // SAFETY: Zig `const layer = l.v;` — by-value `?LayerName` copy. The
+            // `SmallList<&'static [u8],1>` payload is arena-backed and never
+            // freed via this view, so the bitwise duplicate is sound (same as
+            // every other `ptr::read` shallow-copy in this file).
+            let layer = unsafe { core::ptr::read(&l.v) };
             let mut do_block_rule = true;
             if ast.rules.v.is_empty() {
                 if l.v.is_none() {

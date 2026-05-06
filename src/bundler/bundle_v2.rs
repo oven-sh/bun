@@ -1210,8 +1210,9 @@ impl<'a> BundleV2<'a> {
         // `BundleV2`. Allocate via Box::leak (lifetime tied to `graph.heap` in
         // practice; freed in `deinit_without_freeing_arena`). The body mirrors
         // bundle_v2.zig:310-360.
-        let _this_transpiler: *mut Transpiler<'a> = &mut *self.transpiler;
         todo!("blocked_on: Transpiler::shallow_clone_for_client");
+        #[allow(unreachable_code)]
+        let this_transpiler: &mut Transpiler<'a> = unsafe { &mut *(&mut *self.transpiler as *mut _) };
         #[allow(unreachable_code)]
         let client_transpiler: &'a mut Transpiler<'a> = unreachable!();
 

@@ -119,7 +119,16 @@ impl<Owner: ChannelOwner> Channel<Owner> {
     /// `SocketKind` value of its own. The per-file isolation swap skips
     /// `rare.test_parallel_ipc_group` so the coordinator link survives.
     fn ensure_posix_group(vm: &mut VirtualMachine) -> &mut uws::SocketGroup {
-        let g = vm.rare_data().test_parallel_ipc_group(vm);
+        // PORT NOTE: borrowck split — `rare_data()` mutably borrows `vm`, but
+        // the group accessor needs `vm` again for `uws_loop()`. The two touch
+        // disjoint storage (the `Box<RareData>` payload vs the loop pointer
+        // field), so a raw-pointer reborrow is sound here. Mirrors Zig's
+        // `vm.rareData().testParallelIpcGroup(vm)` which has no such aliasing
+        // restriction.
+        let rd: *mut bun_jsc::rare_data::RareData = vm.rare_data();
+        // SAFETY: `rd` points into `vm`'s boxed RareData, which outlives this
+        // call; the accessor only reads `vm.uws_loop()` (a separate field).
+        let g = unsafe { (*rd).test_parallel_ipc_group(vm) };
         // First Owner to call wins the vtable; coordinator and worker run in
         // separate processes so there's never more than one Owner type sharing
         // this group.

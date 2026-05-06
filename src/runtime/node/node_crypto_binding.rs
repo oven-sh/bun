@@ -802,7 +802,7 @@ pub mod random {
             // underflow. Defer to the `buf.byte_len - offset` default below instead.
             size_value = JSValue::UNDEFINED;
         } else {
-            let _ = validators::validate_function(global, b"callback", callback)?;
+            let _ = validators::validate_function(global, "callback", callback)?;
             offset = assert_offset(global, offset_value, element_size, buf.byte_len)?;
         }
 
@@ -944,11 +944,11 @@ impl Scrypt {
         let Some(salt) =
             StringOrBuffer::from_js_maybe_async(global, salt_value, IS_ASYNC, true)?
         else {
-            return global.throw_invalid_argument_type_value(
+            return Err(global.throw_invalid_argument_type_value(
                 "salt",
                 "string, ArrayBuffer, Buffer, TypedArray, or DataView",
                 salt_value,
-            );
+            ));
         };
 
         let salt = scopeguard::guard(salt, |s| {

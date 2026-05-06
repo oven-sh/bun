@@ -1522,7 +1522,7 @@ mod phase_a_draft {
             }
 
             if let Some(public_hoist_pattern_expr) = expr_get(install_obj, b"publicHoistPattern") {
-                let _ = (&public_hoist_pattern_expr, self.log, self.source);
+                let _ = (&public_hoist_pattern_expr, &self.log, &self.source);
                 // `bun_install::PnpmMatcher::from_expr` consumes a
                 // `bun_js_parser::Expr` and produces `bun_install::PnpmMatcher`,
                 // but `install.public_hoist_pattern` holds the CYCLEBREAK
@@ -1531,7 +1531,7 @@ mod phase_a_draft {
                     todo!("blocked_on: bun_install::PnpmMatcher::from_expr / api::PnpmMatcher bridge");
             }
             if let Some(hoist_pattern_expr) = expr_get(install_obj, b"hoistPattern") {
-                let _ = (&hoist_pattern_expr, self.log, self.source);
+                let _ = (&hoist_pattern_expr, &self.log, &self.source);
                 install.hoist_pattern =
                     todo!("blocked_on: bun_install::PnpmMatcher::from_expr / api::PnpmMatcher bridge");
             }

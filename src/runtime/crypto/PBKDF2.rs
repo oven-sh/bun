@@ -371,11 +371,13 @@ impl Job {
     pub fn create(
         vm: *mut VirtualMachine,
         global_this: &JSGlobalObject,
-        data: &PBKDF2,
+        // Zig: `data: *const PBKDF2` then `pbkdf2 = data.*` (struct copy). `PBKDF2` is not
+        // `Copy` in Rust (owns `StringOrBuffer`s), so take by value — the sole caller
+        // (`node_crypto_binding::pbkdf2`) owns it and hands it over.
+        data: PBKDF2,
     ) -> *mut Job {
         let job = Box::into_raw(Box::new(Job {
-            pbkdf2: *data,
-            // TODO(port): `PBKDF2` may not be `Copy` (StringOrBuffer fields); Zig moved by value.
+            pbkdf2: data,
             output: Vec::new(),
             task: WorkPoolTask {
                 node: Default::default(),

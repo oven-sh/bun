@@ -1133,13 +1133,13 @@ impl Framework {
         Ok(framework)
     }
 
-    pub fn init_transpiler(
+    pub fn init_transpiler<'a>(
         &mut self,
-        arena: &Arena,
+        arena: &'a Arena,
         log: &mut logger::Log,
         mode: Mode,
         renderer: Graph,
-        out: &mut core::mem::MaybeUninit<bun_bundler::Transpiler>,
+        out: &mut core::mem::MaybeUninit<bun_bundler::Transpiler<'a>>,
         bundler_options: &BuildConfigSubset,
     ) -> Result<(), bun_core::Error> {
         let source_map: bun_bundler::options::SourceMapOption = match mode {

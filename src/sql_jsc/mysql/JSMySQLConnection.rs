@@ -20,6 +20,7 @@ use bun_string::strings;
 use bun_uws::{self as uws, AnySocket, NewSocketHandler, SocketTCP};
 
 use crate::mysql::protocol::any_mysql_error_jsc::mysql_error_to_js;
+use crate::mysql::protocol::error_packet_jsc::ErrorPacketJsc;
 use super::js_mysql_query::JSMySQLQuery;
 // PORT NOTE: `my_sql_connection::MySQLConnection` (the protocol-layer struct)
 // is intentionally NOT imported by name — that ident is taken in this module's
@@ -316,9 +317,8 @@ impl JSMySQLConnection {
         event_loop.enter();
         let _loop_guard = scopeguard::guard((), |_| event_loop.exit());
         self.ensure_js_value_is_alive();
-        if let Err(e) = self.connection.flush_queue() {
-            debug_assert_eq!(e, err!("AuthenticationFailed"));
-            self.fail(b"Authentication failed", e);
+        if let Err(my_sql_connection::FlushQueueError::AuthenticationFailed) = self.connection.flush_queue() {
+            self.fail(b"Authentication failed", AnyMySQLErrorT::AuthenticationFailed);
             return;
         }
     }
@@ -816,8 +816,8 @@ impl JSMySQLConnection {
         if js_error.is_empty() {
             js_error = mysql_error_to_js(
                 self.global_object,
-                b"Connection closed",
-                err!("ConnectionClosed"),
+                Some(b"Connection closed"),
+                AnyMySQLErrorT::ConnectionClosed,
             );
         }
         js_error.ensure_still_alive();
@@ -834,7 +834,7 @@ impl JSMySQLConnection {
     }
 
     fn fail(&mut self, message: &[u8], err: AnyMySQLErrorT) {
-        let instance = mysql_error_to_js(self.global_object, message, err);
+        let instance = mysql_error_to_js(self.global_object, Some(message), err);
         self.fail_with_js_value(instance);
     }
 
@@ -870,10 +870,10 @@ impl JSMySQLConnection {
             binary: !request.is_simple(),
             raw: result_mode == ResultMode::Raw,
             bigint: request.is_bigint_supported(),
-            ..Default::default()
+            values: Box::default(),
         };
         let mut structure: JSValue = JSValue::UNDEFINED;
-        let mut cached_structure: Option<CachedStructure> = None;
+        let mut cached_structure: Option<&CachedStructure> = None;
         match result_mode {
             ResultMode::Objects => {
                 cached_structure = if let Some(value) = self.js_value.try_get() {
@@ -882,7 +882,6 @@ impl JSMySQLConnection {
                     None
                 };
                 structure = cached_structure
-                    .as_ref()
                     .unwrap()
                     .js_value()
                     .unwrap_or(JSValue::UNDEFINED);
@@ -893,7 +892,7 @@ impl JSMySQLConnection {
         }
         // defer row.deinit(allocator) — Drop on ResultSet::Row
         if let Err(e) = row.decode(reader) {
-            if e == err!("ShortRead") {
+            if e == AnyMySQLErrorT::ShortRead {
                 return Err(OnResultRowError::ShortRead);
             }
             self.connection.queue.mark_current_request_as_finished(request);
@@ -907,7 +906,7 @@ impl JSMySQLConnection {
                 self.global_object,
                 pending_value,
                 structure,
-                &statement.fields_flags,
+                statement.fields_flags,
                 result_mode,
                 cached_structure,
             )
@@ -1006,9 +1005,10 @@ impl<const SSL: bool> SocketHandler<SSL> {
 
     pub fn on_open(this: &mut JSMySQLConnection, s: NewSocketHandler<SSL>) {
         let socket = Self::_socket(s);
+        let is_tcp = matches!(socket, AnySocket::SocketTcp(_));
         this.connection.set_socket(socket);
 
-        if matches!(socket, AnySocket::SocketTcp(_)) {
+        if is_tcp {
             // This handshake is not TLS handleshake is actually the MySQL handshake
             // When a connection is upgraded to TLS, the onOpen callback is called again and at this moment we dont wanna to change the status to handshaking
             this.connection.status = my_sql_connection::Status::Handshaking;
@@ -1033,10 +1033,12 @@ impl<const SSL: bool> SocketHandler<SSL> {
             }
         };
         if !handshake_was_successful {
-            let Ok(v) = ssl_error.to_js(this.global_object) else {
-                return;
-            };
-            this.fail_with_js_value(v);
+            // TODO(port): blocked_on us_bun_verify_error_t::to_js — bun_runtime
+            // dep is gated (see Cargo.toml); `verify_error_to_js` lives in
+            // `bun_runtime::socket::uws_jsc`. Until that crate is green, fail
+            // with a generic ConnectionClosed instead of the per-field SSL error.
+            let _ = &ssl_error;
+            this.fail(b"TLS handshake failed", AnyMySQLErrorT::ConnectionClosed);
         }
     }
 
@@ -1051,7 +1053,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         let p: *mut JSMySQLConnection = this;
         // SAFETY: `p` from live `&mut this`; paired with the `ref_()` in on_open.
         let _guard = scopeguard::guard((), move |_| unsafe { JSMySQLConnection::deref(p) });
-        this.fail(b"Connection closed", err!("ConnectionClosed"));
+        this.fail(b"Connection closed", AnyMySQLErrorT::ConnectionClosed);
     }
 
     pub fn on_end(_: &mut JSMySQLConnection, socket: NewSocketHandler<SSL>) {
@@ -1061,11 +1063,11 @@ impl<const SSL: bool> SocketHandler<SSL> {
 
     pub fn on_connect_error(this: &mut JSMySQLConnection, _: NewSocketHandler<SSL>, _: i32) {
         // TODO: proper propagation of the error
-        this.fail(b"Connection closed", err!("ConnectionClosed"));
+        this.fail(b"Connection closed", AnyMySQLErrorT::ConnectionClosed);
     }
 
     pub fn on_timeout(this: &mut JSMySQLConnection, _: NewSocketHandler<SSL>) {
-        this.fail(b"Connection timeout", err!("ConnectionTimedOut"));
+        this.fail(b"Connection timeout", AnyMySQLErrorT::ConnectionTimedOut);
     }
 
     pub fn on_data(this: &mut JSMySQLConnection, _: NewSocketHandler<SSL>, data: &[u8]) {
@@ -1124,6 +1126,14 @@ impl core::error::Error for OnResultRowError {}
 impl From<OnResultRowError> for bun_core::Error {
     fn from(e: OnResultRowError) -> Self {
         bun_core::Error::from_name(<&'static str>::from(&e))
+    }
+}
+impl From<OnResultRowError> for AnyMySQLErrorT {
+    fn from(e: OnResultRowError) -> Self {
+        match e {
+            OnResultRowError::ShortRead => AnyMySQLErrorT::ShortRead,
+            OnResultRowError::JSError => AnyMySQLErrorT::JSError,
+        }
     }
 }
 

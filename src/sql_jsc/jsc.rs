@@ -900,13 +900,22 @@ pub struct JsRef {
     strong: StrongOptional,
 }
 impl JsRef {
-    pub fn weak(value: JSValue) -> Self { Self { value, strong: StrongOptional::empty() } }
+    /// JSRef.zig:105 — `pub fn empty()` — weak ref to `.zero`.
+    pub fn empty() -> Self { Self { value: JSValue::ZERO, strong: StrongOptional::empty() } }
+    /// JSRef.zig:95 — `pub fn initWeak(value)`.
+    pub fn init_weak(value: JSValue) -> Self { Self { value, strong: StrongOptional::empty() } }
+    pub fn weak(value: JSValue) -> Self { Self::init_weak(value) }
     pub fn get(&self) -> JSValue { self.value }
     pub fn try_get(&self) -> Option<JSValue> {
         if self.value.is_empty_or_undefined_or_null() { None } else { Some(self.value) }
     }
+    /// JSRef.zig:174 — `pub fn isNotEmpty()`.
+    pub fn is_not_empty(&self) -> bool { !self.value.is_empty_or_undefined_or_null() }
+    /// JSRef.zig:183 — `pub fn isStrong()`.
+    pub fn is_strong(&self) -> bool { self.strong.has() }
     pub fn set_weak(&mut self, value: JSValue) { self.value = value; }
-    pub fn set_strong(&mut self, global: &JSGlobalObject, value: JSValue) {
+    /// JSRef.zig:130 — `pub fn setStrong(this, value, globalThis)`.
+    pub fn set_strong(&mut self, value: JSValue, global: &JSGlobalObject) {
         debug_assert!(!value.is_empty_or_undefined_or_null());
         self.value = value;
         self.strong.set(global, value);
@@ -1045,7 +1054,7 @@ pub struct AutoFlusher {
 impl AutoFlusher {
     /// AutoFlusher.zig: `registerDeferredMicrotaskWithTypeUnchecked` — posts
     /// `(this, Type.onAutoFlush)` into `vm.eventLoop().deferred_tasks`.
-    pub fn register_deferred_microtask_with_type_unchecked<T>(this: *mut T, vm: &mut VirtualMachine) {
+    pub fn register_deferred_microtask_with_type_unchecked<T>(this: *mut T, vm: &VirtualMachine) {
         // SAFETY: `vm` is live; `this` is a live `*mut T` whose `auto_flusher`
         // field has `registered == false` (caller-checked). The fn ptr ABI is
         // `fn(*mut c_void) -> bool` — identical to `fn(*mut T) -> bool` for a

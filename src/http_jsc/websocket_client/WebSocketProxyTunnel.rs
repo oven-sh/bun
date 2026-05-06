@@ -56,8 +56,8 @@ impl UpgradeClientUnion {
     pub fn handle_decrypted_data(&self, data: &[u8]) {
         match self {
             // SAFETY: BACKREF — caller (WebSocketUpgradeClient) outlives the tunnel during handshake phase
-            UpgradeClientUnion::Http(client) => unsafe { (**client).handle_decrypted_data(data) },
-            UpgradeClientUnion::Https(client) => unsafe { (**client).handle_decrypted_data(data) },
+            UpgradeClientUnion::Http(client) => unsafe { HttpUpgradeClient::handle_decrypted_data(*client, data) },
+            UpgradeClientUnion::Https(client) => unsafe { HttpsUpgradeClient::handle_decrypted_data(*client, data) },
             UpgradeClientUnion::None => {}
         }
     }
@@ -65,8 +65,8 @@ impl UpgradeClientUnion {
     pub fn terminate(&self, code: ErrorCode) {
         match self {
             // SAFETY: BACKREF — caller (WebSocketUpgradeClient) outlives the tunnel during handshake phase
-            UpgradeClientUnion::Http(client) => unsafe { (**client).terminate(code) },
-            UpgradeClientUnion::Https(client) => unsafe { (**client).terminate(code) },
+            UpgradeClientUnion::Http(client) => unsafe { HttpUpgradeClient::terminate(*client, code) },
+            UpgradeClientUnion::Https(client) => unsafe { HttpsUpgradeClient::terminate(*client, code) },
             UpgradeClientUnion::None => {}
         }
     }
@@ -74,8 +74,8 @@ impl UpgradeClientUnion {
     pub fn on_proxy_tls_handshake_complete(&self) {
         match self {
             // SAFETY: BACKREF — caller (WebSocketUpgradeClient) outlives the tunnel during handshake phase
-            UpgradeClientUnion::Http(client) => unsafe { (**client).on_proxy_tls_handshake_complete() },
-            UpgradeClientUnion::Https(client) => unsafe { (**client).on_proxy_tls_handshake_complete() },
+            UpgradeClientUnion::Http(client) => unsafe { HttpUpgradeClient::on_proxy_tls_handshake_complete(*client) },
+            UpgradeClientUnion::Https(client) => unsafe { HttpsUpgradeClient::on_proxy_tls_handshake_complete(*client) },
             UpgradeClientUnion::None => {}
         }
     }
@@ -242,7 +242,8 @@ impl WebSocketProxyTunnel {
                 on_close: Self::on_close,
                 write: Self::write_encrypted,
             },
-        )?;
+        )
+        .map_err(|_| bun_core::err!("InvalidOptions"))?;
 
         // SAFETY: caller contract — `this` is live. Short-lived raw deref to assign
         // the field; no `&mut Self` is bound across the re-entrant `start*()` below.
@@ -278,8 +279,10 @@ impl WebSocketProxyTunnel {
                 if let Some(hostname) = this.sni_hostname.as_deref() {
                     if !strings::is_ip_address(hostname) {
                         // Set SNI hostname
-                        let Ok(hostname_z) = ZStr::from_bytes(hostname) else { return };
-                        ssl_ptr.configure_http_client(&hostname_z);
+                        let hostname_z = bun_core::ZBox::from_slice(hostname);
+                        // SAFETY: ssl_ptr is a live `*mut SSL` owned by the wrapper.
+                        unsafe { &mut *ssl_ptr.as_ptr() }
+                            .configure_http_client(hostname_z.as_zstr());
                         // hostname_z dropped here (owned NUL-terminated copy)
                     }
                 }
@@ -353,7 +356,8 @@ impl WebSocketProxyTunnel {
                 let t = &*this;
                 match (t.wrapper.as_ref().and_then(|w| w.ssl), t.sni_hostname.as_deref()) {
                     (Some(ssl_ptr), Some(hostname)) => {
-                        !boringssl::check_server_identity(ssl_ptr, hostname)
+                        // SAFETY: ssl_ptr is a live `*mut SSL` owned by the wrapper.
+                        !boringssl::check_server_identity(&mut *ssl_ptr.as_ptr(), hostname)
                     }
                     _ => false,
                 }
@@ -542,7 +546,7 @@ impl WebSocketProxyTunnel {
         let wrapper_ptr = unsafe { ptr::addr_of_mut!((*this).wrapper) };
         // SAFETY: deref of field projection; `this` is live.
         if let Some(w) = unsafe { (*wrapper_ptr).as_mut() } {
-            return w.write_data(data);
+            return w.write_data(data).map_err(|_| bun_core::err!("ConnectionClosed"));
         }
         Err(bun_core::err!("ConnectionClosed"))
     }

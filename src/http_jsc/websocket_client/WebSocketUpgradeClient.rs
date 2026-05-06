@@ -124,7 +124,10 @@ pub struct HTTPClient<const SSL: bool> {
     /// Heap-allocated because ownership transfers to the connected
     /// `WebSocket` after the upgrade completes (so the `SSL_CTX` outlives
     /// this struct).
-    secure: Option<SslCtxRef>,
+    // TODO(port): Zig held a strong `SslCtxRef` (RAII over `SSL_CTX_up_ref`/
+    // `SSL_CTX_free`). No such wrapper exists in `bun_uws` yet; store the raw
+    // retained pointer and release in `clear_data`/Drop callers.
+    secure: Option<*mut SslCtx>,
 
     /// Expected Sec-WebSocket-Accept value for handshake validation per RFC 6455 §4.2.2.
     /// This is base64(SHA-1(Sec-WebSocket-Key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")).
@@ -365,7 +368,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
             input_body_buf,
             to_send_len: 0,
             read_length: 0,
-            headers_buf: [picohttp::Header::default(); 128],
+            headers_buf: [picohttp::Header::ZERO; 128],
             body: Vec::new(),
             hostname: Box::default(),
             poll_ref: KeepAlive::init(),
@@ -427,46 +430,46 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // Default-TLS shares the VM-wide client SSL_CTX; a custom CA
         // builds a per-connection one that the connected WebSocket
         // inherits so it isn't rebuilt on adopt.
-        let secure_ptr: Option<&uws::SslCtx> = if SSL {
+        //
+        // CYCLEBREAK(body-gate): `RareData::default_client_ssl_ctx` and
+        // `SSLContextCache::get_or_create_opts` are gated high-tier bodies in
+        // `bun_jsc::rare_data` (their real impls live in `bun_runtime`).
+        // Until the cycle-break vtable lands, build the per-connection CTX
+        // directly via the tier-neutral `BunSocketContextOptions::create_ssl_context`
+        // for the custom-CA path, and skip the shared default-ctx cache (the
+        // adopting `SocketGroup` already provisions a default `SSL_CTX`).
+        let secure_ptr: Option<*mut uws::SslCtx> = if SSL {
             'brk: {
                 if let Some(config) = &client_ref.ssl_config {
                     if config.requires_custom_request_ctx {
                         let mut err = uws::create_bun_socket_error_t::none;
-                        // Per-VM weak cache: every `new WebSocket(wss://, {tls:{ca}})`
-                        // with the same CA shares one CTX with each other and with
-                        // any `Bun.connect`/Postgres/etc. that named it.
-                        // SAFETY: see `group` above — non-overlapping reborrow of `*vm_ptr`.
-                        let ctx = match unsafe { (*vm_ptr).rare_data() }
-                            .ssl_ctx_cache()
-                            .get_or_create_opts(config.as_usockets_for_client_verification(), &mut err)
-                        {
-                            Some(ctx) => ctx,
-                            None => {
-                                // Do NOT fall through to the default trust store — the
-                                // user passed an explicit CA/cert and BoringSSL
-                                // rejected it. Swapping in system roots would let the
-                                // connection succeed against a host the user didn't
-                                // trust. The C++ caller emits an `error` event on null.
-                                log!(
-                                    "createSSLContext failed for WebSocket: {}",
-                                    <&'static str>::from(err)
-                                );
-                                client_ref.poll_ref.unref(vm_loop_ctx(vm_ptr));
-                                // SAFETY: `client` from Box::into_raw above; sole owner.
-                                unsafe { Self::deref(client) };
-                                return None;
-                            }
+                        let ctx = config
+                            .as_usockets_for_client_verification()
+                            .create_ssl_context(&mut err);
+                        let Some(ctx) = ctx else {
+                            // Do NOT fall through to the default trust store — the
+                            // user passed an explicit CA/cert and BoringSSL
+                            // rejected it. Swapping in system roots would let the
+                            // connection succeed against a host the user didn't
+                            // trust. The C++ caller emits an `error` event on null.
+                            log!(
+                                "createSSLContext failed for WebSocket: {}",
+                                err as i32
+                            );
+                            client_ref.poll_ref.unref(vm_loop_ctx(vm_ptr));
+                            // SAFETY: `client` from Box::into_raw above; sole owner.
+                            unsafe { Self::deref(client) };
+                            return None;
                         };
                         // Owned ref; transferred to the connected WebSocket on
                         // upgrade, freed in `deinit` if we never get that far.
-                        // TODO(port): SslCtxRef ownership — `ctx` from cache should
-                        // be a retained ref; storing it and yielding a borrow.
                         client_ref.secure = Some(ctx);
-                        break 'brk client_ref.secure.as_deref();
+                        break 'brk client_ref.secure;
                     }
                 }
-                // SAFETY: see `group` above — non-overlapping reborrow of `*vm_ptr`.
-                Some(unsafe { (*vm_ptr).rare_data() }.default_client_ssl_ctx())
+                // TODO(port): high-tier — share the VM-wide default client
+                // `SSL_CTX` via `RareData::default_client_ssl_ctx` once un-gated.
+                None
             }
         } else {
             None
@@ -587,7 +590,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // cannot re-enter clear_data() while the proxy is still reachable.
         if let Some(mut proxy) = self.proxy.take() {
             if let Some(tunnel) = proxy.get_tunnel() {
-                tunnel.detach_upgrade_client();
+                // SAFETY: `proxy` holds a live ref on `tunnel`.
+                unsafe { (*tunnel.as_ptr()).detach_upgrade_client() };
             }
             drop(proxy);
         }
@@ -812,7 +816,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
     }
 
     pub fn is_same_socket(&self, socket: Socket<SSL>) -> bool {
-        socket.socket.eq(&self.tcp.socket)
+        // PORT NOTE: `InternalSocket` has no `PartialEq`; compare native handles.
+        socket.get_native_handle() == self.tcp.get_native_handle()
     }
 
     /// # Safety
@@ -830,11 +835,14 @@ impl<const SSL: bool> HTTPClient<SSL> {
             // SAFETY: short-lived `&mut` for the proxy borrow; ends before return.
             if let Some(p) = unsafe { &mut (*this).proxy } {
                 if let Some(tunnel) = p.get_tunnel() {
+                    let tp = tunnel.as_ptr();
                     // Ref the tunnel to keep it alive during this call
                     // (in case the WebSocket client closes during processing)
-                    tunnel.r#ref();
-                    let _g = scopeguard::guard((), |_| tunnel.deref());
-                    tunnel.receive(data);
+                    // SAFETY: `p` holds a live ref on `tunnel`.
+                    unsafe { (*tp).ref_() };
+                    let _g = scopeguard::guard((), move |_| unsafe { WebSocketProxyTunnel::deref(tp) });
+                    // SAFETY: ref guard above keeps the tunnel live.
+                    unsafe { WebSocketProxyTunnel::receive(tp, data) };
                 }
             }
             return;
@@ -874,7 +882,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
             // SAFETY: short-lived `&mut` for the proxy borrow.
             if let Some(p) = unsafe { &mut (*this).proxy } {
                 if let Some(tunnel) = p.get_tunnel() {
-                    tunnel.receive(data);
+                    // SAFETY: `p` holds a live ref on `tunnel`.
+                    unsafe { WebSocketProxyTunnel::receive(tunnel.as_ptr(), data) };
                     // SAFETY: balances the r#ref() above; may free `this`.
                     unsafe { Self::deref(this) };
                     return;
@@ -906,14 +915,14 @@ impl<const SSL: bool> HTTPClient<SSL> {
 
         let response = match picohttp::Response::parse(body, &mut me.headers_buf) {
             Ok(r) => r,
-            Err(picohttp::ParseError::MalformedHttpResponse) => {
+            Err(picohttp::ParseResponseError::Malformed_HTTP_Response) => {
                 // SAFETY: `me`'s last use is above; no `&mut Self` spans this call.
                 unsafe { Self::terminate(this, ErrorCode::InvalidResponse) };
                 // SAFETY: balances the r#ref() above; may free `this`.
                 unsafe { Self::deref(this) };
                 return;
             }
-            Err(picohttp::ParseError::ShortRead) => {
+            Err(picohttp::ParseResponseError::ShortRead) => {
                 if me.body.is_empty() {
                     me.body.extend_from_slice(data);
                 }
@@ -965,12 +974,12 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // Parse the response to find the end of headers
         let response = match picohttp::Response::parse(body, &mut me.headers_buf) {
             Ok(r) => r,
-            Err(picohttp::ParseError::MalformedHttpResponse) => {
+            Err(picohttp::ParseResponseError::Malformed_HTTP_Response) => {
                 // SAFETY: `me`'s last use is above; no `&mut Self` spans this call.
                 unsafe { Self::terminate(this, ErrorCode::InvalidResponse) };
                 return;
             }
-            Err(picohttp::ParseError::ShortRead) => {
+            Err(picohttp::ParseResponseError::ShortRead) => {
                 if me.body.is_empty() {
                     me.body.extend_from_slice(data);
                 }
@@ -1098,8 +1107,10 @@ impl<const SSL: bool> HTTPClient<SSL> {
         };
 
         // Start TLS handshake
-        if tunnel.start(ssl_options, initial_data).is_err() {
-            tunnel.deref();
+        // SAFETY: `tunnel` was just allocated by `init` (live, ref_count == 1).
+        if unsafe { WebSocketProxyTunnel::start(tunnel.as_ptr(), ssl_options, initial_data) }.is_err() {
+            // SAFETY: release the ref taken by `init`.
+            unsafe { WebSocketProxyTunnel::deref(tunnel.as_ptr()) };
             // SAFETY: `me`'s last use is above; no `&mut Self` spans this call.
             unsafe { Self::terminate(this, ErrorCode::ProxyTunnelFailed) };
             return;
@@ -1201,12 +1212,12 @@ impl<const SSL: bool> HTTPClient<SSL> {
 
         let response = match picohttp::Response::parse(body, &mut me.headers_buf) {
             Ok(r) => r,
-            Err(picohttp::ParseError::MalformedHttpResponse) => {
+            Err(picohttp::ParseResponseError::Malformed_HTTP_Response) => {
                 // SAFETY: `me`'s last use is above; no `&mut Self` spans this call.
                 unsafe { Self::terminate(this, ErrorCode::InvalidResponse) };
                 return;
             }
-            Err(picohttp::ParseError::ShortRead) => {
+            Err(picohttp::ParseResponseError::ShortRead) => {
                 if me.body.is_empty() {
                     me.body.extend_from_slice(data);
                 }
@@ -1238,9 +1249,9 @@ impl<const SSL: bool> HTTPClient<SSL> {
     /// (aliased `&mut`), and the success path's double `deref` may free
     /// `this` (argument-protector UB on `&mut self`).
     pub unsafe fn process_response(this: *mut Self, response: picohttp::Response, remain_buf: &[u8]) {
-        let mut upgrade_header = picohttp::Header::default();
-        let mut connection_header = picohttp::Header::default();
-        let mut websocket_accept_header = picohttp::Header::default();
+        let mut upgrade_header = picohttp::Header::ZERO;
+        let mut connection_header = picohttp::Header::ZERO;
+        let mut websocket_accept_header = picohttp::Header::ZERO;
         let mut protocol_header_seen = false;
 
         // var visited_version = false;
@@ -1566,7 +1577,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
 
             // Normal mode: pass socket directly to WebSocket client
             unsafe { (*this).tcp.detach() };
-            if let Some(native_socket) = socket.socket.get() {
+            if let uws::InternalSocket::Connected(native_socket) = socket.socket {
                 // SAFETY: live C++ back-reference.
                 unsafe {
                     (*ws).did_connect(
@@ -1621,7 +1632,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // SAFETY: short-lived `&mut` for the proxy borrow.
         if let Some(p) = unsafe { &mut (*this).proxy } {
             if let Some(tunnel) = p.get_tunnel() {
-                tunnel.on_writable();
+                // SAFETY: `p` holds a live ref on `tunnel`.
+                unsafe { WebSocketProxyTunnel::on_writable(tunnel.as_ptr()) };
                 // In .done state (after WebSocket upgrade), just handle tunnel writes
                 // SAFETY: short-lived read.
                 if unsafe { (*this).state } == State::Done {
@@ -1781,7 +1793,8 @@ fn parse_u8_dec(s: &[u8]) -> Option<u8> {
 // self-referential in Rust; instead store only the `Utf8Slice` array (len =
 // 2*count, names at even indices, values at odd) and yield pairs via `iter()`.
 struct Headers8Bit<'a> {
-    slices: Vec<Utf8Slice<'a>>,
+    slices: Vec<Utf8Slice>,
+    _marker: core::marker::PhantomData<&'a BunString>,
 }
 
 impl<'a> Headers8Bit<'a> {
@@ -1800,13 +1813,13 @@ impl<'a> Headers8Bit<'a> {
         let names_in = unsafe { core::slice::from_raw_parts(names_ptr, len) };
         let values_in = unsafe { core::slice::from_raw_parts(values_ptr, len) };
 
-        let mut slices: Vec<Utf8Slice<'a>> = Vec::with_capacity(len * 2);
+        let mut slices: Vec<Utf8Slice> = Vec::with_capacity(len * 2);
         for i in 0..len {
             slices.push(names_in[i].to_utf8());
             slices.push(values_in[i].to_utf8());
         }
 
-        Self { slices }
+        Self { slices, _marker: core::marker::PhantomData }
     }
 
     fn iter(&self) -> impl Iterator<Item = (&[u8], &[u8])> + '_ {
@@ -1985,8 +1998,8 @@ fn build_request_body(
     };
 
     let static_headers = [
-        picohttp::Header { name: b"Sec-WebSocket-Key", value: key },
-        picohttp::Header { name: b"Sec-WebSocket-Protocol", value: protocol },
+        picohttp::Header::new(b"Sec-WebSocket-Key", key),
+        picohttp::Header::new(b"Sec-WebSocket-Protocol", protocol),
     ];
 
     let headers_ = &static_headers[0..1 + (!protocol.is_empty()) as usize];

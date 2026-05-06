@@ -859,7 +859,7 @@ pub fn from_bytes(
                 })
             }
         }
-        T::Int4 => {
+        T::int4 => {
             if binary {
                 Ok(SQLDataCell {
                     tag: Tag::Int4,
@@ -875,7 +875,7 @@ pub fn from_bytes(
             }
         }
         // postgres when reading bigint as int8 it returns a string unless type: { bigint: postgres.BigInt is set
-        T::Int8 => {
+        T::int8 => {
             if bigint {
                 // .int8 is a 64-bit integer always string
                 Ok(SQLDataCell {
@@ -898,7 +898,7 @@ pub fn from_bytes(
                 })
             }
         }
-        T::Float8 => {
+        T::float8 => {
             if binary && bytes.len() == 8 {
                 Ok(SQLDataCell {
                     tag: Tag::Float8,
@@ -914,7 +914,7 @@ pub fn from_bytes(
                 })
             }
         }
-        T::Float4 => {
+        T::float4 => {
             if binary && bytes.len() == 4 {
                 Ok(SQLDataCell {
                     tag: Tag::Float8,
@@ -930,7 +930,7 @@ pub fn from_bytes(
                 })
             }
         }
-        T::Numeric => {
+        T::numeric => {
             if binary {
                 // this is probrably good enough for most cases
                 // PERF(port): was stack-fallback (1024-byte stackFallback allocator)
@@ -938,7 +938,7 @@ pub fn from_bytes(
 
                 // if is binary format lets display as a string because JS cant handle it in a safe way
                 let result = parse_binary_numeric(bytes, &mut numeric_buffer)
-                    .map_err(|_| err!("UnsupportedNumericFormat"))?;
+                    .map_err(|_| AnyPostgresError::UnsupportedNumericFormat)?;
                 Ok(SQLDataCell {
                     tag: Tag::String,
                     value: Value {
@@ -963,7 +963,7 @@ pub fn from_bytes(
                 })
             }
         }
-        T::Jsonb | T::Json => Ok(SQLDataCell {
+        T::jsonb | T::json => Ok(SQLDataCell {
             tag: Tag::Json,
             value: Value {
                 json: if !bytes.is_empty() {
@@ -975,7 +975,7 @@ pub fn from_bytes(
             free_value: 1,
             ..Default::default()
         }),
-        T::Bool => {
+        T::bool => {
             if binary {
                 Ok(SQLDataCell {
                     tag: Tag::Bool,
@@ -990,7 +990,7 @@ pub fn from_bytes(
                 })
             }
         }
-        tag @ (T::Date | T::Timestamp | T::Timestamptz) => {
+        tag @ (T::date | T::timestamp | T::timestamptz) => {
             if bytes.is_empty() {
                 return Ok(SQLDataCell {
                     tag: Tag::Null,
@@ -1000,12 +1000,12 @@ pub fn from_bytes(
             }
             if binary && bytes.len() == 8 {
                 match tag {
-                    T::Timestamptz => Ok(SQLDataCell {
+                    T::timestamptz => Ok(SQLDataCell {
                         tag: Tag::DateWithTimeZone,
                         value: Value { date_with_time_zone: crate::postgres::types::date::from_binary(bytes) },
                         ..Default::default()
                     }),
-                    T::Timestamp => Ok(SQLDataCell {
+                    T::timestamp => Ok(SQLDataCell {
                         tag: Tag::Date,
                         value: Value { date: crate::postgres::types::date::from_binary(bytes) },
                         ..Default::default()
@@ -1020,15 +1020,15 @@ pub fn from_bytes(
                         ..Default::default()
                     });
                 }
-                let str = BunString::init(bytes);
+                let mut str = BunString::init(bytes);
                 Ok(SQLDataCell {
                     tag: Tag::Date,
-                    value: Value { date: str.parse_date(global_object)? },
+                    value: Value { date: crate::jsc::bun_string_jsc::parse_date(&mut str, global_object)? },
                     ..Default::default()
                 })
             }
         }
-        tag @ (T::Time | T::Timetz) => {
+        tag @ (T::time | T::timetz) => {
             if bytes.is_empty() {
                 return Ok(SQLDataCell {
                     tag: Tag::Null,
@@ -1037,7 +1037,7 @@ pub fn from_bytes(
                 });
             }
             if binary {
-                if tag == T::Time && bytes.len() == 8 {
+                if tag == T::time && bytes.len() == 8 {
                     // PostgreSQL sends time as microseconds since midnight in binary format
                     let microseconds = i64::from_ne_bytes(bytes[0..8].try_into().unwrap()).swap_bytes();
 
@@ -1054,7 +1054,7 @@ pub fn from_bytes(
                         free_value: 1,
                         ..Default::default()
                     })
-                } else if tag == T::Timetz && bytes.len() == 12 {
+                } else if tag == T::timetz && bytes.len() == 12 {
                     // PostgreSQL sends timetz as microseconds since midnight (8 bytes) + timezone offset in seconds (4 bytes)
                     let microseconds = i64::from_ne_bytes(bytes[0..8].try_into().unwrap()).swap_bytes();
                     let tz_offset_seconds = i32::from_ne_bytes(bytes[8..12].try_into().unwrap()).swap_bytes();
@@ -1075,7 +1075,7 @@ pub fn from_bytes(
                         ..Default::default()
                     })
                 } else {
-                    Err(err!("InvalidBinaryData").into())
+                    Err(AnyPostgresError::InvalidBinaryData)
                 }
             } else {
                 // Text format - just return as string
@@ -1094,69 +1094,69 @@ pub fn from_bytes(
             }
         }
 
-        T::Bytea => {
+        T::bytea => {
             if binary {
                 Ok(SQLDataCell {
                     tag: Tag::Bytea,
-                    value: Value { bytea: (bytes.as_ptr() as usize, bytes.len()) },
+                    value: Value { bytea: [bytes.as_ptr() as usize, bytes.len()] },
                     ..Default::default()
                 })
             } else {
                 if bytes.starts_with(b"\\x") {
                     return parse_bytea(&bytes[2..]);
                 }
-                Err(err!("UnsupportedByteaFormat").into())
+                Err(AnyPostgresError::UnsupportedByteaFormat)
             }
         }
         // text array types
         // PERF(port): was `inline` switch — each tag was a comptime arg to parseArray.
         // Demoted to runtime; see parse_array note.
-        tag @ (T::BpcharArray
-        | T::VarcharArray
-        | T::CharArray
-        | T::TextArray
-        | T::NameArray
-        | T::JsonArray
-        | T::JsonbArray
+        tag @ (T::bpchar_array
+        | T::varchar_array
+        | T::char_array
+        | T::text_array
+        | T::name_array
+        | T::json_array
+        | T::jsonb_array
         // special types handled as text array
-        | T::PathArray
-        | T::XmlArray
-        | T::PointArray
-        | T::LsegArray
-        | T::BoxArray
-        | T::PolygonArray
-        | T::LineArray
-        | T::CidrArray
-        | T::NumericArray
-        | T::MoneyArray
-        | T::VarbitArray
-        | T::BitArray
-        | T::Int2vectorArray
-        | T::CircleArray
-        | T::Macaddr8Array
-        | T::MacaddrArray
-        | T::InetArray
-        | T::AclitemArray
-        | T::TidArray
-        | T::PgDatabaseArray
-        | T::PgDatabaseArray2
+        | T::path_array
+        | T::xml_array
+        | T::point_array
+        | T::lseg_array
+        | T::box_array
+        | T::polygon_array
+        | T::line_array
+        | T::cidr_array
+        | T::numeric_array
+        | T::money_array
+        | T::varbit_array
+        | T::bit_array
+        | T::int2vector_array
+        | T::circle_array
+        | T::macaddr8_array
+        | T::macaddr_array
+        | T::inet_array
+        | T::aclitem_array
+        | T::tid_array
+        | T::pg_database_array
+        | T::pg_database_array2
         // numeric array types
-        | T::Int8Array
-        | T::Int2Array
-        | T::Float8Array
-        | T::OidArray
-        | T::XidArray
-        | T::CidArray
+        | T::int8_array
+        | T::int2_array
+        | T::float8_array
+        | T::oid_array
+        | T::xid_array
+        | T::cid_array
         // special types
-        | T::BoolArray
-        | T::ByteaArray
+        | T::bool_array
+        | T::bytea_array
         // time types
-        | T::TimeArray
-        | T::DateArray
-        | T::TimetzArray
-        | T::TimestampArray
-        | T::TimestamptzArray
-        | T::IntervalArray) => parse_array(bytes, bigint, tag, global_object, None, false),
+        | T::time_array
+        | T::date_array
+        | T::timetz_array
+        | T::timestamp_array
+        | T::timestamptz_array
+        | T::interval_array) => parse_array(bytes, bigint, tag, global_object, None, false),
         _ => Ok(SQLDataCell {
             tag: Tag::String,
             value: Value {
@@ -1356,7 +1356,7 @@ pub fn parse_binary_float8(bytes: &[u8]) -> Result<f64, AnyPostgresError> {
 pub fn parse_binary_int8(bytes: &[u8]) -> Result<i64, AnyPostgresError> {
     // pq_getmsgfloat8
     if bytes.len() != 8 {
-        return Err(err!("InvalidBinaryData").into());
+        return Err(AnyPostgresError::InvalidBinaryData);
     }
     Ok(i64::from_ne_bytes(bytes[0..8].try_into().unwrap()).swap_bytes())
 }
@@ -1367,7 +1367,7 @@ pub fn parse_binary_int4(bytes: &[u8]) -> Result<i32, AnyPostgresError> {
         1 => Ok(bytes[0] as i32),
         2 => Ok(pg_ntoh16(u16::from_ne_bytes(bytes[0..2].try_into().unwrap())) as i32),
         4 => Ok(pg_ntoh32(u32::from_ne_bytes(bytes[0..4].try_into().unwrap())) as i32),
-        _ => Err(err!("UnsupportedIntegerSize").into()),
+        _ => Err(AnyPostgresError::UnsupportedIntegerSize),
     }
 }
 
@@ -1376,7 +1376,7 @@ pub fn parse_binary_oid(bytes: &[u8]) -> Result<u32, AnyPostgresError> {
         1 => Ok(bytes[0] as u32),
         2 => Ok(pg_ntoh16(u16::from_ne_bytes(bytes[0..2].try_into().unwrap())) as u32),
         4 => Ok(pg_ntoh32(u32::from_ne_bytes(bytes[0..4].try_into().unwrap()))),
-        _ => Err(err!("UnsupportedIntegerSize").into()),
+        _ => Err(AnyPostgresError::UnsupportedIntegerSize),
     }
 }
 
@@ -1391,7 +1391,7 @@ pub fn parse_binary_int2(bytes: &[u8]) -> Result<i16, AnyPostgresError> {
             // Convert from big-endian to native-endian (we always use little endian)
             Ok(value.swap_bytes() as i16) // Cast to signed 16-bit integer (i16)
         }
-        _ => Err(err!("UnsupportedIntegerSize").into()),
+        _ => Err(AnyPostgresError::UnsupportedIntegerSize),
     }
 }
 
@@ -1434,14 +1434,14 @@ impl<'a> Putter<'a> {
         structure: JSValue,
         flags: Flags,
         result_mode: PostgresSQLQueryResultMode,
-        cached_structure: Option<&PostgresCachedStructure>,
-    ) -> Result<JSValue, bun_core::Error> {
+        cached_structure: Option<PostgresCachedStructure>,
+    ) -> Result<JSValue, AnyPostgresError> {
         // TODO(port): jsc.JSObject.ExternColumnIdentifier path — confirm bun_jsc export name
-        let mut names: *mut crate::jsc::ExternColumnIdentifier = core::ptr::null_mut();
+        let mut names: Option<*mut crate::jsc::ExternColumnIdentifier> = None;
         let mut names_count: u32 = 0;
-        if let Some(c) = cached_structure {
+        if let Some(c) = &cached_structure {
             if let Some(f) = c.fields.as_ref() {
-                names = f.as_ptr() as *mut _;
+                names = Some(f.as_ptr() as *mut _);
                 names_count = f.len() as u32;
             }
         }
@@ -1456,7 +1456,7 @@ impl<'a> Putter<'a> {
             result_mode as u8,
             names,
             names_count,
-        ))
+        )?)
     }
 
     fn put_impl<const IS_RAW: bool>(&mut self, index: u32, optional_bytes: Option<&mut Data>) -> Result<bool> {
@@ -1485,14 +1485,14 @@ impl<'a> Putter<'a> {
         bun_core::scoped_log!(Postgres, "index: {}, oid: {}", index, oid);
         let cell: &mut SQLDataCell = &mut self.list[index as usize];
         if IS_RAW {
-            *cell = SQLDataCell::raw(optional_bytes);
+            *cell = SQLDataCell::raw(optional_bytes.as_deref());
         } else {
-            let tag = if (types::short::MAX as i32) < oid {
-                types::Tag::Text
+            let tag = if (types::short::MAX as u32) < oid {
+                types::Tag::text
             } else {
                 // types::Tag is `#[repr(transparent)] struct Tag(pub Short)` —
-                // construct via from_raw, no transmute needed.
-                types::Tag::from_raw(types::short::try_from(oid).unwrap())
+                // construct directly, no transmute needed.
+                types::Tag(oid as types::short)
             };
             *cell = if let Some(data) = optional_bytes {
                 from_bytes(
@@ -1514,8 +1514,7 @@ impl<'a> Putter<'a> {
         cell.index = match &field.name_or_index {
             // The indexed columns can be out of order.
             ColumnIdentifier::Index(i) => *i,
-            _ => i32::try_from(index).unwrap(),
-            // TODO(port): confirm cell.index width — Zig used @intCast(index)
+            _ => index,
         };
 
         // TODO: when duplicate and we know the result will be an object

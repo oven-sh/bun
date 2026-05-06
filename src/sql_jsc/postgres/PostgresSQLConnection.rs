@@ -2390,25 +2390,27 @@ impl PostgresSQLConnection {
                 };
                 // SAFETY: valid *mut PostgresSQLQuery owned by self.requests queue.
                 let request = unsafe { &mut *request_ptr };
-                let mut is_error_owned = true;
+                // Convert to JS while we still own `err` — Zig's `request.onError` only ever
+                // calls `err.toJS`, so materialize the JS value once and route through
+                // `on_js_error` to avoid double-ownership of the non-Clone ErrorResponse.
+                let js_err = crate::postgres::protocol::error_response_jsc::to_js(&err, self.global());
                 if let Some(stmt_ptr) = request.statement {
                     // SAFETY: request holds a ref on its statement; valid while request is queued.
                     let stmt = unsafe { &mut *stmt_ptr };
                     if stmt.status == PostgresSQLStatement::Status::Parsing {
                         stmt.status = PostgresSQLStatement::Status::Failed;
-                        // TODO(port): ownership transfer of `err` into stmt.error_response (clone for on_error below).
-                        stmt.error_response = Some(PostgresSQLStatement::ErrorResponse::Protocol(err.clone()));
-                        is_error_owned = false;
+                        stmt.error_response =
+                            Some(crate::postgres::postgres_sql_statement::Error::Protocol(err));
                         if self.statements.remove(&bun_wyhash::hash(&stmt.signature.name)).is_some() {
                             stmt.deref();
                         }
                     }
                 }
+                // If `err` was not moved into stmt above, it drops here automatically.
 
                 self.finish_request(request);
                 self.update_ref();
-                request.on_error(PostgresSQLStatement::ErrorResponse::Protocol(err), self.global());
-                let _ = is_error_owned; // err dropped at scope end if still owned
+                request.on_js_error(js_err, self.global());
             }
             MessageType::PortalSuspended => {
                 // try reader.eatMessage(&protocol.PortalSuspended);
@@ -2429,9 +2431,8 @@ impl PostgresSQLConnection {
             }
             MessageType::NoticeResponse => {
                 debug!("UNSUPPORTED NoticeResponse");
-                let mut resp: protocol::NoticeResponse = Default::default();
-                resp.decode_internal(reader)?;
-                // resp dropped at scope end
+                let _resp = protocol::NoticeResponse::decode_internal(reader)?;
+                // _resp dropped at scope end
             }
             MessageType::EmptyQueryResponse => {
                 reader.eat_message(&protocol::EMPTY_QUERY_RESPONSE)?;
@@ -2460,9 +2461,9 @@ impl PostgresSQLConnection {
         self.update_has_pending_activity();
         // TODO(port): Zig reads `pending_activity_count.raw` (non-atomic). Using Relaxed load.
         if self.pending_activity_count.load(Ordering::Relaxed) > 0 {
-            self.poll_ref.r#ref(unsafe { self.vm() });
+            self.poll_ref.r#ref(bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js));
         } else {
-            self.poll_ref.unref(unsafe { self.vm() });
+            self.poll_ref.unref(bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js));
         }
     }
 

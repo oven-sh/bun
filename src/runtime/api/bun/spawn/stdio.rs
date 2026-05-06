@@ -486,7 +486,10 @@ impl Stdio {
             }
             return Ok(());
         } else if value.is_number() {
-            let fd = value.as_file_descriptor();
+            // `JSValue.asFileDescriptor()` (jsc/JSValue.zig:2151) is just
+            // `bun.FD.fromUV(this.toInt32())` — inline it here since the
+            // upstream `bun_jsc::JSValue` doesn't expose a wrapper.
+            let fd = Fd::from_uv(value.to_int32());
             let file_fd = fd.uv();
             if file_fd < 0 {
                 return Err(global.throw_invalid_arguments(format_args!(

@@ -499,6 +499,10 @@ impl JSValkeyClient {
         global_object: &JSGlobalObject,
         arguments: &[JSValue],
     ) -> JsResult<*mut JSValkeyClient> {
+        // SAFETY: JSGlobalObject is a heap singleton alive for the VM lifetime
+        // (Phase A models it as `&'static`).
+        let global_object: &'static JSGlobalObject =
+            unsafe { core::mem::transmute::<&JSGlobalObject, &'static JSGlobalObject>(global_object) };
         let vm = global_object.bun_vm();
         // SAFETY: `bun_vm()` never returns null for a Bun-owned global.
         let vm_ref = unsafe { &mut *vm };
@@ -780,6 +784,9 @@ impl JSValkeyClient {
         &self,
         global_object: &JSGlobalObject,
     ) -> Result<*mut JSValkeyClient, bun_alloc::AllocError> {
+        // SAFETY: see `create_no_js_no_pubsub`.
+        let global_object: &'static JSGlobalObject =
+            unsafe { core::mem::transmute::<&JSGlobalObject, &'static JSGlobalObject>(global_object) };
         let vm = global_object.bun_vm();
 
         // Make a copy of connection_strings to avoid double-free

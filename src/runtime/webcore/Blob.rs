@@ -1042,7 +1042,7 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
     // store. `content_type` is handled by its own Drop above since it
     // hasn't been attached to `blob` yet.
     // SAFETY: blob is a freshly-allocated heap pointer from Blob::new.
-    let blob_guard = scopeguard::guard(blob, |b| unsafe { (*b).deinit() });
+    let mut blob_guard = scopeguard::guard(blob, |b| unsafe { (*b).deinit() });
     let blob = unsafe { &mut **blob_guard };
 
     'versions: {
@@ -1089,8 +1089,9 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
     let _ = content_type;
 
     let blob_ptr = scopeguard::ScopeGuard::into_inner(blob_guard);
-    // SAFETY: blob_ptr is valid; toJS is infallible.
-    Ok(unsafe { (*blob_ptr).to_js(global_this) })
+    // SAFETY: blob_ptr is valid; toJS is infallible. Explicit `&mut *` forces
+    // the inherent `Blob::to_js(&mut self)` over `JsClass::to_js(self)`.
+    Ok(unsafe { (&mut *blob_ptr).to_js(global_this) })
 }
 
 impl Blob {
@@ -1113,7 +1114,7 @@ impl Blob {
                 return Err(global_this.throw("Blob.onStructuredCloneDeserialize failed"));
             }
             Err(e) if e == bun_core::err!("OutOfMemory") => {
-                return global_this.throw_out_of_memory();
+                return Err(global_this.throw_out_of_memory());
             }
             Err(_) => unreachable!(),
         };
@@ -1395,7 +1396,6 @@ impl Blob {
             writer.write_str(" {\n")?;
             {
                 formatter.indent_inc();
-                let _dec = scopeguard::guard((), |_| formatter.indent_dec());
 
                 if show_name {
                     formatter.write_indent(writer)?;
@@ -1432,6 +1432,8 @@ impl Blob {
                     formatter.write_indent(writer)?;
                     write!(writer, "lastModified: {}\n", self.last_modified)?;
                 }
+
+                formatter.indent_dec();
             }
             formatter.write_indent(writer)?;
             writer.write_str("}")?;
@@ -1624,7 +1626,7 @@ fn write_file_with_empty_source_to_destination(
                 *err = sys_error_with_path_like(err, &file.pathlike);
                 return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                     ctx,
-                    result.to_js(ctx)?,
+                    err.to_js(ctx),
                 ));
             }
         }
@@ -2544,8 +2546,9 @@ pub fn construct_bun_file(
     }
 
     let ptr = Blob::new(blob);
-    // SAFETY: ptr was just produced by Box::into_raw in Blob::new.
-    Ok(unsafe { (*ptr).to_js(global_object) })
+    // SAFETY: ptr was just produced by Box::into_raw in Blob::new. Explicit
+    // `&mut *` forces inherent `Blob::to_js(&mut self)` over `JsClass::to_js(self)`.
+    Ok(unsafe { (&mut *ptr).to_js(global_object) })
 }
 
 // `find_or_create_file_from_path`: canonical impl lives later in this file
@@ -5297,8 +5300,9 @@ pub fn construct_bun_file(
         }
 
         let ptr = Blob::new(blob);
-        // SAFETY: ptr was just produced by Box::into_raw in Blob::new.
-        return Ok(unsafe { (*ptr).to_js(global_object) });
+        // SAFETY: ptr was just produced by Box::into_raw in Blob::new. Explicit
+        // `&mut *` forces inherent `Blob::to_js(&mut self)` over `JsClass::to_js(self)`.
+        return Ok(unsafe { (&mut *ptr).to_js(global_object) });
     }
     #[allow(unreachable_code)]
     {
@@ -5497,7 +5501,7 @@ impl Any {
                 Ok(str)
             }
             Any::WTFStringImpl(impl_) => {
-                let str = BunString::adopt_wtf_impl(core::mem::replace(impl_, core::ptr::null_mut()));
+                let mut str = BunString::adopt_wtf_impl(core::mem::replace(impl_, core::ptr::null_mut()));
                 *self = Any::Blob(Blob::default());
                 if str.length() == 0 {
                     return Ok(JSValue::NULL);

@@ -157,13 +157,13 @@ impl ByteBlobLoader {
         if self.remain == 0 {
             return streams::Result::IntoArrayAndDone(streams::IntoArray {
                 value: array,
-                len: copied as u32,
+                len: copied,
             });
         }
 
         streams::Result::IntoArray(streams::IntoArray {
             value: array,
-            len: copied as u32,
+            len: copied,
         })
     }
 

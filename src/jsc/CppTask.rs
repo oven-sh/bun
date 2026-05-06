@@ -5,6 +5,7 @@ use bun_event_loop::{task_tag, TaskTag, Taskable};
 use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 
 // TODO(port): move to jsc_sys
+#[allow(improper_ctypes)] // VirtualMachine is opaque to C++; passed as `void*`
 unsafe extern "C" {
     // TODO(port): Zig declares this as `bun.JSError!void` via generated binding; confirm the
     // actual C ABI (likely void with pending exception on the VM) before finalizing.

@@ -201,8 +201,10 @@ impl JSSourceMap {
     fn to_js(this: Box<Self>, global: &JSGlobalObject) -> JSValue {
         // Codegen body (ZigGeneratedClasses.zig:21141): `SourceMap__create(global, this)`.
         // SAFETY: `global` is live; `this` is the freshly-constructed payload whose
-        // ownership transfers to the C++ JSCell wrapper (`m_ctx`).
-        unsafe { SourceMap__create(global.as_ptr(), Box::into_raw(this)) }
+        // ownership transfers to the C++ JSCell wrapper (`m_ctx`). The extern takes
+        // an erased `*mut ()` (matching `src/jsc/generated.rs::__create`) since
+        // C++ stores it opaquely; cast back in `finalize`.
+        unsafe { SourceMap__create(global.as_ptr(), Box::into_raw(this).cast::<()>()) }
     }
     #[inline]
     fn payload_set_cached(this_value: JSValue, global: &JSGlobalObject, value: JSValue) {

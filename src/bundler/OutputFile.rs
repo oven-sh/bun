@@ -452,59 +452,62 @@ impl OutputFile {
         Ok(())
     }
 
-    
-    // TODO(b2-blocked): bun_sys::move_file_z / bun_string::ZStr::from_bytes
     // TODO(port): narrow error set
     pub fn move_to(&self, _: &[u8], rel_path: &[u8], dir: Fd) -> Result<(), Error> {
         let Value::Move(mv) = &self.value else {
             unreachable!()
         };
         // Zig: `std.posix.toPosixPath` + `bun.sliceTo(.., 0)` to NUL-terminate both
-        // paths. `bun_str::ZStr::from_bytes` performs the same dupeZ.
-        let src = bun_str::ZStr::from_bytes(mv.get_pathname());
-        let dst = bun_str::ZStr::from_bytes(rel_path);
-        bun_sys::move_file_z(mv.dir, &src, dir, &dst)?;
+        // paths into stack buffers. Mirrored with `resolve_path::z` over two
+        // `PathBuffer`s.
+        let mut src_buf = PathBuffer::uninit();
+        let mut dst_buf = PathBuffer::uninit();
+        let src = resolve_path::z(mv.get_pathname(), &mut src_buf);
+        let dst = resolve_path::z(rel_path, &mut dst_buf);
+        bun_sys::move_file_z(mv.dir, src, dir, dst)?;
         Ok(())
     }
 
-    
-    // TODO(b2-blocked): bun_sys::openat / copy_file
     // TODO(port): narrow error set
     pub fn copy_to(&self, _: &[u8], rel_path: &[u8], dir: Fd) -> Result<(), Error> {
-        // TODO(port): Zig used `dir.stdDir().createFile(rel_path, .{})` and
-        // `std.fs.cwd().openFile(...)`. Mapped to `bun_sys` openat calls.
+        // PORT NOTE: Zig used `dir.stdDir().createFile(rel_path, .{})` and
+        // `std.fs.cwd().openFile(...)`. Mapped to `bun_sys::openat` (which takes
+        // a NUL-terminated `&ZStr`).
+        let mut out_buf = PathBuffer::uninit();
         let fd_out = bun_sys::openat(
             dir,
-            rel_path,
+            resolve_path::z(rel_path, &mut out_buf),
             bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
             0o644,
-        )
-        .unwrap()?;
+        )?;
+        #[allow(unused_mut)]
         let mut do_close = false;
+        let mut in_buf = PathBuffer::uninit();
         let fd_in = bun_sys::openat(
             Fd::cwd(),
-            &self.src_path.text,
+            resolve_path::z(self.src_path.text, &mut in_buf),
             bun_sys::O::RDONLY,
             0,
-        )
-        .unwrap()?;
+        )?;
 
         #[cfg(windows)]
         {
-            do_close = fs::FileSystem::instance().fs.need_to_close_files();
+            // SAFETY: `FileSystem::instance()` is initialized before any bundler
+            // output is produced.
+            do_close = unsafe { (*crate::bun_fs::FileSystem::instance()).fs.need_to_close_files() };
 
             // use paths instead of bun.getFdPathW()
             panic!("TODO windows");
         }
 
-        let guard = scopeguard::guard((), |_| {
+        let guard = scopeguard::guard((), move |_| {
             if do_close {
-                fd_out.close();
-                fd_in.close();
+                let _ = bun_sys::close(fd_out);
+                let _ = bun_sys::close(fd_in);
             }
         });
 
-        bun_sys::copy_file(fd_in, fd_out).unwrap()?;
+        bun_sys::copy_file(fd_in, fd_out)?;
 
         drop(guard);
         Ok(())

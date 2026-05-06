@@ -273,17 +273,10 @@ impl<'a> Transpiler<'a> {
             js_ast::Stmt::data_store_reset();
         });
 
-        // PORT NOTE: reshaped for borrowck — Zig passed `&this.options.env`
-        // into `this.options.loadDefines(...)`. Rust forbids `&self.options.env`
-        // while `&mut self.options` is live; `Env` is not `Clone`
-        // (contains `MultiArrayList`). `load_defines` only *reads* `env` and
-        // never touches `self.env`, so a raw-pointer reborrow is sound.
-        // SAFETY: `self.options.env` is a stable field of `BundleOptions`; not
-        // moved or dropped by `load_defines` (it writes `self.define` /
-        // `self.defines_loaded` only).
-        let env_ptr: *const options::Env = &self.options.env;
-        self.options
-            .load_defines(Some(env_loader), Some(unsafe { &*env_ptr }))?;
+        // Spec passed `&this.options.env` as a separate arg; `load_defines` now
+        // reads `&self.env` internally so the disjoint borrow is resolved
+        // inside the `&mut self` scope without `unsafe`.
+        self.options.load_defines(Some(env_loader))?;
 
         let mut is_development = false;
         if let Some(node_env) = self.options.define.dots.get(b"NODE_ENV".as_slice()) {

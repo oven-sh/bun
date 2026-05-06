@@ -1644,12 +1644,13 @@ fn unsupported_non_regular_file_error() -> SystemError {
 // TODO(port): Zig had these as `const` values; SystemError contains bun.String which
 // is not const-constructible in Rust. Using fns here. Phase B: consider lazy_static.
 
-pub type CopyFilePromiseTask = jsc::ConcurrentPromiseTask<CopyFile<'static>>;
-// TODO(port): the 'static here papers over the JSC_BORROW lifetime; Phase B fix.
-pub type CopyFilePromiseTaskEventLoopTask =
-    <CopyFilePromiseTask as jsc::HasEventLoopTask>::EventLoopTask;
+// TODO(port): real type is `jsc::concurrent_promise_task::ConcurrentPromiseTask<'static, CopyFile<'static>>`
+// but that module is currently in `_gated` (cfg(any())); using the 0-arg stub re-exported
+// from `jsc::event_loop` until Phase B ungates it.
+pub type CopyFilePromiseTask = jsc::ConcurrentPromiseTask;
 // TODO(port): Zig `CopyFilePromiseTask.EventLoopTask` — exact Rust associated-type
-// path depends on bun_jsc::ConcurrentPromiseTask shape.
+// path depends on bun_jsc::ConcurrentPromiseTask shape; using `jsc::EventLoopTask` for now.
+pub type CopyFilePromiseTaskEventLoopTask = jsc::EventLoopTask;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

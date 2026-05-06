@@ -1440,7 +1440,11 @@ impl Value {
 
 mod _jsc_gated {
 use super::*;
-use crate::webcore::sink::ArrayBufferSink;
+use crate::webcore::sink::{self, ArrayBufferSink};
+
+// PORT NOTE: Zig `ArrayBufferSink.JSSink` is a nested type from `Sink.JSSink(@This(), name)`.
+// Rust uses a free generic `sink::JSSink<T>` (inherent associated types are unstable).
+type ArrayBufferJSSink = sink::JSSink<ArrayBufferSink>;
 
 // https://github.com/WebKit/webkit/blob/main/Source/WebCore/Modules/fetch/FetchBody.cpp#L45
 pub fn extract(global_this: &JSGlobalObject, value: JSValue) -> JsResult<Body> {
@@ -1894,7 +1898,7 @@ pub struct ValueBufferer<'a> {
     pub ctx: *mut c_void,
     pub on_finished_buffering: ValueBuffererCallback,
 
-    pub js_sink: Option<Box<ArrayBufferSink::JSSink>>,
+    pub js_sink: Option<Box<ArrayBufferJSSink>>,
     pub byte_stream: Option<NonNull<ByteStream>>,
     // readable stream strong ref to keep byte stream alive
     pub readable_stream_ref: webcore::readable_stream::Strong,

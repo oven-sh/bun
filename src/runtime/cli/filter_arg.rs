@@ -325,8 +325,7 @@ impl PackageFilterIterator {
             true,
             true,
             Some(glob_ignore_fn),
-        )?
-        .map_err(|e| bun_core::errno_to_error(e.get_errno()))?;
+        )??;
         self.walker.write(walker);
         // TODO(port): self-referential — `iter.walker` borrows `self.walker`. This is unsound
         // if `PackageFilterIterator` moves after `init_walker`. Phase B: Pin<Box<Self>> or fold
@@ -336,9 +335,7 @@ impl PackageFilterIterator {
             unsafe { &mut *(self.walker.assume_init_mut() as *mut GlobWalker) };
         self.iter.write(glob::walk::Iterator::new(walker_ref));
         // SAFETY: just wrote `iter`.
-        unsafe { self.iter.assume_init_mut() }
-            .init()?
-            .map_err(|e| bun_core::errno_to_error(e.get_errno()))?;
+        unsafe { self.iter.assume_init_mut() }.init()??;
         Ok(())
     }
 

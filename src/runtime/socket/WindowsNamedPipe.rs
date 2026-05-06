@@ -490,13 +490,13 @@ impl WindowsNamedPipe {
         bun_sys::Result::Ok(())
     }
 
+    #[cfg(windows)]
     pub fn open(
         &mut self,
         fd: Fd,
-        ssl_options: Option<SslConfig>,
+        ssl_options: Option<SSLConfig>,
         owned_ctx: Option<*mut boringssl::SSL_CTX>,
     ) -> bun_sys::Result<()> {
-        #[cfg(windows)]
         debug_assert!(self.pipe.is_some());
         self.flags.set_disconnected(true);
 
@@ -505,21 +505,18 @@ impl WindowsNamedPipe {
                 return result;
             }
         }
-        #[cfg(windows)]
-        {
-            let init_result = self
-                .pipe
-                .as_mut()
-                .unwrap()
-                .init(self.vm.uv_loop(), false);
-            if init_result.is_err() {
-                return init_result;
-            }
+        let init_result = self
+            .pipe
+            .as_mut()
+            .unwrap()
+            .init(self.vm.uv_loop(), false);
+        if init_result.is_err() {
+            return init_result;
+        }
 
-            let open_result = self.pipe.as_mut().unwrap().open(fd);
-            if open_result.is_err() {
-                return open_result;
-            }
+        let open_result = self.pipe.as_mut().unwrap().open(fd);
+        if open_result.is_err() {
+            return open_result;
         }
 
         self.r#ref();

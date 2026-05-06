@@ -3596,28 +3596,31 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
 
     /// Assumes the first character of the literal has been eaten
     /// Backtracks and returns false if unsuccessful
-    fn eat_literal<CP: PartialEq + Copy + Default, const N: usize>(
+    fn eat_literal<CP: PartialEq + Copy + TryFrom<u32>, const N: usize>(
         &mut self,
         literal: &[CP; N],
     ) -> bool {
-        // TODO(port): Zig used `comptime CodepointType: type` + `comptime literal: []const CodepointType`.
+        // Zig used `comptime CodepointType: type` + `comptime literal: []const CodepointType`
+        // and called `eat_slice::<_, N-1>()`. Const-generic arithmetic isn't stable in Rust,
+        // so inline the N-1 comparison loop here instead.
         let literal_skip_first = &literal[1..];
         let snapshot = self.make_snapshot();
-        let slice = match self.eat_slice::<CP, { N - 1 }>() {
-            // TODO(port): const-generic arithmetic — needs `generic_const_exprs` feature; revisit.
-            Some(s) => s,
-            None => {
+        for expected in literal_skip_first {
+            let Some(result) = self.peek() else {
+                self.backtrack(snapshot);
+                return false;
+            };
+            let Ok(got) = CP::try_from(result.char) else {
+                self.backtrack(snapshot);
+                return false;
+            };
+            if got != *expected {
                 self.backtrack(snapshot);
                 return false;
             }
-        };
-
-        if &slice[..] == literal_skip_first {
-            return true;
+            let _ = self.eat();
         }
-
-        self.backtrack(snapshot);
-        false
+        true
     }
 
     fn eat_number_word(&mut self) -> Option<usize> {
@@ -4058,7 +4061,7 @@ impl<'a> SrcAscii<'a> {
     }
 }
 
-pub type CodepointIterator = strings::UnsignedCodepointIterator;
+pub type CodepointIterator<'a> = strings::UnsignedCodepointIterator<'a>;
 
 #[derive(Clone, Copy)]
 pub struct SrcUnicode<'a> {
@@ -4372,7 +4375,7 @@ fn is_all_ascii(s: &[u8]) -> bool {
 pub struct CmdEnvIter<'a> {
     pub env: &'a bun_collections::StringArrayHashMap<Box<ZStr>>,
     // TODO(port): Zig `[:0]const u8` value — confirm map value type.
-    pub iter: bun_collections::array_hash_map::Iter<'a, Box<ZStr>>,
+    pub iter: bun_collections::array_hash_map::Iter<'a, Box<[u8]>, Box<ZStr>>,
 }
 
 pub struct CmdEnvEntry<'a> {

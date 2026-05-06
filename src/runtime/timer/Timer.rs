@@ -122,7 +122,7 @@ impl All {
     }
 
     fn insert_lock_held(&mut self, timer: *mut EventLoopTimer) {
-        #[cfg(feature = "ci_assert")]
+        #[cfg(debug_assertions)]
         debug_assert!(self.lock.try_lock() == false);
         // SAFETY: caller guarantees `timer` is a valid live EventLoopTimer
         let timer_ref = unsafe { &mut *timer };
@@ -155,13 +155,13 @@ impl All {
     }
 
     fn remove_lock_held(&mut self, timer: *mut EventLoopTimer) {
-        #[cfg(feature = "ci_assert")]
+        #[cfg(debug_assertions)]
         debug_assert!(self.lock.try_lock() == false);
         // SAFETY: caller guarantees `timer` is a valid live EventLoopTimer
         let timer_ref = unsafe { &mut *timer };
         match timer_ref.in_heap {
             InHeap::None => {
-                #[cfg(feature = "ci_assert")]
+                #[cfg(debug_assertions)]
                 debug_assert!(false); // can't remove a timer that was not inserted
             }
             InHeap::Regular => self.timers.remove(timer),
@@ -181,7 +181,7 @@ impl All {
             self.remove_lock_held(timer);
         }
 
-        #[cfg(feature = "ci_assert")]
+        #[cfg(debug_assertions)]
         {
             if core::ptr::eq(&timer_ref.next, time) {
                 panic!("timer.next == time. For threadsafety reasons, time and timer.next must always be a different pointer.");

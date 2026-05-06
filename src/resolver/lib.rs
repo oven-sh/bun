@@ -8847,8 +8847,10 @@ impl<'a> Resolver<'a> {
                     Err(err) => {
                         let pretty = tsconfigpath;
                         if err == bun_core::err!("ENOENT") || err == bun_core::err!("FileNotFound") {
+                            // SAFETY: BACKREF — `self.log` (see `log()` PORT NOTE); narrow `&mut` for this call.
                             let _ = unsafe { &mut *self.log() }.add_error_fmt(None, logger::Loc::EMPTY, format_args!("Cannot find tsconfig file {}", bun_core::fmt::quote(pretty)));
                         } else if err != bun_core::err!("ParseErrorAlreadyLogged") && err != bun_core::err!("IsDir") && err != bun_core::err!("EISDIR") {
+                            // SAFETY: BACKREF — `self.log` (see `log()` PORT NOTE); narrow `&mut` for this call.
                             let _ = unsafe { &mut *self.log() }.add_error_fmt(None, logger::Loc::EMPTY, format_args!("Cannot read file {}: {}", bun_core::fmt::quote(pretty), bstr::BStr::new(err.name())));
                         }
                         None
@@ -8875,6 +8877,7 @@ impl<'a> Resolver<'a> {
                         let parent_config_maybe: Option<*mut TSConfigJSON> = match self.parse_tsconfig(abs_path, FD::INVALID) {
                             Ok(v) => v.map(Box::into_raw),
                             Err(err) => {
+                                // SAFETY: BACKREF — `self.log` (see `log()` PORT NOTE); narrow `&mut` for this call.
                                 let _ = unsafe { &mut *self.log() }.add_debug_fmt(None, logger::Loc::EMPTY, format_args!(
                                     "{} loading tsconfig.json extends {}",
                                     bstr::BStr::new(err.name()),

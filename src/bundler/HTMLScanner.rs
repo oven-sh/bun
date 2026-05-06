@@ -102,7 +102,7 @@ impl<'a> HTMLScanner<'a> {
 
     pub fn on_tag(
         &mut self,
-        _element: *mut lol::Element,
+        _element: &mut lol::Element,
         path: &[u8],
         url_attribute: &[u8],
         kind: ImportKind,

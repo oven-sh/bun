@@ -432,7 +432,7 @@ impl IntermediateOutput {
         display_size: impl Into<Option<&'d mut usize>>,
         force_absolute_path: bool,
         enable_source_map_shifts: bool,
-        standalone_chunk_contents: &[Option<&[u8]>],
+        standalone_chunk_contents: &[Option<Box<[u8]>>],
     ) -> Result<CodeResult, AllocError> {
         let display_size: Option<&mut usize> = display_size.into();
         if enable_source_map_shifts {
@@ -473,7 +473,7 @@ impl IntermediateOutput {
         chunks: &mut [Chunk],
         display_size: Option<&mut usize>,
         force_absolute_path: bool,
-        standalone_chunk_contents: Option<&[Option<&[u8]>]>,
+        standalone_chunk_contents: Option<&[Option<Box<[u8]>>]>,
     ) -> Result<CodeResult, AllocError> {
         // B-2 second pass: un-gated. `Graph.input_files` SoA accessors are now
         // real (`Graph::InputFileListExt`); `LinkerGraph.files` SoA
@@ -530,7 +530,7 @@ impl IntermediateOutput {
                             if let Some(scc) = standalone_chunk_contents {
                                 match piece.query.kind() {
                                     QueryKind::Chunk => {
-                                        if let Some(content) = scc[index] {
+                                        if let Some(content) = scc[index].as_deref() {
                                             // Account for escaping </script or </style inside inline content.
                                             // Each occurrence of the closing tag adds 1 byte (`</` → `<\/`).
                                             count += content.len()

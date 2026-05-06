@@ -560,7 +560,7 @@ impl<'a> LinkerContext<'a> {
     pub fn link(
         &mut self,
         bundle: &mut BundleV2,
-        entry_points: &[js_ast::Index],
+        entry_points: &[Index],
         server_component_boundaries: js_ast::ast::server_component_boundary::List,
         reachable: &[Index],
     ) -> Result<Box<[Chunk]>, LinkError> {
@@ -2499,8 +2499,11 @@ impl<'a> LinkerContext<'a> {
     /// `&mut self.log` borrow; the underlying `parse_graph.input_files` slab
     /// is append-only and outlives the link step (LIFETIMES.tsv: GRAPHBACKED).
     #[inline]
-    pub fn get_source(&self, index: u32) -> &'static Source {
-        let index = index as usize;
+    pub fn get_source<I: TryInto<usize>>(&self, index: I) -> &'static Source {
+        // PORT NOTE: Zig spec is `index: anytype`; callers pass both `u32` and
+        // `usize`. Route through `TryInto<usize>` so the SoA index works for
+        // either width without forcing `as`-casts at every call site.
+        let index: usize = match index.try_into() { Ok(i) => i, Err(_) => unreachable!() };
         // SAFETY: parse_graph backref into BundleV2.graph; the input_files SoA
         // is monotonically grown and never freed for the link step's lifetime,
         // so the element address is stable. `'static` is a white lie matching
@@ -2519,7 +2522,7 @@ impl<'a> LinkerContext<'a> {
         &mut self,
         file_source_index: u32,
         file_import_records: &[ImportRecord],
-        css_asts: *mut [Option<*mut core::ffi::c_void>],
+        css_asts: *const [Option<*mut core::ffi::c_void>],
         sources: &[Source],
         loaders: &[Loader],
     ) -> ScanCssImportsResult {

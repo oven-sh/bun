@@ -1242,7 +1242,7 @@ pub fn generate_entry_point_tail_js(
             allocator,
             unsafe { &(*c.resolver).opts }.target,
             &ast_view,
-            c.get_source(source_index as usize),
+            c.get_source(source_index),
             print_options,
             ast_view.import_records.slice(),
             &[Part {

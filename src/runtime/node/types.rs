@@ -1310,14 +1310,14 @@ pub struct Valid;
 
 impl Valid {
     pub fn path_slice(zig_str: &ZigStringSlice, ctx: &JSGlobalObject) -> JsResult<()> {
-        match zig_str.len() {
+        match zig_str.slice().len() {
             0..=MAX_PATH_BYTES => Ok(()),
             _ => {
                 let mut system_error = bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)
                     .with_path(zig_str.slice())
                     .to_system_error();
                 system_error.syscall = bun_str::String::DEAD;
-                ctx.throw_value(system_error.to_error_instance(ctx))
+                Err(ctx.throw_value(system_error.to_error_instance(ctx)))
             }
         }
     }
@@ -1329,38 +1329,40 @@ impl Valid {
                 let mut system_error =
                     bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open).to_system_error();
                 system_error.syscall = bun_str::String::DEAD;
-                ctx.throw_value(system_error.to_error_instance(ctx))
+                Err(ctx.throw_value(system_error.to_error_instance(ctx)))
             }
         }
     }
 
     pub fn path_string(zig_str: &ZigString, ctx: &JSGlobalObject) -> JsResult<()> {
-        Self::path_string_length(zig_str.len(), ctx)
+        Self::path_string_length(zig_str.len, ctx)
     }
 
     pub fn path_buffer(buffer: &Buffer, ctx: &JSGlobalObject) -> JsResult<()> {
         let slice = buffer.slice();
         match slice.len() {
-            0 => ctx.throw_invalid_arguments("Invalid path buffer: can't be empty", format_args!("")),
+            0 => Err(ctx.throw_invalid_arguments("Invalid path buffer: can't be empty")),
             1..=MAX_PATH_BYTES => Ok(()),
             _ => {
                 let mut system_error =
                     bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open).to_system_error();
                 system_error.syscall = bun_str::String::DEAD;
-                ctx.throw_value(system_error.to_error_instance(ctx))
+                Err(ctx.throw_value(system_error.to_error_instance(ctx)))
             }
         }
     }
 
     pub fn path_null_bytes(slice: &[u8], global: &JSGlobalObject) -> JsResult<()> {
         if strings::index_of_char(slice, 0).is_some() {
-            return global
-                .err(jsc::ErrorCode::INVALID_ARG_VALUE)
-                .fmt(format_args!(
-                    "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received {}",
-                    bun_fmt::quote(slice)
-                ))
-                .throw();
+            return Err(global
+                .err(
+                    jsc::ErrorCode::INVALID_ARG_VALUE,
+                    format_args!(
+                        "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received {}",
+                        bun_fmt::quote(slice)
+                    ),
+                )
+                .throw());
         }
         Ok(())
     }

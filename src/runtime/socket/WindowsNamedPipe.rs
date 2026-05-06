@@ -598,6 +598,29 @@ impl WindowsNamedPipe {
         result
     }
 
+    #[cfg(not(windows))]
+    pub fn open(
+        &mut self,
+        _fd: Fd,
+        _ssl_options: Option<SSLConfig>,
+        _owned_ctx: Option<*mut boringssl::SSL_CTX>,
+    ) -> bun_sys::Result<()> {
+        // Unreachable on POSIX — `WindowsNamedPipeContext` is aliased to `()` there;
+        // this stub exists only so the module type-checks across platforms.
+        unreachable!("WindowsNamedPipe::open is windows-only")
+    }
+
+    #[cfg(not(windows))]
+    pub fn connect(
+        &mut self,
+        _path: &[u8],
+        _ssl_options: Option<SSLConfig>,
+        _owned_ctx: Option<*mut boringssl::SSL_CTX>,
+    ) -> bun_sys::Result<()> {
+        // Unreachable on POSIX — see `open` above.
+        unreachable!("WindowsNamedPipe::connect is windows-only")
+    }
+
     /// Set up the in-process SSL wrapper for `connect`/`open`. Prefers a prebuilt
     /// `SSL_CTX` (one ref ADOPTED — held by `wrapper` on success, freed here on
     /// failure) so a memoised `tls.createSecureContext` reaches this path with its

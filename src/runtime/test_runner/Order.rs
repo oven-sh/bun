@@ -39,13 +39,18 @@ impl Order {
         Ok(())
     }
 
-    pub fn generate_all_order(&mut self, entries: &mut [Box<ExecutionEntry>]) -> JsResult<AllOrderResult> {
+    pub fn generate_all_order(&mut self, entries: &[Box<ExecutionEntry>]) -> JsResult<AllOrderResult> {
         let start = self.groups.len();
-        for entry_box in entries.iter_mut() {
-            // Zig signature is `[]const *ExecutionEntry` (immutable slice of *mutable* pointers); the
-            // Rust equivalent that preserves write provenance is `&mut [Box<ExecutionEntry>]`.
-            let entry_ref: &mut ExecutionEntry = &mut **entry_box;
-            let entry: *mut ExecutionEntry = entry_ref;
+        for entry_box in entries.iter() {
+            // Zig signature is `[]const *ExecutionEntry` (immutable slice of *mutable* pointers).
+            // Callers (e.g. BunTestRoot.hook_scope) only hold `&` access to the Vec, so we accept
+            // `&[Box<_>]` and cast each Box's address to *mut — the Zig code mutates through the
+            // pointer, not the slice. SAFETY: each Box<ExecutionEntry> is live and uniquely owned
+            // by the DescribeScope tree; writing through *mut matches the Zig `*ExecutionEntry`
+            // mutation contract.
+            let entry: *mut ExecutionEntry =
+                (&**entry_box) as *const ExecutionEntry as *mut ExecutionEntry;
+            let entry_ref = unsafe { &mut *entry };
             if bun_core::Environment::CI_ASSERT && entry_ref.added_in_phase != AddedInPhase::Preload {
                 debug_assert!(entry_ref.next.is_none());
             }
@@ -76,7 +81,7 @@ impl Order {
 
         // gather beforeAll
         let beforeall_order: AllOrderResult = if use_hooks {
-            self.generate_all_order(&mut current.before_all)?
+            self.generate_all_order(&current.before_all)?
         } else {
             AllOrderResult::EMPTY
         };

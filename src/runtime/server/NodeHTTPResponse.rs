@@ -1875,17 +1875,17 @@ impl NodeHTTPResponse {
 
     /// Called by intrusive RefCount when count reaches zero.
     fn deinit(&mut self) {
-        debug_assert!(!self.body_read_ref.has());
-        debug_assert!(!self.poll_ref.has());
+        debug_assert!(!self.body_read_ref.has);
+        debug_assert!(!self.poll_ref.has);
         debug_assert!(!self.flags.contains(Flags::IS_REQUEST_PENDING));
         debug_assert!(
             self.flags.contains(Flags::SOCKET_CLOSED)
                 || self.flags.contains(Flags::REQUEST_HAS_COMPLETED)
         );
 
-        self.buffered_request_body_data_during_pause.deinit();
-        self.poll_ref.unref(VirtualMachine::get());
-        self.body_read_ref.unref(VirtualMachine::get());
+        self.buffered_request_body_data_during_pause.clear_and_free();
+        self.poll_ref.unref(vm_get());
+        self.body_read_ref.unref(vm_get());
 
         self.promise.deinit();
         // SAFETY: self was allocated via Box::into_raw in `create`; refcount is zero so no

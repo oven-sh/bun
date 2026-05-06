@@ -2476,7 +2476,7 @@ impl ExpectMatcherUtils {
             expected_string: None,
             received: Some(received),
             expected: Some(expected),
-            global_this: Some(global_this),
+            global_this,
             not: is_not,
         };
 

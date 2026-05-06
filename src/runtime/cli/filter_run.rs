@@ -686,7 +686,7 @@ pub fn run_scripts_with_filter(ctx: Command::Context) -> Result<core::convert::I
     } else if ctx.positionals.len() > 0 {
         &ctx.positionals[0]
     } else {
-        Output::pretty_errorln("<r><red>error<r>: No script name provided", ());
+        Output::pretty_errorln("<r><red>error<r>: No script name provided");
         Global::exit(1);
     };
     let mut pre_script_name = vec![0u8; script_name.len() + 3].into_boxed_slice();

@@ -5566,7 +5566,7 @@ impl H2FrameParser {
     pub fn set_native_socket_from_js(this: &mut Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let args_list = callframe.arguments_old::<1>();
         if args_list.len < 1 {
-            return global_object.throw("Expected socket argument");
+            return Err(global_object.throw("Expected socket argument"));
         }
 
         let socket_js = args_list.ptr[0];

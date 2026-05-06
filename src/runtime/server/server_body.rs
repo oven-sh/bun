@@ -2198,22 +2198,23 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     pub fn get_url_as_string(&self) -> Result<BunString, AllocError> {
         let fmt = match &self.config.address {
             server_config::Address::Unix(unix) => 'brk: {
-                if unix.len() > 1 && unix[0] == 0 {
+                let unix_bytes = unix.as_bytes();
+                if unix_bytes.len() > 1 && unix_bytes[0] == 0 {
                     // abstract domain socket, let's give it an "abstract" URL
                     break 'brk bun_fmt::URLFormatter {
                         proto: bun_fmt::URLProto::Abstract,
-                        hostname: Some(&unix[1..]),
+                        hostname: Some(&unix_bytes[1..]),
                         port: None,
                     };
                 }
                 bun_fmt::URLFormatter {
                     proto: bun_fmt::URLProto::Unix,
-                    hostname: Some(unix),
+                    hostname: Some(unix_bytes),
                     port: None,
                 }
             }
-            server_config::Address::Tcp(tcp) => 'blk: {
-                let mut port: u16 = tcp.port;
+            server_config::Address::Tcp { port: tcp_port, hostname } => 'blk: {
+                let mut port: u16 = *tcp_port;
                 if let Some(listener) = self.listener {
                     // SAFETY: listener is a live uws ListenSocket FFI handle until stop_listening() nulls it
                     port = u16::try_from(unsafe { &*listener }.get_local_port()).unwrap();
@@ -2225,7 +2226,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 }
                 break 'blk bun_fmt::URLFormatter {
                     proto: if SSL { bun_fmt::URLProto::Https } else { bun_fmt::URLProto::Http },
-                    hostname: tcp.hostname.as_ref().map(|h| bstr::slice_to_nul(h)),
+                    hostname: hostname.as_ref().map(|h| h.as_bytes()),
                     port: Some(port),
                 };
             }
@@ -2237,9 +2238,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_url(&self, global: &JSGlobalObject) -> Result<JSValue, AllocError> {
-        let mut url = self.get_url_as_string()?;
-        let r = url.to_js_dom_url(global);
+    pub fn get_url(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        let mut url = self.get_url_as_string().map_err(|_| global.throw_out_of_memory())?;
+        let r = jsc::bun_string_jsc::to_jsdomurl(&mut url, global);
         url.deref();
         Ok(r)
     }
@@ -2249,7 +2250,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // TODO(port): narrow error set
         match &self.config.address {
             server_config::Address::Unix(_) => return Ok(JSValue::UNDEFINED),
-            server_config::Address::Tcp(_) => {}
+            server_config::Address::Tcp { .. } => {}
         }
         {
             if let Some(listener) = self.listener {
@@ -2257,17 +2258,17 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 // SAFETY: listener is a live uws ListenSocket FFI handle until stop_listening() nulls it
                 if let Some(addr) = unsafe { &*listener }.socket().remote_address(&mut buf[..1024]) {
                     if !addr.is_empty() {
-                        return BunString::create_utf8_for_js(global, addr);
+                        return jsc::bun_string_jsc::create_utf8_for_js(global, addr);
                     }
                 }
             }
             {
                 match &self.config.address {
-                    server_config::Address::Tcp(tcp) => {
-                        if let Some(hostname) = &tcp.hostname {
-                            return BunString::create_utf8_for_js(global, bstr::slice_to_nul(hostname));
+                    server_config::Address::Tcp { hostname, .. } => {
+                        if let Some(hostname) = hostname {
+                            return jsc::bun_string_jsc::create_utf8_for_js(global, hostname.as_bytes());
                         } else {
-                            return Ok(BunString::static_(b"localhost").to_js(global));
+                            return BunString::static_(b"localhost").to_js(global);
                         }
                     }
                     server_config::Address::Unix(_) => unreachable!(),
@@ -2279,7 +2280,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     #[bun_jsc::host_fn(getter)]
     pub fn get_protocol(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         let _ = self;
-        Ok(BunString::static_(if SSL { b"https" } else { b"http" }).to_js(global))
+        if SSL {
+            BunString::static_(b"https").to_js(global)
+        } else {
+            BunString::static_(b"http").to_js(global)
+        }
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -2293,7 +2298,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 
     pub fn on_request_complete(&mut self) {
-        self.vm.event_loop().process_gc_timer();
+        // SAFETY: event_loop() returns a live *mut EventLoop owned by the VM singleton.
+        unsafe { &mut *self.vm.event_loop() }.process_gc_timer();
         self.pending_requests -= 1;
         self.deinit_if_we_can();
     }
@@ -2575,7 +2581,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             listener: None,
             h3_app: None,
             h3_listener: None,
-            h3_alt_svc: ZStr::empty_boxed(),
+            h3_alt_svc: zstr_empty_boxed(),
             js_value: JsRef::empty(),
             pending_requests: 0,
             request_pool_allocator: ServerRequestContext::<SSL, DEBUG>::pool_get_or_init(),
@@ -2680,18 +2686,20 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         if error_instance.is_empty() {
             match &self.config.address {
-                server_config::Address::Tcp(tcp) => 'error_set: {
+                server_config::Address::Tcp { port, hostname } => 'error_set: {
                     #[cfg(target_os = "linux")]
                     {
                         let rc: i32 = -1;
                         let code = sys::get_errno(rc);
-                        if code == sys::E::ACCES {
+                        if code == sys::E::EACCES {
                             let mut cursor = &mut output_buf[..];
                             let msg = match write!(
                                 cursor,
                                 "permission denied {}:{}",
-                                BStr::new(tcp.hostname.as_deref().unwrap_or(b"0.0.0.0")),
-                                tcp.port
+                                BStr::new(
+                                    hostname.as_deref().map(|h| h.as_bytes()).unwrap_or(b"0.0.0.0")
+                                ),
+                                port
                             ) {
                                 Ok(_) => {
                                     let n = 4096 - cursor.len();
@@ -2703,14 +2711,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                                 message: BunString::init(msg),
                                 code: BunString::static_(b"EACCES"),
                                 syscall: BunString::static_(b"listen"),
-                                ..Default::default()
+                                ..system_error_default()
                             })
                             .to_error_instance(global);
                             break 'error_set;
                         }
                     }
                     let mut cursor = &mut output_buf[..];
-                    let msg = match write!(cursor, "Failed to start server. Is port {} in use?", tcp.port) {
+                    let msg = match write!(cursor, "Failed to start server. Is port {} in use?", port) {
                         Ok(_) => {
                             let n = 4096 - cursor.len();
                             &output_buf[..n]
@@ -2721,9 +2729,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         message: BunString::init(msg),
                         code: BunString::static_(b"EADDRINUSE"),
                         syscall: BunString::static_(b"listen"),
-                        ..Default::default()
+                        ..system_error_default()
                     })
                     .to_error_instance(global);
+                    let _ = hostname; // suppress unused on non-linux
                 }
                 server_config::Address::Unix(unix) => match sys::get_errno(-1i32) {
                     sys::E::SUCCESS => {
@@ -2731,7 +2740,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         let msg = match write!(
                             cursor,
                             "Failed to listen on unix socket {}",
-                            bun_fmt::QuotedFormatter { text: unix }
+                            bun_fmt::QuotedFormatter { text: unix.as_bytes() }
                         ) {
                             Ok(_) => {
                                 let n = 4096 - cursor.len();
@@ -2743,13 +2752,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             message: BunString::init(msg),
                             code: BunString::static_(b"EADDRINUSE"),
                             syscall: BunString::static_(b"listen"),
-                            ..Default::default()
+                            ..system_error_default()
                         })
                         .to_error_instance(global);
                     }
                     e => {
-                        let mut sys_err = sys::Error::from_code(e, sys::Tag::Listen);
-                        sys_err.path = unix.clone();
+                        let mut sys_err = sys::Error::from_code(e, sys::Tag::listen);
+                        sys_err.path = unix.as_bytes().to_vec().into_boxed_slice();
                         error_instance = match sys_err.to_js(global) {
                             Ok(v) => v,
                             Err(_) => return,
@@ -2769,7 +2778,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         };
 
         self.listener = Some(socket);
-        self.vm.event_loop_handle = AsyncLoop::get();
+        self.vm.event_loop_handle = Some(AsyncLoop::get());
         if !SSL {
             self.vm.add_listening_socket_for_watch_mode(unsafe { &*socket }.socket().fd());
         }
@@ -2793,16 +2802,16 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 Ok(_) => {
                     buf.push(0);
                     // SAFETY: NUL terminator just written
-                    self.h3_alt_svc = unsafe { ZStr::from_boxed_with_nul(buf.into_boxed_slice()) };
+                    self.h3_alt_svc = zstr_from_boxed_with_nul(buf.into_boxed_slice());
                 }
-                Err(_) => self.h3_alt_svc = ZStr::empty_boxed(),
+                Err(_) => self.h3_alt_svc = zstr_empty_boxed(),
             }
         }
     }
 
     pub fn on_h3_request(&mut self, req: &mut uws::H3::Request, resp: &mut uws::H3::Response) {
         if !Self::HAS_H3 { unreachable!(); }
-        if self.config.on_request.is_empty() {
+        if self.config.on_request.is_none() {
             return Self::on_h3_404(self, req, resp);
         }
         self.on_request_for::<ServerH3RequestContext<SSL, DEBUG>>(req, resp);
@@ -2825,12 +2834,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
     pub fn ref_(&mut self) {
         if self.poll_ref.is_active() { return; }
-        self.poll_ref.ref_(self.vm);
+        self.poll_ref.ref_(bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js));
     }
 
     pub fn unref(&mut self) {
         if !self.poll_ref.is_active() { return; }
-        self.poll_ref.unref(self.vm);
+        self.poll_ref.unref(bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js));
     }
 
     #[bun_jsc::host_fn(method)]
@@ -2867,10 +2876,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         );
 
         resp.write_status(b"200 OK");
-        resp.write_header(b"Content-Type", MimeType::JSON.value);
+        resp.write_header(b"Content-Type", &MimeType::JSON.value);
         resp.write_header(b"Cache-Control", b"public, max-age=3600");
         resp.write_header_int(b"Age", 0);
-        let buffer = writer.ctx.written;
+        let buffer = writer.ctx.written();
         resp.end(buffer, false);
     }
 
@@ -2886,10 +2895,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     ) {
         self.on_pending_request();
         #[cfg(debug_assertions)]
-        self.vm.event_loop().debug.enter();
+        unsafe { (*self.vm.event_loop()).debug.enter() };
         let _dbg_guard = scopeguard::guard((), |_| {
             #[cfg(debug_assertions)]
-            self.vm.event_loop().debug.exit();
+            unsafe { (*self.vm.event_loop()).debug.exit() };
         });
         req.set_yield(false);
         resp.timeout(self.config.idle_timeout);
@@ -2906,7 +2915,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 if let Some(node_response) = node_http_response {
                     // SAFETY: node_response was returned by NodeHTTPServer__onRequest_* with a ref;
                     // synchronous path drops that ref here (intrusive refcount)
-                    unsafe { &*node_response }.deref_();
+                    unsafe { &mut *node_response }.deref();
                 }
             }
         });
@@ -3378,10 +3387,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.on_pending_request();
 
         #[cfg(debug_assertions)]
-        self.vm.event_loop().debug.enter();
+        unsafe { (*self.vm.event_loop()).debug.enter() };
         let _dbg_guard = scopeguard::guard((), |_| {
             #[cfg(debug_assertions)]
-            self.vm.event_loop().debug.exit();
+            unsafe { (*self.vm.event_loop()).debug.exit() };
         });
         req.set_yield(false);
         resp.timeout(self.config.idle_timeout);

@@ -4559,19 +4559,22 @@ impl Resolver {
         if channel != Self::get_channel_from_vm(global_this)?
             && unsafe { c_ares::ares_queue_active_queries(channel) } != 0
         {
-            return global_this
+            return Err(global_this
                 .err(jsc::Error::DNS_SET_SERVERS_FAILED, format_args!("Failed to set servers: there are pending queries"))
-                .throw();
+                .throw());
         }
 
         let arguments = callframe.arguments();
         if arguments.is_empty() {
-            return global_this.throw_not_enough_arguments("setServers", 1, 0);
+            // TODO(port): blocked_on bun_jsc::JSGlobalObject::throw_not_enough_arguments (gated)
+            return Err(global_this.throw(format_args!(
+                "Not enough arguments to 'setServers'. Expected 1, got 0."
+            )));
         }
 
         let argument = arguments[0];
         if !argument.is_array() {
-            return global_this.throw_invalid_argument_type("setServers", "servers", "array");
+            return Err(global_this.throw_invalid_argument_type("setServers", "servers", "array"));
         }
 
         let mut triples_iterator = argument.array_iterator(global_this)?;

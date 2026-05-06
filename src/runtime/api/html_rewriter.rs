@@ -266,7 +266,7 @@ impl HTMLRewriter {
     pub fn transform_(&mut self, global: &JSGlobalObject, response_value: JSValue) -> JsResult<JSValue> {
         // PORT NOTE: `Response` doesn't yet impl `JsClass`, so use the
         // codegen `from_js` directly instead of `JSValue::as_::<Response>()`.
-        if let Some(response) = webcore::response::js::from_js(response_value) {
+        if let Some(response) = webcore::response::js::from_js(response_value).map(|p| p as *mut Response) {
             // SAFETY: response is the m_ctx of a live JS Response (response_value
             // is on the stack, conservatively scanned).
             let body_value = unsafe { (*response).get_body_value() };
@@ -318,7 +318,7 @@ impl HTMLRewriter {
                 return Err(global.throw_value(err));
             }
             out_response_value.ensure_still_alive();
-            let Some(out_response) = webcore::response::js::from_js(out_response_value) else {
+            let Some(out_response) = webcore::response::js::from_js(out_response_value).map(|p| p as *mut Response) else {
                 return Ok(out_response_value);
             };
             // SAFETY: out_response is the m_ctx of out_response_value (kept alive

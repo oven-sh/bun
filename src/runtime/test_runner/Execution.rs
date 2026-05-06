@@ -1021,25 +1021,25 @@ fn step_sequence_one(
     Execution::on_entry_started(next_item);
 
     if let Some(cb) = next_item.callback.as_ref() {
-        group_log::log("runSequence queued callback");
+        group_log::log(format_args!("runSequence queued callback"));
 
         let callback_data = RefDataValue::Execution {
             group_index: this.group_index,
             entry_data: Some(EntryData {
                 sequence_index,
                 entry: next_item_ptr.as_ptr() as *const (),
-                remaining_repeat_count: sequence.remaining_repeat_count,
+                remaining_repeat_count: sequence.remaining_repeat_count as i64,
             }),
         };
         group_log::log(format_args!("runSequence queued callback: {}", callback_data));
 
         if BunTest::run_test_callback(
-            buntest_strong,
+            buntest_strong.clone(),
             global_this,
             cb.get(),
             next_item.has_done_parameter,
             callback_data,
-            &mut next_item.timespec,
+            &next_item.timespec,
         )
         .is_some()
         {

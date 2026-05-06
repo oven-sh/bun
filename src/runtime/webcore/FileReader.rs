@@ -62,7 +62,7 @@ impl Default for FileReader {
             started: false,
             waiting_for_on_reader_done: false,
             // TODO(port): event_loop has no Zig default; callers must overwrite before use
-            event_loop: EventLoopHandle::default(),
+            event_loop: EventLoopHandle::init(core::ptr::null_mut()),
             lazy: Lazy::None,
             buffered: Vec::new(),
             read_inside_on_pull: ReadDuringJSOnPullResult::None,

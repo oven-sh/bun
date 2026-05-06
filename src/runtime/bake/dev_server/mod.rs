@@ -619,6 +619,18 @@ impl WatcherAtomics {
     ) -> Option<*mut HotReloadEvent> {
         todo!("blocked_on: dev_server::WatcherAtomics body un-gate")
     }
+
+    /// Watcher thread: atomically pick a `HotReloadEvent` not in use by the
+    /// DevServer thread. Full body in gated `../DevServer/WatcherAtomics.rs`.
+    pub fn watcher_acquire_event(&mut self) -> *mut HotReloadEvent {
+        todo!("blocked_on: dev_server::WatcherAtomics body un-gate")
+    }
+
+    /// Watcher thread: hand `ev` back to the DevServer thread (or queue it).
+    /// Full body in gated `../DevServer/WatcherAtomics.rs`.
+    pub fn watcher_release_and_submit_event(&mut self, _ev: *mut HotReloadEvent) {
+        todo!("blocked_on: dev_server::WatcherAtomics body un-gate")
+    }
 }
 
 /// `DevServer.DirectoryWatchStore` — sparse map of directories under watch

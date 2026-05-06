@@ -6074,10 +6074,14 @@ impl Property {
         }
     }
 
-     // blocked_on: generics::deinit_dispatch — Property::deinit (.zig:6566)
+    /// We're going to have this empty for now since not every property has a deinit function.
+    /// It's not strictly necessary since all allocations are into an arena.
+    /// It's mostly intended as a performance optimization in the case where mimalloc arena is used,
+    /// since it can reclaim the memory and use it for subsequent allocations.
+    /// I haven't benchmarked that though, so I don't actually know how much faster it would actually make it.
     pub fn deinit(&mut self, allocator: &bun_alloc::Arena) {
+        let _ = self;
         let _ = allocator;
-        todo!("blocked_on: generics::deinit_dispatch — Property::deinit")
     }
 }
 

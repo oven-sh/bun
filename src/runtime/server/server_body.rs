@@ -58,6 +58,99 @@ pub use super::node_http_response::NodeHTTPResponse;
 pub use super::any_request_context::AnyRequestContext;
 pub use super::request_context::NewRequestContext;
 
+// ─── BunInfo (CYCLEBREAK move-in from bun_core::Global) ──────────────────────
+// Spec: src/bun_core/Global.zig:195-210. `generate()` builds the struct and
+// hands it to `JSON.toAST`, which reflects over fields at comptime. Rust has no
+// `@typeInfo`, so this is the hand-expanded reflection output (cf.
+// `bun_interchange::json::ToAst` derive sketch, json.rs:808-824): an `E.Object`
+// with `bun_version` (string) + `platform` (nested `E.Object` of `os`/`arch`/
+// `version`, enums emitted as `@tagName` strings).
+pub mod BunInfo {
+    use bun_analytics::generate_header::generate_platform;
+    use bun_analytics::schema::analytics::{Architecture, OperatingSystem, Platform};
+    use bun_core::Global;
+    use bun_js_parser::ast::e::EString;
+    use bun_js_parser::{Expr, E, G};
+    use bun_logger::Loc;
+
+    pub struct BunInfo {
+        pub bun_version: &'static [u8],
+        pub platform: Platform,
+    }
+
+    fn os_tag_name(os: OperatingSystem) -> &'static [u8] {
+        match os {
+            OperatingSystem::_none => b"_none",
+            OperatingSystem::linux => b"linux",
+            OperatingSystem::macos => b"macos",
+            OperatingSystem::windows => b"windows",
+            OperatingSystem::wsl => b"wsl",
+            OperatingSystem::android => b"android",
+            OperatingSystem::freebsd => b"freebsd",
+        }
+    }
+
+    fn arch_tag_name(arch: Architecture) -> &'static [u8] {
+        match arch {
+            Architecture::_none => b"_none",
+            Architecture::x64 => b"x64",
+            Architecture::arm => b"arm",
+        }
+    }
+
+    #[inline]
+    fn str_expr(s: &[u8]) -> Expr {
+        Expr::init(EString::init(s), Loc::EMPTY)
+    }
+
+    #[inline]
+    fn prop(key: &'static [u8], value: Expr) -> G::Property {
+        G::Property {
+            key: Some(str_expr(key)),
+            value: Some(value),
+            ..G::Property::default()
+        }
+    }
+
+    /// Zig: `pub fn generate(comptime Bundler: type, _: Bundler, allocator) !JSAst.Expr`.
+    /// `Bundler` is an unused comptime witness; `allocator` maps onto the
+    /// global expr `Store` used by `Expr::init`.
+    pub fn generate<B>(_transpiler: B) -> Result<Expr, bun_core::Error> {
+        let info = BunInfo {
+            bun_version: Global::package_json_version.as_bytes(),
+            platform: generate_platform::for_os(),
+        };
+
+        // `JSON.toAST(allocator, BunInfo, info)` — hand-expanded:
+        let platform_props: Vec<G::Property> = vec![
+            prop(b"os", str_expr(os_tag_name(info.platform.os))),
+            prop(b"arch", str_expr(arch_tag_name(info.platform.arch))),
+            prop(b"version", str_expr(info.platform.version)),
+        ];
+        let platform_expr = Expr::init(
+            E::Object {
+                properties: G::PropertyList::move_from_list(platform_props),
+                is_single_line: false,
+                ..E::Object::default()
+            },
+            Loc::EMPTY,
+        );
+
+        let root_props: Vec<G::Property> = vec![
+            prop(b"bun_version", str_expr(info.bun_version)),
+            prop(b"platform", platform_expr),
+        ];
+        Ok(Expr::init(
+            E::Object {
+                properties: G::PropertyList::move_from_list(root_props),
+                is_single_line: false,
+                ..E::Object::default()
+            },
+            Loc::EMPTY,
+        ))
+    }
+}
+
 // ─── write_status ────────────────────────────────────────────────────────────
 pub fn write_status<const SSL: bool>(resp_ptr: Option<&mut uws::NewApp<SSL>::Response>, status: u16) {
     if let Some(resp) = resp_ptr {
@@ -2390,7 +2483,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let source = logger::Source::init_empty_file(b"info.json");
         let _ = bun_js_parser::printer::print_json(
             &mut writer,
-            Global::BunInfo::generate(&VirtualMachine::get().transpiler).expect("unreachable"),
+            BunInfo::generate(&VirtualMachine::get().transpiler).expect("unreachable"),
             &source,
             bun_js_parser::printer::Options { mangled_props: None },
         );

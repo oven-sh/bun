@@ -507,11 +507,25 @@ impl<'a> Parser<'a> {
     ) -> Result<(), Error> {
         let mut p = TSXParser::init(
             self.bump,
-            self.log,
+            // SAFETY: `log` was created from the `&'a mut Log` passed to
+            // `Parser::init`; the unique borrow is being handed off to `P`
+            // (which also receives the lexer). Matches Zig's two-`*Log` model.
+            unsafe { &mut *self.log.as_ptr() },
             self.source,
             self.define,
-            self.lexer,
-            self.options,
+            // See `_scan_imports`: move lexer/options out, leaving inert
+            // placeholders so `self` may drop without double-free.
+            core::mem::replace(
+                &mut self.lexer,
+                js_lexer::Lexer::init_without_reading(
+                    // SAFETY: reborrow of the unique Log handle for the inert
+                    // placeholder lexer (never actually read).
+                    unsafe { &mut *self.log.as_ptr() },
+                    self.source,
+                    self.bump,
+                ),
+            ),
+            core::mem::take(&mut self.options),
         )?;
 
         // Consume a leading hashbang comment
@@ -544,7 +558,9 @@ impl<'a> Parser<'a> {
 
         parse_tracer.end();
 
-        if self.log.errors > 0 {
+        // SAFETY: see `log_mut` — `log` aliases the `&'a mut Log` handed to the
+        // lexer at `Parser::init`; reading the error count is sound.
+        if unsafe { self.log.as_ref() }.errors > 0 {
             #[cfg(target_arch = "wasm32")]
             {
                 // If the logger is backed by console.log, every print appends a newline.

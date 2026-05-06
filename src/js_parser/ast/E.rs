@@ -716,10 +716,8 @@ impl Number {
         T::from_f64(clamped)
     }
 
-    // TODO(port): jsonStringify — Zig std.json protocol; Phase B picks a serde strategy.
-    pub fn json_stringify<W>(&self, writer: &mut W) -> Result<(), bun_core::Error> {
-        let _ = writer;
-        todo!("jsonStringify protocol")
+    pub fn json_stringify<W: crate::JsonWriter>(&self, writer: &mut W) -> Result<(), bun_core::Error> {
+        writer.write(&self.value)
     }
 
     // `toJS` alias deleted — lives in `js_parser_jsc` extension trait.
@@ -750,10 +748,8 @@ pub struct BigInt {
 impl BigInt {
     pub const EMPTY: BigInt = BigInt { value: b"" };
 
-    // TODO(port): jsonStringify — Zig std.json protocol.
-    pub fn json_stringify<W>(&self, writer: &mut W) -> Result<(), bun_core::Error> {
-        let _ = writer;
-        todo!("jsonStringify protocol")
+    pub fn json_stringify<W: crate::JsonWriter>(&self, writer: &mut W) -> Result<(), bun_core::Error> {
+        writer.write(self.value)
     }
 
     // `toJS` alias deleted — lives in `js_parser_jsc` extension trait.

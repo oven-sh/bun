@@ -130,8 +130,8 @@ pub fn nanoseconds(global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSVa
 
 #[bun_jsc::host_fn(export = "BunObject_callback_shrink")]
 pub fn shrink(global_object: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
-    let _ = global_object;
-    todo!("blocked_on: bun_jsc::VM::shrink_footprint")
+    global_object.vm().shrink_footprint();
+    Ok(JSValue::UNDEFINED)
 }
 
 pub use Bun__gc as gc;

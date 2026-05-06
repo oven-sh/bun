@@ -293,18 +293,30 @@ impl Response {
         unsafe { c::uws_h3_res_force_close(self) }
     }
 
-    pub fn on_writable<UD>(
-        &mut self,
-        handler: fn(&mut UD, u64, &mut Response) -> bool,
-        ud: *mut UD,
-    ) {
-        // TODO(port): comptime-fn trampoline — see note on `for_each_header`.
-        let _ = handler;
-        unsafe extern "C" fn cb<UD>(_r: *mut Response, _off: u64, _p: *mut c_void) -> bool {
-            unimplemented!("TODO(port): comptime handler trampoline");
+    pub fn on_writable<UD, H>(&mut self, _handler: H, ud: *mut UD)
+    where
+        H: Fn(&mut UD, u64, &mut Response) -> bool + Copy + 'static,
+    {
+        const { assert!(core::mem::size_of::<H>() == 0, "handler must be a fn item or capture-less closure") };
+        unsafe extern "C" fn cb<UD, H>(r: *mut Response, off: u64, p: *mut c_void) -> bool
+        where
+            H: Fn(&mut UD, u64, &mut Response) -> bool + Copy + 'static,
+        {
+            if p.is_null() {
+                // null should always be treated as a no-op, there's no case where it should have any effect.
+                return true;
+            }
+            // SAFETY: H is a ZST (asserted at compile time above).
+            let handler: H = unsafe { core::mem::zeroed() };
+            // SAFETY: `r` is a live H3 response for the duration of the callback.
+            let res = unsafe { &mut *r };
+            // SAFETY: `p` is the `ud` pointer we passed below; non-null checked above.
+            let ud = unsafe { &mut *p.cast::<UD>() };
+            // PERF(port): was @call(.always_inline)
+            handler(ud, off, res)
         }
         // SAFETY: self is a live FFI handle; trampoline is `extern "C"`; ud forwarded opaquely
-        unsafe { c::uws_h3_res_on_writable(self, Some(cb::<UD>), ud.cast()) }
+        unsafe { c::uws_h3_res_on_writable(self, Some(cb::<UD, H>), ud.cast()) }
     }
     pub fn clear_on_writable(&mut self) {
         // SAFETY: self is a live FFI handle

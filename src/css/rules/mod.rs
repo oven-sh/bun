@@ -33,28 +33,7 @@ pub mod font_palette_values;
 pub mod page;
 pub mod supports;
 pub mod counter_style;
-gated_rule!(custom_media, {
-    use crate::{PrintErr, Printer};
-    /// `@custom-media --name <media-list>;`
-    #[derive(Clone)]
-    pub struct CustomMediaRule {
-        pub name: crate::values::ident::DashedIdent,
-        pub query: crate::media_query::MediaList,
-        pub loc: super::Location,
-    }
-    impl CustomMediaRule {
-        pub fn to_css(&self, _dest: &mut Printer) -> Result<(), PrintErr> {
-            todo!("blocked_on: rules/custom_media.rs un-gate")
-        }
-        pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-            Self {
-                name: self.name.deep_clone(bump),
-                query: super::dc::media_list(&self.query, bump),
-                loc: self.loc,
-            }
-        }
-    }
-});
+pub mod custom_media;
 pub mod namespace;
 pub mod unknown;
 pub mod document;

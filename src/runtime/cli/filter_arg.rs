@@ -219,7 +219,7 @@ impl FilterSet {
             if is_path {
                 let parts: [&[u8]; 1] = [filter_utf8];
                 let joined =
-                    resolve_path::join_abs_string_buf::<platform::Loose>(cwd, buf.as_mut_slice(), &parts);
+                    resolve_path::join_abs_string_buf::<platform::Loose>(cwd, &mut buf[..], &parts);
                 let mut filter_utf8_temp = Box::<[u8]>::from(joined);
                 for b in filter_utf8_temp.iter_mut() {
                     if *b == b'\\' {

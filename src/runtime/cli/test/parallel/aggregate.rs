@@ -138,13 +138,12 @@ impl FileCoverage {
 /// can't be unioned; this under-reports % Funcs when workers cover different
 /// functions of the same file. The non-parallel path has the same FN/FNDA gap.
 pub fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
-    paths: &[&[u8]],
+    paths: &[Box<[u8]>],
     opts: &mut CodeCoverageOptions,
 ) {
     // PERF(port): was arena bulk-free (std.heap.ArenaAllocator) — profile in Phase B
 
-    // TODO(port): StringArrayHashMap key ownership semantics — using Box<[u8]> keys for now
-    let mut by_file: ArrayHashMap<Box<[u8]>, FileCoverage> = ArrayHashMap::default();
+    let mut by_file: StringArrayHashMap<FileCoverage> = StringArrayHashMap::default();
 
     for path in paths {
         let data = match File::read_from(Fd::cwd(), path) {

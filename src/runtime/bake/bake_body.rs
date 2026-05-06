@@ -975,7 +975,7 @@ impl Framework {
             // TODO(port): errdefer for (file_system_router_types[0..i]) |*fsr| fsr.style.deinit();
             // — Style should impl Drop; bumpalo Vec drop will handle this if so.
             while let Some(fsr_opts) = it.next()? {
-                let root = match get_optional_string(fsr_opts, global, "root", refs, arena)? {
+                let root = match get_optional_string(fsr_opts, global, b"root", refs, arena)? {
                     Some(r) => r,
                     None => {
                         return Err(global.throw_invalid_arguments(format_args!(

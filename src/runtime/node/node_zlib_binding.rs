@@ -220,7 +220,7 @@ pub trait CompressionContext {
     fn do_work(&mut self);
     fn reset(&mut self) -> Error;
     fn close(&mut self);
-    fn get_error_info(&self) -> Error;
+    fn get_error_info(&mut self) -> Error;
     fn update_write_result(&mut self, avail_in: &mut u32, avail_out: &mut u32);
 }
 

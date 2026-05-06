@@ -167,7 +167,7 @@ impl Default for DateHeaderTimer {
 impl DateHeaderTimer {
     /// Spec DateHeaderTimer.zig `run` — refresh the cached `Date:` header and
     /// reschedule. Body needs `vm.timer: All` (currently `()` in bun_jsc).
-    pub fn run(&mut self, _vm: &mut bun_jsc::VirtualMachine) {
+    pub fn run(&mut self, _vm: &mut bun_jsc::virtual_machine::VirtualMachine) {
         todo!("blocked_on: bun_jsc::VirtualMachine::timer (DateHeaderTimer::run)")
     }
 }
@@ -206,7 +206,7 @@ impl EventLoopDelayMonitor {
 
     pub fn enable(
         &mut self,
-        _vm: &mut bun_jsc::VirtualMachine,
+        _vm: &mut bun_jsc::virtual_machine::VirtualMachine,
         histogram: JSValue,
         resolution_ms: i32,
     ) {
@@ -227,7 +227,7 @@ impl EventLoopDelayMonitor {
         unsafe { (*Self::timer_all()).insert(elt) };
     }
 
-    pub fn disable(&mut self, _vm: &mut bun_jsc::VirtualMachine) {
+    pub fn disable(&mut self, _vm: &mut bun_jsc::virtual_machine::VirtualMachine) {
         if !self.enabled {
             return;
         }
@@ -247,7 +247,7 @@ impl EventLoopDelayMonitor {
     /// into the JS histogram and reschedule.
     pub fn on_fire(
         &mut self,
-        _vm: &mut bun_jsc::VirtualMachine,
+        _vm: &mut bun_jsc::virtual_machine::VirtualMachine,
         now: &bun_event_loop::EventLoopTimer::Timespec,
     ) {
         if !self.enabled || self.js_histogram.is_empty() {

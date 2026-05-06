@@ -65,7 +65,8 @@ impl BunStringSpawnExt for BunString {
 /// call sites stay shape-compatible with the Zig spec.
 #[inline]
 fn signal_code_from_js(val: JSValue, global: &JSGlobalObject) -> JsResult<SignalCode> {
-    bun_sys_jsc::signal_code_jsc::from_js(val, global)
+    let _ = (val, global);
+    todo!("blocked_on: bun_sys_jsc::signal_code_jsc::from_js")
 }
 
 /// `bun.timespec.orderIgnoreEpoch` — not yet on `bun_core::Timespec`; local port.

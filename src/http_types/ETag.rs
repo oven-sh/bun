@@ -200,7 +200,7 @@ impl Headers {
         let values: &[StringPointer] =
             unsafe { entries.items::<StringPointer>(HeaderEntryField::Value) };
         for (i, name_ptr) in names.iter().enumerate() {
-            if strings::eql_case_insensitive_ascii::<true>(self.as_str(*name_ptr), name) {
+            if strings::eql_case_insensitive_ascii(self.as_str(*name_ptr), name, true) {
                 return Some(self.as_str(values[i]));
             }
         }

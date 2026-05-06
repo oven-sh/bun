@@ -2,13 +2,21 @@ use std::borrow::Cow;
 
 use bun_string::strings;
 
-// TODO(b2-blocked): bun_options_types::Loader
-// `options_types` is same-tier (T3); adding it as a dep creates a cargo cycle
-// (http_types → options_types → zlib → io → uws_sys → http_types). `by_loader`
-// (the only consumer) stays gated below until the io→uws_sys edge is broken or
-// Loader moves to a lower tier.
-
-use bun_options_types::Loader; // TYPE_ONLY: was bun_bundler::options::Loader (T5); moved to options_types (T3) per CYCLEBREAK
+// PORT NOTE (cyclebreak): `by_loader` needs `bun_options_types::Loader`, but
+// adding that dep creates a cargo cycle
+// (http_types → options_types → zlib → io → uws_sys → http_types). The Loader
+// enum is `#[repr(u8)]` with stable discriminants (pinned by
+// `bun-native-bundler-plugin-api/bundler_plugin.h`), so we mirror the handful
+// of variants `by_loader` actually inspects as local `u8` constants and accept
+// the raw discriminant. Callers pass `loader as u8`.
+mod loader_disc {
+    pub const JSX: u8 = 0;
+    pub const JS: u8 = 1;
+    pub const TS: u8 = 2;
+    pub const TSX: u8 = 3;
+    pub const CSS: u8 = 4;
+    pub const JSON: u8 = 6;
+}
 
 // ───────────────────────────────────────────────────────────────────────────
 // `Table` (= generated `mime_type_list_enum::MimeTypeList`). The Rust side is a
@@ -502,12 +510,14 @@ impl MimeType {
 }
 
 // TODO: improve this
-// TODO(b2-blocked): bun_options_types::Loader (same-tier T3 → cargo cycle; see top-of-file note)
-
-pub fn by_loader(loader: Loader, ext: &[u8]) -> MimeType {
+// PORT NOTE (cyclebreak): takes the `#[repr(u8)]` discriminant of
+// `bun_options_types::Loader` to avoid a same-tier cargo cycle (see
+// `loader_disc` at top of file). Callers: `by_loader(loader as u8, ext)`.
+pub fn by_loader(loader: u8, ext: &[u8]) -> MimeType {
+    use loader_disc as L;
     match loader {
-        Loader::Tsx | Loader::Ts | Loader::Js | Loader::Jsx | Loader::Json => JAVASCRIPT,
-        Loader::Css => CSS,
+        L::TSX | L::TS | L::JS | L::JSX | L::JSON => JAVASCRIPT,
+        L::CSS => CSS,
         _ => by_extension(ext),
     }
 }

@@ -112,20 +112,21 @@ pub fn is_enabled() -> bool {
 pub mod features {
     use super::*;
 
-    // TODO(b2-blocked): bun_options_types::module_loader::HardcodedModule
-    // The real `HardcodedModule` enum (Zig: `bun.jsc.ModuleLoader.HardcodedModule`)
-    // currently lives in `bun_resolve_builtins` (T5). Per CYCLEBREAK.md
-    // §analytics, its TYPE_ONLY move target is `bun_options_types` (T3); that
-    // move-in has not landed yet. It must also derive `enumset::EnumSetType`
-    // for use in `EnumSet<HardcodedModule>` here. Until the move-in lands,
-    // re-gate just this static and the formatter's builtins iterator below,
-    // and add `bun_options_types.workspace = true` to Cargo.toml when un-gating.
-    
+    // PORT NOTE (cyclebreak): the Zig original is
+    // `EnumSet(bun.jsc.ModuleLoader.HardcodedModule)`. That enum lives in
+    // `bun_resolve_builtins` (T5) and pulling it here would create a forward
+    // dep (analytics is T1). The only operations we need are `insert` and
+    // ordered iteration of the module *names* for the crash-report formatter,
+    // so store the `&'static str` name (= `@tagName(HardcodedModule)`) instead
+    // of the enum value. Writers (`runtime/jsc_hooks.rs`) call
+    // `BUILTIN_MODULES.lock().insert(<&'static str>::from(hardcoded))`.
+    // PERF(port): Zig used a packed `EnumSet` (bitset); BTreeSet is O(log n)
+    // insert — fine for ≤~80 entries written once each at module-load time.
     pub static BUILTIN_MODULES: parking_lot::Mutex<
-        enumset::EnumSet<bun_options_types::module_loader::HardcodedModule>,
-    > = parking_lot::const_mutex(enumset::EnumSet::empty());
+        std::collections::BTreeSet<&'static str>,
+    > = parking_lot::const_mutex(std::collections::BTreeSet::new());
     // PORT NOTE: Zig used a plain mutable global; wrapped in a Mutex here
-    // because `EnumSet` is not a single atomic word for large enums.
+    // because the set is not a single atomic word.
 
     macro_rules! define_features {
         ( $( $(#[$doc:meta])* $idx:literal => ($ident:ident, $name:literal) ),* $(,)? ) => {
@@ -214,20 +215,19 @@ pub mod features {
                         writer.write_str("\n")?;
                     }
 
-                    // TODO(b2-blocked): bun_options_types::module_loader::HardcodedModule
-                    // (see BUILTIN_MODULES above)
-                    
+                    // See BUILTIN_MODULES above — stores `&'static str` names
+                    // directly (cyclebreak), so no `@tagName` conversion needed.
                     {
                         let builtins = BUILTIN_MODULES.lock();
                         let mut iter = builtins.iter();
                         if let Some(first) = iter.next() {
                             writer.write_str("Builtins: \"")?;
-                            writer.write_str(<&'static str>::from(first))?;
+                            writer.write_str(first)?;
                             writer.write_str("\" ")?;
 
                             while let Some(key) = iter.next() {
                                 writer.write_str("\"")?;
-                                writer.write_str(<&'static str>::from(key))?;
+                                writer.write_str(key)?;
                                 writer.write_str("\" ")?;
                             }
 

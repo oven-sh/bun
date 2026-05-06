@@ -4193,13 +4193,11 @@ impl HTTPClient {
         &mut self,
         incoming_data: &[u8],
     ) -> Result<bool, bun_core::Error> {
-        // PORT NOTE: reshaped for borrowck — get_body_buffer() borrows &mut
-        // self.state; hold it as a raw ptr and re-borrow for the disjoint
-        // reads/writes below.
-        let buffer: *mut MutableString = self.state.get_body_buffer();
-        // SAFETY: buffer points into self.state.{body_out_str,compressed_body};
-        // re-borrowed only across disjoint-field accesses.
-        let buffer = unsafe { &mut *buffer };
+        // PORT NOTE: reshaped for borrowck — get_body_buffer() may return
+        // `&mut self.state.compressed_body`, so its borrow must be scoped
+        // tightly and not held across other `self.state.*` accesses (would be
+        // aliased `&mut`). Read the Copy fields first, then borrow the buffer
+        // only for the write block.
         let content_length = self.state.content_length;
 
         let remainder: &[u8] = if let Some(cl) = content_length {
@@ -4211,6 +4209,7 @@ impl HTTPClient {
 
         // we can ignore the body data in redirects
         if !self.state.flags.is_redirect_pending {
+            let buffer = self.state.get_body_buffer();
             if buffer.list.is_empty() && incoming_data.len() < PREALLOCATE_MAX {
                 let _ = buffer.list.try_reserve_exact(incoming_data.len());
             }

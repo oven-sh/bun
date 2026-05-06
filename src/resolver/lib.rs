@@ -4466,7 +4466,7 @@ impl<'a> Resolver<'a> {
             })
         };
 
-        if unsafe { &mut *self.log() }.level == logger::Level::Verbose {
+        if unsafe { &*self.log() }.level == logger::Level::Verbose {
             if self.debug_logs.is_some() {
                 // deinit → drop
                 self.debug_logs = None;
@@ -7861,7 +7861,7 @@ impl<'a> Resolver<'a> {
             // SAFETY: ARENA — slot in the BSSMap-backed EntriesOptionMap singleton; outlives the resolver.
             let entries = unsafe { &mut *entries };
             if let Some(lookup) = entries.get(&base[..]) {
-                if unsafe { &*lookup.entry }.kind(unsafe { &mut *rfs }, self.store_fd) == Fs::file_system::EntryKind::File {
+                if unsafe { &*lookup.entry }.kind(rfs, self.store_fd) == Fs::file_system::EntryKind::File {
                     let out_buf: &[u8] = {
                         if unsafe { &*lookup.entry }.abs_path.is_empty() {
                             let parts = [dir_info.abs_path, &base[..]];
@@ -8245,7 +8245,7 @@ impl<'a> Resolver<'a> {
         }
 
         if let Some(query) = entries!().get(base) {
-            if unsafe { &*query.entry }.kind(unsafe { &mut *rfs }, self.store_fd) == Fs::file_system::EntryKind::File {
+            if unsafe { &*query.entry }.kind(rfs, self.store_fd) == Fs::file_system::EntryKind::File {
                 if let Some(debug) = self.debug_logs.as_mut() {
                     debug.add_note_fmt(format_args!("Found file \"{}\" ", bstr::BStr::new(base)));
                 }
@@ -8335,7 +8335,7 @@ impl<'a> Resolver<'a> {
                     buffer[segment.len()..].copy_from_slice(ext_to_replace);
 
                     if let Some(query) = entries!().get(&buffer[..]) {
-                        if unsafe { &*query.entry }.kind(unsafe { &mut *rfs }, self.store_fd) == Fs::file_system::EntryKind::File {
+                        if unsafe { &*query.entry }.kind(rfs, self.store_fd) == Fs::file_system::EntryKind::File {
                             if let Some(debug) = self.debug_logs.as_mut() {
                                 debug.add_note_fmt(format_args!("Rewrote to \"{}\" ", bstr::BStr::new(&buffer[..])));
                             }
@@ -8403,7 +8403,7 @@ impl<'a> Resolver<'a> {
         }
 
         if let Some(query) = unsafe { &*entries }.get(file_name) {
-            if unsafe { &*query.entry }.kind(unsafe { &mut *rfs }, self.store_fd) == Fs::file_system::EntryKind::File {
+            if unsafe { &*query.entry }.kind(rfs, self.store_fd) == Fs::file_system::EntryKind::File {
                 if let Some(debug) = self.debug_logs.as_mut() {
                     debug.add_note_fmt(format_args!("Found file \"{}\" ", bstr::BStr::new(&buffer[..])));
                 }

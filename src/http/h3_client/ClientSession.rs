@@ -285,6 +285,10 @@ impl ClientSession {
             return;
         };
         // SAFETY: stream.client is a live backref while the stream is attached.
+        // NB: `detach()` writes `client.h3 = None` through this same raw
+        // backref, which pops this `&mut`'s Unique tag under Stacked Borrows —
+        // so every `self.detach(stream)` below that is followed by further
+        // `client` use re-derives a fresh `&mut` from `client_ptr` first.
         let client = unsafe { &mut *client_ptr.as_ptr() };
 
         if client.signals.get(Signal::Aborted) {
@@ -300,6 +304,8 @@ impl ClientSession {
             if result == HeaderResult::Finished || (done && st.body_buffer.is_empty()) {
                 if client.state.flags.is_redirect_pending {
                     self.detach(stream);
+                    // SAFETY: re-derive — detach() invalidated the prior Unique tag.
+                    let client = unsafe { &mut *client_ptr.as_ptr() };
                     return client.do_redirect_h3();
                 }
                 client.clone_metadata();
@@ -308,6 +314,8 @@ impl ClientSession {
                     client.state.content_length = Some(0);
                 }
                 self.detach(stream);
+                // SAFETY: re-derive — detach() invalidated the prior Unique tag.
+                let client = unsafe { &mut *client_ptr.as_ptr() };
                 return finish(client);
             }
             client.clone_metadata();
@@ -345,11 +353,15 @@ impl ClientSession {
             st.body_buffer.clear();
             if done {
                 self.detach(stream);
+                // SAFETY: re-derive — detach() invalidated the prior Unique tag.
+                let client = unsafe { &mut *client_ptr.as_ptr() };
                 return finish(client);
             }
             if report {
                 if client.state.is_done() {
                     self.detach(stream);
+                    // SAFETY: re-derive — detach() invalidated the prior Unique tag.
+                    let client = unsafe { &mut *client_ptr.as_ptr() };
                     return client.progress_update_h3();
                 }
                 client.progress_update_h3();
@@ -359,6 +371,8 @@ impl ClientSession {
 
         if done {
             self.detach(stream);
+            // SAFETY: re-derive — detach() invalidated the prior Unique tag.
+            let client = unsafe { &mut *client_ptr.as_ptr() };
             client.state.flags.received_last_chunk = true;
             return finish(client);
         }

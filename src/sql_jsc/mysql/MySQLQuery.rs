@@ -146,20 +146,31 @@ impl MySQLQuery {
         Ok(())
     }
 
+    /// `statement` is a raw `*mut MySQLStatement` (not `&mut`) because the sole caller,
+    /// `run_prepared_query`, must derive it from `self.statement` and then call this
+    /// `&mut self` method — a `&mut MySQLStatement` rooted in `*self` would overlap that
+    /// reborrow. The Zig original (.zig:59) likewise passes an independent `*MySQLStatement`.
     fn bind_and_execute<W>(
         &mut self,
         writer: W,
-        statement: &mut MySQLStatement,
+        statement: *mut MySQLStatement,
         global_object: &JSGlobalObject,
         binding_value: JSValue,
         columns_value: JSValue,
     ) -> Result<(), AnyMySQLError> {
-        debug_assert!(
-            statement.params.len() == statement.params_received as usize && statement.statement_id > 0,
-            "statement is not prepared",
-        );
-        if statement.signature.fields.len() != statement.params.len() {
-            return Err(AnyMySQLError::WrongNumberOfParametersProvided);
+        {
+            // SAFETY: `statement` is non-null and kept alive by the `Rc` in
+            // `self.statement` for the duration of this call; no other `&mut` to it
+            // exists (caller converted its borrow to a raw pointer before reborrowing
+            // `self`). This block only reads.
+            let stmt = unsafe { &*statement };
+            debug_assert!(
+                stmt.params.len() == stmt.params_received as usize && stmt.statement_id > 0,
+                "statement is not prepared",
+            );
+            if stmt.signature.fields.len() != stmt.params.len() {
+                return Err(AnyMySQLError::WrongNumberOfParametersProvided);
+            }
         }
 
         // BLOB parameters borrow ArrayBuffer/Blob bytes rather than copying.
@@ -171,7 +182,7 @@ impl MySQLQuery {
         struct Ctx<'a, W> {
             this: &'a mut MySQLQuery,
             writer: W,
-            statement: &'a mut MySQLStatement,
+            statement: *mut MySQLStatement,
             global_object: &'a JSGlobalObject,
             binding_value: JSValue,
             columns_value: JSValue,

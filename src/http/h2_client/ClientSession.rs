@@ -162,8 +162,28 @@ impl ClientSession {
 
     #[inline]
     pub(crate) fn hpack(&self) -> &mut lshpack::HPACK {
-        // SAFETY: hpack was allocated by lshpack_wrapper_init and is freed in Drop.
+        // SAFETY: `hpack` is a disjoint FFI heap allocation owned for the
+        // session's lifetime (init in `create`, freed in `Drop`). Taking
+        // `&self` (not `&mut self`) lets callers borrow other session fields
+        // alongside the returned `&mut HPACK`; this is sound because no other
+        // path produces a borrow of the HPACK allocation, so the returned
+        // `&mut` is always unique.
         unsafe { &mut *self.hpack }
+    }
+
+    /// Send RST_STREAM for `stream` and mark it closed. Equivalent to
+    /// `Stream::rst` but routed through `self` directly so the stream's
+    /// `session` backref is not dereferenced while `&mut self` is already
+    /// live on the stack — re-entering via the raw backref would form a
+    /// second aliased `&mut ClientSession` (Stacked-Borrows UB).
+    fn rst_stream(&mut self, stream: &mut Stream, code: wire::ErrorCode) {
+        if stream.rst_done || stream.state == StreamState::Closed {
+            return;
+        }
+        stream.rst_done = true;
+        stream.state = StreamState::Closed;
+        let value: [u8; 4] = (code as u32).to_be_bytes();
+        self.write_frame(wire::FrameType::HTTP_FRAME_RST_STREAM, 0, stream.id, &value);
     }
 
     pub fn create(
@@ -431,9 +451,11 @@ impl ClientSession {
     /// Remove `stream` from the session, RST it, and fail its client. The
     /// session and socket stay up for siblings.
     pub fn detach_with_failure(&mut self, stream: *mut Stream, err: Error) {
-        // SAFETY: caller guarantees `stream` is live.
+        // SAFETY: caller guarantees `stream` is a live entry in `self.streams`;
+        // the Stream is a disjoint heap allocation so `&mut Stream` does not
+        // overlap `&mut self`.
         let s = unsafe { &mut *stream };
-        s.rst(wire::ErrorCode::CANCEL);
+        self.rst_stream(s, wire::ErrorCode::CANCEL);
         let _ = self.flush();
         let client = s.client.take();
         if let Some(c) = client {

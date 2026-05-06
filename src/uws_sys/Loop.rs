@@ -482,29 +482,39 @@ impl WindowsLoop {
     }
 
     // TODO(port): see PosixLoop::add_post_handler — same trampoline-synthesis limitation.
-    pub fn add_post_handler(
-        &mut self,
+    // Takes `this: *mut Self` (not `&mut self`) so the stored `Handler.loop_` inherits the
+    // long-lived raw-pointer provenance from `us_create_loop`/`uws_get_loop_with_native`
+    // rather than a transient `&mut` reborrow (which Stacked Borrows would invalidate on the
+    // next access to the C-owned singleton). Mirrors Zig's `this: *WindowsLoop`.
+    /// # Safety
+    /// `this` must be the live C-allocated loop pointer returned by
+    /// `us_create_loop`/`uws_get_loop_with_native` (not derived from a `&mut` reborrow).
+    pub unsafe fn add_post_handler(
+        this: *mut Self,
         ctx: *mut c_void,
         callback: unsafe extern "C" fn(*mut c_void, *mut Loop),
     ) -> Handler {
-        // SAFETY: self is a valid loop pointer
-        unsafe { c::uws_loop_addPostHandler(self, ctx, callback) };
+        // SAFETY: `this` is the live C-allocated loop pointer per fn contract.
+        unsafe { c::uws_loop_addPostHandler(this, ctx, callback) };
         Handler {
-            loop_: self,
+            loop_: this,
             ctx,
             callback,
         }
     }
 
-    pub fn add_pre_handler(
-        &mut self,
+    /// # Safety
+    /// `this` must be the live C-allocated loop pointer returned by
+    /// `us_create_loop`/`uws_get_loop_with_native` (not derived from a `&mut` reborrow).
+    pub unsafe fn add_pre_handler(
+        this: *mut Self,
         ctx: *mut c_void,
         callback: unsafe extern "C" fn(*mut c_void, *mut Loop),
     ) -> Handler {
-        // SAFETY: self is a valid loop pointer
-        unsafe { c::uws_loop_addPreHandler(self, ctx, callback) };
+        // SAFETY: `this` is the live C-allocated loop pointer per fn contract.
+        unsafe { c::uws_loop_addPreHandler(this, ctx, callback) };
         Handler {
-            loop_: self,
+            loop_: this,
             ctx,
             callback,
         }

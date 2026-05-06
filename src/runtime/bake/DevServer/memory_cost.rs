@@ -229,8 +229,10 @@ pub fn memory_cost_slice<T>(slice: &[T]) -> usize {
 pub fn memory_cost_array_hash_map<K, V, C>(map: &ArrayHashMap<K, V, C>) -> usize {
     // Zig: @TypeOf(map.entries).capacityInBytes(map.entries.capacity)
     // i.e. the MultiArrayList backing storage byte capacity.
-    // TODO(port): ArrayHashMap must expose `capacity_in_bytes()` (entries MultiArrayList byte capacity).
-    map.capacity_in_bytes()
+    // `bun_collections::ArrayHashMap` exposes no capacity accessor; approximate
+    // via `len()` (lower bound: keys + values + 32-bit hash per entry).
+    // TODO(port): blocked_on: bun_collections::ArrayHashMap::capacity_in_bytes
+    map.len() * (size_of::<K>() + size_of::<V>() + size_of::<u32>())
 }
 
 // ──────────────────────────────────────────────────────────────────────────

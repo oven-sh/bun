@@ -2595,7 +2595,10 @@ impl TestCommand {
             if repeat_index > 0 {
                 vm.clear_entry_point().map_err(|_| bun_core::err!(JSError))?;
                 let entry = ZigString::init(file_path);
-                vm.global().delete_module_registry_entry(&entry).map_err(|_| bun_core::err!(JSError))?;
+                // blocked_on: bun_jsc::JSGlobalObject::delete_module_registry_entry —
+                // JSGlobalObject.rs is cfg-gated upstream.
+                // Zig: `try vm.global.deleteModuleRegistryEntry(&entry);`
+                let _ = (vm.global(), &entry);
                 // Reset per-test snapshot counters so rerun N matches the same
                 // snapshot keys as run 1 instead of looking for "test name 2", etc.
                 reporter.jest.snapshots.reset_counts();

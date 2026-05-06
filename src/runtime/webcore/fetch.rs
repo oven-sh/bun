@@ -301,15 +301,15 @@ pub fn bun_fetch_preconnect(
     }
 
     if url_str.tag() == BunStringTag::Dead {
-        return global_object
+        return Err(global_object
             .err(jsc::ErrorCode::INVALID_ARG_TYPE, format_args!("Invalid URL"))
-            .throw();
+            .throw());
     }
 
     if url_str.is_empty() {
-        return global_object
+        return Err(global_object
             .err(jsc::ErrorCode::INVALID_ARG_TYPE, format_args!("{}", FETCH_ERROR_BLANK_URL))
-            .throw();
+            .throw());
     }
 
     // PORT NOTE: bun.handleOom(url_str.toOwnedSlice(...)) → to_owned_slice() aborts on OOM.

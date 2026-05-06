@@ -1178,7 +1178,7 @@ impl<'a> BlobReadChain<'a> {
                 };
                 let _ = outer.resolve(global, inner);
             }
-            Blob::ReadBytesResult::Err(e) => {
+            ReadBytesResult::Err(e) => {
                 drop(deliver);
                 let _ = outer.reject(global, e.to_error_instance(global));
             }

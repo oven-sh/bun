@@ -6,20 +6,78 @@ use core::ffi::c_void;
 use core::marker::PhantomData;
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, Strong, VirtualMachine};
-use bun_jsc::codegen::{JSH2FrameParser, JSTCPSocket, JSTLSSocket};
-use bun_jsc::webcore::{AbortSignal, AutoFlusher};
-use bun_jsc::ArrayBuffer::BinaryType;
-use bun_jsc::node::{Encoding, StringOrBuffer};
+use bun_jsc::AbortSignal;
+use bun_jsc::BinaryType;
+use crate::webcore::AutoFlusher;
+use crate::node::{Encoding, StringOrBuffer};
 use bun_str::{strings, String as BunString, ZigString};
 use bun_collections::{BabyList as ByteList, HashMap as BunHashMap, HiveArray};
-use bun_core::MutableString;
+use bun_string::MutableString;
 use bun_http::lshpack;
 use crate::api::socket::{TCPSocket, TLSSocket};
 use bstr::BStr;
 use phf::phf_map;
 
 bun_output::declare_scope!(H2FrameParser, visible);
-bun_output::declare_scope!(UInt31WithReserved, visible);
+
+// ──────────────────────────────────────────────────────────────────────────
+// Codegen stubs — `jsc.Codegen.JSH2FrameParser` / `JSTCPSocket` / `JSTLSSocket`
+// are emitted by generate-classes.ts (.classes.ts → .rs) but the Rust output
+// path is not wired up yet. Mirror the surface this file consumes so the
+// module compiles; bodies are `todo!()` until the generator lands.
+// ──────────────────────────────────────────────────────────────────────────
+#[allow(non_snake_case, non_camel_case_types, dead_code)]
+pub mod JSH2FrameParser {
+    use super::{JSGlobalObject, JSValue};
+    /// GC-cached value slots on the JS wrapper (Zig: `js.<field>SetCached` /
+    /// `js.<field>GetCached`).
+    #[derive(Clone, Copy)]
+    pub enum Gc {
+        context,
+        onError,
+        onWrite,
+        onStreamStart,
+        onStreamHeaders,
+        onStreamEnd,
+        onStreamData,
+        onStreamError,
+        onRemoteSettings,
+        onLocalSettings,
+        onWantTrailers,
+        onPing,
+        onEnd,
+        onGoAway,
+        onAborted,
+        onAltSvc,
+        onOrigin,
+        onFrameError,
+    }
+    impl Gc {
+        pub fn get(self, _this_value: JSValue) -> Option<JSValue> {
+            todo!("blocked_on: bun_jsc::codegen::JSH2FrameParser")
+        }
+        pub fn set(self, _this_value: JSValue, _global: &JSGlobalObject, _value: JSValue) {
+            todo!("blocked_on: bun_jsc::codegen::JSH2FrameParser")
+        }
+    }
+    pub fn get_constructor(_global: &JSGlobalObject) -> JSValue {
+        todo!("blocked_on: bun_jsc::codegen::JSH2FrameParser")
+    }
+}
+#[allow(non_snake_case)]
+pub mod JSTLSSocket {
+    use super::{JSValue, TLSSocket};
+    pub fn from_js(_value: JSValue) -> Option<&'static mut TLSSocket> {
+        todo!("blocked_on: bun_jsc::codegen::JSTLSSocket")
+    }
+}
+#[allow(non_snake_case)]
+pub mod JSTCPSocket {
+    use super::{JSValue, TCPSocket};
+    pub fn from_js(_value: JSValue) -> Option<&'static mut TCPSocket> {
+        todo!("blocked_on: bun_jsc::codegen::JSTCPSocket")
+    }
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // Constants

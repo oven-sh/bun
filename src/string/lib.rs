@@ -101,10 +101,13 @@ impl String {
     #[inline] pub const fn dead() -> Self { Self::DEAD }
     #[inline] pub fn tag(&self) -> Tag { self.tag }
 
-    /// `bun.String.init(ZigString)` — borrow a ZigString (caller owns memory).
+    /// `bun.String.init(anytype)` — polymorphic borrow constructor
+    /// (string.zig:331). Mirrors the Zig `switch (@TypeOf(value))` table via
+    /// `Into<Self>` impls below: `String` is identity, `ZigString` is wrapped,
+    /// byte/str slices go through `ZigString::from_bytes`.
     #[inline]
-    pub const fn init(z: ZigString) -> Self {
-        Self { tag: Tag::ZigString, value: StringImpl { zig: z } }
+    pub fn init<T: Into<Self>>(value: T) -> Self {
+        value.into()
     }
 
     /// `bun.String.borrowUTF8` — borrow `s` (no copy, no refcount). Caller

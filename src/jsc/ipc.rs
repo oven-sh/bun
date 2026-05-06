@@ -8,12 +8,139 @@ use bun_core::Output;
 use bun_event_loop::ManagedTask::ManagedTask;
 use bun_io::StreamBuffer;
 use crate as jsc;
-use crate::json_line_buffer::JSONLineBuffer;
+// PORT NOTE: `crate::json_line_buffer` is gated behind `cfg(any())` in lib.rs;
+// pull the file in directly so the type is available to ipc.rs.
+#[path = "JSONLineBuffer.rs"]
+mod json_line_buffer;
+use json_line_buffer::JSONLineBuffer;
 use crate::{
-    CallFrame, JSGlobalObject, JSValue, JsError, JsResult, SerializedFlags, Task,
+    CallFrame, JSGlobalObject, JSValue, JsError, JsResult, Task,
     VirtualMachine, ZigString,
 };
 use bun_string::{strings, String as BunString};
+
+// ──────────────────────────────────────────────────────────────────────────
+// JSValue / JSGlobalObject shims (B-2).
+// `JSGlobalObject.rs` and the serialize/deserialize/push/callNextTick surface
+// of `JSValue.zig` are still gated; route the handful of FFI entry points ipc
+// needs through local externs until those modules un-gate.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// `JSValue.SerializedFlags` (JSValue.zig:2301) — packed u8 passed to
+/// `Bun__serializeJSValue`.
+#[derive(Default, Copy, Clone)]
+pub struct SerializedFlags {
+    pub for_cross_process_transfer: bool,
+    pub for_storage: bool,
+}
+
+/// `JSValue.SerializedScriptValue` (JSValue.zig:2286) — owned slice + opaque
+/// handle freed via `Bun__SerializedScriptSlice__free` on drop.
+pub struct SerializedScriptValue {
+    bytes: *const u8,
+    size: usize,
+    handle: *mut c_void,
+}
+impl SerializedScriptValue {
+    #[inline]
+    pub fn data(&self) -> &[u8] {
+        // SAFETY: `bytes`/`size` came from C++ `SerializedScriptValue::wireBytes()`
+        // and remain valid until `handle` is freed in Drop.
+        unsafe { core::slice::from_raw_parts(self.bytes, self.size) }
+    }
+}
+impl Drop for SerializedScriptValue {
+    fn drop(&mut self) {
+        // SAFETY: `handle` is the non-null opaque returned by `Bun__serializeJSValue`.
+        unsafe { Bun__SerializedScriptSlice__free(self.handle) }
+    }
+}
+
+#[repr(C)]
+struct SerializedScriptValueExternal {
+    bytes: *const u8,
+    size: usize,
+    handle: *mut c_void,
+}
+
+unsafe extern "C" {
+    fn Bun__JSValue__deserialize(global: *const JSGlobalObject, data: *const u8, len: usize) -> JSValue;
+    fn Bun__serializeJSValue(global: *const JSGlobalObject, value: JSValue, flags: u8) -> SerializedScriptValueExternal;
+    fn Bun__SerializedScriptSlice__free(handle: *mut c_void);
+    fn JSC__JSValue__push(value: JSValue, global: *const JSGlobalObject, out: JSValue);
+    fn Bun__Process__queueNextTick1(global: *const JSGlobalObject, func: JSValue, arg: JSValue);
+    fn JSGlobalObject__clearException(this: *const JSGlobalObject);
+    fn Bun__Process__emitWarning(global: *const JSGlobalObject, warning: JSValue, type_: JSValue, code: JSValue, ctor: JSValue);
+}
+
+/// `JSValue.deserialize` (JSValue.zig:2279).
+#[inline]
+fn js_value_deserialize(bytes: &[u8], global: &JSGlobalObject) -> JsResult<JSValue> {
+    // SAFETY: `global` is live; `bytes` borrowed for the call (C++ copies).
+    crate::from_js_host_call(global, || unsafe {
+        Bun__JSValue__deserialize(global, bytes.as_ptr(), bytes.len())
+    })
+}
+
+/// `JSValue.serialize` (JSValue.zig:2309).
+#[inline]
+fn js_value_serialize(
+    value: JSValue,
+    global: &JSGlobalObject,
+    flags: SerializedFlags,
+) -> JsResult<SerializedScriptValue> {
+    let mut flags_u8: u8 = 0;
+    if flags.for_cross_process_transfer { flags_u8 |= 1 << 0; }
+    if flags.for_storage { flags_u8 |= 1 << 1; }
+    // SAFETY: `global` is live; FFI may set an exception (checked below).
+    let ext = crate::from_js_host_call_generic(global, || unsafe {
+        Bun__serializeJSValue(global, value, flags_u8)
+    })?;
+    // Zig: `value.bytes.?` / `value.handle.?` — non-null on success.
+    debug_assert!(!ext.bytes.is_null());
+    debug_assert!(!ext.handle.is_null());
+    Ok(SerializedScriptValue { bytes: ext.bytes, size: ext.size, handle: ext.handle })
+}
+
+/// `JSValue.push` (JSValue.zig:404).
+#[inline]
+fn js_value_push(arr: JSValue, global: &JSGlobalObject, item: JSValue) -> JsResult<()> {
+    // SAFETY: `global` is live; FFI may set an exception.
+    crate::from_js_host_call_generic(global, || unsafe {
+        JSC__JSValue__push(arr, global, item)
+    })
+}
+
+/// `JSValue.callNextTick` (JSValue.zig:275) — single-arg overload.
+#[inline]
+fn js_value_call_next_tick_1(function: JSValue, global: &JSGlobalObject, arg: JSValue) -> JsResult<()> {
+    // SAFETY: `global` is live; FFI may set an exception.
+    crate::from_js_host_call_generic(global, || unsafe {
+        Bun__Process__queueNextTick1(global, function, arg)
+    })
+}
+
+/// `JSGlobalObject.clearException` (JSGlobalObject.zig).
+#[inline]
+fn global_clear_exception(global: &JSGlobalObject) {
+    // SAFETY: `global` is a live JSGlobalObject*.
+    unsafe { JSGlobalObject__clearException(global) }
+}
+
+/// `JSGlobalObject.emitWarning` (JSGlobalObject.zig).
+#[inline]
+fn global_emit_warning(
+    global: &JSGlobalObject,
+    warning: JSValue,
+    type_: JSValue,
+    code: JSValue,
+    ctor: JSValue,
+) -> JsResult<()> {
+    // SAFETY: `global` is live; JSValue args are rooted on the caller's stack.
+    crate::from_js_host_call_generic(global, || unsafe {
+        Bun__Process__emitWarning(global, warning, type_, code, ctor)
+    })
+}
 use bun_sys::FdExt;
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
@@ -302,7 +429,7 @@ mod advanced {
                 }
 
                 let message = &data[HEADER_LENGTH..][..message_len as usize];
-                let deserialized = JSValue::deserialize(message, global)?;
+                let deserialized = js_value_deserialize(message, global)?;
 
                 Ok(DecodeIPCMessageResult {
                     bytes_consumed: HEADER_LENGTH_U32 + message_len,
@@ -334,16 +461,16 @@ mod advanced {
         value: JSValue,
         is_internal: IsInternal,
     ) -> Result<usize, IPCSerializationError> {
-        let serialized = value
-            .serialize(
-                global,
-                SerializedFlags {
-                    // IPC sends across process.
-                    for_cross_process_transfer: true,
-                    for_storage: false,
-                },
-            )
-            .map_err(|e| match e {
+        let serialized = js_value_serialize(
+            value,
+            global,
+            SerializedFlags {
+                // IPC sends across process.
+                for_cross_process_transfer: true,
+                for_storage: false,
+            },
+        )
+        .map_err(|e| match e {
                 JsError::Thrown => IPCSerializationError::JSError,
                 JsError::Terminated => IPCSerializationError::JSTerminated,
                 JsError::OutOfMemory => IPCSerializationError::OutOfMemory,
@@ -463,7 +590,7 @@ mod json {
         let deserialized = match crate::bun_string_jsc::to_js_by_parse_json(&mut str, global_this) {
             Ok(v) => v,
             Err(JsError::Thrown) => {
-                global_this.clear_exception();
+                global_clear_exception(global_this);
                 drop(str);
                 if is_ascii && !was_ascii_string_freed {
                     panic!("Expected ascii string to be freed by ExternalString, but it wasn't. This is a bug in Bun.");
@@ -471,7 +598,7 @@ mod json {
                 return Err(IPCDecodeError::InvalidFormat);
             }
             Err(JsError::Terminated) => {
-                global_this.clear_exception();
+                global_clear_exception(global_this);
                 drop(str);
                 if is_ascii && !was_ascii_string_freed {
                     panic!("Expected ascii string to be freed by ExternalString, but it wasn't. This is a bug in Bun.");

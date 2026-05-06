@@ -482,7 +482,8 @@ impl JSValue {
         if v.0 == JSValue::PROPERTY_DOES_NOT_EXIST.0 || v.is_undefined() { Ok(None) } else { Ok(Some(v)) }
     }
 
-    pub fn get(self, global: &JSGlobalObject, property: &[u8]) -> JsResult<Option<JSValue>> {
+    pub fn get(self, global: &JSGlobalObject, property: impl AsRef<[u8]>) -> JsResult<Option<JSValue>> {
+        let property = property.as_ref();
         // Spec (JSValue.zig:1536-1540) only routes to `fastGet` when the key is
         // *comptime-known*. A runtime byte-slice match here is wrong because
         // C++ `builtinNameMap` maps e.g. `asyncIterator` → `Symbol.asyncIterator`
@@ -502,11 +503,11 @@ impl JSValue {
     pub fn get_if_property_exists(
         self,
         global: &JSGlobalObject,
-        property: &[u8],
+        property: impl AsRef<[u8]>,
     ) -> JsResult<Option<JSValue>> {
         self.get(global, property)
     }
-    pub fn get_truthy(self, global: &JSGlobalObject, property: &[u8]) -> JsResult<Option<JSValue>> {
+    pub fn get_truthy(self, global: &JSGlobalObject, property: impl AsRef<[u8]>) -> JsResult<Option<JSValue>> {
         // JSValue.zig:1625 truthyPropertyValue: filters undef/null AND empty strings.
         Ok(self.get(global, property)?.filter(|v| {
             !v.is_empty_or_undefined_or_null() && !(v.is_string() && !v.to_boolean())
@@ -515,8 +516,9 @@ impl JSValue {
     pub fn get_stringish(
         self,
         global: &JSGlobalObject,
-        property: &[u8],
+        property: impl AsRef<[u8]>,
     ) -> JsResult<Option<bun_string::String>> {
+        let property = property.as_ref();
         // JSValue.zig:1682 `getStringish` — `get(prop)`, filter null/false → None,
         // reject symbols, otherwise coerce via `toBunString` and filter "" → None.
         let Some(prop) = self.get(global, property)? else { return Ok(None) };

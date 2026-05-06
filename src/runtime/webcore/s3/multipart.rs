@@ -102,7 +102,7 @@ use bun_collections::IntegerBitSet;
 use bun_core::{declare_scope, scoped_log};
 use bun_io::StreamBuffer;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{JSGlobalObject, JsResult};
+use bun_jsc::JSGlobalObject;
 use bun_s3_signing::acl::ACL;
 use bun_s3_signing::credentials::S3Credentials;
 use bun_s3_signing::error::S3Error;
@@ -272,7 +272,9 @@ impl UploadPart {
         unsafe { &*self.data }
     }
 
-    pub fn on_part_response(result: S3PartResult, this: &mut Self) -> JsTerminatedResult<()> {
+    pub fn on_part_response(result: S3PartResult, this: *mut c_void) -> JsTerminatedResult<()> {
+        // SAFETY: callback context — `this` is the `*mut UploadPart` passed in `perform()`
+        let this = unsafe { &mut *(this as *mut Self) };
         // SAFETY: ctx is a live BACKREF while a part is in flight (part holds a ref on ctx)
         let ctx = unsafe { &mut *this.ctx };
 
@@ -355,8 +357,7 @@ impl UploadPart {
                 request_payer: ctx.request_payer,
                 ..Default::default()
             },
-            // TODO(port): verify simple_request callback enum shape
-            s3_simple_request::S3Callback::Part(Self::on_part_response as _),
+            s3_simple_request::S3Callback::Part(Self::on_part_response),
             self as *mut Self as *mut c_void,
         )
     }
@@ -391,7 +392,11 @@ impl Drop for MultiPartUpload {
         // Zig `deinit`
         scoped_log!(S3MultiPartUpload, "deinit");
         // queue: Box<[UploadPart]> — dropped automatically (parts' raw `data` already freed during lifecycle)
-        self.poll_ref.unref(self.vm);
+        // PORT NOTE: KeepAlive::unref takes an `EventLoopCtx` (aio cycle-break vtable),
+        // not `&VirtualMachine`. Route through the global hook like simple_request does.
+        let _ = self.vm;
+        self.poll_ref
+            .unref(bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js));
         // path, proxy, content_type, content_disposition, content_encoding — Box dropped automatically
         // credentials: Arc<S3Credentials> — dropped automatically (== .deref())
         // uploadid_buffer: MutableString — Drop
@@ -402,9 +407,12 @@ impl Drop for MultiPartUpload {
 }
 
 impl MultiPartUpload {
-    pub fn single_send_upload_response(result: S3UploadResult, this: *mut Self) -> JsResult<()> {
+    pub fn single_send_upload_response(
+        result: S3UploadResult,
+        this: *mut c_void,
+    ) -> JsTerminatedResult<()> {
         // SAFETY: callback context — `this` was passed as opaque ctx and is live (holds final ref)
-        let this = unsafe { &mut *this };
+        let this = unsafe { &mut *(this as *mut Self) };
         if this.state == State::Finished {
             return Ok(());
         }
@@ -432,17 +440,14 @@ impl MultiPartUpload {
                             request_payer: this.request_payer,
                             ..Default::default()
                         },
-                        s3_simple_request::S3Callback::Upload(
-                            Self::single_send_upload_response as _,
-                        ),
+                        s3_simple_request::S3Callback::Upload(Self::single_send_upload_response),
                         this as *mut Self as *mut c_void,
                     )?;
 
                     Ok(())
                 } else {
                     scoped_log!(S3MultiPartUpload, "singleSendUploadResponse failed");
-                    // TODO(port): narrow error set — Zig returns JSError here, fail() returns JSTerminated
-                    this.fail(err).map_err(Into::into)
+                    this.fail(err)
                 }
             }
             S3UploadResult::Success => {
@@ -451,7 +456,7 @@ impl MultiPartUpload {
                 if let Some(callback) = this.on_writable {
                     callback(this, this.callback_context, this.buffered.size() as u64);
                 }
-                this.done().map_err(Into::into)
+                this.done()
             }
         }
     }
@@ -630,8 +635,9 @@ impl MultiPartUpload {
     /// Result of the Multipart request, after this we can start draining the parts
     pub fn start_multi_part_request_result(
         result: S3DownloadResult,
-        this: *mut Self,
-    ) -> JsResult<()> {
+        this: *mut c_void,
+    ) -> JsTerminatedResult<()> {
+        let this = this as *mut Self;
         // PORT NOTE: `defer this.deref()` — guard runs even on early return / error
         let _deref_guard = scopeguard::guard(this, |t| MultiPartUpload::deref_(t));
         // SAFETY: callback context — `this` is live (a ref was taken before the request)
@@ -648,11 +654,11 @@ impl MultiPartUpload {
                     BStr::new(err.message),
                     BStr::new(err.message)
                 );
-                this.fail(err).map_err(Into::into)
+                this.fail(err)
             }
             S3DownloadResult::Success(response) => {
-                // TODO(port): verify response.body type (Zig: bun.MutableString with .list.items)
-                let slice = response.body.list.items();
+                // response.body is bun.MutableString — `list` is a Vec<u8>
+                let slice = response.body.list.as_slice();
                 // PERF(port): Zig stored body and sliced upload_id into it; here we dupe upload_id
                 if let Some(start) = strings::index_of(slice, b"<UploadId>") {
                     if let Some(end) = strings::index_of(slice, b"</UploadId>") {
@@ -670,8 +676,7 @@ impl MultiPartUpload {
                     this.fail(S3Error {
                         code: b"UnknownError",
                         message: b"Failed to initiate multipart upload",
-                    })
-                    .map_err(Into::into)?;
+                    })?;
                     return Ok(());
                 }
                 scoped_log!(
@@ -682,23 +687,22 @@ impl MultiPartUpload {
                 );
                 this.state = State::MultipartCompleted;
                 // start draining the parts
-                this.drain_enqueued_parts(0).map_err(Into::into)
+                this.drain_enqueued_parts(0)
             }
             // this is "unreachable" but we cover in case AWS returns 404
-            S3DownloadResult::NotFound(_) => this
-                .fail(S3Error {
-                    code: b"UnknownError",
-                    message: b"Failed to initiate multipart upload",
-                })
-                .map_err(Into::into),
+            S3DownloadResult::NotFound(_) => this.fail(S3Error {
+                code: b"UnknownError",
+                message: b"Failed to initiate multipart upload",
+            }),
         }
     }
 
     /// We do a best effort to commit the multipart upload, if it fails we will retry, if it still fails we will fail the upload
     pub fn on_commit_multi_part_request(
         result: S3CommitResult,
-        this: *mut Self,
+        this: *mut c_void,
     ) -> JsTerminatedResult<()> {
+        let this = this as *mut Self;
         // SAFETY: callback context — `this` is live (final-step ref)
         let this_ref = unsafe { &mut *this };
         scoped_log!(
@@ -734,8 +738,9 @@ impl MultiPartUpload {
     /// We do a best effort to rollback the multipart upload, if it fails we will retry, if it still we just deinit the upload
     pub fn on_rollback_multi_part_request(
         result: S3UploadResult,
-        this: *mut Self,
+        this: *mut c_void,
     ) -> JsTerminatedResult<()> {
+        let this = this as *mut Self;
         // SAFETY: callback context — `this` is live (final-step ref)
         let this_ref = unsafe { &mut *this };
         scoped_log!(
@@ -786,7 +791,7 @@ impl MultiPartUpload {
                 request_payer: self.request_payer,
                 ..Default::default()
             },
-            s3_simple_request::S3Callback::Commit(Self::on_commit_multi_part_request as _),
+            s3_simple_request::S3Callback::Commit(Self::on_commit_multi_part_request),
             self as *mut Self as *mut c_void,
         )
     }
@@ -816,7 +821,7 @@ impl MultiPartUpload {
                 request_payer: self.request_payer,
                 ..Default::default()
             },
-            s3_simple_request::S3Callback::Upload(Self::on_rollback_multi_part_request as _),
+            s3_simple_request::S3Callback::Upload(Self::on_rollback_multi_part_request),
             self as *mut Self as *mut c_void,
         )
     }
@@ -851,9 +856,7 @@ impl MultiPartUpload {
                     request_payer: self.request_payer,
                     ..Default::default()
                 },
-                s3_simple_request::S3Callback::Download(
-                    Self::start_multi_part_request_result as _,
-                ),
+                s3_simple_request::S3Callback::Download(Self::start_multi_part_request_result),
                 self as *mut Self as *mut c_void,
             )?;
         } else if self.state == State::MultipartCompleted {
@@ -995,7 +998,7 @@ impl MultiPartUpload {
                     request_payer: self.request_payer,
                     ..Default::default()
                 },
-                s3_simple_request::S3Callback::Upload(Self::single_send_upload_response as _),
+                s3_simple_request::S3Callback::Upload(Self::single_send_upload_response),
                 self as *mut Self as *mut c_void,
             ); // TODO: properly propagate exception upwards
         } else {
@@ -1005,7 +1008,7 @@ impl MultiPartUpload {
     }
 
     pub fn part_size_in_bytes(&self) -> usize {
-        self.options.part_size
+        self.options.part_size as usize
     }
 
     pub fn continue_stream(&mut self) {
@@ -1027,7 +1030,7 @@ impl MultiPartUpload {
     }
 
     pub fn is_queue_empty(&self) -> bool {
-        self.available.mask() == IntegerBitSet::<{ Self::MAX_QUEUE_SIZE }>::full().mask()
+        self.available.mask == IntegerBitSet::<{ Self::MAX_QUEUE_SIZE }>::init_full().mask
     }
 
     // PORT NOTE: Zig used `comptime encoding: enum {bytes, latin1, utf16}`. Rust's
@@ -1064,7 +1067,7 @@ impl MultiPartUpload {
             if !chunk.is_empty() {
                 match encoding {
                     WriteEncoding::Bytes => self.buffered.write(chunk)?,
-                    WriteEncoding::Latin1 => self.buffered.write_latin1(chunk, true)?,
+                    WriteEncoding::Latin1 => self.buffered.write_latin1::<true>(chunk)?,
                     WriteEncoding::Utf16 => {
                         // SAFETY: @alignCast — caller guarantees chunk is u16-aligned
                         let utf16 = unsafe {
@@ -1089,7 +1092,7 @@ impl MultiPartUpload {
             }
             match encoding {
                 WriteEncoding::Bytes => self.buffered.write(chunk)?,
-                WriteEncoding::Latin1 => self.buffered.write_latin1(chunk, true)?,
+                WriteEncoding::Latin1 => self.buffered.write_latin1::<true>(chunk)?,
                 WriteEncoding::Utf16 => {
                     // SAFETY: @alignCast — caller guarantees chunk is u16-aligned
                     let utf16 = unsafe {

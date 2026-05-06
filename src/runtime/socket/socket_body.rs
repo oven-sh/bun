@@ -123,6 +123,66 @@ trait SocketHandlerAddrExt {
     fn local_address<'a>(&self, buf: &'a mut [u8]) -> Option<&'a [u8]>;
     fn remote_address<'a>(&self, buf: &'a mut [u8]) -> Option<&'a [u8]>;
 }
+
+// `bun_uws::NewSocketHandler` lacks pause/resume/nodelay/keepalive/is_named_pipe;
+// the underlying `us_socket_t` already has them (uws_sys/us_socket_t.rs), so
+// dispatch over `InternalSocket` here until they land upstream.
+trait SocketHandlerStreamExt {
+    fn resume_stream(&self) -> bool;
+    fn pause_stream(&self) -> bool;
+    fn set_no_delay(&self, enabled: bool) -> bool;
+    fn set_keep_alive(&self, enabled: bool, delay: u32) -> bool;
+    fn is_named_pipe(&self) -> bool;
+}
+impl<const SSL: bool> SocketHandlerStreamExt for uws::NewSocketHandler<SSL> {
+    fn resume_stream(&self) -> bool {
+        match self.socket {
+            uws::InternalSocket::Connected(s) => {
+                // SAFETY: non-null FFI handle owned by uSockets.
+                unsafe { (*s).resume() };
+                true
+            }
+            uws::InternalSocket::Detached => true,
+            _ => false,
+        }
+    }
+    fn pause_stream(&self) -> bool {
+        match self.socket {
+            uws::InternalSocket::Connected(s) => {
+                // SAFETY: non-null FFI handle owned by uSockets.
+                unsafe { (*s).pause() };
+                true
+            }
+            uws::InternalSocket::Detached => true,
+            _ => false,
+        }
+    }
+    fn set_no_delay(&self, enabled: bool) -> bool {
+        match self.socket {
+            uws::InternalSocket::Connected(s) => {
+                // SAFETY: non-null FFI handle owned by uSockets.
+                unsafe { (*s).set_nodelay(enabled) };
+                true
+            }
+            _ => false,
+        }
+    }
+    fn set_keep_alive(&self, enabled: bool, delay: u32) -> bool {
+        match self.socket {
+            uws::InternalSocket::Connected(s) => {
+                // SAFETY: non-null FFI handle owned by uSockets.
+                unsafe { (*s).set_keepalive(enabled, delay) == 0 }
+            }
+            _ => false,
+        }
+    }
+    fn is_named_pipe(&self) -> bool {
+        #[cfg(windows)]
+        return matches!(self.socket, uws::InternalSocket::Pipe(_));
+        #[cfg(not(windows))]
+        return matches!(self.socket, uws::InternalSocket::Pipe);
+    }
+}
 impl<const SSL: bool> SocketHandlerAddrExt for uws::NewSocketHandler<SSL> {
     fn local_address<'a>(&self, buf: &'a mut [u8]) -> Option<&'a [u8]> {
         match self.socket {
@@ -393,7 +453,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         let native_callback = core::mem::replace(&mut self.native_callback, NativeCallbacks::None);
         match native_callback {
             NativeCallbacks::H2(h2) => {
-                h2.on_native_close();
+                // SAFETY: `RefPtr` lacks `DerefMut`; reach the pointee via the
+                // raw NonNull (intrusive refcount keeps it alive until `drop`).
+                unsafe { (*h2.data.as_ptr()).on_native_close() };
                 // Zig `h2.deref()` — IntrusiveRc::drop decrements.
                 drop(h2);
             }
@@ -420,7 +482,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // SAFETY: short-lived read; see `get_handlers` contract.
         let vm = unsafe { (*self.get_handlers()).vm };
-        let group = vm.rare_data().bun_connect_group(vm, SSL);
+        let group = vm.rare_data().bun_connect_group::<SSL>(vm);
         let kind: uws::SocketKind = if SSL {
             uws::SocketKind::BunSocketTls
         } else {
@@ -439,69 +501,74 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         use super::listener::UnixOrHost;
         match connection {
-            UnixOrHost::Host(host) => {
+            UnixOrHost::Host { host, port } => {
                 // PERF(port): was stack-fallback alloc — profile in Phase B.
                 // getaddrinfo doesn't accept bracketed IPv6.
-                let raw = host.host.as_slice();
+                let raw: &[u8] = host;
                 let clean = if raw.len() > 1 && raw[0] == b'[' && raw[raw.len() - 1] == b']' {
                     &raw[1..raw.len() - 1]
                 } else {
                     raw
                 };
-                let hostz = ZStr::from_bytes(clean);
+                let hostz = bstr::ZBox::from_bytes(clean);
+                // SAFETY: `ZBox` guarantees a trailing NUL and contains no
+                // interior NUL (host bytes were `[` stripped slice).
+                let host_c = unsafe {
+                    core::ffi::CStr::from_bytes_with_nul_unchecked(hostz.as_bytes_with_nul())
+                };
 
                 self.socket = match group.connect(
                     kind,
                     ssl_ctx,
-                    hostz.as_cstr(),
-                    host.port,
+                    host_c,
+                    c_int::from(*port),
                     flags,
-                    core::mem::size_of::<*mut c_void>(),
+                    core::mem::size_of::<*mut c_void>() as c_int,
                 ) {
                     uws::ConnectResult::Failed => {
                         return Err(bun_core::err!("FailedToOpenSocket"))
                     }
                     uws::ConnectResult::Socket(s) => {
                         // SAFETY: ext slot is sized for `*mut Self`.
-                        unsafe { *s.ext::<*mut Self>() = self as *mut Self };
+                        unsafe { *(*s).ext::<*mut Self>() = self as *mut Self };
                         SocketHandler::<SSL>::from(s)
                     }
                     uws::ConnectResult::Connecting(c) => {
                         // SAFETY: ext slot is sized for `*mut Self`.
-                        unsafe { *c.ext::<*mut Self>() = self as *mut Self };
+                        unsafe { *(*c).ext::<*mut Self>() = self as *mut Self };
                         SocketHandler::<SSL>::from_connecting(c)
                     }
                 };
             }
             UnixOrHost::Unix(u) => {
                 // PERF(port): was stack-fallback alloc — profile in Phase B.
-                let pathz = ZStr::from_bytes(u);
-                let s = group
-                    .connect_unix(
-                        kind,
-                        ssl_ctx,
-                        pathz.as_ptr(),
-                        pathz.len(),
-                        flags,
-                        core::mem::size_of::<*mut c_void>(),
-                    )
-                    .ok_or(bun_core::err!("FailedToOpenSocket"))?;
+                let s = group.connect_unix(
+                    kind,
+                    ssl_ctx,
+                    u,
+                    flags,
+                    core::mem::size_of::<*mut c_void>() as c_int,
+                );
+                if s.is_null() {
+                    return Err(bun_core::err!("FailedToOpenSocket"));
+                }
                 // SAFETY: ext slot is sized for `*mut Self`.
-                unsafe { *s.ext::<*mut Self>() = self as *mut Self };
+                unsafe { *(*s).ext::<*mut Self>() = self as *mut Self };
                 self.socket = SocketHandler::<SSL>::from(s);
             }
             UnixOrHost::Fd(f) => {
-                let s = group
-                    .from_fd(
-                        kind,
-                        ssl_ctx,
-                        core::mem::size_of::<*mut c_void>(),
-                        f.native(),
-                        false,
-                    )
-                    .ok_or(bun_core::err!("ConnectionFailed"))?;
+                let s = group.from_fd(
+                    kind,
+                    ssl_ctx,
+                    core::mem::size_of::<*mut c_void>() as c_int,
+                    f.native(),
+                    false,
+                );
+                if s.is_null() {
+                    return Err(bun_core::err!("ConnectionFailed"));
+                }
                 // SAFETY: ext slot is sized for `*mut Self`.
-                unsafe { *s.ext::<*mut Self>() = self as *mut Self };
+                unsafe { *(*s).ext::<*mut Self>() = self as *mut Self };
                 self.socket = SocketHandler::<SSL>::from(s);
                 self.on_open(self.socket);
             }
@@ -514,7 +581,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     // `impl<const SSL: bool>` block. The codegen `JsClass` derive owns the
     // constructor link name, so the placeholder shim isn't needed.
     pub fn constructor(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<*mut Self> {
-        global.throw("Cannot construct Socket", ())
+        Err(global.throw("Cannot construct Socket"))
     }
 
     #[bun_jsc::host_fn(method)]
@@ -567,17 +634,18 @@ impl<const SSL: bool> NewSocket<SSL> {
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         jsc::mark_binding!();
-        let args = callframe.arguments_old(2);
+        let args = callframe.arguments_old::<2>();
 
-        let enabled: bool = if args.len() >= 1 {
-            args.ptr()[0].to_boolean()
+        let enabled: bool = if args.len >= 1 {
+            args.ptr[0].to_boolean()
         } else {
             false
         };
 
-        let initial_delay: u32 = if args.len() > 1 {
+        let initial_delay: u32 = if args.len > 1 {
+            use bun_sql_jsc::jsc::JSGlobalObjectSqlExt as _;
             u32::try_from(global.validate_integer_range(
-                args.ptr()[1],
+                args.ptr[1],
                 0i32,
                 jsc::IntegerRange {
                     min: 0,
@@ -601,9 +669,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         jsc::mark_binding!();
-        let args = callframe.arguments_old(1);
-        let enabled: bool = if args.len() >= 1 {
-            args.ptr()[0].to_boolean()
+        let args = callframe.arguments_old::<1>();
+        let enabled: bool = if args.len >= 1 {
+            args.ptr[0].to_boolean()
         } else {
             true
         };
@@ -766,7 +834,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         self.socket = SocketHandler::<SSL>::DETACHED;
 
         let vm = unsafe { (*handlers).vm };
-        self.poll_ref.unref_on_next_tick(vm);
+        let _ = vm;
+        self.poll_ref.unref_on_next_tick(js_loop_ctx());
 
         // TODO(port): errdefer — combined `defer markInactive()` + `defer deref()`
         // moved to a guard so all early-returns run them.

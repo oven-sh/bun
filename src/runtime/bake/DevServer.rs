@@ -753,8 +753,13 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     let _ = (&dev.server_graph, &dev.client_graph, &dev.directory_watchers);
 
     dev.graph_safety_lock.lock();
-    let _unlock = scopeguard::guard((), |_| dev.graph_safety_lock.unlock());
-    // TODO(port): scopeguard captures &mut dev; Phase B reshaping needed.
+    // PORT NOTE: capture the raw `dev_ptr` so the guard closure doesn't hold a
+    // unique borrow of `dev` for the rest of the function (Zig `defer` had no
+    // aliasing check). `dev_ptr` is live for the whole fn body.
+    // SAFETY: `dev_ptr` points into the `Box` we own; the guard runs before
+    // `dev` is moved out via `Ok(dev)` (dropping `_unlock` first via
+    // `ScopeGuard::into_inner` below).
+    let _unlock = scopeguard::guard((), move |_| unsafe { (*dev_ptr).graph_safety_lock.unlock() });
 
     if let Err(err) = dev.bun_watcher.start() {
         return Err(global.throw_error(
@@ -942,7 +947,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
                     .iter()
                     .map(|e| Box::<[u8]>::from(e.as_ref()))
                     .collect(),
-                style: fsr.style,
+                style: fsr.style.clone(),
                 allow_layouts: fsr.allow_layouts,
                 server_file: to_opaque_file_id::<{ bake::Side::Server }>(server_file),
                 client_file: if let Some(client) = &fsr.entry_client {
@@ -4069,7 +4074,7 @@ pub fn finalize_bundle(
                     // pointer-only struct by value. Replace with by-value move
                     // once `Handler::ServerHandler` stores it by-value.
                     SavedRequestUnion::Saved({
-                        let _ = &mut *saved;
+                        let _ = saved;
                         todo!("blocked_on: server::SavedRequest by-value move")
                     }),
                     response,

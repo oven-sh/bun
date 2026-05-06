@@ -2084,8 +2084,8 @@ pub fn write_file_internal(
     }
 
     // if path_or_blob is a path, convert it into a file blob
-    let mut destination_blob: Blob = match *path_or_blob {
-        PathOrBlob::Path(ref mut path) => {
+    let mut destination_blob: Blob = match path_or_blob {
+        PathOrBlob::Path(path) => {
             let new_blob = Blob::find_or_create_file_from_path(path, global_this, true);
             if new_blob.store.is_none() {
                 return Err(global_this
@@ -2093,7 +2093,7 @@ pub fn write_file_internal(
             }
             new_blob
         }
-        PathOrBlob::Blob(ref b) => {
+        PathOrBlob::Blob(b) => {
             debug_assert!(b.store.is_some());
             b.dupe()
         }
@@ -5307,7 +5307,7 @@ pub fn construct_bun_file(
         // borrow conflict with the `&mut` below) and deref through the guard.
         let mut path = scopeguard::guard(path, |p| p.deinit_and_unprotect());
 
-        let mut blob = Blob::find_or_create_file_from_path(&mut path, global_object, false);
+        let mut blob = Blob::find_or_create_file_from_path(&mut *path, global_object, false);
 
         if let Some(opts) = options {
             if opts.is_object() {

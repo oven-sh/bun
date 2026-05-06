@@ -342,6 +342,11 @@ pub mod framework_router {
             &mut self.types[i.get() as usize]
         }
 
+        #[inline]
+        pub fn type_ptr_const(&self, i: TypeIndex) -> &Type {
+            &self.types[i.get() as usize]
+        }
+
         /// `FrameworkRouter.matchSlow` — keystone shim. Real body lives in
         /// `framework_router_body::FrameworkRouter::match_slow`; this struct
         /// is a separate keystone type so we forward-declare the API and

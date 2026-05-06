@@ -156,6 +156,10 @@ impl Archive {
 // `jsc.Codegen.JSArchive` — what the `#[bun_jsc::JsClass]` derive would emit.
 // Symbol names match generate-classes.ts (`${typeName}__fromJS` / `__create`).
 const _: () = {
+    // `*mut Archive` is opaque to C++ (linked by symbol name only); the
+    // pointee's transitive `Store` field has no `#[repr(C)]`, but the FFI
+    // boundary never dereferences it — silence the layout lint.
+    #[allow(improper_ctypes)]
     #[cfg(all(windows, target_arch = "x86_64"))]
     unsafe extern "sysv64" {
         #[link_name = "Archive__fromJS"]
@@ -167,6 +171,7 @@ const _: () = {
         #[link_name = "Archive__getConstructor"]
         fn __get_constructor(global: *mut JSGlobalObject) -> JSValue;
     }
+    #[allow(improper_ctypes)]
     #[cfg(not(all(windows, target_arch = "x86_64")))]
     unsafe extern "C" {
         #[link_name = "Archive__fromJS"]

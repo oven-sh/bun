@@ -103,49 +103,61 @@ pub mod whatwg {
     }
 
     // TODO(port): move to <area>_sys
+    // PORT NOTE: getters take `*const URL` — the C++ side (BunString.cpp) never mutates the
+    // WTF::URL on read. `URL__deinit` keeps `*mut` (it `delete`s). `BunString*` inputs stay
+    // `*mut` to match the C ABI; callers pass a mutable local copy (see below).
     unsafe extern "C" {
         // `URL__fromJS` / `URL__getHrefFromJS` intentionally omitted — tier-6 (bun_jsc).
         fn URL__fromString(str: *mut String) -> Option<core::ptr::NonNull<URL>>;
-        fn URL__protocol(url: *mut URL) -> String;
-        fn URL__href(url: *mut URL) -> String;
-        fn URL__username(url: *mut URL) -> String;
-        fn URL__password(url: *mut URL) -> String;
-        fn URL__search(url: *mut URL) -> String;
-        fn URL__host(url: *mut URL) -> String;
-        fn URL__hostname(url: *mut URL) -> String;
-        fn URL__port(url: *mut URL) -> u32;
+        fn URL__protocol(url: *const URL) -> String;
+        fn URL__href(url: *const URL) -> String;
+        fn URL__username(url: *const URL) -> String;
+        fn URL__password(url: *const URL) -> String;
+        fn URL__search(url: *const URL) -> String;
+        fn URL__host(url: *const URL) -> String;
+        fn URL__hostname(url: *const URL) -> String;
+        fn URL__port(url: *const URL) -> u32;
         fn URL__deinit(url: *mut URL);
-        fn URL__pathname(url: *mut URL) -> String;
+        fn URL__pathname(url: *const URL) -> String;
         fn URL__getHref(input: *mut String) -> String;
         fn URL__getFileURLString(input: *mut String) -> String;
         fn URL__getHrefJoin(base: *mut String, relative: *mut String) -> String;
         fn URL__pathFromFileURL(input: *mut String) -> String;
-        fn URL__hash(url: *mut URL) -> String;
-        fn URL__fragmentIdentifier(url: *mut URL) -> String;
+        fn URL__hash(url: *const URL) -> String;
+        fn URL__fragmentIdentifier(url: *const URL) -> String;
         fn URL__originLength(latin1_slice: *const u8, len: usize) -> u32;
     }
 
-    // PORT NOTE: Zig takes `bun.String` by value then `var input = str; f(&input)` purely to
-    // obtain a mutable address for C ABI. We take `&String` (matching existing call sites in
-    // this crate) and cast through `*mut` — the C++ side does not actually mutate the input.
-    #[inline]
-    fn as_mut_ptr(s: &String) -> *mut String {
-        s as *const String as *mut String
-    }
+    // PORT NOTE: Zig takes `bun.String` by value then `var input = str; f(&input)` to
+    // obtain a mutable address for C ABI. We take `&String` (matching existing call sites
+    // in this crate) and — since `bun_string::String: Copy` — bit-copy into a mutable
+    // local and pass `&mut local`. This mirrors the Zig spec exactly and avoids casting
+    // a shared-ref-derived pointer to `*mut` (read-only provenance). The C++ side
+    // (`BunString::toWTFString() const`) does not mutate, but the local-copy form is
+    // sound regardless.
 
     /// Percent-encodes the URL, punycode-encodes the hostname, and returns the normalized
     /// href. If parsing fails, the returned String's tag is `Dead`.
     pub fn href_from_string(str: &String) -> String {
-        unsafe { URL__getHref(as_mut_ptr(str)) }
+        let mut input = *str;
+        // SAFETY: `input` is a uniquely-owned local; lives for the duration of the call.
+        unsafe { URL__getHref(&mut input) }
     }
     pub fn join(base: &String, relative: &String) -> String {
-        unsafe { URL__getHrefJoin(as_mut_ptr(base), as_mut_ptr(relative)) }
+        let mut base_str = *base;
+        let mut relative_str = *relative;
+        // SAFETY: locals are uniquely owned; live for the duration of the call.
+        unsafe { URL__getHrefJoin(&mut base_str, &mut relative_str) }
     }
     pub fn file_url_from_string(str: &String) -> String {
-        unsafe { URL__getFileURLString(as_mut_ptr(str)) }
+        let mut input = *str;
+        // SAFETY: `input` is a uniquely-owned local; lives for the duration of the call.
+        unsafe { URL__getFileURLString(&mut input) }
     }
     pub fn path_from_file_url(str: &String) -> String {
-        unsafe { URL__pathFromFileURL(as_mut_ptr(str)) }
+        let mut input = *str;
+        // SAFETY: `input` is a uniquely-owned local; lives for the duration of the call.
+        unsafe { URL__pathFromFileURL(&mut input) }
     }
     pub fn origin_from_slice(slice: &[u8]) -> Option<&[u8]> {
         // a valid URL will not have non-ascii in the origin.

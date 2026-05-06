@@ -1732,7 +1732,7 @@ impl PackageManifest {
     }
 
     pub fn report_size(&self) {
-        Output::pretty_errorln(
+        Output::pretty_errorln(format_args!(
             " Versions count:            {}\n \
              External Strings count:    {}\n \
              Package Versions count:    {}\n\n \
@@ -1742,20 +1742,18 @@ impl PackageManifest {
              Packages:   {}\n  \
              Strings:    {}\n  \
              Total:      {}",
-            (
-                self.versions.len(),
-                self.external_strings.len(),
-                self.package_versions.len(),
-                core::mem::size_of_val(&*self.versions),
-                core::mem::size_of_val(&*self.external_strings),
-                core::mem::size_of_val(&*self.package_versions),
-                core::mem::size_of_val(&*self.string_buf),
-                core::mem::size_of_val(&*self.versions)
-                    + core::mem::size_of_val(&*self.external_strings)
-                    + core::mem::size_of_val(&*self.package_versions)
-                    + core::mem::size_of_val(&*self.string_buf),
-            ),
-        );
+            self.versions.len(),
+            self.external_strings.len(),
+            self.package_versions.len(),
+            core::mem::size_of_val(&*self.versions),
+            core::mem::size_of_val(&*self.external_strings),
+            core::mem::size_of_val(&*self.package_versions),
+            core::mem::size_of_val(&*self.string_buf),
+            core::mem::size_of_val(&*self.versions)
+                + core::mem::size_of_val(&*self.external_strings)
+                + core::mem::size_of_val(&*self.package_versions)
+                + core::mem::size_of_val(&*self.string_buf),
+        ));
         Output::flush();
     }
 }
@@ -2266,13 +2264,11 @@ impl PackageManifest {
                 if scope.url_hash == *registry::DEFAULT_URL_HASH
                     && !strings::eql_long(expected_name, received_name, true)
                 {
-                    Output::warn(
+                    Output::warn(format_args!(
                         "Package name mismatch. Expected <b>\"{}\"<r> but received <red>\"{}\"<r>",
-                        (
-                            bstr::BStr::new(expected_name),
-                            bstr::BStr::new(received_name),
-                        ),
-                    );
+                        bstr::BStr::new(expected_name),
+                        bstr::BStr::new(received_name),
+                    ));
                 }
             }
         }

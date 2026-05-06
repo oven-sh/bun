@@ -173,6 +173,21 @@ where
         css::implement_deep_clone(self, allocator)
     }
 
+    /// Deep-clone into a `GenericBorder` with a different const-generic
+    /// discriminant `Q`. The fields are identical regardless of `P`; this is
+    /// the Rust equivalent of Zig coercing one anonymous struct literal into
+    /// multiple `Border*` aliases. Needed when one logical value must be
+    /// emitted as two distinct physical `Property` variants (e.g.
+    /// inline-start → BorderLeft + BorderRight).
+    pub fn clone_as<const Q: u8>(&self, allocator: &Bump) -> GenericBorder<S, Q> {
+        let cloned = self.deep_clone(allocator);
+        GenericBorder {
+            width: cloned.width,
+            style: cloned.style,
+            color: cloned.color,
+        }
+    }
+
     pub fn eql(&self, other: &Self) -> bool {
         css::implement_eql(self, other)
     }
@@ -756,6 +771,27 @@ struct FlushContext<'a, 'bump, 'ctx> {
 // PORT NOTE: `$val` is evaluated *before* reborrowing `$f` so callers may pass
 // expressions that read `f.allocator` without tripping E0502.
 macro_rules! fc_logical_prop {
+    // PORT NOTE: the `GenericBorder` shorthand pairs carry distinct const-generic
+    // discriminants per side (BorderLeft = P=3, BorderRight = P=1), so a single
+    // `__val` cannot `deep_clone()` into both `Property` variants. Recast via
+    // `clone_as::<Q>()` instead. Callers always pass a `to_border()` result here,
+    // so the `__val` annotation drives `P` inference for that call.
+    ($f:expr, BorderLeft, BorderRight, $val:expr) => {{
+        let __val: BorderLeft = $val;
+        let f = &mut *$f;
+        f.ctx.add_logical_rule(
+            Property::BorderLeft(__val.clone_as(f.allocator)),
+            Property::BorderRight(__val.clone_as(f.allocator)),
+        );
+    }};
+    ($f:expr, BorderRight, BorderLeft, $val:expr) => {{
+        let __val: BorderRight = $val;
+        let f = &mut *$f;
+        f.ctx.add_logical_rule(
+            Property::BorderRight(__val.clone_as(f.allocator)),
+            Property::BorderLeft(__val.clone_as(f.allocator)),
+        );
+    }};
     ($f:expr, $ltr:ident, $rtl:ident, $val:expr) => {{
         let __val = $val;
         let f = &mut *$f;

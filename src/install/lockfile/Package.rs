@@ -3017,31 +3017,38 @@ pub mod serializer {
         needs_update: &mut bool,
     ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
+        let n = list.len();
         let mut sliced = list.slice();
 
         // PERF(port): was `inline for (FieldsEnum.fields)` — profile in Phase B
-        // TODO(port): @field reflection — see save() above.
-        for field in List::<SemverIntType>::FIELDS {
-            let value = sliced.items_mut(*field);
-
-            assert_no_uninitialized_padding(value.element_type());
-            let bytes = value.as_bytes_mut();
+        for field in PackageField::ALL {
+            let sz = <Package<SemverIntType> as bun_collections::MultiArrayElement>
+                ::SIZES_BYTES[field as usize];
+            // SAFETY: `items_raw` returns a column pointer with `n` elements of
+            // `sz` bytes each; the byte view is used solely for memcpy from the
+            // serialised lockfile stream.
+            let bytes: &mut [u8] = unsafe {
+                core::slice::from_raw_parts_mut(sliced.items_raw::<u8>(field), n * sz)
+            };
+            // TODO(port): assert_no_uninitialized_padding once a typed accessor lands.
             let end_pos = stream.pos + bytes.len();
             if end_pos as u64 <= end_at {
                 bytes.copy_from_slice(&stream.buffer[stream.pos..stream.pos + bytes.len()]);
                 stream.pos = end_pos;
-                if field.name() == b"meta" {
+                if matches!(field, PackageField::Meta) {
                     // need to check if any values were created from an older version of bun
                     // (currently just `has_install_script`). If any are found, the values need
                     // to be updated before saving the lockfile.
-                    for meta in value.cast_mut::<Meta>() {
+                    let metas: &mut [Meta] =
+                        unsafe { sliced.items_mut::<Meta>(field) };
+                    for meta in metas {
                         if meta.needs_update() {
                             *needs_update = true;
                             break;
                         }
                     }
                 }
-            } else if field.name() == b"scripts" {
+            } else if matches!(field, PackageField::Scripts) {
                 bytes.fill(0);
             } else {
                 return Err(bun_core::err!(

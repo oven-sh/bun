@@ -592,6 +592,11 @@ pub mod repository {
 }
 /// Stub: `bin.rs` — `Bin` struct + Value union read by `npm.rs` parse.
 pub mod bin {
+    /// Port of `Bin.Linker` (src/install/bin.zig). Real body lives in
+    /// `bin_real::Linker`; re-exported here so `bin::Linker { .. }` call sites
+    /// (isolated/hoisted installers) resolve against the stub `bin` path until
+    /// the stub/real `Bin` structs unify (reconciler-6).
+    pub use crate::bin_real::Linker;
     #[derive(Default, Clone, Copy)]
     pub struct Bin {
         pub tag: Tag,

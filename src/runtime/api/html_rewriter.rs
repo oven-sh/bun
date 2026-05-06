@@ -22,7 +22,8 @@ use std::io::Write as _;
 use std::rc::Rc;
 
 use bun_collections::{ByteList, LinearFifo};
-use bun_core::MutableString;
+use bun_collections::linear_fifo::DynamicBuffer;
+use bun_string::MutableString;
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, Strong, SystemError,
     TopExceptionScope, VirtualMachine, ZigString,
@@ -34,7 +35,7 @@ use bun_jsc::{
 use bun_lolhtml_sys::lol_html as lolhtml;
 use bun_lolhtml_sys::lol_html as lolhtml_sys;
 use crate::webcore::{self, Blob, Body, Response};
-use crate::webcore::streams::{Signal, StreamResult};
+use crate::webcore::streams::{self, Signal, StreamResult, Writable};
 // TODO(b2-blocked): `crate::webcore::sink` is still gated; `Sink` references
 // (`webcore::Sink::init`, `Sink::UTF8Fallback`) resolve once it un-gates.
 use bun_str::String as BunString;
@@ -79,13 +80,16 @@ pub struct HTMLRewriter {
 }
 
 impl HTMLRewriter {
-    #[bun_jsc::host_fn]
+    // PORT NOTE: no `#[bun_jsc::host_fn]` here — `#[bun_jsc::JsClass]` on the
+    // struct already emits the C-ABI constructor shim that calls
+    // `<HTMLRewriter>::constructor(__g, __f)`.
     pub fn constructor(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<*mut HTMLRewriter> {
         let rewriter = Box::into_raw(Box::new(HTMLRewriter {
             builder: lolhtml::HTMLRewriterBuilder::init(),
             context: Rc::new(RefCell::new(LOLHTMLContext::default())),
         }));
-        bun_core::analytics::Features::html_rewriter_inc();
+        bun_core::analytics::Features::HTML_REWRITER
+            .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         Ok(rewriter)
     }
 
@@ -233,7 +237,7 @@ impl HTMLRewriter {
         if kind != ResponseKind::Other {
             let body_value = webcore::Body::extract(global, response_value)?;
             let resp = Box::into_raw(Box::new(Response::init(
-                webcore::ResponseInit { status_code: 200, ..Default::default() },
+                webcore::response::Init { status_code: 200, ..Default::default() },
                 body_value,
                 BunString::empty(),
                 false,
@@ -292,9 +296,12 @@ pub struct HTMLRewriterLoader {
     pub context: Rc<RefCell<LOLHTMLContext>>,
     pub chunk_size: usize,
     pub failed: bool,
-    pub output: webcore::Sink,
-    pub signal: webcore::Signal,
-    pub backpressure: LinearFifo<u8>,
+    // TODO(port): lifetime — Zig `Sink` stores `*anyopaque` (no borrow). Rust
+    // `Sink<'a>` borrows its handler; the destination handler outlives this
+    // loader (set in `setup()`), so use `'static` as the Phase-A erasure.
+    pub output: webcore::Sink<'static>,
+    pub signal: Signal,
+    pub backpressure: LinearFifo<u8, DynamicBuffer<u8>>,
 }
 
 impl HTMLRewriterLoader {
@@ -304,7 +311,7 @@ impl HTMLRewriterLoader {
         }
         // SAFETY: rewriter created via builder.build(); not yet freed.
         unsafe { lolhtml::HTMLRewriter::deinit(self.rewriter) };
-        self.backpressure = LinearFifo::new();
+        self.backpressure = LinearFifo::init();
         self.finalized = true;
     }
 
@@ -315,7 +322,7 @@ impl HTMLRewriterLoader {
         self.finalize();
     }
 
-    pub fn connect(&mut self, signal: webcore::Signal) {
+    pub fn connect(&mut self, signal: Signal) {
         self.signal = signal;
     }
 
@@ -538,7 +545,7 @@ impl BufferOutputSink {
         // below. Access fields via raw-pointer place expressions instead.
 
         let result = Box::into_raw(Box::new(Response::init(
-            webcore::ResponseInit { status_code: 200, ..Default::default() },
+            webcore::response::Init { status_code: 200, ..Default::default() },
             webcore::Body {
                 value: Body::Value::Locked(Body::PendingValue {
                     global: global_static,

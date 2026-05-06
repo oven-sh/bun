@@ -394,31 +394,40 @@ impl Framework {
     ///
     /// $ bun i react@experimental react-dom@experimental react-refresh@experimental react-server-dom-bun
     pub fn react(arena: &Arena) -> Result<Framework, bun_core::Error> {
-        // TODO(port): cfg! keeps both branches in typeck; include_bytes! may
-        // fail if files absent. Phase B: split with #[cfg(feature = "codegen_embed")].
-        let built_in_values: &[BuiltInModule] = if cfg!(feature = "codegen_embed") {
-            &[
-                BuiltInModule::Code(include_bytes!("./bun-framework-react/client.tsx")),
-                BuiltInModule::Code(include_bytes!("./bun-framework-react/server.tsx")),
-                BuiltInModule::Code(include_bytes!("./bun-framework-react/ssr.tsx")),
-            ]
-        } else {
-            &[
-                // Cannot use .import because resolution must happen from the user's POV
-                BuiltInModule::Code(bun_core::runtime_embed_file(
+        // PORT NOTE: split into `#[cfg]` branches so the `include_bytes!` arm
+        // is not typechecked when `codegen_embed` is off (the codegen output
+        // dir does not exist during a non-embed build).
+        #[cfg(feature = "codegen_embed")]
+        let built_in_values: &[BuiltInModule] = &[
+            BuiltInModule::Code(include_bytes!("./bun-framework-react/client.tsx")),
+            BuiltInModule::Code(include_bytes!("./bun-framework-react/server.tsx")),
+            BuiltInModule::Code(include_bytes!("./bun-framework-react/ssr.tsx")),
+        ];
+        #[cfg(not(feature = "codegen_embed"))]
+        let built_in_values: &[BuiltInModule] = &[
+            // Cannot use .import because resolution must happen from the user's POV
+            BuiltInModule::Code(
+                bun_core::runtime_embed_file!(
                     bun_core::EmbedKind::Src,
-                    "bake/bun-framework-react/client.tsx",
-                )),
-                BuiltInModule::Code(bun_core::runtime_embed_file(
+                    "bake/bun-framework-react/client.tsx"
+                )
+                .as_bytes(),
+            ),
+            BuiltInModule::Code(
+                bun_core::runtime_embed_file!(
                     bun_core::EmbedKind::Src,
-                    "bake/bun-framework-react/server.tsx",
-                )),
-                BuiltInModule::Code(bun_core::runtime_embed_file(
+                    "bake/bun-framework-react/server.tsx"
+                )
+                .as_bytes(),
+            ),
+            BuiltInModule::Code(
+                bun_core::runtime_embed_file!(
                     bun_core::EmbedKind::Src,
-                    "bake/bun-framework-react/ssr.tsx",
-                )),
-            ]
-        };
+                    "bake/bun-framework-react/ssr.tsx"
+                )
+                .as_bytes(),
+            ),
+        ];
 
         Ok(Framework {
             is_built_in_react: true,
@@ -478,18 +487,21 @@ impl Framework {
             fw.react_fast_refresh = Some(ReactFastRefresh {
                 import_source: b"react-refresh/runtime/index.js",
             });
+            #[cfg(feature = "codegen_embed")]
+            let react_refresh_code =
+                BuiltInModule::Code(include_bytes!("node-fallbacks/react-refresh.js"));
+            #[cfg(not(feature = "codegen_embed"))]
+            let react_refresh_code = BuiltInModule::Code(
+                bun_core::runtime_embed_file!(
+                    bun_core::EmbedKind::Codegen,
+                    "node-fallbacks/react-refresh.js"
+                )
+                .as_bytes(),
+            );
             fw.built_in_modules.put(
                 arena,
                 b"react-refresh/runtime/index.js",
-                if cfg!(feature = "codegen_embed") {
-                    // TODO(port): @embedFile path resolution differs from include_bytes!
-                    BuiltInModule::Code(include_bytes!("node-fallbacks/react-refresh.js"))
-                } else {
-                    BuiltInModule::Code(bun_core::runtime_embed_file(
-                        bun_core::EmbedKind::Codegen,
-                        "node-fallbacks/react-refresh.js",
-                    ))
-                },
+                react_refresh_code,
             )?;
         }
 
@@ -559,11 +571,9 @@ impl Framework {
         }
 
         for fsr in clone.file_system_router_types.iter_mut() {
-            fsr.root = arena.alloc_slice_copy(paths::join_abs(
-                server.fs.top_level_dir,
-                paths::Style::Auto,
-                fsr.root,
-            ));
+            fsr.root = arena.alloc_slice_copy(paths::resolve_path::join_abs::<
+                paths::platform::Auto,
+            >(server.fs.top_level_dir, fsr.root));
             if let Some(entry_client) = &mut fsr.entry_client {
                 self.resolve_helper(client, entry_client, &mut had_errors, b"client side entrypoint");
             }
@@ -867,7 +877,7 @@ impl Framework {
                                 }
                             } else if exts_js.is_array() {
                                 let mut it_2 = exts_js.array_iterator(global)?;
-                                let mut extensions = bumpalo::collections::Vec::with_capacity_in(
+                                let mut extensions = bun_alloc::ArenaVec::with_capacity_in(
                                     exts_js.get_length(global)?,
                                     arena,
                                 );
@@ -889,16 +899,16 @@ impl Framework {
                                         slice
                                     } else {
                                         // PERF(port): std.mem.concat into arena
-                                        let mut v = bumpalo::collections::Vec::with_capacity_in(
+                                        let mut v = bun_alloc::ArenaVec::with_capacity_in(
                                             1 + slice.len(),
                                             arena,
                                         );
                                         v.push(b'.');
                                         v.extend_from_slice(slice);
-                                        v.into_bump_slice()
+                                        &*v.into_bump_slice()
                                     });
                                 }
-                                break 'exts extensions.into_bump_slice();
+                                break 'exts &*extensions.into_bump_slice();
                             }
 
                             return Err(global.throw_invalid_arguments(format_args!(
@@ -917,11 +927,11 @@ impl Framework {
                             if exts_js.is_array() {
                                 let mut it_2 = array.array_iterator(global)?;
                                 let mut dirs =
-                                    bumpalo::collections::Vec::with_capacity_in(len, arena);
+                                    bun_alloc::ArenaVec::with_capacity_in(len, arena);
                                 while let Some(array_item) = it_2.next()? {
                                     dirs.push(refs.track(array_item.to_slice(global, arena)?));
                                 }
-                                break 'exts dirs.into_bump_slice();
+                                break 'exts &*dirs.into_bump_slice();
                             }
 
                             return Err(global.throw_invalid_arguments(format_args!(
@@ -1013,14 +1023,13 @@ impl Framework {
     ) -> Result<(), bun_core::Error> {
         use bun_js_parser as ast;
 
-        // TODO(port): ASTMemoryAllocator scope — typed_arena pattern in bun_js_parser
+        // PORT NOTE: Zig built `ASTMemoryAllocator.Scope` by hand and called
+        // `enter`/`exit`; the Rust port collapses that to `ASTMemoryAllocator::enter`
+        // returning the RAII `Scope`. `defer ast_scope.exit()` is the explicit
+        // exit at end-of-fn (the Scope has no Drop yet).
         let mut ast_memory_allocator = ast::ASTMemoryAllocator::new_without_stack(arena);
-        let mut ast_scope = ast::ASTMemoryAllocatorScope {
-            previous: ast::Stmt::data_store_memory_allocator(),
-            current: &mut ast_memory_allocator,
-        };
-        ast_scope.enter();
-        let _guard = scopeguard::guard((), |_| ast_scope.exit());
+        let ast_scope = ast_memory_allocator.enter();
+        let _guard = scopeguard::guard(ast_scope, |s| s.exit());
 
         *out = bun_bundler::Transpiler::init(
             arena,
@@ -1041,9 +1050,9 @@ impl Framework {
         out.options.entry_points = &[];
         out.options.log = log;
         out.options.output_format = match mode {
-            Mode::Development => bun_bundler::options::OutputFormat::InternalBakeDev,
+            Mode::Development => bun_js_parser::options::OutputFormat::Internal_BakeDev,
             Mode::ProductionDynamic | Mode::ProductionStatic => {
-                bun_bundler::options::OutputFormat::Esm
+                bun_js_parser::options::OutputFormat::Esm
             }
         };
         out.options.out_extensions = bun_collections::StringHashMap::new();
@@ -1117,6 +1126,7 @@ impl Framework {
                 bundler_options.define.keys.len(),
                 bundler_options.define.values.len()
             );
+            use bun_bundler::{DefineDataExt, DefineExt};
             for (k, v) in bundler_options
                 .define
                 .keys
@@ -1124,13 +1134,13 @@ impl Framework {
                 .zip(bundler_options.define.values.iter())
             {
                 let parsed =
-                    bun_bundler::options::define::Data::parse(k, v, false, false, log, arena)?;
+                    bun_bundler::defines::DefineData::parse(k, v, false, false, log, arena)?;
                 out.options.define.insert(arena, k, parsed)?;
             }
 
             for drop_item in bundler_options.drop.keys() {
                 if !drop_item.is_empty() {
-                    let parsed = bun_bundler::options::define::Data::parse(
+                    let parsed = bun_bundler::defines::DefineData::parse(
                         drop_item, b"", true, true, log, arena,
                     )?;
                     out.options.define.insert(arena, drop_item, parsed)?;
@@ -1255,30 +1265,47 @@ impl HmrRuntime {
 
 #[inline(always)]
 pub fn get_hmr_runtime(side: Side) -> HmrRuntime {
-    // TODO(port): cfg! keeps both branches; include_bytes! needs files present.
-    // Phase B: split with #[cfg(feature = "codegen_embed")] and ensure NUL-terminated.
-    if cfg!(feature = "codegen_embed") {
+    // PORT NOTE: split into `#[cfg]` branches so the `include_bytes!` arm is
+    // not typechecked when `codegen_embed` is off (the codegen output dir
+    // does not exist during a non-embed build).
+    #[cfg(feature = "codegen_embed")]
+    {
         match side {
             // TODO(port): @embedFile yields [:0]const u8; include_bytes! lacks NUL
             Side::Client => HmrRuntime::init(
-                // SAFETY: codegen emits NUL-terminated bytes (see TODO above — verify in Phase B)
+                // SAFETY: codegen emits NUL-terminated bytes (verify in Phase B)
                 unsafe { ZStr::from_bytes_unchecked(include_bytes!("bake-codegen/bake.client.js")) },
             ),
             Side::Server => HmrRuntime::init(
-                // SAFETY: codegen emits NUL-terminated bytes (see TODO above — verify in Phase B)
+                // SAFETY: codegen emits NUL-terminated bytes (verify in Phase B)
                 unsafe { ZStr::from_bytes_unchecked(include_bytes!("bake-codegen/bake.server.js")) },
             ),
         }
-    } else {
+    }
+    #[cfg(not(feature = "codegen_embed"))]
+    {
+        // `runtime_embed_file!` returns `&'static str` (no NUL); leak a
+        // NUL-terminated copy on first call. The Zig used `runtimeEmbedFile`
+        // which returns `[:0]const u8` directly — Phase B should add a `_z`
+        // variant to `bun_core` so this leak goes away.
+        fn intern_z(s: &'static str) -> &'static ZStr {
+            // SAFETY: leaked allocation lives forever; written NUL-terminated.
+            let mut v = Vec::with_capacity(s.len() + 1);
+            v.extend_from_slice(s.as_bytes());
+            v.push(0);
+            let leaked: &'static [u8] = Box::leak(v.into_boxed_slice());
+            unsafe { ZStr::from_bytes_unchecked(&leaked[..leaked.len() - 1]) }
+        }
         HmrRuntime::init(match side {
-            Side::Client => bun_core::runtime_embed_file_z(
+            Side::Client => intern_z(bun_core::runtime_embed_file!(
                 bun_core::EmbedKind::CodegenEager,
-                "bake.client.js",
-            ),
+                "bake.client.js"
+            )),
             // server runtime is loaded once, so it is pointless to make this eager.
-            Side::Server => {
-                bun_core::runtime_embed_file_z(bun_core::EmbedKind::Codegen, "bake.server.js")
-            }
+            Side::Server => intern_z(bun_core::runtime_embed_file!(
+                bun_core::EmbedKind::Codegen,
+                "bake.server.js"
+            )),
         })
     }
 }
@@ -1321,7 +1348,12 @@ pub fn add_import_meta_defines(
     mode: Mode,
     side: Side,
 ) -> Result<(), bun_core::Error> {
-    use bun_bundler::options::define::Data as DefineData;
+    use bun_bundler::defines::DefineData;
+    use bun_bundler::DefineExt;
+    use bun_js_parser::E::EString;
+
+    static MODE_DEVELOPMENT: EString = EString::from_static(b"development");
+    static MODE_PRODUCTION: EString = EString::from_static(b"production");
 
     // The following are from Vite: https://vitejs.dev/guide/env-and-mode
     // Note that it is not currently possible to have mixed
@@ -1341,14 +1373,8 @@ pub fn add_import_meta_defines(
         arena,
         b"import.meta.env.MODE",
         DefineData::init_static_string(match mode {
-            Mode::Development => &bun_bundler::options::define::StaticString {
-                data: b"development",
-            },
-            Mode::ProductionDynamic | Mode::ProductionStatic => {
-                &bun_bundler::options::define::StaticString {
-                    data: b"production",
-                }
-            }
+            Mode::Development => &MODE_DEVELOPMENT,
+            Mode::ProductionDynamic | Mode::ProductionStatic => &MODE_PRODUCTION,
         }),
     )?;
     define.insert(

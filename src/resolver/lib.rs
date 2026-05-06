@@ -7341,9 +7341,11 @@ impl<'a> Resolver<'a> {
 
     // PORT NOTE: `dir_info` is raw `*mut` (matching spec `*DirInfo`) so
     // `load_index_with_extension` may re-borrow without aliasing the caller's `&mut`.
-    pub fn load_as_index(&mut self, dir_info: *mut DirInfo::DirInfo, extension_order: &[&'static [u8]]) -> Option<MatchResult> {
+    pub fn load_as_index(&mut self, dir_info: *mut DirInfo::DirInfo, extension_order: options::ExtensionSlice) -> Option<MatchResult> {
         // Try the "index" file with extensions
-        for ext in extension_order {
+        // SAFETY: `extension_order` points into `self.opts`, owned by `self`.
+        for ext in unsafe { &*extension_order }.iter() {
+            let ext: &[u8] = ext;
             if let Some(result) = self.load_index_with_extension(dir_info, ext) {
                 return Some(result);
             }
@@ -7574,10 +7576,16 @@ impl<'a> Resolver<'a> {
             package_json = Some(pkg_json as *const _);
             if pkg_json.main_fields.count() > 0 {
                 let main_field_values = &pkg_json.main_fields;
-                let main_field_keys = self.opts.main_fields;
-                // TODO: check this works right. Not sure this will really work.
-                let auto_main = self.opts.main_fields.as_ptr()
-                    == options::DEFAULT_MAIN_FIELDS.get(self.opts.target).as_ptr();
+                // PORT NOTE: raw fat ptr — borrows `self.opts.main_fields` heap buffer so
+                // the loop body can take `&mut self` without overlapping borrows.
+                let main_field_keys: options::ExtensionSlice = &*self.opts.main_fields;
+                let mf_ext_order: options::ExtensionSlice = &*self.opts.main_field_extension_order;
+                // Spec resolver.zig compares the *pointer* of `opts.main_fields`
+                // against the per-target default to detect "user did not pass
+                // --main-fields"; the bundler now projects that as an explicit
+                // bool because the owned `Box<[Box<[u8]>]>` can never alias a
+                // static.
+                let auto_main = self.opts.main_fields_is_default;
 
                 if let Some(debug) = self.debug_logs.as_mut() {
                     debug.add_note_fmt(format_args!(
@@ -7586,7 +7594,10 @@ impl<'a> Resolver<'a> {
                     ));
                 }
 
-                for key in main_field_keys.iter() {
+                // SAFETY: `main_field_keys` points into `self.opts.main_fields`, owned by
+                // `self` and never mutated during resolve.
+                for key in unsafe { &*main_field_keys }.iter() {
+                    let key: &[u8] = key;
                     let field_rel_path = match main_field_values.get(key) {
                         Some(v) => v,
                         None => {
@@ -7602,7 +7613,7 @@ impl<'a> Resolver<'a> {
                         dir_info,
                         field_rel_path,
                         key,
-                        if *key == b"main" { self.opts.main_field_extension_order } else { extension_order },
+                        if key == b"main" { mf_ext_order } else { extension_order },
                     ) {
                         Some(r) => r,
                         None => continue,
@@ -7612,18 +7623,18 @@ impl<'a> Resolver<'a> {
                     // use a special per-module automatic algorithm to decide whether to
                     // use "module" or "main" based on whether the package is imported
                     // using "import" or "require".
-                    if auto_main && *key == b"module" {
+                    if auto_main && key == b"module" {
                         let mut absolute_result: Option<MatchResult> = None;
 
                         if let Some(main_rel_path) = main_field_values.get(b"main".as_slice()) {
                             if !main_rel_path.is_empty() {
-                                absolute_result = self.load_from_main_field(path, dir_info, main_rel_path, b"main", self.opts.main_field_extension_order);
+                                absolute_result = self.load_from_main_field(path, dir_info, main_rel_path, b"main", mf_ext_order);
                             }
                         } else {
                             // Some packages have a "module" field without a "main" field but
                             // still have an implicit "index.js" file. In that case, treat that
                             // as the value for "main".
-                            absolute_result = self.load_as_index_with_browser_remapping(dir_info, path, self.opts.main_field_extension_order);
+                            absolute_result = self.load_as_index_with_browser_remapping(dir_info, path, mf_ext_order);
                         }
 
                         if let Some(auto_main_result) = absolute_result {
@@ -7788,7 +7799,9 @@ impl<'a> Resolver<'a> {
 
         // Try the path with extensions
         bufs!(load_as_file)[..path.len()].copy_from_slice(path);
-        for ext in extension_order {
+        // SAFETY: `extension_order` points into `self.opts`, owned by `self`.
+        for ext in unsafe { &*extension_order }.iter() {
+            let ext: &[u8] = ext;
             if let Some(result) = self.load_extension(base, path, ext, entries!()) {
                 dec_ret!(Some(result));
             }
@@ -7799,8 +7812,10 @@ impl<'a> Resolver<'a> {
         // `load_extension` (avoids the forbidden lifetime-extension cast).
         let n = self.opts.extra_cjs_extensions.len();
         for i in 0..n {
-            let ext = self.opts.extra_cjs_extensions[i];
-            if let Some(result) = self.load_extension(base, path, ext, entries!()) {
+            let ext: *const [u8] = &*self.opts.extra_cjs_extensions[i];
+            // SAFETY: `extra_cjs_extensions` is owned by `self.opts` and never mutated
+            // while the resolver runs; the heap buffer behind each `Box<[u8]>` is stable.
+            if let Some(result) = self.load_extension(base, path, unsafe { &*ext }, entries!()) {
                 dec_ret!(Some(result));
             }
         }
@@ -8380,7 +8395,7 @@ pub struct BrowserMapPath<'b> {
     pub remapped: &'static [u8],
     pub cleaned: &'b [u8],
     pub input_path: &'b [u8],
-    pub extension_order: &'static [&'static [u8]],
+    pub extension_order: crate::options::ExtensionSlice,
     pub map: &'b BrowserMap,
 }
 
@@ -8406,7 +8421,9 @@ impl<'b> BrowserMapPath<'b> {
             ext_buf[..cleaned.len()].copy_from_slice(cleaned);
 
             // If that failed, try adding implicit extensions
-            for ext in self.extension_order {
+            // SAFETY: `extension_order` points into `Resolver.opts`, which outlives this borrow.
+            for ext in unsafe { &*self.extension_order }.iter() {
+                let ext: &[u8] = ext;
                 if cleaned.len() + ext.len() > ext_buf.len() {
                     continue;
                 }
@@ -8446,7 +8463,9 @@ impl<'b> BrowserMapPath<'b> {
         if index_path.len() <= ext_buf.len() {
             ext_buf[..index_path.len()].copy_from_slice(index_path);
 
-            for ext in self.extension_order {
+            // SAFETY: `extension_order` points into `Resolver.opts`, which outlives this borrow.
+            for ext in unsafe { &*self.extension_order }.iter() {
+                let ext: &[u8] = ext;
                 if index_path.len() + ext.len() > ext_buf.len() {
                     continue;
                 }

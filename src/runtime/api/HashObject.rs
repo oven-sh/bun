@@ -59,8 +59,7 @@ impl HashAlgorithm for Adler32 {
     type Output = u32;
     fn hash(_seed: u64, input: &[u8]) -> u32 {
         // Zig: std.hash.Adler32.hash(input) — single-arg, seed ignored.
-        // TODO(port): std.hash.Adler32 equivalent
-        bun_hash::adler32(input)
+        bun_hash::Adler32::hash(input)
     }
 }
 

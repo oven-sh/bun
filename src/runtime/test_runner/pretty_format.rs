@@ -1634,7 +1634,14 @@ impl<'a> Formatter<'a> {
                             to_json_function.call(self.global_this, value, &[])?,
                             JSType::Object,
                         );
-                    } else if let Some(timer) = value.as_::<crate::timer::TimeoutObject>() {
+                    } else if let Some(timer) = {
+                        // TODO(port): `crate::timer::TimeoutObject` does not yet impl
+                        // `bun_jsc::JsClass`, so `value.as_::<TimeoutObject>()` won't
+                        // typecheck. Stub to `None` until the codegen-backed impl lands.
+                        // blocked_on: crate::timer::TimeoutObject (JsClass)
+                        let _ = value;
+                        None::<*mut crate::timer::TimeoutObject>
+                    } {
                         // SAFETY: `as_` returned non-null; the GC keeps the cell alive while
                         // `value` is on the stack (conservative scan).
                         let timer = unsafe { &*timer };
@@ -1677,9 +1684,11 @@ impl<'a> Formatter<'a> {
                         }
 
                         return Ok(());
-                    } else if let Some(immediate) =
-                        value.as_::<crate::timer::ImmediateObject>()
-                    {
+                    } else if let Some(immediate) = {
+                        // blocked_on: crate::timer::ImmediateObject (JsClass)
+                        let _ = value;
+                        None::<*mut crate::timer::ImmediateObject>
+                    } {
                         // SAFETY: see TimeoutObject branch above.
                         let immediate = unsafe { &*immediate };
                         self.add_for_new_line(

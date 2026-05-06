@@ -79,6 +79,7 @@ bun_uws_sys.workspace = true
 bun_valkey.workspace = true
 bun_watcher.workspace = true
 bun_which.workspace = true
+bun_hash.workspace = true
 bun_wyhash.workspace = true
 bun_zlib.workspace = true
 bun_zstd.workspace = true

@@ -8,18 +8,45 @@ use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use bun_aio::KeepAlive;
-use bun_collections::UnboundedQueue;
+use bun_threading::UnboundedQueue;
 use bun_core::Environment;
 use bun_jsc::{
-    CallFrame, ConcurrentTask, EventLoopHandle, JSGlobalObject, JSPromise, JSValue, JsError,
-    JsResult, MiniEventLoop, Task, VirtualMachine, ZigString,
+    CallFrame, EventLoopHandle, JSGlobalObject, JSPromise, JSValue, JsError,
+    JsResult, Task, ZigString,
 };
+use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::AbortSignal;
 use bun_jsc::debugger::AsyncTaskTracker;
-use bun_jsc::webcore::{self, AbortSignal, Blob};
-use bun_paths::{self as paths, OSPathBuffer, OSPathChar, OSPathSliceZ, PathBuffer, PathString};
-use bun_string::{self as bstr, strings, String as BunString, ZStr};
+use bun_event_loop::ConcurrentTask::ConcurrentTask as ConcurrentTaskItem;
+use bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
+use bun_event_loop::MiniEventLoop::MiniEventLoop;
+use bun_paths::{self as paths, OSPathBuffer, OSPathChar, OSPathSliceZ, PathBuffer};
+use bun_string::{self as bstr, strings, String as BunString, ZStr, PathString};
 use bun_sys::{self as sys, Fd as FD, Maybe, Mode, SystemErrno, E};
-use bun_threading::{WorkPool, WorkPoolTask};
+use bun_threading::work_pool::{WorkPool, Task as WorkPoolTask};
+use crate::webcore;
+
+// Local namespace shim: dependents in this file spell `ConcurrentTask::create*`
+// (the Zig spelling). The Rust crate exports the *struct* as `ConcurrentTask`
+// inside a same-named module, so re-export the free constructors here under the
+// module name the call sites expect.
+mod ConcurrentTask {
+    pub use bun_event_loop::ConcurrentTask::ConcurrentTask;
+    #[inline] pub fn create(task: bun_jsc::Task) -> *mut ConcurrentTask { ConcurrentTask::create(task) }
+    #[inline] pub fn create_from<T>(task: T) -> *mut ConcurrentTask { ConcurrentTask::create_from(task) }
+    #[inline] pub fn from_callback<T>(ptr: *mut T, cb: fn(*mut T) -> bun_jsc::JsResult<()>) -> *mut ConcurrentTask {
+        ConcurrentTask::from_callback(ptr, cb)
+    }
+}
+
+/// `webcore.Blob.SizeType` — Zig used `u52`; Rust models it as `u64` (see
+/// `src/runtime/webcore/Blob.rs`). Aliased locally because `Blob::SizeType`
+/// is not an associated type in the Rust port.
+type BlobSizeType = u64;
+
+/// `webcore.RefPtr<AbortSignal>` — JSC's intrusive ref-counted pointer.
+/// `bun_string::wtf::RefPtr` is the canonical alias for `bun_ptr::ExternalShared`.
+type AbortSignalRef = bun_string::wtf::RefPtr<AbortSignal>;
 
 // PORT NOTE: Zig referenced these via `bun.api.node.*`. The Phase-A draft
 // pulled them through `bun_jsc::node` (a re-export shim that no longer exists
@@ -35,12 +62,29 @@ use super::types::{
 /// Local alias for the many `node::foo` call sites below — keeps the diff
 /// against `node_fs.zig` readable while routing to `super::*`.
 mod node {
-    pub use super::super::types::{mode_from_js, Buffer, SliceWithUnderlyingString};
+    pub use super::super::types::{Buffer, SliceWithUnderlyingString};
     pub use super::super::statfs::StatFS;
     pub use super::super::time_like::from_js as time_like_from_js;
-    pub use super::super::util::validators;
     pub use super::super::{gid_t, uid_t};
+
+    /// `node::mode_from_js` — the real impl lives in `super::types::mode_from_js`
+    /// but is currently `#[cfg(any())]`-gated by a sibling agent. Forward to it
+    /// when ungated; until then this is a typed stub so the dozens of call
+    /// sites in `args::*::from_js` keep their signatures.
+    #[inline]
+    pub fn mode_from_js(
+        ctx: &bun_jsc::JSGlobalObject,
+        value: bun_jsc::JSValue,
+    ) -> bun_jsc::JsResult<Option<bun_sys::Mode>> {
+        let _ = (ctx, value);
+        todo!("blocked_on: bun_runtime::node::types::mode_from_js")
+    }
 }
+
+// `node::validators::*` — `super::util::validators` is a `pub use` of a
+// crate-private module, which trips E0365 if we `pub use` it again. Import it
+// privately at file scope instead and call as `validators::foo` directly.
+use super::util::validators;
 
 pub use super::node_fs_constant as constants;
 // node_fs_watcher / node_fs_stat_watcher are JSC-bound and not yet declared in
@@ -71,8 +115,24 @@ use bun_resolver::fs::FileSystem;
 
 #[cfg(windows)]
 use bun_sys::windows::{self, libuv as uv};
+/// On POSIX the libuv-backed code paths (`UVFSRequest`, `uv_fs_*`) are dead
+/// branches kept for source parity with `node_fs.zig`. `bun_sys` only exports
+/// the libuv shim on Windows, so we provide a minimal type-only stub here so
+/// the cross-platform signatures (`uv::fs_t`, `uv::Loop`) type-check. Every
+/// body that actually *calls* into uv on POSIX is already `#[cfg(windows)]`.
 #[cfg(not(windows))]
-use bun_sys::libuv_stub as uv; // TODO(port): uv stubs on posix
+mod uv {
+    #[repr(C)]
+    pub struct fs_t { _opaque: [u8; 0] }
+    impl fs_t {
+        pub const UNINITIALIZED: fs_t = fs_t { _opaque: [] };
+        pub fn deinit(&mut self) {}
+        pub unsafe fn ptr_as<T>(&self) -> *const T { core::ptr::null() }
+    }
+    pub struct Loop;
+    impl Loop { pub fn get() -> *mut Loop { core::ptr::null_mut() } }
+    pub unsafe fn uv_fs_req_cleanup(_req: *mut fs_t) {}
+}
 
 // Syscall = bun.sys.sys_uv on Windows, bun.sys otherwise
 #[cfg(windows)]

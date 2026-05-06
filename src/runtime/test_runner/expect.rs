@@ -564,7 +564,7 @@ impl Expect {
         }
     }
 
-    #[bun_jsc::host_fn]
+    // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn call(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments = callframe.arguments_old(2).slice();
         let value = if arguments.len() < 1 { JSValue::UNDEFINED } else { arguments[0] };
@@ -652,7 +652,7 @@ impl Expect {
         self.throw(global_this, signature, args)
     }
 
-    #[bun_jsc::host_fn]
+    // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn constructor(global_this: &JSGlobalObject, _frame: &CallFrame) -> JsResult<*mut Expect> {
         Err(global_this.throw("expect() cannot be called with new", format_args!("")))
     }
@@ -1200,43 +1200,43 @@ impl Expect {
         ExpectStatic::create(global_this, f)
     }
 
-    #[bun_jsc::host_fn]
+    // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn any(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         ExpectAny::call(global_this, call_frame)
     }
 
-    #[bun_jsc::host_fn]
+    // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn anything(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         ExpectAnything::call(global_this, call_frame)
     }
 
-    #[bun_jsc::host_fn]
+    // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn close_to(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         ExpectCloseTo::call(global_this, call_frame)
     }
 
-    #[bun_jsc::host_fn]
+    // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn object_containing(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         ExpectObjectContaining::call(global_this, call_frame)
     }
 
-    #[bun_jsc::host_fn]
+    // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn string_containing(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         ExpectStringContaining::call(global_this, call_frame)
     }
 
-    #[bun_jsc::host_fn]
+    // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn string_matching(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         ExpectStringMatching::call(global_this, call_frame)
     }
 
-    #[bun_jsc::host_fn]
+    // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn array_containing(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         ExpectArrayContaining::call(global_this, call_frame)
     }
 
     /// Implements `expect.extend({ ... })`
-    #[bun_jsc::host_fn]
+    // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn extend(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let args = call_frame.arguments_old(1).slice();
 
@@ -1446,7 +1446,7 @@ impl Expect {
 
     /// Function that is run for either `expect.myMatcher()` call or `expect().myMatcher` call,
     /// and we can known which case it is based on if the `callFrame.this()` value is an instance of Expect
-    #[bun_jsc::host_fn]
+    // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn apply_custom_matcher(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let _gc = scopeguard::guard((), |_| global_this.bun_vm().auto_garbage_collect());
 
@@ -1517,7 +1517,7 @@ impl Expect {
 
     pub const ADD_SNAPSHOT_SERIALIZER: fn(&JSGlobalObject, &CallFrame) -> JsResult<JSValue> = Self::not_implemented_static_fn;
 
-    #[bun_jsc::host_fn]
+    // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn has_assertions(global_this: &JSGlobalObject, _call_frame: &CallFrame) -> JsResult<JSValue> {
         let _gc = scopeguard::guard((), |_| global_this.bun_vm().auto_garbage_collect());
 
@@ -1536,7 +1536,7 @@ impl Expect {
         Ok(JSValue::UNDEFINED)
     }
 
-    #[bun_jsc::host_fn]
+    // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn assertions(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let _gc = scopeguard::guard((), |_| global_this.bun_vm().auto_garbage_collect());
 
@@ -1591,7 +1591,7 @@ impl Expect {
         Err(global_this.throw("Not implemented", format_args!("")))
     }
 
-    #[bun_jsc::host_fn]
+    // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn not_implemented_static_fn(global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         Err(global_this.throw("Not implemented", format_args!("")))
     }
@@ -1611,7 +1611,7 @@ impl Expect {
         vm.auto_garbage_collect();
     }
 
-    #[bun_jsc::host_fn]
+    // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn do_unreachable(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arg = callframe.arguments_old(1).ptr[0];
 
@@ -1815,7 +1815,7 @@ impl ExpectAnything {
         unsafe { drop(Box::from_raw(this)) };
     }
 
-    #[bun_jsc::host_fn]
+    // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn call(global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         let anything = Box::into_raw(Box::new(ExpectAnything { flags: Flags::default() }));
 
@@ -1841,7 +1841,7 @@ impl ExpectStringMatching {
         unsafe { drop(Box::from_raw(this)) };
     }
 
-    #[bun_jsc::host_fn]
+    // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn call(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let args = call_frame.arguments();
 
@@ -1875,7 +1875,7 @@ impl ExpectCloseTo {
         unsafe { drop(Box::from_raw(this)) };
     }
 
-    #[bun_jsc::host_fn]
+    // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn call(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let args = call_frame.arguments_old(2).slice();
 
@@ -1924,7 +1924,7 @@ impl ExpectObjectContaining {
         unsafe { drop(Box::from_raw(this)) };
     }
 
-    #[bun_jsc::host_fn]
+    // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn call(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let args = call_frame.arguments_old(1).slice();
 
@@ -1958,7 +1958,7 @@ impl ExpectStringContaining {
         unsafe { drop(Box::from_raw(this)) };
     }
 
-    #[bun_jsc::host_fn]
+    // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn call(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let args = call_frame.arguments_old(1).slice();
 
@@ -1992,7 +1992,7 @@ impl ExpectAny {
         unsafe { drop(Box::from_raw(this)) };
     }
 
-    #[bun_jsc::host_fn]
+    // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn call(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let _arguments = call_frame.arguments_old(1);
         let arguments: &[JSValue] = &_arguments.ptr[.._arguments.len];
@@ -2046,7 +2046,7 @@ impl ExpectArrayContaining {
         unsafe { drop(Box::from_raw(this)) };
     }
 
-    #[bun_jsc::host_fn]
+    // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn call(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let args = call_frame.arguments_old(1).slice();
 
@@ -2493,11 +2493,11 @@ impl ExpectTypeOf {
         Self::create(global_this)
     }
 
-    #[bun_jsc::host_fn]
+    // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn constructor(global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<*mut ExpectTypeOf> {
         Err(global_this.throw("expectTypeOf() cannot be called with new", format_args!("")))
     }
-    #[bun_jsc::host_fn]
+    // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn call(global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         Self::create(global_this)
     }

@@ -251,7 +251,7 @@ impl S3HttpSimpleTask {
         let mut this = unsafe { Box::from_raw(this) };
 
         if !this.result.is_success() {
-            this.error_with_body::<{ ErrorType::Failure }>()?;
+            this.error_with_body(ErrorType::Failure)?;
             return Ok(());
         }
         debug_assert!(this.result.metadata.is_some());
@@ -275,13 +275,13 @@ impl S3HttpSimpleTask {
                         this.callback_context,
                     )?;
                 }
-                404 => this.error_with_body::<{ ErrorType::NotFound }>()?,
-                _ => this.error_with_body::<{ ErrorType::Failure }>()?,
+                404 => this.error_with_body(ErrorType::NotFound)?,
+                _ => this.error_with_body(ErrorType::Failure)?,
             },
             Callback::Delete(callback) => match response.status_code {
                 200 | 204 => callback(S3DeleteResult::Success, this.callback_context)?,
-                404 => this.error_with_body::<{ ErrorType::NotFound }>()?,
-                _ => this.error_with_body::<{ ErrorType::Failure }>()?,
+                404 => this.error_with_body(ErrorType::NotFound)?,
+                _ => this.error_with_body(ErrorType::Failure)?,
             },
             Callback::ListObjects(callback) => match response.status_code {
                 200 => {
@@ -291,20 +291,20 @@ impl S3HttpSimpleTask {
                                 callback(S3ListObjectsResult::Success(success), this.callback_context)?;
                             }
                             Err(_) => {
-                                this.error_with_body::<{ ErrorType::Failure }>()?;
+                                this.error_with_body(ErrorType::Failure)?;
                                 return Ok(());
                             }
                         }
                     } else {
-                        this.error_with_body::<{ ErrorType::Failure }>()?;
+                        this.error_with_body(ErrorType::Failure)?;
                     }
                 }
-                404 => this.error_with_body::<{ ErrorType::NotFound }>()?,
-                _ => this.error_with_body::<{ ErrorType::Failure }>()?,
+                404 => this.error_with_body(ErrorType::NotFound)?,
+                _ => this.error_with_body(ErrorType::Failure)?,
             },
             Callback::Upload(callback) => match response.status_code {
                 200 => callback(S3UploadResult::Success, this.callback_context)?,
-                _ => this.error_with_body::<{ ErrorType::Failure }>()?,
+                _ => this.error_with_body(ErrorType::Failure)?,
             },
             Callback::Download(callback) => match response.status_code {
                 200 | 204 | 206 => {
@@ -319,10 +319,10 @@ impl S3HttpSimpleTask {
                         this.callback_context,
                     )?;
                 }
-                404 => this.error_with_body::<{ ErrorType::NotFound }>()?,
+                404 => this.error_with_body(ErrorType::NotFound)?,
                 _ => {
                     // error
-                    this.error_with_body::<{ ErrorType::Failure }>()?;
+                    this.error_with_body(ErrorType::Failure)?;
                 }
             },
             Callback::Commit(callback) => {
@@ -339,7 +339,7 @@ impl S3HttpSimpleTask {
                     if let Some(etag) = response.headers.get(b"etag") {
                         callback(S3PartResult::Etag(etag), this.callback_context)?;
                     } else {
-                        this.error_with_body::<{ ErrorType::Failure }>()?;
+                        this.error_with_body(ErrorType::Failure)?;
                     }
                 }
             }
@@ -348,18 +348,29 @@ impl S3HttpSimpleTask {
     }
 
     /// this is the callback from the http.zig AsyncHTTP is always called from the HTTPThread
-    pub fn http_callback(this: &mut Self, async_http: &mut AsyncHTTP, result: HTTPClientResult) {
+    pub fn http_callback(this: *mut Self, async_http: *mut AsyncHTTP, result: HTTPClientResult<'_>) {
+        // SAFETY: `this` was produced by `S3HttpSimpleTask::new` and is exclusively owned by the
+        // HTTP thread until enqueued back to the JS thread below.
+        let this = unsafe { &mut *this };
         let is_done = !result.has_more;
-        this.result = result;
-        // TODO(port): Zig does `this.http = async_http.*` (copies the whole AsyncHTTP). Verify
-        // AsyncHTTP is Clone or this should be a move/swap in the Rust port.
-        this.http = async_http.clone();
-        this.response_buffer = async_http.response_buffer.clone();
+        // SAFETY: `result.body` (the only borrowed field) points at `this.response_buffer`, which
+        // lives for the task's lifetime — extending to `'static` here is sound for self-reference.
+        this.result =
+            unsafe { core::mem::transmute::<HTTPClientResult<'_>, HTTPClientResult<'static>>(result) };
+        // PORT NOTE: Zig does `this.http = async_http.*` (struct copy). AsyncHTTP is not Clone in
+        // the Rust port, so we move it out via ptr::read — the http thread does not touch
+        // `*async_http` again after this callback (its allocation is owned by the task).
+        // SAFETY: see PORT NOTE above; `async_http` is a valid live pointer for this call.
+        this.http = unsafe { core::ptr::read(async_http) };
+        // SAFETY: `response_buffer` is the `*mut MutableString` we passed to `AsyncHTTP::init`;
+        // it points at `this.response_buffer`, so this is a self-read (idempotent). Kept to mirror
+        // the Zig source verbatim.
+        this.response_buffer = unsafe { core::ptr::read(this.http.response_buffer) };
         if is_done {
-            this.vm
-                .event_loop()
-                .enqueue_task_concurrent(this.concurrent_task.from(this, ConcurrentTask::AutoDeinit::ManualDeinit));
-            // TODO(port): ConcurrentTask::from signature / AutoDeinit enum path
+            let task = this.concurrent_task.from(this as *mut Self, AutoDeinit::ManualDeinit) as *mut ConcurrentTask;
+            // SAFETY: `vm` is the live per-thread VM pointer captured at task creation; event_loop
+            // is set during VM init and outlives this task.
+            unsafe { (*(*this.vm).event_loop()).enqueue_task_concurrent(task) };
         }
     }
 }
@@ -372,7 +383,10 @@ impl Drop for S3HttpSimpleTask {
         // Owned-field frees from the Zig deinit (response_buffer, headers, sign_result, range,
         // proxy_url, result.certificate_info, result.metadata) are handled by their own Drop impls.
         // TODO(port): verify HTTPClientResult's Drop frees certificate_info/metadata.
-        self.poll_ref.unref(self.vm);
+        // PORT NOTE: KeepAlive::unref takes an aio EventLoopCtx; the JS-loop ctx is fetched via
+        // the global hook (registered by bun_runtime::init) — same pattern as
+        // `event_loop_handle_to_ctx` in process.rs.
+        self.poll_ref.unref(bun_aio::get_vm_ctx(bun_aio::AllocatorType::Js));
         self.http.clear_data();
     }
 }
@@ -403,8 +417,7 @@ pub fn execute_simple_s3_request(
     callback_context: *mut c_void,
 ) -> JsTerminatedResult<()> {
     let mut result = match this.sign_request(
-        // TODO(port): SignOptions struct path / field names in bun_s3_signing
-        bun_s3_signing::credentials::SignOptions {
+        SignOptions {
             path: options.path,
             method: options.method,
             search_params: options.search_params,
@@ -413,6 +426,9 @@ pub fn execute_simple_s3_request(
             acl: options.acl,
             storage_class: options.storage_class,
             request_payer: options.request_payer,
+            content_hash: None,
+            content_md5: None,
+            content_type: None,
         },
         false,
         None,
@@ -449,7 +465,7 @@ pub fn execute_simple_s3_request(
         }
     };
 
-    let task = S3HttpSimpleTask::new(S3HttpSimpleTask {
+    let task_ptr = S3HttpSimpleTask::new(S3HttpSimpleTask {
         // SAFETY: `http` is overwritten below before any read; Zig used `= undefined`.
         http: unsafe { core::mem::zeroed() },
         // TODO(port): AsyncHTTP likely cannot be zeroed — use MaybeUninit or a two-phase init helper
@@ -465,33 +481,46 @@ pub fn execute_simple_s3_request(
         proxy_url: Box::default(),
         poll_ref: KeepAlive::init(),
     });
-    // SAFETY: `task` is a freshly Box::into_raw'd pointer; exclusive access here.
-    let task = unsafe { &mut *task };
-    task.poll_ref.ref_(task.vm);
+    // SAFETY: `task_ptr` is a freshly Box::into_raw'd pointer; exclusive access here.
+    let task = unsafe { &mut *task_ptr };
+    task.poll_ref.ref_(bun_aio::get_vm_ctx(bun_aio::AllocatorType::Js));
 
-    let url = URL::parse(&task.sign_result.url);
     let proxy = options.proxy_url.unwrap_or(b"");
     task.proxy_url = if !proxy.is_empty() { Box::<[u8]>::from(proxy) } else { Box::default() };
+    // SAFETY (lifetime extension): `url`, `headers_buf`, `proxy_url`, and `body` borrow from
+    // heap-allocated fields of `*task` (sign_result.url / headers.buf / proxy_url) which the task
+    // outlives. AsyncHTTP::init wants `'static` borrows because the HTTP thread reads them
+    // concurrently; they remain valid until `task` is dropped in `on_response`. The Zig source
+    // passed raw slices with the same ownership contract.
+    let url = URL::parse(unsafe { &*(&*task.sign_result.url as *const [u8]) });
+    let headers_buf: &'static [u8] = unsafe { &*(task.headers.buf.as_slice() as *const [u8]) };
+    let body: &'static [u8] = unsafe { &*(options.body as *const [u8]) };
+    let http_proxy = if !task.proxy_url.is_empty() {
+        Some(URL::parse(unsafe { &*(&*task.proxy_url as *const [u8]) }))
+    } else {
+        None
+    };
+    // SAFETY: `task.vm` is the live per-thread VM pointer from `VirtualMachine::get()`.
+    let vm = unsafe { &mut *task.vm };
     task.http = AsyncHTTP::init(
         options.method,
         url,
-        &task.headers.entries,
-        task.headers.buf.as_slice(),
-        &mut task.response_buffer,
-        options.body,
-        // TODO(port): HTTPClientResult::Callback::New(*T, fn).init(task) generic wrapper shape
-        bun_http::http_client_result::Callback::new::<S3HttpSimpleTask>(task, S3HttpSimpleTask::http_callback),
-        bun_http::Redirect::Follow,
-        bun_http::Options {
-            http_proxy: if !task.proxy_url.is_empty() { Some(URL::parse(&task.proxy_url)) } else { None },
-            verbose: task.vm.get_verbose_fetch(),
-            reject_unauthorized: task.vm.get_tls_reject_unauthorized(),
+        task.headers.entries.clone().expect("OOM"),
+        headers_buf,
+        &mut task.response_buffer as *mut MutableString,
+        body,
+        HTTPClientResultCallback::new::<S3HttpSimpleTask>(task_ptr, S3HttpSimpleTask::http_callback),
+        FetchRedirect::Follow,
+        HttpOptions {
+            http_proxy,
+            verbose: Some(vm.get_verbose_fetch()),
+            reject_unauthorized: Some(vm.get_tls_reject_unauthorized()),
             ..Default::default()
         },
     );
     // queue http request
     HTTPThread::init(&Default::default());
-    let mut batch = ThreadPool::Batch::default();
+    let mut batch = thread_pool::Batch::default();
     task.http.schedule(&mut batch);
     bun_http::http_thread().schedule(batch);
     Ok(())

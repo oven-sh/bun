@@ -1319,11 +1319,14 @@ fn extract_to_disk_filtered(
     use libarchive::lib;
     let archive = lib::Archive::read_new();
     let _guard = scopeguard::guard((), |_| {
-        let _ = archive.read_free();
+        // SAFETY: archive handle valid until guard runs after the loop.
+        let _ = unsafe { (*archive).read_free() };
     });
     configure_archive_reader(archive);
 
-    if archive.read_open_memory(file_buffer) != lib::Status::Ok {
+    // SAFETY: non-null handle from read_new(); single-threaded use.
+    let archive_ref = unsafe { &*archive };
+    if archive_ref.read_open_memory(file_buffer) != lib::Result::Ok {
         return Err(bun_core::err!("ReadError"));
     }
 
@@ -1348,12 +1351,12 @@ fn extract_to_disk_filtered(
     });
 
     let mut count: u32 = 0;
-    let mut entry: *mut lib::ArchiveEntry = core::ptr::null_mut();
+    let mut entry: *mut lib::Entry = core::ptr::null_mut();
 
-    while archive.read_next_header(&mut entry) == lib::Status::Ok {
+    while archive_ref.read_next_header(&mut entry) == lib::Result::Ok {
         // SAFETY: read_next_header returned Ok; entry valid until next call.
         let entry_ref = unsafe { &*entry };
-        let pathname = entry_ref.pathname_utf8();
+        let pathname = entry_ref.pathname().as_bytes();
 
         // Validate path safety (reject absolute paths, path traversal)
         if !is_safe_path(pathname) {
@@ -1393,7 +1396,7 @@ fn extract_to_disk_filtered(
                 };
 
                 // Create parent directories if needed (ignore expected errors)
-                if let Some(parent_dir) = bun_paths::dirname(pathname) {
+                if let Some(parent_dir) = bun_core::dirname(pathname) {
                     match dir_fd.make_path(parent_dir) {
                         // Expected: directory already exists
                         Err(e) if e == bun_core::err!("PathAlreadyExists") => {}
@@ -1425,7 +1428,7 @@ fn extract_to_disk_filtered(
                     let mut buf = [0u8; 64 * 1024];
                     while remaining > 0 {
                         let to_read = remaining.min(buf.len());
-                        let read = archive.read_data(&mut buf[..to_read]);
+                        let read = archive_ref.read_data(&mut buf[..to_read]);
                         if read <= 0 {
                             write_success = false;
                             break;
@@ -1463,7 +1466,7 @@ fn extract_to_disk_filtered(
                 }
             }
             bun_sys::FileKind::SymLink => {
-                let link_target = entry_ref.symlink();
+                let link_target = entry_ref.symlink().as_bytes();
                 // Validate symlink target is also safe
                 if !is_safe_path(link_target) {
                     continue;
@@ -1475,7 +1478,7 @@ fn extract_to_disk_filtered(
                     match bun_sys::symlinkat(link_target, dir_fd, pathname).unwrap_result() {
                         Err(err) => {
                             if err == bun_core::err!("EPERM") || err == bun_core::err!("ENOENT") {
-                                if let Some(parent) = bun_paths::dirname(pathname) {
+                                if let Some(parent) = bun_core::dirname(pathname) {
                                     let _ = dir_fd.make_path(parent);
                                 }
                                 if bun_sys::symlinkat(link_target, dir_fd, pathname)

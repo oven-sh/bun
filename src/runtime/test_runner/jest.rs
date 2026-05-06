@@ -1,20 +1,25 @@
 use core::ptr::NonNull;
 use std::io::Write as _;
+use std::rc::Rc;
 
 use crate::cli::command::TestOptions;
 use crate::cli::test_command::CommandLineReporter;
 use bun_collections::{ArrayHashMap, MultiArrayList};
 use bun_core::Output;
+use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, RegularExpression, VirtualMachine,
-    ZigString,
+    self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, RegularExpression, ZigString,
 };
 use bun_logger as logger;
 use bun_str as strings;
 
 pub use super::bun_test;
 use super::expect::{Expect, ExpectTypeOf};
+use super::scope_functions::{self, create_bound, strings as scope_strings, Mode as ScopeKind};
 use super::snapshot::Snapshots;
+use super::timers::fake_timers;
+use bun_test::js_fns::{GenericHook, GenericHookTag};
+use bun_test::{BaseScopeCfg, RefDataValue, ScopeMode};
 
 #[derive(Default)]
 struct RepeatInfo {
@@ -63,7 +68,7 @@ impl CurrentFile {
     fn print(title: &[u8], prefix: &[u8], repeat_count: u32, repeat_index: u32) {
         let _enable_buffering = Output::enable_buffering_scope();
 
-        Output::pretty_error(format_args!("<r>\n"));
+        bun_core::pretty_error!("<r>\n");
 
         if repeat_count > 0 {
             if repeat_count > 1 {
@@ -113,8 +118,8 @@ pub struct TestRunner<'a> {
     pub only: bool,
     pub run_todo: bool,
     pub concurrent: bool,
-    // TODO(port): std.Random has no direct Rust equivalent; replace with a PRNG handle.
-    pub randomize: Option<bun_core::Random>,
+    // TODO(port): std.Random has no direct Rust equivalent; using xoshiro256++ handle.
+    pub randomize: Option<bun_core::rand::DefaultPrng>,
     /// The --seed value when --randomize is on. Used to derive a per-file
     /// shuffle PRNG from hash(seed, file_path) so within-file test order is
     /// independent of which worker (and which prior files) ran it.
@@ -127,11 +132,11 @@ pub struct TestRunner<'a> {
 
     // PORT NOTE: `allocator: std.mem.Allocator` field deleted — global mimalloc.
     // TODO(port): `drainer` had `= undefined` default in Zig
-    pub drainer: jsc::AnyTask,
+    pub drainer: jsc::AnyTask::AnyTask,
 
     pub has_pending_tests: bool,
 
-    pub snapshots: Snapshots,
+    pub snapshots: Snapshots<'a>,
 
     pub default_timeout_ms: u32,
 
@@ -198,8 +203,8 @@ impl<'a> TestRunner<'a> {
 
         // Check if the file path matches any of the glob patterns
         for pattern in glob_patterns {
-            let result = bun_glob::r#match(pattern, file_path);
-            if result == bun_glob::MatchResult::Match {
+            let result = bun_glob::matcher::r#match(pattern, file_path);
+            if result == bun_glob::matcher::MatchResult::Match {
                 return true;
             }
         }
@@ -299,41 +304,41 @@ pub mod Jest {
     pub fn create_test_module(global_object: &JSGlobalObject) -> JsResult<JSValue> {
         let module = JSValue::create_empty_object(global_object, 23);
 
-        let test_scope_functions = bun_test::ScopeFunctions::create_bound(
+        let test_scope_functions = create_bound(
             global_object,
-            bun_test::ScopeKind::Test,
+            ScopeKind::Test,
             JSValue::ZERO,
-            bun_test::ScopeOptions::default(),
-            bun_test::ScopeFunctions::strings::TEST,
+            BaseScopeCfg::default(),
+            scope_strings::TEST.clone(),
         )?;
         module.put(global_object, ZigString::static_str("test"), test_scope_functions);
         module.put(global_object, ZigString::static_str("it"), test_scope_functions);
 
-        let xtest_scope_functions = bun_test::ScopeFunctions::create_bound(
+        let xtest_scope_functions = create_bound(
             global_object,
-            bun_test::ScopeKind::Test,
+            ScopeKind::Test,
             JSValue::ZERO,
-            bun_test::ScopeOptions { self_mode: bun_test::SelfMode::Skip, ..Default::default() },
-            bun_test::ScopeFunctions::strings::XTEST,
+            BaseScopeCfg { self_mode: ScopeMode::Skip, ..Default::default() },
+            scope_strings::XTEST.clone(),
         )?;
         module.put(global_object, ZigString::static_str("xtest"), xtest_scope_functions);
         module.put(global_object, ZigString::static_str("xit"), xtest_scope_functions);
 
-        let describe_scope_functions = bun_test::ScopeFunctions::create_bound(
+        let describe_scope_functions = create_bound(
             global_object,
-            bun_test::ScopeKind::Describe,
+            ScopeKind::Describe,
             JSValue::ZERO,
-            bun_test::ScopeOptions::default(),
-            bun_test::ScopeFunctions::strings::DESCRIBE,
+            BaseScopeCfg::default(),
+            scope_strings::DESCRIBE.clone(),
         )?;
         module.put(global_object, ZigString::static_str("describe"), describe_scope_functions);
 
-        let xdescribe_scope_functions = match bun_test::ScopeFunctions::create_bound(
+        let xdescribe_scope_functions = match create_bound(
             global_object,
-            bun_test::ScopeKind::Describe,
+            ScopeKind::Describe,
             JSValue::ZERO,
-            bun_test::ScopeOptions { self_mode: bun_test::SelfMode::Skip, ..Default::default() },
-            bun_test::ScopeFunctions::strings::XDESCRIBE,
+            BaseScopeCfg { self_mode: ScopeMode::Skip, ..Default::default() },
+            scope_strings::XDESCRIBE.clone(),
         ) {
             Ok(v) => v,
             Err(_) => return Ok(JSValue::ZERO),
@@ -343,27 +348,27 @@ pub mod Jest {
         module.put(
             global_object,
             ZigString::static_str("beforeEach"),
-            jsc::JSFunction::create(global_object, "beforeEach", bun_test::js_fns::generic_hook::<{ bun_test::HookKind::BeforeEach }>::hook_fn, 1, Default::default()),
+            jsc::JSFunction::create(global_object, "beforeEach", GenericHook::<{ GenericHookTag::BeforeEach }>::hook_fn, 1, Default::default()),
         );
         module.put(
             global_object,
             ZigString::static_str("beforeAll"),
-            jsc::JSFunction::create(global_object, "beforeAll", bun_test::js_fns::generic_hook::<{ bun_test::HookKind::BeforeAll }>::hook_fn, 1, Default::default()),
+            jsc::JSFunction::create(global_object, "beforeAll", GenericHook::<{ GenericHookTag::BeforeAll }>::hook_fn, 1, Default::default()),
         );
         module.put(
             global_object,
             ZigString::static_str("afterAll"),
-            jsc::JSFunction::create(global_object, "afterAll", bun_test::js_fns::generic_hook::<{ bun_test::HookKind::AfterAll }>::hook_fn, 1, Default::default()),
+            jsc::JSFunction::create(global_object, "afterAll", GenericHook::<{ GenericHookTag::AfterAll }>::hook_fn, 1, Default::default()),
         );
         module.put(
             global_object,
             ZigString::static_str("afterEach"),
-            jsc::JSFunction::create(global_object, "afterEach", bun_test::js_fns::generic_hook::<{ bun_test::HookKind::AfterEach }>::hook_fn, 1, Default::default()),
+            jsc::JSFunction::create(global_object, "afterEach", GenericHook::<{ GenericHookTag::AfterEach }>::hook_fn, 1, Default::default()),
         );
         module.put(
             global_object,
             ZigString::static_str("onTestFinished"),
-            jsc::JSFunction::create(global_object, "onTestFinished", bun_test::js_fns::generic_hook::<{ bun_test::HookKind::OnTestFinished }>::hook_fn, 1, Default::default()),
+            jsc::JSFunction::create(global_object, "onTestFinished", GenericHook::<{ GenericHookTag::OnTestFinished }>::hook_fn, 1, Default::default()),
         );
         module.put(
             global_object,
@@ -393,7 +398,7 @@ pub mod Jest {
         mock_fn.put(global_object, ZigString::static_str("restore"), restore_all_mocks);
         mock_fn.put(global_object, ZigString::static_str("clearAllMocks"), clear_all_mocks);
 
-        let jest = JSValue::create_empty_object(global_object, 9 + bun_test::FakeTimers::TIMER_FNS_COUNT);
+        let jest = JSValue::create_empty_object(global_object, 9 + fake_timers::TIMER_FNS_COUNT);
         jest.put(global_object, ZigString::static_str("fn"), mock_fn);
         jest.put(global_object, ZigString::static_str("mock"), mock_module_fn);
         jest.put(global_object, ZigString::static_str("spyOn"), spy_on);

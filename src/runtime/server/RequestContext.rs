@@ -1864,11 +1864,12 @@ where
         this.deref();
     }
 
-    pub fn on_s3_size_resolved(result: S3::S3StatResult, this: &mut Self) {
+    pub fn on_s3_size_resolved(result: S3::simple_request::S3StatResult<'_>, this: &mut Self) {
         if let Some(resp) = this.resp {
             let size = match result {
-                S3::S3StatResult::Failure(_) | S3::S3StatResult::NotFound => 0,
-                S3::S3StatResult::Success(stat) => stat.size,
+                S3::simple_request::S3StatResult::Failure(_)
+                | S3::simple_request::S3StatResult::NotFound(_) => 0,
+                S3::simple_request::S3StatResult::Success(stat) => stat.size,
             };
             let mut pair = HeaderResponseSizePair { this, size };
             // SAFETY: FFI handle
@@ -1977,7 +1978,7 @@ where
                     let path = blob.store.as_ref().unwrap().data.s3.path();
                     let env = global_this.bun_vm().transpiler.env;
 
-                    let _ = S3::stat(
+                    let _ = S3::client::stat(
                         credentials,
                         path,
                         Self::on_s3_size_resolved as *const _,
@@ -2097,8 +2098,8 @@ where
 
         if let Some(promise) = response_value.as_any_promise() {
             // If we immediately have the value available, we can skip the extra event loop tick
-            match promise.unwrap(vm.global.vm(), jsc::PromiseUnwrap::MarkHandled) {
-                jsc::PromiseUnwrapResult::Pending => {
+            match promise.unwrap(vm.global.vm(), jsc::PromiseUnwrapMode::MarkHandled) {
+                jsc::PromiseResult::Pending => {
                     ctx.ref_();
                     let cell = NativePromiseContext::create(this.global_this(), ctx);
                     let _ = response_value.then_with_value(
@@ -2109,7 +2110,7 @@ where
                     ); // TODO: properly propagate exception upwards
                     return;
                 }
-                jsc::PromiseUnwrapResult::Fulfilled(fulfilled_value) => {
+                jsc::PromiseResult::Fulfilled(fulfilled_value) => {
                     // if you return a Response object or a Promise<Response>
                     // but you upgraded the connection to a WebSocket
                     // just ignore the Response object. It doesn't do anything.
@@ -2161,7 +2162,7 @@ where
                     ctx.render(response);
                     return;
                 }
-                jsc::PromiseUnwrapResult::Rejected(err) => {
+                jsc::PromiseResult::Rejected(err) => {
                     ctx.handle_reject(err);
                     return;
                 }
@@ -2396,7 +2397,7 @@ where
                         stream_log!("was locked but it shouldn't be");
                         let mut err = jsc::SystemError {
                             code: BunString::static_(
-                                <&'static str>::from(jsc::node::ErrorCode::ERR_STREAM_CANNOT_PIPE),
+                                <&'static str>::from(jsc::ErrorCode::ERR_STREAM_CANNOT_PIPE),
                             ),
                             message: BunString::static_(
                                 "Stream already used, please create a new one",
@@ -2735,8 +2736,8 @@ where
         let server = unsafe { &*ctx.server.unwrap() };
         let vm = server.vm();
 
-        match promise.unwrap(vm.global.vm(), jsc::PromiseUnwrap::MarkHandled) {
-            jsc::PromiseUnwrapResult::Pending => {
+        match promise.unwrap(vm.global.vm(), jsc::PromiseUnwrapMode::MarkHandled) {
+            jsc::PromiseResult::Pending => {
                 ctx.flags.set_is_error_promise_pending(true);
                 ctx.ref_();
                 let cell = NativePromiseContext::create(server.global_this(), ctx);
@@ -2747,7 +2748,7 @@ where
                     Self::on_reject,
                 ); // TODO: properly propagate exception upwards
             }
-            jsc::PromiseUnwrapResult::Fulfilled(fulfilled_value) => {
+            jsc::PromiseResult::Fulfilled(fulfilled_value) => {
                 // if you return a Response object or a Promise<Response>
                 // but you upgraded the connection to a WebSocket
                 // just ignore the Response object. It doesn't do anything.
@@ -2783,7 +2784,7 @@ where
                 ctx.render(response);
                 return;
             }
-            jsc::PromiseUnwrapResult::Rejected(err) => {
+            jsc::PromiseResult::Rejected(err) => {
                 ctx.finish_running_error_handler(err, status);
                 return;
             }
@@ -3103,7 +3104,7 @@ where
             {
                 this.request_body_buf = Vec::new();
                 // SAFETY: FFI handle
-                unsafe { resp.clear_on_data() };
+                unsafe { this.resp.unwrap().clear_on_data() };
                 this.flags.set_is_waiting_for_request_body(false);
 
                 let loop_ = vm.event_loop();
@@ -3129,10 +3130,12 @@ where
                 // ref, and a later handleResolve()/handleReject() from an
                 // async handler would dereference the stale pointer.
                 // SAFETY: FFI handle
-                if this.resp.is_some() && unsafe { !resp.has_responded() } {
-                    this.flags.set_has_written_status(true);
-                    // SAFETY: FFI handle
-                    unsafe { resp.write_status(b"413 Payload Too Large") };
+                if let Some(resp) = this.resp {
+                    if unsafe { !resp.has_responded() } {
+                        this.flags.set_has_written_status(true);
+                        // SAFETY: FFI handle
+                        unsafe { resp.write_status(b"413 Payload Too Large") };
+                    }
                 }
                 this.end_without_body(!HTTP3);
                 return;
@@ -3475,10 +3478,19 @@ fn get_content_type(
     (content_type, needs_content_type, content_type_needs_free)
 }
 
+// Active stub used while the real body above remains gated on
+// `FetchHeaders::fast_get` returning the right slice type and the
+// 3-arg `MimeType::init` shape.
+fn get_content_type(
+    _headers: Option<&FetchHeaders>,
+    _blob: &AnyBlob,
+) -> (MimeType, bool, bool) {
+    todo!("blocked_on: FetchHeaders::fast_get / MimeType::init signature")
+}
+
 // `ServerLike` lives in `crate::server` (mod.rs) and is impl'd for the four
 // `NewServer` monomorphizations.
 
-#[cfg(any())] // TODO(b2-blocked): ../api/welcome-page.html.gz path resolves at link time.
 static WELCOME_PAGE_HTML_GZ: &[u8] = include_bytes!("../api/welcome-page.html.gz");
 
 // ──────────────────────────────────────────────────────────────────────────

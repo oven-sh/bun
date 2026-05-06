@@ -774,6 +774,16 @@ impl Expr {
         matches!(self.data, expr::Data::EString(_))
     }
 
+    /// Zig: `Expr.asString(allocator)` — `Some(utf8)` when `data` is
+    /// `e_string`, transcoding UTF-16 into `bump` if necessary.
+    #[inline]
+    pub fn as_string<'b>(&self, bump: &'b Bump) -> Option<&'b [u8]> {
+        match &self.data {
+            expr::Data::EString(s) => Some(s.get().string(bump).expect("OOM")),
+            _ => None,
+        }
+    }
+
     /// Zig: `Expr.asString(allocator)` — `Some(utf8)` when `data` is `e_string`.
     pub fn as_utf8_string_literal(&self) -> Option<&[u8]> {
         if let expr::Data::EString(s) = &self.data {

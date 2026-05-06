@@ -231,6 +231,12 @@ impl PathBuffer {
         // SAFETY: all-zero is a valid [u8; N].
         unsafe { core::mem::zeroed() }
     }
+    /// Explicit `&mut [u8]` view (callers that need a sized borrow without
+    /// going through `DerefMut`).
+    #[inline]
+    pub fn as_mut_slice(&mut self) -> &mut [u8] { &mut self.0[..] }
+    #[inline]
+    pub fn as_slice(&self) -> &[u8] { &self.0[..] }
 }
 impl Default for PathBuffer {
     #[inline]

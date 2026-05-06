@@ -24,12 +24,13 @@ use bun_str::{strings, ZStr};
 use bun_sys::{self as sys, Fd, File};
 use bun_dotenv as DotEnv;
 use bun_perf::system_timer::Timer;
+use bun_core::zstr;
 use crate::bun_json as JSON;
 
 use crate::{
-    self as Install, dependency::Dependency, npm as Npm, resolution::Resolution,
-    DependencyID, ExternalSlice, Features, PackageID, PackageInstall, PackageManager,
-    PackageNameAndVersionHash, PackageNameHash, TruncatedPackageNameHash,
+    self as Install, dependency, dependency::Dependency, npm as Npm, resolution,
+    resolution::Resolution, DependencyID, ExternalSlice, Features, PackageID, PackageInstall,
+    PackageManager, PackageNameAndVersionHash, PackageNameHash, TruncatedPackageNameHash,
     initialize_store, invalid_dependency_id, invalid_package_id,
 };
 use crate::config_version::ConfigVersion;
@@ -78,6 +79,17 @@ pub use self::tree::Tree;
 pub use self::lockfile_json_stringify_for_debugging::json_stringify;
 pub use crate::padding_checker::assert_no_uninitialized_padding;
 use self::bun_lock as TextLockfile;
+// Bring the derive-generated `items_*` column accessors (`PackageListExt` for
+// `MultiArrayList<Package>`, `PackageSliceExt` for `Slice<Package>`) into scope.
+use self::package::{PackageListExt as _, PackageSliceExt as _};
+
+// Zig path-style associated types (`Dependency.Version`, `Resolution.Tag`,
+// `String.Buf`/`String.Builder`) are module-level types in the Rust port.
+// Alias them locally so the body reads like the spec.
+type DependencyVersion = dependency::Version;
+type ResolutionTag = resolution::Tag;
+type SemverStringBuf<'a> = bun_semver::semver_string::Buf<'a>;
+type SemverStringBuilder = bun_semver::semver_string::Builder;
 
 // ────────────────────────────────────────────────────────────────────────────
 // Type aliases / collection types
@@ -326,10 +338,9 @@ pub enum LockfileFormat {
 impl LockfileFormat {
     pub fn filename(self) -> &'static ZStr {
         match self {
-            LockfileFormat::Text => ZStr::from_static("bun.lock\0"),
-            LockfileFormat::Binary => ZStr::from_static("bun.lockb\0"),
+            LockfileFormat::Text => zstr!("bun.lock"),
+            LockfileFormat::Binary => zstr!("bun.lockb"),
         }
-        // TODO(port): verify ZStr::from_static API in bun_str
     }
 }
 
@@ -440,7 +451,7 @@ impl<'a> LoadResult<'a> {
     /// configVersion and boolean for if the configVersion previously existed/needs to be saved to lockfile
     pub fn choose_config_version(&self) -> (ConfigVersion, bool) {
         match self {
-            LoadResult::NotFound | LoadResult::Err(_) => (ConfigVersion::Current, true),
+            LoadResult::NotFound | LoadResult::Err(_) => (ConfigVersion::CURRENT, true),
             LoadResult::Ok(ok) => match ok.migrated {
                 Migrated::None => {
                     if let Some(config_version) = ok.lockfile.saved_config_version {
@@ -706,7 +717,7 @@ impl Lockfile {
         &self,
         dep_id: DependencyID,
         features: Features,
-        meta: &Package::Meta,
+        meta: &package::Meta,
         cpu: Npm::Architecture,
         os: Npm::OperatingSystem,
     ) -> bool {
@@ -744,7 +755,7 @@ impl Lockfile {
 
         // set all disabled dependencies of workspaces to `invalid_package_id`
         for package_id in 0..end as usize {
-            if package_id != 0 && old_resolutions[package_id].tag != Resolution::Tag::Workspace {
+            if package_id != 0 && old_resolutions[package_id].tag != ResolutionTag::Workspace {
                 continue;
             }
 
@@ -807,13 +818,13 @@ impl Lockfile {
                     if update.package_id == invalid_package_id {
                         debug_assert_eq!(root_deps.len(), old_resolutions.len());
                         for (dep, &old_resolution) in root_deps.iter().zip(old_resolutions.iter()) {
-                            if dep.name_hash == SemverString::Builder::string_hash(update.name()) {
+                            if dep.name_hash == SemverStringBuilder::string_hash(update.name()) {
                                 if old_resolution as usize >= old.packages.len() {
                                     continue;
                                 }
                                 let res = resolutions_of_yore[old_resolution as usize];
-                                if res.tag != Resolution::Tag::Npm
-                                    || update.version.tag != Dependency::Version::Tag::DistTag
+                                if res.tag != ResolutionTag::Npm
+                                    || update.version.tag != dependency::Tag::DistTag
                                 {
                                     continue;
                                 }
@@ -864,13 +875,13 @@ impl Lockfile {
                         for (dep, &old_resolution) in
                             root_deps.iter_mut().zip(old_resolutions.iter())
                         {
-                            if dep.name_hash == SemverString::Builder::string_hash(update.name()) {
+                            if dep.name_hash == SemverStringBuilder::string_hash(update.name()) {
                                 if old_resolution as usize >= old.packages.len() {
                                     continue;
                                 }
                                 let res = resolutions_of_yore[old_resolution as usize];
-                                if res.tag != Resolution::Tag::Npm
-                                    || update.version.tag != Dependency::Version::Tag::DistTag
+                                if res.tag != ResolutionTag::Npm
+                                    || update.version.tag != dependency::Tag::DistTag
                                 {
                                     continue;
                                 }
@@ -940,8 +951,8 @@ impl Lockfile {
         old.clean_with_logger(manager, updates, &mut log, exact_versions, log_level)
     }
 
-    pub fn resolve_catalog_dependency(&self, dep: &Dependency) -> Option<Dependency::Version> {
-        if dep.version.tag != Dependency::Version::Tag::Catalog {
+    pub fn resolve_catalog_dependency(&self, dep: &Dependency) -> Option<DependencyVersion> {
+        if dep.version.tag != dependency::Tag::Catalog {
             return Some(dep.version);
         }
 
@@ -977,8 +988,8 @@ impl Lockfile {
         for (pkg_id, (resolution, dependencies)) in
             resolutions.iter().zip(dependencies_lists.iter()).enumerate()
         {
-            if resolution.tag != Resolution::Tag::Workspace
-                && resolution.tag != Resolution::Tag::Root
+            if resolution.tag != ResolutionTag::Workspace
+                && resolution.tag != ResolutionTag::Root
             {
                 continue;
             }
@@ -1007,7 +1018,7 @@ impl Lockfile {
             let name_hashes = packages.items_name_hash();
             let resolutions = packages.items_resolution();
             for (i, (res, name_hash)) in resolutions.iter().zip(name_hashes.iter()).enumerate() {
-                if res.tag == Resolution::Tag::Workspace && *name_hash == workspace_name_hash_ {
+                if res.tag == ResolutionTag::Workspace && *name_hash == workspace_name_hash_ {
                     return PackageID::try_from(i).unwrap();
                 }
             }
@@ -1480,7 +1491,7 @@ impl Lockfile {
             let pkg_bin = &mut pkg_bins[i];
 
             match pkg_res.tag {
-                Resolution::Tag::Npm => {
+                ResolutionTag::Npm => {
                     let Some(manifest) = manager.manifests.by_name_hash(
                         manager,
                         manager.scope_for_package_name(
@@ -1748,7 +1759,7 @@ impl Lockfile {
             let package: Package = self.packages.get(i);
             debug_assert!(self.str(&package.name).len() == package.name.len() as usize);
             debug_assert!(
-                SemverString::Builder::string_hash(self.str(&package.name))
+                SemverStringBuilder::string_hash(self.str(&package.name))
                     == package.name_hash as u64
             );
             debug_assert!(
@@ -1769,7 +1780,7 @@ impl Lockfile {
                     self.str(&dependency.name).len() == dependency.name.len() as usize
                 );
                 debug_assert!(
-                    SemverString::Builder::string_hash(self.str(&dependency.name))
+                    SemverStringBuilder::string_hash(self.str(&dependency.name))
                         == dependency.name_hash
                 );
             }
@@ -1949,13 +1960,13 @@ impl Lockfile {
         name_hash: u64,
         // If non-null, attempt to use an existing package
         // that satisfies this version range.
-        version: Option<Dependency::Version>,
+        version: Option<DependencyVersion>,
         resolution: &Resolution,
     ) -> Option<PackageID> {
         let entry = self.package_index.get(&name_hash)?;
         let resolutions: &[Resolution] = self.packages.items_resolution();
         let npm_version = version.and_then(|v| match v.tag {
-            Dependency::Version::Tag::Npm => Some(v.value.npm.version),
+            dependency::Tag::Npm => Some(v.value.npm.version),
             _ => None,
         });
         let buf = self.buffers.string_bytes.as_slice();
@@ -1970,7 +1981,7 @@ impl Lockfile {
                     return Some(*id);
                 }
 
-                if resolutions[*id as usize].tag == Resolution::Tag::Npm {
+                if resolutions[*id as usize].tag == ResolutionTag::Npm {
                     if let Some(npm_v) = &npm_version {
                         if npm_v.satisfies(resolutions[*id as usize].value.npm.version, buf, buf) {
                             return Some(*id);
@@ -1988,7 +1999,7 @@ impl Lockfile {
                         return Some(id);
                     }
 
-                    if resolutions[id as usize].tag == Resolution::Tag::Npm {
+                    if resolutions[id as usize].tag == ResolutionTag::Npm {
                         if let Some(npm_v) = &npm_version {
                             if npm_v.satisfies(resolutions[id as usize].value.npm.version, buf, buf)
                             {
@@ -2179,8 +2190,8 @@ impl Lockfile {
         }
     }
 
-    pub fn string_buf(&mut self) -> SemverString::Buf<'_> {
-        SemverString::Buf {
+    pub fn string_buf(&mut self) -> SemverStringBuf<'_> {
+        SemverStringBuf {
             bytes: &mut self.buffers.string_bytes,
             pool: &mut self.string_pool,
         }
@@ -2262,7 +2273,7 @@ impl<'a> StringBuilder<'a> {
         if SemverString::can_inline(slice) {
             return;
         }
-        self._count_with_hash(slice, SemverString::Builder::string_hash(slice));
+        self._count_with_hash(slice, SemverStringBuilder::string_hash(slice));
     }
 
     #[inline]
@@ -2336,7 +2347,7 @@ impl<'a> StringBuilder<'a> {
 
     #[inline]
     pub fn append<T: StringBuilderType>(&mut self, slice: &[u8]) -> T {
-        self.append_with_hash::<T>(slice, SemverString::Builder::string_hash(slice))
+        self.append_with_hash::<T>(slice, SemverStringBuilder::string_hash(slice))
     }
 
     /// SlicedString is not supported due to inline strings.
@@ -2421,7 +2432,7 @@ impl<'a> bun_semver::StringBuilder for StringBuilder<'a> {
     #[inline]
     fn append<T: bun_semver::semver_string::BuilderStringType>(&mut self, slice_: &[u8]) -> T {
         let s: SemverString = StringBuilder::append::<SemverString>(self, slice_);
-        T::from_pooled(s, SemverString::Builder::string_hash(slice_))
+        T::from_pooled(s, SemverStringBuilder::string_hash(slice_))
     }
 }
 
@@ -2696,8 +2707,8 @@ impl Lockfile {
             let l_res = l_pkg_resolutions[l_pkg_id];
             let r_res = r_pkg_resolutions[r_pkg_id];
 
-            if l_res.tag == Resolution::Tag::Uninitialized
-                || r_res.tag == Resolution::Tag::Uninitialized
+            if l_res.tag == ResolutionTag::Uninitialized
+                || r_res.tag == ResolutionTag::Uninitialized
             {
                 if l_res.tag != r_res.tag {
                     return Ok(false);
@@ -2890,14 +2901,14 @@ impl Lockfile {
     pub fn resolve_package_from_name_and_version(
         &self,
         package_name: &[u8],
-        version: Dependency::Version,
+        version: DependencyVersion,
     ) -> Option<PackageID> {
-        let name_hash = SemverString::Builder::string_hash(package_name);
+        let name_hash = SemverStringBuilder::string_hash(package_name);
         let entry = self.package_index.get(&name_hash)?;
         let buf = self.buffers.string_bytes.as_slice();
 
         match version.tag {
-            Dependency::Version::Tag::Npm => match entry {
+            dependency::Tag::Npm => match entry {
                 PackageIndexEntry::Id(id) => {
                     let resolutions = self.packages.items_resolution();
 
@@ -2991,7 +3002,7 @@ pub mod default_trusted_dependencies {
         #[inline]
         fn hash(&self, s: &&'static [u8]) -> u64 {
             // truncate to u32 because Lockfile.trustedDependencies uses the same u32 string hash
-            (SemverString::Builder::string_hash(s) as u32) as u64
+            (SemverStringBuilder::string_hash(s) as u32) as u64
         }
         #[inline]
         fn eql(&self, a: &&'static [u8], b: &&'static [u8]) -> bool {
@@ -3034,7 +3045,7 @@ pub mod default_trusted_dependencies {
     /// Open-coded `hasContext` so the lookup key can borrow with any lifetime,
     /// not just `'static`.
     pub fn has(name: &[u8]) -> bool {
-        let hash = (SemverString::Builder::string_hash(name) as u32) as u64;
+        let hash = (SemverStringBuilder::string_hash(name) as u32) as u64;
         for entry in &MAP.entries[(hash >> MAP.shift) as usize..] {
             if entry.hash >= hash {
                 return entry.hash == hash && entry.key == name;
@@ -3047,12 +3058,12 @@ pub mod default_trusted_dependencies {
 impl Lockfile {
     pub fn has_trusted_dependency(&self, name: &[u8], resolution: &Resolution) -> bool {
         if let Some(trusted_dependencies) = &self.trusted_dependencies {
-            let hash = SemverString::Builder::string_hash(name) as u32;
+            let hash = SemverStringBuilder::string_hash(name) as u32;
             return trusted_dependencies.contains(&hash);
         }
 
         // Only allow default trusted dependencies for npm packages
-        resolution.tag == Resolution::Tag::Npm && default_trusted_dependencies::has(name)
+        resolution.tag == ResolutionTag::Npm && default_trusted_dependencies::has(name)
     }
 }
 

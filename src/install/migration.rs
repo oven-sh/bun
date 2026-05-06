@@ -6,7 +6,7 @@ use bun_semver::{self as Semver, String as SemverString, SlicedString};
 use bun_semver::query::token::Wildcard;
 use bun_str::strings;
 use bun_sys::{self, Fd, File, O};
-use bun_js_parser::ast::{E, Expr, ExprData};
+use bun_logger::js_ast::{E, Expr, ExprData};
 
 use crate::dependency::{self, Dependency, Behavior, Tag as DepTag, Value as DepValue, Version as DepVersion};
 use crate::install::{self as Install, PackageID, PackageManager, ExternalStringList};
@@ -307,6 +307,8 @@ pub fn migrate_npm_lockfile<'a>(
             let json_array = match &wksp.data {
                 ExprData::EArray(arr) => *arr,
                 ExprData::EObject(obj) => {
+                    // PORT NOTE: `StoreRef::get` shadows `E::Object::get`; deref-coerce.
+                    let obj: &E::Object = obj;
                     if let Some(packages) = obj.get(b"packages") {
                         match &packages.data {
                             ExprData::EArray(arr) => *arr,
@@ -358,6 +360,8 @@ pub fn migrate_npm_lockfile<'a>(
         let ExprData::EObject(pkg) = &entry.value.as_ref().unwrap().data else {
             return Err(err!("InvalidNPMLockfile"));
         };
+        // PORT NOTE: `StoreRef::get` shadows `E::Object::get`; deref-coerce.
+        let pkg: &E::Object = pkg;
 
         if pkg.get(b"link").is_some() {
             id_map.insert(
@@ -531,6 +535,8 @@ pub fn migrate_npm_lockfile<'a>(
         // this pass is allowed to make more assumptions because we already checked things during
         // the counting pass
         let ExprData::EObject(pkg) = &entry.value.as_ref().unwrap().data else { unreachable!() };
+        // PORT NOTE: `StoreRef::get` shadows `E::Object::get`; deref-coerce.
+        let pkg: &E::Object = pkg;
 
         let pkg_path = entry.key.as_ref().unwrap().as_string(&arena).unwrap();
 
@@ -835,6 +841,8 @@ pub fn migrate_npm_lockfile<'a>(
         // this pass is allowed to make more assumptions because we already checked things during
         // the counting pass
         let ExprData::EObject(pkg) = &entry.value.as_ref().unwrap().data else { unreachable!() };
+        // PORT NOTE: `StoreRef::get` shadows `E::Object::get`; deref-coerce.
+        let pkg: &E::Object = pkg;
 
         if pkg.get(b"link").is_some()
             || pkg.get(b"inBundle").or_else(|| pkg.get(b"extraneous"))

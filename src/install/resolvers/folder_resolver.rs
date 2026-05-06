@@ -12,7 +12,11 @@ use bun_str::{strings, ZStr};
 use bun_sys::{self, Fd, File, O};
 
 use crate::dependency::{self, Dependency};
-use crate::install::{Features, Lockfile, PackageID, PackageManager};
+use crate::install::{Features, Lockfile, PackageID};
+// PORT NOTE: typed against the real `PackageManager` (not the lib.rs stub) —
+// `PackageManagerResolution` / `PackageManagerEnqueue` are the only callers
+// and they pass `package_manager_real::PackageManager`.
+use crate::package_manager_real::PackageManager;
 use crate::lockfile::Package as LockfilePackage;
 use crate::npm;
 use crate::resolution::{Resolution, Tag as ResolutionTag, Value as ResolutionValue, NpmVersionInfo};
@@ -46,16 +50,20 @@ impl<'a> fmt::Display for PackageWorkspaceSearchPathFormatter<'a> {
         let mut joined = [0u8; MAX_PATH_BYTES + 2];
         // Zig: `getPtr(@truncate(String.Builder.stringHash(...)))` — key type is
         // `PackageNameHash` (u64), so the @truncate is identity.
+        // SAFETY: caller constructs this formatter only when
+        // `self.version.tag == .workspace`, so the `workspace` union arm is
+        // initialized (Zig: `formatter.version.value.workspace`).
+        let workspace = unsafe { &self.version.value.workspace };
         let str_to_use = self
             .manager
             .lockfile
             .workspace_paths
             .get(
                 &semver::string::Builder::string_hash(
-                    self.manager.lockfile.str(&self.version.value.workspace),
+                    self.manager.lockfile.str(workspace),
                 ),
             )
-            .unwrap_or(&self.version.value.workspace);
+            .unwrap_or(workspace);
 
         // SAFETY: joined[2..] is exactly MAX_PATH_BYTES bytes long.
         let joined_path: &mut PathBuffer = unsafe {
@@ -289,14 +297,14 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
 
         // SAFETY: `log` is set by `PackageManager::init()` before any resolver
         // path runs (mirrors Zig's non-optional `*logger.Log`).
-        let log: &mut logger::Log = unsafe { manager.log.unwrap().as_mut() };
+        let log: &mut logger::Log = unsafe { &mut *manager.log };
         let json = match manager
             .workspace_package_json_cache
             .get_with_path(log, abs.as_bytes(), Default::default())
         {
-            crate::package_manager::workspace_package_json_cache::GetResult::Entry(e) => e,
-            crate::package_manager::workspace_package_json_cache::GetResult::ReadErr(e)
-            | crate::package_manager::workspace_package_json_cache::GetResult::ParseErr(e) => {
+            crate::package_manager_real::workspace_package_json_cache::GetResult::Entry(e) => e,
+            crate::package_manager_real::workspace_package_json_cache::GetResult::ReadErr(e)
+            | crate::package_manager_real::workspace_package_json_cache::GetResult::ParseErr(e) => {
                 return Err(e);
             }
         };
@@ -314,7 +322,7 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
             bun_perf::trace(bun_perf::PerfEvent::FolderResolverReadPackageJSONFromDiskFolder);
 
         let source = &'brk: {
-            let file = File::from(
+            let file = File::from_fd(
                 bun_sys::openat_a(Fd::cwd(), abs.as_bytes(), O::RDONLY, 0)?,
             );
             // defer file.close() — TODO(port): File should impl Drop to close
@@ -446,7 +454,10 @@ pub fn get_or_put(
         },
         GlobalOrRelative::CacheFolder(_) => 'cache_folder: {
             let mut resolver = CacheFolderResolver {
-                version: version.value.npm.version.to_version(),
+                // SAFETY: `GlobalOrRelative::CacheFolder` is only passed by
+                // `PackageManagerResolution` with a `version.tag == .npm`
+                // dependency (Zig: `version.value.npm.version.toVersion()`).
+                version: unsafe { version.value.npm.version.to_version() },
             };
             break 'cache_folder read_package_json_from_disk(
                 manager,

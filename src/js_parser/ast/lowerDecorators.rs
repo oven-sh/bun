@@ -34,11 +34,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 }
 
 #[cfg(any())]
-// blocked_on: P::{generate_temp_ref, record_usage, new_symbol, call_runtime, b} all gated
-//   (P.rs:640 impl block); G::Property/G::Class/G::Fn full struct-init (no Default —
-//   ts_decorators/class_static_block/kind/flags all required); E::Arrow.args is &'static [G::Arg]
-//   (arena slice rework); Flags::PropertySet bitflags const names (IsComputed/IsMethod/IsStatic);
-//   ~2060-line bodies, >30 path/shape errors per method.
+// blocked_on: E::Arrow.args is `&'static [G::Arg]` (arena slice rework — E.rs:351);
+//   Flags::PropertySet bitflags const names (IsComputed/IsMethod/IsStatic); ~2060-line
+//   bodies, >30 path/shape errors per method.
+//   (P::{generate_temp_ref, record_usage, new_symbol, call_runtime, b} and G::Property
+//   Default have since landed — re-audit error count once E::Arrow.args is reworked.)
+// PORT NOTE: live stub signatures above already match call sites P.rs:5742 (out-param
+//   BumpVec) and visitExpr.rs:2426 (return Expr); un-gate this module in place of the
+//   `todo!()` stubs once the remaining blockers clear.
 #[allow(warnings)]
 mod _draft {
 //! Lowering for TC39 standard ES decorators.

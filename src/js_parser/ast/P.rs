@@ -9,6 +9,7 @@ use core::ptr::NonNull;
 use std::io::Write as _;
 
 use bumpalo::Bump;
+use crate::ExpressionTransposer;
 
 use bun_alloc::Arena;
 use bun_collections::{BabyList, HashMap, ArrayHashMap, StringHashMap};
@@ -28,7 +29,7 @@ use crate::ast::g::{Arg, Decl, Property};
 use crate::part::{SymbolPropertyUseMap, SymbolUseMap};
 use crate::{
     ConvertESMExportsForHmr, DeclaredSymbol, DeferredArrowArgErrors, DeferredErrors,
-    DeferredImportNamespace, ExprBindingTuple, ExpressionTransposer, FindLabelSymbolResult,
+    DeferredImportNamespace, ExprBindingTuple, FindLabelSymbolResult,
     FnOnlyDataVisit, FnOrArrowDataParse, FnOrArrowDataVisit, FunctionKind, IdentifierOpts,
     ImportItemForNamespaceMap, ImportNamespaceCallOrConstruct, ImportScanner, InvalidLoc, JSXImport,
     JSXTransformType, Jest, JsxT, LocList, MacroState, ParseStatementOptions, ParsedPath,
@@ -552,9 +553,9 @@ pub struct P<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> {
     //     Expression , AssignmentExpression
     //
     pub after_arrow_body_loc: logger::Loc,
-    pub import_transposer: ImportTransposer<'a>,
-    pub require_transposer: RequireTransposer<'a>,
-    pub require_resolve_transposer: RequireResolveTransposer<'a>,
+    pub import_transposer: ImportTransposer<'a, TYPESCRIPT, J, SCAN_ONLY>,
+    pub require_transposer: RequireTransposer<'a, TYPESCRIPT, J, SCAN_ONLY>,
+    pub require_resolve_transposer: RequireResolveTransposer<'a, TYPESCRIPT, J, SCAN_ONLY>,
 
     pub const_values: js_ast::ast::ConstValuesMap,
 

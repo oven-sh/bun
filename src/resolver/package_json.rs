@@ -67,10 +67,18 @@ pub struct DependencyMap {
 pub type DependencyHashMap = ArrayHashMap<SemverString, Dependency /* , SemverString::ArrayHashContext */>;
 // TODO(port): ArrayHashMap context param — Zig used String.ArrayHashContext with store_hash=false
 
-#[derive(Default)]
 pub struct PackageJSON {
     pub name: Box<[u8]>,
     pub source: logger::Source,
+    /// PORT NOTE: owns the file bytes that `source.contents` (and the
+    /// `&'static [u8]` map values below) borrow. Replaces the prior
+    /// `mem::forget` leak — forbidden per docs/PORTING.md §Forbidden patterns.
+    /// Zig (`package_json.zig:615`) used `bun.default_allocator` and never
+    /// freed on success because the DirInfo cache is process-lifetime; here the
+    /// `PackageJSON` itself is the owner so the bytes free if it ever drops.
+    // TODO(port): lifetime — once `logger::Source::contents` becomes
+    // `Cow<'static, [u8]>`, fold this into `source` and drop the re-borrow.
+    pub source_contents: Box<[u8]>,
     pub main_fields: MainFieldMap,
     pub module_type: ModuleType,
     pub version: Box<[u8]>,
@@ -115,6 +123,35 @@ pub struct PackageJSON {
 
     pub exports: Option<ExportsMap>,
     pub imports: Option<ExportsMap>,
+}
+
+// PORT NOTE: hand-rolled `Default` because `#[derive(Default)]` would zero
+// `package_manager_package_id` (a valid lockfile id — typically the root
+// package). Spec `package_json.zig:68` declares the field default as
+// `Install.invalid_package_id` (= `u32::MAX`); `node_fallbacks.rs` relies on
+// `..Default::default()` matching that. Likewise `arch`/`os` default to
+// `*::all()` (zig:65-66).
+impl Default for PackageJSON {
+    fn default() -> Self {
+        PackageJSON {
+            name: Box::default(),
+            source: logger::Source::default(),
+            source_contents: Box::default(),
+            main_fields: MainFieldMap::default(),
+            module_type: ModuleType::default(),
+            version: Box::default(),
+            scripts: None,
+            config: None,
+            arch: Architecture::all(),
+            os: OperatingSystem::all(),
+            package_manager_package_id: INVALID_PACKAGE_ID,
+            dependencies: DependencyMap::default(),
+            side_effects: SideEffects::default(),
+            browser_map: BrowserMap::default(),
+            exports: None,
+            imports: None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -262,36 +299,41 @@ impl SideEffects {
 // (tsconfig_json.rs). `bun_bundler::cache::JSON_CACHE_VTABLE` wires it to
 // `bun_interchange::json`.
 
-/// `crate::fs::FileSystem` (the lib.rs forward-decl) only exposes `*_buf`
-/// variants; the Zig body calls the threadlocal-buffer `abs`/`join`/`normalize`.
-/// Thin extension trait that delegates to `bun_paths::resolve_path` so the
-/// call shapes match without touching lib.rs.
+/// The Zig body calls the threadlocal-buffer `abs`/`join`/`normalize` and
+/// immediately dupes the result. Thin extension trait that delegates to
+/// `bun_paths::resolve_path` and returns owned `Box<[u8]>` so no `'static`
+/// lifetime is fabricated from a threadlocal scratch buffer (forbidden per
+/// docs/PORTING.md §Forbidden patterns — "`unsafe { &*(p as *const _) }` to
+/// extend a lifetime"). `crate::fs::FileSystem` already has an inherent
+/// borrowing `abs(&self) -> &[u8]` (lib.rs); that wins method resolution at
+/// call-sites that only need a transient borrow.
 pub trait FileSystemPackageJsonExt {
-    fn abs(&self, parts: &[&[u8]]) -> &'static [u8];
+    fn abs_owned(&self, parts: &[&[u8]]) -> Box<[u8]>;
     fn join(&self, parts: &[&[u8]]) -> &'static [u8];
-    fn normalize(&self, str: &[u8]) -> &'static [u8];
+    fn normalize(&self, str: &[u8]) -> Box<[u8]>;
 }
 impl FileSystemPackageJsonExt for crate::fs::FileSystem {
-    fn abs(&self, parts: &[&[u8]]) -> &'static [u8] {
+    fn abs_owned(&self, parts: &[&[u8]]) -> Box<[u8]> {
         // PORT NOTE: Zig `FileSystem.abs` joins against `top_level_dir` into a
-        // threadlocal buffer. `join_abs_string` writes into its own threadlocal;
-        // SAFETY: re-erase to 'static (caller immediately interns via dirname_store).
+        // threadlocal buffer; caller immediately dupes. Return owned to avoid
+        // laundering the threadlocal borrow into `'static`.
         let out = resolve_path::resolve_path::join_abs_string::<resolve_path::resolve_path::platform::Loose>(
             self.top_level_dir,
             parts,
         );
-        unsafe { core::slice::from_raw_parts(out.as_ptr(), out.len()) }
+        Box::from(out)
     }
     fn join(&self, parts: &[&[u8]]) -> &'static [u8] {
         resolve_path::resolve_path::join::<resolve_path::resolve_path::platform::Loose>(parts)
     }
-    fn normalize(&self, str: &[u8]) -> &'static [u8] {
+    fn normalize(&self, str: &[u8]) -> Box<[u8]> {
         // PORT NOTE: Zig `FileSystem.normalize` (fs.zig) is
         // `path_handler.normalizeString(str, true, .auto)` — collapses `.`/`..`/dup-separators
-        // only; it does NOT join against cwd. Writes into a threadlocal buffer.
-        // SAFETY: re-erase to 'static (caller immediately interns via dirname_store).
+        // only; it does NOT join against cwd. Writes into a threadlocal buffer;
+        // caller immediately dupes. Return owned to avoid laundering the
+        // threadlocal borrow into `'static`.
         let out = resolve_path::resolve_path::normalize_string::<true, resolve_path::resolve_path::platform::Auto>(str);
-        unsafe { core::slice::from_raw_parts(out.as_ptr(), out.len()) }
+        Box::from(&*out)
     }
 }
 
@@ -747,17 +789,24 @@ impl PackageJSON {
         // PERF(port): include_scripts_ was a comptime enum param — profile in Phase B
         let include_scripts = include_scripts_ == IncludeScripts::IncludeScripts;
 
+        // SAFETY: Resolver stores `fs`/`log` as raw `*mut` to mirror Zig's freely-
+        // aliasing `*FileSystem`/`*Log` and break borrowck cycles between
+        // `Resolver` self-borrows. Both are always non-null for a live resolver
+        // and uniquely accessed for the duration of this call.
+        let r_fs: &mut Fs::FileSystem = unsafe { &mut *r.fs };
+        let r_log: &mut logger::Log = unsafe { &mut *r.log };
+
         // TODO: remove this extra copy
         let parts: [&[u8]; 2] = [input_path, b"package.json"];
-        let package_json_path_ = r.fs.abs(&parts);
-        let package_json_path = r.fs.dirname_store.append_slice(package_json_path_).expect("unreachable");
+        let package_json_path_ = r_fs.abs(&parts);
+        let package_json_path = r_fs.dirname_store.append_slice(package_json_path_).expect("unreachable");
 
         // DirInfo cache is reused globally
         // So we cannot free these
         // (allocator dropped — global mimalloc)
 
         let mut entry = match r.caches.fs.read_file_with_allocator(
-            r.fs,
+            r_fs,
             package_json_path,
             dirname_fd,
             false,
@@ -766,7 +815,7 @@ impl PackageJSON {
             Ok(e) => e,
             Err(err) => {
                 if err != bun_core::err!("IsDir") {
-                    r.log
+                    r_log
                         .add_error_fmt(
                             None,
                             logger::Loc::EMPTY,
@@ -784,7 +833,14 @@ impl PackageJSON {
         };
         // PORT NOTE: reshaped for borrowck — `mem::take` the contents (leaving
         // `Contents::Empty` behind) so `entry` stays whole for the close-guard.
-        let entry_contents = core::mem::take(&mut entry.contents);
+        // Immediately convert to owned `Box<[u8]>`: `use_shared_buffer = false`
+        // above guarantees `Contents::Owned`/`Empty`, so the match is exhaustive
+        // in practice (the catch-all copy is unreachable but defensive).
+        let entry_contents: Box<[u8]> = match core::mem::take(&mut entry.contents) {
+            crate::cache::Contents::Owned(v) => v.into_boxed_slice(),
+            crate::cache::Contents::Empty => Box::default(),
+            other => Box::from(other.as_slice()),
+        };
         let _close_guard = scopeguard::guard(entry, |mut e| {
             let _ = e.close_fd();
         });
@@ -797,19 +853,25 @@ impl PackageJSON {
         // `pretty`/`is_node_module`); `key_path` is only used for `text`, so init the
         // source directly from the interned path.
         //
-        // SAFETY: ARENA — `use_shared_buffer = false` above, so `entry_contents` is
-        // `Contents::Owned`/`Empty` (heap or static). The bytes outlive every read
-        // through `json_source`: on the success path `entry_contents` is
-        // `mem::forget`-ed at the bottom of this fn (Zig: `bun.default_allocator`,
-        // never freed — "DirInfo cache is reused globally"); on every early
-        // `return None` below it drops and frees normally (Zig:
-        // `allocator.free(entry.contents)`), after `json_source` is already dead.
+        // TODO(port): lifetime — `logger::Source::contents` is `&'static [u8]`; once
+        // it becomes `Cow<'static, [u8]>` move `entry_contents` straight into
+        // `json_source` and delete this re-borrow.
+        //
+        // SAFETY: `entry_contents: Box<[u8]>` is the unique owner of these bytes.
+        // On the success path it is *moved* (not leaked) into
+        // `package_json.source_contents` at the bottom of this fn, so the heap
+        // allocation lives for the life of the returned `PackageJSON` (Zig:
+        // `bun.default_allocator`, never freed — "DirInfo cache is reused
+        // globally"). On every early `return None` below `entry_contents` drops
+        // and frees normally (Zig: `allocator.free(entry.contents)`), after
+        // `json_source` is already dead. `Box<[u8]>` heap address is stable
+        // across the move.
         let contents_static: &'static [u8] = unsafe {
             core::slice::from_raw_parts(entry_contents.as_ptr(), entry_contents.len())
         };
         let json_source = logger::Source::init_path_string(package_json_path, contents_static);
 
-        let json: js_ast::Expr = match r.caches.json.parse_package_json(r.log, &json_source, true) {
+        let json: js_ast::Expr = match r.caches.json.parse_package_json(r_log, &json_source, true) {
             Ok(Some(v)) => v,
             Ok(None) => return None,
             Err(err) => {
@@ -837,6 +899,8 @@ impl PackageJSON {
             // PORT NOTE: reshaped for borrowck — `json_source` stays a local until the
             // end so we can borrow it while mutating other `package_json` fields.
             source: logger::Source::default(),
+            // Filled at the bottom by moving `entry_contents` in (see SAFETY note above).
+            source_contents: Box::default(),
             module_type: ModuleType::Unknown,
             browser_map: BrowserMap::default(),
             main_fields: MainFieldMap::default(),
@@ -885,7 +949,7 @@ impl PackageJSON {
                         package_json.module_type = ModuleType::Esm;
                     }
                     ModuleType::Unknown => {
-                        r.log
+                        r_log
                             .add_range_warning_fmt(
                                 Some(json_source),
                                 json_source.range_of_string(type_json.loc),
@@ -898,7 +962,7 @@ impl PackageJSON {
                     }
                 }
             } else {
-                r.log
+                r_log
                     .add_warning(Some(json_source), type_json.loc, b"The value for \"type\" must be a string")
                     .expect("unreachable");
             }
@@ -953,7 +1017,7 @@ impl PackageJSON {
                             // import of "foo", but that's actually not a bug. Or arguably it's a
                             // bug in Browserify but we have to replicate this bug because packages
                             // do this in the wild.
-                            let key: Box<[u8]> = Box::from(r.fs.normalize(_key_str));
+                            let key: Box<[u8]> = Box::from(r_fs.normalize(_key_str));
 
                             match &value.data {
                                 js_ast::ExprData::EString(str) => {
@@ -972,7 +1036,7 @@ impl PackageJSON {
                                     // Only print this warning if its not inside node_modules, since node_modules/ is not actionable.
                                     // PORT NOTE: `logger::fs::Path` has no `is_node_module`; inline the check.
                                     if !strings::contains(json_source.path.text, NODE_MODULES_PATH.as_bytes()) {
-                                        r.log
+                                        r_log
                                             .add_warning(
                                                 Some(json_source),
                                                 value.loc,
@@ -990,13 +1054,13 @@ impl PackageJSON {
         }
 
         if let Some(exports_prop) = json.as_property(b"exports") {
-            if let Some(exports_map) = ExportsMap::parse(json_source, r.log, exports_prop.expr, exports_prop.loc) {
+            if let Some(exports_map) = ExportsMap::parse(json_source, r_log, exports_prop.expr, exports_prop.loc) {
                 package_json.exports = Some(exports_map);
             }
         }
 
         if let Some(imports_prop) = json.as_property(b"imports") {
-            if let Some(imports_map) = ExportsMap::parse(json_source, r.log, imports_prop.expr, imports_prop.loc) {
+            if let Some(imports_map) = ExportsMap::parse(json_source, r_log, imports_prop.expr, imports_prop.loc) {
                 package_json.imports = Some(imports_map);
             }
         }
@@ -1052,7 +1116,7 @@ impl PackageJSON {
                                 name,
                             ];
 
-                            let pattern = r.fs.join(&joined);
+                            let pattern = r_fs.join(&joined);
 
                             if strings::contains_char(name, b'*')
                                 || strings::contains_char(name, b'?')
@@ -1090,7 +1154,7 @@ impl PackageJSON {
                                 name,
                             ];
 
-                            let pattern = r.fs.join(&joined);
+                            let pattern = r_fs.join(&joined);
                             // Normalize pattern to use forward slashes for cross-platform compatibility
                             let normalized_pattern =
                                 Self::normalize_path_for_glob(pattern).unwrap_or_else(|_| pattern.to_vec());
@@ -1111,7 +1175,7 @@ impl PackageJSON {
 
                             // PERF(port): was getOrPutAssumeCapacity
                             let _ = map.insert(
-                                StringHashMapUnownedKey::init(r.fs.join(&joined)),
+                                StringHashMapUnownedKey::init(r_fs.join(&joined)),
                                 (),
                             );
                         }

@@ -49,6 +49,173 @@ use bun_wyhash::Wyhash11 as Wyhash;
 use crate::generics::{CssEql, CssHash, DeepClone};
 use bun_alloc::Arena;
 
+// ─── External-gate shims ───────────────────────────────────────────────────
+// `TokenList::{parse,to_css}` bottom out on a handful of leaf fns that still
+// carry `#[cfg(any())]` in *other* files (`values/{url,ident}.rs`,
+// `css_modules.rs`). Those gates are stale — every dependency they cite now
+// exists — but this round's edit scope is `custom.rs` + `css_parser.rs` only.
+// To un-gate the TokenList hub without touching those files, the leaf bodies
+// are inlined here verbatim. Once `url.rs`/`ident.rs` un-gate, callers below
+// can swap back to the canonical methods and this module drops.
+mod ext {
+    use super::*;
+    use crate::dependencies;
+    use crate::properties::css_modules::Specifier;
+
+    /// Inline of `Url::parse` (gated in `values/url.rs` on
+    /// `Parser::add_import_record`, which now exists at css_parser.rs:3228).
+    pub(super) fn url_parse(input: &mut Parser) -> Result<Url> {
+        let start_pos = input.position();
+        let loc = input.current_source_location();
+        let url = input.expect_url()?;
+        // SAFETY: `url` borrows the parser source/arena which outlives the
+        // `add_import_record` call (same lifetime erasure as `src_str`).
+        let url: &'static [u8] = unsafe { &*(url as *const [u8]) };
+        let import_record_idx =
+            input.add_import_record(url, start_pos, css_parser::ImportKind::Url)?;
+        Ok(Url {
+            import_record_idx,
+            loc: dependencies::Location::from_source_location(loc),
+        })
+    }
+
+    /// Inline of `Url::to_css` (gated in `values/url.rs` on `WriteAll for
+    /// Vec<u8>`, which this round adds in css_parser.rs).
+    pub(super) fn url_to_css(this: &Url, dest: &mut Printer) -> PrintResult<()> {
+        let dep: Option<dependencies::UrlDependency> = if dest.dependencies.is_some() {
+            Some(dependencies::UrlDependency::new(
+                dest.allocator,
+                this,
+                dest.filename(),
+                dest.get_import_records()?,
+            ))
+        } else {
+            None
+        };
+
+        // If adding dependencies, always write url() with quotes so that the placeholder can
+        // be replaced without escaping more easily. Quotes may be removed later during minification.
+        if let Some(d) = dep {
+            dest.write_str("url(")?;
+            // SAFETY: placeholder borrows the printer arena.
+            let placeholder = unsafe { &*d.placeholder };
+            css_parser::serializer::serialize_string(placeholder, dest)
+                .map_err(|_| dest.add_fmt_error())?;
+            dest.write_char(b')')?;
+
+            if let Some(dependencies) = &mut dest.dependencies {
+                // PORT NOTE: bun.handleOom dropped — Vec::push aborts on OOM via global allocator
+                dependencies.push(crate::Dependency::Url(d));
+            }
+
+            return Ok(());
+        }
+
+        let import_record = dest.import_record(this.import_record_idx)?;
+        let is_internal = import_record.tag.is_internal();
+        // PORT NOTE: reshaped for borrowck — `get_import_record_url` reborrows
+        // &mut *dest, so capture `is_internal` first.
+        let url: &'static [u8] = {
+            let u = dest.get_import_record_url(this.import_record_idx)?;
+            // SAFETY: import-record paths are arena/source-owned and outlive `dest`.
+            unsafe { &*(u as *const [u8]) }
+        };
+
+        if dest.minify && !is_internal {
+            // PERF(port): was std.Io.Writer.Allocating with dest.allocator — using Vec<u8>; profile in Phase B
+            let mut buf: Vec<u8> = Vec::new();
+            // PERF(alloc) we could use stack fallback here?
+            let _ = Token::UnquotedUrl(url).to_css_generic(&mut buf);
+
+            // If the unquoted url is longer than it would be quoted (e.g. `url("...")`)
+            // then serialize as a string and choose the shorter version.
+            if buf.len() > url.len() + 7 {
+                let mut buf2: Vec<u8> = Vec::new();
+                // PERF(alloc) we could use stack fallback here?
+                let _ = css_parser::serializer::serialize_string(url, &mut buf2);
+                if buf2.len() + 5 < buf.len() {
+                    dest.write_str("url(")?;
+                    dest.write_str(&buf2)?;
+                    return dest.write_char(b')');
+                }
+            }
+
+            dest.write_str(&buf)?;
+        } else {
+            dest.write_str("url(")?;
+            css_parser::serializer::serialize_string(url, dest).map_err(|_| dest.add_fmt_error())?;
+            dest.write_char(b')')?;
+        }
+        Ok(())
+    }
+
+    /// Inline of `DashedIdentReference::parse_with_options` (gated in
+    /// `values/ident.rs` on `ParserOptions.css_modules` + `Specifier::parse`,
+    /// both of which now exist).
+    pub(super) fn dashed_ident_ref_parse(
+        input: &mut Parser,
+        options: &ParserOptions,
+    ) -> Result<DashedIdentReference> {
+        let ident = DashedIdent::parse(input)?;
+        let from = if options
+            .css_modules
+            .as_ref()
+            .map_or(false, |m| m.dashed_idents)
+        {
+            if input.try_parse(|i| i.expect_ident_matching(b"from")).is_ok() {
+                Some(Specifier::parse(input)?)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        Ok(DashedIdentReference { ident, from })
+    }
+
+    /// Inline of `DashedIdentReference::to_css` (gated in `values/ident.rs`).
+    /// The `css_module.reference_dashed` branch is itself still gated
+    /// (`css_modules.rs:110`); fall through to `write_dashed_ident` which is
+    /// the non-CSS-Modules path and the tail of the original body.
+    // blocked_on: CssModule::reference_dashed — CSS-Modules dashed-ident
+    // remapping is skipped until that un-gates; non-CSS-Modules output is
+    // byte-identical.
+    pub(super) fn dashed_ident_ref_to_css(
+        this: &DashedIdentReference,
+        dest: &mut Printer,
+    ) -> PrintResult<()> {
+        dest.write_dashed_ident(&this.ident, false)
+    }
+
+    /// Inline of `CustomIdent::to_css` (gated in `values/ident.rs` on
+    /// `Printer::write_ident`, which now exists at printer.rs:534).
+    pub(super) fn custom_ident_to_css(this: &CustomIdent, dest: &mut Printer) -> PrintResult<()> {
+        let css_module_custom_idents_enabled = match &dest.css_module {
+            Some(m) => m.config.custom_idents,
+            None => false,
+        };
+        // SAFETY: arena-owned slice valid for the printer's `'a` lifetime.
+        let v: &[u8] = unsafe { &*this.v };
+        // SAFETY: same arena-slice provenance as `Printer::write_dashed_ident`.
+        let v: &'static [u8] = unsafe { &*(v as *const [u8]) };
+        dest.write_ident(v, css_module_custom_idents_enabled)
+    }
+}
+
+// blocked_on: `LightDarkOwned` lives in `values::color::gated_full_impl` (the
+// 3.5k-line Colorspace/Interpolate lattice gated on `color_generated` landing).
+// The trait body is trivial — it just forwards to the inherent
+// `UnresolvedColor::light_dark_owned` below — so re-gate the impl until the
+// trait surfaces at module scope. Callers (`ColorFallbackKind::get_color`)
+// are themselves inside `gated_full_impl`, so no live path is broken.
+#[cfg(any())]
+impl css_values::color::LightDarkOwned for UnresolvedColor {
+    #[inline]
+    fn light_dark_owned(light: Self, dark: Self) -> Self {
+        UnresolvedColor::light_dark_owned(light, dark)
+    }
+}
+
 // ─── Token protocol impls ──────────────────────────────────────────────────
 // `Token` / `Num` / `Dimension` are defined data-only at crate root (lib.rs);
 // their `eql`/`hash` bodies in css_parser.rs forward to `generic::implement_*`
@@ -182,9 +349,6 @@ pub struct TokenList {
 impl TokenList {
     // deinit(): body only freed owned `Vec` fields — handled by `Drop` on `Vec`.
 
-    #[cfg(any())]
-    // blocked_on: DashedIdentFns::to_css, AnimationName::to_css, Token::to_css,
-    // UnresolvedColor/Variable/EnvironmentVariable/Function::to_css un-gate.
     pub fn to_css(&self, dest: &mut Printer, is_custom_property: bool) -> PrintResult<()> {
         if !dest.minify && self.v.len() == 1 && self.v[0].is_whitespace() {
             return Ok(());
@@ -206,18 +370,17 @@ impl TokenList {
                         && is_custom_property
                         && !url.is_absolute(dest.get_import_records()?)
                     {
+                        let pretty = dest
+                            .get_import_records()?
+                            .at(url.import_record_idx as usize)
+                            .path
+                            .pretty as *const [u8];
                         return dest.new_error(
-                            css::PrinterErrorKind::ambiguous_url_in_custom_property {
-                                url: dest
-                                    .get_import_records()?
-                                    .at(url.import_record_idx as usize)
-                                    .path
-                                    .pretty,
-                            },
+                            css::PrinterErrorKind::ambiguous_url_in_custom_property { url: pretty },
                             Some(url.loc),
                         );
                     }
-                    url.to_css(dest)?;
+                    ext::url_to_css(url, dest)?;
                     has_whitespace = false;
                 }
                 TokenOrValue::Var(var) => {
@@ -251,7 +414,9 @@ impl TokenList {
                     has_whitespace = false;
                 }
                 TokenOrValue::DashedIdent(v) => {
-                    DashedIdentFns::to_css(v, dest)?;
+                    // Inline of `DashedIdent::to_css` (gated in ident.rs on
+                    // `Printer::write_dashed_ident`, which now exists).
+                    dest.write_dashed_ident(v, true)?;
                     has_whitespace = false;
                 }
                 TokenOrValue::AnimationName(v) => {
@@ -299,7 +464,6 @@ impl TokenList {
         Ok(())
     }
 
-    #[cfg(any())] // blocked_on: Token::to_css (only `to_css_generic` exists today)
     pub fn to_css_raw(&self, dest: &mut Printer) -> PrintResult<()> {
         for token_or_value in self.v.iter() {
             if let TokenOrValue::Token(token) = token_or_value {
@@ -327,7 +491,6 @@ impl TokenList {
         }
     }
 
-    #[cfg(any())] // blocked_on: TokenList::parse_into un-gate
     pub fn parse(input: &mut Parser, options: &ParserOptions, depth: usize) -> Result<TokenList> {
         let mut tokens: Vec<TokenOrValue> = Vec::new(); // PERF: deinit on error
         TokenListFns::parse_into(input, &mut tokens, options, depth)?;
@@ -353,7 +516,6 @@ impl TokenList {
         Ok(TokenList { v: tokens })
     }
 
-    #[cfg(any())] // blocked_on: TokenList::parse un-gate
     pub fn parse_with_options(input: &mut Parser, options: &ParserOptions) -> Result<TokenList> {
         Self::parse(input, options, 0)
     }
@@ -412,10 +574,6 @@ impl TokenList {
         Ok(())
     }
 
-    #[cfg(any())]
-    // blocked_on: Url::parse, UnresolvedColor::parse (ComponentParser),
-    // Variable::parse (DashedIdentReference::parse_with_options),
-    // EnvironmentVariable::parse_nested.
     pub fn parse_into(
         input: &mut Parser,
         tokens: &mut Vec<TokenOrValue>,
@@ -458,12 +616,12 @@ impl TokenList {
                         tokens.push(TokenOrValue::UnresolvedColor(color));
                         last_is_delim = false;
                         last_is_whitespace = false;
-                    } else if *f == b"url" {
+                    } else if strings::eql(*f, b"url") {
                         input.reset(&state);
-                        tokens.push(TokenOrValue::Url(Url::parse(input)?));
+                        tokens.push(TokenOrValue::Url(ext::url_parse(input)?));
                         last_is_delim = false;
                         last_is_whitespace = false;
-                    } else if *f == b"var" {
+                    } else if strings::eql(*f, b"var") {
                         let var = input.parse_nested_block(|input2| {
                             let thevar = Variable::parse(input2, options, depth + 1)?;
                             Ok(TokenOrValue::Var(thevar))
@@ -471,7 +629,7 @@ impl TokenList {
                         tokens.push(var);
                         last_is_delim = true;
                         last_is_whitespace = false;
-                    } else if *f == b"env" {
+                    } else if strings::eql(*f, b"env") {
                         let env = input.parse_nested_block(|input2| {
                             let env = EnvironmentVariable::parse_nested(input2, options, depth + 1)?;
                             Ok(TokenOrValue::Env(env))
@@ -510,7 +668,7 @@ impl TokenList {
                 }
                 Token::UnquotedUrl(_) => {
                     input.reset(&state);
-                    tokens.push(TokenOrValue::Url(Url::parse(input)?));
+                    tokens.push(TokenOrValue::Url(ext::url_parse(input)?));
                     last_is_delim = false;
                     last_is_whitespace = false;
                     continue;
@@ -735,7 +893,6 @@ impl UnresolvedColor {
 
     // deinit(): body only freed owned `TokenList` fields — handled by `Drop`.
 
-    #[cfg(any())] // blocked_on: TokenList::to_css un-gate
     pub fn to_css(&self, dest: &mut Printer, is_custom_property: bool) -> PrintResult<()> {
         fn conv(c: f32) -> i32 {
             (c * 255.0).round().clamp(0.0, 255.0) as i32
@@ -817,9 +974,6 @@ impl UnresolvedColor {
         }
     }
 
-    #[cfg(any())]
-    // blocked_on: values::color::ComponentParser / parse_rgb_components /
-    // parse_hsl_hwb_components (gated_full_impl) + TokenList::parse.
     pub fn parse(input: &mut Parser, f: &[u8], options: &ParserOptions) -> Result<UnresolvedColor> {
         use css_values::color::{parse_hsl_hwb_components, parse_rgb_components, ComponentParser, HSL, SRGB};
         let mut parser = ComponentParser::new(false);
@@ -859,9 +1013,8 @@ impl UnresolvedColor {
                 let dark = TokenListFns::parse(input2, options, 0)?;
                 Ok(UnresolvedColor::LightDark { light, dark })
             });
-        } else {
-            return Err(input.new_custom_error(ParserError::invalid_value));
         }
+        Err(input.new_custom_error(ParserError::invalid_value))
     }
 
     pub fn light_dark_owned(light: UnresolvedColor, dark: UnresolvedColor) -> UnresolvedColor {
@@ -888,10 +1041,8 @@ pub struct Variable {
 impl Variable {
     // deinit(): body only freed owned `TokenList` field — handled by `Drop`.
 
-    #[cfg(any())]
-    // blocked_on: DashedIdentReference::parse_with_options + TokenList::parse.
     pub fn parse(input: &mut Parser, options: &ParserOptions, depth: usize) -> Result<Self> {
-        let name = DashedIdentReference::parse_with_options(input, options)?;
+        let name = ext::dashed_ident_ref_parse(input, options)?;
 
         let fallback = if input.try_parse(Parser::expect_comma).is_ok() {
             Some(TokenList::parse(input, options, depth)?)
@@ -902,11 +1053,9 @@ impl Variable {
         Ok(Variable { name, fallback })
     }
 
-    #[cfg(any())]
-    // blocked_on: DashedIdentReference::to_css + TokenList::to_css.
     pub fn to_css(&self, dest: &mut Printer, is_custom_property: bool) -> PrintResult<()> {
         dest.write_str("var(")?;
-        self.name.to_css(dest)?;
+        ext::dashed_ident_ref_to_css(&self.name, dest)?;
         if let Some(fallback) = &self.fallback {
             dest.delim(b',', false)?;
             fallback.to_css(dest, is_custom_property)?;
@@ -940,14 +1089,11 @@ pub struct EnvironmentVariable {
 impl EnvironmentVariable {
     // deinit(): body only freed owned `Vec`/`TokenList` fields — handled by `Drop`.
 
-    #[cfg(any())] // blocked_on: EnvironmentVariable::parse_nested
     pub fn parse(input: &mut Parser, options: &ParserOptions, depth: usize) -> Result<EnvironmentVariable> {
         input.expect_function_matching(b"env")?;
         input.parse_nested_block(|i| EnvironmentVariable::parse_nested(i, options, depth))
     }
 
-    #[cfg(any())]
-    // blocked_on: EnvironmentVariableName::parse (DashedIdentReference) + TokenList::parse.
     pub fn parse_nested(
         input: &mut Parser,
         options: &ParserOptions,
@@ -968,8 +1114,6 @@ impl EnvironmentVariable {
         Ok(EnvironmentVariable { name, indices, fallback })
     }
 
-    #[cfg(any())]
-    // blocked_on: EnvironmentVariableName::to_css + TokenList::to_css.
     pub fn to_css(&self, dest: &mut Printer, is_custom_property: bool) -> PrintResult<()> {
         dest.write_str("env(")?;
         self.name.to_css(dest)?;
@@ -1013,16 +1157,14 @@ pub enum EnvironmentVariableName {
 impl EnvironmentVariableName {
     // eql / hash — provided by `#[derive(CssEql, CssHash)]`.
 
-    #[cfg(any())]
-    // blocked_on: DashedIdentReference::parse_with_options.
     pub fn parse(input: &mut Parser) -> Result<EnvironmentVariableName> {
         if let Ok(ua) = input.try_parse(UAEnvironmentVariable::parse) {
             return Ok(EnvironmentVariableName::Ua(ua));
         }
 
-        if let Ok(dashed) = input.try_parse(|i| {
-            DashedIdentReference::parse_with_options(i, &ParserOptions::default(None))
-        }) {
+        if let Ok(dashed) =
+            input.try_parse(|i| ext::dashed_ident_ref_parse(i, &ParserOptions::default(None)))
+        {
             return Ok(EnvironmentVariableName::Custom(dashed));
         }
 
@@ -1030,13 +1172,11 @@ impl EnvironmentVariableName {
         Ok(EnvironmentVariableName::Unknown(ident))
     }
 
-    #[cfg(any())]
-    // blocked_on: DashedIdentReference::to_css + CustomIdentFns::to_css.
     pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
         match self {
             EnvironmentVariableName::Ua(ua) => ua.to_css(dest),
-            EnvironmentVariableName::Custom(custom) => custom.to_css(dest),
-            EnvironmentVariableName::Unknown(unknown) => CustomIdentFns::to_css(unknown, dest),
+            EnvironmentVariableName::Custom(custom) => ext::dashed_ident_ref_to_css(custom, dest),
+            EnvironmentVariableName::Unknown(unknown) => ext::custom_ident_to_css(unknown, dest),
         }
     }
 }
@@ -1132,7 +1272,6 @@ pub struct Function {
 impl Function {
     // deinit(): body only freed owned `TokenList` field — handled by `Drop`.
 
-    #[cfg(any())] // blocked_on: TokenList::to_css
     pub fn to_css(&self, dest: &mut Printer, is_custom_property: bool) -> PrintResult<()> {
         IdentFns::to_css(&self.name, dest)?;
         dest.write_char(b'(')?;
@@ -1291,7 +1430,6 @@ pub struct UnparsedProperty {
 }
 
 impl UnparsedProperty {
-    #[cfg(any())] // blocked_on: TokenList::parse
     pub fn parse(
         property_id: css::properties::PropertyId,
         input: &mut Parser,
@@ -1350,7 +1488,6 @@ pub struct CustomProperty {
 }
 
 impl CustomProperty {
-    #[cfg(any())] // blocked_on: TokenList::parse
     pub fn parse(
         name: CustomPropertyName,
         input: &mut Parser,

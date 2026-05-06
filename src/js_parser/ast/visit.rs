@@ -1063,17 +1063,159 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             }
 
             // note: our version assumes useDefineForClassFields is true
-            // blocked_on: TS ctor-field hoisting — touches `Stmt::assign`, `E::Dot` ctor,
-            //   `declare_symbol`, and overlapping `&mut [Property]` borrows that need a
-            //   reshaped Vec dance. Preserved verbatim in `_draft::visit_class`.
-            //   Gated behind `#[cfg(any())]` so the verify gate excludes it (was a
-            //   silent `let _ = constructor;` no-op in live code).
-            #[cfg(any())]
             if Self::IS_TYPESCRIPT_ENABLED {
                 if let Some(constructor) = constructor_function {
-                    // spec visit.zig:686-747: count `is_typescript_ctor_field` args, find
-                    // `super()` index, insert `this.x = x` assignments into the ctor body
-                    // and prepend matching field decls to `class.properties`.
+                    // SAFETY: `constructor` is a `StoreRef<E::Function>` arena slot captured
+                    // from `class.properties[i].value.data` above; arena-owned for 'a, and the
+                    // per-property `&mut [Property]` borrow has been released. Moving the
+                    // `Property` structs below does not invalidate this pointer (it points to
+                    // a separate Store allocation, not into the Property slice itself).
+                    let func_args: *mut [G::Arg] = unsafe { (*constructor).func.args };
+                    let mut to_add: usize = 0;
+                    // SAFETY: arena-owned slice valid for 'a.
+                    for arg in unsafe { &*func_args }.iter() {
+                        if arg.is_typescript_ctor_field
+                            && matches!(arg.binding.data, BData::BIdentifier(_))
+                        {
+                            to_add += 1;
+                        }
+                    }
+
+                    // if this is an expression, we can move statements after super() because there will be 0 decorators
+                    let mut super_index: Option<usize> = None;
+                    if class.extends.is_some() {
+                        // SAFETY: arena-owned slice valid for 'a.
+                        let body_stmts = unsafe { &*(*constructor).func.body.stmts };
+                        for (index, stmt) in body_stmts.iter().enumerate() {
+                            let is_super = match &stmt.data {
+                                StmtData::SExpr(se) => match &se.value.data {
+                                    ExprData::ECall(call) => {
+                                        matches!(call.target.data, ExprData::ESuper(_))
+                                    }
+                                    _ => false,
+                                },
+                                _ => false,
+                            };
+                            if !is_super {
+                                continue;
+                            }
+                            super_index = Some(index);
+                            break;
+                        }
+                    }
+
+                    if to_add > 0 {
+                        // to match typescript behavior, we also must prepend to the class body
+                        // SAFETY: arena-owned slice valid for 'a.
+                        let old_body: &[Stmt] = unsafe { &*(*constructor).func.body.stmts };
+                        let mut stmts = BumpVec::<Stmt>::with_capacity_in(
+                            old_body.len() + to_add,
+                            self.allocator,
+                        );
+                        stmts.extend_from_slice(old_body);
+
+                        let old_props: *mut [G::Property] = class.properties;
+                        // SAFETY: arena-owned slice valid for 'a.
+                        let old_props_len = unsafe { &*old_props }.len();
+                        let mut class_body = BumpVec::<G::Property>::with_capacity_in(
+                            old_props_len + to_add,
+                            self.allocator,
+                        );
+                        // PORT NOTE: Zig `fromOwnedSlice` adopts the existing buffer in-place.
+                        // Rust BumpVec can't adopt a foreign `*mut [T]`, so move each element
+                        // out by `ptr::read` (G::Property has no Drop; old slice becomes dead
+                        // arena bytes).
+                        for i in 0..old_props_len {
+                            // SAFETY: in-bounds; arena-owned; no Drop on Property.
+                            unsafe {
+                                class_body.push(core::ptr::read(
+                                    (old_props as *mut G::Property).add(i),
+                                ));
+                            }
+                        }
+                        let mut j: usize = 0;
+
+                        // SAFETY: arena-owned slice valid for 'a.
+                        let args_len = unsafe { &*func_args }.len();
+                        for arg_idx in 0..args_len {
+                            // PORT NOTE: reshaped for borrowck — copy the scalars we need
+                            // (id_ref, bind_loc) out of the arg before calling `&mut self`
+                            // helpers, so no live `&Arg` overlaps `self.new_expr`/`declare_symbol`.
+                            let (id_ref, bind_loc) = {
+                                // SAFETY: in-bounds; arena-owned.
+                                let arg = unsafe { &(*func_args)[arg_idx] };
+                                if !arg.is_typescript_ctor_field {
+                                    continue;
+                                }
+                                match arg.binding.data {
+                                    BData::BIdentifier(id) => {
+                                        // SAFETY: arena-owned b::Identifier.
+                                        (unsafe { (*id).r#ref }, arg.binding.loc)
+                                    }
+                                    _ => continue,
+                                }
+                            };
+
+                            // SAFETY: original_name is an arena-owned slice valid for 'a.
+                            let name: &'a [u8] = unsafe {
+                                &*self.symbols[id_ref.inner_index() as usize].original_name
+                            };
+                            let arg_ident = self.new_expr(
+                                E::Identifier { ref_: id_ref, ..Default::default() },
+                                bind_loc,
+                            );
+                            let this_target = self.new_expr(E::This {}, bind_loc);
+                            let dot = self.new_expr(
+                                E::Dot {
+                                    target: this_target,
+                                    // TODO(port): E::Dot::name is `&'static [u8]` placeholder for
+                                    // arena str (see visitStmt.rs:30 `as_static`). Phase B threads
+                                    // `'bump` through E::Dot and removes this transmute.
+                                    name: unsafe {
+                                        core::mem::transmute::<&[u8], &'static [u8]>(name)
+                                    },
+                                    name_loc: bind_loc,
+                                    ..Default::default()
+                                },
+                                bind_loc,
+                            );
+                            let insert_at = match super_index {
+                                Some(k) => j + k + 1,
+                                None => j,
+                            };
+                            stmts.insert(insert_at, Stmt::assign(dot, arg_ident));
+
+                            // O(N)
+                            // Zig: `class_body.items.len += 1; bun.copy(...)` — open a 1-slot
+                            // gap at j and write the new field. `Vec::insert` is the same
+                            // memmove + write.
+                            // Copy the argument name symbol to prevent the class field
+                            // declaration from being renamed but not the constructor argument.
+                            let field_symbol_ref = self
+                                .declare_symbol(SymbolKind::Other, bind_loc, name)
+                                .unwrap_or(id_ref);
+                            self.symbols[field_symbol_ref.inner_index() as usize]
+                                .must_not_be_renamed = true;
+                            let field_ident = self.new_expr(
+                                E::Identifier {
+                                    ref_: field_symbol_ref,
+                                    ..Default::default()
+                                },
+                                bind_loc,
+                            );
+                            class_body.insert(
+                                j,
+                                G::Property { key: Some(field_ident), ..Default::default() },
+                            );
+                            j += 1;
+                        }
+
+                        class.properties = class_body.into_bump_slice_mut();
+                        // SAFETY: see `constructor` SAFETY note at top of this block.
+                        unsafe {
+                            (*constructor).func.body.stmts = stmts.into_bump_slice_mut();
+                        }
+                    }
                 }
             }
 

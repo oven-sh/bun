@@ -20,7 +20,7 @@ impl Default for BuildMessage {
 }
 
 impl BuildMessage {
-    #[crate::host_fn]
+    // `#[JsClass]` emits `BuildMessageClass__construct` calling this.
     pub fn constructor(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<*mut BuildMessage> {
         Err(global.throw(format_args!("BuildMessage is not constructable")))
     }
@@ -126,9 +126,9 @@ impl BuildMessage {
     ) -> JsResult<JSValue> {
         let object = JSValue::create_empty_object(global, 4);
         object.put(global, b"name", bun_string::String::static_str(b"BuildMessage").to_js(global)?);
-        object.put(global, b"position", self.get_position(global));
-        object.put(global, b"message", self.get_message(global));
-        object.put(global, b"level", self.get_level(global));
+        object.put(global, b"position", self.get_position(global)?);
+        object.put(global, b"message", self.get_message(global)?);
+        object.put(global, b"level", self.get_level(global)?);
         Ok(object)
     }
 
@@ -153,36 +153,36 @@ impl BuildMessage {
 
     // https://github.com/oven-sh/bun/issues/2375#issuecomment-2121530202
     #[crate::host_fn(getter)]
-    pub fn get_column(&self, _global: &JSGlobalObject) -> JSValue {
+    pub fn get_column(&self, _global: &JSGlobalObject) -> JsResult<JSValue> {
         if let Some(location) = &self.msg.data.location {
-            return JSValue::from((location.column - 1).max(0));
+            return Ok(JSValue::from((location.column - 1).max(0)));
         }
 
-        JSValue::from(0i32)
+        Ok(JSValue::from(0i32))
     }
 
     #[crate::host_fn(getter)]
-    pub fn get_line(&self, _global: &JSGlobalObject) -> JSValue {
+    pub fn get_line(&self, _global: &JSGlobalObject) -> JsResult<JSValue> {
         if let Some(location) = &self.msg.data.location {
-            return JSValue::from((location.line - 1).max(0));
+            return Ok(JSValue::from((location.line - 1).max(0)));
         }
 
-        JSValue::from(0i32)
+        Ok(JSValue::from(0i32))
     }
 
     #[crate::host_fn(getter)]
-    pub fn get_position(&self, global: &JSGlobalObject) -> JSValue {
-        BuildMessage::generate_position_object(&self.msg, global)
+    pub fn get_position(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        Ok(BuildMessage::generate_position_object(&self.msg, global))
     }
 
     #[crate::host_fn(getter)]
-    pub fn get_message(&self, global: &JSGlobalObject) -> JSValue {
-        ZigString::init(&self.msg.data.text).to_js(global)
+    pub fn get_message(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        Ok(ZigString::init(&self.msg.data.text).to_js(global))
     }
 
     #[crate::host_fn(getter)]
-    pub fn get_level(&self, global: &JSGlobalObject) -> JSValue {
-        ZigString::init(self.msg.kind.string()).to_js(global)
+    pub fn get_level(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        Ok(ZigString::init(self.msg.kind.string()).to_js(global))
     }
 
     pub fn finalize(this: *mut BuildMessage) {

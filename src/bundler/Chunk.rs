@@ -221,10 +221,38 @@ pub struct CodeResult {
 }
 
 // PORT NOTE: Zig used `std.mem.Allocator`; the Rust crate exposes a global
-// mimalloc — we don't need a vtable here yet. Keep `()` so callers compile;
-// real allocator threading (page_allocator vs default_allocator) lands when
+// mimalloc — we don't need a vtable here yet. `()` is kept as a token so the
+// caller's `Option<&DynAlloc>` plumbing matches the Zig signature; the actual
+// allocation goes through `alloc_buf` (global mimalloc) regardless. Real
+// allocator threading (page_allocator vs default_allocator) lands when
 // `bun_alloc::Allocator` is a stable trait object.
 type DynAlloc = ();
+
+/// `allocator.alloc(u8, n)` — until `DynAlloc` is a real trait object, route
+/// through the global allocator. PERF(port): Zig picked page_allocator for
+/// `n >= 512KiB`; mimalloc handles large allocations via mmap already so this
+/// is a behavior match in practice.
+#[inline]
+fn alloc_buf(_allocator: &DynAlloc, n: usize) -> Result<Box<[u8]>, AllocError> {
+    let mut v: Vec<u8> = Vec::new();
+    v.try_reserve_exact(n).map_err(|_| AllocError)?;
+    // SAFETY: `u8` is trivially valid at any bit pattern; reserved capacity ≥ n.
+    unsafe { v.set_len(n) };
+    Ok(v.into_boxed_slice())
+}
+
+/// Extract the `OutputFile` index from a trailing `AdditionalFile` entry.
+/// Zig: `files.last().output_file` (untagged-union field read; bundler always
+/// pushes `.output_file = …` for asset additional-files, see bundle_v2.zig).
+#[inline]
+fn additional_output_file_index(f: &AdditionalFile) -> usize {
+    match *f {
+        AdditionalFile::OutputFile(i) => i as usize,
+        AdditionalFile::SourceIndex(_) => {
+            unreachable!("asset additional_files entry must be .output_file")
+        }
+    }
+}
 
 impl IntermediateOutput {
     pub fn allocator_for_size(_size: usize) -> &'static DynAlloc {
@@ -408,7 +436,7 @@ impl IntermediateOutput {
         // TODO(port): MultiArrayList SoA accessors — assuming `.items(.field)` → method returning slice
         let additional_files = graph.input_files.items_additional_files();
         let unique_key_for_additional_files = graph.input_files.items_unique_key_for_additional_file();
-        let mut relative_platform_buf = bun_paths::path_buffer_pool().get();
+        let mut relative_platform_buf = bun_paths::path_buffer_pool::get();
         match self {
             IntermediateOutput::Pieces(pieces) => {
                 let entry_point_chunks_for_scb = linker_graph.files.items_entry_point_chunk_index();
@@ -418,7 +446,7 @@ impl IntermediateOutput {
                     before: Default::default(),
                 };
                 let mut shifts: Vec<source_map::SourceMapShifts> = if ENABLE_SOURCE_MAP_SHIFTS {
-                    Vec::with_capacity(pieces.len() as usize + 1)
+                    Vec::with_capacity(pieces.len as usize + 1)
                 } else {
                     Vec::new()
                 };
@@ -430,7 +458,7 @@ impl IntermediateOutput {
 
                 let mut count: usize = 0;
                 let mut from_chunk_dir =
-                    bun_paths::dirname_posix(chunk.final_rel_path).unwrap_or(b"");
+                    bun_paths::resolve_path::dirname::<bun_paths::platform::Posix>(chunk.final_rel_path);
                 if from_chunk_dir == b"." {
                     from_chunk_dir = b"";
                 }
@@ -482,11 +510,15 @@ impl IntermediateOutput {
                             let file_path: &[u8] = match piece.query.kind() {
                                 QueryKind::Asset => {
                                     let files = &additional_files[index];
-                                    if !(files.len() > 0) {
-                                        Output::panic("Internal error: missing asset file");
+                                    if !(files.len > 0) {
+                                        Output::panic(format_args!(
+                                            "Internal error: missing asset file"
+                                        ));
                                     }
 
-                                    let output_file = files.last().unwrap().output_file;
+                                    let output_file = additional_output_file_index(
+                                        files.slice().last().unwrap(),
+                                    );
 
                                     &graph.additional_output_files.as_slice()[output_file].dest_path
                                 }
@@ -523,12 +555,13 @@ impl IntermediateOutput {
                                 if from_chunk_dir.is_empty() || force_absolute_path {
                                     file_path
                                 } else {
-                                    bun_paths::relative_platform_buf(
-                                        &mut relative_platform_buf,
+                                    bun_paths::resolve_path::relative_platform_buf::<
+                                        bun_paths::platform::Posix,
+                                        false,
+                                    >(
+                                        &mut relative_platform_buf[..],
                                         from_chunk_dir,
                                         file_path,
-                                        bun_paths::Platform::Posix,
-                                        false,
                                     )
                                 },
                             );
@@ -554,8 +587,7 @@ impl IntermediateOutput {
 
                 let allocator =
                     allocator_to_use.unwrap_or_else(|| Self::allocator_for_size(count));
-                // TODO(port): allocator.alloc(u8, n) — using bun_alloc::Allocator::alloc_slice
-                let mut total_buf = allocator.alloc_slice::<u8>(count + debug_id_len)?;
+                let mut total_buf = alloc_buf(allocator, count + debug_id_len)?;
                 let mut remain: &mut [u8] = &mut total_buf;
 
                 for piece in pieces.slice() {

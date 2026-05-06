@@ -466,7 +466,6 @@ impl JustifyItemsSelfPosition {
     }
 }
 
-#[cfg(any())] // blocked_on: Token::Ident lifetime (see JustifyContent note)
 impl JustifyItems {
     pub fn parse(input: &mut Parser) -> CssResult<Self> {
         if input.try_parse(|i| i.expect_ident_matching(b"normal")).is_ok() {
@@ -494,7 +493,8 @@ impl JustifyItems {
         }
 
         let location = input.current_source_location();
-        let ident = input.expect_ident()?;
+        // SAFETY: see `src_str` — borrow detached so the slice can be stored in `Token`.
+        let ident = unsafe { src_str(input.expect_ident()?) };
 
         // TODO(port): bun.ComptimeEnumMap getASCIIICaseInsensitive
         if bun_string::strings::eql_case_insensitive_ascii::<true>(ident, b"left") {
@@ -552,16 +552,18 @@ pub enum LegacyJustify {
     Center,
 }
 
-#[cfg(any())] // blocked_on: Parser::expect_ident borrow lifetime (nested ident lookups)
 impl LegacyJustify {
     pub fn parse(input: &mut Parser) -> CssResult<Self> {
         let location = input.current_source_location();
-        let ident = input.expect_ident()?;
+        // SAFETY: see `src_str` — borrow detached so `input` is reusable for the
+        // nested `expect_ident*` calls below.
+        let ident = unsafe { src_str(input.expect_ident()?) };
 
         // TODO(port): bun.ComptimeEnumMap getASCIIICaseInsensitive
         if bun_string::strings::eql_case_insensitive_ascii::<true>(ident, b"legacy") {
             let inner_location = input.current_source_location();
-            let inner_ident = input.expect_ident()?;
+            // SAFETY: see `src_str`.
+            let inner_ident = unsafe { src_str(input.expect_ident()?) };
             if bun_string::strings::eql_case_insensitive_ascii::<true>(inner_ident, b"left") {
                 return Ok(LegacyJustify::Left);
             } else if bun_string::strings::eql_case_insensitive_ascii::<true>(inner_ident, b"right") {
@@ -601,8 +603,8 @@ impl LegacyJustify {
 /// A [gap](https://www.w3.org/TR/css-align-3/#column-row-gap) value, as used in the
 /// `column-gap` and `row-gap` properties.
 #[derive(Clone, PartialEq)]
-// TODO(port): css.DeriveParse / css.DeriveToCss
-#[cfg_attr(any(), derive(css::Parse, css::ToCss))] // blocked_on: payload struct parse/to_css + Parser borrow lifetimes
+// Zig: `css.DeriveParse` / `css.DeriveToCss`
+#[derive(css::Parse, css::ToCss)]
 pub enum GapValue {
     /// Equal to `1em` for multi-column containers, and zero otherwise.
     Normal,
@@ -619,7 +621,6 @@ pub struct Gap {
     pub column: GapValue,
 }
 
-#[cfg(any())] // blocked_on: GapValue::{parse,to_css} (gated derive above)
 impl Gap {
     // TODO(port): PropertyFieldMap was a comptime struct mapping fields → CSS property names
     // (.row = "row-gap", .column = "column-gap"). Encode as derive attrs in Phase B.
@@ -653,7 +654,6 @@ pub struct PlaceItems {
     pub justify: JustifyItems,
 }
 
-#[cfg(any())] // blocked_on: AlignItems/JustifyItems::{parse,to_css}
 impl PlaceItems {
     // TODO(port): PropertyFieldMap (.align = "align-items", .justify = "justify-items")
     // TODO(port): VendorPrefixMap (.align = true)
@@ -717,7 +717,6 @@ pub struct PlaceSelf {
     pub justify: JustifySelf,
 }
 
-#[cfg(any())] // blocked_on: AlignSelf/JustifySelf::{parse,to_css}
 impl PlaceSelf {
     // TODO(port): PropertyFieldMap (.align = "align-self", .justify = "justify-self")
     // TODO(port): VendorPrefixMap (.align = true)
@@ -813,7 +812,6 @@ pub struct PlaceContent {
     pub justify: JustifyContent,
 }
 
-#[cfg(any())] // blocked_on: AlignContent/JustifyContent::{parse,to_css}
 impl PlaceContent {
     // TODO(port): PropertyFieldMap (.align = PropertyIdTag::AlignContent, .justify = PropertyIdTag::JustifyContent)
     // TODO(port): VendorPrefixMap (.align = true, .justify = true)

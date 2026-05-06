@@ -3011,11 +3011,6 @@ impl<'a> Resolver<'a> {
         self.opts.global_cache.is_enabled()
     }
 
-    // TODO(b2-blocked): `CacheSet::init()` is now real (see `crate::cache`);
-    // remaining gate is `options::BundleOptions` field-shape parity
-    // (`extension_order.default.default` chain) once MOVE_DOWN to
-    // bun_options_types completes.
-    #[cfg(any())]
     pub fn init1(
         log: *mut logger::Log,
         _fs: *mut Fs::FileSystem,
@@ -3109,6 +3104,10 @@ impl<'a> Resolver<'a> {
 
     pub fn flush_debug_logs(&mut self, flush_mode: FlushMode) -> core::result::Result<(), bun_core::Error> {
         // TODO(port): narrow error set
+        // PORT NOTE: capture `log` before partially borrowing `self.debug_logs`
+        // so the method call doesn't conflict with the field borrow (`log()`
+        // derefs the raw `*mut Log` and is lifetime-decoupled from `&self`).
+        let log = self.log();
         if let Some(debug) = self.debug_logs.as_mut() {
             // PORT NOTE: spec resolver.zig:650-658 — only consume `what`/`notes` inside
             // the arm that actually emits, so the success-at-non-verbose path touches
@@ -3117,10 +3116,10 @@ impl<'a> Resolver<'a> {
             // the `what` buffer via `Data.text: Cow::Owned` (no `Box::leak`, PORTING.md
             // §Forbidden). The `should_print` gate mirrors the bypassed wrappers.
             if flush_mode == FlushMode::Fail {
-                if logger::Kind::Debug.should_print(self.log().level) {
+                if logger::Kind::Debug.should_print(log.level) {
                     let what = core::mem::take(&mut debug.what);
                     let notes = core::mem::take(&mut debug.notes).into_boxed_slice();
-                    self.log().add_msg(Msg {
+                    log.add_msg(Msg {
                         kind: logger::Kind::Debug,
                         data: logger::range_data(
                             None,
@@ -3131,11 +3130,11 @@ impl<'a> Resolver<'a> {
                         ..Default::default()
                     })?;
                 }
-            } else if (self.log().level as u32) <= (logger::Level::Verbose as u32) {
-                if logger::Kind::Verbose.should_print(self.log().level) {
+            } else if (log.level as u32) <= (logger::Level::Verbose as u32) {
+                if logger::Kind::Verbose.should_print(log.level) {
                     let what = core::mem::take(&mut debug.what);
                     let notes = core::mem::take(&mut debug.notes).into_boxed_slice();
-                    self.log().add_msg(Msg {
+                    log.add_msg(Msg {
                         kind: logger::Kind::Verbose,
                         data: logger::range_data(
                             None,
@@ -5475,11 +5474,6 @@ impl<'a> Resolver<'a> {
         file: &[u8],
         dirname_fd: FD,
     ) -> core::result::Result<Option<&'static mut TSConfigJSON>, bun_core::Error> {
-        // TODO(b2-blocked): bun_bundler::cache::{Fs,Json} — `self.caches` is the
-        // FORWARD_DECL CacheSet; `read_file_with_allocator`/`TSConfigJSON::parse`
-        // signatures are guesses until the bundler crate compiles. Re-gated.
-        #[cfg(any())]
-        {
         // Since tsconfig.json is cached permanently, in our DirEntries cache
         // we must use the global allocator
         let mut entry = self.caches.fs.read_file_with_allocator(
@@ -5489,45 +5483,58 @@ impl<'a> Resolver<'a> {
             false,
             None,
         )?;
-        let _close = scopeguard::guard((), |_| {
-            let _ = entry.close_fd();
+        // PORT NOTE: reshaped for borrowck — `mem::take` the contents (leaving
+        // `Contents::Empty` behind) so `entry` stays whole for the close-guard.
+        let entry_contents = core::mem::take(&mut entry.contents);
+        let _close_guard = scopeguard::guard(entry, |mut e| {
+            let _ = e.close_fd();
         });
 
         // The file name needs to be persistent because it can have errors
         // and if those errors need to print the filename
-        // then it will be undefined memory if we parse another tsconfig.json late
-        let key_path = Fs::Path::init(self.fs().dirname_store.append_slice(file).expect("unreachable"));
+        // then it will be undefined memory if we parse another tsconfig.json later
+        let key_path = self.fs().dirname_store.append_slice(file).expect("unreachable");
 
-        let source = logger::Source::init_path_string(key_path.text(), entry.contents);
+        // SAFETY: ARENA — `use_shared_buffer = false` above, so `entry_contents`
+        // is `Contents::Owned`/`Empty` (heap or static). Zig reads with
+        // `bun.default_allocator` and never frees (tsconfig is interned into the
+        // permanent DirInfo cache); `mem::forget` the backing buffer immediately
+        // so the `&'static` is honest on every return path.
+        let contents_static: &'static [u8] = unsafe {
+            core::slice::from_raw_parts(entry_contents.as_ptr(), entry_contents.len())
+        };
+        core::mem::forget(entry_contents);
+
+        let source = logger::Source::init_path_string(key_path, contents_static);
         let file_dir = source.path.source_dir();
 
-        let result = match TSConfigJSON::parse(self.log(), &source, &mut self.caches.json)? {
+        let mut result = match TSConfigJSON::parse(self.log(), &source, &mut self.caches.json)? {
             Some(r) => r,
             None => return Ok(None),
         };
 
         if result.has_base_url() {
             // this might leak
-            if !bun_paths::is_absolute(result.base_url) {
-                let paths = [file_dir, result.base_url];
-                result.base_url = self.fs().dirname_store.append_slice(self.fs().abs_buf(&paths, bufs!(tsconfig_base_url))).expect("unreachable");
+            if !bun_paths::is_absolute(&result.base_url) {
+                // PORT NOTE: Zig interns into `dirname_store` and stores the
+                // arena slice; Rust `base_url: Box<[u8]>` owns its bytes, so
+                // copy `abs_buf`'s thread-local result directly instead of
+                // double-copying through the arena.
+                let abs = self.fs().abs_buf(&[file_dir, &result.base_url[..]], bufs!(tsconfig_base_url));
+                result.base_url = Box::from(abs);
             }
         }
 
-        if result.paths.count() > 0 && (result.base_url_for_paths.is_empty() || !bun_paths::is_absolute(result.base_url_for_paths)) {
+        if result.paths.count() > 0 && (result.base_url_for_paths.is_empty() || !bun_paths::is_absolute(&result.base_url_for_paths)) {
             // this might leak
-            let paths = [file_dir, result.base_url];
-            result.base_url_for_paths = self.fs().dirname_store.append_slice(self.fs().abs_buf(&paths, bufs!(tsconfig_base_url))).expect("unreachable");
+            let abs = self.fs().abs_buf(&[file_dir, &result.base_url[..]], bufs!(tsconfig_base_url));
+            result.base_url_for_paths = Box::from(abs);
         }
 
-        return Ok(Some(result));
-        } // end #[cfg(any())]
-        let _ = (file, dirname_fd);
-        // TODO(port): Phase B — bun_bundler::cache. Until that crate is wired,
-        // degrade to "no tsconfig" rather than panicking the resolver on the
-        // node_modules hot path (every directory containing a tsconfig.json
-        // would otherwise hit `unimplemented!()` via `dir_info_uncached`).
-        Ok(None)
+        // PORT NOTE: Zig `TSConfigJSON.parse` returns `*TSConfigJSON` (already
+        // heap, never freed). Rust returns `Box<TSConfigJSON>`; leak to match
+        // the `&'static mut` contract callers (`dir_info_uncached`) rely on.
+        Ok(Some(Box::leak(result)))
     }
 
     pub fn bin_dirs(&self) -> &[&'static [u8]] {

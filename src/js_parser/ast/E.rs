@@ -1522,10 +1522,9 @@ impl EString {
 }
 
 // ── live EString surface (B-2 un-gate) ─────────────────────────────────────
-// Ordering / equality / const-literal helpers extracted from the round-C draft
-// below. Rope mutation (`push`/`clone_rope_nodes`) and `string_z`/`to_zig_string`
-// remain gated on `StoreRef::{from_mut,get_mut}` and `bun_string::ZStr` arena
-// constructors respectively.
+// Ordering / equality / const-literal / rope-mutation helpers extracted from
+// the round-C draft below. `string_z`/`to_zig_string` remain gated on
+// `bun_string::ZStr` arena constructors.
 impl EString {
     pub const CLASS: EString = EString::from_static(b"class");
     pub const EMPTY: EString = EString::from_static(b"");
@@ -1649,6 +1648,78 @@ impl EString {
             strings::eql_comptime_utf16(&self.slice16()[..value.len()], value)
         }
     }
+
+    /// Zig `E.String.push` — link `other` onto this string's rope tail.
+    ///
+    /// `other` MUST be Store/arena-allocated (callers pass
+    /// `Expr::init(EString, ...).data.e_string_mut()` or a freshly
+    /// `Store::append`ed node); its address is captured as a `StoreRef`.
+    pub fn push(&mut self, other: &mut EString) {
+        debug_assert!(self.is_utf8());
+        debug_assert!(other.is_utf8());
+
+        if other.rope_len == 0 {
+            other.rope_len = other.data.len() as u32;
+        }
+        if self.rope_len == 0 {
+            self.rope_len = self.data.len() as u32;
+        }
+        self.rope_len += other.rope_len;
+
+        // SAFETY: caller contract — `other` lives in the AST Store/arena and
+        // outlives the next reset; capturing its address as a `StoreRef` is the
+        // Zig `*E.String` semantics.
+        let other_ref = unsafe { StoreRef::from_raw(other as *mut EString) };
+        if self.next.is_none() {
+            self.next = Some(other_ref);
+            self.end = Some(other_ref);
+        } else {
+            let mut end = self.end.unwrap();
+            while end.get().next.is_some() {
+                end = end.get().end.unwrap();
+            }
+            // SAFETY: `end` points into the live Store; rope nodes are mutated
+            // in place per Zig semantics (single-threaded visitor).
+            unsafe { (*end.as_ptr()).next = Some(other_ref) };
+            self.end = Some(other_ref);
+        }
+    }
+
+    /// Cloning the rope string is rarely needed, see `foldStringAddition`'s
+    /// comments and the 'edgecase/EnumInliningRopeStringPoison' test
+    pub fn clone_rope_nodes(s: &EString) -> EString {
+        let mut root = s.shallow_clone();
+        if root.next.is_some() {
+            let mut current: *mut EString = &mut root;
+            let last: *mut EString;
+            loop {
+                // SAFETY: `current` is either `&mut root` (first iter) or a
+                // freshly Store-appended node (subsequent iters) — both live
+                // and unaliased here.
+                let node = unsafe { &mut *current };
+                match node.next {
+                    Some(next) => {
+                        // SAFETY: `Store::append` never returns null (slab arena).
+                        let new_next = unsafe {
+                            StoreRef::from_raw(crate::ast::expr::data::Store::append(
+                                next.get().shallow_clone(),
+                            ))
+                        };
+                        node.next = Some(new_next);
+                        current = new_next.as_ptr();
+                    }
+                    None => {
+                        last = current;
+                        break;
+                    }
+                }
+            }
+            // SAFETY: loop always advances past `root` (root.next was Some), so
+            // `last` is a Store-owned node with a stable address.
+            root.end = Some(unsafe { StoreRef::from_raw(last) });
+        }
+        root
+    }
 }
 
 fn array_sorter_is_less_than(lhs: &Expr, rhs: &Expr) -> Ordering {
@@ -1658,82 +1729,12 @@ fn array_sorter_is_less_than(lhs: &Expr, rhs: &Expr) -> Ordering {
         .order(rhs.data.e_string().unwrap().get())
 }
 
-// TODO(b2-ast-round-C): remaining EString rope-mutation / ZStr / ZigString methods.
-// `push`/`clone_rope_nodes` need `StoreRef::{from_mut,get_mut}` +
-// `expr::data::Store::append_string`; `string_z`/`to_zig_string` need
-// `bun_string::ZStr::from_bytes_in` + bump-arena `to_utf8_alloc_z`. The
-// duplicate methods kept here for diffability against E.zig.
+// TODO(b2-ast-round-C): remaining EString ZStr / ZigString methods.
+// `string_z`/`to_zig_string` need `bun_string::ZStr::from_bytes_in` +
+// bump-arena `to_utf8_alloc_z`. The duplicate methods kept here for
+// diffability against E.zig.
 #[cfg(any())]
 impl EString {
-    pub fn is_identifier(&mut self, bump: &Bump) -> bool {
-        if !self.is_utf8() {
-            return crate::lexer::is_identifier_utf16(self.slice16());
-        }
-
-        crate::lexer::is_identifier(self.slice(bump))
-    }
-
-    pub const CLASS: EString = EString {
-        data: b"class",
-        prefer_template: false,
-        next: None,
-        end: None,
-        rope_len: 0,
-        is_utf16: false,
-    };
-
-    pub fn push(&mut self, other: &mut EString) {
-        debug_assert!(self.is_utf8());
-        debug_assert!(other.is_utf8());
-
-        if other.rope_len == 0 {
-            other.rope_len = other.data.len() as u32;
-        }
-
-        if self.rope_len == 0 {
-            self.rope_len = self.data.len() as u32;
-        }
-
-        self.rope_len += other.rope_len;
-        if self.next.is_none() {
-            // TODO(port): `other` must be a Store-allocated node; callers pass
-            // `Expr::init(EString, ...).data.e_string`, which is. Phase B: tighten signature.
-            let other_ref = StoreRef::from_mut(other);
-            self.next = Some(other_ref);
-            self.end = Some(other_ref);
-        } else {
-            let mut end = self.end.unwrap();
-            while end.get().next.is_some() {
-                end = end.get().end.unwrap();
-            }
-            end.get_mut().next = Some(StoreRef::from_mut(other));
-            self.end = Some(StoreRef::from_mut(other));
-        }
-    }
-
-    /// Cloning the rope string is rarely needed, see `foldStringAddition`'s
-    /// comments and the 'edgecase/EnumInliningRopeStringPoison' test
-    pub fn clone_rope_nodes(s: EString) -> EString {
-        let mut root = s;
-
-        if root.next.is_some() {
-            let mut current: Option<*mut EString> = Some(&mut root as *mut EString);
-            loop {
-                // SAFETY: pointer is to a live Store node or `root` on this stack frame.
-                let node = unsafe { &mut *current.unwrap() };
-                if let Some(next) = node.next {
-                    node.next = Some(crate::ast::expr::Data::Store::append_string(*next.get()));
-                    current = node.next.map(|r| r.as_mut_ptr());
-                } else {
-                    root.end = Some(StoreRef::from_mut(node));
-                    break;
-                }
-            }
-        }
-
-        root
-    }
-
     pub fn to_utf8(&mut self, bump: &Bump) -> Result<(), AllocError> {
         if !self.is_utf16 {
             return Ok(());

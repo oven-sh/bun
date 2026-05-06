@@ -48,7 +48,7 @@ fn import_kind_label(kind: ImportKind) -> &'static [u8] {
 }
 
 impl ResolveMessage {
-    #[crate::host_fn]
+    // `#[JsClass]` emits `ResolveMessageClass__construct` calling this.
     pub fn constructor(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<*mut ResolveMessage> {
         Err(global.throw(format_args!("ResolveMessage is not constructable")))
     }
@@ -101,21 +101,21 @@ impl ResolveMessage {
 
     // https://github.com/oven-sh/bun/issues/2375#issuecomment-2121530202
     #[crate::host_fn(getter)]
-    pub fn get_column(this: &Self, _global: &JSGlobalObject) -> JSValue {
+    pub fn get_column(this: &Self, _global: &JSGlobalObject) -> JsResult<JSValue> {
         if let Some(location) = &this.msg.data.location {
-            return JSValue::from((location.column - 1).max(0));
+            return Ok(JSValue::from((location.column - 1).max(0)));
         }
 
-        JSValue::from(0_i32)
+        Ok(JSValue::from(0_i32))
     }
 
     #[crate::host_fn(getter)]
-    pub fn get_line(this: &Self, _global: &JSGlobalObject) -> JSValue {
+    pub fn get_line(this: &Self, _global: &JSGlobalObject) -> JsResult<JSValue> {
         if let Some(location) = &this.msg.data.location {
-            return JSValue::from((location.line - 1).max(0));
+            return Ok(JSValue::from((location.line - 1).max(0)));
         }
 
-        JSValue::from(0_i32)
+        Ok(JSValue::from(0_i32))
     }
 
     pub fn fmt(
@@ -261,12 +261,12 @@ impl ResolveMessage {
     ) -> JsResult<JSValue> {
         let object = JSValue::create_empty_object(global, 7);
         object.put(global, b"name", bun_string::String::static_str(b"ResolveMessage").to_js(global)?);
-        object.put(global, b"position", this.get_position(global));
-        object.put(global, b"message", this.get_message(global));
-        object.put(global, b"level", this.get_level(global));
-        object.put(global, b"specifier", this.get_specifier(global));
-        object.put(global, b"importKind", this.get_import_kind(global));
-        object.put(global, b"referrer", this.get_referrer(global));
+        object.put(global, b"position", this.get_position(global)?);
+        object.put(global, b"message", this.get_message(global)?);
+        object.put(global, b"level", this.get_level(global)?);
+        object.put(global, b"specifier", this.get_specifier(global)?);
+        object.put(global, b"importKind", this.get_import_kind(global)?);
+        object.put(global, b"referrer", this.get_referrer(global)?);
         Ok(object)
     }
 
@@ -289,49 +289,49 @@ impl ResolveMessage {
     }
 
     #[crate::host_fn(getter)]
-    pub fn get_position(this: &Self, global: &JSGlobalObject) -> JSValue {
-        crate::BuildMessage::generate_position_object(&this.msg, global)
+    pub fn get_position(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        Ok(crate::BuildMessage::generate_position_object(&this.msg, global))
     }
 
     #[crate::host_fn(getter)]
-    pub fn get_message(this: &Self, global: &JSGlobalObject) -> JSValue {
-        ZigString::init(&this.msg.data.text).to_js(global)
+    pub fn get_message(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        Ok(ZigString::init(&this.msg.data.text).to_js(global))
     }
 
     #[crate::host_fn(getter)]
-    pub fn get_level(this: &Self, global: &JSGlobalObject) -> JSValue {
-        ZigString::init(this.msg.kind.string()).to_js(global)
+    pub fn get_level(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        Ok(ZigString::init(this.msg.kind.string()).to_js(global))
     }
 
     #[crate::host_fn(getter)]
-    pub fn get_specifier(this: &Self, global: &JSGlobalObject) -> JSValue {
-        match &this.msg.metadata {
+    pub fn get_specifier(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        Ok(match &this.msg.metadata {
             logger::Metadata::Resolve(resolve) => {
                 ZigString::init(resolve.specifier.slice(&this.msg.data.text)).to_js(global)
             }
             // Unreachable in practice (ResolveMessage is only constructed for
             // `.resolve` metadata) — Zig accessed the union arm unchecked.
             _ => ZigString::init(b"").to_js(global),
-        }
+        })
     }
 
     #[crate::host_fn(getter)]
-    pub fn get_import_kind(this: &Self, global: &JSGlobalObject) -> JSValue {
-        match &this.msg.metadata {
+    pub fn get_import_kind(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        Ok(match &this.msg.metadata {
             logger::Metadata::Resolve(resolve) => {
                 ZigString::init(import_kind_label(resolve.import_kind)).to_js(global)
             }
             _ => ZigString::init(b"").to_js(global),
-        }
+        })
     }
 
     #[crate::host_fn(getter)]
-    pub fn get_referrer(this: &Self, global: &JSGlobalObject) -> JSValue {
-        if let Some(referrer) = &this.referrer {
+    pub fn get_referrer(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        Ok(if let Some(referrer) = &this.referrer {
             ZigString::init(referrer).to_js(global)
         } else {
             JSValue::NULL
-        }
+        })
     }
 
     pub extern "C" fn finalize(this: *mut ResolveMessage) {

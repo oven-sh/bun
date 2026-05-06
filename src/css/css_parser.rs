@@ -6200,20 +6200,32 @@ pub mod to_css {
     use super::*;
 
     /// Serialize `self` in CSS syntax and return a string.
-    #[cfg(any())] // blocked_on: printer.rs Printer::new arena signature reshape
-    pub fn string<T: generic::ToCss>(
+    ///
+    /// (This is a convenience wrapper for `to_css` and probably should not be overridden.)
+    pub fn string<'a, T: generic::ToCss>(
+        allocator: &'a Bump,
         this: &T,
-        options: PrinterOptions,
-        import_info: Option<ImportInfo>,
-        local_names: Option<&LocalsResultsMap>,
-        symbols: &bun_logger::symbol::Map,
+        options: PrinterOptions<'a>,
+        import_info: Option<ImportInfo<'a>>,
+        local_names: Option<&'a LocalsResultsMap>,
+        symbols: &'a bun_logger::symbol::Map,
     ) -> Result<Vec<u8>, PrintErr> {
         let mut s: Vec<u8> = Vec::new();
         // PERF: think about how cheap this is to create
-        let mut printer =
-            Printer::new(Vec::new(), &mut s, options, import_info, local_names, symbols);
-        // TODO(port): Zig special-cased `T == CSSString` → `CSSStringFns.toCss`.
+        let mut printer = Printer::new(
+            allocator,
+            bumpalo::collections::Vec::new_in(allocator),
+            &mut s,
+            options,
+            import_info,
+            local_names,
+            symbols,
+        );
+        // PORT NOTE: Zig special-cased `T == CSSString` → `CSSStringFns.toCss`;
+        // in Rust the `ToCss` impl on `CSSString` routes there directly, so the
+        // generic dispatch suffices.
         this.to_css(&mut printer)?;
+        drop(printer);
         Ok(s)
     }
 
@@ -6228,15 +6240,14 @@ pub mod to_css {
         Ok(())
     }
 
-    #[cfg(any())] // blocked_on: BabyList::len() trait-bound divergence
     pub fn from_baby_list<T: generic::ToCss>(
         this: &BabyList<T>,
         dest: &mut Printer,
     ) -> Result<(), PrintErr> {
-        let len = this.len();
+        let len = this.len;
         for (idx, val) in this.slice_const().iter().enumerate() {
             val.to_css(dest)?;
-            if u32::try_from(idx).unwrap() < len - 1 {
+            if (idx as u32) < len - 1 {
                 dest.delim(b',', false)?;
             }
         }

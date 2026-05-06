@@ -131,6 +131,226 @@ impl<'a> Transpiler<'a> {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
+// B-2 un-gated: `configure_linker*` / `run_env_loader` — unblocks
+// `RunCommand::configure_env_for_run` (runtime/cli/run_command.rs:527),
+// `bun_install::configure_env_for_run`, `JSBundleCompletionTask`,
+// `JSTranspiler`, and `bun.js.rs:: bun_main_shell_entry`.
+// ══════════════════════════════════════════════════════════════════════════
+
+use bun_resolver::tsconfig_json::{JsxField, TSConfigJSON};
+
+/// CYCLEBREAK: convert resolver-side `tsconfig_json::options::jsx::Pragma`
+/// into the bundler-side `options_impl::jsx::Pragma`. The two are structurally
+/// the same value type but nominally distinct until the move-down to
+/// `bun_options_types` lands (see resolver/tsconfig_json.rs:13 CYCLEBREAK note).
+/// Fields the resolver subset doesn't carry (`classic_import_source`, `parse`,
+/// `side_effects`) keep the bundler `Default`, matching Zig's struct-literal
+/// defaults (options.zig:1196-1204).
+fn jsx_pragma_from_resolver(
+    src: &bun_resolver::tsconfig_json::options::jsx::Pragma,
+) -> crate::options_impl::jsx::Pragma {
+    use bun_resolver::tsconfig_json::options::jsx::Runtime as R;
+    use crate::options_impl::jsx;
+    jsx::Pragma {
+        factory: src.factory.iter().map(|s| s.clone()).collect(),
+        fragment: src.fragment.iter().map(|s| s.clone()).collect(),
+        runtime: match src.runtime {
+            R::Automatic => jsx::Runtime::Automatic,
+            R::Classic => jsx::Runtime::Classic,
+            R::Solid => jsx::Runtime::Solid,
+        },
+        import_source: jsx::ImportSource {
+            development: src.import_source.development.clone(),
+            production: src.import_source.production.clone(),
+        },
+        package_name: src.package_name.clone(),
+        development: src.development,
+        ..jsx::Pragma::default()
+    }
+}
+
+/// CYCLEBREAK: inline `TSConfigJSON::merge_jsx` (resolver/tsconfig_json.rs:346)
+/// against the bundler-side `Pragma`. The upstream `merge_jsx` takes/returns
+/// the resolver-side nominal type; round-tripping through
+/// [`jsx_pragma_from_resolver`] would lose `classic_import_source`/`parse`/
+/// `side_effects`. Spec: options.zig — `TSConfigJSON.mergeJSX` is a 5-field
+/// conditional copy keyed on `jsx_flags`.
+fn merge_tsconfig_jsx_into(tsconfig: &TSConfigJSON, out: &mut crate::options_impl::jsx::Pragma) {
+    use bun_resolver::tsconfig_json::options::jsx::Runtime as R;
+    use crate::options_impl::jsx;
+    if tsconfig.jsx_flags.contains(JsxField::Factory) {
+        out.factory = tsconfig.jsx.factory.iter().map(|s| s.clone()).collect();
+    }
+    if tsconfig.jsx_flags.contains(JsxField::Fragment) {
+        out.fragment = tsconfig.jsx.fragment.iter().map(|s| s.clone()).collect();
+    }
+    if tsconfig.jsx_flags.contains(JsxField::ImportSource) {
+        out.import_source = jsx::ImportSource {
+            development: tsconfig.jsx.import_source.development.clone(),
+            production: tsconfig.jsx.import_source.production.clone(),
+        };
+    }
+    if tsconfig.jsx_flags.contains(JsxField::Runtime) {
+        out.runtime = match tsconfig.jsx.runtime {
+            R::Automatic => jsx::Runtime::Automatic,
+            R::Classic => jsx::Runtime::Classic,
+            R::Solid => jsx::Runtime::Solid,
+        };
+    }
+    if tsconfig.jsx_flags.contains(JsxField::Development) {
+        out.development = tsconfig.jsx.development;
+    }
+}
+
+impl<'a> Transpiler<'a> {
+    /// Port of `transpiler.zig:233 configureLinkerWithAutoJSX`.
+    pub fn configure_linker_with_auto_jsx(&mut self, auto_jsx: bool) {
+        // PORT NOTE: `Linker::init` dropped its `allocator` arg (linker.rs:172
+        // — global mimalloc). Zig stored borrowed `*T` into the linker; the
+        // un-gated `crate::linker::Linker` mirrors that with raw pointers so
+        // `&mut self.options` etc. coerce directly. Self-reference is
+        // load-bearing — `linker.link()` reads back through these into the
+        // owning `Transpiler` — hence raw `*mut`, not `&'a mut` (would alias
+        // `&mut self` on every call).
+        // PORT NOTE: `.cast()` on the `options`/`resolver` pointers erases the
+        // `<'a>` lifetime parameter — `Linker` stores them as
+        // `*mut BundleOptions` / `*mut Resolver` with an (implicit) distinct
+        // lifetime. Raw-pointer storage is the Zig contract; the linker never
+        // outlives its owning `Transpiler<'a>`.
+        self.linker = crate::linker::Linker::init(
+            self.log,
+            core::ptr::addr_of_mut!(self.resolve_queue),
+            core::ptr::addr_of_mut!(self.options).cast(),
+            core::ptr::addr_of_mut!(self.resolver).cast(),
+            core::ptr::addr_of_mut!(*self.resolve_results),
+            self.fs,
+        );
+
+        if auto_jsx {
+            // Most of the time, this will already be cached
+            // SAFETY: `self.fs` is the process-lifetime `Fs::FileSystem`
+            // singleton (set in `Transpiler::init` from `FileSystem::init`).
+            let top_level_dir = unsafe { (*self.fs).top_level_dir };
+            if let Ok(Some(root_dir)) = self.resolver.read_dir_info(top_level_dir) {
+                // SAFETY: `read_dir_info` returns a pointer into the resolver's
+                // BSS-backed `DirInfo` cache; entries live for process lifetime
+                // and are never freed (resolver/dir_info.rs).
+                let root_dir = unsafe { &*root_dir };
+                if let Some(tsconfig) = root_dir.tsconfig_json {
+                    // If we don't explicitly pass JSX, try to get it from the root tsconfig
+                    if self.options.transform_options.jsx.is_none() {
+                        self.options.jsx = jsx_pragma_from_resolver(&tsconfig.jsx);
+                    }
+                    self.options.emit_decorator_metadata = tsconfig.emit_decorator_metadata;
+                    self.options.experimental_decorators = tsconfig.experimental_decorators;
+                }
+            }
+        }
+    }
+
+    /// Port of `transpiler.zig:259 configureLinker`.
+    #[inline]
+    pub fn configure_linker(&mut self) {
+        self.configure_linker_with_auto_jsx(true);
+    }
+
+    /// Port of `transpiler.zig:263 runEnvLoader`.
+    pub fn run_env_loader(&mut self, skip_default_env: bool) -> Result<(), bun_core::Error> {
+        // TODO(port): narrow error set
+        use bun_options_types::schema::api::DotEnvBehavior;
+        // SAFETY: `self.env` is non-null — set to either the caller-provided
+        // loader or the `dot_env::INSTANCE` singleton in `Transpiler::init`.
+        // Derived once up front; no other live `&mut` to this `Loader` exists
+        // for the duration of this call (Zig accessed `this.env.*` freely).
+        let env: &mut dot_env::Loader<'_> = unsafe { &mut *self.env };
+
+        match self.options.env.behavior {
+            DotEnvBehavior::prefix
+            | DotEnvBehavior::load_all
+            | DotEnvBehavior::load_all_without_inlining => {
+                // Process always has highest priority. Load process env vars
+                // unconditionally before attempting directory traversal, so
+                // that inherited environment variables are always available
+                // even when a parent directory is not readable.
+                let was_production = self.options.production;
+                env.load_process()?;
+                let has_production_env = env.is_production();
+                if !was_production && has_production_env {
+                    self.options.set_production(true);
+                    // TODO(b2-blocked): `self.resolver.opts.set_production(true)`
+                    // — resolver's FORWARD_DECL `BundleOptions` (resolver
+                    // lib.rs:2123 `mod options`) carries neither `production`
+                    // nor `force_node_env`, so the only field `setProduction`
+                    // touches that exists there is `jsx.development`. Mirror
+                    // that one write so resolver-side JSX import-source
+                    // selection (`Pragma::import_source`) stays in sync.
+                    self.resolver.opts.jsx.development = false;
+                }
+
+                // Load the project root for .env file discovery. If the cwd
+                // (or a parent) is unreadable, readDirInfo may return null;
+                // bail out of .env file loading in that case, but process
+                // env vars were already loaded above.
+                // SAFETY: `self.fs` — process-lifetime singleton (see above).
+                let top_level_dir = unsafe { (*self.fs).top_level_dir };
+                let dir_info = match self.resolver.read_dir_info(top_level_dir) {
+                    Ok(Some(d)) => d,
+                    _ => return Ok(()),
+                };
+                // SAFETY: BSS-backed `DirInfo` cache entry — process-lifetime.
+                let dir_info = unsafe { &*dir_info };
+
+                if let Some(tsconfig) = dir_info.tsconfig_json {
+                    merge_tsconfig_jsx_into(tsconfig, &mut self.options.jsx);
+                }
+
+                let Some(dir) = dir_info.get_entries(self.resolver.generation) else {
+                    return Ok(());
+                };
+                // SAFETY/CYCLEBREAK: `get_entries` returns
+                // `*mut bun_resolver::fs::DirEntry`; `dot_env::Loader::load`
+                // takes `&mut bun_sys::fs::DirEntry`, the `#[repr(C)]` opaque
+                // FORWARD_DECL of the same type (sys/lib.rs:2784, MOVE_DOWN
+                // pending). The dotenv side only calls `has_comptime_query`
+                // through it; cast across the seam.
+                let dir: &mut bun_sys::fs::DirEntry =
+                    unsafe { &mut *(dir as *mut bun_sys::fs::DirEntry) };
+
+                // PORT NOTE: `Env.files: Box<[Box<[u8]>]>` but `Loader::load`
+                // wants `&[&[u8]]`. Re-borrow into a small Vec; the explicit
+                // `--env-file` list is bounded (CLI args), not hot-path.
+                // PERF(port): one tiny alloc — Zig passed the slice directly.
+                let env_files: Vec<&[u8]> =
+                    self.options.env.files.iter().map(|f| &**f).collect();
+
+                let suffix = if self.options.is_test() || env.is_test() {
+                    dot_env::DotEnvFileSuffix::Test
+                } else if self.options.production {
+                    dot_env::DotEnvFileSuffix::Production
+                } else {
+                    dot_env::DotEnvFileSuffix::Development
+                };
+                env.load(dir, &env_files, suffix, skip_default_env)?;
+            }
+            DotEnvBehavior::disable => {
+                env.load_process()?;
+                if env.is_production() {
+                    self.options.set_production(true);
+                    // TODO(b2-blocked): see note in the `.prefix` arm above.
+                    self.resolver.opts.jsx.development = false;
+                }
+            }
+            DotEnvBehavior::_none => {}
+        }
+
+        if env.get(b"BUN_DISABLE_TRANSPILER").unwrap_or(b"0") == b"1" {
+            self.options.disable_transpilation = true;
+        }
+        Ok(())
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════
 // B-2 un-gated: `ParseResult` / `AlreadyBundled` / `ParseOptions` +
 // `Transpiler::parse*` — real types so `ModuleLoader::transpile_source_code`
 // (jsc_hooks.rs) and `AsyncModule` / `JSTranspiler` can name them. The body

@@ -1846,8 +1846,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 Box::into_raw(s3_stream) as *mut libc::c_void,
             )?;
             // PORT NOTE: url/url_proxy_buffer ownership moved into s3_stream above.
-            url = ZigURL::default();
-            url_proxy_buffer = Vec::new();
             return Ok(promise_value);
         }
         if method == Method::POST {

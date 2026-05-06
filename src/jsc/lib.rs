@@ -1944,6 +1944,24 @@ impl SystemError {
         value
     }
 }
+/// Reshape the T1 `bun_sys::SystemError` (non-`#[repr(C)]`, different field
+/// order) into the `#[repr(C)]` extern layout C++ reads. In Zig there is one
+/// `jsc.SystemError`; the Rust port split data (T1) from the JSC bridge (T6) —
+/// this `From` is the canonical layering seam (see PORTING.md §_jsc bridge).
+impl From<bun_sys::SystemError> for SystemError {
+    fn from(e: bun_sys::SystemError) -> Self {
+        Self {
+            errno: e.errno as core::ffi::c_int,
+            code: e.code,
+            message: e.message,
+            path: e.path,
+            syscall: e.syscall,
+            hostname: e.hostname,
+            fd: e.fd as core::ffi::c_int,
+            dest: e.dest,
+        }
+    }
+}
 
 /// `JSValue.toEnumFromMap(global, "signal", SignalCode, SignalCode.Map)`
 /// (JSValue.zig:1703). Lives here (not in `bun_sys_jsc`) because the orphan

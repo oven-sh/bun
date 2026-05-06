@@ -2563,11 +2563,18 @@ pub mod environment_variables {
     ) -> usize {
         // SAFETY: caller is C++ with live global; ptr is a valid out-param.
         let bun_vm = unsafe { &mut *(*global_object).bun_vm() };
-        // TODO(port): map.map.keys().ptr — exposes raw pointer to the env-map
-        // key slice array. The Rust StringMap needs a `.keys_ptr()` accessor
-        // returning `*mut &[u8]` for FFI compat.
-        let _ = (bun_vm, ptr);
-        todo!("blocked_on: bun_dotenv::Map::keys_ptr / unmanaged_entries_len")
+        // SAFETY: `transpiler.env` is the process-lifetime dotenv loader.
+        let env = unsafe { &*bun_vm.transpiler.env };
+        let keys: &[Box<[u8]>] = env.map.map.keys();
+        // PORT NOTE: C++ expects `[*][]const u8` (pointer to array of slice
+        // descriptors). `Box<[u8]>` and `&[u8]` share the (ptr,len) fat-pointer
+        // layout (both `repr(transparent)` over `*const [u8]`), so the keys
+        // backing slice can be reinterpreted in place.
+        // SAFETY: layout-compatible reinterpret; the backing Vec lives for the
+        // VM lifetime and is not reallocated between this call and
+        // `Bun__getEnvKey`.
+        unsafe { *ptr = keys.as_ptr() as *mut &[u8] };
+        keys.len()
     }
 
     #[unsafe(no_mangle)]

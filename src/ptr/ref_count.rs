@@ -546,16 +546,72 @@ impl<T: ThreadSafeRefCounted> ThreadSafeRefCount<T> {
         self.raw_count.store(0, Ordering::Relaxed);
     }
 
+    /// Type-erased accessor for the embedded debug tracker. Exposed (rather
+    /// than the private `debug` field) so [`impl_thread_safe_any_ref_counted!`]
+    /// can hand-impl [`AnyRefCounted::rc_debug_data`] from outside this crate.
+    #[cfg(debug_assertions)]
+    #[doc(hidden)]
+    #[inline]
+    pub fn debug_data_ptr(&mut self) -> *mut dyn DebugDataOps {
+        &mut self.debug as *mut _
+    }
+
     // PORT NOTE: `getRefCount` / `is_ref_count` / `ref_count_options` — see
     // notes on RefCount above.
 }
 
-// TODO(port): blanket `impl<T: ThreadSafeRefCounted> AnyRefCounted for T`
-// conflicts with the `RefCounted` blanket above (Rust forbids overlapping
-// blanket impls). Phase B: either (a) make hosts impl `AnyRefCounted` directly
-// via a derive macro, or (b) use a marker-type dispatch. For now only the
-// single-threaded blanket is provided; thread-safe hosts must impl
-// `AnyRefCounted` by hand.
+// A blanket `impl<T: ThreadSafeRefCounted> AnyRefCounted for T` would overlap
+// with the `RefCounted` blanket above (Rust forbids overlapping blanket impls).
+// Instead, thread-safe hosts opt in explicitly via this macro — equivalent to
+// the blanket impl, expanded per-type.
+//
+// Zig: `RefPtr` reflected on `@FieldType(T, "ref_count")` to accept either
+// mixin; this macro is the manual half of that dispatch.
+/// Implements [`AnyRefCounted`] for a type that already implements
+/// [`ThreadSafeRefCounted`], delegating to its embedded [`ThreadSafeRefCount`].
+#[macro_export]
+macro_rules! impl_thread_safe_any_ref_counted {
+    ($T:ty) => {
+        impl $crate::AnyRefCounted for $T {
+            type DestructorCtx = ();
+
+            #[inline]
+            unsafe fn rc_ref(this: *mut Self) {
+                // SAFETY: caller contract — `this` points to a live Self.
+                unsafe { $crate::ThreadSafeRefCount::<Self>::ref_(this) }
+            }
+            #[inline]
+            unsafe fn rc_deref_with_context(this: *mut Self, (): ()) {
+                // SAFETY: caller contract — `this` points to a live Self.
+                unsafe { $crate::ThreadSafeRefCount::<Self>::deref(this) }
+            }
+            #[inline]
+            unsafe fn rc_has_one_ref(this: *const Self) -> bool {
+                // SAFETY: caller contract — `this` points to a live Self.
+                unsafe {
+                    (*<Self as $crate::ThreadSafeRefCounted>::get_ref_count(this as *mut Self))
+                        .has_one_ref()
+                }
+            }
+            #[inline]
+            unsafe fn rc_assert_no_refs(this: *const Self) {
+                // SAFETY: caller contract — `this` points to a live Self.
+                unsafe {
+                    (*<Self as $crate::ThreadSafeRefCounted>::get_ref_count(this as *mut Self))
+                        .assert_no_refs()
+                }
+            }
+            #[cfg(debug_assertions)]
+            #[inline]
+            unsafe fn rc_debug_data(this: *mut Self) -> *mut dyn $crate::ref_count::DebugDataOps {
+                // SAFETY: caller contract — `this` points to a live Self.
+                unsafe {
+                    (*<Self as $crate::ThreadSafeRefCounted>::get_ref_count(this)).debug_data_ptr()
+                }
+            }
+        }
+    };
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // RefPtr

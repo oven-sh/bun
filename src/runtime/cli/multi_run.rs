@@ -838,10 +838,8 @@ pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, 
             &mut root_buf,
         )?;
 
-        // PackageFilterIterator wants `&[&[u8]]`; build a borrowed view.
-        let pattern_refs: Vec<&[u8]> = patterns.iter().map(|p| &**p).collect();
         let mut package_json_iter =
-            FilterArg::PackageFilterIterator::init(&pattern_refs, resolve_root)?;
+            FilterArg::PackageFilterIterator::init(&patterns, resolve_root)?;
         // Drop handles deinit
 
         // Phase 1: Collect matching packages (filesystem order is nondeterministic)

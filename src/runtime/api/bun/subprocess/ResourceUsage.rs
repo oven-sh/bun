@@ -113,7 +113,7 @@ pub struct ResourceUsage {
 
 impl ResourceUsage {
     pub fn create(rusage: &Rusage, global: &JSGlobalObject) -> JsResult<JSValue> {
-        Box::new(ResourceUsage { rusage: *rusage }).to_js(global)
+        Ok(Box::new(ResourceUsage { rusage: *rusage }).to_js(global))
     }
 
     #[bun_jsc::host_fn(getter)]

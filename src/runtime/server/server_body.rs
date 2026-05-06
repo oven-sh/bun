@@ -1362,7 +1362,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         crate::socket::socket_address::SocketAddress::create_dto(
             // SAFETY: global_this set in init() and outlives ThisServer (JSC_BORROW per LIFETIMES.tsv)
             unsafe { &*self.global_this },
-            info.ip,
+            &info.ip,
             u16::try_from(info.port).unwrap(),
             info.is_ipv6,
         )

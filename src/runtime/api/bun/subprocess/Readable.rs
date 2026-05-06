@@ -224,7 +224,7 @@ impl Readable {
                 }
 
                 let own = buffer.take_slice()?;
-                ReadableStream::from_owned_slice(global, own, 0)
+                ReadableStream::from_owned_slice(global, own.into_vec(), 0)
             }
             _ => Ok(JSValue::UNDEFINED),
         }

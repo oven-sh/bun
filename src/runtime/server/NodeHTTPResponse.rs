@@ -789,7 +789,7 @@ impl NodeHTTPResponse {
         'do_it: {
             if status_message_slice.slice().is_empty() {
                 if let Some(status_message) =
-                    HTTPStatusText::get(u32::try_from(status_code).unwrap())
+                    HTTPStatusText::get(u16::try_from(status_code).unwrap())
                 {
                     write_head_internal(
                         self.raw_response.as_ref().unwrap(),

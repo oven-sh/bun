@@ -126,7 +126,7 @@ impl Worker {
                 stdout: Stdio::Buffer,
                 stderr: Stdio::Buffer,
                 extra_fds: vec![Stdio::Buffer].into_boxed_slice(),
-                cwd: coord.cwd.as_bytes().to_vec().into_boxed_slice(),
+                cwd: coord.cwd.to_vec().into_boxed_slice(),
                 stream: true,
                 // Own pgrp so abortAll can kill(-pid, SIGTERM) the worker and
                 // anything it spawned. PDEATHSIG is the SIGKILL safety net on
@@ -140,8 +140,10 @@ impl Worker {
             };
             // Zig: `try (try spawnProcess(...)).unwrap()` — outer `?` for the
             // anyerror, inner map for the bun_sys::Result.
+            // SAFETY: `Option<*const c_char>` has the same layout as `*const c_char`
+            // (null-pointer optimization), so the cast is repr-transparent.
             let mut spawned =
-                spawn::spawn_process(&options, coord.argv.as_ptr(), coord.envps[this.idx as usize].as_ptr())?
+                spawn::spawn_process(&options, coord.argv.as_ptr().cast(), coord.envps[this.idx as usize].as_ptr().cast())?
                     .map_err(|e| {
                         Output::err(e, "spawnProcess failed for test worker", ());
                         bun_core::err!("SpawnFailed")

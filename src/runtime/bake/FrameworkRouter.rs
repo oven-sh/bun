@@ -708,6 +708,25 @@ pub enum Style {
     JavascriptDefined(Strong),
 }
 
+// PORT NOTE: `bake::FileSystemRouterType` derives `Clone` (Zig copied the struct
+// by value), so `Style` must be `Clone` as well. `bun_jsc::Strong` is a unique
+// GC handle with `Drop` and intentionally has no `Clone` — duplicating it would
+// double-free. The built-in styles are trivially copyable; the JS-defined arm
+// defers until upstream grows a safe clone (or we re-create from the held
+// `JSValue`, which needs a `&JSGlobalObject` we don't have here).
+impl Clone for Style {
+    fn clone(&self) -> Self {
+        match self {
+            Style::NextjsPages => Style::NextjsPages,
+            Style::NextjsAppUi => Style::NextjsAppUi,
+            Style::NextjsAppRoutes => Style::NextjsAppRoutes,
+            Style::JavascriptDefined(_) => {
+                todo!("blocked_on: bun_jsc::Strong::clone")
+            }
+        }
+    }
+}
+
 pub static STYLE_MAP: phf::Map<&'static [u8], fn() -> Style> = phf::phf_map! {
     b"nextjs-pages" => || Style::NextjsPages,
     b"nextjs-app-ui" => || Style::NextjsAppUi,

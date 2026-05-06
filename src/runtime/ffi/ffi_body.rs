@@ -1964,13 +1964,11 @@ pub fn generate_symbol_for_function(
         ));
     }
 
-    *function = Function {
-        base_name: None,
-        arg_types: abi_types,
-        return_type,
-        threadsafe,
-        ..Default::default()
-    };
+    *function = Function::default();
+    function.base_name = None;
+    function.arg_types = abi_types;
+    function.return_type = return_type;
+    function.threadsafe = threadsafe;
 
     if let Some(ptr) = value.get(global, "ptr")? {
         if ptr.is_number() {
@@ -2553,7 +2551,7 @@ impl Function {
             let ptr = global_object
                 .map(|g| g as *const _ as usize)
                 .unwrap_or(0);
-            let fmt = bun_fmt::hex_int_upper(ptr as u64);
+            let fmt = bun_fmt::hex_int_upper::<16>(ptr as u64);
             write!(writer, "#define JS_GLOBAL_OBJECT (void*)0x{}ULL\n", fmt)?;
         }
 
@@ -2624,7 +2622,7 @@ impl Function {
 
         {
             let ptr = context_ptr.map(|p| p as usize).unwrap_or(0);
-            let fmt = bun_fmt::hex_int_upper(ptr as u64);
+            let fmt = bun_fmt::hex_int_upper::<16>(ptr as u64);
 
             // TODO(port): std.fmt.bufPrint → write!-into-slice
             let written = if !self.arg_types.is_empty() {

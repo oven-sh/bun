@@ -373,7 +373,7 @@ impl<Ctx: CryptoJobCtx> CryptoJob<Ctx> {
         // If `ctx.init` throws, we must release the callback `Strong` and any resources the
         // ctx already owns (e.g. `Scrypt` has already protected its password/salt buffers in
         // `from_js`). `deinit` handles all of that; `poll.unref` is a no-op while inactive.
-        let guard = scopeguard::guard(job, |job| {
+        let mut guard = scopeguard::guard(job, |job| {
             // SAFETY: job came from Box::into_raw above and has not been consumed.
             unsafe { Self::deinit(job) };
         });
@@ -533,7 +533,7 @@ pub mod random {
         }
 
         if !callback.is_undefined() {
-            let _ = validators::validate_function(global, b"callback", callback)?;
+            let _ = validators::validate_function(global, "callback", callback)?;
         }
 
         if !min_value.is_safe_integer() {
@@ -641,7 +641,7 @@ pub mod random {
         };
 
         uuid.print((&mut bytes[..36]).try_into().unwrap());
-        Ok(str.transfer_to_js(global))
+        str.transfer_to_js(global)
     }
 
     pub fn assert_offset(

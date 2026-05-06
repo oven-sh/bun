@@ -10,7 +10,6 @@ use std::sync::Arc;
 use bun_ptr::{RefCount, RefCounted, RefPtr};
 
 use bun_aio::{FilePoll, KeepAlive};
-use bun_ptr::CowString;
 use bun_core::Output;
 use bun_jsc::{
     self as jsc, ArrayBuffer, CallFrame, JSGlobalObject, JSPromise, JSValue, JsRef, JsResult,

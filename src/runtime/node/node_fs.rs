@@ -1182,8 +1182,13 @@ impl ReaddirSubtask {
         };
         // SAFETY: `this` is the Box::leak'd subtask; basename was allocator.dupeZ'd in enqueue()
         let _cleanup = scopeguard::guard(this as *mut Self, |p| unsafe {
-            // free duped basename + destroy self
-            drop(Box::from_raw((*p).basename.slice_assume_z().as_ptr() as *mut u8));
+            // free duped basename + destroy self.
+            // basename was allocated as `Box<[u8]>` of len+1 (NUL included) in
+            // enqueue(); reconstruct that exact layout for drop.
+            let z = (*p).basename.slice_assume_z();
+            let len_with_nul = z.len() + 1;
+            let ptr = z.as_bytes().as_ptr() as *mut u8;
+            drop(Box::<[u8]>::from_raw(core::slice::from_raw_parts_mut(ptr, len_with_nul)));
             drop(Box::from_raw(p));
         });
         let mut buf = PathBuffer::uninit();
@@ -1196,9 +1201,22 @@ impl AsyncReaddirRecursiveTask {
     pub fn new(init: Self) -> Box<Self> { Box::new(init) }
 
     pub fn enqueue(&mut self, basename: &ZStr) {
+        // Spec (node_fs.zig:1058) does `bun.default_allocator.dupeZ(u8, basename)` —
+        // the subtask runs on another thread after the caller's `name_to_copy_z`
+        // (which points into a per-iteration buffer) has been overwritten, so we
+        // must heap-own the bytes here. Freed in ReaddirSubtask::call's cleanup.
+        let mut owned = Vec::with_capacity(basename.len() + 1);
+        owned.extend_from_slice(basename.as_bytes());
+        owned.push(0);
+        let owned: Box<[u8]> = owned.into_boxed_slice();
+        let len = owned.len() - 1; // exclude NUL
+        let ptr = Box::into_raw(owned) as *mut u8;
+        // SAFETY: `ptr[..len]` is the duped bytes; `ptr[len] == 0`. The Box<[u8]>
+        // backing is reconstructed and freed in `ReaddirSubtask::call`.
+        let basename_ps = PathString::init(unsafe { core::slice::from_raw_parts(ptr, len) });
         let task = ReaddirSubtask::new(ReaddirSubtask {
             readdir_task: self,
-            basename: PathString::init(ZStr::from_bytes(basename.as_bytes())), // dupeZ
+            basename: basename_ps,
             task: WorkPoolTask { callback: ReaddirSubtask::call },
         });
         debug_assert!(self.subtask_count.fetch_add(1, Ordering::Relaxed) > 0);
@@ -1705,13 +1723,15 @@ pub mod args {
         pub fn to_thread_safe(&mut self) { self.path.to_thread_safe(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Lutimes> {
             let path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments("path must be a string or TypedArray"))?;
-            let atime = node::time_like_from_js(ctx, arguments.next().ok_or_else(|| { path.deinit(); ctx.throw_invalid_arguments("atime is required") })?)?
-                .ok_or_else(|| { path.deinit(); ctx.throw_invalid_arguments("atime must be a number or a Date") })?;
+            // Zig: `errdefer path.deinit()` — also covers the `try timeLikeFromJS` throws.
+            let path = scopeguard::guard(path, |p| p.deinit());
+            let atime = node::time_like_from_js(ctx, arguments.next().ok_or_else(|| ctx.throw_invalid_arguments("atime is required"))?)?
+                .ok_or_else(|| ctx.throw_invalid_arguments("atime must be a number or a Date"))?;
             arguments.eat();
-            let mtime = node::time_like_from_js(ctx, arguments.next().ok_or_else(|| { path.deinit(); ctx.throw_invalid_arguments("mtime is required") })?)?
-                .ok_or_else(|| { path.deinit(); ctx.throw_invalid_arguments("mtime must be a number or a Date") })?;
+            let mtime = node::time_like_from_js(ctx, arguments.next().ok_or_else(|| ctx.throw_invalid_arguments("mtime is required"))?)?
+                .ok_or_else(|| ctx.throw_invalid_arguments("mtime must be a number or a Date"))?;
             arguments.eat();
-            Ok(Lutimes { path, atime, mtime })
+            Ok(Lutimes { path: scopeguard::ScopeGuard::into_inner(path), atime, mtime })
         }
     }
 
@@ -1726,13 +1746,15 @@ pub mod args {
         pub fn deinit_and_unprotect(&mut self) { self.path.deinit_and_unprotect(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Chmod> {
             let path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments("path must be a string or TypedArray"))?;
+            // Zig: `errdefer path.deinit()` — also covers the `try modeFromJS` throw.
+            let path = scopeguard::guard(path, |p| p.deinit());
             let mode_arg = arguments.next().unwrap_or(JSValue::UNDEFINED);
             let mode: Mode = match node::mode_from_js(ctx, mode_arg)? {
                 Some(m) => m,
-                None => { path.deinit(); return Err(node::validators::throw_err_invalid_arg_type(ctx, "mode", &[], "number", mode_arg)); }
+                None => { return Err(node::validators::throw_err_invalid_arg_type(ctx, "mode", &[], "number", mode_arg)); }
             };
             arguments.eat();
-            Ok(Chmod { path, mode })
+            Ok(Chmod { path: scopeguard::ScopeGuard::into_inner(path), mode })
         }
     }
 
@@ -5720,13 +5742,19 @@ impl NodeFS {
         #[cfg(windows)]
         {
             let _ = mode;
+            // Spec (node_fs.zig:6837-6838) precomputes both ENOENT fallbacks once,
+            // before any branch. Re-deriving them inline inside `unwrap_or_else`
+            // double-borrows `&mut self` (the outer `errno_sys_p` arg already holds
+            // a borrow into `sync_error_buf`).
+            let src_enoent_maybe = Maybe::<ret::CopyFile>::init_err_with_p(E::NOENT, sys::Tag::copyfile, self.os_path_into_sync_error_buf(src.as_slice()));
+            let dst_enoent_maybe = Maybe::<ret::CopyFile>::init_err_with_p(E::NOENT, sys::Tag::copyfile, self.os_path_into_sync_error_buf(dest.as_slice()));
             let stat_ = match reuse_stat {
                 Some(a) => a,
                 None => {
                     let a = unsafe { sys::c::GetFileAttributesW(src.as_ptr()) };
                     if a == sys::c::INVALID_FILE_ATTRIBUTES {
-                        return Maybe::<ret::CopyFile>::errno_sys_p(0, sys::Tag::copyfile, self.os_path_into_sync_error_buf(src.as_slice()))
-                            .unwrap_or_else(|| Maybe::<ret::CopyFile>::init_err_with_p(E::NOENT, sys::Tag::copyfile, self.os_path_into_sync_error_buf(src.as_slice())));
+                        let p = self.os_path_into_sync_error_buf(src.as_slice());
+                        return Maybe::<ret::CopyFile>::errno_sys_p(0, sys::Tag::copyfile, p).unwrap();
                     }
                     a
                 }
@@ -5745,8 +5773,8 @@ impl NodeFS {
                         _ => {}
                     }
                     let _ = err;
-                    let result = Maybe::<ret::CopyFile>::errno_sys_p(0, sys::Tag::copyfile, self.os_path_into_sync_error_buf(dest.as_slice()))
-                        .unwrap_or_else(|| Maybe::<ret::CopyFile>::init_err_with_p(E::NOENT, sys::Tag::copyfile, self.os_path_into_sync_error_buf(src.as_slice())));
+                    let p = self.os_path_into_sync_error_buf(dest.as_slice());
+                    let result = Maybe::<ret::CopyFile>::errno_sys_p(0, sys::Tag::copyfile, p).unwrap_or(src_enoent_maybe);
                     return Self::should_ignore_ebusy(&args.src, &args.dest, result);
                 }
                 return Maybe::SUCCESS;
@@ -5759,14 +5787,14 @@ impl NodeFS {
                 let wbuf = paths::os_path_buffer_pool().get();
                 let len = unsafe { windows::GetFinalPathNameByHandleW(handle.cast(), wbuf.as_mut_ptr(), wbuf.len() as u32, 0) } as usize;
                 if len == 0 || len >= wbuf.len() {
-                    return Maybe::<ret::CopyFile>::errno_sys_p(0, sys::Tag::copyfile, self.os_path_into_sync_error_buf(dest.as_slice()))
-                        .unwrap_or_else(|| Maybe::<ret::CopyFile>::init_err_with_p(E::NOENT, sys::Tag::copyfile, self.os_path_into_sync_error_buf(dest.as_slice())));
+                    let p = self.os_path_into_sync_error_buf(dest.as_slice());
+                    return Maybe::<ret::CopyFile>::errno_sys_p(0, sys::Tag::copyfile, p).unwrap_or(dst_enoent_maybe);
                 }
                 let flags = if stat_ & windows::FILE_ATTRIBUTE_DIRECTORY != 0 { windows::SYMBOLIC_LINK_FLAG_DIRECTORY } else { 0 };
                 wbuf[len] = 0;
                 if unsafe { windows::CreateSymbolicLinkW(dest.as_ptr(), wbuf.as_ptr(), flags) } == 0 {
-                    return Maybe::<ret::CopyFile>::errno_sys_p(0, sys::Tag::copyfile, self.os_path_into_sync_error_buf(dest.as_slice()))
-                        .unwrap_or_else(|| Maybe::<ret::CopyFile>::init_err_with_p(E::NOENT, sys::Tag::copyfile, self.os_path_into_sync_error_buf(dest.as_slice())));
+                    let p = self.os_path_into_sync_error_buf(dest.as_slice());
+                    return Maybe::<ret::CopyFile>::errno_sys_p(0, sys::Tag::copyfile, p).unwrap_or(dst_enoent_maybe);
                 }
                 return Maybe::SUCCESS;
             }

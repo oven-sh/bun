@@ -13,11 +13,15 @@ use bun_http_types::FetchRedirect::FetchRedirect;
 use bun_http_types::FetchRequestMode::FetchRequestMode;
 use bun_http_types::Method::Method;
 use crate::webcore::jsc::codegen::JSRequest as js;
-use crate::webcore::jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsRef, JsResult, Strong, URL};
+use crate::webcore::jsc::{
+    self as jsc, CallFrame, HTTPHeaderName, JSGlobalObject, JSValue, JsError, JsRef, JsResult,
+    Strong, URL,
+};
 use bun_ptr::weak_ptr::WeakPtrData;
 use crate::api::{AnyRequestContext, NodeHTTPResponse};
 use crate::webcore::body::{self, Body, BodyMixin, Value as BodyValue};
 use crate::webcore::{AbortSignal, Blob, CookieMap, FetchHeaders, ReadableStream, Response};
+use super::response::HeadersRef;
 use bun_str::{strings, String as BunString, ZigString};
 use bun_uws as uws;
 
@@ -35,7 +39,7 @@ pub type WeakRef = bun_ptr::WeakPtr<Request>;
 pub struct Request {
     pub url: BunString,
 
-    headers: Option<Arc<FetchHeaders>>,
+    headers: Option<HeadersRef>,
     pub signal: Option<Arc<AbortSignal>>,
     // TODO(port): mapped from *Body.Value.HiveRef per LIFETIMES.tsv. Zig pools
     // BodyValue in a HiveAllocator and mutates `#body.value` in place; Phase B
@@ -126,6 +130,137 @@ impl BodyMixin for Request {
         global_object: &JSGlobalObject,
     ) -> Option<ReadableStream> {
         Request::get_body_readable_stream(self, global_object)
+    }
+}
+
+// ─── un-gated header accessors & simple getters ─────────────────────────────
+impl Request {
+    // Returns if the request has headers already cached/set.
+    pub fn has_fetch_headers(&self) -> bool {
+        self.headers.is_some()
+    }
+
+    /// Sets the headers of the request. This will take ownership of the headers.
+    /// it will deref the previous headers if they exist.
+    pub fn set_fetch_headers(&mut self, headers: Option<HeadersRef>) {
+        // old_headers.deref() → handled by HeadersRef::Drop on assignment
+        self.headers = headers;
+    }
+
+    /// Returns the headers of the request. If the headers are not already cached, it will create a new FetchHeaders object.
+    /// If the headers are empty, it will look at request_context to get the headers.
+    /// If the headers are empty and request_context is null, it will create an empty FetchHeaders object.
+    pub fn ensure_fetch_headers(
+        &mut self,
+        global_this: &JSGlobalObject,
+    ) -> JsResult<&mut HeadersRef> {
+        if self.headers.is_some() {
+            // headers is already set
+            return Ok(self.headers.as_mut().unwrap());
+        }
+
+        if let Some(req) = self.request_context.get_request() {
+            // we have a request context, so we can get the headers from it
+            self.headers = Some(HeadersRef::create_from_uws(req as *mut core::ffi::c_void));
+        } else {
+            // we don't have a request context, so we need to create an empty headers object
+            self.headers = Some(HeadersRef::create_empty());
+            // PORT NOTE: reshaped for borrowck — Zig read `blob.content_type`
+            // through `self.body` while holding `self.headers`. Snapshot the
+            // pointer first; `Blob.content_type` is a raw `*const [u8]` that
+            // stays valid across the field borrow.
+            let content_type: Option<*const [u8]> = match &*self.body {
+                BodyValue::Blob(blob) => Some(blob.content_type),
+                // TODO(b2-blocked): `Locked.readable.get(global_this)` path —
+                // `PendingValue::readable` accessor + `ReadableStream.ptr.Blob`
+                // are still gated.
+                _ => None,
+            };
+
+            if let Some(content_type_) = content_type {
+                // SAFETY: Blob.content_type is always a valid (possibly empty)
+                // slice pointer (see Blob field contract).
+                let content_type_ = unsafe { &*content_type_ };
+                if !content_type_.is_empty() {
+                    self.headers.as_mut().unwrap().put(
+                        HTTPHeaderName::ContentType,
+                        content_type_,
+                        global_this,
+                    )?;
+                }
+            }
+        }
+
+        Ok(self.headers.as_mut().unwrap())
+    }
+
+    pub fn get_fetch_headers_unless_empty(&mut self) -> Option<&mut HeadersRef> {
+        if self.headers.is_none() {
+            if let Some(req) = self.request_context.get_request() {
+                // we have a request context, so we can get the headers from it
+                self.headers = Some(HeadersRef::create_from_uws(req as *mut core::ffi::c_void));
+            }
+        }
+
+        let headers = self.headers.as_mut()?;
+        if headers.is_empty() {
+            return None;
+        }
+        Some(headers)
+    }
+
+    /// This should only be called by the JS code. use getFetchHeaders to get the current headers or ensureFetchHeaders to get the headers and create them if they don't exist.
+    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
+    pub fn get_headers(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+        Ok(self.ensure_fetch_headers(global_this)?.to_js(global_this))
+    }
+
+    pub fn clone_headers(
+        &mut self,
+        global_this: &JSGlobalObject,
+    ) -> JsResult<Option<HeadersRef>> {
+        if self.headers.is_none() {
+            if let Some(uws_req) = self.request_context.get_request() {
+                self.headers =
+                    Some(HeadersRef::create_from_uws(uws_req as *mut core::ffi::c_void));
+            }
+        }
+
+        if let Some(head) = self.headers.as_mut() {
+            if head.is_empty() {
+                return Ok(None);
+            }
+
+            return head.clone_this(global_this);
+        }
+
+        Ok(None)
+    }
+
+    pub fn get_content_type(&mut self) -> JsResult<Option<bun_str::ZigStringSlice>> {
+        if let Some(req) = self.request_context.get_request() {
+            // SAFETY: `req` points to a live uWS HttpRequest for the duration
+            // of the request handler; header() returns a borrowed view.
+            if let Some(value) = unsafe { (*req).header(b"content-type") } {
+                return Ok(Some(bun_str::ZigStringSlice::from_utf8_never_free(value)));
+            }
+        }
+
+        if let Some(headers) = self.headers.as_mut() {
+            if let Some(value) = headers.fast_get(HTTPHeaderName::ContentType) {
+                return Ok(Some(value.to_slice()));
+            }
+        }
+
+        if let BodyValue::Blob(blob) = &*self.body {
+            // SAFETY: see ensure_fetch_headers note.
+            let ct = unsafe { &*blob.content_type };
+            if !ct.is_empty() {
+                return Ok(Some(bun_str::ZigStringSlice::from_utf8_never_free(ct)));
+            }
+        }
+
+        Ok(None)
     }
 }
 
@@ -265,7 +400,7 @@ impl Request {
     /// TODO: do we need this?
     pub fn init2(
         url: BunString,
-        headers: Option<Arc<FetchHeaders>>,
+        headers: Option<HeadersRef>,
         body: Arc<BodyValue>,
         method: Method,
     ) -> Request {

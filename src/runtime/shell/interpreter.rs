@@ -361,6 +361,13 @@ impl Interpreter {
     /// `deinit` (which closes IO, derefs the shell env, etc.) must run first;
     /// this only recycles the storage.
     pub fn free_node(&mut self, id: NodeId) {
+        // Guard: callers may have stored `NodeId::NONE` in `currently_executing`
+        // when `spawn_expr` failed (Subshell init error path). Spec never
+        // touches `currently_executing` on that path, so the later
+        // `deinit_node`/`free_node` is a no-op there too.
+        if id == NodeId::NONE || id == NodeId::INTERPRETER {
+            return;
+        }
         debug_assert!(
             !matches!(self.nodes[id.idx()], Node::Free),
             "double-free of {}",
@@ -513,6 +520,16 @@ impl Interpreter {
                     Ok(id) => id,
                     Err(e) => {
                         self.throw(&ShellErr::new_sys(e));
+                        // Spec divergence note: Zig's `Binary.makeChild` returns
+                        // `null` here and the caller falls through as if the
+                        // subshell exited 0 (Binary.zig:55-61, 130-134); Stmt.zig
+                        // returns `.failed` without touching `currently_executing`.
+                        // We return `NodeId::NONE` so callers that blindly store
+                        // it into `currently_executing` are still safe — guarded
+                        // in `deinit_node`/`free_node` below.
+                        // TODO(port): teach Stmt/Binary callers to treat
+                        // `NodeId::NONE` as the Zig fallthrough (synthetic exit 0
+                        // for Binary, plain `.failed` for Stmt).
                         return (NodeId::NONE, Yield::failed());
                     }
                 }
@@ -526,6 +543,12 @@ impl Interpreter {
     /// Run the per-state cleanup, then recycle the slot. Replaces every
     /// `child.deinit()` + `parent.destroy(child)` pair in Zig.
     pub fn deinit_node(&mut self, id: NodeId) {
+        // Guard the `NodeId::NONE` sentinel: `spawn_expr` returns it on
+        // Subshell init failure, and Stmt/Binary `currently_executing` may
+        // hold it. Indexing `nodes[u32::MAX-1]` would be OOB.
+        if id == NodeId::NONE || id == NodeId::INTERPRETER {
+            return;
+        }
         match self.nodes[id.idx()].kind() {
             StateKind::Script => Script::deinit(self, id),
             StateKind::Stmt => Stmt::deinit(self, id),
@@ -597,8 +620,11 @@ impl Interpreter {
     }
 
     pub fn throw(&mut self, err: &ShellErr) {
-        // TODO(b2-blocked): bun_jsc — throw_shell_err(err, self.event_loop)
-        let _ = err;
+        // Spec: `throwShellErr(err, event_loop)` raises a JS exception.
+        // TODO(b2-blocked): bun_jsc — throw_shell_err(err, self.event_loop).
+        // Until JSC is wired, stash the underlying syscall error so `finish`/
+        // the JS resolve path can surface it instead of silently dropping it.
+        self.last_err = Some(err.0.clone());
     }
 
     // ── run loop ───────────────────────────────────────────────────────────
@@ -828,7 +854,10 @@ impl CowFd {
         unsafe {
             (*this).refcount -= 1;
             if (*this).refcount == 0 {
-                // TODO(port): (*this).__fd.close();
+                // Spec `CowFd.deinit` (interpreter.zig:192-196): close the fd
+                // before freeing. `closefd` tolerates EBADF like Zig's
+                // `closeAllowingBadFileDescriptor`.
+                closefd((*this).__fd);
                 drop(Box::from_raw(this));
             }
         }

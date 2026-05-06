@@ -2205,9 +2205,23 @@ impl CssRef {
     }
 
     pub fn to_real_ref(self, source_index: u32) -> bun_logger::Ref {
-        // bun_logger::Ref packs (inner_index, source_index, is_slice) — the
-        // Symbol tag is implied by `is_source_contents_slice = false`.
-        bun_logger::Ref::init(self.inner_index(), source_index, false)
+        // Spec (css_parser.zig) constructs `Ref{ .tag = .symbol, ... }`.
+        // `Ref::init(.., false)` would yield RefTag::AllocatedName, which is wrong —
+        // downstream `ref.is_symbol()` checks (bundler symbol-map paths) would fail
+        // for CSS-module locals. `Ref::pack` is crate-private, so inline its
+        // bit-packing here (Ref is #[repr(transparent)] u64; layout is stable).
+        const INNER_MASK: u64 = (1u64 << 31) - 1;
+        const SRC_SHIFT: u32 = 33;
+        const SYMBOL_TAG: u64 = 3; // RefTag::Symbol
+        let packed = (self.inner_index() as u64 & INNER_MASK)
+            | (SYMBOL_TAG << 31)
+            | ((source_index as u64 & INNER_MASK) << SRC_SHIFT);
+        // SAFETY: bun_logger::Ref is #[repr(transparent)] over u64.
+        let r: bun_logger::Ref = unsafe { core::mem::transmute::<u64, bun_logger::Ref>(packed) };
+        debug_assert!(r.is_symbol());
+        debug_assert_eq!(r.inner_index(), self.inner_index());
+        debug_assert_eq!(r.source_index(), source_index);
+        r
     }
 }
 
@@ -2807,6 +2821,7 @@ impl<AtRule> StyleSheet<AtRule> {
         }
         #[cfg(not(any()))] {
         let _ = (count, new_import_records);
+        todo!("pluck_imports exec pass");
         }
     }
 }

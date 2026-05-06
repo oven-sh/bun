@@ -828,8 +828,8 @@ impl<'a> Parser<'a> {
                 for stmt in stmts.iter_mut() {
                     if matches!(stmt.data, js_ast::StmtData::SEnum(_)) {
                         // SAFETY: stash the unique `&'a mut [_]` as a raw ptr.
-                        let old_scopes_in_order: *mut [_] =
-                            core::mem::replace(&mut p.scope_order_to_visit, &mut []);
+                        let old_scopes_in_order =
+                            core::mem::replace(&mut p.scope_order_to_visit, &mut []) as *mut [_];
                         let idx = p
                             .scopes_in_order_for_enum
                             .keys()
@@ -973,7 +973,7 @@ impl<'a> Parser<'a> {
             return Err(err!("SyntaxError"));
         }
 
-        let postvisit_tracer = bun_core::perf::trace("JSParser::postvisit");
+        let mut postvisit_tracer = bun_core::perf::trace("JSParser::postvisit");
         let _postvisit_guard = scopeguard::guard((), move |_| postvisit_tracer.end());
 
         let mut uses_dirname =
@@ -1099,13 +1099,17 @@ impl<'a> Parser<'a> {
             }
 
             if p.commonjs_named_exports.count() > 0 {
-                let export_refs = p.commonjs_named_exports.values();
-                let export_names = p.commonjs_named_exports.keys();
+                // PORT NOTE: borrowck — `deoptimize_commonjs_named_exports` mut-borrows
+                // `self`, so the `values()`/`keys()` slices are read once into locals
+                // (Zig kept slice handles across the call).
+                let export_names_len = p.commonjs_named_exports.keys().len();
+                let first_export_ref_loc = p.commonjs_named_exports.values()[0].loc_ref.loc;
+                let export_refs_len = p.commonjs_named_exports.values().len();
 
                 'break_optimize: {
                     if !p.commonjs_named_exports_deoptimized {
                         let mut needs_decl_count: usize = 0;
-                        for export_ref in export_refs.iter() {
+                        for export_ref in p.commonjs_named_exports.values().iter() {
                             needs_decl_count += export_ref.needs_decl as usize;
                         }
                         // This is a workaround for packages which have broken ESM checks
@@ -1117,7 +1121,7 @@ impl<'a> Parser<'a> {
                         if p.options.module_type == options::ModuleType::Esm
                             || p.has_es_module_syntax
                         {
-                            if needs_decl_count == export_names.len() {
+                            if needs_decl_count == export_names_len {
                                 force_esm = true;
                                 break 'break_optimize;
                             }
@@ -1125,14 +1129,14 @@ impl<'a> Parser<'a> {
 
                         if needs_decl_count > 0 {
                             p.symbols.as_mut_slice()[p.exports_ref.inner_index() as usize]
-                                .use_count_estimate += export_refs.len() as u32;
+                                .use_count_estimate += export_refs_len as u32;
                             p.deoptimize_commonjs_named_exports();
                         }
                     }
                 }
 
                 if !p.commonjs_named_exports_deoptimized && p.esm_export_keyword.len == 0 {
-                    p.esm_export_keyword.loc = export_refs[0].loc_ref.loc;
+                    p.esm_export_keyword.loc = first_export_ref_loc;
                     p.esm_export_keyword.len = 5;
                 }
             }
@@ -1630,13 +1634,14 @@ impl<'a> Parser<'a> {
             let decls = p.allocator.alloc_slice_fill_with::<G::Decl, _>(count, |_| G::Decl::default());
             if uses_dirname {
                 // var __dirname = import.meta
+                let import_meta = p.new_expr(E::ImportMeta {}, logger::Loc::EMPTY);
                 decls[0] = G::Decl {
                     binding: p.b(B::Identifier { r#ref: p.dirname_ref }, logger::Loc::EMPTY),
                     value: Some(p.new_expr(
                         E::Dot {
                             name: b"dir",
                             name_loc: logger::Loc::EMPTY,
-                            target: p.new_expr(E::ImportMeta {}, logger::Loc::EMPTY),
+                            target: import_meta,
                             ..Default::default()
                         },
                         logger::Loc::EMPTY,
@@ -1646,13 +1651,14 @@ impl<'a> Parser<'a> {
             }
             if uses_filename {
                 // var __filename = import.meta.path
+                let import_meta = p.new_expr(E::ImportMeta {}, logger::Loc::EMPTY);
                 decls[uses_dirname as usize] = G::Decl {
                     binding: p.b(B::Identifier { r#ref: p.filename_ref }, logger::Loc::EMPTY),
                     value: Some(p.new_expr(
                         E::Dot {
                             name: b"path",
                             name_loc: logger::Loc::EMPTY,
-                            target: p.new_expr(E::ImportMeta {}, logger::Loc::EMPTY),
+                            target: import_meta,
                             ..Default::default()
                         },
                         logger::Loc::EMPTY,

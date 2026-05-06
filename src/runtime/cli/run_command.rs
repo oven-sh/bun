@@ -621,7 +621,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 for (k, v) in config.keys().iter().zip(config.values().iter()) {
                     let key = strings::concat(&[b"npm_package_config_", &k[..]])?;
                     // PERF(port): was assume_capacity
-                    env_loader.map.put_assume_capacity(&key, v);
+                    env_loader.map.put_assume_capacity(&key, *v);
                 }
             }
         }
@@ -1218,7 +1218,7 @@ impl RunCommand {
             let root_dir = unsafe { &*root_dir_info };
             if let Some(package_json) = root_dir.enclosing_package_json {
                 if let Some(scripts) = package_json.scripts.as_deref() {
-                    if let Some(script_content) = scripts.get(target_name) {
+                    if let Some(&script_content) = scripts.get(target_name) {
                         bun_core::scoped_log!(
                             RUN,
                             "Found matching script `{}`",
@@ -1261,7 +1261,7 @@ impl RunCommand {
                         let silent = ctx.debug.silent;
                         let use_system_shell = ctx.debug.use_system_shell;
 
-                        if let Some(prescript) = scripts.get(&temp_script_buffer[1..]) {
+                        if let Some(&prescript) = scripts.get(&temp_script_buffer[1..]) {
                             Self::run_package_script_foreground(
                                 ctx,
                                 prescript,
@@ -1287,7 +1287,7 @@ impl RunCommand {
 
                         temp_script_buffer[..b"post".len()].copy_from_slice(b"post");
 
-                        if let Some(postscript) = scripts.get(&temp_script_buffer[..]) {
+                        if let Some(&postscript) = scripts.get(&temp_script_buffer[..]) {
                             Self::run_package_script_foreground(
                                 ctx,
                                 postscript,

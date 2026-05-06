@@ -1,10 +1,11 @@
-use crate::css_parser as css;
-use css::css_rules::layer::LayerName;
-use css::css_rules::supports::SupportsCondition;
-use css::css_rules::Location;
-use css::{dependencies, Dependency, MediaList, PrintErr, Printer};
+use crate as css;
+use crate::css_rules::layer::LayerName;
+use crate::css_rules::supports::SupportsCondition;
+use crate::css_rules::Location;
+use crate::media_query::MediaList;
+use crate::{PrintErr, Printer};
 
-use bun_alloc::Arena; // bumpalo::Bump re-export
+use bun_alloc::Arena;
 use bun_collections::BabyList;
 use bun_options_types::ImportRecord;
 
@@ -13,13 +14,13 @@ use bun_options_types::ImportRecord;
 /// structs are layout-identical (the code `@ptrCast`s between the parents), so
 /// we use a single Rust type for both.
 #[repr(C)]
-#[derive(Clone)]
-pub struct ImportLayer {
+#[derive(Default)]
+pub struct Layer {
     /// PERF: null pointer optimizaiton, nullable
     pub v: Option<LayerName>,
 }
 
-impl ImportLayer {
+impl Layer {
     pub fn eql(&self, other: &Self) -> bool {
         match (&self.v, &other.v) {
             (None, None) => true,
@@ -27,20 +28,16 @@ impl ImportLayer {
             (Some(a), Some(b)) => a.eql(b),
         }
     }
-
-    pub fn deep_clone(&self, allocator: &Arena) -> Self {
-        // TODO(port): css.implementDeepClone is comptime-reflection field-walk; replace with derive
-        css::implement_deep_clone(self, allocator)
-    }
 }
 
 /// TODO: change this to be field on ImportRule
 /// The fields of this struct need to match the fields of ImportRule
 /// because we cast between them
 #[repr(C)]
+#[derive(Default)]
 pub struct ImportConditions {
     /// An optional cascade layer name, or `None` for an anonymous layer.
-    pub layer: Option<ImportLayer>,
+    pub layer: Option<Layer>,
 
     /// An optional `supports()` condition.
     pub supports: Option<SupportsCondition>,
@@ -49,62 +46,34 @@ pub struct ImportConditions {
     pub media: MediaList,
 }
 
-impl Default for ImportConditions {
-    fn default() -> Self {
-        Self {
-            layer: None,
-            supports: None,
-            media: MediaList::default(),
-        }
-    }
-}
-
 impl ImportConditions {
-    pub fn hash<H: core::hash::Hasher>(&self, hasher: &mut H) {
-        // TODO(port): css.implementHash is comptime-reflection field-walk; replace with #[derive(Hash)]
-        css::implement_hash(self, hasher);
-    }
-
     pub fn has_anonymous_layer(&self) -> bool {
         matches!(&self.layer, Some(l) if l.v.is_none())
-    }
-
-    pub fn deep_clone(&self, allocator: &Arena) -> ImportConditions {
-        ImportConditions {
-            layer: match &self.layer {
-                Some(l) => Some(ImportLayer {
-                    v: l.v.as_ref().map(|layer| layer.deep_clone(allocator)),
-                }),
-                None => None,
-            },
-            supports: self.supports.as_ref().map(|s| s.deep_clone(allocator)),
-            media: self.media.deep_clone(allocator),
-        }
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         if let Some(lyr) = &self.layer {
             dest.write_str(" layer")?;
             if let Some(l) = &lyr.v {
-                dest.write_char('(')?;
+                dest.write_char(b'(')?;
                 l.to_css(dest)?;
-                dest.write_char(')')?;
+                dest.write_char(b')')?;
             }
         }
 
         if let Some(sup) = &self.supports {
             dest.write_str(" supports")?;
-            if matches!(sup, SupportsCondition::Declaration { .. }) {
+            if matches!(sup, SupportsCondition::Declaration(_)) {
                 sup.to_css(dest)?;
             } else {
-                dest.write_char('(')?;
+                dest.write_char(b'(')?;
                 sup.to_css(dest)?;
-                dest.write_char(')')?;
+                dest.write_char(b')')?;
             }
         }
 
         if !self.media.media_queries.is_empty() {
-            dest.write_char(' ')?;
+            dest.write_char(b' ')?;
             self.media.to_css(dest)?;
         }
         Ok(())
@@ -136,21 +105,20 @@ impl ImportConditions {
     ///
     /// But this could change in the future, so still keeping this function.
     ///
+    // blocked_on: MediaList::clone_with_import_records (no impl yet on MediaList).
+    #[cfg(any())]
     pub fn clone_with_import_records(
         &self,
         allocator: &Arena,
         import_records: &mut BabyList<ImportRecord>,
     ) -> ImportConditions {
         ImportConditions {
-            layer: match &self.layer {
-                Some(layer) => Some(ImportLayer {
-                    v: layer
-                        .v
-                        .as_ref()
-                        .map(|l| l.clone_with_import_records(allocator, import_records)),
-                }),
-                None => None,
-            },
+            layer: self.layer.as_ref().map(|layer| Layer {
+                v: layer
+                    .v
+                    .as_ref()
+                    .map(|l| l.clone_with_import_records(allocator, import_records)),
+            }),
             supports: self
                 .supports
                 .as_ref()
@@ -180,11 +148,11 @@ impl ImportConditions {
 #[repr(C)]
 pub struct ImportRule {
     /// The url to import.
-    // TODO(port): arena-owned slice; consider `&'bump [u8]` once crate-wide lifetime is threaded
-    pub url: *const [u8],
+    // TODO(port): arena lifetime — `&'bump [u8]` once crate-wide thread lands.
+    pub url: &'static [u8],
 
     /// An optional cascade layer name, or `None` for an anonymous layer.
-    pub layer: Option<ImportLayer>,
+    pub layer: Option<Layer>,
 
     /// An optional `supports()` condition.
     pub supports: Option<SupportsCondition>,
@@ -201,40 +169,35 @@ pub struct ImportRule {
     pub loc: Location,
 }
 
-impl ImportRule {
-    pub fn from_url(url: &[u8]) -> Self {
+impl Default for ImportRule {
+    fn default() -> Self {
         Self {
-            url: url as *const [u8],
+            url: b"",
             layer: None,
             supports: None,
-            media: MediaList { media_queries: Default::default() },
+            media: MediaList::default(),
             import_record_idx: u32::MAX,
             loc: Location::dummy(),
         }
     }
+}
 
-    pub fn from_url_and_import_record_idx(url: &[u8], import_record_idx: u32) -> Self {
-        Self {
-            url: url as *const [u8],
-            layer: None,
-            supports: None,
-            media: MediaList { media_queries: Default::default() },
-            import_record_idx,
-            loc: Location::dummy(),
-        }
+impl ImportRule {
+    pub fn from_url(url: &'static [u8]) -> Self {
+        Self { url, ..Default::default() }
     }
 
-    pub fn from_conditions_and_url(url: &[u8], conds: ImportConditions) -> Self {
+    pub fn from_url_and_import_record_idx(url: &'static [u8], import_record_idx: u32) -> Self {
+        Self { url, import_record_idx, ..Default::default() }
+    }
+
+    pub fn from_conditions_and_url(url: &'static [u8], conds: ImportConditions) -> Self {
         Self {
-            url: url as *const [u8],
-            layer: match conds.layer {
-                Some(layer) => Some(ImportLayer { v: layer.v }),
-                None => None,
-            },
+            url,
+            layer: conds.layer,
             supports: conds.supports,
             media: conds.media,
-            import_record_idx: u32::MAX,
-            loc: Location::dummy(),
+            ..Default::default()
         }
     }
 
@@ -243,30 +206,29 @@ impl ImportRule {
         // laid out identically to the {layer, supports, media} field run of ImportRule
         // (also #[repr(C)]). The Zig code relies on this same layout pun via @ptrCast.
         // TODO(port): replace with an actual `conditions: ImportConditions` field on ImportRule
-        unsafe { &*(&self.layer as *const Option<ImportLayer> as *const ImportConditions) }
+        unsafe { &*(&self.layer as *const Option<Layer> as *const ImportConditions) }
     }
 
     pub fn conditions_mut(&mut self) -> &mut ImportConditions {
         // SAFETY: see `conditions()` above.
-        unsafe { &mut *(&mut self.layer as *mut Option<ImportLayer> as *mut ImportConditions) }
+        unsafe { &mut *(&mut self.layer as *mut Option<Layer> as *mut ImportConditions) }
     }
 
     /// The `import_records` here is preserved from esbuild in the case that we do need it, it doesn't seem necessary now
+    // blocked_on: MediaList::clone_with_import_records (no impl yet on MediaList).
+    #[cfg(any())]
     pub fn conditions_with_import_records(
         &self,
         allocator: &Arena,
         import_records: &mut BabyList<ImportRecord>,
     ) -> ImportConditions {
         ImportConditions {
-            layer: match &self.layer {
-                Some(layer) => Some(ImportLayer {
-                    v: layer
-                        .v
-                        .as_ref()
-                        .map(|l| l.clone_with_import_records(allocator, import_records)),
-                }),
-                None => None,
-            },
+            layer: self.layer.as_ref().map(|layer| Layer {
+                v: layer
+                    .v
+                    .as_ref()
+                    .map(|l| l.clone_with_import_records(allocator, import_records)),
+            }),
             supports: self
                 .supports
                 .as_ref()
@@ -280,8 +242,11 @@ impl ImportRule {
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        let dep = if dest.dependencies.is_some() {
-            Some(dependencies::ImportDependency::new(
+        // blocked_on: dependencies::ImportDependency::new (its impl block is
+        // `#[cfg(any())]`-gated on `to_css::string` + `css_modules::hash`).
+        #[cfg(any())]
+        let dep: Option<css::dependencies::ImportDependency> = if dest.dependencies.is_some() {
+            Some(css::dependencies::ImportDependency::new(
                 dest.allocator,
                 self,
                 dest.filename(),
@@ -291,66 +256,65 @@ impl ImportRule {
         } else {
             None
         };
+        #[cfg(not(any()))]
+        let dep: Option<css::dependencies::ImportDependency> = None;
 
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
 
         dest.write_str("@import ")?;
         if let Some(d) = dep {
-            if css::serializer::serialize_string(&d.placeholder, dest).is_err() {
-                return dest.add_fmt_error();
-            }
+            // SAFETY: `placeholder` is arena-allocated by `css_modules::hash`
+            // and outlives this print call.
+            let placeholder = unsafe { &*d.placeholder };
+            css::serializer::serialize_string(placeholder, dest)
+                .map_err(|_| dest.add_fmt_error())?;
 
             if let Some(deps) = &mut dest.dependencies {
                 // PERF(port): was `catch unreachable` (alloc cannot fail under arena)
-                deps.push(Dependency::Import(d));
+                deps.push(css::Dependency::Import(d));
             }
         } else {
-            // SAFETY: `url` is an arena-owned slice valid for the lifetime of `self`.
-            let url = unsafe { &*self.url };
-            if css::serializer::serialize_string(url, dest).is_err() {
-                return dest.add_fmt_error();
-            }
+            css::serializer::serialize_string(self.url, dest)
+                .map_err(|_| dest.add_fmt_error())?;
         }
 
         if let Some(lyr) = &self.layer {
             dest.write_str(" layer")?;
             if let Some(l) = &lyr.v {
-                dest.write_char('(')?;
+                dest.write_char(b'(')?;
                 l.to_css(dest)?;
-                dest.write_char(')')?;
+                dest.write_char(b')')?;
             }
         }
 
         if let Some(sup) = &self.supports {
             dest.write_str(" supports")?;
-            if matches!(sup, SupportsCondition::Declaration { .. }) {
+            if matches!(sup, SupportsCondition::Declaration(_)) {
                 sup.to_css(dest)?;
             } else {
-                dest.write_char('(')?;
+                dest.write_char(b'(')?;
                 sup.to_css(dest)?;
-                dest.write_char(')')?;
+                dest.write_char(b')')?;
             }
         }
 
         if !self.media.media_queries.is_empty() {
-            dest.write_char(' ')?;
+            dest.write_char(b' ')?;
             self.media.to_css(dest)?;
         }
-        dest.write_str(";")?;
-        Ok(())
-    }
-
-    pub fn deep_clone(&self, allocator: &Arena) -> Self {
-        // TODO(port): css.implementDeepClone is comptime-reflection field-walk; replace with derive
-        css::implement_deep_clone(self, allocator)
+        dest.write_str(";")
     }
 }
+
+// silence unused-import warnings on the gated bodies' deps
+#[allow(unused_imports)]
+use {Arena as _Arena, BabyList as _BabyList, ImportRecord as _ImportRecord};
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/css/rules/import.zig (268 lines)
 //   confidence: medium
 //   todos:      4
-//   notes:      layout-pun conditions()/conditions_mut() needs #[repr(C)] verified; url field is raw arena ptr pending crate-wide 'bump lifetime; implement_hash/implement_deep_clone are reflection helpers needing trait/derive in Phase B
+//   notes:      layout-pun conditions()/conditions_mut() needs #[repr(C)] verified; url laundered as &'static [u8] pending crate-wide 'bump; clone_with_import_records / conditions_with_import_records gated on MediaList::clone_with_import_records; ImportDependency hookup in to_css gated on dependencies.rs un-gate; inherent deep_clone via deep_clone_shim! in mod.rs
 // ──────────────────────────────────────────────────────────────────────────

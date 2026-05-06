@@ -813,10 +813,87 @@ fn classify<'a>(data: &'a syn::DataEnum) -> syn::Result<Vec<VariantShape<'a>>> {
     Ok(out)
 }
 
+/// `true` when `ty` is spelled `Option<…>` (any path ending in `Option` with one
+/// generic argument). Used by the struct branch of `expand_derive_to_css` to
+/// mirror Zig's `@typeInfo(field.type) == .optional` unwrap.
+fn is_option_type(ty: &syn::Type) -> bool {
+    let syn::Type::Path(tp) = ty else { return false };
+    let Some(seg) = tp.path.segments.last() else { return false };
+    if seg.ident != "Option" {
+        return false;
+    }
+    matches!(
+        &seg.arguments,
+        syn::PathArguments::AngleBracketed(ab) if ab.args.len() == 1
+    )
+}
+
 fn expand_derive_to_css(input: DeriveInput) -> syn::Result<TokenStream2> {
     let name = &input.ident;
-    let Data::Enum(data) = &input.data else {
-        return Err(syn::Error::new_spanned(name, "#[derive(ToCss)] is only valid on enums"));
+    let data = match &input.data {
+        Data::Enum(data) => data,
+        // ── Struct branch ──────────────────────────────────────────────────
+        // Port of the `__generateToCss` auto-serializer in Zig's
+        // `DeriveToCss` (`src/css/css_parser.zig:821-843`): for a payload
+        // struct whose Zig original carried `pub fn __generateToCss() void {}`,
+        // the printer is the field sequence, space-separated, with optionals
+        // unwrapped (and the inter-field space emitted unconditionally — that
+        // is what the Zig does, so we do not second-guess it here).
+        //
+        // The Zig dispatched this from inside the *enum*'s `toCss` via
+        // `@typeInfo` reflection on the payload type. Rust proc-macros cannot
+        // see through a type name, so the equivalent is deriving `ToCss`
+        // directly on the payload struct; the enum arm's
+        // `__inner.to_css(__dest)` then resolves to this generated inherent.
+        Data::Struct(s) => {
+            let Fields::Named(named) = &s.fields else {
+                return Err(syn::Error::new_spanned(
+                    name,
+                    "#[derive(ToCss)] on a struct requires named fields \
+                     (Zig `__generateToCss` shape)",
+                ));
+            };
+            let (impl_g, ty_g, where_g) = input.generics.split_for_impl();
+            let fields: Vec<_> = named.named.iter().collect();
+            let last = fields.len().saturating_sub(1);
+            let stmts = fields.iter().enumerate().map(|(j, f)| {
+                let fname = f.ident.as_ref().unwrap();
+                let body = if is_option_type(&f.ty) {
+                    quote! {
+                        if let ::core::option::Option::Some(__v) = &self.#fname {
+                            __v.to_css(__dest)?;
+                        }
+                    }
+                } else {
+                    quote! { self.#fname.to_css(__dest)?; }
+                };
+                let sep = if fields.len() > 1 && j != last {
+                    quote! { __dest.write_char(b' ')?; }
+                } else {
+                    quote! {}
+                };
+                quote! { #body #sep }
+            });
+            return Ok(quote! {
+                #[automatically_derived]
+                #[allow(dead_code)]
+                impl #impl_g #name #ty_g #where_g {
+                    pub fn to_css(
+                        &self,
+                        __dest: &mut ::bun_css::printer::Printer<'_>,
+                    ) -> ::core::result::Result<(), ::bun_css::PrintErr> {
+                        #(#stmts)*
+                        ::core::result::Result::Ok(())
+                    }
+                }
+            });
+        }
+        Data::Union(_) => {
+            return Err(syn::Error::new_spanned(
+                name,
+                "#[derive(ToCss)] is only valid on enums and named-field structs",
+            ));
+        }
     };
     let shapes = classify(data)?;
     let (impl_g, ty_g, where_g) = input.generics.split_for_impl();

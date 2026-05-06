@@ -1,18 +1,16 @@
-use crate::css_parser as css;
-use crate::values as css_values;
-use css::Printer;
-use css::PrintErr;
-
-pub use css::Error;
+use crate::css_rules::Location;
+use crate::values::ident::Ident;
+use crate::values::string::{CssString, CssStringFns};
+use crate::{PrintErr, Printer};
 
 /// A [@namespace](https://drafts.csswg.org/css-namespaces/#declaration) rule.
 pub struct NamespaceRule {
     /// An optional namespace prefix to declare, or `None` to declare the default namespace.
-    pub prefix: Option<css::Ident>,
+    pub prefix: Option<Ident>,
     /// The url of the namespace.
-    pub url: css::CSSString,
+    pub url: CssString,
     /// The location of the rule in the source file.
-    pub loc: css::Location,
+    pub loc: Location,
 }
 
 impl NamespaceRule {
@@ -22,24 +20,19 @@ impl NamespaceRule {
 
         dest.write_str("@namespace ")?;
         if let Some(prefix) = &self.prefix {
-            css_values::ident::IdentFns::to_css(prefix, dest)?;
-            dest.write_char(' ')?;
+            prefix.to_css(dest)?;
+            dest.write_char(b' ')?;
         }
 
-        css_values::string::CSSStringFns::to_css(&self.url, dest)?;
-        dest.write_char(';')
-    }
-
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-        // TODO(port): implement_deep_clone uses @typeInfo field iteration; replace with #[derive] or per-type trait in Phase B
-        css::implement_deep_clone(self, bump)
+        CssStringFns::to_css(&self.url, dest)?;
+        dest.write_char(b';')
     }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/css/rules/namespace.zig (38 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      deep_clone relies on comptime-reflection helper; arena (&Bump) threaded per AST-crate rule
+//   confidence: high
+//   todos:      0
+//   notes:      inherent deep_clone provided by deep_clone_shim! in mod.rs until DeepClone derive lands
 // ──────────────────────────────────────────────────────────────────────────

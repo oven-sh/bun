@@ -73,8 +73,9 @@ pub struct Transpiler<'a> {
     pub source_map: options::SourceMapOption,
 
     // TODO(b2-blocked): crate::linker::Linker — `linker` module is still gated
-    // (depends on bun_css / runtime printer surface). Field kept opaque so
-    // `set_log`/`set_allocator` bodies stay in the draft until then.
+    // (depends on bun_css / runtime printer surface). Field kept as the opaque
+    // unit stub `crate::Linker(())`; `set_log`/`set_allocator` skip the
+    // `linker.log`/`linker.allocator` write until the real type lands.
     pub linker: crate::Linker,
     pub timer: SystemTimer,
     // TODO(port): lifetime — Zig stored `&DotEnv.Loader` (global singleton).

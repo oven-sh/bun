@@ -454,7 +454,10 @@ impl TimerObjectInternals {
 
     pub fn run(
         &mut self,
-        global_this: &JSGlobalObject,
+        // Zig spec: `globalThis: *jsc.JSGlobalObject` — keep as raw *mut so we
+        // forward provenance to C++ without a `&T as *const T as *mut T` cast
+        // (UB when C++ mutates VM/exception state through it).
+        global_this: *mut JSGlobalObject,
         timer: JSValue,
         callback: JSValue,
         arguments: JSValue,
@@ -462,21 +465,24 @@ impl TimerObjectInternals {
         vm: &mut VirtualMachine,
     ) -> bool {
         if vm.is_inspector_enabled() {
-            Debugger::will_dispatch_async_call(global_this, Debugger::AsyncCallType::DOMTimer, async_id);
+            // SAFETY: `global_this` is `vm.global`, live for the duration of the call.
+            Debugger::will_dispatch_async_call(unsafe { &*global_this }, Debugger::AsyncCallType::DOMTimer, async_id);
         }
 
         // Bun__JSTimeout__call handles exceptions.
         self.flags.set_in_callback(true);
-        // SAFETY: FFI call into C++; arguments are valid JSC handles on the JS thread.
+        // SAFETY: FFI call into C++ on the JS thread; `global_this` is the live
+        // per-thread global and all JSValue args are GC-rooted by the caller.
         let result = unsafe {
-            Bun__JSTimeout__call(global_this as *const _ as *mut _, timer, callback, arguments)
+            Bun__JSTimeout__call(global_this, timer, callback, arguments)
         };
         // defer self.flags.in_callback = false;
         self.flags.set_in_callback(false);
 
         // defer { if vm.isInspectorEnabled() ... }
         if vm.is_inspector_enabled() {
-            Debugger::did_dispatch_async_call(global_this, Debugger::AsyncCallType::DOMTimer, async_id);
+            // SAFETY: as above.
+            Debugger::did_dispatch_async_call(unsafe { &*global_this }, Debugger::AsyncCallType::DOMTimer, async_id);
         }
 
         result

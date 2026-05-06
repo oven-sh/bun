@@ -99,7 +99,14 @@ pub mod install_stubs {
             pub fn npm(&self) -> &NpmInfo { &self.npm }
         }
         #[derive(Default, Clone)]
-        pub struct NpmInfo { pub version: bun_semver::query::Group }
+        pub struct NpmInfo { pub version: NpmGroup }
+        /// FORWARD_DECL: `bun_semver::query::Group` — the real type is a linked
+        /// list (`NonNull`, neither `Clone` nor `Send`). The resolver only
+        /// calls `.is_exact()` on the dormant auto-install path; the install
+        /// hook supplies the real value when wired.
+        #[derive(Default, Clone)]
+        pub struct NpmGroup { _opaque: () }
+        impl NpmGroup { pub fn is_exact(&self) -> bool { false } }
     }
 
     #[derive(Default, Clone)]

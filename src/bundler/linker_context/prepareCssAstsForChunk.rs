@@ -207,9 +207,13 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                     }
 
                     let mut empty_conditions = ImportConditions::default();
-                    let actual_conditions: &mut ImportConditions = match conditions {
-                        Some(cc) => cc,
-                        None => &mut empty_conditions,
+                    // Index 0 is disjoint from every `at(j)` (j>=1) read above; only
+                    // now do we materialize the exclusive borrow that Zig's raw pointer
+                    // held the whole time.
+                    let actual_conditions: &mut ImportConditions = if had_conditions {
+                        entry.conditions.get_mut(0)
+                    } else {
+                        &mut empty_conditions
                     };
 
                     entry.condition_import_records.push(

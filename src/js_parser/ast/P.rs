@@ -914,12 +914,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 let should_unwrap_require = self.options.features.unwrap_commonjs_to_esm
                     && (self.unwrap_all_requires
                         || path_package_name(&path)
-                            // TODO(b2-blocked): stub `Runtime::Features.should_unwrap_require`
-                            // is a bool, not the per-package predicate. The real
-                            // `runtime.rs::Features::should_unwrap_require(pkg)` matches
-                            // against `unwrap_commonjs_packages`; restore once
-                            // `RuntimeFeatures` aliases the real struct.
-                            .map(|_pkg| self.options.features.should_unwrap_require)
+                            .map(|pkg| self.options.features.should_unwrap_require(pkg))
                             .unwrap_or(false))
                     // We cannot unwrap a require wrapped in a try/catch because
                     // import statements cannot be wrapped in a try/catch and
@@ -6824,8 +6819,18 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             loc,
         )
     }
+}
 
-    #[cfg(any())] // blocked_on: ImportScanner::scan_stub; ConvertESMExportsForHmr; full Ast struct field set; compute_ts_enums_map
+// ═══════════════════════════════════════════════════════════════════════════
+// Round-G un-gate: P::to_ast — final assembly P→Ast.
+// Split out of the round-D/E gated block above so the parser entry point
+// (`Parser::parse` → `to_ast`) typechecks. Heavy sub-calls that are still
+// round-E (`ImportScanner::scan`, `ConvertESMExportsForHmr`,
+// `apply_repl_transforms`, `compute_character_frequency`) are wired to their
+// real signatures; their bodies `todo!()` until their own un-gate rounds.
+impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
+    P<'a, TYPESCRIPT, J, SCAN_ONLY>
+{
     pub fn to_ast(
         &mut self,
         parts: &mut ListManaged<'a, js_ast::Part>,
@@ -6833,7 +6838,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         wrap_mode: WrapMode,
         hashbang: &'a [u8],
     ) -> Result<js_ast::Ast, bun_core::Error> {
+        use crate::ast::import_scanner::ImportScanner;
+        use crate::ast::convert_esm_exports_for_hmr::ConvertESMExportsForHmr;
+
         let allocator = self.allocator;
+        let _ = hashbang; // TODO(port): Ast.hashbang is `&'static [u8]`; needs lifetime param on Ast.
 
         // if (p.options.tree_shaking and p.options.features.trim_unused_imports) {
         //     p.treeShake(&parts, false);
@@ -6851,24 +6860,54 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             debug_assert!(!self.options.tree_shaking);
             debug_assert!(self.options.features.hot_module_reloading);
 
-            let last_idx = parts.len() - 1;
+            // PORT NOTE: Zig held `&mut parts[last]` inside `hmr_transform_ctx`
+            // while iterating `parts` — Rust borrowck rejects that aliasing.
+            // Reshaped via `split_last_mut` so the head slice and tail part are
+            // disjoint borrows.
+            let (last_part, head_parts) = parts
+                .split_last_mut()
+                .expect("hot_module_reloading parse always has at least one part");
             let mut hmr_transform_ctx = ConvertESMExportsForHmr {
-                last_part: &mut parts[last_idx],
+                last_part,
                 is_in_node_modules: self.source.path.is_node_module(),
-                ..Default::default()
+                imports_seen: Default::default(),
+                export_star_props: BumpVec::new_in(allocator),
+                export_props: BumpVec::new_in(allocator),
+                stmts: BumpVec::new_in(allocator),
             };
             hmr_transform_ctx.stmts.reserve({
                 // get a estimate on how many statements there are going to be
                 let mut count: usize = 0;
-                for part in parts.iter() {
-                    count += part.stmts.len();
+                for part in head_parts.iter() {
+                    // SAFETY: Part.stmts is an arena-owned slice valid for 'a.
+                    count += unsafe { &*part.stmts }.len();
                 }
+                // SAFETY: same for last_part.
+                count += unsafe { &*hmr_transform_ctx.last_part.stmts }.len();
                 count + 2
             });
 
-            for part in parts.iter() {
+            for part in head_parts.iter() {
                 // Bake does not care about 'import =', as it handles it on it's own
-                let _ = /* TODO(b2-blocked): ImportScanner round-D */ return Err(bun_core::Error::TODO); ImportScanner::scan_stub(self, part.stmts, wrap_mode != WrapMode::None, true, Some(&mut hmr_transform_ctx))?;
+                let _ = ImportScanner::scan::<TYPESCRIPT, J, SCAN_ONLY, true>(
+                    self,
+                    // SAFETY: Part.stmts is an arena-owned slice valid for 'a.
+                    unsafe { &mut *part.stmts },
+                    wrap_mode != WrapMode::None,
+                    Some(&mut hmr_transform_ctx),
+                )?;
+            }
+            // Re-run for the last part (Zig iterated all `parts.items` including last).
+            {
+                // SAFETY: arena-owned slice valid for 'a; `last_part` is uniquely
+                // borrowed inside `hmr_transform_ctx` so go through a raw ptr.
+                let last_stmts: *mut [Stmt] = hmr_transform_ctx.last_part.stmts;
+                let _ = ImportScanner::scan::<TYPESCRIPT, J, SCAN_ONLY, true>(
+                    self,
+                    unsafe { &mut *last_stmts },
+                    wrap_mode != WrapMode::None,
+                    Some(&mut hmr_transform_ctx),
+                )?;
             }
 
             hmr_transform_ctx.finalize(self, parts.as_mut_slice())?;
@@ -6884,16 +6923,25 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 // Potentially remove some statements, then filter out parts to remove any
                 // with no statements
                 for idx in begin..parts.len() {
-                    let mut part = parts[idx].clone();
+                    // PORT NOTE: Zig shallow-copied the Part struct; Rust moves it
+                    // out (Default-filling the slot) and writes back on keep.
+                    let mut part = core::mem::take(&mut parts[idx]);
                     self.import_records_for_current_part.clear();
-                    self.declared_symbols.clear();
+                    self.declared_symbols.clear_retaining_capacity();
 
-                    let result = /* TODO(b2-blocked): ImportScanner round-D */ return Err(bun_core::Error::TODO); ImportScanner::scan_stub(self, part.stmts, wrap_mode != WrapMode::None, false, None)?;
+                    let result = ImportScanner::scan::<TYPESCRIPT, J, SCAN_ONLY, false>(
+                        self,
+                        // SAFETY: Part.stmts is an arena-owned slice valid for 'a.
+                        unsafe { &mut *part.stmts },
+                        wrap_mode != WrapMode::None,
+                        None,
+                    )?;
                     kept_import_equals = kept_import_equals || result.kept_import_equals;
                     removed_import_equals = removed_import_equals || result.removed_import_equals;
 
-                    part.stmts = result.stmts;
-                    if !part.stmts.is_empty() {
+                    part.stmts = result.stmts as *mut [Stmt];
+                    // SAFETY: just assigned from a live &mut [Stmt].
+                    if unsafe { &*part.stmts }.len() > 0 {
                         // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
                         if unsafe { &*self.module_scope }.contains_direct_eval && part.declared_symbols.len() > 0 {
                             // If this file contains a direct call to "eval()", all parts that
@@ -6902,18 +6950,25 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                             part.can_be_removed_if_unused = false;
                         }
                         if part.declared_symbols.len() == 0 {
-                            part.declared_symbols = self.declared_symbols.clone_in(self.allocator).expect("unreachable");
+                            part.declared_symbols = self.declared_symbols.clone().expect("unreachable");
                         } else {
-                            part.declared_symbols.append_list(self.allocator, &self.declared_symbols).expect("unreachable");
+                            part.declared_symbols
+                                .append_list(self.declared_symbols.clone().expect("unreachable"))
+                                .expect("unreachable");
                         }
 
                         if part.import_record_indices.len == 0 {
-                            part.import_record_indices = BabyList::from_owned_slice(
-                                self.allocator.alloc_slice_copy(self.import_records_for_current_part.as_slice()),
-                            );
+                            // SAFETY: bump-arena slice; BabyList::from_bump_slice marks
+                            // origin Borrowed so Drop is a no-op (matches Zig's
+                            // `ImportRecord.List.init(dupe(...))` arena ownership).
+                            part.import_record_indices = unsafe {
+                                BabyList::from_bump_slice(
+                                    allocator.alloc_slice_copy(self.import_records_for_current_part.as_slice()),
+                                )
+                            };
                         } else {
                             part.import_record_indices
-                                .append_slice(self.allocator, self.import_records_for_current_part.as_slice())
+                                .append_slice(self.import_records_for_current_part.as_slice())
                                 .expect("oom");
                         }
 
@@ -6935,11 +6990,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             // Do a second pass for exported items now that imported items are filled out.
             // This isn't done for HMR because it already deletes all `.s_export_clause`s
             for part in parts.iter() {
-                for stmt in part.stmts.iter() {
+                // SAFETY: Part.stmts is an arena-owned slice valid for 'a.
+                for stmt in unsafe { &*part.stmts }.iter() {
                     if let js_ast::StmtData::SExportClause(clause) = &stmt.data {
-                        for item in clause.items.iter() {
-                            if let Some(_import) = self.named_imports.get_entry(&item.name.r#ref.unwrap()) {
-                                _import.value_mut().is_exported = true;
+                        // SAFETY: ExportClause.items is an arena-owned slice valid for 'a.
+                        for item in unsafe { &*clause.items }.iter() {
+                            if let Some(import) = self.named_imports.get_ptr_mut(&item.name.ref_.unwrap()) {
+                                import.is_exported = true;
                             }
                         }
                     }
@@ -6968,15 +7025,17 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
             let mut total_stmts_count: usize = 0;
             for part in parts.iter() {
-                total_stmts_count += part.stmts.len();
+                // SAFETY: Part.stmts is an arena-owned slice valid for 'a.
+                total_stmts_count += unsafe { &*part.stmts }.len();
             }
 
             // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
             let preserve_strict_mode = unsafe { &*self.module_scope }.strict_mode
                 == js_ast::StrictModeKind::ExplicitStrictMode
                 && !(parts.len() > 0
-                    && parts[0].stmts.len() > 0
-                    && matches!(parts[0].stmts[0].data, js_ast::StmtData::SDirective(_)));
+                    // SAFETY: Part.stmts is an arena-owned slice valid for 'a.
+                    && unsafe { &*parts[0].stmts }.len() > 0
+                    && matches!(unsafe { &*parts[0].stmts }[0].data, js_ast::StmtData::SDirective(_)));
 
             total_stmts_count += usize::from(preserve_strict_mode);
 
@@ -6989,9 +7048,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 }
 
                 for part in parts.iter() {
-                    remaining_stmts[..part.stmts.len()].copy_from_slice(part.stmts);
-                    remaining_stmts = &mut remaining_stmts[part.stmts.len()..];
+                    // SAFETY: Part.stmts is an arena-owned slice valid for 'a.
+                    let src = unsafe { &*part.stmts };
+                    remaining_stmts[..src.len()].copy_from_slice(src);
+                    remaining_stmts = &mut remaining_stmts[src.len()..];
                 }
+                let _ = remaining_stmts;
             }
 
             let wrapper = self.new_expr(
@@ -6999,64 +7061,84 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     func: G::Fn {
                         name: None,
                         open_parens_loc: logger::Loc::EMPTY,
-                        args,
-                        body: G::FnBody { loc: logger::Loc::EMPTY, stmts: stmts_to_copy },
-                        flags: Flags::Function::init(Flags::FunctionInit { is_export: false, ..Default::default() }),
+                        args: args as *mut [Arg],
+                        body: G::FnBody { loc: logger::Loc::EMPTY, stmts: stmts_to_copy as *mut [Stmt] },
+                        // PORT NOTE: Zig `Flags.Function.init(.{ .is_export = false })` →
+                        // empty FunctionSet (no flags set).
+                        flags: Flags::FUNCTION_NONE,
                         ..Default::default()
                     },
                 },
                 logger::Loc::EMPTY,
             );
 
-            let top_level_stmts = self.allocator.alloc_slice_copy(&[self.s(S::SExpr { value: wrapper, ..Default::default() }, logger::Loc::EMPTY)]);
+            let top_level_stmts =
+                allocator.alloc_slice_copy(&[self.s(S::SExpr { value: wrapper, ..Default::default() }, logger::Loc::EMPTY)]);
 
-            parts.reserve(1);
+            // PORT NOTE: reshaped — Zig wrote `parts.items.len = 1` directly.
+            // BumpVec has no `set_len`-on-grow path; ensure at least one slot then truncate.
+            if parts.is_empty() {
+                parts.push(js_ast::Part::default());
+            }
             parts.truncate(1);
-            // PORT NOTE: reshaped — Zig wrote `parts.items.len = 1` directly
-            parts[0].stmts = top_level_stmts;
+            parts[0].stmts = top_level_stmts as *mut [Stmt];
         }
 
         // REPL mode transforms
         if self.options.repl_mode {
-            repl_transforms::ReplTransforms::apply(self, parts, allocator)?;
+            // PORT NOTE: Zig `ReplTransforms(@This()).apply` → inherent `apply_repl_transforms`
+            // (declared in ast::repl_transforms as an `impl P` mixin).
+            self.apply_repl_transforms(parts, allocator)?;
         }
 
-        let mut top_level_symbols_to_parts = js_ast::Ast::TopLevelSymbolToParts::default();
-        let top_level = &mut top_level_symbols_to_parts;
+        let mut top_level_symbols_to_parts = js_ast::ast::TopLevelSymbolToParts::default();
 
         if self.options.bundle {
             // Each part tracks the other parts it depends on within this file
+            // PORT NOTE: closure captures (top_level, symbols) via the `ctx` arg of
+            // `for_each_top_level_symbol`, since the iterator borrows `parts` while the
+            // closure mutates `top_level_symbols_to_parts` (disjoint from `self.symbols`).
+            struct Ctx<'s> {
+                top_level: &'s mut js_ast::ast::TopLevelSymbolToParts,
+                symbols: &'s [Symbol],
+                part_index: u32,
+            }
             for (part_index, part) in parts.iter_mut().enumerate() {
-                let decls = &part.declared_symbols;
-                let symbols = self.symbols.as_slice();
-                let part_index = part_index as u32;
+                let mut ctx = Ctx {
+                    top_level: &mut top_level_symbols_to_parts,
+                    symbols: self.symbols.as_slice(),
+                    part_index: part_index as u32,
+                };
+                DeclaredSymbol::for_each_top_level_symbol(
+                    &mut part.declared_symbols,
+                    &mut ctx,
+                    |ctx: &mut Ctx<'_>, input: Ref| {
+                        // If this symbol was merged, use the symbol at the end of the
+                        // linked list in the map. This is the case for multiple "var"
+                        // declarations with the same name, for example.
+                        let mut r#ref = input;
+                        let mut symbol_ref = &ctx.symbols[r#ref.inner_index() as usize];
+                        while symbol_ref.has_link() {
+                            r#ref = symbol_ref.link;
+                            symbol_ref = &ctx.symbols[r#ref.inner_index() as usize];
+                        }
 
-                DeclaredSymbol::for_each_top_level_symbol(decls, |input: Ref| {
-                    // If this symbol was merged, use the symbol at the end of the
-                    // linked list in the map. This is the case for multiple "var"
-                    // declarations with the same name, for example.
-                    let mut r#ref = input;
-                    let mut symbol_ref = &symbols[r#ref.inner_index() as usize];
-                    while symbol_ref.has_link() {
-                        r#ref = symbol_ref.link;
-                        symbol_ref = &symbols[r#ref.inner_index() as usize];
-                    }
-
-                    let entry = top_level.get_or_put(self.allocator, r#ref).expect("unreachable");
-                    if !entry.found_existing {
-                        *entry.value_ptr = Default::default();
-                    }
-                    entry.value_ptr.push(self.allocator, part_index).expect("oom");
-                });
+                        let entry = ctx.top_level.get_or_put(r#ref).expect("unreachable");
+                        if !entry.found_existing {
+                            *entry.value_ptr = Default::default();
+                        }
+                        entry.value_ptr.append(ctx.part_index).expect("oom");
+                    },
+                );
             }
 
             // Pulling in the exports of this module always pulls in the export part
             {
-                let entry = top_level.get_or_put(self.allocator, self.exports_ref).expect("unreachable");
+                let entry = top_level_symbols_to_parts.get_or_put(self.exports_ref).expect("unreachable");
                 if !entry.found_existing {
                     *entry.value_ptr = Default::default();
                 }
-                entry.value_ptr.push(self.allocator, js_ast::NAMESPACE_EXPORT_PART_INDEX).expect("oom");
+                entry.value_ptr.append(js_ast::NAMESPACE_EXPORT_PART_INDEX).expect("oom");
             }
         }
 
@@ -7068,22 +7150,85 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             // When code splitting is enabled, always create wrapper_ref to match esbuild behavior.
             // Otherwise, use needsWrapperRef() to optimize away unnecessary wrappers.
             if self.options.bundle && (self.options.code_splitting || self.needs_wrapper_ref(parts.as_slice())) {
-                let mut buf = BumpVec::new_in(self.allocator);
+                use core::fmt::Write as _;
+                let mut buf = bumpalo::collections::String::new_in(allocator);
                 let _ = write!(&mut buf, "require_{}", self.source.fmt_identifier());
-                break 'brk self.new_symbol(js_ast::symbol::Kind::Other, buf.into_bump_slice()).expect("oom");
+                break 'brk self
+                    .new_symbol(js_ast::symbol::Kind::Other, buf.into_bump_str().as_bytes())
+                    .expect("oom");
             }
 
             Ref::NONE
         };
 
-        Ok(js_ast::Ast {
-            runtime_imports: self.runtime_imports.clone(),
+        // ── Precompute fields whose initializers borrow `self` mutably so the
+        //    Ast struct literal below has no overlapping borrows ──
+        // Assign slots to symbols in nested scopes. This is some precomputation for
+        // the symbol renaming pass that will happen later in the linker. It's done
+        // now in the parser because we want it to be done in parallel per file and
+        // we're already executing code in parallel here
+        let nested_scope_slot_counts = if self.options.features.minify_identifiers {
             // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-            module_scope: unsafe { (*self.module_scope).clone() },
+            renamer::assign_nested_scope_slots(
+                allocator,
+                unsafe { &mut *self.module_scope },
+                self.symbols.as_mut_slice(),
+            )
+        } else {
+            js_ast::SlotCounts::default()
+        };
+
+        let ts_enums = self.compute_ts_enums_map(allocator)?;
+
+        // TODO(b2-blocked): compute_character_frequency body gated (lexer.all_comments,
+        // CharFreq.scan slice arg, Scope.members iter shape). Returns None until un-gated.
+        let char_freq: Option<js_ast::CharFreq> = None;
+
+        // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
+        let module_scope_strict = unsafe { &*self.module_scope }.strict_mode;
+        // PORT NOTE: Zig shallow-copies `p.module_scope.*` into Ast; Scope is not
+        // `Clone` in Rust (BabyList/HashMap members), so move it out and leave
+        // a default in `*self.module_scope`. `to_ast` is terminal — the parser
+        // does not touch `module_scope` afterwards.
+        // SAFETY: same as above.
+        let module_scope = core::mem::take(unsafe { &mut *self.module_scope });
+
+        let uses_module_ref = self.symbols[self.module_ref.inner_index() as usize].use_count_estimate > 0;
+        let uses_exports_ref = self.symbols[self.exports_ref.inner_index() as usize].use_count_estimate > 0;
+        let uses_require_ref = if self.options.bundle {
+            self.runtime_imports.__require.is_some()
+                && self.symbols[self.runtime_imports.__require.unwrap().inner_index() as usize].use_count_estimate > 0
+        } else {
+            self.symbols[self.require_ref.inner_index() as usize].use_count_estimate > 0
+        };
+
+        // PORT NOTE: BumpVec<'a, T> can't be moved into a global-allocator BabyList;
+        // wrap the bump-backed storage as a Borrowed BabyList (Drop is no-op).
+        // SAFETY: bump-arena storage lives for 'a, which outlives the Ast.
+        let symbols = unsafe { js_ast::symbol::List::from_bump_slice(self.symbols.as_mut_slice()) };
+        // SAFETY: same — `parts` is a BumpVec<'a, Part>.
+        let parts_list = unsafe { BabyList::<js_ast::Part>::from_bump_slice(parts.as_mut_slice()) };
+        // TODO(port): `Ast.import_records` should consume `self.import_records`;
+        // ImportRecordList<'a> is an Owned-BumpVec/Borrowed-Vec enum and BabyList
+        // wants global-allocator storage. Round-E adds an adapter; until then leave
+        // empty (no caller reads it before the bundler pass re-populates).
+        let import_records: BabyList<ImportRecord> = Default::default();
+
+        Ok(js_ast::Ast {
+            // TODO(port): Ast.runtime_imports is the round-B opaque
+            // `ast::runtime_stub::Imports` (zero-sized stand-in), distinct from
+            // `parser::Runtime::Imports` stored on P. Once `runtime.rs::Imports`
+            // un-gates and Ast switches to it, change to `self.runtime_imports.clone()`.
+            runtime_imports: Default::default(),
+            module_scope,
             exports_ref: self.exports_ref,
             wrapper_ref,
             module_ref: self.module_ref,
-            export_star_import_records: self.export_star_import_records.as_slice(),
+            export_star_import_records: self
+                .export_star_import_records
+                .as_slice()
+                .to_vec()
+                .into_boxed_slice(),
             approximate_newline_count: self.lexer.approximate_newline_count,
             exports_kind,
             named_imports: core::mem::take(&mut *self.named_imports),
@@ -7091,54 +7236,89 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             import_keyword: self.esm_import_keyword,
             export_keyword: self.esm_export_keyword,
             top_level_symbols_to_parts,
-            char_freq: self.compute_character_frequency(),
-            // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-            directive: if unsafe { &*self.module_scope }.strict_mode == js_ast::StrictModeKind::ExplicitStrictMode {
+            char_freq,
+            directive: if module_scope_strict == js_ast::StrictModeKind::ExplicitStrictMode {
                 Some(b"use strict" as &[u8])
             } else {
                 None
             },
-
-            // Assign slots to symbols in nested scopes. This is some precomputation for
-            // the symbol renaming pass that will happen later in the linker. It's done
-            // now in the parser because we want it to be done in parallel per file and
-            // we're already executing code in parallel here
-            nested_scope_slot_counts: if self.options.features.minify_identifiers {
-                renamer::assign_nested_scope_slots(self.allocator, self.module_scope, self.symbols.as_slice())
-            } else {
-                js_ast::SlotCounts::default()
-            },
+            nested_scope_slot_counts,
 
             require_ref: self.runtime_imports.__require.unwrap_or(self.require_ref),
 
             force_cjs_to_esm: self.unwrap_all_requires
                 || exports_kind == js_ast::ExportsKind::EsmWithDynamicFallbackFromCjs,
-            uses_module_ref: self.symbols[self.module_ref.inner_index() as usize].use_count_estimate > 0,
-            uses_exports_ref: self.symbols[self.exports_ref.inner_index() as usize].use_count_estimate > 0,
-            uses_require_ref: if self.options.bundle {
-                self.runtime_imports.__require.is_some()
-                    && self.symbols[self.runtime_imports.__require.unwrap().inner_index() as usize].use_count_estimate > 0
-            } else {
-                self.symbols[self.require_ref.inner_index() as usize].use_count_estimate > 0
-            },
+            uses_module_ref,
+            uses_exports_ref,
+            uses_require_ref,
             commonjs_module_exports_assigned_deoptimized: self.commonjs_module_exports_assigned_deoptimized,
             top_level_await_keyword: self.top_level_await_keyword,
             commonjs_named_exports: core::mem::take(&mut self.commonjs_named_exports),
             has_commonjs_export_names: self.has_commonjs_export_names,
             has_import_meta: self.has_import_meta,
 
-            hashbang,
+            // TODO(port): Ast.hashbang is `&'static [u8]` (placeholder lifetime);
+            // once Ast gains an arena lifetime param, pass `hashbang` through.
+            hashbang: b"",
             // TODO: cross-module constant inlining
             // const_values: self.const_values,
-            ts_enums: self.compute_ts_enums_map(allocator)?,
+            ts_enums,
             import_meta_ref: self.import_meta_ref,
 
-            symbols: js_ast::symbol::List::move_from_list(&mut self.symbols),
-            parts: BabyList::<js_ast::Part>::move_from_list(parts),
-            import_records: ImportRecord::List::move_from_list(&mut self.import_records),
-            // TODO(port): ImportRecordList enum needs a move_from_list adapter
+            symbols,
+            parts: parts_list,
+            import_records,
             ..Default::default()
         })
+    }
+
+    pub fn compute_ts_enums_map(
+        &self,
+        _allocator: &'a Bump,
+    ) -> Result<js_ast::ast::TsEnumsMap, bun_core::Error> {
+        // When hot module reloading is enabled, we disable enum inlining
+        // to avoid making the HMR graph more complicated.
+        if self.options.features.hot_module_reloading {
+            return Ok(Default::default());
+        }
+
+        use crate::{InlinedEnumValue, InlinedEnumValueDecoded};
+        let mut map = js_ast::ast::TsEnumsMap::default();
+        map.ensure_total_capacity(self.top_level_enums.len())?;
+        for r#ref in self.top_level_enums.iter() {
+            let Some(js_ast::ts::Data::Namespace(namespace)) =
+                self.ref_to_ts_namespace_member.get(r#ref)
+            else {
+                // Zig `.?` — must be present and a namespace for top-level enums.
+                unreachable!("top_level_enums entry missing namespace member data");
+            };
+            let namespace: *mut js_ast::TSNamespaceMemberMap = *namespace;
+            let mut inner_map = StringHashMap::<InlinedEnumValue>::default();
+            // SAFETY: arena-owned TSNamespaceMemberMap valid for parser 'a lifetime
+            let ns = unsafe { &*namespace };
+            inner_map.ensure_total_capacity(ns.count())?;
+            for i in 0..ns.count() {
+                let key = &ns.keys()[i];
+                let val = &ns.values()[i];
+                match &val.data {
+                    js_ast::ts::Data::EnumNumber(num) => {
+                        inner_map.put_assume_capacity(
+                            key,
+                            InlinedEnumValue::encode(InlinedEnumValueDecoded::Number(*num)),
+                        );
+                    }
+                    js_ast::ts::Data::EnumString(str_) => {
+                        inner_map.put_assume_capacity(
+                            key,
+                            InlinedEnumValue::encode(InlinedEnumValueDecoded::String(*str_)),
+                        );
+                    }
+                    _ => continue,
+                }
+            }
+            map.put_assume_capacity(*r#ref, inner_map);
+        }
+        Ok(map)
     }
 
     /// The bundler will generate wrappers to contain top-level side effects using
@@ -7155,11 +7335,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     ///
     /// The logic in this function must be in sync with the hoisting
     /// logic in `LinkerContext.generateCodeForFileInChunkJS`
-    #[cfg(any())] // blocked_on: part.stmts iteration over *mut [Stmt]; S::Class StoreRef auto-deref; only caller is to_ast
     fn needs_wrapper_ref(&self, parts: &[js_ast::Part]) -> bool {
         debug_assert!(self.options.bundle);
         for part in parts {
-            for stmt in part.stmts.iter() {
+            // SAFETY: Part.stmts is an arena-owned slice valid for 'a.
+            for stmt in unsafe { &*part.stmts }.iter() {
                 match &stmt.data {
                     js_ast::StmtData::SFunction(_) => {}
                     js_ast::StmtData::SClass(class) => {
@@ -7198,11 +7378,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// `P::init` — pulled out of the round-D gate above so `Parser::_parse` can
-// construct the parser. Body is a faithful port of `P.zig::init`; the
-// transposer / Binding2ExprWrapper back-pointers are Phase-B placeholders
-// (their type aliases are still `()` / `ExpressionTransposer<(), _>`).
+// `init` stays gated with the rest of round-D — it references the
+// Binding2ExprWrapper / ExpressionTransposer self-referential init helpers.
+#[cfg(any())]
 impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     P<'a, TYPESCRIPT, J, SCAN_ONLY>
 {
@@ -7373,6 +7551,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
             // Moved-in last so the field expressions above can still read `opts.*`.
             options: opts,
+
+            _jsx: core::marker::PhantomData,
         };
         this.lexer.track_comments = this.options.features.minify_identifiers;
 

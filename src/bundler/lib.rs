@@ -237,7 +237,7 @@ pub mod options {
     /// `Clone` and downstream (`resolver/package_json.rs`) needs `Env: Clone`.
     /// The `api::StringMap`/`EnvConfig`-driven methods (`set_from_api`,
     /// `set_defaults_map`, `to_api`) live on `options_impl::Env`.
-    #[derive(Clone, Default)]
+    #[derive(Clone)]
     pub struct Env {
         pub behavior: EnvBehavior,
         pub prefix: Box<[u8]>,
@@ -259,6 +259,20 @@ pub mod options {
     }
     /// Name used by `resolver/package_json.rs::load_define_defaults`.
     pub type EnvDefault = EnvEntry;
+
+    impl Default for Env {
+        fn default() -> Env {
+            // `options.zig:2205` — `behavior` field default is `.disable`, not
+            // `DotEnvBehavior`'s own derived default (`_none`).
+            Env {
+                behavior: EnvBehavior::disable,
+                prefix: Box::default(),
+                defaults: Vec::new(),
+                files: Box::default(),
+                disable_default_env_files: false,
+            }
+        }
+    }
 
     impl Env {
         /// `options.zig:Env.init` — allocator argument dropped (global mimalloc).

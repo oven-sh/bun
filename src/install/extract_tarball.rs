@@ -10,7 +10,8 @@ use bun_semver::{self as Semver, Version};
 use bun_str::{strings, strings::StringOrTinyString, ZStr};
 use bun_sys::{self as sys, Dir, Fd};
 
-use bun_install::install::{self as Install, DependencyID, ExtractData, PackageManager};
+use bun_install::install::{self as Install, DependencyID, ExtractData};
+use bun_install::package_manager_real::PackageManager;
 use bun_install::integrity::Integrity;
 use bun_install::npm::{self as Npm};
 use bun_install::package_manager_real::directories;
@@ -823,7 +824,7 @@ impl ExtractTarball {
                             let mut dest_buf = PathBuffer::uninit();
                             let dest_path = path::join_abs_string_buf_z(
                                 // only set once, should be fine to read not on main thread
-                                package_manager.cache_directory_path.as_slice(),
+                                package_manager.cache_directory_path.as_bytes(),
                                 &mut dest_buf,
                                 &[name, dest_name],
                                 path::Style::Windows,

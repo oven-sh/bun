@@ -1007,7 +1007,7 @@ impl TarballStream {
 
         let mut result = match tarball.move_to_cache_directory(
             &mut (*task).log,
-            self.tmpname.as_bytes(),
+            self.tmpname.as_zstr(),
             name,
             basename,
             self.resolved_github_dirname,

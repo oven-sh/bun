@@ -2611,7 +2611,7 @@ impl PackageManager {
     pub fn cached_npm_package_folder_name(
         &self,
         _name: &[u8],
-        _version: &bun_semver::Version,
+        _version: bun_semver::Version,
         _patch_hash: Option<u64>,
     ) -> &'static bun_str::ZStr {
         todo!("blocked_on: package_manager_real::directories::cached_npm_package_folder_name (reconciler-6)")

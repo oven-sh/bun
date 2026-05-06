@@ -695,6 +695,17 @@ impl WakeHandler {
 
 pub static mut VERBOSE_INSTALL: bool = false;
 
+impl PackageManager {
+    /// Port of Zig `pub var verbose_install: bool` (PackageManager.zig) — read
+    /// as `PackageManager.verbose_install` throughout the install pipeline.
+    #[inline]
+    pub fn verbose_install() -> bool {
+        // SAFETY: set once during single-threaded CLI startup
+        // (PackageManagerOptions.load); only read afterwards.
+        unsafe { VERBOSE_INSTALL }
+    }
+}
+
 /// Hook (GENUINE b0): `bun.cli.Arguments.loadConfig(_, cli.config, ctx, .InstallCommand)`
 /// (PackageManager.zig:801). The bunfig loader lives in tier-6 `bun_cli`;
 /// install can't depend on it without a cycle. bun_cli registers this once at

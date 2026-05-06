@@ -1344,15 +1344,17 @@ impl CronJob {
     /// `#[JsClass]` proc-macro emits (generate-classes.ts).
     fn to_js_ptr(this: *mut Self, global: &JSGlobalObject) -> JSValue {
         unsafe extern "C" {
+            // Must match the signature `#[bun_jsc::JsClass]` already emitted for
+            // `CronJob__create` (clashing_extern_declarations).
             #[link_name = "CronJob__create"]
-            fn __create(global: *mut JSGlobalObject, ptr: *mut core::ffi::c_void) -> JSValue;
+            fn __create(global: *mut JSGlobalObject, ptr: *mut CronJob) -> JSValue;
         }
         // SAFETY: `global` is live; `this` is a live `Box::into_raw` pointer.
         // Ownership of one ref transfers to the C++ wrapper (released via
         // `finalize` → `deref`). `as_mut_ptr` derives `*mut` via `UnsafeCell`.
-        // The extern takes `*mut c_void` to keep the FFI signature repr-C-safe;
-        // `CronJob` itself is repr(Rust) (`#[JsClass]` adds no `#[repr]`).
-        unsafe { __create(global.as_mut_ptr(), this as *mut core::ffi::c_void) }
+        // The C++ side treats the pointer opaquely; the Rust-side extern uses
+        // `*mut CronJob` so it lines up with the `#[JsClass]`-generated decl.
+        unsafe { __create(global.as_mut_ptr(), this) }
     }
 
     fn release_pending_ref(this: *mut Self) {

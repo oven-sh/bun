@@ -72,10 +72,12 @@ test.if(isPosix)("bun completions doesn't duplicate when .zshrc uses $HOME inste
 
 // One test per variant so a failure names the specific form that regressed
 // instead of bailing at the first mismatch inside a shared loop.
-test.if(isPosix).each([
-  ['[ -s "~/.bun/_bun" ] && source "~/.bun/_bun"'],
-  ['[ -s "${HOME}/.bun/_bun" ] && source "${HOME}/.bun/_bun"'],
-])("bun completions doesn't duplicate for %s", async snippet => {
+test
+  .if(isPosix)
+  .each([
+    ['[ -s "~/.bun/_bun" ] && source "~/.bun/_bun"'],
+    ['[ -s "${HOME}/.bun/_bun" ] && source "${HOME}/.bun/_bun"'],
+  ])("bun completions doesn't duplicate for %s", async snippet => {
   const zshrcBefore = `export PATH="/usr/local/bin:$PATH"\n\n${snippet}\n`;
   using dir = tempDir("bun-completions-30335-variant", {
     ".bun/.keep": "",

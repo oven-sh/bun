@@ -1061,7 +1061,7 @@ pub struct Kqueue {
     /// ident (fd number) → entry (by value — avoids a per-entry heap alloc for
     /// recursive trees). `udata` on the kevent carries a monotonic generation number
     /// so the reader can reject stale events after the fd is recycled.
-    entries: ArrayHashMap<i32, KqEntry<'static>>,
+    entries: ArrayHashMap<i32, KqEntry>,
     /// Bumped on every `addOne` and stored in both `KqEntry.gen` and `kev.udata`.
     next_gen: usize,
 }

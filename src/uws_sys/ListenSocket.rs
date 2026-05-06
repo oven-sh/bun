@@ -1,5 +1,6 @@
 use core::ffi::{c_char, c_int, c_void};
 use core::marker::{PhantomData, PhantomPinned};
+use core::ptr::NonNull;
 
 use bun_core::Fd;
 

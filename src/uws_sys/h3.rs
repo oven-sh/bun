@@ -341,9 +341,11 @@ impl Response {
             }
             // SAFETY: H is a ZST (asserted at compile time above).
             let handler: H = unsafe { core::mem::zeroed() };
-            // SAFETY: `r` is a live H3 response for the duration of the callback.
+            // SAFETY: `r` is a live H3 response (opaque ZST handle) for the duration of the
+            // callback; uws hands it to exactly one callback at a time.
             let res = unsafe { &mut *r };
-            // SAFETY: `p` is the `ud` pointer we passed below; non-null checked above.
+            // SAFETY: `p` is the `ud` pointer we passed below; non-null checked above. The
+            // callback fires from the uws event loop with no other Rust `&mut UD` live.
             let ud = unsafe { &mut *p.cast::<UD>() };
             // PERF(port): was @call(.always_inline)
             handler(ud, res);
@@ -370,9 +372,11 @@ impl Response {
             }
             // SAFETY: H is a ZST (asserted at compile time above).
             let handler: H = unsafe { core::mem::zeroed() };
-            // SAFETY: `r` is a live H3 response for the duration of the callback.
+            // SAFETY: `r` is a live H3 response (opaque ZST handle) for the duration of the
+            // callback; uws hands it to exactly one callback at a time.
             let res = unsafe { &mut *r };
-            // SAFETY: `p` is the `ud` pointer we passed below; non-null checked above.
+            // SAFETY: `p` is the `ud` pointer we passed below; non-null checked above. The
+            // callback fires from the uws event loop with no other Rust `&mut UD` live.
             let ud = unsafe { &mut *p.cast::<UD>() };
             // PERF(port): was @call(.always_inline)
             handler(ud, res);
@@ -410,9 +414,11 @@ impl Response {
             };
             // SAFETY: H is a ZST (asserted at compile time above).
             let handler: H = unsafe { core::mem::zeroed() };
-            // SAFETY: `r` is a live H3 response for the duration of the callback.
+            // SAFETY: `r` is a live H3 response (opaque ZST handle) for the duration of the
+            // callback; uws hands it to exactly one callback at a time.
             let res = unsafe { &mut *r };
-            // SAFETY: `p` is the `ud` pointer we passed below; non-null checked above.
+            // SAFETY: `p` is the `ud` pointer we passed below; non-null checked above. The
+            // callback fires from the uws event loop with no other Rust `&mut UD` live.
             let ud = unsafe { &mut *p.cast::<UD>() };
             // PERF(port): was @call(.always_inline)
             handler(ud, res, chunk, last);

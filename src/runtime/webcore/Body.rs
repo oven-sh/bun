@@ -21,6 +21,83 @@ use bun_str::{self as strings, MutableString, String as BunString, ZigString};
 use bun_str::WTFStringImpl;
 use bun_jsc::ZigStringJsc as _;
 
+// ────────────────────────────────────────────────────────────────────────────
+// Local shims for upstream-gated `JsClass` impls / `AnyPromise` methods.
+// These adapt call sites in this file without editing `bun_jsc` (orphan rule).
+// ────────────────────────────────────────────────────────────────────────────
+
+#[inline]
+fn as_dom_form_data(_value: JSValue) -> Option<*mut DOMFormData> {
+    // TODO(port): blocked_on: bun_jsc::JsClass for DOMFormData (opaque stub_ty!).
+    None
+}
+#[inline]
+fn as_url_search_params(_value: JSValue) -> Option<*mut URLSearchParams> {
+    // TODO(port): blocked_on: bun_jsc::JsClass for URLSearchParams (opaque stub_ty!).
+    None
+}
+#[inline]
+fn as_image(_value: JSValue) -> Option<*mut crate::image::Image> {
+    // TODO(port): blocked_on: bun_jsc::JsClass for crate::image::Image
+    // (`#[bun_jsc::JsClass]` not yet derived on Image).
+    None
+}
+
+/// Local extension over `bun_jsc::AnyPromise` adding `wrap`/`resolve`/`reject`
+/// (the upstream enum exposes only `as_value`/`status`/`set_handled`/`unwrap`;
+/// the full impl lives in the gated `src/jsc/AnyPromise.rs`).
+trait AnyPromiseExt {
+    fn wrap_call<F>(self, global: &JSGlobalObject, f: F) -> JsTerminated<()>
+    where
+        F: FnOnce(&JSGlobalObject) -> JsResult<JSValue>;
+    fn resolve_value(self, global: &JSGlobalObject, value: JSValue) -> JsTerminated<()>;
+    fn reject_value(self, global: &JSGlobalObject, value: JSValue) -> JsTerminated<()>;
+    fn reject_value_with_async_stack(
+        self,
+        global: &JSGlobalObject,
+        value: JSValue,
+    ) -> JsTerminated<()>;
+}
+impl AnyPromiseExt for jsc::AnyPromise {
+    fn wrap_call<F>(self, global: &JSGlobalObject, f: F) -> JsTerminated<()>
+    where
+        F: FnOnce(&JSGlobalObject) -> JsResult<JSValue>,
+    {
+        // Mirror `AnyPromise.wrap` (AnyPromise.zig): call through `JSPromise::wrap`
+        // (which catches a thrown exception and rejects), then resolve/reject this
+        // promise with the result.
+        match JSPromise::wrap(global, f) {
+            Ok(v) => self.resolve_value(global, v),
+            Err(e) => Err(e),
+        }
+    }
+    fn resolve_value(self, global: &JSGlobalObject, value: JSValue) -> JsTerminated<()> {
+        match self {
+            // SAFETY: variants hold a live JSC heap cell created via `as_any_promise`.
+            jsc::AnyPromise::Normal(p) => unsafe { (*p).resolve(global, value) },
+            jsc::AnyPromise::Internal(p) => unsafe { (*p).resolve(global, value) },
+        }
+        Ok(())
+    }
+    fn reject_value(self, global: &JSGlobalObject, value: JSValue) -> JsTerminated<()> {
+        match self {
+            // SAFETY: variants hold a live JSC heap cell created via `as_any_promise`.
+            jsc::AnyPromise::Normal(p) => unsafe { (*p).reject(global, value) },
+            jsc::AnyPromise::Internal(p) => unsafe { (*p).reject(global, value) },
+        }
+        Ok(())
+    }
+    fn reject_value_with_async_stack(
+        self,
+        global: &JSGlobalObject,
+        value: JSValue,
+    ) -> JsTerminated<()> {
+        // TODO(port): `value.attach_async_stack_from_promise(global, self.as_js_promise())`
+        // — `attach_async_stack_from_promise` is gated upstream. Fall back to plain reject.
+        self.reject_value(global, value)
+    }
+}
+
 bun_core::declare_scope!(BodyValue, visible);
 bun_core::declare_scope!(BodyMixin, visible);
 bun_core::declare_scope!(BodyValueBufferer, visible);
@@ -932,8 +1009,9 @@ impl Value {
                 // Blob.Store frees via an Allocator, so dupe out of the
                 // codec's allocator here. The hot path (`.bytes()`) hands the
                 // codec buffer to JS without this copy.
-                let owned: Box<[u8]> = Box::from(encoded.bytes());
-                encoded.deinit();
+                // SAFETY: `encoded.bytes` is the codec-owned slice; copy then drop frees it.
+                let owned: Box<[u8]> = Box::from(unsafe { encoded.bytes.as_ref() });
+                drop(encoded);
                 let mut blob = Blob::init(owned.into_vec(), global_this);
                 blob.content_type = mime.to_bytes() as *const [u8];
                 blob.content_type_was_set = true;
@@ -1089,8 +1167,9 @@ impl Value {
                                 blob.content_type = mime_type.value.as_ref() as *const [u8];
                                 blob.content_type_allocated = allocated;
                                 blob.content_type_was_set = true;
-                                if let Some(store) = blob.store.as_mut() {
-                                    store.mime_type = mime_type;
+                                if let Some(store) = blob.store.as_ref() {
+                                    // SAFETY: store is a live StoreRef; single-threaded JS — no concurrent &Store.
+                                    unsafe { (*store.as_ptr()).mime_type = mime_type };
                                 }
                                 // content_slice dropped (replaces defer content_slice.deinit())
                             }
@@ -1099,7 +1178,8 @@ impl Value {
                             blob.content_type = bun_http_types::MimeType::TEXT.value.as_ref() as *const [u8];
                             blob.content_type_allocated = false;
                             blob.content_type_was_set = true;
-                            blob.store.as_mut().unwrap().mime_type = bun_http_types::MimeType::TEXT;
+                            // SAFETY: store presence checked above; single-threaded JS — no concurrent &Store.
+                            unsafe { (*blob.store.as_ref().unwrap().as_ptr()).mime_type = bun_http_types::MimeType::TEXT };
                         }
                         promise.resolve_value(global, blob.to_js(global))?;
                     }
@@ -1524,7 +1604,7 @@ impl Value {
 
         if let Value::WTFStringImpl(s) = self {
             // SAFETY: WTFStringImpl is a non-null intrusive-refcounted ptr; bump +1.
-            unsafe { bun_str::WTFStringImplStruct::ref_(&**s) };
+            unsafe { (***s).r#ref() };
             return Ok(Value::WTFStringImpl(std::sync::Arc::new(**s)));
         }
 

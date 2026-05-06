@@ -1046,31 +1046,33 @@ pub fn js_password_object_verify(
     global_object: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
-    let arguments_ = callframe.arguments_old(3);
+    let arguments_ = callframe.arguments_old::<3>();
     let arguments = &arguments_.ptr[..arguments_.len];
 
     if arguments.len() < 2 {
-        return global_object.throw_not_enough_arguments("verify", 2, 0);
+        return Err(global_object.throw_not_enough_arguments("verify", 2, 0));
     }
 
     let mut algorithm: Option<Algorithm> = None;
 
     if arguments.len() > 2 && !arguments[2].is_empty_or_undefined_or_null() {
         if !arguments[2].is_string() {
-            return global_object.throw_invalid_argument_type("verify", "algorithm", "string");
+            return Err(
+                global_object.throw_invalid_argument_type("verify", "algorithm", "string")
+            );
         }
 
         let algorithm_string = arguments[2].get_zig_string(global_object)?;
 
-        algorithm = match Algorithm::LABEL.get(algorithm_string.as_bytes()).copied() {
+        algorithm = match algorithm_from_zig_string(&algorithm_string) {
             Some(a) => Some(a),
             None => {
                 if !global_object.has_exception() {
-                    return global_object.throw_invalid_argument_type(
+                    return Err(global_object.throw_invalid_argument_type(
                         "verify",
                         "algorithm",
                         UNKNOWN_PASSWORD_ALGORITHM_MESSAGE,
-                    );
+                    ));
                 }
                 return Err(JsError::Thrown);
             }
@@ -1107,7 +1109,12 @@ pub fn js_password_object_verify(
         return Ok(JSPromise::resolved_promise_value(global_object, JSValue::FALSE));
     }
 
-    JSPasswordObject::verify::<false>(global_object, owned_password, owned_hash, algorithm)
+    JSPasswordObject::verify::<false>(
+        global_object,
+        owned_password.into_boxed_slice(),
+        owned_hash.into_boxed_slice(),
+        algorithm,
+    )
 }
 
 // Once we have bindings generator, this should be replaced with a generated function

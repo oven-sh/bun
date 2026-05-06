@@ -803,23 +803,23 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         arg: Expr,
         buf: &mut BumpVec<'a, u8>,
     ) -> Result<&'a [u8], bun_core::Error> {
-        if let Some(tmpl) = arg.data.as_e_template() {
+        if let Some(mut tmpl) = arg.data.e_template() {
             if tmpl.tag.is_some() {
                 return Ok(b""); // tagged template — opaque
             }
-            match &tmpl.head {
-                E::Template::Head::Cooked(head) => {
+            match &mut tmpl.head {
+                js_ast::e::TemplateContents::Cooked(head) => {
                     buf.extend_from_slice(head.slice(self.allocator));
                 }
-                E::Template::Head::Raw => return Ok(b""), // shouldn't happen post-visit but be safe
+                js_ast::e::TemplateContents::Raw(_) => return Ok(b""), // shouldn't happen post-visit but be safe
             }
-            for part in tmpl.parts.iter() {
+            for part in tmpl.parts.slice_mut() {
                 buf.push(0); // \x00 placeholder per interpolation
-                match &part.tail {
-                    E::Template::Head::Cooked(tail) => {
+                match &mut part.tail {
+                    js_ast::e::TemplateContents::Cooked(tail) => {
                         buf.extend_from_slice(tail.slice(self.allocator));
                     }
-                    E::Template::Head::Raw => return Ok(b""), // raw tail — treat as opaque
+                    js_ast::e::TemplateContents::Raw(_) => return Ok(b""), // raw tail — treat as opaque
                 }
             }
             return Ok(buf.as_slice());
@@ -853,7 +853,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         {
             let mut shape_buf = BumpVec::new_in(self.allocator);
             let shape = self.extract_dynamic_specifier_shape(arg, &mut shape_buf)?;
-            if !self.options.allow_unresolved.allows(shape) {
+            // TODO(b2-blocked): `options::AllowUnresolved` is a unit-stub today; the
+            // real type's `allows()` lives in bun_options. Until it exists, treat
+            // all shapes as allowed (matches the early-return above).
+            let allowed = { let _ = &self.options.allow_unresolved; let _ = shape; true };
+            if !allowed {
                 let r = js_lexer::range_of_identifier(self.source, loc);
                 if !shape.is_empty() {
                     // Print a human-readable shape: replace \x00 with *
@@ -864,9 +868,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         }
                     }
                     self.log.add_range_error_fmt_with_note(
-                        self.source,
+                        Some(self.source),
                         r,
-                        self.allocator,
                         format_args!(
                             "This {} expression will not be bundled because the argument is not a string literal",
                             kind
@@ -880,9 +883,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     )?;
                 } else {
                     self.log.add_range_error_fmt_with_note(
-                        self.source,
+                        Some(self.source),
                         r,
-                        self.allocator,
                         format_args!(
                             "This {} expression will not be bundled because the argument is not a string literal",
                             kind
@@ -1283,7 +1285,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         let default_export_ref = self
             .named_exports
             .get(b"default" as &[u8])
-            .map(|d| d.r#ref)
+            .map(|d| d.ref_)
             .unwrap_or(Ref::NONE);
 
         while parts_.len() > 1 {
@@ -1291,9 +1293,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             let last_end = parts_.len();
 
             for i in 0..parts_.len() {
-                let part = parts_[i].clone();
+                // PORT NOTE: Zig copied `Part` by value (POD struct). Rust `Part` is
+                // not `Clone`, so borrow it for the dead-check; the only mutation
+                // is the swap into `parts_[parts_end]` at the bottom.
+                let part = &parts_[i];
                 let is_dead = part.can_be_removed_if_unused && 'can_remove_part: {
-                    for stmt in part.stmts.iter() {
+                    // SAFETY: arena-owned `*mut [Stmt]` valid for parser 'a lifetime.
+                    for stmt in unsafe { &*part.stmts }.iter() {
                         match &stmt.data {
                             js_ast::StmtData::SLocal(local) => {
                                 if local.is_export {
@@ -1394,7 +1400,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             let mut first_none_part: usize = parts_.len();
             let mut stmts_count: usize = 0;
             for (i, part) in parts_.iter().enumerate() {
-                if part.tag == js_ast::Part::Tag::None {
+                if part.tag == crate::PartTag::None {
                     stmts_count += part.stmts.len();
                     first_none_part = i.min(first_none_part);
                 }
@@ -1407,7 +1413,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 let mut stmts_remain = &mut stmts_list[..];
 
                 for part in parts_.iter() {
-                    if part.tag == js_ast::Part::Tag::None {
+                    if part.tag == crate::PartTag::None {
                         stmts_remain[..part.stmts.len()].copy_from_slice(part.stmts);
                         stmts_remain = &mut stmts_remain[part.stmts.len()..];
                     }
@@ -3206,13 +3212,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             }
             js_ast::ExprData::EArray(ex) => {
                 if let Some(spread) = ex.comma_after_spread {
-                    invalid_loc.push(InvalidLoc { loc: spread, kind: InvalidLoc::Tag::Spread });
+                    invalid_loc.push(InvalidLoc { loc: spread, kind: crate::parser::InvalidLocTag::Spread });
                 }
 
                 if ex.is_parenthesized {
                     invalid_loc.push(InvalidLoc {
                         loc: self.source.range_of_operator_before(expr.loc, b"(").loc,
-                        kind: InvalidLoc::Tag::Parentheses,
+                        kind: crate::parser::InvalidLocTag::Parentheses,
                     });
                 }
 
@@ -3245,13 +3251,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             }
             js_ast::ExprData::EObject(ex) => {
                 if let Some(sp) = ex.comma_after_spread {
-                    invalid_loc.push(InvalidLoc { loc: sp, kind: InvalidLoc::Tag::Spread });
+                    invalid_loc.push(InvalidLoc { loc: sp, kind: crate::parser::InvalidLocTag::Spread });
                 }
 
                 if ex.is_parenthesized {
                     invalid_loc.push(InvalidLoc {
                         loc: self.source.range_of_operator_before(expr.loc, b"(").loc,
-                        kind: InvalidLoc::Tag::Parentheses,
+                        kind: crate::parser::InvalidLocTag::Parentheses,
                     });
                 }
                 // p.markSyntaxFeature(compat.Destructuring, p.source.RangeOfOperatorAfter(expr.Loc, "{"))
@@ -3259,17 +3265,17 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 let mut properties = BumpVec::with_capacity_in(ex.properties.len as usize, self.allocator);
                 for item in ex.properties.slice_mut() {
                     if item.flags.contains(Flags::Property::IsMethod)
-                        || item.kind == Property::Kind::Get
-                        || item.kind == Property::Kind::Set
+                        || item.kind == js_ast::g::PropertyKind::Get
+                        || item.kind == js_ast::g::PropertyKind::Set
                     {
                         invalid_loc.push(InvalidLoc {
                             loc: item.key.unwrap().loc,
                             kind: if item.flags.contains(Flags::Property::IsMethod) {
-                                InvalidLoc::Tag::Method
-                            } else if item.kind == Property::Kind::Get {
-                                InvalidLoc::Tag::Getter
+                                crate::parser::InvalidLocTag::Method
+                            } else if item.kind == js_ast::g::PropertyKind::Get {
+                                crate::parser::InvalidLocTag::Getter
                             } else {
-                                InvalidLoc::Tag::Setter
+                                crate::parser::InvalidLocTag::Setter
                             },
                         });
                         continue;
@@ -3277,7 +3283,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     let value = item.value.as_mut().unwrap();
                     let tup = self.convert_expr_to_binding_and_initializer(value, invalid_loc, false);
                     let initializer = tup.expr.or(item.initializer);
-                    let is_spread = item.kind == Property::Kind::Spread || item.flags.contains(Flags::Property::IsSpread);
+                    let is_spread = item.kind == js_ast::g::PropertyKind::Spread || item.flags.contains(Flags::Property::IsSpread);
                     properties.push(B::Property {
                         flags: Flags::Property::init(Flags::PropertyInit { is_spread, is_computed: item.flags.contains(Flags::Property::IsComputed), ..Default::default() }),
                         key: item.key.unwrap_or_else(|| self.new_expr(E::Missing {}, expr.loc)),
@@ -3293,7 +3299,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 ));
             }
             _ => {
-                invalid_loc.push(InvalidLoc { loc: expr.loc, kind: InvalidLoc::Tag::Unknown });
+                invalid_loc.push(InvalidLoc { loc: expr.loc, kind: crate::parser::InvalidLocTag::Unknown });
                 return None;
             }
         }
@@ -3396,7 +3402,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // Match spec: only assert above, do not actually pop.
     }
 
-     // blocked_on: S::Import field set; MacroState::RefData; ParsedPath fields; ImportItemForNamespaceMap API
+     // blocked_on: S::Import field set; crate::parser::MacroRefData; ParsedPath fields; ImportItemForNamespaceMap API
     pub fn process_import_statement(
         &mut self,
         stmt_: S::Import,
@@ -3409,27 +3415,27 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         if is_macro {
             let id = self.add_import_record(ImportKind::Stmt, path.loc, path.text);
             self.import_records.items_mut()[id as usize].path.namespace = js_ast::Macro::NAMESPACE;
-            self.import_records.items_mut()[id as usize].flags.is_unused = true;
+            self.import_records.items_mut()[id as usize].flags.insert(bun_options_types::ImportRecordFlags::IS_UNUSED);
 
             if let Some(name_loc) = stmt.default_name {
                 let name = self.load_name_from_ref(name_loc.r#ref.unwrap());
                 let r#ref = self.declare_symbol(js_ast::symbol::Kind::Other, name_loc.loc, name)?;
-                self.is_import_item.put(self.allocator, r#ref, ())?;
-                self.macro_.refs.put(r#ref, MacroState::RefData { import_record_id: id, name: b"default" })?;
+                self.is_import_item.insert(r#ref, ())?;
+                self.macro_.refs.put(r#ref, crate::parser::MacroRefData { import_record_id: id, name: b"default" })?;
             }
 
             if let Some(star) = stmt.star_name_loc {
                 let name = self.load_name_from_ref(stmt.namespace_ref);
                 let r#ref = self.declare_symbol(js_ast::symbol::Kind::Other, star, name)?;
                 stmt.namespace_ref = r#ref;
-                self.macro_.refs.put(r#ref, MacroState::RefData { import_record_id: id, ..Default::default() })?;
+                self.macro_.refs.put(r#ref, crate::parser::MacroRefData { import_record_id: id, ..Default::default() })?;
             }
 
             for item in stmt.items.iter() {
                 let name = self.load_name_from_ref(item.name.r#ref.unwrap());
                 let r#ref = self.declare_symbol(js_ast::symbol::Kind::Other, item.name.loc, name)?;
-                self.is_import_item.put(self.allocator, r#ref, ())?;
-                self.macro_.refs.put(r#ref, MacroState::RefData { import_record_id: id, name: item.alias })?;
+                self.is_import_item.insert(r#ref, ())?;
+                self.macro_.refs.put(r#ref, crate::parser::MacroRefData { import_record_id: id, name: item.alias })?;
             }
 
             return Ok(self.s(S::Empty {}, loc));
@@ -3485,7 +3491,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
             if Self::TRACK_SYMBOL_USAGE_DURING_PARSE_PASS {
                 if let Some(uses) = &mut self.parse_pass_symbol_uses {
-                    uses.put(name, ScanPassResult::ParsePassSymbolUse {
+                    uses.put(name, crate::parser::ParsePassSymbolUse {
                         r#ref: stmt.namespace_ref,
                         import_record_index: stmt.import_record_index,
                         ..Default::default()
@@ -3520,7 +3526,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 let name = self.load_name_from_ref(name_loc.r#ref.unwrap());
                 let r#ref = self.declare_symbol(js_ast::symbol::Kind::Import, name_loc.loc, name)?;
                 name_loc.r#ref = Some(r#ref);
-                self.is_import_item.put(self.allocator, r#ref, ())?;
+                self.is_import_item.insert(r#ref, ())?;
 
                 // ensure every e_import_identifier holds the namespace
                 if self.options.features.hot_module_reloading {
@@ -3537,12 +3543,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 if let Some(remap) = &macro_remap {
                     if let Some(remapped_path) = remap.get(b"default" as &[u8]) {
                         let new_import_id = self.add_import_record(ImportKind::Stmt, path.loc, remapped_path);
-                        self.macro_.refs.put(r#ref, MacroState::RefData { import_record_id: new_import_id, name: b"default" })?;
+                        self.macro_.refs.put(r#ref, crate::parser::MacroRefData { import_record_id: new_import_id, name: b"default" })?;
 
                         self.import_records.items_mut()[new_import_id as usize].path.namespace = js_ast::Macro::NAMESPACE;
-                        self.import_records.items_mut()[new_import_id as usize].flags.is_unused = true;
+                        self.import_records.items_mut()[new_import_id as usize].flags.insert(bun_options_types::ImportRecordFlags::IS_UNUSED);
                         if SCAN_ONLY {
-                            self.import_records.items_mut()[new_import_id as usize].flags.is_internal = true;
+                            self.import_records.items_mut()[new_import_id as usize].flags.insert(bun_options_types::ImportRecordFlags::IS_INTERNAL);
                             self.import_records.items_mut()[new_import_id as usize].path.is_disabled = true;
                         }
                         stmt.default_name = None;
@@ -3553,7 +3559,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
                 if Self::TRACK_SYMBOL_USAGE_DURING_PARSE_PASS {
                     if let Some(uses) = &mut self.parse_pass_symbol_uses {
-                        uses.put(name, ScanPassResult::ParsePassSymbolUse {
+                        uses.put(name, crate::parser::ParsePassSymbolUse {
                             r#ref,
                             import_record_index: stmt.import_record_index,
                             ..Default::default()
@@ -3578,7 +3584,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             let r#ref = self.declare_symbol(js_ast::symbol::Kind::Import, item.name.loc, name)?;
             item.name.r#ref = Some(r#ref);
 
-            self.is_import_item.put(self.allocator, r#ref, ())?;
+            self.is_import_item.insert(r#ref, ())?;
             self.check_for_non_bmp_code_point(item.alias_loc, item.alias);
 
             // ensure every e_import_identifier holds the namespace
@@ -3596,12 +3602,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             if let Some(remap) = &macro_remap {
                 if let Some(remapped_path) = remap.get(item.alias) {
                     let new_import_id = self.add_import_record(ImportKind::Stmt, path.loc, remapped_path);
-                    self.macro_.refs.put(r#ref, MacroState::RefData { import_record_id: new_import_id, name: item.alias })?;
+                    self.macro_.refs.put(r#ref, crate::parser::MacroRefData { import_record_id: new_import_id, name: item.alias })?;
 
                     self.import_records.items_mut()[new_import_id as usize].path.namespace = js_ast::Macro::NAMESPACE;
-                    self.import_records.items_mut()[new_import_id as usize].flags.is_unused = true;
+                    self.import_records.items_mut()[new_import_id as usize].flags.insert(bun_options_types::ImportRecordFlags::IS_UNUSED);
                     if SCAN_ONLY {
-                        self.import_records.items_mut()[new_import_id as usize].flags.is_internal = true;
+                        self.import_records.items_mut()[new_import_id as usize].flags.insert(bun_options_types::ImportRecordFlags::IS_INTERNAL);
                         self.import_records.items_mut()[new_import_id as usize].path.is_disabled = true;
                     }
                     remap_count += 1;
@@ -3611,7 +3617,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
             if Self::TRACK_SYMBOL_USAGE_DURING_PARSE_PASS {
                 if let Some(uses) = &mut self.parse_pass_symbol_uses {
-                    uses.put(name, ScanPassResult::ParsePassSymbolUse {
+                    uses.put(name, crate::parser::ParsePassSymbolUse {
                         r#ref,
                         import_record_index: stmt.import_record_index,
                         ..Default::default()
@@ -3631,11 +3637,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
         if remap_count > 0 && stmt.items.is_empty() && stmt.default_name.is_none() {
             self.import_records.items_mut()[stmt.import_record_index as usize].path.namespace = js_ast::Macro::NAMESPACE;
-            self.import_records.items_mut()[stmt.import_record_index as usize].flags.is_unused = true;
+            self.import_records.items_mut()[stmt.import_record_index as usize].flags.insert(bun_options_types::ImportRecordFlags::IS_UNUSED);
 
             if SCAN_ONLY {
                 self.import_records.items_mut()[stmt.import_record_index as usize].path.is_disabled = true;
-                self.import_records.items_mut()[stmt.import_record_index as usize].flags.is_internal = true;
+                self.import_records.items_mut()[stmt.import_record_index as usize].flags.insert(bun_options_types::ImportRecordFlags::IS_INTERNAL);
             }
 
             return Ok(self.s(S::Empty {}, loc));
@@ -3643,7 +3649,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             item_refs.shrink_and_free(stmt.items.len() + usize::from(stmt.default_name.is_some()));
         }
 
-        if path.import_tag != ParsedPath::ImportTag::None || path.loader.is_some() {
+        if path.import_tag != bun_options_types::ImportRecordTag::None || path.loader.is_some() {
             self.validate_and_set_import_type(&path, &mut stmt)?;
         }
 
@@ -3681,7 +3687,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     }
                 }
             }
-        } else if path.import_tag == ParsedPath::ImportTag::BakeResolveToSsrGraph {
+        } else if path.import_tag == bun_options_types::ImportRecordTag::BakeResolveToSsrGraph {
             self.import_records.items_mut()[stmt.import_record_index as usize].tag = path.import_tag;
         }
         Ok(())
@@ -5422,7 +5428,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     value: Some(*value),
                 }]);
                 let mut local = self.s(
-                    S::Local { is_export: true, decls: Decl::List::from_owned_slice(decls), ..Default::default() },
+                    S::Local { is_export: true, decls: js_ast::g::DeclList::from_owned_slice(decls), ..Default::default() },
                     loc,
                 );
                 self.visit_and_append_stmt(stmts, &mut local).expect("unreachable");
@@ -5438,7 +5444,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     value: Some(with.value),
                 }]);
                 let mut local = self.s(
-                    S::Local { is_export: true, decls: Decl::List::from_owned_slice(decls), ..Default::default() },
+                    S::Local { is_export: true, decls: js_ast::g::DeclList::from_owned_slice(decls), ..Default::default() },
                     loc,
                 );
                 self.visit_and_append_stmt(stmts, &mut local).expect("unreachable");
@@ -5581,13 +5587,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             if self.enclosing_namespace_arg_ref.is_none() {
                 // Top-level namespace: "var"
                 stmts.push(self.s(
-                    S::Local { kind: js_ast::s::Kind::KVar, decls: G::Decl::List::from_owned_slice(decls), is_export, ..Default::default() },
+                    S::Local { kind: js_ast::s::Kind::KVar, decls: js_ast::g::DeclList::from_owned_slice(decls), is_export, ..Default::default() },
                     stmt_loc,
                 ));
             } else {
                 // Nested namespace: "let"
                 stmts.push(self.s(
-                    S::Local { kind: js_ast::s::Kind::KLet, decls: G::Decl::List::from_owned_slice(decls), ..Default::default() },
+                    S::Local { kind: js_ast::s::Kind::KLet, decls: js_ast::g::DeclList::from_owned_slice(decls), ..Default::default() },
                     stmt_loc,
                 ));
             }
@@ -6707,10 +6713,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             for (key, val) in unsafe { &*namespace }.iter() {
                 match &val.data {
                     js_ast::ts::Data::EnumNumber(num) => {
-                        inner_map.put_assume_capacity_no_clobber(key, InlinedEnumValue::encode(InlinedEnumValue::Decoded::Number(*num)));
+                        inner_map.put_assume_capacity_no_clobber(key, InlinedEnumValue::encode(crate::InlinedEnumValueDecoded::Number(*num)));
                     }
                     js_ast::ts::Data::EnumString(str_) => {
-                        inner_map.put_assume_capacity_no_clobber(key, InlinedEnumValue::encode(InlinedEnumValue::Decoded::String(*str_)));
+                        inner_map.put_assume_capacity_no_clobber(key, InlinedEnumValue::encode(crate::InlinedEnumValueDecoded::String(*str_)));
                     }
                     _ => continue,
                 }

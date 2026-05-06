@@ -15,7 +15,9 @@ use crate::parser::{
     AwaitOrYield, DeferredTsDecorators, JsxT, LexicalDecl, ParseStatementOptions, ParsedPath, Ref,
     StmtList, TypeScript,
 };
-use bun_options_types::ImportKind;
+use crate::parser::fs;
+use js_ast::expr::EFlags;
+use bun_options_types::{ImportKind, ImportRecordFlags, ImportRecordTag};
 
 // TODO(port): narrow error set
 type Result<T> = core::result::Result<T, bun_core::Error>;

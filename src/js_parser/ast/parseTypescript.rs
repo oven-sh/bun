@@ -7,6 +7,7 @@ use crate::ast::{
     StmtData, TSNamespaceMember, TSNamespaceMemberMap,
 };
 use crate::ast::p::P;
+use crate::ast::expr::EFlags;
 use crate::ast::scope::Kind as ScopeKind;
 use crate::ast::symbol::Kind as SymbolKind;
 use crate::ast::ts::Data as TSNamespaceMemberData;
@@ -38,14 +39,9 @@ fn clone_ts_member_data(d: &TSNamespaceMemberData) -> TSNamespaceMemberData {
 impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
     // TODO(port): narrow error set
     pub fn parse_type_script_decorators(&mut self) -> Result<ExprNodeList, Error> {
-        
-        // blocked_on: ExprNodeList = BabyList<Expr> (return type) — BumpVec→BabyList conversion
-        //   (BabyList::move_from_list takes Vec<T>, not BumpVec); p.options.features.standard_decorators
-        //   field missing on RuntimeFeatures (Parser.rs).
-        {
         let p = self;
         if !Self::IS_TYPESCRIPT_ENABLED && !p.options.features.standard_decorators {
-            return Ok(&[]);
+            return Ok(ExprNodeList::default());
         }
 
         let mut decorators: BumpVec<'_, ExprNodeIndex> = BumpVec::new_in(p.allocator);
@@ -70,14 +66,15 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 //
                 // This matches the behavior of the TypeScript compiler.
                 // PERF(port): was ensureUnusedCapacity + unusedCapacitySlice — profile in Phase B
-                // TODO(port): Zig `parseExprWithFlags` takes an out-param slot; reshaped to return value.
-                decorators.push(p.parse_expr_with_flags(Level::New, ExprEFlags::TsDecorator)?);
+                // PORT NOTE: Zig `parseExprWithFlags` takes an out-param slot; preserved here.
+                let mut expr = Expr::EMPTY;
+                p.parse_expr_with_flags(Level::New, EFlags::TsDecorator, &mut expr)?;
+                decorators.push(expr);
             }
         }
 
-        Ok(decorators.into_bump_slice())
-        }
-        todo!("b2-ast-E: parse_type_script_decorators body")
+        // SAFETY: bump-arena slice; ExprNodeList wraps it as Borrowed (no growth/free).
+        Ok(unsafe { ExprNodeList::from_bump_slice(decorators.into_bump_slice_mut()) })
     }
 
     /// Parse a standard (TC39) decorator expression following the `@` token.
@@ -89,12 +86,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     ///   @ DecoratorParenthesizedExpression
     // TODO(port): narrow error set
     pub fn parse_standard_decorator(&mut self) -> Result<ExprNodeIndex, Error> {
-        
-        // blocked_on: P::store_name_in_ref gated (P.rs:640 impl block); E::Dot has no Default
-        //   (needs full {target,name,name_loc,optional_chain,can_be_removed_if_unused,
-        //   call_can_be_unwrapped_if_unused}); E::Call.args is ExprNodeList (BabyList) not slice;
-        //   skip_type_script_type_arguments stub arity.
-        {
         let p = self;
         let loc = p.lexer.loc();
 
@@ -112,27 +103,28 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             return Err(err!("SyntaxError"));
         }
 
+        let ident = p.lexer.identifier;
+        let ref_ = p.store_name_in_ref(ident)?;
         let mut expr = p.new_expr(
-            E::Identifier {
-                ref_: p.store_name_in_ref(p.lexer.identifier)?,
-            },
+            E::Identifier { ref_, ..Default::default() },
             loc,
         );
         p.lexer.next()?;
 
         // Skip TypeScript type arguments after the identifier (e.g., @foo<T>)
         if Self::IS_TYPESCRIPT_ENABLED {
-            let _ = p.skip_type_script_type_arguments(false)?;
+            let _ = p.skip_type_script_type_arguments::<false>()?;
         }
 
         // DecoratorMemberExpression: Identifier (.Identifier)*
         while p.lexer.token == T::TDot || p.lexer.token == T::TQuestionDot {
             // Forbid optional chaining in decorators
             if p.lexer.token == T::TQuestionDot {
+                let err_loc = p.lexer.loc();
                 p.log.add_error(
-                    p.source,
-                    p.lexer.loc(),
-                    "Optional chaining is not allowed in decorator expressions",
+                    Some(p.source),
+                    err_loc,
+                    b"Optional chaining is not allowed in decorator expressions",
                 )?;
                 return Err(err!("SyntaxError"));
             }
@@ -153,13 +145,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     target: expr,
                     name,
                     name_loc,
+                    ..Default::default()
                 },
                 loc,
             );
 
             // Skip TypeScript type arguments after member access (e.g., @foo.bar<T>)
             if Self::IS_TYPESCRIPT_ENABLED {
-                let _ = p.skip_type_script_type_arguments(false)?;
+                let _ = p.skip_type_script_type_arguments::<false>()?;
             }
         }
 
@@ -172,14 +165,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     target: expr,
                     args: args.list,
                     close_paren_loc: args.loc,
+                    ..Default::default()
                 },
                 loc,
             );
         }
 
         Ok(expr)
-        }
-        todo!("b2-ast-E: parse_standard_decorator body")
     }
 
     pub fn parse_type_script_namespace_stmt(
@@ -447,21 +439,16 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         default_name_loc: logger::Loc,
         default_name: &'a [u8],
     ) -> Result<Stmt, Error> {
-        let _ = (loc, opts, default_name_loc, default_name);
-        
-        // blocked_on: P::{b, declare_symbol, push_scope_for_parse_pass, pop_scope} gated (P.rs:640);
-        //   G::DeclList = BabyList<Decl> (need from_slice/init_one); E::Call/E::Dot full struct-init.
-        {
         let p = self;
         p.lexer.expect(T::TEquals)?;
 
         let kind = js_ast::LocalKind::KConst;
         let name = p.lexer.identifier;
+        let target_ref = p.store_name_in_ref(name).expect("unreachable");
+        let target_loc = p.lexer.loc();
         let target = p.new_expr(
-            E::Identifier {
-                ref_: p.store_name_in_ref(name).expect("unreachable"),
-            },
-            p.lexer.loc(),
+            E::Identifier { ref_: target_ref, ..Default::default() },
+            target_loc,
         );
         let mut value = target;
         p.lexer.expect(T::TIdentifier)?;
@@ -469,16 +456,20 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         if name == b"require" && p.lexer.token == T::TOpenParen {
             // "import ns = require('x')"
             p.lexer.next()?;
-            let path = p.new_expr(p.lexer.to_e_string()?, p.lexer.loc());
+            let path_estr = p.lexer.to_e_string()?;
+            let path_loc = p.lexer.loc();
+            let path = p.new_expr(path_estr, path_loc);
             p.lexer.expect(T::TStringLiteral)?;
             p.lexer.expect(T::TCloseParen)?;
             if !opts.is_typescript_declare {
-                let args = ExprNodeList::init_one(p.allocator, path)?;
+                let args = ExprNodeList::init_one(path)?;
+                let close_paren_loc = p.lexer.loc();
                 value = p.new_expr(
                     E::Call {
                         target,
-                        close_paren_loc: p.lexer.loc(),
+                        close_paren_loc,
                         args,
+                        ..Default::default()
                     },
                     loc,
                 );
@@ -489,11 +480,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             let mut prev_value = value;
             while p.lexer.token == T::TDot {
                 p.lexer.next()?;
+                let dot_name = p.lexer.identifier;
+                let dot_name_loc = p.lexer.loc();
                 value = p.new_expr(
                     E::Dot {
                         target: prev_value,
-                        name: p.lexer.identifier,
-                        name_loc: p.lexer.loc(),
+                        name: dot_name,
+                        name_loc: dot_name_loc,
+                        ..Default::default()
                     },
                     loc,
                 );
@@ -514,21 +508,18 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             .declare_symbol(SymbolKind::Constant, default_name_loc, default_name)
             .expect("unreachable");
         // PERF(port): was `allocator.alloc(Decl, 1)` into arena slice — profile in Phase B
-        let decls = p.allocator.alloc_slice_copy(&[Decl {
-            binding: p.b(B::Identifier { ref_ }, default_name_loc),
-            value: Some(value),
-        }]);
+        let binding = p.b(B::Identifier { r#ref: ref_ }, default_name_loc);
+        let decls = G::DeclList::init_one(G::Decl { binding, value: Some(value) })?;
         Ok(p.s(
             S::Local {
                 kind,
-                decls: DeclList::from_owned_slice(decls),
+                decls,
                 is_export: opts.is_export,
                 was_ts_import_equals: true,
+                ..Default::default()
             },
             loc,
         ))
-        }
-        todo!("b2-ast-E: parse_type_script_import_equals_stmt body")
     }
 
     pub fn parse_typescript_enum_stmt(
@@ -536,12 +527,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         loc: logger::Loc,
         opts: &mut ParseStatementOptions,
     ) -> Result<Stmt, Error> {
-        let _ = (loc, opts);
-        
-        // blocked_on: P::{push_scope_for_parse_pass, declare_symbol, get_or_create_exported_namespace_members,
-        //   pop_scope, store_name_in_ref} gated (P.rs:640); p.scopes_in_order_for_enum field shape;
-        //   EnumValue.{name,value} field types; TSNamespaceMemberMap insert API.
-        {
         let p = self;
         p.lexer.expect(T::TEnum)?;
         let name_loc = p.lexer.loc();

@@ -199,6 +199,21 @@ pub struct Import {
     pub is_single_line: bool, // = false
 }
 
+impl Default for Import {
+    fn default() -> Self {
+        Self {
+            namespace_ref: Ref::NONE,
+            default_name: None,
+            // Zig: `&[_]ClauseItem{}` — empty arena slice. Model as a dangling
+            // zero-length fat pointer so callers can `..Default::default()`.
+            items: core::ptr::slice_from_raw_parts_mut(core::ptr::NonNull::dangling().as_ptr(), 0),
+            star_name_loc: None,
+            import_record_index: u32::MAX,
+            is_single_line: false,
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct Return {
     pub value: Option<ExprNodeIndex>, // = None

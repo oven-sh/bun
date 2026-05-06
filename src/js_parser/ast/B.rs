@@ -1,7 +1,9 @@
 use crate::ast::base::Ref;
 use crate::ast::binding::Binding;
 use crate::ast::expr::Expr;
-use crate::{flags, ArrayBinding, ExprNodeIndex};
+use crate::{flags, ExprNodeIndex};
+// Re-exported so callers can spell `js_ast::b::ArrayBinding` (Zig: `B.Array.Item`).
+pub use crate::ArrayBinding;
 
 /// B is for Binding! Bindings are on the left side of variable
 /// declarations (s_local), which is how destructuring assignments
@@ -106,6 +108,8 @@ impl Object {
 }
 
 impl B {
+    // Zig: `union(Binding.Tag)` — Phase B should ensure `Binding::Tag` discriminants
+    // match this enum's variant order so `tag()` stays a transmute/match.
     pub fn tag(&self) -> super::binding::Tag {
         use super::binding::Tag;
         match self {
@@ -115,40 +119,46 @@ impl B {
             B::BMissing(_) => Tag::BMissing,
         }
     }
-}
-
-// TODO(b2-ast-round): write_to_hasher needs Expr::Data::write_to_hasher +
-// SymbolTable bound + bun_core::write_any_to_hasher; wire after Expr lands.
-
-impl B {
-    // TODO(port): `union(Binding.Tag)` — Phase B should ensure `Binding::Tag` discriminants
-    // match this enum's variant order so `tag()` stays a transmute/match.
-    fn tag(&self) -> Binding::Tag {
-        match self {
-            B::BIdentifier(_) => Binding::Tag::BIdentifier,
-            B::BArray(_) => Binding::Tag::BArray,
-            B::BObject(_) => Binding::Tag::BObject,
-            B::BMissing(_) => Binding::Tag::BMissing,
-        }
-    }
 
     /// This hash function is currently only used for React Fast Refresh transform.
     /// This doesn't include the `is_single_line` properties, as they only affect whitespace.
-    pub fn write_to_hasher<H: core::hash::Hasher, S>(&self, hasher: &mut H, symbol_table: S)
+    pub fn write_to_hasher<H, S>(&self, hasher: &mut H, symbol_table: &mut S)
     where
-        S: Copy,
-        // TODO(port): `symbol_table: anytype` — only forwarded to `Ref::get_symbol` and
-        // `Expr::Data::write_to_hasher`; bound by whatever trait those settle on in Phase B.
+        H: bun_core::Hasher + ?Sized,
+        S: crate::ast::base::SymbolTable + ?Sized,
+        // PORT NOTE: `symbol_table: anytype` — forwarded to `Ref::get_symbol` and
+        // `Expr::Data::write_to_hasher`; bound mirrors `Expr::Data::write_to_hasher`.
     {
+        // Local mirror of `bun.writeAnyToHasher` for arbitrary `Copy` POD —
+        // `bun_core::write_any_to_hasher` is bound by `AsBytes` (ints only) and
+        // we cannot impl that trait for tuples/`Tag` from this crate-file scope.
+        // Mirrors Zig `hasher.update(std.mem.asBytes(&thing))`.
+        #[inline(always)]
+        fn raw<H: bun_core::Hasher + ?Sized, T: Copy>(h: &mut H, v: T) {
+            // SAFETY: `T: Copy` ⇒ no drop glue / no interior refs; we read
+            // exactly size_of::<T> initialized bytes from `v`'s stack slot.
+            h.update(unsafe {
+                core::slice::from_raw_parts(
+                    core::ptr::addr_of!(v).cast::<u8>(),
+                    core::mem::size_of::<T>(),
+                )
+            });
+        }
         match self {
             B::BIdentifier(id) => {
-                let original_name = id.r#ref.get_symbol(symbol_table).original_name;
-                write_any_to_hasher(hasher, (self.tag(), original_name.len()));
+                // SAFETY: arena-owned `B::Identifier` valid for parser arena lifetime.
+                let ref_ = unsafe { (**id).r#ref };
+                // SAFETY: `original_name` is an arena-owned slice valid for the
+                // parser/AST arena that `symbol_table` borrows from.
+                let original_name = unsafe { &*ref_.get_symbol(symbol_table).original_name };
+                raw(hasher, (self.tag(), original_name.len()));
             }
             B::BArray(array) => {
-                write_any_to_hasher(hasher, (self.tag(), array.has_spread, array.items.len()));
-                for item in array.items.iter() {
-                    write_any_to_hasher(hasher, (item.default_value.is_some(),));
+                // SAFETY: arena-owned `B::Array` valid for parser arena lifetime.
+                let array = unsafe { &**array };
+                raw(hasher, (self.tag(), array.has_spread, array.items().len()));
+                for item in array.items().iter() {
+                    raw(hasher, (item.default_value.is_some(),));
                     if let Some(default) = &item.default_value {
                         default.data.write_to_hasher(hasher, symbol_table);
                     }
@@ -156,12 +166,11 @@ impl B {
                 }
             }
             B::BObject(object) => {
-                write_any_to_hasher(hasher, (self.tag(), object.properties.len()));
-                for property in object.properties.iter() {
-                    write_any_to_hasher(
-                        hasher,
-                        (property.default_value.is_some(), property.flags),
-                    );
+                // SAFETY: arena-owned `B::Object` valid for parser arena lifetime.
+                let object = unsafe { &**object };
+                raw(hasher, (self.tag(), object.properties().len()));
+                for property in object.properties().iter() {
+                    raw(hasher, (property.default_value.is_some(), property.flags));
                     if let Some(default) = &property.default_value {
                         default.data.write_to_hasher(hasher, symbol_table);
                     }
@@ -173,6 +182,10 @@ impl B {
         }
     }
 }
+
+// Keep `Binding` referenced (it's the conceptual tag-host of `B`).
+#[allow(dead_code)]
+type _BindingTagHost = Binding;
 
 pub use crate::ast::g::Class;
 

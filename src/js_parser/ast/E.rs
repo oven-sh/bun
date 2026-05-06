@@ -91,24 +91,11 @@ impl Array {
         // This over-allocates a little but it's fine
         // PERF(port): Zig allocated in arena; Phase-A BabyList uses global allocator.
         let mut out: BabyList<Expr> =
-<<<<<<< Updated upstream
             BabyList::init_capacity(estimated_count + self.items.len as usize)?;
-||||||| Stash base
-            BabyList::init_capacity(bump, estimated_count + self.items.len() as usize)?;
-=======
-            BabyList::init_capacity(estimated_count + self.items.len() as usize)?;
->>>>>>> Stashed changes
         out.expand_to_capacity();
-<<<<<<< Updated upstream
         // PORT NOTE: reshaped for borrowck — iterate items via index so the &mut
         // borrow of `out` (remain) does not overlap a shared borrow of `self`.
         let items_len = self.items.len as usize;
-||||||| Stash base
-=======
-        // PORT NOTE: reshaped for borrowck — iterate items via index so the &mut
-        // borrow of `out` (remain) does not overlap a shared borrow of `self`.
-        let items_len = self.items.len() as usize;
->>>>>>> Stashed changes
         let mut remain = out.slice_mut();
         for idx in 0..items_len {
             let item = self.items.slice()[idx];
@@ -138,15 +125,8 @@ impl Array {
 
         // PORT NOTE: reshaped for borrowck — capture remain.len() before re-borrowing `out`.
         let remain_len = remain.len();
-<<<<<<< Updated upstream
         let new_len = out.len as usize - remain_len;
         out.shrink_retaining_capacity(new_len);
-||||||| Stash base
-        out.shrink_retaining_capacity(out.len() - u32::try_from(remain_len).unwrap());
-=======
-        let new_len = out.len() as usize - remain_len;
-        out.shrink_retaining_capacity(new_len);
->>>>>>> Stashed changes
         Ok(out)
     }
 
@@ -154,8 +134,6 @@ impl Array {
     // PORTING.md (jsc extension trait lives in `js_parser_jsc` crate).
 
     /// Assumes each item in the array is a string
-    // TODO(b2-ast-round-C): depends on `EString::order` (gated EString impl).
-    #[cfg(any())]
     pub fn alphabetize_strings(&mut self) {
         if cfg!(debug_assertions) {
             for item in self.items.slice() {
@@ -974,34 +952,166 @@ pub mod object {
     pub use super::{Object, Rope, RopeQuery, SetError};
 }
 
-// TODO(b2-ast-round-C): Object accessors call `Expr::as_property`/`EString::eql`
-// which need `bun_string::utf16_eql_string` (track-A blocked_on) and the gated
-// `impl Expr` accessor block. Un-gate with the parser round.
-
+// `toJS` alias deleted — lives in `js_parser_jsc` extension trait.
 impl Object {
-    pub fn get(&self, key: &[u8]) -> Option<Expr> {
-        self.as_property(key).map(|query| query.expr)
-    }
-
-    // `toJS` alias deleted — lives in `js_parser_jsc` extension trait.
-
-    pub fn put(&mut self, bump: &Bump, key: &[u8], expr: Expr) -> Result<(), AllocError> {
-        if let Some(query) = self.as_property(key) {
-            self.properties.ptr_mut()[query.i as usize].value = Some(expr);
-        } else {
-            self.properties.append(
-                bump,
-                G::Property {
-                    key: Some(Expr::init(EString::init(key), expr.loc)),
-                    value: Some(expr),
-                    ..G::Property::default()
-                },
-            )?;
+    pub fn set(&self, key: Expr, _bump: &Bump, value: Expr) -> Result<(), SetError> {
+        let head_key = match key.data.e_string() {
+            Some(s) => s.data,
+            None => return Err(SetError::Clobber),
+        };
+        if self.has_property(head_key) {
+            return Err(SetError::Clobber);
         }
+        // TODO(port): Zig takes `*const Object` but mutates `properties` (BabyList interior).
+        // Mirroring with raw cast; Phase B should make this `&mut self`.
+        // SAFETY: BabyList stores ptr/len/cap; Zig mutates through `*const Object` here and
+        // callers never hold an aliasing borrow over the properties slice.
+        let this = unsafe { &mut *(self as *const Object as *mut Object) };
+        this.properties.append(G::Property {
+            key: Some(key),
+            value: Some(value),
+            ..G::Property::default()
+        })?;
         Ok(())
     }
 
-    pub fn put_string(
+    // this is terribly, shamefully slow
+    pub fn set_rope(
+        &mut self,
+        rope: &Rope,
+        bump: &Bump,
+        value: Expr,
+    ) -> Result<(), SetError> {
+        let head_key = match rope.head.data.e_string() {
+            Some(s) => s.data,
+            None => return Err(SetError::Clobber),
+        };
+        if let Some(existing) = self.get(head_key) {
+            match existing.data {
+                crate::ast::expr::Data::EArray(mut array) => {
+                    if rope.next.is_null() {
+                        array.push(bump, value)?;
+                        return Ok(());
+                    }
+
+                    if let Some(last) = array.items.last() {
+                        if !matches!(last.data, crate::ast::expr::Data::EObject(_)) {
+                            return Err(SetError::Clobber);
+                        }
+                        // SAFETY: rope.next is non-null (checked above) and arena-owned.
+                        last.data
+                            .e_object_mut()
+                            .unwrap()
+                            .set_rope(unsafe { &*rope.next }, bump, value)?;
+                        return Ok(());
+                    }
+
+                    array.push(bump, value)?;
+                    return Ok(());
+                }
+                crate::ast::expr::Data::EObject(mut object) => {
+                    if !rope.next.is_null() {
+                        // SAFETY: rope.next is non-null and arena-owned.
+                        object.set_rope(unsafe { &*rope.next }, bump, value)?;
+                        return Ok(());
+                    }
+
+                    return Err(SetError::Clobber);
+                }
+                _ => {
+                    return Err(SetError::Clobber);
+                }
+            }
+        }
+
+        let mut value_ = value;
+        if !rope.next.is_null() {
+            let mut obj = Expr::init(Object::default(), rope.head.loc);
+            // SAFETY: rope.next is non-null and arena-owned.
+            obj.data
+                .e_object_mut()
+                .unwrap()
+                .set_rope(unsafe { &*rope.next }, bump, value)?;
+            value_ = obj;
+        }
+
+        self.properties.append(G::Property {
+            key: Some(rope.head),
+            value: Some(value_),
+            ..G::Property::default()
+        })?;
+        Ok(())
+    }
+
+    pub fn get_or_put_array(
+        &mut self,
+        rope: &Rope,
+        bump: &Bump,
+    ) -> Result<Expr, SetError> {
+        let head_key = match rope.head.data.e_string() {
+            Some(s) => s.data,
+            None => return Err(SetError::Clobber),
+        };
+        if let Some(existing) = self.get(head_key) {
+            match existing.data {
+                crate::ast::expr::Data::EArray(mut array) => {
+                    if rope.next.is_null() {
+                        return Ok(existing);
+                    }
+
+                    if let Some(last) = array.items.last() {
+                        if !matches!(last.data, crate::ast::expr::Data::EObject(_)) {
+                            return Err(SetError::Clobber);
+                        }
+                        // SAFETY: rope.next is non-null (checked above) and arena-owned.
+                        return last
+                            .data
+                            .e_object_mut()
+                            .unwrap()
+                            .get_or_put_array(unsafe { &*rope.next }, bump);
+                    }
+
+                    return Err(SetError::Clobber);
+                }
+                crate::ast::expr::Data::EObject(mut object) => {
+                    if rope.next.is_null() {
+                        return Err(SetError::Clobber);
+                    }
+                    // SAFETY: rope.next is non-null and arena-owned.
+                    return object.get_or_put_array(unsafe { &*rope.next }, bump);
+                }
+                _ => {
+                    return Err(SetError::Clobber);
+                }
+            }
+        }
+
+        if !rope.next.is_null() {
+            let mut obj = Expr::init(Object::default(), rope.head.loc);
+            // SAFETY: rope.next is non-null and arena-owned.
+            let out = obj
+                .data
+                .e_object_mut()
+                .unwrap()
+                .get_or_put_array(unsafe { &*rope.next }, bump)?;
+            self.properties.append(G::Property {
+                key: Some(rope.head),
+                value: Some(obj),
+                ..G::Property::default()
+            })?;
+            return Ok(out);
+        }
+
+        let out = Expr::init(Array::default(), rope.head.loc);
+        self.properties.append(G::Property {
+            key: Some(rope.head),
+            value: Some(out),
+            ..G::Property::default()
+        })?;
+        Ok(out)
+    }
+
+    fn _dup_removed_marker_start(
         &mut self,
         bump: &Bump,
         key: &[u8],

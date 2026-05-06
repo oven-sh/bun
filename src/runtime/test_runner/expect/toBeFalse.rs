@@ -56,7 +56,7 @@ impl Expect {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/test_runner/expect/toBeFalse.zig (35 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      defer post_match via scopeguard will fight borrowck; ConsoleFormatter init/Default and Expect::get_signature const-fn need Phase B wiring
+//   confidence: medium-high
+//   todos:      0
+//   notes:      defer post_match() reshaped via inner closure (no raw ptrs); matches toBeTrue.rs pattern
 // ──────────────────────────────────────────────────────────────────────────

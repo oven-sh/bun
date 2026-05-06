@@ -397,12 +397,12 @@ impl<'a> GlobalJS<'a> {
 
 #[derive(Clone, Copy)]
 pub struct GlobalMini<'a> {
-    pub mini: &'a MiniEventLoop,
+    pub mini: &'a MiniEventLoop<'a>,
 }
 
 impl<'a> GlobalMini<'a> {
     #[inline]
-    pub fn init(g: &'a MiniEventLoop) -> Self {
+    pub fn init(g: &'a MiniEventLoop<'a>) -> Self {
         Self { mini: g }
     }
 

@@ -486,11 +486,11 @@ fn print_modified_segment_without_diffdiff(
 
     print_line_prefix(writer, config, removed_prefix)?;
     print_segment(segment.removed, writer, config, styles::REMOVED_LINE)?;
-    writer.write_all(b"\n")?;
+    writer.write_str("\n")?;
     print_line_prefix(writer, config, inserted_prefix)?;
     print_segment(segment.inserted, writer, config, styles::INSERTED_LINE)?;
     if !modified_style.single_line {
-        writer.write_all(b"\n")?;
+        writer.write_str("\n")?;
     }
     Ok(())
 }

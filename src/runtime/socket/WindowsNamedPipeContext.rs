@@ -5,7 +5,7 @@ use core::ptr::NonNull;
 use std::sync::Arc;
 
 use bun_core::Output;
-use bun_jsc::{self as jsc, JSGlobalObject};
+use bun_jsc::{self as jsc, JSGlobalObject, SysErrorJsc};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_event_loop::AnyTask::AnyTask;
 use bun_event_loop::Task;
@@ -61,7 +61,7 @@ impl WindowsNamedPipeContext {
             let n = (*this).ref_count.get() - 1;
             (*this).ref_count.set(n);
             if n == 0 {
-                Self::schedule_deinit(this);
+                schedule_deinit(this);
             }
         }
     }

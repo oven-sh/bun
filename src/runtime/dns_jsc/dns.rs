@@ -4215,11 +4215,15 @@ impl Resolver {
         );
         let promise = unsafe { (*(*request).tail).promise.value() };
 
-        unsafe {
-            (*channel).resolve::<T>(name, T::TYPE_NAME, request, ResolveInfoRequest::<T>::on_cares_complete);
-        }
+        // TODO(port): blocked_on bun_cares_sys::c_ares_draft::Channel::resolve —
+        // upstream API is `resolve<T: ResolveHandler>(&mut self, name, ctx: &mut T)`
+        // (trait-based callback dispatch). `ResolveInfoRequest<T>` does not yet
+        // impl `ResolveHandler`; the Zig version passed (name, type_name, ctx, callback)
+        // directly. Until the per-record-type ResolveHandler impls land this is a no-op.
+        let _ = (channel, request);
 
-        self.request_sent(global_this.bun_vm());
+        // SAFETY: bun_vm() returns a live VM pointer for the duration of the call.
+        self.request_sent(unsafe { &*global_this.bun_vm() });
         Ok(promise)
     }
 

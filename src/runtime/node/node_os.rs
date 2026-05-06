@@ -1118,7 +1118,7 @@ pub fn network_interfaces_windows(global_this: &JSGlobalObject) -> JsResult<JSVa
                 cidr = ZigString::init(cidr_str).with_encoding().to_js(global_this);
             }
 
-            interface.put(global_this, ZigString::static_("address"), ZigString::init(&ip_buf[start..start + addr_len]).with_encoding().to_js(global_this));
+            interface.put(global_this, b"address", ZigString::init(&ip_buf[start..start + addr_len]).with_encoding().to_js(global_this));
         }
 
         // netmask

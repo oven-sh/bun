@@ -232,20 +232,18 @@ impl WindowsNamedPipe {
         bun_output::scoped_log!(WindowsNamedPipe, "onHandshake");
 
         self.ssl_error = CertError {
-            error_no: ssl_error.error_no,
-            code: if ssl_error.code.is_null() || ssl_error.error_no == 0 {
-                bun_str::ZStr::empty()
+            error_no: ssl_error.error,
+            code: if ssl_error.code.is_null() || ssl_error.error == 0 {
+                None
             } else {
                 // SAFETY: code is a NUL-terminated C string from BoringSSL when non-null
-                let s = unsafe { core::ffi::CStr::from_ptr(ssl_error.code) }.to_bytes();
-                bun_str::ZStr::from_bytes(s)
+                Some(unsafe { CStr::from_ptr(ssl_error.code) }.into())
             },
-            reason: if ssl_error.reason.is_null() || ssl_error.error_no == 0 {
-                bun_str::ZStr::empty()
+            reason: if ssl_error.reason.is_null() || ssl_error.error == 0 {
+                None
             } else {
                 // SAFETY: reason is a NUL-terminated C string from BoringSSL when non-null
-                let s = unsafe { core::ffi::CStr::from_ptr(ssl_error.reason) }.to_bytes();
-                bun_str::ZStr::from_bytes(s)
+                Some(unsafe { CStr::from_ptr(ssl_error.reason) }.into())
             },
         };
         (self.handlers.on_handshake)(self.handlers.ctx, handshake_success, ssl_error);

@@ -739,7 +739,7 @@ impl BunxCommand {
             if let Some(segment) = path_iter.next() {
                 if !strings::eql_long(
                     strings::without_trailing_slash(segment),
-                    strings::without_trailing_slash(ignore_cwd),
+                    strings::without_trailing_slash(&ignore_cwd),
                     true,
                 ) {
                     new_path.extend_from_slice(segment);
@@ -748,7 +748,7 @@ impl BunxCommand {
             while let Some(segment) = path_iter.next() {
                 if !strings::eql_long(
                     strings::without_trailing_slash(segment),
-                    strings::without_trailing_slash(ignore_cwd),
+                    strings::without_trailing_slash(&ignore_cwd),
                     true,
                 ) {
                     new_path.push(DELIMITER);

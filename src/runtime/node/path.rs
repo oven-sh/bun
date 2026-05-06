@@ -3168,14 +3168,16 @@ pub fn resolve_windows_t<'a, T: PathChar>(
                 }
             }
             if let Some(ep_len) = env_path_len {
-                path = &buf2[0..ep_len];
+                path_ptr = buf2.as_ptr();
+                path_len = ep_len;
             } else {
                 // cwd is limited to MAX_PATH_BYTES.
                 cwd_len = match super::_cwd::get_cwd_t(&mut tmp_buf[..]) {
                     Ok(r) => r.len(),
                     Err(e) => return Err(e),
                 };
-                path = &tmp_buf[0..cwd_len];
+                path_ptr = tmp_buf.as_ptr();
+                path_len = cwd_len;
                 // We must set envPath here so that it doesn't hit the null check just below.
                 env_path_len = Some(cwd_len);
             }
@@ -3189,8 +3191,8 @@ pub fn resolve_windows_t<'a, T: PathChar>(
             //     StringPrototypeToLowerCase(resolvedDevice) &&
             //     StringPrototypeCharCodeAt(path, 2) === CHAR_BACKWARD_SLASH)) {
             if env_path_len.is_none()
-                || (path[2] == T::from_u8(CHAR_BACKWARD_SLASH)
-                    && !eql_ignore_case_t(&path[0..2], &tmp_buf[0..resolved_device_len]))
+                || (path!()[2] == T::from_u8(CHAR_BACKWARD_SLASH)
+                    && !eql_ignore_case_t(&path!()[0..2], &tmp_buf[0..resolved_device_len]))
             {
                 // Translated from the following JS code:
                 //   path = `${resolvedDevice}\\`;
@@ -3199,19 +3201,22 @@ pub fn resolve_windows_t<'a, T: PathChar>(
                 buf_offset = buf_size;
                 buf_size += 1;
                 buf2[buf_offset] = T::from_u8(CHAR_BACKWARD_SLASH);
-                path = &buf2[0..buf_size];
+                path_ptr = buf2.as_ptr();
+                path_len = buf_size;
             }
         }
 
-        let len = path.len();
+        let len = path_len;
         let mut root_end: usize = 0;
         // Backed by tmpBuf or an anonymous buffer.
         let mut device_buf: [T; 2] = [T::default(); 2];
-        let mut device: &[T] = &[];
+        // PORT NOTE: same raw-ptr trick as `path` — `device` may alias tmp_buf.
+        let mut device_ptr: *const T = core::ptr::NonNull::<T>::dangling().as_ptr();
+        let mut device_len: usize = 0;
         let mut device_in_tmp = false;
         // Prefix with _ to avoid shadowing the identifier in the outer scope.
         let mut _is_absolute: bool = false;
-        let byte0 = if len > 0 { path[0] } else { T::default() };
+        let byte0 = if len > 0 { path!()[0] } else { T::default() };
 
         // Try to match a root
         if len == 1 {

@@ -1100,18 +1100,19 @@ where
         }
 
         this.detach_response();
-        let mut any_js_calls = false;
+        let any_js_calls = core::cell::Cell::new(false);
         // SAFETY: BACKREF, just asserted Some
         let server = unsafe { &*this.server.unwrap() };
-        let vm = server.vm();
+        let vm = server.vm() as *const VirtualMachine as *mut VirtualMachine;
         let global_this = server.global_this();
         // PORT NOTE: reshaped for borrowck — defer block captures `this` and `any_js_calls`
         let this_ptr = this as *mut Self;
         let _guard = scopeguard::guard((), |_| {
             // This is a task in the event loop.
             // If we called into JavaScript, we must drain the microtask queue
-            if any_js_calls {
-                vm.drain_microtasks();
+            if any_js_calls.get() {
+                // SAFETY: vm is live for the request duration.
+                unsafe { (*vm).drain_microtasks() };
             }
             // SAFETY: this outlives the guard
             unsafe { (*this_ptr).deref() };
@@ -1120,7 +1121,7 @@ where
         if let Some(request) = this.request_weakref.get() {
             request.request_context = AnyRequestContext::NULL;
             if shim::iec_trigger(&mut request.internal_event_callback, request::EventType::Abort, global_this) {
-                any_js_calls = true;
+                any_js_calls.set(true);
             }
             // we can already clean this strong refs
             shim::iec_deinit(&mut request.internal_event_callback);

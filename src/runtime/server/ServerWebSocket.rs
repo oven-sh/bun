@@ -1080,7 +1080,7 @@ impl ServerWebSocket {
                     "sendText() backpressure ({} bytes string)",
                     buffer.len()
                 );
-                JSValue::js_number(-1)
+                JSValue::js_number(-1.0)
             }
             SendStatus::Success => {
                 bun_output::scoped_log!(
@@ -1088,7 +1088,7 @@ impl ServerWebSocket {
                     "sendText() success ({} bytes string)",
                     buffer.len()
                 );
-                JSValue::js_number(buffer.len())
+                JSValue::js_number(buffer.len() as f64)
             }
             SendStatus::Dropped => {
                 bun_output::scoped_log!(
@@ -1096,7 +1096,7 @@ impl ServerWebSocket {
                     "sendText() dropped ({} bytes string)",
                     buffer.len()
                 );
-                JSValue::js_number(0)
+                JSValue::js_number(0.0)
             }
         };
         js_string.ensure_still_alive();

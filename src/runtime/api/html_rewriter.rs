@@ -2035,12 +2035,15 @@ impl EndTag {
 
     pub fn replace_(
         &mut self,
-        call_frame: &CallFrame,
-        global_object: &JSGlobalObject,
-        content: ZigString,
-        content_options: Option<ContentOptions>,
+        _call_frame: &CallFrame,
+        _global_object: &JSGlobalObject,
+        _content: ZigString,
+        _content_options: Option<ContentOptions>,
     ) -> JSValue {
-        self.content_handler(lolhtml::EndTag::replace, call_frame.this(), global_object, content, content_options)
+        // PORT NOTE: `lolhtml::EndTag` has no `replace` in the C API surface
+        // (only before/after/remove). Zig source defines `replace` on EndTag
+        // as a wrapper that isn't present in the sys crate yet.
+        todo!("blocked_on: bun_lolhtml_sys::EndTag::replace")
     }
 
     // TODO(port): host_fn.wrapInstanceMethod — before/after/replace wrap `_` variants.

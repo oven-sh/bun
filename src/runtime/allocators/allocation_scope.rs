@@ -10,15 +10,14 @@ use core::ffi::c_void;
 // AllocationScope's History to T≥1 or move ArrayHashMap into bun_core.
 use bun_collections::{ArrayHashMap};
 use bun_core::Output;
-// MOVE_DOWN: StoredTrace/WriteStackTraceLimits/dump_stack_trace → bun_core (move-in pending).
-use bun_core::{dump_stack_trace, StoredTrace, WriteStackTraceLimits};
+// Zig: `bun.crash_handler.WriteStackTraceLimits` — bun_core renamed it `DumpStackTraceOptions`.
+use bun_core::{dump_stack_trace, StoredTrace, DumpStackTraceOptions as WriteStackTraceLimits};
 use parking_lot::Mutex;
 
-// TODO(port): `std.mem.Allocator` is Zig's fat-pointer (ptr + vtable) dynamic allocator handle.
-// `bun_alloc` must expose an equivalent (`crate::StdAllocator` here) for the parent-allocator
-// plumbing below. Phase B: define `StdAllocator { ptr: *mut c_void, vtable: &'static AllocatorVTable }`
-// or replace with `&'static dyn crate::Allocator`.
-use crate::StdAllocator;
+// `std.mem.Allocator` is Zig's fat-pointer (ptr + vtable) dynamic allocator handle. This module
+// was hoisted out of `bun_alloc` (CYCLEBREAK), so the parent-allocator plumbing now resolves
+// `StdAllocator` from the `bun_alloc` crate rather than `crate::`.
+use bun_alloc::StdAllocator;
 
 /// An allocation scope with a dynamically typed parent allocator. Prefer using a concrete type,
 /// like `AllocationScopeIn<bun_alloc::DefaultAllocator>`.

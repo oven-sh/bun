@@ -119,9 +119,8 @@ pub extern "C" fn Timer_disableEventLoopDelayMonitoring(vm: *mut VirtualMachine)
     vm.timer.event_loop_delay.disable(vm);
 }
 
-// TODO(port): `EventLoopTimerTag` / `TimespecClock` enum paths are guessed; fix imports in Phase B.
 use crate::timer::EventLoopTimerTag;
-use bun_core::TimespecClock;
+use bun_core::TimespecMockMode;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

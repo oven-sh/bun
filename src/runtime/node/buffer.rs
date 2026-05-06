@@ -1,17 +1,12 @@
 pub struct BufferVectorized;
 
-// ─── gated: depends on bun_jsc::node::Encoding + bun_jsc::web_core::encoding ──
-// `fill` is a pure FFI-exported helper but its body dispatches on the JSC
-// `Encoding` enum and calls `web_core::encoding::write_u8/write_u16`, neither
-// of which are stable in the current bun_jsc surface.
-// TODO(b2-blocked): un-gate once bun_jsc::{node::Encoding, web_core::encoding} land.
-
 mod _impl {
 use super::*;
+#[cfg(target_os = "macos")]
 use core::ffi::c_void;
 
-use bun_jsc::node::Encoding;
-use bun_jsc::web_core::encoding as encoder;
+use crate::node::Encoding;
+use crate::webcore::encoding as encoder;
 use bun_str::ZigString;
 
 impl BufferVectorized {

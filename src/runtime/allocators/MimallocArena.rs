@@ -258,8 +258,7 @@ impl MimallocArena {
     pub fn init() -> Self {
         // SAFETY: FFI — mi_heap_new() takes no args; returns null on OOM (handled below).
         let mimalloc_heap = NonNull::new(unsafe { mimalloc::mi_heap_new() })
-            // TODO(b0): `out_of_memory` arrives from move-in (bun_core → bun_alloc).
-            .unwrap_or_else(|| crate::out_of_memory());
+            .unwrap_or_else(|| bun_alloc::out_of_memory());
         #[cfg(not(feature = "ci_assert"))]
         { return MimallocArena { heap: mimalloc_heap }; }
         #[cfg(feature = "ci_assert")]

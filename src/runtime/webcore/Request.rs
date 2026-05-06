@@ -90,11 +90,6 @@ impl Request {
     }
 }
 
-// TODO(port): BodyMixin(@This()) — in Rust, BodyMixin is a trait impl'd for Request;
-// these re-exports become trait methods (get_text/get_bytes/get_body/get_body_used/
-// get_json/get_array_buffer/get_blob/get_form_data/get_blob_without_call_frame).
-impl BodyMixin for Request {}
-
 // Wire the cached `body` JS slot accessor so `PendingValue::is_disturbed` can
 // short-circuit on a JS-side stream that was already read (Zig:
 // `T.js.bodyGetCached(this_value)`).

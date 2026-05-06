@@ -35,6 +35,7 @@ bun_collections.workspace = true
 bun_crash_handler.workspace = true
 # phase-c: css is not on the `bun-rs -e` hot path; gate behind a feature so
 # bun_bin does not transitively compile bun_css.
+bun_cares_sys.workspace = true
 bun_css = { workspace = true, optional = true }
 bun_dns.workspace = true
 bun_dotenv.workspace = true

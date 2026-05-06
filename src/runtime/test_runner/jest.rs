@@ -325,8 +325,8 @@ pub mod Jest {
             BaseScopeCfg::default(),
             scope_strings::TEST.clone(),
         )?;
-        module.put(global_object, ZigString::static_str("test"), test_scope_functions);
-        module.put(global_object, ZigString::static_str("it"), test_scope_functions);
+        module.put(global_object, b"test", test_scope_functions);
+        module.put(global_object, b"it", test_scope_functions);
 
         let xtest_scope_functions = create_bound(
             global_object,

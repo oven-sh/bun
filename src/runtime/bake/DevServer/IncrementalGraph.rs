@@ -477,7 +477,7 @@ pub struct TempLookup {
     pub edge_index: EdgeIndex,
     pub seen: bool,
 }
-pub type TempLookupHashTable = AutoArrayHashMap<FileIndex, TempLookup>;
+pub type TempLookupHashTable = ArrayHashMap<FileIndex, TempLookup>;
 
 pub struct InsertEmptyResult {
     pub index: FileIndex,
@@ -2253,7 +2253,7 @@ impl IncrementalGraph<Server> {
 
 pub struct TakeJSBundleOptionsClient {
     pub kind: ChunkKind,
-    pub script_id: SourceMapStore::Key,
+    pub script_id: SourceMapStoreKey,
     // TODO(port): lifetime — callers pass non-static path slices; Phase A forbids
     // struct lifetimes so `&'static [u8]` stands in for the borrowed `[]const u8`.
     pub initial_response_entry_point: &'static [u8],
@@ -2264,7 +2264,7 @@ impl Default for TakeJSBundleOptionsClient {
     fn default() -> Self {
         Self {
             kind: ChunkKind::InitialResponse,
-            script_id: SourceMapStore::Key::default(),
+            script_id: SourceMapStoreKey::default(),
             initial_response_entry_point: b"",
             react_refresh_entry_point: b"",
             console_log: false,
@@ -2274,7 +2274,7 @@ impl Default for TakeJSBundleOptionsClient {
 
 pub struct TakeJSBundleOptionsServer {
     pub kind: ChunkKind,
-    pub script_id: SourceMapStore::Key,
+    pub script_id: SourceMapStoreKey,
 }
 
 pub struct SourceMapGeneration {

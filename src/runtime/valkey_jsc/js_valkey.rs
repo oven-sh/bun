@@ -2045,7 +2045,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         this.client.socket = Self::_socket(socket);
 
         this.ref_();
-        let _d = scopeguard::guard((), |_| this.deref());
+        let _d = deref_guard(this);
         let _ = this.client.on_data(data); // TODO: properly propagate exception upwards
         this.update_poll_ref();
     }
@@ -2053,7 +2053,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
     pub fn on_writable(this: &mut JSValkeyClient, socket: SocketType<SSL>) {
         this.client.socket = Self::_socket(socket);
         this.ref_();
-        let _d = scopeguard::guard((), |_| this.deref());
+        let _d = deref_guard(this);
         this.client.on_writable();
         this.update_poll_ref();
     }

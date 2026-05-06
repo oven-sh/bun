@@ -180,8 +180,7 @@ macro_rules! extern_crypto_job {
                 }
 
                 // Zig `comptime { @export(...) }` — exported C symbols.
-                #[unsafe(no_mangle)]
-                #[export_name = concat!("Bun__", $name_str, "__create")]
+                #[unsafe(export_name = concat!("Bun__", $name_str, "__create"))]
                 pub extern "C" fn __create(
                     global: &JSGlobalObject,
                     ctx: *mut Ctx,
@@ -190,14 +189,12 @@ macro_rules! extern_crypto_job {
                     Job::create(global, ctx, callback)
                 }
 
-                #[unsafe(no_mangle)]
-                #[export_name = concat!("Bun__", $name_str, "__schedule")]
+                #[unsafe(export_name = concat!("Bun__", $name_str, "__schedule"))]
                 pub extern "C" fn __schedule(this: &mut Job) {
                     Job::schedule(this)
                 }
 
-                #[unsafe(no_mangle)]
-                #[export_name = concat!("Bun__", $name_str, "__createAndSchedule")]
+                #[unsafe(export_name = concat!("Bun__", $name_str, "__createAndSchedule"))]
                 pub extern "C" fn __create_and_schedule(
                     global: &JSGlobalObject,
                     ctx: *mut Ctx,

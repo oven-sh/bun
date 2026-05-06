@@ -261,9 +261,9 @@ impl Context {
                 let state = unsafe { c::ZSTD_createDCtx() };
                 if state.is_null() {
                     return Error::init(
-                        "Could not initialize zstd instance",
+                        c"Could not initialize zstd instance".as_ptr(),
                         -1,
-                        "ERR_ZLIB_INITIALIZATION_FAILED",
+                        c"ERR_ZLIB_INITIALIZATION_FAILED".as_ptr(),
                     );
                 }
                 self.state = Some(state.cast());
@@ -282,7 +282,7 @@ impl Context {
                 };
                 // SAFETY: ZSTD_isError is a pure fn on usize.
                 if unsafe { c::ZSTD_isError(result) } > 0 {
-                    return Error::init("Setting parameter failed", -1, "ERR_ZSTD_PARAM_SET_FAILED");
+                    return Error::init(c"Setting parameter failed".as_ptr(), -1, c"ERR_ZSTD_PARAM_SET_FAILED".as_ptr());
                 }
                 Error::OK
             }
@@ -293,7 +293,7 @@ impl Context {
                 };
                 // SAFETY: ZSTD_isError is a pure fn on usize.
                 if unsafe { c::ZSTD_isError(result) } > 0 {
-                    return Error::init("Setting parameter failed", -1, "ERR_ZSTD_PARAM_SET_FAILED");
+                    return Error::init(c"Setting parameter failed".as_ptr(), -1, c"ERR_ZSTD_PARAM_SET_FAILED".as_ptr());
                 }
                 Error::OK
             }

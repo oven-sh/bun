@@ -1703,7 +1703,7 @@ where
                 this.drain_microtasks();
 
                 match promise.status() {
-                    jsc::PromiseStatus::Pending => {
+                    jsc::js_promise::Status::Pending => {
                         stream_log!("promise still Pending");
                         if !this.flags.has_written_status() {
                             response_stream.sink.on_first_write = None;
@@ -2387,13 +2387,13 @@ where
                                 .to_vec()
                                 .into_boxed_slice(),
                             router: None,
-                            reason: Api::FallbackReason::FetchEventHandler,
+                            reason: Some(Api::FallbackStep::fetch_event_handler),
                             cwd: server.vm().transpiler.fs.top_level_dir.clone(),
                             problems: Api::Problems {
                                 code: 500,
                                 name: "StreamError",
                                 exceptions: exception_list,
-                                build: Api::Build { msgs: Vec::new() },
+                                build: Api::Log::default(),
                             },
                         });
 

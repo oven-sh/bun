@@ -1766,13 +1766,26 @@ fn transpile_source_code_inner(
                 // Spec :805-815 — rewrite `specifier` against `vm.origin` so
                 // importing an asset via the file loader yields the public URL,
                 // not the absolute filesystem path.
-                let mut buf: Vec<u8> = Vec::new();
+                let mut buf = std::string::String::new();
                 // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
                 // `URL<'static>` is a view struct; clone borrows the same
                 // process-lifetime `href`.
                 let origin = unsafe { (*jsc_vm).origin.clone() };
-                crate::api::bun_object::get_public_path(specifier, origin, &mut buf);
-                bun_jsc::bun_string_jsc::create_utf8_for_js(global, &buf)
+                // PORT NOTE: `jsc.API.Bun.getPublicPath` is gated behind a
+                // private `_jsc_gated` mod in BunObject.rs; it is a thin
+                // wrapper over `get_public_path_with_asset_prefix` with
+                // `dir = VM.top_level_dir`, `asset_prefix = ""`, `.loose`.
+                // Inline that body here (mirrors filesystem_router.rs).
+                let top_level_dir = unsafe { (*jsc_vm).transpiler.fs.top_level_dir };
+                crate::api::bun_object::get_public_path_with_asset_prefix(
+                    specifier,
+                    top_level_dir,
+                    &origin,
+                    b"",
+                    &mut buf,
+                    bun_paths::Platform::Loose,
+                );
+                bun_jsc::bun_string_jsc::create_utf8_for_js(global, buf.as_bytes())
                     .map_err(|_| bun_core::err!("JSError"))?
             } else {
                 bun_jsc::bun_string_jsc::create_utf8_for_js(global, path.text)
@@ -1967,7 +1980,7 @@ fn get_hardcoded_module(
                 return Some(ResolvedSource {
                     allocator: core::ptr::null_mut(),
                     source_code: bun_string::String::init(
-                        bun_js_parser::runtime::Runtime::source_code(),
+                        bun_js_parser::runtime_full::Runtime::source_code(),
                     ),
                     specifier: *specifier,
                     source_url: *specifier,
@@ -2066,7 +2079,7 @@ unsafe fn fetch_builtin_module(
     {
         // SAFETY: per fn contract.
         if let Some(graph) = unsafe { (*jsc_vm).standalone_module_graph } {
-            let graph = graph.as_ptr().cast::<bun_bundler::StandaloneModuleGraph>();
+            let graph = graph.as_ptr().cast::<bun_standalone_graph::Graph>();
             if let Some(file) = unsafe { (*graph).files.get_ptr(spec) } {
                 // … sqlite synthetic-import wrapper / bytecode-cache fields …
             }

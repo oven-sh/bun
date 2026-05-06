@@ -2405,7 +2405,7 @@ pub mod internal {
 
         bun_output::scoped_log!(dns, "getaddrinfo({}) = cache miss (libc)", bstr::BStr::new(host.map(|h| h.as_bytes()).unwrap_or(b"")));
         // schedule the request to be executed on the work pool
-        bun_threading::WorkPool::go(req, work_pool_callback);
+        bun_threading::work_pool::WorkPool::go(req, work_pool_callback);
         Some(req)
     }
 

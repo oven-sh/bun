@@ -158,19 +158,18 @@ impl Collection {
     pub fn step(
         buntest_strong: BunTestPtr,
         global_this: &JSGlobalObject,
-        data: bun_test::bun_test_ref_data_value::RefDataValue,
+        data: RefDataValue,
     ) -> JsResult<StepResult> {
         group::begin();
         let _g = scopeguard::guard((), |_| group::end());
         let buntest = buntest_strong.get();
         let this = &mut buntest.collection;
 
-        if !matches!(data, bun_test::bun_test_ref_data_value::RefDataValue::Start) {
+        if !matches!(data, RefDataValue::Start) {
             this.run_one_completed(global_this, None, data)?;
         }
 
-        let _formatter = super::make_formatter(global_this);
-        // TODO(port): ConsoleObject.Formatter construction — verify Rust ctor shape.
+        let _formatter = make_formatter(global_this);
 
         // append queued callbacks, in reverse order because items will be pop()ed from the end
         // PORT NOTE: reshaped for borrowck — Zig indexed `items[i]` then clearRetainingCapacity;

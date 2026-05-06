@@ -108,6 +108,98 @@ unsafe extern "C" {
     fn bun_ffi_ensure_offsets_are_loaded();
 }
 
+// ─── Local extern thin-wrappers (codegen / `bun_jsc` surface not yet wired) ──
+// PORT NOTE: see host_fns.rs for the canonical declarations; these are
+// duplicated here so this translation unit links without depending on a
+// `bun_jsc::codegen::JSFFI` / `bun_jsc::host_fn::new_runtime_function`
+// re-export that the gated `_gated` module would otherwise provide.
+#[cfg(all(windows, target_arch = "x86_64"))]
+unsafe extern "sysv64" {
+    #[link_name = "FFIPrototype__symbolsValueSetCachedValue"]
+    fn FFIPrototype__symbolsValueSetCachedValue(
+        this_value: JSValue,
+        global: *const JSGlobalObject,
+        value: JSValue,
+    );
+}
+#[cfg(not(all(windows, target_arch = "x86_64")))]
+unsafe extern "C" {
+    #[link_name = "FFIPrototype__symbolsValueSetCachedValue"]
+    fn FFIPrototype__symbolsValueSetCachedValue(
+        this_value: JSValue,
+        global: *const JSGlobalObject,
+        value: JSValue,
+    );
+}
+unsafe extern "C" {
+    /// `host_fn::NewRuntimeFunction` — `Bun__CreateFFIFunctionValue`.
+    fn Bun__CreateFFIFunctionValue(
+        global: *const JSGlobalObject,
+        symbol_name: *const ZigString,
+        arg_count: u32,
+        function_pointer: *const c_void,
+        add_ptr_property: bool,
+        input_function_ptr: *mut c_void,
+    ) -> JSValue;
+}
+
+/// `JSValue.exposed_to_ffi` (JSValue.zig:2467) — raw extern fn pointers fed to
+/// the TCC-JIT'd C trampolines via `add_symbol`. Declared locally while the
+/// `bun_jsc::ffi` module stays gated.
+mod exposed_to_ffi {
+    use super::{c_void, JSGlobalObject, JSValue};
+    unsafe extern "C" {
+        #[link_name = "JSC__JSValue__toInt64"]
+        pub fn JSVALUE_TO_INT64(value: JSValue) -> i64;
+        #[link_name = "JSC__JSValue__toUInt64NoTruncate"]
+        pub fn JSVALUE_TO_UINT64(value: JSValue) -> u64;
+        #[link_name = "JSC__JSValue__fromInt64NoTruncate"]
+        pub fn INT64_TO_JSVALUE(global: *mut JSGlobalObject, i: i64) -> JSValue;
+        #[link_name = "JSC__JSValue__fromUInt64NoTruncate"]
+        pub fn UINT64_TO_JSVALUE(global: *mut JSGlobalObject, i: u64) -> JSValue;
+        /// `jsc.C.JSObjectCallAsFunction` — JavaScriptCore C API.
+        pub fn JSObjectCallAsFunction(
+            ctx: *mut c_void,
+            function: *mut c_void,
+            this_object: *mut c_void,
+            argument_count: usize,
+            arguments: *const JSValue,
+            exception: *mut *mut c_void,
+        ) -> *mut c_void;
+    }
+}
+
+/// `host_fn::NewRuntimeFunction` thin wrapper. See host_fn.rs:310.
+#[inline]
+fn new_runtime_function(
+    global: &JSGlobalObject,
+    symbol_name: &ZigString,
+    arg_count: u32,
+    function_pointer: *const c_void,
+    add_ptr_property: bool,
+    input_function_ptr: Option<*mut c_void>,
+) -> JSValue {
+    // SAFETY: thin FFI wrapper; `global` is a live opaque JSC handle,
+    // `function_pointer` is a JIT'd entry point owned by the caller.
+    unsafe {
+        Bun__CreateFFIFunctionValue(
+            global,
+            symbol_name,
+            arg_count,
+            function_pointer,
+            add_ptr_property,
+            input_function_ptr.unwrap_or(core::ptr::null_mut()),
+        )
+    }
+}
+
+/// `jsc::codegen::JSFFI::symbols_value_set_cached` thin wrapper.
+#[inline]
+fn symbols_value_set_cached(js_object: JSValue, global: &JSGlobalObject, obj: JSValue) {
+    // SAFETY: `js_object` is the freshly-created wrapper; `global` is live.
+    unsafe { FFIPrototype__symbolsValueSetCachedValue(js_object, global, obj) }
+}
+
 impl Offsets {
     fn load_once() {
         // SAFETY: extern "C" fn populating a static

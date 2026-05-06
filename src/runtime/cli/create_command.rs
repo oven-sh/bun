@@ -1366,20 +1366,17 @@ impl CreateCommand {
                 Output::flush();
             });
 
-            let process = bun_core::spawn_sync(&bun_core::SpawnOptions {
-                argv: install_args,
+            let process = spawn_sync::spawn(&spawn_sync::Options {
+                argv: install_args.iter().map(|s| Box::<[u8]>::from(*s)).collect(),
                 envp: None,
-                cwd: destination,
-                stderr: bun_core::Stdio::Inherit,
-                stdout: bun_core::Stdio::Inherit,
-                stdin: bun_core::Stdio::Inherit,
-                #[cfg(windows)]
-                windows: bun_core::WindowsSpawnOptions {
-                    loop_: bun_jsc::EventLoopHandle::init(bun_event_loop::MiniEventLoop::init_global(None, None)),
-                },
+                cwd: Box::from(destination),
+                stderr: spawn_sync::SyncStdio::Inherit,
+                stdout: spawn_sync::SyncStdio::Inherit,
+                stdin: spawn_sync::SyncStdio::Inherit,
+                // TODO(port): windows: { loop = EventLoopHandle.init(MiniEventLoop.initGlobal(...)) }
                 ..Default::default()
             })?;
-            let _ = process.unwrap_result()?;
+            let _ = process?;
         }
 
         if !postinstall_tasks.is_empty() {

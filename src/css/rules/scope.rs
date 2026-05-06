@@ -29,7 +29,9 @@ impl<R> ScopeRule<R> {
         if let Some(scope_start) = &self.scope_start {
             dest.write_char(b'(')?;
             // scope_start.to_css(dest)?;
-            let ctx = dest.context();
+            // PORT NOTE: read `dest.ctx` directly (Copy) — `Printer::context()`
+            // ties the borrow to `&self`, which conflicts with `&mut dest`.
+            let ctx = dest.ctx;
             serialize_selector_list(scope_start.v.slice(), dest, ctx, false)?;
             dest.write_char(b')')?;
             dest.whitespace()?;
@@ -49,12 +51,12 @@ impl<R> ScopeRule<R> {
                     scope_start,
                     scope_end,
                     |scope_end: &SelectorList, d: &mut Printer| -> Result<(), PrintErr> {
-                        let ctx = d.context();
+                        let ctx = d.ctx;
                         serialize_selector_list(scope_end.v.slice(), d, ctx, false)
                     },
                 )?;
             } else {
-                let ctx = dest.context();
+                let ctx = dest.ctx;
                 return serialize_selector_list(scope_end.v.slice(), dest, ctx, false);
             }
             dest.write_char(b')')?;

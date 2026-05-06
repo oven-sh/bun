@@ -285,16 +285,41 @@ macro_rules! deep_clone_shim {
     )*};
 }
 
-// Data-only stubs from `gated_rule!` above that lack an inherent `deep_clone`.
+// `gated_rule!` data-only stubs (no inherent `deep_clone`) + real leaf modules
+// whose `deep_clone` impl is still `#[cfg(any())]`-gated on their own field
+// blockers (`MediaList`, `DeclarationBlock`, `SelectorList`, `SyntaxString`,
+// `properties::{font,custom}` payloads, …).
 deep_clone_shim!(
     import::ImportRule,
     layer::LayerStatementRule,
     custom_media::CustomMediaRule,
     namespace::NamespaceRule,
     unknown::UnknownAtRule,
+    keyframes::KeyframesRule,
+    font_face::FontFaceRule,
+    font_palette_values::FontPaletteValuesRule,
+    page::PageRule,
+    counter_style::CounterStyleRule,
+    viewport::ViewportRule,
+    property::PropertyRule,
 );
+use container::ContainerRule;
+use document::MozDocumentRule;
 use layer::LayerBlockRule;
-deep_clone_shim!(generic: LayerBlockRule);
+use nesting::NestingRule;
+use scope::ScopeRule;
+use starting_style::StartingStyleRule;
+deep_clone_shim!(generic:
+    LayerBlockRule,
+    MediaRule,
+    StyleRule,
+    SupportsRule,
+    MozDocumentRule,
+    NestingRule,
+    ContainerRule,
+    ScopeRule,
+    StartingStyleRule,
+);
 
 impl<'bump> css::generics::DeepClone<'bump> for Location {
     #[inline]
@@ -647,24 +672,24 @@ impl<R> CssRuleList<R> {
     }
 
     /// Zig: `css.implementDeepClone(@This(), this, allocator)`.
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self
+    pub fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> Self
     where
-        R: for<'b> css::generics::DeepClone<'b>,
+        R: css::generics::DeepClone<'bump>,
     {
         Self { v: self.v.iter().map(|r| r.deep_clone(bump)).collect() }
     }
 }
 
-impl<R> CssRule<R>
-where
-    R: for<'b> css::generics::DeepClone<'b>,
-{
+impl<R> CssRule<R> {
     /// Zig: `css.implementDeepClone(@This(), this, allocator)` — variant-wise
     /// dispatch to each leaf rule's `deep_clone`. Hand-written (not
     /// `#[derive(DeepClone)]`) because the leaf payloads expose `deep_clone`
     /// as **inherent** methods rather than `DeepClone` trait impls during the
     /// staggered Phase-B un-gate; method-syntax dispatch here picks up either.
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> Self
+    where
+        R: css::generics::DeepClone<'bump>,
+    {
         #[allow(unused_imports)]
         use css::generics::DeepClone as _;
         match self {

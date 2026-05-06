@@ -6780,10 +6780,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         )
     }
 
-    #[cfg(any())] // reconciler-6 re-gate: ReactRefresh::HookContext; E::Array items
     pub fn get_react_refresh_hook_signal_init(
         &mut self,
-        ctx: &mut ReactRefresh::HookContext,
+        ctx: &mut crate::HookContext,
         function_with_hook_calls: Expr,
     ) -> Expr {
         let loc = logger::Loc::EMPTY;
@@ -6792,48 +6791,50 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         let hash_data = self
             .allocator
             .alloc_slice_fill_default::<u8>(bun_base64::encode_len_from_size(core::mem::size_of_val(&final_)));
-        debug_assert!(bun_base64::encode(hash_data, bytemuck::bytes_of(&final_)) == hash_data.len());
+        // Zig: `&std.mem.toBytes(final)`
+        let _written = bun_base64::encode(hash_data, &final_.to_ne_bytes());
+        debug_assert!(_written == hash_data.len());
 
         let have_custom_hooks = ctx.user_hooks.count() > 0;
         let have_force_arg = have_custom_hooks || self.react_refresh.force_reset;
 
-        let args = self
-            .allocator
-            .alloc_slice_fill_default::<Expr>(2 + usize::from(have_force_arg) + usize::from(have_custom_hooks));
+        let n_args = 2 + usize::from(have_force_arg) + usize::from(have_custom_hooks);
+        let mut args = BumpVec::with_capacity_in(n_args, self.allocator);
 
-        args[0] = function_with_hook_calls;
-        args[1] = self.new_expr(E::String { data: hash_data }, loc);
+        args.push(function_with_hook_calls);
+        args.push(self.new_expr(E::String::init(hash_data), loc));
 
         if have_force_arg {
-            args[2] = self.new_expr(E::Boolean { value: self.react_refresh.force_reset }, loc);
+            args.push(self.new_expr(E::Boolean { value: self.react_refresh.force_reset }, loc));
         }
 
         if have_custom_hooks {
             // () => [useCustom1, useCustom2]
-            args[3] = self.new_expr(
-                E::Arrow {
-                    body: G::FnBody {
-                        stmts: self.allocator.alloc_slice_copy(&[self.s(
-                            S::Return {
-                                value: Some(self.new_expr(
-                                    E::Array { items: ExprNodeList::from_borrowed_slice_dangerous(ctx.user_hooks.values()), ..Default::default() },
-                                    loc,
-                                )),
-                            },
-                            loc,
-                        )]),
-                        loc,
-                    },
-                    prefer_expr: true,
+            let array = self.new_expr(
+                E::Array {
+                    items: ExprNodeList::from_slice(ctx.user_hooks.values()).expect("oom"),
                     ..Default::default()
                 },
                 loc,
             );
+            let ret = self.s(S::Return { value: Some(array) }, loc);
+            args.push(self.new_expr(
+                E::Arrow {
+                    body: G::FnBody { stmts: self.allocator.alloc_slice_copy(&[ret]) as *mut [Stmt], loc },
+                    prefer_expr: true,
+                    ..Default::default()
+                },
+                loc,
+            ));
         }
 
         // _s(func, "<hash>", force, () => [useCustom])
         self.new_expr(
-            E::Call { target: Expr::init_identifier(ctx.signature_cb, loc), args: ExprNodeList::from_owned_slice(args), ..Default::default() },
+            E::Call {
+                target: Expr::init_identifier(ctx.signature_cb, loc),
+                args: ExprNodeList::from_slice(args.as_slice()).expect("oom"),
+                ..Default::default()
+            },
             loc,
         )
     }

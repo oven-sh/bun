@@ -43,14 +43,28 @@ mod node {
 }
 
 pub use super::node_fs_constant as constants;
-// node_fs_binding / node_fs_watcher / node_fs_stat_watcher are JSC-bound and
-// not yet declared in `node.rs`; their re-exports stay gated for round 2.
-#[cfg(any())]
-pub use super::node_fs_binding::Binding;
+// node_fs_watcher / node_fs_stat_watcher are JSC-bound and not yet declared in
+// `node.rs`; their re-exports stay gated.
 #[cfg(any())]
 pub use super::node_fs_watcher::FSWatcher as Watcher;
 #[cfg(any())]
 pub use super::node_fs_stat_watcher::StatWatcher;
+
+// PORT NOTE: `Binding` is `super::node_fs_binding::Binding` in Zig, but that
+// module is not yet wired into `node.rs`. The async `create()` entry points
+// only thread it through as an unused `_binding: &mut Binding` (the JSC class
+// instance that owns the per-thread `NodeFS`). Forward-declare an opaque type
+// here so the signatures stay source-compatible; swap to the real re-export
+// once `node_fs_binding` is declared.
+#[repr(C)]
+pub struct Binding {
+    _opaque: [u8; 0],
+}
+
+/// `jsc.JSPromise.Strong` — re-exported under its Rust crate name. The Zig
+/// source spells this `JSPromise.Strong` (a nested decl), which Rust models as
+/// `bun_jsc::js_promise::Strong` / the `JSPromiseStrong` alias.
+use bun_jsc::JSPromiseStrong;
 
 use super::dir_iterator as DirIterator;
 use bun_resolver::fs::FileSystem;

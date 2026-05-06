@@ -1091,8 +1091,11 @@ impl DevServer<'_> {
         ) {
             Ok(v) => v,
             Err(err) => {
-                // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime
-                unsafe { &*self.vm }.print_error_like_object_to_console(global.take_exception(err));
+                // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime;
+                // `print_error_like_object_to_console` needs `&mut VM`, so cast
+                // the shared borrow through a raw pointer (single-threaded JS).
+                unsafe { &mut *(self.vm as *const VirtualMachine as *mut VirtualMachine) }
+                    .print_error_like_object_to_console(global.take_exception(err));
                 panic!("Server runtime failed to start. The above error is always a bug in Bun");
             }
         };
@@ -5034,10 +5037,12 @@ impl DevServer<'_> {
 
     pub fn on_watch_error(&self, err: sys::Error) {
         if !err.path.is_empty() {
+            // PORT NOTE: split out path before moving `err` into `Output::err`.
+            let path = err.path.clone();
             Output::err(
                 err,
                 "failed to watch {} for hot-reloading",
-                (bun_core::fmt::quote(&err.path),),
+                (bun_core::fmt::quote(&path),),
             );
         } else {
             Output::err(err, "failed to watch files for hot-reloading", ());
@@ -5240,7 +5245,8 @@ fn dump_state_due_to_crash(dev: &mut DevServer) -> Result<(), bun_core::Error> {
     // bun_base64::encode_len_from_size(4096) == ((4096 + 2) / 3) * 4 == 5464
     let mut buf = [0u8; 5464];
     for chunk in payload.chunks(4096) {
-        file.write_all(&buf[..bun_base64::encode(&mut buf, chunk)])?;
+        let n = bun_base64::encode(&mut buf, chunk);
+        file.write_all(&buf[..n])?;
     }
 
     file.write_all(b"\"), c => c.charCodeAt(0));\n")?;
@@ -5588,7 +5594,7 @@ impl<'a> PromiseEnsureRouteBundledCtx<'a> {
         // SAFETY: p was set by ensure_promise
         unsafe { &mut *self.p.unwrap() }.resolve(self.global, JSValue::TRUE)?;
         // SAFETY: dev.vm is JSC_BORROW — valid for DevServer lifetime
-        unsafe { &mut *(self.dev.vm as *mut VirtualMachine) }.drain_microtasks();
+        unsafe { &mut *(self.dev.vm as *const VirtualMachine as *mut VirtualMachine) }.drain_microtasks();
         Ok(())
     }
 
@@ -5622,7 +5628,7 @@ impl<'a> PromiseEnsureRouteBundledCtx<'a> {
         unsafe { &mut *self.p.unwrap() }
             .reject(self.global, BunString::static_("Plugin error").to_js(self.global))?;
         // SAFETY: dev.vm is JSC_BORROW — valid for DevServer lifetime
-        unsafe { &mut *(self.dev.vm as *mut VirtualMachine) }.drain_microtasks();
+        unsafe { &mut *(self.dev.vm as *const VirtualMachine as *mut VirtualMachine) }.drain_microtasks();
         Ok(())
     }
 

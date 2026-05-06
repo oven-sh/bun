@@ -524,7 +524,7 @@ impl JSValkeyClient {
         // the case right now and I do not understand why. It will take some work in JSC to
         // understand why this is happening, but since I need to uncork valkey, I'm adding this as
         // a stop-gap.
-        let parsed_url = 'get_url: {
+        let parsed_url: NonNull<URL> = 'get_url: {
             let url_slice = url_str.to_utf8();
             let url_byte_slice = url_slice.slice();
 
@@ -533,7 +533,7 @@ impl JSValkeyClient {
             }
 
             if strings::strings::contains(url_byte_slice, b"://") {
-                break 'get_url match URL::from_string(&url_str) {
+                break 'get_url match URL::from_string(BunString::borrow_utf8(url_byte_slice)) {
                     Some(u) => u,
                     None => {
                         return Err(global_object.throw_invalid_arguments("Invalid URL format"))
@@ -561,7 +561,9 @@ impl JSValkeyClient {
                 None => return Err(global_object.throw_invalid_arguments("Invalid URL format")),
             }
         };
-        // `defer parsed_url.deinit();` — Drop on scope exit.
+        // SAFETY: `from_string`/`from_utf8` returns a heap-allocated URL we own.
+        let parsed_url = unsafe { parsed_url.as_ref() };
+        // `defer parsed_url.deinit();` — TODO(port): URL leaks here until Drop is wired.
 
         // Extract protocol string
         let protocol_str = parsed_url.protocol();

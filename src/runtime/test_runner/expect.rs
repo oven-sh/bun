@@ -2137,7 +2137,7 @@ impl ExpectArrayContaining {
 ///
 /// Reference: `AsymmetricMatcher` in https://github.com/jestjs/jest/blob/main/packages/expect/src/types.ts
 /// (but only created for *custom* matchers, as built-ins have their own classes)
-#[bun_jsc::JsClass]
+#[bun_jsc::JsClass(no_construct)]
 pub struct ExpectCustomAsymmetricMatcher {
     pub flags: Flags,
 }

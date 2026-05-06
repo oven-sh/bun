@@ -662,11 +662,11 @@ impl ShellSubprocess {
     }
 
     pub fn wait(&mut self, sync: bool) {
-        self.process.wait(sync)
+        self.proc().wait(sync)
     }
 
     pub fn on_process_exit(&mut self, _: &Process, status: Status, _: &Rusage) {
-        log!("onProcessExit({:x}, {:?})", self as *mut _ as usize, status);
+        log!("onProcessExit({:x})", self as *mut _ as usize);
         let exit_code: Option<u8> = 'brk: {
             if let Status::Exited { code, .. } = status {
                 break 'brk Some(code);

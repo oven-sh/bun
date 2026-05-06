@@ -115,16 +115,16 @@ pub trait ReqLike {
     fn set_yield(&mut self, y: bool);
 }
 impl ReqLike for uws_sys::Request {
-    #[inline] fn header(&mut self, name: &[u8]) -> Option<&[u8]> { (*self).header(name) }
-    #[inline] fn method(&mut self) -> &[u8] { (*self).method() }
-    #[inline] fn url(&mut self) -> &[u8] { (*self).url() }
-    #[inline] fn set_yield(&mut self, y: bool) { (*self).set_yield(y) }
+    #[inline] fn header(&mut self, name: &[u8]) -> Option<&[u8]> { uws_sys::Request::header(self, name) }
+    #[inline] fn method(&mut self) -> &[u8] { uws_sys::Request::method(self) }
+    #[inline] fn url(&mut self) -> &[u8] { uws_sys::Request::url(self) }
+    #[inline] fn set_yield(&mut self, y: bool) { uws_sys::Request::set_yield(self, y) }
 }
 impl ReqLike for uws_sys::h3::Request {
-    #[inline] fn header(&mut self, name: &[u8]) -> Option<&[u8]> { self.header(name) }
-    #[inline] fn method(&mut self) -> &[u8] { self.method() }
-    #[inline] fn url(&mut self) -> &[u8] { self.url() }
-    #[inline] fn set_yield(&mut self, y: bool) { self.set_yield(y) }
+    #[inline] fn header(&mut self, name: &[u8]) -> Option<&[u8]> { uws_sys::h3::Request::header(self, name) }
+    #[inline] fn method(&mut self) -> &[u8] { uws_sys::h3::Request::method(self) }
+    #[inline] fn url(&mut self) -> &[u8] { uws_sys::h3::Request::url(self) }
+    #[inline] fn set_yield(&mut self, y: bool) { uws_sys::h3::Request::set_yield(self, y) }
 }
 
 pub trait RespLike {
@@ -134,9 +134,9 @@ pub trait RespLike {
     fn on_timeout_warn(&mut self, ud: *mut c_void);
 }
 impl<const SSL: bool> RespLike for uws_sys::NewAppResponse<SSL> {
-    #[inline] fn write_status(&mut self, s: &[u8]) { self.write_status(s) }
-    #[inline] fn end_without_body(&mut self, c: bool) { self.end_without_body(c) }
-    #[inline] fn timeout(&mut self, s: u8) { self.timeout(s) }
+    #[inline] fn write_status(&mut self, s: &[u8]) { uws_sys::NewAppResponse::<SSL>::write_status(self, s) }
+    #[inline] fn end_without_body(&mut self, c: bool) { uws_sys::NewAppResponse::<SSL>::end_without_body(self, c) }
+    #[inline] fn timeout(&mut self, s: u8) { uws_sys::NewAppResponse::<SSL>::timeout(self, s) }
     #[inline] fn on_timeout_warn(&mut self, _ud: *mut c_void) {
         // TODO(port): wire on_timeout::<c_void>(on_timeout_for_idle_warn, ud) once the
         // generic `Fn(*mut U, &mut Response<SSL>)` shape can be expressed without
@@ -144,9 +144,9 @@ impl<const SSL: bool> RespLike for uws_sys::NewAppResponse<SSL> {
     }
 }
 impl RespLike for uws_sys::h3::Response {
-    #[inline] fn write_status(&mut self, s: &[u8]) { self.write_status(s) }
-    #[inline] fn end_without_body(&mut self, c: bool) { self.end_without_body(c) }
-    #[inline] fn timeout(&mut self, s: u8) { self.timeout(s) }
+    #[inline] fn write_status(&mut self, s: &[u8]) { uws_sys::h3::Response::write_status(self, s) }
+    #[inline] fn end_without_body(&mut self, c: bool) { uws_sys::h3::Response::end_without_body(self, c) }
+    #[inline] fn timeout(&mut self, s: u8) { uws_sys::h3::Response::timeout(self, s) }
     #[inline] fn on_timeout_warn(&mut self, _ud: *mut c_void) {
         // TODO(port): wire H3::Response::on_timeout once warn handler is generic.
     }
@@ -1818,10 +1818,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 std::sync::Arc::new(body),
                 method,
             );
-        } else if let Some(request_) = first_arg.as_::<Request>() {
-            // TODO(port): Request::cloneInto out-param pattern — reshape to return value
-            // SAFETY: request_ is a live *mut Request from JS heap.
-            existing_request = unsafe { &mut *request_ }.clone(ctx)?;
+        } else if first_arg.is_object() && {
+            // TODO(port): blocked_on: webcore::request::Request: JsClass
+            // `JSValue::as_::<Request>()` requires the JsClass impl which is not yet generated.
+            false
+        } {
+            todo!("blocked_on: webcore::request::Request: JsClass");
+            #[allow(unreachable_code)]
+            { existing_request = Request::init2(BunString::empty(), None, std::sync::Arc::new(BodyValue::Null), Method::GET); }
         } else {
             // Local shim — `JSValueGetType` lives in the gated `jsc::_gated::c_api` and is
             // not re-exported through `jsc::C`. Declare the FFI here so we don't depend on
@@ -2269,8 +2273,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         if let server_config::Address::Unix(path) = &self.config.address {
             let path_bytes = path.as_bytes();
             if !path_bytes.is_empty() && path_bytes[0] != 0 {
-                // SAFETY: CString guarantees a NUL terminator after as_bytes(); ZStr layout matches.
-                let _ = sys::unlink(unsafe { ZStr::from_bytes_with_nul_unchecked(path.as_bytes_with_nul()) });
+                // SAFETY: CString guarantees a NUL terminator after as_bytes(); ZStr::from_raw bounds are met.
+                let _ = sys::unlink(unsafe { ZStr::from_raw(path_bytes.as_ptr(), path_bytes.len()) });
             }
         }
 
@@ -3073,7 +3077,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             SavedRequestUnion::Saved(data) => PreparedRequestFor {
                 js_request: {
                     let v = data.js_request.get();
-                    bun_core::assert(!v.is_empty(), "Request was unexpectedly freed");
+                    assert!(!v.is_empty(), "Request was unexpectedly freed");
                     v
                 },
                 request_object: todo!("blocked_on: SavedRequest::request mutability"),
@@ -3136,14 +3140,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // RFC 9114 §4.2: an HTTP/3 message containing a transfer-encoding
         // header field is malformed.
         if Ctx::IS_H3 {
-            if req.header(b"transfer-encoding").is_some() {
-                // SAFETY: when `Ctx::IS_H3`, `Ctx::Resp` is the H3 response struct;
-                // the trait associated type erases this so cast through raw ptr.
-                let h3 = resp as *mut Ctx::Resp as *mut bun_uws_sys::h3::Response;
-                unsafe {
-                    (*h3).write_status(b"400 Bad Request");
-                    (*h3).end_without_body(false);
-                }
+            if ReqLike::header(req, b"transfer-encoding").is_some() {
+                RespLike::write_status(resp, b"400 Bad Request");
+                RespLike::end_without_body(resp, false);
                 return None;
             }
         }
@@ -3163,19 +3162,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 // is a stream error (RFC 9114 §4.1.2); close_connection
                 // would CONNECTION_CLOSE every sibling stream on the conn.
                 if len > self.config.max_request_body_size {
-                    // TODO(port): `RequestCtx::Resp` does not yet expose a uniform
-                    // `write_status`/`end_without_body` surface across SSL/TCP/H3;
-                    // dispatch on the H3 fast-path here and stub the rest.
-                    if Ctx::IS_H3 {
-                        // SAFETY: see IS_H3 transfer-encoding cast above.
-                        let h3 = resp as *mut Ctx::Resp as *mut bun_uws_sys::h3::Response;
-                        unsafe {
-                            (*h3).write_status(b"413 Request Entity Too Large");
-                            (*h3).end_without_body(false);
-                        }
-                    } else {
-                        todo!("blocked_on: RequestCtx::Resp write_status/end_without_body for non-H3");
-                    }
+                    RespLike::write_status(resp, b"413 Request Entity Too Large");
+                    RespLike::end_without_body(resp, !Ctx::IS_H3);
                     return None;
                 }
 

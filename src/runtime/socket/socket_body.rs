@@ -2718,13 +2718,12 @@ impl<const SSL: bool> NewSocket<SSL> {
                 // created above; sole owner here.
                 drop(unsafe { Box::from_raw(handlers_ptr.as_ptr()) });
                 if err != 0 && !global.has_exception() {
-                    return global.throw_value(boringssl_err_to_js(global, err));
+                    return Err(global.throw_value(boringssl_err_to_js(global, err)));
                 }
                 if !global.has_exception() {
-                    return global.throw(
+                    return Err(global.throw(
                         "Failed to upgrade socket from TCP -> TLS. Is the TLS config correct?",
-                        (),
-                    );
+                    ));
                 }
                 return Ok(JSValue::UNDEFINED);
             }

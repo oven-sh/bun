@@ -3475,7 +3475,7 @@ pub fn finalize_bundle(
             if dev.client_graph.current_chunk_len > 0 {
                 let script_id = 'h: {
                     // `bundler.ContentHasher.Hash` = `std.hash.XxHash64`.
-                    let mut source_map_hash = bun_hash::XxHash64Streaming::init(0x4b12);
+                    let mut source_map_hash = bun_hash::XxHash64Streaming::new(0x4b12);
                     let keys = dev.client_graph.bundled_files.keys();
                     let values = dev.client_graph.bundled_files.values();
                     for part in &dev.client_graph.current_chunk_parts {
@@ -3872,20 +3872,21 @@ impl DevServer<'_> {
         let _g = scopeguard::guard((), |_| self.graph_safety_lock.unlock());
 
         // TODO(port): `switch (graph == .client) { inline else => |is_client| ... }` — unrolled
-        let owner = if graph == bake::Graph::Client {
-            serialized_failure::Owner::Client(self.client_graph.insert_stale(abs_path, false)?).encode()
+        // `Owner::encode()` returns the body-module `Packed`; the keystone
+        // `OwnerPacked` is layout-identical (`#[repr(transparent)] u32`).
+        let owner: serialized_failure::OwnerPacked = if graph == bake::Graph::Client {
+            let idx = self.client_graph.insert_stale(abs_path, false)?;
+            serialized_failure::OwnerPacked::new(bake::Side::Client, incremental_graph::FileIndex::init(idx.get()))
         } else {
-            serialized_failure::Owner::Server(
-                self.server_graph.insert_stale(abs_path, graph == bake::Graph::Ssr)?,
-            )
-            .encode()
+            let idx = self.server_graph.insert_stale(abs_path, graph == bake::Graph::Ssr)?;
+            serialized_failure::OwnerPacked::new(bake::Side::Server, incremental_graph::FileIndex::init(idx.get()))
         };
         let current_bundle = self.current_bundle.as_mut().unwrap();
         let gop = current_bundle.resolution_failure_entries.get_or_put(owner)?;
         if !gop.found_existing {
-            *gop.value = Log::init();
+            *gop.value_ptr = Log::init();
         }
-        Ok(gop.value)
+        Ok(gop.value_ptr)
     }
 }
 
@@ -3896,7 +3897,14 @@ pub struct CacheEntry {
 impl DevServer<'_> {
     pub fn is_file_cached(&mut self, path: &[u8], side: bake::Graph) -> Option<CacheEntry> {
         // Barrel files with deferred records must always be re-parsed.
-        if self.barrel_files_with_deferrals.contains_key(path) {
+        // TODO(port): `ArrayHashMap<Box<[u8]>, ()>::contains_key` wants
+        // `&Box<[u8]>`; no `Borrow<[u8]>` adapter yet, so linear-scan keys.
+        if self
+            .barrel_files_with_deferrals
+            .keys()
+            .iter()
+            .any(|k| &**k == path)
+        {
             return None;
         }
 

@@ -676,7 +676,8 @@ impl ValkeyClient {
         if self.write_buffer.remaining().is_empty() && self.connection_ready() {
             if self.queue.readable_length() > 0 {
                 // Check the command at the head of the queue
-                let flags = self.queue.peek_item(0).meta;
+                // (`Entry` isn't `Copy`, so peek by slice rather than `peek_item`).
+                let flags = self.queue.readable_slice(0)[0].meta;
 
                 if !flags.supports_auto_pipelining {
                     // Head is non-pipelineable. Try to drain it serially if nothing is in-flight.

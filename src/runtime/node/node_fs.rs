@@ -509,24 +509,9 @@ pub const DEFAULT_PERMISSION: Mode = 0;
 // ──────────────────────────────────────────────────────────────────────────
 
 trait JSValueNodeFsExt {
-    fn get_boolean_strict(self, ctx: &JSGlobalObject, name: &'static str) -> JsResult<Option<bool>>;
     fn is_string_literal(self) -> bool;
 }
 impl JSValueNodeFsExt for JSValue {
-    /// `JSValue.getBooleanStrict` (JSValue.zig:1873) — missing/undefined → `None`;
-    /// non-boolean → `ERR_INVALID_ARG_TYPE`.
-    fn get_boolean_strict(self, ctx: &JSGlobalObject, name: &'static str) -> JsResult<Option<bool>> {
-        match self.get(ctx, name)? {
-            None => Ok(None),
-            Some(v) => {
-                if v.is_boolean() {
-                    Ok(Some(v.to_boolean()))
-                } else {
-                    Err(ctx.throw_invalid_argument_type_value(name, "boolean", v))
-                }
-            }
-        }
-    }
     /// `JSValue.isStringLiteral` (JSValue.zig:1048) — exact `JSType::String`
     /// (not `StringObject`/`DerivedStringObject`).
     #[inline]
@@ -4528,7 +4513,7 @@ impl NodeFS {
     }
 
     fn pread_inner(&mut self, args: &args::Read) -> Maybe<ret::Read> {
-        let mut buf = args.buffer.slice();
+        let mut buf = args.buffer.slice_mut();
         let off = (args.offset as usize).min(buf.len());
         buf = &mut buf[off..];
         let l = (args.length as usize).min(buf.len());

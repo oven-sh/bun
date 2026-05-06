@@ -86,6 +86,18 @@ pub trait AnyResponseExt {
     fn has_responded(self) -> bool;
     fn override_write_offset(self, offset: u64);
 }
+
+/// Extract the raw FFI pointer from an `AnyResponse` for C-ABI shims that
+/// take `*mut c_void` (e.g. `FetchHeaders::to_uws_response`, `CookieMap::write`).
+#[inline]
+fn any_response_as_ptr(r: uws::AnyResponse) -> *mut c_void {
+    match r {
+        uws::AnyResponse::SSL(p) => p as *mut c_void,
+        uws::AnyResponse::TCP(p) => p as *mut c_void,
+        uws::AnyResponse::H3(p) => p as *mut c_void,
+    }
+}
+
 impl AnyResponseExt for uws::AnyResponse {
     #[inline]
     fn has_responded(self) -> bool {

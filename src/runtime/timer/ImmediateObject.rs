@@ -103,7 +103,7 @@ impl ImmediateObject {
     }
 
     /// returns true if an exception was thrown
-    pub fn run_immediate_task(&mut self, vm: &mut VirtualMachine) -> bool {
+    pub fn run_immediate_task(&mut self, vm: *mut VirtualMachine) -> bool {
         self.internals_mut().run_immediate_task(vm)
     }
 

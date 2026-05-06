@@ -1738,8 +1738,9 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
 
     fn unregister_auto_flusher(&mut self) {
         if self.auto_flusher.registered {
-            // SAFETY: global_this set before any auto-flusher registration
-            let vm = unsafe { &*self.global_this }.bun_vm();
+            // SAFETY: global_this set before any auto-flusher registration; bun_vm()
+            // returns the per-global VM singleton, valid for the program lifetime.
+            let vm = unsafe { &*(*self.global_this).bun_vm() };
             AutoFlusher::unregister_deferred_microtask_with_type_unchecked::<Self>(self, vm);
         }
     }
@@ -1749,8 +1750,8 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         // if we enqueue data we should reset the timeout
         res.reset_timeout();
         if !self.auto_flusher.registered {
-            // SAFETY: global_this set before first write
-            let vm = unsafe { &*self.global_this }.bun_vm();
+            // SAFETY: global_this set before first write; see unregister_auto_flusher.
+            let vm = unsafe { &*(*self.global_this).bun_vm() };
             AutoFlusher::register_deferred_microtask_with_type_unchecked::<Self>(self, vm);
         }
     }
@@ -1869,22 +1870,10 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             // at scope exit (AFTER resolve, which may reenter JS and mutate `wrote`). Read it here,
             // not before the call.
             self.wrote_at_start_of_flush = self.wrote;
-            return result;
+            return Ok(result?);
         }
         Ok(())
     }
-
-    // TODO(port): const-generic string selection — Rust cannot branch on const bool to produce &'static str at type level
-    pub const NAME: &'static str = if HTTP3 {
-        "H3ResponseSink"
-    } else if SSL {
-        "HTTPSResponseSink"
-    } else {
-        "HTTPResponseSink"
-    };
-    // PORT NOTE: associated const with const-generic if — requires `#![feature(generic_const_exprs)]` or Phase B trait
-
-    // TODO(port): `pub const JSSink = Sink.JSSink(@This(), name)` — type generator; needs macro/codegen
 }
 
 pub type HTTPSResponseSink = HTTPServerWritable<true, false>;

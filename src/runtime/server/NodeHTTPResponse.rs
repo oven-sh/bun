@@ -606,7 +606,7 @@ impl NodeHTTPResponse {
         }
         // Don't overwrite WebSocket user data
         if !self.flags.contains(Flags::UPGRADED) {
-            if let Some(raw_response) = &self.raw_response {
+            if let Some(raw_response) = self.raw_response {
                 raw_response.on_timeout(on_timeout_shim, self as *mut Self);
             }
         }
@@ -974,10 +974,8 @@ impl NodeHTTPResponse {
             return Ok(JSValue::FALSE);
         }
         self.flags.insert(Flags::IS_DATA_BUFFERED_DURING_PAUSE);
-        self.raw_response
-            .as_ref()
-            .unwrap()
-            .on_data(on_buffer_paused_shim, self as *mut Self);
+        let raw = self.raw_response.unwrap();
+        raw.on_data(on_buffer_paused_shim, self as *mut Self);
 
         // TODO: figure out why windows is not emitting EOF with UV_DISCONNECT
         #[cfg(not(windows))]
@@ -1030,10 +1028,8 @@ impl NodeHTTPResponse {
             return JSValue::FALSE;
         }
         self.set_on_aborted_handler();
-        self.raw_response
-            .as_ref()
-            .unwrap()
-            .on_data(on_data_shim, self as *mut Self);
+        let raw = self.raw_response.unwrap();
+        raw.on_data(on_data_shim, self as *mut Self);
         self.flags.remove(Flags::IS_DATA_BUFFERED_DURING_PAUSE);
         let mut result: JSValue = JSValue::TRUE;
 

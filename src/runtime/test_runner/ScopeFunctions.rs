@@ -491,7 +491,7 @@ impl ScopeFunctions {
 
         let [condition] = frame.arguments_as_array::<1>();
         if frame.arguments().len() == 0 {
-            return global.throw(format_args!("Expected condition to be a boolean"));
+            return Err(global.throw(format_args!("Expected condition to be a boolean")));
         }
         let cond = condition.to_boolean();
         if cond != invert {
@@ -511,13 +511,13 @@ impl ScopeFunctions {
         let _g = group_log::begin();
 
         if cfg.self_mode == SelfMode::Failing && self.mode == Mode::Describe {
-            return global.throw(format_args!("Cannot {} on {}", bstr::BStr::new(name), self));
+            return Err(global.throw(format_args!("Cannot {} on {}", bstr::BStr::new(name), self)));
         }
         if cfg.self_only {
             error_in_ci(global, b".only")?;
         }
         let Some(extended) = self.cfg.extend(cfg) else {
-            return global.throw(format_args!("Cannot {} on {}", bstr::BStr::new(name), self));
+            return Err(global.throw(format_args!("Cannot {} on {}", bstr::BStr::new(name), self)));
         };
         create_bound(global, self.mode, self.each, extended, fn_name)
     }

@@ -215,9 +215,9 @@ pub extern "C" fn Bun__encoding__toString(
 pub fn to_string(
     input: &[u8],
     global_object: &JSGlobalObject,
-    encoding: Encoding,
+    encoding: impl Into<Encoding>,
 ) -> JsResult<JSValue> {
-    match encoding {
+    match encoding.into() {
         // treat buffer as utf8
         // callers are expected to check that before constructing `Buffer` objects
         Encoding::Buffer | Encoding::Utf8 => {
@@ -353,9 +353,9 @@ pub fn to_string_comptime<const ENCODING: u8>(
     bun_string.transfer_to_js(global)
 }
 
-pub fn to_bun_string(input: &[u8], encoding: Encoding) -> BunString {
+pub fn to_bun_string(input: &[u8], encoding: impl Into<Encoding>) -> BunString {
     // PERF(port): was `inline else` comptime monomorphization — profile in Phase B
-    match encoding {
+    match encoding.into() {
         Encoding::Utf8 => to_bun_string_comptime::<{ enc::UTF8 }>(input),
         Encoding::Ascii => to_bun_string_comptime::<{ enc::ASCII }>(input),
         Encoding::Latin1 => to_bun_string_comptime::<{ enc::LATIN1 }>(input),

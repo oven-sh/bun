@@ -1481,8 +1481,14 @@ impl RareData {
     }
 
     pub fn boring_engine(&mut self) -> *mut boring_sys::ENGINE {
-        // TODO(port): bun_boringssl_sys::ENGINE_new lazy-init — gated.
-        self.boring_ssl_engine.unwrap_or(core::ptr::null_mut())
+        extern "C" {
+            fn ENGINE_new() -> *mut boring_sys::ENGINE;
+        }
+        // SAFETY: BoringSSL is linked into the binary; ENGINE_new returns a
+        // fresh non-null handle (mirrors Zig `BoringSSL.ENGINE_new().?`).
+        *self
+            .boring_ssl_engine
+            .get_or_insert_with(|| unsafe { ENGINE_new() })
     }
 
     pub fn default_csrf_secret(&mut self) -> &[u8] {
@@ -1495,10 +1501,14 @@ impl RareData {
     }
 
     pub fn tls_default_ciphers(&self) -> Option<&[u8]> {
-        // PORT NOTE: Zig returns `[:0]const u8`; the stored buffer is
-        // NUL-terminated (set_tls_default_ciphers appends 0) so callers needing
-        // a C string can take `.as_ptr()` of the trailing-NUL slice.
-        self.tls_default_ciphers.as_deref()
+        // PORT NOTE: Zig returns `[:0]const u8` whose `.len` excludes the NUL
+        // sentinel. The stored buffer is NUL-terminated (set_tls_default_ciphers
+        // appends 0), so strip the trailing NUL from the returned slice's length
+        // to match `dupeZ` semantics. Callers needing a C string can still take
+        // `.as_ptr()` — the NUL byte remains in storage one-past-the-end.
+        self.tls_default_ciphers
+            .as_deref()
+            .map(|s| &s[..s.len() - 1])
     }
 
     pub fn set_tls_default_ciphers(&mut self, ciphers: &[u8]) {

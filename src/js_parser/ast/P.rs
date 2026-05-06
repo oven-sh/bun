@@ -1579,8 +1579,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         Expr { data: js_ast::ExprData::EIdentifier(ident), loc }
     }
 
-    #[cfg(any())] // blocked_on: DeclaredSymbolList::push, BabyList::push, ClauseItem field shapes,
-    //   NamedImport.{alias,alias_loc} Option-wrapping, Part::Tag path syntax
     pub fn generate_import_stmt_for_bake_response(
         &mut self,
         parts: &mut ListManaged<'a, js_ast::Part>,
@@ -1594,24 +1592,21 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         let import_record_i = self.add_import_record_by_range(ImportKind::Stmt, logger::Range::NONE, import_path);
 
         let mut declared_symbols = crate::DeclaredSymbolList::default();
-        declared_symbols.ensure_total_capacity(allocator, 2)?;
+        declared_symbols.ensure_total_capacity(2)?;
 
-        let stmts = allocator.alloc_slice_fill_default::<Stmt>(1);
-
-        declared_symbols.push(DeclaredSymbol { r#ref: self.bun_app_namespace_ref, is_top_level: true });
-        // PERF(port): was assume_capacity
+        declared_symbols.append_assume_capacity(DeclaredSymbol { ref_: self.bun_app_namespace_ref, is_top_level: true });
         // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-        unsafe { &mut *self.module_scope }.generated.push(allocator, self.bun_app_namespace_ref)?;
+        unsafe { &mut *self.module_scope }.generated.append(self.bun_app_namespace_ref)?;
 
-        let clause_items = allocator.alloc_slice_copy(&[js_ast::ClauseItem {
-            alias: b"Response",
-            original_name: b"Response",
+        let response_ref = self.response_ref;
+        let clause_items = allocator.alloc_slice_fill_with::<js_ast::ClauseItem, _>(1, |_| js_ast::ClauseItem {
+            alias: b"Response" as *const [u8],
+            original_name: b"Response" as *const [u8],
             alias_loc: logger::Loc::default(),
-            name: LocRef { r#ref: Some(self.response_ref), loc: logger::Loc::default() },
-        }]);
+            name: LocRef { ref_: Some(response_ref), loc: logger::Loc::default() },
+        });
 
-        declared_symbols.push(DeclaredSymbol { r#ref: self.response_ref, is_top_level: true });
-        // PERF(port): was assume_capacity
+        declared_symbols.append_assume_capacity(DeclaredSymbol { ref_: self.response_ref, is_top_level: true });
 
         // ensure every e_import_identifier holds the namespace
         if self.options.features.hot_module_reloading {
@@ -1620,31 +1615,32 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             symbol.namespace_alias.as_mut().unwrap().import_record_index = import_record_i;
         }
 
-        self.is_import_item.put(allocator, self.response_ref, ())?;
+        self.is_import_item.insert(self.response_ref, ());
         self.named_imports.put(
-            allocator,
             self.response_ref,
             js_ast::NamedImport {
-                alias: b"Response",
-                alias_loc: logger::Loc::default(),
-                namespace_ref: self.bun_app_namespace_ref,
+                alias: Some(b"Response" as *const [u8]),
+                alias_loc: Some(logger::Loc::default()),
+                namespace_ref: Some(self.bun_app_namespace_ref),
                 import_record_index: import_record_i,
-                ..Default::default()
+                local_parts_with_uses: Default::default(),
+                alias_is_star: false,
+                is_exported: false,
             },
         )?;
 
-        stmts[0] = self.s(
+        let import_stmt = self.s(
             S::Import {
                 namespace_ref: self.bun_app_namespace_ref,
                 items: clause_items,
                 import_record_index: import_record_i,
                 is_single_line: true,
-                ..Default::default()
+                default_name: None,
+                star_name_loc: None,
             },
             logger::Loc::default(),
         );
-
-        let import_records = allocator.alloc_slice_copy(&[import_record_i]);
+        let stmts = allocator.alloc_slice_fill_with::<Stmt, _>(1, |_| import_stmt);
 
         // This import is placed in a part before the main code, however
         // the bundler ends up re-ordering this to be after... The order
@@ -1652,15 +1648,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         parts.push(js_ast::Part {
             stmts,
             declared_symbols,
-            import_record_indices: BabyList::<u32>::from_owned_slice(import_records),
-            tag: js_ast::Part::Tag::Runtime,
+            import_record_indices: BabyList::<u32>::from_owned_slice(Box::new([import_record_i])),
+            tag: js_ast::PartTag::Runtime,
             ..Default::default()
         });
         Ok(())
     }
 
-    #[cfg(any())] // blocked_on: same as generate_import_stmt_for_bake_response (DeclaredSymbolList/
-    //   BabyList push surface, ClauseItem/NamedImport field shapes, Part::Tag path)
     pub fn generate_import_stmt<I, Sym>(
         &mut self,
         import_path: &'a [u8],
@@ -1685,81 +1679,93 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             if is_internal {
                 import_record.path.namespace = b"runtime";
             }
-            import_record.flags.is_internal = is_internal;
+            import_record
+                .flags
+                .set(bun_options_types::import_record::Flags::IS_INTERNAL, is_internal);
         }
+        // Zig: `nonUniqueNameString` = MutableString.ensureValidIdentifier(nonUniqueNameStringBase()).
+        // TODO(port): wire `bun_string::MutableString::ensure_valid_identifier` once it lands as
+        // a bump-arena variant; for now use the base which is already a JS-safe identifier for
+        // every runtime/jest path that reaches here.
         let import_path_identifier = self.import_records.items()[import_record_i as usize]
             .path
             .name
-            .non_unique_name_string(allocator)?;
+            .non_unique_name_string_base();
         let mut namespace_identifier =
             BumpVec::with_capacity_in(import_path_identifier.len() + prefix.len(), allocator);
         namespace_identifier.extend_from_slice(prefix);
         namespace_identifier.extend_from_slice(import_path_identifier);
         let namespace_identifier = namespace_identifier.into_bump_slice();
 
-        let clause_items = allocator.alloc_slice_fill_default::<js_ast::ClauseItem>(imports.len());
-        let stmts = allocator.alloc_slice_fill_default::<Stmt>(1 + usize::from(additional_stmt.is_some()));
+        let clause_items =
+            allocator.alloc_slice_fill_with::<js_ast::ClauseItem, _>(imports.len(), |_| js_ast::ClauseItem {
+                alias: b"" as *const [u8],
+                original_name: b"" as *const [u8],
+                alias_loc: logger::Loc::default(),
+                name: LocRef::default(),
+            });
         let mut declared_symbols = crate::DeclaredSymbolList::default();
-        declared_symbols.ensure_total_capacity(allocator, imports.len() + 1)?;
+        declared_symbols.ensure_total_capacity(imports.len() + 1)?;
 
         let namespace_ref = self.new_symbol(js_ast::symbol::Kind::Other, namespace_identifier)?;
-        declared_symbols.push(DeclaredSymbol { r#ref: namespace_ref, is_top_level: true });
-        // PERF(port): was assume_capacity
+        declared_symbols.append_assume_capacity(DeclaredSymbol { ref_: namespace_ref, is_top_level: true });
         // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-        unsafe { &mut *self.module_scope }.generated.push(allocator, namespace_ref)?;
+        unsafe { &mut *self.module_scope }.generated.append(namespace_ref)?;
         for (alias, clause_item) in imports.iter().zip(clause_items.iter_mut()) {
-            let r#ref = symbols.get(alias).expect("unreachable");
-            let alias_name = symbols.alias_name(alias);
+            let ref_ = symbols.get(alias).expect("unreachable");
+            let alias_name: &'static [u8] = symbols.alias_name(alias);
             *clause_item = js_ast::ClauseItem {
-                alias: alias_name,
-                original_name: alias_name,
+                alias: alias_name as *const [u8],
+                original_name: alias_name as *const [u8],
                 alias_loc: logger::Loc::default(),
-                name: LocRef { r#ref: Some(r#ref), loc: logger::Loc::default() },
+                name: LocRef { ref_: Some(ref_), loc: logger::Loc::default() },
             };
-            declared_symbols.push(DeclaredSymbol { r#ref, is_top_level: true });
-            // PERF(port): was assume_capacity
+            declared_symbols.append_assume_capacity(DeclaredSymbol { ref_, is_top_level: true });
 
             // ensure every e_import_identifier holds the namespace
             if self.options.features.hot_module_reloading {
-                let symbol = &mut self.symbols[r#ref.inner_index() as usize];
+                let symbol = &mut self.symbols[ref_.inner_index() as usize];
                 if symbol.namespace_alias.is_none() {
                     symbol.namespace_alias = Some(js_ast::NamespaceAlias {
                         namespace_ref,
-                        alias: alias_name,
+                        alias: alias_name as *const [u8],
                         import_record_index: import_record_i,
+                        was_originally_property_access: false,
                     });
                 }
             }
 
-            self.is_import_item.put(allocator, r#ref, ())?;
+            self.is_import_item.insert(ref_, ());
             self.named_imports.put(
-                allocator,
-                r#ref,
+                ref_,
                 js_ast::NamedImport {
-                    alias: alias_name,
-                    alias_loc: logger::Loc::default(),
-                    namespace_ref,
+                    alias: Some(alias_name as *const [u8]),
+                    alias_loc: Some(logger::Loc::default()),
+                    namespace_ref: Some(namespace_ref),
                     import_record_index: import_record_i,
-                    ..Default::default()
+                    local_parts_with_uses: Default::default(),
+                    alias_is_star: false,
+                    is_exported: false,
                 },
             )?;
         }
 
-        stmts[0] = self.s(
+        let import_stmt = self.s(
             S::Import {
                 namespace_ref,
                 items: clause_items,
                 import_record_index: import_record_i,
                 is_single_line: true,
-                ..Default::default()
+                default_name: None,
+                star_name_loc: None,
             },
             logger::Loc::default(),
         );
+        let stmts =
+            allocator.alloc_slice_fill_with::<Stmt, _>(1 + usize::from(additional_stmt.is_some()), |_| import_stmt);
         if let Some(add) = additional_stmt {
             stmts[1] = add;
         }
-
-        let import_records = allocator.alloc_slice_copy(&[import_record_i]);
 
         // This import is placed in a part before the main code, however
         // the bundler ends up re-ordering this to be after... The order
@@ -1767,8 +1773,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         parts.push(js_ast::Part {
             stmts,
             declared_symbols,
-            import_record_indices: BabyList::<u32>::from_owned_slice(import_records),
-            tag: js_ast::Part::Tag::Runtime,
+            import_record_indices: BabyList::<u32>::from_owned_slice(Box::new([import_record_i])),
+            tag: js_ast::PartTag::Runtime,
             ..Default::default()
         });
         Ok(())

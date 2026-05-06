@@ -816,6 +816,109 @@ impl Json {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// CYCLEBREAK §Dispatch — `bun_resolver::tsconfig_json::JsonCacheVTable` wiring.
+// The resolver crate cannot name `bun_interchange` (tier ordering); it carries
+// an erased `(*mut (), &'static vtable)` handle whose default is `unwired()`
+// (panics). The bundler — which sits above both — supplies the real vtable
+// here, forwarding each slot to `bun_interchange::json_parser` and lifting the
+// T2 value-subset `bun_logger::js_ast::Expr` into the full `js_ast::Expr` via
+// the `From` impl (src/js_parser/ast/Expr.rs).
+// ──────────────────────────────────────────────────────────────────────────
+
+use bun_resolver::tsconfig_json::{
+    JsonCache as ResolverJsonCache, JsonCacheVTable, JsonMode as ResolverJsonMode,
+};
+
+/// Shared body for all three vtable slots — port of `Json::parse`
+/// (cache.zig:283) with the allocator arg sourced from `(*cache).bump`.
+#[inline]
+unsafe fn json_vtable_parse(
+    cache: *mut (),
+    log: &mut logger::Log,
+    source: &logger::Source,
+    func: fn(&logger::Source, &mut logger::Log, &Bump) -> Result<json_parser::Expr, bun_core::Error>,
+) -> Result<Option<js_ast::Expr>, bun_core::Error> {
+    // SAFETY: `JsonCache.ptr` is minted by `Json::as_resolver_cache` from a
+    // `&mut Json`; the bundler guarantees the `Json` outlives every call.
+    let bump: &Bump = unsafe { &(*(cache as *const Json)).bump };
+    let mut temp_log = logger::Log::init();
+    // PORT NOTE: reshaped for borrowck — Zig `defer temp_log.appendToMaybeRecycled(...)`
+    let result = match func(source, &mut temp_log, bump) {
+        Ok(expr) => Some(js_ast::Expr::from(expr)),
+        Err(_) => None,
+    };
+    let _ = temp_log.append_to_maybe_recycled(log, source);
+    Ok(result)
+}
+
+unsafe fn json_vtable_parse_tsconfig(
+    cache: *mut (),
+    log: &mut logger::Log,
+    source: &logger::Source,
+) -> Result<Option<js_ast::Expr>, bun_core::Error> {
+    unsafe { json_vtable_parse(cache, log, source, json_parser::parse_ts_config::<true>) }
+}
+
+unsafe fn json_vtable_parse_package_json(
+    cache: *mut (),
+    log: &mut logger::Log,
+    source: &logger::Source,
+    force_utf8: bool,
+) -> Result<Option<js_ast::Expr>, bun_core::Error> {
+    // PORT NOTE: `comptime force_utf8` → runtime branch over the two
+    // monomorphizations (vtable slot is a plain `fn`, not generic).
+    let f: fn(&logger::Source, &mut logger::Log, &Bump) -> Result<json_parser::Expr, bun_core::Error> =
+        if force_utf8 {
+            json_parser::parse_ts_config::<true>
+        } else {
+            json_parser::parse_ts_config::<false>
+        };
+    unsafe { json_vtable_parse(cache, log, source, f) }
+}
+
+unsafe fn json_vtable_parse_json(
+    cache: *mut (),
+    log: &mut logger::Log,
+    source: &logger::Source,
+    mode: ResolverJsonMode,
+    force_utf8: bool,
+) -> Result<Option<js_ast::Expr>, bun_core::Error> {
+    // tsconfig.* and jsconfig.* files are JSON files, but they are not valid JSON files.
+    // They are JSON files with comments and trailing commas.
+    // Sometimes tooling expects this to work.
+    let f: fn(&logger::Source, &mut logger::Log, &Bump) -> Result<json_parser::Expr, bun_core::Error> =
+        match (mode, force_utf8) {
+            (ResolverJsonMode::Jsonc, true) => json_parser::parse_ts_config::<true>,
+            (ResolverJsonMode::Jsonc, false) => json_parser::parse_ts_config::<false>,
+            (ResolverJsonMode::Json, true) => json_parser::parse::<true>,
+            (ResolverJsonMode::Json, false) => json_parser::parse::<false>,
+        };
+    unsafe { json_vtable_parse(cache, log, source, f) }
+}
+
+/// Static vtable installed into `resolver.caches.json`. Mirrors
+/// cache.zig:296-313 (`parseJSON`/`parsePackageJSON`/`parseTSConfig`).
+pub static JSON_CACHE_VTABLE: JsonCacheVTable = JsonCacheVTable {
+    parse_tsconfig: json_vtable_parse_tsconfig,
+    parse_package_json: json_vtable_parse_package_json,
+    parse_json: json_vtable_parse_json,
+};
+
+impl Json {
+    /// Mints the erased resolver-side handle for this `Json` cache. Caller
+    /// (transpiler/ThreadPool) assigns the result to `resolver.caches.json`,
+    /// replacing the panicking `JsonCache::unwired()` default.
+    ///
+    /// SAFETY: `self` must outlive every use of the returned handle.
+    pub fn as_resolver_cache(&mut self) -> ResolverJsonCache {
+        ResolverJsonCache {
+            ptr: self as *mut Json as *mut (),
+            vtable: &JSON_CACHE_VTABLE,
+        }
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/bundler/cache.zig (334 lines)
 //   confidence: medium

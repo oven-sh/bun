@@ -559,17 +559,19 @@ pub fn scan_imports_and_exports(
                 break 'brk count;
             };
 
-            // TODO(port): bundler is an AST crate; this should allocate from the linker arena.
-            let string_buffer: Box<[u8]> = vec![0u8; string_buffer_len].into_boxed_slice();
+            // Allocate the identifier-name buffer from the linker arena so it is
+            // reclaimed when the link pass ends (Zig: `this.allocator().alloc(u8, ...)`).
+            // The slices handed out below are stored in `Symbol.original_name: *const [u8]`,
+            // which is arena-lifetime by construction.
+            let string_buffer: &mut [u8] = this
+                .graph
+                .allocator()
+                .alloc_slice_fill_default::<u8>(string_buffer_len);
             let mut builder = bun_string::StringBuilder {
                 len: 0,
                 cap: string_buffer.len(),
-                ptr: core::ptr::NonNull::new(string_buffer.as_ptr() as *mut u8),
+                ptr: core::ptr::NonNull::new(string_buffer.as_mut_ptr()),
             };
-            // PORT NOTE: `string_buffer` ownership is intentionally leaked into
-            // the symbol table via `original_name: *const [u8]` (arena lifetime).
-            // PERF(port): move to arena alloc once `LinkerGraph::allocator()` is threaded.
-            core::mem::forget(string_buffer);
 
             // Pre-generate symbols for re-exports CommonJS symbols in case they
             // are necessary later. This is done now because the symbols map cannot be
@@ -836,7 +838,9 @@ pub fn scan_imports_and_exports(
                     let other_id = rec_source_index.value as usize;
 
                     // Don't follow external imports (this includes import() expressions)
-                    let is_external_dyn = {
+                    // PORT NOTE: short-circuit — `is_external_dynamic_import` indexes by
+                    // `record.source_index`, so it must only run when that index is valid.
+                    let is_external_dyn = rec_source_index.is_valid() && {
                         let record =
                             &col_ref!(import_records_list)[id].slice()[import_record_index as usize];
                         this.is_external_dynamic_import(record, source_index)

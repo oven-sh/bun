@@ -65,6 +65,12 @@ pub struct RuntimeState {
     pub timer: timer::All,
     /// Synthetic `bun:main` wrapper source.
     pub entry_point: ServerEntryPoint,
+    /// Backing arena for `vm.transpiler` (spec passes `bun.default_allocator`;
+    /// the Rust `Transpiler<'a>` threads `&'a Arena`). Owned here so
+    /// `deinit_runtime_state` reclaims it on Worker teardown — previously
+    /// `Box::leak`'d per-VM (PORTING.md §Forbidden: `Box::leak` only for true
+    /// process-lifetime singletons via `OnceLock`, which a per-VM arena is not).
+    pub transpiler_arena: Box<bun_alloc::Arena>,
     // TODO(b2-cycle): `body_value_hive_allocator: webcore::Body::Value::HiveAllocator`
     // — `HiveAllocator` is `#[cfg(any())]`-gated in `webcore/Body.rs`. Add the
     // field (and `HiveAllocator::init()` in `init_runtime_state`) once un-gated.
@@ -125,6 +131,7 @@ unsafe fn init_runtime_state(
     let state = Box::into_raw(Box::new(RuntimeState {
         timer: timer::All::init(),
         entry_point: ServerEntryPoint::default(),
+        transpiler_arena: Box::new(bun_alloc::Arena::new()),
     }));
     RUNTIME_STATE.with(|c| c.set(state));
 
@@ -157,11 +164,18 @@ unsafe fn init_runtime_state(
         args.resolve = Some(api::ResolveMode::Lazy);
         args.target = Some(api::Target::Bun);
         // PORT NOTE: Zig passed `bun.default_allocator`; the Rust struct
-        // threads `&'a Arena` (`bumpalo::Bump`). Process-lifetime per-VM
-        // arena, paired with `vm.transpiler` itself (never dropped — see
-        // `ptr::write` note below).
+        // threads `&'a Arena` (`bumpalo::Bump`). The arena lives on
+        // `RuntimeState` (boxed above) so `deinit_runtime_state` reclaims it
+        // alongside `timer`/`entry_point` on Worker teardown. The `Box`
+        // payload address is stable, so a `'static` borrow is sound for the
+        // `Transpiler<'static>` field — both die in VM teardown
+        // (`vm.transpiler` is never dropped; see `ptr::write` note below).
+        // SAFETY: `state` is the unique freshly-boxed `RuntimeState`; the
+        // inner `Box<Arena>` payload is heap-stable and outlives the
+        // `Transpiler` (reclaimed in `deinit_runtime_state` after the VM —
+        // and hence `vm.transpiler` — is done).
         let allocator: &'static bun_alloc::Arena =
-            Box::leak(Box::new(bun_alloc::Arena::new()));
+            unsafe { &*(&*(*state).transpiler_arena as *const bun_alloc::Arena) };
         match bun_bundler::Transpiler::init(allocator, log, args, None) {
             Ok(transpiler) => {
                 // SAFETY: `vm` is the unique freshly-boxed VM; `transpiler`
@@ -236,9 +250,16 @@ unsafe fn generate_entry_point(
 /// `loadPreloads()` — runs `--preload` scripts. Returns the first rejected
 /// preload promise if any, else null. Spec VirtualMachine.zig:2204-2280.
 ///
+/// Errors bubble exactly like Zig's `try this.loadPreloads()` in
+/// `reloadEntryPoint`: resolver `Failure` returns the resolver error,
+/// `Pending`/`NotFound` returns `error.ModuleNotFound`,
+/// `JSModuleLoader.import` throwing returns `error.JSError`.
+///
 /// # Safety
 /// `vm` is the live per-thread VM.
-unsafe fn load_preloads(vm: *mut VirtualMachine) -> *mut JSInternalPromise {
+unsafe fn load_preloads(
+    vm: *mut VirtualMachine,
+) -> Result<*mut JSInternalPromise, bun_core::Error> {
     // PORT NOTE: reshaped for borrowck — `wait_for_promise` / `event_loop().tick()`
     // need `&mut VirtualMachine` while we're also iterating `vm.preload` and
     // touching `vm.transpiler.resolver` / `vm.log`. Dereference per-field via

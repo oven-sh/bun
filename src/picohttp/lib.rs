@@ -307,7 +307,13 @@ impl<'a> HeaderList<'a> {
         None
     }
 
-    pub fn get_if_other_is_absent(&self, name: &[u8], other: &[u8]) -> Option<&'a [u8]> {
+    pub fn get_if_other_is_absent(
+        &self,
+        name: impl AsRef<[u8]>,
+        other: impl AsRef<[u8]>,
+    ) -> Option<&'a [u8]> {
+        let name = name.as_ref();
+        let other = other.as_ref();
         let mut value: Option<&'a [u8]> = None;
         for header in self.list {
             if strings::eql_case_insensitive_ascii(header.name(), other, true) {

@@ -30,7 +30,7 @@ use bun_wyhash::Wyhash;
 pub type PackageID = u32;
 pub const INVALID_PACKAGE_ID: PackageID = u32::MAX;
 
-pub use install_stubs::{Architecture, Dependency, OperatingSystem};
+pub use install_stubs::{Architecture, Dependency, DependencyGroup, OperatingSystem, PackageManager};
 
 #[allow(non_snake_case)]
 pub mod install_stubs {
@@ -116,6 +116,7 @@ pub mod install_stubs {
     pub static mut INSTALL_HOOKS: InstallHooks = InstallHooks {
         parse: |_, _, _, _, _, _| None,
         parse_with_tag: |_, _, _, _, _, _, _| None,
+        resolve_package_from_name_and_version: |_, _, _| None,
     };
     pub struct InstallHooks {
         pub parse: fn(
@@ -124,7 +125,7 @@ pub mod install_stubs {
             &[u8],
             &bun_semver::SlicedString,
             *mut bun_logger::Log,
-            *const super::PackageManager,
+            *const PackageManager,
         ) -> Option<Version::Version>,
         pub parse_with_tag: fn(
             SemverString,
@@ -133,19 +134,19 @@ pub mod install_stubs {
             Version::Tag,
             &bun_semver::SlicedString,
             *mut bun_logger::Log,
-            *const super::PackageManager,
+            *const PackageManager,
         ) -> Option<Version::Version>,
+        pub resolve_package_from_name_and_version:
+            fn(*const Lockfile, &[u8], &Version::Version) -> Option<PackageID>,
     }
     impl Dependency {
-        #[allow(non_snake_case)]
-        pub use Version::*;
         pub fn parse(
             name: SemverString,
             name_hash: Option<u64>,
             version: &[u8],
             sliced: &bun_semver::SlicedString,
             log: *mut bun_logger::Log,
-            pm: *const super::PackageManager,
+            pm: *const PackageManager,
         ) -> Option<Version::Version> {
             // SAFETY: single-threaded init; written once by bun_install.
             unsafe { (INSTALL_HOOKS.parse)(name, name_hash, version, sliced, log, pm) }
@@ -157,7 +158,7 @@ pub mod install_stubs {
             tag: Version::Tag,
             sliced: &bun_semver::SlicedString,
             log: *mut bun_logger::Log,
-            pm: *const super::PackageManager,
+            pm: *const PackageManager,
         ) -> Option<Version::Version> {
             // SAFETY: see `parse`.
             unsafe { (INSTALL_HOOKS.parse_with_tag)(name, name_hash, version, tag, sliced, log, pm) }
@@ -189,21 +190,19 @@ pub mod install_stubs {
     impl Lockfile {
         pub fn resolve_package_from_name_and_version(
             &self,
-            _name: &[u8],
-            _version: &Version::Version,
+            name: &[u8],
+            version: &Version::Version,
         ) -> Option<PackageID> {
-            // FORWARD_DECL hook — unreachable until bun_install populates
-            // `r.package_manager` (which it doesn't without linking).
-            None
+            // SAFETY: single-threaded init; hook installed by bun_install.
+            unsafe { (INSTALL_HOOKS.resolve_package_from_name_and_version)(self, name, version) }
         }
     }
-}
-
-/// Opaque `bun_install::PackageManager`. Held as `Option<NonNull<_>>` on the
-/// resolver; only dereferenced when bun_install has installed itself.
-#[repr(C)]
-pub struct PackageManager {
-    pub lockfile: install_stubs::Lockfile,
+    /// Opaque `bun_install::PackageManager`. Held as `Option<NonNull<_>>` on the
+    /// resolver; only dereferenced when bun_install has installed itself.
+    #[repr(C)]
+    pub struct PackageManager {
+        pub lockfile: Lockfile,
+    }
 }
 impl OperatingSystem {
     pub fn all() -> Self { Self(()) }

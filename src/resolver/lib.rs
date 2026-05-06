@@ -2639,7 +2639,7 @@ use std::io::Write as _;
 // ── FORWARD_DECL stubs for higher-tier crates ─────────────────────────────
 // TODO(b2-blocked): bun_install / bun_bundler / bun_http — replace with real
 // imports once those crates compile and the dep edges are restored in Cargo.toml.
-mod __forward_decls {
+pub(crate) mod __forward_decls {
     use super::*;
 
     // ── bun_install ─────────────────────────────────────────────────────
@@ -2717,7 +2717,9 @@ mod __forward_decls {
     impl PackageScripts { pub fn has_any(&self) -> bool { false } }
 
     /// FORWARD_DECL: `bun_install::PackageManager` — opaque.
-    pub struct PackageManager(());
+    /// Unified with the package_json install stubs so `r.package_manager`
+    /// derefs to the same shape both modules touch.
+    pub use crate::package_json::install_stubs::PackageManager;
 
     // ── bun_install::dependency ─────────────────────────────────────────
     pub mod Dependency {

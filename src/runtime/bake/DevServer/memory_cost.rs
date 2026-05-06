@@ -152,8 +152,11 @@ pub fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
         * (size_of::<*const HTMLBundleRoute>() + size_of::<&[u8]>());
     // DevServer does not count the referenced HTMLBundle.HTMLBundleRoutes
     // .bundling_failures
-    other_bytes += memory_cost_slice(dev.bundling_failures.keys());
-    for failure in dev.bundling_failures.keys() {
+    // PORT NOTE: Zig keys the set by `SerializedFailure` directly; the Rust port
+    // stores `OwnerPacked → SerializedFailure`, so the failure payloads live in
+    // `.values()`.
+    other_bytes += memory_cost_slice(dev.bundling_failures.values());
+    for failure in dev.bundling_failures.values() {
         other_bytes += failure.data.len();
     }
     // All entries are owned by the bundler arena, not DevServer, except for `requests`

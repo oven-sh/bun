@@ -1908,13 +1908,16 @@ impl TestCommand {
             // We use the string "Etc/UTC" instead of "UTC" so there is no normalization difference.
             b"Etc/UTC";
 
-        if let Some(tz) = vm.transpiler.env.get(b"TZ") {
+        // SAFETY: `vm.transpiler.env` is the process-lifetime DotEnv loader pointer.
+        if let Some(tz) = unsafe { (*vm.transpiler.env).get(b"TZ") } {
             tz_name = tz;
         }
 
         if !tz_name.is_empty() {
             // SAFETY: `vm.global` initialised by `VirtualMachine::init`.
-            let _ = unsafe { (*vm.global).set_time_zone(&ZigString::init(tz_name)) };
+            // blocked_on: bun_jsc::JSGlobalObject::set_time_zone — JSGlobalObject.rs is cfg-gated upstream.
+            // Zig: `_ = vm.global.setTimeZone(&ZigString.init(tz_name));`
+            let _ = (unsafe { &*vm.global }, &ZigString::init(tz_name));
         }
 
         if ctx.test_options.test_worker {
@@ -2552,7 +2555,7 @@ impl TestCommand {
                 // SAFETY: vm.log points at the VM-owned Log for the lifetime of the run.
                 let log = unsafe { &mut *log_ptr.as_ptr() };
                 if log.errors > 0 {
-                    let _ = log.print(err_w());
+                    let _ = log.print(err_w() as *mut bun_core::io::Writer);
                     log.msgs.clear();
                     log.errors = 0;
                 }

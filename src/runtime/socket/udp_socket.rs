@@ -108,10 +108,10 @@ extern "C" fn on_data(socket: *mut uws::udp::Socket, buf: *mut uws::udp::PacketB
         let mut scope_id: Option<u32> = None;
 
         // SAFETY: peer points to a sockaddr_storage; family discriminates the cast.
-        match unsafe { (*peer).family } {
+        match peer.ss_family as c_int {
             f if f == inet::AF_INET => {
                 // SAFETY: family == AF_INET so peer is sockaddr_in.
-                let peer4 = unsafe { &*(peer as *const sockaddr_in) };
+                let peer4 = unsafe { &*(peer as *const _ as *const sockaddr_in) };
                 // SAFETY: libc addr-format fn; src points to in_addr, dst is INET6_ADDRSTRLEN+1 bytes.
                 hostname = unsafe {
                     inet_ntop(

@@ -4871,12 +4871,11 @@ impl<'a> ShellSrcBuilder<'a> {
             self.append_utf8_impl(&latin1[..non_ascii_idx as usize])?;
         }
 
-        strings::allocate_latin1_into_utf8_with_list(
-            self.outbuf,
-            self.outbuf.len(),
-            latin1,
-        )?;
-        // TODO(port): Zig reassigns self.outbuf.* to the returned list; here we mutate in place.
+        // Zig reassigns `self.outbuf.* = allocateLatin1IntoUTF8WithList(self.outbuf.*, …)`;
+        // mirror that by moving the Vec out, transforming, and storing back.
+        let len = self.outbuf.len();
+        let buf = core::mem::take(self.outbuf);
+        *self.outbuf = strings::allocate_latin1_into_utf8_with_list(buf, len, latin1);
         Ok(())
     }
 

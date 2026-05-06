@@ -784,22 +784,22 @@ impl Writable {
                 event_loop,
                 subprocess,
                 result,
-                StaticPipeWriter::Source::Blob(blob),
+                JscSubprocess::Source::Blob(blob),
             ))),
             Stdio::ArrayBuffer(array_buffer) => Ok(Writable::Buffer(StaticPipeWriter::create(
                 event_loop,
                 subprocess,
                 result,
-                StaticPipeWriter::Source::ArrayBuffer(array_buffer),
+                JscSubprocess::Source::ArrayBuffer(array_buffer),
             ))),
             Stdio::Memfd(memfd) => {
-                debug_assert!(memfd != bun_sys::INVALID_FD);
+                debug_assert!(memfd.is_valid());
                 Ok(Writable::Memfd(memfd))
             }
             Stdio::Fd(_) => Ok(Writable::Fd(result.unwrap())),
             Stdio::Inherit => Ok(Writable::Inherit),
             Stdio::Path(_) | Stdio::Ignore => Ok(Writable::Ignore),
-            Stdio::Ipc(_) | Stdio::Capture(_) => Ok(Writable::Ignore),
+            Stdio::Ipc | Stdio::Capture(_) => Ok(Writable::Ignore),
             Stdio::ReadableStream(_) => {
                 // The shell never uses this
                 panic!("Unimplemented stdin readable_stream");

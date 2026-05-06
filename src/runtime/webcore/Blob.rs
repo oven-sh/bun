@@ -820,7 +820,8 @@ fn _on_structured_clone_deserialize<R: bun_io::Read>(
                 let name = read_slice(reader, name_len as usize)?;
 
                 let mut name_consumed = false;
-                if let Some(store) = &scopeguard::guard_ref(&guard).store {
+                // ScopeGuard derefs to its inner Blob.
+                if let Some(store) = &(*guard).store {
                     if let Store::Data::Bytes(bytes_store) = &mut store.data_mut() {
                         bytes_store.stored_name = bun_str::PathString::init(name);
                         name_consumed = true;
@@ -1007,7 +1008,7 @@ impl Blob {
         };
 
         let mut context = FormDataContext {
-            joiner: bun_core::StringJoiner::default(),
+            joiner: bun_str::string_joiner::StringJoiner::default(),
             boundary: boundary as *const [u8],
             failed: false,
             global_this: global_this,

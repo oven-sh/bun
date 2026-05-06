@@ -759,7 +759,7 @@ pub fn get_tls_ticket(this: &mut This, global: &JSGlobalObject, _frame: &CallFra
     let mut length: usize = 0;
     // The pointer is only valid while the connection is in use so we need to copy it
     // SAFETY: session is a non-null *mut SSL_SESSION; out-params are valid stack locals.
-    unsafe { boringssl::SSL_SESSION_get0_ticket(session, &mut ticket, &mut length) };
+    unsafe { ffi::SSL_SESSION_get0_ticket(session, &mut ticket, &mut length) };
 
     if ticket.is_null() || length == 0 {
         return Ok(JSValue::UNDEFINED);

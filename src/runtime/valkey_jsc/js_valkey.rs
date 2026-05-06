@@ -1422,11 +1422,18 @@ impl JSValkeyClient {
         }
         let holder = Box::into_raw(Box::new(Holder {
             ctx: self as *mut JSValkeyClient,
-            task: jsc::AnyTask::default(), // overwritten below
+            task: jsc::AnyTask::AnyTask::default(), // overwritten below
         }));
-        // SAFETY: holder just allocated
+        // SAFETY: holder just allocated; closure captures nothing so it coerces
+        // to `fn(*mut c_void) -> JsResult<()>`.
         unsafe {
-            (*holder).task = jsc::AnyTask::new::<Holder>(Holder::run, holder);
+            (*holder).task = jsc::AnyTask::AnyTask {
+                ctx: Some(core::ptr::NonNull::new_unchecked(holder.cast::<c_void>())),
+                callback: |p: *mut c_void| {
+                    Holder::run(p.cast::<Holder>());
+                    Ok(())
+                },
+            };
         }
 
         self.client.vm.enqueue_task(jsc::Task::init(unsafe { &mut (*holder).task }));
@@ -1568,12 +1575,13 @@ impl JSValkeyClient {
         memory_cost += self.client.read_buffer.byte_list.cap as usize;
 
         // Add queue sizes
-        memory_cost +=
-            self.client.in_flight.count * core::mem::size_of::<valkey::command::PromisePair>();
+        memory_cost += self.client.in_flight.count
+            * core::mem::size_of::<super::valkey_command::PromisePair>();
         for command in self.client.queue.readable_slice(0) {
             memory_cost += command.serialized_data.len();
         }
-        memory_cost += self.client.queue.count * core::mem::size_of::<valkey::command::Entry>();
+        memory_cost +=
+            self.client.queue.count * core::mem::size_of::<super::valkey_command::Entry>();
         memory_cost
     }
 

@@ -7,9 +7,12 @@ use bun_boringssl as boringssl;
 use bun_core::{err, Error as BunError};
 use bun_http as http;
 use bun_http::{AsyncHTTP, CertificateInfo, FetchRedirect, HTTPClientResult, HTTPResponseMetadata, Headers, Signals, ThreadSafeStreamBuffer};
-use bun_http_types::Method;
+use bun_http::Method;
 use bun_jsc::debugger::AsyncTaskTracker;
-use bun_jsc::{self as jsc, AnyTask, ConcurrentTask, JSGlobalObject, JSPromise, JSValue, JsResult, Strong, Task, VirtualMachine};
+use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue, JsResult, Strong, Task};
+use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::ConcurrentTask::{ConcurrentTask, AutoDeinit};
+use bun_jsc::AnyTask::AnyTask;
 use bun_str::{self as strings, MutableString, String as BunString, ZigStringSlice};
 use bun_threading::{Mutex, ThreadPool};
 use bun_url::URL as ZigURL;
@@ -17,10 +20,23 @@ use bun_url::URL as ZigURL;
 use crate::api::bun_x509 as X509;
 use crate::socket::ssl_config::SharedPtr as SSLConfigSharedPtr;
 use crate::webcore::blob::{Any as AnyBlob, Blob, SizeType as BlobSizeType, Store as BlobStore};
-use crate::webcore::body::{self, Body, BodyValue, ValueError as BodyValueError};
+use crate::webcore::body::{self, Body, Value as BodyValue, ValueError as BodyValueError};
 use crate::webcore::readable_stream::{self, ReadableStream, Strong as ReadableStreamStrong};
 use crate::webcore::resumable_sink::ResumableFetchSink;
+use crate::webcore::streams::{StreamResult, StreamError};
 use crate::webcore::{AbortSignal, DrainResult, FetchHeaders, InternalBlob, Response, ResumableSinkBackpressure};
+
+// PORT NOTE: `bun_jsc` does not yet export `JsTerminatedResult`; alias locally.
+type JsTerminatedResult<T> = Result<T, bun_jsc::JsTerminated>;
+
+// PORT NOTE: `d2i_X509` is in BoringSSL but not yet bound in `bun_boringssl_sys`; declare locally.
+extern "C" {
+    fn d2i_X509(
+        out: *mut *mut boringssl::c::X509,
+        inp: *mut *const u8,
+        len: core::ffi::c_long,
+    ) -> *mut boringssl::c::X509;
+}
 
 bun_output::declare_scope!(FetchTasklet, visible);
 
@@ -63,7 +79,7 @@ pub struct FetchTasklet {
 
     pub signal: Option<Arc<AbortSignal>>,
     pub signals: Signals,
-    pub signal_store: http::SignalsStore,
+    pub signal_store: http::signals::Store,
     pub has_schedule_callback: AtomicBool,
 
     // must be stored because AbortSignal stores reason weakly

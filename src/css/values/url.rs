@@ -14,7 +14,6 @@ pub struct Url {
 }
 
 impl Url {
-     // blocked_on: Parser::add_import_record (BabyList push/len + ImportRecord Default)
     pub fn parse(input: &mut css::Parser) -> CssResult<Url> {
         let start_pos = input.position();
         let loc = input.current_source_location();
@@ -70,21 +69,17 @@ impl Url {
         false
     }
 
-    // blocked_on: WriteAll for Vec<u8> (or a growable arena writer) so the
-    // minify-compare path can serialize into scratch buffers; ImportRecord
-    // tag/flags shape (`is_internal` lives on Tag, not Flags); UrlDependency
-    // .placeholder deref. The non-minify path is straight-line and could
-    // un-gate sooner once `serialize_string` accepts a non-Printer writer.
-    
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         use crate::dependencies::UrlDependency;
         let dep: Option<UrlDependency> = if dest.dependencies.is_some() {
-            // TODO(port): allocator param — Printer.allocator is arena-backed in CSS crate; verify UrlDependency::new signature in Phase B
+            // PORT NOTE: hoist `get_import_records` (mut borrow) out of the arg
+            // list so `filename()` (shared borrow) can run; result is `&'a _`.
+            let import_records = dest.get_import_records()?;
             Some(UrlDependency::new(
                 dest.allocator,
                 self,
                 dest.filename(),
-                dest.get_import_records()?,
+                import_records,
             ))
         } else {
             None
@@ -112,12 +107,25 @@ impl Url {
         let import_record = dest.import_record(self.import_record_idx)?;
         let is_internal = import_record.tag.is_internal();
         let url = dest.get_import_record_url(self.import_record_idx)?;
+        // SAFETY: `url` borrows arena-backed `import_info` data valid for the
+        // printer's `'a`; detach so `dest` can be re-borrowed mutably below
+        // (same pattern as `Url::parse` above).
+        let url: &[u8] = unsafe { &*(url as *const [u8]) };
 
         if dest.minify && !is_internal {
             // PERF(port): was std.Io.Writer.Allocating with dest.allocator — using Vec<u8>; profile in Phase B
             let mut buf: Vec<u8> = Vec::new();
             // PERF(alloc) we could use stack fallback here?
-            if css::Token::to_css_generic(&css::Token::UnquotedUrl(url), &mut buf).is_err() {
+            // PORT NOTE: inlined `Token::to_css_generic(UnquotedUrl(url))` —
+            // `Token` payloads are `&'static [u8]` placeholders in Phase A and
+            // we only have `&'a [u8]` here.
+            use css::WriteAll;
+            if buf
+                .write_all(b"url(")
+                .and_then(|_| css::serializer::serialize_unquoted_url(url, &mut buf))
+                .and_then(|_| buf.write_all(b")"))
+                .is_err()
+            {
                 return Err(dest.add_fmt_error());
             }
 

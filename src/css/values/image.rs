@@ -368,16 +368,19 @@ pub struct ImageSetOption {
 }
 
 impl ImageSetOption {
-    // blocked_on: `Parser::add_import_record` (gated in css_parser.rs on
-    // BabyList push API). Body preserved verbatim; un-gates with that method.
-    
     pub fn parse(input: &mut css::Parser) -> Result<ImageSetOption> {
         let start_position = input.input.tokenizer.get_position();
         let loc = input.current_source_location();
+        // PORT NOTE: `expect_url_or_string` returns a borrow of the parser, so
+        // it can't be used as a `try_parse` callback directly (the result type
+        // `R` may not borrow the closure arg). Erase the borrow via `*const`
+        // — token slices are arena-static (see `css_parser::src_str`).
         let image = if let Some(url) = input
-            .try_parse(css::Parser::expect_url_or_string)
+            .try_parse(|p| p.expect_url_or_string().map(|s| s as *const [u8]))
             .ok()
         {
+            // SAFETY: see above — `url` borrows the parser's source/arena.
+            let url: &[u8] = unsafe { &*url };
             let record_idx = input.add_import_record(url, start_position, ImportKind::Url)?;
             Image::Url(Url {
                 import_record_idx: record_idx,
@@ -407,10 +410,6 @@ impl ImageSetOption {
         })
     }
 
-    // blocked_on: `dependencies::UrlDependency::new` taking the now-real
-    // `values::url::Url` + `serializer::serialize_string` accepting
-    // `&mut Printer` (currently `&mut impl WriteAll`). Body preserved.
-    
     pub fn to_css(
         &self,
         dest: &mut css::Printer,
@@ -419,17 +418,23 @@ impl ImageSetOption {
         if matches!(self.image, Image::Url(_)) && !is_prefixed {
             let Image::Url(url) = &self.image else { unreachable!() };
             let dep_: Option<UrlDependency> = if dest.dependencies.is_some() {
+                // PORT NOTE: hoist `get_import_records` (mut borrow) out of the
+                // arg list so `filename()` (shared borrow) can run; result is `&'a _`.
+                let import_records = dest.get_import_records()?;
                 Some(UrlDependency::new(
+                    dest.allocator,
                     url,
                     dest.filename(),
-                    dest.get_import_records()?,
+                    import_records,
                 ))
             } else {
                 None
             };
 
             if let Some(dep) = dep_ {
-                if let Err(_) = css::serializer::serialize_string(&dep.placeholder, dest) {
+                // SAFETY: placeholder borrows the printer arena.
+                let placeholder = unsafe { &*dep.placeholder };
+                if let Err(_) = css::serializer::serialize_string(placeholder, dest) {
                     return Err(dest.add_fmt_error());
                 }
                 if let Some(dependencies) = &mut dest.dependencies {
@@ -437,10 +442,11 @@ impl ImageSetOption {
                     dependencies.push(css::Dependency::Url(dep));
                 }
             } else {
-                if let Err(_) = css::serializer::serialize_string(
-                    dest.get_import_record_url(url.import_record_idx)?,
-                    dest,
-                ) {
+                let record_url = dest.get_import_record_url(url.import_record_idx)?;
+                // SAFETY: `record_url` borrows arena-backed `import_info` data
+                // valid for the printer's `'a`; detach so `dest` is reusable.
+                let record_url: &[u8] = unsafe { &*(record_url as *const [u8]) };
+                if let Err(_) = css::serializer::serialize_string(record_url, dest) {
                     return Err(dest.add_fmt_error());
                 }
             }

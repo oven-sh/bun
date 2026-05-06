@@ -370,7 +370,6 @@ impl IdentOrRef {
         None
     }
 
-     // blocked_on: bun_logger::symbol::Map::follow + LocalsResultsMap::get surface
     pub fn as_str(
         self,
         map: &bun_logger::symbol::Map,
@@ -383,17 +382,21 @@ impl IdentOrRef {
         }
         let r = self.as_ref().unwrap();
         let final_ref = map.follow(r);
-        local_names.unwrap().get(final_ref)
+        // SAFETY: LocalsResultsMap values are arena-owned `*const [u8]` slices
+        // valid for the symbol-map lifetime (see `Printer::lookup_symbol`).
+        local_names
+            .unwrap()
+            .get(&final_ref)
+            .map(|p| unsafe { &**p })
     }
 
-     // blocked_on: bun_logger::symbol::List::at + Symbol.original_name
     pub fn as_original_string(self, symbols: &bun_logger::symbol::List) -> &[u8] {
         if self.is_ident() {
             // SAFETY: arena slice reconstructed from packed ptr/len
             return unsafe { &*self.as_ident().unwrap().v };
         }
         let r = self.as_ref().unwrap();
-        symbols.at(r.inner_index()).original_name
+        symbols.at(r.inner_index() as usize).original_name
     }
 
     pub fn hash(&self, hasher: &mut Wyhash) {

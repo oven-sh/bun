@@ -104,13 +104,14 @@ impl<T, const N: usize> SmallList<T, N> {
     // hub un-gates. `to_css` is un-gated below (B-2) — `Printer::delim` is
     // stubbed in the lib.rs printer shim until `printer.rs` un-gates.
     
-    pub fn parse(input: &mut Parser) -> CssResult<Self> {
-        // TODO(port): trait bound — T must implement css generic parse protocol
-        let parse_fn = void_wrap::<T>(generic::parse_for::<T>());
+    pub fn parse(input: &mut Parser) -> CssResult<Self>
+    where
+        T: generic::Parse,
+    {
         let mut values: Self = Self::default();
         loop {
             input.skip_whitespace();
-            match input.parse_until_before(Delimiters { comma: true, ..Default::default() }, (), parse_fn) {
+            match input.parse_until_before(Delimiters::COMMA, generic::parse::<T>) {
                 CssResult::Ok(v) => {
                     values.append(v);
                 }
@@ -119,7 +120,7 @@ impl<T, const N: usize> SmallList<T, N> {
             match input.next() {
                 CssResult::Err(_) => return CssResult::Ok(values),
                 CssResult::Ok(t) => {
-                    if t.is_comma() {
+                    if matches!(t, crate::css_parser::Token::Comma) {
                         continue;
                     }
                     unreachable!("Expected a comma");
@@ -902,14 +903,16 @@ where
     }
 
     // Get RGB fallbacks if needed.
-    let rgb: Option<SmallList<T, 1>> = if fallbacks.rgb {
-        let mut shallow_clone = this.shallow_clone();
+    let rgb: Option<SmallList<T, 1>> = if fallbacks.contains(ColorFallbackKind::RGB) {
+        let len = this.len();
+        let mut shallow_clone = SmallList::<T, 1>::init_capacity(len);
+        shallow_clone.set_len(len);
         // PORT NOTE: reshaped for borrowck — index instead of zip over two &mut self slices
-        let len = shallow_clone.len();
         for i in 0..len {
             let in_ = this.r#mut(i);
-            let out_val = in_.get_fallback(allocator, ColorFallbackKind { rgb: true, ..Default::default() });
-            *shallow_clone.r#mut(i) = out_val;
+            let out_val = in_.get_fallback(allocator, ColorFallbackKind::RGB);
+            // SAFETY: i < len; slot uninitialized after set_len
+            unsafe { ptr::write(shallow_clone.as_ptr().add(i as usize), out_val) };
         }
         Some(shallow_clone)
     } else {
@@ -920,7 +923,7 @@ where
     let prefix_images: &SmallList<T, 1> = if let Some(ref r) = rgb { r } else { &*this };
 
     // Legacy -webkit-gradient()
-    if prefixes.webkit
+    if prefixes.contains(css::VendorPrefix::WEBKIT)
         && targets.browsers.is_some()
         && css::prefixes::Feature::is_webkit_gradient(targets.browsers.unwrap())
     {
@@ -934,7 +937,7 @@ where
             break 'images images;
         };
         if !images.is_empty() {
-            res.push(images);
+            let _ = res.append(images);
         }
     }
 
@@ -946,17 +949,17 @@ where
         r: &mut BabyList<SmallList<T, 1>>,
         alloc: &bun_alloc::Arena,
     ) {
-        if pfs.contains(css::VendorPrefix::from_name(prefix)) {
+        if pfs.contains(css::VendorPrefix::from_name_str(prefix)) {
             let mut images = SmallList::<T, 1>::init_capacity(pfi.len());
             images.set_len(pfi.len());
             // PORT NOTE: reshaped for borrowck — index instead of zip
             for i in 0..pfi.len() {
                 let in_ = pfi.at(i);
-                let image = in_.get_image().get_prefixed(alloc, css::VendorPrefix::from_name(prefix));
+                let image = in_.get_image().get_prefixed(alloc, css::VendorPrefix::from_name_str(prefix));
                 // SAFETY: i < len; slot uninitialized after set_len
                 unsafe { ptr::write(images.as_ptr().add(i as usize), in_.with_image(alloc, image)) };
             }
-            r.push(images);
+            let _ = r.append(images);
         }
     }
 
@@ -964,26 +967,28 @@ where
     prefix_helper("moz", &prefixes, prefix_images, &mut res, allocator);
     prefix_helper("o", &prefixes, prefix_images, &mut res, allocator);
 
-    if prefixes.none {
+    if prefixes.contains(css::VendorPrefix::NONE) {
         if let Some(r) = rgb {
-            res.push(r);
+            let _ = res.append(r);
         }
 
-        if fallbacks.p3 {
-            let mut p3_images = this.shallow_clone();
-            let len = p3_images.len();
+        if fallbacks.contains(ColorFallbackKind::P3) {
+            let len = this.len();
+            let mut p3_images = SmallList::<T, 1>::init_capacity(len);
+            p3_images.set_len(len);
             for i in 0..len {
                 let in_ = this.r#mut(i);
-                let out_val = in_.get_fallback(allocator, ColorFallbackKind { p3: true, ..Default::default() });
-                *p3_images.r#mut(i) = out_val;
+                let out_val = in_.get_fallback(allocator, ColorFallbackKind::P3);
+                // SAFETY: i < len; slot uninitialized after set_len
+                unsafe { ptr::write(p3_images.as_ptr().add(i as usize), out_val) };
             }
-            res.push(p3_images);
+            let _ = res.append(p3_images);
         }
 
         // Convert to lab if needed (e.g. if oklab is not supported but lab is).
-        if fallbacks.lab {
+        if fallbacks.contains(ColorFallbackKind::LAB) {
             for item in this.slice_mut() {
-                let new = item.get_fallback(allocator, ColorFallbackKind { lab: true, ..Default::default() });
+                let new = item.get_fallback(allocator, ColorFallbackKind::LAB);
                 let old = core::mem::replace(item, new);
                 drop(old);
             }
@@ -1000,6 +1005,7 @@ where
 
 pub fn get_fallbacks_text_shadow(
     this: &mut SmallList<TextShadow, 1>,
+    allocator: &bun_alloc::Arena,
     targets: css::targets::Targets,
 ) -> SmallList<SmallList<TextShadow, 1>, 2> {
     let mut fallbacks = css::ColorFallbackKind::default();
@@ -1008,33 +1014,33 @@ pub fn get_fallbacks_text_shadow(
     }
 
     let mut res = SmallList::<SmallList<TextShadow, 1>, 2>::default();
-    if fallbacks.rgb {
+    if fallbacks.contains(css::ColorFallbackKind::RGB) {
         let mut rgb = SmallList::<TextShadow, 1>::init_capacity(this.len());
         for shadow in this.slice() {
             let mut new_shadow = *shadow;
             // dummy non-alloced color to avoid deep cloning the real one since we will replace it
             new_shadow.color = css::css_values::color::CssColor::CurrentColor;
-            new_shadow = new_shadow.deep_clone();
+            new_shadow = new_shadow.deep_clone(allocator);
             new_shadow.color = shadow.color.to_rgb().unwrap();
             rgb.append_assume_capacity(new_shadow);
         }
         res.append(rgb);
     }
 
-    if fallbacks.p3 {
+    if fallbacks.contains(css::ColorFallbackKind::P3) {
         let mut p3 = SmallList::<TextShadow, 1>::init_capacity(this.len());
         for shadow in this.slice() {
             let mut new_shadow = *shadow;
             // dummy non-alloced color to avoid deep cloning the real one since we will replace it
             new_shadow.color = css::css_values::color::CssColor::CurrentColor;
-            new_shadow = new_shadow.deep_clone();
+            new_shadow = new_shadow.deep_clone(allocator);
             new_shadow.color = shadow.color.to_p3().unwrap();
             p3.append_assume_capacity(new_shadow);
         }
         res.append(p3);
     }
 
-    if fallbacks.lab {
+    if fallbacks.contains(css::ColorFallbackKind::LAB) {
         for shadow in this.slice_mut() {
             let out = shadow.color.to_lab().unwrap();
             // old color dropped via replace

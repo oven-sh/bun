@@ -270,6 +270,7 @@ pub mod versioned_url;
  #[path = "PackageManager.rs"] pub mod package_manager_real;
  #[path = "PackageManagerTask.rs"] pub mod package_manager_task;
  #[path = "lockfile.rs"] pub mod lockfile_real;
+ pub use lockfile_real::{default_trusted_dependencies, DEFAULT_TRUSTED_DEPENDENCIES_LIST};
  #[path = "bin.rs"] pub mod bin_real;
  pub mod lifecycle_script_runner;
  #[path = "PackageInstall.rs"] pub mod package_install;

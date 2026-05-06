@@ -2542,23 +2542,27 @@ impl RunCommand {
         }
 
         let silent = ctx.debug.silent;
-        let spawn_result = match bun_core::spawn_sync(&bun_core::SpawnSyncOptions {
-            argv: &argv,
+
+        use crate::api::bun_process::{sync, Status as SpawnStatus};
+
+        // TODO: remember to free this when we add --filter or --concurrent
+        // in the meantime we don't need to free it.
+        let envp = env.map.create_null_delimited_env_map()?;
+
+        let spawn_result = match sync::spawn(&sync::Options {
+            argv: argv.iter().map(|a| a.to_vec().into_boxed_slice()).collect(),
             argv0: Some(executable_z),
-
-            // TODO: remember to free this when we add --filter or --concurrent
-            // in the meantime we don't need to free it.
-            envp: env.map.create_null_delimited_env_map()?,
-
-            cwd: Some(cwd),
-            stderr: bun_core::Stdio::Inherit,
-            stdout: bun_core::Stdio::Inherit,
-            stdin: bun_core::Stdio::Inherit,
+            envp: Some(envp.as_ptr() as *const *const c_char),
+            cwd: cwd.to_vec().into_boxed_slice(),
+            stderr: sync::SyncStdio::Inherit,
+            stdout: sync::SyncStdio::Inherit,
+            stdin: sync::SyncStdio::Inherit,
             use_execve_on_macos: silent,
 
             #[cfg(windows)]
-            windows: bun_core::SpawnWindowsOptions {
+            windows: crate::api::bun_process::WindowsOptions {
                 loop_: jsc::EventLoopHandle::init(jsc::MiniEventLoop::init_global(env, None)),
+                ..Default::default()
             },
             ..Default::default()
         }) {
@@ -2612,14 +2616,16 @@ impl RunCommand {
                 Self::run_binary_generic_error(executable, silent, err);
             }
             sys::Result::Ok(result) => {
+                let signal_code = result.status.signal_code();
                 match result.status {
                     // An error occurred after the process was spawned.
-                    bun_core::SpawnStatus::Err(err) => {
+                    SpawnStatus::Err(err) => {
                         Self::run_binary_generic_error(executable, silent, err);
                     }
 
-                    bun_core::SpawnStatus::Signaled(signal) => {
-                        if signal.valid() && signal != bun_core::Signal::SIGINT && !silent {
+                    SpawnStatus::Signaled(signal) => {
+                        let signal = bun_sys::SignalCode(signal);
+                        if signal.valid() && signal != bun_sys::SignalCode::SIGINT && !silent {
                             Output::pretty_errorln(
                                 "<r><red>error<r>: Failed to run \"<b>{}<r>\" due to signal <b>{}<r>",
                                 (
@@ -2633,18 +2639,22 @@ impl RunCommand {
                             bun_crash_handler::suppress_reporting();
                         }
 
-                        Global::raise_ignoring_panic_handler(signal);
+                        if let Some(sc) = signal_code {
+                            Global::raise_ignoring_panic_handler(sc);
+                        }
+                        Global::exit(1);
                     }
 
-                    bun_core::SpawnStatus::Exited(exit_code) => {
+                    SpawnStatus::Exited(exit_code) => {
                         // A process can be both signaled and exited
-                        if exit_code.signal.valid() {
+                        let exit_signal = bun_sys::SignalCode(exit_code.signal);
+                        if exit_signal.valid() {
                             if !silent {
                                 Output::pretty_errorln(
                                     "<r><red>error<r>: \"<b>{}<r>\" exited with signal <b>{}<r>",
                                     (
                                         bstr::BStr::new(Self::basename_or_bun(executable)),
-                                        exit_code.signal.name().unwrap_or("unknown"),
+                                        exit_signal.name().unwrap_or("unknown"),
                                     ),
                                 );
                             }
@@ -2653,7 +2663,9 @@ impl RunCommand {
                                 bun_crash_handler::suppress_reporting();
                             }
 
-                            Global::raise_ignoring_panic_handler(exit_code.signal);
+                            if let Some(sc) = signal_code {
+                                Global::raise_ignoring_panic_handler(sc);
+                            }
                         }
 
                         let code = exit_code.code;
@@ -2703,7 +2715,7 @@ impl RunCommand {
 
                         Global::exit(code);
                     }
-                    bun_core::SpawnStatus::Running => panic!("Unexpected state: process is running"),
+                    SpawnStatus::Running => panic!("Unexpected state: process is running"),
                 }
             }
         }
@@ -2835,8 +2847,8 @@ impl RunCommand {
 
             #[cfg(debug_assertions)]
             {
-                // TODO(port): std.fs.deleteTreeAbsolute → bun_sys equivalent
-                let _ = sys::delete_tree_absolute(Self::BUN_NODE_DIR.as_bytes());
+                // Zig: std.fs.deleteTreeAbsolute(BUN_NODE_DIR) — best-effort.
+                let _ = sys::Dir::cwd().delete_tree(Self::BUN_NODE_DIR.as_bytes());
             }
             const PATHS: [&str; 2] = [
                 const_format::concatcp!(RunCommand::BUN_NODE_DIR, "/node"),
@@ -2847,16 +2859,27 @@ impl RunCommand {
                 loop {
                     'inner: {
                         // SAFETY: argv0 is a valid NUL-terminated C string
-                        let target = unsafe { CStr::from_ptr(argv0) };
-                        if let Err(err) = sys::symlinkz(target, p.as_bytes()) {
-                            if err == bun_core::err!("PathAlreadyExists") {
+                        let target = unsafe { ZStr::from_ptr(argv0.cast()) };
+                        // SAFETY: PATHS entries are NUL-terminated string literals.
+                        let link =
+                            unsafe { ZStr::from_raw(p.as_ptr(), p.len()) };
+                        if let sys::Result::Err(err) = sys::symlink(target, link) {
+                            if err.get_errno() == sys::Errno::EXIST {
                                 break 'inner;
                             }
                             if retried {
                                 return Ok(());
                             }
 
-                            let _ = sys::make_dir_absolute_z(Self::BUN_NODE_DIR.as_bytes());
+                            // Zig: std.fs.makeDirAbsoluteZ(BUN_NODE_DIR) — best-effort.
+                            // SAFETY: BUN_NODE_DIR is a NUL-terminated literal.
+                            let dir_z = unsafe {
+                                ZStr::from_raw(
+                                    Self::BUN_NODE_DIR.as_ptr(),
+                                    Self::BUN_NODE_DIR.len(),
+                                )
+                            };
+                            let _ = sys::mkdir(dir_z, 0o755);
 
                             retried = true;
                             continue;

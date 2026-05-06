@@ -1708,11 +1708,13 @@ pub fn write_file_with_source_destination(
             )
             .expect("unreachable");
             let task = write_file_mod::WriteFileTask::create_on_js_thread(ctx, file_copier);
-            // Defer promise creation until we're just about to schedule the task
-            let promise = JSPromise::create(ctx);
-            let promise_value = promise.as_value(ctx);
+            // Defer promise creation until we're just about to schedule the task.
+            // PORT NOTE: Zig wrote `promise.strong.set(ctx, promise_value)` directly;
+            // `JSPromiseStrong.strong` is private in `bun_jsc`, so use `init` (which
+            // creates the JSPromise *and* the strong handle in one step) instead.
             // SAFETY: write_file_promise was just produced by Box::into_raw above; sole owner.
-            unsafe { (*write_file_promise).promise.strong.set(ctx, promise_value) };
+            unsafe { (*write_file_promise).promise = jsc::JSPromiseStrong::init(ctx) };
+            let promise_value = unsafe { (*write_file_promise).promise.value() };
             promise_value.ensure_still_alive();
             task.schedule();
             return Ok(promise_value);
@@ -2050,8 +2052,8 @@ pub fn write_file_internal(
                         promise: jsc::JSPromiseStrong::init(global_this),
                         mkdirp_if_not_exists: options.mkdirp_if_not_exists.unwrap_or(true),
                     }));
-                    body_value.as_locked_mut().task = task as *mut c_void;
-                    body_value.as_locked_mut().on_receive_value = WriteFileWaitFromLockedValueTask::then_wrap;
+                    body_value.as_locked_mut().task = Some(task as *mut c_void);
+                    body_value.as_locked_mut().on_receive_value = Some(WriteFileWaitFromLockedValueTask::then_wrap);
                     // SAFETY: task was just produced by Box::into_raw; ownership handed to body_value.task.
                     return Ok(unsafe { (*task).promise.value() });
                 }
@@ -2088,8 +2090,8 @@ pub fn write_file_internal(
                         promise: jsc::JSPromiseStrong::init(global_this),
                         mkdirp_if_not_exists: options.mkdirp_if_not_exists.unwrap_or(true),
                     }));
-                    body_value.as_locked_mut().task = task as *mut c_void;
-                    body_value.as_locked_mut().on_receive_value = WriteFileWaitFromLockedValueTask::then_wrap;
+                    body_value.as_locked_mut().task = Some(task as *mut c_void);
+                    body_value.as_locked_mut().on_receive_value = Some(WriteFileWaitFromLockedValueTask::then_wrap);
                     // SAFETY: task was just produced by Box::into_raw; ownership handed to body_value.task.
                     return Ok(unsafe { (*task).promise.value() });
                 }
@@ -4578,7 +4580,7 @@ impl Blob {
                 Ok(jsc::ArrayBuffer::from_bytes(unsafe { &mut *buf }, TYPED_ARRAY_VIEW).to_js_with_context(
                     global,
                     store.into_raw() as *mut c_void,
-                    Some(jsc::array_buffer::BlobArrayBuffer_deallocator),
+                    Some(blob_store_array_buffer_deallocator),
                 ))
             }
             Lifetime::Transfer => {
@@ -4595,7 +4597,7 @@ impl Blob {
                 Ok(jsc::ArrayBuffer::from_bytes(unsafe { &mut *buf }, TYPED_ARRAY_VIEW).to_js_with_context(
                     global,
                     store.into_raw() as *mut c_void,
-                    Some(jsc::array_buffer::BlobArrayBuffer_deallocator),
+                    Some(blob_store_array_buffer_deallocator),
                 ))
             }
             Lifetime::Temporary => {
@@ -5708,7 +5710,7 @@ impl Internal {
     // TODO(b2-blocked): bun_jsc::* — ZigString::to_external_u16/to_js_object.
     
     pub fn to_string_owned(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        let bytes_without_bom = strings::unicode::without_utf8_bom(&self.bytes);
+        let bytes_without_bom = strings::without_utf8_bom(&self.bytes);
         if let Some(out) = strings::to_utf16_alloc(bytes_without_bom, false, false).unwrap_or(Some(Vec::new())) {
             // TODO(port): Zig used `catch &[_]u16{}` to swallow alloc errors into empty.
             let return_value = ZigString::to_external_u16(out.as_ptr(), out.len(), global_this);
@@ -5730,7 +5732,7 @@ impl Internal {
     // TODO(b2-blocked): bun_jsc::* — ZigString::to_json_object.
     
     pub fn to_json(&mut self, global_this: &JSGlobalObject) -> JSValue {
-        let str_bytes = ZigString::init(strings::unicode::without_utf8_bom(&self.bytes)).with_encoding();
+        let str_bytes = ZigString::init(strings::without_utf8_bom(&self.bytes)).with_encoding();
         let json = str_bytes.to_json_object(global_this);
         self.bytes = Vec::new();
         json

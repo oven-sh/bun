@@ -6235,7 +6235,9 @@ impl<'a> Resolver<'a> {
                                 let index = b"index";
                                 let buf = bufs!(load_as_file);
                                 buf[..index.len()].copy_from_slice(index);
-                                for ext in extension_order {
+                                // SAFETY: `extension_order` points into `self.opts.extension_order`, owned by `self`.
+                                for ext in unsafe { &*extension_order }.iter() {
+                                    let ext: &[u8] = ext;
                                     let file_name = &mut buf[0..index.len() + ext.len()];
                                     file_name[index.len()..].copy_from_slice(ext);
                                     let index_query = dir_entries.get(&file_name[..]);
@@ -7254,7 +7256,7 @@ impl<'a> Resolver<'a> {
         dir_info: *mut DirInfo::DirInfo,
         _field_rel_path: &[u8],
         field: &[u8],
-        extension_order: &[&'static [u8]],
+        extension_order: options::ExtensionSlice,
     ) -> Option<MatchResult> {
         let mut field_rel_path = _field_rel_path;
         // Is this a directory?
@@ -7351,8 +7353,10 @@ impl<'a> Resolver<'a> {
         // `load_index_with_extension` (avoids the forbidden lifetime-extension cast).
         let n = self.opts.extra_cjs_extensions.len();
         for i in 0..n {
-            let ext = self.opts.extra_cjs_extensions[i];
-            if let Some(result) = self.load_index_with_extension(dir_info, ext) {
+            let ext: *const [u8] = &*self.opts.extra_cjs_extensions[i];
+            // SAFETY: `extra_cjs_extensions` is owned by `self.opts` and never mutated
+            // while the resolver runs; the heap buffer behind each `Box<[u8]>` is stable.
+            if let Some(result) = self.load_index_with_extension(dir_info, unsafe { &*ext }) {
                 return Some(result);
             }
         }
@@ -7432,7 +7436,7 @@ impl<'a> Resolver<'a> {
         // would alias a live `&mut`. Spec uses raw `*DirInfo`; re-borrow narrowly.
         dir_info: *mut DirInfo::DirInfo,
         path_: &[u8],
-        extension_order: &[&'static [u8]],
+        extension_order: options::ExtensionSlice,
     ) -> Option<MatchResult> {
         // In order for our path handling logic to be correct, it must end with a trailing slash.
         let mut path = path_;
@@ -7689,7 +7693,7 @@ impl<'a> Resolver<'a> {
         dec_ret!(None);
     }
 
-    pub fn load_as_file(&mut self, path: &[u8], extension_order: &[&'static [u8]]) -> Option<LoadResult> {
+    pub fn load_as_file(&mut self, path: &[u8], extension_order: options::ExtensionSlice) -> Option<LoadResult> {
         // SAFETY: PORT — RealFS is the global singleton (fs.zig); Zig held a raw
         // pointer here (resolver.zig:3784). Derive provenance from the raw
         // `*mut FileSystem` field so intervening `unsafe { &mut *self.fs() }` calls in

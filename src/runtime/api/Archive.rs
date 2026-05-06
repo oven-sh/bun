@@ -1010,8 +1010,8 @@ struct FilesContext {
 }
 
 impl FilesContext {
-    fn clone_error_string(archive: &libarchive::lib::Archive) -> Option<CString> {
-        let err_str = archive.error_string();
+    fn clone_error_string(archive: *mut libarchive::lib::Archive) -> Option<CString> {
+        let err_str = libarchive::lib::Archive::error_string(archive);
         if err_str.is_empty() {
             return None;
         }
@@ -1022,11 +1022,14 @@ impl FilesContext {
         use libarchive::lib;
         let archive = lib::Archive::read_new();
         let _guard = scopeguard::guard((), |_| {
-            let _ = archive.read_free();
+            // SAFETY: archive handle valid until guard runs after the loop.
+            let _ = unsafe { (*archive).read_free() };
         });
         configure_archive_reader(archive);
 
-        if archive.read_open_memory(self.store.shared_view()) != lib::Status::Ok {
+        // SAFETY: non-null handle from read_new(); used single-threaded.
+        let archive_ref = unsafe { &*archive };
+        if archive_ref.read_open_memory(self.store.shared_view()) != lib::Result::Ok {
             return Ok(if let Some(err) = Self::clone_error_string(archive) {
                 FilesResult::LibarchiveErr(err)
             } else {
@@ -1037,15 +1040,15 @@ impl FilesContext {
         let mut entries: FileEntryList = Vec::new();
         // errdefer freeEntries(&entries) — handled by Drop on `entries`
 
-        let mut entry: *mut lib::ArchiveEntry = core::ptr::null_mut();
-        while archive.read_next_header(&mut entry) == lib::Status::Ok {
+        let mut entry: *mut lib::Entry = core::ptr::null_mut();
+        while archive_ref.read_next_header(&mut entry) == lib::Result::Ok {
             // SAFETY: read_next_header returned Ok; entry valid until next call.
             let entry_ref = unsafe { &*entry };
-            if entry_ref.filetype() != lib::FileType::Regular as u32 {
+            if entry_ref.filetype() != FILETYPE_REGULAR {
                 continue;
             }
 
-            let pathname = entry_ref.pathname_utf8();
+            let pathname = entry_ref.pathname().as_bytes();
             // Apply glob pattern filtering (supports both positive and negative patterns)
             if let Some(patterns) = &self.glob_patterns {
                 if !match_glob_patterns(patterns, pathname) {
@@ -1054,7 +1057,8 @@ impl FilesContext {
             }
 
             let size: usize = usize::try_from(entry_ref.size().max(0)).unwrap();
-            let mtime = entry_ref.mtime();
+            // TODO(b2-blocked): bun_libarchive::lib::Entry::mtime — port returns 0 until then.
+            let mtime: i64 = 0;
 
             // Read data first before allocating path
             let mut data: Vec<u8> = Vec::new();
@@ -1062,7 +1066,7 @@ impl FilesContext {
                 data = vec![0u8; size];
                 let mut total_read: usize = 0;
                 while total_read < size {
-                    let read = archive.read_data(&mut data[total_read..]);
+                    let read = archive_ref.read_data(&mut data[total_read..]);
                     if read < 0 {
                         // Read error - returned as a normal Result (not a Zig error), so the
                         // errdefer above won't fire. Free the current buffer and all previously

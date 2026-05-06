@@ -1254,7 +1254,7 @@ where
         self.blob = WebCore::Blob::Any::Blob(blob);
         let file = &self.blob.store().unwrap().data.file;
         let mut file_buf = PathBuffer::uninit();
-        let auto_close = !matches!(file.pathlike, WebCore::PathLike::Fd(_));
+        let auto_close = !matches!(file.pathlike, crate::node::PathLike::Fd(_));
         let fd: bun_sys::Fd = if !auto_close {
             file.pathlike.fd()
         } else {
@@ -1288,22 +1288,22 @@ where
             }
         };
 
-        let is_regular = bun_sys::is_regular_file(stat.mode);
+        let mode = stat.mode as bun_sys::Mode;
+        let is_regular = bun_sys::S::ISREG(mode);
         let (file_type, pollable): (bun_io::FileType, bool) = 'brk: {
-            let mode = i64::try_from(stat.mode).unwrap();
-            if bun_sys::S::isfifo(mode) || bun_sys::S::ischr(mode) {
+            if bun_sys::S::ISFIFO(mode) || bun_sys::S::ISCHR(mode) {
                 break 'brk (bun_io::FileType::Pipe, true);
             }
-            if bun_sys::S::issock(mode) {
+            if bun_sys::S::ISSOCK(mode) {
                 break 'brk (bun_io::FileType::Socket, true);
             }
-            if bun_sys::S::isdir(mode) {
+            if bun_sys::S::ISDIR(mode) {
                 if auto_close {
                     fd.close();
                 }
                 let mut sys = bun_sys::Error {
                     errno: bun_sys::E::ISDIR as _,
-                    syscall: bun_sys::Syscall::Read,
+                    syscall: bun_sys::Tag::read,
                     ..Default::default()
                 }
                 .with_path_like(&file.pathlike)
@@ -1378,14 +1378,14 @@ where
             && self.range != RangeRequest::Raw::None
         {
             match self.range.resolve(stat_size) {
-                RangeRequest::Resolved::None => {}
-                RangeRequest::Resolved::Satisfiable(r) => {
-                    self.sendfile.offset = Blob::SizeType::try_from(r.start).unwrap();
-                    self.sendfile.remain = Blob::SizeType::try_from(r.end - r.start + 1).unwrap();
+                RangeRequest::Result::None => {}
+                RangeRequest::Result::Satisfiable { start, end } => {
+                    self.sendfile.offset = Blob::SizeType::try_from(start).unwrap();
+                    self.sendfile.remain = Blob::SizeType::try_from(end - start + 1).unwrap();
                     self.sendfile.total = stat_size;
                     self.flags.set_needs_content_range(true);
                 }
-                RangeRequest::Resolved::Unsatisfiable => {
+                RangeRequest::Result::Unsatisfiable => {
                     if auto_close {
                         fd.close();
                     }
@@ -1462,7 +1462,7 @@ where
         });
     }
 
-    pub fn do_render_with_body_locked(this: *mut c_void, value: &mut WebCore::Body::Value) {
+    pub fn do_render_with_body_locked(this: *mut c_void, value: &mut Body::Value) {
         // SAFETY: this is a *RequestContext registered as lock.task
         Self::do_render_with_body(unsafe { &mut *(this as *mut Self) }, value, None);
     }
@@ -2343,7 +2343,7 @@ where
 
     pub fn do_render_with_body(
         this: &mut Self,
-        value: &mut WebCore::Body::Value,
+        value: &mut Body::Value,
         owned_readable: Option<WebCore::ReadableStream>,
     ) {
         this.drain_microtasks();

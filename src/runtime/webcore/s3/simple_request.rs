@@ -94,13 +94,15 @@ pub enum S3PartResult<'a> {
 
 pub struct S3HttpSimpleTask {
     pub http: AsyncHTTP,
-    pub vm: &'static VirtualMachine,
+    pub vm: *mut VirtualMachine,
     pub sign_result: SignResult,
     pub headers: Headers,
     pub callback_context: *mut c_void,
     pub callback: Callback,
     pub response_buffer: MutableString,
-    pub result: HTTPClientResult,
+    // PORT NOTE: `'static` here because `result.body` (when set) points at our own
+    // `response_buffer` — self-referential, so the borrow lives as long as the task.
+    pub result: HTTPClientResult<'static>,
     pub concurrent_task: ConcurrentTask,
     pub range: Option<Box<[u8]>>,
     /// Owned dupe of the proxy URL. The env-derived proxy slice can be freed
@@ -151,7 +153,10 @@ impl Callback {
     }
 }
 
-#[derive(core::marker::ConstParamTy, PartialEq, Eq, Clone, Copy)]
+// PORT NOTE: Zig used `comptime error_type` and an enum const-generic. Stable Rust forbids
+// enum const params (`adt_const_params` is unstable), so this is a runtime parameter — the
+// branch is on an error path, no perf concern.
+#[derive(PartialEq, Eq, Clone, Copy)]
 enum ErrorType {
     NotFound,
     Failure,
@@ -163,7 +168,7 @@ impl S3HttpSimpleTask {
         Box::into_raw(Box::new(init))
     }
 
-    fn error_with_body<const ERROR_TYPE: ErrorType>(&self) -> JsTerminatedResult<()> {
+    fn error_with_body(&self, error_type: ErrorType) -> JsTerminatedResult<()> {
         let mut code: &[u8] = b"UnknownError";
         let mut message: &[u8] = b"an unexpected error has occurred";
         let mut has_error_code = false;
@@ -189,7 +194,7 @@ impl S3HttpSimpleTask {
             }
         }
 
-        if ERROR_TYPE == ErrorType::NotFound {
+        if error_type == ErrorType::NotFound {
             if !has_error_code {
                 code = b"NoSuchKey";
                 message = b"The specified key does not exist.";

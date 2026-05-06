@@ -2933,7 +2933,7 @@ pub fn fix_dead_code_elimination() {
     ))]
     keep_symbols!(posix_platform_specific_v8_apis::_ZN2v85Array3NewENS_5LocalINS_7ContextEEEmSt8functionIFNS_10MaybeLocalINS_5ValueEEEvEE);
 
-    core::hint::black_box(bun_runtime::node::buffer::BufferVectorized::fill as *const ());
+    core::hint::black_box(crate::node::buffer::BufferVectorized::fill as *const ());
 }
 
 // ──────────────────────────────────────────────────────────────────────────

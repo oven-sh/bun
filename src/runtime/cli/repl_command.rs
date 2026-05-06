@@ -15,7 +15,7 @@ use bun_alloc::Arena;
 use bun_core::{Global, Output};
 use bun_jsc::{self as jsc, JSGlobalObject, VirtualMachine};
 use bun_js_parser as js_ast;
-use bun_runtime::api::dns::Resolver as DNSResolver;
+use crate::api::dns::Resolver as DNSResolver;
 use bun_str::ZigString;
 
 use crate::repl::Repl;

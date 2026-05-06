@@ -19,7 +19,7 @@ use bun_uws::us_bun_verify_error_t;
 
 use super::ssl_wrapper::SSLWrapper;
 // TODO(port): confirm crate path for EventLoopTimer (bun.api.Timer.EventLoopTimer)
-use bun_runtime::api::timer::EventLoopTimer;
+use crate::api::timer::EventLoopTimer;
 
 bun_output::declare_scope!(UpgradedDuplex, visible);
 
@@ -314,7 +314,7 @@ impl<'a> UpgradedDuplex<'a> {
 
     pub fn start_tls(
         &mut self,
-        ssl_options: &bun_runtime::api::server_config::SSLConfig,
+        ssl_options: &crate::api::server_config::SSLConfig,
         is_client: bool,
     ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set

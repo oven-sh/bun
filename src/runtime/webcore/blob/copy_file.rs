@@ -8,9 +8,9 @@ use std::sync::Arc;
 use bun_aio as aio;
 use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue, JsResult, SystemError};
 use bun_paths::PathBuffer;
-use bun_runtime::node::fs as node_fs;
-use bun_runtime::webcore::Blob;
-use bun_runtime::webcore::blob::{SizeType, Store, store};
+use crate::node::fs as node_fs;
+use crate::webcore::Blob;
+use crate::webcore::blob::{SizeType, Store, store};
 use bun_str as strings;
 use bun_sys::{self, Fd, Mode, Stat, windows::libuv};
 

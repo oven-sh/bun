@@ -17,8 +17,8 @@ use crate::run_command::RunCommand;
 use crate::Command;
 
 // TODO(port): crate path for `bun.spawn` (Process/Status/SpawnOptions/Rusage/spawnProcess) —
-// lives under src/runtime/api/bun/process.zig; using `bun_runtime::spawn` as placeholder.
-use bun_runtime::spawn::{self, Process, Rusage, SpawnOptions, SpawnProcessResult, Status};
+// lives under src/runtime/api/bun/process.zig; using `crate::spawn` as placeholder.
+use crate::spawn::{self, Process, Rusage, SpawnOptions, SpawnProcessResult, Status};
 // TODO(port): crate path for `bun.DotEnv.Loader`
 use bun_dotenv::Loader as DotEnvLoader;
 // TODO(port): crate path for `bun.io` BufferedReader/ReadState — assumed `bun_io`

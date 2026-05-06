@@ -237,17 +237,17 @@ fn run_install(argv: &mut Vec<&[u8]>) -> Result<(), bun_core::Error> {
 
     argv[0] = bun_core::self_exe_path()?;
 
-    // TODO(port): bun.spawnSync — confirm crate path (bun_runtime::process::spawn_sync)
-    let process = match bun_runtime::process::spawn_sync(&bun_runtime::process::SpawnOptions {
+    // TODO(port): bun.spawnSync — confirm crate path (crate::process::spawn_sync)
+    let process = match crate::process::spawn_sync(&crate::process::SpawnOptions {
         argv,
         envp: None,
         cwd: bun_fs::FileSystem::instance().top_level_dir,
-        stderr: bun_runtime::process::Stdio::Inherit,
-        stdout: bun_runtime::process::Stdio::Inherit,
-        stdin: bun_runtime::process::Stdio::Inherit,
+        stderr: crate::process::Stdio::Inherit,
+        stdout: crate::process::Stdio::Inherit,
+        stdin: crate::process::Stdio::Inherit,
 
         #[cfg(windows)]
-        windows: bun_runtime::process::WindowsOptions {
+        windows: crate::process::WindowsOptions {
             loop_: bun_jsc::EventLoopHandle::init(bun_event_loop::MiniEventLoop::init_global(None, None)),
         },
     }) {
@@ -271,7 +271,7 @@ fn run_install(argv: &mut Vec<&[u8]>) -> Result<(), bun_core::Error> {
                     }
                 }
 
-                if let bun_runtime::process::Status::Exited { code, .. } = spawn_result.status {
+                if let crate::process::Status::Exited { code, .. } = spawn_result.status {
                     Global::exit(code);
                 }
 
@@ -426,13 +426,13 @@ pub fn generate_files(
                 // Now we need to run shadcn to add the components to the project
                 // TODO(port): bun.spawnSync — confirm crate path
                 let shadcn_process =
-                    match bun_runtime::process::spawn_sync(&bun_runtime::process::SpawnOptions {
+                    match crate::process::spawn_sync(&crate::process::SpawnOptions {
                         argv: &shadcn_argv,
                         envp: None,
                         cwd: bun_fs::FileSystem::instance().top_level_dir,
-                        stderr: bun_runtime::process::Stdio::Inherit,
-                        stdout: bun_runtime::process::Stdio::Inherit,
-                        stdin: bun_runtime::process::Stdio::Inherit,
+                        stderr: crate::process::Stdio::Inherit,
+                        stdout: crate::process::Stdio::Inherit,
+                        stdin: crate::process::Stdio::Inherit,
                         // TODO(port): Zig omits `.windows` here (unlike runInstall / dev-server spawns) — likely upstream bug; mirroring source exactly for now.
                     }) {
                         Ok(p) => p,
@@ -455,7 +455,7 @@ pub fn generate_files(
                                 }
                             }
 
-                            if let bun_runtime::process::Status::Exited { code, .. } =
+                            if let crate::process::Status::Exited { code, .. } =
                                 spawn_result.status
                             {
                                 Global::exit(code);
@@ -480,16 +480,16 @@ pub fn generate_files(
 
     // Start dev server
     // TODO(port): bun.spawnSync — confirm crate path
-    let start = match bun_runtime::process::spawn_sync(&bun_runtime::process::SpawnOptions {
+    let start = match crate::process::spawn_sync(&crate::process::SpawnOptions {
         argv: &[bun_core::self_exe_path()?, b"dev"],
         envp: None,
         cwd: bun_fs::FileSystem::instance().top_level_dir,
-        stderr: bun_runtime::process::Stdio::Inherit,
-        stdout: bun_runtime::process::Stdio::Inherit,
-        stdin: bun_runtime::process::Stdio::Inherit,
+        stderr: crate::process::Stdio::Inherit,
+        stdout: crate::process::Stdio::Inherit,
+        stdin: crate::process::Stdio::Inherit,
 
         #[cfg(windows)]
-        windows: bun_runtime::process::WindowsOptions {
+        windows: crate::process::WindowsOptions {
             loop_: bun_jsc::EventLoopHandle::init(bun_event_loop::MiniEventLoop::init_global(None, None)),
         },
     }) {
@@ -513,7 +513,7 @@ pub fn generate_files(
                     }
                 }
 
-                if let bun_runtime::process::Status::Exited { code, .. } = spawn_result.status {
+                if let crate::process::Status::Exited { code, .. } = spawn_result.status {
                     Global::exit(code);
                 }
 

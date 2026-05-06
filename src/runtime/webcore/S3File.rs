@@ -4,8 +4,8 @@ use std::sync::Arc;
 use bun_core::Output;
 use bun_http::Method;
 use bun_jsc::{CallFrame, ErrorCode, JSGlobalObject, JSPromise, JSValue, JsError, JsResult};
-use bun_runtime::node::{PathLike, PathOrBlob};
-use bun_runtime::webcore::blob::{self, Blob};
+use crate::node::{PathLike, PathOrBlob};
+use crate::webcore::blob::{self, Blob};
 use bun_s3 as s3;
 use bun_str::strings;
 
@@ -107,7 +107,7 @@ pub fn presign(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVal
 
     match path_or_blob {
         PathOrBlob::Path(path) => {
-            if matches!(path, bun_runtime::node::PathOrFileDescriptor::Fd(_)) {
+            if matches!(path, crate::node::PathOrFileDescriptor::Fd(_)) {
                 return global.throw_invalid_arguments("Expected a S3 or path to presign", &[]);
             }
             let options = args.next_eat();
@@ -134,7 +134,7 @@ pub fn unlink(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValu
 
     match path_or_blob {
         PathOrBlob::Path(path) => {
-            if matches!(path, bun_runtime::node::PathOrFileDescriptor::Fd(_)) {
+            if matches!(path, crate::node::PathOrFileDescriptor::Fd(_)) {
                 return global.throw_invalid_arguments("Expected a S3 or path to delete", &[]);
             }
             let options = args.next_eat();
@@ -170,7 +170,7 @@ pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue
     match path_or_blob {
         PathOrBlob::Path(path) => {
             let options = args.next_eat();
-            if matches!(path, bun_runtime::node::PathOrFileDescriptor::Fd(_)) {
+            if matches!(path, crate::node::PathOrFileDescriptor::Fd(_)) {
                 return global.throw_invalid_arguments("Expected a S3 or path to upload", &[]);
             }
             let blob = construct_s3_file_internal_store(global, path.path(), options)?;
@@ -221,7 +221,7 @@ pub fn size(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue>
     match &mut path_or_blob {
         PathOrBlob::Path(path) => {
             let options = args.next_eat();
-            if matches!(path, bun_runtime::node::PathOrFileDescriptor::Fd(_)) {
+            if matches!(path, crate::node::PathOrFileDescriptor::Fd(_)) {
                 return global.throw_invalid_arguments("Expected a S3 or path to get size", &[]);
             }
             let mut blob = construct_s3_file_internal_store(global, path.path(), options)?;
@@ -249,7 +249,7 @@ pub fn exists(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValu
     match &mut path_or_blob {
         PathOrBlob::Path(path) => {
             let options = args.next_eat();
-            if matches!(path, bun_runtime::node::PathOrFileDescriptor::Fd(_)) {
+            if matches!(path, crate::node::PathOrFileDescriptor::Fd(_)) {
                 return global.throw_invalid_arguments("Expected a S3 or path to check if it exists", &[]);
             }
             let mut blob = construct_s3_file_internal_store(global, path.path(), options)?;
@@ -672,7 +672,7 @@ pub fn stat(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue>
     match &mut path_or_blob {
         PathOrBlob::Path(path) => {
             let options = args.next_eat();
-            if matches!(path, bun_runtime::node::PathOrFileDescriptor::Fd(_)) {
+            if matches!(path, crate::node::PathOrFileDescriptor::Fd(_)) {
                 return global.throw_invalid_arguments("Expected a S3 or path to get size", &[]);
             }
             let mut blob = construct_s3_file_internal_store(global, path.path(), options)?;

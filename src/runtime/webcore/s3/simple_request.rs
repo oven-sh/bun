@@ -397,7 +397,7 @@ impl Drop for S3HttpSimpleTask {
         // proxy_url, result.certificate_info, result.metadata) are handled by their own Drop impls.
         // TODO(port): verify HTTPClientResult's Drop frees certificate_info/metadata.
         // PORT NOTE: KeepAlive::unref takes an aio EventLoopCtx; the JS-loop ctx is fetched via
-        // the global hook (registered by bun_runtime::init) — same pattern as
+        // the global hook (registered by crate::init) — same pattern as
         // `event_loop_handle_to_ctx` in process.rs.
         self.poll_ref.unref(bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js));
         // SAFETY: `http` is always initialised before the task pointer escapes (see

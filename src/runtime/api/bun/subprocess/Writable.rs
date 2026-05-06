@@ -6,9 +6,9 @@ use bun_core::{self, err};
 use bun_jsc::{EventLoop, JSGlobalObject, JSValue};
 use bun_sys::{self, Fd};
 
-use bun_runtime::webcore::blob::SizeType as BlobSizeType;
-use bun_runtime::webcore::file_sink::{self, FileSink};
-use bun_runtime::webcore::sink::DestructorPtr;
+use crate::webcore::blob::SizeType as BlobSizeType;
+use crate::webcore::file_sink::{self, FileSink};
+use crate::webcore::sink::DestructorPtr;
 use bun_spawn::Stdio;
 
 use super::{js, StaticPipeWriter, StdioResult, Subprocess};

@@ -28,7 +28,7 @@ use bun_url::URL;
 use bun_uws::{self as uws, AnyResponse, AnyWebSocket, Opcode, ResponseKind, WebSocketUpgradeContext};
 use crate::bake::{self as bake, DevServer, FrameworkRouter};
 use bun_fs::FileSystem;
-use bun_runtime::standalone_module_graph::StandaloneModuleGraph;
+use crate::standalone_module_graph::StandaloneModuleGraph;
 use bun_uuid::UUID;
 use bun_wyhash::hash;
 use bstr::BStr;

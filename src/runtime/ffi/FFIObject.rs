@@ -7,7 +7,7 @@ use bun_jsc::{
 use bun_jsc::host_fn::{DomCall, DomEffect};
 use bun_str::{self as strings, ZigString};
 
-// TODO(port): `bun.api.FFI` lives in `src/runtime/ffi/FFI.zig` → `bun_runtime::ffi::FFI`
+// TODO(port): `bun.api.FFI` lives in `src/runtime/ffi/FFI.zig` → `crate::ffi::FFI`
 use crate::ffi::FFI;
 
 pub fn new_cstring(

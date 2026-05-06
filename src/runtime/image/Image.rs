@@ -16,7 +16,7 @@ use bun_jsc::{
     self as jsc, ArrayBuffer, CallFrame, JSGlobalObject, JSPromise, JSValue, JsRef, JsResult,
     Strong, ZigString,
 };
-use bun_runtime::webcore::Blob;
+use crate::webcore::Blob;
 use bun_str::{self as strings, ZStr};
 use bun_sys as sys;
 
@@ -1578,7 +1578,7 @@ impl<'a> PipelineTask<'a> {
                         jsc::CallFrame::ArgumentsSlice::init(global.bun_vm(), &[dest_js]);
                     // TODO(port): `PathOrBlob::from_js_no_copy` signature.
                     let mut path_or_blob =
-                        match bun_runtime::node::PathOrBlob::from_js_no_copy(global, &mut arg_slice)
+                        match crate::node::PathOrBlob::from_js_no_copy(global, &mut arg_slice)
                         {
                             Ok(p) => p,
                             Err(_) => return promise.reject(global, jsc::JsError::Thrown.into()),

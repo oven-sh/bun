@@ -51,7 +51,7 @@ pub mod discord_command;
 
 // ─── open (minimal open_url; full Editor/EditorContext stays gated) ──────────
 // TODO(b2-blocked): full `open.rs` (Editor detection/spawn) needs
-// `bun_runtime::process::spawn_sync`, `bun_threading::spawn_detached`,
+// `crate::process::spawn_sync`, `bun_threading::spawn_detached`,
 // `bun_resolver::fs::FileSystem` — none of which are wired on this path yet.
 // `bun discord` only needs `open_url`, so provide a thin print-fallback impl
 // here until the heavy half compiles.

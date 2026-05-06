@@ -328,7 +328,7 @@ impl Process {
 /// Convert an `EventLoopHandle` to the aio-level `EventLoopCtx`.
 ///
 /// `Mini` constructs the ctx directly from the published vtable. `Js` defers
-/// to the `GET_VM_CTX_HOOK` global (registered by `bun_runtime::init()`) since
+/// to the `GET_VM_CTX_HOOK` global (registered by `crate::init()`) since
 /// the JS event-loop ctx vtable lives in `bun_jsc` (T6) and bun_runtime is the
 /// only crate that sees both. Per-thread there is exactly one JS event loop,
 /// so the hook lookup is equivalent to dispatching on `owner`.

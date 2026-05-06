@@ -1,6 +1,6 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_jsc::call_frame::ArgumentsSlice;
-use bun_runtime::node::fs::{self, NodeFS};
+use crate::node::fs::{self, NodeFS};
 
 /// Signature of every generated NodeFS host function.
 pub type NodeFSFunction =
@@ -49,7 +49,7 @@ pub trait NodeFsOp {
 pub trait FsArguments: Sized {
     fn from_js(global: &JSGlobalObject, slice: &mut ArgumentsSlice) -> JsResult<Self>;
     /// `args.signal` — only meaningful when `HAS_ABORT_SIGNAL`.
-    fn signal(&self) -> Option<&bun_runtime::webcore::AbortSignal> {
+    fn signal(&self) -> Option<&crate::webcore::AbortSignal> {
         None
     }
     /// `args.recursive` — only meaningful for `readdir`.
@@ -223,12 +223,12 @@ impl Binding {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_dirent(_this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(bun_runtime::node::Dirent::get_constructor(global))
+        Ok(crate::node::Dirent::get_constructor(global))
     }
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_stats(_this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(bun_runtime::node::StatsSmall::get_constructor(global))
+        Ok(crate::node::StatsSmall::get_constructor(global))
     }
 }
 

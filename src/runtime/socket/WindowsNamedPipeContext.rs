@@ -10,8 +10,8 @@ use bun_sys::{self, Error as SysError, Fd, SystemErrno};
 use bun_boringssl_sys as boringssl;
 use bun_paths::PathBuffer;
 use bun_str::ZStr;
-use bun_runtime::api::server_config::SSLConfig;
-use bun_runtime::api::{TCPSocket, TLSSocket};
+use crate::api::server_config::SSLConfig;
+use crate::api::{TCPSocket, TLSSocket};
 use bun_sys::windows::libuv as uv;
 
 bun_output::declare_scope!(WindowsNamedPipeContext, visible);

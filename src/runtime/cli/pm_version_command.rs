@@ -12,7 +12,7 @@ use bun_js_parser::js_printer as JSPrinter;
 use bun_json as JSON;
 use bun_logger as logger;
 use bun_paths::{self as path, PathBuffer};
-use bun_runtime::process::{spawn_sync, SpawnSyncOptions, SpawnSyncResult, Stdio};
+use crate::process::{spawn_sync, SpawnSyncOptions, SpawnSyncResult, Stdio};
 use bun_semver as Semver;
 use bun_str::strings;
 use bun_sys::{self, Fd};
@@ -728,7 +728,7 @@ impl PmVersionCommand {
             cwd,
             envp: None,
             #[cfg(windows)]
-            windows: bun_runtime::process::WindowsSpawnOptions {
+            windows: crate::process::WindowsSpawnOptions {
                 loop_: bun_jsc::EventLoopHandle::init(bun_event_loop::MiniEventLoop::init_global(
                     None, None,
                 )),
@@ -775,7 +775,7 @@ impl PmVersionCommand {
             cwd,
             envp: None,
             #[cfg(windows)]
-            windows: bun_runtime::process::WindowsSpawnOptions {
+            windows: crate::process::WindowsSpawnOptions {
                 loop_: bun_jsc::EventLoopHandle::init(bun_event_loop::MiniEventLoop::init_global(
                     None, None,
                 )),
@@ -843,7 +843,7 @@ impl PmVersionCommand {
             stdin: Stdio::Ignore,
             envp: None,
             #[cfg(windows)]
-            windows: bun_runtime::process::WindowsSpawnOptions {
+            windows: crate::process::WindowsSpawnOptions {
                 loop_: bun_jsc::EventLoopHandle::init(bun_event_loop::MiniEventLoop::init_global(
                     None, None,
                 )),
@@ -889,7 +889,7 @@ impl PmVersionCommand {
             stdin: Stdio::Ignore,
             envp: None,
             #[cfg(windows)]
-            windows: bun_runtime::process::WindowsSpawnOptions {
+            windows: crate::process::WindowsSpawnOptions {
                 loop_: bun_jsc::EventLoopHandle::init(bun_event_loop::MiniEventLoop::init_global(
                     None, None,
                 )),
@@ -927,7 +927,7 @@ impl PmVersionCommand {
             stdin: Stdio::Ignore,
             envp: None,
             #[cfg(windows)]
-            windows: bun_runtime::process::WindowsSpawnOptions {
+            windows: crate::process::WindowsSpawnOptions {
                 loop_: bun_jsc::EventLoopHandle::init(bun_event_loop::MiniEventLoop::init_global(
                     None, None,
                 )),

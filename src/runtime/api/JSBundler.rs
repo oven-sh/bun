@@ -49,7 +49,7 @@ use bun_bundler::BundleV2;
 use bun_options_types::{CompileTarget, ImportKind};
 use bun_js_parser::ast::Index;
 use bun_interchange::api; // bun.schema.api
-use bun_runtime::webcore::Blob;
+use crate::webcore::Blob;
 use bun_collections::{StringHashMap, StringSet, StringMap, StringArrayHashMap};
 use bun_core::MutableString;
 
@@ -1354,7 +1354,7 @@ pub mod js_bundler {
                         this.define.insert(key, value)?;
                     }
 
-                    let base_public_path = bun_runtime::StandaloneModuleGraph::target_base_public_path(
+                    let base_public_path = crate::StandaloneModuleGraph::target_base_public_path(
                         compile.compile_target.os,
                         b"root/",
                     );

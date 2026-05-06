@@ -14,8 +14,8 @@ use bun_jsc::{
     self as jsc, ArrayBuffer, Codegen, EventLoopHandle, JSGlobalObject, JSValue, MarkedArrayBuffer,
     SystemError,
 };
-use bun_runtime::api::bun::Subprocess as JscSubprocess;
-use bun_runtime::webcore::{self, Blob, FileSink, ReadableStream};
+use crate::api::bun::Subprocess as JscSubprocess;
+use crate::webcore::{self, Blob, FileSink, ReadableStream};
 use crate::shell::interpreter::Cmd as ShellCmd;
 use crate::shell::{self as sh, EnvMap, IOWriter, Yield};
 use bun_spawn::{self, Process, Rusage, SpawnOptions, Status, WindowsSpawnOptions, WindowsSpawnResult};

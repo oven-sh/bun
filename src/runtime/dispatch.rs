@@ -1,4 +1,4 @@
-//! `bun_runtime::dispatch` — the §Dispatch hot-path payoff.
+//! `crate::dispatch` — the §Dispatch hot-path payoff.
 //!
 //! Per `docs/PORTING.md` §Dispatch, low-tier crates store
 //! `Task = { tag: TaskTag, ptr: *mut () }` and never name a variant type. This

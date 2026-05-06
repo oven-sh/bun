@@ -39,7 +39,7 @@ use core::ffi::{c_int, c_uint, c_void, CStr};
 use core::ptr;
 use std::sync::Once;
 
-use bun_runtime::image::codecs;
+use crate::image::codecs;
 // TODO(port): move to runtime_sys / bun_sys::windows
 use bun_sys::windows;
 

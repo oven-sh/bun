@@ -5,8 +5,8 @@ use bstr::BStr;
 use bun_core::output;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_jsc::node::{PathLike, PathOrBlob};
-use bun_runtime::webcore::Blob;
-use bun_runtime::s3::{self as S3, MultiPartUploadOptions, ACL, StorageClass, S3Credentials};
+use crate::webcore::Blob;
+use crate::s3::{self as S3, MultiPartUploadOptions, ACL, StorageClass, S3Credentials};
 use bun_str::PathString;
 
 use super::s3_file as S3File;
@@ -625,7 +625,7 @@ impl S3Client {
 // TODO(port): `FormatTag` / `JSType` are the ConsoleObject formatter enums
 // (`.Double`, `.NumberObject`). Import from the ported ConsoleObject module
 // once available.
-use bun_runtime::console_object::{FormatTag, JSType};
+use crate::console_object::{FormatTag, JSType};
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

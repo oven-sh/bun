@@ -1,4 +1,4 @@
-//! `bun_runtime::jsc_hooks` — high-tier implementations for the §Dispatch
+//! `crate::jsc_hooks` — high-tier implementations for the §Dispatch
 //! cold-path vtables that `bun_jsc` exposes (`virtual_machine::RuntimeHooks`
 //! and `module_loader::LoaderHooks`).
 //!
@@ -1724,7 +1724,7 @@ fn transpile_source_code_inner(
                 return Err(bun_core::err!("NotSupported"));
             }
             // TODO(b2-cycle): `jsc::API::HTMLBundle::init` — gated in
-            // `bun_runtime::api`. Spec :735-742.
+            // `crate::api`. Spec :735-742.
             Err(bun_core::err!("NotSupported"))
         }
 

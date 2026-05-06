@@ -127,7 +127,7 @@ impl FileRoute {
 
                 blob.global_this = global;
                 debug_assert!(!blob.is_heap_allocated(), "expected blob not to be heap-allocated");
-                *body_value = bun_runtime::webcore::body::Value::blob(blob.dupe());
+                *body_value = crate::webcore::body::Value::blob(blob.dupe());
                 let headers = Headers::from(response.get_init_headers(), /* body = */ &blob);
 
                 return Ok(Some(Box::into_raw(Box::new(FileRoute {

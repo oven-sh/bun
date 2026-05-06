@@ -361,9 +361,9 @@ pub extern "C" fn Request__clone(
 
 // `comptime { _ = Request__clone; ... }` force-reference block → drop. Rust links what's pub.
 
-pub type EventType = <NodeHTTPResponse as bun_runtime::api::HasAbortEvent>::AbortEvent;
+pub type EventType = <NodeHTTPResponse as crate::api::HasAbortEvent>::AbortEvent;
 // TODO(port): `jsc.API.NodeHTTPResponse.AbortEvent` — direct path is
-// `bun_runtime::api::node_http_response::AbortEvent`; adjust in Phase B.
+// `crate::api::node_http_response::AbortEvent`; adjust in Phase B.
 
 impl InternalJSEventCallback {
     pub fn init(function: JSValue, global_this: &JSGlobalObject) -> InternalJSEventCallback {
@@ -438,17 +438,17 @@ impl Request {
 
     pub fn get_form_data_encoding(
         &mut self,
-    ) -> JsResult<Option<Box<bun_runtime::webcore::form_data::AsyncFormData>>> {
+    ) -> JsResult<Option<Box<crate::webcore::form_data::AsyncFormData>>> {
         let Some(content_type_slice) = self.get_content_type()? else {
             return Ok(None);
         };
         // `defer content_type_slice.deinit()` → Drop on ZigString::Slice
         let Some(encoding) =
-            bun_runtime::webcore::form_data::Encoding::get(content_type_slice.slice())
+            crate::webcore::form_data::Encoding::get(content_type_slice.slice())
         else {
             return Ok(None);
         };
-        Ok(Some(bun_runtime::webcore::form_data::AsyncFormData::init(
+        Ok(Some(crate::webcore::form_data::AsyncFormData::init(
             encoding,
         )))
     }

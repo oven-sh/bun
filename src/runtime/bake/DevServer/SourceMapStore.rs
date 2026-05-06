@@ -17,7 +17,7 @@ use crate::bake::{self as bake, Side};
 use crate::bake::dev_server::{
     self, ChunkKind, DevAllocator, DevServer, dump_bundle, packed_map,
 };
-use bun_runtime::api::timer::EventLoopTimer;
+use crate::api::timer::EventLoopTimer;
 
 // PORT NOTE: Zig `mapLog = DevServer.mapLog` — reuse DevServer's existing scope so
 // `BUN_DEBUG_<scope>=1` enables both call sites; do NOT re-declare a new scope here.

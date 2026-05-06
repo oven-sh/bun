@@ -23,11 +23,11 @@ use bun_core::Fd;
 // Errno/Tag/can_use_memfd. LinuxMemFdAllocator is syscall-heavy and constructs a runtime Blob
 // payload; this module likely belongs in T≥1. Neither vtable nor hook fits a syscall surface.
 use bun_sys as sys;
-// TODO(b0-genuine): bun_runtime::webcore::blob::store::Bytes — return-value struct constructed
+// TODO(b0-genuine): crate::webcore::blob::store::Bytes — return-value struct constructed
 // inline (cap/ptr/len/allocator). Not dispatch; not a hook. Candidate fix: define a local
 // `MemFdBytes { cap: u32, ptr: *mut u8, len: u32, allocator: ... }` here and have runtime convert,
 // or hoist `alloc()`/`create()` into bun_runtime via the move-in pass.
-use bun_runtime::webcore::blob::store::Bytes as BlobStoreBytes;
+use crate::webcore::blob::store::Bytes as BlobStoreBytes;
 
 /// Intrusive thread-safe ref-counted memfd allocator.
 ///

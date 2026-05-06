@@ -392,11 +392,11 @@ impl CompileC {
         {
             let mut which_buf = PathBuffer::uninit();
 
-            let process = match bun_runtime::api::process::spawn_sync(
-                &bun_runtime::api::process::SpawnOptions {
-                    stdout: bun_runtime::api::process::Stdio::Buffer,
-                    stdin: bun_runtime::api::process::Stdio::Ignore,
-                    stderr: bun_runtime::api::process::Stdio::Ignore,
+            let process = match crate::api::process::spawn_sync(
+                &crate::api::process::SpawnOptions {
+                    stdout: crate::api::process::Stdio::Buffer,
+                    stdin: crate::api::process::Stdio::Ignore,
+                    stderr: crate::api::process::Stdio::Ignore,
                     argv: &[
                         bun_core::which(
                             &mut which_buf,

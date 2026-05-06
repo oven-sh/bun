@@ -459,15 +459,15 @@ use bun_url::URL;
 use bun_semver::SemverObject;
 use bun_gen::bun_object as r#gen;
 
-use bun_runtime::api::{
+use crate::api::{
     self, FFIObject, HashObject, JSON5Object, JSONCObject, MarkdownObject, TOMLObject,
     UnsafeObject, YAMLObject,
 };
-use bun_runtime::node;
-use bun_runtime::crypto::Crypto;
-use bun_runtime::api::cron;
-use bun_runtime::api::csrf_jsc;
-use bun_runtime::valkey_jsc::js_valkey::SubscriptionCtx;
+use crate::node;
+use crate::crypto::Crypto;
+use crate::api::cron;
+use crate::api::csrf_jsc;
+use crate::valkey_jsc::js_valkey::SubscriptionCtx;
 use crate::test_runner::jest::Jest;
 use bun_bundler::api::JSBundler;
 
@@ -1640,10 +1640,10 @@ pub fn index_of_line(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsR
     Ok(JSValue::js_number_from_int32(-1))
 }
 
-pub use bun_runtime::crypto as crypto_mod;
+pub use crate::crypto as crypto_mod;
 // TODO(port): `pub const Crypto = @import("../crypto/crypto.zig");` re-exports
 // the crypto module under this file's namespace; in Rust the canonical path is
-// `bun_runtime::crypto`.
+// `crate::crypto`.
 
 #[bun_jsc::host_fn]
 pub fn nanoseconds(global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {

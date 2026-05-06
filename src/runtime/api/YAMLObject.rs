@@ -10,7 +10,7 @@ use bun_jsc::{
     MarkedArgumentBuffer, ZigString,
 };
 use bun_logger as logger;
-use bun_runtime::node::BlobOrStringOrBuffer;
+use crate::node::BlobOrStringOrBuffer;
 use bun_str::String;
 
 pub fn create(global_this: &JSGlobalObject) -> JSValue {
@@ -986,7 +986,7 @@ pub fn parse(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValu
             break 'input v;
         }
         let str = input_value.to_bun_string(global)?;
-        BlobOrStringOrBuffer::StringOrBuffer(bun_runtime::node::StringOrBuffer::String(
+        BlobOrStringOrBuffer::StringOrBuffer(crate::node::StringOrBuffer::String(
             str.to_slice(&arena),
         ))
     };

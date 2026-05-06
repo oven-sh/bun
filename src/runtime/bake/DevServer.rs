@@ -31,10 +31,10 @@ use crate::bake::framework_router::{self as framework_router, FrameworkRouter, O
 use bun_bundler::{self as bundler, options::Loader, BundleV2, Transpiler};
 use bun_http::{Method, MimeType};
 use bun_options_types::{ImportKind, ImportRecord};
-use bun_runtime::api::server::StaticRoute;
-use bun_runtime::api::timer::EventLoopTimer;
-use bun_runtime::api::{AnyServer, HTMLBundle, JSBundler, SavedRequest};
-use bun_runtime::webcore::{Blob, Request as WebRequest, Response};
+use crate::api::server::StaticRoute;
+use crate::api::timer::EventLoopTimer;
+use crate::api::{AnyServer, HTMLBundle, JSBundler, SavedRequest};
+use crate::webcore::{Blob, Request as WebRequest, Response};
 use bun_safety::ThreadLock;
 use bun_sourcemap::SourceMap;
 use bun_watcher::Watcher;
@@ -4434,7 +4434,7 @@ impl DevServer {
             system_total: u32,
         }
         let cost = self.memory_cost_detailed();
-        let system_total = bun_runtime::node::os::totalmem();
+        let system_total = crate::node::os::totalmem();
         let fields = Fields {
             incremental_graph_client: cost.incremental_graph_client as u32,
             incremental_graph_server: cost.incremental_graph_server as u32,
@@ -4448,7 +4448,7 @@ impl DevServer {
                 0
             },
             process_used: sys::self_process_memory_usage().unwrap_or(0) as u32,
-            system_used: system_total.saturating_sub(bun_runtime::node::os::freemem()) as u32,
+            system_used: system_total.saturating_sub(crate::node::os::freemem()) as u32,
             system_total: system_total as u32,
         };
         // SAFETY: Fields is repr(C) POD

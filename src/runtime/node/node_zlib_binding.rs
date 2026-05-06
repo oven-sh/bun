@@ -67,7 +67,7 @@ use bun_core::Output;
 use bun_jsc::{
     self as jsc, CallFrame, ConcurrentTask, JSGlobalObject, JSValue, JsResult, Task, VirtualMachine,
 };
-use bun_runtime::node::Buffer;
+use crate::node::Buffer;
 use bun_str::{self, String as BunString, ZigString};
 use bun_threading::{WorkPool, WorkPoolTask};
 use bun_zlib;

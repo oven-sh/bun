@@ -1429,6 +1429,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_output"
+version = "0.0.0"
+dependencies = [
+ "bun_core",
+]
+
+[[package]]
 name = "bun_patch"
 version = "0.0.0"
 dependencies = [
@@ -1696,6 +1703,7 @@ dependencies = [
  "bun_glob",
  "bun_hash",
  "bun_http",
+ "bun_http_jsc",
  "bun_http_types",
  "bun_install",
  "bun_interchange",
@@ -1709,6 +1717,7 @@ dependencies = [
  "bun_logger",
  "bun_lolhtml_sys",
  "bun_options_types",
+ "bun_output",
  "bun_paths",
  "bun_picohttp",
  "bun_ptr",
@@ -1723,6 +1732,8 @@ dependencies = [
  "bun_simdutf_sys",
  "bun_sourcemap",
  "bun_sourcemap_jsc",
+ "bun_spawn",
+ "bun_sql_jsc",
  "bun_standalone_graph",
  "bun_string",
  "bun_sys",

@@ -483,7 +483,7 @@ impl SocketAddress {
         }
         let mut buf = [0u8; inet::INET6_ADDRSTRLEN as usize];
         let formatted = self._addr.fmt(&mut buf);
-        let presentation = bun_runtime::webcore::encoding::to_bun_string_comptime(formatted.as_bytes(), bun_str::Encoding::Latin1);
+        let presentation = crate::webcore::encoding::to_bun_string_comptime(formatted.as_bytes(), bun_str::Encoding::Latin1);
         debug_assert!(presentation.tag() != bun_str::Tag::Dead);
         self._presentation = presentation;
         presentation

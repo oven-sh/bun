@@ -298,7 +298,7 @@ impl S3HttpDownloadStreamingTask {
 impl Drop for S3HttpDownloadStreamingTask {
     fn drop(&mut self) {
         // PORT NOTE: KeepAlive::unref now takes an aio EventLoopCtx; the JS-loop ctx is fetched
-        // via the global hook (registered by bun_runtime::init) — same pattern as
+        // via the global hook (registered by crate::init) — same pattern as
         // `S3HttpSimpleTask::drop` in simple_request.rs.
         self.poll_ref
             .unref(bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js));

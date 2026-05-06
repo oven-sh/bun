@@ -5,8 +5,8 @@ use core::mem::offset_of;
 use bun_collections::{ArrayHashMap, StringArrayHashMap};
 use bun_core::{fmt as bun_fmt, Output};
 use bun_http::MimeType;
-use bun_runtime::api::server::StaticRoute;
-use bun_runtime::webcore::blob::AnyBlob;
+use crate::api::server::StaticRoute;
+use crate::webcore::blob::AnyBlob;
 
 use super::{memory_cost_array_hash_map, memory_cost_array_list, DevServer};
 

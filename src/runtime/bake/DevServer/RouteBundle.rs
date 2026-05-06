@@ -7,7 +7,7 @@ use crate::dev_server::{DevServer, IncrementalGraph, SerializedFailure, SourceMa
 use crate::framework_router::{self, Route};
 // TODO(port): verify crate paths for HTMLBundle (jsc.API.HTMLBundle) and StaticRoute (bun.api.server.StaticRoute)
 use bun_jsc::api::html_bundle::{HTMLBundle, HTMLBundleRoute};
-use bun_runtime::api::server::StaticRoute;
+use crate::api::server::StaticRoute;
 
 // Zig: `pub const Index = bun.GenericIndex(u30, RouteBundle);`
 // TODO(port): Zig used u30 backing; Rust has no u30 — using u32 newtype. Reconcile with bun.GenericIndex port.

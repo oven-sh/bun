@@ -1,7 +1,7 @@
 use core::ffi::{c_int, c_void};
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsError, JsResult};
-use bun_runtime::webcore::{FetchHeaders, Response};
+use crate::webcore::{FetchHeaders, Response};
 use bun_str::String as BunString;
 
 pub fn fix_dead_code_elimination() {
@@ -175,12 +175,12 @@ pub fn construct_render(
 
     // Create a Response with Render body
     let mut response = Box::new(Response::init(
-        bun_runtime::webcore::ResponseInit {
+        crate::webcore::ResponseInit {
             status_code: 200,
             headers: 'headers: {
                 let mut headers = FetchHeaders::create_empty();
                 headers.put(
-                    bun_runtime::webcore::fetch_headers::HTTPHeaderName::Location,
+                    crate::webcore::fetch_headers::HTTPHeaderName::Location,
                     path_utf8.slice(),
                     global_this,
                 )?;
@@ -189,7 +189,7 @@ pub fn construct_render(
             // TODO(port): remaining ResponseInit fields use Zig struct defaults
             ..Default::default()
         },
-        bun_runtime::webcore::Body { value: bun_runtime::webcore::BodyValue::Empty },
+        crate::webcore::Body { value: crate::webcore::BodyValue::Empty },
         BunString::empty(),
         false,
     ));

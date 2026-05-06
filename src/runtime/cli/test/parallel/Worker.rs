@@ -11,7 +11,7 @@ use bun_aio as r#async;
 use bun_io;
 use bun_sys;
 // TODO(port): `bun.spawn` lives under src/runtime/api/bun/process.zig — confirm crate path in Phase B.
-use bun_runtime::spawn::{self, Process, Rusage, SpawnOptions, Status, Stdio};
+use crate::spawn::{self, Process, Rusage, SpawnOptions, Status, Stdio};
 
 use super::channel::Channel;
 use super::coordinator::Coordinator;

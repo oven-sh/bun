@@ -23,7 +23,7 @@ use bun_core::Output;
 use bun_jsc::{self as jsc, ZigException, ZigStackFrame, ZigStackFramePosition};
 use bun_logger::Log;
 use bun_paths::path_buffer_pool;
-use bun_runtime::api::server::StaticRoute;
+use crate::api::server::StaticRoute;
 use bun_str::strings;
 use bun_uws::{self as uws, AnyResponse, Request};
 
@@ -398,7 +398,7 @@ impl ErrorReportRequest {
 
         StaticRoute::send_blob_then_deinit(
             r,
-            &bun_runtime::webcore::Blob::from_vec(out),
+            &crate::webcore::Blob::from_vec(out),
             StaticRoute::SendOptions {
                 mime_type: &bun_http::MimeType::OTHER,
                 server: ctx.dev().server.as_ref().unwrap(),

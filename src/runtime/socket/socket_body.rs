@@ -34,8 +34,8 @@ pub use super::windows_named_pipe_context::WindowsNamedPipeContext;
 pub type WindowsNamedPipeContext = ();
 
 mod tls_socket_functions;
-use bun_runtime::api::bun::h2_frame_parser::H2FrameParser;
-use bun_runtime::api::SecureContext;
+use crate::api::bun::h2_frame_parser::H2FrameParser;
+use crate::api::SecureContext;
 
 bun_output::declare_scope!(Socket, visible);
 macro_rules! log {

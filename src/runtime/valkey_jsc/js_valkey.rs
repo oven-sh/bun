@@ -10,8 +10,8 @@ use bun_jsc::{
     self as jsc, CallFrame, JSArray, JSGlobalObject, JSMap, JSPromise, JSValue, JsRef, JsResult,
     VirtualMachine,
 };
-use bun_runtime::api::server_config::SSLConfig;
-use bun_runtime::api::Timer;
+use crate::api::server_config::SSLConfig;
+use crate::api::Timer;
 use bun_str::{self as strings, String as BunString};
 use bun_uws as uws;
 

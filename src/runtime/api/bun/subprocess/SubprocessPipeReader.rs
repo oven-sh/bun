@@ -5,7 +5,7 @@ use bun_aio::Loop as AsyncLoop;
 use bun_io::BufferedReader;
 use bun_jsc::{self as jsc, EventLoop, JSGlobalObject, JSValue, JsResult, MarkedArrayBuffer};
 use bun_ptr::IntrusiveRc;
-use bun_runtime::webcore::ReadableStream;
+use crate::webcore::ReadableStream;
 use bun_sys;
 
 use super::{MaxBuf, StdioKind, StdioResult, Subprocess};

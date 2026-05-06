@@ -559,7 +559,7 @@ macro_rules! js_sink {
             use $crate::sink::JsSinkType;
             use ::core::ffi::c_void;
             use ::bun_jsc::{JSGlobalObject, JSValue, CallFrame, JsResult};
-            use ::bun_runtime::webcore::{streams, Blob};
+            use ::crate::webcore::{streams, Blob};
             use ::bun_sys::{self as sys, Error as SysError};
             use ::bun_collections::ByteList;
 

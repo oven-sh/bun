@@ -3,7 +3,7 @@ use core::mem::size_of;
 use crate::dev_server::{DeferredRequest, DevServer, HmrSocket, IncrementalResult, TestingBatchEvents};
 use bun_collections::ArrayHashMap;
 // TODO(port): HTMLBundle lives under bun.jsc.API in Zig but is defined in src/runtime/api/server/ — verify crate path in Phase B.
-use bun_runtime::api::server::html_bundle::HTMLBundleRoute;
+use crate::api::server::html_bundle::HTMLBundleRoute;
 
 #[derive(Clone, Copy, Default)]
 pub struct MemoryCost {

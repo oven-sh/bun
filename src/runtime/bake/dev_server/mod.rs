@@ -597,7 +597,7 @@ impl Drop for DevServer {
 
 /// The bundler (`bun_bundler`, lower tier) names `DevServerHandle` as an
 /// erased `(*mut (), &'static DevServerVTable)` so it can call back into
-/// `bun_runtime::bake` without a crate cycle. This is the static instance.
+/// `crate::bake` without a crate cycle. This is the static instance.
 /// PERF(port): was inline switch — see PORTING.md §Dispatch (cold path).
 pub static DEV_SERVER_VTABLE: bun_bundler::dispatch::DevServerVTable =
     bun_bundler::dispatch::DevServerVTable {

@@ -854,7 +854,7 @@ impl Value {
                 ));
             }
 
-            if let Some(image) = value.as_::<bun_runtime::api::Image>() {
+            if let Some(image) = value.as_::<crate::api::Image>() {
                 // Body init is synchronous, so encode now and wrap as a Blob
                 // with the right MIME type. The off-thread path is still
                 // available via `await image.blob()`.
@@ -2034,7 +2034,7 @@ impl<'a> ValueBufferer<'a> {
     pub fn on_resolve_stream(_global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let args = callframe.arguments_old(2);
         let Some(sink) =
-            bun_runtime::api::NativePromiseContext::take::<Self>(args.ptr[args.len - 1])
+            crate::api::NativePromiseContext::take::<Self>(args.ptr[args.len - 1])
         else {
             return Ok(JSValue::UNDEFINED);
         };
@@ -2046,7 +2046,7 @@ impl<'a> ValueBufferer<'a> {
     pub fn on_reject_stream(_global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let args = callframe.arguments_old(2);
         let Some(sink) =
-            bun_runtime::api::NativePromiseContext::take::<Self>(args.ptr[args.len - 1])
+            crate::api::NativePromiseContext::take::<Self>(args.ptr[args.len - 1])
         else {
             return Ok(JSValue::UNDEFINED);
         };
@@ -2128,7 +2128,7 @@ impl<'a> ValueBufferer<'a> {
             if let Some(promise) = assignment_result.as_any_promise() {
                 match promise.status() {
                     jsc::PromiseStatus::Pending => {
-                        let cell = bun_runtime::api::NativePromiseContext::create(global_this, self);
+                        let cell = crate::api::NativePromiseContext::create(global_this, self);
                         let _ = assignment_result.then_with_value(
                             global_this,
                             cell,

@@ -15,7 +15,7 @@ use bun_jsc::call_frame::ArgumentsSlice;
 use bun_paths::{self, resolve_path as Path};
 use bun_ptr::IntrusiveArc;
 use bun_resolver::fs;
-use bun_runtime::api::timer::EventLoopTimer;
+use crate::api::timer::EventLoopTimer;
 use bun_str::{self, strings, ZStr, ZString};
 use bun_sys::{self, PosixStat};
 use bun_threading::{Guarded, UnboundedQueue, WorkPool};

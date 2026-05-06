@@ -48,14 +48,14 @@ pub fn open_url(url: &ZStr) {
 
     'maybe_fallback: {
         // TODO(port): exact crate path for spawn_sync (src/runtime/api/bun/process.zig)
-        let spawn_result = match bun_runtime::process::spawn_sync(&bun_runtime::process::SpawnOptions {
+        let spawn_result = match crate::process::spawn_sync(&crate::process::SpawnOptions {
             argv: args_buf,
             envp: None,
-            stderr: bun_runtime::process::Stdio::Inherit,
-            stdout: bun_runtime::process::Stdio::Inherit,
-            stdin: bun_runtime::process::Stdio::Inherit,
+            stderr: crate::process::Stdio::Inherit,
+            stdout: crate::process::Stdio::Inherit,
+            stdin: crate::process::Stdio::Inherit,
             #[cfg(windows)]
-            windows: bun_runtime::process::WindowsOptions {
+            windows: crate::process::WindowsOptions {
                 loop_: bun_jsc::EventLoopHandle::init(bun_event_loop::MiniEventLoop::init_global(None, None)),
             },
             ..Default::default()
@@ -341,7 +341,7 @@ impl Editor {
         // TODO(port): std.process.Child is banned (PORTING.md: no std::process).
         // Zig stored `std.process.Child.init(args_buf[0..i], default_allocator)` here and
         // spawned a detached std.Thread to run it. Phase B should replace with
-        // bun_runtime::process::spawn (async) or a bun_threading worker that owns
+        // crate::process::spawn (async) or a bun_threading worker that owns
         // SpawnedEditorContext and calls bun.spawnSync.
         let spawned_ptr = Box::into_raw(spawned);
         // TODO(port): std.Thread.spawn → bun_threading::spawn_detached
@@ -448,13 +448,13 @@ fn auto_close(spawned: *mut SpawnedEditorContext) {
     }
 
     // TODO(port): Zig called `child_process.spawn()` then `.wait()` via std.process.Child.
-    // Replace with bun_runtime::process::spawn_sync once available from a non-JS thread.
-    let _ = bun_runtime::process::spawn_sync(&bun_runtime::process::SpawnOptions {
+    // Replace with crate::process::spawn_sync once available from a non-JS thread.
+    let _ = crate::process::spawn_sync(&crate::process::SpawnOptions {
         argv: &argv[0..spawned.argc],
         envp: None,
-        stderr: bun_runtime::process::Stdio::Inherit,
-        stdout: bun_runtime::process::Stdio::Inherit,
-        stdin: bun_runtime::process::Stdio::Inherit,
+        stderr: crate::process::Stdio::Inherit,
+        stdout: crate::process::Stdio::Inherit,
+        stdin: crate::process::Stdio::Inherit,
         ..Default::default()
     });
 }

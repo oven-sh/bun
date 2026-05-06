@@ -15,7 +15,7 @@
 
 use bun_boringssl_sys as boringssl;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-use bun_runtime::api::server::ServerConfig::SSLConfig;
+use crate::api::server::ServerConfig::SSLConfig;
 use bun_str::strings;
 use bun_uws as uws;
 

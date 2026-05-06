@@ -97,6 +97,7 @@ members = [
   "src/uws_sys",
   "src/zstd",
   "src/options_types",
+  "src/output",
   "src/runtime",
   "src/simdutf_sys",
   "src/which",
@@ -226,6 +227,7 @@ bun_tcc_sys = { path = "src/tcc_sys" }
 bun_uws_sys = { path = "src/uws_sys" }
 bun_zstd = { path = "src/zstd" }
 bun_options_types = { path = "src/options_types" }
+bun_output = { path = "src/output" }
 bun_runtime = { path = "src/runtime", default-features = false }
 bun_simdutf_sys = { path = "src/simdutf_sys" }
 bun_which = { path = "src/which" }

@@ -461,6 +461,27 @@ impl Default for ParseStackEntry {
     }
 }
 
+// PORT NOTE: Zig used a hand-rolled `*anyopaque + VTable`; the Rust `bun_md`
+// `Renderer` is a `&mut dyn RendererImpl`, so dispatch through the trait and
+// keep the `*_impl(ptr: *mut c_void, ..)` bodies below unchanged.
+impl<'a> md::types::RendererImpl for ParseRenderer<'a> {
+    fn enter_block(&mut self, block_type: md::BlockType, data: u32, flags: u32) -> JsResult<()> {
+        Self::enter_block_impl(self as *mut Self as *mut c_void, block_type, data, flags)
+    }
+    fn leave_block(&mut self, block_type: md::BlockType, data: u32) -> JsResult<()> {
+        Self::leave_block_impl(self as *mut Self as *mut c_void, block_type, data)
+    }
+    fn enter_span(&mut self, span_type: md::SpanType, detail: md::SpanDetail<'_>) -> JsResult<()> {
+        Self::enter_span_impl(self as *mut Self as *mut c_void, span_type, detail)
+    }
+    fn leave_span(&mut self, span_type: md::SpanType) -> JsResult<()> {
+        Self::leave_span_impl(self as *mut Self as *mut c_void, span_type)
+    }
+    fn text(&mut self, text_type: md::TextType, content: &[u8]) -> JsResult<()> {
+        Self::text_impl(self as *mut Self as *mut c_void, text_type, content)
+    }
+}
+
 impl<'a> ParseRenderer<'a> {
     fn init(
         global_object: &'a JSGlobalObject,

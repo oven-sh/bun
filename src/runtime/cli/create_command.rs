@@ -1324,7 +1324,7 @@ impl CreateCommand {
 
         if !create_options.skip_install {
             npm_client_ = Some(NPMClient {
-                tag: crate::which_npm_client::NPMClientTag::Bun,
+                tag: crate::cli::which_npm_client::Tag::Bun,
                 bin: bun_core::self_exe_path()?,
             });
         }

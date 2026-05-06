@@ -24,6 +24,8 @@ pub mod s3_stat;
 pub mod resumable_sink;
 #[path = "webcore/S3Client.rs"]
 pub mod s3_client;
+#[path = "webcore/S3File.rs"]
+pub mod s3_file;
 #[path = "webcore/CookieMap.rs"]
 pub mod cookie_map;
 #[path = "webcore/ByteBlobLoader.rs"]

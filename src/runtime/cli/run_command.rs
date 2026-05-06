@@ -839,7 +839,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     /// transpiler option mapping (`install`/`global_cache`/`minify`/macros/
     /// `serve_plugins` — `Run.boot` in src/bun.js.rs lines 110-170) stays
     /// gated on `vm.transpiler` being populated by `init_runtime_state`.
-    fn boot(
+    pub(crate) fn boot(
         ctx: &mut ContextData,
         entry_path: Box<[u8]>,
         loader: Option<Loader>,
@@ -937,7 +937,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 // loop without a crate-cycle.
 // ──────────────────────────────────────────────────────────────────────────
 
-struct Run {
+pub(crate) struct Run {
     vm: *mut VirtualMachine,
     entry_path: &'static [u8],
     /// Snapshot of `ctx.runtime_options.eval.eval_and_print` (the full

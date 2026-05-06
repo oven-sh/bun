@@ -54,15 +54,19 @@ impl ObjectURLRegistry {
 
     fn get_duped_blob(&self, uuid: &UUID) -> Option<Blob> {
         let map = self.map.lock();
-        let entry = map.get(uuid)?;
-        Some(entry.blob.dupe_with_content_type(true))
+        let result = map.get(uuid).map(|e| e.blob.dupe_with_content_type(true));
+        self.map.unlock();
+        result
     }
 
     pub fn resolve_and_dupe(&self, pathname: &[u8]) -> Option<Blob> {
         let uuid = uuid_from_pathname(pathname)?;
         let map = self.map.lock();
-        let entry = map.get(&uuid)?;
-        Some(entry.blob.dupe_with_content_type(true))
+        let result = map
+            .get(&uuid)
+            .map(|e| e.blob.dupe_with_content_type(true));
+        self.map.unlock();
+        result
     }
 
     pub fn resolve_and_dupe_to_js(

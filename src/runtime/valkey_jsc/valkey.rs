@@ -11,7 +11,8 @@ use bun_valkey::valkey_protocol as protocol;
 use bun_valkey::valkey_protocol::{RESPValue, RedisError};
 
 use super::js_valkey::JSValkeyClient;
-use super::valkey_command::{self as command, Command};
+use super::valkey_command as command;
+use super::valkey_command_body::{Args, Command};
 
 pub use super::valkey_context as ValkeyContext;
 

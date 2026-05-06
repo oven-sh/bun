@@ -1799,9 +1799,95 @@ unsafe fn deinit_and_destroy(this: *mut Terminal) {
     drop(unsafe { Box::from_raw(this) });
 }
 
-// TODO(port): wire IOWriter callbacks to Terminal methods via the
-// `bun_io::StreamingWriterHandler` trait (onClose/onWritable/onError/onWrite).
-// In Zig this was an anon struct of decl aliases passed as a comptime param.
+// `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})` → trait impl.
+impl bun_ptr::RefCounted for Terminal {
+    type DestructorCtx = ();
+    unsafe fn get_ref_count(this: *mut Self) -> *mut bun_ptr::RefCount<Self> {
+        // SAFETY: caller contract — `this` points to a live Self.
+        unsafe { &raw mut (*this).ref_count }
+    }
+    unsafe fn destructor(this: *mut Self, _ctx: ()) {
+        // SAFETY: ref_count == 0 so this is the last live reference; `this`
+        // was Box::into_raw'd in init_terminal.
+        unsafe { deinit_and_destroy(this) };
+    }
+}
+
+// `bun.io.StreamingWriter(@This(), struct { onClose, onWritable, onError, onWrite })`
+// → trait impl on `Terminal`. All methods take `*mut Self` because the writer
+// is an intrusive *field of* the parent — see PipeWriter.rs PosixStreamingWriterParent.
+#[cfg(unix)]
+impl bun_io::pipe_writer::PosixStreamingWriterParent for Terminal {
+    const HAS_ON_READY: bool = true;
+    unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus) {
+        // SAFETY: `this` is the BACKREF set via `writer.parent = terminal`;
+        // the StreamingWriter never materializes `&mut Terminal`, so this is
+        // the unique access path for the callback's duration.
+        unsafe { &mut *this }.on_write(amount, status)
+    }
+    unsafe fn on_error(this: *mut Self, err: sys::Error) {
+        // SAFETY: see on_write.
+        unsafe { &mut *this }.on_writer_error(err)
+    }
+    unsafe fn on_ready(this: *mut Self) {
+        // SAFETY: see on_write.
+        unsafe { &mut *this }.on_writer_ready()
+    }
+    unsafe fn on_close(this: *mut Self) {
+        // SAFETY: see on_write.
+        unsafe { &mut *this }.on_writer_close()
+    }
+    unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
+        // SAFETY: see on_write. Shared-only read of event_loop_handle.
+        // CYCLEBREAK: `bun_io::EventLoopHandle` is opaque `*mut c_void`; pass
+        // the address of the stored `bun_jsc::EventLoopHandle` so the
+        // (runtime-registered) FilePoll vtable can recover it.
+        bun_io::EventLoopHandle(
+            unsafe { &raw const (*this).event_loop_handle } as *mut core::ffi::c_void,
+        )
+    }
+    unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop {
+        // SAFETY: see on_write. Shared-only read of event_loop_handle.
+        unsafe { (*this).event_loop_handle.loop_() as *const _ as *mut bun_uws_sys::Loop }
+    }
+}
+
+#[cfg(windows)]
+impl bun_io::pipe_writer::WindowsWriterParent for Terminal {
+    unsafe fn loop_(this: *mut Self) -> *mut bun_uv::Loop {
+        // SAFETY: BACKREF set via writer.parent; shared-only read.
+        unsafe { (*this).event_loop_handle.loop_().uv_loop }
+    }
+    unsafe fn ref_(this: *mut Self) {
+        // SAFETY: see loop_.
+        unsafe { &*this }.ref_()
+    }
+    unsafe fn deref(this: *mut Self) {
+        // SAFETY: see loop_.
+        unsafe { &mut *this }.deref_()
+    }
+}
+
+#[cfg(windows)]
+impl bun_io::pipe_writer::WindowsStreamingWriterParent for Terminal {
+    const HAS_ON_WRITABLE: bool = true;
+    unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus) {
+        // SAFETY: BACKREF set via writer.parent; unique access for callback duration.
+        unsafe { &mut *this }.on_write(amount, status)
+    }
+    unsafe fn on_error(this: *mut Self, err: sys::Error) {
+        // SAFETY: see on_write.
+        unsafe { &mut *this }.on_writer_error(err)
+    }
+    unsafe fn on_writable(this: *mut Self) {
+        // SAFETY: see on_write.
+        unsafe { &mut *this }.on_writer_ready()
+    }
+    unsafe fn on_close(this: *mut Self) {
+        // SAFETY: see on_write.
+        unsafe { &mut *this }.on_writer_close()
+    }
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

@@ -4418,7 +4418,7 @@ impl DevServer<'_> {
     }
 
     pub fn emit_memory_visualizer_message(&mut self) {
-        const _: () = assert!(cfg!(feature = "bake_debugging_features"));
+        debug_assert!(cfg!(feature = "bake_debugging_features"));
         debug_assert!(self.emit_memory_visualizer_events > 0);
 
         // PERF(port): was stack-fallback (65536)

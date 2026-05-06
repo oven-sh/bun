@@ -49,7 +49,7 @@ impl Expect {
 
         let count_as_num = count.to_u32();
 
-        let Some(expect_string) = Expect::js::captured_value_get_cached(this_value) else {
+        let Some(expect_string) = super::js::captured_value_get_cached(this_value) else {
             return Err(global.throw(format_args!(
                 "Internal consistency error: the expect(value) was garbage collected but it should not have been!"
             )));

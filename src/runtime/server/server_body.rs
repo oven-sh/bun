@@ -2673,10 +2673,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     e => {
                         let mut sys_err = sys::Error::from_code(e, sys::Tag::listen);
                         sys_err.path = unix.as_bytes().to_vec().into_boxed_slice();
-                        error_instance = match sys_err.to_js(global) {
-                            Ok(v) => v,
-                            Err(_) => return,
-                        };
+                        error_instance = sys_err.to_js(global);
                     }
                 },
             }

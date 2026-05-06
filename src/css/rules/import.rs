@@ -135,6 +135,9 @@ impl ImportConditions {
         }
     }
 
+    // blocked_on: SupportsCondition::eql (gated in supports.rs on
+    // generics::CssEql derive).
+    #[cfg(any())]
     pub fn supports_eql(lhs: &Self, rhs: &Self) -> bool {
         match (&lhs.supports, &rhs.supports) {
             (None, None) => true,

@@ -240,8 +240,9 @@ impl Request {
     pub fn get_content_type(&mut self) -> JsResult<Option<bun_str::ZigStringSlice>> {
         if let Some(req) = self.request_context.get_request() {
             // SAFETY: `req` points to a live uWS HttpRequest for the duration
-            // of the request handler; header() returns a borrowed view.
-            if let Some(value) = unsafe { (*req).header(b"content-type") } {
+            // of the request handler; header() returns a view into its buffer.
+            let req = unsafe { &*req };
+            if let Some(value) = req.header(b"content-type") {
                 return Ok(Some(bun_str::ZigStringSlice::from_utf8_never_free(value)));
             }
         }
@@ -1629,5 +1630,5 @@ impl Request {
 //   source:     src/runtime/webcore/Request.zig (1115 lines)
 //   confidence: medium
 //   todos:      25
-//   notes:      Arc<BodyValue> (per LIFETIMES.tsv) needs interior mutability — Zig mutates #body.value in place; construct_into defer-cleanup reshaped to macro+closure (verify error paths); Flags kept unpacked for field-access parity.
+//   notes:      headers is Option<HeadersRef> (RAII over C++-refcounted FetchHeaders, NOT Rc/Arc); Box<BodyValue> needs interior mutability — Zig mutates #body.value in place; construct_into defer-cleanup reshaped to macro+closure (verify error paths); Flags kept unpacked for field-access parity.
 // ──────────────────────────────────────────────────────────────────────────

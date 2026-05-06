@@ -413,12 +413,25 @@ impl<R> CssRule<R> {
             CssRule::Scope(_x) => todo!("phase-b2: ScopeRule::to_css"),
             CssRule::Unknown(x) => x.to_css(dest),
             // Zig: `.custom => |x| x.toCss(dest) catch return dest.addFmtError()`.
-            // The custom-at-rule type is opaque here; the only in-tree `R`
-            // (`DefaultAtRule`) has a `toCss` that errors unconditionally. A
-            // trait bound (`R: ToCss`) would cascade through every
-            // `CssRuleList<R>` user, so until a second concrete `R` exists,
-            // surface the same fmt error the spec does instead of silently
-            // succeeding (PORTING.md §Forbidden: silent no-op).
+            //
+            // PORT NOTE (incomplete): the spec has TWO concrete `R` types —
+            // `DefaultAtRule` (whose `toCss` errors unconditionally) and
+            // `TailwindAtRule` (src/css/rules/tailwind.zig:14-19, used via
+            // `BundlerAtRule` when `ENABLE_TAILWIND_PARSING`), whose `toCss`
+            // SUCCEEDS and writes `@tailwind <name>;`. This arm therefore
+            // diverges from the spec for `R = TailwindAtRule`: it fails
+            // serialization where the spec round-trips.
+            //
+            // The correct port threads a `ToCss`-style bound (or per-`R`
+            // vtable) so `Custom(x)` dispatches to `x.to_css(dest)` and only
+            // maps the error path via `add_fmt_error()`. That bound cascades
+            // through every nested `CssRuleList<R>` printer (media, supports,
+            // layer, document, nesting, starting_style, style, scope,
+            // container) — deferred to the patch that un-gates
+            // `BundlerAtRule = TailwindAtRule`.
+            // TODO(port): dispatch to `x.to_css(dest)` once `R: ToCss` (or
+            // equivalent) is threaded; current behavior is only spec-correct
+            // for `R = DefaultAtRule`.
             CssRule::Custom(_x) => Err(dest.add_fmt_error()),
             CssRule::Ignored => Ok(()),
         }
@@ -458,7 +471,16 @@ impl<R> CssRuleList<R> {
                     None
                 };
                 #[cfg(not(any()))]
-                let dep: Option<css::dependencies::Dependency> = {
+                let dep: Option<css::dependencies::Dependency> = if dest.dependencies.is_some() {
+                    // Spec rules.zig:482-489 unconditionally constructs and
+                    // appends `Dependency{.import = ImportDependency.new(...)}`
+                    // here before `continue`. Returning `None` would silently
+                    // drop the @import from BOTH the serialized output AND the
+                    // collected dependencies (PORTING.md §Forbidden: silent
+                    // no-op). Fail loudly until ImportDependency::new un-gates.
+                    let _ = import_rule;
+                    todo!("blocked_on: dependencies::ImportDependency::new")
+                } else {
                     let _ = import_rule;
                     None
                 };

@@ -254,6 +254,11 @@ pub fn debug(args: core::fmt::Arguments<'_>) {
 /// Function-form of `Output.prettyErrorln` for callers holding a pre-built
 /// `Arguments` (no `<tag>` rewrite — caller is expected to have already
 /// applied it or to pass plain text). Macro form: `crate::pretty_errorln!`.
+///
+/// NOTE: unlike the macro (and Zig output.zig:1106-1109), this fn form cannot
+/// inspect the comptime template and therefore *always* appends `\n`. Callers
+/// must NOT pass a template that already ends in `\n` or output will contain a
+/// doubled newline. Prefer the `pretty_errorln!` macro where possible.
 #[inline]
 pub fn pretty_errorln(args: core::fmt::Arguments<'_>) {
     print_to(Destination::Stderr, args);
@@ -1350,6 +1355,9 @@ macro_rules! debug {
     };
 }
 
+/// NOTE: unlike Zig output.zig:794-797, this fn form cannot inspect the
+/// comptime template and therefore *always* appends `\n`. Callers must NOT
+/// pass a template that already ends in `\n`. Prefer the `debug!` macro.
 #[inline]
 pub fn _debug(args: fmt::Arguments<'_>) {
     debug_assert!(SOURCE_SET.get());
@@ -1659,6 +1667,11 @@ pub fn pretty(args: fmt::Arguments<'_>) {
 /// Dynamic-args entry point; the compile-time `<tag>` rewrite happens at the
 /// call site (Phase-A drafts pass a pre-built `format_args!`). For the
 /// literal-template form use the `prettyln!` macro instead.
+///
+/// NOTE: unlike the macro (and Zig output.zig:1090-1093), this fn form cannot
+/// inspect the comptime template and therefore *always* appends `\n`. Callers
+/// must NOT pass a template that already ends in `\n` or output will contain a
+/// doubled newline. Prefer the `prettyln!` macro where possible.
 #[inline]
 pub fn prettyln(args: fmt::Arguments<'_>) {
     print_to(Destination::Stdout, args);
@@ -2001,7 +2014,9 @@ macro_rules! prettyln {
 
 #[macro_export]
 macro_rules! print_errorln {
-    ($fmt:literal $(, $arg:expr)* $(,)?) => {{
+    ($fmt:expr $(, $arg:expr)* $(,)?) => {{
+        // `:expr` (not `:literal`) so `concat!(..)` templates compile —
+        // Zig `comptime fmt: string` accepts `"a" ++ "b"` (output.zig:1095).
         const __NL: &str = $crate::output::_needs_nl($fmt);
         $crate::output::print_to(
             $crate::output::Destination::Stderr,
@@ -2092,6 +2107,11 @@ pub fn print_error(args: fmt::Arguments<'_>) {
 /// `Output.printErrorln` — function form (the `print_errorln!` macro at crate
 /// root is the comptime-string variant). Takes anything `Display` so both
 /// `format_args!(..)` and bare `&str` call sites compile; appends `\n`.
+///
+/// NOTE: unlike the macro (and Zig output.zig:1095-1098), this fn form cannot
+/// inspect the comptime template and therefore *always* appends `\n`. Callers
+/// must NOT pass a template that already ends in `\n` or output will contain a
+/// doubled newline. Prefer the `print_errorln!` macro where possible.
 #[inline]
 pub fn print_errorln(args: impl core::fmt::Display) {
     print_to(Destination::Stderr, format_args!("{args}\n"));

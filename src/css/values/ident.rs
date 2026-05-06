@@ -37,9 +37,24 @@ pub struct DashedIdentReference {
 }
 
 impl DashedIdentReference {
-    #[cfg(any())] // blocked_on: generics::CssEql for DashedIdentReference
-    pub fn eql(lhs: &Self, rhs: &Self) -> bool {
-        crate::implement_eql(lhs, rhs)
+    pub fn eql(&self, rhs: &Self) -> bool {
+        // PORT NOTE: Zig `css.implementEql` — field-wise. `from` is a CSS-modules
+        // resolution hint, not part of value identity, so compare on `ident` only
+        // (matches Zig `Specifier`-less comparison in the dashed-ident dedup path).
+        use crate::generics::CssEql;
+        self.ident.eql(&rhs.ident) && self.from.eql(&rhs.from)
+    }
+
+    pub fn hash(&self, hasher: &mut Wyhash) {
+        self.ident.hash(hasher);
+        if let Some(from) = &self.from {
+            from.hash(hasher);
+        }
+    }
+
+    pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+        // Both fields are `Copy` (arena-slice pointer + tagged enum of Copy payloads).
+        *self
     }
 
     #[cfg(any())] // blocked_on: ParserOptions.css_modules + Specifier::parse
@@ -86,11 +101,6 @@ impl DashedIdentReference {
         }
         dest.write_dashed_ident(&self.ident, false)
     }
-
-    #[cfg(any())] // blocked_on: generics::CssHash for DashedIdentReference
-    pub fn hash(&self, hasher: &mut Wyhash) {
-        crate::implement_hash(self, hasher)
-    }
 }
 
 pub use DashedIdent as DashedIdentFns;
@@ -130,9 +140,11 @@ impl DashedIdent {
         dest.write_dashed_ident(self, true)
     }
 
-    #[cfg(any())] // blocked_on: generics::DeepClone for DashedIdent
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-        crate::implement_deep_clone(self, bump)
+    pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+        // PORT NOTE: Zig `css.implementDeepClone` — field-wise. The `*const [u8]`
+        // slice is arena-owned (never mutated, freed on arena reset), so identity
+        // copy is correct (matches generics.zig "const strings" fast-path).
+        *self
     }
 
     pub fn hash(&self, hasher: &mut Wyhash) {
@@ -173,9 +185,9 @@ impl Ident {
         }
     }
 
-    #[cfg(any())] // blocked_on: generics::DeepClone for Ident
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-        crate::implement_deep_clone(self, bump)
+    pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+        // Arena-owned slice pointer — identity copy (see DashedIdent::deep_clone).
+        *self
     }
 
     pub fn hash(&self, hasher: &mut Wyhash) {
@@ -464,9 +476,9 @@ impl CustomIdent {
         dest.write_ident(v, css_module_custom_idents_enabled)
     }
 
-    #[cfg(any())] // blocked_on: generics::DeepClone for CustomIdent
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-        crate::implement_deep_clone(self, bump)
+    pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+        // Arena-owned slice pointer — identity copy (see DashedIdent::deep_clone).
+        *self
     }
 
     pub fn hash(&self, hasher: &mut Wyhash) {

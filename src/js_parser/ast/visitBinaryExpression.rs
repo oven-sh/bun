@@ -67,18 +67,34 @@ fn try_optimize_typeof_undefined<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN
 
 // PORT NOTE: `Expr.Data.eql(left, right, p, .{loose,strict})` — the canonical
 // implementation lives in `Expr.rs` as `Data::eql<P, K: EqlKindT>` but is
-// `#[cfg(any())]`-gated on `ParserLike` + `EString::eql` (track-A). Until that
-// un-gates, this local shim returns `Equality::UNKNOWN` so callers fall through
-// to the non-folding path (matches Zig when `equality.ok == false`). Swap to
-// `ExprData::eql::<_, K>(left, right, p)` once Expr.rs:2883 lands.
+// `#[cfg(any())]`-gated on `ParserLike` + `EString::eql` (track-A). Swap the
+// body to `ExprData::eql::<_, K>(left, right, p)` once Expr.rs:2883 un-gates.
+//
+// Until then we MUST NOT silently fall through (PORTING.md §Forbidden: silent
+// no-op). The `require.main === module` arm is wired here directly because it
+// has observable side effects in the caller (`p.ignore_usage(p.module_ref)` /
+// `ignore_usage_of_runtime_require()`); dropping it would corrupt ref-usage
+// tracking. The remaining constant-folding arms depend on the gated
+// `EString::eql` path and stay `TODO(port)` until Expr.rs un-gates.
 #[inline]
 fn data_eql<'a, const STRICT: bool, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>(
     left: &ExprData,
     right: &ExprData,
     p: &mut P<'a, TYPESCRIPT, J, SCAN_ONLY>,
 ) -> Equality {
-    let _ = (left, right, p);
-    // blocked_on: ExprData::eql<P, K: EqlKindT> (#[cfg(any())] in Expr.rs:2883)
+    let _ = STRICT;
+    // Do not need to check `left` for ERequireMain because it is always
+    // re-ordered to the right side by the `is_primitive_to_reorder` swap above.
+    if matches!(right, ExprData::ERequireMain) {
+        if let ExprData::EIdentifier(id) = *left {
+            if id.ref_.eql(p.module_ref) {
+                return Equality { ok: true, equal: true, is_require_main_and_module: true };
+            }
+        }
+    }
+    // TODO(port): constant-folding arms (ENull/EUndefined/EBoolean/ENumber/
+    // EBigInt/EString) — blocked_on: ExprData::eql<P, K: EqlKindT>
+    // (#[cfg(any())] in Expr.rs:2883, needs EString::eql / track-A).
     Equality::UNKNOWN
 }
 
@@ -733,8 +749,9 @@ impl<'arena> BinaryExpressionVisitor<'arena> {
 //   confidence: medium
 //   todos:      0
 //   notes:      Outer CreateBinaryExpressionVisitor wrapper flattened into const-generic struct;
-//               `in` field renamed `in_`. `Data::eql` shimmed locally (returns UNKNOWN) until
-//               Expr.rs:2883 un-gates — equality folding is a no-op until then. `join_with_comma`
-//               dropped its allocator arg (Rust port uses the global Store). Tail return re-wraps
-//               the arena `*E.Binary` as `StoreRef` (verified same slot as Zig).
+//               `in` field renamed `in_`. `Data::eql` shimmed locally — `require.main === module`
+//               arm is live (side-effects on ref usage), constant-folding arms TODO(port) until
+//               Expr.rs:2883 un-gates. `join_with_comma` dropped its allocator arg (Rust port
+//               uses the global Store). Tail return re-wraps the arena `*E.Binary` as `StoreRef`
+//               (verified same slot as Zig).
 // ──────────────────────────────────────────────────────────────────────────

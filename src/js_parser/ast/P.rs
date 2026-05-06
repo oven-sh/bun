@@ -16,7 +16,7 @@ use bun_core::{Environment, Output};
 use bun_logger as logger;
 use bun_options_types::{ImportRecord, ImportKind};
 use bun_string::strings;
-use bun_wyhash::Wyhash11 as Wyhash;
+use bun_wyhash::Wyhash;
 
 use crate::lexer as js_lexer;
 use crate::ast as js_ast;
@@ -5688,55 +5688,68 @@ fn path_package_name<'a>(path: &fs::Path<'a>) -> Option<&'a [u8]> {
 impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     P<'a, TYPESCRIPT, J, SCAN_ONLY>
 {
-    #[cfg(any())] // blocked_on: G::Property kind/flags surface; E::Function StoreRef deref; lower_standard_decorators_stmt; ExprNodeList::init API divergence
     pub fn lower_class(&mut self, stmtorexpr: js_ast::StmtOrExpr) -> &'a mut [Stmt] {
+        use js_ast::g::PropertyKind;
         match stmtorexpr {
             js_ast::StmtOrExpr::Stmt(stmt) => {
+                // SAFETY: every call site is the visitStmt s_class branch.
+                let s_class_ptr: *mut S::Class = stmt.data.s_class().unwrap().as_ptr();
+
                 // Standard decorator lowering path (for both JS and TS files)
-                if stmt.data.s_class().class.should_lower_standard_decorators {
-                    return self.lower_standard_decorators_stmt(stmt);
+                if unsafe { &*s_class_ptr }.class.should_lower_standard_decorators {
+                    // PORT NOTE: Zig `lowerStandardDecoratorsStmt` returns `[]Stmt`; the
+                    // round-E Rust stub takes an out-param Vec instead. Wrap to keep
+                    // this function's `[]Stmt` contract.
+                    let mut out = BumpVec::<Stmt>::new_in(self.allocator);
+                    self.lower_standard_decorators_stmt(stmt, &mut out);
+                    return out.into_bump_slice_mut();
                 }
 
                 if !TYPESCRIPT {
-                    if !stmt.data.s_class().class.has_decorators {
+                    if !unsafe { &*s_class_ptr }.class.has_decorators {
                         return self.allocator.alloc_slice_copy(&[stmt]);
                     }
                 }
-                let class = &mut stmt.data.s_class_mut().class;
+                // SAFETY: arena-owned StoreRef; parser holds exclusive access during visit.
+                // Raw ptr (re-borrowed per use) so calls to `&mut self` helpers below
+                // don't alias an outstanding `&mut G::Class`.
+                let class: *mut G::Class = unsafe { &mut (*s_class_ptr).class };
                 let mut constructor_function: Option<*mut E::Function> = None;
 
-                let mut static_decorators = BumpVec::new_in(self.allocator);
-                let mut instance_decorators = BumpVec::new_in(self.allocator);
-                let mut instance_members = BumpVec::new_in(self.allocator);
-                let mut static_members = BumpVec::new_in(self.allocator);
-                let mut class_properties = BumpVec::new_in(self.allocator);
+                let mut static_decorators = BumpVec::<Stmt>::new_in(self.allocator);
+                let mut instance_decorators = BumpVec::<Stmt>::new_in(self.allocator);
+                let mut instance_members = BumpVec::<Stmt>::new_in(self.allocator);
+                let mut static_members = BumpVec::<Stmt>::new_in(self.allocator);
+                let mut class_properties = BumpVec::<G::Property>::new_in(self.allocator);
 
-                for prop in class.properties.iter_mut() {
+                // SAFETY: `class.properties` is an arena-owned slice valid for 'a.
+                for prop in unsafe { (*(*class).properties).iter_mut() } {
                     // merge parameter decorators with method decorators
                     if prop.flags.contains(Flags::Property::IsMethod) {
-                        if let Some(prop_value) = &prop.value {
-                            match &prop_value.data {
+                        if let Some(prop_value) = prop.value {
+                            match prop_value.data {
                                 js_ast::ExprData::EFunction(func) => {
-                                    let is_constructor = matches!(&prop.key, Some(k) if matches!(&k.data, js_ast::ExprData::EString(s) if s.eql_comptime(b"constructor")));
+                                    let is_constructor = matches!(prop.key, Some(k) if matches!(k.data, js_ast::ExprData::EString(s) if s.eql_comptime(b"constructor")));
 
                                     if is_constructor {
-                                        constructor_function = Some(func as *const _ as *mut _);
+                                        constructor_function = Some(func.as_ptr());
                                     }
 
-                                    for (i, arg) in func.func.args.iter().enumerate() {
+                                    // SAFETY: arena-owned `*mut [Arg]` valid for 'a.
+                                    for (i, arg) in unsafe { &*func.func.args }.iter().enumerate() {
                                         for arg_decorator in arg.ts_decorators.slice() {
+                                            let arg0 = self.new_expr(E::Number { value: i as f64 }, arg_decorator.loc);
+                                            let args = self.allocator.alloc_slice_copy(&[arg0, *arg_decorator]);
+                                            // SAFETY: arena-owned slice; never grown after wrapping.
+                                            let args = unsafe { ExprNodeList::from_bump_slice(args) };
+                                            let call = self.call_runtime(arg_decorator.loc, b"__legacyDecorateParamTS", args);
                                             let decorators = if is_constructor {
-                                                &mut class.ts_decorators
+                                                // SAFETY: re-borrow arena class; no other &mut outstanding.
+                                                unsafe { &mut (*class).ts_decorators }
                                             } else {
                                                 &mut prop.ts_decorators
                                             };
-                                            let args = self.allocator.alloc_slice_copy(&[
-                                                self.new_expr(E::Number { value: i as f64 }, arg_decorator.loc),
-                                                *arg_decorator,
-                                            ]);
-                                            decorators
-                                                .push(self.allocator, self.call_runtime(arg_decorator.loc, b"__legacyDecorateParamTS", args))
-                                                .expect("oom");
+                                            decorators.append(call).expect("oom");
                                         }
                                     }
                                 }
@@ -5759,24 +5772,17 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                             self.new_expr(E::Null {}, loc)
                         };
 
+                        // SAFETY: re-borrow arena class.
+                        let class_name = unsafe { (*class).class_name }.unwrap();
+                        let class_ref = class_name.ref_.unwrap();
                         let target: Expr;
                         if prop.flags.contains(Flags::Property::IsStatic) {
-                            self.record_usage(class.class_name.unwrap().r#ref.unwrap());
-                            target = self.new_expr(
-                                E::Identifier { r#ref: class.class_name.unwrap().r#ref.unwrap(), ..Default::default() },
-                                class.class_name.unwrap().loc,
-                            );
+                            self.record_usage(class_ref);
+                            target = self.new_expr(E::Identifier::init(class_ref), class_name.loc);
                         } else {
+                            let inner = self.new_expr(E::Identifier::init(class_ref), class_name.loc);
                             target = self.new_expr(
-                                E::Dot {
-                                    target: self.new_expr(
-                                        E::Identifier { r#ref: class.class_name.unwrap().r#ref.unwrap(), ..Default::default() },
-                                        class.class_name.unwrap().loc,
-                                    ),
-                                    name: b"prototype",
-                                    name_loc: loc,
-                                    ..Default::default()
-                                },
+                                E::Dot { target: inner, name: b"prototype", name_loc: loc, ..Default::default() },
                                 loc,
                             );
                         }
@@ -5790,15 +5796,18 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         }
 
                         // PORT NOTE: reshaped — Zig insertSlice(0, ...) prepends; we prepend then push args.
-                        let mut full = BumpVec::with_capacity_in(prop.ts_decorators.len as usize + array.len(), self.allocator);
+                        let mut full = BumpVec::<Expr>::with_capacity_in(
+                            prop.ts_decorators.len as usize + array.len(),
+                            self.allocator,
+                        );
                         full.extend_from_slice(prop.ts_decorators.slice());
                         full.extend_from_slice(&array);
-                        let args = self.allocator.alloc_slice_copy(&[
-                            self.new_expr(E::Array { items: ExprNodeList::from_owned_slice(full.into_bump_slice()), ..Default::default() }, loc),
-                            target,
-                            descriptor_key,
-                            descriptor_kind,
-                        ]);
+                        // SAFETY: arena slice handed to a non-growing list.
+                        let full_items = unsafe { ExprNodeList::from_bump_slice(full.into_bump_slice_mut()) };
+                        let array_expr = self.new_expr(E::Array { items: full_items, ..Default::default() }, loc);
+                        let args_slice = self.allocator.alloc_slice_copy(&[array_expr, target, descriptor_key, descriptor_kind]);
+                        // SAFETY: arena slice; never grown.
+                        let args = unsafe { ExprNodeList::from_bump_slice(args_slice) };
 
                         let decorator = self.call_runtime(prop.key.unwrap().loc, b"__legacyDecorateClassTS", args);
                         let decorator_stmt = self.s(S::SExpr { value: decorator, ..Default::default() }, decorator.loc);
@@ -5810,9 +5819,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         }
                     }
 
-                    if prop.kind != Property::Kind::ClassStaticBlock
+                    if prop.kind != PropertyKind::ClassStaticBlock
                         && !prop.flags.contains(Flags::Property::IsMethod)
-                        && !matches!(prop.key.as_ref().map(|k| &k.data), Some(js_ast::ExprData::EPrivateIdentifier(_)))
+                        && !matches!(prop.key.map(|k| k.data), Some(js_ast::ExprData::EPrivateIdentifier(_)))
                         && prop.ts_decorators.len > 0
                     {
                         // remove decorated fields without initializers to avoid assigning undefined.
@@ -5820,11 +5829,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
                         let mut target: Expr;
                         if prop.flags.contains(Flags::Property::IsStatic) {
-                            self.record_usage(class.class_name.unwrap().r#ref.unwrap());
-                            target = self.new_expr(
-                                E::Identifier { r#ref: class.class_name.unwrap().r#ref.unwrap(), ..Default::default() },
-                                class.class_name.unwrap().loc,
-                            );
+                            // SAFETY: re-borrow arena class.
+                            let class_name = unsafe { (*class).class_name }.unwrap();
+                            let class_ref = class_name.ref_.unwrap();
+                            self.record_usage(class_ref);
+                            target = self.new_expr(E::Identifier::init(class_ref), class_name.loc);
                         } else {
                             target = self.new_expr(E::This {}, prop.key.unwrap().loc);
                         }
@@ -5832,12 +5841,15 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         if prop.flags.contains(Flags::Property::IsComputed)
                             || matches!(prop.key.unwrap().data, js_ast::ExprData::ENumber(_))
                         {
-                            target = self.new_expr(E::Index { target, index: prop.key.unwrap(), ..Default::default() }, prop.key.unwrap().loc);
+                            target = self.new_expr(
+                                E::Index { target, index: prop.key.unwrap(), optional_chain: None },
+                                prop.key.unwrap().loc,
+                            );
                         } else {
                             target = self.new_expr(
                                 E::Dot {
                                     target,
-                                    name: prop.key.unwrap().data.e_string().data,
+                                    name: prop.key.unwrap().data.e_string().unwrap().data,
                                     name_loc: prop.key.unwrap().loc,
                                     ..Default::default()
                                 },
@@ -5854,68 +5866,82 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         continue;
                     }
 
-                    class_properties.push(prop.clone());
+                    // PORT NOTE: Zig copies `prop.*` by value into the new list; the old
+                    // backing slice is overwritten right after this loop, so `take` is
+                    // semantically equivalent (Property: Default).
+                    class_properties.push(core::mem::take(prop));
                 }
 
-                class.properties = class_properties.into_bump_slice();
+                // SAFETY: re-borrow arena class.
+                unsafe { (*class).properties = class_properties.into_bump_slice_mut() as *mut [G::Property] };
 
                 if !instance_members.is_empty() {
                     if constructor_function.is_none() {
-                        let mut properties = BumpVec::from_iter_in(class.properties.iter().cloned(), self.allocator);
-                        let mut constructor_stmts = BumpVec::new_in(self.allocator);
+                        // PORT NOTE: Zig `Property.List.fromList(class.properties)` re-wraps the
+                        // freshly-installed slice and inserts at index 0. We rebuild instead
+                        // (Property is not Clone in Rust).
+                        let old_props: *mut [G::Property] = unsafe { (*class).properties };
+                        let old_len = unsafe { (*old_props).len() };
+                        let mut properties = BumpVec::<G::Property>::with_capacity_in(old_len + 1, self.allocator);
+                        let mut constructor_stmts = BumpVec::<Stmt>::new_in(self.allocator);
 
-                        if class.extends.is_some() {
+                        if unsafe { (*class).extends }.is_some() {
                             let target = self.new_expr(E::Super {}, stmt.loc);
-                            let arguments_ref = self.new_symbol(js_ast::symbol::Kind::Unbound, arguments_str()).expect("unreachable");
-                            // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-                            unsafe { &mut *self.current_scope }.generated.push(self.allocator, arguments_ref).expect("oom");
+                            let arguments_ref = self.new_symbol(js_ast::symbol::Kind::Unbound, arguments_str).expect("unreachable");
+                            // SAFETY: arena-owned Scope pointer valid for 'a; no aliasing &mut outstanding.
+                            unsafe { &mut *self.current_scope }.generated.append(arguments_ref).expect("oom");
 
-                            let super_ = self.new_expr(
-                                E::Spread { value: self.new_expr(E::Identifier { r#ref: arguments_ref, ..Default::default() }, stmt.loc) },
-                                stmt.loc,
-                            );
-                            let args = ExprNodeList::init_one(self.allocator, super_).expect("oom");
+                            let spread_inner = self.new_expr(E::Identifier::init(arguments_ref), stmt.loc);
+                            let super_ = self.new_expr(E::Spread { value: spread_inner }, stmt.loc);
+                            let args = ExprNodeList::init_one(super_).expect("oom");
 
+                            let call_value = self.new_expr(E::Call { target, args, ..Default::default() }, stmt.loc);
                             constructor_stmts.push(self.s(
-                                S::SExpr { value: self.new_expr(E::Call { target, args, ..Default::default() }, stmt.loc), ..Default::default() },
+                                S::SExpr { value: call_value, ..Default::default() },
                                 stmt.loc,
                             ));
                         }
 
                         constructor_stmts.extend_from_slice(&instance_members);
 
-                        properties.insert(
-                            0,
-                            G::Property {
-                                flags: Flags::Property::init(Flags::PropertyInit { is_method: true, ..Default::default() }),
-                                key: Some(self.new_expr(E::String { data: b"constructor" }, stmt.loc)),
-                                value: Some(self.new_expr(
-                                    E::Function {
-                                        func: G::Fn {
-                                            name: None,
-                                            open_parens_loc: logger::Loc::EMPTY,
-                                            args: &[],
-                                            body: G::FnBody { loc: stmt.loc, stmts: constructor_stmts.into_bump_slice() },
-                                            flags: Flags::Function::init(Default::default()),
-                                            ..Default::default()
-                                        },
-                                    },
-                                    stmt.loc,
-                                )),
-                                ..Default::default()
+                        let key_expr = self.new_expr(E::EString::from_static(b"constructor"), stmt.loc);
+                        let value_expr = self.new_expr(
+                            E::Function {
+                                func: G::Fn {
+                                    name: None,
+                                    open_parens_loc: logger::Loc::EMPTY,
+                                    args: crate::empty_arena_slice_mut(),
+                                    body: G::FnBody { loc: stmt.loc, stmts: constructor_stmts.into_bump_slice_mut() as *mut [Stmt] },
+                                    flags: Flags::FUNCTION_NONE,
+                                    ..Default::default()
+                                },
                             },
+                            stmt.loc,
                         );
+                        properties.push(G::Property {
+                            flags: Flags::Property::IsMethod.into(),
+                            key: Some(key_expr),
+                            value: Some(value_expr),
+                            ..Default::default()
+                        });
+                        // SAFETY: arena-owned slice valid for 'a; moved (not copied) into new list.
+                        for old in unsafe { (*old_props).iter_mut() } {
+                            properties.push(core::mem::take(old));
+                        }
 
-                        class.properties = properties.into_bump_slice();
+                        unsafe { (*class).properties = properties.into_bump_slice_mut() as *mut [G::Property] };
                     } else {
-                        // SAFETY: arena-owned E.Function node valid for parser 'a lifetime
+                        // SAFETY: arena-owned E.Function node valid for 'a.
                         let cf = unsafe { &mut *constructor_function.unwrap() };
+                        // SAFETY: `body.stmts` is an arena-owned `*mut [Stmt]`.
+                        let old_stmts: &[Stmt] = unsafe { &*cf.func.body.stmts };
                         let mut constructor_stmts =
-                            BumpVec::from_iter_in(cf.func.body.stmts.iter().cloned(), self.allocator);
+                            BumpVec::<Stmt>::with_capacity_in(old_stmts.len() + instance_members.len(), self.allocator);
+                        constructor_stmts.extend_from_slice(old_stmts);
                         // statements coming from class body inserted after super call or beginning of constructor.
                         let mut super_index: Option<usize> = None;
                         for (index, item) in constructor_stmts.iter().enumerate() {
-                            if !matches!(&item.data, js_ast::StmtData::SExpr(se) if matches!(&se.value.data, js_ast::ExprData::ECall(c) if matches!(c.target.data, js_ast::ExprData::ESuper(_))))
+                            if !matches!(item.data, js_ast::StmtData::SExpr(se) if matches!(se.value.data, js_ast::ExprData::ECall(c) if matches!(c.target.data, js_ast::ExprData::ESuper(_))))
                             {
                                 continue;
                             }
@@ -5924,12 +5950,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         }
 
                         let i = super_index.map(|j| j + 1).unwrap_or(0);
-                        // TODO(port): bumpalo Vec lacks insert_slice; emulate via splice
+                        // TODO(port): bumpalo Vec lacks insert_slice; emulate via per-item insert.
                         for (off, m) in instance_members.iter().enumerate() {
-                            constructor_stmts.insert(i + off, m.clone());
+                            constructor_stmts.insert(i + off, *m);
                         }
 
-                        cf.func.body.stmts = constructor_stmts.into_bump_slice();
+                        cf.func.body.stmts = constructor_stmts.into_bump_slice_mut() as *mut [Stmt];
                     }
 
                     // TODO: make sure "super()" comes before instance field initializers
@@ -5938,53 +5964,59 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
                 let mut stmts_count: usize =
                     1 + static_members.len() + instance_decorators.len() + static_decorators.len();
-                if class.ts_decorators.len > 0 {
+                if unsafe { (*class).ts_decorators.len } > 0 {
                     stmts_count += 1;
                 }
-                let mut stmts = BumpVec::with_capacity_in(stmts_count, self.allocator);
+                let mut stmts = BumpVec::<Stmt>::with_capacity_in(stmts_count, self.allocator);
                 stmts.push(stmt); // PERF(port): was assume_capacity
                 stmts.extend_from_slice(&static_members);
                 stmts.extend_from_slice(&instance_decorators);
                 stmts.extend_from_slice(&static_decorators);
-                if class.ts_decorators.len > 0 {
-                    let mut array = class.ts_decorators.move_to_list_managed(self.allocator);
+                if unsafe { (*class).ts_decorators.len } > 0 {
+                    let mut array: Vec<Expr> = unsafe { &mut (*class).ts_decorators }.move_to_list_managed();
 
                     if self.options.features.emit_decorator_metadata {
                         if let Some(cf) = constructor_function {
                             // design:paramtypes
-                            // SAFETY: arena-owned E.Function node valid for parser 'a lifetime
-                            let constructor_args = unsafe { &*cf }.func.args;
+                            // SAFETY: arena-owned E.Function node valid for 'a.
+                            let constructor_args: &[G::Arg] = unsafe { &*(*cf).func.args };
                             let args1 = if !constructor_args.is_empty() {
                                 let param_array = self.allocator.alloc_slice_fill_default::<Expr>(constructor_args.len());
                                 for (i, ca) in constructor_args.iter().enumerate() {
-                                    param_array[i] = self.serialize_metadata(ca.ts_metadata).expect("unreachable");
+                                    param_array[i] = self.serialize_metadata(ca.ts_metadata.clone()).expect("unreachable");
                                 }
-                                self.new_expr(E::Array { items: ExprNodeList::from_owned_slice(param_array), ..Default::default() }, logger::Loc::EMPTY)
+                                // SAFETY: arena slice; never grown.
+                                let items = unsafe { ExprNodeList::from_bump_slice(param_array) };
+                                self.new_expr(E::Array { items, ..Default::default() }, logger::Loc::EMPTY)
                             } else {
-                                self.new_expr(E::Array { items: ExprNodeList::EMPTY, ..Default::default() }, logger::Loc::EMPTY)
+                                self.new_expr(E::Array { items: ExprNodeList::default(), ..Default::default() }, logger::Loc::EMPTY)
                             };
-                            let args = self.allocator.alloc_slice_copy(&[
-                                self.new_expr(E::String { data: b"design:paramtypes" }, logger::Loc::EMPTY),
-                                args1,
-                            ]);
+                            let label = self.new_expr(E::EString::from_static(b"design:paramtypes"), logger::Loc::EMPTY);
+                            let args_slice = self.allocator.alloc_slice_copy(&[label, args1]);
+                            // SAFETY: arena slice; never grown.
+                            let args = unsafe { ExprNodeList::from_bump_slice(args_slice) };
                             array.push(self.call_runtime(stmt.loc, b"__legacyMetadataTS", args));
                         }
                     }
 
-                    let args = self.allocator.alloc_slice_copy(&[
-                        self.new_expr(E::Array { items: ExprNodeList::from_owned_slice(array.into_bump_slice()), ..Default::default() }, stmt.loc),
-                        self.new_expr(E::Identifier { r#ref: class.class_name.unwrap().r#ref.unwrap(), ..Default::default() }, class.class_name.unwrap().loc),
-                    ]);
+                    // SAFETY: re-borrow arena class.
+                    let class_name = unsafe { (*class).class_name }.unwrap();
+                    let class_ref = class_name.ref_.unwrap();
+                    let array_items = ExprNodeList::move_from_list(array);
+                    let array_expr = self.new_expr(E::Array { items: array_items, ..Default::default() }, stmt.loc);
+                    let class_ident = self.new_expr(E::Identifier::init(class_ref), class_name.loc);
+                    let args_slice = self.allocator.alloc_slice_copy(&[array_expr, class_ident]);
+                    // SAFETY: arena slice; never grown.
+                    let args = unsafe { ExprNodeList::from_bump_slice(args_slice) };
 
-                    stmts.push(Stmt::assign(
-                        self.new_expr(E::Identifier { r#ref: class.class_name.unwrap().r#ref.unwrap(), ..Default::default() }, class.class_name.unwrap().loc),
-                        self.call_runtime(stmt.loc, b"__legacyDecorateClassTS", args),
-                    ));
+                    let lhs = self.new_expr(E::Identifier::init(class_ref), class_name.loc);
+                    let rhs = self.call_runtime(stmt.loc, b"__legacyDecorateClassTS", args);
+                    stmts.push(Stmt::assign(lhs, rhs));
 
-                    self.record_usage(class.class_name.unwrap().r#ref.unwrap());
-                    self.record_usage(class.class_name.unwrap().r#ref.unwrap());
+                    self.record_usage(class_ref);
+                    self.record_usage(class_ref);
                 }
-                stmts.into_bump_slice()
+                stmts.into_bump_slice_mut()
             }
             js_ast::StmtOrExpr::Expr(expr) => {
                 self.allocator.alloc_slice_copy(&[self.s(S::SExpr { value: expr, ..Default::default() }, expr.loc)])

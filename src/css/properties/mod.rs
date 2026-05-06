@@ -80,37 +80,19 @@ macro_rules! prop_value_stub {
 
 // ─── Submodule declarations ────────────────────────────────────────────────
 // (Zig: `pub const X = @import("./X.zig");`)
-gated_prop!(align, {
-    handler_stub!(AlignHandler);
-    prop_value_stub!(
-        AlignContent, JustifyContent, PlaceContent,
-        AlignSelf, JustifySelf, PlaceSelf,
-        AlignItems, JustifyItems, PlaceItems,
-        GapValue, Gap,
-    );
-});
+//
+// B-2 round 8: the leaf property modules below are un-gated — their value
+// *types* (and handler ZSTs) compile for real and replace the former
+// `prop_value_stub!` / `handler_stub!` placeholders. Heavy parse/to_css/
+// handle_property *bodies* that bottom out on still-unported Parser/
+// PropertyHandlerContext surface remain internally `#[cfg(any())]`-gated
+// inside each leaf file (same pattern as `font.rs`).
+pub mod align;
 gated_prop!(animation, {
     prop_value_stub!(AnimationName);
 });
-gated_prop!(background, {
-    handler_stub!(BackgroundHandler);
-    prop_value_stub!(
-        Background, BackgroundPosition, BackgroundSize, BackgroundRepeat,
-        BackgroundAttachment, BackgroundClip, BackgroundOrigin,
-    );
-});
-gated_prop!(border, {
-    handler_stub!(BorderHandler);
-    prop_value_stub!(
-        LineStyle, BorderSideWidth,
-        BorderColor, BorderStyle, BorderWidth,
-        BorderBlockColor, BorderBlockStyle, BorderBlockWidth,
-        BorderInlineColor, BorderInlineStyle, BorderInlineWidth,
-        Border, BorderTop, BorderBottom, BorderLeft, BorderRight,
-        BorderBlock, BorderBlockStart, BorderBlockEnd,
-        BorderInline, BorderInlineStart, BorderInlineEnd,
-    );
-});
+pub mod background;
+pub mod border;
 gated_prop!(border_image, {
     handler_stub!(BorderImageHandler);
     prop_value_stub!(BorderImage, BorderImageRepeat, BorderImageSideWidth, BorderImageSlice);
@@ -124,18 +106,9 @@ gated_prop!(box_shadow, {
     prop_value_stub!(BoxShadow);
 });
 gated_prop!(contain);
-gated_prop!(display, {
-    prop_value_stub!(Display, Visibility);
-});
+pub mod display;
 gated_prop!(effects);
-gated_prop!(flex, {
-    handler_stub!(FlexHandler);
-    prop_value_stub!(
-        FlexDirection, FlexWrap, FlexFlow, Flex,
-        BoxOrient, BoxDirection, BoxAlign, BoxPack, BoxLines,
-        FlexPack, FlexItemAlign, FlexLinePack,
-    );
-});
+pub mod flex;
 // `font`: un-gated — real data types (FontWeight / FontSize / FontStretch /
 // FontFamily / FontStyle / FontVariantCaps / LineHeight / Font / FontHandler)
 // live in `font.rs`. parse/to_css/handle_property bodies remain internally
@@ -144,66 +117,19 @@ gated_prop!(flex, {
 pub mod font;
 gated_prop!(grid);
 gated_prop!(list);
-gated_prop!(margin_padding, {
-    // Zig: MarginHandler/PaddingHandler/ScrollMarginHandler/InsetHandler are
-    // four `NewSizeHandler(...)` instantiations of one comptime-generic struct.
-    handler_stub!(MarginHandler, PaddingHandler, ScrollMarginHandler, InsetHandler);
-    prop_value_stub!(
-        InsetBlock, InsetInline, Inset,
-        MarginBlock, MarginInline, Margin,
-        PaddingBlock, PaddingInline, Padding,
-        ScrollMarginBlock, ScrollMarginInline, ScrollMargin,
-        ScrollPaddingBlock, ScrollPaddingInline, ScrollPadding,
-    );
-});
-gated_prop!(masking, {
-    prop_value_stub!(
-        MaskMode, MaskClip, MaskComposite, MaskType, Mask, MaskBorder,
-        MaskBorderMode, GeometryBox, WebKitMaskComposite, WebKitMaskSourceType,
-    );
-});
-gated_prop!(outline, {
-    prop_value_stub!(Outline, OutlineStyle);
-});
-gated_prop!(overflow, {
-    prop_value_stub!(Overflow, OverflowKeyword, TextOverflow);
-});
-gated_prop!(position, {
-    prop_value_stub!(Position);
-});
+pub mod margin_padding;
+pub mod masking;
+pub mod outline;
+pub mod overflow;
+pub mod position;
 gated_prop!(prefix_handler, { handler_stub!(FallbackHandler); });
 gated_prop!(shape);
-gated_prop!(size, {
-    handler_stub!(SizeHandler);
-    prop_value_stub!(Size, MaxSize, BoxSizing, AspectRatio);
-});
+pub mod size;
 gated_prop!(svg);
-gated_prop!(text, {
-    /// [direction](https://drafts.csswg.org/css-writing-modes-3/#direction)
-    /// — data-only mirror of the gated `text.rs` enum so
-    /// `DeclarationHandler.direction: Option<Direction>` and
-    /// `Property::Direction(..)` compile.
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-    pub enum Direction { Ltr, Rtl }
-    prop_value_stub!(TextShadow);
-});
-gated_prop!(transform, {
-    handler_stub!(TransformHandler);
-    // PORT NOTE: real `TransformList<'bump>` is bump-allocated; the codegen
-    // `Property` enum is lifetime-free, so the stub is a plain owned type.
-    prop_value_stub!(
-        TransformList, TransformStyle, TransformBox, BackfaceVisibility,
-        Perspective, Translate, Rotate, Scale,
-    );
-});
-gated_prop!(transition, {
-    handler_stub!(TransitionHandler);
-    prop_value_stub!(Transition);
-});
-gated_prop!(ui, {
-    handler_stub!(ColorSchemeHandler);
-    prop_value_stub!(ColorScheme);
-});
+pub mod text;
+pub mod transform;
+pub mod transition;
+pub mod ui;
 
 // `css_modules`: data-only stub for `Composes`/`Specifier` so
 // `css_parser::gated_shims` can later flip to `crate::properties::css_modules`.

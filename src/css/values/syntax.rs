@@ -411,56 +411,131 @@ fn is_name_code_point(c: u8) -> bool {
     is_ident_start(c) || (c >= b'0' && c <= b'9') || c == b'-'
 }
 
-// ─── ParsedComponent gated on cross-module value-type un-gates ────────────
+// ─── ParsedComponent ──────────────────────────────────────────────────────
 // `ParsedComponent` is the materialized form of a `SyntaxComponentKind` and
-// carries `Image` / `CssColor` / `Transform{,List}` / `TokenList` payloads —
-// all of which are still data-only stubs (gated_prop!/gated_value!). The enum
-// + serializer + `SyntaxString::parse_value` re-enable when those flip.
-#[cfg(any())] // blocked_on: properties::{transform,custom} + values::{image,color} un-gate
-mod parsed_component_gated {
-    use super::*;
-    use crate::values::angle::Angle;
-    use crate::values::color::CssColor;
-    use crate::values::ident::{CustomIdent, CustomIdentFns, Ident};
-    use crate::values::image::Image;
-    use crate::values::length::{Length, LengthPercentage};
-    use crate::values::number::{CSSIntegerFns, CSSNumberFns};
-    use crate::values::percentage::Percentage;
-    use crate::values::resolution::Resolution;
-    use crate::values::time::Time;
-    use crate::values::url::Url;
-    use crate::properties::custom::TokenList;
-    use crate::properties::transform::{Transform, TransformList};
+// carries `Image` / `CssColor` / `Transform{,List}` / `TokenList` payloads.
+// PORT NOTE: no `#[derive]` — payload types lack a common Debug/Clone/PartialEq
+// surface (Image: none; TokenList: Default-only; Ident/CustomIdent: no Eq;
+// Transform: no Debug). Zig has only `deepClone` + `toCss`, mirrored below.
+pub enum ParsedComponent {
+    /// A `<length>` value.
+    Length(Length),
+    /// A `<number>` value.
+    Number(CSSNumber),
+    /// A `<percentage>` value.
+    Percentage(Percentage),
+    /// A `<length-percentage>` value.
+    LengthPercentage(LengthPercentage),
+    /// A `<color>` value.
+    Color(CssColor),
+    /// An `<image>` value.
+    Image(Image), // Zig doesn't have lifetimes, so 'i is omitted.
+    /// A `<url>` value.
+    Url(Url), // Lifetimes are omitted in Zig.
+    /// An `<integer>` value.
+    Integer(CSSInteger),
+    /// An `<angle>` value.
+    Angle(Angle),
+    /// A `<time>` value.
+    Time(Time),
+    /// A `<resolution>` value.
+    Resolution(Resolution),
+    /// A `<transform-function>` value.
+    TransformFunction(Transform),
+    /// A `<transform-list>` value.
+    TransformList(TransformList),
+    /// A `<custom-ident>` value.
+    CustomIdent(CustomIdent),
+    /// A literal value.
+    Literal(Ident),
+    /// A repeated component value.
+    Repeated(Repeated),
+    /// A raw token stream.
+    TokenList(TokenList),
+}
 
-    #[derive(Debug, Clone, PartialEq)]
-    pub enum ParsedComponent {
-        Length(Length),
-        Number(CSSNumber),
-        Percentage(Percentage),
-        LengthPercentage(LengthPercentage),
-        Color(CssColor),
-        Image(Image),
-        Url(Url),
-        Integer(CSSInteger),
-        Angle(Angle),
-        Time(Time),
-        Resolution(Resolution),
-        TransformFunction(Transform),
-        TransformList(TransformList),
-        CustomIdent(CustomIdent),
-        Literal(Ident),
-        Repeated(Repeated),
-        TokenList(TokenList),
-    }
+/// A repeated component value.
+pub struct Repeated {
+    /// The components to repeat.
+    // PERF(port): was arena ArrayList — `Vec` until Phase B threads `'bump` into BumpVec.
+    pub components: Vec<ParsedComponent>,
+    /// A multiplier describing how the components repeat.
+    pub multiplier: Multiplier,
+}
 
-    #[derive(Debug, Clone, PartialEq)]
-    pub struct Repeated {
-        pub components: Vec<ParsedComponent>,
-        pub multiplier: Multiplier,
+impl Repeated {
+    pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+        // TODO(port): css.implementDeepClone — replace with DeepClone trait/derive
+        todo!("blocked_on: ParsedComponent payload deep_clone (Image/TokenList/Transform lack Clone)")
     }
 }
-#[cfg(any())]
-pub use parsed_component_gated::{ParsedComponent, Repeated};
+
+impl ParsedComponent {
+    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+        match self {
+            ParsedComponent::Length(v) => v.to_css(dest),
+            ParsedComponent::Number(v) => CSSNumberFns::to_css(v, dest),
+            ParsedComponent::Percentage(v) => v.to_css(dest),
+            ParsedComponent::LengthPercentage(v) => v.to_css(dest),
+            ParsedComponent::Color(v) => v.to_css(dest),
+            ParsedComponent::Image(v) => v.to_css(dest),
+            ParsedComponent::Url(v) => v.to_css(dest),
+            ParsedComponent::Integer(v) => CSSIntegerFns::to_css(v, dest),
+            ParsedComponent::Angle(v) => v.to_css(dest),
+            ParsedComponent::Time(v) => v.to_css(dest),
+            ParsedComponent::Resolution(v) => v.to_css(dest),
+            ParsedComponent::TransformFunction(_v) => {
+                // blocked_on: properties::transform un-gate — stub has no `to_css`.
+                // Body once un-gated: `v.to_css(dest)`
+                todo!("blocked_on: properties::transform::Transform::to_css un-gate")
+            }
+            ParsedComponent::TransformList(_v) => {
+                // blocked_on: properties::transform un-gate — stub has no `to_css`.
+                // Body once un-gated: `v.to_css(dest)`
+                todo!("blocked_on: properties::transform::TransformList::to_css un-gate")
+            }
+            ParsedComponent::CustomIdent(_v) => {
+                // blocked_on: values::ident::CustomIdent::to_css un-gate (Printer::write_ident).
+                // Body once un-gated: `CustomIdentFns::to_css(v, dest)`
+                todo!("blocked_on: values::ident::CustomIdent::to_css un-gate")
+            }
+            ParsedComponent::Literal(v) => {
+                // SAFETY: arena-owned slice valid for the printer's lifetime.
+                let s = unsafe { &*v.v };
+                css::serializer::serialize_identifier(s, dest).map_err(|_| dest.add_fmt_error())
+            }
+            ParsedComponent::Repeated(r) => {
+                let mut first = true;
+                for component in r.components.iter() {
+                    if !first {
+                        match r.multiplier {
+                            Multiplier::Comma => dest.delim(b',', false)?,
+                            Multiplier::Space => dest.write_char(b' ')?,
+                            Multiplier::None => unreachable!(),
+                        }
+                    } else {
+                        first = false;
+                    }
+                    component.to_css(dest)?;
+                }
+                Ok(())
+            }
+            ParsedComponent::TokenList(_t) => {
+                // blocked_on: properties::custom::TokenList::to_css un-gate.
+                // Body once un-gated: `t.to_css(dest, false)`
+                todo!("blocked_on: properties::custom::TokenList::to_css un-gate")
+            }
+        }
+    }
+
+    pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+        // TODO(port): css.implementDeepClone is comptime field reflection — replace with
+        // a `DeepClone` trait/derive in Phase B. Several payloads (Image/TokenList/
+        // TransformList stub) lack `Clone`, so cannot defer to `Clone` like the
+        // sibling types above.
+        todo!("blocked_on: ParsedComponent payload deep_clone (Image/TokenList/Transform lack Clone)")
+    }
+}
 
 /// A [multiplier](https://drafts.css-houdini.org/css-properties-values-api/#multipliers) for a
 /// [SyntaxComponent](SyntaxComponent). Indicates whether and how the component may be repeated.
@@ -479,5 +554,5 @@ pub enum Multiplier {
 //   source:     src/css/values/syntax.zig (524 lines)
 //   confidence: medium
 //   todos:      4
-//   notes:      SyntaxString/Component/Kind/Multiplier real (parse_string + to_css). ParsedComponent + parse_value internally gated on properties::{transform,custom} + values::{image,color}. Phase-A uses 'static slice placeholders pending 'bump threading.
+//   notes:      SyntaxString/Component/Kind/Multiplier + ParsedComponent/Repeated + parse_value/to_css real. Transform{Function,List}/CustomIdent/TokenList arms todo!()-stubbed (leaf types still gated_prop!/cfg-gated). Phase-A uses 'static slice placeholders pending 'bump threading.
 // ──────────────────────────────────────────────────────────────────────────

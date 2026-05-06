@@ -147,10 +147,10 @@ impl Url {
         Ok(())
     }
 
-    #[cfg(any())] // blocked_on: generics::DeepClone for Url
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-        // TODO(port): css::implement_deep_clone is reflection-based in Zig (@typeInfo); Phase B should derive or hand-impl
-        crate::implement_deep_clone(self, bump)
+    pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+        // PORT NOTE: Zig `css.implementDeepClone` is field-wise reflection; both
+        // fields (`u32`, `dependencies::Location`) are `Copy`, so identity copy.
+        Url { import_record_idx: self.import_record_idx, loc: self.loc }
     }
 
     // TODO: dedupe import records??
@@ -161,10 +161,11 @@ impl Url {
 
     // TODO: dedupe import records??
     // This might not fucking work
-    #[cfg(any())] // blocked_on: generics::CssHash for Url
     pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash11) {
-        // TODO(port): css::implement_hash is reflection-based in Zig (@typeInfo); Phase B should derive or hand-impl
-        crate::implement_hash(self, hasher)
+        // PORT NOTE: Zig `css.implementHash` is field-wise reflection. Only
+        // `import_record_idx` participates in identity (matches `eql` above);
+        // `loc` is presentation metadata.
+        hasher.update(&self.import_record_idx.to_ne_bytes());
     }
 }
 

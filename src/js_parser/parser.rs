@@ -243,6 +243,7 @@ pub use bun_options_types::import_record as importRecord;
 pub mod Runtime {
     use bun_collections::{StringArrayHashMap, StringSet};
     use bun_string::strings;
+    use bun_wyhash::Wyhash;
 
     use crate::ast::base::Ref;
     use crate::ast::Expr;

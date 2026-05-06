@@ -25,7 +25,7 @@ impl UnknownAtRule {
 
         if !self.prelude.v.is_empty() {
             dest.write_char(b' ')?;
-            self.prelude.to_css(dest, false)?;
+            token_list_to_css(&self.prelude, dest, false)?;
         }
 
         if let Some(block) = &self.block {
@@ -33,13 +33,33 @@ impl UnknownAtRule {
             dest.write_char(b'{')?;
             dest.indent();
             dest.newline()?;
-            block.to_css(dest, false)?;
+            token_list_to_css(block, dest, false)?;
             dest.dedent();
             dest.newline()?;
             dest.write_char(b'}')
         } else {
             dest.write_char(b';')
         }
+    }
+}
+
+// blocked_on: properties::custom::TokenList::to_css — its body is `#[cfg(any())]`
+// gated on Token::to_css + TokenOrValue payload serializers. Thin wrapper here
+// so the blocker is named at the actual choke point instead of a generic
+// "un-gate rules/unknown.rs" shim; once `TokenList::to_css` un-gates, the
+// `#[cfg]` flips and this becomes a passthrough.
+#[inline]
+fn token_list_to_css(
+    list: &TokenList,
+    dest: &mut Printer,
+    is_custom_property: bool,
+) -> Result<(), PrintErr> {
+    #[cfg(any())]
+    return list.to_css(dest, is_custom_property);
+    #[cfg(not(any()))]
+    {
+        let _ = (list, dest, is_custom_property);
+        todo!("blocked_on: properties::custom::TokenList::to_css — Token::to_css un-gate")
     }
 }
 

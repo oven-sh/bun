@@ -313,9 +313,8 @@ impl LengthValue {
         self.value() == 0.0
     }
 
-    pub fn deep_clone(&self) -> Self {
-        *self
-    }
+    // deep_clone / eql / hash — provided by `#[derive(DeepClone, CssEql, CssHash)]`
+    // on the macro-generated enum (POD f32 payload → bitwise/structural).
 
     pub fn zero() -> LengthValue {
         Self::Px(0.0)
@@ -437,13 +436,6 @@ impl LengthValue {
             return Some(op_fn(a, b));
         }
         None
-    }
-
-    // TODO(port): css.implementHash — f32 is not std::hash::Hash; needs bit-pattern hash helper.
-    // Gated until `generics::CssHash` covers `LengthValue` (or a derive lands).
-    #[cfg(any())] // blocked_on: generics::CssHash impl for LengthValue
-    pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
-        crate::generic::implement_hash(self, hasher)
     }
 
     pub fn try_add(&self, rhs: &LengthValue) -> Option<LengthValue> {

@@ -16,7 +16,7 @@ use bun_core::{Timespec, TimespecMockMode};
 
 use crate::jsc::{
     generated::{JSImmediate, JSTimeout},
-    Debugger, JSGlobalObject, JSValue, JsRef, ScriptExecutionStatus,
+    Debugger, JSGlobalObject, JSValue, JsRef, JsResult, ScriptExecutionStatus,
 };
 // PORT NOTE: `bun_jsc::VirtualMachine` is a *module* alias; the struct lives at
 // `virtual_machine::VirtualMachine`.

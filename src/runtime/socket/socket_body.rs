@@ -852,9 +852,12 @@ impl<const SSL: bool> NewSocket<SSL> {
                 unsafe { (*handlers).promise.deinit() };
 
                 // reject the promise on connect() error
-                let js_promise = promise.as_promise().unwrap();
-                let err_value = err.to_error_instance_with_async_stack(global, js_promise);
-                js_promise.reject(global, err_value)?;
+                let js_promise: *mut jsc::JSPromise = promise.as_promise().unwrap();
+                // SAFETY: `as_promise` returned non-null; promise lives for this call.
+                let err_value =
+                    err.to_error_instance_with_async_stack(global, unsafe { &*js_promise });
+                // SAFETY: same — `reject` takes &mut self.
+                unsafe { (*js_promise).reject(global, Ok(err_value)) }?;
             }
 
             return Ok(());

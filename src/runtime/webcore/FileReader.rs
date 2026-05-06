@@ -513,8 +513,10 @@ impl FileReader {
         // Owned fields (buffered: Vec, reader: BufferedReader, pending_value: Strong,
         // lazy: Arc) drop automatically; only genuine side effects remain.
         self.reader().update_ref(false);
-        // SAFETY: see `parent()`.
-        unsafe { (*self.parent()).deinit() };
+        // SAFETY: see `parent()`. `Source` is always `Box`-allocated
+        // (`bun.TrivialNew`); this is the terminal owner-release matching Zig
+        // `this.parent().deinit()` → `bun.destroy(this)`.
+        unsafe { drop(Box::from_raw(self.parent())) };
     }
 
     #[inline]

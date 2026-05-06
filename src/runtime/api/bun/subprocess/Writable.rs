@@ -237,7 +237,12 @@ impl<'a> Writable<'a> {
                     }
                 }
 
-                pipe.writer.handle.poll.flags.insert(bun_aio::PollFlag::Socket);
+                // Zig: `pipe.writer.handle.poll.flags.insert(.socket);`
+                // `handle` is `PollOrFd` (enum) in Rust; flag mutation goes
+                // through the FilePoll vtable shim.
+                if let Some(poll) = pipe.writer.handle.get_poll() {
+                    poll.set_flag(bun_io::FilePollFlag::Socket);
+                }
 
                 subprocess.weak_file_sink_stdin_ptr = NonNull::new(pipe_ptr);
                 subprocess.ref_();

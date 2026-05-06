@@ -923,11 +923,11 @@ impl Scrypt {
         let Some(password) =
             StringOrBuffer::from_js_maybe_async(global, password_value, IS_ASYNC, true)?
         else {
-            return global.throw_invalid_argument_type_value(
+            return Err(global.throw_invalid_argument_type_value(
                 "password",
                 "string, ArrayBuffer, Buffer, TypedArray, or DataView",
                 password_value,
-            );
+            ));
         };
 
         let password = scopeguard::guard(password, |p| {

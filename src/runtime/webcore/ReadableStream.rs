@@ -1044,9 +1044,9 @@ pub mod js_readable_stream_source {
 
         if !value.is_callable() {
             return Err(global_object.throw_invalid_argument_type(
-                b"ReadableStreamSource",
-                b"onDrain",
-                b"function",
+                "ReadableStreamSource",
+                "onDrain",
+                "function",
             ));
         }
         let cb = value.with_async_context_if_needed(global_object);
@@ -1134,7 +1134,7 @@ pub mod js_readable_stream_source {
                 {
                     return r;
                 }
-                Err(global_this.throw_todo(b"This is not implemented yet"))
+                Err(global_this.throw_todo("This is not implemented yet"))
             }
         };
     }

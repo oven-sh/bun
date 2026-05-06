@@ -1332,6 +1332,16 @@ impl<'a> RequestEnsureRouteBundledCtx<'a> {
     }
 }
 
+impl<'a> EnsureRouteCtx for RequestEnsureRouteBundledCtx<'a> {
+    fn on_defer(&mut self, b: BundleQueueType) -> JsResult<()> { Self::on_defer(self, b) }
+    fn on_loaded(&mut self) -> JsResult<()> { Self::on_loaded(self) }
+    fn on_failure(&mut self) -> JsResult<()> { Self::on_failure(self) }
+    fn on_plugin_error(&mut self) -> JsResult<()> { Self::on_plugin_error(self) }
+    fn to_dev_response(&mut self) -> DevResponse { Self::to_dev_response(self) }
+    fn dev(&mut self) -> &mut DevServer { self.dev }
+    fn route_bundle_index(&self) -> route_bundle::Index { self.route_bundle_index }
+}
+
 #[derive(Copy, Clone)]
 enum BundleQueueType {
     NextBundle,
@@ -3212,7 +3222,7 @@ pub fn finalize_bundle(
             // This memory will be owned by the `DevServerSourceProvider` in C++
             #[cfg(feature = "allocation_scope")]
             dev.allocation_scope.leak_slice(&json);
-            let json = ::core::mem::ManuallyDrop::new(json);
+            let json: ::core::mem::ManuallyDrop<Vec<u8>> = ::core::mem::ManuallyDrop::new(json);
 
             match c::bake_load_server_hmr_patch_with_source_map(
                 global,

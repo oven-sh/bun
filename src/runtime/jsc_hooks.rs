@@ -2592,7 +2592,9 @@ unsafe fn transpile_file(
             if is_commonjs_require {
                 
                 // TODO(b2-cycle): same `commonjs_custom_extensions` typing
-                // gate as above (spec :1043-1064).
+                // gate as above (spec :1043-1064). `node_module_module` is
+                // still under `bun_jsc::_gated` (`#![cfg(any())]`).
+                #[cfg(any())]
                 {
                     use bun_jsc::node_module_module::{
                         find_longest_registered_extension, CustomLoader,

@@ -2418,7 +2418,7 @@ impl<'a> bun_semver::StringBuilder for StringBuilder<'a> {
     #[inline]
     fn append<T: bun_semver::semver_string::BuilderStringType>(&mut self, slice_: &[u8]) -> T {
         let s: SemverString = StringBuilder::append::<SemverString>(self, slice_);
-        T::wrap_string(s, SemverString::Builder::string_hash(slice_))
+        T::from_pooled(s, SemverString::Builder::string_hash(slice_))
     }
 }
 

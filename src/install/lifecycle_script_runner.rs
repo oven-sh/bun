@@ -564,7 +564,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             #[cfg(windows)]
             windows: bun_spawn::WindowsOptions {
                 // MOVE_DOWN(b0): bun_jsc::EventLoopHandle → bun_event_loop::EventLoopHandle
-                loop_: bun_event_loop::EventLoopHandle::init(&manager.event_loop),
+                loop_: bun_event_loop::EventLoopHandle::init(&mut (*manager).event_loop),
             },
 
             stream: false,
@@ -572,15 +572,18 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         };
 
         (*this).remaining_fds = 0;
-        (*this).started_at = bun_core::timespec::now(bun_core::timespec::Mode::AllowMockedTime).ns();
+        (*this).started_at =
+            bun_core::Timespec::now(bun_core::TimespecMockMode::AllowMockedTime).ns();
         // Store the allocation-rooted `this` in the intrusive heap — not a `&mut self`
         // reborrow, whose SB tag would be invalidated by the field accesses below.
-        (*this).manager.active_lifecycle_scripts.insert(this);
+        (*manager)
+            .active_lifecycle_scripts
+            .insert(this as *mut LifecycleScriptSubprocess<'static>);
         let mut spawned = bun_spawn::spawn_process(
             &spawn_options,
             // SAFETY: argv is a `[?[*:0]const u8; 4]` with trailing null; matches the C layout
             // expected by spawn_process (Zig used @ptrCast here).
-            unsafe { &mut *(argv.as_mut_ptr() as *mut _) },
+            argv.as_mut_ptr() as *mut _,
             (*this).envp,
         )??;
         // TODO(port): Zig was `try (try spawnProcess(...)).unwrap()` — outer `!Maybe(Spawned)`.

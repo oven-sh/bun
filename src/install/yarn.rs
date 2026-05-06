@@ -1639,20 +1639,17 @@ pub fn migrate_yarn_lockfile<'a>(
         }
 
         if scoped_name.is_none() {
-            let version_str: Vec<u8> = match this.packages.get(package_id as usize).resolution.tag {
-                Resolution::Tag::Npm => 'brk: {
+            let pkg_resolution = this.packages.get(package_id as usize).resolution;
+            let version_str: Vec<u8> = match pkg_resolution.tag {
+                ResolutionTag::Npm => 'brk: {
                     let mut version_buf = [0u8; 64];
                     let mut cursor = &mut version_buf[..];
+                    // SAFETY: tag == Npm ⇒ `value.npm` is the active union field.
+                    let npm_version = unsafe { pkg_resolution.value.npm.version };
                     let _ = write!(
                         &mut cursor,
                         "{}",
-                        this.packages
-                            .get(package_id as usize)
-                            .resolution
-                            .value
-                            .npm
-                            .version
-                            .fmt(this.buffers.string_bytes.as_slice())
+                        npm_version.fmt(this.buffers.string_bytes.as_slice())
                     );
                     let written = 64 - cursor.len();
                     break 'brk version_buf[..written].to_vec();
@@ -1699,7 +1696,7 @@ pub fn migrate_yarn_lockfile<'a>(
         }
     }
 
-    this.buffers.trees[0].dependencies = lockfile::DependencyIDSlice { off: 0, len: 0 };
+    this.buffers.trees[0].dependencies = lockfile::DependencyIDSlice::new(0, 0);
 
     let mut spec_to_package_id: StringHashMap<PackageID> = StringHashMap::new();
 

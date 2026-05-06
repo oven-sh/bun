@@ -16,8 +16,9 @@ use crate::dependency;
 use crate::package_manager_real::Options as PackageManagerOptions;
 use crate::resolution::Tag as ResolutionTag;
 use crate::ALIGNMENT_BYTES_TO_REPEAT_BUFFER;
+use super::PatchedDep;
 use bun_install::{
-    Dependency, PackageID, PackageManager, PackageNameAndVersionHash, PackageNameHash, PatchedDep,
+    Dependency, PackageID, PackageManager, PackageNameAndVersionHash, PackageNameHash,
 };
 use bun_logger::Log;
 use bun_semver::{self as semver, String as SemverString};

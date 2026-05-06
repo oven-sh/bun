@@ -1076,6 +1076,10 @@ pub mod lockfile {
         }
         #[inline] pub fn items_bin(&self) -> &[crate::bin::Bin] { &self.bin }
         #[inline] pub fn items_scripts(&self) -> &[package::scripts::Scripts] { &self.scripts }
+        #[inline] pub fn slice_mut(&mut self) -> &mut Self { self }
+        #[inline] pub fn items_dependencies_mut(&mut self) -> &mut [ExternalSlice<Dependency>] { &mut self.dependencies }
+        #[inline] pub fn items_resolutions_mut(&mut self) -> &mut [ExternalSlice<PackageID>] { &mut self.resolutions }
+        #[inline] pub fn items_scripts_mut(&mut self) -> &mut [package::scripts::Scripts] { &mut self.scripts }
         /// Reserve capacity across all column vecs (Zig: `MultiArrayList.ensureUnusedCapacity`).
         pub fn reserve(&mut self, additional: usize) {
             self.name.reserve(additional);
@@ -2056,6 +2060,10 @@ impl RootPackageId {
     /// Zig: `active_lifecycle_scripts: LifecycleScriptSubprocess.List` —
     /// intrusive min-heap of currently-running lifecycle subprocesses.
     pub active_lifecycle_scripts: lifecycle_script_runner::List<'static>,
+    /// Zig: `last_reported_slow_lifecycle_script_at: u64 = 0`.
+    pub last_reported_slow_lifecycle_script_at: u64,
+    /// Zig: `cached_tick_for_slow_lifecycle_script_logging: u64 = 0`.
+    pub cached_tick_for_slow_lifecycle_script_logging: u64,
     /// Zig: `lifecycle_script_time_log: LifecycleScriptTimeLog`.
     pub lifecycle_script_time_log: package_manager_real::LifecycleScriptTimeLog,
     /// Zig: `patch_task_queue: bun.UnboundedQueue(PatchTask, .next)`
@@ -2149,6 +2157,10 @@ impl PackageManager {
 #[derive(Default)] pub struct PackageManagerOptionsStub {
     pub log_level: package_manager::Options::LogLevel,
     pub enable: PackageManagerEnableStub,
+    /// Zig: `Options.cpu: Npm.Architecture = Npm.Architecture.current`.
+    pub cpu: npm::Architecture,
+    /// Zig: `Options.os: Npm.OperatingSystem = Npm.OperatingSystem.current`.
+    pub os: npm::OperatingSystem,
     /// Zig: `Options.link_workspace_packages: bool = true`.
     pub link_workspace_packages: bool,
     /// Zig: `Options.dry_run: bool = false`.
@@ -2372,6 +2384,18 @@ pub mod ci_info {
     }
 }
 
+/// Port of the `void`-callbacks instantiation of `runTasks`' `Callbacks`
+/// (src/install/PackageManager/runTasks.zig). All hooks are no-ops; only
+/// `progress_bar` is read.
+#[derive(Default)]
+pub struct RunTasksCallbacks {
+    pub on_extract: (),
+    pub on_resolve: (),
+    pub on_package_manifest_error: (),
+    pub on_package_download_error: (),
+    pub progress_bar: bool,
+}
+
 /// Process-lifetime singleton — Zig: `var instance: PackageManager = undefined;`
 /// (src/install/PackageManager.zig). Allocated at `PackageManager.init()`.
 
@@ -2529,6 +2553,114 @@ impl PackageManager {
     /// `resolve_tasks`. Real impl posts to `uws.Loop`; stubbed until
     /// `bun_event_loop` exposes the package-manager loop handle.
     pub fn wake(&self) {}
+
+    // ── install_with_manager.rs surface (stubbed until package_manager_real un-gates) ──
+
+    /// Zig: `PackageManager.pendingTaskCount()` (src/install/PackageManager.zig).
+    #[inline]
+    pub fn pending_task_count(&self) -> u32 {
+        self.pending_tasks.load(core::sync::atomic::Ordering::Relaxed)
+    }
+    /// Zig: `PackageManager.hasEnoughTimePassedBetweenWaitingMessages()`.
+    pub fn has_enough_time_passed_between_waiting_messages() -> bool { false }
+    /// Zig: `PackageManager.drainDependencyList()` (PackageManagerEnqueue.zig).
+    pub fn drain_dependency_list(&mut self) {
+        todo!("blocked_on: package_manager_real::package_manager_enqueue un-gate (reconciler-6)")
+    }
+    /// Zig: `PackageManager.processPeerDependencyList()` (processDependencyList.zig).
+    pub fn process_peer_dependency_list(&mut self) -> Result<(), bun_core::Error> {
+        todo!("blocked_on: package_manager_real::process_dependency_list un-gate (reconciler-6)")
+    }
+    /// Zig: `PackageManager.enqueueDependencyWithMain()` (PackageManagerEnqueue.zig).
+    pub fn enqueue_dependency_with_main(
+        &mut self,
+        _id: DependencyID,
+        _dependency: &Dependency,
+        _resolution: PackageID,
+        _is_peer: bool,
+    ) -> Result<(), bun_core::Error> {
+        todo!("blocked_on: package_manager_real::package_manager_enqueue un-gate (reconciler-6)")
+    }
+    /// Zig: `PackageManager.enqueueDependencyList()` (PackageManagerEnqueue.zig).
+    pub fn enqueue_dependency_list(&mut self, _list: lockfile::DependencySlice) {
+        todo!("blocked_on: package_manager_real::package_manager_enqueue un-gate (reconciler-6)")
+    }
+    /// Zig: `PackageManager.enqueuePatchTaskPre()` (patchPackage.zig).
+    pub fn enqueue_patch_task_pre(&mut self, _task: *mut PatchTask) {
+        todo!("blocked_on: package_manager_real::patch_package un-gate (reconciler-6)")
+    }
+    /// Zig: `PackageManager.startProgressBar()` / `endProgressBar()`.
+    pub fn start_progress_bar(&mut self) {}
+    pub fn end_progress_bar(&mut self) {}
+    /// Zig: `PackageManager.verifyResolutions()` (PackageManagerResolution.zig).
+    pub fn verify_resolutions(&mut self, _log_level: package_manager::Options::LogLevel) {
+        todo!("blocked_on: package_manager_real::package_manager_resolution un-gate (reconciler-6)")
+    }
+    /// Zig: `PackageManager.loadRootLifecycleScripts()` (PackageManagerLifecycle.zig).
+    pub fn load_root_lifecycle_scripts(&mut self, _root: &lockfile::package::Package) {
+        todo!("blocked_on: package_manager_real::package_manager_lifecycle un-gate (reconciler-6)")
+    }
+    /// Zig: `PackageManager.setupGlobalDir()` (PackageManagerDirectories.zig).
+    pub fn setup_global_dir(&mut self, _ctx: &package_manager_real::Command::ContextData) -> Result<(), bun_core::Error> {
+        todo!("blocked_on: package_manager_real::package_manager_directories un-gate (reconciler-6)")
+    }
+    /// Zig: `PackageManager.saveLockfile()` (PackageManagerDirectories.zig).
+    pub fn save_lockfile(
+        &mut self,
+        _load_result: &lockfile::LoadResult<'_>,
+        _save_format: lockfile::Format,
+        _had_any_diffs: bool,
+        _lockfile_before_install: *const Lockfile,
+        _packages_len_before_install: usize,
+        _log_level: package_manager::Options::LogLevel,
+    ) -> Result<(), bun_core::Error> {
+        todo!("blocked_on: package_manager_real::package_manager_directories un-gate (reconciler-6)")
+    }
+    /// Zig: `PackageManager.writeYarnLock()`.
+    pub fn write_yarn_lock(&mut self) -> Result<(), bun_core::Error> {
+        todo!("blocked_on: lockfile_real::printer::Yarn un-gate (reconciler-6)")
+    }
+    /// Zig: `PackageManager.spawnPackageLifecycleScripts()` (PackageManagerLifecycle.zig).
+    pub fn spawn_package_lifecycle_scripts(
+        &mut self,
+        _ctx: &package_manager_real::Command::ContextData,
+        _scripts: &lockfile::package::scripts::List,
+        _optional: bool,
+        _foreground: bool,
+        _node_modules_dir: Option<bun_sys::Fd>,
+    ) -> Result<(), bun_core::Error> {
+        todo!("blocked_on: package_manager_real::package_manager_lifecycle un-gate (reconciler-6)")
+    }
+    /// Zig: `PackageManager.reportSlowLifecycleScripts()`.
+    pub fn report_slow_lifecycle_scripts(&mut self) {}
+    /// Zig: `PackageManager.sleep()` — one event-loop tick.
+    pub fn sleep(&mut self) {
+        todo!("blocked_on: bun_event_loop::AnyEventLoop::tick wiring (reconciler-6)")
+    }
+    /// Zig: `PackageManager.sleepUntil()` (PackageManager.zig). Generic over
+    /// the closure type `*const fn(*Ctx) bool`; routes to the real
+    /// `package_manager_real` impl once un-gated.
+    /// SAFETY: `mgr` and `closure` must be valid for the duration of the call;
+    /// see `install_with_manager::RunAndWaitClosure` for the provenance
+    /// contract.
+    pub unsafe fn sleep_until<Ctx>(
+        _mgr: *mut PackageManager,
+        _closure: &mut Ctx,
+        _is_done: fn(&mut Ctx) -> bool,
+    ) {
+        todo!("blocked_on: package_manager_real::sleep_until un-gate (reconciler-6)")
+    }
+    /// Zig: `PackageManager.runTasks()` (runTasks.zig). The `void` callbacks
+    /// instantiation used by `install_with_manager::RunAndWaitClosure`.
+    pub fn run_tasks(
+        &mut self,
+        _extract_ctx: &mut (),
+        _callbacks: RunTasksCallbacks,
+        _check_peers: bool,
+        _log_level: package_manager::Options::LogLevel,
+    ) -> Result<(), bun_core::Error> {
+        todo!("blocked_on: package_manager_real::run_tasks un-gate (reconciler-6)")
+    }
 
     /// Port of `PackageManager.incrementPendingTasks`
     /// (src/install/PackageManager/runTasks.zig). `.monotonic` is okay because

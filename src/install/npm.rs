@@ -1165,6 +1165,18 @@ impl PackageVersion {
     pub fn all_dependencies_bundled(&self) -> bool {
         self.bundled_dependencies.is_invalid()
     }
+
+    /// Port of Zig's `@field(package_version, group.field)` reflection used by
+    /// `Package.fromNPM` to walk dependency groups by name.
+    pub fn dep_group(&self, field: &[u8]) -> ExternalStringMap {
+        match field {
+            b"dependencies" => self.dependencies,
+            b"dev_dependencies" => self.dev_dependencies,
+            b"optional_dependencies" => self.optional_dependencies,
+            b"peer_dependencies" => self.peer_dependencies,
+            _ => unreachable!("PackageVersion::dep_group: unknown field"),
+        }
+    }
 }
 
 // TODO(b2): re-enable once Bin is the real #[repr(C)] layout (currently stub)

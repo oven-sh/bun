@@ -43,12 +43,6 @@ impl YAML {
         let _ = bump;
         let mut parser: Parser<Utf8> = Parser::init(source.contents());
 
-        // TODO(b2-blocked): bun_logger::js_ast::{Expr::init, E} — `Parser::parse`
-        //   chain (parse → parse_stream → parse_document → parse_node) constructs
-        //   `E::*` payloads via the 3-arg `Expr::init(tag, payload, loc)` form;
-        //   the T2 stub only exposes 2-arg `Expr::init`. Body re-gated.
-        #[cfg(any())]
-        {
         let stream = match parser.parse() {
             Ok(s) => s,
             Err(e) => {

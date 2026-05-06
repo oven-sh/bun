@@ -288,12 +288,12 @@ pub fn validate_string(
 pub fn validate_number(
     global_this: &JSGlobalObject,
     value: JSValue,
-    name: &[u8],
+    name: &str,
     maybe_min: Option<f64>,
     maybe_max: Option<f64>,
 ) -> JsResult<f64> {
     if !value.is_number() {
-        return Err(throw_invalid_argument_type_value(global_this, name, b"number", value));
+        return Err(throw_invalid_argument_type_value(global_this, name, "number", value));
     }
 
     let num: f64 = value.as_number();

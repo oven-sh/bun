@@ -1572,21 +1572,22 @@ impl CronJob {
 
     #[bun_jsc::host_fn(method)]
     pub fn stop(this: &mut Self, _global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        Self::self_stop(this, this.global.bun_vm());
+        // SAFETY: `bun_vm()` returns the per-thread singleton.
+        Self::self_stop(this, unsafe { &*this.global.bun_vm() });
         Ok(frame.this())
     }
 
     #[bun_jsc::host_fn(method)]
     pub fn do_ref(this: &mut Self, _global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         if !this.stopped {
-            this.poll_ref.ref_(this.global.bun_vm());
+            this.poll_ref.ref_(vm_ctx());
         }
         Ok(frame.this())
     }
 
     #[bun_jsc::host_fn(method)]
     pub fn do_unref(this: &mut Self, _global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        this.poll_ref.unref(this.global.bun_vm());
+        this.poll_ref.unref(vm_ctx());
         Ok(frame.this())
     }
 

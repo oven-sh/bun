@@ -695,10 +695,15 @@ pub fn to_buffer(
             // SAFETY: ptr/len came from get_ptr_slice; FFI-owned memory.
             let slice = unsafe { core::slice::from_raw_parts_mut(ptr, len) };
             if callback.is_some() || ctx.is_some() {
-                return Ok(JSValue::create_buffer_with_ctx(global_this, slice, ctx, callback));
+                return Ok(create_buffer_with_ctx(
+                    global_this,
+                    slice,
+                    ctx.unwrap_or(core::ptr::null_mut()),
+                    callback,
+                ));
             }
 
-            Ok(JSValue::create_buffer(global_this, slice))
+            Ok(create_buffer_with_ctx(global_this, slice, core::ptr::null_mut(), None))
         }
     }
 }

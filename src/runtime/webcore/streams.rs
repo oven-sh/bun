@@ -49,10 +49,18 @@ pub mod result {
 /// Options payload for the `Start::FileSink` variant. Mirrors
 /// `jsc.WebCore.FileSink.Options` (path-or-fd + chunk size).
 // TODO(port): once `crate::webcore::file_sink::Options` is exported, alias to it.
-#[derive(Default)]
 pub struct FileSinkOptions {
     pub chunk_size: BlobSizeType,
     pub input_path: crate::webcore::PathOrFileDescriptor,
+}
+
+impl Default for FileSinkOptions {
+    fn default() -> Self {
+        Self {
+            chunk_size: 0,
+            input_path: crate::webcore::PathOrFileDescriptor::Fd(Fd::INVALID),
+        }
+    }
 }
 
 pub enum Start {

@@ -3366,23 +3366,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // SAFETY: handle_oom aborts on failure; pointer is non-null and owns a fresh pool slot.
         let ctx = unsafe { &mut *bun_core::handle_oom(self.request_pool_allocator.try_get()) };
         let mut should_deinit_context = false;
-        ctx.create(self, req, resp, Some(&mut should_deinit_context), None);
-        let body = self.vm.init_request_body_value(Body::Value::Null).expect("unreachable");
-
-        ctx.request_body = Some(body);
-        let signal = AbortSignal::new(unsafe { &*self.global_this });
-        ctx.signal = Some(signal);
-        signal.pending_activity_ref();
-
-        let request_object = Request::new_(Request::init(
-            ctx.method,
-            AnyRequestContext::init(ctx),
-            SSL,
-            signal.ref_(),
-            body.ref_(),
-        ));
-        ctx.upgrade_context = Some(upgrade_ctx);
-        ctx.request_weakref = crate::webcore::request::WeakRef::init_ref(request_object);
+        // TODO(port): Body::Value / AbortSignal::new / Request::new_ — same
+        // surface gap as prepare_js_request_context_for; un-gates with the
+        // shared RequestContext setup helpers.
+        let _ = (&mut *ctx, req, resp, upgrade_ctx, &mut should_deinit_context);
+        todo!("blocked_on: bun_jsc::AbortSignal::new / webcore::Body::Value / Request::new");
+        #[allow(unreachable_code)]
+        let request_object: &mut Request = unreachable!();
         // We keep the Request object alive for the duration of the request so that we can remove the pointer to the UWS request object.
         let global = unsafe { &*self.global_this };
         let args = [
@@ -3504,7 +3494,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // Keep the raw `*mut` (`app_ptr`) for FFI/handler storage that needs write provenance, and
         // a shared `&` (`app`) for the route-registration helpers below which only need read access.
         let app_ptr = self.app.unwrap();
-        let app = unsafe { &mut *app_ptr };
+        // Reborrow per call site — `set_routes` interleaves `app` mutation with
+        // `&mut self` access (config, user_routes, dev_server), so a single
+        // long-lived `&mut *app_ptr` would alias.
+        macro_rules! app { () => { unsafe { &mut *app_ptr } } }
         let any_server: AnyServer = todo!("blocked_on: bun_collections::TaggedPtrUnion From<*const NewServer<SSL,DEBUG>>");
         let dev_server = self.dev_server.as_deref_mut();
 
@@ -3590,7 +3583,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // Register HTTP routes
             match user_route.route.method {
                 server_config::RouteMethod::Any => {
-                    app.any_ctx(user_route.route.path.to_bytes(), user_route, Self::on_user_route_request);
+                    app!().any_ctx(user_route.route.path.to_bytes(), user_route, Self::on_user_route_request);
                     if Self::HAS_H3 {
                         if let Some(h3_app) = self.h3_app {
                             unsafe { &mut *h3_app }.any(user_route.route.path.to_bytes(), user_route as *mut _, Self::on_h3_user_route_request);
@@ -3610,7 +3603,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 }
                 server_config::RouteMethod::Specific(method_val) => {
                     // method_val is HTTP.Method here
-                    app.method_ctx(method_val, user_route.route.path.to_bytes(), user_route, Self::on_user_route_request);
+                    app!().method_ctx(method_val, user_route.route.path.to_bytes(), user_route, Self::on_user_route_request);
                     if Self::HAS_H3 {
                         if let Some(h3_app) = self.h3_app {
                             unsafe { &mut *h3_app }.method(method_val, user_route.route.path.to_bytes(), user_route as *mut _, Self::on_h3_user_route_request);
@@ -3634,8 +3627,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         // --- 4. Register negative routes ---
         for route_path in &self.config.negative_routes {
-            app.head_ctx(route_path.to_bytes(), self, Self::on_request);
-            app.any_ctx(route_path.to_bytes(), self, Self::on_request);
+            app!().head_ctx(route_path.to_bytes(), self, Self::on_request);
+            app!().any_ctx(route_path.to_bytes(), self, Self::on_request);
             if Self::HAS_H3 {
                 if let Some(h3_app) = self.h3_app {
                     let h3_app = unsafe { &mut *h3_app };
@@ -3671,15 +3664,15 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
                 match &entry.route {
                     crate::server::AnyRoute::Static(static_route) => {
-                        let _ = (&any_server, &*app, &**static_route, &entry.path, entry.method);
+                        let _ = (&any_server, app_ptr, &**static_route, &entry.path, entry.method);
                         todo!("blocked_on: server::ServerConfig::apply_static_route");
                     }
                     crate::server::AnyRoute::File(file_route) => {
-                        let _ = (&any_server, &*app, &**file_route, &entry.path, entry.method);
+                        let _ = (&any_server, app_ptr, &**file_route, &entry.path, entry.method);
                         todo!("blocked_on: server::ServerConfig::apply_static_route");
                     }
                     crate::server::AnyRoute::Html(html_bundle_route) => {
-                        let _ = (&any_server, &*app, html_bundle_route, &entry.path, entry.method);
+                        let _ = (&any_server, app_ptr, html_bundle_route, &entry.path, entry.method);
                         todo!("blocked_on: server::ServerConfig::apply_static_route / dev_server::HTMLRouter::put");
                         #[allow(unreachable_code)]
                         { needs_plugins = true; }
@@ -3703,7 +3696,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         // --- 7. Debug mode specific routes ---
         if DEBUG {
-            app.get_ctx(b"/bun:info", self, Self::on_bun_info_request);
+            app!().get_ctx(b"/bun:info", self, Self::on_bun_info_request);
         }
 
         // Snapshot "/*" coverage from user/static routes before DevServer
@@ -3743,23 +3736,23 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             for method_to_cover in star_methods_covered_by_user.iter() {
                 if self.config.on_node_http_request.is_none() {
                     if self.config.on_request.is_none() {
-                        app.method_ctx(method_to_cover, b"/*", self, Self::on404);
+                        app!().method_ctx(method_to_cover, b"/*", self, Self::on404);
                     } else {
-                        app.method_ctx(method_to_cover, b"/*", self, Self::on_request);
+                        app!().method_ctx(method_to_cover, b"/*", self, Self::on_request);
                     }
                 } else {
-                    app.method_ctx(method_to_cover, b"/*", self, Self::on_node_http_request);
+                    app!().method_ctx(method_to_cover, b"/*", self, Self::on_node_http_request);
                 }
             }
         } else {
             if self.config.on_node_http_request.is_none() {
                 if self.config.on_request.is_none() {
-                    app.any_ctx(b"/*", self, Self::on404);
+                    app!().any_ctx(b"/*", self, Self::on404);
                 } else {
-                    app.any_ctx(b"/*", self, Self::on_request);
+                    app!().any_ctx(b"/*", self, Self::on_request);
                 }
             } else {
-                app.any_ctx(b"/*", self, Self::on_node_http_request);
+                app!().any_ctx(b"/*", self, Self::on_node_http_request);
             }
         }
 
@@ -3792,7 +3785,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
 
         if should_add_chrome_devtools_json_route {
-            app.get_ctx(CHROME_DEVTOOLS_ROUTE, self, Self::on_chrome_dev_tools_json_request);
+            app!().get_ctx(CHROME_DEVTOOLS_ROUTE, self, Self::on_chrome_dev_tools_json_request);
         }
 
         // If onNodeHTTPRequest is configured, it might be needed for Node.js compatibility layer
@@ -3882,7 +3875,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         return JSValue::ZERO;
                     }
 
-                    unsafe { &mut *app }.domain(ZStr::from_cstr(server_name_cstr));
+                    // SAFETY: CStr guarantees a NUL at .to_bytes().len().
+                    unsafe { &mut *app }.domain(unsafe { ZStr::from_raw(server_name_cstr.as_ptr() as *const u8, server_name.len()) });
                     if throw_ssl_error_if_necessary(global) {
                         Self::deinit(self);
                         return JSValue::ZERO;
@@ -3904,7 +3898,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     if !sni_servername.is_empty() {
                         if Self::HAS_H3 {
                             if let Some(h3a) = self.h3_app {
-                                if unsafe { &mut *h3a }.add_server_name_with_options(ZStr::from_cstr(sni_name_cstr), sni_opts).is_err() {
+                                // SAFETY: CStr guarantees a NUL at .to_bytes().len().
+                                let sni_zstr = unsafe { ZStr::from_raw(sni_name_cstr.as_ptr() as *const u8, sni_servername.len()) };
+                                if unsafe { &mut *h3a }.add_server_name_with_options(sni_zstr, sni_opts).is_err() {
                                     if !global.has_exception() {
                                         let _ = global.throw(format_args!("Failed to add serverName \"{}\" for HTTP/3", BStr::new(sni_servername)));
                                     }
@@ -3923,7 +3919,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             return JSValue::ZERO;
                         }
 
-                        unsafe { &mut *app }.domain(ZStr::from_cstr(sni_name_cstr));
+                        // SAFETY: CStr guarantees a NUL at .to_bytes().len().
+                        unsafe { &mut *app }.domain(unsafe { ZStr::from_raw(sni_name_cstr.as_ptr() as *const u8, sni_servername.len()) });
 
                         if throw_ssl_error_if_necessary(global) {
                             Self::deinit(self);

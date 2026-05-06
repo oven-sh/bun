@@ -185,38 +185,41 @@ impl FileRoute {
         if let Some(response_ptr) = response_ptr {
             // SAFETY: non-null per JsClass::from_js contract.
             let response = unsafe { &mut *response_ptr };
-            let body_value = response.get_body_value();
-            body_value.to_blob_if_possible();
-            if let crate::webcore::body::Value::Blob(b) = &*body_value {
-                if b.needs_to_read_file() {
-                    if {
-                        let _ = &b.store;
-                        todo!("blocked_on: webcore::blob::Store::data file().pathlike is_fd()")
-                    } {
-                        return Err(global.throw_todo(
-                            "Support serving files from a file descriptor. Please pass a path instead.",
-                        ));
-                    }
-
-                    let mut blob = body_value.use_();
-
-                    blob.global_this = global as *const _;
-                    debug_assert!(!blob.is_heap_allocated(), "expected blob not to be heap-allocated");
-                    *body_value = crate::webcore::body::Value::Blob(blob.dupe());
-                    let headers = headers_from(response.get_init_headers(), &blob);
-
-                    return Ok(Some(Box::into_raw(Box::new(FileRoute {
-                        ref_count: Cell::new(1),
-                        server: Cell::new(None),
-                        has_last_modified_header: headers.get(b"last-modified").is_some(),
-                        has_content_length_header: headers.get(b"content-length").is_some(),
-                        has_content_range_header: headers.get(b"content-range").is_some(),
-                        blob,
-                        headers,
-                        status_code: response.status_code(),
-                        stat_hash: StatHash::default(),
-                    }))));
+            response.get_body_value().to_blob_if_possible();
+            // TODO(port): Body.Value tag/payload access — verify exact Rust enum API in Phase B
+            let needs_read = matches!(
+                response.get_body_value(),
+                crate::webcore::body::Value::Blob(b) if b.needs_to_read_file()
+            );
+            if needs_read {
+                let is_fd: bool =
+                    todo!("blocked_on: webcore::blob::Store::data file().pathlike is_fd()");
+                #[allow(unreachable_code)]
+                if is_fd {
+                    return Err(global.throw_todo(
+                        "Support serving files from a file descriptor. Please pass a path instead.",
+                    ));
                 }
+
+                let mut blob = response.get_body_value().use_();
+
+                blob.global_this = global as *const _;
+                debug_assert!(!blob.is_heap_allocated(), "expected blob not to be heap-allocated");
+                *response.get_body_value() = crate::webcore::body::Value::Blob(blob.dupe());
+                let headers = headers_from(response.get_init_headers(), &blob);
+                let status_code = response.status_code();
+
+                return Ok(Some(Box::into_raw(Box::new(FileRoute {
+                    ref_count: Cell::new(1),
+                    server: Cell::new(None),
+                    has_last_modified_header: headers.get(b"last-modified").is_some(),
+                    has_content_length_header: headers.get(b"content-length").is_some(),
+                    has_content_range_header: headers.get(b"content-range").is_some(),
+                    blob,
+                    headers,
+                    status_code,
+                    stat_hash: StatHash::default(),
+                }))));
             }
         }
         if let Some(blob_ptr) = argument.as_::<Blob>() {

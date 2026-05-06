@@ -288,14 +288,14 @@ impl Default for UDPSocketConfig {
 impl UDPSocketConfig {
     pub fn from_js(global_this: &JSGlobalObject, options: JSValue, this_value: JSValue) -> JsResult<Self> {
         if options.is_empty_or_undefined_or_null() || !options.is_object() {
-            return global_this.throw_invalid_arguments(format_args!("Expected an object"));
+            return Err(global_this.throw_invalid_arguments(format_args!("Expected an object"));
         }
 
         let port: u16 = 'brk: {
             if let Some(value) = options.get_truthy(global_this, "port")? {
                 let number = value.coerce_to_int32(global_this)?;
                 if number < 0 || number > 0xffff {
-                    return global_this.throw_invalid_arguments(format_args!(
+                    return Err(global_this.throw_invalid_arguments(format_args!(
                         "Expected \"port\" to be an integer between 0 and 65535"
                     ));
                 }
@@ -340,7 +340,7 @@ impl UDPSocketConfig {
 
             if let Some(value) = options.get_truthy(global_this, "binaryType")? {
                 if !value.is_string() {
-                    return global_this.throw_invalid_arguments(format_args!(
+                    return Err(global_this.throw_invalid_arguments(format_args!(
                         "Expected \"socket.binaryType\" to be a string"
                     ));
                 }
@@ -348,7 +348,7 @@ impl UDPSocketConfig {
                 config.binary_type = match BinaryType::from_js_value(global_this, value)? {
                     Some(bt) => bt,
                     None => {
-                        return global_this.throw_invalid_arguments(format_args!(
+                        return Err(global_this.throw_invalid_arguments(format_args!(
                             "Expected \"socket.binaryType\" to be 'arraybuffer', 'uint8array', or 'buffer'"
                         ));
                     }
@@ -364,7 +364,7 @@ impl UDPSocketConfig {
                 ($name:literal, $field:ident) => {
                     if let Some(value) = socket.get_truthy(global_this, $name)? {
                         if !value.is_cell() || !value.is_callable() {
-                            return global_this.throw_invalid_arguments(format_args!(
+                            return Err(global_this.throw_invalid_arguments(format_args!(
                                 concat!("Expected \"socket.", $name, "\" to be a function")
                             ));
                         }
@@ -734,7 +734,7 @@ impl UDPSocket {
             && this.parse_addr(global_this, JSValue::js_number(0), arguments[1], &mut interface)?
         {
             if addr.ss_family != interface.ss_family {
-                return global_this.throw_invalid_arguments(format_args!(
+                return Err(global_this.throw_invalid_arguments(format_args!(
                     "Family mismatch between address and interface"
                 ));
             }
@@ -819,7 +819,7 @@ impl UDPSocket {
         let group_addr = unsafe { group_addr.assume_init() };
 
         if source_addr.ss_family != group_addr.ss_family {
-            return global_this.throw_invalid_arguments(format_args!(
+            return Err(global_this.throw_invalid_arguments(format_args!(
                 "Family mismatch between source and group addresses"
             ));
         }
@@ -838,7 +838,7 @@ impl UDPSocket {
             // SAFETY: initialized by parse_addr above.
             let interface = unsafe { interface.assume_init() };
             if source_addr.ss_family != interface.ss_family {
-                return global_this.throw_invalid_arguments(format_args!(
+                return Err(global_this.throw_invalid_arguments(format_args!(
                     "Family mismatch among source, group and interface addresses"
                 ));
             }
@@ -1072,7 +1072,7 @@ impl UDPSocket {
         let mut port: JSValue = JSValue::ZERO;
         while let Some(val) = iter.next(global_this)? {
             if (i as usize) >= array_len {
-                return global_this.throw_invalid_arguments(format_args!(
+                return Err(global_this.throw_invalid_arguments(format_args!(
                     "Mismatch between array length property and number of items"
                 ));
             }
@@ -1092,7 +1092,7 @@ impl UDPSocket {
                     if val.is_string() {
                         break 'blk val.to_js_string(global_this)?.to_js();
                     }
-                    return global_this.throw_invalid_arguments(format_args!(
+                    return Err(global_this.throw_invalid_arguments(format_args!(
                         "Expected ArrayBufferView or string as payload"
                     ));
                 };
@@ -1111,14 +1111,14 @@ impl UDPSocket {
             }
             if i % 3 == 2 {
                 if !this.parse_addr(global_this, port, val, &mut addrs[slice_idx])? {
-                    return global_this.throw_invalid_arguments(format_args!("Invalid address"));
+                    return Err(global_this.throw_invalid_arguments(format_args!("Invalid address"));
                 }
                 addr_ptrs[slice_idx] = &addrs[slice_idx] as *const _ as *const c_void;
             }
             i += 1;
         }
         if (i as usize) != array_len {
-            return global_this.throw_invalid_arguments(format_args!(
+            return Err(global_this.throw_invalid_arguments(format_args!(
                 "Mismatch between array length property and number of items"
             ));
         }
@@ -1179,7 +1179,7 @@ impl UDPSocket {
                     break 'brk None;
                 }
                 if arguments.len == 3 {
-                    return global_this.throw_invalid_arguments(format_args!(
+                    return Err(global_this.throw_invalid_arguments(format_args!(
                         "Cannot specify destination on connected socket"
                     ));
                 }
@@ -1209,7 +1209,7 @@ impl UDPSocket {
         let addr_ptr: *const c_void = 'brk: {
             if let Some(dest) = dst {
                 if !this.parse_addr(global_this, dest.port, dest.address, &mut addr)? {
-                    return global_this.throw_invalid_arguments(format_args!("Invalid address"));
+                    return Err(global_this.throw_invalid_arguments(format_args!("Invalid address"));
                 }
                 break 'brk &addr as *const _ as *const c_void;
             } else {
@@ -1234,7 +1234,7 @@ impl UDPSocket {
                 payload_str = payload_arg.to_js_string(global_this)?.to_slice(global_this);
                 break 'brk payload_str.slice();
             } else {
-                return global_this.throw_invalid_arguments(format_args!(
+                return Err(global_this.throw_invalid_arguments(format_args!(
                     "Expected ArrayBufferView or string as first argument"
                 ));
             }
@@ -1379,7 +1379,7 @@ impl UDPSocket {
         let args = callframe.arguments_old(1);
 
         if args.len < 1 {
-            return global_this.throw_invalid_arguments(format_args!("Expected 1 argument"));
+            return Err(global_this.throw_invalid_arguments(format_args!("Expected 1 argument"));
         }
 
         let options = args.ptr[0];
@@ -1490,7 +1490,7 @@ impl UDPSocket {
         let args = call_frame.arguments_old(2);
 
         let Some(this) = call_frame.this().as_::<UDPSocket>() else {
-            return global_this.throw_invalid_arguments(format_args!("Expected UDPSocket as 'this'"));
+            return Err(global_this.throw_invalid_arguments(format_args!("Expected UDPSocket as 'this'"));
         };
 
         if this.connect_info.is_some() {
@@ -1502,7 +1502,7 @@ impl UDPSocket {
         }
 
         if args.len < 2 {
-            return global_this.throw_invalid_arguments(format_args!("Expected 2 arguments"));
+            return Err(global_this.throw_invalid_arguments(format_args!("Expected 2 arguments"));
         }
 
         let str = args.ptr[0].to_bun_string(global_this)?;

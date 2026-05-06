@@ -4498,7 +4498,7 @@ impl NodeFS {
 
     pub fn uv_statfs(&mut self, args: &args::StatFS, req: &mut uv::fs_t, rc: i64) -> Maybe<ret::StatFS> {
         if rc < 0 {
-            return Maybe::Err(sys::Error { errno: (-rc) as _, syscall: sys::Tag::open, path: args.path.slice().into(), from_libuv: true, ..Default::default() });
+            return Maybe::Err(sys::Error { errno: (-rc) as _, syscall: sys::Tag::open, path: args.path.slice().into(), #[cfg(windows)] from_libuv: true, ..Default::default() });
         }
         // node_fs.zig:4333 — `req.ptrAs(*align(1) bun.StatFS).*`: libuv stores
         // a `uv_statfs_t*` in `req.ptr` on success. The struct is unaligned in

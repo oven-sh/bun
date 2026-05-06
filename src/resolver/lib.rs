@@ -7122,8 +7122,9 @@ impl<'a> Resolver<'a> {
 
         if self.care_about_browser_field {
             // Potentially remap using the "browser" field
-            // SAFETY: resolver mutex held; sole `&mut DirInfo` for this index.
-            if let Some(browser_scope) = unsafe { dir_info.get_enclosing_browser_scope() } {
+            // SAFETY: ARENA — DirInfo ptr is a BSSMap slot; narrow re-borrow ends
+            // before `browser_scope` (which may alias `dir_info`) is held.
+            if let Some(browser_scope) = unsafe { (*dir_info).get_enclosing_browser_scope() } {
                 if let Some(browser_json) = browser_scope.package_json {
                     if let Some(remap) = self.check_browser_map::<{ BrowserMapPathKind::AbsolutePath }>(browser_scope, field_rel_path) {
                         // Is the path disabled?
@@ -7180,7 +7181,9 @@ impl<'a> Resolver<'a> {
     // nodeModulePathsForJS / Resolver__propForRequireMainPaths: see src/jsc/resolver_jsc.zig
     // (no Zig callers; exported to C++ only)
 
-    pub fn load_as_index(&mut self, dir_info: &mut DirInfo::DirInfo, extension_order: &[&'static [u8]]) -> Option<MatchResult> {
+    // PORT NOTE: `dir_info` is raw `*mut` (matching spec `*DirInfo`) so
+    // `load_index_with_extension` may re-borrow without aliasing the caller's `&mut`.
+    pub fn load_as_index(&mut self, dir_info: *mut DirInfo::DirInfo, extension_order: &[&'static [u8]]) -> Option<MatchResult> {
         // Try the "index" file with extensions
         for ext in extension_order {
             if let Some(result) = self.load_index_with_extension(dir_info, ext) {
@@ -7201,7 +7204,10 @@ impl<'a> Resolver<'a> {
         None
     }
 
-    fn load_index_with_extension(&mut self, dir_info: &mut DirInfo::DirInfo, ext: &[u8]) -> Option<MatchResult> {
+    fn load_index_with_extension(&mut self, dir_info: *mut DirInfo::DirInfo, ext: &[u8]) -> Option<MatchResult> {
+        // SAFETY: ARENA — DirInfo ptr is a BSSMap slot and outlives the resolver;
+        // narrow re-borrow scoped to this fn body, no other live `&mut` to this slot.
+        let dir_info: &DirInfo::DirInfo = unsafe { &*dir_info };
         // SAFETY: PORT (Stacked Borrows) — derive `rfs` from the raw `*mut FileSystem`
         // field so the `&mut *self.fs()` calls below (`abs_buf`/`dirname_store.append_slice`)
         // don't pop its provenance. Re-borrow `&mut *rfs` at the single use site.
@@ -7265,7 +7271,10 @@ impl<'a> Resolver<'a> {
 
     pub fn load_as_index_with_browser_remapping(
         &mut self,
-        dir_info: &mut DirInfo::DirInfo,
+        // PORT NOTE: raw `*mut` (not `&mut`) — `get_enclosing_browser_scope()` may
+        // return `dir_info` itself (resolver.zig:4161 self-browser-scope), which
+        // would alias a live `&mut`. Spec uses raw `*DirInfo`; re-borrow narrowly.
+        dir_info: *mut DirInfo::DirInfo,
         path_: &[u8],
         extension_order: &[&'static [u8]],
     ) -> Option<MatchResult> {

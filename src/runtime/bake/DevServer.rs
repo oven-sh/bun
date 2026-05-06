@@ -5292,7 +5292,9 @@ impl DevServer<'_> {
 
     pub fn publish(&self, topic: HmrTopic, message: &[u8], opcode: Opcode) {
         if let Some(s) = &self.server {
-            let _ = s.publish(&[topic as u8], message, opcode, false);
+            // PORT NOTE: `AnyServer::publish` is typed against `bun_uws_sys::Opcode`;
+            // `bun_uws::Opcode` is a distinct newtype with the same repr — re-wrap.
+            let _ = s.publish(&[topic as u8], message, bun_uws_sys::Opcode(opcode.0), false);
         }
     }
 

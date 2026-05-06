@@ -3682,7 +3682,7 @@ pub mod ret {
             match self {
                 Readdir::WithFileTypes(mut items) => {
                     let array = JSValue::create_empty_array(global_object, items.len())?;
-                    let mut previous_jsstring: Option<*mut bun_jsc::JSString> = None;
+                    let mut previous_jsstring: *mut bun_jsc::JSString = core::ptr::null_mut();
                     for (i, item) in items.iter_mut().enumerate() {
                         let res = item.to_js_newly_created(global_object, Some(&mut previous_jsstring))?;
                         array.put_index(global_object, i as u32, res)?;

@@ -74,6 +74,7 @@ const _: () = {
     }
 };
 
+#[repr(C)]
 pub struct Request {
     pub url: BunString,
 

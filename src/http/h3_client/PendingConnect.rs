@@ -74,8 +74,8 @@ impl PendingConnect {
         }
         // Zig .monotonic == LLVM monotonic == Rust Relaxed
         let _ = super::LIVE_SESSIONS.fetch_sub(1, Ordering::Relaxed);
-        // SAFETY: session is intrusive-refcounted; this drops the connection-alive ref.
-        unsafe { (*session).deref() };
+        // session is intrusive-refcounted; this drops the connection-alive ref.
+        ClientSession::deref(session);
     }
 }
 
@@ -93,11 +93,9 @@ impl PendingConnect {
         let session = unsafe { (*this).session };
         // Zig: defer { session.deref(); bun.destroy(this); }
         let _guard = scopeguard::guard((), move |_| {
-            // SAFETY: `session` had one ref taken in `register`; `this` was Box::into_raw'd there.
-            unsafe {
-                (*session).deref();
-                drop(Box::from_raw(this));
-            }
+            ClientSession::deref(session);
+            // SAFETY: `this` was Box::into_raw'd in `register`.
+            unsafe { drop(Box::from_raw(this)) };
         });
 
         // SAFETY: session is kept alive by the ref we hold for the duration of this fn.

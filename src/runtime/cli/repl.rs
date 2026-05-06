@@ -28,9 +28,14 @@ use bun_sys::{self as sys, Fd};
 // ============================================================================
 
 // TODO(port): move to cli_sys / jsc_sys
+// NOTE: `globalObject` is `*const` here because `JSGlobalObject` is an opaque
+// FFI handle (zero Rust-visible bytes). All mutation happens on the C++ side;
+// Rust only ever holds `&JSGlobalObject`, so deriving a `*mut` from that shared
+// reference would violate provenance. This matches the convention in
+// `src/jsc/lib.rs` / `src/jsc/ipc.rs`.
 unsafe extern "C" {
     fn Bun__REPL__evaluate(
-        globalObject: *mut JSGlobalObject,
+        globalObject: *const JSGlobalObject,
         sourcePtr: *const u8,
         sourceLen: usize,
         filenamePtr: *const u8,
@@ -39,7 +44,7 @@ unsafe extern "C" {
     ) -> JSValue;
 
     fn Bun__REPL__getCompletions(
-        globalObject: *mut JSGlobalObject,
+        globalObject: *const JSGlobalObject,
         targetValue: JSValue,
         prefixPtr: *const u8,
         prefixLen: usize,

@@ -1865,9 +1865,9 @@ pub type TruncatedPackageNameHash = u32;
 pub struct Aligner;
 
 impl Aligner {
-    pub fn write<T, W: std::io::Write>(writer: &mut W, pos: usize) -> std::io::Result<usize> {
-        // TODO(port): narrow error set / use bun_io::Write once available
-        let to_write = Self::skip_amount::<T>(pos);
+    pub fn write<T, W: bun_io::Write>(writer: &mut W, pos: u64) -> bun_io::Result<usize> {
+        // TODO(port): narrow error set
+        let to_write = Self::skip_amount::<T>(pos as usize);
 
         let remainder: &[u8] =
             &ALIGNMENT_BYTES_TO_REPEAT_BUFFER[0..to_write.min(ALIGNMENT_BYTES_TO_REPEAT_BUFFER.len())];

@@ -15,34 +15,37 @@ pub struct FetchHeaders {
 }
 
 // TODO(port): move to jsc_sys
+// NOTE: `JSGlobalObject` / `VM` are opaque ZST handles; extern fns take `*const` to match the
+// codebase convention (see JSValue.rs / JSGlobalObject.rs) and avoid `&T as *const T as *mut T`
+// casts. ABI is identical — C++ sees a plain pointer either way.
 unsafe extern "C" {
-    fn WebCore__FetchHeaders__append(arg0: *mut FetchHeaders, arg1: *const ZigString, arg2: *const ZigString, arg3: *mut JSGlobalObject);
-    fn WebCore__FetchHeaders__cast_(value0: JSValue, arg1: *mut VM) -> *mut FetchHeaders;
-    fn WebCore__FetchHeaders__clone(arg0: *mut FetchHeaders, arg1: *mut JSGlobalObject) -> JSValue;
-    fn WebCore__FetchHeaders__cloneThis(arg0: *mut FetchHeaders, arg1: *mut JSGlobalObject) -> *mut FetchHeaders;
+    fn WebCore__FetchHeaders__append(arg0: *mut FetchHeaders, arg1: *const ZigString, arg2: *const ZigString, arg3: *const JSGlobalObject);
+    fn WebCore__FetchHeaders__cast_(value0: JSValue, arg1: *const VM) -> *mut FetchHeaders;
+    fn WebCore__FetchHeaders__clone(arg0: *mut FetchHeaders, arg1: *const JSGlobalObject) -> JSValue;
+    fn WebCore__FetchHeaders__cloneThis(arg0: *mut FetchHeaders, arg1: *const JSGlobalObject) -> *mut FetchHeaders;
     fn WebCore__FetchHeaders__copyTo(arg0: *mut FetchHeaders, arg1: *mut StringPointer, arg2: *mut StringPointer, arg3: *mut u8);
     fn WebCore__FetchHeaders__count(arg0: *mut FetchHeaders, arg1: *mut u32, arg2: *mut u32);
     fn WebCore__FetchHeaders__createEmpty() -> *mut FetchHeaders;
     fn WebCore__FetchHeaders__createFromPicoHeaders_(arg0: *const c_void) -> *mut FetchHeaders;
     fn WebCore__FetchHeaders__createFromUWS(arg1: *mut c_void) -> *mut FetchHeaders;
-    fn WebCore__FetchHeaders__createValueNotJS(arg0: *mut JSGlobalObject, arg1: *mut StringPointer, arg2: *mut StringPointer, arg3: *const ZigString, arg4: u32) -> *mut FetchHeaders;
-    fn WebCore__FetchHeaders__createValue(arg0: *mut JSGlobalObject, arg1: *mut StringPointer, arg2: *mut StringPointer, arg3: *const ZigString, arg4: u32) -> JSValue;
+    fn WebCore__FetchHeaders__createValueNotJS(arg0: *const JSGlobalObject, arg1: *mut StringPointer, arg2: *mut StringPointer, arg3: *const ZigString, arg4: u32) -> *mut FetchHeaders;
+    fn WebCore__FetchHeaders__createValue(arg0: *const JSGlobalObject, arg1: *mut StringPointer, arg2: *mut StringPointer, arg3: *const ZigString, arg4: u32) -> JSValue;
     fn WebCore__FetchHeaders__deref(arg0: *mut FetchHeaders);
     fn WebCore__FetchHeaders__fastGet_(arg0: *mut FetchHeaders, arg1: u8, arg2: *mut ZigString);
     fn WebCore__FetchHeaders__fastHas_(arg0: *mut FetchHeaders, arg1: u8) -> bool;
     fn WebCore__FetchHeaders__fastRemove_(arg0: *mut FetchHeaders, arg1: u8);
-    fn WebCore__FetchHeaders__get_(arg0: *mut FetchHeaders, arg1: *const ZigString, arg2: *mut ZigString, arg3: *mut JSGlobalObject);
-    fn WebCore__FetchHeaders__has(arg0: *mut FetchHeaders, arg1: *const ZigString, arg2: *mut JSGlobalObject) -> bool;
+    fn WebCore__FetchHeaders__get_(arg0: *mut FetchHeaders, arg1: *const ZigString, arg2: *mut ZigString, arg3: *const JSGlobalObject);
+    fn WebCore__FetchHeaders__has(arg0: *mut FetchHeaders, arg1: *const ZigString, arg2: *const JSGlobalObject) -> bool;
     fn WebCore__FetchHeaders__isEmpty(arg0: *mut FetchHeaders) -> bool;
-    fn WebCore__FetchHeaders__put_(arg0: *mut FetchHeaders, arg1: *const ZigString, arg2: *const ZigString, arg3: *mut JSGlobalObject);
-    fn WebCore__FetchHeaders__remove(arg0: *mut FetchHeaders, arg1: *const ZigString, arg2: *mut JSGlobalObject);
-    fn WebCore__FetchHeaders__toJS(arg0: *mut FetchHeaders, arg1: *mut JSGlobalObject) -> JSValue;
+    fn WebCore__FetchHeaders__put_(arg0: *mut FetchHeaders, arg1: *const ZigString, arg2: *const ZigString, arg3: *const JSGlobalObject);
+    fn WebCore__FetchHeaders__remove(arg0: *mut FetchHeaders, arg1: *const ZigString, arg2: *const JSGlobalObject);
+    fn WebCore__FetchHeaders__toJS(arg0: *mut FetchHeaders, arg1: *const JSGlobalObject) -> JSValue;
     fn WebCore__FetchHeaders__toUWSResponse(arg0: *mut FetchHeaders, kind: ResponseKind, arg2: *mut c_void);
     fn WebCore__FetchHeaders__createFromH3(arg0: *mut c_void) -> *mut FetchHeaders;
 
-    fn WebCore__FetchHeaders__createFromJS(arg0: *mut JSGlobalObject, arg1: JSValue) -> *mut FetchHeaders;
+    fn WebCore__FetchHeaders__createFromJS(arg0: *const JSGlobalObject, arg1: JSValue) -> *mut FetchHeaders;
 
-    fn WebCore__FetchHeaders__put(this: *mut FetchHeaders, name_: HTTPHeaderName, value: *const ZigString, global: *mut JSGlobalObject);
+    fn WebCore__FetchHeaders__put(this: *mut FetchHeaders, name_: HTTPHeaderName, value: *const ZigString, global: *const JSGlobalObject);
 }
 
 #[repr(C)]

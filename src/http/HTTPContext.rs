@@ -167,14 +167,24 @@ impl<const SSL: bool> HTTPContext<SSL> {
         self.ref_count.set(self.ref_count.get() + 1);
     }
 
-    pub fn deref(&self) {
+    pub fn deref(this: *mut Self) {
         // TODO(port): IntrusiveRc::deref — decrements; runs Drop at 0.
-        let n = self.ref_count.get() - 1;
-        self.ref_count.set(n);
+        // Takes a raw `*mut Self` (not `&self`) so the pointer retains the
+        // full write provenance from `Box::into_raw`; routing through `&self`
+        // and casting back to `*mut` would be UB under Stacked Borrows when
+        // `Box::from_raw` reclaims the allocation.
+        // SAFETY: `this` is a live HTTPContext (Box-allocated for custom-SSL
+        // entries, or a static which never reaches 0). `ref_count` is a
+        // `Cell<u32>`, so the field access creates only a SharedReadWrite
+        // borrow over those bytes and does not invalidate `this`.
+        let rc = unsafe { &(*this).ref_count };
+        let n = rc.get() - 1;
+        rc.set(n);
         if n == 0 {
             // SAFETY: refcount hit zero; this struct was Box-allocated for
-            // custom-SSL entries (statics never reach 0).
-            unsafe { drop(Box::from_raw(self as *const Self as *mut Self)) };
+            // custom-SSL entries (statics never reach 0). `this` originated
+            // from `Box::into_raw` so it carries unique ownership provenance.
+            unsafe { drop(Box::from_raw(this)) };
         }
     }
 

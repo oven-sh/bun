@@ -185,8 +185,18 @@ pub mod install_stubs {
     }
 
     // ── bun_install::PackageManager (opaque + lockfile accessor) ───────────
+    // FORWARD_DECL: shape-only projections of `bun_install::lockfile::{Lockfile,
+    // Packages, Buffers}` and `PackageManager`. The auto-install path is the
+    // sole consumer (see `Resolver::load_node_modules` global-cache block) and
+    // is unreachable until `bun_install` writes `r.package_manager`; until that
+    // crate links, every body below routes through `INSTALL_HOOKS` (or is
+    // statically unreachable behind `package_manager.is_some()`).
     #[repr(C)]
-    pub struct Lockfile { _opaque: [u8; 0] }
+    #[derive(Default)]
+    pub struct Lockfile {
+        pub packages: LockfilePackages,
+        pub buffers: LockfileBuffers,
+    }
     impl Lockfile {
         pub fn resolve_package_from_name_and_version(
             &self,
@@ -196,12 +206,126 @@ pub mod install_stubs {
             // SAFETY: single-threaded init; hook installed by bun_install.
             unsafe { (INSTALL_HOOKS.resolve_package_from_name_and_version)(self, name, version) }
         }
+        pub fn append_package(
+            &mut self,
+            pkg: super::resolver::__phase_a_body::__forward_decls::Package,
+        ) -> Result<super::resolver::__phase_a_body::__forward_decls::Package, bun_core::Error> {
+            // FORWARD_DECL: real impl is `bun_install::lockfile::Lockfile::appendPackage`.
+            // Unreachable until `r.package_manager` is set by bun_install.
+            Ok(pkg)
+        }
+        pub fn str(&self, _s: &()) -> &[u8] { b"" }
+    }
+    /// Column-slice projection of `bun_install::lockfile::Packages` (a
+    /// `MultiArrayList<Package>`). Only the columns the resolver reads are
+    /// surfaced; bun_install owns the real backing storage.
+    #[derive(Default)]
+    pub struct LockfilePackages;
+    impl LockfilePackages {
+        pub fn len(&self) -> usize { 0 }
+        pub fn items_dependencies(&self) -> &[DependencySlice] { &[] }
+        pub fn items_resolutions(&self) -> &[ResolutionSlice] { &[] }
+        pub fn items_resolution(&self) -> &[super::resolver::__phase_a_body::__forward_decls::Resolution] { &[] }
+    }
+    /// `bun_install::lockfile::Buffers` projection — flat backing buffers for
+    /// `LockfilePackages` columns.
+    #[derive(Default)]
+    pub struct LockfileBuffers {
+        pub dependencies: BufferList<Dependency>,
+        pub resolutions: BufferList<PackageID>,
+        pub string_bytes: BufferList<u8>,
+    }
+    impl LockfileBuffers {
+        pub fn legacy_package_to_dependency_id(
+            &self,
+            _lockfile: Option<&Lockfile>,
+            _package_id: PackageID,
+        ) -> Result<u32, bun_core::Error> {
+            Ok(0)
+        }
+    }
+    #[derive(Default)]
+    pub struct BufferList<T>(Vec<T>);
+    impl<T> BufferList<T> { pub fn items(&self) -> &[T] { &self.0 } }
+    /// `Package.dependencies` column entry — slice handle into
+    /// `LockfileBuffers.dependencies`.
+    #[derive(Clone, Copy, Default)]
+    pub struct DependencySlice { off: u32, len: u32 }
+    impl DependencySlice {
+        pub fn get<'a>(&self, buf: &'a [Dependency]) -> &'a [Dependency] {
+            &buf[self.off as usize..(self.off + self.len) as usize]
+        }
+    }
+    /// `Package.resolutions` column entry — slice handle into
+    /// `LockfileBuffers.resolutions`.
+    #[derive(Clone, Copy, Default)]
+    pub struct ResolutionSlice { off: u32, len: u32 }
+    impl ResolutionSlice {
+        pub fn get<'a>(&self, buf: &'a [PackageID]) -> &'a [PackageID] {
+            &buf[self.off as usize..(self.off + self.len) as usize]
+        }
     }
     /// Opaque `bun_install::PackageManager`. Held as `Option<NonNull<_>>` on the
     /// resolver; only dereferenced when bun_install has installed itself.
     #[repr(C)]
     pub struct PackageManager {
         pub lockfile: Lockfile,
+        pub on_wake: super::resolver::__phase_a_body::__forward_decls::Install::WakeHandler,
+    }
+    impl PackageManager {
+        /// FORWARD_DECL: `bun_install::PackageManager::initWithRuntime`.
+        pub fn init_with_runtime(
+            _log: &mut bun_logger::Log,
+            _install: Option<&bun_options_types::schema::api::BunInstall>,
+            _: (),
+            _env_loader: NonNull<bun_env_loader::Loader>,
+        ) -> *mut PackageManager {
+            // Unreachable: only entered when auto-install is on, which requires
+            // bun_install to have replaced this hook. See `INSTALL_HOOKS` note.
+            core::ptr::null_mut()
+        }
+        pub fn path_for_resolution<'b>(
+            &self,
+            _package_id: PackageID,
+            _resolution: &super::resolver::__phase_a_body::__forward_decls::Resolution,
+            _buf: &'b mut [u8],
+        ) -> Result<&'b [u8], bun_core::Error> {
+            Err(bun_core::err!("FileNotFound"))
+        }
+        pub fn get_preinstall_state(
+            &self,
+            _package_id: PackageID,
+        ) -> super::resolver::__phase_a_body::__forward_decls::Install::PreinstallState {
+            super::resolver::__phase_a_body::__forward_decls::Install::PreinstallState::Unknown
+        }
+        pub fn enqueue_package_for_download(
+            &mut self,
+            _name: &[u8],
+            _dependency_id: u32,
+            _package_id: PackageID,
+            _version: (),
+            _url: &[u8],
+            _ctx: super::resolver::__phase_a_body::__forward_decls::Install::TaskCallbackContext,
+            _patch_name_and_version_hash: Option<u64>,
+        ) -> Result<(), bun_core::Error> {
+            Ok(())
+        }
+        pub fn resolve_from_disk_cache(
+            &mut self,
+            _name: &[u8],
+            _version: &Version::Version,
+        ) -> Option<PackageID> {
+            None
+        }
+        pub fn enqueue_dependency_to_root(
+            &mut self,
+            _name: &[u8],
+            _version: &Version::Version,
+            _version_buf: &[u8],
+            _behavior: DepBehavior,
+        ) -> super::resolver::__phase_a_body::__forward_decls::Install::EnqueueResult {
+            super::resolver::__phase_a_body::__forward_decls::Install::EnqueueResult::NotFound
+        }
     }
 }
 // TODO(b2-blocked): bun_bundler::options::{Framework, RouteConfig} — local opaque

@@ -327,9 +327,9 @@ describe("system-wide bunfig.toml", () => {
 
     // Auto-discovered: we warn about the broken file but still run.
     expect(stderr).toContain("ignoring auto-discovered system bunfig");
-    expect(exitCode).toBe(0);
     // `bun pm cache` printed *some* cache directory — i.e. the process
     // continued past the broken bunfig.
     expect(stdout.trim().length).toBeGreaterThan(0);
+    expect(exitCode).toBe(0);
   });
 });

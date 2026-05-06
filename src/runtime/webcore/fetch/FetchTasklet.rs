@@ -1247,14 +1247,19 @@ impl FetchTasklet {
 
     pub fn get(
         global_this: &'static JSGlobalObject,
-        fetch_options: &FetchOptions,
+        fetch_options: FetchOptions,
         promise: jsc::JSPromiseStrong,
     ) -> Result<*mut FetchTasklet, BunError> {
         // TODO(port): narrow error set
-        let jsc_vm = global_this.bun_vm();
+        // SAFETY: bun_vm() returns the FFI `*mut VirtualMachine`; the VM outlives
+        // this tasklet (process-lifetime singleton on the JS thread).
+        let jsc_vm: &'static VirtualMachine = unsafe { &*global_this.bun_vm() };
         let mut fetch_tasklet = Box::new(FetchTasklet {
             sink: None,
-            http: Some(Box::new(AsyncHTTP::default())), // TODO(port): Zig used uninitialized create; init() called below
+            // PORT NOTE: Zig used `bun.new(AsyncHTTP, undefined)` then `init()` below.
+            // Rust `AsyncHTTP` has no `Default`/zero-init; defer the Box until
+            // `AsyncHTTP::init` produces the value.
+            http: None,
             result: HTTPClientResult::default(),
             metadata: None,
             javascript_vm: jsc_vm,
@@ -1277,7 +1282,7 @@ impl FetchTasklet {
             signals: Signals::default(),
             signal_store: http::signals::Store::default(),
             has_schedule_callback: AtomicBool::new(false),
-            abort_reason: Strong::EMPTY,
+            abort_reason: StrongOptional::empty(),
             check_server_identity: fetch_options.check_server_identity,
             reject_unauthorized: fetch_options.reject_unauthorized,
             upgraded_connection: fetch_options.upgraded_connection,
@@ -1286,7 +1291,9 @@ impl FetchTasklet {
             is_waiting_abort: false,
             is_waiting_request_stream_start: false,
             mutex: Mutex::new(),
-            tracker: AsyncTaskTracker::init(jsc_vm),
+            // SAFETY: jsc_vm derived from FFI ptr above; AsyncTaskTracker::init only
+            // bumps a counter on the VM.
+            tracker: AsyncTaskTracker::init(unsafe { &mut *global_this.bun_vm() }),
             ref_count: AtomicU32::new(1),
         });
 

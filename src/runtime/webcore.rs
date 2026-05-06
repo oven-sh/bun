@@ -140,6 +140,12 @@ pub mod node_types {
         }
         pub fn estimated_size(&self) -> usize { self.slice().len() }
         pub fn is_string(&self) -> bool { matches!(self, Self::String(_)) }
+        /// Zig `PathLike.toThreadSafe` — clone any JS-backed slice so the
+        /// path may outlive the JS callframe. This stub variant already owns
+        /// its bytes (`PathString`/`Vec<u8>`), so this is a no-op.
+        // TODO(b2-blocked): forward to `crate::node::types::PathLike::to_thread_safe`
+        // once `crate::node::types` un-gates and this alias collapses.
+        pub fn to_thread_safe(&mut self) {}
         /// Null-terminate into `buf`. Mirrors `node::PathLike::sliceZ`.
         /// Returned `&ZStr` borrows only from `buf`, not `self`.
         pub fn slice_z<'a>(&self, buf: &'a mut PathBuffer) -> &'a ZStr {

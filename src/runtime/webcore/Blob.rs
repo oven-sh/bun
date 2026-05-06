@@ -2077,12 +2077,13 @@ fn validate_writable_blob(global_this: &JSGlobalObject, blob: &Blob) -> JsResult
 // TODO(b2-blocked): #[bun_jsc::host_fn]
 pub fn write_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let arguments = callframe.arguments();
-    let mut args = jsc::ArgumentsSlice::init(global_this.bun_vm(), arguments);
+    // SAFETY: `bun_vm()` returns a live VM pointer for the calling JS context.
+    let mut args = jsc::ArgumentsSlice::init(unsafe { &*global_this.bun_vm() }, arguments);
 
     // accept a path or a blob
     let mut path_or_blob = PathOrBlob::from_js_no_copy(global_this, &mut args)?;
-    let _path_cleanup = scopeguard::guard(&mut path_or_blob, |p| {
-        if let PathOrBlob::Path(path) = p { path.deinit(); }
+    let _path_cleanup = scopeguard::guard((), |_| {
+        if let PathOrBlob::Path(ref path) = path_or_blob { path.deinit(); }
     });
     // "Blob" must actually be a BunFile, not a webcore blob.
     if let PathOrBlob::Blob(ref blob) = path_or_blob {
@@ -2090,9 +2091,9 @@ pub fn write_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResu
     }
 
     let Some(data) = args.next_eat() else {
-        return global_this.throw_invalid_arguments(
+        return Err(global_this.throw_invalid_arguments(
             "Bun.write(pathOrFdOrBlob, blob) expects a Blob-y thing to write",
-        );
+        ));
     };
     let mut mkdirp_if_not_exists: Option<bool> = None;
     let mut mode: Option<bun_sys::Mode> = None;
@@ -2101,26 +2102,26 @@ pub fn write_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResu
         if options_object.is_object() {
             if let Some(create_directory) = options_object.get_truthy(global_this, "createPath")? {
                 if !create_directory.is_boolean() {
-                    return global_this.throw_invalid_argument_type("write", "options.createPath", "boolean");
+                    return Err(global_this.throw_invalid_argument_type("write", "options.createPath", "boolean"));
                 }
                 mkdirp_if_not_exists = Some(create_directory.to_boolean());
             }
             if let Some(mode_value) = options_object.get(global_this, "mode")? {
                 if !mode_value.is_empty_or_undefined_or_null() {
                     if !mode_value.is_number() {
-                        return global_this.throw_invalid_argument_type("write", "options.mode", "number");
+                        return Err(global_this.throw_invalid_argument_type("write", "options.mode", "number"));
                     }
                     let mode_int = mode_value.to_int64();
                     if mode_int < 0 || mode_int > 0o777 {
-                        return global_this.throw_range_error(mode_int, jsc::RangeErrorOptions {
-                            field_name: "mode", min: 0, max: 0o777,
-                        });
+                        return Err(global_this.throw_range_error(mode_int, jsc::RangeErrorOptions {
+                            field_name: b"mode", min: 0, max: 0o777, msg: b"",
+                        }));
                     }
                     mode = Some(mode_int as bun_sys::Mode);
                 }
             }
         } else if !options_object.is_empty_or_undefined_or_null() {
-            return global_this.throw_invalid_argument_type("write", "options", "object");
+            return Err(global_this.throw_invalid_argument_type("write", "options", "object"));
         }
     }
     write_file_internal(
@@ -2152,16 +2153,13 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
         ) {
             bun_sys::Result::Ok(result) => result,
             bun_sys::Result::Err(err) => {
-                if err.get_errno() == bun_sys::E::NOENT {
+                if err.get_errno() == bun_sys::E::ENOENT {
                     *needs_async = true;
                     return JSValue::ZERO;
                 }
                 return JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                     global_this,
-                    match err.with_path(pathlike.path().slice()).to_js(global_this) {
-                        Ok(v) => v,
-                        Err(_) => return JSValue::ZERO,
-                    },
+                    err.with_path(pathlike.path().slice()).to_js(global_this),
                 );
             }
         }
@@ -2174,10 +2172,10 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
         // we only truncate if it's a path
         // if it's a file descriptor, we assume they want manual control over that behavior
         if truncate {
-            let _ = fd.truncate(i64::try_from(written).unwrap());
+            let _ = bun_sys::ftruncate(fd, i64::try_from(written).unwrap());
         }
         if NEEDS_OPEN {
-            fd.close();
+            let _ = bun_sys::close(fd);
         }
     });
 
@@ -2193,7 +2191,7 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
                 }
                 bun_sys::Result::Err(err) => {
                     truncate = false;
-                    if err.get_errno() == bun_sys::E::AGAIN {
+                    if err.get_errno() == bun_sys::E::EAGAIN {
                         *needs_async = true;
                         return JSValue::ZERO;
                     }
@@ -2204,14 +2202,14 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
                     };
                     return JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                         global_this,
-                        match err_js { Ok(v) => v, Err(_) => return JSValue::ZERO },
+                        err_js,
                     );
                 }
             }
         }
     }
 
-    JSPromise::resolved_promise_value(global_this, JSValue::js_number(written))
+    JSPromise::resolved_promise_value(global_this, JSValue::js_number(written as f64))
 }
 
 fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
@@ -5552,7 +5550,10 @@ impl Internal {
         let bytes_without_bom = strings::without_utf8_bom(&self.bytes);
         if let Some(out) = strings::to_utf16_alloc(bytes_without_bom, false, false).unwrap_or(Some(Vec::new())) {
             // TODO(port): Zig used `catch &[_]u16{}` to swallow alloc errors into empty.
-            let return_value = jsc::zig_string::to_external_u16(out.as_ptr(), out.len(), global_this);
+            let out_len = out.len();
+            // Ownership transfers to JSC's external-string finalizer.
+            let out_ptr = Box::into_raw(out.into_boxed_slice()) as *const u16;
+            let return_value = jsc::zig_string::to_external_u16(out_ptr, out_len, global_this);
             return_value.ensure_still_alive();
             self.bytes = Vec::new();
             return Ok(return_value);

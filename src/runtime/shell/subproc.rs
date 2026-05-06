@@ -633,7 +633,8 @@ impl ShellSubprocess {
         }
 
         if let Readable::Pipe(pipe) = &mut subproc.stdout {
-            if let Err(err) = pipe.start(subprocess, event_loop) {
+            // SAFETY: see `arc_mut` doc; uniquely held during start.
+            if let Err(err) = unsafe { arc_mut(pipe) }.start(subprocess, event_loop) {
                 let sys_err = err.to_shell_system_error();
                 // PORT NOTE: reshaped for borrowck
                 // SAFETY: subprocess was allocated above and is uniquely owned here.
@@ -643,13 +644,15 @@ impl ShellSubprocess {
             }
             if !spawn_args.lazy {
                 if let Readable::Pipe(pipe) = &mut subproc.stdout {
-                    pipe.read_all();
+                    // SAFETY: see `arc_mut` doc.
+                    unsafe { arc_mut(pipe) }.read_all();
                 }
             }
         }
 
         if let Readable::Pipe(pipe) = &mut subproc.stderr {
-            if let Err(err) = pipe.start(subprocess, event_loop) {
+            // SAFETY: see `arc_mut` doc; uniquely held during start.
+            if let Err(err) = unsafe { arc_mut(pipe) }.start(subprocess, event_loop) {
                 let sys_err = err.to_shell_system_error();
                 // PORT NOTE: reshaped for borrowck
                 // SAFETY: subprocess was allocated above and is uniquely owned here.
@@ -660,7 +663,8 @@ impl ShellSubprocess {
 
             if !spawn_args.lazy {
                 if let Readable::Pipe(pipe) = &mut subproc.stderr {
-                    pipe.read_all();
+                    // SAFETY: see `arc_mut` doc.
+                    unsafe { arc_mut(pipe) }.read_all();
                 }
             }
         }
@@ -1155,7 +1159,8 @@ impl Readable {
                 *self = Readable::Closed;
             }
             Readable::Pipe(pipe) => {
-                pipe.close();
+                // SAFETY: see `arc_mut` doc.
+                unsafe { arc_mut(pipe) }.close();
             }
             _ => {}
         }

@@ -2466,7 +2466,7 @@ impl<'a> Formatter<'a> {
                                             }
                                             Tag::Array => {
                                                 let length =
-                                                    children.get_length(self.global_this)?;
+                                                    children.get_length(self.global_this)? as usize;
                                                 if length == 0 {
                                                     break 'print_children;
                                                 }
@@ -2673,13 +2673,9 @@ impl<'a> Formatter<'a> {
 
                             return Ok(());
                         }
-                        writer.write_all(
-                            <&'static str>::from(array_buffer.typed_array_type).as_bytes(),
-                        );
+                        writer.write_all(typed_array_type_name(array_buffer.typed_array_type));
                     } else {
-                        writer.write_all(
-                            <&'static str>::from(array_buffer.typed_array_type).as_bytes(),
-                        );
+                        writer.write_all(typed_array_type_name(array_buffer.typed_array_type));
                     }
 
                     writer.write_all(b" [");

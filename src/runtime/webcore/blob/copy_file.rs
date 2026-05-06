@@ -213,10 +213,10 @@ impl<'a> CopyFile<'a> {
             loop {
                 let dest = self.destination_file_store.pathlike.path().slice_z(&mut path_buf1);
                 let mode = self.destination_mode.unwrap_or(node_fs::DEFAULT_PERMISSION);
-                self.destination_fd = match bun_sys::open(dest, OPEN_DESTINATION_FLAGS, mode) {
+                match bun_sys::open(dest, OPEN_DESTINATION_FLAGS, mode) {
                     bun_sys::Result::Ok(result) => {
                         match result.make_lib_uv_owned_for_syscall(bun_sys::Tag::open, bun_sys::ErrorCase::CloseOnFail) {
-                            bun_sys::Result::Ok(result_fd) => result_fd,
+                            bun_sys::Result::Ok(result_fd) => self.destination_fd = result_fd,
                             bun_sys::Result::Err(errno) => {
                                 self.system_error = Some(errno.to_system_error());
                                 return Err(bun_core::errno_to_zig_err(errno.errno as i32));
@@ -248,7 +248,7 @@ impl<'a> CopyFile<'a> {
                         );
                         return Err(bun_core::errno_to_zig_err(errno.errno as i32));
                     }
-                };
+                }
                 break;
             }
         }

@@ -1026,9 +1026,23 @@ impl IncrementalGraph<Client> {
 
             // Free a failure if it exists
             if existing.failed {
-                let _ = (file_index,);
-                // TODO(port): blocked_on: bun_collections::ArrayHashMap::fetch_swap_remove_adapted
-                todo!("blocked_on: bun_collections::ArrayHashMap::fetch_swap_remove_adapted");
+                // PORT NOTE: keystone `bundling_failures` is keyed by `OwnerPacked`
+                // (Zig keys by `SerializedFailure` with a custom adapter), so a
+                // direct `fetch_swap_remove` replaces `fetchSwapRemoveAdapted`.
+                let dev = self.owner();
+                let owner = serialized_failure::OwnerPacked::new(
+                    Side::Client,
+                    ig::FileIndex::init(file_index.get()),
+                );
+                let (_, fail) = dev
+                    .bundling_failures
+                    .fetch_swap_remove(&owner)
+                    .unwrap_or_else(|| {
+                        Output::panic(format_args!(
+                            "Missing SerializedFailure in IncrementalGraph"
+                        ))
+                    });
+                dev.incremental_result.failures_removed.push(fail);
             }
 
             // Persist some data

@@ -1103,7 +1103,7 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
         .make_open_path(&manager.node_gyp_tempdir_name, Default::default())
     {
         Ok(d) => d,
-        Err(e) if e.get_errno() == bun_sys::E::EEXIST => {
+        Err(e) if e == bun_core::err!(EEXIST) => {
             // it should not exist
             Output::pretty_errorln("<r><red>error<r>: node-gyp tempdir already exists");
             Global::crash();
@@ -1111,7 +1111,7 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
         Err(e) => {
             Output::pretty_errorln(format_args!(
                 "<r><red>error<r>: <b><red>{}<r> creating node-gyp tempdir",
-                bstr::BStr::new(e.name()),
+                e.name(),
             ));
             Global::crash();
         }

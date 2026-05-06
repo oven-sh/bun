@@ -544,18 +544,49 @@ impl ServerConfig {
     }
 }
 
-// ─── from_js + JS-side parsing (gated) ───────────────────────────────────────
-// All of validate_route_name / get_routes_object / FromJSOptions / from_js
-// touch bun_jsc method surface (JSValue::get, JSGlobalObject::throw_*,
-// JSPropertyIterator, ArgumentsSlice). Preserved verbatim; un-gate once
-// `bun_jsc` is a dep of bun_runtime.
-// TODO(b2-blocked): bun_jsc method surface.
+// ─── from_js + JS-side parsing ──────────────────────────────────────────────
 
-pub mod _gated_from_js {
-use super::*;
 use crate::server::jsc::{JSPropertyIterator, JsError};
 use crate::node::crypto::JSValueCryptoExt as _; // with_async_context_if_needed
 use bun_core::fmt as bun_fmt;
+
+/// Bridge `crate::bake::FileSystemRouterType` (Cow-backed, mod.rs) →
+/// `bake_body::FileSystemRouterType` (`&'static [u8]` slices). All strings are
+/// duped into `arena` so the resulting `&'static` borrows are backed by
+/// `UserOptions.arena` (same lifetime erasure convention as the rest of
+/// `bake_body` — see its file-level TODO(port)).
+fn convert_file_system_router_type(
+    arena: &bun_alloc::Arena,
+    t: crate::bake::FileSystemRouterType,
+) -> crate::bake::bake_body::FileSystemRouterType {
+    use crate::bake::bake_body as bb;
+    fn dupe(arena: &bun_alloc::Arena, s: &[u8]) -> &'static [u8] {
+        bb::arena_dupe_z(arena, s).as_bytes()
+    }
+    fn dupe_slice(
+        arena: &bun_alloc::Arena,
+        v: Vec<std::borrow::Cow<'static, [u8]>>,
+    ) -> &'static [&'static [u8]] {
+        let items: Vec<&'static [u8]> =
+            v.into_iter().map(|s| dupe(arena, &s)).collect();
+        // SAFETY: arena-backed; lifetime erased per bake_body's `'static`
+        // convention (the arena lives in `UserOptions` which outlives all
+        // borrowers — Phase B threads `'bump`).
+        let slice = arena.alloc_slice_copy(&items);
+        unsafe { core::slice::from_raw_parts(slice.as_ptr(), slice.len()) }
+    }
+    bb::FileSystemRouterType {
+        root: dupe(arena, &t.root),
+        prefix: dupe(arena, &t.prefix),
+        entry_server: dupe(arena, &t.entry_server),
+        entry_client: t.entry_client.map(|s| dupe(arena, &s)),
+        ignore_underscores: t.ignore_underscores,
+        ignore_dirs: dupe_slice(arena, t.ignore_dirs),
+        extensions: dupe_slice(arena, t.extensions),
+        style: t.style,
+        allow_layouts: t.allow_layouts,
+    }
+}
 
 // Local extension shim for `JSValue::get_boolean_strict` (upstream copy in
 // `crate::node::fs` is `pub(super)` and not reachable here).

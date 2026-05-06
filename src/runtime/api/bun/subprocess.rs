@@ -307,6 +307,22 @@ const _: () = {
         fn __create(global: *mut JSGlobalObject, ptr: *mut c_void) -> JSValue;
     }
 
+    /// Wrap an already-heap-allocated `Subprocess` (via `Box::into_raw`) in its
+    /// JS cell. `Bun.spawn` boxes early so address-dependent back-pointers
+    /// (`stdin.pipe.signal`, MaxBuf owner, IPC owner) can be wired before
+    /// `subprocess.toJS(globalThis)` runs; this is the raw-ptr entrypoint that
+    /// avoids re-boxing.
+    ///
+    /// # Safety
+    /// `ptr` must come from `Box::into_raw(Box::new(Subprocess { .. }))` and not
+    /// yet be owned by any JS wrapper; ownership transfers to the C++ side
+    /// (released via `SubprocessClass__finalize`).
+    #[inline]
+    pub unsafe fn to_js_from_ptr(ptr: *mut Subprocess<'_>, global: &JSGlobalObject) -> JSValue {
+        // SAFETY: caller contract.
+        unsafe { __create(global.as_mut_ptr(), ptr.cast()) }
+    }
+
     impl<'a> bun_jsc::JsClass for Subprocess<'a> {
         fn to_js(self, global: &JSGlobalObject) -> JSValue {
             let ptr = Box::into_raw(Box::new(self));

@@ -1784,10 +1784,9 @@ pub fn migrate_yarn_lockfile<'a>(
         let resolutions_off = u32::try_from(this.buffers.resolutions.len()).unwrap();
 
         if let Some(deps) = &entry.dependencies {
-            let mut dep_iter = deps.iterator();
-            while let Some(dep_entry) = dep_iter.next() {
-                let dep_name = *dep_entry.key_ptr;
-                let dep_version_literal = *dep_entry.value_ptr;
+            for (dep_name_key, dep_version_ref) in deps.iter() {
+                let dep_name: &[u8] = dep_name_key.as_ref();
+                let dep_version_literal: &[u8] = *dep_version_ref;
 
                 let name_hash = string_hash(dep_name);
                 let dep_name_string = string_buf.append_with_hash(dep_name, name_hash)?;
@@ -1799,11 +1798,11 @@ pub fn migrate_yarn_lockfile<'a>(
 
                 let mut parsed_version = Dependency::parse(
                     dep_name_string,
-                    name_hash,
+                    Some(name_hash),
                     dep_version_string.slice(this.buffers.string_bytes.as_slice()),
                     &sliced_string,
-                    log,
-                    manager,
+                    Some(log),
+                    Some(manager),
                 )
                 .unwrap_or_default();
 
@@ -1813,7 +1812,7 @@ pub fn migrate_yarn_lockfile<'a>(
                     name: dep_name_string,
                     name_hash,
                     version: parsed_version,
-                    behavior: dependency::Behavior { prod: true, ..Default::default() },
+                    behavior: dependency::Behavior::PROD,
                 });
 
                 let mut dep_spec = Vec::new();
@@ -1836,10 +1835,9 @@ pub fn migrate_yarn_lockfile<'a>(
         }
 
         if let Some(optional_deps) = &entry.optional_dependencies {
-            let mut opt_dep_iter = optional_deps.iterator();
-            while let Some(dep_entry) = opt_dep_iter.next() {
-                let dep_name = *dep_entry.key_ptr;
-                let dep_version_literal = *dep_entry.value_ptr;
+            for (dep_name_key, dep_version_ref) in optional_deps.iter() {
+                let dep_name: &[u8] = dep_name_key.as_ref();
+                let dep_version_literal: &[u8] = *dep_version_ref;
 
                 let name_hash = string_hash(dep_name);
                 let dep_name_string = string_buf.append_with_hash(dep_name, name_hash)?;
@@ -1852,11 +1850,11 @@ pub fn migrate_yarn_lockfile<'a>(
 
                 let mut parsed_version = Dependency::parse(
                     dep_name_string,
-                    name_hash,
+                    Some(name_hash),
                     dep_version_string.slice(this.buffers.string_bytes.as_slice()),
                     &sliced_string,
-                    log,
-                    manager,
+                    Some(log),
+                    Some(manager),
                 )
                 .unwrap_or_default();
 
@@ -1866,7 +1864,7 @@ pub fn migrate_yarn_lockfile<'a>(
                     name: dep_name_string,
                     name_hash,
                     version: parsed_version,
-                    behavior: dependency::Behavior { optional: true, ..Default::default() },
+                    behavior: dependency::Behavior::OPTIONAL,
                 });
 
                 let mut dep_spec = Vec::new();
@@ -1889,10 +1887,9 @@ pub fn migrate_yarn_lockfile<'a>(
         }
 
         if let Some(peer_deps) = &entry.peer_dependencies {
-            let mut peer_dep_iter = peer_deps.iterator();
-            while let Some(dep_entry) = peer_dep_iter.next() {
-                let dep_name = *dep_entry.key_ptr;
-                let dep_version_literal = *dep_entry.value_ptr;
+            for (dep_name_key, dep_version_ref) in peer_deps.iter() {
+                let dep_name: &[u8] = dep_name_key.as_ref();
+                let dep_version_literal: &[u8] = *dep_version_ref;
 
                 let name_hash = string_hash(dep_name);
                 let dep_name_string = string_buf.append_with_hash(dep_name, name_hash)?;
@@ -1905,11 +1902,11 @@ pub fn migrate_yarn_lockfile<'a>(
 
                 let mut parsed_version = Dependency::parse(
                     dep_name_string,
-                    name_hash,
+                    Some(name_hash),
                     dep_version_string.slice(this.buffers.string_bytes.as_slice()),
                     &sliced_string,
-                    log,
-                    manager,
+                    Some(log),
+                    Some(manager),
                 )
                 .unwrap_or_default();
 
@@ -1919,7 +1916,7 @@ pub fn migrate_yarn_lockfile<'a>(
                     name: dep_name_string,
                     name_hash,
                     version: parsed_version,
-                    behavior: dependency::Behavior { peer: true, ..Default::default() },
+                    behavior: dependency::Behavior::PEER,
                 });
 
                 let mut dep_spec = Vec::new();
@@ -1942,10 +1939,9 @@ pub fn migrate_yarn_lockfile<'a>(
         }
 
         if let Some(dev_deps) = &entry.dev_dependencies {
-            let mut dev_dep_iter = dev_deps.iterator();
-            while let Some(dep_entry) = dev_dep_iter.next() {
-                let dep_name = *dep_entry.key_ptr;
-                let dep_version_literal = *dep_entry.value_ptr;
+            for (dep_name_key, dep_version_ref) in dev_deps.iter() {
+                let dep_name: &[u8] = dep_name_key.as_ref();
+                let dep_version_literal: &[u8] = *dep_version_ref;
 
                 let name_hash = string_hash(dep_name);
                 let dep_name_string = string_buf.append_with_hash(dep_name, name_hash)?;
@@ -1958,11 +1954,11 @@ pub fn migrate_yarn_lockfile<'a>(
 
                 let mut parsed_version = Dependency::parse(
                     dep_name_string,
-                    name_hash,
+                    Some(name_hash),
                     dep_version_string.slice(this.buffers.string_bytes.as_slice()),
                     &sliced_string,
-                    log,
-                    manager,
+                    Some(log),
+                    Some(manager),
                 )
                 .unwrap_or_default();
 
@@ -1972,7 +1968,7 @@ pub fn migrate_yarn_lockfile<'a>(
                     name: dep_name_string,
                     name_hash,
                     version: parsed_version,
-                    behavior: dependency::Behavior { dev: true, ..Default::default() },
+                    behavior: dependency::Behavior::DEV,
                 });
 
                 let mut dep_spec = Vec::new();
@@ -1994,20 +1990,20 @@ pub fn migrate_yarn_lockfile<'a>(
             }
         }
 
-        packages_slice.items_dependencies_mut()[package_id as usize] = lockfile::DependencySlice {
-            off: deps_off,
-            len: dep_count,
-        };
+        this.packages.items_dependencies_mut()[package_id as usize] =
+            lockfile::DependencySlice::new(deps_off, dep_count);
 
-        packages_slice.items_resolutions_mut()[package_id as usize] = lockfile::DependencyIDSlice {
-            off: resolutions_off,
-            len: dep_count,
-        };
+        this.packages.items_resolutions_mut()[package_id as usize] =
+            lockfile::DependencyIDSlice::new(resolutions_off, dep_count);
     }
 
-    this.resolve(log)?;
+    // `Lockfile::resolve` returns `Result<(), tree::SubtreeError>`; surface as
+    // a tagged `bun_core::Error` until `From<SubtreeError>` lands.
+    if let Err(_e) = this.resolve(log) {
+        return Err(bun_core::err!("LockfileResolveFailed"));
+    }
 
-    this.fetch_necessary_package_metadata_after_yarn_or_pnpm_migration(manager, true)?;
+    this.fetch_necessary_package_metadata_after_yarn_or_pnpm_migration::<true>(manager)?;
 
     if cfg!(debug_assertions) {
         // TODO(port): Environment.allow_assert maps to debug_assertions

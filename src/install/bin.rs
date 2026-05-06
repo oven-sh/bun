@@ -28,7 +28,7 @@ bun_output::declare_scope!(BinLinker, hidden);
 #[derive(Clone, Copy)]
 pub struct Bin {
     pub tag: Tag,
-    _padding_tag: [u8; 3],
+    pub _padding_tag: [u8; 3],
 
     // Largest member must be zero initialized
     pub value: Value,

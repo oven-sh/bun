@@ -1117,10 +1117,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 let name = clone.name.slice();
                 let url = clone.url.slice();
 
-                manager
-                    .git_repositories
-                    .put(task.id, repo_fd)
-                    .expect("unreachable");
+                manager.git_repositories.insert(task.id, repo_fd);
 
                 if task.status == Task::Status::Fail {
                     let err = task.err.unwrap_or(bun_core::err!("Failed"));
@@ -1134,8 +1131,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         // checkout for this repo or the install loop blocks
                         // forever on the entry's pending-task slot.
                         let mut drained_any = false;
-                        if let Some(removed) = manager.task_queue.remove(&task.id) {
-                            let waiters = removed.value;
+                        if let Some(waiters) = manager.task_queue.remove(&task.id) {
                             // Zig: defer waiters.deinit() — Drop at end of `if` scope.
                             let pkg_resolutions = manager.lockfile.packages.items_resolution();
                             for waiter in waiters.iter() {
@@ -1153,8 +1149,8 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                     continue;
                                 }
                                 let checkout_id = Task::Id::for_git_checkout(
-                                    manager.lockfile.str(&res.value.git().repo),
-                                    manager.lockfile.str(&res.value.git().resolved),
+                                    manager.lockfile.str(&res.value.git.repo),
+                                    manager.lockfile.str(&res.value.git.resolved),
                                 );
                                 drained_any = true;
                                 C::on_package_download_error(
@@ -1174,7 +1170,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             // released.
                             let checkout_id = Task::Id::for_git_checkout(
                                 url,
-                                manager.lockfile.str(&clone.res.value.git().resolved),
+                                manager.lockfile.str(&clone.res.value.git.resolved),
                             );
                             C::on_package_download_error(
                                 extract_ctx,
@@ -1207,13 +1203,14 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     let dep = &manager.lockfile.buffers.dependencies[dep_id as usize];
                     let dep_name = dep.name.slice(&manager.lockfile.buffers.string_bytes);
 
-                    let git = &clone.res.value.git();
+                    let git = &clone.res.value.git;
                     let committish = git.committish.slice(&manager.lockfile.buffers.string_bytes);
                     let repo = git.repo.slice(&manager.lockfile.buffers.string_bytes);
 
-                    let resolved = Repository::find_commit(
-                        &manager.env,
-                        &mut manager.log,
+                    let resolved = crate::repository_real::Repository::find_commit(
+                        &mut manager.env,
+                        // SAFETY: `manager.log` is a non-null backref to the CLI log.
+                        unsafe { &mut *manager.log },
                         task.data.git_clone.std_dir(),
                         dep_name,
                         committish,
@@ -1227,7 +1224,8 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     }
 
                     manager.task_batch.push(ThreadPoolBatch::from(
-                        manager.enqueue_git_checkout(
+                        enqueue::enqueue_git_checkout(
+                            manager,
                             checkout_id,
                             repo_fd,
                             dep_id,
@@ -1240,9 +1238,10 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 } else {
                     // Resolving!
                     let dependency_list_entry = manager.task_queue.get_mut(&task.id).unwrap();
-                    let dependency_list = core::mem::take(dependency_list_entry.value_ptr);
+                    let dependency_list = core::mem::take(dependency_list_entry);
 
-                    manager.process_dependency_list::<C>(
+                    process_dependency_list_for_ctx::<C>(
+                        manager,
                         dependency_list,
                         extract_ctx,
                         install_peer,
@@ -1276,7 +1275,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             alias.slice(),
                             resolution,
                             err,
-                            manager.lockfile.str(&resolution.value.git().repo),
+                            manager.lockfile.str(&resolution.value.git.repo),
                         );
                     } else {
                         let _ = unsafe { &mut *manager.log }.add_error_fmt(

@@ -840,6 +840,16 @@ pub mod lockfile {
         /// Port of `Lockfile.isEmpty` (src/install/lockfile.zig).
         #[inline]
         pub fn is_empty(&self) -> bool { self.packages.is_empty() }
+        /// Port of `Lockfile.saveToDisk` (src/install/lockfile.zig). Real body
+        /// lives in `lockfile_real::Lockfile::save_to_disk`; the stub `Lockfile`
+        /// has no buffer/serializer surface yet.
+        pub fn save_to_disk(
+            &mut self,
+            _load_result: &LoadResult<'_>,
+            _options: &crate::package_manager_real::Options,
+        ) {
+            todo!("blocked_on: lockfile_real un-gate (reconciler-6) — stub Lockfile::save_to_disk")
+        }
         /// Port of `Lockfile.eql` (src/install/lockfile.zig). Compares the
         /// post-clean lockfile against `before` for `--frozen-lockfile`.
         pub fn eql(&self, _before: &Self, _packages_len: usize) -> Result<bool, bun_core::Error> {
@@ -867,7 +877,7 @@ pub mod lockfile {
         pub fn filter(
             &mut self,
             _log: *mut bun_logger::Log,
-            _manager: &mut crate::PackageManager,
+            _manager: *mut crate::PackageManager,
             _install_root_dependencies: bool,
             _workspace_filters: &[crate::package_manager::WorkspaceFilter],
             _packages_to_install: Option<&[PackageID]>,
@@ -878,6 +888,11 @@ pub mod lockfile {
         #[inline]
         pub fn str<'a, T: bun_semver::Slicable>(&'a self, slicable: &'a T) -> &'a [u8] {
             slicable.slice(&self.buffers.string_bytes)
+        }
+
+        /// Port of `Lockfile.isWorkspaceRootDependency` (src/install/lockfile.zig).
+        pub fn is_workspace_root_dependency(&self, id: DependencyID) -> bool {
+            self.packages.items_dependencies()[0].contains(id)
         }
 
         /// Port of `Lockfile.initEmpty` (src/install/lockfile.zig). Resets to a
@@ -1897,7 +1912,26 @@ unsafe impl bun_threading::unbounded_queue::Node for NetworkTask {
     pub loaded_manifest: Option<npm::PackageManifest>,
     pub is_extended_manifest: bool,
 }
-#[derive(Default)] pub struct TarballStream;
+/// Stub for `TarballStream` (src/install/TarballStream.rs). Only the surface
+/// `NetworkTask::notify` / `reset_streaming_for_retry` touch is exposed; the
+/// real producer/consumer machinery lives in the `tarball_stream` module and
+/// operates over raw `*mut Self`, so the method bodies here are placeholders
+/// until `crate::TarballStream` is retargeted at the real type.
+#[derive(Default)] pub struct TarballStream {
+    /// HTTP status code latched on the first metadata-carrying chunk.
+    pub status_code: u32,
+}
+impl TarballStream {
+    /// See `tarball_stream::min_size()`.
+    #[inline]
+    pub fn min_size() -> usize { tarball_stream::min_size() }
+    /// Stub: real impl is `tarball_stream::TarballStream::on_chunk(*mut Self, ..)`.
+    pub fn on_chunk(&mut self, _chunk: &[u8], _is_last: bool, _err: Option<bun_core::Error>) {
+        todo!("blocked_on: bun_install reconciler -- retarget crate::TarballStream at tarball_stream::TarballStream so on_chunk routes to the real raw-ptr impl")
+    }
+    /// Stub: real impl in `tarball_stream::TarballStream::reset_for_retry`.
+    pub fn reset_for_retry(&mut self) {}
+}
 /// Port of `RootPackageId` (src/install/PackageManager.zig:38) — lazy cache
 /// for the root/workspace package id. `get()` resolves on first call via
 /// `Lockfile::get_workspace_package_id` and memoises.
@@ -2135,6 +2169,10 @@ impl PackageManager {
     pub lockfile_only: bool,
     /// Zig: `Options.filter_patterns: []const []const u8 = &.{}`.
     pub filter_patterns: Vec<Box<[u8]>>,
+    /// Zig: `Options.local_package_features: Features = .{ ... }`.
+    pub local_package_features: Features,
+    /// Zig: `Options.remote_package_features: Features = .{ ... }`.
+    pub remote_package_features: Features,
     /// Zig: `Options.hoist_pattern: ?PnpmMatcher = null` — isolated installer
     /// hidden-hoist matcher (`.npmrc` `hoist-pattern`).
     pub hoist_pattern: Option<crate::pnpm_matcher::PnpmMatcher>,

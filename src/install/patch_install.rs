@@ -607,7 +607,7 @@ impl<'a> PatchTask<'a> {
                                 self.manager
                                     .lockfile
                                     .patched_dependencies
-                                    .get(calc_hash.name_and_version_hash)
+                                    .get(&calc_hash.name_and_version_hash)
                                     .unwrap()
                                     .path
                                     .slice(&self.manager.lockfile.buffers.string_bytes)
@@ -711,7 +711,7 @@ impl<'a> PatchTask<'a> {
         let patchdep = manager
             .lockfile
             .patched_dependencies
-            .get(name_and_version_hash)
+            .get(&name_and_version_hash)
             .unwrap_or_else(|| panic!("This is a bug"));
         let patchfile_path: Box<[u8]> = Box::from(
             patchdep
@@ -721,8 +721,9 @@ impl<'a> PatchTask<'a> {
         // TODO(port): Zig used `dupeZ` (NUL-terminated). The field is typed `[]const u8` and only
         // used as a byte slice, so `Box<[u8]>` without trailing NUL should be equivalent. Verify.
 
+        let tempdir = manager.get_temporary_directory().handle;
         let pt = Box::new(PatchTask {
-            tempdir: manager.get_temporary_directory().handle,
+            tempdir,
             callback: Callback::CalcHash(CalcPatchHash {
                 state,
                 patchfile_path,
@@ -772,7 +773,7 @@ impl<'a> PatchTask<'a> {
             pkg_manager
                 .lockfile
                 .patched_dependencies
-                .get(name_and_version_hash)
+                .get(&name_and_version_hash)
                 .unwrap()
                 .path
                 .slice(&pkg_manager.lockfile.buffers.string_bytes),
@@ -782,23 +783,26 @@ impl<'a> PatchTask<'a> {
         let patch_hash_idx = strings::index_of(cache_dir_subpath_bytes, b"_patch_hash=")
             .unwrap_or_else(|| panic!("This is a bug in Bun."));
 
+        // need to dupe this as it's calculated using
+        // `PackageManager.cached_package_folder_name_buf` which may be modified
+        let cache_dir_subpath = dupe_z(cache_dir_subpath_bytes);
+        let cache_dir_subpath_without_patch_hash =
+            dupe_z(&cache_dir_subpath_bytes[..patch_hash_idx]);
+        let cache_dir = stuff.cache_dir;
+
+        let tempdir = pkg_manager.get_temporary_directory().handle;
         let pt = Box::new(PatchTask {
-            tempdir: pkg_manager.get_temporary_directory().handle,
+            tempdir,
             callback: Callback::Apply(ApplyPatch {
                 pkg_id,
                 patch_hash,
                 name_and_version_hash,
-                cache_dir: stuff.cache_dir,
+                cache_dir,
                 patchfilepath,
                 pkgname: pkg_name,
                 logger: Log::init(),
-                // need to dupe this as it's calculated using
-                // `PackageManager.cached_package_folder_name_buf` which may be
-                // modified
-                cache_dir_subpath: dupe_z(cache_dir_subpath_bytes),
-                cache_dir_subpath_without_patch_hash: dupe_z(
-                    &cache_dir_subpath_bytes[..patch_hash_idx],
-                ),
+                cache_dir_subpath,
+                cache_dir_subpath_without_patch_hash,
                 task_id: None,
                 install_context: None,
             }),

@@ -371,6 +371,7 @@ impl<'a> Default for SpawnOptions<'a> {
 /// callers go through `WindowsSpawnResult` in `bun_runtime`; only the POSIX
 /// fields are needed at this tier (lifecycle scripts read `stdout`/`stderr`/
 /// `memfds` and call `to_process`).
+#[derive(Default)]
 pub struct SpawnResult {
     pub pid: PidT,
     pub pidfd: Option<i32>,

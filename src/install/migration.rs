@@ -10,7 +10,7 @@ use bun_js_parser::ast::{E, Expr, ExprData};
 
 use crate::dependency::{self, Dependency, Behavior, Tag as DepTag, Value as DepValue, Version as DepVersion};
 use crate::install::{self as Install, PackageID, PackageManager, ExternalStringList};
-use crate::npm::{self as Npm, NegatableExt};
+use crate::npm::{self as Npm};
 use crate::bin::{self, Bin};
 use crate::integrity::Integrity;
 use crate::resolution::{self, Resolution, TaggedValue as ResTagged};
@@ -45,13 +45,14 @@ pub fn detect_and_load_other_lockfile<'a>(
         };
         // file closes on Drop
         let mut lockfile_path_buf = PathBuffer::uninit();
-        let Ok(lockfile_path) = bun_sys::get_fd_path_z(lockfile.handle(), &mut lockfile_path_buf) else {
+        let Ok(lockfile_path) = bun_sys::get_fd_path(lockfile.handle(), &mut lockfile_path_buf) else {
             break 'npm;
         };
+        let lockfile_path: &[u8] = &*lockfile_path;
         let Ok(data) = lockfile.read_to_end() else {
             break 'npm;
         };
-        let migrate_result = match migrate_npm_lockfile(this, manager, log, &data, lockfile_path.as_bytes()) {
+        let migrate_result = match migrate_npm_lockfile(this, manager, log, &data, lockfile_path) {
             Ok(r) => r,
             Err(e) => {
                 if e == err!("NPMLockfileVersionMismatch") {
@@ -664,7 +665,7 @@ pub fn migrate_npm_lockfile<'a>(
                 break 'bin Bin {
                     tag: bin::Tag::Map,
                     _padding_tag: [0; 3],
-                    value: bin::Value::init_map(ExternalStringList { off, len, _phantom: core::marker::PhantomData }),
+                    value: bin::Value::init_map(ExternalStringList { off, len, _marker: core::marker::PhantomData }),
                 };
             }
         } else {
@@ -869,12 +870,12 @@ pub fn migrate_npm_lockfile<'a>(
                         *dependencies_list_col.add(package_idx as usize) = ExternalSlice {
                             off: dependencies_start as u32,
                             len,
-                            _phantom: core::marker::PhantomData,
+                            _marker: core::marker::PhantomData,
                         };
                         *resolution_list_col.add(package_idx as usize) = ExternalSlice {
                             off: resolutions_start as u32,
                             len,
-                            _phantom: core::marker::PhantomData,
+                            _marker: core::marker::PhantomData,
                         };
                     }
                 }
@@ -1083,9 +1084,9 @@ pub fn migrate_npm_lockfile<'a>(
                                                     // SAFETY: tag-guarded union access
                                                     res_version_git_owner = unsafe {
                                                         if parsed.tag == DepTag::Git {
-                                                            (*parsed.value.git).owner
+                                                            parsed.value.git.owner
                                                         } else {
-                                                            (*parsed.value.github).owner
+                                                            parsed.value.github.owner
                                                         }
                                                     };
 

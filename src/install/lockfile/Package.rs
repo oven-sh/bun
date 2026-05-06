@@ -690,8 +690,8 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
             package.name_hash = package_name.hash;
             package.name = package_name.value;
             package.resolution =
-                Resolution::<SemverIntType>::init(TaggedValue::Npm(VersionedURLType {
-                    version: version.append(manifest.string_buf, &mut string_builder),
+                Resolution::<SemverIntType>::init(TaggedValue::Npm(VersionedURLType::<SemverIntType> {
+                    version: version.append(manifest.string_buf, &mut string_builder).into(),
                     url: string_builder
                         .append::<String>(manifest.str(&package_version_ptr.tarball_url)),
                 }));
@@ -705,7 +705,9 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
             // SAFETY: capacity reserved above; slots are filled below.
             unsafe { dependencies_list.set_len(total_len) };
             let dependencies = &mut dependencies_list[dep_start..total_len];
-            dependencies.fill(Dependency::default());
+            for d in dependencies.iter_mut() {
+                *d = Dependency::default();
+            }
 
             total_dependencies_count = 0;
             // PERF(port): was `inline for` — profile in Phase B
@@ -758,18 +760,20 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
 
                     let mut behavior = group.behavior;
                     if is_peer {
-                        behavior.optional =
-                            i < usize::from(package_version.non_optional_peer_dependencies_start);
+                        behavior.set(
+                            Behavior::OPTIONAL,
+                            (i as u32) < package_version.non_optional_peer_dependencies_start,
+                        );
                     }
                     if package_version_ptr.all_dependencies_bundled() {
-                        behavior.bundled = true;
+                        behavior.insert(Behavior::BUNDLED);
                     } else {
                         for bundled_dep_name_hash in package_version
                             .bundled_dependencies
                             .get(manifest.bundled_deps_buf)
                         {
                             if *bundled_dep_name_hash == name.hash {
-                                behavior.bundled = true;
+                                behavior.insert(Behavior::BUNDLED);
                                 break;
                             }
                         }
@@ -781,11 +785,11 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
                         behavior,
                         version: Dependency::parse(
                             name.value,
-                            name.hash,
+                            Some(name.hash),
                             sliced.slice,
                             &sliced,
-                            log,
-                            pm,
+                            Some(log),
+                            Some(pm),
                         )
                         .unwrap_or_default(),
                     };
@@ -810,7 +814,8 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
                 }
             }
 
-            package.bin = package_version.bin.clone_into(
+            package.bin = Bin::clone(
+                &package_version.bin,
                 manifest.string_buf,
                 manifest.extern_strings_bin_entries,
                 extern_strings_list.as_slice(),
@@ -841,11 +846,12 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
 
             #[cfg(debug_assertions)]
             {
-                if package.resolution.value.npm().url.is_empty() {
+                // SAFETY: `resolution` was initialised with `TaggedValue::Npm` just above.
+                if unsafe { package.resolution.value.npm }.url.is_empty() {
                     Output::panic(format_args!(
                         "tarball_url is empty for package {}@{}",
                         bstr::BStr::new(manifest.name()),
-                        version
+                        version.fmt(manifest.string_buf),
                     ));
                 }
             }
@@ -949,7 +955,8 @@ impl Diff {
                 .zip(to_lockfile.overrides.map.values())
             {
                 if (from_k != to_k)
-                    || (!from_override.eql(
+                    || (!Dependency::eql(
+                        from_override,
                         to_override,
                         from_lockfile.buffers.string_bytes.as_slice(),
                         to_lockfile.buffers.string_bytes.as_slice(),
@@ -991,7 +998,8 @@ impl Diff {
                     .zip(to_lockfile.catalogs.default.keys())
                     .zip(to_lockfile.catalogs.default.values())
                 {
-                    if !from_dep_name.eql(
+                    if !String::eql(
+                        from_dep_name,
                         to_dep_name,
                         from_lockfile.buffers.string_bytes.as_slice(),
                         to_lockfile.buffers.string_bytes.as_slice(),
@@ -1000,7 +1008,8 @@ impl Diff {
                         break 'catalogs;
                     }
 
-                    if !from_dep.eql(
+                    if !Dependency::eql(
+                        from_dep,
                         to_dep,
                         from_lockfile.buffers.string_bytes.as_slice(),
                         to_lockfile.buffers.string_bytes.as_slice(),
@@ -1020,7 +1029,8 @@ impl Diff {
                         .zip(to_lockfile.catalogs.groups.keys())
                         .zip(to_lockfile.catalogs.groups.values())
                 {
-                    if !from_catalog_name.eql(
+                    if !String::eql(
+                        from_catalog_name,
                         to_catalog_name,
                         from_lockfile.buffers.string_bytes.as_slice(),
                         to_lockfile.buffers.string_bytes.as_slice(),
@@ -1041,7 +1051,8 @@ impl Diff {
                         .zip(to_catalog_deps.keys())
                         .zip(to_catalog_deps.values())
                     {
-                        if !from_dep_name.eql(
+                        if !String::eql(
+                            from_dep_name,
                             to_dep_name,
                             from_lockfile.buffers.string_bytes.as_slice(),
                             to_lockfile.buffers.string_bytes.as_slice(),
@@ -1050,7 +1061,8 @@ impl Diff {
                             break 'catalogs;
                         }
 
-                        if !from_dep.eql(
+                        if !Dependency::eql(
+                            from_dep,
                             to_dep,
                             from_lockfile.buffers.string_bytes.as_slice(),
                             to_lockfile.buffers.string_bytes.as_slice(),
@@ -1183,14 +1195,14 @@ impl Diff {
         }
 
         summary.patched_dependencies_changed = 'patched_dependencies_changed: {
-            if from_lockfile.patched_dependencies.entries.len()
-                != to_lockfile.patched_dependencies.entries.len()
+            if from_lockfile.patched_dependencies.count()
+                != to_lockfile.patched_dependencies.count()
             {
                 break 'patched_dependencies_changed true;
             }
             let mut iter = to_lockfile.patched_dependencies.iterator();
             while let Some(entry) = iter.next() {
-                if let Some(val) = from_lockfile.patched_dependencies.get(*entry.key_ptr) {
+                if let Some(val) = from_lockfile.patched_dependencies.get(&*entry.key_ptr) {
                     if val.path.slice(from_lockfile.buffers.string_bytes.as_slice())
                         != entry
                             .value_ptr
@@ -1205,7 +1217,7 @@ impl Diff {
             }
             let mut iter = from_lockfile.patched_dependencies.iterator();
             while let Some(entry) = iter.next() {
-                if !to_lockfile.patched_dependencies.contains(*entry.key_ptr) {
+                if !to_lockfile.patched_dependencies.contains(&*entry.key_ptr) {
                     break 'patched_dependencies_changed true;
                 }
             }

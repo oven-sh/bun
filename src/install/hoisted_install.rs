@@ -52,10 +52,17 @@ pub fn install_hoisted_packages(
 
     {
         // PORT NOTE: reshaped for borrowck — Zig passes `this.log, this` (two
-        // borrows of `this`). Snapshot the raw log ptr first.
+        // borrows of `this`). Snapshot the raw log ptr first; pass `mgr_ptr`
+        // (raw) for the manager so `&mut this.lockfile` doesn't overlap a
+        // simultaneous `&mut *this`.
         let log = this.log.map_or(core::ptr::null_mut(), |p| p.as_ptr());
-        this.lockfile
-            .filter(log, this, install_root_dependencies, workspace_filters, packages_to_install)?;
+        this.lockfile.filter(
+            log,
+            mgr_ptr,
+            install_root_dependencies,
+            workspace_filters,
+            packages_to_install,
+        )?;
     }
 
     let _restore_buffers = scopeguard::guard((), move |()| {
@@ -265,10 +272,15 @@ pub fn install_hoisted_packages(
                     let mut trees: Vec<TreeContext> = Vec::with_capacity(count);
                     for _i in 0..count {
                         trees.push(TreeContext {
-                            binaries: bin::PriorityQueue::init(bin::PriorityQueueContext {
-                                dependencies: &this.lockfile.buffers.dependencies,
-                                string_buf: &this.lockfile.buffers.string_bytes,
-                            }),
+                            // TODO(port): blocked_on reconciler-6 —
+                            // `TreeContext.binaries` is `bin::PriorityQueue
+                            // <'static>` but the queue context borrows
+                            // `&this.lockfile.buffers.{dependencies,
+                            // string_bytes}`. Zig stores raw `*ArrayList`
+                            // pointers (no lifetime); the Rust field needs the
+                            // queue to be `<'a>` once `PackageInstaller<'a>`
+                            // threads through.
+                            binaries: todo!("blocked_on: reconciler-6 — bin::PriorityQueue<'static> vs lockfile-borrowed context"),
                             pending_installs: Vec::new(),
                             install_count: 0,
                         });

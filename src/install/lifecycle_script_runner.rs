@@ -593,33 +593,33 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         {
             if let Some(stdout) = spawned.stdout {
                 if !spawned.memfds[1] {
-                    (*this).stdout.set_parent(this);
+                    (*this).stdout.set_parent(this as *mut c_void);
                     let _ = bun_sys::set_nonblocking(stdout);
                     (*this).remaining_fds += 1;
 
                     Self::reset_output_flags(&mut (*this).stdout, stdout);
                     (*this).stdout.start(stdout, true)?;
                     if let Some(poll) = (*this).stdout.handle.get_poll() {
-                        poll.flags.insert(bun_aio::PollFlag::Socket);
+                        poll.set_flag(FilePollFlag::Socket);
                     }
                 } else {
-                    (*this).stdout.set_parent(this);
+                    (*this).stdout.set_parent(this as *mut c_void);
                     (*this).stdout.start_memfd(stdout);
                 }
             }
             if let Some(stderr) = spawned.stderr {
                 if !spawned.memfds[2] {
-                    (*this).stderr.set_parent(this);
+                    (*this).stderr.set_parent(this as *mut c_void);
                     let _ = bun_sys::set_nonblocking(stderr);
                     (*this).remaining_fds += 1;
 
                     Self::reset_output_flags(&mut (*this).stderr, stderr);
                     (*this).stderr.start(stderr, true)?;
                     if let Some(poll) = (*this).stderr.handle.get_poll() {
-                        poll.flags.insert(bun_aio::PollFlag::Socket);
+                        poll.set_flag(FilePollFlag::Socket);
                     }
                 } else {
-                    (*this).stderr.set_parent(this);
+                    (*this).stderr.set_parent(this as *mut c_void);
                     (*this).stderr.start_memfd(stderr);
                 }
             }
@@ -638,7 +638,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             }
         }
 
-        let event_loop = &(*this).manager.event_loop;
+        let event_loop = &(*manager).event_loop;
         let process = spawned.to_process(event_loop, false);
 
         debug_assert!((*this).process.is_none(), "forgot to call `resetPolls`");
@@ -648,24 +648,19 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         // reenter `on_process_exit` through `this` without aliasing.
         process.set_exit_handler(this);
 
-        match process.watch_or_reap() {
-            bun_sys::Result::Err(err) => {
-                if !process.has_exited() {
-                    // SAFETY: all-zero is a valid Rusage (#[repr(C)] POD).
-                    process.on_exit(
-                        Status::Err(err),
-                        &unsafe { core::mem::zeroed::<Rusage>() },
-                    );
-                }
+        if let Err(err) = process.watch_or_reap() {
+            if !process.has_exited() {
+                // SAFETY: all-zero is a valid Rusage (#[repr(C)] POD).
+                process.on_exit(Status::Err(err), &core::mem::zeroed::<Rusage>());
             }
-            bun_sys::Result::Ok(_) => {}
         }
 
         Ok(())
+        } // unsafe
     }
 
     pub fn print_output(&mut self) {
-        if !self.manager.options.log_level.is_verbose() {
+        if !self.manager().options.log_level.is_verbose() {
             let stdout = self.stdout.final_buffer();
 
             // Reuse the memory

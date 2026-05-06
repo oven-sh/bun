@@ -123,6 +123,24 @@ fn write_array<T>(
     )
 }
 
+/// Bridges `bun_semver::string::ArrayHashContext` (inherent `hash`/`eql`) to
+/// `bun_collections::ArrayHashAdapter` so `get_or_put_adapted` can use it.
+/// Can't `impl` the foreign trait for the foreign type directly (orphan rule).
+struct StringCtxAdapter<'a, 'b>(&'b semver::string::ArrayHashContext<'a>);
+
+impl<'a, 'b> bun_collections::array_hash_map::ArrayHashAdapter<SemverString, SemverString>
+    for StringCtxAdapter<'a, 'b>
+{
+    #[inline]
+    fn hash(&self, key: &SemverString) -> u32 {
+        self.0.hash(*key)
+    }
+    #[inline]
+    fn eql(&self, a: &SemverString, b: &SemverString, b_index: usize) -> bool {
+        self.0.eql(*a, *b, b_index)
+    }
+}
+
 pub fn save(
     this: &mut Lockfile,
     options: &PackageManagerOptions,
@@ -585,11 +603,15 @@ pub fn load(
                     .ensure_total_capacity(default_deps.len())?;
 
                 // PORT NOTE: reshaped for borrowck — `dependency::Context` borrows
-                // `log` / `lockfile.buffers` / `manager` while we also need
-                // `&mut lockfile.catalogs` for `put_assume_capacity_context`.
-                // Capture `string_bytes` as a raw slice once and rebuild the
-                // context per-put so the lockfile borrow is released between uses.
-                let string_bytes = lockfile.buffers.string_bytes.as_slice();
+                // `lockfile.buffers` while we also need `&mut lockfile.catalogs`.
+                // `string_bytes` is not reallocated in this block, so a raw-ptr
+                // slice view is sound (matches Zig's aliased pointers).
+                let string_bytes: &[u8] = unsafe {
+                    let s = lockfile.buffers.string_bytes.as_slice();
+                    core::slice::from_raw_parts(s.as_ptr(), s.len())
+                };
+                // Zig `String.arrayHashContext(lockfile, null)` →
+                // `{ .arg_buf = lockfile.buffers.string_bytes.items, .existing_buf = same }`.
                 let str_ctx = semver::string::ArrayHashContext {
                     arg_buf: string_bytes,
                     existing_buf: string_bytes,
@@ -603,6 +625,7 @@ pub fn load(
                         package_manager: manager.as_deref_mut(),
                     };
                     let value = dependency::to_dependency(*dep, &mut context);
+                    drop(context);
                     // PERF(port): was assume_capacity
                     lockfile.catalogs.default.put_assume_capacity_context(
                         *dep_name,
@@ -625,18 +648,18 @@ pub fn load(
                     let catalog_deps: Vec<dependency::External> = buffers::read_array(stream)?;
 
                     // PORT NOTE: `CatalogMap::get_or_put_group` currently takes the
-                    // stub `bun_install::lockfile::Lockfile`; inline the body here
+                    // stub `bun_install::lockfile::Lockfile`; inline its body here
                     // against the real `&mut lockfile.catalogs` to avoid the type
-                    // mismatch and the simultaneous `&mut lockfile` borrow.
+                    // mismatch and the simultaneous `&mut lockfile` self-borrow.
                     let group: &mut super::catalog_map::Map = if catalog_name.is_empty() {
                         &mut lockfile.catalogs.default
                     } else {
-                        let entry = lockfile.catalogs.groups.get_or_put_context(
-                            *catalog_name,
-                            |k| str_ctx.hash(*k),
-                            |a, b, i| str_ctx.eql(*a, *b, i),
-                        )?;
+                        let entry = lockfile
+                            .catalogs
+                            .groups
+                            .get_or_put_adapted(*catalog_name, StringCtxAdapter(&str_ctx))?;
                         if !entry.found_existing {
+                            *entry.key_ptr = *catalog_name;
                             *entry.value_ptr = super::catalog_map::Map::default();
                         }
                         entry.value_ptr
@@ -652,6 +675,7 @@ pub fn load(
                             package_manager: manager.as_deref_mut(),
                         };
                         let value = dependency::to_dependency(*dep, &mut context);
+                        drop(context);
                         // PERF(port): was assume_capacity
                         group.put_assume_capacity_context(
                             *dep_name,

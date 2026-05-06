@@ -307,7 +307,7 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
         // (`&mut manager.lockfile` + `&mut *manager` + `&mut *manager.log`)
         // also need a raw-pointer split. Body deferred until the stub/real
         // Lockfile types unify.
-        let _ = (&mut package, &json.source, json.root, &mut *resolver, features);
+        let _ = (&mut package, &json.source, &json.root, &mut *resolver, features);
         todo!("blocked_on: Package::parse_with_json — stub PackageManager.lockfile vs lockfile_real::Lockfile type mismatch (reconciler-6)");
     } else {
         let _tracer =

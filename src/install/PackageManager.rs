@@ -1091,7 +1091,7 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
         .make_open_path(&manager.node_gyp_tempdir_name, Default::default())
     {
         Ok(d) => d,
-        Err(e) if e.errno == bun_sys::E::EXIST => {
+        Err(e) if e.get_errno() == bun_sys::E::EEXIST => {
             // it should not exist
             Output::pretty_errorln("<r><red>error<r>: node-gyp tempdir already exists");
             Global::crash();
@@ -1403,7 +1403,7 @@ pub fn init(
                     0,
                 ) {
                     Ok(f) => break 'child f,
-                    Err(e) if e == err!("FileNotFound") => {
+                    Err(e) if e.get_errno() == bun_sys::E::ENOENT => {
                         if let Some(parent) = bun_core::dirname(this_cwd) {
                             this_cwd = strings::without_trailing_slash(parent);
                             continue;
@@ -1411,18 +1411,17 @@ pub fn init(
                             break;
                         }
                     }
-                    Err(e) if e == err!("AccessDenied") => {
+                    Err(e) if e.get_errno() == bun_sys::E::EACCES => {
                         Output::err(
                             "EACCES",
                             "Permission denied while opening \"{s}\"",
                             &[&bstr::BStr::new(package_json_path.as_bytes())],
                         );
                         if need_write {
-                            Output::note("package.json must be writable to add packages", &[]);
+                            Output::note("package.json must be writable to add packages");
                         } else {
                             Output::note(
                                 "package.json is missing read permissions, or is owned by another user",
-                                &[],
                             );
                         }
                         Global::crash();
@@ -1435,7 +1434,7 @@ pub fn init(
                             "could not open \"{s}\"",
                             &[&bstr::BStr::new(package_json_path.as_bytes())],
                         );
-                        return Err(e);
+                        return Err(e.into());
                     }
                 }
             }

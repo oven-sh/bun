@@ -62,6 +62,11 @@ pub type List = Vec<Tree>;
 pub const ROOT_DEP_ID: DependencyID = invalid_package_id - 1;
 pub const INVALID_ID: Id = Id::MAX;
 
+impl Tree {
+    pub const INVALID_ID: Id = INVALID_ID;
+    pub const ROOT_DEP_ID: DependencyID = ROOT_DEP_ID;
+}
+
 // max number of node_modules folders
 pub const MAX_DEPTH: usize = (MAX_PATH_BYTES / b"node_modules".len()) + 1;
 

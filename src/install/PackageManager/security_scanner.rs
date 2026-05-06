@@ -990,19 +990,18 @@ impl<'a> SecurityScanSubprocess<'a> {
         let exec_path = bun_core::self_exe_path()?;
 
         // TODO(port): argv as null-terminated C-string array for spawnProcess FFI.
-        // Zig: `try allocator.dupeZ(u8, exec_path)` / `dupeZ(u8, code)`. Route
-        // through `bun_core::dupe_z` (libc-malloc'd, NUL-terminated) so the
-        // pointers stay valid across the `spawn_process` FFI boundary.
-        let argv0 = bun_core::dupe_z(exec_path.as_bytes());
-        let argv3 = bun_core::dupe_z(&self.code);
-        // `defer { allocator.free(span(argv[0/3])) }` — free after spawn.
-        let _argv0_guard = scopeguard::guard(argv0, |p| unsafe { bun_core::free_z(p) });
-        let _argv3_guard = scopeguard::guard(argv3, |p| unsafe { bun_core::free_z(p) });
+        // Zig: `try allocator.dupeZ(u8, exec_path)` / `dupeZ(u8, code)`. Build
+        // owned NUL-terminated buffers so the pointers stay valid across the
+        // `spawn_process` FFI boundary; `defer free` ≡ Vec drop.
+        let mut argv0_buf: Vec<u8> = exec_path.as_bytes().to_vec();
+        argv0_buf.push(0);
+        let mut argv3_buf: Vec<u8> = self.code.to_vec();
+        argv3_buf.push(0);
         let mut argv: [Option<*const core::ffi::c_char>; 5] = [
-            Some(argv0),
+            Some(argv0_buf.as_ptr().cast()),
             Some(b"--no-install\0".as_ptr().cast()),
             Some(b"-e\0".as_ptr().cast()),
-            Some(argv3),
+            Some(argv3_buf.as_ptr().cast()),
             None,
         ];
 
@@ -1049,7 +1048,10 @@ impl<'a> SecurityScanSubprocess<'a> {
             bun_sys::environ_ptr(),
         )? {
             Ok(s) => s,
-            Err(e) => return Err(Error::from(e)),
+            Err(e) => {
+                Output::err_generic("Failed to spawn security scanner subprocess: {}", (e,));
+                return Err(err!("SpawnProcessFailed"));
+            }
         };
         // `defer spawned.extra_pipes.deinit()` — drops at scope exit.
 
@@ -1140,7 +1142,10 @@ impl<'a> SecurityScanSubprocess<'a> {
             bun_sys::environ_ptr(),
         )? {
             Ok(s) => s,
-            Err(e) => return Err(Error::from(e)),
+            Err(e) => {
+                Output::err_generic("Failed to spawn security scanner subprocess: {}", (e,));
+                return Err(err!("SpawnProcessFailed"));
+            }
         };
         // `defer spawned.extra_pipes.deinit()` — drops at scope exit.
 
@@ -1179,7 +1184,8 @@ impl<'a> SecurityScanSubprocess<'a> {
         // StaticPipeWriter still holds a pointer to it (child crash case).
         self.remaining_fds = 2;
         if let Err(e) = self.ipc_reader.start(ipc_read_fd, true) {
-            return Err(Error::from(e));
+            Output::err_generic("Failed to start security scanner IPC reader: {}", (e,));
+            return Err(err!("IPCReaderStartFailed"));
         }
 
         // PORT NOTE: `to_process` consumes `SpawnResult` by value in the
@@ -1341,7 +1347,7 @@ impl<'a> SecurityScanSubprocess<'a> {
                 Status::Signaled(sig) => {
                     Output::err_generic(
                         "Security scanner terminated by signal {} without sending data",
-                        (sig.name().unwrap_or("unknown"),),
+                        (format_args!("{:?}", sig),),
                     );
                 }
                 _ => {
@@ -1526,7 +1532,7 @@ impl<'a> SecurityScanSubprocess<'a> {
                 Status::Signaled(sig) => {
                     Output::pretty_errorln(format_args!(
                         "<d>[SecurityProvider]<r> Terminated by signal {} [{}ms]",
-                        sig.name().unwrap_or("unknown"),
+                        format_args!("{:?}", sig),
                         duration
                     ));
                 }
@@ -1674,7 +1680,7 @@ fn parse_security_advisories_from_expr(
                     // Duplicate the string since asString returns temporary memory
                     break 'blk Some(Box::from(str));
                 }
-                if matches!(desc_expr.data, ExprData::ENull) {
+                if matches!(desc_expr.data, ExprData::ENull(_)) {
                     break 'blk None;
                 }
                 Output::err_generic(
@@ -1693,7 +1699,7 @@ fn parse_security_advisories_from_expr(
                     // Duplicate the string since asString returns temporary memory
                     break 'blk Some(Box::from(str));
                 }
-                if matches!(url_expr.data, ExprData::ENull) {
+                if matches!(url_expr.data, ExprData::ENull(_)) {
                     break 'blk None;
                 }
                 Output::err_generic(

@@ -4512,8 +4512,8 @@ impl RunCommand {
         Ok(())
     }
 
-    fn bun_feedback(ctx: &Command::Context) -> Result<core::convert::Infallible, bun_core::Error> {
-        const TRIGGER: &[u8] = bun_paths::path_literal!("/[eval]");
+    fn bun_feedback(ctx: &Command::Context) -> Result<::core::convert::Infallible, bun_core::Error> {
+        const TRIGGER: &[u8] = path_literal!(b"/[eval]", b"\\[eval]");
         let mut entry_point_buf = [0u8; MAX_PATH_BYTES + TRIGGER.len()];
         // TODO(port): std.posix.getcwd → bun_sys
         let cwd = sys::getcwd_buf(&mut entry_point_buf[..MAX_PATH_BYTES])?;

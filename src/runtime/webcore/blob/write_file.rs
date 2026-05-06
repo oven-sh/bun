@@ -7,7 +7,6 @@
 // un-gated so `crate::webcore::blob::write_file` is a real path; the heavy body
 // re-gates here.
 // ──────────────────────────────────────────────────────────────────────────
-#![cfg(any())]
 
 use core::ffi::c_void;
 use core::mem::offset_of;

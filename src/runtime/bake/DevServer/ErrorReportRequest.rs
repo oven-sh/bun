@@ -117,7 +117,6 @@ impl ErrorReportRequest {
             let _file_name = read_string32(&mut reader)?;
             // Frame construction blocked: jsc::ZigStackFrame is currently a
             // `stub_ty!` tuple-struct placeholder in src/jsc/lib.rs (real
-            // struct gated behind #[cfg(any())]).
         }
 
         let _ = (

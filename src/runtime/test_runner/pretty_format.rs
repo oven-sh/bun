@@ -1819,7 +1819,6 @@ impl<'a> Formatter<'a> {
                         // of this arm instead of printing `Timeout (#N[, repeats])` per
                         // .zig:1242-1254. Replace with `value.as_::<crate::timer::TimeoutObject>()`
                         // once available.
-                        #[cfg(any())]
                         {
                             value.as_::<crate::timer::TimeoutObject>()
                         }
@@ -1874,7 +1873,6 @@ impl<'a> Formatter<'a> {
                         // ALWAYS `None` until codegen lands; Immediate values fall through to
                         // the generic Object printer instead of `Immediate (#N)` per
                         // .zig:1255-1261. Replace with `value.as_::<crate::timer::ImmediateObject>()`.
-                        #[cfg(any())]
                         {
                             value.as_::<crate::timer::ImmediateObject>()
                         }
@@ -1908,7 +1906,6 @@ impl<'a> Formatter<'a> {
                         // ALWAYS `None` until codegen lands; BuildMessage values fall through
                         // to the generic Object printer instead of `msg.writeFormat` per
                         // .zig:1262-1264. Replace with `value.as_::<crate::api::BuildMessage>()`.
-                        #[cfg(any())]
                         {
                             value.as_::<crate::api::BuildMessage>()
                         }
@@ -1929,7 +1926,6 @@ impl<'a> Formatter<'a> {
                         // ALWAYS `None` until codegen lands; ResolveMessage values fall through
                         // to the generic Object printer instead of `msg.writeFormat` per
                         // .zig:1265-1268. Replace with `value.as_::<crate::api::ResolveMessage>()`.
-                        #[cfg(any())]
                         {
                             value.as_::<crate::api::ResolveMessage>()
                         }

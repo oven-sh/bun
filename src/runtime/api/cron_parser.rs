@@ -20,7 +20,6 @@ use phf::phf_map;
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Local shim: `gregorian_date_time_to_ms_utc` lives in the gated
-// `bun_jsc::JSGlobalObject.rs` draft (behind `#![cfg(any())]`), so mirror it
 // here as an extension trait until that file is enabled upstream.
 // Port of `JSGlobalObject.gregorianDateTimeToMSUTC` (JSGlobalObject.zig:30).
 // ──────────────────────────────────────────────────────────────────────────────

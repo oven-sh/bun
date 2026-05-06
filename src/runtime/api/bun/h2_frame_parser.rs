@@ -7,7 +7,6 @@ use core::marker::PhantomData;
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, Strong, StrongOptional};
 use bun_jsc::virtual_machine::VirtualMachine;
-// `bun_jsc::abort_signal` is currently parked behind `mod _gated { #![cfg(any())] }`
 // (see src/jsc/lib.rs), so the real module isn't visible to dependents yet. Pull
 // the opaque `stub_ty!`-generated `AbortSignal` from the crate root and shim the
 // handful of methods this file calls via a local extension trait until the
@@ -30,7 +29,6 @@ use phf::phf_map;
 bun_output::declare_scope!(H2FrameParser, visible);
 
 // ──────────────────────────────────────────────────────────────────────────
-// AbortSignal shim — `bun_jsc::abort_signal` is gated behind `#![cfg(any())]`
 // upstream, leaving only the opaque `stub_ty!` `AbortSignal` at the crate root.
 // Mirror the surface this file consumes (`listen`/`ref_`/`aborted`/…) so the
 // module compiles; bodies `todo!()` until the upstream module is un-gated.

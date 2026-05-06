@@ -845,7 +845,6 @@ impl FilePoll {
                 return errno;
             }
         }
-        #[cfg(any())] // TODO(b2-blocked): bun_sys::darwin::{EV, NOTE}
         #[cfg(target_os = "macos")]
         {
             use bun_sys::darwin::{kevent64_s, EV, EVFILT, NOTE};
@@ -946,7 +945,6 @@ impl FilePoll {
                 return sys::Result::Err(sys::Error::from_code(errno, sys::Tag::kqueue));
             }
         }
-        #[cfg(any())] // TODO(b2-blocked): bun_sys::freebsd::{kevent, EV, EVFILT, NOTE}
         #[cfg(target_os = "freebsd")]
         {
             use bun_sys::freebsd::{kevent, Kevent, EV, EVFILT, NOTE};
@@ -1136,7 +1134,6 @@ impl FilePoll {
                 return errno;
             }
         }
-        #[cfg(any())] // TODO(b2-blocked): bun_sys::darwin::{EV, NOTE}
         #[cfg(target_os = "macos")]
         {
             use bun_sys::darwin::{kevent64, kevent64_s, EV, EVFILT, NOTE};
@@ -1240,7 +1237,6 @@ impl FilePoll {
                 return errno_sys(changelist[1].data, sys::Tag::kevent).unwrap();
             }
         }
-        #[cfg(any())] // TODO(b2-blocked): bun_sys::freebsd::{kevent, EV, EVFILT, NOTE}
         #[cfg(target_os = "freebsd")]
         {
             use bun_sys::freebsd::{kevent, Kevent, EV, EVFILT, NOTE};

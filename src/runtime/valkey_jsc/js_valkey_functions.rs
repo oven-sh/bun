@@ -16,7 +16,6 @@ type Slice = bun_jsc::ZigStringSlice;
 // Local `JSGlobalObject` extension shims.
 //
 // `bun_jsc/JSGlobalObject.rs` (which carries `throw_missing_arguments_value`
-// and `validate_integer_range`) is currently `#![cfg(any())]`-gated, so port
 // the two helpers Valkey needs against the `lib.rs` surface (`err()`/`throw()`).
 // TODO(port): drop once `bun_jsc::JSGlobalObject` un-gates these.
 // ──────────────────────────────────────────────────────────────────────────

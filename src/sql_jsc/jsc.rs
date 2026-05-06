@@ -183,7 +183,6 @@ pub trait JSGlobalObjectSqlExt {
     fn sql_vm_ptr(&self) -> *mut VirtualMachine;
 
     // ── Ports of gated `bun_jsc::JSGlobalObject` methods (JSGlobalObject.rs is
-    // behind `#![cfg(any())]` in the stub crate, so these are mirrored here so
     // SQL callsites compile against the local [`IntegerRange`]). ──
     fn validate_integer_range<T: bun_core::Integer>(
         &self,

@@ -1,4 +1,3 @@
-#![cfg(any())] // reconciler-6: re-gate (1200+ errors); stub surface in lib.rs
 use core::fmt;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 

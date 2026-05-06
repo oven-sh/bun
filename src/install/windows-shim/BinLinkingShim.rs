@@ -1,4 +1,3 @@
-#![cfg(any())] // reconciler-6: re-gate (1200+ errors); stub surface in lib.rs
 //! This struct is used by bun.exe to encode `.bunx` files, to be consumed
 //! by the shim 'bun_shim_impl.exe'. The latter exe does not include this code.
 //!

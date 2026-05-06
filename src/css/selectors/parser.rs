@@ -1299,7 +1299,6 @@ impl<'a> SelectorParser<'a> {
             TokenList::parse_raw(input, &mut args, self.options, 0)?;
             return Ok(PseudoElement::CustomFunction { name, arguments: TokenList { v: args } });
         }
-        #[cfg(any())]
         {
             // Spec (parser.zig:1088-1094) calls `TokenList.parseRaw(input, ...)`
             // which consumes the function-argument tokens. Until
@@ -1427,7 +1426,6 @@ impl<'a> SelectorParser<'a> {
                         arguments: TokenList { v: args },
                     };
                 }
-                #[cfg(any())]
                 {
                     // Consume the function body so the outer parser stays in sync.
                     while parser.next().is_ok() {}

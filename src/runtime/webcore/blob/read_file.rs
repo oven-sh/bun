@@ -6,7 +6,6 @@
 // (they're currently traits). Module is un-gated so `crate::webcore::blob::read_file`
 // is a real path; the heavy body re-gates here.
 // ──────────────────────────────────────────────────────────────────────────
-#![cfg(any())]
 
 use core::ffi::c_void;
 use core::marker::PhantomData;

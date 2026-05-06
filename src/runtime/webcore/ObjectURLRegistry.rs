@@ -10,7 +10,6 @@ use crate::webcore::Blob;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Local shims — upstream `bun_jsc::JSGlobalObject::throw_not_enough_arguments`
-// and `bun_str::String::has_prefix_comptime` are still `#[cfg(any())]`-gated,
 // so provide module-local extension traits until those land.
 // ──────────────────────────────────────────────────────────────────────────
 trait JSGlobalObjectObjUrlExt {

@@ -139,7 +139,6 @@ use crate::server::WebSocketServerContext as WebSocketServer;
 bun_core::declare_scope!(WebSocketServer, visible);
 
 // `bun_jsc::AbortSignal` is currently the `stub_ty!` opaque (real impl is
-// `#[cfg(any())]`-gated in bun_jsc::_gated). Provide a local trait so call
 // sites compile; bodies are `todo!` until the real type is un-gated upstream.
 #[allow(unused_variables)]
 trait AbortSignalExt {

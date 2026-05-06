@@ -1,4 +1,3 @@
-#![cfg(any())] // reconciler-6: re-gate (1200+ errors); stub surface in lib.rs
 // ───────────────────────────────────────────────────────────────────────────
 // Submodules — Zig basenames preserved per PORTING.md, hence #[path] attrs.
 // These are the install-to-disk primitives the Installer state machine drives.

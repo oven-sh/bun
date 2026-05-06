@@ -60,7 +60,6 @@ use crate::webcore::s3::simple_request::S3HttpSimpleTask;
 use crate::webcore::s3::download_stream::S3HttpDownloadStreamingTask;
 use crate::webcore::blob::copy_file::CopyFilePromiseTask;
 // `read_file::ReadFileTask` / `write_file::WriteFileTask` — module bodies are
-// `#![cfg(any())]`-gated (b2-blocked on bun_io/bun_jsc); arms below stubbed.
 use crate::webcore::file_sink::{FlushPendingTask as FlushPendingFileSinkTask, Poll as FileSinkPoll};
 use crate::webcore::streams::Pending as StreamPending;
 

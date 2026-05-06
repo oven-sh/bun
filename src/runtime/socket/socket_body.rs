@@ -31,7 +31,6 @@ use crate::crypto::boringssl_jsc::err_to_js as boringssl_err_to_js;
 use super::upgraded_duplex::{UpgradedDuplex, Handlers as UpgradedDuplexHandlers};
 
 // ── Local shims (Phase D) ────────────────────────────────────────────────
-// `JSGlobalObject.rs` impl block is `#[cfg(any())]`-gated upstream, so
 // `throw_not_enough_arguments` is unreachable as an inherent method.
 trait JSGlobalObjectSocketExt {
     fn throw_not_enough_arguments(
@@ -652,7 +651,6 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         let initial_delay: u32 = if args.len > 1 {
             // TODO(port): `JSGlobalObject::validate_integer_range` is gated
-            // upstream (`JSGlobalObject.rs` is `#![cfg(any())]`); reuse the
             // `bun_sql_jsc` extension-trait port until it's un-gated.
             use bun_sql_jsc::jsc::JSGlobalObjectSqlExt as _;
             u32::try_from(global.validate_integer_range(

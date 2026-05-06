@@ -2120,7 +2120,6 @@ pub extern "C" fn Bun__WebSocket__parseSSLConfig(
     // owns `from_js`. Phase B: route the C++ caller to the runtime-crate export
     // or hoist `from_js` into a shared lower crate per docs/PORTING.md.
     let _ = (global_this, tls_value);
-    #[cfg(any())]
     {
         let vm = global_this.bun_vm();
         let config_opt = match SSLConfig::from_js(vm, global_this, tls_value) {

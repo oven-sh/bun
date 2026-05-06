@@ -169,7 +169,6 @@ impl UpdateInteractiveCommand {
         let _ = ctx;
         // Zig: `PackageManager.CommandLineArguments.parse(.update)` +
         // `PackageManager.init(ctx, cli, .update)` — both gated behind
-        // `package_manager_real` (`#![cfg(any())]` reconciler-6).
         todo!("blocked_on: bun_install::PackageManager::init / CommandLineArguments (package_manager_real un-gate)")
     }
 
@@ -240,7 +239,6 @@ impl UpdateInteractiveCommand {
         // `manager.root_package_id`, `manager.options.filter_patterns`,
         // `manager.options.do_`, `manager.to_update`, `manager.root_dir`,
         // `Lockfile::load_from_cwd`, `PackageManager::install_with_manager` —
-        // all gated behind `package_manager_real` (`#![cfg(any())]`
         // reconciler-6). Body preserved verbatim in
         // update_interactive_command.zig.
         todo!("blocked_on: bun_install::PackageManager::lockfile / install_with_manager (package_manager_real un-gate)")
@@ -251,7 +249,6 @@ impl UpdateInteractiveCommand {
     fn get_all_workspaces(manager: &PackageManager) -> Box<[PackageID]> {
         let _ = manager;
         // Needs `manager.lockfile.packages.items_resolution()` — gated behind
-        // `package_manager_real` (`#![cfg(any())]` reconciler-6).
         todo!("blocked_on: bun_install::PackageManager::lockfile (package_manager_real un-gate)")
     }
 
@@ -263,7 +260,6 @@ impl UpdateInteractiveCommand {
     ) -> Box<[PackageID]> {
         let _ = (original_cwd, manager, filters);
         // Needs `manager.lockfile` + `Lockfile.packages.items_resolution()` —
-        // gated behind `package_manager_real` (`#![cfg(any())]` reconciler-6).
         todo!("blocked_on: bun_install::PackageManager::lockfile (package_manager_real un-gate)")
     }
 
@@ -342,7 +338,6 @@ impl UpdateInteractiveCommand {
         // Needs `manager.lockfile`, `manager.manifests`,
         // `manager.options.minimum_release_age_ms`, `Lockfile::resolve_catalog_dependency`,
         // `manifest.find_by_dist_tag_with_filter` — all gated behind
-        // `package_manager_real` (`#![cfg(any())]` reconciler-6). Body
         // preserved verbatim in update_interactive_command.zig.
         todo!("blocked_on: bun_install::PackageManager::lockfile / manifests (package_manager_real un-gate)")
     }

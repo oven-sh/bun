@@ -3,8 +3,8 @@ use std::io::Write as _;
 
 use bun_jsc::VM;
 use bun_paths::{OSPathBuffer, PathBuffer};
-use bun_str::String as BunString;
-use bun_sys::{self, Errno, Fd};
+use bun_string::String as BunString;
+use bun_sys::{self, Errno, Fd, FdDirExt as _};
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
 pub enum ProfilerError {

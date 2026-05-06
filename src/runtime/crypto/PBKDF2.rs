@@ -21,7 +21,6 @@ use crate::crypto::evp::{Algorithm, AlgorithmExt as _};
 
 // Local shim for `bun.ComptimeStringMap.fromJSCaseInsensitive` — the upstream
 // `bun_jsc::comptime_string_map_jsc::from_js_case_insensitive` is currently gated
-// behind `#[cfg(any())]` (jsc/lib.rs `_gated` module). Map keys are all lower-case
 // ASCII, so lower the probe and do a direct phf lookup.
 fn algorithm_from_js_case_insensitive(
     global_this: &JSGlobalObject,

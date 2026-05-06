@@ -18,19 +18,16 @@ fn link(_ctx: command::Context) -> Result<(), bun_core::Error> {
     // PORT NOTE: `CommandLineArguments`, `Options`, `attempt_to_create_package_json`,
     // and `Bin.Linker` live in `bun_install::package_manager_real` /
     // `bun_install::bin_real`, both of which are currently gated off
-    // (`#![cfg(any())]` — reconciler-6: 1200+ errors). The stub
     // `bun_install::package_manager` module only re-exports `PackageManager` +
     // `Subcommand`, and the stub `PackageManager` lacks `init`,
     // `original_package_json_path`, `log`, `global_dir`, `setup_global_dir`,
     // `options.{positionals,log_level,bin_path,should_print_command_name}`,
     // and `update_package_json_and_install_with_manager`. Mirrors
     // `update_command.rs` precedent until those crates ungate. Full port body
-    // preserved below under `#[cfg(any())]` with mechanical fixes applied.
     let _ = Subcommand::Link;
     todo!("blocked_on: bun_install::package_manager_real / bin_real un-gate (reconciler-6)")
 }
 
-#[cfg(any())]
 mod _gated_port {
     use bstr::BStr;
 
@@ -327,5 +324,4 @@ mod _gated_port {
 //   source:     src/cli/link_command.zig (217 lines)
 //   confidence: medium
 //   todos:      6
-//   notes:      Body gated under #[cfg(any())] — depends on bun_install::package_manager_real and bun_install::bin_real (both reconciler-6 gated, 1200+ errors). Stub PackageManager lacks ~10 fields/methods used here. Mechanical fixes applied to preserved body: PACKAGE_JSON_VERSION_WITH_SHA→package_json_version_with_sha, bun_str::StringOrTinyString→strings::StringOrTinyString, bin::Linker via bin_real, SymLinkFlags→bool placeholder.
 // ──────────────────────────────────────────────────────────────────────────

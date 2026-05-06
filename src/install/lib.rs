@@ -209,7 +209,6 @@ pub mod padding_checker;
 pub mod versioned_url;
 
 // ─── reconciler-6: heavy modules re-gated wholesale ────────────────────────
-// File bodies preserved on disk under `#![cfg(any())]` (1200+ port errors).
 // Declared here under `` so the crate tree is addressable for
 // diff-pass; sibling inline stubs below expose the minimal surface that
 // `npm.rs`/`resolution.rs`/`dependency.rs` and downstream `bun_jsc` need.
@@ -638,7 +637,6 @@ pub mod lockfile {
 /// `UpdateRequest` — mounted directly (sibling of the gated
 /// `package_manager_real`) so `bunx_command` / `outdated_command` can name
 /// `bun_install::update_request::{UpdateRequest, Array}` while
-/// `PackageManager.rs` itself remains `#![cfg(any())]`-gated.
 #[path = "PackageManager/UpdateRequest.rs"]
 pub mod update_request;
 pub use update_request::UpdateRequest;
@@ -649,7 +647,6 @@ pub mod package_manager {
     pub use super::Subcommand;
     pub use super::update_request;
     /// Stub: `PackageManager.Options` (src/install/PackageManager/PackageManagerOptions.zig).
-    /// Real body gated behind `package_manager_real` (`#![cfg(any())]` reconciler-6).
     #[allow(non_snake_case)]
     pub mod Options {
         #[derive(Copy, Clone, PartialEq, Eq, Default, Debug)]
@@ -698,7 +695,6 @@ pub mod package_manager {
 
     /// Stub: `PackageManager.WorkspacePackageJSONCache`
     /// (src/install/PackageManager/WorkspacePackageJSONCache.zig). Real body
-    /// gated behind `package_manager_real` (`#![cfg(any())]` reconciler-6).
     /// Surfaced for `bun_runtime::cli::pack_command` / `publish_command`.
     pub mod workspace_package_json_cache {
         use bun_collections::StringHashMap;
@@ -821,7 +817,6 @@ pub mod package_manager {
     pub use workspace_package_json_cache::{GetJSONOptions as GetJsonOptions, GetResult as GetJsonResult};
 
     /// Stub: real body lives in `PackageManager/CommandLineArguments.rs`,
-    /// gated behind `package_manager_real` (`#![cfg(any())]` reconciler-6).
     /// Only the `AuditLevel` enum is surfaced for `bun_runtime::cli::audit_command`.
     pub mod command_line_arguments {
         #[derive(Copy, Clone, Eq, PartialEq, PartialOrd, Ord)]
@@ -879,7 +874,6 @@ pub mod package_manager {
         }
 
         /// Stub: real body in `PackageManager/security_scanner.rs`, gated behind
-        /// `package_manager_real` (`#![cfg(any())]` reconciler-6). Depends on
         /// `PackageManager::lockfile` iteration + subprocess scan loop. Generic
         /// over `Ctx` because `bun_runtime::command::Context` would be a circular dep.
         pub fn perform_security_scan_for_all<Ctx>(
@@ -980,7 +974,6 @@ pub mod package_manager {
         }
     }
     /// Stub: real body lives in `PackageManager/updatePackageJSONAndInstall.rs`,
-    /// gated behind `package_manager_real` (`#![cfg(any())]` reconciler-6).
     /// Generic over `Ctx` because `bun_runtime::command::Context` isn't visible
     /// from this crate (would be a circular dep).
     pub fn update_package_json_and_install_catch_error<Ctx>(
@@ -1074,7 +1067,6 @@ pub use dependency::Dependency;
 pub use dependency::Behavior;
 
 // ─── reconciler-6: stub surface for re-gated heavy modules ──────────────────
-// The file-backed bodies are `#![cfg(any())]`-gated (1200+ port errors).
 // These opaque stubs keep `bun_jsc::AsyncModule` / `bun_runtime` callers
 // type-checking until the bodies un-gate per-file.
 pub use lockfile::bun_lock as TextLockfile;

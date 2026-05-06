@@ -153,7 +153,6 @@ unsafe extern "C" {
 }
 
 /// Local shim for `bun.String.toJSArray` — `bun_jsc::bun_string_jsc::to_js_array`
-/// (which wraps `BunString__createArray`) is gated behind `#[cfg(any())]` upstream.
 fn bun_string_to_js_array(global: &JSGlobalObject, items: &[BunString]) -> JsResult<JSValue> {
     let array = JSValue::create_empty_array(global, items.len())?;
     for (i, s) in items.iter().enumerate() {
@@ -215,7 +214,6 @@ pub fn create_exec_argv(global_object: &JSGlobalObject, _frame: &CallFrame) -> J
         // bun_jsc::WebWorker with no accessor yet. Until those land the worker
         // override path falls through to the parent's argv re-parse below.
         let _ = _worker;
-        #[cfg(any())]
         if let Some(exec_argv) = todo!("blocked_on: bun_jsc::WebWorker::exec_argv") {
             let exec_argv: &[BunString] = exec_argv;
             let array = JSValue::create_empty_array(global_object, exec_argv.len())?;

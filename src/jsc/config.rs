@@ -1,4 +1,4 @@
-use bun_schema::api; // TODO(port): verify crate path for `bun.schema.api` (generated schema)
+use bun_options_types::schema::api;
 
 // PORT NOTE: Zig `DefaultBunDefines` is a namespace-only struct with nested
 // namespace-only structs. Ported as nested modules; inner consts were NOT `pub`

@@ -17,7 +17,6 @@ use bun_jsc::URL;
 use crate::test_runner::expect::JSValueTestExt;
 
 // ─── Local upstream shims (gated bun_jsc modules) ─────────────────────────
-// `bun_jsc::URL.rs` and `JSGlobalObject.rs` are still `#![cfg(any())]`-gated;
 // declare the FFI symbols and extension methods we need locally until they
 // land in the active stub.
 // TODO(port): drop once bun_jsc un-gates URL.rs / JSGlobalObject.rs.

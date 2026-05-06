@@ -1,4 +1,3 @@
-#![cfg(any())] // reconciler-6: re-gate (1200+ errors); stub surface in lib.rs
 use bun_collections::{StringHashMap, ArrayHashMap};
 use bun_core::{err, Error, Global, Output};
 use bun_logger as logger;

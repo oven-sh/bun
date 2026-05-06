@@ -18,7 +18,6 @@ fn unlink(_ctx: Command::Context) -> Result<(), bun_core::Error> {
     // PORT NOTE: `CommandLineArguments`, `Options`, `attempt_to_create_package_json`,
     // and `Bin.Linker` live in `bun_install::package_manager_real` /
     // `bun_install::bin_real`, both of which are currently gated off
-    // (`#![cfg(any())]` — reconciler-6: 1200+ errors). The stub
     // `bun_install::package_manager` module only re-exports `PackageManager` +
     // `Subcommand`, and the stub `PackageManager` lacks `init`,
     // `original_package_json_path`, `log`, `global_dir`, `setup_global_dir`,
@@ -26,13 +25,11 @@ fn unlink(_ctx: Command::Context) -> Result<(), bun_core::Error> {
     // should_print_command_name}`. The stub `Lockfile` lacks `init_empty` /
     // `str` / `Package` / `buffers.extern_strings`, and `bun_sys::File` lacks
     // `to_source`. Mirrors `link_command.rs` precedent until those crates
-    // ungate. Full port body preserved below under `#[cfg(any())]` with
     // mechanical fixes applied.
     let _ = Subcommand::Unlink;
     todo!("blocked_on: bun_install::package_manager_real / bin_real un-gate (reconciler-6)")
 }
 
-#[cfg(any())]
 mod _gated_port {
     use bstr::BStr;
 

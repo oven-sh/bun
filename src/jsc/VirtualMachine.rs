@@ -2087,7 +2087,6 @@ impl VirtualMachine {
     /// Spec VirtualMachine.zig:369 `mimeType`.
     pub fn mime_type(&mut self, str_: &[u8]) -> Option<bun_http::MimeType::MimeType> {
         // Body delegates to RareData::mime_type_from_string, which is currently
-        // gated behind `#[cfg(any())] mod _accessor_body` in rare_data.rs
         // (depends on MimeType::create_hash_table). Stub until that lands.
         let _ = (self.rare_data(), str_);
         todo!("blocked_on: RareData::mime_type_from_string")
@@ -2667,6 +2666,9 @@ impl VirtualMachine {
     // `FetchFlags` would need `ConstParamTy` (unstable derive on the enum's
     // owning module) to stay a const generic; the only branches are cheap
     // equality tests so the runtime form is fine. PERF(port): revisit.
+    #[allow(unreachable_code)] // TODO(b2-cycle): tail is dead behind the
+                               // `VmLoaderCtx` `todo!()` below; drop once the
+                               // runtime registers the vtable.
     pub fn fetch_without_on_load_plugins(
         jsc_vm: &mut VirtualMachine,
         global_object: &JSGlobalObject,
@@ -2691,20 +2693,44 @@ impl VirtualMachine {
         let referrer_clone = referrer.to_utf8();
 
         let mut virtual_source_to_use: Option<logger::Source> = None;
-        // TODO(b2-cycle): real type is `bun_runtime::webcore::Blob`; `bun_bundler`
-        // models it as `OpaqueBlob = *mut ()` to break the dep cycle.
-        let mut blob_to_deinit: Option<bun_bundler::options::OpaqueBlob> = None;
+        // Spec :1676-1677 — `var blob_to_deinit: ?webcore.Blob = null;
+        // defer if (blob_to_deinit) |*blob| blob.deinit();`. The blob crosses
+        // the bundler↔runtime boundary as an erased `OpaqueBlob`; deinit goes
+        // through the same `VmLoaderVTable` that produced it, so model the
+        // `defer` as a drop guard holding `(slot, deinit_fn)`.
+        struct BlobDeinit(
+            Option<bun_bundler::options::OpaqueBlob>,
+            unsafe fn(bun_bundler::options::OpaqueBlob),
+        );
+        impl Drop for BlobDeinit {
+            fn drop(&mut self) {
+                if let Some(blob) = self.0.take() {
+                    // SAFETY: `blob` was produced by `vtable.resolve_blob`;
+                    // `self.1` is that vtable's `blob_deinit`.
+                    unsafe { (self.1)(blob) };
+                }
+            }
+        }
         // TODO(b2-cycle): `get_loader_and_virtual_source` takes a `&VmLoaderCtx`
         // (erased VM + vtable); nothing registers the `VmLoaderVTable` yet
         // (see runtime/jsc_hooks.rs). Restored once the runtime wires it.
-        #[allow(unreachable_code)]
-        let lr: bun_bundler::options::LoaderResult<'_> = {
-            let _ = (
-                specifier_clone.slice(),
-                &mut virtual_source_to_use,
-                &mut blob_to_deinit,
-            );
-            todo!("blocked_on: bun_bundler::options::VmLoaderCtx vtable")
+        let loader_ctx = bun_bundler::options::VmLoaderCtx {
+            vm: (jsc_vm as *const VirtualMachine).cast::<()>(),
+            vtable: todo!(
+                "blocked_on: bun_runtime::jsc_hooks VmLoaderVTable registration"
+            ),
+        };
+        let mut blob_to_deinit = BlobDeinit(None, loader_ctx.vtable.blob_deinit);
+        let lr = match bun_bundler::options::get_loader_and_virtual_source(
+            specifier_clone.slice(),
+            &loader_ctx,
+            &mut virtual_source_to_use,
+            &mut blob_to_deinit.0,
+            None,
+        ) {
+            Ok(lr) => lr,
+            // Spec :1679 `catch { return error.ModuleNotFound; }`.
+            Err(_) => return Err(bun_core::err!("ModuleNotFound")),
         };
         let module_type = lr
             .package_json
@@ -3500,11 +3526,9 @@ impl VirtualMachine {
     ) -> Result<(), bun_core::Error> {
         // TODO(port): blocked_on `ZigStackTrace`/`ZigStackFrame` stub — both
         // are `stub_ty!` opaques (no `frames()`/`.position`/`.source_url`).
-        // Full body preserved below under `#[cfg(any())]`; un-gate when the
         // real `#[repr(C)]` types land.
         let _ = (writer, trace, allow_ansi_colors);
         return Ok(());
-        #[cfg(any())]
         {
         let stack = trace.frames();
         if stack.is_empty() {
@@ -3572,7 +3596,6 @@ impl VirtualMachine {
             }
         }
         Ok(())
-        } // end #[cfg(any())]
     }
 
     /// Spec VirtualMachine.zig:2904 `remapStackFramePositions`.
@@ -3599,10 +3622,8 @@ impl VirtualMachine {
         //
         // TODO(port): blocked_on `ZigStackFrame` stub — `.position` /
         // `.remapped` / `.source_url` are unavailable on the `stub_ty!`
-        // opaque. Loop body preserved under `#[cfg(any())]`; un-gate when the
         // real `#[repr(C)]` type lands.
         let _ = (frames, frames_count, &mut table_locked);
-        #[cfg(any())]
         {
         // SAFETY: caller passes `frames_count` valid `ZigStackFrame`s.
         let frames = unsafe { core::slice::from_raw_parts_mut(frames, frames_count) };
@@ -3820,11 +3841,9 @@ impl VirtualMachine {
         // TODO(port): blocked_on `ZigStackTrace`/`ZigStackFrame` stub +
         // `bun_string::String::github_action()` — the body walks
         // `exception.stack.frames()` and emits the GitHub `::error` annotation.
-        // Full body preserved under `#[cfg(any())]`; un-gate when the real
         // `#[repr(C)]` stack types land.
         let _ = exception;
         return;
-        #[cfg(any())]
         {
         let name = &exception.name;
         let message = &exception.message;
@@ -3934,7 +3953,6 @@ impl VirtualMachine {
 
         let _ = writer.write_all(b"\n");
         let _ = writer.flush();
-        } // end #[cfg(any())]
     }
 
     /// Spec VirtualMachine.zig:3864 `resolveSourceMapping`.

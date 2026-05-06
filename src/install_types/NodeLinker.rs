@@ -210,7 +210,6 @@ impl PnpmMatcher {
         source: &logger::Source,
     ) -> Result<PnpmMatcher, FromExprError> {
         #![allow(unreachable_code)]
-        #[cfg(any())]
         // TODO(b2-blocked): bun_logger::ast::ExprData (enum variants EString/EArray)
         // TODO(b2-blocked): bun_logger::ast::Expr::as_string_cloned
         // TODO(b2-blocked): bun_logger::ast::E::String::slice
@@ -321,7 +320,6 @@ impl PnpmMatcher {
             matchers: matchers.into_boxed_slice(),
             behavior,
         });
-        } // end #[cfg(any())]
         let _ = (expr, log, source);
         Err(FromExprError::UnexpectedExpr)
     }

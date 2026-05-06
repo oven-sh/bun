@@ -40,11 +40,9 @@ pub use store as Store_;
 #[path = "blob/write_file.rs"] pub mod write_file;
  #[path = "blob/copy_file.rs"]  pub mod copy_file;
 
-// `blob/read_file.rs` self-gates with `#![cfg(any())]` (heavy bun_io/ThreadPool
 // deps), which cfg's out the `mod` *item itself* — so `read_file::` is an
 // unresolved path everywhere. Body.rs / Image.rs / this file only need the
 // public result types, so re-declare a thin module with those until the real
-// body un-gates (at which point the `#![cfg(any())]` removal makes the
 // `#[path]`-decl above win and this becomes a duplicate to delete).
 #[allow(dead_code)]
 pub mod read_file {
@@ -67,13 +65,11 @@ pub mod read_file {
     }
 }
 
-// `blob/write_file.rs` self-gates with `#![cfg(any())]` (heavy bun_io/ThreadPool
 // + WorkTask deps), which cfg's out the `mod` *item itself* — so
 // `super::write_file` resolves to the *function* `write_file` below instead of
 // the module. `_jsc_gated` only needs the public façade types
 // (`WriteFilePromise`, `WriteFileWaitFromLockedValueTask`, `WriteFile{,Task}`),
 // so re-declare a thin module with `todo!()` bodies until the real body
-// un-gates (at which point delete this stub and the `#![cfg(any())]`).
 #[allow(dead_code, unused_variables)]
 pub mod write_file {
     use super::{jsc, Blob, JSGlobalObject, SizeType};
@@ -518,7 +514,6 @@ use bun_bundler::options_impl::LoaderExt as _;
 use bun_jsc::zig_string::ZigString as JscZigString;
 
 /// Local shim for `bun_jsc::dom_form_data::FormDataEntry` — that module is
-/// `#![cfg(any())]`-gated upstream and `bun_jsc::DOMFormData` is currently a
 /// `stub_ty!` opaque struct, so the associated-type path
 /// `jsc::DOMFormData::FormDataEntry` cannot resolve. Mirrors Zig
 /// `jsc.DOMFormData.FormDataEntry` (`union(enum) { string, file }`).
@@ -555,7 +550,6 @@ impl Blob {
 
         let _ = global;
         todo!("blocked_on: read_file::NewReadFileHandler / read_file::ReadFile (gated in blob/read_file.rs)");
-        #[cfg(any())] // preserved for when blob/read_file.rs un-gates
         {
         // TODO(port): NewReadFileHandler<F> is a generic struct from read_file.rs.
         type Handler<F> = NewReadFileHandler<F>;
@@ -718,7 +712,6 @@ impl Blob {
     ) {
         let _ = (ctx, function, global);
         todo!("blocked_on: read_file::ReadFile / ReadFileTask / ReadFileUV (gated in blob/read_file.rs)");
-        #[cfg(any())] // preserved for when blob/read_file.rs un-gates
         {
         #[cfg(windows)]
         {
@@ -4681,7 +4674,6 @@ impl Blob {
         let view_ptr = self.shared_view_raw();
         if view_ptr.len() == 0 {
             // PORT NOTE: `bun_jsc::DOMFormData` is currently the `stub_ty!`
-            // opaque (real module gated under `#![cfg(any())]`); call the FFI
             // symbol directly until it un-gates.
             unsafe extern "C" {
                 fn WebCore__DOMFormData__create(global: *mut JSGlobalObject) -> JSValue;
@@ -5160,7 +5152,6 @@ impl Blob {
         // `bun_dotenv::Loader::get_s3_credentials` returns an owned/cloneable
         // value (`Store::init_s3` consumes `S3Credentials` by value, env loader
         // hands back `&S3Credentials`). Falls through to the file path below.
-        #[cfg(any())]
         if check_s3 {
             if let PathOrFileDescriptor::Path(ref p) = path_or_fd {
                 if p.slice().starts_with(b"s3://") {
@@ -5203,7 +5194,6 @@ impl Blob {
                 // opaque `Option<NonNull<c_void>>` until the graph type is
                 // ported; cannot `.find(slice)` on it yet. Re-gated.
                 
-                #[cfg(any())]
                 {
                     // blocked_on: bun_jsc::VirtualMachine::standalone_module_graph
                     // (typed as `Option<NonNull<c_void>>` until the graph type is ported)
@@ -5232,7 +5222,6 @@ impl Blob {
                 // plain fd-backed `Store::File` below, which is behaviourally
                 // correct (just misses the cached-store fast path).
                 
-                #[cfg(any())]
                 if let Some(tag) = fd.stdio_tag() {
                     // blocked_on: bun_jsc::rare_data::BlobStore ↔ webcore::blob::Store unification
                     // (rare_data().stdin/out/err() return `&Arc<high_tier::BlobStore>`, not StoreRef)

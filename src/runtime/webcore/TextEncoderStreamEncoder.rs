@@ -6,7 +6,6 @@ bun_output::declare_scope!(TextEncoderStreamEncoder, visible);
 
 // ──────────────────────────────────────────────────────────────────────────
 // Local shim — upstream `JSGlobalObject.rs` impl block is still
-// `#[cfg(any())]`-gated, so `throw_not_enough_arguments` is unavailable as
 // an inherent method on `bun_jsc::JSGlobalObject`.
 // ──────────────────────────────────────────────────────────────────────────
 trait JSGlobalObjectEncoderExt {

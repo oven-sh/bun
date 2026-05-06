@@ -13,7 +13,6 @@ impl UpdateCommand {
         //
         // `CommandLineArguments` and `update_package_json_and_install_catch_error`
         // live in `bun_install::package_manager_real` which is currently gated
-        // off (`#![cfg(any())]` — reconciler-6: 1200+ errors). The stub
         // `bun_install::package_manager` module only re-exports
         // `PackageManager` + `Subcommand`. Until that crate ungates, the body
         // below mirrors update_command.zig:2-10 against todo!() stand-ins.

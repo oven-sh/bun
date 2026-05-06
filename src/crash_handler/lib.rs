@@ -628,7 +628,6 @@ pub fn crash_handler(
                         #[cfg(windows)]
                         {
                             // TODO(b2-blocked): bun_sys::windows::GetThreadDescription / PWSTR / HRESULT_CODE
-                            #[cfg(any())]
                             {
                             let mut name: bun_sys::windows::PWSTR = core::ptr::null_mut();
                             // SAFETY: GetCurrentThread/GetThreadDescription are valid Win32 calls
@@ -1908,7 +1907,6 @@ fn report(url: &[u8]) {
     }
     #[cfg(windows)]
     {
-        #[cfg(any())]
         // TODO(b2-blocked): bun_sys::windows::PROCESS_INFORMATION / STARTUPINFOW / CreateProcessW
         // TODO(b2-blocked): bun_str::w! / strings::convert_utf8_to_utf16_in_buffer
         {
@@ -1968,7 +1966,6 @@ fn report(url: &[u8]) {
 
         // we don't care what happens with the process
         let _ = spawn_result;
-        } // end #[cfg(any())] windows
         let _ = url;
     }
     #[cfg(any(target_os = "macos", target_os = "linux", target_os = "freebsd"))]

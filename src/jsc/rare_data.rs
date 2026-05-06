@@ -552,7 +552,6 @@ impl Default for AWSSignatureCache {
 //   - default_client_ssl_ctx / dns / s3  (high-tier ctors)
 // ──────────────────────────────────────────────────────────────────────────
 
-#[cfg(any())] // gated: high-tier bodies — un-gated equivalents live below.
 mod _accessor_body {
 use super::*;
 

@@ -2160,7 +2160,6 @@ impl<'a> ValueBufferer<'a> {
 
                 if is_pending {
                     if let AnyBlob::Blob(_blob) = &mut input {
-                        // TODO(blocked_on: blob::read_file): module is `#![cfg(any())]`-gated.
                         // _blob.do_read_file_internal(self, Self::on_finished_loading_file, self.global);
                         todo!("blocked_on: blob::read_file::do_read_file_internal");
                     }
@@ -2179,7 +2178,6 @@ impl<'a> ValueBufferer<'a> {
         Ok(())
     }
 
-    // TODO(blocked_on: blob::read_file): `blob::read_file` is `#![cfg(any())]`-gated;
     // restore the real `ReadFileResultType` parameter and match body once ungated.
     #[allow(dead_code)]
     fn on_finished_loading_file(&mut self /*, bytes: blob::read_file::ReadFileResultType */) {

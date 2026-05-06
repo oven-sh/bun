@@ -5104,7 +5104,6 @@ impl BunXFastPath {
             // TODO(b2-blocked): `bun_install::windows_shim::bun_shim_impl` is not
             // re-exported from the install crate yet (only `bin_linking_shim` is).
             todo!("blocked_on: bun_install::windows_shim::bun_shim_impl::FromBunRunContext");
-            #[cfg(any())]
             let run_ctx = bun_install::windows_shim::bun_shim_impl::FromBunRunContext {
                 handle,
                 base_path: &path_to_use.as_slice()[4..],
@@ -5135,7 +5134,6 @@ impl BunXFastPath {
                 );
             }
 
-            #[cfg(any())]
             bun_install::windows_shim::bun_shim_impl::try_startup_from_bun_js(run_ctx);
 
             bun_output::scoped_log!(BunXFastPath, "did not start via shim");

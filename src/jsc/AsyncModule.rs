@@ -7,7 +7,6 @@
 //! `RuntimeTranspilerStore::run_from_js_thread`). The package-manager-driven
 //! bodies (`Queue::poll_modules` / `resolve_error` / `download_error` /
 //! `resume_loading_module`) are preserved verbatim from the Phase-A draft
-//! inside `#[cfg(any())]` blocks below — every body reaches into
 //! `bun_install::PackageManager` runTasks / `MultiArrayList` column accessors /
 //! `bun_bundler::linker` that aren't wired yet (see PORT STATUS).
 
@@ -248,7 +247,6 @@ unsafe extern "C" {
 // the `EventLoopCtx` vtable for VM is installed).
 // ──────────────────────────────────────────────────────────────────────────
 
-#[cfg(any())] // TODO(port): un-gate once (a)-(d) above land — see PORT STATUS.
 mod _gated_impl {
     use super::*;
     use core::sync::atomic::Ordering;

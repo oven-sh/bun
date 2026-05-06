@@ -1259,7 +1259,6 @@ To create a project with the official Next.js scaffolding tool, run\n\
         let _ = (package_name, property_path);
         // PORT NOTE: `bun_install::PackageManager::CommandLineArguments::parse`,
         // `PackageManager::init`, and `Subcommand::Info` are gated behind
-        // `package_manager_real` (`#![cfg(any())]` reconciler-6) in the
         // bun_install crate. Wire `pm_view_command::view(pm, package_name,
         // property_path, cli.json_output)` once un-gated.
         todo!("blocked_on: bun_install::PackageManager::init / CommandLineArguments::parse / Subcommand::Info")

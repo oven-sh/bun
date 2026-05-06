@@ -82,9 +82,7 @@ impl PackageManagerCommand {
         let _ = (load_lockfile, pm, not_silent);
         // PORT NOTE: `bun_install::lockfile::LoadResult` is currently a unit-struct stub
         // (gated behind `package_manager_real`, reconciler-6) with no `NotFound` / `Err`
-        // variants to match on. Real body preserved under `#[cfg(any())]` until un-gated.
         todo!("blocked_on: bun_install::lockfile::LoadResult variants (NotFound/Err) — package_manager_real un-gate (reconciler-6)");
-        #[cfg(any())]
         {
             if matches!(load_lockfile, lockfile::LoadResult::NotFound) {
                 if not_silent {
@@ -109,12 +107,9 @@ impl PackageManagerCommand {
     pub fn print_hash(ctx: Command::Context, file: File) -> Result<(), bun_core::Error> {
         // PORT NOTE: `PackageManager::CommandLineArguments::parse`, `PackageManager::init`,
         // and `pm.lockfile` live in `bun_install::package_manager_real`, which is currently
-        // gated off (`#![cfg(any())]` — reconciler-6). The stub `bun_install::PackageManager`
         // lacks `init`, `lockfile`, and `Subcommand::Pm`-tied options. Full port body
-        // preserved below under `#[cfg(any())]` with mechanical fixes applied.
         let _ = (ctx, file);
         todo!("blocked_on: bun_install::package_manager_real un-gate (reconciler-6) — PackageManager::init / CommandLineArguments::parse / pm.lockfile");
-        #[cfg(any())]
         {
             let cli = CommandLineArguments::parse(Subcommand::Pm)?;
             let (pm, _cwd) = PackageManager::init(ctx, cli, Subcommand::Pm)?;
@@ -217,10 +212,8 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
         // PORT NOTE: `CommandLineArguments`, `PackageManager::init`, `pm.lockfile`,
         // `pm.options.{positionals,global,bin_path,json_output,enable.force_save_lockfile}`,
         // and `pm.setup_global_dir` live in `bun_install::package_manager_real`, which is
-        // currently gated off (`#![cfg(any())]` — reconciler-6: 1200+ errors). The stub
         // `bun_install::PackageManager` only carries `options.{log_level,enable,scope,...}`.
         // Mirrors `link_command.rs` / `install_command.rs` precedent until those crates
-        // un-gate. Full port body preserved below under `#[cfg(any())]` with mechanical
         // fixes applied.
         let _ = ctx;
         todo!("blocked_on: bun_install::package_manager_real un-gate (reconciler-6) — PackageManager::init / CommandLineArguments::parse / pm.lockfile / pm.options.{{positionals,global,bin_path,json_output}} / setup_global_dir");
@@ -228,7 +221,6 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
 }
 
 // ─── Gated full port body (un-gate alongside bun_install::package_manager_real) ───
-#[cfg(any())]
 mod _gated_port {
     use super::*;
     use bun_install::package_manager::Subcommand;
@@ -640,7 +632,6 @@ mod _gated_port {
                 }
             }
             // TODO(port): bun_install::migration is an empty stub (file body is
-            // `#![cfg(any())]` per reconciler-6). Real call:
             //   migration::detect_and_load_other_lockfile(&mut pm.lockfile, Fd::cwd(), pm, pm.log)
             let load_lockfile: lockfile::LoadResult =
                 todo!("blocked_on: bun_install::migration::detect_and_load_other_lockfile (reconciler-6)");
@@ -684,9 +675,7 @@ mod _gated_port {
 
 // Gated: depends on `Lockfile.packages` MultiArrayList accessors and
 // `Resolution::fmt(.., FmtMode)` which only exist on the real (currently
-// `#![cfg(any())]`-gated) `bun_install::lockfile_real` / `resolution` impls.
 // Sole caller is the `ls` branch above, itself gated for the same reason.
-#[cfg(any())]
 fn print_node_modules_folder_structure(
     directory: &NodeModulesFolder,
     directory_package_id: Option<PackageID>,

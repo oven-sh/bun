@@ -9,7 +9,6 @@ use crate::cli::concat_params;
 // PORT NOTE: `bun_install::package_manager` is a stub that only re-exports `PackageManager` +
 // `Subcommand`; the real `CommandLineArguments` lives under the file-backed
 // `package_manager_real::command_line_arguments` module, which is currently gated out
-// (`#![cfg(any())]` reconciler-6: 1200+ errors). The bodies of `install`/`install_with_cli`
 // below are stubbed with `todo!` until that module is un-gated.
 // use bun_install::package_manager_real::command_line_arguments::CommandLineArguments;
 use bun_bundler::bundle_v2::__phase_a_draft::{DependenciesScanner, DependenciesScannerResult};
@@ -182,7 +181,6 @@ fn install_with_cli(ctx: &mut ContextData /* , cli: CommandLineArguments */) -> 
 // ──────────────────────────────────────────────────────────────────────────
 // `bun install --help` — lifted from `CommandLineArguments::print_help`
 // (src/install/PackageManager/CommandLineArguments.zig, `.install` arm) so the
-// help path works while `package_manager_real` remains `#![cfg(any())]`-gated.
 // When that module un-gates this block should be deleted in favour of
 // `CommandLineArguments::parse` handling `--help` itself.
 // ──────────────────────────────────────────────────────────────────────────

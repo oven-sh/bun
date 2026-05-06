@@ -2181,7 +2181,6 @@ pub fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSVa
     // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
     let _ = unsafe { (*global_this.bun_vm()).rare_data() };
     // RareData::s3_default_client(&mut self, &JSGlobalObject) lives in the
-    // `#[cfg(any())] _accessor_body` block of `bun_jsc::rare_data`.
     todo!("blocked_on: bun_jsc::rare_data::RareData::s3_default_client (gated _accessor_body)")
 }
 
@@ -2248,7 +2247,6 @@ pub fn get_unsafe(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
 pub fn string_width(global_object: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
     // The real impl lives in `bun_jsc::bun_string_jsc::js_get_string_width`
     // (src/jsc/bun_string_jsc.rs:157) but that module is currently inside the
-    // `#[cfg(any())] _gated` block of bun_jsc.
     let _ = (global_object, call_frame);
     todo!("blocked_on: bun_jsc::bun_string_jsc::js_get_string_width (gated)")
 }
@@ -3298,21 +3296,18 @@ pub mod JSZstd {
 pub fn create_bun_stdin(global_this: &JSGlobalObject) -> JSValue {
     // SAFETY: bun_vm() returns the thread-local VM raw ptr; non-null on JS thread.
     let _rare_data = unsafe { &mut *global_this.bun_vm() }.rare_data();
-    // RareData::stdin() lives in the `#[cfg(any())] _accessor_body` block.
     todo!("blocked_on: bun_jsc::rare_data::RareData::stdin + bun_jsc::WebCore::Blob::{{new,init_with_store}}")
 }
 
 pub fn create_bun_stderr(global_this: &JSGlobalObject) -> JSValue {
     // SAFETY: bun_vm() returns the thread-local VM raw ptr; non-null on JS thread.
     let _rare_data = unsafe { &mut *global_this.bun_vm() }.rare_data();
-    // RareData::stderr() lives in the `#[cfg(any())] _accessor_body` block.
     todo!("blocked_on: bun_jsc::rare_data::RareData::stderr + bun_jsc::WebCore::Blob::{{new,init_with_store}}")
 }
 
 pub fn create_bun_stdout(global_this: &JSGlobalObject) -> JSValue {
     // SAFETY: bun_vm() returns the thread-local VM raw ptr; non-null on JS thread.
     let _rare_data = unsafe { &mut *global_this.bun_vm() }.rare_data();
-    // RareData::stdout() lives in the `#[cfg(any())] _accessor_body` block.
     todo!("blocked_on: bun_jsc::rare_data::RareData::stdout + bun_jsc::WebCore::Blob::{{new,init_with_store}}")
 }
 

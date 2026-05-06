@@ -36,7 +36,6 @@ macro_rules! log {
 }
 
 // ── Local shim (Phase D) ────────────────────────────────────────────────
-// `JSGlobalObject::throw_not_enough_arguments` is `#[cfg(any())]`-gated
 // upstream in bun_jsc; bridge it here over `throw_invalid_arguments`.
 trait JSGlobalObjectListenerExt {
     fn throw_not_enough_arguments(&self, name_: &str, expected: usize, got: usize) -> jsc::JsError;

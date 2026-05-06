@@ -52,7 +52,6 @@ use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, ElTim
 
 // ──────────────────────────────────────────────────────────────────────────
 // Local shims (Phase D — upstream `JSGlobalObject.rs` impl block is still
-// `#[cfg(any())]`-gated, so `throw_not_enough_arguments` /
 // `validate_integer_range` are unavailable as inherent methods).
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -124,7 +123,6 @@ pub(crate) fn global_resolver_mut(global_this: &JSGlobalObject) -> &mut Resolver
     // and outlives this call. The two `&mut *vm_ptr` derefs are sequenced.
     let _ = vm_ptr;
     // TODO(port): blocked_on bun_jsc::RareData::global_dns_resolver — upstream
-    // `RareData::global_dns_resolver` lives in a `#[cfg(any())]` gated block and
     // returns a stub `high_tier::dns::Resolver`, not this crate's `Resolver`.
     // Until the cycle-break vtable lands and `RareData` carries the real
     // `dns_jsc::Resolver`, this accessor cannot resolve.

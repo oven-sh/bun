@@ -9,8 +9,6 @@ use bun_string::{strings, String as BunString};
 use crate::{ErrorableString, JSGlobalObject, JSValue, JsResult};
 use bun_jsc::{BunPluginTarget, StringJsc};
 
-// `bun_resolver::fs::Path` — re-exported for signature use. The only construct
-// site (`on_resolve`) is body-gated below pending an owned-buffer init API.
 pub use bun_resolver::fs::Path as FsPath;
 
 pub type MacroJsCtx = JSValue;
@@ -65,9 +63,7 @@ impl<'a> PluginRunner<'a> {
         loc: Loc,
         target: BunPluginTarget,
     ) -> JsResult<Option<FsPath<'static>>> {
-        
-        {
-            let global = self.global_object;
+        let global = self.global_object;
             let namespace_slice = Self::extract_namespace(specifier);
             let namespace = if !namespace_slice.is_empty() && namespace_slice != b"file" {
                 BunString::init(namespace_slice)
@@ -154,28 +150,33 @@ impl<'a> PluginRunner<'a> {
                 break 'brk BunString::init(b"file");
             };
 
-            // PORT NOTE: Zig used std.fmt.allocPrint with this.allocator; we build into Vec<u8>.
+            // PORT NOTE: Zig used `std.fmt.allocPrint(this.allocator, …)` and
+            // returned the allocator-owned slice by value inside `Fs.Path`.
+            // `FsPath<'static>` borrows, so we leak the formatted buffer to
+            // model the same caller-owns-forever contract (matches the pattern
+            // used throughout `src/bundler/` — e.g. LinkerContext.rs).
             let mut path_buf: Vec<u8> = Vec::new();
             write!(&mut path_buf, "{}", file_path).expect("unreachable");
+            let path_static: &'static [u8] = path_buf.leak();
 
             if static_namespace {
-                // TODO(port): Fs.Path.initWithNamespace ownership — Zig passed allocator-owned slice + borrowed byteSlice().
-                return Ok(Some(FsPath::init_with_namespace(
-                    path_buf,
-                    user_namespace.byte_slice(),
-                )));
+                // `byte_slice()` borrows `&self`; re-match to recover the
+                // `'static` literal that was wrapped above so the result
+                // typechecks as `FsPath<'static>` without an extra alloc.
+                let ns: &'static [u8] = if user_namespace.eql_comptime(b"bun") {
+                    b"bun"
+                } else if user_namespace.eql_comptime(b"node") {
+                    b"node"
+                } else {
+                    b"file"
+                };
+                return Ok(Some(FsPath::init_with_namespace(path_static, ns)));
             } else {
                 let mut ns_buf: Vec<u8> = Vec::new();
                 write!(&mut ns_buf, "{}", user_namespace).expect("unreachable");
-                return Ok(Some(FsPath::init_with_namespace(path_buf, ns_buf)));
+                let ns_static: &'static [u8] = ns_buf.leak();
+                return Ok(Some(FsPath::init_with_namespace(path_static, ns_static)));
             }
-        }
-        // TODO(b2-blocked): bun_resolver::fs::Path — owned-buffer init.
-        // `Path<'a>` borrows its `text`/`namespace`; the Zig original passes
-        // allocator-owned slices, but the Rust stub lacks an owning variant.
-        // TODO(b2-blocked): bun_logger::Log::add_error (signature confirm)
-        let _ = (specifier, importer, log, loc, target);
-        unreachable!("b2-blocked: bun_resolver::fs::Path owned init")
     }
 
     pub fn on_resolve_jsc(

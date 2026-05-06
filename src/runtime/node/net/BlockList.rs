@@ -58,7 +58,6 @@ use crate::node::util::validators;
 use crate::socket::socket_address::inet::{self, AF_INET, AF_INET6};
 
 // ─── local shims for upstream-gated APIs ──────────────────────────────────
-// `JSGlobalObject::clear_exception` lives in the `#[cfg(any())]`-gated
 // `JSGlobalObject.rs` module; bind the FFI symbol locally.
 #[inline]
 fn clear_exception(global: &JSGlobalObject) {

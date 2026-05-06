@@ -355,7 +355,6 @@ pub use bun_sql_jsc::mysql as MySQL;
 pub use crate::valkey_jsc::js_valkey::JSValkeyClient as Valkey;
 
 // ─── gated re-exports (target modules not yet declared in lib.rs) ────────────
-#[cfg(any())] // TODO(b2-blocked): crate::webview — lib.rs leaves it un-declared (bun_jsc method surface)
 mod _gated_reexports {
     pub use crate::webview::host_process as WebViewHostProcess;
     pub use crate::webview::chrome_process as ChromeProcess;

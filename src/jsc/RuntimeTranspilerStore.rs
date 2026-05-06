@@ -45,7 +45,6 @@ pub fn dump_source_string_failiable(
     written: &[u8],
 ) -> Result<(), bun_core::Error> {
      // TODO(b2-blocked): bun_sys::Dir, bun_io::BufWriter, bun_core::fmt::format_json_string_utf8, bun_paths::{dirname, basename, windows_filesystem_root}, vm.source_mappings, bun_resolver::fs::FileSystem::RealFS::platform_temp_dir
-    #[cfg(any())]
     {
     // TODO(port): narrow error set
     if !cfg!(debug_assertions) {
@@ -194,7 +193,6 @@ impl RuntimeTranspilerStore {
         vm: &mut VirtualMachine,
     ) {
          // TODO(b2-blocked): bun_collections::UnboundedQueue::{pop_batch, iterator}, EventLoop::drain_microtasks_with_global, JSGlobalObject::report_uncaught_exception_from_error
-        #[cfg(any())]
         {
         let mut batch = self.queue.pop_batch();
         let jsc_vm = vm.jsc_vm;
@@ -233,7 +231,6 @@ impl RuntimeTranspilerStore {
         package_json: Option<&PackageJSON>,
     ) -> *mut c_void {
          // TODO(b2-blocked): TranspilerJobStore::get, JSInternalPromise::create, ResolvedSource fields, ResolvedSourceTag, Strong::create, JSValue::from_cell, Fs::Path::init, PackageJSON.module_type
-        #[cfg(any())]
         {
         let job: *mut TranspilerJob = self.store.get();
         let owned_path = Fs::Path::init(Box::<[u8]>::from(path.text));
@@ -373,7 +370,6 @@ impl TranspilerJob {
 
     pub fn dispatch_to_main_thread(&mut self) {
          // TODO(b2-blocked): VirtualMachine.transpiler_store, UnboundedQueue::push, ConcurrentTask::create_from, EventLoop::enqueue_task_concurrent
-        #[cfg(any())]
         {
         // SAFETY: vm outlives the job (BACKREF — VM owns the store).
         let vm = unsafe { &*self.vm };
@@ -388,7 +384,6 @@ impl TranspilerJob {
 
     pub fn run_from_js_thread(&mut self) -> JsResult<()> {
          // TODO(b2-blocked): Strong::swap, bun_aio::KeepAlive::unref, bun_string::String::{empty, clone_utf8, create_if_different, dupe_ref}, ResolvedSource fields, AsyncModule::fulfill, TranspilerJobStore::put
-        #[cfg(any())]
         {
         // SAFETY: vm/global_this outlive the job (BACKREF).
         let vm = unsafe { &*self.vm };
@@ -437,7 +432,6 @@ impl TranspilerJob {
     pub fn schedule(&mut self) {
          // TODO(b2-blocked): bun_aio::KeepAlive::ref_ takes EventLoopCtx; VirtualMachine→EventLoopCtx
          // conversion is installed in the high tier and is not yet wired here.
-        #[cfg(any())]
         {
             // SAFETY: vm outlives the job (BACKREF).
             self.poll_ref.ref_(unsafe { &*self.vm });
@@ -457,7 +451,6 @@ impl TranspilerJob {
 
     pub fn run(&mut self) {
          // TODO(b2-blocked): bun_alloc::Arena, bun_js_parser::ast::ASTMemoryAllocator, bun_transpiler::Transpiler, bun_watcher::Watcher::get_hash, bun_resolver::{node_fallbacks, package_json::MacroMap}, bun_resolve_builtins::HardcodedModule, bun_bundler::{analyze_transpiled_module, Transpiler::ParseOptions, parse_result::AlreadyBundled}, bun_js_printer::{BufferWriter, BufferPrinter, Format}, RuntimeTranspilerCache fields, ResolvedSource fields, VirtualMachine::{transpiler, bun_watcher, main, main_hash, debugger, module_loader, smol, source_map_handler, is_watcher_enabled, use_isolation_source_provider_cache, source_mappings}
-        #[cfg(any())]
         {
         // PERF(port): was ArenaAllocator bulk-free feeding transpiler/AST — kept as Bump.
         let mut arena = Arena::new();
@@ -914,11 +907,6 @@ impl TranspilerJob {
 
 // TODO(port): placeholder re-exports for types referenced by tag matching above; Phase B
 // resolves these against their real crates. All four are only used inside the
-// `#[cfg(any())]`-gated `run()` body so they are gated likewise.
-#[cfg(any())] use crate::resolved_source::Tag as ResolvedSourceTag;
-#[cfg(any())] use bun_bundler::parse_result::AlreadyBundled;
-#[cfg(any())] use crate::runtime_transpiler_cache::OutputCode;
-#[cfg(any())] use crate::virtual_machine::BunWatcher;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

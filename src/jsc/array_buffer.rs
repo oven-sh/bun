@@ -836,7 +836,6 @@ impl TypedArrayType {
     // so referencing it here is a forward-dep cycle. The inverse mapping
     // (`napi_typedarray_type::from_js_type`) already lives in
     // `bun_runtime/napi/napi_body.rs`; this fn should move there.
-    #[cfg(any())]
     pub fn to_napi(self) -> Option<bun_runtime::api::napi::napi_typedarray_type> {
         use bun_runtime::api::napi::napi_typedarray_type::*;
         match self {

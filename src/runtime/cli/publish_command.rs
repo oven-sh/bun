@@ -22,7 +22,6 @@ use crate::cli::ci_info as ci;
 use bun_simdutf_sys::simdutf as simdutf;
 use bun_sys::dir_iterator as DirIterator;
 use bun_paths::resolve_path::{join_abs_string_buf_z, normalize_buf, normalize_buf_z};
-// `bun_install::package_manager_real` is `#![cfg(any())]`-gated (reconciler-6); pull
 // `LogLevel`/`AuthType`/`Access` from the stub surface in `bun_install`
 // (see PackageManagerOptions.zig `PublishConfig`).
 use bun_install::{AuthType, LogLevel};

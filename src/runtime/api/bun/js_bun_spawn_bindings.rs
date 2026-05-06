@@ -63,7 +63,6 @@ impl BunStringSpawnExt for BunString {
 
 // ── AbortSignal local extension ─────────────────────────────────────────────
 // `bun_jsc::AbortSignal` is an opaque `stub_ty!` (the real impl in
-// `src/jsc/AbortSignal.rs` is gated behind `#![cfg(any())]`). Mirror the C ABI
 // directly so call sites keep the Zig-spec spelling.
 unsafe extern "C" {
     fn WebCore__AbortSignal__fromJS(value: JSValue) -> *mut WebCore::AbortSignal;
@@ -132,7 +131,6 @@ impl AbortSignalSpawnExt for WebCore::AbortSignal {
     #[inline]
     fn get_timeout(&self) -> Option<&crate::timer::AbortSignalTimeout> {
         // TODO(port): blocked_on bun_jsc::abort_signal::AbortSignal::get_timeout
-        // (gated behind `#![cfg(any())]`). The only call site is best-effort
         // `AbortSignal.timeout` honoring in spawnSync; returning `None` falls
         // back to the user-supplied `timeout:` value.
         None

@@ -1,4 +1,3 @@
-#![cfg(any())] // reconciler-6: re-gate (1200+ errors); stub surface in lib.rs
 //! Resumable, non-blocking tarball extractor for `bun install`.
 //!
 //! The HTTP thread hands each body chunk to `on_chunk`, which appends to a

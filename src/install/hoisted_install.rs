@@ -1,4 +1,3 @@
-#![cfg(any())] // reconciler-6: re-gate (1200+ errors); stub surface in lib.rs
 use core::sync::atomic::Ordering;
 
 use bun_core::{Global, Output};

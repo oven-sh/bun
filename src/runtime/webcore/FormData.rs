@@ -37,7 +37,6 @@ fn any_promise_resolve(p: AnyPromise, global: &JSGlobalObject, value: JSValue) -
 }
 
 // PORT NOTE: `bun_jsc::DOMFormData` is currently an opaque `stub_ty!` (real impl
-// gated behind `#[cfg(any())]` in jsc/lib.rs). Declare the underlying C++ externs
 // locally and dispatch through free fns so this file compiles independently.
 mod dom_form_data_shim {
     use super::{DOMFormData, JSGlobalObject, JSValue, ZigString};

@@ -872,7 +872,6 @@ impl EventLoop {
 
     // PORT NOTE: real body — installed by `bun_runtime` via
     // `virtual_machine::RuntimeHooks::auto_tick`. Preserved here for reference.
-    #[cfg(any())] // TODO(b2-cycle): preserved for reference — real body lives in bun_runtime via RuntimeHooks::auto_tick
     pub fn _auto_tick_body(&mut self) {
         let loop_ = self.usockets_loop();
         let ctx = self.vm();

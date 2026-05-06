@@ -29,7 +29,6 @@ use super::pwhash;
 use bun_sha_hmac::SHA512;
 
 // ───────────────────────────────────────────────────────────────────────────
-// Local JSGlobalObject extension — `throw_not_enough_arguments` is `#[cfg(any())]`
 // gated upstream in bun_jsc; provide a file-local shim matching the Zig
 // `globalObject.throwNotEnoughArguments(name, expected, got)` shape.
 // ───────────────────────────────────────────────────────────────────────────

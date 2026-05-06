@@ -160,7 +160,6 @@ pub const USE_MIMALLOC: bool = true;
 //
 // These modelled Zig's `std.mem.Allocator` vtable. With `#[global_allocator]`
 // + `Arena = bumpalo::Bump`, most callers should drop the allocator param
-// entirely. The sub-modules are ported in full (no `#![cfg(any())]` gating —
 // PORTING.md §Forbidden) so the .zig↔.rs diff pass has a real body to compare;
 // callers are migrated incrementally.
 //

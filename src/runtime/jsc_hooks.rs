@@ -1317,7 +1317,6 @@ fn transpile_source_code_inner(
                 // JSValue. This is the same behaviour as `Bun.Transpiler`
                 // (which also routes JSON through the printer).
                 
-                #[cfg(any())]
                 if matches!(loader, L::Json | L::Jsonc | L::Toml | L::Yaml | L::Json5) {
                     // TODO(b2-blocked): `Expr::to_js` — gated in `bun_js_parser`
                     // (`ast.parts.at(0).stmts[0].data.s_expr.value.to_js(...)`).
@@ -1864,7 +1863,6 @@ fn transpile_source_code_inner(
 /// Un-gated no-op stub so the two live call sites compile; the real body
 /// below is ``-gated on `ImportWatcher`. Un-gate both
 /// atomically.
-#[cfg(any())]
 #[inline]
 #[allow(clippy::too_many_arguments)]
 fn maybe_watch_file(
@@ -2525,8 +2523,6 @@ unsafe fn transpile_file(
         // — `vm.commonjs_custom_extensions` is still typed `StringArrayHashMap<()>`
         // on the low-tier VM (VirtualMachine.rs:262); widen to
         // `StringArrayHashMap<CustomLoader>` and un-gate. The module itself is
-        // still parked under `bun_jsc::_gated` (lib.rs `#![cfg(any())]`).
-        #[cfg(any())]
         {
             use bun_jsc::node_module_module::{
                 find_longest_registered_extension, CustomLoader,
@@ -2644,8 +2640,6 @@ unsafe fn transpile_file(
                 
                 // TODO(b2-cycle): same `commonjs_custom_extensions` typing
                 // gate as above (spec :1043-1064). `node_module_module` is
-                // still under `bun_jsc::_gated` (`#![cfg(any())]`).
-                #[cfg(any())]
                 {
                     use bun_jsc::node_module_module::{
                         find_longest_registered_extension, CustomLoader,

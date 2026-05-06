@@ -1,4 +1,3 @@
-#![cfg(any())] // reconciler-6: re-gate (1200+ errors); stub surface in lib.rs
 use core::ffi::c_int;
 use core::sync::atomic::{AtomicPtr, Ordering};
 

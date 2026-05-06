@@ -7,7 +7,6 @@ use bun_install::{
     PackageID, PackageManager, Resolution,
 };
 
-// Local shim: bun_install::lockfile_real is `#![cfg(any())]`-gated (reconciler-6).
 // Swap back to `bun_install::lockfile_real` once un-gated upstream.
 mod lockfile_real {
     // blocked_on: bun_install::lockfile_real::DEFAULT_TRUSTED_DEPENDENCIES_LIST
@@ -55,7 +54,6 @@ impl UntrustedCommand {
 
         let _ = (ctx, pm);
         todo!("blocked_on: bun_install::lockfile_real un-gate (reconciler-6) — Lockfile::{{load_from_cwd,has_trusted_dependency,buffers.dependencies/resolutions}} / package::scripts::{{Scripts,List,PrintFormat}} / tree::{{Iterator,IteratorPathStyle}}");
-        #[cfg(any())]
         {
         let load_lockfile = pm.lockfile.load_from_cwd(pm, ctx.log, true);
         PackageManagerCommand::handle_load_lockfile_errors(&load_lockfile, pm);
@@ -165,7 +163,6 @@ impl UntrustedCommand {
         ));
 
         Ok(())
-        } // end #[cfg(any())]
     }
 
     fn print_zero_untrusted_dependencies_found() {
@@ -182,7 +179,6 @@ impl UntrustedCommand {
 pub struct TrustCommand;
 
 /// Anonymous struct from Zig: value type stored in `scripts_at_depth`.
-#[cfg(any())] // blocked_on: bun_install::lockfile_real un-gate — package::scripts::List
 struct ScriptInfo {
     package_id: PackageID,
     scripts_list: lockfile::package::scripts::List,
@@ -257,7 +253,6 @@ impl TrustCommand {
 
         let _ = (ctx, pm, &packages_to_trust, trust_all);
         todo!("blocked_on: bun_install::lockfile_real un-gate (reconciler-6) — Lockfile::{{load_from_cwd,has_trusted_dependency,buffers.dependencies/resolutions,trusted_dependencies,save_to_disk}} / package::scripts::{{Scripts,List,PrintFormat}} / tree::{{Iterator,IteratorPathStyle}} / PackageManager::{{log,progress,sleep,spawn_package_lifecycle_scripts,root_package_json_file}}");
-        #[cfg(any())]
         {
         let load_lockfile = pm.lockfile.load_from_cwd(pm, ctx.log, true);
         PackageManagerCommand::handle_load_lockfile_errors(&load_lockfile, pm);
@@ -601,7 +596,6 @@ impl TrustCommand {
 
         let _ = root_node; // suppress unused warning when progress is disabled
         Ok(())
-        } // end #[cfg(any())]
     }
 }
 

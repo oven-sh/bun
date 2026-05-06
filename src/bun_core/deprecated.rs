@@ -594,7 +594,6 @@ impl RapidHash {
 // cannot depend on it. The fn body is preserved for the bun_jsc move-in pass to
 // take ownership of (it converts JsError → write Error for Console formatting).
 // Gated out until bun_jsc takes ownership; test_runner/expect.rs carries a local copy.
-#[cfg(any())]
 pub fn js_error_to_write_error(e: JsError) -> crate::Error {
     match e {
         // TODO: this might lose a JSTerminated, causing m_terminationException problems

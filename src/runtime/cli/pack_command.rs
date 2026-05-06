@@ -81,7 +81,6 @@ fn file_to_source_at(dir: &Dir, path: &ZStr) -> bun_sys::Maybe<bun_logger::Sourc
 }
 
 // `PackageManager` stub-field accessors - real fields gated behind
-// `bun_install::package_manager_real` (`#![cfg(any())]` reconciler-6).
 #[allow(clippy::mut_from_ref)]
 #[inline]
 fn pm_log<'a>(_m: *const PackageManager) -> &'a mut bun_logger::Log {

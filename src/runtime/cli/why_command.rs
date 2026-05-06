@@ -15,7 +15,6 @@ use bun_semver as semver;
 use bun_str::strings;
 
 use crate::command;
-#[cfg(any())]
 use crate::package_manager_command::PackageManagerCommand;
 
 pub struct WhyCommand;
@@ -294,7 +293,6 @@ impl WhyCommand {
         let _ = ctx;
         todo!("blocked_on: bun_install::PackageManager::{{CommandLineArguments,Subcommand,init}}");
 
-        #[cfg(any())]
         {
             let cli = PackageManager::CommandLineArguments::parse(PackageManager::Subcommand::Why)?;
             let (pm, _) = PackageManager::init(ctx, &cli, PackageManager::Subcommand::Why)?;
@@ -331,7 +329,6 @@ impl WhyCommand {
         let _ = (ctx, pm);
         todo!("blocked_on: bun_install::PackageManagerOptionsStub::top_only");
 
-        #[cfg(any())]
         Self::exec_with_manager(ctx, pm, positionals[1], pm.options.top_only)
     }
 
@@ -349,7 +346,6 @@ impl WhyCommand {
         let _ = (ctx, &pm.lockfile, package_pattern, top_only);
         todo!("blocked_on: bun_install::lockfile::Lockfile::load_from_cwd / PackageManagerOptionsStub::depth (package_manager_real un-gate, reconciler-6)");
 
-        #[cfg(any())]
         {
         let load_lockfile = pm.lockfile.load_from_cwd(pm, &mut ctx.log, true);
         PackageManagerCommand::handle_load_lockfile_errors(&load_lockfile, pm);
@@ -527,7 +523,6 @@ impl WhyCommand {
         }
 
         Ok(())
-        } // end #[cfg(any())]
     }
 }
 

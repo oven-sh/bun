@@ -22,8 +22,6 @@ use bun_string::{self as strings, String as BunString};
 // High-tier deps (CLI command-line, JS lexer/printer, Jest pretty-format) —
 // gated; bodies that reference them are gated below.
 // TODO(port): bun_runtime / bun_js_parser cycle.
-#[cfg(any())] use bun_runtime::cli::Command as CLI;
-#[cfg(any())] use bun_runtime::test_runner::pretty_format::JestPrettyFormat;
 
 /// Thin facade over `bun_js_parser::lexer` / `bun_js_printer` so the call
 /// sites below keep their Zig spelling (`JSLexer.isLatin1Identifier`,
@@ -428,7 +426,6 @@ fn message_with_type_and_level_(
     // TODO(port-cycle): `crate::Jest::runner()?.bun_test_root.on_before_print()`
     // — Jest runner lives in `bun_runtime` (high-tier cycle); restored when
     // the test-runner crate split lands.
-    #[cfg(any())]
     if let Some(runner) = crate::Jest::runner() {
         runner.bun_test_root.on_before_print();
     }
@@ -438,7 +435,6 @@ fn message_with_type_and_level_(
     // TODO(port-cycle): `CLI::get().runtime_options.console_depth` — `CLI`
     // (`bun_runtime::cli::Command`) is a high-tier cycle dep. Until the CLI
     // context is plumbed through `VirtualMachine`, fall back to the default.
-    #[cfg(any())]
     let console_depth = CLI::get()
         .runtime_options
         .console_depth
@@ -631,7 +627,6 @@ impl<'a> TablePrinter<'a> {
 // surface (`is_iterable`, `for_each_with_context`, `to_object`, `get_own`,
 // `to_cell`) and `jsc::PropertyIteratorOptions` (~30 errs). Stub `print_table`
 // provided above; restore once the missing iterator helpers land.
-#[cfg(any())]
 impl<'a> TablePrinter<'a> {
     /// Compute how much horizontal space a `JSValue` will take when printed.
     fn get_width_for_value(&mut self, value: JSValue) -> JsResult<u32> {
@@ -4158,7 +4153,6 @@ pub mod formatter {
             // still print. Restored once the runtime types implement a
             // dyn-erased `WriteFormat` hook this crate can call without naming
             // them.
-            #[cfg(any())]
             if let Some(response) = value.as_::<bun_runtime::webcore::Response>() {
                 let _ = response.write_format::<C>(self, writer_);
                 return Ok(());
@@ -5453,7 +5447,6 @@ pub extern "C" fn Bun__ConsoleObject__takeHeapSnapshot(
 ) {
     // TODO: this does an extra JSONStringify and we don't need it to!
     // PORT NOTE: `JSGlobalObject::generate_heap_snapshot` lives in the gated
-    // `JSGlobalObject.rs` impl block (`#![cfg(any())]`), so call the FFI
     // export directly until that module un-gates.
     unsafe extern "C" {
         fn JSC__JSGlobalObject__generateHeapSnapshot(this: *const JSGlobalObject) -> JSValue;

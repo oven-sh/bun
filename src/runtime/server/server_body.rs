@@ -542,7 +542,6 @@ impl AnyRoute {
     ) -> JsResult<Option<AnyRoute>> {
         let _ = (argument, index_path, init_ctx);
         todo!("blocked_on: bun_jsc::Node::PathLike::from_bun_string, bun_paths::fs::FileSystem::abs/relative, server::AnyRoute unification");
-        #[cfg(any())]
         {
         if !argument.is_object() {
             return Ok(None);
@@ -635,7 +634,6 @@ impl AnyRoute {
     ) -> JsResult<AnyRoute> {
         let _ = (global, headers, path);
         todo!("blocked_on: Rc<FileRoute>/Rc<StaticRoute> vs *mut init, Blob::find_or_create_file_from_path disambiguation");
-        #[cfg(any())]
         {
         // The file/static route doesn't ref it.
         let blob = Blob::find_or_create_file_from_path(path, global, false);
@@ -730,7 +728,6 @@ impl AnyRoute {
                 return Err(global.throw_invalid_arguments(
                     format_args!("framework router config not yet ported"),
                 ));
-                #[cfg(any())]
                 {
                 let alloc = &mut init_ctx.js_string_allocations;
                 let relative_root = alloc.track(dir);

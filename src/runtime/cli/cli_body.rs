@@ -1387,7 +1387,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>
 
     /// Local shim for `bun_install::PackageManager::CommandLineArguments::print_help`.
     /// The real impl lives in `bun_install` behind the `package_manager_real`
-    /// gate (`#![cfg(any())]` reconciler-6) and isn't re-exported on the
     /// public stub yet.
     fn pm_print_help(_subcommand: bun_install::Subcommand) {
         todo!("blocked_on: bun_install::package_manager::CommandLineArguments::print_help")
@@ -1704,7 +1703,6 @@ To create a project with the official Next.js scaffolding tool, run
         // Parse arguments manually since the standard flow doesn't work for standalone commands
         let _ctx = init::<{ Tag::InfoCommand }>(log)?;
         // `CommandLineArguments::parse` / `PackageManager::init` for `Subcommand::Info`
-        // are gated behind `bun_install::package_manager_real` (`#![cfg(any())]`
         // reconciler-6) and the `Info` variant isn't on the public `Subcommand`
         // stub yet; thread the args through once that lands.
         let pm: &mut bun_install::PackageManager =

@@ -440,7 +440,6 @@ pub extern "C" fn Bun__EventLoop__exitLoop(el: *mut EventLoop) {
 
 // ════════════════════════════════════════════════════════════════════════════
 // JSCScheduler.zig — un-gated bodies (the full `JSCScheduler.rs` draft is
-// `#[cfg(any())]`-gated; only the two C++→Zig exports are needed here).
 // ════════════════════════════════════════════════════════════════════════════
 
 /// `export fn Bun__eventLoop__incrementRefConcurrently(vm, delta)` — bumps the

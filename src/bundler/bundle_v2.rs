@@ -4041,8 +4041,11 @@ impl<'a> BundleV2<'a> {
         false
     }
 
-    fn path_with_pretty_initialized<'a>(&'a self, path: Fs::Path<'a>, target: options::Target) -> Result<Fs::Path<'a>, Error> {
-        generic_path_with_pretty_initialized(path, target, unsafe { &(*self.transpiler.fs).top_level_dir }, self.allocator())
+    fn path_with_pretty_initialized(&self, path: Fs::Path<'static>, target: options::Target) -> Result<Fs::Path<'static>, Error> {
+        // SAFETY: arena outlives the bundle pass; erase the `&self` lifetime so the
+        // returned `Path<'static>` doesn't keep `self` borrowed (borrowck).
+        let bump: &'static bun_alloc::Arena = unsafe { &*(self.allocator() as *const bun_alloc::Arena) };
+        generic_path_with_pretty_initialized(path, target, unsafe { &(*self.transpiler.fs).top_level_dir }, bump)
     }
 
     fn reserve_source_indexes_for_bake(&mut self) -> Result<(), Error> {

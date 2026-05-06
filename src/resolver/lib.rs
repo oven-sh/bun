@@ -2970,7 +2970,11 @@ pub struct Bufs {
     pub esm_absolute_package_path: PathBuffer,
     pub esm_absolute_package_path_joined: PathBuffer,
 
-    pub dir_entry_paths_to_resolve: [DirEntryResolveQueueItem; 256],
+    // PORT NOTE: Zig left this `= undefined`; `DirEntryResolveQueueItem` holds
+    // `&'static [u8]` fields, so a zeroed bit-pattern is UB in Rust. Use
+    // `MaybeUninit` and `assume_init_{ref,mut}` at the (linear write-then-read)
+    // use sites in `dir_info_cached_maybe_log`.
+    pub dir_entry_paths_to_resolve: [core::mem::MaybeUninit<DirEntryResolveQueueItem>; 256],
     pub open_dirs: [FD; 256],
     pub resolve_without_remapping: PathBuffer,
     pub index: PathBuffer,
@@ -3457,13 +3461,15 @@ impl PendingResolution {
 
     // deinit → Drop (frees dependency + string_buf; both have Drop)
 
+    // TODO(b2-blocked): Package::copy → PackageExternal needs a string-builder/arena;
+    // wire once Semver::String::Builder is threaded through here. Gated alongside
+    // its sole (auto-install) caller so the live symbol carries no `unimplemented!()`.
+    #[cfg(any())]
     pub fn init(
         esm: crate::package_json::Package,
         dependency: Dependency::Version,
         resolution_id: Install::PackageID,
     ) -> core::result::Result<PendingResolution, bun_core::Error> {
-        // TODO(b2-blocked): Package::copy → PackageExternal needs a string-builder/arena;
-        // wire once Semver::String::Builder is threaded through here.
         let _ = (esm, dependency, resolution_id);
         unimplemented!("PendingResolution::init (Phase B — Package::copy)")
     }
@@ -6365,13 +6371,13 @@ impl<'a> Resolver<'a> {
         // SAFETY: threadlocal buffer outlives this fn; len ≤ MAX_PATH_BYTES checked above
         let path: &mut [u8] = unsafe { core::slice::from_raw_parts_mut(dir_info_uncached_path_buf.as_mut_ptr(), input_path.len()) };
 
-        bufs!(dir_entry_paths_to_resolve)[0] = DirEntryResolveQueueItem {
+        bufs!(dir_entry_paths_to_resolve)[0].write(DirEntryResolveQueueItem {
             result: top_result,
             // SAFETY: extending lifetime to 'static for threadlocal buf storage; consumed before fn returns
             unsafe_path: unsafe { &*(path as *const [u8]) },
             safe_path: b"",
             fd: FD::INVALID,
-        };
+        });
         let mut top = Dirname::dirname(path);
 
         let mut top_parent = allocators::Result {
@@ -6415,20 +6421,22 @@ impl<'a> Resolver<'a> {
             if usize::try_from(i).unwrap() >= bufs!(dir_entry_paths_to_resolve).len() {
                 return Ok(None);
             }
-            bufs!(dir_entry_paths_to_resolve)[usize::try_from(i).unwrap()] = DirEntryResolveQueueItem {
+            bufs!(dir_entry_paths_to_resolve)[usize::try_from(i).unwrap()].write(DirEntryResolveQueueItem {
                 // SAFETY: extending lifetime to 'static for threadlocal buf storage; consumed before fn returns.
                 unsafe_path: unsafe { &*(top as *const [u8]) },
                 result,
                 safe_path: b"",
                 fd: FD::INVALID,
-            };
+            });
 
             // SAFETY: resolver mutex held; sole `&mut` to this slot.
             if let Some(top_entry) = unsafe { rfs!().entries.get(top) } {
                 match top_entry {
                     Fs::file_system::real_fs::EntriesOption::Entries(entries) => {
-                        bufs!(dir_entry_paths_to_resolve)[usize::try_from(i).unwrap()].safe_path = entries.dir;
-                        bufs!(dir_entry_paths_to_resolve)[usize::try_from(i).unwrap()].fd = entries.fd;
+                        // SAFETY: slot was written immediately above.
+                        let slot = unsafe { bufs!(dir_entry_paths_to_resolve)[usize::try_from(i).unwrap()].assume_init_mut() };
+                        slot.safe_path = entries.dir;
+                        slot.fd = entries.fd;
                     }
                     Fs::file_system::real_fs::EntriesOption::Err(err) => {
                         debuglog!(
@@ -6450,19 +6458,21 @@ impl<'a> Resolver<'a> {
             if result.status != allocators::Status::Unknown {
                 top_parent = result;
             } else {
-                bufs!(dir_entry_paths_to_resolve)[usize::try_from(i).unwrap()] = DirEntryResolveQueueItem {
+                bufs!(dir_entry_paths_to_resolve)[usize::try_from(i).unwrap()].write(DirEntryResolveQueueItem {
                     // SAFETY: extending lifetime to 'static for threadlocal buf storage; consumed before fn returns.
                     unsafe_path: unsafe { &*(root_path as *const [u8]) },
                     result,
                     safe_path: b"",
                     fd: FD::INVALID,
-                };
+                });
                 // SAFETY: resolver mutex held; sole `&mut` to this slot.
                 if let Some(top_entry) = unsafe { rfs!().entries.get(top) } {
                     match top_entry {
                         Fs::file_system::real_fs::EntriesOption::Entries(entries) => {
-                            bufs!(dir_entry_paths_to_resolve)[usize::try_from(i).unwrap()].safe_path = entries.dir;
-                            bufs!(dir_entry_paths_to_resolve)[usize::try_from(i).unwrap()].fd = entries.fd;
+                            // SAFETY: slot was written immediately above.
+                            let slot = unsafe { bufs!(dir_entry_paths_to_resolve)[usize::try_from(i).unwrap()].assume_init_mut() };
+                            slot.safe_path = entries.dir;
+                            slot.fd = entries.fd;
                         }
                         Fs::file_system::real_fs::EntriesOption::Err(err) => {
                             debuglog!(
@@ -6521,7 +6531,8 @@ impl<'a> Resolver<'a> {
 
         // Start at the top.
         while queue_slice_len > 0 {
-            let mut queue_top = bufs!(dir_entry_paths_to_resolve)[queue_slice_len - 1].clone();
+            // SAFETY: every slot in `0..queue_slice_len` was `.write()`-initialised above.
+            let mut queue_top = unsafe { bufs!(dir_entry_paths_to_resolve)[queue_slice_len - 1].assume_init_ref() }.clone();
             // defer top_parent = queue_top.result — done at end of loop body
             queue_slice_len -= 1;
 
@@ -7082,7 +7093,10 @@ impl<'a> Resolver<'a> {
     pub fn load_from_main_field(
         &mut self,
         path: &[u8],
-        dir_info: &mut DirInfo::DirInfo,
+        // PORT NOTE: raw `*mut` (not `&mut`) — `get_enclosing_browser_scope()` may
+        // return `dir_info` itself (resolver.zig:4161 self-browser-scope), which
+        // would alias a live `&mut`. Spec uses raw `*DirInfo`; re-borrow narrowly.
+        dir_info: *mut DirInfo::DirInfo,
         _field_rel_path: &[u8],
         field: &[u8],
         extension_order: &[&'static [u8]],
@@ -7135,7 +7149,8 @@ impl<'a> Resolver<'a> {
 
         // Is this a file?
         if let Some(result) = self.load_as_file(field_abs_path, extension_order) {
-            if let Some(package_json) = dir_info.package_json {
+            // SAFETY: ARENA — DirInfo ptr is a BSSMap slot (see LIFETIMES.tsv).
+            if let Some(package_json) = unsafe { &*dir_info }.package_json {
                 dec_ret!(Some(MatchResult {
                     path_pair: PathPair { primary: Fs::Path::init(result.path), secondary: None },
                     package_json: Some(package_json as *const _),
@@ -7157,8 +7172,7 @@ impl<'a> Resolver<'a> {
             dec_ret!(None);
         };
 
-        // SAFETY: ARENA — DirInfo ptr is a BSSMap slot; uniquely re-borrowed mutably (see LIFETIMES.tsv).
-        let r = self.load_as_index_with_browser_remapping(unsafe { &mut *field_dir_info }, field_abs_path, extension_order);
+        let r = self.load_as_index_with_browser_remapping(field_dir_info, field_abs_path, extension_order);
         if let Some(d) = self.debug_logs.as_mut() { d.decrease_indent(); }
         r
     }
@@ -7173,11 +7187,12 @@ impl<'a> Resolver<'a> {
                 return Some(result);
             }
         }
-        // PORT NOTE: snapshot the slice ptr so the `&self.opts` borrow doesn't
-        // overlap `&mut self` in `load_index_with_extension`.
-        let extra_cjs: &'static [&'static [u8]] =
-            unsafe { &*(self.opts.extra_cjs_extensions.as_ref() as *const [&'static [u8]]) };
-        for ext in extra_cjs.iter() {
+        // PORT NOTE: index by `0..len` so each iteration takes a fresh short
+        // borrow of `self.opts` that ends before `&mut self` is taken by
+        // `load_index_with_extension` (avoids the forbidden lifetime-extension cast).
+        let n = self.opts.extra_cjs_extensions.len();
+        for i in 0..n {
+            let ext = self.opts.extra_cjs_extensions[i];
             if let Some(result) = self.load_index_with_extension(dir_info, ext) {
                 return Some(result);
             }
@@ -7606,11 +7621,12 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        // PORT NOTE: snapshot the slice ptr so the `&self.opts` borrow doesn't
-        // overlap `&mut self` in `load_extension`.
-        let extra_cjs: &'static [&'static [u8]] =
-            unsafe { &*(self.opts.extra_cjs_extensions.as_ref() as *const [&'static [u8]]) };
-        for ext in extra_cjs.iter() {
+        // PORT NOTE: index by `0..len` so each iteration takes a fresh short
+        // borrow of `self.opts` that ends before `&mut self` is taken by
+        // `load_extension` (avoids the forbidden lifetime-extension cast).
+        let n = self.opts.extra_cjs_extensions.len();
+        for i in 0..n {
+            let ext = self.opts.extra_cjs_extensions[i];
             if let Some(result) = self.load_extension(base, path, ext, entries!()) {
                 dec_ret!(Some(result));
             }

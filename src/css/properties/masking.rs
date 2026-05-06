@@ -255,7 +255,6 @@ pub struct Mask {
     pub mode: MaskMode,
 }
 
-#[cfg(any())] // blocked_on: Image/Position/BackgroundSize/BackgroundRepeat::{parse,to_css,default} + .as_value() Result helper
 impl Mask {
     // TODO(port): PropertyFieldMap was a Zig anon-struct const consumed by comptime
     // reflection in shorthand handlers. Represent as assoc const slice; Phase B may
@@ -294,57 +293,55 @@ impl Mask {
 
         loop {
             if image.is_none() {
-                if let Some(value) = input.try_parse(Image::parse).as_value() {
+                if let Ok(value) = input.try_parse(Image::parse) {
                     image = Some(value);
                     continue;
                 }
             }
 
             if position.is_none() {
-                if let Some(value) = input.try_parse(Position::parse).as_value() {
+                if let Ok(value) = input.try_parse(Position::parse) {
                     position = Some(value);
                     size = input
                         .try_parse(|i: &mut css::Parser| -> css::Result<BackgroundSize> {
-                            if let Some(e) = i.expect_delim('/').as_err() {
-                                return css::Result::err(e);
-                            }
+                            i.expect_delim(b'/')?;
                             BackgroundSize::parse(i)
                         })
-                        .as_value();
+                        .ok();
                     continue;
                 }
             }
 
             if repeat.is_none() {
-                if let Some(value) = input.try_parse(BackgroundRepeat::parse).as_value() {
+                if let Ok(value) = input.try_parse(BackgroundRepeat::parse) {
                     repeat = Some(value);
                     continue;
                 }
             }
 
             if origin.is_none() {
-                if let Some(value) = input.try_parse(GeometryBox::parse).as_value() {
+                if let Ok(value) = input.try_parse(GeometryBox::parse) {
                     origin = Some(value);
                     continue;
                 }
             }
 
             if clip.is_none() {
-                if let Some(value) = input.try_parse(MaskClip::parse).as_value() {
+                if let Ok(value) = input.try_parse(MaskClip::parse) {
                     clip = Some(value);
                     continue;
                 }
             }
 
             if composite.is_none() {
-                if let Some(value) = input.try_parse(MaskComposite::parse).as_value() {
+                if let Ok(value) = input.try_parse(MaskComposite::parse) {
                     composite = Some(value);
                     continue;
                 }
             }
 
             if mode.is_none() {
-                if let Some(value) = input.try_parse(MaskMode::parse).as_value() {
+                if let Ok(value) = input.try_parse(MaskMode::parse) {
                     mode = Some(value);
                     continue;
                 }
@@ -379,7 +376,7 @@ impl Mask {
             self.position.to_css(dest)?;
 
             if self.size != BackgroundSize::default() {
-                dest.delim('/', true)?;
+                dest.delim(b'/', true)?;
                 self.size.to_css(dest)?;
             }
         }
@@ -455,7 +452,6 @@ pub struct MaskBorder {
     pub mode: MaskBorderMode,
 }
 
-#[cfg(any())] // blocked_on: BorderImage::{parse_with_callback,to_css_internal} + .as_value() helper + ParserError::InvalidDeclaration
 impl MaskBorder {
     // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.@"mask-border", PropertyFieldMap);
 
@@ -473,7 +469,7 @@ impl MaskBorder {
         let mut mode: Option<MaskBorderMode> = None;
         let border_image = BorderImage::parse_with_callback(input, |p: &mut css::Parser| -> bool {
             if mode.is_none() {
-                if let Some(value) = p.try_parse(MaskBorderMode::parse).as_value() {
+                if let Ok(value) = p.try_parse(MaskBorderMode::parse) {
                     mode = Some(value);
                     return true;
                 }
@@ -483,7 +479,7 @@ impl MaskBorder {
 
         if border_image.is_ok() || mode.is_some() {
             // PERF(port): Zig used `comptime BorderImage.default()` — const-eval default in Phase B
-            let bi = border_image.unwrap_or(BorderImage::default());
+            let bi = border_image.unwrap_or_else(|_| BorderImage::default());
             Ok(MaskBorder {
                 source: bi.source,
                 slice: bi.slice,
@@ -493,7 +489,7 @@ impl MaskBorder {
                 mode: mode.unwrap_or_else(MaskBorderMode::default),
             })
         } else {
-            css::Result::err(input.new_custom_error(css::ParserError::InvalidDeclaration))
+            Err(input.new_custom_error(css::ParserError::invalid_declaration))
         }
     }
 

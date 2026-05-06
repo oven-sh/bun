@@ -2392,7 +2392,9 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         self.delimit_quote = sublexer.delimit_quote;
     }
 
-    fn make_snapshot(&self) -> BacktrackSnapshot<ENCODING> {
+    fn make_snapshot(&self) -> BacktrackSnapshot<'bump, ENCODING> {
+        // PORT NOTE: explicit `'bump` so the snapshot borrows the arena, not
+        // `&self` — otherwise holding a snapshot would freeze the lexer.
         BacktrackSnapshot {
             chars: self.chars,
             j: self.j,
@@ -2401,7 +2403,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         }
     }
 
-    fn backtrack(&mut self, snap: BacktrackSnapshot<ENCODING>) {
+    fn backtrack(&mut self, snap: BacktrackSnapshot<'bump, ENCODING>) {
         self.chars = snap.chars;
         self.j = snap.j;
         self.word_start = snap.word_start;
@@ -3811,9 +3813,9 @@ impl<'a> Src<'a> {
                 c: 0,
                 width: 0,
             };
-            SrcUnicode::next_cursor(&u.iter, &mut u.cursor);
+            SrcUnicode::advance(u.bytes, &mut u.cursor);
             u.next_cursor = u.cursor;
-            SrcUnicode::next_cursor(&u.iter, &mut u.next_cursor);
+            SrcUnicode::advance(u.bytes, &mut u.next_cursor);
         }
     }
 }

@@ -306,10 +306,14 @@ impl SavedSourceMap {
         // `MutableString.list` is `Vec<u8>`; box a copy so the table owns the
         // blob (the incoming `MutableString` may be backed by the printer's
         // recycled buffer or a moved-in cache record).
+        #[cfg(any())] // TODO(b2-blocked): `put_value`'s body is gated (see below). Gating the
+        // `Box::into_raw` here too keeps the live stub allocation-free — otherwise every call
+        // leaks one heap blob (PORTING.md §Forbidden: `Box::leak` semantics). Un-gate together.
+        {
         let blob: Box<[u8]> = Box::<[u8]>::from(mappings.list.as_slice());
         let blob_ptr: *mut [u8] = Box::into_raw(blob);
         // errdefer: on error, reconstitute and drop the Box.
-        match self.put_value(
+        return match self.put_value(
             source.path.text,
             Value::init(blob_ptr as *mut u8 as *mut InternalSourceMap),
         ) {
@@ -319,7 +323,9 @@ impl SavedSourceMap {
                 drop(unsafe { Box::<[u8]>::from_raw(blob_ptr) });
                 Err(e)
             }
-        }
+        };
+        } // end #[cfg(any())]
+        Ok(())
     }
 
     pub fn put_value(&mut self, path: &[u8], value: Value) -> Result<(), bun_core::Error> {

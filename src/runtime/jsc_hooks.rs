@@ -1482,8 +1482,24 @@ fn transpile_source_code_inner(
                 }
 
                 // Spec :553-558 — watcher path uses ref-counted source.
+                #[cfg(any())] // TODO(b2-blocked): `VirtualMachine::ref_counted_resolved_source`.
+                // Spec RETURNS the ref-counted `ResolvedSource` here (with
+                // `is_commonjs_module`/`module_info` patched on). Gated so the
+                // fall-through to the non-watcher tail below is an explicit,
+                // intentional degradation rather than a silent live divergence.
                 if unsafe { (*jsc_vm).is_watcher_enabled() } {
-                    // TODO(b2-blocked): `VirtualMachine::ref_counted_resolved_source`.
+                    let mut resolved_source = unsafe {
+                        (*jsc_vm).ref_counted_resolved_source(
+                            printer.ctx.get_written(),
+                            input_specifier,
+                            path.text,
+                            None,
+                            false,
+                        )
+                    };
+                    resolved_source.is_commonjs_module = is_commonjs_module;
+                    resolved_source.module_info = module_info;
+                    return Ok(resolved_source);
                 }
 
                 // Spec :561-592 — final ResolvedSource.

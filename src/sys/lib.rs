@@ -732,10 +732,12 @@ impl Tag {
     }
 
     /// sys.zig:327-329 — `Tag.isWindows`: tags strictly above `WriteFile`
-    /// belong to the Windows-only block.
+    /// belong to the Windows-only block. Bounded by `SetEndOfFile` so the
+    /// Rust-port-only POSIX tags (`dup2`/`fchdir`/`fchownat`/`ioctl`) parked
+    /// above the Zig range don't read as Windows.
     #[inline]
     pub const fn is_windows(self) -> bool {
-        self.0 > Self::WriteFile.0
+        self.0 > Self::WriteFile.0 && self.0 <= Self::SetEndOfFile.0
     }
 }
 impl From<Tag> for &'static str {
@@ -898,7 +900,11 @@ mod posix_impl {
     pub fn close(fd: Fd) -> Maybe<()> {
         // fd.zig:266 — call close ONCE; never retry on EINTR (Linux may have already
         // released the fd, retrying would close someone else's). Only EBADF surfaces.
+        // fd.zig:273 — Darwin uses `close$NOCANCEL` (avoid pthread cancellation point).
         // SAFETY: fd is a valid open descriptor owned by caller.
+        #[cfg(target_os = "macos")]
+        let rc = unsafe { super::nocancel::close(fd.native()) };
+        #[cfg(not(target_os = "macos"))]
         let rc = unsafe { libc::close(fd.native()) };
         if rc < 0 && last_errno() == libc::EBADF {
             return Err(Error::from_code_int(libc::EBADF, Tag::close).with_fd(fd));
@@ -1266,11 +1272,14 @@ mod posix_impl {
         check!(unsafe { libc::fsync(fd.native()) }, Tag::fsync); Ok(())
     }
     pub fn fdatasync(fd: Fd) -> Maybe<()> {
+        // node_fs.zig:3921 — calls `system.fdatasync` directly on all Unix
+        // (macOS has had fdatasync(2) since 10.7). The libc crate omits the
+        // Apple binding, so declare it locally.
         #[cfg(target_os = "macos")]
-        // macOS has no fdatasync; Zig uses F_FULLFSYNC (sys.zig).
-        { check!(unsafe { libc::fcntl(fd.native(), libc::F_FULLFSYNC) }, Tag::fdatasync); Ok(()) }
+        extern "C" { fn fdatasync(fd: libc::c_int) -> libc::c_int; }
         #[cfg(not(target_os = "macos"))]
-        { check!(unsafe { libc::fdatasync(fd.native()) }, Tag::fdatasync); Ok(()) }
+        use libc::fdatasync;
+        check!(unsafe { fdatasync(fd.native()) }, Tag::fdatasync); Ok(())
     }
     pub fn lseek(fd: Fd, offset: i64, whence: i32) -> Maybe<i64> {
         let rc = check!(unsafe { libc::lseek(fd.native(), offset, whence) }, Tag::lseek);
@@ -1317,12 +1326,10 @@ mod posix_impl {
     }
     #[cfg(unix)]
     pub const MSG_DONTWAIT: i32 = libc::MSG_DONTWAIT;
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    // sys.zig:2205 — `MSG_DONTWAIT | MSG_NOSIGNAL` on all Unix including macOS
+    // (Darwin defines MSG_NOSIGNAL=0x80000; std/c/darwin.zig:1591).
+    #[cfg(unix)]
     pub const SEND_FLAGS_NONBLOCK: i32 = libc::MSG_DONTWAIT | libc::MSG_NOSIGNAL;
-    // macOS has no MSG_NOSIGNAL; SO_NOSIGPIPE on the socket is the equivalent
-    // (set in `socketpair` below). Just MSG_DONTWAIT here.
-    #[cfg(all(unix, not(any(target_os = "linux", target_os = "freebsd"))))]
-    pub const SEND_FLAGS_NONBLOCK: i32 = libc::MSG_DONTWAIT;
     /// sys.zig:3138 `socketpairImpl` — Linux uses `SOCK_CLOEXEC|SOCK_NONBLOCK`
     /// type flags; non-Linux sets CLOEXEC + nonblock + (Darwin) `SO_NOSIGPIPE`
     /// per-fd, closing both on any post-step error.
@@ -1730,12 +1737,26 @@ pub fn pwritev(fd: Fd, vecs: &[PlatformIoVecConst], offset: i64) -> Maybe<usize>
         // (asserted above); `pwritev(2)` only reads through `iov_base`.
         // sys.zig:2064 — Darwin uses `pwritev$NOCANCEL` (avoid cancellation point).
         #[cfg(target_os = "macos")]
-        use nocancel::pwritev as pwritev_sym;
+        {
+            // sys.zig:1955-1964 — `.mac` arm: single `pwritev$NOCANCEL`, no
+            // EINTR retry (surfaces EINTR to caller).
+            let rc = unsafe {
+                nocancel::pwritev(
+                    fd.native(),
+                    vecs.as_ptr().cast::<libc::iovec>(),
+                    vecs.len() as core::ffi::c_int,
+                    offset,
+                )
+            };
+            if rc < 0 {
+                return Err(Error::from_code_int(last_errno(), Tag::pwritev));
+            }
+            return Ok(rc as usize);
+        }
         #[cfg(not(target_os = "macos"))]
-        use libc::pwritev as pwritev_sym;
         loop {
             let rc = unsafe {
-                pwritev_sym(
+                libc::pwritev(
                     fd.native(),
                     vecs.as_ptr().cast::<libc::iovec>(),
                     vecs.len() as core::ffi::c_int,

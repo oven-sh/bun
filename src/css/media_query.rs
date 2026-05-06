@@ -987,28 +987,16 @@ impl MediaFeatureComparison {
 impl MediaFeatureValue {
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         match self {
-            MediaFeatureValue::Length(_len) => {
-                // blocked_on: crate::css_values::length::Length replacing the
-                // local value_shims::Length stand-in (calc lattice un-gate).
-                todo!("MediaFeatureValue::Length to_css — gated on values::length::Length")
-            }
+            MediaFeatureValue::Length(len) => len.to_css(dest),
             MediaFeatureValue::Number(num) => css::to_css::float32(*num, dest),
             MediaFeatureValue::Integer(int) => css::to_css::integer(*int, dest),
             MediaFeatureValue::Boolean(b) => {
                 if *b { dest.write_char(b'1') } else { dest.write_char(b'0') }
             }
-            MediaFeatureValue::Resolution(_res) => {
-                todo!("MediaFeatureValue::Resolution to_css — gated on values::resolution::Resolution")
-            }
-            MediaFeatureValue::Ratio(_ratio) => {
-                todo!("MediaFeatureValue::Ratio to_css — gated on values::ratio::Ratio")
-            }
+            MediaFeatureValue::Resolution(res) => res.to_css(dest),
+            MediaFeatureValue::Ratio(ratio) => ratio.to_css(dest),
             MediaFeatureValue::Ident(id) => id.to_css(dest),
-            MediaFeatureValue::Env(_env) => {
-                // blocked_on: properties::custom::EnvironmentVariable real body
-                // (currently a data-only stub via `gated_prop!`).
-                todo!("MediaFeatureValue::Env to_css — gated on properties::custom un-gate")
-            }
+            MediaFeatureValue::Env(env) => env.to_css(dest, false),
         }
     }
 
@@ -1016,24 +1004,111 @@ impl MediaFeatureValue {
     /// boundary lowering. Consumes `self`.
     pub fn add_f32(self, other: f32) -> MediaFeatureValue {
         match self {
-            MediaFeatureValue::Length(_len) => {
-                // Zig: len.add(allocator, Length.px(other)) — calc lattice.
-                todo!("MediaFeatureValue::Length add_f32 — gated on values::length::Length::add")
-            }
+            // Zig: `len.add(allocator, Length.px(other))` — calc lattice.
+            MediaFeatureValue::Length(len) => MediaFeatureValue::Length(len.add(Length::px(other))),
             MediaFeatureValue::Number(num) => MediaFeatureValue::Number(num + other),
             MediaFeatureValue::Integer(num) => {
                 MediaFeatureValue::Integer(num + if other.is_sign_positive() { 1 } else { -1 })
             }
             MediaFeatureValue::Boolean(v) => MediaFeatureValue::Boolean(v),
-            MediaFeatureValue::Resolution(_res) => {
-                todo!("MediaFeatureValue::Resolution add_f32 — gated on values::resolution::Resolution::add_f32")
-            }
-            MediaFeatureValue::Ratio(_ratio) => {
-                todo!("MediaFeatureValue::Ratio add_f32 — gated on values::ratio::Ratio::add_f32")
-            }
+            MediaFeatureValue::Resolution(res) => MediaFeatureValue::Resolution(res.add_f32(other)),
+            MediaFeatureValue::Ratio(ratio) => MediaFeatureValue::Ratio(ratio.add_f32(other)),
             MediaFeatureValue::Ident(id) => MediaFeatureValue::Ident(id),
             MediaFeatureValue::Env(env) => MediaFeatureValue::Env(env), // TODO: calc support
         }
+    }
+
+    /// Zig: `MediaFeatureValue.valueType`.
+    pub fn value_type(&self) -> MediaFeatureType {
+        use MediaFeatureValue as V;
+        match self {
+            V::Length(_) => MediaFeatureType::Length,
+            V::Number(_) => MediaFeatureType::Number,
+            V::Integer(_) => MediaFeatureType::Integer,
+            V::Boolean(_) => MediaFeatureType::Boolean,
+            V::Resolution(_) => MediaFeatureType::Resolution,
+            V::Ratio(_) => MediaFeatureType::Ratio,
+            V::Ident(_) => MediaFeatureType::Ident,
+            V::Env(_) => MediaFeatureType::Unknown,
+        }
+    }
+
+    /// Zig: `MediaFeatureValue.checkType`.
+    pub fn check_type(&self, expected_type: MediaFeatureType) -> bool {
+        let vt = self.value_type();
+        if expected_type == MediaFeatureType::Unknown || vt == MediaFeatureType::Unknown {
+            return true;
+        }
+        expected_type == vt
+    }
+
+    /// Parses a single media query feature value, with an expected type.
+    /// If the type is unknown, pass `MediaFeatureType::Unknown` instead.
+    pub fn parse(input: &mut Parser, expected_type: MediaFeatureType) -> Result<MediaFeatureValue> {
+        if let Ok(value) = input.try_parse(|i| MediaFeatureValue::parse_known(i, expected_type)) {
+            return Ok(value);
+        }
+        MediaFeatureValue::parse_unknown(input)
+    }
+
+    pub fn parse_known(
+        input: &mut Parser,
+        expected_type: MediaFeatureType,
+    ) -> Result<MediaFeatureValue> {
+        Ok(match expected_type {
+            MediaFeatureType::Boolean => {
+                let value = CSSIntegerFns::parse(input)?;
+                if value != 0 && value != 1 {
+                    return Err(input.new_custom_error(css::ParserError::invalid_value));
+                }
+                MediaFeatureValue::Boolean(value == 1)
+            }
+            MediaFeatureType::Number => MediaFeatureValue::Number(CSSNumberFns::parse(input)?),
+            MediaFeatureType::Integer => MediaFeatureValue::Integer(CSSIntegerFns::parse(input)?),
+            MediaFeatureType::Length => MediaFeatureValue::Length(Length::parse(input)?),
+            MediaFeatureType::Resolution => {
+                MediaFeatureValue::Resolution(Resolution::parse(input)?)
+            }
+            MediaFeatureType::Ratio => MediaFeatureValue::Ratio(Ratio::parse(input)?),
+            MediaFeatureType::Ident => MediaFeatureValue::Ident(Ident::parse(input)?),
+            MediaFeatureType::Unknown => {
+                return Err(input.new_custom_error(css::ParserError::invalid_value));
+            }
+        })
+    }
+
+    pub fn parse_unknown(input: &mut Parser) -> Result<MediaFeatureValue> {
+        // Ratios are ambiguous with numbers because the second param is optional (e.g. 2/1 == 2).
+        // We require the / delimiter when parsing ratios so that 2/1 ends up as a ratio and 2 is
+        // parsed as a number.
+        if let Ok(ratio) = input.try_parse(Ratio::parse_required) {
+            return Ok(MediaFeatureValue::Ratio(ratio));
+        }
+
+        // Parse number next so that unitless values are not parsed as lengths.
+        if let Ok(num) = input.try_parse(CSSNumberFns::parse) {
+            return Ok(MediaFeatureValue::Number(num));
+        }
+
+        if let Ok(res) = input.try_parse(Length::parse) {
+            return Ok(MediaFeatureValue::Length(res));
+        }
+
+        if let Ok(res) = input.try_parse(Resolution::parse) {
+            return Ok(MediaFeatureValue::Resolution(res));
+        }
+
+        // PORT NOTE(suspect): Zig `input.tryParse(EnvironmentVariable.parse, .{})`
+        // leaves the `options`/`depth` params **undefined** (tryParse builds
+        // `ArgsTuple` and only fills index 0). That is UB at runtime;
+        // `MediaFeatureValue::parse` has no `ParserOptions` threaded, so the
+        // env() arm is unreachable in any well-defined execution. Ported
+        // faithfully by skipping the arm with this loud breadcrumb — revisit
+        // when `options` threads through `QueryFeature::parse`.
+        // if let Ok(env) = input.try_parse(|i| EnvironmentVariable::parse(i, options, 0)) { .. }
+
+        let ident = Ident::parse(input)?;
+        Ok(MediaFeatureValue::Ident(ident))
     }
 }
 
@@ -1447,13 +1522,168 @@ fn parse_paren_block<C: QueryCondition>(
 
 impl<FeatureId: FeatureIdTrait> QueryFeature<FeatureId> {
     /// Parse a media/container feature inside `(` `)`.
-    // blocked_on: MediaFeatureName::parse + MediaFeatureValue::parse
-    // (values/{length,ratio,resolution} calc lattice). The full grammar body
-    // (media_query.zig:945-1135) lands once those leaves un-gate. For now this
-    // stays a loud `todo!()` so `@media`/`@container` parse paths fail at the
-    // feature leaf rather than at the rule-prelude root.
-    pub fn parse(_input: &mut Parser) -> Result<Self> {
-        todo!("blocked_on: QueryFeature::parse — MediaFeatureName/MediaFeatureValue::parse (values/ calc lattice)")
+    ///
+    /// Zig: `QueryFeature.parse` (media_query.zig:945).
+    pub fn parse(input: &mut Parser) -> Result<Self> {
+        match input.try_parse(Self::parse_name_first) {
+            Ok(res) => Ok(res),
+            Err(e) => {
+                if matches!(
+                    e.kind,
+                    css::error::ParserErrorKind::custom(css::ParserError::invalid_media_query)
+                ) {
+                    return Err(e);
+                }
+                Self::parse_value_first(input)
+            }
+        }
+    }
+
+    /// Zig: `QueryFeature.parseNameFirst`.
+    pub fn parse_name_first(input: &mut Parser) -> Result<Self> {
+        let (name, legacy_op) = MediaFeatureName::<FeatureId>::parse(input)?;
+
+        let operator = match input.try_parse(|i| consume_operation_or_colon(i, true)) {
+            Ok(operator) => operator,
+            Err(_) => return Ok(QueryFeature::Boolean { name }),
+        };
+
+        if operator.is_some() && legacy_op.is_some() {
+            return Err(input.new_custom_error(css::ParserError::invalid_media_query));
+        }
+
+        let value = MediaFeatureValue::parse(input, name.value_type())?;
+        if !value.check_type(name.value_type()) {
+            return Err(input.new_custom_error(css::ParserError::invalid_media_query));
+        }
+
+        if let Some(op) = operator.or(legacy_op) {
+            if !name.value_type().allows_ranges() {
+                return Err(input.new_custom_error(css::ParserError::invalid_media_query));
+            }
+
+            Ok(QueryFeature::Range { name, operator: op, value })
+        } else {
+            Ok(QueryFeature::Plain { name, value })
+        }
+    }
+
+    /// Zig: `QueryFeature.parseValueFirst`.
+    pub fn parse_value_first(input: &mut Parser) -> Result<Self> {
+        // We need to find the feature name first so we know the type.
+        let start = input.state();
+        // PORT NOTE: Zig loops `MediaFeatureName.parse` then checks
+        // `isExhausted()` — but `expectIdent` does not advance on error, so
+        // the literal Zig body would spin on a non-ident token. The intent
+        // (matching lightningcss) is to *skip* tokens until the name is
+        // found; advance one token per failed attempt.
+        let name: MediaFeatureName<FeatureId> = loop {
+            if let Ok((name, legacy_op)) =
+                input.try_parse(MediaFeatureName::<FeatureId>::parse)
+            {
+                if legacy_op.is_some() {
+                    return Err(input.new_custom_error(css::ParserError::invalid_media_query));
+                }
+                break name;
+            }
+            if input.next().is_err() {
+                return Err(input.new_custom_error(css::ParserError::invalid_media_query));
+            }
+        };
+
+        input.reset(&start);
+
+        // Now we can parse the first value.
+        let value = MediaFeatureValue::parse(input, name.value_type())?;
+        let operator = consume_operation_or_colon(input, false)?;
+
+        // Skip over the feature name again.
+        {
+            let (feature_name, _blah) = MediaFeatureName::<FeatureId>::parse(input)?;
+            debug_assert!(feature_name == name);
+        }
+
+        if !name.value_type().allows_ranges() || !value.check_type(name.value_type()) {
+            return Err(input.new_custom_error(css::ParserError::invalid_media_query));
+        }
+
+        if let Ok(end_operator_) = input.try_parse(|i| consume_operation_or_colon(i, false)) {
+            let start_operator = operator.unwrap();
+            let end_operator = end_operator_.unwrap();
+            // Start and end operators must be matching.
+            // PORT NOTE: discriminants are bitflags (1/2/4/8/16) — see the
+            // comment on `MediaFeatureComparison`. Zig bitwise-ORs them.
+            const GT: u8 = MediaFeatureComparison::GreaterThan as u8;
+            const GTE: u8 = MediaFeatureComparison::GreaterThanEqual as u8;
+            const LT: u8 = MediaFeatureComparison::LessThan as u8;
+            const LTE: u8 = MediaFeatureComparison::LessThanEqual as u8;
+            let check_val: u8 = (start_operator as u8) | (end_operator as u8);
+            #[allow(clippy::eq_op)]
+            match check_val {
+                v if v == (GT | GT)
+                    || v == (GT | GTE)
+                    || v == (GTE | GTE)
+                    || v == (LT | LT)
+                    || v == (LT | LTE)
+                    || v == (LTE | LTE) => {}
+                _ => {
+                    return Err(input.new_custom_error(css::ParserError::invalid_media_query));
+                }
+            }
+
+            let end_value = MediaFeatureValue::parse(input, name.value_type())?;
+            if !end_value.check_type(name.value_type()) {
+                return Err(input.new_custom_error(css::ParserError::invalid_media_query));
+            }
+
+            Ok(QueryFeature::Interval {
+                name,
+                start: value,
+                start_operator,
+                end: end_value,
+                end_operator,
+            })
+        } else {
+            let final_operator = operator.unwrap().opposite();
+            Ok(QueryFeature::Range { name, operator: final_operator, value })
+        }
+    }
+}
+
+/// Consumes an operation or a colon, or returns an error.
+///
+/// Zig: `consumeOperationOrColon` (media_query.zig:1103). Returns `Ok(None)`
+/// when a colon was consumed (and `allow_colon`); `Ok(Some(op))` for `<`/`>`/`=`.
+fn consume_operation_or_colon(
+    input: &mut Parser,
+    allow_colon: bool,
+) -> Result<Option<MediaFeatureComparison>> {
+    let location = input.current_source_location();
+    let first_delim: u32 = {
+        let loc = input.current_source_location();
+        let next_token = input.next()?.clone();
+        match next_token {
+            css::Token::Colon if allow_colon => return Ok(None),
+            css::Token::Delim(oper) => oper,
+            _ => return Err(loc.new_unexpected_token_error(next_token)),
+        }
+    };
+
+    match first_delim {
+        d if d == u32::from(b'=') => Ok(Some(MediaFeatureComparison::Equal)),
+        d if d == u32::from(b'>') => {
+            if input.try_parse(|i| i.expect_delim(b'=')).is_ok() {
+                return Ok(Some(MediaFeatureComparison::GreaterThanEqual));
+            }
+            Ok(Some(MediaFeatureComparison::GreaterThan))
+        }
+        d if d == u32::from(b'<') => {
+            if input.try_parse(|i| i.expect_delim(b'=')).is_ok() {
+                return Ok(Some(MediaFeatureComparison::LessThanEqual));
+            }
+            Ok(Some(MediaFeatureComparison::LessThan))
+        }
+        _ => Err(location.new_unexpected_token_error(css::Token::Delim(first_delim))),
     }
 }
 

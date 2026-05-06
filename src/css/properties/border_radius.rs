@@ -62,14 +62,20 @@ impl BorderRadius {
         ("bottom_left", true),
     ];
 
-    #[cfg(any())] // blocked_on: `LengthPercentage: values::protocol::Parse` impl (Rect::<LP>::parse bound)
     pub fn parse(input: &mut css::Parser) -> css::Result<BorderRadius> {
-        let widths = Rect::<LengthPercentage>::parse(input)?;
-        let heights = if input.try_parse(|i| i.expect_delim('/')).is_ok() {
+        let widths = Rect::<LengthPercentage>::parse_with(input, LengthPercentage::parse)?;
+        let heights = if input.try_parse(|i| i.expect_delim(b'/')).is_ok() {
             // errdefer-style cleanup of `widths` is implicit via Drop on the `?` path.
-            Rect::<LengthPercentage>::parse(input)?
+            Rect::<LengthPercentage>::parse_with(input, LengthPercentage::parse)?
         } else {
-            widths.clone()
+            // PORT NOTE: Zig `widths.deepClone(allocator)` — `LengthPercentage` is
+            // `Clone`-via-derive (no arena indirection), so per-field `.clone()` is exact.
+            Rect {
+                top: widths.top.clone(),
+                right: widths.right.clone(),
+                bottom: widths.bottom.clone(),
+                left: widths.left.clone(),
+            }
         };
 
         Ok(BorderRadius {
@@ -80,27 +86,57 @@ impl BorderRadius {
         })
     }
 
-    #[cfg(any())] // blocked_on: `&LengthPercentage: values::protocol::ToCss` (Rect<&LP>::to_css bound)
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        let widths: Rect<&LengthPercentage> = Rect {
-            top: &self.top_left.a,
-            right: &self.top_right.a,
-            bottom: &self.bottom_right.a,
-            left: &self.bottom_left.a,
-        };
+        // PORT NOTE: Zig built `Rect(*const LengthPercentage)` and reused
+        // `Rect.toCss`. `Rect::<&T>::to_css` would need `&T: ToCss + PartialEq`;
+        // inline the 4-side serialization to avoid that bound (logic is identical
+        // to `values::rect::Rect::to_css`).
+        #[inline]
+        fn write_rect(
+            top: &LengthPercentage,
+            right: &LengthPercentage,
+            bottom: &LengthPercentage,
+            left: &LengthPercentage,
+            dest: &mut Printer,
+        ) -> Result<(), PrintErr> {
+            top.to_css(dest)?;
+            let same_vertical = top == bottom;
+            let same_horizontal = right == left;
+            if same_vertical && same_horizontal && top == right {
+                return Ok(());
+            }
+            dest.write_str(b" ")?;
+            right.to_css(dest)?;
+            if same_vertical && same_horizontal {
+                return Ok(());
+            }
+            dest.write_str(b" ")?;
+            bottom.to_css(dest)?;
+            if same_horizontal {
+                return Ok(());
+            }
+            dest.write_str(b" ")?;
+            left.to_css(dest)
+        }
 
-        let heights: Rect<&LengthPercentage> = Rect {
-            top: &self.top_left.b,
-            right: &self.top_right.b,
-            bottom: &self.bottom_right.b,
-            left: &self.bottom_left.b,
-        };
+        let (wt, wr, wb, wl) = (
+            &self.top_left.a,
+            &self.top_right.a,
+            &self.bottom_right.a,
+            &self.bottom_left.a,
+        );
+        let (ht, hr, hb, hl) = (
+            &self.top_left.b,
+            &self.top_right.b,
+            &self.bottom_right.b,
+            &self.bottom_left.b,
+        );
 
-        widths.to_css(dest)?;
+        write_rect(wt, wr, wb, wl, dest)?;
 
-        if widths != heights {
-            dest.delim('/', true)?;
-            heights.to_css(dest)?;
+        if !(wt == ht && wr == hr && wb == hb && wl == hl) {
+            dest.delim(b'/', true)?;
+            write_rect(ht, hr, hb, hl, dest)?;
         }
         Ok(())
     }

@@ -412,13 +412,13 @@ impl<'a> CopyFile<'a> {
                         ) {
                             bun_sys::Result::Err(err) => {
                                 self.system_error = Some(err.to_system_error());
-                                return Err(bun_sys::errno_to_error(err.errno));
+                                return Err(bun_core::errno_to_zig_err(err.errno as i32));
                             }
                             bun_sys::Result::Ok(()) => {
-                                let _ = linux::ftruncate(
-                                    dest_fd.cast(),
-                                    i64::try_from(total_written).unwrap(),
-                                );
+                                // SAFETY: dest_fd is a valid open fd; raw ftruncate(2).
+                                let _ = unsafe {
+                                    libc::ftruncate(dest_fd.cast(), i64::try_from(total_written).unwrap())
+                                };
                                 return Ok(());
                             }
                         }

@@ -683,6 +683,10 @@ pub use bun_core::{Fd, FdNative, FdKind, FdOptional, Stdio, Mode, FileKind, kind
 #[cfg(not(windows))] pub type SocketT = core::ffi::c_int;
 #[cfg(windows)] pub type SocketT = usize;
 pub use bun_errno::{E, S, SystemErrno, get_errno, GetErrno};
+// libuv-style error constants (negated errno on posix, UV_* on Windows). The
+// per-platform `bun_errno` module defines this as `mod uv_e`; re-export under
+// the canonical Zig name so callers can write `bun_sys::UV_E::NOENT`.
+pub use bun_errno::uv_e as UV_E;
 // `bun_errno::posix` is the small move-down stub (mode_t/E/S/errno). The full
 // `std.posix` surface dependents need (`Sigaction`, `getrlimit`, `tcgetattr`,
 // raw `read`/`write`/`poll`, …) is widened below in this crate's own `posix`

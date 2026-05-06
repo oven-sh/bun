@@ -3,7 +3,7 @@ use std::io::Write as _;
 
 use bun_collections::BabyList;
 use bun_core::{fmt as bun_fmt, Output, SignalCode, StackCheck};
-use bun_errno::uv_e as UV_E;
+use bun_sys::UV_E;
 use bun_event_loop::SpawnSyncEventLoop::TickState;
 use bun_io::max_buf::MaxBuf;
 use bun_jsc::{

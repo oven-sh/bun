@@ -47,10 +47,23 @@ pub struct Entry {
     _opaque_tail: (),
 }
 
+/// Action for `SourceMapStore::remove_or_upgrade_weak_ref` (Zig: `WeakRefOp`).
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub enum RemoveOrUpgradeMode {
+    Remove,
+    Upgrade,
+}
+
 pub struct SourceMapStore {
     pub entries: ArrayHashMap<Key, Entry>,
     pub weak_refs: LinearFifo<WeakRef, StaticBuffer<WeakRef, WEAK_REF_ENTRY_MAX>>,
     pub weak_ref_sweep_timer: EventLoopTimer,
+}
+impl SourceMapStore {
+    /// Full body in gated `../DevServer/SourceMapStore.rs` draft.
+    pub fn remove_or_upgrade_weak_ref(&mut self, _key: Key, _mode: RemoveOrUpgradeMode) -> bool {
+        todo!("blocked_on: SourceMapStore::remove_or_upgrade_weak_ref")
+    }
 }
 impl Default for SourceMapStore {
     fn default() -> Self {

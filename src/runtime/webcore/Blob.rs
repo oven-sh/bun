@@ -5178,27 +5178,11 @@ pub fn construct_bun_file(
 /// `Bun.write(dest, src, options?)` — entry point.
 // TODO(b2-blocked): #[bun_jsc::host_fn]
 pub fn write_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    // TODO(b2-blocked): write_file_internal — depends on `WriteFilePromise`,
-    // `write_file::WriteFile{,Windows,Task}`, `S3.upload`, `node::fs::mkdirp`,
-    // and `Body::Value::from_js` which all live in the `_jsc_gated` block
-    // above. The state-machine types themselves are real (see
-    // `blob/write_file.rs`, un-gated), but the glue that threads a JSPromise
-    // through them is not. Un-gate by lifting `write_file_internal` +
-    // `write_file_with_source_destination` once those land.
-    
-    {
-        let arguments = callframe.arguments_old::<3>();
-        let arguments_slice = arguments.slice();
-        let mut args = jsc::ArgumentsSlice::init(global_this.bun_vm(), arguments_slice);
-        return write_file_internal(
-            global_this,
-            &mut args,
-            arguments_slice.get(2).copied(),
-            false,
-        );
-    }
-    let _ = (global_this, callframe);
-    unreachable!("write_file: blocked on write_file_internal JSPromise glue (see _jsc_gated)")
+    // The full argument-parsing + `write_file_internal` body lives inside
+    // `_jsc_gated` (it depends on `WriteFilePromise`, `write_file::WriteFile*`,
+    // `S3.upload`, `node::fs::mkdirp`, `Body::Value::from_js`). Delegate so the
+    // un-gated `Bun.write` symbol resolves for BunObject.rs callers.
+    _jsc_gated::write_file(global_this, callframe)
 }
 
 // ──────────────────────────────────────────────────────────────────────────

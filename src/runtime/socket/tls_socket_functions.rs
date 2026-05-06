@@ -385,10 +385,10 @@ pub fn get_shared_sigalgs(this: &mut This, global: &JSGlobalObject, _frame: &Cal
             );
         }
         match sign_nid {
-            boringssl::EVP_PKEY_RSA => {
+            ffi::EVP_PKEY_RSA => {
                 sig_with_md = b"RSA";
             }
-            boringssl::EVP_PKEY_RSA_PSS => {
+            ffi::EVP_PKEY_RSA_PSS => {
                 sig_with_md = b"RSA-PSS";
             }
             boringssl::EVP_PKEY_DSA => {

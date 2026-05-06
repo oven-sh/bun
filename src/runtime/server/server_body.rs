@@ -2220,11 +2220,26 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // scheduleDeinit can be called inside a finalizer.
             // Therefore, we split it into two tasks.
             self.flags.insert(ServerFlags::TERMINATED);
-            let task = Box::new(jsc::AnyTask::new::<ServerApp<SSL>>(ServerApp::<SSL>::close, self.app.unwrap()));
+            // Zig: jsc.AnyTask.New(App, App.close).init(this.app.?)
+            let task = Box::new(jsc::AnyTask::AnyTask {
+                ctx: NonNull::new(self.app.unwrap().cast::<c_void>()),
+                callback: |p| {
+                    // SAFETY: ctx was stored from a live *mut ServerApp<SSL> above
+                    unsafe { (*p.cast::<ServerApp<SSL>>()).close() };
+                    Ok(())
+                },
+            });
             self.vm.enqueue_task(jsc::Task::init(Box::into_raw(task)));
         }
 
-        let task = Box::new(jsc::AnyTask::new::<Self>(Self::deinit, self));
+        // Zig: jsc.AnyTask.New(ThisServer, deinit).init(this)
+        let task = Box::new(jsc::AnyTask::AnyTask {
+            ctx: NonNull::new((self as *mut Self).cast::<c_void>()),
+            callback: |p| {
+                Self::deinit(p.cast::<Self>());
+                Ok(())
+            },
+        });
         self.vm.enqueue_task(jsc::Task::init(Box::into_raw(task)));
     }
 

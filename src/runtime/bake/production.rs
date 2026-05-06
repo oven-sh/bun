@@ -984,6 +984,7 @@ pub fn build_with_vm(
             css_file_count += 1;
         }
         if let Some(file) = route.file_layout {
+            let file = OpaqueFileId::init(file.get());
             file_list.put_index(global, file_count, pt.preload_bundled_module(file)?)?;
             for r#ref in pt.output_file(file).referenced_css_chunks.iter() {
                 styles.put_index(

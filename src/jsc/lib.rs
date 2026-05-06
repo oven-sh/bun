@@ -2426,32 +2426,116 @@ pub mod resolve_message;
 pub use self::resolve_message::ResolveMessage;
 
 pub mod zig_exception {
+    use core::ffi::{c_int, c_void};
+    use core::mem::MaybeUninit;
+    use core::ptr;
+
+    use bun_string::String;
+
+    use super::{JSErrorCode, JSRuntimeType, ZigStackFrame, ZigStackTrace};
+
+    /// `bun.jsc.ZigException` — `extern struct` FFI payload populated by C++
+    /// (`JSC__JSValue__toZigException`) and read on the Rust side. Field
+    /// layout mirrors `src/jsc/ZigException.zig:6`.
+    #[repr(C)]
+    pub struct ZigException {
+        pub r#type: JSErrorCode,
+        pub runtime_type: JSRuntimeType,
+
+        /// SystemError only
+        pub errno: c_int,
+        /// SystemError only
+        pub syscall: String,
+        /// SystemError only
+        pub system_code: String,
+        /// SystemError only
+        pub path: String,
+
+        pub name: String,
+        pub message: String,
+        pub stack: ZigStackTrace,
+
+        pub exception: *mut c_void,
+
+        pub remapped: bool,
+
+        pub fd: i32,
+
+        pub browser_url: String,
+    }
+
+    impl Default for ZigException {
+        fn default() -> Self {
+            Self {
+                // SAFETY: JSErrorCode is `#[repr(u8)]`; `255` is the documented
+                // "unknown" sentinel (ZigException.zig:99 `@enumFromInt(255)`).
+                r#type: unsafe { core::mem::transmute::<u8, JSErrorCode>(255) },
+                runtime_type: JSRuntimeType::Nothing,
+                errno: 0,
+                syscall: String::EMPTY,
+                system_code: String::EMPTY,
+                path: String::EMPTY,
+                name: String::EMPTY,
+                message: String::EMPTY,
+                stack: ZigStackTrace::default(),
+                exception: ptr::null_mut(),
+                remapped: false,
+                fd: -1,
+                browser_url: String::EMPTY,
+            }
+        }
+    }
+
     /// `ZigException.Holder` — extern struct that owns the stack-frame storage
     /// passed across the FFI boundary (ZigException.zig:54).
     #[repr(C)]
     pub struct Holder {
-        // TODO(b2): full field layout (frames + remapped flag) — gated.
-        loaded: bool,
-        zig_exception_: super::ZigException,
+        pub source_line_numbers: [i32; Self::SOURCE_LINES_COUNT],
+        pub source_lines: [String; Self::SOURCE_LINES_COUNT],
+        pub frames: [ZigStackFrame; Self::FRAME_COUNT],
+        pub loaded: bool,
+        // PORT NOTE: Zig had `= undefined` (never read until `loaded` flips and
+        // `zig_exception()` writes it). `ZigException` has enum fields, so
+        // `zeroed()` is forbidden — use MaybeUninit and gate access on `loaded`.
+        pub zig_exception: MaybeUninit<ZigException>,
+        pub need_to_clear_parser_arena_on_deinit: bool,
     }
+
     impl Holder {
+        const FRAME_COUNT: usize = 32;
+        pub const SOURCE_LINES_COUNT: usize = 6;
+
         pub fn init() -> Self {
-            Self { loaded: false, zig_exception_: super::ZigException::default() }
+            Self {
+                // PORT NOTE: `[ZigStackFrame::ZERO; N]` would require `Copy`;
+                // mirror the Zig `@memset` via `from_fn`.
+                frames: core::array::from_fn(|_| ZigStackFrame::default()),
+                source_line_numbers: [-1; Self::SOURCE_LINES_COUNT],
+                source_lines: core::array::from_fn(|_| String::EMPTY),
+                zig_exception: MaybeUninit::uninit(),
+                loaded: false,
+                need_to_clear_parser_arena_on_deinit: false,
+            }
         }
+
         /// `Holder.zigException()` (ZigException.zig:98) — lazy-init the inner
         /// `ZigException` (wiring up `frames`/`source_lines` storage) and
-        /// return a mutable pointer to it.
-        pub fn zig_exception(&mut self) -> &mut super::ZigException {
+        /// return a mutable reference to it.
+        pub fn zig_exception(&mut self) -> &mut ZigException {
             if !self.loaded {
-                // TODO(b2): wire frames_ptr/source_lines_ptr to Holder-owned arrays —
-                // gated until ZigException.rs / ZigStackTrace.rs un-gate.
-                self.zig_exception_ = super::ZigException::default();
+                // TODO(port): wire `stack.{frames_ptr,source_lines_ptr,…}` to the
+                // Holder-owned arrays once `ZigStackTrace` un-gates with its real
+                // field layout (currently a `stub_ty!` opaque).
+                self.zig_exception.write(ZigException::default());
                 self.loaded = true;
             }
-            &mut self.zig_exception_
+            // SAFETY: either the branch above just wrote it, or `loaded` was
+            // already true from a prior call that wrote it.
+            unsafe { self.zig_exception.assume_init_mut() }
         }
     }
 }
+pub use self::zig_exception::ZigException;
 
 /// Trait implemented by `#[bun_jsc::JsClass]`-derived types. The proc-macro
 /// emits `to_js`/`from_js`/`from_js_direct` per type; this is the trait shape.

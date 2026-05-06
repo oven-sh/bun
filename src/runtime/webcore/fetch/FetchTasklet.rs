@@ -1060,10 +1060,10 @@ impl FetchTasklet {
             return BodyValue::Error(err);
         }
         if self.is_waiting_body {
-            return BodyValue::Locked(body::Locked {
+            return BodyValue::Locked(body::PendingValue {
                 size_hint: self.get_size_hint(),
-                task: self as *mut _ as *mut c_void,
-                global: self.global_this,
+                task: Some(self as *mut _ as *mut c_void),
+                global: self.global_this as *const JSGlobalObject,
                 on_start_streaming: Some(FetchTasklet::on_start_streaming_http_response_body_callback),
                 on_readable_stream_available: Some(FetchTasklet::on_readable_stream_available),
                 on_stream_cancelled: Some(FetchTasklet::on_stream_cancelled_callback),
@@ -1074,6 +1074,7 @@ impl FetchTasklet {
         let scheduled_response_buffer = core::mem::take(&mut self.scheduled_response_buffer);
         let response = BodyValue::InternalBlob(InternalBlob {
             bytes: scheduled_response_buffer.list,
+            was_string: false,
         });
         self.scheduled_response_buffer = MutableString::default();
 
@@ -1094,10 +1095,11 @@ impl FetchTasklet {
         let url = BunString::create_atom_if_possible(&metadata.url);
         let redirected = self.result.redirected;
         Response::init(
-            crate::webcore::ResponseInit {
+            crate::webcore::response::Init {
                 headers,
                 status_code,
                 status_text,
+                ..Default::default()
             },
             Body {
                 value: self.to_body_value(),
@@ -1178,7 +1180,7 @@ impl FetchTasklet {
             url_proxy_buffer: fetch_options.url_proxy_buffer,
             signal: fetch_options.signal,
             signals: Signals::default(),
-            signal_store: http::SignalsStore::default(),
+            signal_store: http::signals::Store::default(),
             has_schedule_callback: AtomicBool::new(false),
             abort_reason: Strong::EMPTY,
             check_server_identity: fetch_options.check_server_identity,

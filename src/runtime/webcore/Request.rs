@@ -447,12 +447,14 @@ impl Request {
 
     pub fn get_remote_socket_info(&mut self, global_object: &JSGlobalObject) -> Option<JSValue> {
         if let Some(info) = self.request_context.get_remote_socket_info() {
-            return Some(bun_jsc::JSSocketAddress::create(
+            // Zig: `jsc.JSSocketAddress.create` → SocketAddress DTO POJO.
+            return crate::socket::socket_address::SocketAddress::create_dto(
                 global_object,
-                info.ip,
-                info.port,
+                &info.ip,
+                info.port as u16,
                 info.is_ipv6,
-            ));
+            )
+            .ok();
         }
 
         None
@@ -478,7 +480,7 @@ impl Request {
         global_object: &JSGlobalObject,
     ) -> Option<ReadableStream> {
         if let Some(js_ref) = self.js_ref.try_get() {
-            if let Some(stream) = js::gc::stream::get(js_ref) {
+            if let Some(stream) = js_gen::stream_get_cached(js_ref) {
                 // JS is always source of truth for the stream
                 return match ReadableStream::from_js(stream, global_object) {
                     Ok(rs) => rs,

@@ -1529,22 +1529,15 @@ impl<const SSL: bool> NewSocket<SSL> {
         let Some(address_bytes) = this.socket.local_address(&mut buf) else {
             return JSValue::UNDEFINED;
         };
-        // TODO(port): std::net::Address used in Zig — bun_core::net::Address in Rust.
-        let address = match address_bytes.len() {
-            4 => bun_core::net::Address::init_ip4(
-                <[u8; 4]>::try_from(address_bytes).unwrap(),
-                0,
-            ),
-            16 => bun_core::net::Address::init_ip6(
-                <[u8; 16]>::try_from(address_bytes).unwrap(),
-                0,
-                0,
-                0,
-            ),
+        // TODO(port): Zig used `std.net.Address.initIp4/6`; `format_ip` only
+        // needs `Display`, so use `std::net::IpAddr`.
+        let address: std::net::IpAddr = match address_bytes.len() {
+            4 => std::net::Ipv4Addr::from(<[u8; 4]>::try_from(address_bytes).unwrap()).into(),
+            16 => std::net::Ipv6Addr::from(<[u8; 16]>::try_from(address_bytes).unwrap()).into(),
             _ => return JSValue::UNDEFINED,
         };
 
-        let text = bun_fmt::format_ip(address, &mut text_buf).expect("unreachable");
+        let text = bun_fmt::format_ip(&address, &mut text_buf).expect("unreachable");
         ZigString::init(text).to_js(global)
     }
 
@@ -1586,21 +1579,13 @@ impl<const SSL: bool> NewSocket<SSL> {
         let Some(address_bytes) = this.socket.remote_address(&mut buf) else {
             return Ok(JSValue::UNDEFINED);
         };
-        let address = match address_bytes.len() {
-            4 => bun_core::net::Address::init_ip4(
-                <[u8; 4]>::try_from(address_bytes).unwrap(),
-                0,
-            ),
-            16 => bun_core::net::Address::init_ip6(
-                <[u8; 16]>::try_from(address_bytes).unwrap(),
-                0,
-                0,
-                0,
-            ),
+        let address: std::net::IpAddr = match address_bytes.len() {
+            4 => std::net::Ipv4Addr::from(<[u8; 4]>::try_from(address_bytes).unwrap()).into(),
+            16 => std::net::Ipv6Addr::from(<[u8; 16]>::try_from(address_bytes).unwrap()).into(),
             _ => return Ok(JSValue::UNDEFINED),
         };
 
-        let text = bun_fmt::format_ip(address, &mut text_buf).expect("unreachable");
+        let text = bun_fmt::format_ip(&address, &mut text_buf).expect("unreachable");
         BunString::create_utf8_for_js(global, text)
     }
 
@@ -1707,10 +1692,10 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // PERF(port): was stack-fallback alloc — profile in Phase B.
         let allow_string_object = true;
-        let buffer: jsc::node::StringOrBuffer = if data_value.is_undefined() {
-            jsc::node::StringOrBuffer::EMPTY
+        let buffer: StringOrBuffer = if data_value.is_undefined() {
+            StringOrBuffer::EMPTY
         } else {
-            match jsc::node::StringOrBuffer::from_js_with_encoding_value_allow_string_object(
+            match StringOrBuffer::from_js_with_encoding_value_allow_string_object(
                 global,
                 // allocator dropped (global mimalloc)
                 data_value,
@@ -1770,7 +1755,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             #[cfg(unix)]
             if !SSL {
                 // fast-ish path: use writev() to avoid cloning to another buffer.
-                if let uws::SocketState::Connected(connected) = &self.socket.socket {
+                if let uws::InternalSocket::Connected(connected) = &self.socket.socket {
                     if !buffer.slice().is_empty() {
                         let rc = connected
                             .write2(self.buffered_data_for_node_net.slice(), buffer.slice());

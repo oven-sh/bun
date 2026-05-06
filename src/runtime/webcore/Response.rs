@@ -636,7 +636,7 @@ impl Response {
 
             formatter.write_indent(writer)?;
             writer.write_str(Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>statusText<d>:<r> "))?;
-            write!(writer, "{}", Output::pretty_args::<ENABLE_ANSI_COLORS>("<r>\"<b>{}<r>\"", &self.init.status_text))?;
+            write!(writer, "{}", Output::pretty_fmt_args("<r>\"<b>{}<r>\"", ENABLE_ANSI_COLORS, (&self.init.status_text,)))?;
             formatter.print_comma::<_, ENABLE_ANSI_COLORS>(writer)?;
             writer.write_str("\n")?;
 
@@ -674,7 +674,7 @@ impl Response {
             // After toJS/makeMaybePooled, checkBodyStreamRef has already moved
             // the streams from Locked.readable to js.gc.stream. So we need to
             // use js.gc.stream to get the streams and update the body cache.
-            if let Some(cloned_stream) = js::gc::stream::get(js_wrapper) {
+            if let Some(cloned_stream) = js::stream_get_cached(js_wrapper) {
                 js::body_set_cached(js_wrapper, global_this, cloned_stream);
             }
         }
@@ -701,7 +701,7 @@ impl Response {
     pub fn clone_value(&mut self, global_this: &JSGlobalObject) -> JsResult<Response> {
         let body = 'brk: {
             if let Some(js_ref) = self.js_ref.try_get() {
-                if let Some(stream) = js::gc::stream::get(js_ref) {
+                if let Some(stream) = js::stream_get_cached(js_ref) {
                     let mut readable = ReadableStream::from_js(stream, global_this)?;
                     if let Some(readable) = readable.as_mut() {
                         break 'brk self.body.clone_with_readable_stream(global_this, readable)?;
@@ -854,7 +854,7 @@ impl Response {
         }
 
         let headers_ref = response.get_or_create_headers(global_this)?;
-        headers_ref.put_default(FetchHeaders::HTTPHeaderName::ContentType, bun_http_types::MimeType::json.value, global_this)?;
+        headers_ref.put_default(FetchHeaders::HTTPHeaderName::ContentType, &bun_http_types::MimeType::JSON.value, global_this)?;
         Ok(Box::leak(Box::new(response)).to_js(global_this))
     }
 

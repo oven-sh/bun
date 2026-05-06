@@ -84,7 +84,8 @@ use crate::webcore::{AbortSignal, Blob, Body, FetchHeaders, ObjectURLRegistry, R
 use crate::node;
 use bun_paths::resolve_path::PosixToWinNormalizer;
 use bun_picohttp as picohttp;
-use crate::webcore::s3_stub as s3;
+use crate::webcore::s3::client as s3;
+use bun_s3_signing::SignOptions;
 
 pub use super::fetch_tasklet::FetchTasklet;
 use super::fetch_tasklet::HTTPRequestBody;

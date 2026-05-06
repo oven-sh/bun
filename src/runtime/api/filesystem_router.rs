@@ -208,7 +208,10 @@ impl FileSystemRouter {
 
             // TODO(port): `clone_if_borrowed` not on `ZigStringSlice` — copy into arena.
             let s = asset_prefix.to_slice(global_this)?;
-            let leaked: &'static [u8] = arena.alloc_slice_copy(s.slice());
+            // SAFETY: arena is boxed and moved into the returned `FileSystemRouter`; allocation
+            // outlives this slice. Detach borrow via raw ptr so `arena` can be moved below.
+            let leaked: &'static [u8] =
+                unsafe { &*(arena.alloc_slice_copy(s.slice()) as *const [u8]) };
             asset_prefix_slice = ZigStringSlice::from_utf8_never_free(leaked);
         }
         let mut log = Log::Log::new();

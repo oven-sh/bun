@@ -103,6 +103,6 @@ pub fn to_contain_all_values(
 // PORT STATUS
 //   source:     src/test_runner/expect/toContainAllValues.zig (79 lines)
 //   confidence: medium
-//   todos:      2
-//   notes:      defer postMatch needs RAII guard; to_fmt(&mut Formatter) aliases — both patterns recur across all expect matchers
+//   todos:      1
+//   notes:      defer postMatch needs RAII guard — pattern recurs across all expect matchers
 // ──────────────────────────────────────────────────────────────────────────

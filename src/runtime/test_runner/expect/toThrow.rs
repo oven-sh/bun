@@ -87,12 +87,13 @@ pub fn to_throw(
                 let message: JSValue = err
                     .get_truthy(global, "message")?
                     .unwrap_or(JSValue::UNDEFINED);
+                let mut formatter2 = super::make_formatter(global);
                 return Err(global.throw_pretty(
                     signature_no_args,
                     format_args!(
                         "\n\nError name: <red>{}<r>\nError message: <red>{}<r>\n",
                         name.to_fmt(&mut formatter),
-                        message.to_fmt(&mut formatter),
+                        message.to_fmt(&mut formatter2),
                     ),
                 ));
             }
@@ -125,6 +126,7 @@ pub fn to_throw(
                 }
             }
 
+            let mut formatter2 = super::make_formatter(global);
             return this.throw_fmt(
                 global,
                 signature,
@@ -132,7 +134,7 @@ pub fn to_throw(
                 format_args!(
                     "{}{}",
                     expected_value.to_fmt(&mut formatter),
-                    received_message.to_fmt(&mut formatter),
+                    received_message.to_fmt(&mut formatter2),
                 ),
             );
         }

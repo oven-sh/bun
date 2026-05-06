@@ -1670,7 +1670,7 @@ impl CronJob {
             vm.rare_data().cron_jobs.push(job as *mut () as *mut _);
         }
 
-        let js_value = job_ref.to_js(global);
+        let js_value = Self::to_js_ptr(job, global);
         job_ref.this_value.set_strong(js_value, global);
         js::cron_set_cached(js_value, global, schedule_arg);
         js::callback_set_cached(js_value, global, callback_arg.with_async_context_if_needed(global));

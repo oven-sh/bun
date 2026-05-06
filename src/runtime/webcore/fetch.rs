@@ -1685,7 +1685,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             let _ = opened_fd;
             body.detach();
             body = HTTPRequestBody::AnyBlob(blob::Any::from_owned_slice(Vec::new()));
-            http_body = HTTPRequestBody::AnyBlob(body.any_blob().clone());
+            http_body = body.clone_ref();
             todo!("blocked_on: crate::node::fs::NodeFS::read_file");
             #[allow(unreachable_code)]
             { break 'prepare_body; }

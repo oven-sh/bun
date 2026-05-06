@@ -361,17 +361,25 @@ impl InternalState {
         is_final_chunk: bool,
     ) -> Result<(), Error> {
         // PORT NOTE: reshaped for borrowck — Zig passed MutableString by value; we borrow the inner slice.
-        // TODO(port): if `buffer` aliases `self.compressed_body`, caller must restructure (see process_body_buffer).
         self.decompress_bytes(buffer.list.as_slice(), body_out_str, is_final_chunk)
     }
 
     // TODO(port): narrow error set
+    // PORT NOTE: Zig takes `buffer: MutableString` BY VALUE (a shallow struct copy whose
+    // `.list.items` aliases the same allocation). Every caller passes `getBodyBuffer().*`,
+    // so `buffer` is always the current body buffer's bytes. To avoid aliased &mut/& under
+    // Stacked Borrows (decompress_bytes mutates `self.compressed_body`; the uncompressed
+    // path materialises `&mut *body_out_str`), callers `mem::take` the body buffer's `list`
+    // and pass it here as an owned Vec — no `&` into `self` survives across `&mut self`.
     pub fn process_body_buffer(
         &mut self,
-        buffer: &MutableString,
+        mut buffer: Vec<u8>,
         is_final_chunk: bool,
     ) -> Result<bool, Error> {
         if self.flags.is_redirect_pending {
+            // Caller moved the bytes out of the body buffer; put them back so the
+            // take is a no-op (Zig's by-value copy left the original untouched).
+            self.get_body_buffer().list = buffer;
             return Ok(false);
         }
 
@@ -380,11 +388,21 @@ impl InternalState {
 
         match self.encoding {
             Encoding::Brotli | Encoding::Gzip | Encoding::Deflate | Encoding::Zstd => {
-                self.decompress(buffer, body_out_str, is_final_chunk)?;
+                self.decompress_bytes(&buffer, body_out_str, is_final_chunk)?;
+                // Zig's `defer compressed_body.reset()` retained capacity; mirror that by
+                // returning the (cleared) allocation to compressed_body instead of dropping it.
+                buffer.clear();
+                self.compressed_body.list = buffer;
             }
             _ => {
-                if !body_out_str.owns(buffer.list.as_slice()) {
-                    if let Err(err) = body_out_str.append(buffer.list.as_slice()) {
+                // Uncompressed: caller took `buffer` from `body_out_str.list`, leaving it
+                // empty — move the bytes back (Zig's `owns()` check skipped the append
+                // because the by-value copy aliased body_out_str). If body_out_str is
+                // somehow non-empty, fall back to append.
+                if body_out_str.list.is_empty() {
+                    body_out_str.list = buffer;
+                } else if !body_out_str.owns(&buffer) {
+                    if let Err(err) = body_out_str.append(&buffer) {
                         let err: Error = err.into();
                         Output::pretty_errorln(&format_args!(
                             "<r><red>Failed to append to body buffer: {}<r>",

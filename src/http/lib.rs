@@ -4236,14 +4236,12 @@ impl HTTPClient {
             content_length.is_some() && self.state.total_body_received >= content_length.unwrap();
         if is_done || self.signals.get(signals::Field::ResponseBodyStreaming) || content_length.is_none() {
             let is_final_chunk = is_done;
-            // PORT NOTE: get_body_buffer() may return `&mut self.state.compressed_body`;
-            // pass via raw `*const` because process_body_buffer takes `&mut self`
-            // (would alias) but only reads `buffer.list` and writes to disjoint
-            // body_out_str.
-            let buffer_ptr: *const MutableString = self.state.get_body_buffer();
-            // SAFETY: buffer_ptr points into self.state; process_body_buffer
-            // only reads `buffer.list` and writes to a disjoint output buffer.
-            let processed = self.state.process_body_buffer(unsafe { &*buffer_ptr }, is_final_chunk)?;
+            // PORT NOTE: Zig passes `buffer.*` BY VALUE (http.zig:2614). Mirror that by
+            // moving the body buffer's bytes out — process_body_buffer takes `&mut self.state`
+            // and may mutate `compressed_body` (via decompress_bytes' reset) or `body_out_str`,
+            // so any `&` into `self.state` held across the call would be aliased UB.
+            let buffer_snap = core::mem::take(&mut self.state.get_body_buffer().list);
+            let processed = self.state.process_body_buffer(buffer_snap, is_final_chunk)?;
 
             // We can only use the libdeflate fast path when we are not streaming
             // If we ever call processBodyBuffer again, it cannot go through the fast path.
@@ -4336,9 +4334,10 @@ impl HTTPClient {
                 if self.signals.get(signals::Field::ResponseBodyStreaming) {
                     // If we're streaming, we cannot use the libdeflate fast path
                     self.state.flags.is_libdeflate_fast_path_disabled = true;
-                    // SAFETY: buffer_ptr points into self.state; process_body_buffer
-                    // only reads `buffer.list` and writes to a disjoint output buffer.
-                    return self.state.process_body_buffer(unsafe { &*buffer_ptr }, false);
+                    // PORT NOTE: Zig passes the by-value struct copy (http.zig:2681). Move the
+                    // bytes out so no `&` into self.state aliases the `&mut self.state` call.
+                    let buffer_snap = core::mem::take(&mut self.state.get_body_buffer().list);
+                    return self.state.process_body_buffer(buffer_snap, false);
                 }
 
                 return Ok(false);
@@ -4346,14 +4345,16 @@ impl HTTPClient {
             // Done
             _ => {
                 self.state.flags.received_last_chunk = true;
-                // SAFETY: buffer_ptr points into self.state; process_body_buffer
-                // only reads `buffer.list` and writes to a disjoint output buffer.
-                let _ = self.state.process_body_buffer(unsafe { &*buffer_ptr }, true)?;
+                // SAFETY: buffer_ptr is the unique body buffer; sole live borrow.
+                let buffer_len = unsafe { (*buffer_ptr).list.len() };
+                // PORT NOTE: Zig passes the by-value struct copy (http.zig:2689). Move the
+                // bytes out so no `&` into self.state aliases the `&mut self.state` call.
+                let buffer_snap = core::mem::take(&mut self.state.get_body_buffer().list);
+                let _ = self.state.process_body_buffer(buffer_snap, true)?;
 
                 if let Some(progress) = self.progress_node_mut() {
                     progress.activate();
-                    // SAFETY: buffer_ptr is live; reading len() does not alias `progress`.
-                    progress.set_completed_items(unsafe { (*buffer_ptr).list.len() });
+                    progress.set_completed_items(buffer_len);
                     // SAFETY: progress.context is a non-null backref to its owning Progress
                     unsafe { (*progress.context).maybe_refresh() };
                 }
@@ -4378,35 +4379,37 @@ impl HTTPClient {
         // SAFETY: decoder points at self.state.chunked_decoder; sole live borrow.
         unsafe { (*decoder).consume_trailer = 1 };
 
+        // Capture the length up front so no `&[u8]` aliases the live `&mut [u8]` below.
+        let in_len = incoming_data.len();
         let buffer: &mut [u8] = if self.state.response_message_buffer.owns(incoming_data) {
             // if we've already copied the buffer once, we can avoid copying it again.
-            // SAFETY: response_message_buffer is owned mutably by self; incoming_data
-            // is a borrow into it. Zig does `@constCast`.
-            unsafe {
-                core::slice::from_raw_parts_mut(
-                    incoming_data.as_ptr() as *mut u8,
-                    incoming_data.len(),
-                )
-            }
+            // SAFETY: `incoming_data` is a subslice of `response_message_buffer.list`
+            // (`owns` just verified). Zig does `@constCast(incoming_data)` (http.zig:2727),
+            // but `incoming_data.as_ptr() as *mut u8` would carry SharedReadOnly provenance
+            // (it came from a `&[u8]`) and writing through it is UB. Derive the mutable
+            // slice from the owning Vec instead so the write has Unique provenance.
+            let base = self.state.response_message_buffer.list.as_mut_ptr();
+            let off = incoming_data.as_ptr() as usize - base as usize;
+            unsafe { core::slice::from_raw_parts_mut(base.add(off), in_len) }
         } else {
-            small[0..incoming_data.len()].copy_from_slice(incoming_data);
-            &mut small[0..incoming_data.len()]
+            small[0..in_len].copy_from_slice(incoming_data);
+            &mut small[0..in_len]
         };
 
-        let mut bytes_decoded = incoming_data.len();
+        let mut bytes_decoded = in_len;
         // phr_decode_chunked mutates in-place
-        // SAFETY: `buffer` is an exclusive &mut [u8] of len == incoming_data.len(); offset
-        // len - incoming_data.len() == 0 is trivially in bounds.
+        // SAFETY: `buffer` is an exclusive &mut [u8] of len == in_len; offset
+        // len - in_len == 0 is trivially in bounds.
         let pret = unsafe {
             picohttp::phr_decode_chunked(
                 &mut *decoder,
                 buffer
                     .as_mut_ptr()
-                    .add(buffer.len().saturating_sub(incoming_data.len())),
+                    .add(buffer.len().saturating_sub(in_len)),
                 &mut bytes_decoded,
             )
         };
-        let new_len = buffer.len().saturating_sub(incoming_data.len() - bytes_decoded);
+        let new_len = buffer.len().saturating_sub(in_len - bytes_decoded);
         let buffer = &mut buffer[..new_len];
         self.state.total_body_received += bytes_decoded;
         bun_core::scoped_log!(
@@ -4425,19 +4428,18 @@ impl HTTPClient {
                     // SAFETY: progress.context is a non-null backref to its owning Progress
             unsafe { (*progress.context).maybe_refresh() };
                 }
-                // PORT NOTE: reshaped for borrowck — raw ptr to body_buffer.
-                let body_buffer: *mut MutableString = self.state.get_body_buffer();
-                // SAFETY: body_buffer points into self.state; only borrower here.
-                unsafe { (*body_buffer).append_slice_exact(buffer)? };
+                self.state.get_body_buffer().append_slice_exact(buffer)?;
 
                 // streaming chunks
                 if self.signals.get(signals::Field::ResponseBodyStreaming) {
                     // If we're streaming, we cannot use the libdeflate fast path
                     self.state.flags.is_libdeflate_fast_path_disabled = true;
 
-                    // SAFETY: body_buffer points into self.state; process_body_buffer
-                    // only reads `buffer.list` and writes to a disjoint output buffer.
-                    return self.state.process_body_buffer(unsafe { &*body_buffer }, true);
+                    // PORT NOTE: Zig passes `body_buffer.*` BY VALUE (http.zig:2763). Move
+                    // the bytes out so no `&` into self.state aliases the `&mut self.state`
+                    // taken by process_body_buffer (which mutates compressed_body/body_out_str).
+                    let buffer_snap = core::mem::take(&mut self.state.get_body_buffer().list);
+                    return self.state.process_body_buffer(buffer_snap, true);
                 }
 
                 Ok(false)

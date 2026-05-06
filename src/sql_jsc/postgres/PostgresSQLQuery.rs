@@ -473,7 +473,7 @@ impl PostgresSQLQuery {
                     this.statement = None;
                     drop(stmt);
                     // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
-                    unsafe { Self::deref_(this) };
+                    unsafe { Self::deref_(this_ptr) };
 
                     if !global_object.has_exception() {
                         return global_object.throw_value(postgres_error_to_js(global_object, Some("failed to execute query"), err));
@@ -486,12 +486,12 @@ impl PostgresSQLQuery {
             } else {
                 this.status = Status::Pending;
             }
-            if let Err(_) = connection.requests.write_item(this) {
+            if let Err(_) = connection.requests.write_item(this_ptr) {
                 // fail to run do cleanup
                 this.statement = None;
                 drop(stmt);
                 // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
-                unsafe { Self::deref_(this) };
+                unsafe { Self::deref_(this_ptr) };
 
                 return global_object.throw_out_of_memory();
             }
@@ -519,7 +519,7 @@ impl PostgresSQLQuery {
             Ok(s) => s,
             Err(err) => {
                 // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
-                unsafe { Self::deref_(this) };
+                unsafe { Self::deref_(this_ptr) };
                 if !global_object.has_exception() {
                     return global_object.throw_error(err, "failed to generate signature");
                 }

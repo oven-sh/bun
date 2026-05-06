@@ -678,11 +678,12 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         this_transpiler.resolver.store_fd = false;
 
-        // SAFETY: re-derive — borrowck won't let `env_loader` straddle the
-        // `&mut this_transpiler.resolver` above.
-        let env_loader = unsafe { &mut *this_transpiler.env };
-
         if env_is_none {
+            // SAFETY: re-derive — borrowck won't let `env_loader` straddle the
+            // `&mut this_transpiler.resolver` above. Scoped to this block so it
+            // does NOT straddle `run_env_loader` below (which itself derives
+            // `&mut *self.env`, popping any outstanding `&mut Loader` tag).
+            let env_loader = unsafe { &mut *this_transpiler.env };
             env_loader.load_process()?;
 
             if let Some(node_env) = env_loader.get(b"NODE_ENV") {
@@ -695,9 +696,17 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             // (see comment in env_loader.zig:542-548 - the script's own bun instance loads .env)
             // TODO(b2-blocked): `Transpiler::run_env_loader` is in the gated
             // `__phase_a_draft` impl (transpiler.rs:1317).
-            
+
             let _ = this_transpiler.run_env_loader(true);
         }
+
+        // SAFETY: re-derive after `run_env_loader` — that call creates its own
+        // `&mut *self.env` (transpiler.rs:282), which under Stacked Borrows
+        // invalidates any `&mut Loader` derived before it. Zig spec
+        // run_command.zig:820-823 re-dereferences `this_transpiler.env`
+        // per-statement; mirror that by taking a fresh borrow here for the
+        // remaining env-var seeding.
+        let env_loader = unsafe { &mut *this_transpiler.env };
 
         env_loader.map.put_default(b"npm_config_local_prefix", top_level_dir).expect("unreachable");
 

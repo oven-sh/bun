@@ -768,7 +768,7 @@ impl PostgresSQLConnection {
 
         // reset the connection timeout after we're done processing the data
         self.reset_connection_timeout();
-        self.deref();
+        Self::deref(self as *mut Self);
     }
 
     // TODO(b2-blocked): #[crate::jsc::host_fn] proc-macro attr
@@ -943,8 +943,8 @@ pub fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
         status: Status::Connecting,
         ref_count: Cell::new(1),
         write_buffer: OffsetByteList::default(),
-        read_buffer: OffsetByteList::default(),
-        last_message_start: 0,
+        read_buffer: UnsafeCell::new(OffsetByteList::default()),
+        last_message_start: Cell::new(0),
         requests: PostgresRequest::Queue::init(),
         pipelined_requests: 0,
         nonpipelinable_requests: 0,
@@ -1016,7 +1016,7 @@ pub fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
         this.socket = Socket::SocketTcp(match result {
             Ok(s) => s,
             Err(err) => {
-                this.deinit();
+                PostgresSQLConnection::deinit(ptr);
                 return global_object.throw_error(err, "failed to connect to postgresql");
             }
         });

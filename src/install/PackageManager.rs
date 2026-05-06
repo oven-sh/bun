@@ -597,14 +597,18 @@ pub struct ScriptRunEnvironment {
 pub struct WakeHandler {
     // handler: fn (ctx: *anyopaque, pm: *PackageManager) void = undefined,
     // onDependencyError: fn (ctx: *anyopaque, Dependency, PackageID, anyerror) void = undefined,
-    pub handler: Option<fn(*mut c_void, &mut PackageManager)>, // STATIC fn ptr (cast at get_handler)
+    // PORT NOTE: `*mut PackageManager`, not `&mut`, to mirror Zig's `*PackageManager`
+    // exactly — `wake()` is called concurrently from task threads (see
+    // `isolated_install::Installer::Task::callback`) and forming `&mut PackageManager`
+    // there would be aliased-&mut UB.
+    pub handler: Option<fn(*mut c_void, *mut PackageManager)>, // STATIC fn ptr (cast at get_handler)
     pub on_dependency_error: Option<fn(*mut c_void, Dependency, DependencyID, Error)>, // STATIC fn ptr
     pub context: Option<NonNull<c_void>>, // BORROW_PARAM — caller-owned opaque ctx
 }
 
 impl WakeHandler {
     #[inline]
-    pub fn get_handler(&self) -> fn(*mut c_void, &mut PackageManager) {
+    pub fn get_handler(&self) -> fn(*mut c_void, *mut PackageManager) {
         // SAFETY: handler is always set before context per VirtualMachine.zig:1162
         self.handler.unwrap()
     }
@@ -746,10 +750,31 @@ impl PackageManager {
     }
 
     pub fn wake(&mut self) {
-        if let Some(ctx) = self.on_wake.context {
-            (self.on_wake.get_handler())(ctx.as_ptr(), self);
+        // Main-thread / single-owner callers go through `&mut self`; delegate to the
+        // raw-pointer path so there is one body.
+        // SAFETY: `self` is a valid `*mut PackageManager`.
+        unsafe { Self::wake_raw(self) };
+    }
+
+    /// Raw-pointer wake for concurrent task-thread callers (see
+    /// `isolated_install::Installer::Task::callback`). Never materializes
+    /// `&mut PackageManager`, so two task threads finishing simultaneously do
+    /// not hold aliased exclusive borrows. `on_wake` is read-only; the handler
+    /// receives the raw `*mut` (Zig's `*PackageManager` carries no exclusivity
+    /// contract); `event_loop.wakeup()` is the cross-thread signal and is
+    /// internally synchronized — we reach it via `addr_of_mut!` so the `&mut`
+    /// covers only the event-loop field, never the whole `PackageManager`.
+    ///
+    /// # Safety
+    /// `this` must point to a live `PackageManager` (BACKREF).
+    pub unsafe fn wake_raw(this: *mut Self) {
+        unsafe {
+            let on_wake = &*core::ptr::addr_of!((*this).on_wake);
+            if let Some(ctx) = on_wake.context {
+                (on_wake.get_handler())(ctx.as_ptr(), this);
+            }
+            (*core::ptr::addr_of_mut!((*this).event_loop)).wakeup();
         }
-        self.event_loop.wakeup();
     }
 
     /// Spec: PackageManager.zig:424 `sleepUntil(this, closure, isDoneFn)`.

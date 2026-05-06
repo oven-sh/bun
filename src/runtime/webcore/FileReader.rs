@@ -1,3 +1,4 @@
+use core::cell::UnsafeCell;
 use core::mem;
 
 use bun_aio as aio;

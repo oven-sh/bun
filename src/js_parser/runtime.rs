@@ -16,13 +16,33 @@ use crate::ast::{Expr, Ref};
 
 // Zig: `embedDebugFallback` — defined but currently unused upstream as well.
 // Kept for port parity; callers may be re-introduced when codegen_embed wiring lands.
+//
+// PORT NOTE: Zig's `comptime msg, comptime code` params mean the inner
+// `FallbackMessage.has_printed` static is instantiated once per distinct
+// (msg, code) call site — each call site prints its own message exactly once.
+// A plain Rust fn with a single `static HAS_PRINTED` would share one flag
+// across ALL callers, suppressing every message after the first. Macro form
+// gives each expansion its own `static`, matching Zig semantics.
+#[allow(unused_macros)]
+macro_rules! embed_debug_fallback {
+    ($msg:expr, $code:expr) => {{
+        static HAS_PRINTED: ::std::sync::atomic::AtomicBool =
+            ::std::sync::atomic::AtomicBool::new(false);
+        if !HAS_PRINTED.swap(true, ::std::sync::atomic::Ordering::Relaxed) {
+            $crate::runtime_full::_embed_debug_fallback_print($msg);
+        }
+        $code
+    }};
+}
+#[allow(unused_imports)]
+pub(crate) use embed_debug_fallback;
+
+// Out-of-line print so the macro doesn't depend on `Output` being in scope at
+// the expansion site.
+#[doc(hidden)]
 #[allow(dead_code)]
-fn embed_debug_fallback(msg: &'static str, code: &'static [u8]) -> &'static [u8] {
-    static HAS_PRINTED: AtomicBool = AtomicBool::new(false);
-    if !HAS_PRINTED.swap(true, Ordering::Relaxed) {
-        Output::debug(msg);
-    }
-    code
+pub(crate) fn _embed_debug_fallback_print(msg: &'static str) {
+    Output::debug(msg);
 }
 
 // ───────────────────────────── Fallback ─────────────────────────────

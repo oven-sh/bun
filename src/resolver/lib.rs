@@ -2713,12 +2713,18 @@ pub(crate) mod __forward_decls {
         /// FORWARD_DECL: `bun_install::lockfile::Package::fromPackageJSON`.
         /// Auto-install-only — unreachable until bun_install installs itself
         /// (gated behind `r.package_manager.is_some()`).
+        ///
+        /// PORT NOTE: Zig's signature is `(lockfile: *Lockfile, pm: *PackageManager, ...)`
+        /// where `lockfile == &pm.lockfile`. In Rust, materializing both as `&mut`
+        /// arguments is overlapping-`&mut` UB (Stacked Borrows: reborrowing `pm`
+        /// invalidates the child `&mut pm.lockfile`). The lockfile parameter is
+        /// dropped here; the real impl reaches it via `pm.lockfile`.
         pub fn from_package_json(
-            _lockfile: &mut crate::package_json::install_stubs::Lockfile,
-            _pm: &mut crate::package_json::install_stubs::PackageManager,
+            pm: &mut crate::package_json::install_stubs::PackageManager,
             _package_json: &crate::package_json::PackageJSON,
             _features: Install::Features,
         ) -> core::result::Result<Package, bun_core::Error> {
+            let _lockfile = &mut pm.lockfile;
             Ok(Package::default())
         }
     }
@@ -6523,13 +6529,12 @@ impl<'a> Resolver<'a> {
                 // from `NonNull::from(&mut **last)` and no other live borrow
                 // exists here.
                 let package_json: &mut PackageJSON = unsafe { package_json.as_mut() };
-                // PORT NOTE: borrowck reshape — Zig passed both `&pm.lockfile` and
-                // `pm` (aliasing); split via raw to keep the call-shape.
-                let lockfile: *mut _ = &mut pm.lockfile;
+                // PORT NOTE: Zig passed both `&pm.lockfile` and `pm` to
+                // `fromPackageJSON`; in Rust that yields two overlapping `&mut`
+                // (`lockfile` is an inline field of `PackageManager`). The
+                // forward-decl drops the separate lockfile arg and reaches it
+                // via `pm.lockfile` internally — see `Package::from_package_json`.
                 package = match Package::from_package_json(
-                    // SAFETY: `pm` is the unique owner of `lockfile`; no other
-                    // `&mut pm.lockfile` is formed across this call.
-                    unsafe { &mut *lockfile },
                     pm,
                     package_json,
                     Install::Features {

@@ -1393,8 +1393,9 @@ impl WindowsBufferedReader {
         // SAFETY: libuv fs_cb — `fs` is a valid `uv_fs_t*` owned by the boxed
         // `source::File` (separate heap allocation from `Self`). Invoked from
         // the event loop with no other Rust borrow of it live (single-owner).
+        // Read out the scalars we need before forming `&mut File` so the
+        // `fs_ref` borrow is dead (NLL) by the time `file` covers it.
         let fs_ref = unsafe { &mut *fs };
-        let file = crate::source::File::from_fs(fs_ref);
         let result = fs_ref.result;
         let nread_int = result.int();
         let was_canceled = nread_int == uv::UV_ECANCELED;
@@ -1407,6 +1408,13 @@ impl WindowsBufferedReader {
 
         // Get parent before completing (fs.data may be null if detached)
         let parent_ptr = fs_ref.data;
+
+        // SAFETY: `fs` is the `fs` field of a heap-boxed `source::File`
+        // (separate allocation from `Self`), so `from_fs`'s container_of
+        // subtraction is valid and the resulting `&mut File` does not overlap
+        // the later `&mut WindowsBufferedReader` (distinct allocations).
+        // `fs_ref` above is dead (NLL) before this point.
+        let file: &mut crate::source::File = unsafe { &mut *crate::source::File::from_fs(fs) };
 
         // ALWAYS complete the read first (cleans up fs_t, updates state)
         file.complete(was_canceled);

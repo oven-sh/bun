@@ -3113,8 +3113,8 @@ impl<'a> LinkerContext<'a> {
         let values: *const [NamedImport] = named_imports_ptr.values();
         // SAFETY: `keys`/`values` borrow stable backing storage; the loop body
         // never mutates `named_imports_ptr` (only `imports_to_bind`/`log`/`symbols`).
-        let mut order: Vec<usize> = (0..unsafe { (*keys).len() }).collect();
-        order.sort_by(|&a, &b| unsafe { (*keys)[a].inner_index().cmp(&(*keys)[b].inner_index()) });
+        let mut order: Vec<usize> = (0..unsafe { (&*keys).len() }).collect();
+        order.sort_by(|&a, &b| unsafe { (&*keys)[a].inner_index().cmp(&(&*keys)[b].inner_index()) });
 
         for &i in &order {
             // SAFETY: see above.

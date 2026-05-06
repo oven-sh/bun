@@ -2600,15 +2600,16 @@ pub struct HotUpdateContext<'a> {
 
 impl<'a> HotUpdateContext<'a> {
     pub fn get_cached_index<const SIDE: bake::Side>(
-        &self,
+        &mut self,
         i: bun_js_parser::ast::Index,
     ) -> &mut incremental_graph::FileIndexOptional<SIDE> {
+        let len = self.sources.len();
         let start = match SIDE {
             bake::Side::Client => 0,
-            bake::Side::Server => self.sources.len(),
+            bake::Side::Server => len,
         };
 
-        let subslice = &self.resolved_index_cache[start..][..self.sources.len()];
+        let subslice = &mut self.resolved_index_cache[start..][..len];
 
         const _: () = assert!(
             core::mem::align_of::<incremental_graph::FileIndexOptional<{ bake::Side::Client }>>()
@@ -2618,8 +2619,10 @@ impl<'a> HotUpdateContext<'a> {
             core::mem::size_of::<incremental_graph::FileIndexOptional<{ bake::Side::Client }>>()
                 == core::mem::size_of::<u32>()
         );
-        // SAFETY: FileIndexOptional is repr(transparent) over u32
-        unsafe { &mut *(&subslice[i.get() as usize] as *const u32 as *mut _) }
+        let elem: &mut u32 = &mut subslice[i.get() as usize];
+        // SAFETY: FileIndexOptional is repr(transparent) over u32; pointer derived
+        // from a unique `&mut u32` so the resulting `&mut` is non-aliased.
+        unsafe { &mut *(elem as *mut u32 as *mut incremental_graph::FileIndexOptional<SIDE>) }
     }
 }
 

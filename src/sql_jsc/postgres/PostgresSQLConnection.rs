@@ -132,9 +132,11 @@ impl PostgresSQLConnection {
         // SAFETY: JSC_BORROW — global_object outlives this connection (owned by VM).
         unsafe { &*self.global_object }
     }
+    /// SAFETY: returns `&mut VirtualMachine` derived from `&self`; two calls
+    /// alias the same VM. Caller must not hold another live `&mut` to it.
+    /// (JSC_BORROW — vm outlives this connection.)
     #[inline]
-    fn vm(&self) -> &mut VirtualMachine {
-        // SAFETY: JSC_BORROW — vm outlives this connection.
+    unsafe fn vm(&self) -> &mut VirtualMachine {
         unsafe { &mut *self.vm }
     }
 

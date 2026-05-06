@@ -12,7 +12,7 @@ use bun_jsc::{
     VirtualMachine, ZigString,
 };
 use bun_aio::{self as Async, FilePoll, KeepAlive};
-use bun_core::{self as bun, env_var, feature_flag, fmt as bun_fmt, Global, Mutex, Output};
+use bun_core::{self as bun, env_var, feature_flag, fmt as bun_fmt, Global, Output};
 use bun_collections::{ArrayHashMap, HiveArray};
 use bun_dns::GetAddrInfo;
 use bun_paths::{PathBuffer, MAX_PATH_BYTES};
@@ -1793,11 +1793,16 @@ pub mod internal {
 
     const MAX_ENTRIES: usize = 256;
 
+    /// The cache data guarded by `GLOBAL_CACHE`. The Zig code stored a `bun.Mutex`
+    /// adjacent to `cache`/`len`; in Rust the lock owns the data (PORTING.md §Concurrency).
     pub struct GlobalCache {
-        pub lock: Mutex,
         pub cache: [*mut Request; MAX_ENTRIES],
         pub len: usize,
     }
+
+    // SAFETY: every `*mut Request` stored here is a heap allocation transferred between
+    // threads only while `GLOBAL_CACHE` is locked; no thread-affine data hangs off it.
+    unsafe impl Send for GlobalCache {}
 
     pub enum CacheResult<'a> {
         Inflight(&'a mut Request),
@@ -1807,7 +1812,7 @@ pub mod internal {
 
     impl GlobalCache {
         pub const fn new() -> Self {
-            Self { lock: Mutex::new(), cache: [ptr::null_mut(); MAX_ENTRIES], len: 0 }
+            Self { cache: [ptr::null_mut(); MAX_ENTRIES], len: 0 }
         }
 
         fn get(&mut self, key: &RequestKey, timestamp_to_store: &mut u32) -> Option<*mut Request> {
@@ -1844,9 +1849,8 @@ pub mod internal {
 
         fn is_nearly_full(&self) -> bool {
             // 80% full (value is kind of arbitrary)
-            // SAFETY: monotonic atomic read of self.len
-            unsafe { core::ptr::read_volatile(&self.len) * 5 >= self.cache.len() * 4 }
-            // TODO(port): Zig used @atomicLoad — make `len` an AtomicUsize in Phase B
+            // Caller already holds GLOBAL_CACHE; the Zig @atomicLoad was redundant.
+            self.len * 5 >= self.cache.len() * 4
         }
 
         fn delete_entry_at(&mut self, len: usize, i: usize) -> Option<*mut Request> {
@@ -1896,9 +1900,9 @@ pub mod internal {
         }
     }
 
-    static mut GLOBAL_CACHE: GlobalCache = GlobalCache::new();
-    // SAFETY: all access guarded by GLOBAL_CACHE.lock; matches Zig file-scope `var`.
-    fn global_cache() -> &'static mut GlobalCache { unsafe { &mut *core::ptr::addr_of_mut!(GLOBAL_CACHE) } }
+    static GLOBAL_CACHE: parking_lot::Mutex<GlobalCache> = parking_lot::Mutex::new(GlobalCache::new());
+    #[inline]
+    fn global_cache() -> &'static parking_lot::Mutex<GlobalCache> { &GLOBAL_CACHE }
 
     // we just hardcode a STREAM socktype
     #[cfg(unix)]
@@ -1984,17 +1988,17 @@ pub mod internal {
     /// path frees the addrinfo request inline (via Bun__addrinfo_freeRequest),
     /// which re-acquires global_cache.lock — so drop it before notifying.
     pub fn register_quic(request: *mut Request, pc: *mut bun_http::H3::PendingConnect) {
-        global_cache().lock.lock();
+        let guard = global_cache().lock();
         let owner = DNSRequestOwner::Quic(pc);
         unsafe {
             if (*request).result.is_some() {
-                global_cache().lock.unlock();
+                drop(guard);
                 owner.notify(request);
                 return;
             }
             (*request).notify.push(owner);
         }
-        global_cache().lock.unlock();
+        drop(guard);
     }
 
     #[repr(C)]
@@ -2086,7 +2090,7 @@ pub mod internal {
             None
         };
 
-        global_cache().lock.lock();
+        let guard = global_cache().lock();
 
         let notify = unsafe {
             (*req).result = Some(RequestResult { info: results, err });
@@ -2096,7 +2100,7 @@ pub mod internal {
         };
 
         // is this correct, or should it go after the loop?
-        global_cache().lock.unlock();
+        drop(guard);
 
         for query in notify {
             query.notify_threadsafe(req);

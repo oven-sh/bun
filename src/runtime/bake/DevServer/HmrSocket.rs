@@ -52,11 +52,13 @@ impl HmrSocket {
         })
     }
 
+    /// SAFETY: returns `&mut DevServer` derived from a raw pointer; caller must
+    /// guarantee no other live `&mut DevServer` aliases it for the borrow's
+    /// lifetime. HmrSocket lifetime is strictly nested inside DevServer (the
+    /// socket is removed from `active_websocket_connections` and destroyed
+    /// before DevServer is torn down), so the pointer itself is always valid.
     #[inline]
-    fn dev(&self) -> &mut DevServer {
-        // SAFETY: HmrSocket lifetime is strictly nested inside DevServer; the
-        // socket is removed from `active_websocket_connections` and destroyed
-        // before DevServer is torn down.
+    unsafe fn dev(&self) -> &mut DevServer {
         unsafe { &mut *self.dev.as_ptr() }
     }
 

@@ -974,6 +974,7 @@ mod __bss_macro_smoke {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub mod heap_breakdown {
+    use core::cell::UnsafeCell;
     #[allow(unused_imports)]
     use core::ffi::{c_char, c_uint, c_void};
     use core::marker::{PhantomData, PhantomPinned};

@@ -77,7 +77,7 @@ impl<'a> Borrowed<'a> {
         {
             // SAFETY: mi_heap_main() returns a non-null pointer to the process-wide main heap
             // with 'static lifetime.
-            return Borrowed { heap: unsafe { &*heap } };
+            return Borrowed { heap: unsafe { NonNull::new_unchecked(heap) }, _lt: PhantomData };
         }
         #[cfg(feature = "ci_assert")]
         {
@@ -95,10 +95,10 @@ impl<'a> Borrowed<'a> {
                         thread_lock: crate::stubs::ThreadLock::init_locked(),
                     });
                 }
-                let p: *const DebugHeap = s.as_ref().unwrap();
+                let p: *mut DebugHeap = s.as_mut().unwrap();
                 // SAFETY: the Option is never reset to None, so the pointer is valid
                 // for the remainder of the thread's lifetime.
-                Borrowed { heap: unsafe { &*p } }
+                Borrowed { heap: unsafe { NonNull::new_unchecked(p) }, _lt: PhantomData }
             })
         }
     }

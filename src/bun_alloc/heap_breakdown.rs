@@ -181,8 +181,10 @@ impl Zone {
         // The posix_memalign only accepts alignment values that are a
         // multiple of the pointer size
         let eff_alignment = alignment.max(core::mem::size_of::<usize>());
-        // SAFETY: zone is a valid malloc_zone_t; memalign with nonzero alignment is sound.
-        let ptr = unsafe { malloc_zone_memalign(zone as *const Zone as *mut Zone, eff_alignment, len) };
+        // SAFETY: `zone.as_ptr()` is the live `*mut malloc_zone_t` returned by
+        // `malloc_create_zone`; interior mutation through it is permitted (see
+        // `Zone::as_ptr`). `eff_alignment` is a nonzero power of two ≥ word size.
+        let ptr = unsafe { malloc_zone_memalign(zone.as_ptr(), eff_alignment, len) };
         if ptr.is_null() {
             None
         } else {
@@ -244,7 +246,10 @@ impl Zone {
         // TODO(port): Zig passed `@returnAddress()` as the ret_addr hint; Rust has no
         // stable equivalent. Passing 0 — the macOS zone API ignores it anyway.
         let raw = Zone::raw_alloc(
-            self as *const Zone as *mut c_void,
+            // SAFETY: vtable context pointer — `as_ptr()` yields the
+            // interior-mutable `*mut Zone`, erased to `*mut c_void` to match
+            // the Zig `*anyopaque` allocator-vtable signature.
+            self.as_ptr().cast::<c_void>(),
             core::mem::size_of::<T>(),
             alignment,
             0,
@@ -259,8 +264,10 @@ impl Zone {
     /// Free a single-item pointer
     #[inline]
     pub fn destroy<T>(&self, ptr: *mut T) {
-        // SAFETY: ptr was returned by `create`/`try_create` on this zone.
-        unsafe { malloc_zone_free(self as *const Zone as *mut Zone, ptr.cast()) };
+        // SAFETY: `self.as_ptr()` is the live malloc zone (interior-mutable,
+        // see `Zone::as_ptr`); `ptr` was returned by `create`/`try_create` on
+        // this same zone.
+        unsafe { malloc_zone_free(self.as_ptr(), ptr.cast()) };
     }
 
     /// Zig: `pub fn isInstance(allocator_: std.mem.Allocator) bool`

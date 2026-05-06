@@ -165,10 +165,11 @@ pub mod lib {
     impl Archive {
         #[inline]
         fn as_mut_ptr(&self) -> *mut Archive {
-            // libarchive's C API takes `struct archive *` (non-const) everywhere;
-            // these `&self` wrappers all came from a `*mut Archive` originally
-            // (see `read_new` / `write_new`), so casting away const is sound.
-            self as *const Archive as *mut Archive
+            // SAFETY: `Archive` contains `UnsafeCell` (`!Freeze`), so a shared
+            // borrow grants SharedReadWrite provenance and the C side may
+            // mutate through the returned pointer. All `&self` here originate
+            // from a `*mut Archive` returned by `read_new` / `write_new`.
+            self._p.get() as *mut Archive
         }
 
         pub fn read_new() -> *mut Archive {
@@ -376,7 +377,8 @@ pub mod lib {
         }
         pub fn write_header(&self, entry: &Entry) -> Result {
             // SAFETY: self valid; entry came from Entry::new()/read_next_header().
-            unsafe { archive_write_header(self.as_mut_ptr(), entry as *const Entry as *mut Entry) }
+            // `Entry` has interior mutability so `&Entry -> *mut Entry` is sound.
+            unsafe { archive_write_header(self.as_mut_ptr(), entry.as_mut_ptr()) }
         }
         pub fn write_data(&self, data: &[u8]) -> isize {
             // SAFETY: self valid; data readable for data.len().
@@ -391,7 +393,10 @@ pub mod lib {
     impl Entry {
         #[inline]
         fn as_mut_ptr(&self) -> *mut Entry {
-            self as *const Entry as *mut Entry
+            // SAFETY: `Entry` contains `UnsafeCell` (`!Freeze`), so a shared
+            // borrow grants SharedReadWrite provenance and the C side may
+            // mutate through the returned pointer.
+            self._p.get() as *mut Entry
         }
 
         pub fn pathname(&self) -> &ZStr {

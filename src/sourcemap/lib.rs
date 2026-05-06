@@ -390,17 +390,23 @@ pub struct SourceProviderMap {
 
 // TODO(port): move to <area>_sys
 unsafe extern "C" {
-    fn ZigSourceProvider__getSourceSlice(this: *mut SourceProviderMap) -> bun_str::String;
+    // C++ side only reads (`provider->source()`); declare `*const` so we never
+    // launder a `&self` borrow into a `*mut` (const→mut cast is UB if written
+    // through, and the foreign side owns all mutable state behind this opaque
+    // handle anyway — Rust holds zero bytes of it).
+    fn ZigSourceProvider__getSourceSlice(this: *const SourceProviderMap) -> bun_str::String;
 }
 
 impl SourceProviderMap {
     pub fn get_source_slice(&self) -> bun_str::String {
-        // SAFETY: opaque FFI handle; pointer is valid by construction
-        unsafe { ZigSourceProvider__getSourceSlice(self as *const _ as *mut _) }
+        // SAFETY: `self` is an opaque FFI handle (ZST marker) whose backing
+        // storage lives entirely in C++; we only pass its address. The callee
+        // does not write through Rust-visible memory.
+        unsafe { ZigSourceProvider__getSourceSlice(self) }
     }
 
     pub fn to_source_content_ptr(&self) -> SourceContentPtr {
-        SourceContentPtr::from_provider(self as *const _ as *mut _)
+        SourceContentPtr::from_provider(self)
     }
 
     /// The last two arguments to this specify loading hints

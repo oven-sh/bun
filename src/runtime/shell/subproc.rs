@@ -30,7 +30,7 @@ use strum::IntoStaticStr;
 use crate::shell::util::{self, OutKind};
 use crate::api::bun_spawn::stdio::Stdio;
 
-pub use Stdio as StdioReexport;
+pub use crate::api::bun_spawn::stdio::Stdio as StdioReexport;
 pub use JscSubprocess::StdioKind;
 
 // ─── Local mirror of `shell.ShellErr` until shell_body.rs is un-gated ────────

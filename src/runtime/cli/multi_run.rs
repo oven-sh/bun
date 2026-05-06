@@ -215,7 +215,7 @@ impl<'a> ProcessHandle<'a> {
         let _ = state.process_exit(self);
     }
 
-    pub fn event_loop(&self) -> &'static MiniEventLoop {
+    pub fn event_loop(&self) -> &'static MiniEventLoop<'static> {
         // SAFETY: state backref
         unsafe { (*self.state).event_loop }
     }
@@ -246,7 +246,7 @@ const RESET: &[u8] = b"\x1b[0m";
 
 struct State<'a> {
     handles: Box<[ProcessHandle<'a>]>,
-    event_loop: &'static MiniEventLoop,
+    event_loop: &'static MiniEventLoop<'static>,
     remaining_scripts: usize,
     max_label_len: usize,
     // TODO(port): was `[:0]const u8`; needs NUL-terminated for argv[0]

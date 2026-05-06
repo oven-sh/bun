@@ -572,6 +572,21 @@ macro_rules! resumable_sink_js_stub {
 }
 resumable_sink_js_stub!(JSResumableFetchSink, JSResumableS3UploadSink);
 
+// Forward to the inherent methods on each Context type. The Zig spec uses
+// duck-typed `Context.writeRequestData` / `Context.writeEndRequest`; in Rust we
+// satisfy the trait bound by delegating to those inherent impls.
+// (S3UploadStreamWrapper's impl lives next to its struct in s3/client.rs.)
+impl ResumableSinkContext for FetchTasklet {
+    #[inline]
+    fn write_request_data(&mut self, bytes: &[u8]) -> ResumableSinkBackpressure {
+        FetchTasklet::write_request_data(self, bytes)
+    }
+    #[inline]
+    fn write_end_request(&mut self, err: Option<JSValue>) {
+        FetchTasklet::write_end_request(self, err)
+    }
+}
+
 pub type ResumableFetchSink<'a> = ResumableSink<'a, JSResumableFetchSink, FetchTasklet>;
 pub type ResumableS3UploadSink<'a> = ResumableSink<'a, JSResumableS3UploadSink, S3UploadStreamWrapper>;
 

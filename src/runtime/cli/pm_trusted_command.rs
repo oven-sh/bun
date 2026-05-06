@@ -50,6 +50,9 @@ impl UntrustedCommand {
         PackageManagerCommand::handle_load_lockfile_errors(&load_lockfile, pm);
         pm.update_lockfile_if_needed(&load_lockfile)?;
 
+        todo!("blocked_on: bun_install::lockfile_real un-gate (reconciler-6) — package::scripts::{{Scripts,List,PrintFormat}} / tree::{{Iterator,IteratorPathStyle}}");
+        #[cfg(any())]
+        {
         let packages = pm.lockfile.packages.slice();
         let scripts: &[lockfile::package::scripts::Scripts] = packages.items_scripts();
         let resolutions: &[Resolution] = packages.items_resolution();

@@ -810,11 +810,11 @@ impl Expr {
     // PERF(port): Zig took `comptime op: Op.Code`. `Op::Code` does not derive
     // `ConstParamTy` (Op.rs owns the enum); pass at runtime here. Revisit once
     // `Code` gains `ConstParamTy` — call sites are a handful of literal ops.
-    pub fn join_with_left_associative_op(op: Op::Code, a: Expr, b: Expr, allocator: &Bump) -> Expr {
+    pub fn join_with_left_associative_op(op: Op::Code, a: Expr, b: Expr) -> Expr {
         // "(a, b) op c" => "a, b op c"
         if let Data::EBinary(mut comma) = a.data {
             if comma.op == crate::ast::OpCode::BinComma {
-                comma.right = Self::join_with_left_associative_op(op, comma.right, b, allocator);
+                comma.right = Self::join_with_left_associative_op(op, comma.right, b);
             }
         }
 
@@ -824,9 +824,8 @@ impl Expr {
             if binary.op == op {
                 return Self::join_with_left_associative_op(
                     op,
-                    Self::join_with_left_associative_op(op, a, binary.left, allocator),
+                    Self::join_with_left_associative_op(op, a, binary.left),
                     binary.right,
-                    allocator,
                 );
             }
         }
@@ -836,6 +835,9 @@ impl Expr {
         Expr::init(E::Binary { op, left: a, right: b }, a.loc)
     }
 
+    // PORT NOTE: Zig threaded `_: std.mem.Allocator` (unused) so the caller's
+    // arena reached `Expr.init`. The Rust port uses the thread-local
+    // `data::Store` and drops the parameter.
     pub fn join_with_comma(self, b: Expr) -> Expr {
         if self.is_missing() {
             return b;
@@ -849,7 +851,7 @@ impl Expr {
         )
     }
 
-    pub fn join_all_with_comma(all: &[Expr], _: &Bump) -> Expr {
+    pub fn join_all_with_comma(all: &[Expr]) -> Expr {
         debug_assert!(!all.is_empty());
         match all.len() {
             1 => all[0],

@@ -88,7 +88,8 @@ impl Metadata {
     /// If the current type is MNever, MNull, or MUndefined assign the current type
     /// to MNone and return None to ensure it's always replaced by the next type.
     /// `load_name`: closure form of `p.load_name_from_ref` to avoid coupling Metadata to P.
-    pub fn finish_union<'b, F: Fn(Ref) -> &'b [u8]>(current: &mut Self, load_name: F) -> Option<Self> {
+    pub fn finish_union<'b, F: Fn(Ref) -> &'b [u8]>(&mut self, load_name: F) -> Option<Self> {
+        let current = self;
         match current {
             Metadata::MIdentifier(r) => {
                 if load_name(*r) == b"Object" {
@@ -108,7 +109,8 @@ impl Metadata {
         }
     }
 
-    pub fn merge_union(result: &mut Self, left: Self) {
+    pub fn merge_union(&mut self, left: Self) {
+        let result = self;
         if !matches!(left, Metadata::MNone) {
             if core::mem::discriminant(result) != core::mem::discriminant(&left) {
                 *result = match result {
@@ -136,7 +138,8 @@ impl Metadata {
     ///
     /// If the current type is MUnknown, MNull, or MUndefined assign the current type
     /// to MNone and return None to ensure it's always replaced by the next type.
-    pub fn finish_intersection<'b, F: Fn(Ref) -> &'b [u8]>(current: &mut Self, load_name: F) -> Option<Self> {
+    pub fn finish_intersection<'b, F: Fn(Ref) -> &'b [u8]>(&mut self, load_name: F) -> Option<Self> {
+        let current = self;
         match current {
             Metadata::MIdentifier(r) => {
                 if load_name(*r) == b"Object" {
@@ -159,7 +162,8 @@ impl Metadata {
         }
     }
 
-    pub fn merge_intersection(result: &mut Self, left: Self) {
+    pub fn merge_intersection(&mut self, left: Self) {
+        let result = self;
         if !matches!(left, Metadata::MNone) {
             if core::mem::discriminant(result) != core::mem::discriminant(&left) {
                 *result = match result {

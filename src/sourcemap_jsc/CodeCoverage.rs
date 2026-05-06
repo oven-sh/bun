@@ -454,6 +454,19 @@ fn thread_map_opt() -> Option<NonNull<ByteRangeMappingHashMap>> {
 }
 
 impl ByteRangeMapping {
+    /// Zig: `pub threadlocal var map: ?*HashMap = null;` — read-only accessor
+    /// for the per-thread `ByteRangeMappingHashMap`. Returns `None` if no
+    /// coverage data was recorded on this thread.
+    ///
+    /// SAFETY: the returned `&'static mut` borrows the thread-local `Box`,
+    /// which is pinned for the thread's lifetime and never re-entered while
+    /// the caller holds it (single-threaded CLI report path). Phase B may
+    /// tighten this to a scoped guard.
+    pub fn map() -> Option<&'static mut ByteRangeMappingHashMap> {
+        // SAFETY: see doc comment — thread-local, no concurrent access.
+        thread_map_opt().map(|mut p| unsafe { p.as_mut() })
+    }
+
     pub fn is_less_than(_: (), a: &ByteRangeMapping, b: &ByteRangeMapping) -> bool {
         strings::order(a.source_url.slice(), b.source_url.slice()) == core::cmp::Ordering::Less
     }

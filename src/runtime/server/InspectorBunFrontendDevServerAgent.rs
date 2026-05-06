@@ -250,7 +250,8 @@ pub extern "C" fn Bun__InspectorBunFrontendDevServerAgent__setEnabled(
     {
         // TODO(port): VirtualMachine::get() / debugger field shape — verify in Phase B.
         if let Some(debugger) = jsc::VirtualMachine::get().debugger.as_mut() {
-            debugger.frontend_dev_server_agent.handle = if agent.is_null() { None } else { Some(agent) };
+            debugger.frontend_dev_server_agent.get_mut().handle =
+                if agent.is_null() { None } else { Some(agent) };
         }
     }
     // TODO(b2-blocked): bun_jsc::VirtualMachine::get

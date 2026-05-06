@@ -4756,22 +4756,24 @@ impl DevServer {
         }
     }
 
-    /// SAFETY: returns `&mut BunFrontendDevServerAgent` derived through `&self`
-    /// via a raw VM pointer; two calls alias the same agent. Caller must not
-    /// hold another live `&mut` to it.
+    /// SAFETY: returns `&mut BunFrontendDevServerAgent` derived through the
+    /// `UnsafeCell` on `Debugger.frontend_dev_server_agent`; two calls alias
+    /// the same agent. Caller must not hold another live `&mut` to it.
+    /// JS-thread only.
     pub unsafe fn inspector(&self) -> Option<&mut BunFrontendDevServerAgent> {
         // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime
         if let Some(debugger) = unsafe { &*self.vm }.debugger.as_ref() {
             #[cold]
             fn cold() {}
             cold();
-            if debugger.frontend_dev_server_agent.is_enabled() {
+            // SAFETY: `frontend_dev_server_agent` is `UnsafeCell`-wrapped for
+            // interior mutability (Zig spec returns `*Agent` from `*const
+            // DevServer`). JS-thread only; caller upholds the no-alias
+            // contract documented above.
+            let agent = unsafe { &mut *debugger.frontend_dev_server_agent.get() };
+            if agent.is_enabled() {
                 cold();
-                // TODO(port): returns &mut from &self.vm — Phase B reshape
-                // SAFETY: agent has interior mutability in Zig; reshaped in Phase B
-                return Some(unsafe {
-                    &mut *(&debugger.frontend_dev_server_agent as *const _ as *mut _)
-                });
+                return Some(agent);
             }
         }
         None

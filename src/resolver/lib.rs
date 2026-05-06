@@ -5968,7 +5968,16 @@ impl<'a> Resolver<'a> {
                 // ported but several PackageManager method signatures are guesses.
                 // If the source directory doesn't have a node_modules directory, we can
                 // check the global cache directory for a package.json file.
-                let manager = self.get_package_manager();
+                // PORT NOTE (Stacked Borrows): `get_package_manager` returns
+                // `&mut PackageManager` tied to `&mut self`; the body below
+                // re-borrows `self` for `enqueue_dependency_to_resolve` /
+                // `debug_logs` / `log()`. PackageManager lives in a separate
+                // allocation (`NonNull` field), so derive a raw pointer once
+                // and re-borrow per use — disjoint from `self`'s storage.
+                let manager_ptr: *mut PackageManager = self.get_package_manager();
+                // SAFETY: re-borrowed narrowly per use; PackageManager outlives resolver.
+                macro_rules! manager { () => { unsafe { &mut *manager_ptr } } }
+                let manager = manager!();
                 let mut dependency_version = Dependency::Version::default();
                 let mut dependency_behavior = Dependency::Behavior::PROD;
                 let mut string_buf: &[u8] = esm.version;
@@ -6292,7 +6301,10 @@ impl<'a> Resolver<'a> {
         // SAFETY: resolver mutex held; no aliased `EntriesMap` access in this scope.
         let mut cached_dir_entry_result = unsafe { rfs!().entries.get_or_put(dir_path) }?;
 
-        let mut dir_entries_option: *mut Fs::file_system::real_fs::EntriesOption;
+        // PORT NOTE: always assigned by either the cached-hit arm or the
+        // `needs_iter` block below; null-init so rustc accepts the proof.
+        let mut dir_entries_option: *mut Fs::file_system::real_fs::EntriesOption =
+            core::ptr::null_mut();
         let mut needs_iter = true;
         let mut in_place: Option<*mut Fs::file_system::DirEntry> = None;
         let open_dir = match bun_sys::open_dir_for_iteration(FD::cwd(), dir_path) {
@@ -6431,7 +6443,12 @@ impl<'a> Resolver<'a> {
         }
 
         let input_package_id = *input_package_id_;
-        let pm = self.get_package_manager();
+        // PORT NOTE: see `manager_ptr` note in `load_node_modules` — split the
+        // `&mut self` borrow by holding the PackageManager via raw pointer.
+        let pm_ptr: *mut PackageManager = self.get_package_manager();
+        // SAFETY: PackageManager lives in a separate allocation; disjoint from `self`.
+        macro_rules! pm { () => { unsafe { &mut *pm_ptr } } }
+        let pm = pm!();
         if cfg!(debug_assertions) {
             // we should never be trying to resolve a dependency that is already resolved
             debug_assert!(pm.lockfile.resolve_package_from_name_and_version(esm.name, &version).is_none());

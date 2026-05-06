@@ -434,8 +434,12 @@ impl WebWorker {
     /// freed by `~Worker`, which can't run while JSWorker (the caller) holds
     /// its `Ref<Worker>`. `Worker::setKeepAlive()` gates out calls after
     /// terminate() or the close task, so this can unconditionally toggle.
+    ///
+    /// Takes `*mut` (not `&mut`) because the worker thread concurrently
+    /// dereferences this struct; materialising `&mut WebWorker` here would be
+    /// aliased-&mut UB.
     #[export_name = "WebWorker__setRef"]
-    pub extern "C" fn set_ref(this: &mut WebWorker, value: bool) {
+    pub extern "C" fn set_ref(this: *mut WebWorker, value: bool) {
         // TODO(b2): `KeepAlive::ref_/unref` take `bun_aio::EventLoopCtx`;
         // `VirtualMachine → EventLoopCtx` conversion lives in the high tier
         // (RuntimeHooks). No-op until that lands — `create()` is itself
@@ -448,8 +452,17 @@ impl WebWorker {
     /// and wakes the worker loop so it observes the flag. `parent_poll_ref`
     /// stays held until the close task runs so that `await worker.terminate()`
     /// keeps the parent alive until 'close' fires.
+    ///
+    /// Takes `*mut` (not `&mut`) because the worker thread concurrently
+    /// dereferences this struct (polling `requested_terminate`, holding
+    /// `vm_lock`, reading `vm`); materialising `&mut WebWorker` on the parent
+    /// thread while the worker holds any reference is aliased-&mut UB.
     #[export_name = "WebWorker__notifyNeedTermination"]
-    pub extern "C" fn notify_need_termination(this: &mut WebWorker) {
+    pub extern "C" fn notify_need_termination(this: *mut WebWorker) {
+        // SAFETY: `this` is a valid heap allocation owned by C++ `WebCore::Worker`
+        // (alive while JSWorker holds its Ref). Only atomic / lock-guarded
+        // fields are touched cross-thread; never `&mut WebWorker`.
+        let this = unsafe { &*this };
         if this.set_requested_terminate() {
             return;
         }
@@ -461,7 +474,9 @@ impl WebWorker {
         if !this.vm.is_null() {
             // SAFETY: vm published under vm_lock; non-null here.
             let vm = unsafe { &*this.vm };
-            // TODO(b2): vm.jsc_vm.notify_need_termination() — VM stub gated.
+            // SAFETY: jsc_vm is a valid JSC::VM*; notify_need_termination is
+            // documented thread-safe (VMTraps).
+            unsafe { (*vm.jsc_vm).notify_need_termination() };
             vm.event_loop().wakeup();
         }
         this.vm_lock.unlock();
@@ -469,8 +484,12 @@ impl WebWorker {
 
     /// Release the keep-alive on the parent's event loop. Called on the parent
     /// thread from the close task posted by `dispatchExit`.
+    ///
+    /// Takes `*mut` for consistency with the other parent-thread FFI exports
+    /// (the worker thread has exited by the time this runs, so `&mut` would be
+    /// sound here, but matching signatures avoids surprises).
     #[export_name = "WebWorker__releaseParentPollRef"]
-    pub extern "C" fn release_parent_poll_ref(this: &mut WebWorker) {
+    pub extern "C" fn release_parent_poll_ref(this: *mut WebWorker) {
         // TODO(b2): `KeepAlive::unref(EventLoopCtx)` — see `set_ref`.
         let _ = this;
     }
@@ -480,14 +499,20 @@ impl WebWorker {
     // =========================================================================
 
     /// process.exit() inside the worker. Worker-thread only.
-    pub fn exit(&mut self) {
-        self.exit_called = true;
+    ///
+    /// Takes `&self` (not `&mut self`) because `terminate_all_and_wait` /
+    /// `notify_need_termination` may concurrently hold `&WebWorker` on another
+    /// thread; producing `&mut` here would be aliased-&mut UB.
+    pub fn exit(&self) {
+        self.exit_called.store(true, Ordering::Relaxed);
         let _ = self.set_requested_terminate();
         // Stop subsequent JS at the next safepoint. `this.vm` is null during
         // `vm.onExit()` (shutdown nulls it first), so a re-entrant
         // process.exit() from an exit handler does not re-arm the trap.
         if !self.vm.is_null() {
-            // TODO(b2): vm.jsc_vm.notify_need_termination() — VM stub gated.
+            // SAFETY: vm non-null; jsc_vm is a valid JSC::VM*;
+            // notify_need_termination is documented thread-safe (VMTraps).
+            unsafe { (*(*self.vm).jsc_vm).notify_need_termination() };
         }
     }
 
@@ -702,7 +727,7 @@ mod __phase_a_body {
             let promise = match vm.load_entry_point_for_web_worker(path) {
                 Ok(p) => p,
                 Err(_) => {
-                    if !self.exit_called {
+                    if !self.exit_called.load(Ordering::Relaxed) {
                         vm.exit_handler.exit_code = 1;
                     }
                     self.flush_logs(vm);
@@ -1045,5 +1070,5 @@ mod __phase_a_body {
 //               resolve_entry_point_specifier gated on RuntimeHooks
 //               (forward-dep on bun_runtime/bun_webcore/bun_standalone) and
 //               on VirtualMachine fields still stubbed (init_worker, arena,
-//               proxy_env_storage, jsc_vm.notify_need_termination).
+//               proxy_env_storage).
 // ──────────────────────────────────────────────────────────────────────────

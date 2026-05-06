@@ -164,6 +164,20 @@ impl<D: Clone> Clone for DimensionPercentage<D> {
     }
 }
 
+impl<D: PartialEq + Clone> PartialEq for DimensionPercentage<D> {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        // Forwarded to `eql()` (below) — `Calc<V>` doesn't derive `PartialEq`
+        // because of its `Box<V>` payload, so a manual impl is needed.
+        match (self, other) {
+            (Self::Dimension(a), Self::Dimension(b)) => a == b,
+            (Self::Percentage(a), Self::Percentage(b)) => a.eql(b),
+            (Self::Calc(a), Self::Calc(b)) => a.eql(b),
+            _ => false,
+        }
+    }
+}
+
 // ─── B-2 round 5: generic-D method block un-gated ─────────────────────────
 // `Zero`/`MulF32`/`TryAdd`/`Parse` protocol traits live in
 // `crate::values::protocol` until `generics::parse_tocss_numeric_gated`
@@ -293,6 +307,7 @@ where
 
     pub fn add(self, other: Self) -> Self
     where
+        Self: crate::values::calc::CalcValue,
         D: protocol::TryAdd + protocol::Zero + protocol::TrySign + protocol::MulF32,
     {
         // Unwrap calc(...) functions so we can add inside.
@@ -323,6 +338,7 @@ where
 
     pub fn add_internal(self, other: Self) -> Self
     where
+        Self: crate::values::calc::CalcValue,
         D: protocol::TryAdd + protocol::Zero + protocol::TrySign,
     {
         if let Some(res) = self.add_recursive(&other) {

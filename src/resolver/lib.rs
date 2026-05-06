@@ -652,7 +652,8 @@ pub mod fs {
         /// Port of `Entry.symlink` in `fs.zig`.
         pub fn symlink(&self, _fs: &mut Implementation, _store_fd: bool) -> &'static [u8] {
             // TODO(b2-blocked): RealFS::kind populates cache.symlink on first call.
-            self.cache.symlink.slice()
+            // SAFETY: PathString backs onto the FilenameStore singleton (interned 'static).
+            unsafe { core::mem::transmute::<&[u8], &'static [u8]>(self.cache.symlink.slice()) }
         }
     }
 
@@ -4957,8 +4958,8 @@ impl<'a> Resolver<'a> {
                             debuglog!(
                                 "Failed to load DirEntry {}  {} - {}",
                                 bstr::BStr::new(top),
-                                err.original_err.name(),
-                                err.canonical_error.name()
+                                bstr::BStr::new(err.original_err.name()),
+                                bstr::BStr::new(err.canonical_error.name())
                             );
                             return Err(err.canonical_error);
                         }

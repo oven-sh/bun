@@ -423,6 +423,14 @@ pub fn create_matcher(raw: &[u8], buf: &mut Vec<u8>) -> Result<Matcher, CreateMa
 
     // PERF(port): was inline `jsc::RegularExpression.init(.cloneUTF8(buf), .none)`
     // — now indirect through REGEX_VTABLE (cold path, vtable per PORTING.md §Dispatch).
+    // The Zig source unconditionally calls `bun.jsc.initialize(false)` before
+    // compiling, so it never fails for lack of a JSC runtime. Here, when the
+    // vtable has not been registered (standalone `bun install` without JSC),
+    // degrade to MatchAll per the module-header contract instead of falsely
+    // reporting InvalidRegExp.
+    if regex_vtable().is_none() {
+        return Ok(Matcher { pattern: Pattern::MatchAll, is_exclude });
+    }
     let regex = compile_regex(BunString::clone_utf8(buf.as_slice()))
         .ok_or(CreateMatcherError::InvalidRegExp)?;
 

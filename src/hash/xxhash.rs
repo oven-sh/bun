@@ -25,6 +25,36 @@ impl XxHash64 {
     }
 }
 
+/// Streaming `std.hash.XxHash64` — used by `bundle_v2.zig:ContentHasher`
+/// (length-prefixed chunk hashing across many `update()` calls before a single
+/// `digest()`). Wraps `twox_hash::XxHash64` so the workspace has exactly one
+/// xxhash implementation; output is bit-identical to Zig's `std.hash.XxHash64`.
+pub struct XxHash64Streaming(twox_hash::XxHash64);
+
+impl XxHash64Streaming {
+    #[inline]
+    pub fn new(seed: u64) -> Self {
+        Self(twox_hash::XxHash64::with_seed(seed))
+    }
+
+    #[inline]
+    pub fn update(&mut self, bytes: &[u8]) {
+        self.0.write(bytes);
+    }
+
+    #[inline]
+    pub fn digest(&self) -> u64 {
+        self.0.finish()
+    }
+}
+
+impl Default for XxHash64Streaming {
+    #[inline]
+    fn default() -> Self {
+        Self::new(0)
+    }
+}
+
 pub struct XxHash3;
 
 impl XxHash3 {

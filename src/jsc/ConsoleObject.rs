@@ -2843,10 +2843,16 @@ pub mod formatter {
                     };
                 }};
             }
-            let _writer_failed = scopeguard::guard((), |_| {
-                // The original `defer` copies `writer.failed` → `self.failed`;
-                // because of the reseat dance above we mirror it at each
-                // `reseat_writer!()` site and once more on every return path.
+            // Zig: `defer { if (writer.failed) this.failed = true; }`.
+            // Capture raw pointers so the body can keep using `writer`/`self`;
+            // the guard reads the *current* `writer.failed` at scope exit, so
+            // every return path (including `?` propagation) is covered.
+            let writer_ptr: *const WrappedWriter<'_> = &writer;
+            let self_failed_ptr: *mut bool = &mut self.failed;
+            let _writer_failed = scopeguard::guard((), move |_| unsafe {
+                if (*writer_ptr).failed {
+                    *self_failed_ptr = true;
+                }
             });
 
             if FORMAT.can_have_circular_references() {

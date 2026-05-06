@@ -229,13 +229,9 @@ pub struct CompileResultForSourceMap {
 
 /// `bundle_v2.zig:ContentHasher` — `std.hash.XxHash64` (seed 0). xxhash64
 /// outperforms wyhash above ~1KB.
+#[derive(Default)]
 pub struct ContentHasher {
-    pub hasher: xxhash_rust::xxh64::Xxh64,
-}
-impl Default for ContentHasher {
-    fn default() -> Self {
-        Self { hasher: xxhash_rust::xxh64::Xxh64::new(0) }
-    }
+    pub hasher: bun_hash::XxHash64Streaming,
 }
 impl ContentHasher {
     pub fn write(&mut self, bytes: &[u8]) {

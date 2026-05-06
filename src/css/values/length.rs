@@ -401,7 +401,7 @@ impl LengthValue {
     pub fn try_op(
         &self,
         other: &LengthValue,
-        op_fn: impl FnOnce(f32, f32) -> f32,
+        op_fn: impl Fn(f32, f32) -> f32,
     ) -> Option<LengthValue> {
         // PERF(port): Zig used `ctx: anytype` + `comptime op_fn` (manual closure) — Rust closure captures ctx
         if let Some(v) = self.try_same_unit_op(other, &op_fn) {
@@ -824,13 +824,28 @@ impl protocol::TryMap for Angle {
 impl protocol::TryOp for Angle {
     #[inline]
     fn try_op<C>(&self, rhs: &Self, ctx: C, f: impl Fn(C, f32, f32) -> f32) -> Option<Self> {
-        Some(self.op(rhs, |a, b| f(ctx, a, b)))
+        // PORT NOTE: `Angle::op` takes a `fn(C, f32, f32)` pointer (Zig
+        // `comptime`-monomorphized fn arg), so we can't pass the generic
+        // closure through it. Inline the per-variant dispatch here instead.
+        Some(match (self, rhs) {
+            (Angle::Deg(a), Angle::Deg(b)) => Angle::Deg(f(ctx, *a, *b)),
+            (Angle::Rad(a), Angle::Rad(b)) => Angle::Rad(f(ctx, *a, *b)),
+            (Angle::Grad(a), Angle::Grad(b)) => Angle::Grad(f(ctx, *a, *b)),
+            (Angle::Turn(a), Angle::Turn(b)) => Angle::Turn(f(ctx, *a, *b)),
+            _ => Angle::Deg(f(ctx, self.to_degrees(), rhs.to_degrees())),
+        })
     }
 }
 impl<R> protocol::TryOpTo<R> for Angle {
     #[inline]
     fn try_op_to<C>(&self, rhs: &Self, ctx: C, f: impl Fn(C, f32, f32) -> R) -> Option<R> {
-        Some(self.op_to(rhs, |a, b| f(ctx, a, b)))
+        Some(match (self, rhs) {
+            (Angle::Deg(a), Angle::Deg(b)) => f(ctx, *a, *b),
+            (Angle::Rad(a), Angle::Rad(b)) => f(ctx, *a, *b),
+            (Angle::Grad(a), Angle::Grad(b)) => f(ctx, *a, *b),
+            (Angle::Turn(a), Angle::Turn(b)) => f(ctx, *a, *b),
+            _ => f(ctx, self.to_degrees(), rhs.to_degrees()),
+        })
     }
 }
 impl protocol::PartialCmp for Angle {

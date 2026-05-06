@@ -373,10 +373,6 @@ impl<'a> Snapshots<'a> {
         let success = core::cell::Cell::new(true);
         // SAFETY: see `parse_file` — thread-local VM singleton, short-lived reborrow.
         let vm = unsafe { &mut *VirtualMachine::get() };
-        let opts = js_parser::ParserOptions::init(
-            vm.transpiler.options.jsx.clone().into(),
-            js_parser::options::Loader::Js,
-        );
 
         // PERF(port): was arena bulk-free per iteration — reset() inside the loop.
         let mut arena = bun_alloc::Arena::new();

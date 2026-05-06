@@ -2,15 +2,19 @@
 
 use core::ffi::{c_int, c_void};
 use core::marker::ConstParamTy;
+#[cfg(windows)]
 use core::mem::offset_of;
+#[cfg(windows)]
+use std::sync::Arc;
 
+#[cfg(windows)]
 use bun_aio as aio;
-use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue, JsResult};
+use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue};
 use bun_paths::PathBuffer;
 use crate::node::fs as node_fs;
+#[allow(unused_imports)]
 use crate::webcore::blob::{self, SizeType, Store, StoreRef, store, MkdirpTarget, Retry, MAX_SIZE};
 use crate::webcore::node_types::PathOrFileDescriptor;
-use bun_str as strings;
 use bun_sys::{self, Fd, FdExt, Mode, Stat, SystemError};
 #[cfg(windows)]
 use bun_sys::windows::libuv;
@@ -276,14 +280,17 @@ impl<'a> CopyFile<'a> {
         let dest_fd = self.destination_fd;
 
         // defer { this.read_len = @truncate(total_written); }
-        let read_len_slot = &mut self.read_len as *mut SizeType;
-        let _guard = scopeguard::guard((), |_| {
-            // SAFETY: self outlives this guard within the fn body
-            unsafe { *read_len_slot = total_written as SizeType };
+        let read_len_slot: *mut SizeType = &mut self.read_len;
+        let total_written_slot: *const u64 = core::ptr::addr_of!(total_written);
+        let _guard = scopeguard::guard((), move |_| {
+            // SAFETY: both raw ptrs point into the enclosing stack frame which
+            // outlives this guard (dropped before fn return); disjoint fields.
+            unsafe { *read_len_slot = *total_written_slot as SizeType };
         });
         // TODO(port): errdefer — scopeguard captures &mut to disjoint field via raw ptr;
         // Phase B: reshape to set read_len at each return site instead.
 
+        #[allow(unused_mut, unused_variables)]
         let mut has_unset_append = false;
 
         // If they can't use copy_file_range, they probably also can't
@@ -557,12 +564,12 @@ impl<'a> CopyFile<'a> {
 
             let mut stat_: Option<Stat> = None;
 
-            if let PathOrFileDescriptor::Fd(fd) = self.destination_file_store.pathlike {
-                self.destination_fd = fd;
+            if let PathOrFileDescriptor::Fd(fd) = &self.destination_file_store.pathlike {
+                self.destination_fd = *fd;
             }
 
-            if let PathOrFileDescriptor::Fd(fd) = self.source_file_store.pathlike {
-                self.source_fd = fd;
+            if let PathOrFileDescriptor::Fd(fd) = &self.source_file_store.pathlike {
+                self.source_fd = *fd;
             }
 
             // Do we need to open both files?

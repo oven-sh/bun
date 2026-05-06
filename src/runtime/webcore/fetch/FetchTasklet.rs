@@ -1355,34 +1355,24 @@ impl FetchTasklet {
         let fetch_tasklet = unsafe { &mut *fetch_tasklet_ptr };
 
         // This task gets queued on the HTTP thread.
-        *fetch_tasklet.http.as_mut().unwrap().as_mut() = AsyncHTTP::init(
-            fetch_options.method,
-            url,
-            &fetch_options.headers.entries,
-            fetch_options.headers.buf.as_slice(),
-            &mut fetch_tasklet.response_buffer,
-            fetch_tasklet.request_body.slice(),
-            http::HTTPClientResultCallback::new::<FetchTasklet>(
-                // handles response events (on headers, on body, etc.)
-                FetchTasklet::callback,
-                fetch_tasklet_ptr,
-            ),
-            fetch_options.redirect_type,
-            http::async_http::Options {
-                http_proxy: proxy,
-                proxy_headers: fetch_options.proxy_headers,
-                hostname: fetch_options.hostname.as_deref(),
-                signals: Some(fetch_tasklet.signals),
-                unix_socket_path: Some(fetch_options.unix_socket_path),
-                disable_timeout: Some(fetch_options.disable_timeout),
-                disable_keepalive: Some(fetch_options.disable_keepalive),
-                disable_decompression: Some(fetch_options.disable_decompression),
-                reject_unauthorized: Some(fetch_options.reject_unauthorized),
-                verbose: Some(fetch_options.verbose),
-                tls_props: fetch_options.ssl_config,
-                ..Default::default()
-            },
-        );
+        // TODO(port): `AsyncHTTP::init` arg ABI drifted from Zig — `headers`
+        // now takes `headers::EntryList` by value (moved out of FetchOptions
+        // above into request_headers), `headers_buf` is `&'static [u8]` (we
+        // have a Vec<u8> on the tasklet), `request_body` is `&'static [u8]`
+        // (slice into FetchTasklet-owned data), and `response_buffer` is
+        // `*mut MutableString`. Most of these need self-referential lifetime
+        // erasure that Zig got for free; route through the upstream init once
+        // its `Options` shape stabilizes.
+        let _ = (url, proxy, fetch_options.method, fetch_options.proxy_headers,
+                 fetch_options.unix_socket_path, fetch_options.disable_timeout,
+                 fetch_options.disable_keepalive, fetch_options.disable_decompression,
+                 fetch_options.verbose, fetch_options.ssl_config, fetch_options.redirect_type,
+                 fetch_tasklet_ptr);
+        fetch_tasklet.http = Some(Box::new({
+            todo!("blocked_on: bun_http::AsyncHTTP::init (self-referential arg lifetimes)");
+            #[allow(unreachable_code)]
+            { unreachable!() }
+        }));
         // enable streaming the write side
         let is_stream = matches!(fetch_tasklet.request_body, HTTPRequestBody::ReadableStream(_));
         let http_client = fetch_tasklet.http.as_mut().unwrap();
@@ -1422,9 +1412,16 @@ impl FetchTasklet {
             fetch_tasklet.http.as_mut().unwrap().request_body = http::HTTPRequestBody::Sendfile(*sendfile);
         }
 
-        if let Some(signal) = fetch_tasklet.signal.as_ref() {
-            signal.pending_activity_ref();
-            fetch_tasklet.signal = Some(signal.listen::<FetchTasklet>(fetch_tasklet_ptr, FetchTasklet::abort_listener));
+        if let Some(signal) = fetch_tasklet.signal {
+            // SAFETY: signal is a live C++-owned WebCore::AbortSignal*.
+            unsafe {
+                WebCore__AbortSignal__incrementPendingActivity(signal);
+                unsafe extern "C" fn cb(ptr: *mut c_void, reason: JSValue) {
+                    FetchTasklet::abort_listener(ptr as *mut FetchTasklet, reason);
+                }
+                let s = WebCore__AbortSignal__addListener(signal, fetch_tasklet_ptr as *mut c_void, Some(cb));
+                fetch_tasklet.signal = Some(WebCore__AbortSignal__ref(s));
+            }
         }
         Ok(fetch_tasklet_ptr)
     }
@@ -1436,8 +1433,9 @@ impl FetchTasklet {
         reason.ensure_still_alive();
         this.abort_reason.set(this.global_this, reason);
         this.abort_task();
-        if let Some(sink) = this.sink.as_ref() {
-            sink.cancel(reason);
+        if let Some(sink) = this.sink {
+            // SAFETY: sink alive while this.sink is Some
+            unsafe { (*sink).cancel(reason) };
             return;
         }
         // Abort fired before the HTTP thread asked for the body, so the

@@ -191,6 +191,13 @@ impl IOWriter {
         unsafe { &mut *self.state.get() }
     }
 
+    /// Read-only accessor for the `is_socket` flag (used by
+    /// `ShellSubprocess::spawn` to decide `no_sigpipe`).
+    #[inline]
+    pub fn is_socket(&self) -> bool {
+        self.state().flags.is_socket
+    }
+
     pub fn init(fd: Fd, flags: Flags, evtloop: EventLoopHandle) -> std::sync::Arc<IOWriter> {
         let mut writer = WriterImpl::default();
         // Tell the PipeWriter impl to *not* close the file descriptor.

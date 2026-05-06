@@ -483,6 +483,7 @@ impl Blob {
 
 mod _jsc_gated {
 use super::*;
+use bun_jsc::SysErrorJsc as _;
 use super::read_file;
 use crate::node as node;
 use crate::image::Image;
@@ -2231,16 +2232,13 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
             bun_sys::Result::Ok(result) => result,
             bun_sys::Result::Err(err) => {
                 #[cfg(not(windows))]
-                if err.get_errno() == bun_sys::E::NOENT {
+                if err.get_errno() == bun_sys::E::ENOENT {
                     *needs_async = true;
                     return JSValue::ZERO;
                 }
                 return JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                     global_this,
-                    match err.with_path(pathlike.path().slice()).to_js(global_this) {
-                        Ok(v) => v,
-                        Err(_) => return JSValue::ZERO,
-                    },
+                    err.with_path(pathlike.path().slice()).to_js(global_this),
                 );
             }
         }
@@ -2250,7 +2248,7 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
 
     let truncate = NEEDS_OPEN || bytes.is_empty();
     let mut written: usize = 0;
-    let _close = scopeguard::guard((), |_| if NEEDS_OPEN { fd.close() });
+    let _close = scopeguard::guard((), |_| if NEEDS_OPEN { let _ = bun_sys::close(fd); });
 
     let mut remain = bytes;
     while !remain.is_empty() {
@@ -2262,7 +2260,7 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
             }
             bun_sys::Result::Err(err) => {
                 #[cfg(not(windows))]
-                if err.get_errno() == bun_sys::E::AGAIN {
+                if err.get_errno() == bun_sys::E::EAGAIN {
                     *needs_async = true;
                     return JSValue::ZERO;
                 }
@@ -2273,7 +2271,7 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
                 };
                 return JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                     global_this,
-                    match err_js { Ok(v) => v, Err(_) => return JSValue::ZERO },
+                    err_js,
                 );
             }
         }
@@ -2287,7 +2285,7 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
         let _ = bun_sys::ftruncate(fd, i64::try_from(written).unwrap());
     }
 
-    JSPromise::resolved_promise_value(global_this, JSValue::js_number(written))
+    JSPromise::resolved_promise_value(global_this, JSValue::js_number(written as f64))
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -2318,24 +2316,25 @@ pub fn jsdom_file_construct_(
 ) -> JsResult<*mut Blob> {
     jsc::mark_binding();
     let mut blob: Blob;
-    let arguments = callframe.arguments_old(3);
+    let arguments = callframe.arguments_old::<3>();
     let args = arguments.slice();
 
     if args.len() < 2 {
-        return global_this
-            .throw_invalid_arguments("new File(bits, name) expects at least 2 arguments");
+        return Err(global_this
+            .throw_invalid_arguments("new File(bits, name) expects at least 2 arguments"));
     }
     {
+        use bun_jsc::StringJsc as _;
         let name_value_str = BunString::from_js(args[1], global_this)?;
 
         blob = Blob::get::<false, true>(global_this, args[0])?;
         if let Some(store_) = &blob.store {
-            match &mut store_.data_mut() {
-                Store::Data::Bytes(bytes) => {
+            match store_.data_mut() {
+                store::Data::Bytes(bytes) => {
                     bytes.stored_name =
-                        bun_str::PathString::init(name_value_str.to_utf8_bytes());
+                        bun_str::PathString::init(name_value_str.to_utf8().slice());
                 }
-                Store::Data::S3(_) | Store::Data::File(_) => {
+                store::Data::S3(_) | store::Data::File(_) => {
                     blob.name = name_value_str.dupe_ref();
                 }
             }
@@ -2343,7 +2342,7 @@ pub fn jsdom_file_construct_(
             // not store but we have a name so we need a store
             blob.store = Some(StoreRef::from(Store::new(Store {
                 data: store::Data::Bytes(store::Bytes::init_empty_with_name(
-                    bun_str::PathString::init(name_value_str.to_utf8_bytes()),
+                    bun_str::PathString::init(name_value_str.to_utf8().slice()),
                 )),
                 ref_count: AtomicU32::new(1),
                 ..Default::default()
@@ -2829,8 +2828,8 @@ impl Blob {
         validate_writable_blob(global_this, self)?;
 
         let store = self.store.as_ref().unwrap();
-        match &store.data {
-            store::Data::S3(s3) => s3.unlink(store.clone(), global_this, args.next_eat()),
+        match store.data_mut() {
+            store::Data::S3(s3) => s3.unlink(store, global_this, args.next_eat()),
             store::Data::File(file) => file.unlink(global_this),
             store::Data::Bytes(_) => unreachable!(), // validate_writable_blob should have caught this
         }

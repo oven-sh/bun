@@ -45,7 +45,7 @@ impl Strong {
         false
     }
 
-    pub fn init(this: &ReadableStream, global: &JSGlobalObject) -> Strong {
+    pub fn init(this: ReadableStream, global: &JSGlobalObject) -> Strong {
         Strong {
             held: bun_jsc::strong::Optional::create(this.value, global),
         }
@@ -192,13 +192,12 @@ impl ReadableStream {
                 // SAFETY: ptr came from ReadableStreamTag__tagged; valid while stream alive.
                 let blobby = unsafe { &mut *blobby };
                 if let webcore::file_reader::Lazy::Blob(store) = &blobby.lazy {
-                    let _ = store;
+                    let blob = Blob::init_with_store(store.clone(), global_this);
+                    blob.store.as_ref().unwrap().ref_();
                     // it should be lazy, file shouldn't have opened yet.
                     debug_assert!(!blobby.started);
                     self.done(global_this);
-                    // TODO(port): two `Blob::init_with_store` defs collide (E0034); the
-                    // Zig body is `Blob.initWithStore(store, globalThis)` then `store.ref()`.
-                    todo!("blocked_on: webcore::Blob::init_with_store duplicate definition");
+                    return Some(webcore::blob::Any::Blob(blob));
                 }
             }
             Source::Bytes(bytes) => {
@@ -497,6 +496,7 @@ pub enum Tag {
     Bytes = 4,
 }
 
+#[derive(Copy, Clone)]
 pub enum Source {
     Invalid,
     /// ReadableStreamDefaultController or ReadableByteStreamController

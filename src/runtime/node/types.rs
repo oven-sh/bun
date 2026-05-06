@@ -1507,6 +1507,27 @@ pub enum PathOrFileDescriptorSerializeTag {
 // (No explicit `impl Drop` needed — field drop of PathLike handles it.)
 
 impl PathOrFileDescriptor {
+    /// Unwrap the `Path` arm. Panics on `Fd` (mirrors Zig's
+    /// `pathlike.path` direct field access, which is only used after the
+    /// caller has matched on the tag).
+    #[inline]
+    pub fn path(&self) -> &PathLike {
+        match self {
+            Self::Path(path) => path,
+            Self::Fd(_) => unreachable!("PathOrFileDescriptor::path() on Fd variant"),
+        }
+    }
+
+    /// Unwrap the `Fd` arm. Panics on `Path` (mirrors Zig's
+    /// `pathlike.fd` direct field access).
+    #[inline]
+    pub fn fd(&self) -> Fd {
+        match self {
+            Self::Fd(fd) => *fd,
+            Self::Path(_) => unreachable!("PathOrFileDescriptor::fd() on Path variant"),
+        }
+    }
+
     pub fn estimated_size(&self) -> usize {
         match self {
             Self::Path(path) => path.estimated_size(),

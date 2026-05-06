@@ -92,6 +92,13 @@ type StdioPipeItem = ExtraPipe;
 
 pub type StaticPipeWriter<'a> = NewStaticPipeWriter<Subprocess<'a>>;
 
+impl<'a> static_pipe_writer::StaticPipeWriterProcess for Subprocess<'a> {
+    unsafe fn on_close_io(this: *mut Self, kind: StdioKind) {
+        // SAFETY: caller (StaticPipeWriter) guarantees `this` is live.
+        unsafe { (*this).on_close_io(kind) }
+    }
+}
+
 #[derive(EnumSetType, strum::IntoStaticStr)]
 pub enum ObservableGetter {
     Stdin,

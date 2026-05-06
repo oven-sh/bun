@@ -136,7 +136,7 @@ impl PathWatcherManager {
     /// Remove `watcher` from the dedup map. Caller holds `mutex`.
     fn unlink_watcher_locked(&self, watcher: *mut PathWatcher) {
         // SAFETY: caller holds self.mutex; exclusive access to self.watchers.
-        let watchers = unsafe { &mut *(&self.watchers as *const _ as *mut StringArrayHashMap<*mut PathWatcher>) };
+        let watchers = unsafe { &mut *self.watchers.get() };
         if let Some(i) = watchers.values().iter().position(|&w| w == watcher) {
             // Key is an owned Box<[u8]>; swap_remove_at drops it.
             watchers.swap_remove_at(i);

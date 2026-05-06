@@ -663,17 +663,21 @@ macro_rules! js_class_module {
             /// in `m_ctx`; ownership transfers to the GC (`finalize` frees it).
             #[inline]
             pub fn to_js(ptr: *mut (), global: &JSGlobalObject) -> JSValue {
-                // SAFETY: `global` is live; `ptr` is a freshly boxed native
-                // payload (not yet owned by any wrapper).
-                unsafe { __create(global as *const _ as *mut _, ptr) }
+                // SAFETY: `global` is an opaque ZST FFI handle (see
+                // `JSGlobalObject::as_ptr`) — the `*mut` is passed across FFI
+                // only, never written through on the Rust side; `ptr` is a
+                // freshly boxed native payload (not yet owned by any wrapper).
+                unsafe { __create(global.as_ptr(), ptr) }
             }
 
             /// Lazily fetch the constructor `JSFunction` from `globalObject`.
             #[inline]
             pub fn get_constructor(global: &JSGlobalObject) -> JSValue {
-                // SAFETY: `global` is live; the C++ side reads the cached
-                // structure/constructor from `Zig::GlobalObject`.
-                unsafe { __get_constructor(global as *const _ as *mut _) }
+                // SAFETY: `global` is an opaque ZST FFI handle (see
+                // `JSGlobalObject::as_ptr`) — the `*mut` is passed across FFI
+                // only; the C++ side reads the cached structure/constructor
+                // from `Zig::GlobalObject`.
+                unsafe { __get_constructor(global.as_ptr()) }
             }
         }
     };

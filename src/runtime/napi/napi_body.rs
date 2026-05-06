@@ -1799,7 +1799,9 @@ pub extern "C" fn napi_get_uv_event_loop(env_: napi_env, loop_: *mut napi_event_
     #[cfg(not(windows))]
     {
         // there is no uv event loop on posix, we use our event loop handle.
-        *loop_out = env.to_js().bun_vm().event_loop() as *const _ as *mut _;
+        // SAFETY: `VirtualMachine::event_loop` already yields `*mut EventLoop`;
+        // no const→mut cast needed.
+        *loop_out = env.to_js().bun_vm().event_loop();
     }
     env.ok()
 }

@@ -7222,11 +7222,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         let commonjs_named_exports_deoptimized =
             if opts.bundle { opts.output_format == options::Format::Cjs } else { true };
 
-        // TODO(port): ExpressionTransposer in Zig captures `*P`; the Rust type
-        // alias currently has `Context = ()` (Phase B wires the real callback),
-        // so feed it an arena-owned unit + identity visitor for now.
-        let unit: &'a mut () = allocator.alloc(());
-
         let mut this = Self {
             legacy_cjs_import_stmts: BumpVec::new_in(allocator),
             // This must default to true or else parsing "in" won't work right.
@@ -7251,13 +7246,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             },
             to_expr_wrapper_namespace: (), // Binding2ExprWrapper.Namespace — Phase-B placeholder
             to_expr_wrapper_hoisted: (),   // Binding2ExprWrapper.Hoisted — Phase-B placeholder
-            // SAFETY: `unit` is arena-owned for `'a`; the three transposers each
-            // need a `&'a mut ()` and never actually dereference it (identity
-            // visitor). Reborrow via raw ptr to satisfy the three distinct
-            // `&'a mut ()` borrows from one allocation.
-            import_transposer: ExpressionTransposer::init(unsafe { &mut *(unit as *mut ()) }, |_, e, _| e),
-            require_transposer: ExpressionTransposer::init(unsafe { &mut *(unit as *mut ()) }, |_, e, _| e),
-            require_resolve_transposer: ExpressionTransposer::init(unsafe { &mut *(unit as *mut ()) }, |_, e, _| e),
+            // TODO(port): ExpressionTransposer in Zig captures `*P`; the Rust
+            // type alias currently has `Context = ()` (Phase B wires the real
+            // callbacks). Seed each with an arena-owned unit context + identity
+            // visitor so the field types are satisfied.
+            import_transposer: ExpressionTransposer::init(allocator.alloc(()), |_, e, _| e),
+            require_transposer: ExpressionTransposer::init(allocator.alloc(()), |_, e, _| e),
+            require_resolve_transposer: ExpressionTransposer::init(allocator.alloc(()), |_, e, _| e),
             source,
             // Zig: `MacroState.init(allocator)` leaves `prepend_stmts = undefined`;
             // Rust cannot leave a `&'a mut Vec<Stmt>` uninitialized, so allocate

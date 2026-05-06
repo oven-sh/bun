@@ -1474,8 +1474,9 @@ pub mod waiter_thread_posix {
 }
 
 #[cfg(any())]
-mod waiter_thread_posix_shim_removed {
-    // Preserved for diff-pass: the old thin-surface stub. Dead.
+mod waiter_thread_posix_body {
+    // Preserved for diff-pass: the old gated draft. Dead — body merged into
+    // `waiter_thread_posix` above.
     use super::*;
     pub struct WaiterThreadPosix(());
     static SHOULD_USE_WAITER_THREAD: AtomicBool = AtomicBool::new(false);

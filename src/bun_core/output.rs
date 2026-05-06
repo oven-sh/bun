@@ -1461,7 +1461,7 @@ impl ScopedLogger {
     ///   BUN_DEBUG_foo=1
     /// To enable all logs, set the environment variable
     ///   BUN_DEBUG_ALL=1
-    pub fn log(&self, colored: fmt::Arguments<'_>, plain: fmt::Arguments<'_>) {
+    pub fn log(&self, args: fmt::Arguments<'_>) {
         if !Environment::ENABLE_LOGS {
             return;
         }
@@ -1491,17 +1491,11 @@ impl ScopedLogger {
 
         let _lock = self.lock.lock();
 
-        let use_ansi = ENABLE_ANSI_COLORS_STDOUT.load(Ordering::Relaxed)
-            && SOURCE_SET.get()
-            && scoped_writer().context_handle() == raw_writer().handle();
-
         let mut out = scoped_writer();
-        // PERF(port): was comptime bool dispatch on use_ansi — profile in Phase B
-        let result = if use_ansi {
-            out.write_fmt(colored)
-        } else {
-            out.write_fmt(plain)
-        };
+        // PERF(port): was comptime bool dispatch on use_ansi — profile in Phase B.
+        // The colored/plain selection now happens at the `scoped_log!` call site
+        // (single arg evaluation) via `_scoped_use_ansi()`.
+        let result = out.write_fmt(args);
         if result.is_err() {
             // Zig: write failure → disable scope and skip the flush.
             self.really_disable.store(true, Ordering::Relaxed);
@@ -1544,18 +1538,28 @@ macro_rules! declare_scope {
 /// MUST gate arg evaluation: expands to a dead branch in release builds.
 #[macro_export]
 macro_rules! scoped_log {
-    ($scope:ident, $fmt:literal $(, $arg:expr)* $(,)?) => {
+    ($scope:ident, $fmt:expr $(, $arg:expr)* $(,)?) => {
         if cfg!(feature = "debug_logs") && $scope.is_visible() {
-            $scope.log(
-                ::core::format_args!(
-                    $crate::pretty_fmt!(concat!("<r><d>[", stringify!($scope), "]<r> ", $fmt, "\n"), true)
-                    $(, $arg)*
-                ),
-                ::core::format_args!(
-                    $crate::pretty_fmt!(concat!("<r><d>[", stringify!($scope), "]<r> ", $fmt, "\n"), false)
-                    $(, $arg)*
-                ),
-            );
+            const __NL: &str = $crate::output::_needs_nl($crate::pretty_fmt!($fmt, false));
+            // Branch on ANSI *before* `format_args!` so each `$arg` evaluates
+            // exactly once (Zig builds the args tuple once — output.zig:922-933).
+            if $crate::output::_scoped_use_ansi() {
+                $scope.log(::core::format_args!(
+                    concat!(
+                        $crate::pretty_fmt!(concat!("<r><d>[", stringify!($scope), "]<r> ", $fmt), true),
+                        "{}",
+                    ),
+                    $($arg,)* __NL
+                ));
+            } else {
+                $scope.log(::core::format_args!(
+                    concat!(
+                        $crate::pretty_fmt!(concat!("<r><d>[", stringify!($scope), "]<r> ", $fmt), false),
+                        "{}",
+                    ),
+                    $($arg,)* __NL
+                ));
+            }
         }
     };
 }

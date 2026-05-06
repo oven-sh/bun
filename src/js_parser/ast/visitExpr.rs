@@ -2332,6 +2332,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 return p.get_react_refresh_hook_signal_init(hook, expr);
             }
         }
+        // Zig: defer p.react_refresh.hook_ctx_storage = prev;
+        p.react_refresh.hook_ctx_storage = prev_hook_ctx;
         let _ = react_hook_data;
         e_.body.stmts = stmts_list.into_bump_slice_mut() as *mut [Stmt];
         expr

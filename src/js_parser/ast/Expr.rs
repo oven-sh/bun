@@ -801,40 +801,33 @@ struct Serializable {
     loc: Loc,
 }
 
-// TODO(b2-ast-round-C): join_with_*/extract_* call `Expr::init` with `E::*`
-// payloads via `IntoExprData`; un-gate once `IntoExprData` impls are complete.
-// `is_missing` is trivial — hoisted into the live `impl Expr` below the
-// `init`/`allocate` block (line ~1090).
-#[cfg(any())]
+// `is_missing` lives in the `init`/`allocate` impl block below (round-A hoist).
 impl Expr {
-    pub fn is_missing(a: &Expr) -> bool {
-        matches!(a.data, Data::EMissing(_))
-    }
-
-    // The goal of this function is to "rotate" the AST if it's possible to use the
-    // left-associative property of the operator to avoid unnecessary parentheses.
+    /// The goal of this function is to "rotate" the AST if it's possible to use the
+    /// left-associative property of the operator to avoid unnecessary parentheses.
+    ///
+    /// When using this, make absolutely sure that the operator is actually
+    /// associative. For example, the "-" operator is not associative for
+    /// floating-point numbers.
     //
-    // When using this, make absolutely sure that the operator is actually
-    // associative. For example, the "-" operator is not associative for
-    // floating-point numbers.
-    pub fn join_with_left_associative_op<const OP: Op::Code>(
-        a: Expr,
-        b: Expr,
-    ) -> Expr {
-        // PERF(port): was comptime monomorphization — profile in Phase B
+    // PERF(port): Zig took `comptime op: Op.Code`. `Op::Code` does not derive
+    // `ConstParamTy` (Op.rs owns the enum); pass at runtime here. Revisit once
+    // `Code` gains `ConstParamTy` — call sites are a handful of literal ops.
+    pub fn join_with_left_associative_op(op: Op::Code, a: Expr, b: Expr) -> Expr {
         // "(a, b) op c" => "a, b op c"
-        if let Data::EBinary(comma) = a.data {
+        if let Data::EBinary(mut comma) = a.data {
             if comma.op == crate::ast::OpCode::BinComma {
-                comma.right = Self::join_with_left_associative_op::<OP>(comma.right, b);
+                comma.right = Self::join_with_left_associative_op(op, comma.right, b);
             }
         }
 
         // "a op (b op c)" => "(a op b) op c"
         // "a op (b op (c op d))" => "((a op b) op c) op d"
         if let Data::EBinary(binary) = b.data {
-            if binary.op == OP {
-                return Self::join_with_left_associative_op::<OP>(
-                    Self::join_with_left_associative_op::<OP>(a, binary.left),
+            if binary.op == op {
+                return Self::join_with_left_associative_op(
+                    op,
+                    Self::join_with_left_associative_op(op, a, binary.left),
                     binary.right,
                 );
             }
@@ -842,7 +835,7 @@ impl Expr {
 
         // "a op b" => "a op b"
         // "(a op b) op c" => "(a op b) op c"
-        Expr::init(E::Binary { op: OP, left: a, right: b }, a.loc)
+        Expr::init(E::Binary { op, left: a, right: b }, a.loc)
     }
 
     pub fn join_with_comma(a: Expr, b: Expr) -> Expr {
@@ -858,15 +851,15 @@ impl Expr {
         )
     }
 
-    pub fn join_all_with_comma(all: &mut [Expr]) -> Expr {
+    pub fn join_all_with_comma(all: &[Expr]) -> Expr {
         debug_assert!(!all.is_empty());
         match all.len() {
             1 => all[0],
             2 => Expr::join_with_comma(all[0], all[1]),
             _ => {
                 let mut expr = all[0];
-                for i in 1..all.len() {
-                    expr = Expr::join_with_comma(expr, all[i]);
+                for it in &all[1..] {
+                    expr = Expr::join_with_comma(expr, *it);
                 }
                 expr
             }
@@ -874,7 +867,7 @@ impl Expr {
     }
 
     pub fn join_all_with_comma_callback<C>(
-        all: &mut [Expr],
+        all: &[Expr],
         ctx: C,
         callback: fn(ctx: &C, expr: Expr) -> Option<Expr>,
     ) -> Option<Expr> {
@@ -923,14 +916,7 @@ impl Expr {
         }
     }
 
-    // TODO(port): jsonStringify protocol — replace with serde or custom trait in Phase B
-    pub fn json_stringify(self_: &Expr, writer: &mut impl fmt::Write) -> fmt::Result {
-        let _ = (self_, writer);
-        // writer.write(Serializable { type_: self_.data.tag(), object: b"expr", value: self_.data, loc: self_.loc })
-        todo!("jsonStringify")
-    }
-
-    pub fn extract_numeric_values_in_safe_range(left: Data, right: Data) -> Option<[f64; 2]> {
+    pub fn extract_numeric_values_in_safe_range(left: &Data, right: &Data) -> Option<[f64; 2]> {
         let l_value = left.extract_numeric_value()?;
         let r_value = right.extract_numeric_value()?;
 
@@ -943,7 +929,6 @@ impl Expr {
             return Some([l_value, r_value]);
         }
 
-        // TODO(b0): math arrives from move-in (was bun_jsc::{MAX,MIN}_SAFE_INTEGER → js_parser::math)
         if l_value > crate::math::MAX_SAFE_INTEGER || r_value > crate::math::MAX_SAFE_INTEGER {
             return None;
         }
@@ -954,7 +939,7 @@ impl Expr {
         Some([l_value, r_value])
     }
 
-    pub fn extract_numeric_values(left: Data, right: Data) -> Option<[f64; 2]> {
+    pub fn extract_numeric_values(left: &Data, right: &Data) -> Option<[f64; 2]> {
         Some([
             left.extract_numeric_value()?,
             right.extract_numeric_value()?,
@@ -962,20 +947,34 @@ impl Expr {
     }
 
     pub fn extract_string_values(
-        left: Data,
-        right: Data,
+        left: &Data,
+        right: &Data,
         bump: &Bump,
     ) -> Option<[*mut E::String; 2]> {
-        let l_string = left.extract_string_value()?;
-        let r_string = right.extract_string_value()?;
-        l_string.resolve_rope_if_needed(bump);
-        r_string.resolve_rope_if_needed(bump);
+        let l_string = Data::extract_string_value(*left)?;
+        let r_string = Data::extract_string_value(*right)?;
+        // SAFETY: `extract_string_value` returns a live arena pointer (StoreRef::as_ptr).
+        unsafe {
+            (*l_string).resolve_rope_if_needed(bump);
+            (*r_string).resolve_rope_if_needed(bump);
 
-        if l_string.is_utf8() != r_string.is_utf8() {
-            return None;
+            if (*l_string).is_utf8() != (*r_string).is_utf8() {
+                return None;
+            }
         }
 
         Some([l_string, r_string])
+    }
+}
+
+// TODO(port): jsonStringify protocol — replace with serde or custom trait in
+// Phase B. Kept gated; `Serializable` is its payload shape.
+#[cfg(any())]
+impl Expr {
+    pub fn json_stringify(self_: &Expr, writer: &mut impl fmt::Write) -> fmt::Result {
+        let _ = (self_, writer);
+        // writer.write(Serializable { type_: self_.data.tag(), object: b"expr", value: self_.data, loc: self_.loc })
+        todo!("jsonStringify")
     }
 }
 

@@ -199,18 +199,24 @@ impl KeyframeSelector {
 // blocked_on: css::derive_parse (DeriveParse comptime macro replacement).
 
 impl KeyframeSelector {
-    // TODO: implement this
     // Zig: `pub const parse = css.DeriveParse(@This()).parse;`
-    // TODO(port): `DeriveParse` is a comptime type-generator producing `parse` from
-    // variant introspection. Replace with `#[derive(css::Parse)]` proc-macro in Phase B.
+    // PORT NOTE: `DeriveParse` is a comptime type-generator producing `parse` from
+    // variant introspection. Expanded by hand here: try the tuple variant
+    // (`Percentage`) first, then fall back to keyword idents (`from`/`to`).
     pub fn parse(input: &mut css::Parser) -> css::Result<KeyframeSelector> {
-        css::derive_parse::<KeyframeSelector>(input)
+        if let Ok(p) = input.try_parse(Percentage::parse) {
+            return Ok(KeyframeSelector::Percentage(p));
+        }
+        let location = input.current_source_location();
+        let ident = input.expect_ident()?;
+        if bun_string::strings::eql_case_insensitive_ascii_check_length(ident, b"from") {
+            Ok(KeyframeSelector::From)
+        } else if bun_string::strings::eql_case_insensitive_ascii_check_length(ident, b"to") {
+            Ok(KeyframeSelector::To)
+        } else {
+            Err(location.new_unexpected_token_error(css::Token::Ident(ident)))
+        }
     }
-
-    // pub fn parse(input: *css.Parser) Result(KeyframeSelector) {
-    //     _ = input; // autofix
-    //     @panic(css.todo_stuff.depth);
-    // }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

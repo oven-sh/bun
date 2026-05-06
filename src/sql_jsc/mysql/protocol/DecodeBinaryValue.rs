@@ -1,16 +1,14 @@
-use bun_jsc::JSGlobalObject;
+use crate::jsc::JSGlobalObject;
 use bun_sql::mysql::mysql_types as types;
 use bun_sql::mysql::mysql_types::FieldType;
-use bun_sql::mysql::protocol::new_reader::NewReader;
+use bun_sql::mysql::protocol::new_reader::{NewReader, ReaderContext};
 use crate::shared::sql_data_cell::SQLDataCell;
-// TODO(port): confirm exact module path / nested type names for SQLDataCell tag & value union
 use crate::shared::sql_data_cell::{Tag as CellTag, Value as CellValue};
-use crate::mysql::mysql_value::Value;
-use crate::mysql::mysql_value::Value::{DateTime, Time};
-// TODO(port): Value::DateTime / Value::Time are nested types in Zig (`Value.DateTime`); adjust to
-// `value::DateTime` / `value::Time` if the Rust port flattens them.
+#[allow(unused_imports)]
+use crate::mysql::my_sql_value::Value;
+use crate::mysql::my_sql_value::{DateTime, Time};
 
-bun_output::declare_scope!(MySQLDecodeBinaryValue, visible);
+bun_core::declare_scope!(MySQLDecodeBinaryValue, visible);
 
 /// MySQL's "binary" pseudo-charset ID. Columns with this character_set value
 /// are true binary types (BINARY, VARBINARY, BLOB), as opposed to string columns

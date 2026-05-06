@@ -338,7 +338,7 @@ pub fn resolve_maybe_needs_trailing_slash(
 #[inline]
 pub fn resolve(
     res: &mut ErrorableString,
-    global: &JSGlobalObject,
+    global: *mut JSGlobalObject,
     specifier: bun_string::String,
     source: bun_string::String,
     query_string: Option<&mut bun_string::String>,

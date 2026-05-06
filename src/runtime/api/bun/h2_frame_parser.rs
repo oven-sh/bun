@@ -166,15 +166,59 @@ pub mod JSH2FrameParser {
 #[allow(non_snake_case)]
 pub mod JSTLSSocket {
     use super::{JSValue, TLSSocket};
-    pub fn from_js(_value: JSValue) -> Option<&'static mut TLSSocket> {
-        todo!("blocked_on: bun_jsc::codegen::JSTLSSocket")
+
+    // `TLSSocket__fromJS` — emitted by generate-classes.ts
+    // (`symbolName(typeName, "fromJS")`). `jsc.conv` = sysv64 on win-x64,
+    // C otherwise.
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    unsafe extern "sysv64" {
+        #[link_name = "TLSSocket__fromJS"]
+        fn __from_js(value: JSValue) -> *mut TLSSocket;
+    }
+    #[cfg(not(all(windows, target_arch = "x86_64")))]
+    unsafe extern "C" {
+        #[link_name = "TLSSocket__fromJS"]
+        fn __from_js(value: JSValue) -> *mut TLSSocket;
+    }
+
+    /// Return the wrapped native `*mut TLSSocket` if `value` is a JS TLSSocket
+    /// wrapper; `None` on type mismatch (Zig: `jsc.Codegen.JSTLSSocket.fromJS`).
+    #[inline]
+    pub fn from_js(value: JSValue) -> Option<*mut TLSSocket> {
+        // SAFETY: `value` is a valid encoded JSValue; the C++ side type-checks
+        // and returns the `m_ctx` pointer or null. The returned pointer is
+        // borrowed from the JS wrapper and valid only while `value` is rooted.
+        let ptr = unsafe { __from_js(value) };
+        if ptr.is_null() { None } else { Some(ptr) }
     }
 }
 #[allow(non_snake_case)]
 pub mod JSTCPSocket {
     use super::{JSValue, TCPSocket};
-    pub fn from_js(_value: JSValue) -> Option<&'static mut TCPSocket> {
-        todo!("blocked_on: bun_jsc::codegen::JSTCPSocket")
+
+    // `TCPSocket__fromJS` — emitted by generate-classes.ts
+    // (`symbolName(typeName, "fromJS")`). `jsc.conv` = sysv64 on win-x64,
+    // C otherwise.
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    unsafe extern "sysv64" {
+        #[link_name = "TCPSocket__fromJS"]
+        fn __from_js(value: JSValue) -> *mut TCPSocket;
+    }
+    #[cfg(not(all(windows, target_arch = "x86_64")))]
+    unsafe extern "C" {
+        #[link_name = "TCPSocket__fromJS"]
+        fn __from_js(value: JSValue) -> *mut TCPSocket;
+    }
+
+    /// Return the wrapped native `*mut TCPSocket` if `value` is a JS TCPSocket
+    /// wrapper; `None` on type mismatch (Zig: `jsc.Codegen.JSTCPSocket.fromJS`).
+    #[inline]
+    pub fn from_js(value: JSValue) -> Option<*mut TCPSocket> {
+        // SAFETY: `value` is a valid encoded JSValue; the C++ side type-checks
+        // and returns the `m_ctx` pointer or null. The returned pointer is
+        // borrowed from the JS wrapper and valid only while `value` is rooted.
+        let ptr = unsafe { __from_js(value) };
+        if ptr.is_null() { None } else { Some(ptr) }
     }
 }
 

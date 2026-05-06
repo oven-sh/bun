@@ -123,11 +123,18 @@ pub fn post_process_js_chunk(
         // PERF(port): was initCapacity catch unreachable
         for import_record in chunk.cross_chunk_imports.slice() {
             // PERF(port): was appendAssumeCapacity
-            // TODO(port): ImportRecord has no Default — fill remaining fields explicitly
-            // once the cross-chunk-import path is exercised in Phase B.
-            let _ = import_record;
-            let _ = &ctx.chunks;
-            todo!("blocked_on: ImportRecord struct-init (no Default impl)");
+            cross_chunk_import_records.push(ImportRecord {
+                kind: import_record.import_kind,
+                path: bun_paths::fs::Path::init(ctx.chunks[import_record.chunk_index as usize].unique_key),
+                range: Logger::Range::NONE,
+                // Remaining fields take their Zig defaults (no Default impl):
+                tag: ImportRecordTag::None,
+                loader: None,
+                source_index: Index::INVALID,
+                module_id: 0,
+                original_path: b"",
+                flags: ImportRecordFlags::default(),
+            });
         }
 
         let ast = c.graph.ast.get(chunk.entry_point.source_index() as usize);
@@ -764,12 +771,11 @@ pub fn post_process_js_chunk(
 
 /// Recursively walk a binding and add all declared names to `ModuleInfo`.
 /// Handles `b_identifier`, `b_array`, `b_object`, and `b_missing`.
-#[allow(dead_code)] // call site is `todo!`-gated until renamer threading lands (Phase B)
 fn add_binding_vars_to_module_info(
     mi: &mut ModuleInfo,
     binding: Binding,
     var_kind: analyze_transpiled_module::VarKind,
-    r: &mut renamer::ChunkRenamer,
+    r: &mut js_printer::renamer::Renamer<'_, '_>,
     symbols: &js_ast::symbol::Map,
 ) {
     match binding.data {

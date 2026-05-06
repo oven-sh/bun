@@ -1109,10 +1109,10 @@ impl<'a> BufferedReaderParent for LifecycleScriptSubprocess<'a> {
         // SAFETY: as above.
         unsafe { (*this).on_reader_error(err) }
     }
-    unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop {
-        // SAFETY: as above. `AsyncLoop` (= `bun_aio::Loop`) aliases the uws
-        // loop on POSIX; cast through for the trait's nominal type.
-        unsafe { (*this).loop_() as *mut bun_uws_sys::Loop }
+    unsafe fn loop_(this: *mut Self) -> *mut AsyncLoop {
+        // SAFETY: as above. `AsyncLoop` (= `bun_aio::Loop`) is a type alias for
+        // `bun_uws_sys::Loop` on POSIX, matching the trait's nominal return type.
+        unsafe { (*this).loop_() }
     }
     unsafe fn event_loop(this: *mut Self) -> EventLoopHandle {
         // SAFETY: as above. Erase `&AnyEventLoop` → opaque handle (see

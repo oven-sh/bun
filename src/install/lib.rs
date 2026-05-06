@@ -183,6 +183,45 @@ pub mod resolution {
         ) -> Formatter<'a> {
             Formatter { resolution: self, buf, path_sep }
         }
+
+        /// Port of `Resolution.fmtStorePath` (src/install/resolution.zig:307).
+        pub fn fmt_store_path<'a>(&'a self, string_buf: &'a [u8]) -> StorePathFormatter<'a> {
+            StorePathFormatter { res: self, string_buf }
+        }
+    }
+
+    /// Port of `Resolution.StorePathFormatter` (src/install/resolution.zig:283).
+    pub struct StorePathFormatter<'a> {
+        pub res: &'a Resolution,
+        pub string_buf: &'a [u8],
+    }
+
+    impl<'a> core::fmt::Display for StorePathFormatter<'a> {
+        fn fmt(&self, writer: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            let string_buf = self.string_buf;
+            let res = &self.res.value;
+            match self.res.tag {
+                Tag::Root => writer.write_str("root"),
+                Tag::Npm => write!(writer, "{}", res.npm.version.fmt(string_buf)),
+                Tag::LocalTarball => {
+                    write!(writer, "{}", res.local_tarball.fmt_store_path(string_buf))
+                }
+                Tag::RemoteTarball => {
+                    write!(writer, "{}", res.remote_tarball.fmt_store_path(string_buf))
+                }
+                Tag::Folder => write!(writer, "{}", res.folder.fmt_store_path(string_buf)),
+                Tag::Git => write!(writer, "{}", res.git.fmt_store_path("git+", string_buf)),
+                Tag::Github => {
+                    write!(writer, "{}", res.github.fmt_store_path("github+", string_buf))
+                }
+                Tag::Workspace => write!(writer, "{}", res.workspace.fmt_store_path(string_buf)),
+                Tag::Symlink => write!(writer, "{}", res.symlink.fmt_store_path(string_buf)),
+                Tag::SingleFileModule => {
+                    write!(writer, "{}", res.single_file_module.fmt_store_path(string_buf))
+                }
+                _ => Ok(()),
+            }
+        }
     }
 
     /// Port of `Resolution.Formatter` (src/install/resolution.zig:400).

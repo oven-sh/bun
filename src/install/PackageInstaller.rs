@@ -1623,7 +1623,7 @@ impl<'a> PackageInstaller<'a> {
 
                         'enqueue_lifecycle_scripts: {
                             if self.manager.postinstall_optimizer.should_ignore_lifecycle_scripts(
-                                PostinstallOptimizer::ScriptCheck {
+                                postinstall_optimizer::PkgInfo {
                                     name_hash: pkg_name_hash,
                                     version: if resolution.tag == resolution::Tag::Npm {
                                         Some(resolution.value.npm.version)
@@ -1928,7 +1928,7 @@ impl<'a> PackageInstaller<'a> {
 
                 'enqueue_lifecycle_scripts: {
                     if self.manager.postinstall_optimizer.should_ignore_lifecycle_scripts(
-                        PostinstallOptimizer::ScriptCheck {
+                        postinstall_optimizer::PkgInfo {
                             name_hash: pkg_name_hash,
                             version: if resolution.tag == resolution::Tag::Npm {
                                 Some(resolution.value.npm.version)

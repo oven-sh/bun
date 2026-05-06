@@ -11,6 +11,7 @@ use super::{
     buffers, package, package_index as PackageIndex, FormatVersion, Lockfile, Scratch, Stream,
     StringPool,
 };
+use super::package::PackageListExt as _;
 use crate::config_version::ConfigVersion;
 use crate::dependency;
 use crate::package_manager_real::Options as PackageManagerOptions;
@@ -171,12 +172,7 @@ pub fn save(
     stream.write_int_u64_le(0)?;
 
     if cfg!(debug_assertions) {
-        // TODO(port): blocked_on `Package<u64>: MultiArrayElement` derive —
-        // `packages.items(.resolution)` needs typed column access. The body is
-        // pure debug assertions (no side effects); iterate an empty slice until
-        // the derive lands so the assertion code stays compiled.
-        let resolutions: &[crate::resolution::Resolution] = &[];
-        for res in resolutions {
+        for res in this.packages.items_resolution() {
             // SAFETY: `res.tag` discriminates which union field is active.
             unsafe {
                 match res.tag {

@@ -165,10 +165,42 @@ impl Default for DateHeaderTimer {
     }
 }
 impl DateHeaderTimer {
+    /// PORT NOTE (b2-cycle): `vm.timer` is `()` on the low-tier
+    /// `VirtualMachine`; the real `timer::All` lives in `RuntimeState`.
+    /// Recover it as a raw ptr — `self` is a field of that same `All`, so
+    /// callers dereference per-field under `// SAFETY:` (raw-ptr-per-field
+    /// re-entry pattern, jsc_hooks.rs).
+    #[inline]
+    fn timer_all() -> *mut All {
+        let state = crate::jsc_hooks::runtime_state();
+        // SAFETY: `runtime_state()` is non-null after `bun_runtime::init()`.
+        unsafe { core::ptr::addr_of_mut!((*state).timer) }
+    }
+
     /// Spec DateHeaderTimer.zig `run` — refresh the cached `Date:` header and
-    /// reschedule. Body needs `vm.timer: All` (currently `()` in bun_jsc).
-    pub fn run(&mut self, _vm: &mut bun_jsc::virtual_machine::VirtualMachine) {
-        todo!("blocked_on: bun_jsc::VirtualMachine::timer (DateHeaderTimer::run)")
+    /// reschedule for 1s later iff there are active connections.
+    pub fn run(&mut self, vm: &mut bun_jsc::virtual_machine::VirtualMachine) {
+        self.event_loop_timer.state = EventLoopTimerState::FIRED;
+        let loop_ = vm.uws_loop();
+        let now = Timespec::now(TimespecMockMode::AllowMockedTime);
+
+        // Record when we last ran it.
+        self.event_loop_timer.next = ElTimespec { sec: now.sec, nsec: now.nsec };
+
+        // updateDate() is an expensive function.
+        // SAFETY: `uws_loop()` returns the live per-thread uws loop owned by the VM.
+        unsafe { (*loop_).update_date() };
+
+        // SAFETY: `loop_` is live for the duration of this call (owned by VM).
+        if unsafe { (*loop_).internal_loop_data.sweep_timer_count } > 0 {
+            // Reschedule it automatically for 1 second later.
+            let next = now.add_ms(1000);
+            self.event_loop_timer.next = ElTimespec { sec: next.sec, nsec: next.nsec };
+            let elt: *mut EventLoopTimer = &mut self.event_loop_timer;
+            // SAFETY: single JS thread; `All::insert` only touches `lock`/`timers`/
+            // `fake_timers`, disjoint from `date_header_timer` which `self` aliases.
+            unsafe { (*Self::timer_all()).insert(elt) };
+        }
     }
 }
 

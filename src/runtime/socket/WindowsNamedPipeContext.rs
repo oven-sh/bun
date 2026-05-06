@@ -315,11 +315,12 @@ impl WindowsNamedPipeContext {
         };
         #[cfg(not(windows))]
         let named_pipe: WindowsNamedPipe = {
-            // Unreachable at runtime on POSIX (`crate::socket::WindowsNamedPipeContext`
-            // is aliased to `()`); keep the module type-checking by leaving the
-            // Windows-only constructor out of the call graph.
+            // Zig: `if (Environment.isPosix) @compileError(...)` on `WindowsNamedPipe::from` —
+            // on POSIX `crate::socket::WindowsNamedPipeContext` is aliased to `()` (see mod.rs)
+            // so no caller can reach `create()`. This arm exists only so the module
+            // type-checks; matches the sibling `WindowsNamedPipe::open`/`connect` POSIX arms.
             let _ = handlers;
-            todo!("blocked_on: WindowsNamedPipe::from (windows-only)")
+            unreachable!("WindowsNamedPipeContext::create is windows-only")
         };
         // Zig: `jsc.AnyTask.New(WindowsNamedPipeContext, runEvent).init(this)` — the
         // comptime-callback `New<T>` wrapper is not yet expressible on stable Rust,

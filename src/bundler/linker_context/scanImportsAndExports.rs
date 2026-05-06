@@ -1700,14 +1700,9 @@ mod __css_validation {
                         };
                     debug_assert!(property_id_tag != PropertyIdTag::Custom);
                     debug_assert!(property_id_tag != PropertyIdTag::Unparsed);
-                    let _ = property_id_tag;
-                    #[allow(unreachable_code)]
                     self.add_property_or_warn(
                         r#ref,
-                        // Zig: `@tagName(property_id_tag)` — kebab-case CSS
-                        // property name. `PropertyIdTag` has no `name()`/
-                        // `Into<&str>` yet (lives in generated `bun_css`).
-                        todo!("blocked_on: bun_css::PropertyIdTag::name"),
+                        property_id_tag.name(),
                         idx,
                         property_usage.range,
                     );

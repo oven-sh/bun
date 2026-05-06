@@ -6,7 +6,6 @@ use bun_alloc::{AllocError, Arena};
 use crate::cli::command;
 use crate::cli::run_command::RunCommand;
 use bun_core::{env_var, Global, Output};
-use bun_dotenv as DotEnv;
 use bun_install::PackageManager;
 use bun_install::LogLevel;
 use bun_js_printer as JSPrinter;
@@ -246,17 +245,16 @@ impl PmVersionCommand {
                 }
 
                 // Zig used `std.fs.cwd().writeFile`; ported to bun_sys (no std::fs).
-                if let Err(err) = bun_sys::File::write_file(
-                    Fd::cwd(),
-                    package_json_path,
-                    package_json_writer.ctx.written_without_trailing_zero(),
-                ) {
-                    Output::err_generic(
-                        "Failed to write package.json: {}",
-                        (BStr::new(err.name()),),
-                    );
-                    Global::exit(1);
-                }
+            if let Err(err) = bun_sys::File::write_file(
+                Fd::cwd(),
+                package_json_path,
+                package_json_writer.ctx.written_without_trailing_zero(),
+            ) {
+                Output::err_generic(
+                    "Failed to write package.json: {}",
+                    (BStr::new(err.name()),),
+                );
+                Global::exit(1);
             }
         }
 
@@ -268,7 +266,7 @@ impl PmVersionCommand {
                         script_command,
                         b"version",
                         &package_json_dir,
-                        pm_shims::env(pm),
+                        pm.env_mut(),
                         &[],
                         silent,
                         use_system_shell,
@@ -277,10 +275,10 @@ impl PmVersionCommand {
             }
         }
 
-        if pm_shims::git_tag_version(pm) {
+        if pm.options.git_tag_version {
             Self::git_commit_and_tag(
                 &new_version_str,
-                pm_shims::message(pm),
+                pm.options.message,
                 &package_json_dir,
             )?;
         }
@@ -293,7 +291,7 @@ impl PmVersionCommand {
                         script_command,
                         b"postversion",
                         &package_json_dir,
-                        pm_shims::env(pm),
+                        pm.env_mut(),
                         &[],
                         silent,
                         use_system_shell,
@@ -331,9 +329,8 @@ impl PmVersionCommand {
         Ok(start_dir.to_vec())
     }
 
-    fn verify_git(cwd: &[u8], pm: &mut PackageManager) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
-        if !pm_shims::git_tag_version(pm) {
+    fn verify_git(cwd: &[u8], pm: &mut PackageManager) -> Result<(), AllocError> {
+        if !pm.options.git_tag_version {
             return Ok(());
         }
 
@@ -344,11 +341,11 @@ impl PmVersionCommand {
             &[b".git"],
         );
         if !matches!(bun_sys::directory_exists_at(Fd::cwd(), git_dir_path), Ok(true)) {
-            pm_shims::set_git_tag_version(pm, false);
+            pm.options.git_tag_version = false;
             return Ok(());
         }
 
-        if !pm_shims::force(pm) && !Self::is_git_clean(cwd)? {
+        if !pm.options.force && !Self::is_git_clean(cwd)? {
             Output::err_generic("Git working directory not clean.", ());
             Global::exit(1);
         }
@@ -431,7 +428,7 @@ impl PmVersionCommand {
             ));
         }
 
-        let preid = pm_shims::preid(pm);
+        let preid = pm.options.preid;
 
         let patch_version = Self::calculate_new_version(
             current_version,

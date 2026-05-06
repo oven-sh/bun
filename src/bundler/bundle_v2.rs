@@ -5346,19 +5346,11 @@ pub struct ImportTrackerIterator {
 
 // `PathTemplate` already in scope via `crate::options`.
 
-#[derive(Default)]
-pub struct CrossChunkImport {
-    pub chunk_index: IndexInt,
-    pub sorted_import_items: BabyList<CrossChunkImportItem>,
-}
-
-#[derive(Default, Clone)]
-pub struct CrossChunkImportItem {
-    pub export_alias: Box<[u8]>,
-    pub r#ref: Ref,
-}
-
-pub type CrossChunkImportItemList = BabyList<CrossChunkImportItem>;
+// PORT NOTE: `CrossChunkImport`/`CrossChunkImportItem` are TYPE_ONLY-hoisted in
+// `ungate_support` so `Chunk::ImportsFromOtherChunks` can name them without a
+// cycle. Re-export the canonical definitions here (instead of duplicating) so
+// `sorted_cross_chunk_imports` and `Chunk` agree on the element type.
+pub use crate::ungate_support::{CrossChunkImport, CrossChunkImportItem, CrossChunkImportItemList};
 
 impl CrossChunkImportItem {
     pub fn less_than(_: (), a: &CrossChunkImportItem, b: &CrossChunkImportItem) -> bool {

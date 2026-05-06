@@ -67,7 +67,9 @@ pub fn compute_chunks(
     let parse_graph = unsafe { &*this.parse_graph };
     // SAFETY: `bump` is a backref into `BundleV2.graph.allocator`, valid for the link step.
     // Hoisted as a raw deref so the loop can hold disjoint &mut borrows into `this.graph`.
-    let allocator: &Arena = unsafe { &*this.graph.bump };
+    // PORT NOTE: `BundlerStyleSheet::empty()` no longer takes an allocator in Rust; kept for
+    // Phase B when arena threading lands.
+    let _allocator: &Arena = unsafe { &*this.graph.bump };
 
     let entry_source_indices = this.graph.entry_points.items_source_index();
     let css_asts = this.graph.ast.items_css();
@@ -164,7 +166,7 @@ pub fn compute_chunks(
                     content: chunk::Content::Css(chunk::CssChunk {
                         imports_in_chunk_in_order: order,
                         asts: (0..order_len)
-                            .map(|_| bun_css::BundlerStyleSheet::empty(allocator))
+                            .map(|_| bun_css::BundlerStyleSheet::empty())
                             .collect::<Vec<_>>()
                             .into_boxed_slice(),
                     }),
@@ -250,7 +252,7 @@ pub fn compute_chunks(
                         content: chunk::Content::Css(chunk::CssChunk {
                             imports_in_chunk_in_order: order,
                             asts: (0..order_len)
-                                .map(|_| bun_css::BundlerStyleSheet::empty(allocator))
+                                .map(|_| bun_css::BundlerStyleSheet::empty())
                                 .collect::<Vec<_>>()
                                 .into_boxed_slice(),
                         }),

@@ -2095,10 +2095,15 @@ impl DevServer<'_> {
         req: SavedRequestUnion,
         resp: AnyResponse,
     ) -> JsResult<()> {
-        let route_bundle = self.route_bundle_ptr(route_bundle_index);
-        debug_assert!(matches!(route_bundle.data, route_bundle::Data::Framework(_)));
+        // PORT NOTE: erase the `&mut RouteBundle` to a raw pointer so subsequent
+        // `&self` accesses (vm/router/callback) don't trip borrowck — Zig freely
+        // aliased `dev` across this scope.
+        let route_bundle: *mut RouteBundle = self.route_bundle_ptr(route_bundle_index);
+        debug_assert!(matches!(unsafe { &(*route_bundle).data }, route_bundle::Data::Framework(_)));
 
-        let framework_bundle = match &mut route_bundle.data {
+        // SAFETY: `route_bundle` points into `self.route_bundles`, which is not
+        // resized or dropped for the duration of this fn.
+        let framework_bundle = match unsafe { &mut (*route_bundle).data } {
             route_bundle::Data::Framework(f) => f,
             _ => unreachable!(),
         };
@@ -2830,7 +2835,11 @@ impl DevServer<'_> {
         debug_assert!(route_bundle.server_state == route_bundle::State::Loaded);
 
         self.graph_safety_lock.lock();
-        let _lock = scopeguard::guard((), |_| self.graph_safety_lock.unlock());
+        // PORT NOTE: scopeguard closures capture `self` by ref, wedging borrowck for
+        // the rest of the fn. Erase to a raw pointer (Zig `defer` had no aliasing check).
+        let self_ptr: *mut Self = self;
+        // SAFETY: `self_ptr` is live for the entire fn body; the guard runs at scope exit.
+        let _lock = scopeguard::guard((), move |_| unsafe { (*self_ptr).graph_safety_lock.unlock() });
 
         // Prepare bitsets
         // PERF(port): was stack-fallback (65536)
@@ -2840,8 +2849,8 @@ impl DevServer<'_> {
         self.client_graph.reset();
         // `current_chunk_parts`/`current_chunk_len` are scratch buffers shared with
         // the HMR pipeline. We must leave them cleared on every exit path.
-        let _reset = scopeguard::guard((), |_| self.client_graph.reset());
-        // TODO(port): scopeguard borrow conflict
+        // SAFETY: see `self_ptr` SAFETY above.
+        let _reset = scopeguard::guard((), move |_| unsafe { (*self_ptr).client_graph.reset() });
         self.trace_all_route_imports(route_bundle, &mut gts, TraceImportGoal::FindClientModules)?;
 
         let mut react_fast_refresh_id: &[u8] = b"";
@@ -2874,7 +2883,8 @@ impl DevServer<'_> {
         map_log!("inc {:x}, 1 for generateClientBundle", script_id.get());
         match self.source_maps.put_or_increment_ref_count(script_id, 1)? {
             source_map_store::PutOrIncrementRefCount::Uninitialized(entry) => {
-                let _guard = scopeguard::guard((), |_| self.source_maps.unref(script_id));
+                // SAFETY: `self_ptr` is live for the entire fn body; guard runs at scope exit.
+                let _guard = scopeguard::guard((), move |_| unsafe { (*self_ptr).source_maps.unref(script_id) });
                 // TODO(port): errdefer — disarm on success
                 gts.clear_and_free();
                 // PERF(port): was ArenaAllocator

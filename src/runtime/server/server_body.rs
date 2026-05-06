@@ -2481,12 +2481,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let base_url: Box<[u8]> = strings::trim(config.base_url.href, b"/").into();
         // errdefer free(base_url) — Box drops on Err automatically
 
-        let dev_server: Option<Box<DevServer>> = if let Some(_bake_options) = &mut config.bake {
+        let dev_server: Option<Box<DevServer>> = if config.bake.is_some() {
             // TODO(port): bake::UserOptions field shapes (root: &ZStr, framework/bundler_options
             // by value) don't yet line up with dev_server::Options; defer until both stabilize.
-            todo!("blocked_on: bun_runtime::bake::dev_server::Options field-shape mismatch");
-            #[allow(unreachable_code)]
-            Some(dev_server_mod::init(todo!())?)
+            let _ = dev_server_mod::init; // keep import live
+            todo!("blocked_on: bun_runtime::bake::dev_server::Options field-shape mismatch")
         } else {
             None
         };

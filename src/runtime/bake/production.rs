@@ -609,13 +609,14 @@ pub fn build_with_vm(
                 framework_router::Style::NextjsPages => fr::Style::NextjsPages,
                 framework_router::Style::NextjsAppUi => fr::Style::NextjsAppUi,
                 framework_router::Style::NextjsAppRoutes => fr::Style::NextjsAppRoutes,
+                framework_router::Style::JavascriptDefined(_) => {
+                    todo!("blocked_on: framework_router::Style::JavascriptDefined conversion")
+                }
             },
             allow_layouts: fsr.allow_layouts,
             server_file: fr::OpaqueFileId::init(server_file.get()),
             client_file: client_file.map(|f| fr::OpaqueFileId::init(f.get())),
-            server_file_string: {
-                todo!("blocked_on: bun_jsc::Strong::empty");
-            },
+            server_file_string: bun_jsc::StrongOptional::empty(),
         });
     }
 

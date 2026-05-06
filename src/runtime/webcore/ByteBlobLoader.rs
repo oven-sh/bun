@@ -90,28 +90,33 @@ impl ByteBlobLoader {
     pub fn setup(&mut self, blob: &Blob, user_chunk_size: blob::SizeType) {
         // TODO(port): in-place init — `self` is a pre-allocated slot inside `Source`
         let store = blob.store.as_ref().unwrap().clone();
-        let mut blobe = blob.clone();
-        blobe.resolve_size();
+        // PORT NOTE: Zig did `var blobe = blob.*; blobe.resolveSize();` — `Blob` is not
+        // `Clone` in Rust, so use the non-mutating `resolved_size()` helper instead.
+        let (offset, size) = blob.resolved_size();
         let (content_type, content_type_allocated) = 'brk: {
             if blob.content_type_was_set {
+                // SAFETY: `Blob.content_type` is a `*const [u8]` pointing at either a
+                // `'static` literal or a heap allocation owned by `blob`; `blob` outlives
+                // this borrow and we immediately copy into an owned `Box<[u8]>`.
+                let ct = unsafe { &*blob.content_type };
                 if blob.content_type_allocated {
-                    break 'brk (Box::<[u8]>::from(&*blob.content_type), true);
+                    break 'brk (Box::<[u8]>::from(ct), true);
                 }
                 // TODO(port): Zig borrowed `blob.content_type` here without copying; we dupe.
-                break 'brk (Box::<[u8]>::from(&*blob.content_type), false);
+                break 'brk (Box::<[u8]>::from(ct), false);
             }
             (Box::default(), false)
         };
         *self = ByteBlobLoader {
-            offset: blobe.offset,
+            offset,
             store: Some(store),
             chunk_size: (if user_chunk_size > 0 {
-                user_chunk_size.min(blobe.size)
+                user_chunk_size.min(size)
             } else {
-                blobe.size
+                size
             })
             .min(1024 * 1024 * 2),
-            remain: blobe.size,
+            remain: size,
             done: false,
             pulled: false,
             content_type,

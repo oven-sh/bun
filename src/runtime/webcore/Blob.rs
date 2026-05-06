@@ -3821,6 +3821,42 @@ impl Blob {
             self.size = 0;
         }
     }
+
+    /// Non-mutating variant of [`resolve_size`]: returns the `(offset, size)` that
+    /// `resolve_size` would assign without touching `self`. Ported for callers
+    /// (e.g. `ByteBlobLoader::setup`) that in Zig copied the whole `Blob` value
+    /// (`var blobe = blob.*; blobe.resolveSize();`) — `Blob` is not `Clone` in Rust.
+    pub fn resolved_size(&self) -> (SizeType, SizeType) {
+        if let Some(store) = &self.store {
+            match &store.data {
+                store::Data::Bytes(_) => {
+                    let offset = self.offset;
+                    let store_size = store.size();
+                    if store_size != MAX_SIZE {
+                        return (store_size.min(offset), store_size - offset);
+                    }
+                    return (self.offset, self.size);
+                }
+                store::Data::File(file) => {
+                    if file.seekable.is_none() {
+                        resolve_file_stat(store);
+                    }
+                    if file.seekable.is_some() && file.max_size != MAX_SIZE {
+                        let store_size = file.max_size;
+                        let offset = self.offset;
+                        return (store_size.min(offset), store_size.saturating_sub(offset));
+                    }
+                    if file.seekable == Some(false) {
+                        return (self.offset, self.size);
+                    }
+                }
+                _ => {}
+            }
+            (self.offset, 0)
+        } else {
+            (self.offset, 0)
+        }
+    }
 }
 
 /// resolve file stat like size, last_modified

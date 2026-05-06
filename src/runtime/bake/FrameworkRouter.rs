@@ -336,12 +336,14 @@ impl EncodedPattern {
     pub fn init_from_parts(parts: &[Part], arena: &Arena) -> Result<EncodedPattern, AllocError> {
         let len = Self::pattern_serialized_length(parts);
         let slice = arena.alloc_slice_fill_default::<u8>(len);
-        let mut fbs = bun_io::FixedBufferStream::new(&mut slice[..]);
-        for part in parts {
-            part.write_as_serialized(&mut fbs)
-                .expect("unreachable: enough space");
+        {
+            let mut fbs = bun_io::FixedBufferStream::new(&mut slice[..]);
+            for part in parts {
+                part.write_as_serialized(&mut fbs)
+                    .expect("unreachable: enough space");
+            }
+            debug_assert!(fbs.pos == len);
         }
-        debug_assert!(fbs.pos() == len);
         Ok(EncodedPattern {
             data: &*slice as *const [u8],
         })

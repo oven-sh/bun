@@ -685,7 +685,7 @@ impl MultiPartUpload {
                 this.drain_enqueued_parts(0).map_err(Into::into)
             }
             // this is "unreachable" but we cover in case AWS returns 404
-            S3DownloadResult::NotFound => this
+            S3DownloadResult::NotFound(_) => this
                 .fail(S3Error {
                     code: b"UnknownError",
                     message: b"Failed to initiate multipart upload",

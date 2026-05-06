@@ -1683,7 +1683,7 @@ pub struct ExtractedInfo {
 fn file_copier_copy(
     destination_dir_: bun_sys::Dir,
     walker: &mut bun_sys::walker_skippable::Walker,
-    node_: &mut Progress::Node,
+    node_: &mut ProgressNode,
     progress_: &mut Progress,
     #[cfg(windows)] dst_base_len: usize,
     #[cfg(windows)] dst_buf: &mut bun_paths::WPathBuffer,
@@ -1754,7 +1754,7 @@ fn file_copier_copy(
             let outfile = match destination_dir_.create_file(entry.path, Default::default()) {
                 Ok(f) => bun_sys::Fd::from_std_file(f),
                 Err(_) => 'brk: {
-                    if let Some(entry_dirname) = bun_paths::Dirname::dirname(entry.path) {
+                    if let Some(entry_dirname) = bun_resolver::Dirname::dirname(entry.path) {
                         let _ = bun_sys::MakePath::make_path(destination_dir_, entry_dirname);
                     }
                     match destination_dir_.create_file(entry.path, Default::default()) {
@@ -1806,7 +1806,7 @@ struct Analyzer<'a> {
     ctx: &'a Command::Context<'a>,
     example_tag: ExampleTag,
     entry_point: &'a [u8],
-    node: &'a mut Progress::Node,
+    node: &'a mut ProgressNode,
     progress: &'a mut Progress,
 }
 
@@ -1826,7 +1826,7 @@ fn run_on_entry_point(
     example_tag: ExampleTag,
     entry_point: &[u8],
     progress: &mut Progress,
-    node: &mut Progress::Node,
+    node: &mut ProgressNode,
 ) -> Result<(), bun_core::Error> {
     let mut analyzer = Analyzer {
         ctx,
@@ -2039,7 +2039,7 @@ impl Example {
         env_loader: &mut DotEnv::Loader,
         name: &[u8],
         refresher: &mut Progress,
-        progress: &mut Progress::Node,
+        progress: &mut ProgressNode,
     ) -> Result<MutableString, bun_core::Error> {
         let owner_i = bun_str::strings::index_of_char(name, b'/').unwrap();
         let owner = &name[0..owner_i];
@@ -2184,7 +2184,7 @@ impl Example {
         env_loader: &mut DotEnv::Loader,
         name: &[u8],
         refresher: &mut Progress,
-        progress: &mut Progress::Node,
+        progress: &mut ProgressNode,
     ) -> Result<MutableString, bun_core::Error> {
         progress.name = b"Fetching package.json";
         refresher.refresh();

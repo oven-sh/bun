@@ -1153,15 +1153,10 @@ impl UpgradeCommand {
                 let completions_argv: [&[u8]; 2] = [target_filename.as_bytes(), b"completions"];
 
                 env_loader.map.put(b"IS_BUN_AUTO_UPDATE", b"true");
-                let std_map = env_loader.map.std_env_map()?;
-                // std_map drops at end of scope
-                let _ = bun_core::spawn_sync(&bun_core::SpawnOptions {
-                    argv: &completions_argv,
-                    cwd: target_dirname.as_bytes(),
-                    max_output_bytes: 4096,
-                    env_map: Some(std_map.get()),
-                    ..Default::default()
-                });
+                // TODO(port): Zig used std.process.Child.run with env_map + max_output_bytes=4096;
+                // PORTING.md bans std::process. The buffered/cwd-aware spawn_sync helper is not
+                // yet available at this layer. blocked_on: bun_core::spawn_sync
+                let _ = (&completions_argv, target_dirname.as_bytes());
             }
 
             Output::print_start_end(ctx.start_time, bun_core::time::nano_timestamp());

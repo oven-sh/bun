@@ -15,8 +15,8 @@ pub struct DoneCallback {
 
 impl DoneCallback {
     pub fn finalize(this: *mut DoneCallback) {
-        // TODO(port): group_log begin(@src())/end() as RAII scope guard
-        let _g = group_log.enter();
+        group_begin!();
+        let _g = scopeguard::guard((), |_| debug::group::end());
 
         // SAFETY: `this` was `Box::into_raw`'d in `create_unbound`; finalize is called
         // exactly once by JSC lazy sweep. Dropping the Box drops `r#ref`

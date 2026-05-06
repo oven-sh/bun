@@ -9,8 +9,6 @@
 
 use core::ffi::{c_int, c_void};
 
-use enum_map::EnumMap;
-
 use bun_uws::{self as uws, us_bun_verify_error_t, us_socket_t, ConnectingSocket, SocketKind};
 use bun_uws_sys::socket_group::VTable;
 use bun_uws_sys::vtable;

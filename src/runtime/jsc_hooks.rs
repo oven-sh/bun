@@ -3362,27 +3362,14 @@ unsafe fn resolve_hook(
     {
         // SAFETY: `vm` is the live per-thread VM.
         if let Some(plugin_runner) = unsafe { (*vm).plugin_runner.as_mut() } {
-            if PluginRunner::could_be_plugin(specifier_utf8.slice()) {
-                let namespace = PluginRunner::extract_namespace(specifier_utf8.slice());
-                let after_namespace = if namespace.is_empty() {
-                    specifier_utf8.slice()
-                } else {
-                    &specifier_utf8.slice()[namespace.len() + 1..]
-                };
-                match plugin_runner.on_resolve_jsc(
-                    bun_string::String::init(namespace),
-                    bun_string::String::borrow_utf8(after_namespace),
-                    source,
-                    bun_options_types::Target::Bun,
-                ) {
-                    Ok(Some(resolved_path)) => {
-                        unsafe { *res = resolved_path };
-                        return true;
-                    }
-                    Ok(None) => {}
-                    Err(_) => return false,
-                }
-            }
+            // `vm.plugin_runner` is `Option<()>` (TODO(b2-cycle) placeholder in
+            // VirtualMachine.rs) and `bun_bundler_jsc::PluginRunner` is not a
+            // `bun_runtime` dep, so `extract_namespace`/`on_resolve_jsc` are
+            // unreachable here. The branch is dead until the field widens.
+            let _ = plugin_runner;
+            let _ = &specifier_utf8;
+            let _ = &source;
+            todo!("blocked_on: bun_bundler_jsc::PluginRunner::on_resolve_jsc (vm.plugin_runner is Option<()>)");
         }
     }
 

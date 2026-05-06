@@ -996,7 +996,9 @@ impl StringArray {
 // ─── FFI host functions ─────────────────────────────────────────────────────
 
 impl FFI {
-    #[bun_jsc::host_fn]
+    // TODO(port): `#[bun_jsc::host_fn]` — the `Free` shim emits a bare
+    // `bun_ffi_cc(__g, __f)` call, which doesn't resolve inside `impl FFI`.
+    // The C-ABI shim (`Bun__FFI__cc`) is supplied by the `.classes.ts` codegen.
     pub fn bun_ffi_cc(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         #[cfg(not(feature = "tinycc"))]
         {

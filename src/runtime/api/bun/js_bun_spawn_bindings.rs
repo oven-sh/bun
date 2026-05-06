@@ -777,7 +777,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         && !jsc_vm.auto_killer.enabled
         && !jsc_vm.jsc_vm.has_execution_time_limit()
         && !jsc_vm.is_inspector_enabled()
-        && !bun_core::feature_flag::BUN_FEATURE_FLAG_DISABLE_SPAWNSYNC_FAST_PATH.get();
+        && !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_SPAWNSYNC_FAST_PATH.get();
 
     // For spawnSync, use an isolated event loop to prevent JavaScript timers from firing
     // and to avoid interfering with the main event loop

@@ -1089,8 +1089,8 @@ fn on_js_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
     if route_id.len() < min_len {
         return not_found(resp);
     }
-    let hex = &route_id[route_id.len() - min_len..][..core::mem::size_of::<u64>() * 2];
-    if hex.len() != core::mem::size_of::<u64>() * 2 {
+    let hex = &route_id[route_id.len() - min_len..][..::core::mem::size_of::<u64>() * 2];
+    if hex.len() != ::core::mem::size_of::<u64>() * 2 {
         return not_found(resp);
     }
     let Some(id) = parse_hex_to_int::<u64>(hex) else {
@@ -1099,7 +1099,7 @@ fn on_js_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
 
     if is_map {
         // SAFETY: SourceId is #[repr(transparent)] over u64 (same size as id)
-        let source_id: source_map_store::SourceId = unsafe { core::mem::transmute(id) };
+        let source_id: source_map_store::SourceId = unsafe { ::core::mem::transmute(id) };
         let Some(entry) = dev.source_maps.entries.get_mut(&source_map_store::Key::init(id)) else {
             return not_found(resp);
         };
@@ -1143,15 +1143,15 @@ fn on_js_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
 
 fn on_asset_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
     let param = req.parameter(0);
-    if param.len() < core::mem::size_of::<u64>() * 2 {
+    if param.len() < ::core::mem::size_of::<u64>() * 2 {
         return not_found(resp);
     }
-    let hex = &param[..core::mem::size_of::<u64>() * 2];
-    let mut out = [0u8; core::mem::size_of::<u64>()];
+    let hex = &param[..::core::mem::size_of::<u64>() * 2];
+    let mut out = [0u8; ::core::mem::size_of::<u64>()];
     let Ok(decoded) = bun_core::fmt::hex_to_bytes(&mut out, hex) else {
         return not_found(resp);
     };
-    debug_assert!(decoded.len() == core::mem::size_of::<u64>());
+    debug_assert!(decoded.len() == ::core::mem::size_of::<u64>());
     let hash: u64 = u64::from_ne_bytes(out);
     debug_log!("onAssetRequest {} {}", hash, bstr::BStr::new(param));
     let Some(asset) = dev.assets.get(hash) else {
@@ -1165,9 +1165,9 @@ pub fn parse_hex_to_int<T>(slice: &[u8]) -> Option<T>
 where
     T: bytemuck::Pod, // TODO(port): @bitCast on [@sizeOf(T)]u8
 {
-    let mut out = [0u8; core::mem::size_of::<T>()];
+    let mut out = [0u8; ::core::mem::size_of::<T>()];
     let decoded = bun_core::fmt::hex_to_bytes(&mut out, slice).ok()?;
-    debug_assert!(decoded.len() == core::mem::size_of::<T>());
+    debug_assert!(decoded.len() == ::core::mem::size_of::<T>());
     // SAFETY: out has size_of::<T>() bytes fully initialized by hex_to_bytes; T: Pod
     Some(unsafe { core::ptr::read(out.as_ptr() as *const T) })
 }
@@ -1241,7 +1241,7 @@ impl<'a> RequestEnsureRouteBundledCtx<'a> {
         // PORT NOTE: reshaped for borrowck â captured args before re-borrowing dev
         let route_bundle_index = self.route_bundle_index;
         let kind = self.kind;
-        let req = core::mem::replace(&mut self.req, ReqOrSaved::Aborted); // TODO(port): ReqOrSaved moved into deferRequest
+        let req = ::core::mem::replace(&mut self.req, ReqOrSaved::Aborted); // TODO(port): ReqOrSaved moved into deferRequest
         let resp = self.resp;
         let requests_array: *mut deferred_request::List = match bundle_field {
             BundleQueueType::CurrentBundle => &mut self.dev.current_bundle.as_mut().unwrap().requests,
@@ -2424,13 +2424,13 @@ impl DevServer<'_> {
 
         if !self.incremental_result.failures_added.is_empty() {
             let mut total_len: usize =
-                core::mem::size_of::<MessageId>() + core::mem::size_of::<u32>();
+                ::core::mem::size_of::<MessageId>() + ::core::mem::size_of::<u32>();
 
             for fail in &self.incremental_result.failures_added {
                 total_len += fail.data.len();
             }
 
-            total_len += self.incremental_result.failures_removed.len() * core::mem::size_of::<u32>();
+            total_len += self.incremental_result.failures_removed.len() * ::core::mem::size_of::<u32>();
 
             let mut gts = self.init_graph_trace_state(0)?;
 
@@ -2447,7 +2447,7 @@ impl DevServer<'_> {
             for removed in &self.incremental_result.failures_removed {
                 payload.extend_from_slice(
                     // SAFETY: encode() returns a #[repr(transparent)] u32 wrapper (@bitCast in Zig)
-                    &unsafe { core::mem::transmute::<_, u32>(removed.get_owner().encode()) }.to_le_bytes(),
+                    &unsafe { ::core::mem::transmute::<_, u32>(removed.get_owner().encode()) }.to_le_bytes(),
                 );
                 removed.deinit(self);
             }
@@ -2491,9 +2491,9 @@ impl DevServer<'_> {
             self.publish(HmrTopic::Errors, &payload, Opcode::Binary);
         } else if !self.incremental_result.failures_removed.is_empty() {
             let mut payload: Vec<u8> = Vec::with_capacity(
-                core::mem::size_of::<MessageId>()
-                    + core::mem::size_of::<u32>()
-                    + self.incremental_result.failures_removed.len() * core::mem::size_of::<u32>(),
+                ::core::mem::size_of::<MessageId>()
+                    + ::core::mem::size_of::<u32>()
+                    + self.incremental_result.failures_removed.len() * ::core::mem::size_of::<u32>(),
             );
             payload.push(MessageId::Errors.char());
 
@@ -2506,7 +2506,7 @@ impl DevServer<'_> {
             for removed in &self.incremental_result.failures_removed {
                 payload.extend_from_slice(
                     // SAFETY: encode() returns a #[repr(transparent)] u32 wrapper (@bitCast in Zig)
-                    &unsafe { core::mem::transmute::<_, u32>(removed.get_owner().encode()) }.to_le_bytes(),
+                    &unsafe { ::core::mem::transmute::<_, u32>(removed.get_owner().encode()) }.to_le_bytes(),
                 );
                 removed.deinit(self);
             }
@@ -2616,7 +2616,7 @@ impl DevServer<'_> {
         let global = unsafe { &*(*self.vm).global };
         let arr = jsc::JSArray::create_empty(global, names.len())?;
         for (i, item) in names.iter().enumerate() {
-            let mut buf = [0u8; ASSET_PREFIX.len() + core::mem::size_of::<u64>() * 2 + "/.css".len()];
+            let mut buf = [0u8; ASSET_PREFIX.len() + ::core::mem::size_of::<u64>() * 2 + "/.css".len()];
             let path = {
                 let mut cursor = &mut buf[..];
                 write!(
@@ -2741,12 +2741,12 @@ impl<'a> HotUpdateContext<'a> {
         let subslice = &mut self.resolved_index_cache[start..][..len];
 
         const _: () = assert!(
-            core::mem::align_of::<incremental_graph::FileIndexOptional<{ bake::Side::Client }>>()
-                == core::mem::align_of::<u32>()
+            ::core::mem::align_of::<incremental_graph::FileIndexOptional<{ bake::Side::Client }>>()
+                == ::core::mem::align_of::<u32>()
         );
         const _: () = assert!(
-            core::mem::size_of::<incremental_graph::FileIndexOptional<{ bake::Side::Client }>>()
-                == core::mem::size_of::<u32>()
+            ::core::mem::size_of::<incremental_graph::FileIndexOptional<{ bake::Side::Client }>>()
+                == ::core::mem::size_of::<u32>()
         );
         let elem: &mut u32 = &mut subslice[i.get() as usize];
         // SAFETY: FileIndexOptional is repr(transparent) over u32; pointer derived
@@ -3132,7 +3132,7 @@ pub fn finalize_bundle(
             // This memory will be owned by the `DevServerSourceProvider` in C++
             #[cfg(feature = "allocation_scope")]
             dev.allocation_scope.leak_slice(&json);
-            let json = core::mem::ManuallyDrop::new(json);
+            let json = ::core::mem::ManuallyDrop::new(json);
 
             match c::bake_load_server_hmr_patch_with_source_map(
                 global,

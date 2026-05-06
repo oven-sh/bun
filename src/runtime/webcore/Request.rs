@@ -709,6 +709,12 @@ impl Request {
             }
         }
 
+        // PORT NOTE: upstream `bun_http_types::MimeType::{OTHER,TEXT}` are `const` items
+        // (not `static`), so `&CONST.value` borrows a temporary `Cow` and cannot be
+        // returned. Mirror their `init_comptime` byte literals here as `'static` slices.
+        const MIME_OTHER_VALUE: &[u8] = b"application/octet-stream";
+        const MIME_TEXT_VALUE: &[u8] = b"text/plain;charset=utf-8";
+
         match &*self.body {
             BodyValue::Blob(blob) => {
                 // SAFETY: Blob.content_type is a valid (possibly empty) raw slice ptr.
@@ -717,16 +723,16 @@ impl Request {
                     return ct;
                 }
 
-                &bun_http_types::MimeType::OTHER.value
+                MIME_OTHER_VALUE
             }
             BodyValue::InternalBlob(ib) => ib.content_type(),
-            BodyValue::WTFStringImpl(_) => &bun_http_types::MimeType::TEXT.value,
+            BodyValue::WTFStringImpl(_) => MIME_TEXT_VALUE,
             // BodyValue::InlineBlob(ib) => ib.content_type(),
             BodyValue::Null
             | BodyValue::Error(_)
             | BodyValue::Used
             | BodyValue::Locked(_)
-            | BodyValue::Empty => &bun_http_types::MimeType::OTHER.value,
+            | BodyValue::Empty => MIME_OTHER_VALUE,
         }
     }
 

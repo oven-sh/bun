@@ -3268,7 +3268,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     let mut item = ex.items.slice()[i];
                     if matches!(item.data, js_ast::ExprData::ESpread(_)) {
                         is_spread = true;
-                        item = item.data.e_spread().value;
+                        item = item.data.e_spread().unwrap().value;
                     }
                     let res = self.convert_expr_to_binding_and_initializer(&mut item, invalid_loc, is_spread);
 

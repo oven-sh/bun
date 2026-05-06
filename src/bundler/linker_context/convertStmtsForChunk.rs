@@ -5,9 +5,13 @@ use bun_js_parser::ast::{self as js_ast, Binding, Expr, ExprNodeList, Stmt};
 use bun_js_parser::ast::{B, E, G, S};
 use bun_js_parser::ast::BundledAst as JSAst;
 use bun_logger::{self as logger, Loc};
+use bun_options_types::import_record::Flags as ImportRecordFlags;
 
-use bun_bundler::{Chunk, WrapKind};
-use bun_bundler::linker_context::{LinkerContext, StmtList, StmtListKind};
+use crate::chunk::Chunk;
+use crate::ungate_support::WrapKind;
+use crate::linker_context_mod::{LinkerContext, LinkerOptionsMode, StmtList, StmtListWhich};
+use crate::EntryPoint;
+use crate::options::Format;
 
 /// Code we ultimately include in the bundle is potentially wrapped
 ///
@@ -35,7 +39,7 @@ use bun_bundler::linker_context::{LinkerContext, StmtList, StmtListKind};
 /// namespace object (foo) because we cannot know what they are going to
 /// attempt to access statically
 pub fn convert_stmts_for_chunk(
-    c: &mut LinkerContext,
+    c: &mut LinkerContext<'_>,
     source_index: u32,
     stmts: &mut StmtList,
     part_stmts: &[js_ast::Stmt],
@@ -44,10 +48,10 @@ pub fn convert_stmts_for_chunk(
     wrap: WrapKind,
     ast: &JSAst,
 ) -> Result<(), bun_core::Error> {
-    // TODO(port): narrow error set
+    let _ = bump;
     let should_extract_esm_stmts_for_wrap = wrap != WrapKind::None;
-    let should_strip_exports = c.options.mode != bun_bundler::options::Mode::Passthrough
-        || c.graph.files.items().entry_point_kind[source_index as usize] != bun_bundler::EntryPointKind::None;
+    let should_strip_exports = c.options.mode != LinkerOptionsMode::Passthrough
+        || c.graph.files.items().entry_point_kind[source_index as usize] != EntryPoint::Kind::None;
 
     let flags = c.graph.meta.items().flags;
     let output_format = c.options.output_format;
@@ -60,7 +64,7 @@ pub fn convert_stmts_for_chunk(
     // importing itself should not see the "__esModule" marker but a CommonJS module
     // importing us should see the "__esModule" marker.
     let mut module_exports_for_export: Option<Expr> = None;
-    if output_format == bun_bundler::options::OutputFormat::Cjs && chunk.is_entry_point() {
+    if output_format == Format::Cjs && chunk.is_entry_point() {
         module_exports_for_export = Some(Expr::allocate(
             bump,
             E::Dot {
@@ -68,17 +72,19 @@ pub fn convert_stmts_for_chunk(
                     bump,
                     E::Identifier {
                         ref_: c.unbound_module_ref,
+                        ..Default::default()
                     },
                     Loc::EMPTY,
                 ),
                 name: b"exports",
                 name_loc: Loc::EMPTY,
+                ..Default::default()
             },
             Loc::EMPTY,
         ));
     }
 
-    for stmt_ in part_stmts {
+    'stmt_loop: for stmt_ in part_stmts {
         let mut stmt = *stmt_;
         'process_stmt: {
             match stmt.data {
@@ -93,13 +99,13 @@ pub fn convert_stmts_for_chunk(
                         bump,
                         ast,
                     )? {
-                        continue;
+                        continue 'stmt_loop;
                     }
 
                     // Make sure these don't end up in the wrapper closure
                     if should_extract_esm_stmts_for_wrap {
-                        stmts.append(StmtListKind::OutsideWrapperPrefix, stmt)?;
-                        continue;
+                        stmts.append(StmtListWhich::OutsideWrapperPrefix, stmt)?;
+                        continue 'stmt_loop;
                     }
                 }
                 js_ast::StmtData::SExportStar(s) => {
@@ -113,7 +119,7 @@ pub fn convert_stmts_for_chunk(
                             bump,
                             ast,
                         )? {
-                            continue;
+                            continue 'stmt_loop;
                         }
 
                         if should_strip_exports {
@@ -131,19 +137,19 @@ pub fn convert_stmts_for_chunk(
 
                         // Make sure these don't end up in the wrapper closure
                         if should_extract_esm_stmts_for_wrap {
-                            stmts.append(StmtListKind::OutsideWrapperPrefix, stmt)?;
-                            continue;
+                            stmts.append(StmtListWhich::OutsideWrapperPrefix, stmt)?;
+                            continue 'stmt_loop;
                         }
 
                         break 'process_stmt;
                     }
 
                     // "export * from 'path'"
-                    let record = ast.import_records.at(s.import_record_index);
+                    let record = ast.import_records.at(s.import_record_index as usize);
 
                     // Barrel optimization: deferred export * records should be dropped
-                    if record.flags.is_unused {
-                        continue;
+                    if record.flags.contains(ImportRecordFlags::IS_UNUSED) {
+                        continue 'stmt_loop;
                     }
 
                     if !should_strip_exports {
@@ -152,7 +158,7 @@ pub fn convert_stmts_for_chunk(
 
                     // Is this export star evaluated at run time?
                     if !record.source_index.is_valid() && c.options.output_format.keep_es6_import_export_syntax() {
-                        if record.flags.calls_runtime_re_export_fn {
+                        if record.flags.contains(ImportRecordFlags::CALLS_RUNTIME_RE_EXPORT_FN) {
                             // Turn this statement into "import * as ns from 'path'"
                             stmt = Stmt::alloc(
                                 S::Import {
@@ -167,24 +173,26 @@ pub fn convert_stmts_for_chunk(
                             // Prefix this module with "__reExport(exports, ns, module.exports)"
                             let export_star_ref = c.runtime_function(b"__reExport");
                             let args_len = 2 + usize::from(module_exports_for_export.is_some());
-                            // PERF(port): was arena alloc of [Expr; N] — using bump slice
-                            let args = bump.alloc_slice_fill_default::<Expr>(args_len);
-                            args[0] = Expr::init(
+                            // PERF(port): was arena alloc of [Expr; N] — using Vec→Box
+                            let mut args: Vec<Expr> = Vec::with_capacity(args_len);
+                            args.push(Expr::init(
                                 E::Identifier {
                                     ref_: ast.exports_ref,
+                                    ..Default::default()
                                 },
                                 stmt.loc,
-                            );
-                            args[1] = Expr::init(
+                            ));
+                            args.push(Expr::init(
                                 E::Identifier {
                                     ref_: s.namespace_ref,
+                                    ..Default::default()
                                 },
                                 stmt.loc,
-                            );
+                            ));
 
                             if let Some(mod_) = module_exports_for_export {
-                                // TODO(port): Zig writes args[3] which is out-of-bounds (len is 3); preserved verbatim — verify intent in Phase B (likely should be args[2])
-                                args[3] = mod_;
+                                // TODO(port): Zig writes args[3] which is out-of-bounds (len is 3); preserved as args[2] — verify intent in Phase B
+                                args.push(mod_);
                             }
 
                             stmts.inside_wrapper_prefix.append_non_dependency(
@@ -197,10 +205,13 @@ pub fn convert_stmts_for_chunk(
                                                     bump,
                                                     E::Identifier {
                                                         ref_: export_star_ref,
+                                                        ..Default::default()
                                                     },
                                                     stmt.loc,
                                                 ),
-                                                args: BabyList::<Expr>::from_owned_slice(args),
+                                                args: BabyList::<Expr>::from_owned_slice(
+                                                    args.into_boxed_slice(),
+                                                ),
                                                 ..Default::default()
                                             },
                                             stmt.loc,
@@ -213,8 +224,8 @@ pub fn convert_stmts_for_chunk(
 
                             // Make sure these don't end up in the wrapper closure
                             if should_extract_esm_stmts_for_wrap {
-                                stmts.append(StmtListKind::OutsideWrapperPrefix, stmt)?;
-                                continue;
+                                stmts.append(StmtListWhich::OutsideWrapperPrefix, stmt)?;
+                                continue 'stmt_loop;
                             }
                         }
                     } else {
@@ -230,6 +241,7 @@ pub fn convert_stmts_for_chunk(
                                                     target: Expr::init(
                                                         E::Identifier {
                                                             ref_: wrapper_ref,
+                                                            ..Default::default()
                                                         },
                                                         stmt.loc,
                                                     ),
@@ -245,7 +257,7 @@ pub fn convert_stmts_for_chunk(
                             }
                         }
 
-                        if record.flags.calls_runtime_re_export_fn {
+                        if record.flags.contains(ImportRecordFlags::CALLS_RUNTIME_RE_EXPORT_FN) {
                             let target: Expr = 'brk: {
                                 if record.source_index.is_valid()
                                     && c.graph.ast.items().exports_kind[record.source_index.get() as usize]
@@ -261,6 +273,7 @@ pub fn convert_stmts_for_chunk(
                                 break 'brk Expr::init(
                                     E::RequireString {
                                         import_record_index: s.import_record_index,
+                                        ..Default::default()
                                     },
                                     stmt.loc,
                                 );
@@ -269,18 +282,19 @@ pub fn convert_stmts_for_chunk(
                             // Prefix this module with "__reExport(exports, require(path), module.exports)"
                             let export_star_ref = c.runtime_function(b"__reExport");
                             let args_len = 2 + usize::from(module_exports_for_export.is_some());
-                            // PERF(port): was arena alloc of [Expr; N] — using bump slice
-                            let args = bump.alloc_slice_fill_default::<Expr>(args_len);
-                            args[0] = Expr::init(
+                            // PERF(port): was arena alloc of [Expr; N] — using Vec→Box
+                            let mut args: Vec<Expr> = Vec::with_capacity(args_len);
+                            args.push(Expr::init(
                                 E::Identifier {
                                     ref_: ast.exports_ref,
+                                    ..Default::default()
                                 },
                                 stmt.loc,
-                            );
-                            args[1] = target;
+                            ));
+                            args.push(target);
 
                             if let Some(mod_) = module_exports_for_export {
-                                args[2] = mod_;
+                                args.push(mod_);
                             }
 
                             stmts.inside_wrapper_prefix.append_non_dependency(
@@ -291,10 +305,13 @@ pub fn convert_stmts_for_chunk(
                                                 target: Expr::init(
                                                     E::Identifier {
                                                         ref_: export_star_ref,
+                                                        ..Default::default()
                                                     },
                                                     stmt.loc,
                                                 ),
-                                                args: ExprNodeList::from_owned_slice(args),
+                                                args: ExprNodeList::from_owned_slice(
+                                                    args.into_boxed_slice(),
+                                                ),
                                                 ..Default::default()
                                             },
                                             stmt.loc,
@@ -307,7 +324,7 @@ pub fn convert_stmts_for_chunk(
                         }
 
                         // Remove the export star statement
-                        continue;
+                        continue 'stmt_loop;
                     }
                 }
 
@@ -321,17 +338,17 @@ pub fn convert_stmts_for_chunk(
                         bump,
                         ast,
                     )? {
-                        continue;
+                        continue 'stmt_loop;
                     }
 
                     if should_strip_exports {
                         // Turn this statement into "import {foo} from 'path'"
                         // TODO: is this allocation necessary?
+                        // SAFETY: arena-owned slice; valid for the duration of this AST.
+                        let src_items: &[js_ast::ClauseItem] = unsafe { &*s.items };
                         let items = bump
-                            .alloc_slice_fill_default::<js_ast::ClauseItem>(s.items.len());
-                        // catch unreachable → expect (alloc-only path)
-                        debug_assert_eq!(s.items.len(), items.len());
-                        for (src, dest) in s.items.iter().zip(items.iter_mut()) {
+                            .alloc_slice_fill_default::<js_ast::ClauseItem>(src_items.len());
+                        for (src, dest) in src_items.iter().zip(items.iter_mut()) {
                             *dest = js_ast::ClauseItem {
                                 alias: src.original_name,
                                 alias_loc: src.alias_loc,
@@ -354,8 +371,8 @@ pub fn convert_stmts_for_chunk(
 
                     // Make sure these don't end up in the wrapper closure
                     if should_extract_esm_stmts_for_wrap {
-                        stmts.append(StmtListKind::OutsideWrapperPrefix, stmt)?;
-                        continue;
+                        stmts.append(StmtListWhich::OutsideWrapperPrefix, stmt)?;
+                        continue 'stmt_loop;
                     }
                 }
 
@@ -364,19 +381,19 @@ pub fn convert_stmts_for_chunk(
 
                     if should_strip_exports {
                         // Remove export statements entirely
-                        continue;
+                        continue 'stmt_loop;
                     }
 
                     // Make sure these don't end up in the wrapper closure
                     if should_extract_esm_stmts_for_wrap {
-                        stmts.append(StmtListKind::OutsideWrapperPrefix, stmt)?;
-                        continue;
+                        stmts.append(StmtListWhich::OutsideWrapperPrefix, stmt)?;
+                        continue 'stmt_loop;
                     }
                 }
 
                 js_ast::StmtData::SFunction(s) => {
                     // Strip the "export" keyword while bundling
-                    if should_strip_exports && s.func.flags.contains(G::FnFlags::IS_EXPORT) {
+                    if should_strip_exports && s.func.flags.contains(G::FnFlags::IsExport) {
                         // Be c areful to not modify the original statement
                         stmt = Stmt::alloc(
                             S::Function {
@@ -384,10 +401,7 @@ pub fn convert_stmts_for_chunk(
                             },
                             stmt.loc,
                         );
-                        // TODO(port): mutating freshly-allocated stmt payload via enum re-match
-                        if let js_ast::StmtData::SFunction(new_s) = &mut stmt.data {
-                            new_s.func.flags.remove(G::FnFlags::IS_EXPORT);
-                        }
+                        stmt.data.s_function_mut().unwrap().func.flags.remove(G::FnFlags::IsExport);
                     }
                 }
 
@@ -409,27 +423,27 @@ pub fn convert_stmts_for_chunk(
                     // Strip the "export" keyword while bundling
                     if should_strip_exports && s.is_export {
                         // Be careful to not modify the original statement
-                        stmt = Stmt::alloc(
-                            (*s).clone(),
-                            stmt.loc,
-                        );
-                        // TODO(port): mutating freshly-allocated stmt payload via enum re-match
-                        if let js_ast::StmtData::SLocal(new_s) = &mut stmt.data {
-                            new_s.is_export = false;
-                        }
+                        // SAFETY: shallow bitwise copy of arena-backed S::Local (matches Zig `s.*`).
+                        let copied: S::Local = unsafe { core::ptr::read(s.as_ptr()) };
+                        stmt = Stmt::alloc(copied, stmt.loc);
+                        stmt.data.s_local_mut().unwrap().is_export = false;
                     } else if FeatureFlags::UNWRAP_COMMONJS_TO_ESM && s.was_commonjs_export && wrap == WrapKind::Cjs {
-                        debug_assert!(s.decls.len() == 1);
-                        let decl = s.decls.ptr()[0];
+                        debug_assert!(s.decls.len == 1);
+                        let decl = *s.decls.at(0);
                         if let Some(decl_value) = decl.value {
+                            let ident_ref = match decl.binding.data {
+                                B::B::BIdentifier(id) => unsafe { (*id).r#ref },
+                                _ => unreachable!(),
+                            };
                             stmt = Stmt::alloc(
                                 S::SExpr {
                                     value: Expr::init(
                                         E::Binary {
-                                            op: js_ast::Op::BinAssign,
+                                            op: js_ast::OpCode::BinAssign,
                                             left: Expr::init(
                                                 E::CommonJSExportIdentifier {
-                                                    // TODO(port): decl.binding.data.b_identifier.ref — depends on Binding enum shape
-                                                    ref_: decl.binding.data.as_b_identifier().ref_,
+                                                    ref_: ident_ref,
+                                                    ..Default::default()
                                                 },
                                                 decl.binding.loc,
                                             ),
@@ -442,7 +456,7 @@ pub fn convert_stmts_for_chunk(
                                 stmt.loc,
                             );
                         } else {
-                            continue;
+                            continue 'stmt_loop;
                         }
                     }
                 }
@@ -458,13 +472,12 @@ pub fn convert_stmts_for_chunk(
                                         // "export default foo;" => "var default = foo;"
                                         stmt = Stmt::alloc(
                                             S::Local {
-                                                decls: G::Decl::List::from_slice(
-                                                    bump,
+                                                decls: G::DeclList::from_slice(
                                                     &[G::Decl {
                                                         binding: Binding::alloc(
                                                             bump,
                                                             B::Identifier {
-                                                                ref_: s.default_name.ref_.unwrap(),
+                                                                r#ref: s.default_name.ref_.unwrap(),
                                                             },
                                                             s2.value.loc,
                                                         ),
@@ -487,10 +500,7 @@ pub fn convert_stmts_for_chunk(
                                             },
                                             stmt.loc,
                                         );
-                                        // TODO(port): mutating freshly-allocated stmt payload via enum re-match
-                                        if let js_ast::StmtData::SFunction(new_s) = &mut stmt.data {
-                                            new_s.func.name = Some(s.default_name);
-                                        }
+                                        stmt.data.s_function_mut().unwrap().func.name = Some(s.default_name);
                                     }
 
                                     js_ast::StmtData::SClass(s2) => {
@@ -505,16 +515,14 @@ pub fn convert_stmts_for_chunk(
                                             },
                                             stmt.loc,
                                         );
-                                        // TODO(port): mutating freshly-allocated stmt payload via enum re-match
-                                        if let js_ast::StmtData::SClass(new_s) = &mut stmt.data {
-                                            new_s.class.class_name = Some(s.default_name);
-                                        }
+                                        stmt.data.s_class_mut().unwrap().class.class_name = Some(s.default_name);
                                     }
 
                                     _ => unreachable!(
                                         "Unexpected type in source file {}",
                                         bstr::BStr::new(
-                                            &c.parse_graph
+                                            // SAFETY: parse_graph is a backref into BundleV2.graph, valid here.
+                                            &unsafe { &*c.parse_graph }
                                                 .input_files
                                                 .get(c.graph.files.get(source_index as usize).input_file.get() as usize)
                                                 .source
@@ -527,13 +535,12 @@ pub fn convert_stmts_for_chunk(
                             js_ast::StmtOrExpr::Expr(e) => {
                                 stmt = Stmt::alloc(
                                     S::Local {
-                                        decls: G::Decl::List::from_slice(
-                                            bump,
+                                        decls: G::DeclList::from_slice(
                                             &[G::Decl {
                                                 binding: Binding::alloc(
                                                     bump,
                                                     B::Identifier {
-                                                        ref_: s.default_name.ref_.unwrap(),
+                                                        r#ref: s.default_name.ref_.unwrap(),
                                                     },
                                                     e.loc,
                                                 ),
@@ -553,20 +560,20 @@ pub fn convert_stmts_for_chunk(
             }
         }
 
-        stmts.append(StmtListKind::InsideWrapperSuffix, stmt)?;
+        stmts.append(StmtListWhich::InsideWrapperSuffix, stmt)?;
     }
 
     Ok(())
 }
 
-pub use bun_bundler::DeferredBatchTask;
-pub use bun_bundler::ThreadPool;
-pub use bun_bundler::ParseTask;
+pub use crate::DeferredBatchTask::DeferredBatchTask;
+pub use crate::ThreadPool;
+pub use crate::ParseTask;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/bundler/linker_context/convertStmtsForChunk.zig (558 lines)
 //   confidence: medium
-//   todos:      6
-//   notes:      AST node construction (Stmt::alloc/Expr::init) and StmtData enum shape are guesses; Zig has args[3] OOB write preserved verbatim; post-alloc payload mutation reshaped via re-match for borrowck.
+//   todos:      1
+//   notes:      Zig has args[3] OOB write in first __reExport branch; ported as push (args[2]). S::Local shallow-copied via ptr::read to mirror Zig `s.*`.
 // ──────────────────────────────────────────────────────────────────────────

@@ -913,8 +913,14 @@ impl MultiPartUpload {
 
                     // queue is not full, we can clear the buffer part now owns the data
                     // if its full we will retry later
-                    // SAFETY: ownership of buffered's allocation transferred to the part above
-                    self.buffered = StreamBuffer::default();
+                    // SAFETY: ownership of buffered's allocation transferred to the part above.
+                    // The Zig spec does `this.buffered = .{}` which overwrites WITHOUT running a
+                    // destructor, releasing the allocation to the UploadPart created via
+                    // enqueue_part(..., needs_clone=false). In Rust, assigning a fresh
+                    // StreamBuffer would Drop the old one and free the Vec<u8> backing storage,
+                    // leaving UploadPart.data dangling (UAF on perform(), double-free on
+                    // free_allocated_slice). Take + forget so the part remains sole owner.
+                    core::mem::forget(core::mem::take(&mut self.buffered));
                     return Ok(());
                 }
                 scoped_log!(

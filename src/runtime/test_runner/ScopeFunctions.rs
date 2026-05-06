@@ -11,6 +11,11 @@ use crate::test_runner::jest;
 // `group_log` wraps `test_runner::debug::group` (a begin/end/log tracer) as an RAII guard
 // so call sites read `let _g = group_log::begin();` and drop calls `end()`. The underlying
 // `group` module exposes `begin_msg`/`end`/`log` taking `fmt::Arguments`.
+//
+// Zig `groupLog.begin(@src())` (debug.zig) emits the call-site `file:line:col: fn_name` so
+// each scope is traceable in BUN_DEBUG output. `begin()` is `#[track_caller]` and forwards
+// `core::panic::Location::caller()` so each call site logs its own source location instead
+// of collapsing to a single static string.
 mod group_log {
     use crate::test_runner::debug::group;
     pub struct Guard;
@@ -21,8 +26,18 @@ mod group_log {
         }
     }
     #[inline]
+    #[track_caller]
     pub fn begin() -> Guard {
-        group::begin_msg(core::format_args!("ScopeFunctions"));
+        let loc = core::panic::Location::caller();
+        // Mirrors Zig `group.begin(@src())` → `"<file>:<line>:<col>: <fn_name>"` (ANSI-coloured
+        // in debug.zig). Rust's `Location` has no `fn_name`, so we emit `file:line:col` which
+        // still gives per-call-site identity in the group-log trace.
+        group::begin_msg(core::format_args!(
+            "\x1b[36m{}\x1b[37m:\x1b[93m{}\x1b[37m:\x1b[33m{}\x1b[m",
+            loc.file(),
+            loc.line(),
+            loc.column(),
+        ));
         Guard
     }
     #[inline]

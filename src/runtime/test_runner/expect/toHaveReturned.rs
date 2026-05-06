@@ -34,12 +34,9 @@ fn to_have_returned_times_fn(
     let this_value = callframe.this();
     let arguments = callframe.arguments();
     // Zig: `defer this.postMatch(globalThis);`
-    // SAFETY: `this` outlives this stack frame; the guard fires before return while we still hold
-    // the exclusive borrow. Raw-ptr capture avoids the borrowck conflict with later uses of `this`.
-    let this_ptr: *mut Expect = this;
-    let _post_match = scopeguard::guard((), move |_| unsafe {
-        (*this_ptr).post_match(global);
-    });
+    // PORT NOTE: reshaped for borrowck — the guard owns the &mut Expect and runs post_match on
+    // every exit path; access goes through DerefMut so the unique borrow is never aliased.
+    let mut this = scopeguard::guard(this, |t| t.post_match(global));
 
     let value: JSValue =
         this.get_value(global, this_value, mode.tag_name(), "<green>expected<r>")?;
@@ -144,5 +141,5 @@ impl Expect {
 //   source:     src/test_runner/expect/toHaveReturned.zig (90 lines)
 //   confidence: medium
 //   todos:      0
-//   notes:      comptime enum param lowered to runtime arg (adt_const_params unstable); raw-ptr scopeguard for `defer post_match`.
+//   notes:      comptime enum param lowered to runtime arg (adt_const_params unstable); scopeguard owns &mut Expect for `defer post_match`.
 // ──────────────────────────────────────────────────────────────────────────

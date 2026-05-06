@@ -3,7 +3,7 @@ use core::ffi::c_void;
 use core::mem::offset_of;
 use core::sync::atomic::{AtomicI32, Ordering};
 
-use bun_sys::{self as sys, Fd};
+use bun_sys::{self as sys, Fd, FdExt as _};
 use bun_io::{self, WriteResult, WriteStatus};
 
 use crate::webcore::jsc::{CallFrame, EventLoopHandle, JSGlobalObject, JSValue, JsResult, Strong, Task};
@@ -133,7 +133,7 @@ impl bun_io::pipe_writer::PosixStreamingWriterParent for FileSink {
         self.io_evtloop()
     }
     fn loop_(&self) -> *mut bun_uws_sys::Loop {
-        self.event_loop_handle.loop_()
+        self.event_loop_handle.r#loop()
     }
 }
 
@@ -203,11 +203,11 @@ pub extern "C" fn Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(
     _global: *mut JSGlobalObject,
     jsvalue: JSValue,
 ) {
-    let Some(ptr) = JSSink::from_js(jsvalue) else {
-        return;
-    };
-    // SAFETY: `JSSink::from_js` returns the `m_ctx` payload pointer for this wrapper.
-    let this: &mut FileSink = unsafe { &mut *(ptr as *mut FileSink) };
+    // TODO(b2-blocked): `JSSink::<FileSink>::from_js` lives in the gated
+    // `js_sink!` macro (Sink.rs); the generic `JSSink<T>` stub does not yet
+    // expose it.
+    let _ = jsvalue;
+    let this: &mut FileSink = todo!("blocked_on: bun_runtime::webcore::sink::JSSink::from_js");
 
     #[cfg(not(windows))]
     {
@@ -261,12 +261,14 @@ impl FileSink {
         self.done = true;
         let mut readable_stream = core::mem::take(&mut self.readable_stream);
         if readable_stream.has() {
-            if let Some(global) = self.event_loop_handle.global_object() {
+            if let Some(global) = self.js_global() {
                 if let Some(stream) = readable_stream.get(global).as_mut() {
                     if !status.is_ok() {
-                        let event_loop = global.bun_vm().event_loop();
-                        event_loop.enter();
-                        let _exit = scopeguard::guard((), |_| event_loop.exit());
+                        // SAFETY: `bun_vm()` is non-null when `global_object()` was.
+                        let event_loop = unsafe { (*global.bun_vm()).event_loop() };
+                        // SAFETY: `event_loop()` returns a live `*mut EventLoop`.
+                        unsafe { (*event_loop).enter() };
+                        let _exit = scopeguard::guard((), move |_| unsafe { (*event_loop).exit() });
                         stream.cancel(global);
                     } else {
                         stream.done(global);
@@ -280,7 +282,7 @@ impl FileSink {
         self.writer.close();
 
         self.pending.result = streams::Writable::Err(sys::Error::from_code(
-            sys::Errno::PIPE,
+            sys::Errno::EPIPE,
             sys::Tag::write,
         ));
         self.run_pending();
@@ -309,7 +311,7 @@ impl FileSink {
     }
 
     pub fn on_write(&mut self, amount: usize, status: WriteStatus) {
-        bun_core::scoped_log!(FileSink, "onWrite({}, {:?})", amount, status);
+        bun_core::scoped_log!(FileSink, "onWrite({}, {})", amount, status as u8);
 
         // `runPending()` below drains microtasks and may drop the JS wrapper's
         // ref, and `writer.end()`/`writer.close()` re-enter `onClose` which
@@ -326,10 +328,10 @@ impl FileSink {
         let has_pending_data = self.writer.has_pending_data();
         // Only keep the event loop ref'd while there's a pending write in progress.
         // If there's no pending write, no need to keep the event loop ref'd.
-        self.writer.update_ref(self.event_loop(), has_pending_data);
+        self.writer.update_ref(self.io_evtloop(), has_pending_data);
 
         if has_pending_data {
-            if let Some(vm) = self.event_loop_handle.bun_vm() {
+            if let Some(vm) = self.js_vm() {
                 if !vm.is_inside_deferred_task_queue {
                     AutoFlusher::register_deferred_microtask_with_type::<Self>(self, vm);
                 }
@@ -377,7 +379,7 @@ impl FileSink {
         bun_core::scoped_log!(FileSink, "onError({:?})", err);
         if self.pending.state == streams::PendingState::Pending {
             self.pending.result = streams::Writable::Err(err);
-            if let Some(vm) = self.event_loop().bun_vm() {
+            if let Some(vm) = self.js_vm() {
                 if vm.is_inside_deferred_task_queue {
                     self.run_pending_later();
                     #[cfg(windows)]
@@ -411,7 +413,7 @@ impl FileSink {
     pub fn on_close(&mut self) {
         bun_core::scoped_log!(FileSink, "onClose()");
         if self.readable_stream.has() {
-            if let Some(global) = self.event_loop_handle.global_object() {
+            if let Some(global) = self.js_global() {
                 if let Some(stream) = self.readable_stream.get(global) {
                     stream.done(global);
                 }
@@ -445,7 +447,7 @@ impl FileSink {
 
         let this = Box::into_raw(Box::new(FileSink {
             ref_count: Cell::new(1),
-            event_loop_handle: EventLoopHandle::init(evtloop),
+            event_loop_handle: evtloop,
             // SAFETY: `pipe` is a live `*mut uv::Pipe` provided by the caller.
             fd: unsafe { (*pipe).fd() },
             ..FileSink::default_fields()
@@ -467,7 +469,7 @@ impl FileSink {
         let evtloop: EventLoopHandle = event_loop_.into();
         let this = Box::into_raw(Box::new(FileSink {
             ref_count: Cell::new(1),
-            event_loop_handle: EventLoopHandle::init(evtloop),
+            event_loop_handle: evtloop,
             fd,
             ..FileSink::default_fields()
         }));
@@ -488,9 +490,18 @@ impl FileSink {
         // PORT NOTE: reshaped for borrowck — Zig passed `self` + a closure that
         // mutated `self.force_sync`. Split into a local capture and apply after.
         let mut force_sync_out = self.force_sync;
+        // CYCLEBREAK(TYPE_ONLY): `OpenForWritingInput` is impl'd for
+        // `bun_io::PathOrFileDescriptor`, not `webcore::PathOrFileDescriptor`;
+        // bridge by-value here.
+        let io_path = match &options.input_path {
+            PathOrFileDescriptor::Fd(fd) => bun_io::PathOrFileDescriptor::Fd(*fd),
+            PathOrFileDescriptor::Path(_slice) => {
+                todo!("blocked_on: bun_io::PathOrFileDescriptor::Path from ZigStringSlice")
+            }
+        };
         let result = bun_io::open_for_writing(
             Fd::cwd(),
-            &options.input_path,
+            io_path,
             options.flags(),
             options.mode,
             &mut self.pollable,
@@ -528,7 +539,7 @@ impl FileSink {
                         return sys::Result::Err(err);
                     }
                     sys::Result::Ok(()) => {
-                        self.writer.update_ref(self.event_loop(), false);
+                        self.writer.update_ref(self.io_evtloop(), false);
                     }
                 }
                 return sys::Result::Ok(());
@@ -543,17 +554,15 @@ impl FileSink {
             sys::Result::Ok(()) => {
                 // Only keep the event loop ref'd while there's a pending write in progress.
                 // If there's no pending write, no need to keep the event loop ref'd.
-                self.writer.update_ref(self.event_loop(), false);
+                self.writer.update_ref(self.io_evtloop(), false);
                 #[cfg(unix)]
                 {
-                    if self.nonblocking {
-                        self.writer.get_poll().unwrap().flags.insert(bun_aio::PollFlag::Nonblocking);
-                    }
-
-                    if self.is_socket {
-                        self.writer.get_poll().unwrap().flags.insert(bun_aio::PollFlag::Socket);
-                    } else if self.pollable {
-                        self.writer.get_poll().unwrap().flags.insert(bun_aio::PollFlag::Fifo);
+                    // `bun_io::FilePoll` is an opaque vtable handle and does not
+                    // yet expose `.flags` for direct mutation; the original Zig
+                    // set `.nonblocking`/`.socket`/`.fifo` here.
+                    if self.nonblocking || self.is_socket || self.pollable {
+                        let _ = self.writer.get_poll();
+                        todo!("blocked_on: bun_io::FilePoll::set_flag");
                     }
                 }
             }
@@ -565,11 +574,11 @@ impl FileSink {
     pub fn loop_(&self) -> *mut bun_uws_sys::Loop {
         #[cfg(windows)]
         {
-            self.event_loop_handle.loop_().uv_loop
+            self.event_loop_handle.r#loop().uv_loop
         }
         #[cfg(not(windows))]
         {
-            self.event_loop_handle.loop_()
+            self.event_loop_handle.r#loop()
         }
     }
 
@@ -586,18 +595,57 @@ impl FileSink {
         bun_io::EventLoopHandle(&self.event_loop_handle as *const _ as *mut c_void)
     }
 
+    /// `EventLoopHandle::global_object()` returns an erased `*mut ()`; recover
+    /// the typed `&JSGlobalObject` (None for the mini loop or null).
+    #[inline]
+    fn js_global(&self) -> Option<&JSGlobalObject> {
+        let p = self.event_loop_handle.global_object();
+        if p.is_null() { return None; }
+        // SAFETY: `global_object()` returns an erased `*mut JSGlobalObject` for
+        // the Js arm; non-null implies a live global owned by the VM.
+        Some(unsafe { &*(p as *const JSGlobalObject) })
+    }
+
+    /// `EventLoopHandle::bun_vm()` returns an erased `*mut ()`; recover the
+    /// typed `&mut VirtualMachine` (None for the mini loop or null).
+    #[inline]
+    fn js_vm(&self) -> Option<&mut bun_jsc::VirtualMachineRef> {
+        let p = self.event_loop_handle.bun_vm();
+        if p.is_null() { return None; }
+        // SAFETY: `bun_vm()` returns an erased `*mut VirtualMachine` for the
+        // Js arm; non-null implies the per-thread VM, never aliased here.
+        Some(unsafe { &mut *(p as *mut bun_jsc::VirtualMachineRef) })
+    }
+
     pub fn connect(&mut self, signal: streams::Signal) {
         self.signal = signal;
     }
 
     pub fn start(&mut self, stream_start: streams::Start) -> sys::Result<()> {
         match stream_start {
-            streams::Start::FileSink(ref file) => match self.setup(file) {
-                sys::Result::Err(err) => {
-                    return sys::Result::Err(err);
+            streams::Start::FileSink(ref file) => {
+                // PORT NOTE: `streams::FileSinkOptions` mirrors `file_sink::Options`
+                // but is a distinct draft type; bridge by-field until streams.rs
+                // aliases to this module's `Options`.
+                let opts = Options {
+                    chunk_size: file.chunk_size,
+                    input_path: match &file.input_path {
+                        crate::webcore::PathOrFileDescriptor::Fd(fd) => {
+                            PathOrFileDescriptor::Fd(*fd)
+                        }
+                        crate::webcore::PathOrFileDescriptor::Path(p) => {
+                            PathOrFileDescriptor::Path(p.clone())
+                        }
+                    },
+                    ..Options::default()
+                };
+                match self.setup(&opts) {
+                    sys::Result::Err(err) => {
+                        return sys::Result::Err(err);
+                    }
+                    sys::Result::Ok(()) => {}
                 }
-                sys::Result::Ok(()) => {}
-            },
+            }
             _ => {}
         }
 
@@ -612,10 +660,12 @@ impl FileSink {
             return;
         }
         self.run_pending_later.has = true;
-        let event_loop = self.event_loop();
-        if let EventLoopHandle::Js(js) = event_loop {
+        if let EventLoopHandle::Js { owner, vtable } = self.event_loop() {
             self.ref_();
-            js.enqueue_task(Task::init(&mut self.run_pending_later));
+            let _ = (owner, vtable);
+            // `EventLoopHandle::Js` erases the `*mut jsc::EventLoop`; the vtable
+            // does not yet expose `enqueue_task(Task)`.
+            todo!("blocked_on: bun_event_loop::JsEventLoopVTable::enqueue_task");
         }
     }
 
@@ -712,7 +762,7 @@ impl FileSink {
             ref_count: Cell::new(1),
             writer: IOWriter::default(),
             fd,
-            event_loop_handle: EventLoopHandle::init(event_loop_handle),
+            event_loop_handle: event_loop_handle.into(),
             ..FileSink::default_fields()
         }));
         LIVE_COUNT.fetch_add(1, Ordering::Relaxed);
@@ -811,8 +861,10 @@ impl FileSink {
         let self_ = unsafe { &mut *this };
         // PORT NOTE: pending/readable_stream/js_sink_ref are dropped by Box drop
         // below; explicit `.deinit()` calls from the Zig are subsumed.
-        if let Some(global) = self_.event_loop_handle.global_object() {
-            AutoFlusher::unregister_deferred_microtask_with_type::<Self>(self_, global.bun_vm());
+        if let Some(global) = self_.js_global() {
+            // SAFETY: `bun_vm()` is non-null when `js_global()` returned Some.
+            let vm = unsafe { &mut *global.bun_vm() };
+            AutoFlusher::unregister_deferred_microtask_with_type::<Self>(self_, vm);
         }
         // SAFETY: `this` was produced by `Box::into_raw` in the constructors.
         drop(unsafe { Box::from_raw(this) });
@@ -825,13 +877,12 @@ impl FileSink {
     pub fn to_js_with_destructor(
         &mut self,
         global_this: &JSGlobalObject,
-        destructor: Option<crate::webcore::sink::DestructorPtr>,
+        // PORT NOTE: `sink::DestructorPtr` is `TaggedPtrUnion<(Detached, Detached)>`
+        // which does not satisfy `bun_ptr::TypeList` yet (sibling Sink.rs); accept
+        // the encoded usize directly until that lands.
+        destructor: Option<usize>,
     ) -> JSValue {
-        JSSink::create_object(
-            global_this,
-            self,
-            destructor.map(|dest| dest.ptr() as usize).unwrap_or(0),
-        )
+        JSSink::create_object(global_this, self, destructor.unwrap_or(0))
     }
 
     pub fn end_from_js(&mut self, global_this: &JSGlobalObject) -> sys::Result<JSValue> {
@@ -867,7 +918,8 @@ impl FileSink {
 
                 let promise_result = self.pending.promise(global_this);
 
-                sys::Result::Ok(promise_result.to_js())
+                // SAFETY: `WritablePending::promise()` never returns null.
+                sys::Result::Ok(unsafe { (*promise_result).to_js() })
             }
             WriteResult::Wrote(written) => {
                 self.writer.end();
@@ -876,8 +928,12 @@ impl FileSink {
         }
     }
 
-    pub fn sink(&mut self) -> crate::webcore::sink::Sink {
-        crate::webcore::sink::Sink::init(self)
+    pub fn sink(&mut self) -> crate::webcore::sink::Sink<'_> {
+        // `Sink::init` is the gated `js_sink!` entry; the un-gated path is
+        // `init_with_type<T: SinkHandler>`, but `FileSink` does not yet impl
+        // `SinkHandler` (return-type mismatch on `connect`).
+        let _ = self;
+        todo!("blocked_on: bun_runtime::webcore::sink::SinkHandler for FileSink")
     }
 
     pub fn update_ref(&mut self, value: bool) {
@@ -943,7 +999,9 @@ impl FileSink {
         FileSink {
             ref_count: Cell::new(1),
             writer: IOWriter::default(),
-            event_loop_handle: EventLoopHandle::default(), // overwritten by caller
+            // PORT NOTE: `EventLoopHandle` has no `Default`; null Js variant is the
+            // closest sentinel — every constructor overwrites this field.
+            event_loop_handle: EventLoopHandle::init(core::ptr::null_mut()),
             written: 0,
             pending: streams::WritablePending {
                 result: streams::Writable::Done,

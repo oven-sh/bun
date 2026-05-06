@@ -27,7 +27,9 @@ Bun looks for the system config at:
 - `/etc/bunfig.toml` on POSIX systems (Linux, macOS)
 - `%ALLUSERSPROFILE%\bunfig.toml` on Windows (typically `C:\ProgramData\bunfig.toml`)
 
-The path can be overridden with the `BUN_SYSTEM_CONFIG` environment variable, which must be an absolute path. Setting `BUN_SYSTEM_CONFIG` with a non-existent or malformed file is treated as an error (fail loudly), so policy typos are caught immediately.
+Auto-discovery of these default paths only applies to package-manager commands (`bun install`, `bun add`, `bun remove`, `bunx`, etc.) — same scope as the `$HOME/.bunfig.toml` lookup above, and for the same reason: every other command path (`bun run`, `bun test`, `bun file.ts`, compiled standalone binaries) would otherwise pay a filesystem probe on every invocation.
+
+To apply a system config across all commands, set `BUN_SYSTEM_CONFIG` to an absolute path. The environment variable is honored on every command path, including compiled standalone binaries. Pointing `BUN_SYSTEM_CONFIG` at a non-existent or malformed file is treated as an error (fail loudly), so policy typos are caught immediately.
 
 Merge order is **system → home → project**; later overrides earlier, with the same shallow-merge semantics as the home/project merge.
 

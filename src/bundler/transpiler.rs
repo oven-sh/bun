@@ -2762,8 +2762,8 @@ impl<'a> Transpiler<'a> {
 #[allow(dead_code)]
 #[derive(Clone, Copy)]
 enum TransformOutstream {
-    Stdout(bun_sys::File),
-    Dir(bun_sys::Dir),
+    Stdout,
+    Dir(bun_sys::Fd),
 }
 
 

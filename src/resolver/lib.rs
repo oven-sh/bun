@@ -7906,7 +7906,7 @@ impl<'a> Resolver<'a> {
             Ok(None) => dec_ret!(None),
             Err(err) => {
                 #[cfg(debug_assertions)]
-                Output::pretty_errorln(format_args!("err: {} reading {}", bstr::BStr::new(err.name()), bstr::BStr::new(path)));
+                Output::pretty_errorln("{}", format_args!("err: {} reading {}", bstr::BStr::new(err.name()), bstr::BStr::new(path)));
                 dec_ret!(None);
             }
         };

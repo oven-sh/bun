@@ -480,22 +480,31 @@ impl Map {
         new
     }
 
-    // TODO(port): lifetime — returns a raw *mut Symbol because callers (merge/follow/
-    // assign_chunk_index/get_with_link) hold aliasing mutable refs into the NestedList and/or
-    // recurse through &mut self while holding the pointer. The Zig signature is
-    // `*const Map -> ?*Symbol` (interior mutability via BabyList.mut). Phase B should decide
-    // on Cell/UnsafeCell or a `&mut self` reshape.
+    // Returns a raw *mut Symbol because callers (merge/follow/assign_chunk_index/
+    // get_with_link) hold aliasing pointers into the NestedList and/or recurse through
+    // &mut self while holding the pointer. Mirrors Zig's `*const Map -> ?*Symbol`
+    // (interior mutability via BabyList's raw `[*]T` ptr field).
+    //
+    // SOUNDNESS: the *mut is derived directly from `BabyList.ptr: NonNull<T>` — a raw
+    // pointer field whose provenance is independent of the `&self` borrow used to read
+    // it. We deliberately do NOT go through `.slice()`/`.at()` (which produce `&[T]`/`&T`
+    // and would yield read-only provenance, making any later write UB). Callers may write
+    // through the result as long as the backing storage is not reallocated and they do
+    // not materialize overlapping `&mut`.
     pub fn get(&self, ref_: Ref) -> Option<*mut Symbol> {
         if Ref::is_source_index_null(ref_.source_index()) || ref_.is_source_contents_slice() {
             return None;
         }
-        // SAFETY: union-find (merge/follow) deliberately holds aliasing *mut into the
-        // NestedList; mirrors Zig's `*const Map -> ?*Symbol`. Backing storage is never
-        // reallocated during a merge/follow pass. Going through raw ptrs avoids a
-        // `&mut self` reshape that would preclude aliasing.
-        let inner = self.symbols_for_source.at(ref_.source_index() as usize);
-        let base = inner.slice().as_ptr() as *mut Symbol;
-        Some(unsafe { base.add(ref_.inner_index() as usize) })
+        let src = ref_.source_index() as usize;
+        let idx = ref_.inner_index() as usize;
+        debug_assert!(src < self.symbols_for_source.len as usize);
+        // SAFETY: src in-bounds (parser-produced ref); raw-ptr field read — no `&` to the
+        // element is created. idx in-bounds of the inner list.
+        unsafe {
+            let inner: *mut List = self.symbols_for_source.ptr.as_ptr().add(src);
+            debug_assert!(idx < (*inner).len as usize);
+            Some((*inner).ptr.as_ptr().add(idx))
+        }
     }
 
     pub fn get_const(&self, ref_: Ref) -> Option<&Symbol> {
@@ -532,10 +541,11 @@ impl Map {
 
     pub fn get_with_link(&self, ref_: Ref) -> Option<*mut Symbol> {
         let symbol_ptr = self.get(ref_)?;
-        // SAFETY: ptr from get() is valid while self is borrowed and storage is not reallocated.
-        let symbol = unsafe { &mut *symbol_ptr };
-        if symbol.has_link() {
-            return Some(self.get(symbol.link).unwrap_or(symbol_ptr));
+        // SAFETY: ptr from get() is valid while storage is not reallocated. Read-only
+        // access here; raw deref avoids holding a `&mut` we don't need.
+        if unsafe { (*symbol_ptr).has_link() } {
+            let link = unsafe { (*symbol_ptr).link };
+            return Some(self.get(link).unwrap_or(symbol_ptr));
         }
         Some(symbol_ptr)
     }

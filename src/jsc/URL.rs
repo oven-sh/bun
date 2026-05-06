@@ -162,15 +162,15 @@ impl URL {
     /// URL("http://example.com:8080").hostname() => "example.com:8080"
     /// ```
     pub fn hostname(&self) -> String {
-        // SAFETY: self is a valid *URL handle from C++
-        unsafe { URL__hostname(self as *const URL as *mut URL) }
+        // SAFETY: self is a valid opaque *URL handle from C++; getter does not mutate.
+        unsafe { URL__hostname(self) }
     }
 
     /// Returns `u32::MAX` if the port is not set. Otherwise, `port`
     /// is guaranteed to be within the `u16` range.
     pub fn port(&self) -> u32 {
-        // SAFETY: self is a valid *URL handle from C++
-        unsafe { URL__port(self as *const URL as *mut URL) }
+        // SAFETY: self is a valid opaque *URL handle from C++; getter does not mutate.
+        unsafe { URL__port(self) }
     }
 
     // PORT NOTE: kept as explicit destroy (not Drop) — URL is an opaque #[repr(C)] FFI
@@ -181,8 +181,8 @@ impl URL {
     }
 
     pub fn pathname(&self) -> String {
-        // SAFETY: self is a valid *URL handle from C++
-        unsafe { URL__pathname(self as *const URL as *mut URL) }
+        // SAFETY: self is a valid opaque *URL handle from C++; getter does not mutate.
+        unsafe { URL__pathname(self) }
     }
 
     pub fn origin_from_slice(slice: &[u8]) -> Option<&[u8]> {

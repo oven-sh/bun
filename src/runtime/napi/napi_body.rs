@@ -157,9 +157,12 @@ pub type napi_ref = *mut Ref;
 // NapiHandleScope
 // ──────────────────────────────────────────────────────────────────────────
 
+/// Opaque C++ handle-scope object. `UnsafeCell` marker permits interior
+/// mutation through `&self` (see [`NapiEnv`] for rationale).
 #[repr(C)]
 pub struct NapiHandleScope {
     _p: [u8; 0],
+    _cell: UnsafeCell<()>,
     _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
 }
 

@@ -125,7 +125,10 @@ pub fn scan_imports_and_exports(
     let module_refs: *mut [Ref] = col_ptr!(ast, AstField::module_ref, Ref);
     let wrapper_refs: *mut [Ref] = col_ptr!(ast, AstField::wrapper_ref, Ref);
     let parts_list: *mut [PartList] = col_ptr!(ast, AstField::parts, PartList);
-    type CssCol = Option<&'static core::ffi::c_void>;
+    // Zig: `[]?*bun.css.BundlerStyleSheet` — element is a *mutable* nullable
+    // pointer. Mirror the actual storage type (`BundledAst.css: Option<*mut c_void>`)
+    // so downstream casts to `*mut BundlerStyleSheet` don't go through `&T`.
+    type CssCol = Option<*mut core::ffi::c_void>;
     let css_asts: *mut [CssCol] = col_ptr!(ast, AstField::css, CssCol);
 
     let input_files: *mut [Source] = col_ptr!(input, InputFileField::source, Source);
@@ -1360,7 +1363,9 @@ mod __css_validation {
     use bun_css::{BundlerStyleSheet, PropertyIdTag};
     use bun_logger::{self as Logger, Log};
 
-    type CssCol = Option<&'static core::ffi::c_void>;
+    // Zig: `?*bun.css.BundlerStyleSheet` — keep the column element as a raw
+    // `*mut` (matches `BundledAst.css`), so we never launder a `&T` into `&mut T`.
+    type CssCol = Option<*mut core::ffi::c_void>;
 
     /// `ArrayHashAdapter` so `LocalScope` (`ArrayHashMap<Box<[u8]>, LocalEntry>`)
     /// can be queried by borrowed `&[u8]` (CSS idents are arena `*const [u8]`).

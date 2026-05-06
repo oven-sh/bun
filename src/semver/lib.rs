@@ -157,7 +157,7 @@ pub mod external_string {
             ExternalString {
                 value: String::init(in_, in_),
                 // `bun.Wyhash.hash(0, in)` — std.hash.Wyhash with seed 0, same as `bun.hash`
-                hash: bun_wyhash::Wyhash11::hash(0, in_),
+                hash: bun_wyhash::hash(in_),
             }
         }
 
@@ -663,7 +663,7 @@ pub mod semver_string {
 
         pub fn hash(&self, arg: String) -> u64 {
             let str = arg.slice(self.arg_buf);
-            bun_wyhash::Wyhash11::hash(0, str)
+            bun_wyhash::hash(str)
         }
     }
 
@@ -679,7 +679,7 @@ pub mod semver_string {
 
         pub fn hash(&self, arg: String) -> u32 {
             let str = arg.slice(self.arg_buf);
-            bun_wyhash::Wyhash11::hash(0, str) as u32
+            bun_wyhash::hash(str) as u32
         }
     }
 

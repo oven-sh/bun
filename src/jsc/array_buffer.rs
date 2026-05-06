@@ -321,22 +321,25 @@ impl ArrayBuffer {
 
     pub fn create_uint8_array(global: &JSGlobalObject, bytes: &[u8]) -> JsResult<JSValue> {
         crate::mark_binding!();
-        // SAFETY: FFI — global is valid; bytes ptr/len come from a live slice, copied by callee.
+        // SAFETY: FFI — `global` is a live opaque ZST handle (coerces to *const); bytes ptr/len
+        // come from a live slice, copied by callee.
         crate::host_fn::from_js_host_call(global, || unsafe {
-            Bun__createUint8ArrayForCopy(global as *const _ as *mut _, bytes.as_ptr().cast(), bytes.len(), false)
+            Bun__createUint8ArrayForCopy(global, bytes.as_ptr().cast(), bytes.len(), false)
         })
     }
 
     pub fn alloc<const KIND: JSType>(global: &JSGlobalObject, len: u32) -> JsResult<(JSValue, &mut [u8])> {
         let mut ptr_out: *mut u8 = ptr::null_mut();
         let buf = match KIND {
-            // SAFETY: FFI — global is valid; ptr_out is a valid out-param written by callee on success.
+            // SAFETY: FFI — `global` is a live opaque ZST handle (coerces to *const); `ptr_out`
+            // is a valid out-param written by callee on success.
             JSType::Uint8Array => crate::host_fn::from_js_host_call(global, || unsafe {
-                Bun__allocUint8ArrayForCopy(global as *const _ as *mut _, len as usize, (&mut ptr_out as *mut *mut u8).cast())
+                Bun__allocUint8ArrayForCopy(global, len as usize, (&mut ptr_out as *mut *mut u8).cast())
             })?,
-            // SAFETY: FFI — global is valid; ptr_out is a valid out-param written by callee on success.
+            // SAFETY: FFI — `global` is a live opaque ZST handle (coerces to *const); `ptr_out`
+            // is a valid out-param written by callee on success.
             JSType::ArrayBuffer => crate::host_fn::from_js_host_call(global, || unsafe {
-                Bun__allocArrayBufferForCopy(global as *const _ as *mut _, len as usize, (&mut ptr_out as *mut *mut u8).cast())
+                Bun__allocArrayBufferForCopy(global, len as usize, (&mut ptr_out as *mut *mut u8).cast())
             })?,
             _ => panic!("ArrayBuffer::alloc: KIND not implemented"), // Zig: @compileError
         };

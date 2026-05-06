@@ -12,10 +12,15 @@ use bun_analytics;
 use crate::CommonAbortReason;
 
 /// Opaque FFI handle to WebCore::AbortSignal (C++ side owns layout & refcount).
+///
+/// `UnsafeCell` marker makes this `!Freeze`: every method takes `&self` but the
+/// C++ side mutates internal state (refcount, listener list, abort flag), so
+/// `&AbortSignal` must not carry a `noalias readonly` assumption when lowered
+/// to `*mut AbortSignal` for FFI.
 #[repr(C)]
 pub struct AbortSignal {
     _p: [u8; 0],
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
+    _m: PhantomData<(UnsafeCell<()>, *mut u8, PhantomPinned)>,
 }
 
 // TODO(port): move to jsc_sys
@@ -86,13 +91,7 @@ impl AbortSignal {
         // TODO(port): analytics counter — Zig: `bun.analytics.Features.abort_signal += 1`
         bun_analytics::features::abort_signal_inc();
         // SAFETY: thin FFI forward.
-        unsafe {
-            WebCore__AbortSignal__signal(
-                self.as_mut_ptr(),
-                global_object as *const _ as *mut _,
-                reason,
-            )
-        }
+        unsafe { WebCore__AbortSignal__signal(self.as_mut_ptr(), global_object.as_ptr(), reason) }
     }
 
     pub fn pending_activity_ref(&self) {

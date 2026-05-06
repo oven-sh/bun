@@ -160,9 +160,12 @@ impl JSObject {
         // is the pointer. SAFETY: caller guarantees `owner.is_cell()`.
         let owner_cell = owner.0 as *mut JSCell;
         // SAFETY: thin FFI shim; `owner_cell` is non-null per caller contract.
+        // `global.as_ptr()` yields the raw FFI handle — JSGlobalObject is an
+        // opaque JSC cell with interior mutability on the C++ side; Rust holds
+        // no `&`-derived view of any field C++ mutates.
         unsafe {
             JSC__createStructure(
-                global as *const _ as *mut _,
+                global.as_ptr(),
                 owner_cell,
                 length,
                 names,

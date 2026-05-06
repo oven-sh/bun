@@ -3024,7 +3024,8 @@ pub struct NapiFinalizerTask {
 }
 
 // TODO(port): jsc.AnyTask.New(@This(), runOnJSThread) — codegen vtable wiring.
-type NapiFinalizerAnyTask = AnyTask<NapiFinalizerTask>;
+#[allow(dead_code)]
+type NapiFinalizerAnyTask = AnyTask;
 
 impl NapiFinalizerTask {
     pub fn init(finalizer: Finalizer) -> Box<NapiFinalizerTask> {

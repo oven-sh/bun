@@ -55,6 +55,7 @@ const _: () = {
         #[link_name = "HTMLBundle__getConstructor"]
         fn __get_constructor(global: *mut JSGlobalObject) -> JSValue;
     }
+    #[allow(improper_ctypes)]
     #[cfg(not(all(windows, target_arch = "x86_64")))]
     unsafe extern "C" {
         #[link_name = "HTMLBundle__fromJS"]

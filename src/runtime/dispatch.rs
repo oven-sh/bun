@@ -33,23 +33,111 @@ use bun_event_loop::EventLoopTimer::{
     JS_TIMER_EPOCH,
 };
 
+use bun_jsc::event_loop::{EventLoop, JsTerminated};
+use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::JSGlobalObject;
+use bun_jsc::task::report_error_or_terminate;
+
+// ── per-variant payload types ────────────────────────────────────────────────
+// (high-tier owns them all; grouped by source module)
+
+use crate::api::archive::{BlobTask as ArchiveBlobTask, ExtractTask as ArchiveExtractTask,
+    FilesTask as ArchiveFilesTask, WriteTask as ArchiveWriteTask, AsyncTask as ArchiveAsyncTask};
+
+use crate::shell::interpreter::{Interpreter, ShellTask};
+use crate::shell::builtins::{cp::ShellCpTask, ls::ShellLsTask, mkdir::ShellMkdirTask,
+    mv::{ShellMvBatchedTask, ShellMvCheckTargetTask}, rm::ShellRmTask, touch::ShellTouchTask,
+    yes::YesTask as ShellYesTask};
+use crate::shell::states::r#async::Async as ShellAsync;
+use crate::shell::IOWriter as ShellIOWriter;
+use crate::shell::dispatch_tasks::{
+    AsyncDeinitReader as ShellIOReaderAsyncDeinit, AsyncDeinitWriter as ShellIOWriterAsyncDeinit,
+    ShellAsyncSubprocessDone, ShellCondExprStatTask, ShellGlobTask, ShellRmDirTask,
+};
+
+use crate::webcore::fetch::FetchTasklet;
+use crate::webcore::s3::simple_request::S3HttpSimpleTask;
+use crate::webcore::s3::download_stream::S3HttpDownloadStreamingTask;
+use crate::webcore::blob::copy_file::CopyFilePromiseTask;
+use crate::webcore::blob::read_file::ReadFileTask;
+use crate::webcore::blob::write_file::WriteFileTask;
+use crate::webcore::file_sink::{FlushPendingTask as FlushPendingFileSinkTask, Poll as FileSinkPoll};
+use crate::webcore::streams::Pending as StreamPending;
+
+use crate::api::glob::AsyncGlobWalkTask;
+use crate::image::AsyncImageTask;
+use crate::api::JSTranspiler::AsyncTransformTask;
+use crate::api::NativePromiseContext::DeferredDerefTask as NativePromiseContextDeferredDerefTask;
+use crate::api::cron::CronJob;
+use crate::api::bun::terminal::Poll as TerminalPoll;
+use crate::api::bun::subprocess::{Subprocess, StaticPipeWriter};
+use crate::api::bun::subprocess::static_pipe_writer::Poll as StaticPipeWriterPoll;
+
+use crate::napi::{napi_async_work, NapiFinalizerTask, ThreadSafeFunction};
+
+use bun_jsc::CppTask;
+use bun_jsc::JSCScheduler::JSCDeferredWorkTask;
+use bun_jsc::PosixSignalTask;
+use bun_jsc::RuntimeTranspilerStore;
+use bun_jsc::module_loader::AsyncModule;
+use bun_jsc::hot_reloader;
+
+use crate::bake::dev_server::hot_reload_event::HotReloadEvent as BakeHotReloadEvent;
+use crate::bake::dev_server::source_map_store::SourceMapStore;
+use crate::bake::dev_server::DevServer;
+
+use crate::node::fs::async_ as fs_async;
+use crate::node::node_fs_watcher::FSWatchTask;
+use crate::node::node_fs_stat_watcher::StatWatcherScheduler;
+use crate::node::zlib::{NativeBrotli, NativeZlib, NativeZstd};
+use crate::node::node_zlib_binding;
+
+use crate::dns_jsc::dns::{self, get_addr_info_request, GetAddrInfoRequest, Resolver as DNSResolver};
+use crate::server::ServerAllConnectionsClosedTask;
+
+use crate::api::bun_process::{self, Process};
+use crate::api::bun_process::waiter_thread::ResultTask as ProcessWaiterThreadTask;
+
+use bun_bundler::DeferredBatchTask as BundleV2DeferredBatchTask;
+
+use crate::socket::upgraded_duplex::UpgradedDuplex;
+#[cfg(windows)]
+use crate::socket::windows_named_pipe::WindowsNamedPipe;
+
+use crate::valkey_jsc::js_valkey::JSValkeyClient as Valkey;
+use bun_sql_jsc::postgres::PostgresSQLConnection;
+use bun_sql_jsc::mysql::JSMySQLConnection as MySQLConnection;
+
+use crate::test_runner::bun_test::{BunTest, BunTestPtr};
+use crate::timer::{DateHeaderTimer, EventLoopDelayMonitor};
+use bun_jsc::abort_signal::Timeout as AbortSignalTimeout;
+
 // ════════════════════════════════════════════════════════════════════════════
 // Task dispatch (src/jsc/Task.zig `tickQueueWithCount` switch)
 // ════════════════════════════════════════════════════════════════════════════
+
+/// Per-arm result for [`run_task`]: `Continue` means proceed to drain
+/// microtasks and the next item; `EarlyReturn` is the HotReloadTask special
+/// case (Zig: `counter.* = 0; return;` — microtasks must NOT drain).
+pub enum RunTaskResult {
+    Continue,
+    EarlyReturn,
+}
 
 /// Dispatch a single `Task` to its variant's `run`-style entry point.
 ///
 /// This is the body of one iteration of Zig `tickQueueWithCount`'s `while`
 /// loop (the per-item `switch`). The surrounding drain loop + microtask flush
-/// lives in [`tick_queue_with_count`] below (gated until `bun_jsc` is a dep).
-///
-/// Arms whose payload type is still ``-gated in this crate are
-/// `todo!("dispatch: …")` placeholders so the table stays exhaustive against
-/// `task_tag::COUNT`; un-gating a type means swapping its arm body in-place.
+/// lives in [`tick_queue_with_count`] below.
 // PERF(port): was inline switch — Zig `inline else` monomorphized every arm.
 // The `match` below preserves direct-call inlining; profile in Phase B.
 #[inline]
-pub fn run_task(task: Task) {
+pub fn run_task(
+    task: Task,
+    el: &mut EventLoop,
+    vm: &mut VirtualMachine,
+    global: &JSGlobalObject,
+) -> Result<RunTaskResult, JsTerminated> {
     /// `*(task.ptr as *mut T)` with the SAFETY invariant spelled once.
     macro_rules! cast {
         ($ty:ty) => {{
@@ -57,6 +145,30 @@ pub fn run_task(task: Task) {
             // by `Taskable::into_task`/`Task::new`; tag uniquely identifies
             // the pointee type and the pointer is live for this dispatch.
             unsafe { &mut *(task.ptr as *mut $ty) }
+        }};
+    }
+    /// Raw `*mut T` (for `Box::from_raw`/self-consuming entry points).
+    macro_rules! cast_ptr {
+        ($ty:ty) => { task.ptr as *mut $ty };
+    }
+    /// Shell builtin tasks: recover `&mut Interpreter` via the embedded
+    /// [`ShellTask`]'s back-ref (Zig stored it inline; Rust port keeps it
+    /// on `ShellTask.interp`, populated at `ShellTask::new`).
+    macro_rules! shell_dispatch {
+        ($ty:ty) => {{
+            let t = cast_ptr!($ty);
+            // SAFETY: `t` is a live Box::into_raw'd shell task; `interp` was
+            // set at schedule time and outlives the task.
+            let interp = unsafe { &mut *(*t).task.interp };
+            <$ty>::run_from_main_thread(t, interp);
+        }};
+        // `.task.task.runFromMainThread()` shape (mv/cond_expr wrap an inner
+        // `task: ShellTask`-embedding struct one level deeper).
+        (nested $ty:ty) => {{
+            let t = cast_ptr!($ty);
+            // SAFETY: see above.
+            let interp = unsafe { &mut *(*t).task.task.interp };
+            <$ty>::run_from_main_thread(t, interp);
         }};
     }
 
@@ -67,150 +179,314 @@ pub fn run_task(task: Task) {
         task_tag::AnyTask => {
             let any = cast!(AnyTask);
             // Zig: `any.run() catch |err| reportErrorOrTerminate(global, err)`.
-            // TODO(b2-blocked): bun_jsc::task::report_error_or_terminate —
-            // route the JsError once `bun_jsc` is a dep.
-            let _ = any.run();
+            if let Err(err) = any.run() {
+                report_error_or_terminate(global, err)?;
+            }
         }
         task_tag::ManagedTask => {
             // Zig: `any.run() catch |err| reportErrorOrTerminate(global, err)`.
-            // TODO(b2-blocked): bun_jsc::task::report_error_or_terminate.
-            let _ = ManagedTask::run(task.ptr as *mut ManagedTask);
+            if let Err(err) = ManagedTask::run(cast_ptr!(ManagedTask)) {
+                report_error_or_terminate(global, err)?;
+            }
         }
         task_tag::CppTask => {
             // Zig: `any.run(global) catch |err| reportErrorOrTerminate(global, err)`.
-            todo!("dispatch: CppTask")
+            if let Err(err) = cast!(CppTask).run(global) {
+                report_error_or_terminate(global, err)?;
+            }
         }
 
         // ── archive ──────────────────────────────────────────────────────
-        task_tag::ArchiveExtractTask => todo!("dispatch: ArchiveExtractTask"),
-        task_tag::ArchiveBlobTask => todo!("dispatch: ArchiveBlobTask"),
-        task_tag::ArchiveWriteTask => todo!("dispatch: ArchiveWriteTask"),
-        task_tag::ArchiveFilesTask => todo!("dispatch: ArchiveFilesTask"),
+        task_tag::ArchiveExtractTask => {
+            ArchiveAsyncTask::run_from_js(cast_ptr!(ArchiveExtractTask))?;
+        }
+        task_tag::ArchiveBlobTask => {
+            ArchiveAsyncTask::run_from_js(cast_ptr!(ArchiveBlobTask))?;
+        }
+        task_tag::ArchiveWriteTask => {
+            ArchiveAsyncTask::run_from_js(cast_ptr!(ArchiveWriteTask))?;
+        }
+        task_tag::ArchiveFilesTask => {
+            ArchiveAsyncTask::run_from_js(cast_ptr!(ArchiveFilesTask))?;
+        }
 
         // ── shell interpreter ────────────────────────────────────────────
-        task_tag::ShellAsync => todo!("dispatch: ShellAsync"),
-        task_tag::ShellAsyncSubprocessDone => todo!("dispatch: ShellAsyncSubprocessDone"),
-        task_tag::ShellIOWriterAsyncDeinit => todo!("dispatch: ShellIOWriterAsyncDeinit"),
-        task_tag::ShellIOWriter => todo!("dispatch: ShellIOWriter"),
-        task_tag::ShellIOReaderAsyncDeinit => todo!("dispatch: ShellIOReaderAsyncDeinit"),
-        task_tag::ShellCondExprStatTask => todo!("dispatch: ShellCondExprStatTask"),
-        task_tag::ShellCpTask => todo!("dispatch: ShellCpTask"),
-        task_tag::ShellTouchTask => todo!("dispatch: ShellTouchTask"),
-        task_tag::ShellMkdirTask => todo!("dispatch: ShellMkdirTask"),
-        task_tag::ShellLsTask => todo!("dispatch: ShellLsTask"),
-        task_tag::ShellMvBatchedTask => todo!("dispatch: ShellMvBatchedTask"),
-        task_tag::ShellMvCheckTargetTask => todo!("dispatch: ShellMvCheckTargetTask"),
-        task_tag::ShellRmTask => todo!("dispatch: ShellRmTask"),
-        task_tag::ShellRmDirTask => todo!("dispatch: ShellRmDirTask"),
-        task_tag::ShellGlobTask => todo!("dispatch: ShellGlobTask"),
-        task_tag::ShellYesTask => todo!("dispatch: ShellYesTask"),
+        task_tag::ShellAsync => {
+            // Spec Task.zig:161 `runFromMainThread()` — Rust port routes via
+            // (interp, NodeId).
+            let t = cast!(crate::shell::dispatch_tasks::ShellAsyncTask);
+            // SAFETY: `interp` set at enqueue; outlives task.
+            let interp = unsafe { &mut *t.interp };
+            ShellAsync::run_from_main_thread(interp, t.node);
+        }
+        task_tag::ShellAsyncSubprocessDone => {
+            let t = cast_ptr!(ShellAsyncSubprocessDone);
+            // SAFETY: live Box'd task.
+            unsafe { ShellAsyncSubprocessDone::run_from_main_thread(t) };
+        }
+        task_tag::ShellIOWriterAsyncDeinit => {
+            let t = cast_ptr!(ShellIOWriterAsyncDeinit);
+            // SAFETY: live Box'd task.
+            unsafe { ShellIOWriterAsyncDeinit::run_from_main_thread(t) };
+        }
+        task_tag::ShellIOWriter => {
+            let t = cast_ptr!(ShellIOWriter);
+            // SAFETY: live IOWriter (ref-counted).
+            unsafe { ShellIOWriter::run_from_main_thread(t) };
+        }
+        task_tag::ShellIOReaderAsyncDeinit => {
+            let t = cast_ptr!(ShellIOReaderAsyncDeinit);
+            // SAFETY: live Box'd task.
+            unsafe { ShellIOReaderAsyncDeinit::run_from_main_thread(t) };
+        }
+        task_tag::ShellCondExprStatTask => {
+            // Spec: `task.get(..).?.task.runFromMainThread()` — one level of
+            // `.task` indirection in Zig too.
+            shell_dispatch!(nested ShellCondExprStatTask);
+        }
+        task_tag::ShellCpTask => shell_dispatch!(ShellCpTask),
+        task_tag::ShellTouchTask => shell_dispatch!(ShellTouchTask),
+        task_tag::ShellMkdirTask => shell_dispatch!(ShellMkdirTask),
+        task_tag::ShellLsTask => shell_dispatch!(ShellLsTask),
+        task_tag::ShellMvBatchedTask => shell_dispatch!(nested ShellMvBatchedTask),
+        task_tag::ShellMvCheckTargetTask => shell_dispatch!(nested ShellMvCheckTargetTask),
+        task_tag::ShellRmTask => shell_dispatch!(ShellRmTask),
+        task_tag::ShellRmDirTask => {
+            let t = cast_ptr!(ShellRmDirTask);
+            // SAFETY: live DirTask child of a ShellRmTask tree.
+            unsafe { ShellRmDirTask::run_from_main_thread(t) };
+        }
+        task_tag::ShellGlobTask => {
+            let t = cast_ptr!(ShellGlobTask);
+            // SAFETY: live Box'd glob task.
+            unsafe {
+                ShellGlobTask::run_from_main_thread(t);
+                ShellGlobTask::deinit(t);
+            }
+        }
+        task_tag::ShellYesTask => {
+            // Declared in the union but never dispatched here in Zig (covered
+            // by the trailing `else` panic). Mirror that.
+            panic!("Unexpected Task tag: {}", task.tag.0);
+        }
 
         // ── fetch / S3 ───────────────────────────────────────────────────
-        task_tag::FetchTasklet => todo!("dispatch: FetchTasklet"),
-        task_tag::S3HttpSimpleTask => todo!("dispatch: S3HttpSimpleTask"),
+        task_tag::FetchTasklet => {
+            cast!(FetchTasklet).on_progress_update()?;
+        }
+        task_tag::S3HttpSimpleTask => {
+            S3HttpSimpleTask::on_response(cast_ptr!(S3HttpSimpleTask))?;
+        }
         task_tag::S3HttpDownloadStreamingTask => {
-            todo!("dispatch: S3HttpDownloadStreamingTask")
+            S3HttpDownloadStreamingTask::on_response(cast_ptr!(S3HttpDownloadStreamingTask));
         }
 
         // ── glob / image / transpiler ────────────────────────────────────
-        task_tag::AsyncGlobWalkTask => todo!("dispatch: AsyncGlobWalkTask"),
-        task_tag::AsyncImageTask => todo!("dispatch: AsyncImageTask"),
-        task_tag::AsyncTransformTask => todo!("dispatch: AsyncTransformTask"),
+        task_tag::AsyncGlobWalkTask => {
+            let t = cast_ptr!(AsyncGlobWalkTask<'_>);
+            // Zig: `defer t.deinit(); try t.runFromJS();` — `?` short-circuits
+            // before `destroy` only on JsTerminated, which tears down the VM.
+            let _g = scopeguard::guard(t, |p| unsafe {
+                bun_jsc::ConcurrentPromiseTask::destroy(p)
+            });
+            // SAFETY: live until guard runs.
+            unsafe { (*t).run_from_js()? };
+        }
+        task_tag::AsyncImageTask => {
+            let t = cast_ptr!(AsyncImageTask<'_>);
+            let _g = scopeguard::guard(t, |p| unsafe {
+                bun_jsc::ConcurrentPromiseTask::destroy(p)
+            });
+            // SAFETY: live until guard runs.
+            unsafe { (*t).run_from_js()? };
+        }
+        task_tag::AsyncTransformTask => {
+            let t = cast_ptr!(AsyncTransformTask);
+            let _g = scopeguard::guard(t, |p| unsafe {
+                bun_jsc::ConcurrentPromiseTask::destroy(p)
+            });
+            // SAFETY: live until guard runs.
+            unsafe { (*t).run_from_js()? };
+        }
 
         // ── blob copy/read/write promise tasks ───────────────────────────
-        task_tag::CopyFilePromiseTask => todo!("dispatch: CopyFilePromiseTask"),
-        task_tag::ReadFileTask => todo!("dispatch: ReadFileTask"),
-        task_tag::WriteFileTask => todo!("dispatch: WriteFileTask"),
+        task_tag::CopyFilePromiseTask => {
+            let t = cast_ptr!(CopyFilePromiseTask);
+            let _g = scopeguard::guard(t, |p| unsafe {
+                bun_jsc::ConcurrentPromiseTask::destroy(p)
+            });
+            // SAFETY: live until guard runs.
+            unsafe { (*t).run_from_js()? };
+        }
+        task_tag::ReadFileTask => {
+            let t = cast_ptr!(ReadFileTask);
+            let _g = scopeguard::guard(t, |p| unsafe {
+                bun_jsc::WorkTask::destroy(p)
+            });
+            // SAFETY: live until guard runs.
+            unsafe { bun_jsc::WorkTask::run_from_js(&mut *t)? };
+        }
+        task_tag::WriteFileTask => {
+            let t = cast_ptr!(WriteFileTask);
+            let _g = scopeguard::guard(t, |p| unsafe {
+                bun_jsc::WorkTask::destroy(p)
+            });
+            // SAFETY: live until guard runs.
+            unsafe { bun_jsc::WorkTask::run_from_js(&mut *t)? };
+        }
 
         // ── napi ─────────────────────────────────────────────────────────
-        task_tag::NapiAsyncWork => todo!("dispatch: napi_async_work"),
-        task_tag::ThreadSafeFunction => todo!("dispatch: ThreadSafeFunction"),
-        task_tag::NapiFinalizerTask => todo!("dispatch: NapiFinalizerTask"),
+        task_tag::NapiAsyncWork => {
+            cast!(napi_async_work).run_from_js(vm, global);
+        }
+        task_tag::ThreadSafeFunction => {
+            ThreadSafeFunction::on_dispatch(cast_ptr!(ThreadSafeFunction));
+        }
+        task_tag::NapiFinalizerTask => {
+            NapiFinalizerTask::run_on_js_thread(cast_ptr!(NapiFinalizerTask));
+        }
 
         // ── JSC scheduler / module loader ────────────────────────────────
-        task_tag::JSCDeferredWorkTask => todo!("dispatch: JSCDeferredWorkTask"),
+        task_tag::JSCDeferredWorkTask => {
+            bun_jsc::mark_binding(core::panic::Location::caller());
+            cast!(JSCDeferredWorkTask).run()?;
+        }
         task_tag::PollPendingModulesTask => {
             // Zig: `virtual_machine.modules.onPoll()`.
-            todo!("dispatch: PollPendingModulesTask")
+            vm.modules.on_poll();
         }
-        task_tag::RuntimeTranspilerStore => todo!("dispatch: RuntimeTranspilerStore"),
+        task_tag::RuntimeTranspilerStore => {
+            cast!(RuntimeTranspilerStore).run_from_js_thread(el, global, vm);
+        }
 
-        // ── hot-reload (NOTE: Zig early-returns from the drain loop) ─────
-        task_tag::HotReloadTask => todo!("dispatch: HotReloadTask"),
-        task_tag::BakeHotReloadEvent => todo!("dispatch: BakeHotReloadEvent"),
-        task_tag::FSWatchTask => todo!("dispatch: FSWatchTask"),
+        // ── hot-reload (Zig early-returns from the drain loop) ───────────
+        task_tag::HotReloadTask => {
+            let t = cast!(hot_reloader::HotReloadTask);
+            // Zig: `defer t.deinit(); t.run(); counter.* = 0; return;`.
+            // `deinit` here only resets the intrusive task state (no free).
+            t.run();
+            t.deinit();
+            return Ok(RunTaskResult::EarlyReturn);
+        }
+        task_tag::BakeHotReloadEvent => {
+            BakeHotReloadEvent::run(cast!(BakeHotReloadEvent));
+        }
+        task_tag::FSWatchTask => {
+            let t = cast_ptr!(FSWatchTask);
+            // SAFETY: live Box'd watch task; `run` may re-enter.
+            unsafe { (*t).run() };
+            // Zig `defer t.deinit()` — Drop runs via Box reclaim.
+            // SAFETY: paired with `Box::into_raw` in `enqueue`.
+            drop(unsafe { Box::from_raw(t) });
+        }
 
         // ── DNS ──────────────────────────────────────────────────────────
-        task_tag::GetAddrInfoRequestTask => todo!("dispatch: GetAddrInfoRequestTask"),
+        task_tag::GetAddrInfoRequestTask => {
+            #[cfg(windows)]
+            panic!("This should not be reachable on Windows");
+            #[cfg(not(windows))]
+            {
+                let t = cast_ptr!(get_addr_info_request::Task);
+                let _g = scopeguard::guard(t, |p| unsafe {
+                    bun_jsc::WorkTask::destroy(p)
+                });
+                // SAFETY: live until guard runs.
+                unsafe { bun_jsc::WorkTask::run_from_js(&mut *t)? };
+            }
+        }
 
         // ── node:fs async ops (`runFromJSThread`) ────────────────────────
-        task_tag::Stat => todo!("dispatch: Stat"),
-        task_tag::Lstat => todo!("dispatch: Lstat"),
-        task_tag::Fstat => todo!("dispatch: Fstat"),
-        task_tag::Open => todo!("dispatch: Open"),
-        task_tag::ReadFile => todo!("dispatch: ReadFile"),
-        task_tag::WriteFile => todo!("dispatch: WriteFile"),
-        task_tag::CopyFile => todo!("dispatch: CopyFile"),
-        task_tag::Read => todo!("dispatch: Read"),
-        task_tag::Write => todo!("dispatch: Write"),
-        task_tag::Truncate => todo!("dispatch: Truncate"),
-        task_tag::Writev => todo!("dispatch: Writev"),
-        task_tag::Readv => todo!("dispatch: Readv"),
-        task_tag::Rename => todo!("dispatch: Rename"),
-        task_tag::FTruncate => todo!("dispatch: FTruncate"),
-        task_tag::Readdir => todo!("dispatch: Readdir"),
-        task_tag::ReaddirRecursive => todo!("dispatch: ReaddirRecursive"),
-        task_tag::Close => todo!("dispatch: Close"),
-        task_tag::Rm => todo!("dispatch: Rm"),
-        task_tag::Rmdir => todo!("dispatch: Rmdir"),
-        task_tag::Chown => todo!("dispatch: Chown"),
-        task_tag::FChown => todo!("dispatch: FChown"),
-        task_tag::Utimes => todo!("dispatch: Utimes"),
-        task_tag::Lutimes => todo!("dispatch: Lutimes"),
-        task_tag::Chmod => todo!("dispatch: Chmod"),
-        task_tag::Fchmod => todo!("dispatch: Fchmod"),
-        task_tag::Link => todo!("dispatch: Link"),
-        task_tag::Symlink => todo!("dispatch: Symlink"),
-        task_tag::Readlink => todo!("dispatch: Readlink"),
-        task_tag::Realpath => todo!("dispatch: Realpath"),
-        task_tag::RealpathNonNative => todo!("dispatch: RealpathNonNative"),
-        task_tag::Mkdir => todo!("dispatch: Mkdir"),
-        task_tag::Fsync => todo!("dispatch: Fsync"),
-        task_tag::Fdatasync => todo!("dispatch: Fdatasync"),
-        task_tag::Access => todo!("dispatch: Access"),
-        task_tag::AppendFile => todo!("dispatch: AppendFile"),
-        task_tag::Mkdtemp => todo!("dispatch: Mkdtemp"),
-        task_tag::Exists => todo!("dispatch: Exists"),
-        task_tag::Futimes => todo!("dispatch: Futimes"),
-        task_tag::Lchmod => todo!("dispatch: Lchmod"),
-        task_tag::Lchown => todo!("dispatch: Lchown"),
-        task_tag::Unlink => todo!("dispatch: Unlink"),
-        task_tag::StatFS => todo!("dispatch: StatFS"),
+        task_tag::Stat => cast!(fs_async::Stat).run_from_js_thread()?,
+        task_tag::Lstat => cast!(fs_async::Lstat).run_from_js_thread()?,
+        task_tag::Fstat => cast!(fs_async::Fstat).run_from_js_thread()?,
+        task_tag::Open => cast!(fs_async::Open).run_from_js_thread()?,
+        task_tag::ReadFile => cast!(fs_async::ReadFile).run_from_js_thread()?,
+        task_tag::WriteFile => cast!(fs_async::WriteFile).run_from_js_thread()?,
+        task_tag::CopyFile => cast!(fs_async::CopyFile).run_from_js_thread()?,
+        task_tag::Read => cast!(fs_async::Read).run_from_js_thread()?,
+        task_tag::Write => cast!(fs_async::Write).run_from_js_thread()?,
+        task_tag::Truncate => cast!(fs_async::Truncate).run_from_js_thread()?,
+        task_tag::Writev => cast!(fs_async::Writev).run_from_js_thread()?,
+        task_tag::Readv => cast!(fs_async::Readv).run_from_js_thread()?,
+        task_tag::Rename => cast!(fs_async::Rename).run_from_js_thread()?,
+        task_tag::FTruncate => cast!(fs_async::Ftruncate).run_from_js_thread()?,
+        task_tag::Readdir => cast!(fs_async::Readdir).run_from_js_thread()?,
+        task_tag::ReaddirRecursive => cast!(fs_async::ReaddirRecursive).run_from_js_thread()?,
+        task_tag::Close => cast!(fs_async::Close).run_from_js_thread()?,
+        task_tag::Rm => cast!(fs_async::Rm).run_from_js_thread()?,
+        task_tag::Rmdir => cast!(fs_async::Rmdir).run_from_js_thread()?,
+        task_tag::Chown => cast!(fs_async::Chown).run_from_js_thread()?,
+        task_tag::FChown => cast!(fs_async::Fchown).run_from_js_thread()?,
+        task_tag::Utimes => cast!(fs_async::Utimes).run_from_js_thread()?,
+        task_tag::Lutimes => cast!(fs_async::Lutimes).run_from_js_thread()?,
+        task_tag::Chmod => cast!(fs_async::Chmod).run_from_js_thread()?,
+        task_tag::Fchmod => cast!(fs_async::Fchmod).run_from_js_thread()?,
+        task_tag::Link => cast!(fs_async::Link).run_from_js_thread()?,
+        task_tag::Symlink => cast!(fs_async::Symlink).run_from_js_thread()?,
+        task_tag::Readlink => cast!(fs_async::Readlink).run_from_js_thread()?,
+        task_tag::Realpath => cast!(fs_async::Realpath).run_from_js_thread()?,
+        task_tag::RealpathNonNative => cast!(fs_async::RealpathNonNative).run_from_js_thread()?,
+        task_tag::Mkdir => cast!(fs_async::Mkdir).run_from_js_thread()?,
+        task_tag::Fsync => cast!(fs_async::Fsync).run_from_js_thread()?,
+        task_tag::Fdatasync => cast!(fs_async::Fdatasync).run_from_js_thread()?,
+        task_tag::Access => cast!(fs_async::Access).run_from_js_thread()?,
+        task_tag::AppendFile => cast!(fs_async::AppendFile).run_from_js_thread()?,
+        task_tag::Mkdtemp => cast!(fs_async::Mkdtemp).run_from_js_thread()?,
+        task_tag::Exists => cast!(fs_async::Exists).run_from_js_thread()?,
+        task_tag::Futimes => cast!(fs_async::Futimes).run_from_js_thread()?,
+        task_tag::Lchmod => cast!(fs_async::Lchmod).run_from_js_thread()?,
+        task_tag::Lchown => cast!(fs_async::Lchown).run_from_js_thread()?,
+        task_tag::Unlink => cast!(fs_async::Unlink).run_from_js_thread()?,
+        task_tag::StatFS => cast!(fs_async::Statfs).run_from_js_thread()?,
 
         // ── compression streams ──────────────────────────────────────────
-        task_tag::NativeZlib => todo!("dispatch: NativeZlib"),
-        task_tag::NativeBrotli => todo!("dispatch: NativeBrotli"),
-        task_tag::NativeZstd => todo!("dispatch: NativeZstd"),
+        task_tag::NativeZlib => {
+            node_zlib_binding::run_from_js_thread::<NativeZlib>(cast!(NativeZlib));
+        }
+        task_tag::NativeBrotli => {
+            node_zlib_binding::run_from_js_thread::<NativeBrotli<'_>>(cast!(NativeBrotli<'_>));
+        }
+        task_tag::NativeZstd => {
+            node_zlib_binding::run_from_js_thread::<NativeZstd>(cast!(NativeZstd));
+        }
 
         // ── process / signals ────────────────────────────────────────────
-        task_tag::ProcessWaiterThreadTask => todo!("dispatch: ProcessWaiterThreadTask"),
+        task_tag::ProcessWaiterThreadTask => {
+            #[cfg(not(windows))]
+            {
+                // SAFETY: tag identifies pointee; Box::into_raw'd in WaiterThread.
+                let t = unsafe { Box::from_raw(cast_ptr!(ProcessWaiterThreadTask<Process>)) };
+                t.run_from_js_thread();
+            }
+            #[cfg(windows)]
+            unreachable!("posix-only");
+        }
         task_tag::PosixSignalTask => {
             // Zig: `PosixSignalTask.runFromJSThread(@intCast(task.asUintptr()), global)`
             // — `ptr` here is *not* a pointer but a packed signal number.
-            todo!("dispatch: PosixSignalTask")
+            PosixSignalTask::run_from_js_thread(task.ptr as usize as u8, global);
         }
         task_tag::NativePromiseContextDeferredDerefTask => {
             // Zig: `runFromJSThread(@intCast(task.asUintptr()))` — `ptr` packs an int.
-            todo!("dispatch: NativePromiseContextDeferredDerefTask")
+            NativePromiseContextDeferredDerefTask::run_from_js_thread(task.ptr as usize);
         }
 
         // ── server / bundler / streams ───────────────────────────────────
         task_tag::ServerAllConnectionsClosedTask => {
-            todo!("dispatch: ServerAllConnectionsClosedTask")
+            ServerAllConnectionsClosedTask::run_from_js_thread(
+                cast_ptr!(ServerAllConnectionsClosedTask),
+                vm,
+            )?;
         }
-        task_tag::BundleV2DeferredBatchTask => todo!("dispatch: BundleV2DeferredBatchTask"),
-        task_tag::FlushPendingFileSinkTask => todo!("dispatch: FlushPendingFileSinkTask"),
-        task_tag::StreamPending => todo!("dispatch: StreamPending"),
+        task_tag::BundleV2DeferredBatchTask => {
+            cast!(BundleV2DeferredBatchTask).run_on_js_thread();
+        }
+        task_tag::FlushPendingFileSinkTask => {
+            FlushPendingFileSinkTask::run_from_js_thread(cast_ptr!(FlushPendingFileSinkTask));
+        }
+        task_tag::StreamPending => {
+            StreamPending::run_from_js_thread(cast_ptr!(StreamPending));
+        }
 
         // ── timer wrappers (declared in the union but never dispatched
         //    here in Zig either — see Task.zig trailing `else`) ───────────
@@ -230,6 +506,7 @@ pub fn run_task(task: Task) {
             panic!("Unexpected Task tag: {}", task.tag.0);
         }
     }
+    Ok(RunTaskResult::Continue)
 }
 
 /// Compile-time guard that the arm count above tracks
@@ -241,30 +518,45 @@ const _: () = assert!(
 
 // ────────────────────────────────────────────────────────────────────────────
 // `tick_queue_with_count` — the full drain loop (Zig `tickQueueWithCount`).
-// Gated: `EventLoop` / `VirtualMachine` / `drain_microtasks_with_global` live
-// in `bun_jsc`, which is not yet a dep of `bun_runtime` (Cargo.toml has it
-// commented out under `TODO(b2-blocked)`).
 // ────────────────────────────────────────────────────────────────────────────
-// TODO(b2-blocked): bun_jsc::event_loop — un-gate once `bun_jsc` is a dep.
 
 pub fn tick_queue_with_count(
-    el: &mut bun_jsc::event_loop::EventLoop,
-    vm: &mut bun_jsc::VirtualMachine,
+    el: &mut EventLoop,
+    vm: &mut VirtualMachine,
     counter: &mut u32,
-) -> Result<(), bun_jsc::event_loop::JsTerminated> {
+) -> Result<(), JsTerminated> {
     let global = el.global();
     let global_vm = global.vm();
+
+    #[cfg(debug_assertions)]
+    if el.debug.js_call_count_outside_tick_queue
+        > el.debug.drain_microtasks_count_outside_tick_queue
+    {
+        // PORT NOTE: Zig `bun.Output.panic` with the long advisory string.
+        // We keep the assert + short message; the full text is debug-only and
+        // can be expanded when `Output::panic` lands.
+        panic!(
+            "{} JavaScript functions were called outside of the microtask queue without draining microtasks. Use EventLoop.runCallback().",
+            el.debug.js_call_count_outside_tick_queue
+                - el.debug.drain_microtasks_count_outside_tick_queue
+        );
+    }
+
     while let Some(task) = el.tasks.read_item() {
-        // PORT NOTE: HotReloadTask is special-cased in Zig — it runs, then
-        // *resets `counter` to 0 and returns early* so microtasks are NOT
-        // drained. That control-flow can't be expressed via `run_task` alone;
-        // when un-gating, either inline the HotReloadTask arm here or have
-        // `run_task` return an enum { Continue, Return }.
-        if task.tag == task_tag::HotReloadTask {
-            todo!("dispatch: HotReloadTask early-return");
-        }
-        run_task(task);
+        // PORT NOTE: Zig increments `counter` via `defer` so it runs even on
+        // the HotReloadTask early-return path (where it's then immediately
+        // overwritten with 0). Hoisting before dispatch is observably
+        // equivalent and avoids a scopeguard.
         *counter += 1;
+        match run_task(task, el, vm, global)? {
+            RunTaskResult::Continue => {}
+            RunTaskResult::EarlyReturn => {
+                // Zig: `counter.* = 0; return;` — hot reload runs immediately
+                // so it should not drain microtasks.
+                *counter = 0;
+                return Ok(());
+            }
+        }
         el.drain_microtasks_with_global(global, global_vm)?;
     }
     el.tasks.reset_head_if_empty();
@@ -284,33 +576,31 @@ pub fn tick_queue_with_count(
 /// (guaranteed by `FilePoll::on_update`, the only caller).
 pub unsafe fn run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
     // SAFETY: contract above.
-    let poll = unsafe { &mut *poll };
-    let owner = poll.owner;
-    let hup = poll.flags.contains(PollFlag::Hup);
+    let poll_ref = unsafe { &mut *poll };
+    let owner = poll_ref.owner;
+    let hup = poll_ref.flags.contains(PollFlag::Hup);
 
     debug_assert!(!owner.is_null());
 
+    /// `ptr.as(T)` — recover the typed owner.
+    macro_rules! owner_as {
+        ($ty:ty) => {{
+            // SAFETY: tag set with this pointee type at `FilePoll::init`.
+            unsafe { &mut *(owner.ptr as *mut $ty) }
+        }};
+    }
+
     match owner.tag() {
         poll_tag::BUFFERED_READER => {
-            // SAFETY: tag set with this pointee type at `FilePoll::init`.
-            let reader = unsafe { &mut *(owner.ptr as *mut bun_io::BufferedReader) };
+            let reader = owner_as!(bun_io::BufferedReader);
             bun_io::BufferedReader::on_poll(reader, size_or_offset as isize, hup);
         }
         poll_tag::PROCESS => {
-            // SAFETY: tag set with this pointee type at `FilePoll::init`.
-            let proc = unsafe { &mut *(owner.ptr as *mut crate::api::bun_process::Process) };
-            // `Process::on_wait_pid_from_event_loop_task` is body-gated
-            // (` impl Process`) pending the `bun_spawn` posix
-            // wrappers; the cast above stays so the type wiring is exercised.
-            // TODO(b2-blocked): crate::api::bun_process::Process::on_wait_pid_from_event_loop_task
-            let _ = proc;
-            todo!("dispatch: Process.on_wait_pid_from_event_loop_task")
+            let proc = owner_as!(Process);
+            proc.on_wait_pid_from_event_loop_task();
         }
         poll_tag::PARENT_DEATH_WATCHDOG => {
-            // SAFETY: tag set with this pointee type at `FilePoll::init`.
-            let wd = unsafe {
-                &mut *(owner.ptr as *mut bun_aio::parent_death_watchdog::ParentDeathWatchdog)
-            };
+            let wd = owner_as!(bun_aio::parent_death_watchdog::ParentDeathWatchdog);
             // Zig gates this `comptime !Environment.isMac => unreachable`;
             // mirror with a debug-assert (Linux uses prctl(PR_SET_PDEATHSIG)).
             #[cfg(target_os = "macos")]
@@ -322,22 +612,65 @@ pub unsafe fn run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
             }
         }
 
-        // ── gated payload types ──────────────────────────────────────────
-        poll_tag::FILE_SINK => todo!("dispatch: FileSink.on_poll"),
-        poll_tag::STATIC_PIPE_WRITER => todo!("dispatch: StaticPipeWriter.on_poll"),
-        poll_tag::SHELL_STATIC_PIPE_WRITER => todo!("dispatch: ShellStaticPipeWriter.on_poll"),
+        poll_tag::FILE_SINK => {
+            let h = owner_as!(FileSinkPoll);
+            h.on_poll(size_or_offset as isize, hup);
+        }
+        poll_tag::STATIC_PIPE_WRITER => {
+            let h = owner_as!(StaticPipeWriterPoll<Subprocess<'_>>);
+            h.on_poll(size_or_offset as isize, hup);
+        }
+        poll_tag::SHELL_STATIC_PIPE_WRITER => {
+            let h = owner_as!(StaticPipeWriterPoll<crate::shell::subproc::ShellSubprocess>);
+            h.on_poll(size_or_offset as isize, hup);
+        }
         poll_tag::SECURITY_SCAN_STATIC_PIPE_WRITER => {
-            todo!("dispatch: SecurityScanStaticPipeWriter.on_poll")
+            let h = owner_as!(
+                StaticPipeWriterPoll<bun_install::security_scanner::SecurityScanSubprocess>
+            );
+            h.on_poll(size_or_offset as isize, hup);
         }
-        poll_tag::SHELL_BUFFERED_WRITER => todo!("dispatch: ShellBufferedWriter.on_poll"),
-        poll_tag::DNS_RESOLVER => todo!("dispatch: DNSResolver.on_dns_poll"),
+        poll_tag::SHELL_BUFFERED_WRITER => {
+            // `bun.shell.Interpreter.IOWriter.Poll`
+            let h = owner_as!(crate::shell::IOWriter::Poll);
+            h.on_poll(size_or_offset as isize, hup);
+        }
+        poll_tag::DNS_RESOLVER => {
+            let resolver = owner_as!(DNSResolver);
+            // SAFETY: `poll` outlives this call (caller contract).
+            resolver.on_dns_poll(unsafe { &mut *poll });
+        }
         poll_tag::GET_ADDR_INFO_REQUEST => {
-            todo!("dispatch: GetAddrInfoRequest.on_machport_change")
+            #[cfg(target_os = "macos")]
+            {
+                let loader = owner.ptr as *mut GetAddrInfoRequest;
+                get_addr_info_request::BackendLibInfo::on_machport_change(loader);
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                debug_assert!(false, "GetAddrInfoRequest poll on non-mac");
+            }
         }
-        poll_tag::REQUEST => todo!("dispatch: InternalDNSRequest.on_machport_change"),
-        poll_tag::TERMINAL_POLL => todo!("dispatch: TerminalPoll.on_poll"),
+        poll_tag::REQUEST => {
+            #[cfg(target_os = "macos")]
+            {
+                let loader = owner.ptr as *mut dns::Request;
+                dns::MacAsyncDNS::on_machport_change(loader);
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                debug_assert!(false, "InternalDNSRequest poll on non-mac");
+            }
+        }
+        poll_tag::TERMINAL_POLL => {
+            let h = owner_as!(TerminalPoll);
+            h.on_poll(size_or_offset as isize, hup);
+        }
         poll_tag::LIFECYCLE_SCRIPT_SUBPROCESS_OUTPUT_READER => {
-            todo!("dispatch: LifecycleScriptSubprocessOutputReader.on_poll")
+            // `OutputReader = BufferedReader` in the install crate — same
+            // entry point as `BUFFERED_READER`, separate tag for ownership.
+            let h = owner_as!(bun_install::lifecycle_script_runner::OutputReader);
+            bun_io::BufferedReader::on_poll(h, size_or_offset as isize, hup);
         }
 
         poll_tag::NULL | _ => {
@@ -409,10 +742,6 @@ unsafe fn run_wtf_timer_hook(
 /// builds (debug-asserts in debug) — i.e. `setTimeout`/`setInterval` callbacks
 /// never fire.
 ///
-/// Arms whose container type is still ``-gated in this crate are
-/// `todo!("dispatch: …")` placeholders so the table stays exhaustive against
-/// `EventLoopTimerTag`; un-gating a type means swapping its arm body in-place.
-///
 /// # Safety
 /// `t` points at a live [`EventLoopTimer`] just popped from `All.timers`;
 /// `now` is the snapshot taken by `All::next`; `vm` is the erased
@@ -434,8 +763,7 @@ unsafe fn fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, vm: *mut ()
 
     // SAFETY: per fn contract — `t` is live for the dispatch read.
     let tag = unsafe { (*t).tag };
-    let vm = vm.cast::<crate::jsc::virtual_machine::VirtualMachine>();
-    let _ = now;
+    let vm = vm.cast::<VirtualMachine>();
     match tag {
         // ── JS-exposed timers (TimerObjectInternals::fire) ───────────────
         EventLoopTimerTag::TimeoutObject => {
@@ -443,27 +771,16 @@ unsafe fn fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, vm: *mut ()
             // SAFETY: container derived from a live `TimeoutObject`; do NOT
             // form `&mut *container` — `internals.fire` may `deref()` and free.
             let internals = unsafe { core::ptr::addr_of_mut!((*container).internals) };
-            // TODO(b2-blocked): `TimerObjectInternals::fire` body lives in the
-            // gated `TimerObjectInternals.rs` Phase-A draft (the un-gated
-            // `timer_object_internals.rs` only carries `run_immediate_task`).
-            // Un-gate the call below once `fire()` is moved over.
-            
             // SAFETY: per fn contract — `now` is the live snapshot; `vm` is the
             // per-thread VM. `fire` may free the container; `t` is dead after.
-            return unsafe { (*internals).fire(&*now, vm) };
-            let _ = (internals, vm);
-            todo!("dispatch: TimerObjectInternals::fire")
+            unsafe { (*internals).fire(&*now, vm) };
         }
         EventLoopTimerTag::ImmediateObject => {
             let container = container_of!(ImmediateObject, event_loop_timer);
             // SAFETY: see TimeoutObject arm.
             let internals = unsafe { core::ptr::addr_of_mut!((*container).internals) };
-            // TODO(b2-blocked): `TimerObjectInternals::fire` — gated draft.
-            
             // SAFETY: see TimeoutObject arm.
-            return unsafe { (*internals).fire(&*now, vm) };
-            let _ = (internals, vm);
-            todo!("dispatch: TimerObjectInternals::fire")
+            unsafe { (*internals).fire(&*now, vm) };
         }
         EventLoopTimerTag::TimerCallback => {
             let container = container_of!(TimerCallback, event_loop_timer);
@@ -480,23 +797,42 @@ unsafe fn fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, vm: *mut ()
             unsafe { WTFTimer::fire(container, &*now, vm) };
         }
         EventLoopTimerTag::AbortSignalTimeout => {
-            // TODO(b2-blocked): `bun_jsc::abort_signal::Timeout::run` — gated module.
-            todo!("dispatch: AbortSignal.Timeout::run")
+            let container = container_of!(AbortSignalTimeout, event_loop_timer);
+            // SAFETY: per fn contract; `run` may free `container`.
+            unsafe { AbortSignalTimeout::run(container, &*vm) };
         }
         EventLoopTimerTag::DateHeaderTimer => {
-            // TODO(b2-blocked): `crate::timer::DateHeaderTimer::run` — gated draft.
-            todo!("dispatch: DateHeaderTimer::run")
+            let container = container_of!(DateHeaderTimer, event_loop_timer);
+            // SAFETY: per fn contract.
+            unsafe { (*container).run(&mut *vm) };
         }
         EventLoopTimerTag::EventLoopDelayMonitor => {
-            // TODO(b2-blocked): `crate::timer::EventLoopDelayMonitor::on_fire` — gated draft.
-            todo!("dispatch: EventLoopDelayMonitor::on_fire")
+            let container = container_of!(EventLoopDelayMonitor, event_loop_timer);
+            // SAFETY: per fn contract.
+            unsafe { (*container).on_fire(&mut *vm, &*now) };
         }
-        EventLoopTimerTag::StatWatcherScheduler => todo!("dispatch: StatWatcherScheduler::timerCallback"),
-        EventLoopTimerTag::UpgradedDuplex => todo!("dispatch: UpgradedDuplex::onTimeout"),
-        EventLoopTimerTag::DNSResolver => todo!("dispatch: DNSResolver::checkTimeouts"),
+        EventLoopTimerTag::StatWatcherScheduler => {
+            let container = container_of!(StatWatcherScheduler, event_loop_timer);
+            // SAFETY: per fn contract.
+            unsafe { (*container).timer_callback() };
+        }
+        EventLoopTimerTag::UpgradedDuplex => {
+            let container = container_of!(UpgradedDuplex<'_>, event_loop_timer);
+            // SAFETY: per fn contract.
+            unsafe { (*container).on_timeout() };
+        }
+        EventLoopTimerTag::DNSResolver => {
+            let container = container_of!(DNSResolver, event_loop_timer);
+            // SAFETY: per fn contract.
+            unsafe { (*container).check_timeouts(&*now, &*vm) };
+        }
         EventLoopTimerTag::WindowsNamedPipe => {
             #[cfg(windows)]
-            todo!("dispatch: WindowsNamedPipe::onTimeout");
+            {
+                let container = container_of!(WindowsNamedPipe, event_loop_timer);
+                // SAFETY: per fn contract.
+                unsafe { (*container).on_timeout() };
+            }
             #[cfg(not(windows))]
             {
                 // Spec: `UnreachableTimer` on non-Windows.
@@ -506,32 +842,73 @@ unsafe fn fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, vm: *mut ()
             }
         }
         EventLoopTimerTag::PostgresSQLConnectionTimeout => {
-            todo!("dispatch: PostgresSQLConnection::onConnectionTimeout")
+            let container = container_of!(PostgresSQLConnection, timer);
+            // SAFETY: per fn contract.
+            unsafe { (*container).on_connection_timeout() };
         }
         EventLoopTimerTag::PostgresSQLConnectionMaxLifetime => {
-            todo!("dispatch: PostgresSQLConnection::onMaxLifetimeTimeout")
+            let container = container_of!(PostgresSQLConnection, max_lifetime_timer);
+            // SAFETY: per fn contract.
+            unsafe { (*container).on_max_lifetime_timeout() };
         }
         EventLoopTimerTag::MySQLConnectionTimeout => {
-            todo!("dispatch: MySQLConnection::onConnectionTimeout")
+            let container = container_of!(MySQLConnection, timer);
+            // SAFETY: per fn contract.
+            unsafe { (*container).on_connection_timeout() };
         }
         EventLoopTimerTag::MySQLConnectionMaxLifetime => {
-            todo!("dispatch: MySQLConnection::onMaxLifetimeTimeout")
+            let container = container_of!(MySQLConnection, max_lifetime_timer);
+            // SAFETY: per fn contract.
+            unsafe { (*container).on_max_lifetime_timeout() };
         }
         EventLoopTimerTag::ValkeyConnectionTimeout => {
-            todo!("dispatch: Valkey::onConnectionTimeout")
+            let container = container_of!(Valkey, timer);
+            // SAFETY: per fn contract.
+            unsafe { (*container).on_connection_timeout() };
         }
         EventLoopTimerTag::ValkeyConnectionReconnect => {
-            todo!("dispatch: Valkey::onReconnectTimer")
+            let container = container_of!(Valkey, reconnect_timer);
+            // SAFETY: per fn contract.
+            unsafe { (*container).on_reconnect_timer() };
         }
-        EventLoopTimerTag::SubprocessTimeout => todo!("dispatch: Subprocess::timeoutCallback"),
+        EventLoopTimerTag::SubprocessTimeout => {
+            let container = container_of!(Subprocess<'_>, event_loop_timer);
+            // SAFETY: per fn contract.
+            unsafe { (*container).timeout_callback() };
+        }
         EventLoopTimerTag::DevServerSweepSourceMaps => {
-            todo!("dispatch: DevServer.SourceMapStore::sweepWeakRefs")
+            // Spec: `bun.bake.DevServer.SourceMapStore.sweepWeakRefs(self, now)`
+            // — takes the raw `*EventLoopTimer` and recovers the store inside.
+            // SAFETY: per fn contract.
+            SourceMapStore::sweep_weak_refs(t, unsafe { &*now });
         }
         EventLoopTimerTag::DevServerMemoryVisualizerTick => {
-            todo!("dispatch: DevServer::emitMemoryVisualizerMessageTimer")
+            // SAFETY: per fn contract; `t` is the `memory_visualizer_timer`
+            // field of a live DevServer.
+            DevServer::emit_memory_visualizer_message_timer(unsafe { &mut *t }, unsafe { &*now });
         }
-        EventLoopTimerTag::BunTest => todo!("dispatch: BunTest::bunTestTimeoutCallback"),
-        EventLoopTimerTag::CronJob => todo!("dispatch: CronJob::onTimerFire"),
+        EventLoopTimerTag::BunTest => {
+            // Spec: `BunTestPtr.cloneFromRawUnsafe(@fieldParentPtr("timer", self))`
+            // — bumps the Rc refcount around the callback so the timer can
+            // safely re-enter `BunTest::run`.
+            let container = container_of!(BunTest<'_>, timer);
+            // SAFETY: container is the payload of a live `Rc<BunTest>`; the
+            // strong count is ≥1 (held by `Jest.active_file`).
+            let strong: BunTestPtr = unsafe {
+                let rc = std::rc::Rc::from_raw(container as *const BunTest<'_>);
+                let cloned = rc.clone();
+                // Don't drop the original ref — it's borrowed, not owned here.
+                let _ = std::rc::Rc::into_raw(rc);
+                cloned
+            };
+            // SAFETY: per fn contract.
+            BunTest::bun_test_timeout_callback(strong, unsafe { &*now }, unsafe { &*vm });
+        }
+        EventLoopTimerTag::CronJob => {
+            let container = container_of!(CronJob, event_loop_timer);
+            // SAFETY: per fn contract; `on_timer_fire` may free `container`.
+            CronJob::on_timer_fire(container, unsafe { &*vm });
+        }
     }
 }
 
@@ -601,23 +978,19 @@ pub fn install_dispatch_hooks() {
     );
 
     // bun_jsc::RUN_TASK_HOOK / TICK_QUEUE_HOOK → tick_queue_with_count.
-    // Gated: `tick_queue_with_count` itself is `` above (its
-    // `HotReloadTask` early-return needs the high-tier type un-gated).
-    // TODO(b2-blocked): bun_jsc::set_run_task_hook / set_tick_queue_hook.
-    
-    {
-        bun_jsc::set_run_task_hook(tick_queue_with_count);
-        bun_jsc::event_loop::set_tick_queue_hook(tick_queue_with_count);
-    }
+    bun_jsc::set_run_task_hook(tick_queue_with_count);
+    bun_jsc::event_loop::set_tick_queue_hook(tick_queue_with_count);
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/jsc/Task.zig tickQueueWithCount (96-arm switch) +
-//               src/aio/posix_event_loop.zig FilePoll.onUpdate (13-arm switch)
-//   confidence: medium — table exhaustive, arm bodies mostly gated
-//   todos:      see `todo!("dispatch: …")` count; un-gate per-type as the
-//               owning module loses its ``
+//               src/aio/posix_event_loop.zig FilePoll.onUpdate (13-arm switch) +
+//               src/event_loop/EventLoopTimer.zig fire (24-arm switch)
+//   confidence: medium — table exhaustive, every arm calls the real per-type
+//               entry point; some upstream types (shell glob/cond_expr/dir,
+//               IOWriter::run_from_main_thread, security-scan pipe writer)
+//               are forward-declared in their owning modules.
 //   notes:      §Dispatch hot-path — high tier owns the match; low tier
 //               stores (tag, ptr) + AtomicPtr hook only.
 // ──────────────────────────────────────────────────────────────────────────

@@ -844,28 +844,24 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     ) -> Result<(), Error> {
         // We mark it as dead, but the value may not actually be dead
         // We just want to be sure to not increment the usage counts for anything in the function
-        // blocked_on: is_export_to_eliminate ( P.rs:5030) + replace_exports map.
-        let mark_as_dead = false;
+        let mark_as_dead = p.options.features.dead_code_elimination
+            && data.func.flags.contains(flags::Function::IsExport)
+            && p.options.features.replace_exports.count() > 0
+            && p.is_export_to_eliminate(data.func.name.unwrap().ref_.unwrap());
         let original_is_dead = p.is_control_flow_dead;
 
         if mark_as_dead {
             p.is_control_flow_dead = true;
         }
 
-        // blocked_on: react_refresh.hook_ctx_storage is `Option<&'a mut Option<HookContext>>`;
-        //   a stack-local `react_hook_data` can't satisfy `'a`. Zig stores a raw ptr.
-        //   Hook tracking deferred — see _draft::s_function for save/restore + emission.
-        //
         // Spec (visitStmt.zig:517-520) unconditionally points p.react_refresh.hook_ctx_storage
-        // at this stack-local before visit_func and defer-restores it. We don't do that yet,
-        // so any visit_func with react_fast_refresh enabled would mis-attribute inner hook
-        // calls into the parent scope's hook_ctx_storage. Gate loud HERE (before visit_func)
-        // so no live path — including the early `return Ok(())` for remove_overwritten below —
-        // can run visit_func with the parent's storage active and then escape the check.
-        if p.options.features.react_fast_refresh {
-            todo!("s_function: react_fast_refresh hook_ctx_storage save/restore — see _draft");
-        }
+        // at this stack-local before visit_func and defer-restores it. Field is now
+        // `Option<NonNull<_>>` (Copy) matching Zig's `?*?HookContext`, so save/set/restore
+        // are trivial; no `'a` constraint to fight.
         let mut react_hook_data: Option<crate::parser::HookContext> = None;
+        let prev_hook_storage = p.react_refresh.hook_ctx_storage;
+        p.react_refresh.hook_ctx_storage =
+            Some(core::ptr::NonNull::from(&mut react_hook_data));
 
         let open_parens_loc = data.func.open_parens_loc;
         data.func = p.visit_func(core::mem::take(&mut data.func), open_parens_loc);

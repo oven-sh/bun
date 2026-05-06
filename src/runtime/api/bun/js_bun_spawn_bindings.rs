@@ -140,12 +140,53 @@ impl AbortSignalSpawnExt for WebCore::AbortSignal {
     }
 }
 
-/// `SignalCode.fromJS` lives in `bun_sys_jsc`; wrap as a free fn here so the
-/// call sites stay shape-compatible with the Zig spec.
-#[inline]
-fn signal_code_from_js(val: JSValue, global: &JSGlobalObject) -> JsResult<SignalCode> {
-    let _ = (val, global);
-    todo!("blocked_on: bun_sys_jsc::signal_code_jsc::from_js")
+/// `bun.SignalCode.fromJS` (src/sys_jsc/signal_code_jsc.zig). Ported inline
+/// because `bun_sys_jsc` carries crate-local JSC handle shims that don't unify
+/// with `bun_jsc`'s types yet; the body is identical.
+fn signal_code_from_js(arg: JSValue, global_this: &JSGlobalObject) -> JsResult<SignalCode> {
+    if let Some(sig64) = arg.get_number() {
+        // Node does this:
+        if sig64.is_nan() {
+            return Ok(SignalCode::DEFAULT);
+        }
+        // This matches node behavior, minus some details with the error messages: https://gist.github.com/Jarred-Sumner/23ba38682bf9d84dff2f67eb35c42ab6
+        if sig64.is_infinite() || sig64.trunc() != sig64 {
+            return Err(global_this.throw_invalid_arguments("Unknown signal"));
+        }
+        if sig64 < 0.0 {
+            return Err(global_this.throw_invalid_arguments("Invalid signal: must be >= 0"));
+        }
+        if sig64 > 31.0 {
+            return Err(global_this.throw_invalid_arguments("Invalid signal: must be < 32"));
+        }
+        // PORT NOTE: `bun_sys::SignalCode` is `#[repr(transparent)] struct(u8)` —
+        // matches Zig's non-exhaustive `enum(u8)` so 0 is a valid inhabitant.
+        return Ok(SignalCode(sig64 as u8));
+    } else if arg.is_string() {
+        // SAFETY: `is_string()` ⇒ `as_string()` returns a non-null cell.
+        if unsafe { (*arg.as_string()).length() } == 0 {
+            return Ok(SignalCode::DEFAULT);
+        }
+        // `arg.toEnum(globalThis, "signal", SignalCode)` — `bun_jsc::FromJsEnum`
+        // for `SignalCode` lives in `bun_sys_jsc` (different `JSValue` newtype),
+        // so do the `bun.String.fromJS` + phf lookup here directly.
+        let bun_str = arg.to_bun_string(global_this)?;
+        let utf8 = bun_str.to_utf8();
+        let hit = bun_sys::signal_code::MAP.get(utf8.slice()).copied();
+        drop(utf8);
+        bun_str.deref();
+        return match hit {
+            Some(code) => Ok(code),
+            None => Err(global_this.ERR_INVALID_ARG_VALUE(format_args!(
+                "signal must be one of SIGHUP, SIGINT, SIGQUIT, ..."
+            ))),
+        };
+    } else if !arg.is_empty_or_undefined_or_null() {
+        return Err(global_this
+            .throw_invalid_arguments("Invalid signal: must be a string or an integer"));
+    }
+
+    Ok(SignalCode::DEFAULT)
 }
 
 /// `bun.timespec.orderIgnoreEpoch` — not yet on `bun_core::Timespec`; local port.
@@ -174,13 +215,6 @@ fn sys_system_error_to_js(err: bun_sys::SystemError, global: &JSGlobalObject) ->
         dest: err.dest,
     };
     jsc_err.to_error_instance(global)
-}
-
-/// `Terminal.CreateResult` — full struct gated behind `bun_terminal_body`. Stub
-/// the shape used by `spawn_maybe_sync` so the parsing path type-checks.
-pub struct TerminalCreateResult {
-    pub terminal: *mut Terminal,
-    pub js_value: JSValue,
 }
 
 /// Obtain `&mut Process` from `ManuallyDrop<Arc<Process>>`. Zig stores

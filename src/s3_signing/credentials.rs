@@ -255,6 +255,35 @@ impl RefCounted for S3Credentials {
 }
 
 impl S3Credentials {
+    /// Construct a value-typed `S3Credentials` (stack/owned, not heap-shared).
+    /// Mirrors the Zig struct-literal init in `env_loader.zig:getS3Credentials`
+    /// — `ref_count` is private so callers outside this crate route through
+    /// here. Heap-share via `.dupe()` or wrap in `Arc`/`IntrusiveRc` afterward.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        access_key_id: Box<[u8]>,
+        secret_access_key: Box<[u8]>,
+        region: Box<[u8]>,
+        endpoint: Box<[u8]>,
+        bucket: Box<[u8]>,
+        session_token: Box<[u8]>,
+        insecure_http: bool,
+        virtual_hosted_style: bool,
+    ) -> Self {
+        Self {
+            ref_count: RefCount::init(),
+            access_key_id,
+            secret_access_key,
+            region,
+            endpoint,
+            bucket,
+            session_token,
+            storage_class: None,
+            insecure_http,
+            virtual_hosted_style,
+        }
+    }
+
     pub fn estimated_size(&self) -> usize {
         size_of::<S3Credentials>()
             + self.access_key_id.len()

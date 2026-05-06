@@ -187,37 +187,33 @@ impl WalkTaskErr {
     }
 }
 
-// TODO(port): `ConcurrentPromiseTask` is currently a zero-generic `stub_ty!`
-// placeholder in `src/jsc/event_loop.rs`. Restore `<WalkTask<'a>>` once the
-// real generic task type is ported. The `'a` lifetime is kept so downstream
-// `AsyncGlobWalkTask<'a>` mentions stay shape-stable.
-#[allow(unused_lifetimes)]
-pub type AsyncGlobWalkTask<'a> = ConcurrentPromiseTask;
+pub type AsyncGlobWalkTask<'a> = ConcurrentPromiseTask<'a, WalkTask<'a>>;
 
 impl<'a> WalkTask<'a> {
+    // PORT NOTE: Zig returned `!*AsyncGlobWalkTask` (the only `try` was the heap
+    // allocation). With the global mimalloc allocator `Box::new` is infallible
+    // (panics on OOM), so the Rust port returns the boxed task directly.
     pub fn create(
         global_this: &'a JSGlobalObject,
         glob_walker: Box<GlobWalker>,
         has_pending_activity: &'a AtomicUsize,
-    ) -> Result<Box<AsyncGlobWalkTask<'a>>, bun_core::Error> {
-        // TODO(port): narrow error set
-        let _walk_task = Box::new(WalkTask {
+    ) -> Box<AsyncGlobWalkTask<'a>> {
+        let walk_task = Box::new(WalkTask {
             walker: glob_walker,
             global: global_this,
             err: None,
             has_pending_activity,
         });
-        // TODO(port): `bun_jsc::ConcurrentPromiseTask` is currently a non-generic
-        // `stub_ty!` placeholder; the real generic + `create_on_js_thread` live in
-        // bun_jsc's private `_gated` module. Restore once re-exported.
-        todo!("blocked_on: bun_jsc::ConcurrentPromiseTask::create_on_js_thread")
+        AsyncGlobWalkTask::create_on_js_thread(global_this, walk_task)
     }
+}
 
-    pub fn run(&mut self) {
+impl<'a> ConcurrentPromiseTaskContext for WalkTask<'a> {
+    fn run(&mut self) {
+        // PORT NOTE: `defer decrPendingActivityFlag(...)` — runs on all paths.
         let guard = scopeguard::guard(self.has_pending_activity, |hpa| {
             decr_pending_activity_flag(hpa);
         });
-        // PORT NOTE: `defer decrPendingActivityFlag(...)` — runs on all paths.
         let result = match self.walker.walk() {
             Ok(r) => r,
             Err(err) => {
@@ -235,10 +231,10 @@ impl<'a> WalkTask<'a> {
         drop(guard);
     }
 
-    pub fn then(&mut self, promise: &mut JSPromise) -> Result<(), JsTerminated> {
-        // TODO(port): Zig `defer this.deinit()` self-destroys (frees walker + self).
-        // In Rust, ownership of `Box<WalkTask>` should be consumed here so Drop
-        // runs at scope exit. Verify ConcurrentPromiseTask::then signature in Phase B.
+    fn then(&mut self, promise: &mut JSPromise) -> Result<(), JsTerminated> {
+        // PORT NOTE: Zig `defer this.deinit()` (free walker + self) is subsumed by
+        // `ConcurrentPromiseTask` owning `Box<WalkTask>` — dropped when dispatch
+        // calls `AsyncGlobWalkTask::destroy()` after `run_from_js()`.
 
         if let Some(err) = &self.err {
             promise.reject_with_async_stack(self.global, err.to_js(self.global))?;
@@ -247,8 +243,8 @@ impl<'a> WalkTask<'a> {
 
         let js_strings = match glob_walk_result_to_js(&mut self.walker, self.global) {
             Ok(v) => v,
-            Err(e) => return promise.reject(self.global, Err(e)),
             // PORT NOTE: `error.JSError` → pass the JsError through; reject() pulls the pending exception.
+            Err(e) => return promise.reject(self.global, Err(e)),
         };
         promise.resolve(self.global, js_strings)
     }

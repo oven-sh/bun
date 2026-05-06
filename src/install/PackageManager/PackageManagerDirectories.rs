@@ -894,16 +894,18 @@ pub fn save_lockfile(
         return Ok(());
     }
 
-    let mut save_node: Option<ProgressNode> = None;
+    // PORT NOTE: `Progress::start` returns `&mut Node` borrowing `this.progress`;
+    // decay to a raw ptr immediately so the exclusive borrow ends before we
+    // re-borrow `this.progress` for `refresh()` / reset below (matches the
+    // pattern in `start_progress_bar`).
+    let mut save_node: *mut ProgressNode = core::ptr::null_mut();
 
     if log_level.show_progress() {
-        // PORT NOTE: Zig set `progress.supports_ansi_escape_codes`; the
-        // `bun_progress` shim is a non-rendering counter and has no such field.
-        let _ = Output::enable_ansi_colors_stderr();
-        // SAFETY: ProgressStrings constants are ASCII.
-        let name = unsafe { core::str::from_utf8_unchecked(ProgressStrings::save()) };
-        save_node = Some(this.progress.start(name, 0));
-        save_node.as_mut().unwrap().activate();
+        this.progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
+        save_node = this.progress.start(ProgressStrings::save(), 0);
+        // SAFETY: `save_node` points into `this.progress.root`, live for as long as
+        // `this.progress` is.
+        unsafe { (*save_node).activate() };
 
         this.progress.refresh();
     }

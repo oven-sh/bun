@@ -113,9 +113,8 @@ impl<'a> PatchFile<'a> {
                             &[abs_patch_dir.as_bytes(), todir],
                         );
                         // CYCLEBREAK(b0): was bun_runtime::node::fs::NodeFs::mkdir_recursive — moved down to bun_sys (T1).
-                        // TODO(b2-blocked): bun_sys::mkdir_recursive — using mkdir_recursive_at (drops mode arg).
                         if let sys::Result::Err(e) =
-                            sys::mkdir_recursive_at(Fd::cwd(), path_to_make.as_bytes())
+                            sys::mkdir_recursive_at_mode(Fd::cwd(), path_to_make.as_bytes(), 0o755)
                         {
                             return Some(e.without_path());
                         }

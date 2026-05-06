@@ -5,7 +5,7 @@
 use bun_http_types::FetchCacheMode::FetchCacheMode;
 use bun_http_types::FetchRedirect::FetchRedirect;
 use bun_http_types::FetchRequestMode::FetchRequestMode;
-use bun_jsc::{JSGlobalObject, JSValue};
+use bun_jsc::{ComptimeStringMapExt as _, FromJsEnum, JSGlobalObject, JSValue, JsResult};
 
 // TODO(port): move to <area>_sys
 unsafe extern "C" {

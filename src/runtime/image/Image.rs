@@ -1126,8 +1126,16 @@ impl Image {
             self.this_ref.set_strong(this_value, global);
         }
         self.pending_tasks += 1;
-        let _ = job;
-        todo!("blocked_on: bun_jsc::ConcurrentPromiseTask::create_on_js_thread")
+        let task = ConcurrentPromiseTask::<PipelineTask<'_>>::create_on_js_thread(global, job);
+        let promise_value = task.promise.value();
+        // Ownership transfers to the WorkPool / event-loop dispatch
+        // (`task_tag::AsyncImageTask` → `run_from_js` → `destroy`).
+        let raw = Box::into_raw(task);
+        // SAFETY: `raw` is freshly leaked; `schedule()` only writes the
+        // intrusive `task` field into the work-pool queue. The worker thread
+        // touches `ctx`/`task` only; `promise` was read above on this thread.
+        unsafe { (*raw).schedule() };
+        Ok(promise_value)
     }
 
     /// Run the full pipeline on the *current* thread. Used when an `Image` is

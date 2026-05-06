@@ -892,7 +892,10 @@ const fn u56_max() -> usize {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/ffi/FFIObject.zig (650 lines)
-//   confidence: medium
-//   todos:      5
-//   notes:      DOMCall + wrapStaticMethod are comptime codegen → need proc-macro/codegen in Phase B; ValueOrError.Slice carries raw (ptr,len) for FFI-owned memory; reader fns shadow primitive type names (legal Rust).
+//   confidence: medium-high
+//   notes:      DOMCall is comptime codegen → represented as const descriptors
+//               + extern `*__put` thunks. wrapStaticMethod monomorphised by
+//               hand (one body per `fields.*` entry). ValueOrError.Slice
+//               carries raw (ptr,len) for FFI-owned memory; reader fns shadow
+//               primitive type names (legal Rust).
 // ──────────────────────────────────────────────────────────────────────────

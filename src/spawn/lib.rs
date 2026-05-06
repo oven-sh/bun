@@ -164,29 +164,120 @@ pub mod subprocess {
         }
     }
 
+    /// Trait bound for the owning process type `P` of [`StaticPipeWriter`].
+    ///
+    /// Port of the duck-typed `process.onCloseIO(.stdin)` call inside Zig's
+    /// `NewStaticPipeWriter(comptime ProcessType)`. Method takes `*mut Self`
+    /// (not `&mut self`) because the writer is a field of the process —
+    /// materializing `&mut P` while the writer borrow is live would alias.
+    pub trait StaticPipeWriterProcess {
+        /// # Safety
+        /// `this` must point to a live `Self`.
+        unsafe fn on_close_io(this: *mut Self, kind: StdioKind);
+    }
+
     /// Port of `jsc.Subprocess.NewStaticPipeWriter(ParentType)` — comptime-
     /// parameterized async writer that drains `source` into `stdio_result`.
     /// The body depends on `bun_io::PipeWriter` + the JS event loop and is
-    /// registered by `bun_runtime` at startup; this stub owns only the fields
-    /// the mid-tier callers touch (`.source`, `.start()`).
+    /// registered by `bun_runtime` at startup via [`hooks::STATIC_PIPE_WRITER`];
+    /// this wrapper owns the fields mid-tier callers touch (`.source`,
+    /// `.start()`) plus an opaque handle to the runtime's intrusive-refcounted
+    /// writer.
     pub struct StaticPipeWriter<P: ?Sized> {
         pub source: Source,
         pub stdio_result: StdioResult,
+        /// Opaque `*mut bun_runtime::…::StaticPipeWriter<_>` allocated by the
+        /// vtable's `create`. Null when the hook is unregistered (test-only).
+        inner: *mut core::ffi::c_void,
         _parent: core::marker::PhantomData<*const P>,
     }
 
-    impl<P: ?Sized> StaticPipeWriter<P> {
-        pub fn create(
-            _event_loop: impl Sized,
-            _parent: *const P,
-            _result: StdioResult,
-            _source: Source,
-        ) -> std::rc::Rc<Self> {
-            todo!("blocked_on: bun_runtime::api::bun::subprocess::StaticPipeWriter dispatch (tier inversion)")
+    impl<P: ?Sized + StaticPipeWriterProcess> StaticPipeWriter<P> {
+        /// Monomorphic thunk so the runtime can invoke `P::on_close_io`
+        /// without naming `P` (PORTING.md §Dispatch — manual vtable arm).
+        unsafe fn on_close_io_thunk(parent: *mut core::ffi::c_void, kind: StdioKind) {
+            // SAFETY: `parent` is the `*mut P` passed to `create()` below; the
+            // runtime stores it verbatim and only calls back while the parent
+            // is alive (parent's destructor derefs the writer first).
+            unsafe { P::on_close_io(parent.cast::<P>(), kind) }
         }
 
+        /// Port of `StaticPipeWriter.create` (subprocess/StaticPipeWriter.zig).
+        ///
+        /// `event_loop` is accepted generically so this leaf crate need not
+        /// depend on `bun_event_loop` on POSIX; the runtime registrant casts
+        /// the pointer back to `&EventLoopHandle`. The pointee is only read
+        /// during this call (Zig: `EventLoopHandle.init(event_loop)` copies).
+        pub fn create<E>(
+            event_loop: E,
+            parent: *const P,
+            result: StdioResult,
+            source: Source,
+        ) -> std::rc::Rc<Self> {
+            let vt = super::hooks::STATIC_PIPE_WRITER.load(super::Ordering::Acquire);
+            // `Box<[u8]>` heap address is stable across the move into `Rc`
+            // below, so taking the slice pointer here is sound.
+            let buf = source.slice() as *const [u8];
+            let inner = if vt.is_null() {
+                debug_assert!(
+                    false,
+                    "bun_runtime did not register STATIC_PIPE_WRITER vtable"
+                );
+                core::ptr::null_mut()
+            } else {
+                // SAFETY: `vt` is a `&'static StaticPipeWriterVTable` written
+                // once by `bun_runtime::init()`; never freed. `event_loop` is
+                // live for the duration of this call. `buf` points into
+                // `source.bytes` which is moved into the returned `Rc` and
+                // outlives the runtime handle (Drop derefs `inner` first).
+                unsafe {
+                    ((*vt).create)(
+                        &event_loop as *const E as *const core::ffi::c_void,
+                        parent as *mut P as *mut core::ffi::c_void,
+                        Self::on_close_io_thunk,
+                        result,
+                        buf,
+                    )
+                }
+            };
+            std::rc::Rc::new(Self {
+                source,
+                stdio_result: result,
+                inner,
+                _parent: core::marker::PhantomData,
+            })
+        }
+
+        /// Port of `StaticPipeWriter.start` — kick off the async drain.
         pub fn start(&self) -> bun_sys::Maybe<()> {
-            todo!("blocked_on: bun_runtime::api::bun::subprocess::StaticPipeWriter dispatch (tier inversion)")
+            let vt = super::hooks::STATIC_PIPE_WRITER.load(super::Ordering::Acquire);
+            if vt.is_null() || self.inner.is_null() {
+                // Unreachable in a linked binary; deterministic error for
+                // isolated unit tests so callers' `match .err` arm fires.
+                return Err(bun_sys::Error::from_code(
+                    bun_sys::E::ENOSYS,
+                    bun_sys::Tag::TODO,
+                ));
+            }
+            // SAFETY: `vt` is the registered static vtable; `inner` was
+            // produced by `vt.create` and has at least one live ref.
+            unsafe { ((*vt).start)(self.inner) }
+        }
+    }
+
+    impl<P: ?Sized> Drop for StaticPipeWriter<P> {
+        fn drop(&mut self) {
+            if self.inner.is_null() {
+                return;
+            }
+            let vt = super::hooks::STATIC_PIPE_WRITER.load(super::Ordering::Acquire);
+            debug_assert!(!vt.is_null());
+            if !vt.is_null() {
+                // SAFETY: `inner` came from `vt.create`; this releases the
+                // wrapper's ref. Runs *before* `self.source` drops (field
+                // drop order), upholding the borrowed-slice contract.
+                unsafe { ((*vt).deref)(self.inner) };
+            }
         }
     }
 }

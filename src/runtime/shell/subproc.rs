@@ -8,7 +8,6 @@ use bun_alloc::Arena;
 use bun_aio::Loop as AsyncLoop;
 use bun_collections::ByteList;
 use bun_core::Output;
-use bun_dotenv::Map as DotEnvMap;
 use bun_io::{BufferedReader, ReadState};
 use bun_jsc::{
     self as jsc, ArrayBuffer, Codegen, EventLoopHandle, JSGlobalObject, JSValue, MarkedArrayBuffer,

@@ -155,8 +155,7 @@ impl SubscriptionCtx {
 
     fn subscription_callback_map(&mut self) -> &mut JSMap {
         let parent_this = self.parent().this_value.try_get().expect("unreachable");
-        let value_js =
-            ParentJS::gc_get(ParentJS::SubscriptionCallbackMap, parent_this).unwrap();
+        let value_js = ParentJS::subscription_callback_map_get_cached(parent_this).unwrap();
         // SAFETY: `from_js` returns a non-null heap cell when the slot was set
         // by `init()`; treated as `&mut` for the duration of the call (single
         // JS thread).

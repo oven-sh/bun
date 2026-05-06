@@ -166,29 +166,34 @@ pub fn set_break_point_on_first_line() -> bool {
 
 pub struct RuntimeTranspilerStore {
     pub generation_number: AtomicU32,
-    // TODO(b2-blocked): bun_collections::HiveArrayFallback<TranspilerJob, N> — gated until
-    // HiveArray::Fallback API is confirmed and TranspilerJob is fully constructible.
-    pub store: (),
+    pub store: TranspilerJobStore,
     pub enabled: bool,
-    // TODO(b2-blocked): bun_collections::UnboundedQueue<TranspilerJob, OFFSET> — intrusive
-    // queue API shape unconfirmed.
-    pub queue: (),
+    pub queue: Queue,
+}
+
+pub type Queue = UnboundedQueue<TranspilerJob>;
+
+impl Taskable for RuntimeTranspilerStore {
+    const TAG: TaskTag = task_tag::RuntimeTranspilerStore;
 }
 
 impl Default for RuntimeTranspilerStore {
     fn default() -> Self {
         Self {
             generation_number: AtomicU32::new(0),
-            store: (),
+            store: TranspilerJobStore::init(),
             enabled: true,
-            queue: (),
+            queue: Queue::new(),
         }
     }
 }
 
 impl RuntimeTranspilerStore {
     pub fn init() -> RuntimeTranspilerStore {
-        RuntimeTranspilerStore::default()
+        // PORT NOTE: Zig passed `bun.typedAllocator(TranspilerJob)` to
+        // `Store.init`; the Rust HiveArrayFallback uses the global mimalloc
+        // (PORTING.md §Allocators), so the allocator arg drops.
+        Self::default()
     }
 
     pub fn run_from_js_thread(
@@ -197,49 +202,61 @@ impl RuntimeTranspilerStore {
         global: &JSGlobalObject,
         vm: &mut VirtualMachine,
     ) {
-         // TODO(b2-blocked): bun_collections::UnboundedQueue::{pop_batch, iterator}, EventLoop::drain_microtasks_with_global, JSGlobalObject::report_uncaught_exception_from_error
-        {
-        let mut batch = self.queue.pop_batch();
+        let batch = self.queue.pop_batch();
         let jsc_vm = vm.jsc_vm;
         let mut iter = batch.iterator();
-        if let Some(job) = iter.next() {
+        let job = iter.next();
+        if !job.is_null() {
             // we run just one job first to see if there are more
-            if let Err(err) = job.run_from_js_thread() {
+            // SAFETY: `job` is a non-null *mut TranspilerJob popped from our
+            // own queue; this thread (JS thread) is its sole owner now.
+            if let Err(err) = unsafe { (*job).run_from_js_thread() } {
                 global.report_uncaught_exception_from_error(err);
             }
         } else {
             return;
         }
-        while let Some(job) = iter.next() {
+        loop {
+            let job = iter.next();
+            if job.is_null() {
+                break;
+            }
             // if there are more, we need to drain the microtasks from the previous run
             if event_loop.drain_microtasks_with_global(global, jsc_vm).is_err() {
                 return;
             }
-            if let Err(err) = job.run_from_js_thread() {
+            // SAFETY: `job` is a non-null *mut TranspilerJob popped from our
+            // own queue; this thread (JS thread) is its sole owner now.
+            if let Err(err) = unsafe { (*job).run_from_js_thread() } {
                 global.report_uncaught_exception_from_error(err);
             }
         }
 
         // immediately after this is called, the microtasks will be drained again.
-        } // end 
-        let _ = (event_loop, global, vm);
     }
 
     pub fn transpile(
         &mut self,
-        vm: &VirtualMachine,
-        global_object: &JSGlobalObject,
+        vm: *mut VirtualMachine,
+        global_object: *mut JSGlobalObject,
         input_specifier: String,
         path: Fs::Path,
         referrer: String,
         loader: Loader,
         package_json: Option<&PackageJSON>,
     ) -> *mut c_void {
-         // TODO(b2-blocked): TranspilerJobStore::get, JSInternalPromise::create, ResolvedSource fields, ResolvedSourceTag, Strong::create, JSValue::from_cell, Fs::Path::init, PackageJSON.module_type
-        {
         let job: *mut TranspilerJob = self.store.get();
-        let owned_path = Fs::Path::init(Box::<[u8]>::from(path.text));
-        let promise = JSInternalPromise::create(global_object);
+        // Zig: `bun.default_allocator.dupe(u8, path.text)` then `Fs.Path.init`.
+        // The duped slice is freed in `reset_for_pool` (Zig `deinit`).
+        let owned_text: &'static [u8] =
+            Box::leak(path.text.to_vec().into_boxed_slice());
+        // PORT NOTE: `Box::leak` here is the literal port of Zig's
+        // `allocator.dupe` + later `allocator.free` (in `reset_for_pool`). The
+        // allocation is reclaimed via `Box::from_raw` against `path.text` when
+        // the job slot is recycled — not a permanent leak.
+        let owned_path = Fs::Path::init(owned_text);
+        // SAFETY: caller passes a live JSGlobalObject (BACKREF).
+        let promise = JSInternalPromise::create(unsafe { &*global_object });
 
         // NOTE: DirInfo should already be cached since module loading happens
         // after module resolution, so this should be cheap
@@ -266,7 +283,10 @@ impl RuntimeTranspilerStore {
                 vm,
                 log: logger::Log::init(),
                 loader,
-                promise: Strong::create(JSValue::from_cell(promise), global_object),
+                promise: StrongOptional::create(
+                    JSValue::from_cell(promise),
+                    &*global_object,
+                ),
                 poll_ref: KeepAlive::default(),
                 fetcher: Fetcher::File,
                 resolved_source,
@@ -288,10 +308,7 @@ impl RuntimeTranspilerStore {
         );
         // SAFETY: job fully initialized above
         unsafe { (*job).schedule() };
-        return promise as *mut c_void;
-        } // end 
-        let _ = (vm, global_object, input_specifier, path, referrer, loader, package_json);
-        core::ptr::null_mut()
+        (promise as *mut JSInternalPromise).cast::<c_void>()
     }
 }
 

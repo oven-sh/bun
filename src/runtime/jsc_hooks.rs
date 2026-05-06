@@ -1345,18 +1345,55 @@ fn transpile_source_code_inner(
                 }
 
                 // Spec :366-384 — JSON/TOML/YAML/JSON5: export as a JS object.
-                // TODO(b2-blocked): `Expr::to_js` — gated in `bun_js_parser`
-                // (`ast.parts.at(0).stmts[0].data.s_expr.value.to_js(...)`).
-                // Until that surfaces, fall through to the print path so the
-                // JSON/TOML body is emitted as JS source instead of a direct
-                // JSValue. This is the same behaviour as `Bun.Transpiler`
-                // (which also routes JSON through the printer).
-                
                 if matches!(loader, L::Json | L::Jsonc | L::Toml | L::Yaml | L::Json5) {
-                    // TODO(b2-blocked): `Expr::to_js` — gated in `bun_js_parser`
-                    // (`ast.parts.at(0).stmts[0].data.s_expr.value.to_js(...)`).
-                    // Until that surfaces, fall through to the print path below.
-                    todo!("blocked_on: bun_js_parser::Expr::to_js")
+                    // SAFETY: per fn contract — `jsc_vm` is the live VM.
+                    let global: &JSGlobalObject = if global_object.is_null() {
+                        unsafe { &*(*jsc_vm).global }
+                    } else {
+                        // SAFETY: null-checked; `global_object` is the live
+                        // per-thread global passed via `TranspileArgs`.
+                        unsafe { &*global_object }
+                    };
+
+                    if parse_result.empty {
+                        return Ok(ResolvedSource {
+                            specifier: input_specifier.dupe_ref(),
+                            source_url: create_if_different(input_specifier, path.text),
+                            jsvalue_for_export: JSValue::create_empty_object(global, 0),
+                            tag: ResolvedSourceTag::ExportsObject,
+                            ..Default::default()
+                        });
+                    }
+
+                    // `parse_result.ast.parts.at(0).stmts[0].data.s_expr.value`
+                    // — the JSON/TOML parser emits exactly one part with one
+                    // expression statement. PORT NOTE: `Part.stmts` is a raw
+                    // arena slice (`*mut [Stmt]`), so deref through it.
+                    use bun_js_parser_jsc::ExprJsc as _;
+                    let part0 = parse_result.ast.parts.at(0);
+                    // SAFETY: `stmts` points into the per-call AST arena
+                    // entered via `_ast_scope`; live until scope exit.
+                    let stmt0 = unsafe { &(*part0.stmts)[0] };
+                    let s_expr = stmt0.data.s_expr().expect(
+                        "JSON/TOML parser yields a single SExpr statement",
+                    );
+                    let jsvalue_for_export = match s_expr.value.to_js(global) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            // Spec :381 — `catch |e| panic("Unexpected JS error: {s}", @errorName(e))`.
+                            bun_core::Output::panic(
+                                "Unexpected JS error: {}",
+                                format_args!("{}", <&'static str>::from(e)),
+                            );
+                        }
+                    };
+                    return Ok(ResolvedSource {
+                        specifier: input_specifier.dupe_ref(),
+                        source_url: create_if_different(input_specifier, path.text),
+                        jsvalue_for_export,
+                        tag: ResolvedSourceTag::ExportsObject,
+                        ..Default::default()
+                    });
                 }
 
                 // Spec :386-398 — already-bundled (bytecode cache hit).

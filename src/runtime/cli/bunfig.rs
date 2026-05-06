@@ -266,8 +266,86 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    // parse_registry / parse_registry_url_string / parse_registry_object bodies
-    // live in the `phase_a_draft` impl block below.
+    fn parse_registry_url_string(
+        &mut self,
+        str: &E::EString,
+    ) -> Result<api::NpmRegistry, bun_core::Error> {
+        let url = URL::parse(str.string(self.bump)?);
+        let mut registry = api::NpmRegistry::default();
+
+        // Token
+        if url.username.is_empty() && !url.password.is_empty() {
+            registry.token = url.password.into();
+            let mut s = Vec::<u8>::new();
+            write!(
+                &mut s,
+                "{}://{}/{}/",
+                bstr::BStr::new(url.display_protocol()),
+                url.display_host(),
+                bstr::BStr::new(bun_string::strings::trim(url.pathname, b"/")),
+            )
+            .expect("unreachable");
+            registry.url = s.into();
+        } else if !url.username.is_empty() && !url.password.is_empty() {
+            registry.username = url.username.into();
+            registry.password = url.password.into();
+            let mut s = Vec::<u8>::new();
+            write!(
+                &mut s,
+                "{}://{}/{}/",
+                bstr::BStr::new(url.display_protocol()),
+                url.display_host(),
+                bstr::BStr::new(bun_string::strings::trim(url.pathname, b"/")),
+            )
+            .expect("unreachable");
+            registry.url = s.into();
+        } else {
+            // Do not include a trailing slash. There might be parameters at the end.
+            registry.url = url.href.into();
+        }
+
+        Ok(registry)
+    }
+
+    fn parse_registry_object(
+        &mut self,
+        obj: &E::Object,
+    ) -> Result<api::NpmRegistry, bun_core::Error> {
+        let mut registry = api::NpmRegistry::default();
+
+        if let Some(url) = obj.get(b"url") {
+            self.expect_string(&url)?;
+            registry.url = expr_as_string(&url, self.bump).unwrap().into();
+        }
+        if let Some(username) = obj.get(b"username") {
+            self.expect_string(&username)?;
+            registry.username = expr_as_string(&username, self.bump).unwrap().into();
+        }
+        if let Some(password) = obj.get(b"password") {
+            self.expect_string(&password)?;
+            registry.password = expr_as_string(&password, self.bump).unwrap().into();
+        }
+        if let Some(token) = obj.get(b"token") {
+            self.expect_string(&token)?;
+            registry.token = expr_as_string(&token, self.bump).unwrap().into();
+        }
+
+        Ok(registry)
+    }
+
+    fn parse_registry(&mut self, expr: &Expr) -> Result<api::NpmRegistry, bun_core::Error> {
+        match &expr.data {
+            ExprData::EString(s) => self.parse_registry_url_string(s),
+            ExprData::EObject(o) => self.parse_registry_object(o),
+            _ => {
+                self.add_error(
+                    expr.loc,
+                    b"Expected registry to be a URL string or an object",
+                )?;
+                Ok(api::NpmRegistry::default())
+            }
+        }
+    }
 
     fn load_env_config(&mut self, expr: &Expr) -> Result<(), bun_core::Error> {
         match &expr.data {

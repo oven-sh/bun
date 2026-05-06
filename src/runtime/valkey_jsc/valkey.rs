@@ -166,6 +166,15 @@ impl Default for TLS {
     }
 }
 
+// Call sites only ever compare against `TLS::None` / `TLS::Enabled`;
+// `SSLConfig` doesn't (and shouldn't) implement `PartialEq`, so compare by
+// discriminant — matches Zig's tagged-union `==` semantics for tag checks.
+impl PartialEq for TLS {
+    fn eq(&self, other: &Self) -> bool {
+        core::mem::discriminant(self) == core::mem::discriminant(other)
+    }
+}
+
 /// Connection options for Valkey client
 pub struct Options {
     pub idle_timeout_ms: u32,

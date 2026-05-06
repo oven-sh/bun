@@ -61,9 +61,21 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__WTFStringImpl__ref(WTF::StringImpl*
 
 extern "C" [[ZIG_EXPORT(nothrow)]] bool BunString__fromJS(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue, BunString* bunString)
 {
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::JSValue value = JSC::JSValue::decode(encodedValue);
     *bunString = Bun::toString(globalObject, value);
-    return bunString->tag != BunStringTag::Dead;
+    if (bunString->tag == BunStringTag::Dead) [[unlikely]] {
+        // Zig's String.fromJS asserts that a Dead result implies a pending
+        // exception. toWTFString almost always throws before returning a null
+        // String, but there are rare paths where it does not; guarantee the
+        // invariant here so the caller never sees Dead without an exception.
+        if (!scope.exception()) [[unlikely]]
+            throwOutOfMemoryError(globalObject, scope);
+        return false;
+    }
+    scope.release();
+    return true;
 }
 
 extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__createAtom(const char* bytes, size_t length)

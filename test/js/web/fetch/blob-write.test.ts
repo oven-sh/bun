@@ -84,3 +84,21 @@ test("Bun.file(path).stat() returns stats", async () => {
   expect(stat).toBeDefined();
   expect(stat.size).toBe(13); // "Hello, world!" is 13 bytes
 });
+
+test("Bun.write() with a native constructor as data stringifies it", async () => {
+  // Hits the generic toSlice fallback in Blob.fromJSWithoutDeferGC; BunString__fromJS
+  // must never return Dead without a pending exception or the debug assert in
+  // String.fromJS trips.
+  const dir = tempDirWithFiles("bun-write-ctor", {});
+  const file = Bun.file(path.join(dir, "out.txt"));
+  await Bun.write(file, ArrayBuffer as any);
+  expect(await file.text()).toBe(ArrayBuffer.toString());
+});
+
+test("S3Client.write() with a native constructor as data does not assert", async () => {
+  const s3 = new Bun.S3Client();
+  // Missing credentials, so the upload itself rejects — we only care that the
+  // Blob conversion of `ArrayBuffer` (a JSFunction) did not trip a debug
+  // assertion in String.fromJS on the way there.
+  await expect(s3.write("key", ArrayBuffer as any)).rejects.toThrow();
+});

@@ -400,13 +400,13 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         for part in passthrough {
             copy_script.push(b' ');
-            // TODO(b2-blocked): `crate::shell::needs_escape_utf8_ascii_latin1` /
+            // PORT NOTE: `crate::shell::needs_escape_utf8_ascii_latin1` /
             // `escape_8bit` live in `shell_body.rs`, which is `#[cfg(any())]`.
-            // Fall back to raw append (matches Zig's no-escape-needed arm) until
-            // the shell-escape surface re-exports.
-            #[cfg(any())]
-            if crate::shell::needs_escape_utf8_ascii_latin1(part) {
-                crate::shell::escape_8bit(part, &mut copy_script, true)?;
+            // Until the shell-escape surface re-exports, use the inlined
+            // byte-identical copies in `shell_escape_inline` so the live path
+            // is never lossy (run_command.zig:233-239).
+            if shell_escape_inline::needs_escape_utf8_ascii_latin1(part) {
+                shell_escape_inline::escape_8bit(part, &mut copy_script, true);
                 continue;
             }
             copy_script.extend_from_slice(part);
@@ -526,21 +526,25 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     /// cache (process-lifetime; Zig returned `*DirInfo`).
     pub fn configure_env_for_run(
         ctx: &mut ContextData,
-        this_transpiler: &mut Transpiler<'static>,
+        this_transpiler: &mut ::core::mem::MaybeUninit<Transpiler<'static>>,
         env: Option<*mut DotEnv::Loader<'static>>,
         log_errors: bool,
         store_root_fd: bool,
     ) -> Result<*mut DirInfo, bun_core::Error> {
         let args = ctx.args.clone();
         let env_is_none = env.is_none();
-        // PORT NOTE: process-lifetime arena for the runner's transpiler — same
-        // pattern as `jsc_hooks::init_runtime_state` (transpiler_arena). Zig
-        // passed `ctx.allocator` (== `bun.default_allocator`); the Rust port
-        // threads an `&'static Arena` per PORTING.md §AST crates.
+        // PORT NOTE: process-lifetime arena singleton for the runner's
+        // transpiler. Zig passed `ctx.allocator` (== `bun.default_allocator`);
+        // the Rust port threads an `&'static Arena` per PORTING.md §AST crates.
         // TODO(port): allocator — collapse once Transpiler::init drops the arena arg.
-        let arena: &'static bun_alloc::Arena =
-            Box::leak(Box::new(bun_alloc::Arena::new()));
-        *this_transpiler = Transpiler::init(arena, ctx.log, args, env)?;
+        let arena: &'static bun_alloc::Arena = runner_arena();
+        // PORT NOTE: out-param constructor — Zig: `var this_transpiler: Transpiler
+        // = undefined;` then `configureEnvForRun` writes the whole struct.
+        // `Transpiler` holds `&Arena`/`Box`/enum fields (non-null invariants),
+        // so callers MUST pass a `MaybeUninit` slot (PORTING.md §std.mem.zeroes).
+        this_transpiler.write(Transpiler::init(arena, ctx.log, args, env)?);
+        // SAFETY: fully written on the line above.
+        let this_transpiler = unsafe { this_transpiler.assume_init_mut() };
         this_transpiler.options.env.behavior = api::DotEnvBehavior::LoadAll;
         // SAFETY: `Transpiler::init` always sets `env` (singleton or leaked).
         let env_loader = unsafe { &mut *this_transpiler.env };
@@ -1252,12 +1256,13 @@ impl RunCommand {
 
         // ── package.json script lookup ──────────────────────────────────────
         if !skip_script_check {
-            // SAFETY: Phase-A out-param init pattern — `configure_env_for_run`
-            // writes the entire struct via `*this_transpiler = Transpiler::init`
-            // before any field is read. Zig: `var this_transpiler: Transpiler = undefined;`.
-            // TODO(port): use MaybeUninit<Transpiler> once `Transpiler::init`'s
-            // gated tail un-gates and stops returning `Err(TODO)`.
-            let mut this_transpiler: Transpiler<'static> = unsafe { ::core::mem::zeroed() };
+            // PORT NOTE: out-param init — Zig: `var this_transpiler: Transpiler
+            // = undefined;`. `Transpiler` is NOT all-zero-valid POD (holds
+            // `&Arena`/`Box`/enum fields), so use `MaybeUninit` and let
+            // `configure_env_for_run` `.write()` the whole struct (PORTING.md
+            // §std.mem.zeroes).
+            let mut this_transpiler =
+                ::core::mem::MaybeUninit::<Transpiler<'static>>::uninit();
             let root_dir_info = Self::configure_env_for_run(
                 ctx,
                 &mut this_transpiler,
@@ -1265,6 +1270,9 @@ impl RunCommand {
                 log_errors,
                 false,
             )?;
+            // SAFETY: `configure_env_for_run` returned `Ok`, so the slot is
+            // fully initialized via `MaybeUninit::write`.
+            let this_transpiler = unsafe { this_transpiler.assume_init_mut() };
             // TODO(b2-blocked): `configure_path_for_run` — bun-node fake-exe
             // creation + PATH stitching; preserved in phase_a_draft.
             #[cfg(any())]

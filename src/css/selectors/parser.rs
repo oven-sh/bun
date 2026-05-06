@@ -221,13 +221,29 @@ pub mod attrs {
         }
 
         pub fn eql(&self, rhs: &Self) -> bool {
-            protocol_shims::implement_eql(self, rhs)
+            match (&self.namespace, &rhs.namespace) {
+                (None, None) => true,
+                (Some(a), Some(b)) => a.eql(b),
+                _ => return false,
+            }
+            .then(|| ())
+            .is_some()
+                && self.local_name.eql(&rhs.local_name)
+                && self.local_name_lower.eql(&rhs.local_name_lower)
+                && self.operation.eql(&rhs.operation)
+                && self.never_matches == rhs.never_matches
         }
         pub fn deep_clone(&self) -> Self {
-            protocol_shims::implement_deep_clone(self)
+            self.clone()
         }
         pub fn hash(&self, hasher: &mut Wyhash) {
-            protocol_shims::implement_hash(self, hasher)
+            if let Some(ns) = &self.namespace {
+                ns.hash(hasher);
+            }
+            self.local_name.hash(hasher);
+            self.local_name_lower.hash(hasher);
+            self.operation.hash(hasher);
+            hasher.update(&[self.never_matches as u8]);
         }
     }
 
@@ -2254,11 +2270,19 @@ impl NthSelectorData {
     }
 
     pub fn eql(&self, rhs: &Self) -> bool {
-        protocol_shims::implement_eql(self, rhs)
+        self == rhs
     }
 
     pub fn hash(&self, hasher: &mut Wyhash) {
-        protocol_shims::implement_hash(self, hasher)
+        hasher.update(&(self.ty as u32).to_ne_bytes());
+        hasher.update(&[self.is_function as u8]);
+        hasher.update(&self.a.to_ne_bytes());
+        hasher.update(&self.b.to_ne_bytes());
+    }
+
+    #[inline]
+    pub fn deep_clone(&self) -> Self {
+        *self
     }
 }
 
@@ -2273,13 +2297,14 @@ pub struct NthOfSelectorData<Impl: SelectorImpl> {
 
 impl<Impl: BunSelectorImpl> NthOfSelectorData<Impl> {
     pub fn eql(&self, rhs: &Self) -> bool {
-        protocol_shims::implement_eql(self, rhs)
+        self.data.eql(&rhs.data) && eql_selector_slice(&self.selectors, &rhs.selectors)
     }
     pub fn hash(&self, hasher: &mut Wyhash) {
-        protocol_shims::implement_hash(self, hasher)
+        self.data.hash(hasher);
+        hash_selector_slice(&self.selectors, hasher);
     }
     pub fn deep_clone(&self) -> Self {
-        protocol_shims::implement_deep_clone(self)
+        Self { data: self.data, selectors: deep_clone_selector_slice(&self.selectors) }
     }
     pub fn nth_data(&self) -> NthSelectorData {
         self.data
@@ -2386,13 +2411,14 @@ pub struct SpecificityAndFlags {
 
 impl SpecificityAndFlags {
     pub fn eql(&self, other: &Self) -> bool {
-        protocol_shims::implement_eql(self, other)
+        self == other
     }
     pub fn has_pseudo_element(&self) -> bool {
         self.flags.contains(SelectorFlags::HAS_PSEUDO)
     }
     pub fn hash(&self, hasher: &mut Wyhash) {
-        protocol_shims::implement_hash(self, hasher)
+        hasher.update(&self.specificity.to_ne_bytes());
+        hasher.update(&[self.flags.bits()]);
     }
     pub fn deep_clone(&self) -> Self {
         *self
@@ -3708,15 +3734,29 @@ impl ViewTransitionPartName {
     }
 
     pub fn eql(&self, rhs: &Self) -> bool {
-        protocol_shims::implement_eql(self, rhs)
+        match (self, rhs) {
+            (Self::All, Self::All) => true,
+            (Self::Name(a), Self::Name(b)) | (Self::Class(a), Self::Class(b)) => a.eql(b),
+            _ => false,
+        }
     }
 
     pub fn hash(&self, hasher: &mut Wyhash) {
-        protocol_shims::implement_hash(self, hasher)
+        match self {
+            Self::All => hasher.update(&0u32.to_ne_bytes()),
+            Self::Name(n) => {
+                hasher.update(&1u32.to_ne_bytes());
+                n.hash(hasher);
+            }
+            Self::Class(n) => {
+                hasher.update(&2u32.to_ne_bytes());
+                n.hash(hasher);
+            }
+        }
     }
 
     pub fn deep_clone(&self) -> Self {
-        protocol_shims::implement_deep_clone(self)
+        self.clone()
     }
 }
 

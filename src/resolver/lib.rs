@@ -662,6 +662,7 @@ pub mod fs {
         // `lookup.entry` across the call (e.g. `dir_info_uncached` reads
         // `lookup.entry.cache.symlink` after `entry.symlink()`). Zig used `*Entry`
         // which is freely aliasing-mutable.
+        #[allow(invalid_reference_casting)] // see PORT NOTE — Zig `*Entry` freely-aliasing semantics
         pub fn kind(&self, fs: &mut Implementation, store_fd: bool) -> EntryKind {
             if self.need_stat {
                 // SAFETY: ARENA — Entry is a slot in the EntryStore singleton; `entries_mutex`
@@ -678,6 +679,7 @@ pub mod fs {
         }
 
         /// Port of `Entry.symlink` in `fs.zig`.
+        #[allow(invalid_reference_casting)] // see PORT NOTE — Zig `*Entry` freely-aliasing semantics
         pub fn symlink(&self, fs: &mut Implementation, store_fd: bool) -> &'static [u8] {
             if self.need_stat {
                 // SAFETY: ARENA — see `Entry::kind` PORT NOTE.

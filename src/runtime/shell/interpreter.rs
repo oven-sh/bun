@@ -501,7 +501,7 @@ impl Interpreter {
         expr: &ast::Expr,
         parent: NodeId,
         io: IO,
-    ) -> (NodeId, Yield) {
+    ) -> (Option<NodeId>, Yield) {
         let child = match expr {
             ast::Expr::Cmd(c) => Cmd::init(self, shell, *c, parent, io),
             ast::Expr::Binary(b) => Binary::init(self, shell, *b, parent, io),
@@ -520,24 +520,21 @@ impl Interpreter {
                     Ok(id) => id,
                     Err(e) => {
                         self.throw(&ShellErr::new_sys(e));
-                        // Spec divergence note: Zig's `Binary.makeChild` returns
-                        // `null` here and the caller falls through as if the
-                        // subshell exited 0 (Binary.zig:55-61, 130-134); Stmt.zig
-                        // returns `.failed` without touching `currently_executing`.
-                        // We return `NodeId::NONE` so callers that blindly store
-                        // it into `currently_executing` are still safe — guarded
-                        // in `deinit_node`/`free_node` below.
-                        // TODO(port): teach Stmt/Binary callers to treat
-                        // `NodeId::NONE` as the Zig fallthrough (synthetic exit 0
-                        // for Binary, plain `.failed` for Stmt).
-                        return (NodeId::NONE, Yield::failed());
+                        // Spec: Zig's `Binary.makeChild` returns `null` here and
+                        // the caller falls through as if the subshell exited 0
+                        // (Binary.zig:55-61, 130-134); Stmt.zig returns `.failed`
+                        // without touching `currently_executing`. Return `None`
+                        // so callers leave `currently_executing` unset — matches
+                        // the Zig fallthrough exactly (no `NodeId::NONE` sentinel
+                        // needed in `deinit_node`/`free_node` for this path).
+                        return (None, Yield::failed());
                     }
                 }
             }
             ast::Expr::Async(e) => Async::init(self, shell, *e, parent, io),
         };
         let y = self.start_node(child);
-        (child, y)
+        (Some(child), y)
     }
 
     /// Run the per-state cleanup, then recycle the slot. Replaces every

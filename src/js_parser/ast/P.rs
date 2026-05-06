@@ -810,10 +810,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         Ok(())
     }
 
-    #[cfg(any())] // blocked_on: TransposeState fields; ImportRecord.flags struct; check_dynamic_specifier
     pub fn transpose_import(&mut self, arg: Expr, state: &TransposeState) -> Expr {
         // The argument must be a string
-        if let Some(str_) = arg.data.as_e_string() {
+        if let Some(mut str_) = arg.data.as_e_string() {
             // Ignore calls to import() if the control flow is provably dead here.
             // We don't want to spend time scanning the required files if they will
             // never be used.
@@ -828,18 +827,20 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             }
 
             if let Some(loader) = state.import_loader {
-                self.import_records.items_mut()[import_record_index as usize].loader = loader;
+                self.import_records.items_mut()[import_record_index as usize].loader = Some(loader);
             }
 
-            self.import_records.items_mut()[import_record_index as usize].flags.handles_import_errors =
+            self.import_records.items_mut()[import_record_index as usize].flags.set(
+                bun_options_types::import_record::Flags::HANDLES_IMPORT_ERRORS,
                 (state.is_await_target && self.fn_or_arrow_data_visit.try_body_count != 0)
-                    || state.is_then_catch_target;
+                    || state.is_then_catch_target,
+            );
             self.import_records_for_current_part.push(import_record_index);
 
             return self.new_expr(
                 E::Import {
                     expr: arg,
-                    import_record_index: u32::try_from(import_record_index).unwrap(),
+                    import_record_index,
                     options: state.import_options,
                 },
                 state.loc,
@@ -851,9 +852,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             let r = js_lexer::range_of_identifier(self.source, state.loc);
             self.log
                 .add_range_debug(
-                    self.source,
+                    Some(self.source),
                     r,
-                    "This \"import\" expression cannot be bundled because the argument is not a string literal",
+                    b"This \"import\" expression cannot be bundled because the argument is not a string literal",
                 )
                 .expect("unreachable");
         }
@@ -870,7 +871,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         )
     }
 
-    #[cfg(any())] // blocked_on: check_dynamic_specifier; ExprNodeList::from_owned_slice(&mut [T])
     pub fn transpose_require_resolve(&mut self, arg: Expr, require_resolve_ref: Expr) -> Expr {
         // The argument must be a string
         if matches!(arg.data, js_ast::ExprData::EString(_)) {
@@ -882,21 +882,22 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             let r = js_lexer::range_of_identifier(self.source, arg.loc);
             self.log
                 .add_range_debug(
-                    self.source,
+                    Some(self.source),
                     r,
-                    "This \"require.resolve\" expression cannot be bundled because the argument is not a string literal",
+                    b"This \"require.resolve\" expression cannot be bundled because the argument is not a string literal",
                 )
                 .expect("unreachable");
         }
 
         let _ = self.check_dynamic_specifier(arg, arg.loc, "require.resolve()");
 
-        let args = self.allocator.alloc_slice_copy(&[arg]);
-
+        // Zig: `allocator.alloc(Expr, 1); args[0] = arg; ExprNodeList.fromOwnedSlice(args)`.
+        // PORT NOTE: BabyList::from_owned_slice wants Box<[T]>; init_one is the
+        // single-element equivalent (matches transpose_require below).
         self.new_expr(
             E::Call {
                 target: require_resolve_ref,
-                args: ExprNodeList::from_owned_slice(args),
+                args: ExprNodeList::init_one(arg).expect("oom"),
                 ..Default::default()
             },
             arg.loc,
@@ -5710,9 +5711,9 @@ fn path_package_name<'a>(path: &fs::Path<'a>) -> Option<&'a [u8]> {
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Round-D/E heavy method bodies (lower_class / to_ast / react_refresh / etc.).
-// These depend on ImportScanner, ConvertESMExportsForHmr, full E-method
-// surface, repl_transforms, and the parse_*/visit_* sibling files. Gated
-// wholesale; the struct + scope-mgmt/allocate/error helpers above compile.
+// lower_class + emit_decorator_metadata_for_prop + serialize_metadata are
+// un-gated and compile against the full TypeScript::Metadata variant set.
+// Remaining individually-gated methods carry their own `blocked_on:` tags.
 impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     P<'a, TYPESCRIPT, J, SCAN_ONLY>
 {
@@ -7599,11 +7600,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 |ctx, arg, state| {
                     debug_assert!(!ctx.0.is_null(), "transposer ctx not wired (prepare_for_visit_pass)");
                     // SAFETY: ctx.0 set to `self as *mut Self` in prepare_for_visit_pass;
-                    // matches Zig's self-referential `*P` capture.
-                    let _p = unsafe { &mut *(ctx.0 as *mut Self) };
-                    let _ = (arg, state);
-                    // blocked_on: P::transpose_import gated (#[cfg(any())] above).
-                    todo!("ImportTransposer: P::transpose_import (gated)")
+                    // matches Zig's self-referential `*P` capture. The transposer
+                    // field (a sibling of the borrowed parser state) is not
+                    // accessed reentrantly by `transpose_import`.
+                    let p = unsafe { &mut *(ctx.0 as *mut Self) };
+                    p.transpose_import(arg, &state)
                 },
             ),
             require_transposer: ExpressionTransposer::init(
@@ -7623,11 +7624,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 |ctx, arg, state| {
                     debug_assert!(!ctx.0.is_null(), "transposer ctx not wired (prepare_for_visit_pass)");
                     // SAFETY: ctx.0 set to `self as *mut Self` in prepare_for_visit_pass;
-                    // matches Zig's self-referential `*P` capture.
-                    let _p = unsafe { &mut *(ctx.0 as *mut Self) };
-                    let _ = (arg, state);
-                    // blocked_on: P::transpose_require_resolve gated (#[cfg(any())] above).
-                    todo!("RequireResolveTransposer: P::transpose_require_resolve (gated)")
+                    // matches Zig's self-referential `*P` capture. The transposer
+                    // field (a sibling of the borrowed parser state) is not
+                    // accessed reentrantly by `transpose_require_resolve`.
+                    let p = unsafe { &mut *(ctx.0 as *mut Self) };
+                    p.transpose_require_resolve(arg, state)
                 },
             ),
             source,

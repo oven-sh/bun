@@ -198,6 +198,11 @@ impl ThreadPool {
         v2: &BundleV2<'_>,
         worker_pool: Option<&mut ThreadPoolLib::ThreadPool>,
     ) -> Result<ThreadPool, bun_alloc::AllocError> {
+        // PORT NOTE: Spec ThreadPool.zig:85 allocated via the bundle arena
+        // (`v2.allocator().create`), so the `false` ownership flag was
+        // harmless — the arena reclaimed it. Here we `Box::into_raw` (global
+        // heap), so `deinit()` must `Box::from_raw` it back; record ownership.
+        let owned = worker_pool.is_none();
         let pool: *mut ThreadPoolLib::ThreadPool = match worker_pool {
             Some(p) => p as *mut _,
             None => {
@@ -212,7 +217,7 @@ impl ThreadPool {
             }
         };
         let mut this = Self::init_with_pool(v2, pool);
-        this.worker_pool_is_owned = false;
+        this.worker_pool_is_owned = owned;
         Ok(this)
     }
 

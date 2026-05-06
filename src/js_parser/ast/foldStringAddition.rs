@@ -1,10 +1,78 @@
 use bun_alloc::Arena; // bumpalo::Bump re-export
-use crate::ast::{self as js_ast, e, E, Expr};
+use crate::ast::{self as js_ast, e, E, Expr, StoreRef};
+use crate::ast::expr::{data, Data, PrimitiveType};
 
-// TODO(b2-ast-D): bodies depend on gated E::String rope methods (clone_rope_nodes/push/append),
-// data::Store::append_string, e::TemplateContents construction (enum, not struct), Expr::init_template.
-// Type def `FoldStringAdditionKind` is real; fn bodies gated.
-#[cfg(any())]
+// ── local rope helpers ─────────────────────────────────────────────────────
+// `EString::push` / `EString::clone_rope_nodes` are still gated in E.rs
+// (round-C draft); inline the minimal surface here so this file can un-gate
+// without touching E.rs. These mirror the Zig bodies 1:1.
+
+#[inline]
+fn store_append_string(s: E::EString) -> StoreRef<E::EString> {
+    // SAFETY: data::Store::append never returns null (slab/arena allocator).
+    unsafe { StoreRef::from_raw(data::Store::append(s)) }
+}
+
+/// Zig `E.String.push` — link `other` onto `lhs`'s rope tail.
+fn estring_push(lhs: &mut E::EString, other: StoreRef<E::EString>) {
+    debug_assert!(lhs.is_utf8());
+    debug_assert!(other.is_utf8());
+
+    // SAFETY: `other` is a freshly Store-appended node; single-threaded visitor.
+    let other_mut = unsafe { &mut *other.as_ptr() };
+    if other_mut.rope_len == 0 {
+        other_mut.rope_len = other_mut.data.len() as u32;
+    }
+    if lhs.rope_len == 0 {
+        lhs.rope_len = lhs.data.len() as u32;
+    }
+    lhs.rope_len += other_mut.rope_len;
+
+    if lhs.next.is_none() {
+        lhs.next = Some(other);
+        lhs.end = Some(other);
+    } else {
+        let mut end = lhs.end.unwrap();
+        while end.get().next.is_some() {
+            end = end.get().end.unwrap();
+        }
+        // SAFETY: `end` points into the live Store; rope nodes are mutated in
+        // place per Zig semantics (no concurrent reader during visiting).
+        unsafe { (*end.as_ptr()).next = Some(other) };
+        lhs.end = Some(other);
+    }
+}
+
+/// Zig `E.String.cloneRopeNodes` — deep-copy the `next` chain into fresh
+/// Store nodes so mutating the result can't alias an inlined-enum's string.
+fn clone_rope_nodes(s: &E::EString) -> E::EString {
+    let mut root = s.shallow_clone();
+    if root.next.is_some() {
+        let mut current: *mut E::EString = &mut root;
+        let last: *mut E::EString;
+        loop {
+            // SAFETY: `current` is either `&mut root` (first iter) or a freshly
+            // Store-appended node (subsequent iters).
+            let node = unsafe { &mut *current };
+            match node.next {
+                Some(next) => {
+                    let new_next = store_append_string(next.get().shallow_clone());
+                    node.next = Some(new_next);
+                    current = new_next.as_ptr();
+                }
+                None => {
+                    last = current;
+                    break;
+                }
+            }
+        }
+        // SAFETY: loop always advances past `root` (root.next was Some), so
+        // `last` is a Store-owned node with stable address.
+        root.end = Some(unsafe { StoreRef::from_raw(last) });
+    }
+    root
+}
+
 /// Concatenate two `E::String`s, mutating BOTH inputs
 /// unless `has_inlined_enum_poison` is set.
 ///
@@ -12,7 +80,7 @@ use crate::ast::{self as js_ast, e, E, Expr};
 /// bugs due to inlined enum values sharing `E::String`s. If a new use case
 /// besides inlined enums comes up to set this to true, please rename the
 /// variable and document it.
-fn join_strings(left: &E::String, right: &E::String, has_inlined_enum_poison: bool) -> E::String {
+fn join_strings(left: &E::EString, right: &E::EString, has_inlined_enum_poison: bool) -> E::EString {
     let mut new = if has_inlined_enum_poison {
         // Inlined enums can be shared by multiple call sites. In
         // this case, we need to ensure that the ENTIRE rope is
@@ -25,9 +93,9 @@ fn join_strings(left: &E::String, right: &E::String, has_inlined_enum_poison: bo
         //     D = B + "d",
         //   };
         //   console.log(A.B, A.D);
-        left.clone_rope_nodes()
+        clone_rope_nodes(left)
     } else {
-        *left
+        left.shallow_clone()
     };
 
     // Similarly, the right side has to be cloned for an enum rope too.
@@ -38,17 +106,36 @@ fn join_strings(left: &E::String, right: &E::String, has_inlined_enum_poison: bo
     //     C = ("3" + B) + "4",
     //   };
     //   console.log(A.B, A.C);
-    // TODO(port): Expr::Data::Store is a typed_arena::Arena<E::String>; `append` returns &'arena mut E::String
-    let rhs_clone = js_ast::expr::data::Store::append_string(if has_inlined_enum_poison {
-        right.clone_rope_nodes()
+    let rhs_clone = store_append_string(if has_inlined_enum_poison {
+        clone_rope_nodes(right)
     } else {
-        *right
+        right.shallow_clone()
     });
 
-    new.push(rhs_clone);
-    new.prefer_template = new.prefer_template || rhs_clone.prefer_template;
+    estring_push(&mut new, rhs_clone);
+    new.prefer_template = new.prefer_template || rhs_clone.get().prefer_template;
 
     new
+}
+
+/// `std.mem.concat(allocator, E.TemplatePart, &.{a, b})` — bitwise concat into
+/// the bump arena. `TemplatePart` is POD-shaped (no Drop) but not `Copy`
+/// because `EString` opted out, so we go through raw `copy_nonoverlapping`.
+fn concat_parts(
+    bump: &Arena,
+    a: &[e::TemplatePart],
+    b: &[e::TemplatePart],
+) -> &'static [e::TemplatePart] {
+    let len = a.len() + b.len();
+    let layout = core::alloc::Layout::array::<e::TemplatePart>(len).expect("OOM");
+    // SAFETY: arena alloc + bitwise copy of POD-like elements; lifetime erased
+    // to `'static` per Phase-A `&'static [T]` arena-slice convention.
+    unsafe {
+        let ptr = bump.alloc_layout(layout).as_ptr().cast::<e::TemplatePart>();
+        core::ptr::copy_nonoverlapping(a.as_ptr(), ptr, a.len());
+        core::ptr::copy_nonoverlapping(b.as_ptr(), ptr.add(a.len()), b.len());
+        core::slice::from_raw_parts(ptr, len)
+    }
 }
 
 /// Transforming the left operand into a string is not safe if it comes from a
@@ -65,14 +152,12 @@ pub enum FoldStringAdditionKind {
 
 /// NOTE: unlike esbuild's js_ast_helpers.FoldStringAddition, this does mutate
 /// the input AST in the case of rope strings
-pub fn fold_string_addition<'bump>(
+pub fn fold_string_addition(
     l: Expr,
     r: Expr,
-    bump: &'bump Arena,
+    bump: &Arena,
     kind: FoldStringAdditionKind,
 ) -> Option<Expr> {
-    #[cfg(any())] // TODO(b2-ast-D): see file-top note
-    {
     // "See through" inline enum constants
     // TODO: implement foldAdditionPreProcess to fold some more things :)
     let mut lhs = l.unwrap_inlined();
@@ -80,8 +165,8 @@ pub fn fold_string_addition<'bump>(
 
     if kind != FoldStringAdditionKind::NestedLeft {
         // See comment on `FoldStringAdditionKind` for examples
-        match &rhs.data {
-            js_ast::expr::Data::EString(_) | js_ast::expr::Data::ETemplate(_) => {
+        match rhs.data {
+            Data::EString(_) | Data::ETemplate(_) => {
                 if let Some(str) = lhs.to_string_expr_without_side_effects(bump) {
                     lhs = str;
                 }
@@ -90,42 +175,38 @@ pub fn fold_string_addition<'bump>(
         }
     }
 
-    match &lhs.data {
-        js_ast::expr::Data::EString(left) => {
+    match lhs.data {
+        Data::EString(left) => {
             if let Some(str) = rhs.to_string_expr_without_side_effects(bump) {
                 rhs = str;
             }
 
             if left.is_utf8() {
-                match &rhs.data {
+                match rhs.data {
                     // "bar" + "baz" => "barbaz"
-                    js_ast::expr::Data::EString(right) => {
+                    Data::EString(right) => {
                         if right.is_utf8() {
-                            let has_inlined_enum_poison =
-                                matches!(l.data, js_ast::expr::Data::EInlinedEnum(_))
-                                    || matches!(r.data, js_ast::expr::Data::EInlinedEnum(_));
+                            let has_inlined_enum_poison = matches!(l.data, Data::EInlinedEnum(_))
+                                || matches!(r.data, Data::EInlinedEnum(_));
 
-                            return Some(Expr::init_string(
-                                join_strings(left, right, has_inlined_enum_poison),
+                            return Some(Expr::init(
+                                join_strings(left.get(), right.get(), has_inlined_enum_poison),
                                 lhs.loc,
                             ));
                         }
                     }
                     // "bar" + `baz${bar}` => `barbaz${bar}`
-                    js_ast::expr::Data::ETemplate(right) => {
+                    Data::ETemplate(right) => {
                         if right.head.is_utf8() {
-                            return Some(Expr::init_template(
+                            return Some(Expr::init(
                                 E::Template {
+                                    tag: None,
                                     parts: right.parts,
-                                    head: e::TemplateContents {
-                                        cooked: join_strings(
-                                            left,
-                                            &right.head.cooked,
-                                            matches!(l.data, js_ast::expr::Data::EInlinedEnum(_)),
-                                        ),
-                                    },
-                                    // TODO(port): remaining E::Template fields (tag, etc.)
-                                    ..Default::default()
+                                    head: e::TemplateContents::Cooked(join_strings(
+                                        left.get(),
+                                        right.head.cooked(),
+                                        matches!(l.data, Data::EInlinedEnum(_)),
+                                    )),
                                 },
                                 l.loc,
                             ));
@@ -137,106 +218,101 @@ pub fn fold_string_addition<'bump>(
                 }
 
                 // "'x' + `y${z}`" => "`xy${z}`"
-                if let js_ast::expr::Data::ETemplate(t) = &rhs.data {
+                if let Data::ETemplate(t) = rhs.data {
                     if t.tag.is_none() {
                         // (intentionally empty — matches Zig)
                     }
                 }
             }
 
-            if left.len() == 0 && rhs.known_primitive() == js_ast::expr::PrimitiveType::String {
+            if left.len() == 0 && rhs.known_primitive() == PrimitiveType::String {
                 return Some(rhs);
             }
 
             return None;
         }
 
-        js_ast::expr::Data::ETemplate(left) => {
+        Data::ETemplate(mut left) => {
             // "`${x}` + 0" => "`${x}` + '0'"
             if let Some(str) = rhs.to_string_expr_without_side_effects(bump) {
                 rhs = str;
             }
 
             if left.tag.is_none() {
-                match &rhs.data {
+                match rhs.data {
                     // `foo${bar}` + "baz" => `foo${bar}baz`
-                    js_ast::expr::Data::EString(right) => {
+                    Data::EString(right) => {
                         if right.is_utf8() {
                             // Mutation of this node is fine because it will be not
                             // be shared by other places. Note that e_template will
                             // be treated by enums as strings, but will not be
                             // inlined unless they could be converted into
                             // .e_string.
-                            // PORT NOTE: reshaped for borrowck — captured len before mutable indexing
+                            // PORT NOTE: `parts` is `&'static [T]` (Phase-A arena
+                            // erasure); element mutation goes through a raw cast.
                             if !left.parts.is_empty() {
                                 let i = left.parts.len() - 1;
-                                let last = &left.parts[i];
-                                if last.tail.is_utf8() {
-                                    left.parts[i].tail = e::TemplateContents {
-                                        cooked: join_strings(
-                                            &last.tail.cooked,
-                                            right,
-                                            matches!(r.data, js_ast::expr::Data::EInlinedEnum(_)),
-                                        ),
-                                    };
+                                let last_tail = &left.parts[i].tail;
+                                if last_tail.is_utf8() {
+                                    let new_tail = e::TemplateContents::Cooked(join_strings(
+                                        last_tail.cooked(),
+                                        right.get(),
+                                        matches!(r.data, Data::EInlinedEnum(_)),
+                                    ));
+                                    // SAFETY: arena-owned slice; Zig wrote `left.parts[i].tail = ...` in place.
+                                    unsafe {
+                                        (*(left.parts.as_ptr() as *mut e::TemplatePart).add(i))
+                                            .tail = new_tail;
+                                    }
                                     return Some(lhs);
                                 }
-                            } else {
-                                if left.head.is_utf8() {
-                                    left.head = e::TemplateContents {
-                                        cooked: join_strings(
-                                            &left.head.cooked,
-                                            right,
-                                            matches!(r.data, js_ast::expr::Data::EInlinedEnum(_)),
-                                        ),
-                                    };
-                                    return Some(lhs);
-                                }
+                            } else if left.head.is_utf8() {
+                                let new_head = join_strings(
+                                    left.head.cooked(),
+                                    right.get(),
+                                    matches!(r.data, Data::EInlinedEnum(_)),
+                                );
+                                left.head = e::TemplateContents::Cooked(new_head);
+                                return Some(lhs);
                             }
                         }
                     }
                     // `foo${bar}` + `a${hi}b` => `foo${bar}a${hi}b`
-                    js_ast::expr::Data::ETemplate(right) => {
+                    Data::ETemplate(right) => {
                         if right.tag.is_none() && right.head.is_utf8() {
                             if !left.parts.is_empty() {
                                 let i = left.parts.len() - 1;
-                                let last = &left.parts[i];
-                                if last.tail.is_utf8() && right.head.is_utf8() {
-                                    left.parts[i].tail = e::TemplateContents {
-                                        cooked: join_strings(
-                                            &last.tail.cooked,
-                                            &right.head.cooked,
-                                            matches!(r.data, js_ast::expr::Data::EInlinedEnum(_)),
-                                        ),
-                                    };
+                                let last_tail = &left.parts[i].tail;
+                                if last_tail.is_utf8() && right.head.is_utf8() {
+                                    let new_tail = e::TemplateContents::Cooked(join_strings(
+                                        last_tail.cooked(),
+                                        right.head.cooked(),
+                                        matches!(r.data, Data::EInlinedEnum(_)),
+                                    ));
+                                    // SAFETY: arena-owned slice; see note above.
+                                    unsafe {
+                                        (*(left.parts.as_ptr() as *mut e::TemplatePart).add(i))
+                                            .tail = new_tail;
+                                    }
 
-                                    left.parts = if right.parts.is_empty() {
+                                    let new_parts = if right.parts.is_empty() {
                                         left.parts
                                     } else {
                                         // std.mem.concat → bump-allocated concat
-                                        // PERF(port): was arena bulk-free — profile in Phase B
-                                        let mut v = bumpalo::collections::Vec::with_capacity_in(
-                                            left.parts.len() + right.parts.len(),
-                                            bump,
-                                        );
-                                        v.extend_from_slice(left.parts);
-                                        v.extend_from_slice(right.parts);
-                                        v.into_bump_slice()
+                                        concat_parts(bump, left.parts, right.parts)
                                     };
+                                    left.parts = new_parts;
                                     return Some(lhs);
                                 }
-                            } else {
-                                if left.head.is_utf8() && right.head.is_utf8() {
-                                    left.head = e::TemplateContents {
-                                        cooked: join_strings(
-                                            &left.head.cooked,
-                                            &right.head.cooked,
-                                            matches!(r.data, js_ast::expr::Data::EInlinedEnum(_)),
-                                        ),
-                                    };
-                                    left.parts = right.parts;
-                                    return Some(lhs);
-                                }
+                            } else if left.head.is_utf8() && right.head.is_utf8() {
+                                let new_head = join_strings(
+                                    left.head.cooked(),
+                                    right.head.cooked(),
+                                    matches!(r.data, Data::EInlinedEnum(_)),
+                                );
+                                left.head = e::TemplateContents::Cooked(new_head);
+                                left.parts = right.parts;
+                                return Some(lhs);
                             }
                         }
                     }
@@ -253,21 +329,23 @@ pub fn fold_string_addition<'bump>(
     }
 
     if let Some(right) = rhs.data.as_e_string() {
-        if right.len() == 0 && lhs.known_primitive() == js_ast::expr::PrimitiveType::String {
+        if right.len() == 0 && lhs.known_primitive() == PrimitiveType::String {
             return Some(lhs);
         }
     }
 
-    return None;
-    } // end #[cfg(any())]
-    let _ = (l, r, bump, kind);
-    todo!("b2-ast-D: fold_string_addition body")
+    None
 }
+
+// silence unused-import warning when only some helpers fire
+#[allow(unused_imports)]
+use js_ast as _;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/js_parser/ast/foldStringAddition.zig (233 lines)
 //   confidence: medium
-//   todos:      3
-//   notes:      Expr.Data variant payloads are arena pointers (mutated in place); exact enum/Store/TemplateString shapes need Phase B alignment with bun_js_parser AST types. Borrowck reshaping needed around `left`/`rhs` overlapping borrows.
+//   notes:      Rope `push`/`clone_rope_nodes` inlined locally pending E.rs
+//               round-C un-gate. `Template.parts` element writes go through
+//               a `*mut` cast (Phase-A `&'static [T]` arena convention).
 // ──────────────────────────────────────────────────────────────────────────

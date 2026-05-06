@@ -929,7 +929,7 @@ fn expand_derive_to_css(input: DeriveInput) -> syn::Result<TokenStream2> {
             // declaration site without a doc-comment.
             let _ = has_css_flag(&input.attrs, "generate_to_css");
             let (impl_g, ty_g, where_g) = input.generics.split_for_impl();
-            let stmts = gen_field_seq_to_css(named.named.iter(), |f| quote! { self.#f });
+            let body = gen_field_seq_to_css(named.named.iter(), |f| quote! { self.#f });
             return Ok(quote! {
                 #[automatically_derived]
                 #[allow(dead_code)]
@@ -938,7 +938,7 @@ fn expand_derive_to_css(input: DeriveInput) -> syn::Result<TokenStream2> {
                         &self,
                         __dest: &mut ::bun_css::printer::Printer<'_>,
                     ) -> ::core::result::Result<(), ::bun_css::PrintErr> {
-                        #(#stmts)*
+                        #body
                         ::core::result::Result::Ok(())
                     }
                 }
@@ -960,7 +960,22 @@ fn expand_derive_to_css(input: DeriveInput) -> syn::Result<TokenStream2> {
             quote! { #name::#ident => __dest.write_str(#kw), }
         }
         VariantShape::Payload { ident, .. } => {
+            // The payload type is opaque to a proc-macro, so we delegate. If
+            // the payload is a ported "anonymous struct" (Zig
+            // `__generateToCss`), give it `#[derive(ToCss)]` — the struct
+            // branch above generates the matching field-sequence printer.
             quote! { #name::#ident(__inner) => __inner.to_css(__dest), }
+        }
+        VariantShape::NamedFields { ident, fields } => {
+            // Inline `__generateToCss` path: destructure and emit fields.
+            let bind: Vec<_> = fields.named.iter().map(|f| f.ident.clone().unwrap()).collect();
+            let body = gen_field_seq_to_css(fields.named.iter(), |f| quote! { #f });
+            quote! {
+                #name::#ident { #(#bind),* } => {
+                    #body
+                    ::core::result::Result::Ok(())
+                }
+            }
         }
     });
 
@@ -997,6 +1012,20 @@ fn expand_derive_parse(input: DeriveInput) -> syn::Result<TokenStream2> {
         match s {
             VariantShape::Unit { ident, keyword } => units.push((ident, keyword.clone())),
             VariantShape::Payload { ident, ty } => payloads.push((ident, ty)),
+            VariantShape::NamedFields { ident, .. } => {
+                // Zig `DeriveParse` only dispatches on void variants and
+                // payload types that themselves expose `parse`; the inline
+                // `__generateToCss` structs in align.zig each hand-write
+                // `parse`. The Rust port lifts those into named structs with a
+                // `parse` inherent and wraps them in a single-field tuple
+                // variant, so this arm is unreachable for any faithful port.
+                return Err(syn::Error::new_spanned(
+                    ident,
+                    "#[derive(Parse)] does not support named-field variants; lift the \
+                     payload into a struct with its own `parse` and use a single-field \
+                     tuple variant",
+                ));
+            }
         }
     }
 

@@ -756,7 +756,7 @@ impl PackageJSON {
         // So we cannot free these
         // (allocator dropped — global mimalloc)
 
-        let entry = match r.caches.fs.read_file_with_allocator(
+        let mut entry = match r.caches.fs.read_file_with_allocator(
             r.fs,
             package_json_path,
             dirname_fd,
@@ -782,9 +782,9 @@ impl PackageJSON {
                 return None;
             }
         };
-        // PORT NOTE: reshaped for borrowck — read `contents` first, then move `entry`
-        // into the close-guard so the fd is closed on every return path.
-        let entry_contents = entry.contents;
+        // PORT NOTE: reshaped for borrowck — `mem::take` the contents (leaving
+        // `Contents::Empty` behind) so `entry` stays whole for the close-guard.
+        let entry_contents = core::mem::take(&mut entry.contents);
         let _close_guard = scopeguard::guard(entry, |mut e| {
             let _ = e.close_fd();
         });
@@ -796,7 +796,18 @@ impl PackageJSON {
         // PORT NOTE: `logger::Source.path` is the lightweight `logger::fs::Path` (no
         // `pretty`/`is_node_module`); `key_path` is only used for `text`, so init the
         // source directly from the interned path.
-        let json_source = logger::Source::init_path_string(package_json_path, entry_contents.as_slice());
+        //
+        // SAFETY: ARENA — `use_shared_buffer = false` above, so `entry_contents` is
+        // `Contents::Owned`/`Empty` (heap or static). The bytes outlive every read
+        // through `json_source`: on the success path `entry_contents` is
+        // `mem::forget`-ed at the bottom of this fn (Zig: `bun.default_allocator`,
+        // never freed — "DirInfo cache is reused globally"); on every early
+        // `return None` below it drops and frees normally (Zig:
+        // `allocator.free(entry.contents)`), after `json_source` is already dead.
+        let contents_static: &'static [u8] = unsafe {
+            core::slice::from_raw_parts(entry_contents.as_ptr(), entry_contents.len())
+        };
+        let json_source = logger::Source::init_path_string(package_json_path, contents_static);
 
         let json: js_ast::Expr = match r.caches.json.parse_package_json(r.log, &json_source, true) {
             Ok(Some(v)) => v,
@@ -1280,9 +1291,12 @@ impl PackageJSON {
             path: json_source.path.clone(),
             contents: json_source.contents,
             contents_is_recycled: json_source.contents_is_recycled,
-            identifier_name: json_source.identifier_name,
+            identifier_name: json_source.identifier_name.clone(),
             index: json_source.index,
         };
+        // See SAFETY note on `contents_static` above — leak the backing buffer now
+        // that ownership has conceptually moved into `package_json.source.contents`.
+        core::mem::forget(entry_contents);
         Some(package_json)
     }
 }

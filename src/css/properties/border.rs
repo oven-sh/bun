@@ -1,9 +1,11 @@
+#![allow(unused_imports, dead_code, unused_macros)]
 use crate as css;
 use crate::{
-    DeclarationList, Feature, Parser, ParserError, PrintErr, Printer, Property,
-    PropertyCategory, PropertyHandlerContext, PropertyId, PropertyIdTag, Result as CssResult,
+    DeclarationList, Feature, Parser, ParserError, PrintErr, Printer,
+    PropertyCategory, PropertyHandlerContext, Result as CssResult,
     SmallList, Targets,
 };
+use crate::properties::{Property, PropertyId, PropertyIdTag};
 use crate::css_values::color::{ColorFallbackKind, CssColor};
 use crate::css_values::length::Length;
 use crate::css_properties::custom::UnparsedProperty;
@@ -56,6 +58,7 @@ pub struct GenericBorder<S, const P: u8> {
     pub color: CssColor,
 }
 
+#[cfg(any())] // blocked_on: css::{Parse,ToCss,Eql} traits + CssResult::{result,err,as_value} + CssColor::{parse,to_css,get_fallbacks}
 impl<S, const P: u8> GenericBorder<S, P>
 where
     S: css::Parse + css::ToCss + css::DeepClone + css::Eql + Default,
@@ -218,8 +221,8 @@ impl Default for LineStyle {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// A value for the [border-width](https://www.w3.org/TR/css-backgrounds-3/#border-width) property.
-#[derive(Clone)]
-#[derive(css::DeriveParse, css::DeriveToCss)] // TODO(port): provides parse/to_css
+#[derive(Clone, PartialEq)]
+#[cfg_attr(any(), derive(css::DeriveParse, css::DeriveToCss))] // blocked_on: Length::{parse,to_css}
 pub enum BorderSideWidth {
     /// A UA defined `thin` value.
     Thin,
@@ -232,6 +235,7 @@ pub enum BorderSideWidth {
 }
 
 impl BorderSideWidth {
+    #[cfg(any())] // blocked_on: Length::is_compatible
     pub fn is_compatible(&self, browsers: Browsers) -> bool {
         match self {
             BorderSideWidth::Length(len) => len.is_compatible(browsers),
@@ -239,12 +243,13 @@ impl BorderSideWidth {
         }
     }
 
-    pub fn deep_clone(&self, allocator: &Bump) -> Self {
-        css::implement_deep_clone(self, allocator)
+    pub fn deep_clone(&self, _allocator: &Bump) -> Self {
+        // PORT NOTE: css.implementDeepClone — Length is value-type; Clone suffices.
+        self.clone()
     }
 
     pub fn eql(&self, other: &Self) -> bool {
-        css::implement_eql(self, other)
+        self == other
     }
 }
 

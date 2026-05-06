@@ -4589,9 +4589,8 @@ impl H2FrameParser {
         let callback = args[0];
         let this_value: JSValue = if args.len() > 1 { args[1] } else { JSValue::UNDEFINED };
         let mut _count: u32 = 0;
-        let self_ptr = this as *mut Self;
-        // SAFETY: self_ptr = self as *mut Self on the line above; reshaped for borrowck, no other live &mut to *self exists across this iterator
-        let mut it = StreamResumableIterator::init(unsafe { &mut *self_ptr });
+        // PORT NOTE: iterator stores a raw *mut so the loop body can keep using `this` exclusively.
+        let mut it = StreamResumableIterator::init(this as *mut Self);
         while let Some(stream) = it.next() {
             // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
             let Some(value) = unsafe { (*stream).js_context.get() } else { continue };

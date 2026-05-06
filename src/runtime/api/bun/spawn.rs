@@ -90,7 +90,9 @@ mod posix_compat {
 // child module: src/runtime/api/bun/spawn/stdio.zig
 // TODO(b2-blocked): stdio.rs imports `crate::api::bun::subprocess::StdioKind`
 // (subprocess body gated) and `bun_sys::windows::libuv`; un-gate once those land.
-
+// NOTE: explicit #[path] required because the parent (`api.rs`) loads this file via
+// `#[path = "api/bun/spawn.rs"]`, which disables the implicit `spawn/` submodule dir.
+#[path = "spawn/stdio.rs"]
 pub mod stdio;
 
 pub mod bun_spawn {

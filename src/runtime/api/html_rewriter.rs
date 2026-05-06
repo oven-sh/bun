@@ -1987,7 +1987,7 @@ impl EndTag {
 
     fn content_handler(
         &mut self,
-        callback: fn(*mut lolhtml::EndTag, &[u8], bool) -> Result<(), lolhtml::Error>,
+        callback: unsafe fn(*mut lolhtml::EndTag, &[u8], bool) -> Result<(), lolhtml::Error>,
         this_object: JSValue,
         global_object: &JSGlobalObject,
         content: ZigString,
@@ -1998,11 +1998,13 @@ impl EndTag {
         }
         let content_slice = content.to_slice();
 
-        if callback(
+        // SAFETY: self.end_tag is non-null (checked above) and valid for the
+        // duration of the lol-html callback.
+        if unsafe { callback(
             self.end_tag,
             content_slice.slice(),
             content_options.map_or(false, |o| o.html),
-        )
+        ) }
         .is_err()
         {
             return create_lolhtml_error(global_object);

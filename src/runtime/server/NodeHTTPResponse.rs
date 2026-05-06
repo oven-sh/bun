@@ -800,7 +800,7 @@ impl NodeHTTPResponse {
                 }
             }
 
-            let message: &[u8] = if status_message_slice.len() > 0 {
+            let message: &[u8] = if status_message_slice.slice().len() > 0 {
                 status_message_slice.slice()
             } else {
                 b"HM"

@@ -2004,9 +2004,9 @@ pub fn generate_symbols(
         },
     )?;
 
-    symbols.reserve(symbols_iter.len());
+    symbols.reserve(symbols_iter.len);
 
-    while let Some(prop) = symbols_iter.next(global)? {
+    while let Some(prop) = symbols_iter.next()? {
         let value = symbols_iter.value;
 
         if value.is_empty_or_undefined_or_null() || !value.is_object() {

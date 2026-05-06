@@ -1450,57 +1450,52 @@ impl CreateCommand {
             let mut display_name = template;
 
             if let Some(first_slash) = bun_str::strings::index_of_char(display_name, b'/') {
+                let first_slash = first_slash as usize;
                 if let Some(second_slash) =
                     bun_str::strings::index_of_char(&display_name[first_slash + 1..], b'/')
                 {
-                    display_name = &template[0..first_slash + 1 + second_slash];
+                    display_name = &template[0..first_slash + 1 + second_slash as usize];
                 }
             }
 
-            Output::pretty(
+            Output::pretty(format_args!(
                 "\n<b><green>Success!<r> <b>{}<r> loaded into <b>{}<r>\n",
-                format_args!(
-                    "{} {}",
-                    bstr::BStr::new(display_name),
-                    bstr::BStr::new(bun_paths::basename(destination))
-                ),
-            );
+                bstr::BStr::new(display_name),
+                bstr::BStr::new(bun_paths::basename(destination)),
+            ));
         } else {
-            Output::pretty(
+            Output::pretty(format_args!(
                 "\n<b>Created <green>{}<r> project successfully\n",
-                format_args!("{}", bstr::BStr::new(bun_paths::basename(template))),
-            );
+                bstr::BStr::new(bun_paths::basename(template)),
+            ));
         }
 
         if is_nextjs {
-            Output::pretty(
+            Output::pretty(format_args!(
                 "\n<r><d>#<r> When dependencies change, run this to update node_modules.bun:\n\n  <b><cyan>bun bun --use next<r>\n",
-                format_args!(""),
-            );
+            ));
         } else if is_create_react_app {
-            Output::pretty(
+            Output::pretty(format_args!(
                 "\n<r><d>#<r> When dependencies change, run this to update node_modules.bun:\n\n  <b><cyan>bun bun {}<r>\n",
-                format_args!("{}", bstr::BStr::new(create_react_app_entry_point_path)),
-            );
+                bstr::BStr::new(create_react_app_entry_point_path),
+            ));
         }
 
-        let rel_destination = filesystem.relative_to(destination);
+        // SAFETY: `filesystem` is the process-lifetime singleton from FileSystem::init.
+        let rel_destination = unsafe { (*filesystem).relative_to(destination) };
         let is_empty_destination = rel_destination.is_empty();
 
         if is_empty_destination {
-            Output::pretty(
+            Output::pretty(format_args!(
                 "\n<d>#<r><b> To get started, run:<r>\n\n  <b><cyan>{}<r>\n\n",
-                format_args!("{}", bstr::BStr::new(start_command)),
-            );
+                bstr::BStr::new(start_command),
+            ));
         } else {
-            Output::pretty(
+            Output::pretty(format_args!(
                 "\n<d>#<r><b> To get started, run:<r>\n\n  <b><cyan>cd {}<r>\n  <b><cyan>{}<r>\n\n",
-                format_args!(
-                    "{} {}",
-                    bstr::BStr::new(rel_destination),
-                    bstr::BStr::new(start_command)
-                ),
-            );
+                bstr::BStr::new(rel_destination),
+                bstr::BStr::new(start_command),
+            ));
         }
 
         Output::flush();

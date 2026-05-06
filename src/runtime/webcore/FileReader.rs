@@ -258,8 +258,13 @@ impl bun_io::pipe_reader::BufferedReaderParent for FileReader {
     fn loop_(&mut self) -> *mut bun_uws_sys::Loop {
         FileReader::loop_(self)
     }
-    fn event_loop(&mut self) -> EventLoopHandle {
-        self.event_loop
+    fn event_loop(&mut self) -> bun_io::EventLoopHandle {
+        // CYCLEBREAK: bun_io::EventLoopHandle is an opaque `*mut c_void` whose
+        // "concrete repr is bun_jsc::EventLoopHandle" (io/lib.rs). Hand it the
+        // address of our stored handle; the FilePoll vtable derefs it back.
+        bun_io::EventLoopHandle(
+            &self.event_loop as *const EventLoopHandle as *mut core::ffi::c_void,
+        )
     }
 }
 

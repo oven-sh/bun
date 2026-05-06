@@ -5190,42 +5190,33 @@ impl NodeFS {
         }
 
         let dest = args.path.slice_z(&mut self.sync_error_buf);
-        // TODO(port): std.posix.unlinkZ/rmdirZ — using bun_sys equivalents
-        if let Err(err1) = sys::unlink_z(dest) {
-            // empircally, it seems to return AccessDenied when the
+        // PORT NOTE: Zig used `std.posix.unlinkZ/rmdirZ` (which return Zig error
+        // sets). The Rust port goes straight to `bun_sys::unlink/rmdir` returning
+        // `Maybe<()>` with a `sys::Error` carrying the errno, so the
+        // `bun_core::err!("…")`/`map_anyerror_to_errno*` round-trip collapses to
+        // a direct errno match — semantically identical, fewer allocations.
+        if let Maybe::Err(err1) = sys::unlink(dest) {
+            let e1 = err1.get_errno();
+            // empirically, it seems to return AccessDenied when the
             // file is actually a directory on macOS.
-            if args.recursive
-                && (err1 == bun_core::err!("IsDir")
-                    || err1 == bun_core::err!("NotDir")
-                    || err1 == bun_core::err!("AccessDenied"))
-            {
-                if let Err(err2) = sys::rmdir_z(dest) {
-                    let code = if err2 == bun_core::err!("FileNotFound") {
-                        if args.force { return Maybe::SUCCESS; }
-                        E::NOENT
-                    } else {
-                        map_anyerror_to_errno_rm_narrow(err2)
-                    };
-                    return Maybe::Err(sys::Error::from_code(code, sys::Tag::rm).with_path(args.path.slice()));
+            if args.recursive && matches!(e1, E::ISDIR | E::NOTDIR | E::ACCES | E::PERM) {
+                if let Maybe::Err(err2) = sys::rmdir(dest) {
+                    if err2.get_errno() == E::NOENT && args.force { return Maybe::SUCCESS; }
+                    return Maybe::Err(err2.with_path_and_syscall(args.path.slice(), sys::Tag::rm));
                 }
                 return Maybe::SUCCESS;
             }
-            let code = if err1 == bun_core::err!("FileNotFound") {
-                if args.force { return Maybe::SUCCESS; }
-                E::NOENT
-            } else {
-                map_anyerror_to_errno_rm_narrow(err1)
-            };
-            return Maybe::Err(sys::Error::from_code(code, sys::Tag::rm).with_path(args.path.slice()));
+            if e1 == E::NOENT && args.force { return Maybe::SUCCESS; }
+            return Maybe::Err(err1.with_path_and_syscall(args.path.slice(), sys::Tag::rm));
         }
         Maybe::SUCCESS
     }
 
     pub fn statfs(&mut self, args: &args::StatFS, _: Flavor) -> Maybe<ret::StatFS> {
-        match Syscall::statfs(args.path.slice_z(&mut self.sync_error_buf)) {
-            Maybe::Ok(ref result) => Maybe::Ok(ret::StatFS::init(result, args.big_int)),
-            Maybe::Err(err) => Maybe::Err(err),
-        }
+        let _ = args;
+        // blocked_on: bun_sys::statfs — `Syscall::statfs` not yet exported on
+        // POSIX (`sys_uv` has it for Windows). Zig body is a 3-line forward.
+        todo!("blocked_on: bun_sys::statfs")
     }
 
     pub fn stat(&mut self, args: &args::Stat, _: Flavor) -> Maybe<ret::Stat> {

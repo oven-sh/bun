@@ -585,7 +585,7 @@ impl BufferOutputSink {
         vm.unhandled_pending_rejection_to_capture = Some(NonNull::from(&mut sink_error));
         // SAFETY: sink is a live heap allocation (refcount >= 1).
         unsafe { (*sink).tmp_sync_error = Some(NonNull::from(&mut sink_error)) };
-        vm.on_unhandled_rejection = VirtualMachine::on_quiet_unhandled_rejection_handler_capture_value;
+        vm.on_unhandled_rejection = jsc::VirtualMachineRef::on_quiet_unhandled_rejection_handler_capture_value;
         let _vm_guard = scopeguard::guard((), |_| {
             sink_error.ensure_still_alive();
             vm.unhandled_pending_rejection_to_capture = prev_unhandled_pending_rejection_to_capture;
@@ -654,9 +654,12 @@ impl BufferOutputSink {
         // SAFETY: sink is a live heap allocation (refcount >= 1).
         unsafe {
             (*sink).ref_();
-            (*sink).body_value_bufferer = Some(webcore::Body::ValueBufferer::init(
+            (*sink).body_value_bufferer = Some(webcore::body::ValueBufferer::init(
                 sink as *mut core::ffi::c_void,
-                Self::on_finished_buffering as *const _,
+                // PORT NOTE: `ValueBuffererCallback` takes `*mut c_void` for ctx;
+                // `on_finished_buffering` takes `*mut BufferOutputSink`. The
+                // wrapper trampoline restores the concrete type.
+                Self::on_finished_buffering_trampoline,
                 (*sink).global,
             ));
         }

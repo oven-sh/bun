@@ -235,7 +235,7 @@ pub mod fs {
                 // Spec `Implementation.init` calls `DirEntry.EntryStore.init`;
                 // touch the singleton so it's initialized before any resolver
                 // worker hits it.
-                let _ = super::dir_entry::EntryStore::instance();
+                let _ = dir_entry::EntryStore::instance();
                 Ok((*(&raw mut INSTANCE)).as_mut_ptr())
             }
         }
@@ -1268,6 +1268,57 @@ pub mod fs {
     }
 
     impl RealFS {
+        /// Port of `RealFS.init` (fs.zig:823-837) — raise RLIMIT_NOFILE and
+        /// record the resulting fd budget so `need_to_close_files` can decide
+        /// whether to cache directory fds.
+        pub fn init(cwd: &'static [u8]) -> RealFS {
+            let file_limit = Self::adjust_ulimit().expect("unreachable");
+            RealFS {
+                entries_mutex: Mutex::default(),
+                entries: EntriesMap::new(),
+                cwd,
+                file_limit,
+                file_quota: file_limit,
+            }
+        }
+
+        /// Port of `RealFS.adjustUlimit` — always try to max out how many
+        /// files we can keep open.
+        pub fn adjust_ulimit() -> core::result::Result<usize, bun_core::Error> {
+            #[cfg(not(unix))]
+            {
+                Ok(usize::MAX)
+            }
+            #[cfg(unix)]
+            {
+                let resource = bun_sys::posix::RlimitResource::NOFILE;
+                let mut lim = bun_sys::posix::getrlimit(resource)?;
+
+                // Cap at 1<<20 to match Node.js. On macOS the hard limit defaults to
+                // RLIM_INFINITY; raising soft anywhere near INT_MAX breaks child processes
+                // that read the limit into an int.
+                let target = {
+                    // musl has extremely low defaults, so ensure at least 163840 there.
+                    #[cfg(target_env = "musl")]
+                    let max = lim.max.max(163_840);
+                    #[cfg(not(target_env = "musl"))]
+                    let max = lim.max;
+                    max.min(1 << 20)
+                };
+                if lim.cur < target {
+                    let mut raised = lim;
+                    raised.cur = target;
+                    // Don't lower the hard limit (Node only touches rlim_cur). The @max
+                    // is for the musl branch above, which may raise past the current hard.
+                    raised.max = lim.max.max(target);
+                    if bun_sys::posix::setrlimit(resource, raised).is_ok() {
+                        lim.cur = raised.cur;
+                    }
+                }
+                Ok(usize::try_from(lim.cur).unwrap())
+            }
+        }
+
         /// Port of `RealFS.openDir` in `fs.zig` — `open(path, O_DIRECTORY)`.
         pub fn open_dir(&self, unsafe_dir_string: &[u8]) -> core::result::Result<Fd, bun_core::Error> {
             // PORT NOTE: Zig used `std.fs.openDirAbsolute` (POSIX) /

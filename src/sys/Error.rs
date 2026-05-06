@@ -178,15 +178,8 @@ impl Error {
         }
     }
 
-    #[inline]
-     // TODO(b2-blocked): PathLike lives in bun_runtime::node (tier-6)
-    pub fn with_path_like(&self, pathlike: &crate::PathLike) -> Error {
-        // TODO(port): exact PathLike enum shape lives elsewhere in bun_sys / bun_runtime::node.
-        match pathlike {
-            crate::PathLike::Fd(fd) => self.with_fd(*fd),
-            crate::PathLike::Path(path) => self.with_path(path.slice()),
-        }
-    }
+    // CYCLEBREAK: `with_path_like` moved to `bun_runtime::node` as an extension method on
+    // `bun_sys::Error` — `PathLike` is a tier-6 type and cannot be named from tier-1 `bun_sys`.
 
     /// When the memory of the path/dest buffer is unsafe to use, call this function to clone the error without the path/dest.
     pub fn without_path(&self) -> Error {

@@ -581,43 +581,10 @@ impl<T> BabyList<T> {
         self.cap as usize * core::mem::size_of::<T>()
     }
 
-    // CYCLEBREAK(b0): `parse` / `to_css` / `eql` depend on bun_css (T4). They move to bun_css
-    // as an extension trait on BabyList<T>. Preserved here behind cfg(any()) so the move-in
-    // pass can lift the bodies verbatim into bun_css::BabyListCssExt.
-    // TODO(b0-genuine): bun_css::generic — needs BabyListCssExt move-in (CYCLEBREAK §css).
-    #[cfg(any())]
-    pub fn parse(input: &mut bun_css::Parser) -> bun_css::Result<Self>
-    where
-        T: bun_css::generic::Parse,
-    {
-        match input.parse_comma_separated::<T>(bun_css::generic::parse_for::<T>) {
-            Ok(v) => Ok(Self::move_from_list(v)),
-            Err(e) => Err(e),
-        }
-    }
-    #[cfg(any())]
-    pub fn to_css(&self, dest: &mut bun_css::Printer) -> Result<(), bun_css::PrintErr>
-    where
-        T: bun_css::ToCss,
-    {
-        bun_css::to_css::from_baby_list::<T>(self, dest)
-    }
-    #[cfg(any())]
-    pub fn eql(lhs: &Self, rhs: &Self) -> bool
-    where
-        T: bun_css::generic::Eql,
-    {
-        if lhs.len != rhs.len {
-            return false;
-        }
-        debug_assert_eq!(lhs.slice_const().len(), rhs.slice_const().len());
-        for (a, b) in lhs.slice_const().iter().zip(rhs.slice_const()) {
-            if !bun_css::generic::eql::<T>(a, b) {
-                return false;
-            }
-        }
-        true
-    }
+    // CYCLEBREAK(b0): `parse` / `to_css` / `eql` depend on bun_css (T4) and have moved to
+    // bun_css as an extension trait on BabyList<T> (`bun_css::BabyListCssExt`). Bodies
+    // deleted here — see `git log -p -- src/collections/baby_list.zig` for the originals.
+    // TODO(b0-genuine): bun_css::generic — verify BabyListCssExt move-in (CYCLEBREAK §css).
 
     /// Allocator-fallible deep clone (Zig `BabyList.deepClone`).
     ///

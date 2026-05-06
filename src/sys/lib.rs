@@ -1,9 +1,10 @@
 #![allow(unused, non_snake_case, non_camel_case_types, non_upper_case_globals, clippy::all)]
 //! `bun_sys` — B-1 minimal compiling surface.
 //! Full Phase-A draft (5500 lines, all syscall wrappers) preserved in
-//! `lib_draft_b1.rs`. B-2: un-gate per-syscall, wire libc/kernel32/ntdll.
+//! `lib_draft_b1.rs` on disk for B-2 move-in reference. Draft module dropped
+//! from build (duplicate of live per-syscall impls below).
 
- #[path = "lib_draft_b1.rs"] mod draft;
+// #[path = "lib_draft_b1.rs"] mod draft;
 // RESOLVED (B-2 round 7): `Fd` struct + pure-data accessors hoisted to
 // `bun_core::Fd` (canonical T0). `fd.rs` is now `pub trait FdExt` over that.
 pub mod fd;
@@ -16,8 +17,9 @@ pub use fd::{FdExt, FdOptionalExt, ErrorCase, MakeLibUvOwnedError, HashMapContex
 // `bun_paths::OsPathZ` (T0, missing) and the `top_level_dir()` resolver hook.
 // B-2 follow-up: cherry-pick File.rs-only methods (`make_openat`, `kind`,
 // `is_tty`, `read_file_from`, `close_and_move_to`) into the inline impl as
-// higher tiers demand them.
- #[path = "File.rs"] pub mod file;
+// higher tiers demand them. Draft module dropped from build; inline `impl File`
+// below + `pub mod file { pub use super::File; }` are canonical.
+// #[path = "File.rs"] pub mod file;
 #[path = "Error.rs"] mod error;
 pub use error::Error;
 // `bun_sys::Error` is the rich syscall error (errno+tag+path); `bun_core::Error`

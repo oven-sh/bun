@@ -2866,6 +2866,20 @@ static mut PACKAGE_MANAGER_INSTANCE: *mut PackageManager = core::ptr::null_mut()
 impl PackageManager {
     pub fn verbose_install() -> bool { false }
 
+    /// Port of `resolution.formatLaterVersionInCache`
+    /// (src/install/PackageManager/PackageManagerResolution.zig). Real body in
+    /// `package_manager_real::resolution::format_later_version_in_cache`; that
+    /// impl types against the real `PackageManager` (needs `self.manifests`)
+    /// so the stub forwards once the two structs unify.
+    pub fn format_later_version_in_cache(
+        &mut self,
+        _package_name: &[u8],
+        _name_hash: PackageNameHash,
+        _resolution: Resolution,
+    ) -> Option<bun_semver::version::Formatter<'_, u64>> {
+        todo!("blocked_on: bun_install::package_manager_real un-gate (reconciler-6) — resolution::format_later_version_in_cache (stub PackageManager has no `manifests`)")
+    }
+
     /// Port of `directories.getCacheDirectoryAndAbsPath`
     /// (src/install/PackageManager/PackageManagerDirectories.zig).
     pub fn get_cache_directory_and_abs_path(&mut self) -> (bun_sys::Fd, bun_paths::AutoAbsPath) {

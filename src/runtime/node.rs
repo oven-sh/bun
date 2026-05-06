@@ -712,7 +712,7 @@ fn translate_to_err_int<Er: IntoErrInt>(err: Er) -> u16 {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/node.zig (367 lines)
-//   confidence: medium
-//   todos:      8
-//   notes:      Maybe<R,E> ported as Rust enum; @hasDecl/@typeInfo dispatch replaced with MaybeErrorRetry/MaybeErrorTodo/MaybeToJs/SyscallRc traits — Phase B must add blanket/per-type impls and wire node/ submodule decls.
+//   notes:      Maybe<R,E> ported as Rust enum; @hasDecl/@typeInfo dispatch
+//               replaced with MaybeErrorRetry/MaybeErrorTodo/MaybeToJs/
+//               SyscallRc/IntoErrInt traits. All node/ submodules wired.
 // ──────────────────────────────────────────────────────────────────────────

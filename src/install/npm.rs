@@ -741,7 +741,9 @@ impl<T: NegatableEnum> Negatable<T> {
                 let items = arr.slice();
                 if !items.is_empty() {
                     for item in items {
-                        if let Some(value) = item.as_string() {
+                        // JSON parsed via `parse_utf8` always yields UTF-8 EStrings,
+                        // so no transcode allocator is needed (Zig: asString(allocator)).
+                        if let Some(value) = item.as_utf8_string_literal() {
                             this.apply(value);
                         }
                     }

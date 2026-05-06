@@ -207,6 +207,58 @@ pub trait HotReloaderCtx {
     fn log_level_at_least_info(&self) -> bool {
         false
     }
+
+    // ── enable_hot_module_reloading accessors ────────────────────────────
+    // Zig's `enableHotModuleReloading` reaches into `ctx.bun_watcher` and
+    // `ctx.transpiler.{fs, env, resolver.watcher}` via structural duck-typing.
+    // The methods below expose just enough surface for the generic body.
+
+    /// Zig: `this.bun_watcher != .none` / `this.bun_watcher != null`.
+    fn is_watcher_enabled(&self) -> bool;
+
+    /// Zig: `this.transpiler.fs` — the watcher only consumes `top_level_dir`.
+    /// Returns the process-global watcher-crate forward-decl.
+    fn watcher_fs(&self) -> &'static bun_watcher::FileSystem;
+
+    /// Zig: assigns `this.bun_watcher = .{ .hot/.watch = w }` (or `= w` for
+    /// non-ImportWatcher ctxs) and `this.transpiler.resolver.watcher =
+    /// ResolveWatcher(*Watcher, Watcher.onMaybeWatchDirectory).init(w)`.
+    /// Returns the now-installed `*mut Watcher` so the caller can `start()` it.
+    fn install_bun_watcher(
+        &mut self,
+        watcher: Box<Watcher>,
+        reload_immediately: bool,
+    ) -> *mut Watcher;
+
+    /// Zig: `!this.transpiler.env.hasSetNoClearTerminalOnReload(!Output.enable_ansi_colors_stdout)`.
+    fn compute_clear_screen(&self) -> bool;
+}
+
+/// Replaces Zig's structural call `this.eventLoop().enqueueTaskConcurrent(task)`
+/// with a trait bound on the `EventLoopType` generic. The only concrete event
+/// loop ever instantiated is `crate::event_loop::EventLoop`.
+pub trait HotReloaderEventLoop {
+    /// # Safety
+    /// `this` must point to a live event loop owned by the reloader's `Ctx`.
+    unsafe fn enqueue_task_concurrent(this: *mut Self, task: *mut ConcurrentTask);
+}
+
+impl HotReloaderEventLoop for EventLoop {
+    unsafe fn enqueue_task_concurrent(this: *mut Self, task: *mut ConcurrentTask) {
+        // SAFETY: precondition — `this` is the VM's live event loop pointer.
+        unsafe { (*this).enqueue_task_concurrent(task) }
+    }
+}
+
+/// Bridge `bun_resolver::fs::FileSystem` → the `bun_watcher` crate's CYCLEBREAK
+/// forward-decl (which carries only `top_level_dir`). The resolver FS is a
+/// process singleton, so a `OnceLock` gives us the required `&'static` without
+/// leaking on every call.
+fn watcher_fs_shim(fs: &FileSystem) -> &'static bun_watcher::FileSystem {
+    static SHIM: OnceLock<bun_watcher::FileSystem> = OnceLock::new();
+    SHIM.get_or_init(|| bun_watcher::FileSystem {
+        top_level_dir: fs.top_level_dir,
+    })
 }
 
 /// Type-erased view of a `Task<Ctx, EventLoopType, RELOAD_IMMEDIATELY>` so

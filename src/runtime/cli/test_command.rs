@@ -2180,15 +2180,17 @@ impl TestCommand {
             }
 
             match vm.hot_reload {
-                // TODO(port): `enable_hot_module_reloading` is bound by `Ctx: HotReloaderCtx`;
-                // `VirtualMachineRef` does not implement that trait yet (cycle break).
                 jsc::virtual_machine::HOT_RELOAD_HOT => {
-                    let _ = vm as *mut VirtualMachine;
-                    todo!("blocked_on: bun_jsc::HotReloaderCtx for VirtualMachineRef");
+                    jsc::hot_reloader::HotReloader::enable_hot_module_reloading(
+                        vm as *mut VirtualMachine,
+                        None,
+                    );
                 }
                 jsc::virtual_machine::HOT_RELOAD_WATCH => {
-                    let _ = vm as *mut VirtualMachine;
-                    todo!("blocked_on: bun_jsc::HotReloaderCtx for VirtualMachineRef");
+                    jsc::hot_reloader::WatchReloader::enable_hot_module_reloading(
+                        vm as *mut VirtualMachine,
+                        None,
+                    );
                 }
                 _ => {}
             }

@@ -520,11 +520,13 @@ impl<'a> YarnLock<'a> {
         Ok(())
     }
 
-    fn find_entry_by_spec(&mut self, spec: &[u8]) -> Option<&mut Entry<'a>> {
-        for entry in self.entries.iter_mut() {
+    fn find_entry_by_spec(&self, spec: &[u8]) -> Option<&Entry<'a>> {
+        // PORT NOTE: Zig returns `?*Entry` (mutable ptr) but every caller only
+        // reads `.workspace` / `.specs`, so `&self` suffices and avoids the
+        // borrowck conflict with the outer `entries.iter()` loops.
+        for entry in self.entries.iter() {
             for entry_spec in entry.specs.iter() {
                 if *entry_spec == spec {
-                    // PORT NOTE: reshaped for borrowck — return after inner loop matched
                     return Some(entry);
                 }
             }

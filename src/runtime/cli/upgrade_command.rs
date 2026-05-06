@@ -1336,11 +1336,27 @@ impl UpgradeCommand {
             {
                 let completions_argv: [&[u8]; 2] = [target_filename.as_bytes(), b"completions"];
 
-                env_loader.map.put(b"IS_BUN_AUTO_UPDATE", b"true");
-                // TODO(port): Zig used std.process.Child.run with env_map + max_output_bytes=4096;
-                // PORTING.md bans std::process. The buffered/cwd-aware spawn_sync helper is not
-                // yet available at this layer. blocked_on: bun_core::spawn_sync
-                let _ = (&completions_argv, target_dirname.as_bytes());
+                let _ = env_loader.map.put(b"IS_BUN_AUTO_UPDATE", b"true");
+                // PORT NOTE: Zig used `std.process.Child.run` with `env_map = std_map.get()`
+                // and discarded the result (`_ = ... catch {}`). `bun.spawnSync` takes the
+                // C-style `[*:null]?[*:0]const u8` envp directly, so build it from the
+                // DotEnv map (`createNullDelimitedEnvMap` equivalent) instead of
+                // round-tripping through `std_env_map`. Output is buffered (matching
+                // `std.process.Child.run`'s default) and silently dropped along with any
+                // spawn error — same as the Zig.
+                if let Ok(envp) = env_loader.map.create_null_delimited_env_map() {
+                    let _ = spawn_sync::spawn(&spawn_sync::Options {
+                        argv: build_argv(&completions_argv),
+                        envp: Some(envp.as_ptr() as *const *const c_char),
+                        cwd: Box::<[u8]>::from(target_dirname.as_bytes()),
+                        stdout: spawn_sync::SyncStdio::Buffer,
+                        stderr: spawn_sync::SyncStdio::Buffer,
+                        stdin: spawn_sync::SyncStdio::Ignore,
+                        #[cfg(windows)]
+                        windows: spawn_windows_options(),
+                        ..Default::default()
+                    });
+                }
             }
 
             Output::print_start_end(ctx.start_time, bun_core::time::nano_timestamp());

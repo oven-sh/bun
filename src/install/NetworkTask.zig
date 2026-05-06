@@ -206,7 +206,7 @@ pub fn forManifest(
         var stack_fallback_allocator = std.heap.stackFallback(512, arena.allocator());
         var encoded_name = name;
         if (strings.containsChar(name, '/')) {
-            encoded_name = try std.mem.replaceOwned(u8, stack_fallback_allocator.get(), name, "/", "%2f");
+            encoded_name = try std.mem.replaceOwned(u8, stack_fallback_allocator.get(), name, "/", "%2F");
         }
 
         const tmp = bun.jsc.URL.join(

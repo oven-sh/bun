@@ -461,7 +461,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             }
 
             // Serialize the fixed-up module_info
-            js.module_info_bytes = Some(bun_js_parser::printer::serialize_module_info(mi));
+            js.module_info_bytes = bun_js_printer::serialize_module_info(Some(mi));
 
             // Free the ModuleInfo now that it's been serialized to bytes.
             // It was allocated with bun.default_allocator (not the arena),

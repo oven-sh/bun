@@ -122,21 +122,40 @@ impl WebSocketProxyTunnel {
         self.ref_count.set(self.ref_count.get() + 1);
     }
 
-    pub fn deref(&self) {
-        let n = self.ref_count.get() - 1;
-        self.ref_count.set(n);
+    /// # Safety
+    /// `this` must point to a live `WebSocketProxyTunnel` allocated by `init`
+    /// (i.e. originated from `Box::into_raw`). Takes a raw `*mut` so the
+    /// `Box::from_raw` on the zero-count path inherits write provenance from
+    /// the original allocation — a `&self` receiver would force a
+    /// `*const → *mut` cast, which is UB to deallocate through.
+    pub unsafe fn deref(this: *mut Self) {
+        // SAFETY: caller contract — `this` is live; `ref_count` is a `Cell`
+        // so the shared borrow is sound even if other raw aliases exist on
+        // this single thread.
+        let rc = unsafe { &(*this).ref_count };
+        let n = rc.get() - 1;
+        rc.set(n);
         if n == 0 {
-            // SAFETY: ref_count hit zero; self was allocated via Box::into_raw in `init`.
+            // SAFETY: ref_count hit zero; `this` was allocated via Box::into_raw in `init`.
             // Drop impl handles field cleanup; Box::from_raw frees the allocation.
-            unsafe { drop(Box::from_raw(self as *const Self as *mut Self)) };
+            drop(unsafe { Box::from_raw(this) });
         }
     }
 
     /// RAII guard mirroring `this.ref(); defer this.deref();`
-    fn ref_scope(&self) -> impl Drop + '_ {
-        self.ref_();
-        scopeguard::guard((), move |_| self.deref())
-        // PORT NOTE: reshaped for borrowck — Zig pattern is ref()+defer deref()
+    ///
+    /// # Safety
+    /// `this` must point to a live `WebSocketProxyTunnel`; the returned guard
+    /// must not outlive the allocation (the `ref()` it takes guarantees this
+    /// as long as no other code over-releases).
+    unsafe fn ref_scope(this: *mut Self) -> impl Drop {
+        // SAFETY: caller contract — `this` is live.
+        unsafe { (*this).ref_() };
+        // SAFETY: ref() above keeps `this` live until this guard drops.
+        scopeguard::guard((), move |_| unsafe { Self::deref(this) })
+        // PORT NOTE: captures raw *mut (not &self) so the guard does not borrow
+        // the tunnel — lets the guarded scope take &mut self without borrowck
+        // conflict, and gives `deref` proper write provenance for Box::from_raw.
     }
 
     /// Initialize a new proxy tunnel with all required parameters

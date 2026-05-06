@@ -462,7 +462,11 @@ impl Default for ParseResult {
     fn default() -> Self {
         ParseResult {
             source: Default::default(),
-            loader: Default::default(),
+            // PORT NOTE: `options::Loader` has no `Default`; Zig field had no
+            // initializer either. `File` is the resolver's neutral fallback
+            // (BundleEnums.rs:353), and `Default` here exists only for
+            // `mem::take` in `AsyncModule::resume_loading_module`.
+            loader: options::Loader::File,
             ast: js_ast::Ast::empty(),
             already_bundled: Default::default(),
             input_fd: None,
@@ -550,7 +554,7 @@ pub struct ParseOptions<'a> {
 fn dup_source(s: &logger::Source) -> logger::Source {
     logger::Source {
         path: s.path.clone(),
-        contents: s.contents,
+        contents: s.contents.clone(),
         contents_is_recycled: s.contents_is_recycled,
         identifier_name: s.identifier_name.clone(),
         index: s.index,

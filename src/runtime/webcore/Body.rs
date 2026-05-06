@@ -1163,7 +1163,10 @@ impl Value {
                         let blob = unsafe { &mut *blob_ptr };
                         if let Some(fetch_headers) = headers {
                             // SAFETY: `fast_get` only writes a stack out-param via FFI; the
-                            // `&FetchHeaders` is an opaque C++ handle (interior-mutable).
+                            // `&FetchHeaders` is an opaque C++ ZST handle (interior-mutable),
+                            // so re-deriving `&mut` from the raw handle pointer is sound — no
+                            // Rust-side state is aliased. Zig spec takes `?*FetchHeaders`.
+                            #[allow(invalid_reference_casting)]
                             let fetch_headers = unsafe { &mut *(fetch_headers as *const FetchHeaders as *mut FetchHeaders) };
                             if let Some(content_type) = fetch_headers.fast_get(HTTPHeaderName::ContentType) {
                                 let content_slice = content_type.to_slice();

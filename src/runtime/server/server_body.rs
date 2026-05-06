@@ -2357,8 +2357,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.unref();
 
         if !SSL {
-            // SAFETY: vm is the per-thread singleton; cast through global_this for &mut access.
-            unsafe { &mut *(self.vm as *const _ as *mut jsc::virtual_machine::VirtualMachine) }
+            // SAFETY: vm is the per-thread singleton; obtain *mut via VirtualMachine::get().
+            unsafe { &mut *jsc::virtual_machine::VirtualMachine::get() }
                 .remove_listening_socket_for_watch_mode(unsafe { &mut *listener }.socket::<SSL>().fd());
         }
 
@@ -2827,8 +2827,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // SAFETY: global_this set in init() and outlives ThisServer (JSC_BORROW)
         let global = unsafe { &*self.global_this };
         let this_object: JSValue = self.js_value.try_get().unwrap_or(JSValue::UNDEFINED);
-        // SAFETY: per-thread singleton VM; reborrow exclusively for the call sites below.
-        let vm = self.vm as *const _ as *mut jsc::virtual_machine::VirtualMachine;
+        // SAFETY: per-thread singleton VM; obtain *mut via VirtualMachine::get() to
+        // avoid invalid_reference_casting on the stored `&'static`.
+        let vm: *mut jsc::virtual_machine::VirtualMachine = jsc::virtual_machine::VirtualMachine::get();
 
         let mut node_http_response: Option<*mut NodeHTTPResponse> = None;
         let mut is_async = false;

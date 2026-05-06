@@ -64,7 +64,7 @@ pub mod js {
         // `UnsafeCell` handle (interior-mutable provenance — sound for C++ to
         // write through; see `JSGlobalObject::as_ptr`). `this` was
         // `Box::into_raw`'d by caller and ownership transfers to the wrapper.
-        let value = unsafe { Timeout__create(global.as_ptr(), this) };
+        let value = unsafe { Timeout__create(global.as_ptr(), this.cast()) };
         #[cfg(debug_assertions)]
         {
             // Zig: `bun.assert(value__.as(Timeout).? == this)` — round-trip ABI check.
@@ -78,7 +78,7 @@ pub mod js {
     pub fn from_js(value: JSValue) -> Option<*mut TimeoutObject> {
         // SAFETY: pure FFI downcast; C++ returns null on mismatch.
         let p = unsafe { Timeout__fromJS(value) };
-        if p.is_null() { None } else { Some(p) }
+        if p.is_null() { None } else { Some(p.cast::<TimeoutObject>()) }
     }
 
     /// Like [`from_js`] but rejects subclasses / mutated structures.
@@ -86,7 +86,7 @@ pub mod js {
     pub fn from_js_direct(value: JSValue) -> Option<*mut TimeoutObject> {
         // SAFETY: pure FFI downcast; C++ returns null on mismatch.
         let p = unsafe { Timeout__fromJSDirect(value) };
-        if p.is_null() { None } else { Some(p) }
+        if p.is_null() { None } else { Some(p.cast::<TimeoutObject>()) }
     }
 }
 

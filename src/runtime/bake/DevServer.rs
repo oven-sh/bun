@@ -2640,34 +2640,34 @@ impl DevServer<'_> {
 
         self.incremental_result.reset();
 
-        let mut heap = bun_alloc::MimallocArena::new();
+        let heap = bun_alloc::MimallocArena::new();
         // TODO(port): heap is moved into BundleV2; errdefer heap.deinit() handled by Drop
         // PORT NOTE: `MimallocArena = bumpalo::Bump` (no `.allocator()` accessor);
-        // `Bump::alloc` is the inherent method, and downstream `alloc` users
-        // expect the arena handle itself.
-        let alloc = &heap;
+        // `Bump::alloc` is the inherent method, and `BundleV2::init`'s `alloc`
+        // param is `&bun_alloc::Arena` (== `&Bump`).
         // TODO(port): ASTMemoryAllocator scope — bake is an AST crate; arena threading required
         let ast_memory_allocator = heap.alloc(bun_js_parser::ASTMemoryAllocator::default());
         let _ast_scope = ast_memory_allocator.enter();
-        let _ = alloc; // PORT NOTE: `enter()` no longer takes the arena (T1 stub).
 
-        let bv2 = BundleV2::init(
+        // PORT NOTE: `BundleV2::init` consumes `heap` *and* borrows it as
+        // `alloc: &Arena`; Zig passed both by-value (heap-moved into `bv2.graph.heap`)
+        // and an interior allocator handle. Until `BundleV2::init` is reshaped to
+        // derive `alloc` internally, this call cannot satisfy borrowck. The
+        // `BakeOptions.framework` field is also blocked (no `Clone`).
+        let _ = (
             &mut self.server_transpiler,
-            Some(bundler::bundle_v2::BakeOptions {
-                framework: todo!("blocked_on: bake::Framework Clone"),
-                client_transpiler: ::core::ptr::NonNull::from(&mut self.client_transpiler),
-                ssr_transpiler: ::core::ptr::NonNull::from(&mut self.ssr_transpiler),
-                plugins: self.bundler_options.plugin.map(|p| p.cast()),
-            }),
-            alloc,
+            &mut self.client_transpiler,
+            &mut self.ssr_transpiler,
+            self.bundler_options.plugin,
             // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime
-            // PORT NOTE: bundler::EventLoop is an erased `Option<NonNull<()>>` (was AnyEventLoop union).
-            ::core::ptr::NonNull::new(unsafe { &*self.vm }.event_loop().cast::<()>()),
-            false, // watching is handled separately
-            // SAFETY: WorkPool is a 'static singleton; BundleV2::init wants Option<&mut ThreadPool>
-            Some(unsafe { &mut *(bun_threading::work_pool::WorkPool::get() as *const _ as *mut _) }),
+            unsafe { &*self.vm }.event_loop(),
+            bun_threading::work_pool::WorkPool::get(),
             heap,
-        )?;
+        );
+        let bv2: Box<BundleV2<'_>> =
+            todo!("blocked_on: bun_bundler::BundleV2::init (alloc/heap aliasing + bake::Framework Clone)");
+        #[allow(unreachable_code)]
+        let bv2 = bv2;
         bv2.bun_watcher = Some(::core::ptr::NonNull::from(&mut *self.bun_watcher).cast::<()>());
         bv2.asynchronous = true;
 

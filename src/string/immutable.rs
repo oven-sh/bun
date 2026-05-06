@@ -830,7 +830,7 @@ pub fn index_any_comptime_t<T: Copy + Eq>(target: &[T], chars: &'static [T]) -> 
 
 pub fn index_equal_any(in_: &[&[u8]], target: &[u8]) -> Option<usize> {
     for (i, str) in in_.iter().enumerate() {
-        if eql_long::<true>(str, target) {
+        if eql_long(str, target, true) {
             return Some(i);
         }
     }
@@ -1193,7 +1193,7 @@ pub fn starts_with(self_: &[u8], str: &[u8]) -> bool {
     if str.len() > self_.len() {
         return false;
     }
-    eql_long::<false>(&self_[0..str.len()], str)
+    eql_long(&self_[0..str.len()], str, false)
 }
 
 /// Transliterated from:
@@ -1229,16 +1229,17 @@ pub fn is_utf8_char_boundary(c: u8) -> bool {
 }
 
 pub fn starts_with_case_insensitive_ascii(self_: &[u8], prefix: &[u8]) -> bool {
-    self_.len() >= prefix.len() && eql_case_insensitive_ascii::<false>(&self_[0..prefix.len()], prefix)
+    self_.len() >= prefix.len() && eql_case_insensitive_ascii(&self_[0..prefix.len()], prefix, false)
 }
 
 pub fn starts_with_generic<T: Copy>(self_: &[T], str: &[T]) -> bool {
     if str.len() > self_.len() {
         return false;
     }
-    eql_long::<false>(
+    eql_long(
         reinterpret_to_u8(&self_[0..str.len()]),
         reinterpret_to_u8(str),
+        false,
     )
 }
 
@@ -1342,7 +1343,7 @@ pub fn eql(self_: &[u8], other: &[u8]) -> bool {
     if self_.len() != other.len() {
         return false;
     }
-    eql_long::<false>(self_, other)
+    eql_long(self_, other, false)
 }
 
 pub fn eql_comptime_t<T: Copy + Eq>(self_: &[T], alt: &'static [u8]) -> bool {
@@ -1453,22 +1454,29 @@ pub fn eql_comptime_check_len_with_type<T: Copy + Eq, const CHECK_LEN: bool>(
 }
 
 pub fn eql_case_insensitive_ascii_ignore_length(a: &[u8], b: &[u8]) -> bool {
-    eql_case_insensitive_ascii::<false>(a, b)
+    eql_case_insensitive_ascii(a, b, false)
 }
 
 pub fn eql_case_insensitive_ascii_check_length(a: &[u8], b: &[u8]) -> bool {
-    eql_case_insensitive_ascii::<true>(a, b)
+    eql_case_insensitive_ascii(a, b, true)
 }
 
 /// Preserves Zig's triple-`i` typo (`eqlCaseInsensitiveASCIIICheckLength`); both
 /// spellings are reachable from ported call sites until the next typo sweep.
 #[inline]
 pub fn eql_case_insensitive_asciii_check_length(a: &[u8], b: &[u8]) -> bool {
-    eql_case_insensitive_ascii::<true>(a, b)
+    eql_case_insensitive_ascii(a, b, true)
 }
 
-pub fn eql_case_insensitive_ascii<const CHECK_LEN: bool>(a: &[u8], b: &[u8]) -> bool {
-    if CHECK_LEN {
+// PORT NOTE: Zig's `comptime check_len: bool` was first ported as a const
+// generic, but the dominant call shape across the tree passes it as a runtime
+// 3rd arg (`eql_case_insensitive_ascii(a, b, true)`). Accept it at runtime —
+// the branch is trivially predicted/inlined; callers wanting the
+// length-agnostic forms still have the `_check_length` / `_ignore_length`
+// wrappers above.
+#[inline]
+pub fn eql_case_insensitive_ascii(a: &[u8], b: &[u8], check_len: bool) -> bool {
+    if check_len {
         if a.len() != b.len() {
             return false;
         }
@@ -1531,16 +1539,21 @@ pub fn eql_long_t<T: Copy, const CHECK_LEN: bool>(a_str: &[T], b_str: &[T]) -> b
             return false;
         }
     }
-    eql_long::<false>(
+    eql_long(
         reinterpret_to_u8(a_str),
         reinterpret_to_u8(b_str),
+        false,
     )
 }
 
-pub fn eql_long<const CHECK_LEN: bool>(a_str: &[u8], b_str: &[u8]) -> bool {
+// PORT NOTE: same rationale as `eql_case_insensitive_ascii` — Zig's
+// `comptime check_len: bool` becomes a runtime 3rd arg to match the dominant
+// ported call shape (`eql_long(a, b, true)`).
+#[inline]
+pub fn eql_long(a_str: &[u8], b_str: &[u8], check_len: bool) -> bool {
     let len = b_str.len();
 
-    if CHECK_LEN {
+    if check_len {
         if len == 0 {
             return a_str.is_empty();
         }
@@ -2605,14 +2618,14 @@ pub fn move_slice<'a>(slice: &[u8], from: &[u8], to: &'a [u8]) -> &'a [u8] {
             (from.as_ptr() as usize + from.len()) >= slice.as_ptr() as usize + slice.len()
                 && (from.as_ptr() as usize <= slice.as_ptr() as usize)
         );
-        debug_assert!(eql_long::<false>(from, &to[0..from.len()])); // data should be identical
+        debug_assert!(eql_long(from, &to[0..from.len()], false)); // data should be identical
     }
 
     let ptr_offset = slice.as_ptr() as usize - from.as_ptr() as usize;
     let result = &to[ptr_offset..][0..slice.len()];
 
     if cfg!(debug_assertions) {
-        debug_assert!(eql_long::<false>(slice, result)); // data should be identical
+        debug_assert!(eql_long(slice, result, false)); // data should be identical
     }
 
     result
@@ -2659,7 +2672,7 @@ pub fn is_ipv6_address(input: &[u8]) -> bool {
 pub fn left_has_any_in_right(to_check: &[&[u8]], against: &[&[u8]]) -> bool {
     for check in to_check {
         for item in against {
-            if eql_long::<true>(check, item) {
+            if eql_long(check, item, true) {
                 return true;
             }
         }
@@ -2746,7 +2759,7 @@ pub fn concat_if_needed(
         }
         let stack_copy = &stack_buf[0..total_length];
         for &interned in interned_strings_to_check {
-            if eql_long::<true>(stack_copy, interned) {
+            if eql_long(stack_copy, interned, true) {
                 // PERF(port): Zig stored the interned slice directly; with an
                 // owned `Box<[u8]>` dest we copy once. Hit at most once per
                 // JSX config; no leak.
@@ -2765,7 +2778,7 @@ pub fn concat_if_needed(
                 break 'brk true;
             }
 
-            if eql_long::<true>(&remain[0..args.len()], arg) {
+            if eql_long(&remain[0..args.len()], arg, true) {
                 remain = &remain[args.len()..];
             } else {
                 break 'brk true;

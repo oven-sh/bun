@@ -25,6 +25,12 @@ impl MutableString {
         MutableString::init(2048)
     }
 
+    /// Snake-case alias of [`init2048`] for callers that spell it `init_2048`.
+    #[inline]
+    pub fn init_2048() -> Result<MutableString, AllocError> {
+        MutableString::init(2048)
+    }
+
     pub fn clone(&self) -> Result<MutableString, AllocError> {
         MutableString::init_copy(&self.list)
     }

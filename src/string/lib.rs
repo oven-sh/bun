@@ -281,24 +281,67 @@ impl String {
     /// Returns `(String, ptr)` where `ptr` is `len` writable bytes — or
     /// `(dead, null)` if WTF allocation failed (string.zig:128 checks
     /// `tag == .Dead` before using the buffer).
-    pub fn create_uninitialized_latin1(len: usize) -> (Self, *mut u8) {
+    pub fn create_uninitialized_latin1(len: usize) -> (Self, &'static mut [u8]) {
         let s = unsafe { BunString__fromLatin1Unitialized(len) };
         if s.tag != Tag::WTFStringImpl {
-            return (s, core::ptr::null_mut());
+            return (s, &mut []);
         }
         debug_assert_eq!(unsafe { (*s.value.wtf).ref_count() }, 1);
         // SAFETY: WTF tag verified above; impl has a writable latin1 buffer of `len`.
         let ptr = unsafe { (*s.value.wtf).m_ptr.latin1 as *mut u8 };
-        (s, ptr)
+        // SAFETY: `ptr` points at `len` writable bytes owned by the new WTF
+        // impl; the `'static` lifetime mirrors Zig's `[]u8` return (lifetime
+        // is actually tied to `s` — caller must not outlive it).
+        (s, unsafe { core::slice::from_raw_parts_mut(ptr, len) })
     }
-    pub fn create_uninitialized_utf16(len: usize) -> (Self, *mut u16) {
+    pub fn create_uninitialized_utf16(len: usize) -> (Self, &'static mut [u16]) {
         let s = unsafe { BunString__fromUTF16Unitialized(len) };
         if s.tag != Tag::WTFStringImpl {
-            return (s, core::ptr::null_mut());
+            return (s, &mut []);
         }
         debug_assert_eq!(unsafe { (*s.value.wtf).ref_count() }, 1);
         let ptr = unsafe { (*s.value.wtf).m_ptr.utf16 as *mut u16 };
-        (s, ptr)
+        // SAFETY: see `create_uninitialized_latin1`.
+        (s, unsafe { core::slice::from_raw_parts_mut(ptr, len) })
+    }
+
+    /// `bun.String.createExternalGloballyAllocated(.latin1, bytes)` — takes
+    /// ownership of a globally-allocated (mimalloc-backed) Latin-1 buffer and
+    /// wraps it in a WTF::ExternalStringImpl. On allocation failure, frees the
+    /// bytes and returns `String::DEAD`.
+    pub fn create_external_globally_allocated_latin1(bytes: Vec<u8>) -> Self {
+        if bytes.is_empty() {
+            return Self::EMPTY;
+        }
+        if bytes.len() >= Self::max_length() {
+            return Self::DEAD;
+        }
+        let mut bytes = core::mem::ManuallyDrop::new(bytes.into_boxed_slice());
+        // SAFETY: ownership transferred to WTF::ExternalStringImpl, which frees
+        // via mimalloc (the global allocator).
+        unsafe { BunString__createExternalGloballyAllocatedLatin1(bytes.as_mut_ptr(), bytes.len()) }
+    }
+
+    /// `bun.String.createExternalGloballyAllocated(.utf16, bytes)`.
+    pub fn create_external_globally_allocated_utf16(bytes: Vec<u16>) -> Self {
+        if bytes.is_empty() {
+            return Self::EMPTY;
+        }
+        if bytes.len() >= Self::max_length() {
+            return Self::DEAD;
+        }
+        let mut bytes = core::mem::ManuallyDrop::new(bytes.into_boxed_slice());
+        // SAFETY: see `create_external_globally_allocated_latin1`.
+        unsafe { BunString__createExternalGloballyAllocatedUTF16(bytes.as_mut_ptr(), bytes.len()) }
+    }
+
+    /// `bun.String.createFromOSPath` — clone an OS-native path slice into a
+    /// WTF-backed string (UTF-8 on POSIX, UTF-16 on Windows).
+    pub fn create_from_os_path(os_path: &bun_paths::OSPathSlice) -> Self {
+        #[cfg(not(windows))]
+        { Self::clone_utf8(os_path) }
+        #[cfg(windows)]
+        { Self::clone_utf16(os_path) }
     }
     /// Convert in place to a WTF-backed string (consuming the borrow).
     pub fn to_wtf_string(&mut self) {
@@ -453,7 +496,7 @@ impl String {
         // straight through encoding-aware `to_utf8_without_ref`.
         self.to_utf8_without_ref().slice() == other
     }
-    pub fn eql_comptime(&self, lit: &'static [u8]) -> bool { self.eql_utf8(lit) }
+    pub fn eql_comptime<S: ?Sized + AsRef<[u8]>>(&self, lit: &S) -> bool { self.eql_utf8(lit.as_ref()) }
 
     #[inline] pub fn is_dead(&self) -> bool { self.tag == Tag::Dead }
 
@@ -480,17 +523,11 @@ impl String {
         }
         if self.is_utf16() {
             let len = self.length();
-            let (new, ptr) = Self::create_uninitialized_utf16(len);
+            let (new, chars) = Self::create_uninitialized_utf16(len);
             if new.tag != Tag::Dead {
-                // SAFETY: ptr points to `len` writable u16s; tag ≠ WTFStringImpl
-                // is excluded above so `value.zig` is the active variant.
-                unsafe {
-                    core::ptr::copy_nonoverlapping(
-                        self.value.zig.utf16_slice().as_ptr(),
-                        ptr,
-                        len,
-                    );
-                }
+                // SAFETY: tag ≠ WTFStringImpl is excluded above so
+                // `value.zig` is the active variant.
+                chars.copy_from_slice(unsafe { self.value.zig.utf16_slice() });
             }
             return new;
         }
@@ -700,12 +737,45 @@ const ZS_GLOBAL_BIT: usize = 1usize << 62;
 const ZS_16BIT_BIT: usize = 1usize << 63;
 const ZS_UNTAG_MASK: usize = (1usize << 53) - 1;
 
+impl Default for ZigString {
+    #[inline]
+    fn default() -> Self { Self::EMPTY }
+}
+
 impl ZigString {
     pub const EMPTY: Self = Self { ptr: b"".as_ptr(), len: 0 };
 
     #[inline]
     pub const fn init(s: &[u8]) -> Self {
         Self { ptr: s.as_ptr(), len: s.len() }
+    }
+    /// `ZigString.init` for `'static` literals — alias for callers spelling it
+    /// `init_static` (matches Zig `ZigString.init` with comptime-known string).
+    #[inline]
+    pub const fn init_static(s: &'static [u8]) -> Self {
+        Self { ptr: s.as_ptr(), len: s.len() }
+    }
+    /// `ZigString.fromUTF8` — alias of [`init_utf8`].
+    #[inline]
+    pub fn from_utf8(s: &[u8]) -> Self { Self::init_utf8(s) }
+    /// `ZigString.dupeForJS` — duplicates `utf8` into a globally-allocated
+    /// buffer suitable for handing to JSC. Widens to UTF-16 if `utf8` contains
+    /// any non-ASCII byte; otherwise leaves as 8-bit. Marks the result global
+    /// so JSC frees it via mimalloc.
+    pub fn dupe_for_js(utf8: &[u8]) -> Result<ZigString, strings::ToUTF16Error> {
+        if let Some(utf16) = strings::to_utf16_alloc(utf8, false, false)? {
+            // PERF(port): leaks Box<[u16]> into raw for global ownership — matches Zig semantics
+            let leaked: &'static [u16] = Box::leak(utf16.into_boxed_slice());
+            let mut out = ZigString::init_utf16(leaked);
+            out.mark_global();
+            out.mark_utf16();
+            Ok(out)
+        } else {
+            let duped: &'static [u8] = Box::leak(Box::<[u8]>::from(utf8));
+            let mut out = ZigString::init(duped);
+            out.mark_global();
+            Ok(out)
+        }
     }
     /// `ZigString.initUTF8` — borrow UTF-8 bytes (sets the UTF-8 ptr-tag).
     #[inline]
@@ -813,7 +883,8 @@ impl ZigString {
     /// directly. The Zig version `@compileError`s on non-ASCII `other`; in
     /// Rust we cannot enforce that at compile time, so it falls through to
     /// the byte compare (caller is expected to pass ASCII).
-    pub fn eql_comptime(self, other: &'static [u8]) -> bool {
+    pub fn eql_comptime<S: ?Sized + AsRef<[u8]>>(self, other: &S) -> bool {
+        let other = other.as_ref();
         if self.is_16bit() {
             return strings::eql_comptime_utf16(self.utf16_slice(), other);
         }

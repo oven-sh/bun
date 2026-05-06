@@ -140,6 +140,10 @@ opaque!(
     /// `STACK_OF(GENERAL_NAME)` — opaque stack handle.
     struct_stack_st_GENERAL_NAME
 );
+opaque!(
+    /// `struct crypto_ex_data_st` (`typedef ... CRYPTO_EX_DATA`).
+    CRYPTO_EX_DATA
+);
 
 // ═══════════════════════════════════════════════════════════════════════════
 // EVP digest context (by-value layout — stored inline by callers)
@@ -622,6 +626,8 @@ unsafe extern "C" {
     pub fn SSL_CTX_new(method: *const SSL_METHOD) -> *mut SSL_CTX;
     pub fn SSL_CTX_free(ctx: *mut SSL_CTX);
     pub fn SSL_CTX_get_verify_mode(ctx: *const SSL_CTX) -> c_int;
+    pub fn SSL_CTX_set_ex_data(ctx: *mut SSL_CTX, idx: c_int, data: *mut c_void) -> c_int;
+    pub fn SSL_CTX_get_ex_data(ctx: *const SSL_CTX, idx: c_int) -> *mut c_void;
 
     // ── SSL ──────────────────────────────────────────────────────────────
     pub fn SSL_new(ctx: *mut SSL_CTX) -> *mut SSL;

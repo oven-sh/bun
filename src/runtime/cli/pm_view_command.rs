@@ -259,11 +259,11 @@ pub fn view(
             keys.push(prop.key.unwrap());
         }
         let versions_array = ast::Expr::init(
-            ast::E::Array(ast::EArray {
+            ast::E::Array {
                 items: ast::ExprNodeList::from_owned_slice(keys.into_boxed_slice()),
                 ..Default::default()
-            }),
-            ast::Loc { start: -1 },
+            },
+            logger::Loc { start: -1 },
         );
         manifest.set(b"versions", versions_array)?;
     }
@@ -277,9 +277,9 @@ pub fn view(
             if let ast::ExprData::EString(e_string) = &value.data {
                 let slice = e_string.slice();
                 if json_output {
-                    Output::println(format_args!("{}", bun_fmt::format_json_string_utf8(slice, Default::default())));
+                    Output::print(format_args!("{}\n", bun_fmt::format_json_string_utf8(slice, Default::default())));
                 } else {
-                    Output::println(format_args!("{}", BStr::new(slice)));
+                    Output::print(format_args!("{}\n", BStr::new(slice)));
                 }
                 Output::flush();
                 return Ok(());
@@ -326,7 +326,7 @@ pub fn view(
             source,
             JSPrinter::Options {
                 mangled_props: None,
-                indent: JSPrinter::Indent { count: 2, ..Default::default() },
+                indent: JSPrinter::Indentation { count: 2, ..Default::default() },
                 ..Default::default()
             },
         )?;

@@ -117,8 +117,8 @@ pub struct ArrayHashContextViaOwner;
 
 impl ArrayHashContextViaOwner {
     pub fn hash(&self, k: &SerializedFailure) -> u32 {
-        // TODO(port): std.hash.int — Zig stdlib integer mixer; map to bun_collections::hash_int or equivalent
-        bun_collections::hash_int(k.get_owner().encode().bits())
+        // std.hash.int — Zig stdlib integer mixer; ported as bun_wyhash::hash_int
+        bun_wyhash::hash_int(k.get_owner().encode().bits())
     }
 
     pub fn eql(&self, a: &SerializedFailure, b: &SerializedFailure, _: usize) -> bool {
@@ -130,8 +130,8 @@ pub struct ArrayHashAdapter;
 
 impl ArrayHashAdapter {
     pub fn hash(&self, own: &Owner) -> u32 {
-        // TODO(port): std.hash.int — see above
-        bun_collections::hash_int(own.encode().bits())
+        // std.hash.int — see above
+        bun_wyhash::hash_int(own.encode().bits())
     }
 
     pub fn eql(&self, a: &Owner, b: &SerializedFailure, _: usize) -> bool {

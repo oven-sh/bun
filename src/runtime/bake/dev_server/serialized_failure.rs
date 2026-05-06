@@ -7,6 +7,10 @@
 use super::incremental_graph::FileIndex;
 use crate::bake::Side;
 
+// Re-export the full enum form from the Phase-A body module so callers can
+// match on `serialized_failure::Owner::{None,Route,Client,Server}`.
+pub use super::serialized_failure_body::{Owner, Packed, PackedKind};
+
 /// `SerializedFailure.Owner` — `packed struct(u32)` (1-bit side + 31-bit idx).
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]

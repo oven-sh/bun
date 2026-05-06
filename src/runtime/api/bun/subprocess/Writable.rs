@@ -3,13 +3,13 @@ use core::ptr::NonNull;
 use std::sync::Arc;
 
 use bun_core::{self, err};
-use bun_jsc::{EventLoop, JSGlobalObject, JSValue};
+use bun_jsc::{event_loop::EventLoop, JSGlobalObject, JSValue};
 use bun_sys::{self, Fd};
 
 use crate::webcore::blob::SizeType as BlobSizeType;
 use crate::webcore::file_sink::{self, FileSink};
 use crate::webcore::sink::DestructorPtr;
-use bun_spawn::Stdio;
+use crate::api::bun_spawn::stdio::Stdio;
 
 use super::{js, StaticPipeWriter, StdioResult, Subprocess};
 
@@ -208,7 +208,7 @@ impl<'a> Writable<'a> {
                     }
                 }
 
-                pipe.writer.handle.poll.flags.insert(file_sink::PollFlag::Socket);
+                pipe.writer.handle.poll.flags.insert(bun_aio::PollFlag::Socket);
                 // TODO(port): Arc<FileSink> interior mutability for writer.handle.poll.flags
 
                 subprocess.weak_file_sink_stdin_ptr = Some(NonNull::from(&*pipe));

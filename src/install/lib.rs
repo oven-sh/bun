@@ -587,6 +587,30 @@ pub mod package_manager {
     pub use super::Subcommand;
     pub mod security_scanner {
         pub use crate::SecurityScanSubprocess;
+
+        /// Stub: real body in `PackageManager/security_scanner.rs`, gated behind
+        /// `package_manager_real` (`#![cfg(any())]` reconciler-6). Generic over
+        /// `Ctx` because `bun_runtime::command::Context` would be a circular dep.
+        #[derive(Default)]
+        pub struct SecurityScanResults;
+        impl SecurityScanResults {
+            pub fn has_advisories(&self) -> bool {
+                todo!("blocked_on: bun_install::package_manager_real un-gate (reconciler-6)")
+            }
+        }
+        pub fn perform_security_scan_for_all<Ctx>(
+            _manager: &mut crate::PackageManager,
+            _command_ctx: Ctx,
+            _original_cwd: &[u8],
+        ) -> Result<Option<SecurityScanResults>, bun_core::Error> {
+            todo!("blocked_on: bun_install::package_manager_real un-gate (reconciler-6)")
+        }
+        pub fn print_security_advisories(
+            _manager: &crate::PackageManager,
+            _results: &SecurityScanResults,
+        ) {
+            todo!("blocked_on: bun_install::package_manager_real un-gate (reconciler-6)")
+        }
     }
     /// Stub: real body lives in `PackageManager/updatePackageJSONAndInstall.rs`,
     /// gated behind `package_manager_real` (`#![cfg(any())]` reconciler-6).

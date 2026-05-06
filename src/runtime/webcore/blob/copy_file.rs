@@ -378,7 +378,7 @@ impl<'a> CopyFile<'a> {
 
                 // EINVAL: eCryptfs and other filesystems may not support copy_file_range.
                 // Also returned when the file descriptor is incompatible with the syscall.
-                bun_sys::E::INVAL => {
+                bun_sys::E::EINVAL => {
                     if CLEAR_APPEND_IF_INVALID {
                         if !has_unset_append {
                             // https://kylelaker.com/2018/08/31/stdout-oappend.html

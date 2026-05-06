@@ -100,30 +100,10 @@ pub type Map = ArrayHashMap<bun_semver::String, FieldEntry>;
 // PORT NOTE: Zig used `bun.Semver.String.ArrayHashContext` + store_hash=false;
 // `bun_collections::ArrayHashMap` is wyhash-keyed — Phase B confirm context match.
 
-pub enum Encoding {
-    URLEncoded,
-    /// boundary
-    // PERF(port): Zig held a borrowed `[]const u8` here; boxed because
-    // `AsyncFormData.deinit` frees it (Phase-A `[]const u8`-field rule). Hot
-    // callers (`from_multipart_data`, `Encoding::get`) now allocate once where
-    // Zig did not — profile in Phase B and consider `Encoding<'a>`.
-    Multipart(Box<[u8]>),
-}
-
-impl Encoding {
-    pub fn get(content_type: &[u8]) -> Option<Encoding> {
-        if strings::index_of(content_type, b"application/x-www-form-urlencoded").is_some() {
-            return Some(Encoding::URLEncoded);
-        }
-
-        if strings::index_of(content_type, b"multipart/form-data").is_none() {
-            return None;
-        }
-
-        let boundary = get_boundary(content_type)?;
-        Some(Encoding::Multipart(Box::from(boundary)))
-    }
-}
+// PORT NOTE: `Encoding` is also defined in `bun_core::form_data` (lower-tier,
+// JSC-free) and is what callers in `Body.rs` hold. Re-export it here so this
+// module's `to_js` accepts the same type instead of a parallel local enum.
+pub use bun_core::form_data::Encoding;
 
 pub struct AsyncFormData {
     pub encoding: Encoding,

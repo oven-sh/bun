@@ -1825,7 +1825,7 @@ impl JSValkeyClient {
                     // TODO(port): {f} format spec on ZigString
                     return global.throw(format_args!(
                         "Failed to remove handler for channel {}",
-                        channel.as_string().get_zig_string(global)
+                        unsafe { &*channel.as_string() }.get_zig_string(global)
                     ));
                 }
             };
@@ -1859,7 +1859,7 @@ impl JSValkeyClient {
             let mut array_iter = channel_or_many.array_iterator(global)?;
             while let Some(channel_arg) = array_iter.next()? {
                 let Some(channel) = from_js(global, channel_arg)? else {
-                    return global.throw_invalid_argument_type("unsubscribe", "channel", "string");
+                    return Err(global.throw_invalid_argument_type("unsubscribe", "channel", "string"));
                 };
                 // PERF(port): was assume_capacity
                 redis_channels.push(channel);

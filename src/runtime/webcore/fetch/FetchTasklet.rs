@@ -198,9 +198,11 @@ impl HTTPRequestBody {
     pub fn from_js(global_this: &JSGlobalObject, value: JSValue) -> JsResult<HTTPRequestBody> {
         let mut body_value = BodyValue::from_js(global_this, value)?;
         if matches!(body_value, BodyValue::Used)
-            || (matches!(&body_value, BodyValue::Locked(l) if l.action != body::Action::None || l.is_disturbed2(global_this)))
+            || (matches!(&body_value, BodyValue::Locked(l) if !l.action.is_none() || l.is_disturbed2(global_this)))
         {
-            return Err(global_this.ERR(jsc::ErrorCode::BODY_ALREADY_USED, "body already used").throw());
+            return Err(global_this
+                .err(jsc::ErrorCode::BODY_ALREADY_USED, format_args!("body already used"))
+                .throw());
         }
         if let BodyValue::Locked(locked) = &body_value {
             if locked.readable.has() {
@@ -256,7 +258,7 @@ impl HTTPRequestBody {
         }
     }
 
-    pub fn has_body(&self) -> bool {
+    pub fn has_body(&mut self) -> bool {
         match self {
             HTTPRequestBody::AnyBlob(blob) => blob.size() > 0,
             HTTPRequestBody::ReadableStream(stream) => stream.has(),

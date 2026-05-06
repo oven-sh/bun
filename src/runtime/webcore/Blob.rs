@@ -5395,9 +5395,10 @@ impl Any {
         match self {
             Any::Blob(b) => b.to_array_buffer_view::<TYPED_ARRAY_VIEW>(global, lifetime),
             Any::InternalBlob(ib) => {
-                let bytes = ib.to_owned_slice();
+                // Ownership transfers to JSC via the default-allocator path.
+                let bytes: &mut [u8] = ib.to_owned_slice().leak();
                 *self = Any::Blob(Blob::default());
-                Ok(jsc::ArrayBuffer::from_default_allocator(global, bytes, TYPED_ARRAY_VIEW))
+                Ok(jsc::ArrayBuffer::from_default_allocator(global, TYPED_ARRAY_VIEW, bytes))
             }
             Any::WTFStringImpl(impl_) => {
                 let str = BunString::init_wtf(core::mem::replace(impl_, bun_str::WTFStringImpl::null()));
@@ -5405,13 +5406,14 @@ impl Any {
 
                 let out_bytes = str.to_utf8_without_ref();
                 if out_bytes.is_allocated() {
+                    let owned: &mut [u8] = out_bytes.into_owned().leak();
                     return Ok(jsc::ArrayBuffer::from_default_allocator(
                         global,
-                        out_bytes.into_owned(),
                         TYPED_ARRAY_VIEW,
+                        owned,
                     ));
                 }
-                Ok(jsc::ArrayBuffer::create(global, out_bytes.slice(), TYPED_ARRAY_VIEW))
+                jsc::ArrayBuffer::create::<TYPED_ARRAY_VIEW>(global, out_bytes.slice())
             }
         }
     }

@@ -373,7 +373,13 @@ impl FileSink {
         self.writer.update_ref(self.io_evtloop(), has_pending_data);
 
         if has_pending_data {
-            if let Some(vm) = self.js_vm() {
+            // PORT NOTE: inline `js_vm()` to avoid holding an immutable borrow of
+            // `self` (via the returned `&VirtualMachine`) across the `&mut self`
+            // needed by `register_deferred_microtask_with_type`.
+            let vm_ptr = self.event_loop_handle.bun_vm() as *mut bun_jsc::VirtualMachineRef;
+            if !vm_ptr.is_null() {
+                // SAFETY: `bun_vm()` non-null implies the per-thread VM; never aliased here.
+                let vm = unsafe { &*vm_ptr };
                 if !vm.is_inside_deferred_task_queue {
                     AutoFlusher::register_deferred_microtask_with_type::<Self>(self, vm);
                 }
@@ -690,13 +696,19 @@ impl FileSink {
                 // but is a distinct draft type; bridge by-field until streams.rs
                 // aliases to this module's `Options`.
                 let opts = Options {
-                    chunk_size: file.chunk_size,
+                    chunk_size: file.chunk_size as webcore::BlobSizeType,
                     input_path: match &file.input_path {
                         crate::webcore::PathOrFileDescriptor::Fd(fd) => {
                             PathOrFileDescriptor::Fd(*fd)
                         }
                         crate::webcore::PathOrFileDescriptor::Path(p) => {
-                            PathOrFileDescriptor::Path(p.clone())
+                            // `ZigStringSlice` is non-`Clone` (owns/WTF-refs its
+                            // bytes); borrow the bytes for the duration of
+                            // `setup(&opts)` — `stream_start` (and thus `p`)
+                            // outlives `opts` within this match arm.
+                            PathOrFileDescriptor::Path(
+                                bun_str::zig_string::Slice::from_utf8_never_free(p.slice()),
+                            )
                         }
                     },
                     ..Options::default()
@@ -1106,7 +1118,7 @@ impl FileSink {
         }
         #[cfg(not(windows))]
         {
-            self.fd.cast()
+            self.fd.native()
         }
     }
 

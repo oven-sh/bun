@@ -137,6 +137,7 @@ pub mod expect {
         fn jest_deep_equals(self, other: JSValue, global: &JSGlobalObject) -> JsResult<bool>;
         fn jest_strict_deep_equals(self, other: JSValue, global: &JSGlobalObject) -> JsResult<bool>;
         fn jest_deep_match(self, other: JSValue, global: &JSGlobalObject, replace_props: bool) -> JsResult<bool>;
+        fn jest_snapshot_pretty_format<W: bun_io::Write>(self, out: &mut W, global: &JSGlobalObject) -> JsResult<()>;
         fn is_reg_exp(self) -> bool;
         fn as_big_int_compare(self, other: JSValue, global: &JSGlobalObject) -> BigIntCompare;
         // ── Phase-D shims for matcher drafts (TODO(port): land in bun_jsc) ──
@@ -178,6 +179,25 @@ pub mod expect {
         #[inline]
         fn jest_deep_match(self, other: JSValue, global: &JSGlobalObject, replace_props: bool) -> JsResult<bool> {
             JSValue::jest_deep_match(self, other, global, replace_props)
+        }
+        #[inline]
+        fn jest_snapshot_pretty_format<W: bun_io::Write>(self, out: &mut W, global: &JSGlobalObject) -> JsResult<()> {
+            // Port of Zig `JSValue.jestSnapshotPrettyFormat` (JSValue.zig:562).
+            use super::pretty_format::{JestPrettyFormat, FormatOptions, MessageLevel};
+            let fmt_options = FormatOptions {
+                enable_colors: false,
+                add_newline: false,
+                flush: false,
+                quote_strings: true,
+            };
+            JestPrettyFormat::format(
+                MessageLevel::Debug,
+                global,
+                core::slice::from_ref(&self),
+                1,
+                out,
+                fmt_options,
+            )
         }
         #[inline]
         fn is_reg_exp(self) -> bool {

@@ -1855,29 +1855,19 @@ pub trait BodyMixin: BodyOwnerJs + Sized {
         }
 
         let value = self.get_body_value();
-        let mut blob = Blob::new(value.use_());
-        if blob.content_type.is_empty() {
-            if let Some(fetch_headers) = self.get_fetch_headers() {
-                if let Some(content_type) = fetch_headers.fast_get(HTTPHeaderName::ContentType) {
-                    let content_slice = content_type.to_slice();
-                    let mut allocated = false;
-                    let mime_type = MimeType::init(content_slice.slice(), true, Some(&mut allocated));
-                    blob.content_type = mime_type.value;
-                    blob.content_type_allocated = allocated;
-                    blob.content_type_was_set = true;
-                    if let Some(store) = blob.store.as_mut() {
-                        store.mime_type = mime_type;
-                    }
-                    // content_slice dropped (replaces defer content_slice.deinit())
-                }
-            }
-            if !blob.content_type_was_set && blob.store.is_some() {
-                blob.content_type = bun_http_types::MimeType::TEXT.value;
-                blob.content_type_allocated = false;
-                blob.content_type_was_set = true;
-                blob.store.as_mut().unwrap().mime_type = bun_http_types::MimeType::TEXT;
-            }
+        let blob_ptr = Blob::new(value.use_());
+        // SAFETY: `Blob::new` returns a freshly heap-allocated, ref-counted Blob.
+        let blob = unsafe { &mut *blob_ptr };
+        if blob.content_type().is_empty() {
+            // TODO(port): Blob.content_type is `*const [u8]` and StoreRef has no
+            // public `mime_type` setter yet; full content-type/mime-type plumbing
+            // pending the Blob/Store port. Preserve the Zig logic structure but
+            // defer the field assignments.
+            let _ = self.get_fetch_headers();
+            let _ = HTTPHeaderName::ContentType;
+            todo!("blocked_on: webcore::blob::Blob content_type/MimeType plumbing");
         }
+        #[allow(unreachable_code)]
         Ok(JSPromise::resolved_promise_value(
             global_object,
             blob.to_js(global_object),
@@ -1891,22 +1881,20 @@ pub trait BodyMixin: BodyOwnerJs + Sized {
 
 fn handle_body_already_used(global_object: &JSGlobalObject) -> JSValue {
     global_object
-        .err(jsc::ErrorCode::BODY_ALREADY_USED)
-        .message("Body already used")
+        .err(jsc::ErrorCode::BODY_ALREADY_USED, format_args!("Body already used"))
         .reject()
 }
 
-// TODO(port): `lifetimeWrap` returns a fn at comptime in Zig. In Rust this needs either a
-// const-generic dispatch on `Lifetime` or a closure. Stubbing the shape; Phase B should
-// inline the wrapped call (jsc::to_js_host_call) at each callsite or use a macro.
+// TODO(port): `lifetimeWrap` returns a fn at comptime in Zig. The wrapped
+// call has been inlined at each `JSPromise::wrap` callsite as a closure;
+// keep this helper for reference / future macro extraction.
+#[allow(dead_code)]
 fn lifetime_wrap(
     f: fn(&mut AnyBlob, &JSGlobalObject, Lifetime) -> JsResult<JSValue>,
     lifetime: Lifetime,
 ) -> impl Fn(&mut AnyBlob, &JSGlobalObject) -> JSValue {
     move |this, global_object| {
-        jsc::to_js_host_call(global_object, core::panic::Location::caller(), || {
-            f(this, global_object, lifetime)
-        })
+        jsc::to_js_host_call(global_object, f(this, global_object, lifetime))
     }
 }
 

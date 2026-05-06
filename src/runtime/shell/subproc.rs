@@ -1074,7 +1074,11 @@ impl Readable {
         }
 
         #[cfg(not(windows))]
-        match stdio {
+        {
+        // PORT NOTE: `Stdio` impls Drop, so dispatch on `&mut` and `mem::take`
+        // Default-able payloads instead of partial moves.
+        let mut stdio = stdio;
+        match &mut stdio {
             Stdio::Inherit => Readable::Inherit,
             Stdio::Ipc | Stdio::Dup2(_) | Stdio::Ignore => Readable::Ignore,
             Stdio::Path(_) => Readable::Ignore,
@@ -1082,7 +1086,7 @@ impl Readable {
             // blobs are immutable, so we should only ever get the case
             // where the user passed in a Blob with an fd
             Stdio::Blob(_) => Readable::Ignore,
-            Stdio::Memfd(memfd) => Readable::Memfd(memfd),
+            Stdio::Memfd(memfd) => Readable::Memfd(*memfd),
             Stdio::Pipe => {
                 Readable::Pipe(PipeReader::create(event_loop, process, result, None, out_type))
             }
@@ -1099,7 +1103,7 @@ impl Readable {
                         PipeReader::set_buffered_output(
                             Arc::as_ptr(pipe).cast_mut(),
                             BufferedOutput::ArrayBuffer {
-                                buf: array_buffer,
+                                buf: core::mem::take(array_buffer),
                                 i: 0,
                             },
                         )

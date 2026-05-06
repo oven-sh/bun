@@ -3068,7 +3068,7 @@ pub struct DuplexUpgradeContext {
     // We only us a tls and not a raw socket when upgrading a Duplex, Duplex dont support socketpairs
     pub tls: Option<IntrusiveRc<TLSSocket>>,
     // task used to deinit the context in the next tick, vm is used to enqueue the task
-    pub vm: &'static VirtualMachine,
+    pub vm: *mut VirtualMachine,
     pub task: AnyTask,
     pub task_event: EventState,
     /// Config to build a fresh `SSL_CTX` from (legacy `{ca,cert,key}` callers).

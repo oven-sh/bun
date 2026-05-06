@@ -296,6 +296,81 @@ pub mod js_valkey {
         pub fn on_reconnect_timer(&mut self) {
             todo!("blocked_on: crate::valkey_jsc::js_valkey::JSValkeyClient::on_reconnect_timer")
         }
+
+        /// Spec js_valkey.zig `send` — serialize+enqueue a command, returning the
+        /// promise that resolves with the reply. Body in `js_valkey_body`.
+        pub fn send(
+            &mut self,
+            _global: &JSGlobalObject,
+            _this_value: JSValue,
+            _command: &super::valkey_command_body::Command<'_>,
+        ) -> Result<&'static bun_jsc::JSPromise, RedisError> {
+            todo!("blocked_on: crate::valkey_jsc::js_valkey_body::JSValkeyClient::send")
+        }
+
+        /// Spec js_valkey.zig `cloneWithoutConnecting`.
+        pub fn clone_without_connecting(
+            &self,
+            _global: &JSGlobalObject,
+        ) -> bun_jsc::JsResult<*mut JSValkeyClient> {
+            todo!("blocked_on: crate::valkey_jsc::js_valkey_body::JSValkeyClient::clone_without_connecting")
+        }
+
+        /// Spec js_valkey.zig `doConnect`.
+        pub fn do_connect(
+            &mut self,
+            _global: &JSGlobalObject,
+            _this_value: JSValue,
+        ) -> bun_jsc::JsResult<JSValue> {
+            todo!("blocked_on: crate::valkey_jsc::js_valkey_body::JSValkeyClient::do_connect")
+        }
+
+        /// Wrap an already-heap-allocated client pointer in its JS object.
+        /// Ownership transfers to the C++ wrapper (freed via `finalize`).
+        pub fn ptr_to_js(ptr: *mut Self, global: &JSGlobalObject) -> JSValue {
+            // SAFETY: codegen extern; `ptr` was produced by `JSValkeyClient::new`
+            // (heap-allocated) and is hereby owned by the JS wrapper.
+            unsafe { RedisClient__create(global.as_ptr(), ptr) }
+        }
+    }
+
+    impl SubscriptionCtx {
+        pub fn init(_parent: &mut JSValkeyClient) -> bun_jsc::JsResult<Self> {
+            todo!("blocked_on: crate::valkey_jsc::js_valkey_body::SubscriptionCtx::init")
+        }
+
+        pub fn upsert_receive_handler(
+            &mut self,
+            _global: &JSGlobalObject,
+            _channel_name: JSValue,
+            _callback: JSValue,
+        ) -> bun_jsc::JsResult<()> {
+            todo!("blocked_on: crate::valkey_jsc::js_valkey_body::SubscriptionCtx::upsert_receive_handler")
+        }
+
+        pub fn clear_receive_handlers(
+            &mut self,
+            _global: &JSGlobalObject,
+            _channel_name: JSValue,
+        ) -> bun_jsc::JsResult<()> {
+            todo!("blocked_on: crate::valkey_jsc::js_valkey_body::SubscriptionCtx::clear_receive_handlers")
+        }
+
+        pub fn clear_all_receive_handlers(
+            &mut self,
+            _global: &JSGlobalObject,
+        ) -> bun_jsc::JsResult<()> {
+            todo!("blocked_on: crate::valkey_jsc::js_valkey_body::SubscriptionCtx::clear_all_receive_handlers")
+        }
+
+        pub fn remove_receive_handler(
+            &mut self,
+            _global: &JSGlobalObject,
+            _channel_name: JSValue,
+            _callback: JSValue,
+        ) -> bun_jsc::JsResult<Option<usize>> {
+            todo!("blocked_on: crate::valkey_jsc::js_valkey_body::SubscriptionCtx::remove_receive_handler")
+        }
     }
 
     /// `SocketHandler<SSL>` — uws dispatch vtable target. Methods gated.

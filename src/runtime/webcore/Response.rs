@@ -137,7 +137,46 @@ pub mod js {
 pub use js::from_js;
 pub use js::from_js_direct;
 
-// TODO(b2-blocked): #[bun_jsc::JsClass]
+// PORT NOTE: hand-rolled `JsClass` impl (proc-macro `#[bun_jsc::JsClass]`
+// not yet wired for Response). Mirrors the Blob.rs pattern — bind the
+// generated C++ shims by link-name and wrap.
+const _: () = {
+    unsafe extern "C" {
+        #[link_name = "Response__fromJS"]
+        fn __from_js(value: bun_jsc::JSValue) -> *mut Response;
+        #[link_name = "Response__fromJSDirect"]
+        fn __from_js_direct(value: bun_jsc::JSValue) -> *mut Response;
+        #[link_name = "Response__create"]
+        fn __create(global: *const bun_jsc::JSGlobalObject, ptr: *mut Response) -> bun_jsc::JSValue;
+        #[link_name = "Response__getConstructor"]
+        fn __get_constructor(global: *const bun_jsc::JSGlobalObject) -> bun_jsc::JSValue;
+    }
+
+    impl bun_jsc::JsClass for Response {
+        fn from_js(value: bun_jsc::JSValue) -> Option<*mut Self> {
+            // SAFETY: pure FFI downcast; returns null on type mismatch.
+            let p = unsafe { __from_js(value) };
+            if p.is_null() { None } else { Some(p) }
+        }
+        fn from_js_direct(value: bun_jsc::JSValue) -> Option<*mut Self> {
+            // SAFETY: pure FFI downcast (exact-structure check); null on miss.
+            let p = unsafe { __from_js_direct(value) };
+            if p.is_null() { None } else { Some(p) }
+        }
+        fn to_js(self, global: &bun_jsc::JSGlobalObject) -> bun_jsc::JSValue {
+            let ptr = Box::into_raw(Box::new(self));
+            // SAFETY: `global` is live; ownership of `ptr` transfers to the
+            // C++ wrapper (freed via `ResponseClass__finalize`).
+            unsafe { __create(global, ptr) }
+        }
+        fn get_constructor(global: &bun_jsc::JSGlobalObject) -> bun_jsc::JSValue {
+            // SAFETY: `global` is a live JSC global; C++ reads its cached
+            // structure/constructor table.
+            unsafe { __get_constructor(global) }
+        }
+    }
+};
+
 pub struct Response {
     body: Body,
     init: Init,
@@ -302,10 +341,10 @@ impl Response {
 impl Response {
     #[inline]
     pub fn get_body_len(&self) -> usize {
-        self.body.len()
+        self.body.len() as usize
     }
 
-    pub fn get_form_data_encoding(&self) -> JsResult<Option<Box<bun_core::form_data::AsyncFormData>>> {
+    pub fn get_form_data_encoding(&mut self) -> JsResult<Option<Box<bun_core::form_data::AsyncFormData>>> {
         let Some(content_type_slice) = self.get_content_type()? else {
             return Ok(None);
         };
@@ -342,7 +381,7 @@ impl Response {
 
     pub fn to_js(&mut self, global_object: &JSGlobalObject) -> JSValue {
         self.calculate_estimated_byte_size();
-        let js_value = js::to_js_unchecked(global_object, self);
+        let js_value = js::to_js_unchecked(global_object, self as *mut Self as *mut ());
         self.js_ref = JsRef::init_weak(js_value);
 
         self.check_body_stream_ref(global_object);

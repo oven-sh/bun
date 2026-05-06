@@ -931,7 +931,7 @@ impl UDPSocket {
         this: &mut Self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
-        function: fn(*mut uws::udp::Socket, i32) -> c_int,
+        function: fn(&mut uws::udp::Socket, i32) -> c_int,
     ) -> JsResult<JSValue> {
         // PERF(port): was comptime monomorphization — profile in Phase B.
         if this.closed {
@@ -950,13 +950,14 @@ impl UDPSocket {
         let Some(socket) = this.socket else {
             return Err(global_this.throw(format_args!("Socket is closed")));
         };
-        let res = function(socket, ttl);
+        // SAFETY: socket valid (checked above).
+        let res = function(unsafe { &mut *socket }, ttl);
 
         if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::setsockopt) {
             return Err(global_this.throw_value(err.to_js(global_this)));
         }
 
-        Ok(JSValue::js_number(ttl))
+        Ok(JSValue::js_number(ttl as f64))
     }
 
     #[bun_jsc::host_fn(method)]

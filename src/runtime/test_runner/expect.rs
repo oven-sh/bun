@@ -2814,6 +2814,29 @@ pub mod mock {
     }
 }
 
+// Local shim for Zig `JSValue.putMayBeIndex` (JSValue.zig:389) — not yet on
+// `bun_jsc::JSValue`; thin-wrap the C++ export here.
+#[inline]
+fn put_may_be_index(
+    target: JSValue,
+    global: &JSGlobalObject,
+    key: &bun_str::String,
+    value: JSValue,
+) -> JsResult<()> {
+    extern "C" {
+        // bindings.cpp: JSC__JSValue__putMayBeIndex — [[ZIG_EXPORT(check_slow)]]
+        fn JSC__JSValue__putMayBeIndex(
+            target: JSValue,
+            global: *const JSGlobalObject,
+            key: *const bun_str::String,
+            value: JSValue,
+        );
+    }
+    // SAFETY: all pointers/handles are live for the call.
+    unsafe { JSC__JSValue__putMayBeIndex(target, global, key, value) };
+    if global.has_exception() { Err(JsError::Thrown) } else { Ok(()) }
+}
+
 // Extract the matcher_fn from a JSCustomExpectMatcherFunction instance
 #[inline]
 fn get_custom_matcher_fn(this_value: JSValue, global_this: &JSGlobalObject) -> Option<JSValue> {

@@ -4563,7 +4563,9 @@ impl NodeFS {
     }
 
     fn pread_inner(&mut self, args: &args::Read) -> Maybe<ret::Read> {
-        let mut buf = args.buffer.slice_mut();
+        // SAFETY: see `read_inner` — JS ArrayBuffer storage is mutable heap.
+        let s = args.buffer.slice();
+        let mut buf = unsafe { core::slice::from_raw_parts_mut(s.as_ptr() as *mut u8, s.len()) };
         let off = (args.offset as usize).min(buf.len());
         buf = &mut buf[off..];
         let l = (args.length as usize).min(buf.len());

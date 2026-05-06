@@ -521,7 +521,16 @@ impl UDPSocket {
         // TODO(port): errdefer — scopeguard captures `&mut *this_ptr` by closure; verify borrowck
         // in Phase B (may need to re-derive `&mut` from `this_ptr` inside the closure).
 
-        let this_value = this.to_js(global_this);
+        // PORT NOTE: `JsClass::to_js(self)` boxes by value, but we already own
+        // the heap allocation in `this_ptr` and need to keep that exact pointer
+        // (it is stashed as the uws user_data). Bind the codegen `__create`
+        // export directly — same call the Zig `toJS(*Self)` makes.
+        unsafe extern "C" {
+            #[link_name = "UDPSocket__create"]
+            fn udp_socket_create(global: *mut JSGlobalObject, ptr: *mut UDPSocket) -> JSValue;
+        }
+        // SAFETY: `global_this` is live; `this_ptr` ownership transfers to the C++ wrapper.
+        let this_value = unsafe { udp_socket_create(global_this.as_mut_ptr(), this_ptr) };
         this_value.ensure_still_alive();
         this.this_value.set_strong(this_value, global_this);
 

@@ -6,7 +6,7 @@ use std::sync::Arc;
 use bstr::BStr;
 
 use bun_aio::Loop as AsyncLoop;
-use bun_options_types::context::Context::Context as CommandContext;
+use crate::package_manager_real::Command::Context as CommandContext;
 use bun_collections::ArrayHashMap;
 use bun_core::{self, err, Error, Output};
 use crate::bun_fs::FileSystem;
@@ -15,9 +15,9 @@ use bun_install::{
     invalid_dependency_id, invalid_package_id, DependencyID, PackageID, PackageManager,
 };
 use bun_io::{BufferedReader, ReadState};
-// MOVE_DOWN(b0): bun_jsc::subprocess → bun_sys::subprocess; bun_jsc::EventLoopHandle → bun_event_loop.
-use bun_sys::subprocess::{self, StdioResult};
-use bun_event_loop::EventLoopHandle;
+// MOVE_DOWN(b0): bun_jsc::subprocess → bun_spawn::subprocess; bun_jsc::EventLoopHandle → bun_event_loop.
+use bun_spawn::subprocess::{self, StdioResult};
+use bun_event_loop::{AnyEventLoop, EventLoopHandle};
 use bun_js_parser::Expr;
 use bun_logger as logger;
 use bun_spawn::{self as spawn, Process, Rusage, SpawnOptions, Status, Stdio};
@@ -26,7 +26,7 @@ use bun_sys::{self, Fd};
 
 use crate::hoisted_install as HoistedInstall;
 use crate::isolated_install as IsolatedInstall;
-use crate::package_manager::install_with_manager as InstallWithManager;
+use crate::package_manager_real::install_with_manager as InstallWithManager;
 
 struct PackagePath {
     pkg_path: Box<[PackageID]>,

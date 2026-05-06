@@ -729,7 +729,7 @@ pub fn migrate_pnpm_lockfile<'a>(
                     let patch_hash = String::Builder::string_hash(&patch_join_buf);
                     lockfile.patched_dependencies.put(
                         patch_hash,
-                        lockfile::PatchedDependency {
+                        crate::lockfile_real::PatchedDep {
                             path: patch.value.path,
                             ..Default::default()
                         },
@@ -1121,7 +1121,7 @@ fn parse_append_package_dependencies(
     lockfile: &mut Lockfile,
     package_obj: &Expr,
     snapshot_obj: &Expr,
-    string_buf: &mut String::Buf,
+    string_buf: &mut semver::string::Buf<'_>,
     log: &mut logger::Log,
 ) -> Result<(u32, u32), ParseAppendDependenciesError> {
     let mut version_buf: Vec<u8> = Vec::new();
@@ -1355,7 +1355,7 @@ fn parse_append_importer_dependencies(
     lockfile: &mut Lockfile,
     manager: &mut PackageManager,
     pkg_expr: &Expr,
-    string_buf: &mut String::Buf,
+    string_buf: &mut semver::string::Buf<'_>,
     log: &mut logger::Log,
     is_root: bool,
     importers_obj: &Expr,
@@ -1568,7 +1568,7 @@ fn update_package_json_after_migration(
         .get_with_path(
             log,
             pkg_json_path.slice(),
-            crate::WorkspacePackageJsonOptions {
+            crate::GetJsonOptions {
                 guess_indentation: true,
                 ..Default::default()
             },

@@ -3817,7 +3817,7 @@ impl Blob {
         // which is not yet implemented. Decrement the intrusive refcount directly;
         // `deref` calls `deinit()` (which `drop(Box::from_raw)`s if heap-allocated)
         // when the count reaches zero.
-        Blob__deref(this_ref);
+        super::Blob__deref(this_ref);
     }
 
     pub fn init_with_all_ascii(bytes: Vec<u8>, global_this: &JSGlobalObject, is_all_ascii: bool) -> Blob {

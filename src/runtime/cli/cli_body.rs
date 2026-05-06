@@ -1739,8 +1739,33 @@ use crate::cli::{
     shell_completions, test_command,
 };
 
-use bun_js as bun_bun_js;
 use bun_install;
+
+/// Stand-in for the higher-tier `bun.js.rs` `Run` entry points. The real
+/// implementation lives in a crate that depends on `bun_runtime`, so the CLI
+/// dispatch path cannot call it directly without a cycle. `run_command.rs`
+/// hosts the lower-tier port; these stubs keep the Phase-A draft compiling
+/// until the dispatch is rewired through that path.
+mod bun_bun_js {
+    #[allow(non_snake_case)]
+    pub mod Run {
+        use super::super::command::Context;
+        pub fn boot(
+            _ctx: Context,
+            _entry: &[u8],
+            _loader: Option<bun_options_types::Loader>,
+        ) -> Result<(), bun_core::Error> {
+            todo!("blocked_on: bun_js::Run::boot (higher-tier crate)")
+        }
+        pub fn boot_standalone(
+            _ctx: Context,
+            _entry: &[u8],
+            _graph: &bun_standalone_graph::StandaloneModuleGraph,
+        ) -> Result<(), bun_core::Error> {
+            todo!("blocked_on: bun_js::Run::boot_standalone (higher-tier crate)")
+        }
+    }
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

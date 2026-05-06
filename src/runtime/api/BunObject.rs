@@ -1139,7 +1139,7 @@ pub fn enable_ansi_colors(_global_this: &JSGlobalObject, _: &JSObject) -> JSValu
 }
 
 // callconv(jsc.conv) — emitted by #[bun_jsc::host_call]; see PORTING.md §FFI.
-fn get_main(global_this: &JSGlobalObject) -> JSValue {
+pub fn get_main(global_this: &JSGlobalObject) -> JSValue {
     // SAFETY: bun_vm() returns the live singleton VirtualMachine for a Bun-owned global.
     let vm = unsafe { &mut *global_this.bun_vm() };
     // If JS has set it to a custom value, use that one

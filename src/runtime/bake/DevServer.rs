@@ -5281,8 +5281,8 @@ impl UnrefSourceMapRequest {
             .map_err(|_| bun_core::err!(InvalidRequest))?;
         let generation = u32::from_ne_bytes(generation_bytes);
         let source_map_key = source_map_store::Key::init((generation as u64) << 32);
-        let _ = ctx
-            .dev
+        // SAFETY: dev outlives the request
+        let _ = unsafe { &mut *ctx.dev }
             .source_maps
             .remove_or_upgrade_weak_ref(source_map_key, source_map_store::WeakRefAction::Remove);
         r.write_status("204 No Content");

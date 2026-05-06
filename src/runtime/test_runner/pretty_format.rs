@@ -323,7 +323,29 @@ pub mod visited {
 
     // PORT NOTE: JSValue keys live on heap; safe because every visited value is also
     // on the stack frame during format() — conservative scan still sees them. Mirrors Zig 1:1.
-    pub type Map = HashMap<JSValue, ()>;
+    //
+    // `HashMap<JSValue, ()>` is a foreign type, so we cannot impl the foreign
+    // `ObjectPoolType` trait on it directly (orphan rule). A `#[repr(transparent)]`
+    // newtype with `Deref`/`DerefMut` keeps every call site (`.clear()`,
+    // `.get_or_put()`, `.remove()`, `mem::take`) unchanged. Same trick as
+    // `src/http/zlib.rs::PooledMutableString`.
+    #[repr(transparent)]
+    #[derive(Default)]
+    pub struct Map(pub HashMap<JSValue, ()>);
+
+    impl core::ops::Deref for Map {
+        type Target = HashMap<JSValue, ()>;
+        #[inline]
+        fn deref(&self) -> &Self::Target {
+            &self.0
+        }
+    }
+    impl core::ops::DerefMut for Map {
+        #[inline]
+        fn deref_mut(&mut self) -> &mut Self::Target {
+            &mut self.0
+        }
+    }
 
     // `ObjectPool<T, ..>` requires `T: ObjectPoolType`. Mirrors Zig's
     // `ObjectPool(Map, Map.init, true, 16)` — `INIT` allocates an empty map,
@@ -331,6 +353,10 @@ pub mod visited {
     impl bun_collections::pool::ObjectPoolType for Map {
         const INIT: Option<fn() -> Result<Self, bun_core::Error>> =
             Some(|| Ok(Map::default()));
+        #[inline]
+        fn reset(&mut self) {
+            self.0.clear();
+        }
     }
 
     // TODO(port): ObjectPool with init fn, threadsafe=true, capacity=16.

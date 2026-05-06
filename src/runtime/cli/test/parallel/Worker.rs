@@ -301,6 +301,29 @@ impl Worker {
     }
 }
 
+impl ChannelOwner for Worker {
+    /// `offset_of!(Worker, ipc)` — recovers `&mut Worker` from `&mut Channel<Worker>`
+    /// in platform callbacks (Zig: `@fieldParentPtr("ipc", ...)`).
+    const CHANNEL_OFFSET: usize = core::mem::offset_of!(Worker, ipc);
+
+    fn on_channel_frame(&mut self, kind: frame::Kind, rd: &mut frame::Reader<'_>) {
+        // SAFETY: coord backref valid; mutation — see field TODO.
+        unsafe { (*(self.coord as *mut Coordinator<'static>)).on_frame(self, kind, rd) };
+    }
+
+    fn on_channel_done(&mut self) {
+        if self.ipc.is_attached() {
+            // Corrupt frame path — kill the worker so onWorkerExit accounts for
+            // the in-flight file and the slot can respawn.
+            if let Some(p) = &self.process {
+                let _ = p.kill(9);
+            }
+        }
+        // SAFETY: coord backref valid; mutation — see field TODO.
+        unsafe { (*(self.coord as *mut Coordinator<'static>)).try_reap(self) };
+    }
+}
+
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum PipeRole {
     Stdout,

@@ -1,4 +1,4 @@
-use bun_collections::LinearFifo;
+use bun_collections::linear_fifo::{DynamicBuffer, LinearFifo};
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult};
 use bun_valkey::valkey_protocol as protocol;
 

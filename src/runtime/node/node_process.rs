@@ -453,8 +453,7 @@ pub fn set_cwd(global_object: &JSGlobalObject, to: &ZigString) -> JsResult<JSVal
 
 // TODO: switch this to using *bun.wtf.String when it is added
 #[cfg(windows)]
-#[unsafe(no_mangle)]
-#[export_name = "Bun__Process__editWindowsEnvVar"]
+#[unsafe(export_name = "Bun__Process__editWindowsEnvVar")]
 pub extern "C" fn bun_process_edit_windows_env_var(k: BunString, v: BunString) {
     const _: () = assert!(cfg!(windows));
     if k.tag() == bun_str::Tag::Empty {

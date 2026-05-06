@@ -351,7 +351,7 @@ impl PackageFilterIterator {
         }
     }
 
-    pub fn next(&mut self) -> Result<Option<&[u8]>, bun_core::Error> {
+    pub fn next(&mut self) -> Result<Option<glob::walk::MatchedPath>, bun_core::Error> {
         // TODO(port): narrow error set
         loop {
             if !self.valid {

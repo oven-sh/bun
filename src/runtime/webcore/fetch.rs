@@ -1704,7 +1704,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
     // Only create this after we have validated all the input.
     // or else we will leak it
-    let promise = JSPromise::Strong::init(global_this);
+    let promise = jsc::JSPromiseStrong::init(global_this);
 
     let promise_val = promise.value();
 
@@ -1791,8 +1791,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 // ──────────────────────────────────────────────────────────────────────────
 
 struct S3StreamWrapper<'a> {
-    promise: JSPromise::Strong,
-    url: ZigURL,
+    promise: jsc::JSPromiseStrong,
+    url: ZigURL<'a>,
     url_proxy_buffer: Box<[u8]>,
     // LIFETIMES.tsv: src/runtime/webcore/fetch.zig · Wrapper · global · JSC_BORROW → &JSGlobalObject
     global: &'a JSGlobalObject,

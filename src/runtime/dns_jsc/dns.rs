@@ -229,11 +229,12 @@ pub mod lib_info {
                 return HANDLE;
             }
             LOADED = true;
-            HANDLE = sys::dlopen(bun_core::zstr!("libinfo.dylib"), sys::RTLD::LAZY | sys::RTLD::LOCAL);
-            if HANDLE.is_none() {
+            let handle = sys::dlopen(bun_core::zstr!("libinfo.dylib"), sys::RTLD::LAZY | sys::RTLD::LOCAL);
+            if handle.is_none() {
                 Output::debug("libinfo.dylib not found");
             }
-            HANDLE
+            HANDLE = handle;
+            handle
         }
     }
 
@@ -352,8 +353,8 @@ pub mod lib_info {
             unsafe { ctx.platform_event_loop() },
             Async::PollKind::Machport,
             Async::posix_event_loop::OneShotFlag::OneShot,
-            // SAFETY: bitcast u32 mach_port → i32 fd, matches Zig @bitCast
-            sys::Fd::from_native(unsafe { core::mem::transmute::<u32, i32>(machport) }),
+            // bitcast u32 mach_port → i32 fd, matches Zig @bitCast
+            sys::Fd::from_native(machport as i32),
         );
         debug_assert!(matches!(rc, sys::Result::Ok(_)));
 

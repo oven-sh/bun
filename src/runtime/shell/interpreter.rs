@@ -2087,6 +2087,108 @@ pub fn unreachable_state(context: &str, state: &str) -> ! {
 
 // ────────────────────────────────────────────────────────────────────────────
 // Gated heavy body
+// ─── createShellInterpreter ─────────────────────────────────────────────────
+// Host fn for `Bun.$` template tag — `BunObject_callback_createShellInterpreter`.
+// Port of `Interpreter.createShellInterpreter` (interpreter.zig:773).
+
+unsafe extern "C" {
+    fn Bun__createShellInterpreter(
+        global: *const crate::jsc::JSGlobalObject,
+        ptr: *mut Interpreter,
+        parsed_shell_script: crate::jsc::JSValue,
+        resolve: crate::jsc::JSValue,
+        reject: crate::jsc::JSValue,
+    ) -> crate::jsc::JSValue;
+}
+
+pub fn create_shell_interpreter(
+    global: &crate::jsc::JSGlobalObject,
+    callframe: &crate::jsc::CallFrame,
+) -> crate::jsc::JsResult<crate::jsc::JSValue> {
+    use crate::jsc::{ArgumentsSlice, JSValue, JsClass as _};
+    use crate::shell::parsed_shell_script::ParsedShellScript;
+
+    let arguments_ = callframe.arguments_old::<3>();
+    // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
+    let vm = unsafe { &*global.bun_vm() };
+    let mut arguments = ArgumentsSlice::init(vm, arguments_.slice());
+
+    let resolve = arguments
+        .next_eat()
+        .ok_or_else(|| global.throw("shell: expected 3 arguments, got 0"))?;
+    let reject = arguments
+        .next_eat()
+        .ok_or_else(|| global.throw("shell: expected 3 arguments, got 0"))?;
+    let parsed_shell_script_js = arguments
+        .next_eat()
+        .ok_or_else(|| global.throw("shell: expected 3 arguments, got 0"))?;
+
+    let parsed_shell_script = ParsedShellScript::from_js(parsed_shell_script_js)
+        .ok_or_else(|| global.throw("shell: expected a ParsedShellScript"))?;
+    // SAFETY: from_js returned a live wrapper-owned heap pointer.
+    let parsed_shell_script = unsafe { &mut *parsed_shell_script };
+
+    if parsed_shell_script.args.is_none() {
+        return Err(global.throw(
+            "shell: shell args is null, this is a bug in Bun. Please file a GitHub issue.",
+        ));
+    }
+
+    let (shargs, mut jsobjs, quiet, cwd, export_env) = parsed_shell_script.take(global);
+
+    let cwd_slice = cwd.as_ref().map(|c| c.to_utf8());
+
+    // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
+    let event_loop = EventLoopHandle::Js(unsafe { (*global.bun_vm()).event_loop });
+    let interpreter: Box<Interpreter> = match Interpreter::init(
+        // command_ctx — unused on the JS event-loop path.
+        core::ptr::null_mut(),
+        event_loop,
+        shargs,
+        jsobjs.as_mut_slice() as *mut [JSValue],
+        export_env,
+        cwd_slice.as_ref().map(|c| c.slice()),
+        None,
+    ) {
+        ShellResult::Ok(i) => i,
+        ShellResult::Err(e) => {
+            // jsobjs / shargs drop on scope exit (export_env was consumed).
+            return Err(e.throw_js(global));
+        }
+    };
+    // jsobjs ownership now mirrored inside the interpreter; keep the Vec alive
+    // for the JS-value lifetimes by leaking into the interpreter's arena once
+    // `setup_io_before_run` lands. PORT NOTE: Zig kept `jsobjs.items` as a
+    // borrow into the arraylist; here `Interpreter::init` cloned the slice,
+    // so the local Vec drops naturally.
+    drop(jsobjs);
+
+    if global.has_exception() {
+        // export_env / shargs are owned by `interpreter` now and freed by Drop.
+        return Err(crate::jsc::JsError::Thrown);
+    }
+
+    let interpreter = Box::into_raw(interpreter);
+    // SAFETY: `interpreter` is a fresh heap allocation.
+    unsafe {
+        (*interpreter).flags.quiet = quiet;
+        (*interpreter).global_this = global as *const _ as *mut _;
+        (*interpreter).estimated_size_for_gc = (*interpreter).compute_estimated_size_for_gc();
+    }
+
+    // SAFETY: C++ wrapper takes ownership; `interpreter` outlives this call.
+    let js_value = unsafe {
+        Bun__createShellInterpreter(global, interpreter, parsed_shell_script_js, resolve, reject)
+    };
+    // SAFETY: same allocation, single thread.
+    unsafe {
+        (*interpreter).this_jsvalue = js_value;
+        (*interpreter).keep_alive.ref_(global.bun_vm().cast());
+    }
+    bun_core::analytics::Features::shell_inc();
+    Ok(js_value)
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 //
 // The remaining ~2400 lines of the original draft (JS-side `init`/`create`,

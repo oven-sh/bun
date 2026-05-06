@@ -1318,13 +1318,27 @@ fn on_js_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
     if is_map {
         // SAFETY: SourceId is #[repr(transparent)] over u64 (same size as id)
         let source_id: source_map_store::SourceId = unsafe { ::core::mem::transmute(id) };
-        if dev.source_maps.entries.get_mut(&source_map_store::Key::init(id)).is_none() {
+        let Some(entry) = dev.source_maps.entries.get_mut(&source_map_store::Key::init(id)) else {
             return not_found(resp);
-        }
-        let _ = (source_id, req, resp);
-        // TODO(port): blocked_on: source_map_store::Entry::render_json +
-        // StaticRoute::init_from_any_blob InitFromBytesOptions shape mismatch.
-        todo!("blocked_on: source_map_store::Entry::render_json")
+        };
+        // PERF(port): was ArenaAllocator scratch
+        let json_bytes = match entry.render_json(dev, source_id.kind(), bake::Side::Client) {
+            Ok(b) => b,
+            Err(e) => bun_core::handle_oom(Err(e)),
+        };
+        let response = StaticRoute::init_from_any_blob(
+            &crate::webcore::blob::Any::from_array_list(json_bytes),
+            crate::server::static_route::InitFromBytesOptions {
+                server: dev.server,
+                mime_type: Some(&MimeType::JSON),
+                ..Default::default()
+            },
+        );
+        // SAFETY: `init_from_any_blob` returns a fresh ref_count=1 box.
+        let _deref = scopeguard::guard((), move |_| unsafe { (*response).deref() });
+        // SAFETY: `response` is live until `_deref` runs after this returns.
+        unsafe { (*response).on_request(crate::server::static_route::OnRequestArg::H1(req), resp) };
+        return;
     }
 
     let route_bundle_index = route_bundle::Index::init(u32::try_from(id & 0xFFFFFFFF).unwrap());

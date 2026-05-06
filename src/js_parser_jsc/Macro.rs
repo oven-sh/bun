@@ -503,6 +503,7 @@ impl<'a> Run<'a> {
             macro_,
             // SAFETY: `vm.global` is set during init and live for the VM lifetime.
             global: unsafe { &*(*vm).global },
+            bump: bun_alloc::Arena::new(),
             id,
             log,
             source,
@@ -631,7 +632,7 @@ impl<'a> Run<'a> {
                     let blob_ref = BlobRef { owner: blob.cast(), vtable: &BLOB_VTABLE };
                     return Expr::from_blob(
                         blob_ref,
-                        js_ast::ast::expr::default_bump(),
+                        &self.bump,
                         mime_type,
                         self.log,
                         self.caller.loc,
@@ -717,9 +718,7 @@ impl<'a> Run<'a> {
                 // surrounding stack frame.
                 let obj_ref = unsafe { &*obj };
                 let mut object_iter = JSPropertyIterator::<
-                    {
-                        JSPropertyIteratorOptions::pub_default(false, true)
-                    },
+                    { JSPropertyIteratorOptions::new(false, true) },
                 >::init(self.global, obj_ref)?;
                 // `object_iter` dropped at scope exit (was `defer object_iter.deinit()`)
 
@@ -731,9 +730,16 @@ impl<'a> Run<'a> {
                 while let Some(prop) = object_iter.next()? {
                     let object_value = self.run(object_iter.value)?;
 
+                    // PORT NOTE: `EString::init` lifetime-erases its borrow
+                    // (arena-owned per the Phase-A `Str` convention). Copy the
+                    // key into `self.bump` so it outlives the temporary
+                    // `to_owned_slice()` Vec — the previous `&temp` form was a
+                    // use-after-free once the Vec dropped.
+                    let key_bytes: &[u8] =
+                        self.bump.alloc_slice_copy(&prop.to_owned_slice());
                     bun_core::handle_oom(properties.append(G::Property {
                         key: Some(Expr::init(
-                            E::EString::init(&prop.to_owned_slice()),
+                            E::EString::init(key_bytes),
                             self.caller.loc,
                         )),
                         value: Some(object_value),
@@ -799,10 +805,10 @@ impl<'a> Run<'a> {
                     .unwrap_or(0);
                 utf16_bytes.truncate(encoded_bytes / 2);
                 // PORT NOTE: `E::EString::init_utf16` lifetime-erases the slice
-                // (arena-owned); leak the Vec into the AST arena's lifetime.
-                // PERF(port): was allocator.alloc — profile in Phase B.
-                let leaked: &'static [u16] = Box::leak(utf16_bytes.into_boxed_slice());
-                return Ok(Expr::init(E::EString::init_utf16(leaked), self.caller.loc));
+                // (arena-owned per the Phase-A `Str` convention). Copy into
+                // `self.bump` — the Zig spec used `this.allocator.alloc`.
+                let arena_slice: &[u16] = self.bump.alloc_slice_copy(&utf16_bytes);
+                return Ok(Expr::init(E::EString::init_utf16(arena_slice), self.caller.loc));
             }
             T::Promise => {
                 if let Some(cached) = self.visited.get(&value) {
@@ -827,7 +833,11 @@ impl<'a> Run<'a> {
                 if rejected
                     || promise_result.is_error()
                     || promise_result.is_aggregate_error(self.global)
-                    || promise_result.is_exception(self.global.vm())
+                    // PORT NOTE: `JSGlobalObject::vm()` returns `&VM`;
+                    // `is_exception` takes `*mut VM` (FFI passthrough). The
+                    // C++ side never writes through it.
+                    || promise_result
+                        .is_exception(self.global.vm() as *const jsc::VM as *mut jsc::VM)
                 {
                     // SAFETY: `vm` is the per-thread VM; uniquely accessed here.
                     unsafe {

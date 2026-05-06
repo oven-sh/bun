@@ -48,278 +48,73 @@ pub mod js_bundler {
     }
 
     /// A map of file paths to their in-memory contents.
-    /// This allows bundling with virtual files that may not exist on disk.
-    #[derive(Default)]
-    pub struct FileMap {
-        pub map: StringHashMap<crate::node::BlobOrStringOrBuffer>,
-    }
+    /// LAYERING: the data-only struct (`map: StringHashMap<Box<[u8]>>`) and
+    /// `get`/`contains`/`resolve` live in `bun_bundler::bundle_v2` so the
+    /// bundler thread can read it without depending on `bun_runtime`. Only
+    /// the JS-aware `from_js` constructor lives here.
+    pub use bun_bundler::bundle_v2::api::JSBundler::FileMap;
 
-    impl FileMap {
-        pub fn deinit_and_unprotect(&mut self) {
-            for (key, mut value) in self.map.drain() {
-                value.deinit_and_unprotect();
-                drop(key);
-            }
-            // map dropped automatically
-        }
+    /// Parse the `files` option from JavaScript.
+    /// Expected format: `Record<string, string | Blob | File | TypedArray | ArrayBuffer>`.
+    /// Uses async (`from_js_async`) parsing so the resulting bytes are owned —
+    /// the bundler runs on a separate thread and must not borrow JS heap memory.
+    pub fn file_map_from_js(global_this: &JSGlobalObject, files_value: JSValue) -> JsResult<FileMap> {
+        let mut this = FileMap::default();
+        // errdefer this.deinit() — `FileMap` (Box<[u8]> values) drops on `?`.
 
-        /// Resolve a specifier against the file map.
-        /// Returns the contents if the specifier exactly matches a key in the map,
-        /// or if the specifier is a relative path that, when joined with a source
-        /// directory, matches a key in the map.
-        pub fn get(&self, specifier: &[u8]) -> Option<&[u8]> {
-            if self.map.len() == 0 {
-                return None;
-            }
+        let Some(files_obj) = files_value.get_object() else {
+            return Err(global_this.throw_invalid_arguments("Expected files to be an object"));
+        };
 
-            #[cfg(not(windows))]
-            {
-                let entry = self.map.get(specifier)?;
-                Some(entry.slice())
-            }
+        let mut files_iter = jsc::JSPropertyIterator::init(
+            global_this,
+            files_obj,
+            jsc::JSPropertyIteratorOptions {
+                skip_empty_name: true,
+                include_value: true,
+                ..Default::default()
+            },
+        )?;
 
-            #[cfg(windows)]
-            {
-                // Normalize backslashes to forward slashes for consistent lookup
-                // Map keys are stored with forward slashes (normalized in fromJS)
-                let buf = bun_paths::path_buffer_pool().get();
-                let normalized = bun_paths::path_to_posix_buf::<u8>(specifier, &mut buf);
-                let entry = self.map.get(normalized)?;
-                Some(entry.slice())
-            }
-        }
+        this.map.reserve(files_iter.len);
 
-        /// Check if the file map contains a given specifier.
-        pub fn contains(&self, specifier: &[u8]) -> bool {
-            if self.map.len() == 0 {
-                return false;
-            }
+        while let Some(prop) = files_iter.next()? {
+            let property_value = files_iter.value;
 
-            #[cfg(not(windows))]
-            {
-                return self.map.contains_key(specifier);
-            }
-
-            #[cfg(windows)]
-            {
-                // Normalize backslashes to forward slashes for consistent lookup
-                let buf = bun_paths::path_buffer_pool().get();
-                let normalized = bun_paths::path_to_posix_buf::<u8>(specifier, &mut buf);
-                self.map.contains_key(normalized)
-            }
-        }
-
-        /// Returns a resolver Result for a file in the map, or null if not found.
-        /// This creates a minimal Result that can be used by the bundler.
-        ///
-        /// source_file: The path of the importing file (may be relative or absolute)
-        /// specifier: The import specifier (e.g., "./utils.js" or "/lib.js")
-        pub fn resolve(&self, source_file: &[u8], specifier: &[u8]) -> Option<resolver::Result> {
-            // Fast path: if the map is empty, return immediately
-            if self.map.len() == 0 {
-                return None;
-            }
-
-            // Check if the specifier is directly in the map
-            // Must use getKey to return the map's owned key, not the parameter
-            #[cfg(not(windows))]
-            {
-                if let Some((key, _)) = self.map.get_key_value(specifier) {
-                    let key: &[u8] = key.as_ref();
-                    // PORT NOTE: Zig hands back a borrow into `self.map`; Rust's
-                    // `resolver::Result` is `'static`, so leak the key (FileMap keys
-                    // already live for the bundler run).
-                    // SAFETY: `key` points into `self.map`, which outlives the
-                    // returned `resolver::Result` (FileMap is owned by the Config).
-                    let key_static: &'static [u8] =
-                        unsafe { core::slice::from_raw_parts(key.as_ptr(), key.len()) };
-                    return Some(resolver::Result {
-                        path_pair: resolver::PathPair {
-                            primary: Fs::Path::init_with_namespace(key_static, b"file"),
-                            ..Default::default()
-                        },
-                        module_type: options::ModuleType::Unknown,
-                        ..Default::default()
-                    });
-                }
-            }
-            #[cfg(windows)]
-            {
-                let buf = bun_paths::path_buffer_pool().get();
-                let normalized_specifier = bun_paths::path_to_posix_buf::<u8>(specifier, &mut buf);
-
-                if let Some(key) = self.map.get_key(normalized_specifier) {
-                    return Some(resolver::Result {
-                        path_pair: resolver::PathPair {
-                            primary: Fs::Path::init_with_namespace(key, b"file"),
-                            ..Default::default()
-                        },
-                        module_type: options::ModuleType::Unknown,
-                        ..Default::default()
-                    });
-                }
-            }
-
-            // Also try with source directory joined for relative specifiers
-            // Check for relative specifiers (not starting with / and not Windows absolute like C:/)
-            if !specifier.is_empty()
-                && specifier[0] != b'/'
-                && !(specifier.len() >= 3
-                    && specifier[1] == b':'
-                    && (specifier[2] == b'/' || specifier[2] == b'\\'))
-            {
-                // First, ensure source_file is absolute. It may be relative (e.g., "../../Windows/Temp/...")
-                // on Windows when the bundler stores paths relative to cwd.
-                let mut abs_source_buf = bun_paths::path_buffer_pool::get();
-                let abs_source_file = if Self::is_absolute_path(source_file) {
-                    source_file
-                } else {
-                    Fs::FileSystem::instance().abs_buf(&[source_file], &mut abs_source_buf)
-                };
-
-                // Normalize source_file to use forward slashes (for Windows compatibility)
-                // On Windows, source_file may have backslashes from the real filesystem
-                // Use pathToPosixBuf which always converts \ to / regardless of platform
-                let mut source_file_buf = bun_paths::path_buffer_pool::get();
-                let normalized_source_file =
-                    bun_paths::resolve_path::path_to_posix_buf::<u8>(abs_source_file, &mut *source_file_buf);
-
-                // Extract directory from source_file using posix path handling
-                // For "/entry.js", we want "/"; for "/src/index.js", we want "/src/"
-                // For "C:/foo/bar.js", we want "C:/foo"
-                let mut buf = bun_paths::path_buffer_pool::get();
-                let source_dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Posix>(normalized_source_file);
-                // If dirname returns empty but path starts with drive letter, extract the drive + root
-                let effective_source_dir: &[u8] = if source_dir.is_empty() {
-                    if normalized_source_file.len() >= 3
-                        && normalized_source_file[1] == b':'
-                        && normalized_source_file[2] == b'/'
-                    {
-                        &normalized_source_file[0..3] // "C:/"
-                    } else if !normalized_source_file.is_empty() && normalized_source_file[0] == b'/' {
-                        b"/"
-                    } else {
-                        Fs::FileSystem::instance().top_level_dir
+            // Parse the value as BlobOrStringOrBuffer using async mode for thread safety.
+            let mut blob_or_string =
+                match crate::node::BlobOrStringOrBuffer::from_js_async(global_this, property_value)? {
+                    Some(v) => v,
+                    None => {
+                        return Err(global_this.throw_invalid_arguments(
+                            "Expected file content to be a string, Blob, File, TypedArray, or ArrayBuffer",
+                        ));
                     }
-                } else {
-                    source_dir
                 };
-                // Use .loose to preserve Windows drive letters, then normalize in-place on Windows
-                let joined_len = bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Loose>(
-                    effective_source_dir,
-                    &mut *buf,
-                    &[specifier],
-                )
-                .len();
-                if cfg!(windows) {
-                    bun_paths::resolve_path::platform_to_posix_in_place::<u8>(&mut buf[0..joined_len]);
-                }
-                let joined = &buf[0..joined_len];
-                // Must use getKey to return the map's owned key, not the temporary buffer
-                if let Some((key, _)) = self.map.get_key_value(joined) {
-                    let key: &[u8] = key.as_ref();
-                    // PORT NOTE: Zig hands back a borrow into `self.map`; Rust's
-                    // `resolver::Result` is `'static`, so extend the lifetime.
-                    // SAFETY: `key` points into `self.map`, which outlives the
-                    // returned `resolver::Result` (FileMap is owned by the Config).
-                    let key_static: &'static [u8] =
-                        unsafe { core::slice::from_raw_parts(key.as_ptr(), key.len()) };
-                    return Some(resolver::Result {
-                        path_pair: resolver::PathPair {
-                            primary: Fs::Path::init_with_namespace(key_static, b"file"),
-                            ..Default::default()
-                        },
-                        module_type: options::ModuleType::Unknown,
-                        ..Default::default()
-                    });
-                }
-            }
+            // Async mode guarantees `blob_or_string` owns its bytes (Blob data is
+            // copied, JS strings are decoded). Extract them into the lower-tier
+            // map and release the wrapper immediately so no JSC handle crosses
+            // threads.
+            // PERF(port): Zig stores the `BlobOrStringOrBuffer` directly; here we
+            // make one extra owned copy to keep `bun_bundler` free of JSC types.
+            let bytes: Box<[u8]> = blob_or_string.slice().to_vec().into_boxed_slice();
+            blob_or_string.deinit_and_unprotect();
 
-            None
+            // Clone the key since we need to own it.
+            let mut key = prop.to_owned_slice();
+
+            // Normalize backslashes to forward slashes for cross-platform consistency.
+            // Use dangerouslyConvertPathToPosixInPlace which always converts \ to /
+            // (uses sep_windows constant, not sep which varies by target).
+            bun_paths::resolve_path::dangerously_convert_path_to_posix_in_place::<u8>(
+                key.as_mut_slice(),
+            );
+
+            // PERF(port): was assume_capacity
+            this.map.insert(key.into_boxed_slice(), bytes);
         }
 
-        /// Check if a path is absolute (works for both posix and Windows paths)
-        fn is_absolute_path(path: &[u8]) -> bool {
-            if path.is_empty() {
-                return false;
-            }
-            // Posix absolute path
-            if path[0] == b'/' {
-                return true;
-            }
-            // Windows absolute path with drive letter (e.g., "C:\..." or "C:/...")
-            if path.len() >= 3 && path[1] == b':' && (path[2] == b'/' || path[2] == b'\\') {
-                return matches!(path[0], b'a'..=b'z' | b'A'..=b'Z');
-            }
-            // Windows UNC path (e.g., "\\server\share")
-            if path.len() >= 2 && path[0] == b'\\' && path[1] == b'\\' {
-                return true;
-            }
-            false
-        }
-
-        /// Parse the files option from JavaScript.
-        /// Expected format: Record<string, string | Blob | File | TypedArray | ArrayBuffer>
-        /// Uses async parsing for cross-thread safety since bundler runs on a separate thread.
-        pub fn from_js(global_this: &JSGlobalObject, files_value: JSValue) -> JsResult<FileMap> {
-            let mut this = FileMap::default();
-            // errdefer this.deinit_and_unprotect() — handled by Drop on error path
-            // TODO(port): errdefer — FileMap doesn't impl Drop because deinit_and_unprotect
-            // touches JS values; use scopeguard
-            let mut guard = scopeguard::guard(&mut this, |s| s.deinit_and_unprotect());
-
-            let Some(files_obj) = files_value.get_object() else {
-                return Err(global_this.throw_invalid_arguments("Expected files to be an object"));
-            };
-
-            let mut files_iter = jsc::JSPropertyIterator::init(
-                global_this,
-                files_obj,
-                jsc::JSPropertyIteratorOptions {
-                    skip_empty_name: true,
-                    include_value: true,
-                    ..Default::default()
-                },
-            )?;
-
-            // PORT NOTE: reshaped for borrowck — extract len before mutating through guard
-            guard.map.reserve(files_iter.len);
-
-            while let Some(prop) = files_iter.next()? {
-                let property_value = files_iter.value;
-
-                // Parse the value as BlobOrStringOrBuffer using async mode for thread safety
-                let mut blob_or_string =
-                    match crate::node::BlobOrStringOrBuffer::from_js_async(global_this, property_value)? {
-                        Some(v) => v,
-                        None => {
-                            return Err(global_this.throw_invalid_arguments(
-                                "Expected file content to be a string, Blob, File, TypedArray, or ArrayBuffer",
-                            ));
-                        }
-                    };
-                // errdefer blob_or_string.deinitAndUnprotect() — only `to_owned_slice()`
-                // (OOM-crashing) sits between here and the insert, so no scopeguard needed.
-
-                // Clone the key since we need to own it
-                let mut key = prop.to_owned_slice();
-
-                // Normalize backslashes to forward slashes for cross-platform consistency
-                // This ensures Windows paths like "C:\foo\bar.js" become "C:/foo/bar.js"
-                // Use dangerouslyConvertPathToPosixInPlace which always converts \ to /
-                // (uses sep_windows constant, not sep which varies by target)
-                bun_paths::resolve_path::dangerously_convert_path_to_posix_in_place::<u8>(
-                    key.as_mut_slice(),
-                );
-
-                // PERF(port): was assume_capacity
-                guard.map.insert(key.into_boxed_slice(), blob_or_string);
-            }
-
-            drop(files_iter);
-            let _ = scopeguard::ScopeGuard::into_inner(guard);
-            Ok(this)
-        }
+        Ok(this)
     }
 
     pub struct Config {

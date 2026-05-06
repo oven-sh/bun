@@ -4499,10 +4499,9 @@ impl Resolver {
         let channel: *mut c_ares::Channel = match self.get_channel() {
             ChannelResult::Result(res) => res,
             ChannelResult::Err(err) => {
-                // syscall = "query" + ucfirst(TYPE_NAME)
-                // TODO(port): blocked_on CAresRecordTypeExt::syscall_name impls — using "query" placeholder.
+                // syscall = "query" + ucfirst(TYPE_NAME) — precomputed per record type.
                 return Err(global_this.throw_value(
-                    super::cares_jsc::error_to_js_with_syscall(err, global_this, b"query")?,
+                    super::cares_jsc::error_to_js_with_syscall(err, global_this, T::SYSCALL.as_bytes())?,
                 ));
             }
         };
@@ -4526,12 +4525,11 @@ impl Resolver {
         );
         let promise = unsafe { (*(*request).tail).promise.value() };
 
-        // TODO(port): blocked_on bun_cares_sys::c_ares_draft::Channel::resolve —
-        // upstream API is `resolve<T: ResolveHandler>(&mut self, name, ctx: &mut T)`
-        // (trait-based callback dispatch). `ResolveInfoRequest<T>` does not yet
-        // impl `ResolveHandler`; the Zig version passed (name, type_name, ctx, callback)
-        // directly. Until the per-record-type ResolveHandler impls land this is a no-op.
-        let _ = (channel, request);
+        // SAFETY: `channel` is the live c-ares channel owned by `self`; `request`
+        // is the freshly heap-allocated ResolveInfoRequest. c-ares stores the ctx
+        // pointer and calls `T::RAW_CALLBACK` (→ `on_cares_complete`) which
+        // consumes the request, so the `&mut` borrow is not held past this call.
+        unsafe { (*channel).resolve(name, &mut *request) };
 
         // SAFETY: bun_vm() returns a live VM pointer for the duration of the call.
         self.request_sent(unsafe { &*global_this.bun_vm() });

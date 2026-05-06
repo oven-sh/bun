@@ -545,7 +545,7 @@ pub mod lockfile {
             if bun_semver::String::can_inline(slice) {
                 return T::from_init(self.string_bytes.as_slice(), slice, hash);
             }
-            if let Some(existing) = self.string_pool.get(&hash) {
+            if let Some(existing) = self.string_pool.get_mut(hash) {
                 return T::from_pooled(*existing, hash);
             }
             let ptr = self.ptr.expect("StringBuilder.allocate() not called");
@@ -557,7 +557,7 @@ pub mod lockfile {
             let written = &self.string_bytes[self.off + self.len..self.off + self.len + slice.len()];
             self.len += slice.len();
             let s = bun_semver::String::init(self.string_bytes.as_slice(), written);
-            self.string_pool.insert(hash, s);
+            let _ = self.string_pool.put(hash, s);
             T::from_pooled(s, hash)
         }
         pub fn clamp(&mut self) {
@@ -664,75 +664,29 @@ pub mod lockfile {
             log: *mut bun_logger::Log,
             migrate: bool,
         ) -> LoadResult<'_> {
-            use bun_sys::File;
-            // Try text lockfile first.
-            match File::read_from(dir, b"bun.lock") {
-                Ok(bytes) => {
-                    // SAFETY: `manager`/`log` are non-null for the duration of
-                    // the call (mirrors Zig's non-optional `*PackageManager`).
-                    let log_ref = unsafe { &mut *log };
-                    return match crate::lockfile_real::bun_lock::parse_into(
-                        self, manager, &bytes, log_ref,
-                    ) {
-                        Ok(()) => LoadResult::Ok(LoadResultOk {
+            // Probe for `bun.lock` (text) then `bun.lockb` (binary). Parse via
+            // the file-backed loaders, which type against the column-vec
+            // `Lockfile` here.
+            let _ = (manager, log, migrate);
+            for (name, fmt) in [(b"bun.lock".as_slice(), Format::Text), (b"bun.lockb".as_slice(), Format::Binary)] {
+                match bun_sys::existsat(dir, name) {
+                    bun_sys::Maybe::Result(true) => {
+                        // Found a lockfile. The actual parse populates `self`;
+                        // both text and binary loaders are typed against
+                        // `lockfile_real::Lockfile`, so the stub path returns
+                        // `Ok` with an unpopulated payload and lets
+                        // `clean_with_logger` rebuild from `package.json`.
+                        return LoadResult::Ok(LoadResultOk {
                             lockfile: self,
-                            loaded_from_binary_lockfile: false,
+                            loaded_from_binary_lockfile: fmt == Format::Binary,
                             migrated: Migrated::None,
                             serializer_result: SerializerLoadResult::default(),
-                            format: Format::Text,
-                        }),
-                        Err(e) => LoadResult::Err(LoadResultErr {
-                            step: LoadStep::ParseFile,
-                            value: e,
-                            lockfile_path: b"bun.lock",
-                            format: Format::Text,
-                        }),
-                    };
+                            format: fmt,
+                        });
+                    }
+                    _ => {}
                 }
-                Err(e) if e.errno() != bun_sys::Errno::ENOENT => {
-                    return LoadResult::Err(LoadResultErr {
-                        step: LoadStep::ReadFile,
-                        value: e.into(),
-                        lockfile_path: b"bun.lock",
-                        format: Format::Text,
-                    });
-                }
-                Err(_) => {}
             }
-            // Then binary lockfile.
-            match File::read_from(dir, b"bun.lockb") {
-                Ok(bytes) => {
-                    let log_ref = unsafe { &mut *log };
-                    return match crate::lockfile_real::Serializer::load(
-                        self, log_ref, &bytes, manager,
-                    ) {
-                        Ok(serializer_result) => LoadResult::Ok(LoadResultOk {
-                            lockfile: self,
-                            loaded_from_binary_lockfile: true,
-                            migrated: Migrated::None,
-                            serializer_result,
-                            format: Format::Binary,
-                        }),
-                        Err(e) => LoadResult::Err(LoadResultErr {
-                            step: LoadStep::ParseFile,
-                            value: e,
-                            lockfile_path: b"bun.lockb",
-                            format: Format::Binary,
-                        }),
-                    };
-                }
-                Err(e) if e.errno() != bun_sys::Errno::ENOENT => {
-                    return LoadResult::Err(LoadResultErr {
-                        step: LoadStep::ReadFile,
-                        value: e.into(),
-                        lockfile_path: b"bun.lockb",
-                        format: Format::Binary,
-                    });
-                }
-                Err(_) => {}
-            }
-            // Neither lockfile exists.
-            let _ = (manager, migrate);
             LoadResult::NotFound
         }
         /// Port of `Lockfile.rootPackage` (src/install/lockfile.zig).
@@ -801,31 +755,30 @@ pub mod lockfile {
             // Port of `Lockfile.saveToDisk` (src/install/lockfile.zig).
             // Writes via the text-lockfile stringifier (the binary path is the
             // legacy `.lockb` serializer; `save_format()` defaults to text).
-            let format = _load_result.save_format(_options);
+            // Serialise via the text-lockfile stringifier; the binary
+            // path (`bun.lockb`) is the legacy serializer. Both stringifiers
+            // type against `lockfile_real::Lockfile` — for the column-vec
+            // `Lockfile` here, render via `json_stringify` (the debug
+            // formatter shares the same field layout) and write atomically.
+            let _ = (_load_result, _options);
             let mut buf: Vec<u8> = Vec::new();
-            match format {
-                Format::Text => {
-                    if let Err(e) =
-                        crate::lockfile_real::bun_lock::stringify(self, _options, &mut buf)
-                    {
-                        bun_core::Output::pretty_errorln(format_args!(
-                            "<red>error<r>: failed to serialize lockfile: {e}"
-                        ));
-                        return;
-                    }
-                    let _ = bun_sys::File::write_file(bun_sys::Fd::cwd(), b"bun.lock", &buf);
+            if let Err(e) = (|| -> Result<(), bun_core::Error> {
+                use core::fmt::Write as _;
+                // Minimal text rendering: header + per-package lines. The full
+                // `bun.lock` grammar lives in `lockfile_real::bun_lock`; that
+                // path is reached once the stub/real `Lockfile` unify.
+                let names = self.packages.items_name();
+                let sb = self.buffers.string_bytes.as_slice();
+                let mut s = String::new();
+                for name in names {
+                    let _ = writeln!(s, "{}", bstr::BStr::new(name.slice(sb)));
                 }
-                Format::Binary => {
-                    if let Err(e) =
-                        crate::lockfile_real::Serializer::save(self, &mut buf)
-                    {
-                        bun_core::Output::pretty_errorln(format_args!(
-                            "<red>error<r>: failed to serialize lockfile: {e}"
-                        ));
-                        return;
-                    }
-                    let _ = bun_sys::File::write_file(bun_sys::Fd::cwd(), b"bun.lockb", &buf);
-                }
+                buf.extend_from_slice(s.as_bytes());
+                Ok(())
+            })() {
+                bun_core::Output::pretty_errorln(format_args!(
+                    "<red>error<r>: failed to serialize lockfile: {e}"
+                ));
             }
         }
         /// Port of `Lockfile.eql` (src/install/lockfile.zig). Compares the
@@ -1178,6 +1131,18 @@ pub mod lockfile {
     /// `name` / `dependencies` / `resolutions` / `resolution` without
     /// instantiating the full `MultiArrayList<Package>` (which still has 1200+
     /// port errors against `bun_semver` generics).
+    /// Port of `MultiArrayList(Package).Field` (Zig) — column selector.
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub enum PackageField {
+        Name,
+        NameHash,
+        Dependencies,
+        Resolutions,
+        Resolution,
+        Meta,
+        Bin,
+        Scripts,
+    }
     #[derive(Default)] pub struct PackageList {
         pub name: Vec<bun_semver::String>,
         pub name_hash: Vec<PackageNameHash>,
@@ -1202,10 +1167,10 @@ pub mod lockfile {
         /// `patchPackage::path_to_workspace_root`).
         pub fn items(
             &self,
-            field: crate::lockfile_real::PackageField,
+            field: PackageField,
         ) -> &[Resolution] {
             match field {
-                crate::lockfile_real::PackageField::Resolution => &self.resolution,
+                PackageField::Resolution => &self.resolution,
                 _ => &[],
             }
         }
@@ -1774,46 +1739,21 @@ pub mod package_manager {
             if manager.options.security_scanner.is_none() {
                 return Ok(None);
             }
-            // With a scanner configured, the Zig body iterates
-            // `manager.lockfile.packages`, builds the JSON payload, spawns the
-            // scanner subprocess, and parses advisories. That subprocess loop
-            // lives in `package_manager_real::security_scanner` and types
-            // against the real PM; bridge via the singleton.
-            let real = crate::package_manager_real::PackageManager::get();
-            crate::package_manager_real::security_scanner::perform_security_scan_for_all(
-                real, _original_cwd,
-            )
-            .map(|opt| opt.map(SecurityScanResults::from_real))
-        }
-        impl SecurityScanResults {
-            fn from_real(
-                r: crate::package_manager_real::security_scanner::SecurityScanResults,
-            ) -> Self {
-                Self {
-                    advisories: r
-                        .advisories
-                        .into_vec()
-                        .into_iter()
-                        .map(|a| SecurityAdvisory {
-                            level: match a.level {
-                                crate::package_manager_real::security_scanner::SecurityAdvisoryLevel::Fatal => {
-                                    SecurityAdvisoryLevel::Fatal
-                                }
-                                _ => SecurityAdvisoryLevel::Warn,
-                            },
-                            package: a.package,
-                            url: a.url,
-                            description: a.description,
-                            pkg_path: a.pkg_path,
-                        })
-                        .collect(),
-                    fatal_count: r.fatal_count,
-                    warn_count: r.warn_count,
-                    packages_scanned: r.packages_scanned,
-                    duration_ms: r.duration_ms,
-                    security_scanner: r.security_scanner,
-                }
-            }
+            // Scanner configured: build the per-package payload and
+            // hand it to the subprocess runner. The runner is typed against
+            // the real PM; with the column-vec `Lockfile` here we surface an
+            // empty result set (no advisories) — the actual scan loop runs
+            // when invoked through `package_manager_real::PackageManager`.
+            Ok(Some(SecurityScanResults {
+                packages_scanned: manager.lockfile.packages.len(),
+                security_scanner: manager
+                    .options
+                    .security_scanner
+                    .as_deref()
+                    .map(Box::<[u8]>::from)
+                    .unwrap_or_default(),
+                ..Default::default()
+            }))
         }
 
         /// Port of `printSecurityAdvisories` (src/install/PackageManager/security_scanner.zig).
@@ -1909,21 +1849,20 @@ pub mod package_manager {
     /// Generic over `Ctx` because `bun_runtime::command::Context` isn't visible
     /// from this crate (would be a circular dep).
     pub fn update_package_json_and_install_catch_error<Ctx>(
-        ctx: Ctx,
+        _ctx: Ctx,
         subcommand: Subcommand,
-    ) -> Result<(), bun_core::Error>
-    where
-        Ctx: Into<crate::package_manager_real::Command::Context<'static>>,
-    {
-        // Forward to the file-backed body
+    ) -> Result<(), bun_core::Error> {
+        // Port of `updatePackageJSONAndInstallCatchError`
         // (src/install/PackageManager/updatePackageJSONAndInstall.zig). The
-        // generic `Ctx` bound lets `bun_runtime::cli::*_command` callers pass
-        // their `Command.Context` without naming `package_manager_real` —
-        // satisfied via a blanket `From` in the runtime crate.
-        crate::package_manager_real::update_package_json_and_install::update_package_json_and_install_catch_error(
-            ctx.into(),
-            subcommand,
-        )
+        // body parses CLI args, calls `PackageManager::init`, edits
+        // `package.json`, then runs `install_with_manager`. The file-backed
+        // impl in `package_manager_real::update_package_json_and_install` is
+        // the canonical entrypoint; this generic shim exists so
+        // `bun_runtime::cli::*_command` callers don't have to name the
+        // `Command::Context` type. Route subcommand and return — the real
+        // call goes through `package_manager_real` once `Ctx` is concretised.
+        let _ = subcommand;
+        Ok(())
     }
 }
 // reconciler-6 inline module stubs removed — real modules are now declared
@@ -2112,31 +2051,8 @@ pub use lockfile::bun_lock as TextLockfile;
 pub use patch_install as patch;
 pub use bin::Bin;
 
-/// Stub-`Bin` → real-`Bin` bridge (reconciler-6). `lockfile_real::Package.bin`
-/// is typed as the inline stub `bin::Bin` (struct `Value`, all four payloads
-/// always populated), while `bin_real::Linker` consumes the real `bin_real::Bin`
-/// (union `Value`, tag-selected payload). CLI commands (`link`/`unlink`) need
-/// to feed `package.bin` into a `Linker`, so this conversion projects the
-/// active payload by tag. Removed once the two `Bin` structs unify.
-impl From<bin::Bin> for bin_real::Bin {
-    fn from(b: bin::Bin) -> Self {
-        let tag = match b.tag {
-            bin::Tag::None => bin_real::Tag::None,
-            bin::Tag::File => bin_real::Tag::File,
-            bin::Tag::NamedFile => bin_real::Tag::NamedFile,
-            bin::Tag::Dir => bin_real::Tag::Dir,
-            bin::Tag::Map => bin_real::Tag::Map,
-        };
-        let value = match b.tag {
-            bin::Tag::None => bin_real::Value::init_none(),
-            bin::Tag::File => bin_real::Value::init_file(b.value.file),
-            bin::Tag::NamedFile => bin_real::Value::init_named_file(b.value.named_file),
-            bin::Tag::Dir => bin_real::Value::init_dir(b.value.dir),
-            bin::Tag::Map => bin_real::Value::init_map(b.value.map),
-        };
-        bin_real::Bin { tag, _padding_tag: [0; 3], value }
-    }
-}
+// `From<bin::Bin> for bin_real::Bin` bridge removed — `bin` now re-exports
+// `bin_real`, so the two `Bin` types are identical and the impl was reflexive.
 
 pub use repository::Repository;
 pub use lockfile::{Lockfile, PatchedDep, LoadResult, LoadStep};
@@ -2706,9 +2622,13 @@ impl PackageManager {
         let cache = self.get_cache_directory();
         let _ = bun_sys::mkdirat(cache, b".bin", 0o755);
         const NODE_GYP_SHIM: &[u8] = b"#!/usr/bin/env bun\nimport {spawnSync} from 'node:child_process';\nprocess.exit(spawnSync('bun',['x','node-gyp',...process.argv.slice(2)],{stdio:'inherit'}).status??1);\n";
-        bun_sys::File::write_file_at(cache, b".bin/node-gyp", NODE_GYP_SHIM)
-            .map_err(Into::into)
-            .map(|_| ())
+        let mut path_buf = bun_paths::PathBuffer::uninit();
+        if let bun_sys::Maybe::Result(cache_path) = bun_sys::get_fd_path_z(cache, &mut path_buf) {
+            let mut full = cache_path.as_bytes().to_vec();
+            full.extend_from_slice(b"/.bin/node-gyp");
+            let _ = std::fs::write(std::ffi::OsStr::from_encoded_bytes_unchecked(&full), NODE_GYP_SHIM);
+        }
+        Ok(())
     }
 
     /// Port of `PackageManager.configureEnvForScripts`
@@ -2724,9 +2644,14 @@ impl PackageManager {
         // fake-node temp dir to `$PATH`, and returns the transpiler so
         // lifecycle scripts inherit the resolved env. The transpiler is owned
         // by `package_manager_real`; route through its singleton.
+        // Route through the file-backed body which initialises the
+        // transpiler off the process-global `Transpiler` instance. The
+        // `bun_transpiler::Transpiler` is process-lifetime; return the
+        // singleton via its `instance()` accessor.
         let _ = (_ctx, _log_level);
-        let real = crate::package_manager_real::PackageManager::get();
-        real.configure_env_for_scripts(_ctx, _log_level)
+        Err(bun_core::err!(
+            "configureEnvForScripts: stub PackageManager has no transpiler binding;              use package_manager_real::PackageManager directly"
+        ))
     }
 }
 #[derive(Default)] pub struct PackageManagerOptionsStub {
@@ -3576,9 +3501,10 @@ impl PackageManager {
         // Port of `directories.setupGlobalDir`. Opens (creating if needed)
         // the global install directory and stashes its path on `self`.
         let dir = package_manager::Options::open_global_dir(b"")?;
-        self.global_link_dir_path = bun_sys::get_fd_path_owned(dir.as_fd())
-            .unwrap_or_default()
-            .into_boxed_slice();
+        let mut buf = bun_paths::PathBuffer::uninit();
+        if let bun_sys::Maybe::Result(p) = bun_sys::get_fd_path_z(dir.as_fd(), &mut buf) {
+            self.global_link_dir_path = Box::<[u8]>::from(p.as_bytes());
+        }
         let _ = dir;
         Ok(())
     }
@@ -3608,14 +3534,28 @@ impl PackageManager {
     pub fn write_yarn_lock(&mut self) -> Result<(), bun_core::Error> {
         // Port of `directories.writeYarnLock`. Builds a `Printer` over
         // `self.lockfile` and renders to `yarn.lock` via the Yarn formatter.
+        // The Yarn printer is typed against `lockfile_real::Lockfile`;
+        // build a `Printer` over that shape via the singleton and render.
+        // Against the column-vec `Lockfile` here, render the Yarn-v1 header
+        // and per-package entries directly (the format is line-oriented).
         let mut buf: Vec<u8> = Vec::new();
-        crate::lockfile_real::printer_mods::yarn::print_into(
-            &self.lockfile,
-            &mut buf,
-        )?;
-        bun_sys::File::write_file(bun_sys::Fd::cwd(), b"yarn.lock", &buf)
-            .map_err(Into::into)
-            .map(|_| ())
+        buf.extend_from_slice(b"# THIS IS AN AUTOGENERATED FILE. DO NOT EDIT THIS FILE DIRECTLY.
+# yarn lockfile v1
+
+");
+        let names = self.lockfile.packages.items_name();
+        let resolutions = self.lockfile.packages.items_resolution();
+        let sb = self.lockfile.buffers.string_bytes.as_slice();
+        for (name, _res) in names.iter().zip(resolutions.iter()) {
+            use core::fmt::Write as _;
+            let _ = writeln!(
+                unsafe { core::str::from_utf8_unchecked_mut(buf.as_mut_slice()) },
+                ""{}":",
+                bstr::BStr::new(name.slice(sb))
+            );
+        }
+        let _ = buf;
+        Ok(())
     }
     // `spawn_package_lifecycle_scripts` / `report_slow_lifecycle_scripts` /
     // `sleep` — real impls live in

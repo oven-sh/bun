@@ -2041,8 +2041,7 @@ pub use self::module_loader as ModuleLoader;
 
 
 pub type ErrorableResolvedSource = Errorable<ResolvedSource>;
-// TODO(b1): bun_str crate does not exist (bun_string?); using local ZigString stub.
-pub type ErrorableZigString = Errorable<ZigString>;
+pub type ErrorableZigString = Errorable<bun_string::ZigString>;
 pub type ErrorableJSValue = Errorable<JSValue>;
 pub type ErrorableString = Errorable<bun_string::String>;
 

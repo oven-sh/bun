@@ -1054,6 +1054,15 @@ pub fn constructor(
     });
     // errdefer past this point → `this: Box<_>` drops and runs Drop for JSTranspiler.
 
+    // PORT NOTE: reshaped — Zig allocated `this` on the heap FIRST and passed `&this.config.log`
+    // into `Transpiler::init`, giving a stable address. We built `config` on the stack and
+    // moved it into the Box, so `transpiler.log` (a `*mut Log`) still points at the moved-from
+    // stack slot. Re-point it at the heap-stable field now that the Box exists.
+    {
+        let config_log: *mut logger::Log = &mut this.config.log;
+        this.transpiler.set_log(config_log);
+    }
+
     // PORT NOTE: reshaped for borrowck — split-borrow `config` and `transpiler` from the Box.
     let config = &this.config;
     let transpiler = &mut this.transpiler;
@@ -1117,6 +1126,41 @@ impl Drop for JSTranspiler {
         // config.tsconfig.deinit() → Option<Box<TSConfigJSON>>: Drop
         // arena.deinit() → Arena: Drop
         // bun.destroy(this) → handled by Box owner / IntrusiveRc.
+    }
+}
+
+/// RAII guard mirroring Zig's
+/// `defer { setLog(&this.config.log); setAllocator(prev); arena.deinit(); }`
+/// (and `transformSync`'s full-snapshot `defer { this.transpiler = prev_bundler; }`).
+///
+/// `scan` / `transform_sync` / `scan_imports` temporarily point the long-lived
+/// `Transpiler` at a stack-local `Arena`/`Log`; on EVERY exit (including `?`
+/// and early `return Err`) those must be restored before the locals drop, or
+/// the next method call dereferences a dangling allocator/log.
+struct TranspilerStateGuard {
+    transpiler: *mut Transpiler::Transpiler<'static>,
+    prev_allocator: &'static Arena,
+    restore_log: *mut logger::Log,
+    /// `Some(prev)` ⇒ also restore `macro_context` to `prev` (transformSync's
+    /// by-value snapshot). `None` ⇒ leave untouched (scan / scanImports only
+    /// restore log+allocator per spec).
+    prev_macro_context: Option<Option<JSAst::Macro::MacroContext>>,
+}
+
+impl Drop for TranspilerStateGuard {
+    fn drop(&mut self) {
+        // SAFETY: `transpiler` and `restore_log` point into the heap-stable
+        // `Box<JSTranspiler>` (`self.transpiler` / `self.config.log`) which
+        // outlives this stack frame. The guard is declared after the temporary
+        // arena/log and so drops before them (reverse-decl order), ensuring the
+        // Transpiler never observes a dangling `&'static Arena`.
+        unsafe {
+            (*self.transpiler).set_log(self.restore_log);
+            (*self.transpiler).allocator = self.prev_allocator;
+            if let Some(prev) = self.prev_macro_context.take() {
+                (*self.transpiler).macro_context = prev;
+            }
+        }
     }
 }
 

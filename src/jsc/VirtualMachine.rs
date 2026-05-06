@@ -1452,37 +1452,13 @@ impl VirtualMachine {
     }
 
     /// `eventLoop().waitForPromise(promise)` — spin tick/auto_tick until
-    /// `promise` settles. Hoisted here (vs. the gated `event_loop.rs` body)
-    /// so `load_entry_point` can call it without naming `Timer::All`.
+    /// `promise` settles. Thin forwarder; body lives in
+    /// [`crate::event_loop::EventLoop::wait_for_promise`] (spec event_loop.zig).
+    #[inline]
     pub fn wait_for_promise(&mut self, promise: jsc::AnyPromise) {
-        let jsc_vm = self.jsc_vm;
-        loop {
-            // SAFETY: AnyPromise wraps a live JSC heap cell.
-            let status = match promise {
-                jsc::AnyPromise::Normal(p) => unsafe { (*p).status() },
-                jsc::AnyPromise::Internal(p) => unsafe { (*p).status() },
-            };
-            if status != crate::js_promise::Status::Pending {
-                break;
-            }
-            // SAFETY: jsc_vm is live for VM lifetime.
-            if unsafe { JSC__VM__executionForbidden(jsc_vm) } {
-                break;
-            }
-            // SAFETY: `event_loop` is a self-pointer into this VM; uniquely
-            // accessed here (no overlapping `&mut EventLoop`).
-            unsafe { (*self.event_loop()).tick() };
-            // Re-check after tick before sleeping in auto_tick.
-            // SAFETY: see above.
-            let status = match promise {
-                jsc::AnyPromise::Normal(p) => unsafe { (*p).status() },
-                jsc::AnyPromise::Internal(p) => unsafe { (*p).status() },
-            };
-            if status != crate::js_promise::Status::Pending {
-                break;
-            }
-            self.auto_tick();
-        }
+        // SAFETY: `event_loop` is a self-pointer into this VM; uniquely
+        // accessed here (no overlapping `&mut EventLoop`).
+        unsafe { (*self.event_loop()).wait_for_promise(promise) };
     }
 
     /// `eventLoop().autoTick()` — dispatched through the runtime hook

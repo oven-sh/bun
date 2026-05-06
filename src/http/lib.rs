@@ -1752,7 +1752,7 @@ pub const MAX_H2_RETRIES: u8 = 5;
 pub fn h3_alt_svc_enabled() -> bool {
     // SAFETY: set once at startup before HTTP thread spawns
     unsafe { EXPERIMENTAL_HTTP3_CLIENT_FROM_CLI
-        || bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP3_CLIENT.get() }
+        || bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP3_CLIENT.get().unwrap_or(false) }
 }
 
 #[inline]

@@ -243,5 +243,5 @@ const _: () = assert!(core::mem::align_of::<body::ValueBufferer<'_>>() > Deferre
 //   source:     src/runtime/api/NativePromiseContext.zig (163 lines)
 //   confidence: medium
 //   todos:      3
-//   notes:      Tag.fromType comptime-switch ported as trait; server::*::RequestContext paths are placeholders pending server.zig port; Task::init/set_uintptr signatures assumed.
+//   notes:      Tag.fromType comptime-switch ported as trait; server::*::RequestContext paths are placeholders pending server.zig port; Task built via Task::new (Rust Task has no setUintptr — {tag,ptr} pair).
 // ──────────────────────────────────────────────────────────────────────────

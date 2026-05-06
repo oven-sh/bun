@@ -27,6 +27,25 @@ pub enum Kind {
     Shutdown,
 }
 
+impl TryFrom<u8> for Kind {
+    type Error = ();
+    fn try_from(v: u8) -> Result<Self, ()> {
+        // Mirrors Zig `enum(u8)` int → enum: valid only for declared discriminants.
+        Ok(match v {
+            0 => Kind::Ready,
+            1 => Kind::FileStart,
+            2 => Kind::TestDone,
+            3 => Kind::FileDone,
+            4 => Kind::RepeatBufs,
+            5 => Kind::JunitFile,
+            6 => Kind::CoverageFile,
+            7 => Kind::Run,
+            8 => Kind::Shutdown,
+            _ => return Err(()),
+        })
+    }
+}
+
 /// Upper bound on a single IPC frame payload. The protocol is internal but
 /// fd 3 is reachable from test JS via `fs.writeSync(3, ...)`; rejecting
 /// nonsensical lengths up-front prevents both a `5 + len` u32 overflow and

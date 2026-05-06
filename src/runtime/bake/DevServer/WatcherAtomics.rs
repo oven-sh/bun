@@ -204,19 +204,17 @@ impl WatcherAtomics {
                     self.dbg_server_event = Some(ev);
                 }
                 // PORT NOTE: `jsc::ConcurrentTask` is a module; the struct lives at
-                // `jsc::ConcurrentTask::ConcurrentTask`. The field on `HotReloadEvent` is
-                // `MaybeUninit<ConcurrentTask>`, so initialize via `MaybeUninit::new` and
-                // hand the raw pointer to `enqueue_task_concurrent`.
-                ev_ref.concurrent_task =
-                    core::mem::MaybeUninit::new(jsc::ConcurrentTask::ConcurrentTask {
-                        task: jsc::Task::init(ev),
-                        ..Default::default()
-                    });
-                ev_ref
-                    .owner
-                    .vm
-                    .event_loop
-                    .enqueue_task_concurrent(ev_ref.concurrent_task.as_mut_ptr());
+                // `jsc::ConcurrentTask::ConcurrentTask`.
+                ev_ref.concurrent_task = jsc::ConcurrentTask::ConcurrentTask {
+                    task: jsc::Task::init(ev),
+                    ..Default::default()
+                };
+                // SAFETY: `owner` BACKREF is valid; `vm` is JSC_BORROW valid for DevServer's
+                // lifetime; `event_loop` points at a sibling field of `VirtualMachine`.
+                unsafe {
+                    (*(*(*ev_ref.owner).vm).event_loop)
+                        .enqueue_task_concurrent(&mut ev_ref.concurrent_task);
+                }
             }
 
             NextEvent::WAITING => {

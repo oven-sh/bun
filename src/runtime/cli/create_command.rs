@@ -537,7 +537,8 @@ impl CreateCommand {
 
                 let abs_template_path = filesystem.abs(&template_parts);
                 // TODO(port): std.fs.openDirAbsolute — use bun_sys directory APIs
-                let template_dir = match bun_sys::Dir::open_absolute(abs_template_path, bun_sys::DirOpenOptions { iterate: true }) {
+                let _ = bun_sys::OpenDirOptions { iterate: true, ..Default::default() };
+                let template_dir = match bun_sys::open_dir_absolute(abs_template_path).map(bun_sys::Dir::from_fd) {
                     Ok(d) => d,
                     Err(err) => {
                         node.end();

@@ -146,7 +146,7 @@ impl Collection {
             // SAFETY: active_scope is always valid while Collection lives.
             bstr::BStr::new(unsafe { self.active_scope.as_ref() }.base.name.as_deref().unwrap_or(b"undefined")),
         ));
-        self.active_scope = NonNull::from(prev_scope);
+        self.active_scope = prev_scope;
         group::log(format_args!(
             "collection:runOneCompleted reset scope back to {}",
             // SAFETY: active_scope is always valid while Collection lives.

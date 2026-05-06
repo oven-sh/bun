@@ -1453,16 +1453,16 @@ impl<const SSL: bool> HTTPClient<SSL> {
             return;
         }
 
-        if connection_header.name.len().min(connection_header.value.len()) == 0 {
+        if connection_header.name().len().min(connection_header.value().len()) == 0 {
             // SAFETY: no `&mut Self` is live across this call.
             unsafe { Self::terminate(this, ErrorCode::MissingConnectionHeader) };
             return;
         }
 
         if websocket_accept_header
-            .name
+            .name()
             .len()
-            .min(websocket_accept_header.value.len())
+            .min(websocket_accept_header.value().len())
             == 0
         {
             // SAFETY: no `&mut Self` is live across this call.
@@ -1470,20 +1470,20 @@ impl<const SSL: bool> HTTPClient<SSL> {
             return;
         }
 
-        if !strings::eql_case_insensitive_ascii(connection_header.value, b"Upgrade", true) {
+        if !strings::eql_case_insensitive_ascii(connection_header.value(), b"Upgrade", true) {
             // SAFETY: no `&mut Self` is live across this call.
             unsafe { Self::terminate(this, ErrorCode::InvalidConnectionHeader) };
             return;
         }
 
-        if !strings::eql_case_insensitive_ascii(upgrade_header.value, b"websocket", true) {
+        if !strings::eql_case_insensitive_ascii(upgrade_header.value(), b"websocket", true) {
             // SAFETY: no `&mut Self` is live across this call.
             unsafe { Self::terminate(this, ErrorCode::InvalidUpgradeHeader) };
             return;
         }
 
         // SAFETY: short-lived read.
-        if websocket_accept_header.value != unsafe { &(*this).expected_accept[..] } {
+        if websocket_accept_header.value() != unsafe { &(*this).expected_accept[..] } {
             // SAFETY: no `&mut Self` is live across this call.
             unsafe { Self::terminate(this, ErrorCode::MismatchWebsocketAcceptHeader) };
             return;
@@ -1524,13 +1524,13 @@ impl<const SSL: bool> HTTPClient<SSL> {
                     // SAFETY: live C++ back-reference.
                     unsafe {
                         (*ws).did_connect_with_tunnel(
-                            tunnel,
-                            overflow.as_ptr(),
+                            tunnel.as_ptr().cast::<c_void>(),
+                            overflow.as_ptr().cast_mut(),
                             overflow.len(),
                             if deflate_result.enabled {
-                                &deflate_result.params as *const _
+                                Some(&deflate_result.params)
                             } else {
-                                ptr::null()
+                                None
                             },
                         )
                     };
@@ -1580,15 +1580,16 @@ impl<const SSL: bool> HTTPClient<SSL> {
                 // SAFETY: live C++ back-reference.
                 unsafe {
                     (*ws).did_connect(
-                        native_socket,
-                        overflow.as_ptr(),
+                        &mut *native_socket,
+                        overflow.as_ptr().cast_mut(),
                         overflow.len(),
                         if deflate_result.enabled {
-                            &deflate_result.params as *const _
+                            Some(&deflate_result.params)
                         } else {
-                            ptr::null()
+                            None
                         },
-                        saved_secure.take(), // ownership transferred; suppress the drop above
+                        // ownership transferred; suppress the drop above
+                        saved_secure.take().map(|p| &mut *p),
                     )
                 };
             } else {

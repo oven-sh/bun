@@ -1,14 +1,13 @@
 use core::cell::Cell;
 use core::ffi::c_void;
 
-use bun_aio::KeepAlive;
 use bun_boringssl_sys as boringssl;
-use bun_core::{err, fmt as bun_fmt, timespec, StringBuilder};
+use bun_core::{err, fmt as bun_fmt, timespec, TimespecMockMode};
 use crate::jsc::{
     api::server_config::SSLConfig, codegen::js_mysql_connection as js, webcore::AutoFlusher,
-    CallFrame, EventLoopTimer, JSGlobalObject, JSValue, JsRef, JsResult, VirtualMachine,
+    CallFrame, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, JSGlobalObject, JSValue,
+    JsRef, JsResult, KeepAlive, VirtualMachine,
 };
-use bun_ptr::IntrusiveRc;
 use bun_sql::mysql::protocol::any_mysql_error::{self as AnyMySQLError, Error as AnyMySQLErrorT};
 use bun_sql::mysql::protocol::error_packet::ErrorPacket;
 use bun_sql::mysql::protocol::new_reader::NewReader;
@@ -34,7 +33,11 @@ bun_core::declare_scope!(MySQLConnection, visible);
 
 const NS_PER_MS: u64 = 1_000_000;
 
-#[bun_jsc::JsClass]
+// TODO(b2-blocked): #[bun_jsc::JsClass] — proc-macro emits `bun_jsc::{JSGlobalObject,
+// CallFrame, JSValue}` types, but this crate uses the local `crate::jsc` shim
+// types (distinct nominal types). Re-enable once the shim re-exports `bun_jsc`
+// or the macro is generic over the global-object type. The hand-rolled
+// `impl crate::jsc::JsClass` below covers `from_js`/`to_js` in the meantime.
 pub struct JSMySQLConnection {
     // intrusive refcount (bun.ptr.RefCount mixin); destroy callback = `deinit`
     ref_count: Cell<u32>,
@@ -64,6 +67,12 @@ pub struct JSMySQLConnection {
     /// It stops when the connection is closed.
     pub max_lifetime_interval_ms: u32,
     pub max_lifetime_timer: EventLoopTimer,
+}
+
+impl crate::jsc::JsClass for JSMySQLConnection {
+    fn from_js(value: JSValue) -> Option<*mut Self> {
+        js::from_js(value)
+    }
 }
 
 // pub const ref = RefCount.ref; pub const deref = RefCount.deref;

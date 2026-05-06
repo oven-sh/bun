@@ -18,7 +18,10 @@ use crate::shared::CachedStructure as PostgresCachedStructure;
 use crate::postgres::postgres_request as PostgresRequest;
 use crate::postgres::postgres_request::MessageType;
 use crate::postgres::PostgresSQLQuery;
+use crate::postgres::postgres_sql_query::{self, Status as QueryStatus, js as query_js};
 use crate::postgres::PostgresSQLStatement;
+use crate::postgres::postgres_sql_statement::{Status as StatementStatus, Error as StatementError};
+use crate::jsc::{EventLoopTimerState, EventLoopTimerTag};
 use bun_sql::postgres::SocketMonitor;
 use bun_sql::postgres::PostgresProtocol as protocol;
 use crate::postgres::AuthenticationState;
@@ -162,6 +165,31 @@ impl PostgresSQLConnection {
     #[inline]
     unsafe fn vm(&self) -> &mut VirtualMachine {
         unsafe { &mut *self.vm }
+    }
+
+    /// `KeepAlive::{ref_,unref}` take an `EventLoopCtx` (manual vtable, lives in
+    /// `bun_aio`). The sql_jsc-side `VirtualMachine` is a thin façade with no
+    /// direct conversion; route through the global hook (`get_vm_ctx(.Js)`) which
+    /// resolves to the same singleton VM stored in `self.vm`.
+    #[inline]
+    fn vm_ctx(&self) -> bun_aio::EventLoopCtx {
+        bun_aio::get_vm_ctx(bun_aio::AllocatorType::Js)
+    }
+
+    #[inline]
+    fn socket_is_closed(&self) -> bool {
+        match &self.socket {
+            Socket::SocketTcp(s) => s.is_closed(),
+            Socket::SocketTls(s) => s.is_closed(),
+        }
+    }
+
+    #[inline]
+    fn socket_close(&self) {
+        match &self.socket {
+            Socket::SocketTcp(s) => s.close(uws::CloseKind::Normal),
+            Socket::SocketTls(s) => s.close(uws::CloseKind::Normal),
+        }
     }
 
     pub fn on_auto_flush(&mut self) -> bool {
@@ -830,7 +858,7 @@ pub fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
                 Err(_) => return Ok(JSValue::ZERO),
             }
         } else {
-            return global_object.throw_invalid_arguments("tls must be a boolean or an object", &[]);
+            return Err(global_object.throw_invalid_arguments("tls must be a boolean or an object"));
         };
 
         if global_object.has_exception() {

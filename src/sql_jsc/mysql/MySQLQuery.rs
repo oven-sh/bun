@@ -155,19 +155,19 @@ impl MySQLQuery {
     /// `run_prepared_query`, must derive it from `self.statement` and then call this
     /// `&mut self` method — a `&mut MySQLStatement` rooted in `*self` would overlap that
     /// reborrow. The Zig original (.zig:59) likewise passes an independent `*MySQLStatement`.
-    fn bind_and_execute<W>(
+    fn bind_and_execute<C: WriterContext>(
         &mut self,
-        writer: W,
+        writer: NewWriter<C>,
         statement: *mut MySQLStatement,
         global_object: &JSGlobalObject,
         binding_value: JSValue,
         columns_value: JSValue,
     ) -> Result<(), AnyMySQLError> {
         {
-            // SAFETY: `statement` is non-null and kept alive by the `Rc` in
+            // SAFETY: `statement` is non-null and kept alive by the intrusive ref held in
             // `self.statement` for the duration of this call; no other `&mut` to it
-            // exists (caller converted its borrow to a raw pointer before reborrowing
-            // `self`). This block only reads.
+            // exists (caller passes the raw pointer before reborrowing `self`). This
+            // block only reads.
             let stmt = unsafe { &*statement };
             debug_assert!(
                 stmt.params.len() == stmt.params_received as usize && stmt.statement_id > 0,
@@ -184,9 +184,9 @@ impl MySQLQuery {
         // buffer and force GC. Root every borrowed JSValue in a stack-scoped
         // MarkedArgumentBuffer so the wrapper (and its RefPtr<ArrayBuffer>)
         // survives until execute.deinit() has unpinned and released the borrow.
-        struct Ctx<'a, W> {
+        struct Ctx<'a, C: WriterContext> {
             this: &'a mut MySQLQuery,
-            writer: W,
+            writer: NewWriter<C>,
             statement: *mut MySQLStatement,
             global_object: &'a JSGlobalObject,
             binding_value: JSValue,
@@ -195,9 +195,9 @@ impl MySQLQuery {
         }
 
         // TODO(port): `MarkedArgumentBuffer::run` expects an `extern "C" fn(*mut Ctx, *mut MarkedArgumentBuffer)`.
-        // A generic `extern "C" fn` is fine (monomorphized per `W`), but Phase B must confirm the
+        // A generic `extern "C" fn` is fine (monomorphized per `C`), but Phase B must confirm the
         // bun_jsc API shape — it may instead take a Rust closure and handle the trampoline internally.
-        extern "C" fn run<W>(ctx: *mut Ctx<'_, W>, roots: *mut MarkedArgumentBuffer) {
+        extern "C" fn run<C: WriterContext>(ctx: *mut Ctx<'_, C>, roots: *mut MarkedArgumentBuffer) {
             // SAFETY (single-owner): `ctx` points at the caller's stack-local `Ctx`; the only
             // Rust borrow of it was the ephemeral `&mut ctx as *mut _` used to derive this
             // pointer at the `MarkedArgumentBuffer::run` call site, so no other `&mut` aliases
@@ -208,7 +208,7 @@ impl MySQLQuery {
             let roots = unsafe { &mut *roots };
             ctx.result = MySQLQuery::bind_and_execute_impl(
                 ctx.this,
-                &mut ctx.writer,
+                ctx.writer,
                 ctx.statement,
                 ctx.global_object,
                 ctx.binding_value,
@@ -226,42 +226,77 @@ impl MySQLQuery {
             columns_value,
             result: Ok(()),
         };
-        MarkedArgumentBuffer::run(&mut ctx as *mut _ as *mut c_void, run::<W>);
+        MarkedArgumentBuffer::run(&mut ctx as *mut _ as *mut c_void, run::<C>);
         ctx.result
     }
 
-    fn bind_and_execute_impl<W>(
+    fn bind_and_execute_impl<C: WriterContext>(
         &mut self,
-        writer: &mut W,
+        writer: NewWriter<C>,
         statement: *mut MySQLStatement,
         global_object: &JSGlobalObject,
         binding_value: JSValue,
         columns_value: JSValue,
         roots: &mut MarkedArgumentBuffer,
     ) -> Result<(), AnyMySQLError> {
-        // SAFETY: `statement` was derived from the `Rc<MySQLStatement>` held in
-        // `self.statement` by `run_prepared_query`; that `Rc` keeps the allocation alive
-        // across this call. The caller dropped its `&mut` borrow before reborrowing `self`,
-        // so this is the only live mutable access path to the statement for the duration
-        // of this function (matches Zig .zig:74 which takes an independent `*MySQLStatement`).
+        // SAFETY: `statement` was copied from `self.statement` by `run_prepared_query`;
+        // the intrusive ref held there keeps the allocation alive across this call. The
+        // caller passes the raw pointer before reborrowing `self`, so this is the only
+        // live mutable access path to the statement for the duration of this function
+        // (matches Zig .zig:74 which takes an independent `*MySQLStatement`).
         let statement = unsafe { &mut *statement };
-        let mut execute = prepared_statement::Execute {
-            statement_id: statement.statement_id,
-            param_types: statement.signature.fields.clone(), // TODO(port): Zig borrows the slice; Phase B should make `Execute.param_types` a `&[_]`.
-            new_params_bind_flag: statement.execution_flags.need_to_send_params,
-            iteration_count: 1,
-            ..Default::default()
-        };
-        // `defer execute.deinit()` — deleted: `Execute` impls `Drop`.
 
         // Bind before touching the writer so a bind failure (user-triggerable via JS
         // getters / param-count mismatch) doesn't leave a partial packet header in
         // the connection's write buffer.
-        self.bind(&mut execute, global_object, binding_value, columns_value, roots)?;
+        let params = self.bind(
+            &statement.signature.fields,
+            global_object,
+            binding_value,
+            columns_value,
+            roots,
+        )?;
+        // `defer execute.deinit()` — `params: Vec<Value>` drops at end of scope.
+
+        // Thunks bridging the higher-tier `Value` into the lower-tier `ExecuteParams`
+        // hooks (which can't name `Value` directly across crates).
+        fn is_null_thunk(ctx: *mut c_void, i: usize) -> bool {
+            // SAFETY: `ctx` is `params.as_ptr()` and `i < params.len()` (asserted by
+            // the `len` field passed alongside, checked in `Execute::write_internal`).
+            unsafe { matches!(*(ctx as *const Value).add(i), Value::Null) }
+        }
+        fn to_data_thunk(
+            ctx: *mut c_void,
+            i: usize,
+            ft: FieldType,
+        ) -> Result<bun_sql::shared::Data, any_mysql_error::Error> {
+            // SAFETY: same as `is_null_thunk`.
+            unsafe { (*(ctx as *const Value).add(i)).to_data(ft) }
+        }
+
+        let execute = prepared_statement::Execute {
+            statement_id: statement.statement_id,
+            flags: 0,
+            iteration_count: 1,
+            param_types: &statement.signature.fields,
+            new_params_bind_flag: statement
+                .execution_flags
+                .contains(ExecutionFlags::NEED_TO_SEND_PARAMS),
+            params: ExecuteParams {
+                len: params.len(),
+                ctx: params.as_ptr() as *mut c_void,
+                is_null: is_null_thunk,
+                to_data: to_data_thunk,
+                _marker: PhantomData,
+            },
+        };
+
         let mut packet = writer.start(0)?;
         execute.write(writer)?;
         packet.end()?;
-        statement.execution_flags.need_to_send_params = false;
+        statement
+            .execution_flags
+            .remove(ExecutionFlags::NEED_TO_SEND_PARAMS);
         self.status = Status::Running;
         Ok(())
     }

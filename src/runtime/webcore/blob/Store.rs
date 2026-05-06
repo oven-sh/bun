@@ -1,4 +1,5 @@
 use core::ffi::c_void;
+use core::ptr::NonNull;
 use core::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
@@ -215,14 +216,13 @@ impl Store {
     }
 
     /// Takes ownership of `bytes`.
-    pub fn init(bytes: Vec<u8>) -> Box<Store> {
-        let store = Store::new(Store {
+    pub fn init(bytes: Vec<u8>) -> StoreRef {
+        StoreRef::from(Store::new(Store {
             data: Data::Bytes(Bytes::init(bytes)),
             mime_type: bun_http_types::MimeType::NONE,
             ref_count: AtomicU32::new(1),
             is_all_ascii: None,
-        });
-        store
+        }))
     }
 
     pub fn shared_view(&self) -> &[u8] {

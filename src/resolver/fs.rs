@@ -1672,10 +1672,11 @@ impl RealFS {
         FileSystem::set_max_fd(std_file.handle().native());
         let file = std_file;
 
-        // PORT NOTE: `file_contents` borrows either `shared_buffer.list` (USE_SHARED_BUFFER) or
-        // a leaked heap alloc; both are tracked as a raw (ptr, len) pair so borrowck doesn't tie
-        // the slice to `&mut shared_buffer` across the read/truncate/grow loop. The final slice
-        // is reconstituted with `from_raw_parts` (matches Zig's `[]const u8` return).
+        // PORT NOTE: in the `USE_SHARED_BUFFER` branch, `file_contents` borrows
+        // `shared_buffer.list`; tracked as a raw (ptr, len) pair so borrowck doesn't tie the
+        // slice to `&mut shared_buffer` across the read/truncate/grow loop. The final slice is
+        // reconstituted with `from_raw_parts` (matches Zig's `[]const u8` return). The
+        // non-shared-buffer branch owns its allocation and returns early with `Cow::Owned`.
         let mut file_contents_ptr: *const u8 = b"".as_ptr();
         let mut file_contents_len: usize = 0;
         // When we're serving a JavaScript-like file over HTTP, we do not want to cache the contents in memory
@@ -1795,18 +1796,22 @@ impl RealFS {
                     }
                 };
                 if read_count + 1 < buf.len() {
-                    // allocator.dupeZ
+                    // allocator.dupeZ — own the buffer; caller frees via PathContentsPair drop.
+                    // PORT NOTE: Zig returned an allocator-owned `[:0]u8` and the caller freed it
+                    // later; Rust returns `Cow::Owned` so the caller's drop frees it. The trailing
+                    // NUL sentinel is not part of `contents` (matches Zig `[:0]`).
                     let mut allocation = vec![0u8; read_count + 1];
                     allocation[..read_count].copy_from_slice(&buf[..read_count]);
                     allocation[read_count] = 0;
-                    let allocation = Box::leak(allocation.into_boxed_slice());
-                    // TODO(port): ownership — Zig returned slice into allocator-owned buffer
-                    let fc: &[u8] = &allocation[..read_count];
+                    allocation.truncate(read_count);
 
                     // TODO(b2-blocked): `strings::BOM` (gated in `immutable/unicode.rs`) —
                     // BOM strip + UTF-16→UTF-8 transcode. Serve bytes verbatim until then.
 
-                    return Ok(PathContentsPair { path: Path::init(path), contents: fc });
+                    return Ok(PathContentsPair {
+                        path: Path::init(path),
+                        contents: Cow::Owned(allocation),
+                    });
                 }
 
                 &initial_buf[..read_count]
@@ -1828,11 +1833,11 @@ impl RealFS {
             };
             debug!("stat({}) = {}", file.handle(), size);
 
-            let mut buf = vec![0u8; size + 1].into_boxed_slice();
+            let mut buf = vec![0u8; size + 1];
             buf[..initial_read.len()].copy_from_slice(initial_read);
 
             if size == 0 {
-                return Ok(PathContentsPair { path: Path::init(path), contents: b"" });
+                return Ok(PathContentsPair { path: Path::init(path), contents: Cow::Borrowed(b"") });
             }
 
             // stick a zero at the end
@@ -1846,21 +1851,21 @@ impl RealFS {
                     return Err(err);
                 }
             };
-            // TODO(port): ownership — leaking buf to return &[u8] (matches Zig allocator-owned semantics)
-            let buf = Box::leak(buf);
-            file_contents_ptr = buf.as_ptr();
-            file_contents_len = read_count + initial_read.len();
+            let total = read_count + initial_read.len();
             debug!("read({}, {}) = {}", file.handle(), size, read_count);
+            buf.truncate(total);
 
             // TODO(b2-blocked): `strings::BOM` (gated in `immutable/unicode.rs`) —
             // BOM strip + UTF-16→UTF-8 transcode. Serve bytes verbatim until then.
+
+            return Ok(PathContentsPair { path: Path::init(path), contents: Cow::Owned(buf) });
         }
 
-        // SAFETY: see PORT NOTE above — `file_contents_ptr` borrows `shared_buffer.list` (which
-        // outlives this fn per the caller contract) or a `Box::leak`'d alloc.
-        let file_contents =
+        // SAFETY: see PORT NOTE above — `file_contents_ptr` borrows `shared_buffer.list`, which
+        // outlives this fn per the caller contract.
+        let file_contents: &'static [u8] =
             unsafe { core::slice::from_raw_parts(file_contents_ptr, file_contents_len) };
-        Ok(PathContentsPair { path: Path::init(path), contents: file_contents })
+        Ok(PathContentsPair { path: Path::init(path), contents: Cow::Borrowed(file_contents) })
     }
 
     pub fn kind_from_absolute(
@@ -2117,17 +2122,16 @@ pub struct PathContentsPair<'a> {
     pub contents: Cow<'static, [u8]>,
 }
 
-pub struct NodeJSPathName {
-    pub base: &'static [u8],
-    pub dir: &'static [u8],
+pub struct NodeJSPathName<'a> {
+    pub base: &'a [u8],
+    pub dir: &'a [u8],
     /// includes the leading .
-    pub ext: &'static [u8],
-    pub filename: &'static [u8],
+    pub ext: &'a [u8],
+    pub filename: &'a [u8],
 }
-// TODO(port): lifetime — all four fields borrow the input path; struct should be NodeJSPathName<'a>
 
-impl NodeJSPathName {
-    pub fn init<const IS_WINDOWS: bool>(path_: &[u8]) -> NodeJSPathName {
+impl<'a> NodeJSPathName<'a> {
+    pub fn init<const IS_WINDOWS: bool>(path_: &'a [u8]) -> NodeJSPathName<'a> {
         let platform: path_handler::Platform =
             if IS_WINDOWS { path_handler::Platform::Windows } else { path_handler::Platform::Posix };
         let get_last_sep = platform.get_last_separator_func();

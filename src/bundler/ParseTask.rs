@@ -1990,30 +1990,31 @@ fn run_with_source_code(
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// taskCallback / ioTaskCallback
+// runFromThreadPool
 // ───────────────────────────────────────────────────────────────────────────
 
-fn io_task_callback(task: *mut ThreadPoolLib::Task) {
-    // SAFETY: task points to ParseTask.io_task.
-    let parse_task = unsafe {
-        &mut *(task as *mut u8)
-            .sub(offset_of!(ParseTask, io_task))
-            .cast::<ParseTask>()
-    };
-    run_from_thread_pool(parse_task);
-}
-
-fn task_callback(task: *mut ThreadPoolLib::Task) {
-    // SAFETY: task points to ParseTask.task.
-    let parse_task = unsafe {
-        &mut *(task as *mut u8)
-            .sub(offset_of!(ParseTask, task))
-            .cast::<ParseTask>()
-    };
-    run_from_thread_pool(parse_task);
-}
-
+/// Live entry point for `task_callback` / `io_task_callback` (hoisted to
+/// `super::*`). Body is gated on `crate::ThreadPool::Worker` — see
+/// `run_from_thread_pool_impl` below for the full ported body.
 pub fn run_from_thread_pool(this: &mut ParseTask) {
+    #[cfg(any())]
+    return run_from_thread_pool_impl(this);
+    // blocked_on: `crate::ThreadPool::Worker::get` (gated module). Fail loud
+    // rather than silently returning so a thread-pool dispatch with the gate
+    // still in place is caught immediately.
+    let _ = this;
+    todo!(
+        "ParseTask::run_from_thread_pool: bundler ThreadPool::Worker module is gated \
+         (lib.rs #[cfg(any())] pub mod ThreadPool)"
+    );
+}
+
+// blocked_on: `crate::ThreadPool::Worker` (gated); `ThreadPool::uses_io_pool`;
+// `ctx.graph.pool.schedule_inside_thread_pool` (`graph.pool: NonNull<ThreadPool>`
+// where `ThreadPool` is the lib.rs unit-stub); `BundleV2.loop_()` returning the
+// erased `EventLoop = Option<NonNull<()>>` (no `Js`/`Mini` variants yet).
+#[cfg(any())]
+fn run_from_thread_pool_impl(this: &mut ParseTask) {
     // SAFETY: ctx backref valid.
     let ctx = unsafe { &*this.ctx };
     let mut worker = ThreadPool::Worker::get(ctx);
@@ -2134,9 +2135,12 @@ pub fn run_from_thread_pool(this: &mut ParseTask) {
 pub fn on_complete(result: *mut Result) {
     // SAFETY: result allocated via Box::into_raw above; ctx backref valid.
     let r = unsafe { &mut *result };
-    BundleV2::on_parse_task_complete(result, unsafe { &*r.ctx });
+    // SAFETY: ctx points to a live BundleV2 for the duration of the bundle pass.
+    BundleV2::on_parse_task_complete(r, unsafe { &mut *(r.ctx as *mut BundleV2) });
 }
-} // end #[cfg(any())] mod __parse_worker_draft
+} // end mod parse_worker
+
+pub use parse_worker::{get_runtime_source, on_complete, FileLoaderHash, OnBeforeParsePlugin};
 
 // ───────────────────────────────────────────────────────────────────────────
 // Re-exports
@@ -2145,7 +2149,6 @@ pub fn on_complete(result: *mut Result) {
 pub use bun_js_parser::ast::Ref;
 
 pub use crate::DeferredBatchTask::DeferredBatchTask;
-pub use crate::ThreadPool;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

@@ -973,6 +973,22 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         self.options.features.unwrap_commonjs_to_esm
     }
 
+    // ─── Parser.rs `_parse` calls these names (commonjs as one word); other ───
+    // ─── visit modules call the `_common_js_` two-word forms above. Keep    ───
+    // ─── both spellings until round-E reconciles call sites.               ───
+    #[inline]
+    pub fn should_unwrap_commonjs_to_esm(&self) -> bool {
+        self.should_unwrap_common_js_to_esm()
+    }
+    #[inline]
+    pub fn is_deoptimized_commonjs(&self) -> bool {
+        self.is_deoptimized_common_js()
+    }
+    #[inline]
+    pub fn deoptimize_commonjs_named_exports(&mut self) {
+        self.deoptimize_common_js_named_exports();
+    }
+
     fn is_binding_used(&mut self, binding: Binding, default_export_ref: Ref) -> bool {
         match binding.data {
             js_ast::b::B::BIdentifier(ident) => {
@@ -1534,7 +1550,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         Expr { data: js_ast::ExprData::EIdentifier(ident), loc }
     }
 
-    #[cfg(any())] // blocked_on: ClauseItem fields; NamedImport fields; Part fields; S::Import shape
     pub fn generate_import_stmt_for_bake_response(
         &mut self,
         parts: &mut ListManaged<'a, js_ast::Part>,
@@ -1613,7 +1628,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         Ok(())
     }
 
-    #[cfg(any())] // blocked_on: ClauseItem; NamedImport; Part; S::Import; GenerateImportSymbols trait shape
     pub fn generate_import_stmt<I, Sym>(
         &mut self,
         import_path: &'a [u8],
@@ -2343,7 +2357,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         Substitution::Failure(expr)
     }
 
-    #[cfg(any())] // round-D: heavy body, depends on parse_*/visit_*/ImportScanner/full E surface
     pub fn prepare_for_visit_pass(&mut self) -> Result<(), bun_core::Error> {
         {
             let mut i: usize = 0;
@@ -4200,7 +4213,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         }
     }
 
-    #[cfg(any())] // blocked_on: visit_stmts_and_prepend_temp_refs; b(); Part fields; symbol_uses.count()
     pub fn append_part(
         &mut self,
         parts: &mut ListManaged<'a, js_ast::Part>,

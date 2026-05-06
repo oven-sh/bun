@@ -1368,7 +1368,7 @@ impl Template {
     pub fn write_to_package_json(
         self,
         fields: &mut PackageJSONFields,
-        bump: &bumpalo::Bump,
+        bump: &bun_alloc::Arena,
     ) -> Result<(), Error> {
         type Rope = js_ast::E::object::Rope;
         fields.name = self.name().to_vec();

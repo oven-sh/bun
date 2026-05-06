@@ -73,6 +73,23 @@ fn html_string_to_bun_string(s: lolhtml::HTMLString) -> BunString {
     out
 }
 
+/// `bun.String.toJSArray` — the un-gated `bun_jsc::bun_string_jsc` module lacks
+/// `to_js_array`; declare the C++ symbol locally (matches
+/// src/jsc/bun_string_jsc.rs:111 / `BunString__createArray`).
+#[inline]
+fn bun_string_to_js_array(global: &JSGlobalObject, array: &[BunString]) -> JsResult<JSValue> {
+    unsafe extern "C" {
+        fn BunString__createArray(
+            global: *mut JSGlobalObject,
+            ptr: *const BunString,
+            len: usize,
+        ) -> JSValue;
+    }
+    // SAFETY: `array` ptr/len from a live slice; `global` borrowed for call duration.
+    let v = unsafe { BunString__createArray(global as *const _ as *mut _, array.as_ptr(), array.len()) };
+    if global.has_exception() { Err(jsc::JsError::Thrown) } else { Ok(v) }
+}
+
 /// Shim for `JSValue::createObject2` (not yet ported to Rust JSValue).
 fn create_object2(
     global: &JSGlobalObject,

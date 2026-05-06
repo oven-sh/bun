@@ -700,12 +700,8 @@ impl IntoErrInt for bun_sys::posix::E {
 #[cfg(windows)]
 impl IntoErrInt for bun_sys::windows::NTSTATUS {
     fn into_err_int(self) -> bun_sys::ErrorInt {
-        
-        {
-            // TODO(b2-blocked): bun_sys::windows::translate_ntstatus_to_errno
-            return bun_sys::windows::translate_ntstatus_to_errno(self) as bun_sys::ErrorInt;
-        }
-        unreachable!("blocked on bun_sys::windows::translate_ntstatus_to_errno")
+        // Zig: `@intFromEnum(bun.windows.translateNTStatusToErrno(err))`
+        bun_sys::windows::translate_ntstatus_to_errno(self) as bun_sys::ErrorInt
     }
 }
 

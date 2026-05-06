@@ -210,188 +210,30 @@ pub use bake_body::StringRefList;
 // FrameworkRouter
 // ══════════════════════════════════════════════════════════════════════════
 pub mod framework_router {
-    use bun_collections::{ArrayHashMap, StringArrayHashMap};
-
-    // PORT NOTE: these were keystone stubs duplicating the real defs in
-    // `framework_router_body` (FrameworkRouter.rs). The `InsertionHandler`
-    // trait — re-exported below — is defined against the body types, so the
-    // duplicate stubs caused E0053 in implementers. Re-export the canonical
-    // body types instead so `framework_router::X` ≡ `framework_router_body::X`.
+    // PORT NOTE: this module used to carry duplicate "keystone" stub structs
+    // (`Route`, `Type`, `FrameworkRouter`, `MatchedParams`, `EncodedPattern`)
+    // alongside the real defs in `framework_router_body` (FrameworkRouter.rs).
+    // The two nominal type sets diverged and forced `todo!()` shims. The body
+    // module is now fully ported and un-gated, so re-export everything so
+    // `framework_router::X` ≡ `framework_router_body::X` and the real method
+    // bodies (`init_empty`, `match_slow`, `memory_cost`, `to_js`, …) resolve
+    // directly.
     pub use super::framework_router_body::{
-        FileKind, OpaqueFileId, OpaqueFileIdOptional, RouteIndex, TinyLog, TypeIndex,
+        DynamicRouteMap, EncodedPattern, FileKind, FrameworkRouter, InsertionHandler,
+        JSFrameworkRouter, MatchedParams, OpaqueFileId, OpaqueFileIdOptional, Part, Route,
+        RouteIndex, StaticRouteMap, Style, TinyLog, Type, TypeIndex,
     };
 
-    /// `FrameworkRouter.Style` — routing convention (`.nextjs-pages` etc).
-    // PORT NOTE: keystone stub removed — `framework_router_body::Type.style`
-    // and the body `Style::from_js` are typed against the body enum, so the
-    // duplicate here caused E0308 in `production.rs`. Re-export so
-    // `framework_router::Style` ≡ `framework_router_body::Style`.
-    pub use super::framework_router_body::Style;
-
-    /// `FrameworkRouter.Route` — one node in the route tree. Full body (with
-    /// `Part`, matching, deinit) gated in `FrameworkRouter.rs`.
-    pub struct Route {
-        pub parent: Option<RouteIndex>,
-        pub first_child: Option<RouteIndex>,
-        pub prev_sibling: Option<RouteIndex>,
-        pub next_sibling: Option<RouteIndex>,
-        pub r#type: TypeIndex,
-        pub file_page: OpaqueFileIdOptional,
-        pub file_layout: OpaqueFileIdOptional,
-        pub bundle: super::dev_server::route_bundle::IndexOptional,
-        // TODO(b2-blocked): `part: Part` (encoded path segment) — gated draft.
-        _opaque_tail: (),
-    }
-
-    /// `FrameworkRouter.Type` — per-`FileSystemRouterType` resolved config.
-    pub struct Type {
-        pub abs_root: Box<[u8]>,
-        pub prefix: Box<[u8]>,
-        pub ignore_underscores: bool,
-        pub ignore_dirs: Box<[Box<[u8]>]>,
-        pub extensions: Box<[Box<[u8]>]>,
-        pub style: Style,
-        pub allow_layouts: bool,
-        pub client_file: OpaqueFileIdOptional,
-        /// Spec FrameworkRouter.zig:112 — NON-optional (every router type has
-        /// a server entrypoint). Only `client_file` is `.Optional`.
-        pub server_file: OpaqueFileId,
-        pub server_file_string: super::jsc::StrongOptional,
-    }
-
-    /// `FrameworkRouter.MatchedParams`.
-    #[derive(Default)]
-    pub struct MatchedParams {
-        // TODO(b2-blocked): `BoundedArray<Param, 16>` — gated draft.
-        _opaque: (),
-    }
-
-    /// `FrameworkRouter.EncodedPattern` — a route pattern with dynamic
-    /// segments encoded so that `/hello/[foo]/bar` and `/hello/[baz]/bar`
-    /// hash/compare *equal* (FrameworkRouter.zig:19-27). Keying
-    /// `DynamicRouteMap` on raw bytes would let those two patterns coexist,
-    /// silently passing routes the spec rejects as duplicates.
-    #[derive(Clone, Debug)]
-    pub struct EncodedPattern(pub Box<[u8]>);
-    impl core::hash::Hash for EncodedPattern {
-        fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
-            // Spec: `EffectiveURLContext` (FrameworkRouter.zig:19-27) hashes the
-            // pattern with dynamic-segment *names* erased so `[foo]` ≡ `[bar]`.
-            // TODO(port): full segment-erasure body lives in the gated
-            // `FrameworkRouter.rs::EffectiveUrlContext`; un-gate once
-            // `Part::decode` is available here.
-            self.0.hash(state)
-        }
-    }
-    impl PartialEq for EncodedPattern {
-        fn eq(&self, other: &Self) -> bool {
-            // TODO(port): must match `EffectiveURLContext.eql` — compares by
-            // effective URL (dynamic segment names ignored). See gated
-            // `FrameworkRouter.rs::EffectiveUrlContext`.
-            self.0 == other.0
-        }
-    }
-    impl Eq for EncodedPattern {}
-
-    pub type StaticRouteMap = StringArrayHashMap<RouteIndex>;
-    pub type DynamicRouteMap = ArrayHashMap<EncodedPattern, RouteIndex>;
-
-    /// Discovers routes from the filesystem; see `FrameworkRouter.zig`.
-    pub struct FrameworkRouter {
-        pub root: Box<[u8]>,
-        pub types: Box<[Type]>,
-        pub routes: Vec<Route>,
-        pub static_routes: StaticRouteMap,
-        pub dynamic_routes: DynamicRouteMap,
-        /// Arena for pattern strings (`EncodedPattern`/`StaticRoute.route_path`).
-        pub pattern_arena: bun_alloc::Arena,
-    }
-    impl FrameworkRouter {
-        // TODO(b2-blocked): `init_empty` (FrameworkRouter.zig:96) — needs
-        // `Resolver` walk; un-gate from `FrameworkRouter.rs` once
-        // `bun_resolver::DirInfo` is real.
-        pub fn init_empty(
-            _root: &[u8],
-            _types: Vec<Type>,
-        ) -> Result<Self, bun_alloc::AllocError> {
-            // TODO(port): keystone `Type`/`FrameworkRouter` here are distinct from the body
-            // draft; unify before constructing the real router.
-            todo!("blocked_on: framework_router::FrameworkRouter::init_empty")
-        }
-
-        /// `FrameworkRouter.memoryCost` (FrameworkRouter.zig:163).
-        pub fn memory_cost(&self) -> usize {
-            let mut cost: usize = core::mem::size_of::<FrameworkRouter>();
-            cost += self.routes.capacity() * core::mem::size_of::<Route>();
-            // TODO(port): `StaticRouteMap`/`DynamicRouteMap` entries.capacityInBytes —
-            // blocked_on: bun_collections::ArrayHashMap::capacity_in_bytes
-            cost
-        }
-
-        #[inline]
-        pub fn route_ptr(&self, i: RouteIndex) -> &Route {
-            &self.routes[i.get() as usize]
-        }
-
-        #[inline]
-        pub fn route_ptr_mut(&mut self, i: RouteIndex) -> &mut Route {
-            &mut self.routes[i.get() as usize]
-        }
-
-        #[inline]
-        pub fn type_ptr(&mut self, i: TypeIndex) -> &mut Type {
-            &mut self.types[i.get() as usize]
-        }
-
-        #[inline]
-        pub fn type_ptr_const(&self, i: TypeIndex) -> &Type {
-            &self.types[i.get() as usize]
-        }
-
-        /// `FrameworkRouter.matchSlow` — keystone shim. Real body lives in
-        /// `framework_router_body::FrameworkRouter::match_slow`; this struct
-        /// is a separate keystone type so we forward-declare the API and
-        /// `todo!()` until the two FrameworkRouter shapes are unified.
-        pub fn match_slow(
-            &self,
-            _path: &[u8],
-            _params: &mut MatchedParams,
-        ) -> Option<RouteIndex> {
-            todo!("blocked_on: framework_router::FrameworkRouter unification with framework_router_body")
-        }
-    }
-
-    impl MatchedParams {
-        /// `MatchedParams.toJS` — keystone shim; real body in
-        /// `framework_router_body::MatchedParams::to_js`.
-        pub fn to_js(&self, _global: &super::jsc::JSGlobalObject) -> super::jsc::JSValue {
-            todo!("blocked_on: framework_router::MatchedParams unification with framework_router_body")
-        }
-    }
-
-    /// `FrameworkRouter.InsertionContext` — manual vtable (Zig used
-    /// `*anyopaque` + comptime fn-ptr table; already indirect).
-    pub struct InsertionContext {
-        pub opaque_ctx: *mut (),
-        pub vtable: &'static InsertionVTable,
-    }
-    pub struct InsertionVTable {
-        pub get_file_id_for_router:
-            fn(*mut (), &[u8], RouteIndex, FileKind) -> Result<OpaqueFileId, bun_alloc::AllocError>,
-        pub on_router_syntax_error: fn(*mut (), &[u8], TinyLog) -> Result<(), bun_alloc::AllocError>,
-        pub on_router_collision_error:
-            fn(*mut (), &[u8], OpaqueFileId, FileKind) -> Result<(), bun_alloc::AllocError>,
-    }
-
-    // ── re-exports from the full FrameworkRouter.rs draft ───────────────
-    // production.rs needs `Part`, `init_empty`, `scan_all`, `route_ptr`,
-    // `InsertionHandler`; surface them here so callers go through the
-    // canonical `crate::bake::framework_router` path.
-    pub use super::framework_router_body::{InsertionHandler, Part};
-
+    /// `FrameworkRouter.InsertionContext` — Zig used an `*anyopaque` +
+    /// comptime fn-ptr `VTable` pair with a `wrap(T, ptr)` helper that
+    /// generated trampolines. The Rust port maps that to a trait object
+    /// (`&mut dyn InsertionHandler`); this is the `wrap` shim only, kept so
+    /// callsites read `InsertionContext::wrap(&mut ctx)` like the spec.
+    pub enum InsertionContext {}
     impl InsertionContext {
         /// Zig: `InsertionContext.wrap(T, ptr)` — comptime vtable generation.
         /// Port: thin shim over the trait-object form (`&mut dyn InsertionHandler`).
+        #[inline]
         pub fn wrap<T: InsertionHandler>(ctx: &mut T) -> &mut dyn InsertionHandler {
             ctx
         }

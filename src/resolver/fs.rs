@@ -3120,6 +3120,10 @@ static SYS_FS_VTABLE: bun_sys::fs::FsVTable = bun_sys::fs::FsVTable {
         // SAFETY: `p` is an erased `&bun_resolver::fs::DirEntry`.
         unsafe { &*(p as *const DirEntry) }.has_comptime_query(q)
     },
+    dir_entry_fd: |p| {
+        // SAFETY: `p` is an erased `&bun_resolver::fs::DirEntry`.
+        unsafe { &*(p as *const DirEntry) }.fd
+    },
     dir_entry_data: |p| {
         // SAFETY: see above.
         let d = unsafe { &*(p as *const DirEntry) };

@@ -2077,7 +2077,10 @@ pub fn install_isolated_packages(
                                     .unwrap_or(false);
                             }
                             installer.append_real_store_path(&mut store_path, entry_id, installer::Which::Final);
-                            let scope_for_patch_tag_path = store_path.save();
+                            // PORT NOTE: reshaped for borrowck — Zig `save()` returns a
+                            // `ResetScope` holding `*Path`; capture the length instead so
+                            // `store_path` stays unborrowed.
+                            let scope_for_patch_tag_path = store_path.len();
                             if pkg_res_tag == ResolutionTag::Npm {
                                 // if it's from npm, it should always have a package.json.
                                 // in other cases, probably yes but i'm less confident.
@@ -2092,7 +2095,7 @@ pub fn install_isolated_packages(
                                 installer::PatchInfo::Patch(patch) => {
                                     let mut hash_buf: install::BuntagHashBuf = Default::default();
                                     let hash = install::buntaghashbuf_make(&mut hash_buf, patch.contents_hash);
-                                    scope_for_patch_tag_path.restore();
+                                    store_path.set_length(scope_for_patch_tag_path);
                                     bun_core::handle_oom(store_path.append(&*hash));
                                     !sys::exists_z(store_path.slice_z())
                                 }

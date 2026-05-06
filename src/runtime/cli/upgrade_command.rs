@@ -981,18 +981,15 @@ impl UpgradeCommand {
                         &unzip_script,
                     ];
 
-                    let spawn_res = bun_core::spawn_sync(&bun_core::SpawnOptions {
-                        argv: &unzip_argv,
+                    let spawn_res = spawn_sync::spawn(&spawn_sync::Options {
+                        argv: build_argv(&unzip_argv),
                         envp: None,
-                        cwd: &tmpdir_path_buf[..tmpdir_path_len],
-                        stderr: bun_core::Stdio::Inherit,
-                        stdout: bun_core::Stdio::Inherit,
-                        stdin: bun_core::Stdio::Inherit,
-                        windows: bun_core::SpawnWindowsOptions {
-                            loop_: jsc::EventLoopHandle::init(jsc::MiniEventLoop::init_global(
-                                None, None,
-                            )),
-                        },
+                        cwd: Box::<[u8]>::from(&tmpdir_path_buf[..tmpdir_path_len]),
+                        stderr: spawn_sync::SyncStdio::Inherit,
+                        stdout: spawn_sync::SyncStdio::Inherit,
+                        stdin: spawn_sync::SyncStdio::Inherit,
+                        #[cfg(windows)]
+                        windows: spawn_windows_options(),
                         ..Default::default()
                     });
                     let spawn_res = match spawn_res {
@@ -1006,11 +1003,11 @@ impl UpgradeCommand {
                             Global::exit(1);
                         }
                     };
-                    if let Err(err) = spawn_res.unwrap_result() {
+                    if let Err(err) = spawn_res {
                         Output::pretty_errorln(format_args!(
                             "<r><red>error:<r> Failed to run Expand-Archive on {} due to error {}",
                             bstr::BStr::new(tmpname.as_bytes()),
-                            err.name()
+                            bstr::BStr::new(err.name())
                         ));
                         Global::exit(1);
                     }

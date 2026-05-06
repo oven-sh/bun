@@ -1,10 +1,4 @@
 //! `DevServer.RouteBundle` — per-navigatable-route bundling state.
-//!
-//! Method bodies (`invalidate_client_bundle`, `memory_cost`) live in the gated
-//! `../DevServer/RouteBundle.rs` draft (blocked on `bun_jsc::Strong` +
-//! `StaticRoute::memory_cost`).
-
-use std::sync::Arc;
 
 use super::incremental_graph;
 use super::jsc;

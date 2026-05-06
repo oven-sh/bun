@@ -134,8 +134,10 @@ pub use crate::why_command::WhyCommand;
 pub use crate::fuzzilli_command::FuzzilliCommand;
 pub use crate::repl_command::ReplCommand;
 
-pub use crate::arguments as Arguments;
-pub mod arguments;
+// `arguments` is mounted in the parent (`cli/mod.rs` → `#[path = "Arguments.rs"]`);
+// re-export here instead of redeclaring the module.
+pub use super::arguments;
+pub use super::arguments as Arguments;
 
 mod auto_command {
     use super::*;

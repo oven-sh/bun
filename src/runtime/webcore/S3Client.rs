@@ -13,9 +13,19 @@ use super::s3_file as S3File;
 
 bun_core::declare_scope!(S3Client, visible);
 
-// TODO(port): `bun.Output.prettyFmt` is a comptime color-tag expander; needs a
-// const-fn/macro equivalent (`output::pretty_fmt!`) that yields `&'static str`
-// keyed on `ENABLE_ANSI_COLORS`.
+// Local front for `bun_core::pretty_fmt!` that accepts a runtime / const-
+// generic bool. The proc-macro only matches `true`/`false` literals, so
+// monomorphized callers (`<const C: bool>`) branch here. Both arms yield
+// `&'static str`.
+macro_rules! pfmt {
+    ($fmt:expr, $colors:expr) => {
+        if $colors {
+            ::bun_core::pretty_fmt!($fmt, true)
+        } else {
+            ::bun_core::pretty_fmt!($fmt, false)
+        }
+    };
+}
 pub fn write_format_credentials<F, W, const ENABLE_ANSI_COLORS: bool>(
     credentials: &S3Credentials,
     options: MultiPartUploadOptions,
@@ -48,12 +58,11 @@ where
         };
 
         formatter.write_indent(writer)?;
-        writer.write_str(output::pretty_fmt!("<r>endpoint<d>:<r> \"", ENABLE_ANSI_COLORS))?;
+        writer.write_str(pfmt!("<r>endpoint<d>:<r> \"", ENABLE_ANSI_COLORS))?;
         write!(
             writer,
             "{}",
-            // TODO(port): pretty_fmt with runtime arg — Zig: prettyFmt("<r><b>{s}<r>\"", ..)
-            output::pretty_fmt_args!::<ENABLE_ANSI_COLORS>("<r><b>{}<r>\"", BStr::new(endpoint))
+            output::pretty_fmt_args("<r><b>{}<r>\"", ENABLE_ANSI_COLORS, (BStr::new(endpoint),))
         )?;
         formatter.print_comma(writer, ENABLE_ANSI_COLORS)?;
         writer.write_str("\n")?;
@@ -64,11 +73,11 @@ where
             S3Credentials::guess_region(&credentials.endpoint)
         };
         formatter.write_indent(writer)?;
-        writer.write_str(output::pretty_fmt!("<r>region<d>:<r> \"", ENABLE_ANSI_COLORS))?;
+        writer.write_str(pfmt!("<r>region<d>:<r> \"", ENABLE_ANSI_COLORS))?;
         write!(
             writer,
             "{}",
-            output::pretty_fmt_args!::<ENABLE_ANSI_COLORS>("<r><b>{}<r>\"", BStr::new(region))
+            output::pretty_fmt_args("<r><b>{}<r>\"", ENABLE_ANSI_COLORS, (BStr::new(region),))
         )?;
         formatter.print_comma(writer, ENABLE_ANSI_COLORS)?;
         writer.write_str("\n")?;
@@ -76,7 +85,7 @@ where
         // PS: We don't want to print the credentials if they are empty just signal that they are there without revealing them
         if !credentials.access_key_id.is_empty() {
             formatter.write_indent(writer)?;
-            writer.write_str(output::pretty_fmt!(
+            writer.write_str(pfmt!(
                 "<r>accessKeyId<d>:<r> \"<r><b>[REDACTED]<r>\"",
                 ENABLE_ANSI_COLORS
             ))?;
@@ -87,7 +96,7 @@ where
 
         if !credentials.secret_access_key.is_empty() {
             formatter.write_indent(writer)?;
-            writer.write_str(output::pretty_fmt!(
+            writer.write_str(pfmt!(
                 "<r>secretAccessKey<d>:<r> \"<r><b>[REDACTED]<r>\"",
                 ENABLE_ANSI_COLORS
             ))?;
@@ -98,7 +107,7 @@ where
 
         if !credentials.session_token.is_empty() {
             formatter.write_indent(writer)?;
-            writer.write_str(output::pretty_fmt!(
+            writer.write_str(pfmt!(
                 "<r>sessionToken<d>:<r> \"<r><b>[REDACTED]<r>\"",
                 ENABLE_ANSI_COLORS
             ))?;

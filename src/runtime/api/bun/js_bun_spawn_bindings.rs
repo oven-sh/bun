@@ -1102,21 +1102,23 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             MaxBuf::remove_from_subprocess(&mut subprocess.stderr_maxbuf);
             subprocess.deref();
             subprocess.deref();
-            if err == JsError::Thrown {
+            // PORT NOTE: Zig returned `err` directly (`bun.JSError` or
+            // `error.OutOfMemory`); the Rust port's `Writable::init` returns
+            // `bun_core::Error`. Map non-thrown to OOM.
+            if global_this.has_exception() {
                 return Err(JsError::Thrown);
             }
-            return global_this.throw_out_of_memory();
+            let _ = err;
+            return Err(global_this.throw_out_of_memory());
         }
     };
 
     // PORT NOTE: Zig passed `allocator` (unused/autofix) — dropped in Rust port of Readable::init.
-    // SAFETY: subprocess_ptr is a live Box-allocated Subprocess; erase the borrow lifetime to
-    // 'static for the intrusive back-pointer (PipeReader stores it as a raw NonNull).
-    let subprocess_nn: core::ptr::NonNull<SubprocessT<'static>> =
-        unsafe { core::ptr::NonNull::new_unchecked((subprocess as *mut SubprocessT).cast()) };
+    // SAFETY: event_loop points to the live JSC EventLoop for this thread.
+    let event_loop_nn = unsafe { NonNull::new_unchecked(event_loop) };
     subprocess.stdout = Readable::init(
         stdio[1],
-        event_loop,
+        event_loop_nn,
         subprocess_nn,
         spawned.stdout,
         subprocess.stdout_maxbuf,
@@ -1124,7 +1126,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     );
     subprocess.stderr = Readable::init(
         stdio[2],
-        event_loop,
+        event_loop_nn,
         subprocess_nn,
         spawned.stderr,
         subprocess.stderr_maxbuf,
@@ -1135,7 +1137,8 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     // For existing terminal: keep slave_fd open so terminal can be reused for more spawns
     if let Some(info) = terminal_info.take() {
         terminal_js_value = info.js_value;
-        info.terminal.close_slave_fd();
+        // TODO(port): Terminal::close_slave_fd gated behind bun_terminal_body.
+        let _ = info.terminal;
         subprocess.flags.insert(Subprocess::Flags::OWNS_TERMINAL);
     }
     // existing_terminal: don't close slave_fd - user manages lifecycle and can reuse

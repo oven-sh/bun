@@ -1423,7 +1423,12 @@ where
                 .with_path(&file.pathlike)
                 .to_system_error();
                 sys.message = BunString::static_("Cannot stream a directory as a response body");
-                return self.run_error_handler(sys.to_error_instance(global_this));
+                let _ = (sys, global_this);
+                // `bun_sys::SystemError` is a local sys-crate struct; the JS
+                // conversion lives on `bun_jsc::SystemError`.
+                return self.run_error_handler(
+                    todo!("blocked_on: bun_sys::SystemError::to_error_instance"),
+                );
             }
             (bun_io::FileType::File, false)
         };
@@ -1433,7 +1438,7 @@ where
             _ => unreachable!(),
         };
         let stat_size: BlobSizeType =
-            BlobSizeType::try_from(stat.size.max(0)).unwrap();
+            BlobSizeType::try_from(stat.st_size.max(0)).unwrap();
         if let AnyBlob::Blob(b) = &mut self.blob {
             b.size = if is_regular { stat_size } else { original_size.min(stat_size) };
         }

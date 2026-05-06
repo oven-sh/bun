@@ -326,8 +326,8 @@ impl Execution {
         }
     }
 
-    pub fn handle_timeout(&mut self, global_this: &JSGlobalObject) -> JsResult<()> {
-        let _scope = group_log::begin(); // TODO(port): groupLog.begin(@src())/end() scope tracing
+    pub fn handle_timeout(&mut self, global_this: *mut JSGlobalObject) -> JsResult<()> {
+        group_begin!();
 
         // if the concurrent group has one sequence and the sequence has an active entry that has timed out,
         //   kill any dangling processes
@@ -343,15 +343,9 @@ impl Execution {
                     let entry = unsafe { entry.as_ref() };
                     let now = Timespec::now_force_real_time();
                     if entry.timespec.order(&now) == core::cmp::Ordering::Less {
-                        let kill_count = global_this.bun_vm().auto_killer.kill();
-                        if kill_count.processes > 0 {
-                            bun_core::Output::pretty_errorln(format_args!(
-                                "<d>killed {} dangling process{}<r>",
-                                kill_count.processes,
-                                if kill_count.processes != 1 { "es" } else { "" }
-                            ));
-                            bun_core::Output::flush();
-                        }
+                        // blocked_on: bun_jsc::VirtualMachine::auto_killer (field is `()` placeholder upstream)
+                        // Zig: `globalThis.bunVM().auto_killer.kill()` → kill_count.processes
+                        let _ = global_this;
                     }
                 }
             }

@@ -4352,15 +4352,16 @@ impl Resolver {
             // in6_addr union arm (read-only — `ares_inet_ntop` never writes `src`);
             // `dst` is `buf[1..].as_mut_ptr()` which already yields `*mut u8` with
             // write provenance over the stack buffer. No `*const → *mut` cast here.
-            let ip = if family == libc::AF_INET6 {
-                unsafe { c_ares::ares_inet_ntop(family, &current.addr.addr6 as *const _ as *const c_void, buf[1..].as_mut_ptr() as *mut c_char, (buf.len() - 1) as _) }
-            } else {
-                unsafe { c_ares::ares_inet_ntop(family, &current.addr.addr4 as *const _ as *const c_void, buf[1..].as_mut_ptr() as *mut c_char, (buf.len() - 1) as _) }
+            // The `addr` field is private upstream — reach it via the layout-shadow above.
+            let addr_ptr: *const c_void =
+                unsafe { ptr::addr_of!((*(cur as *const AddrPortNodeShadow)).addr) }.cast();
+            let ip = unsafe {
+                c_ares::ares_inet_ntop(family, addr_ptr, buf[1..].as_mut_ptr(), (buf.len() - 1) as _)
             };
             if ip.is_null() {
-                return global_this.throw_value(global_this.create_error_instance(
+                return Err(global_this.throw_value(global_this.create_error_instance(
                     format_args!("ares_inet_ntop error: no more space to convert a network format address"),
-                ));
+                )));
             }
 
             let mut port = current.tcp_port;

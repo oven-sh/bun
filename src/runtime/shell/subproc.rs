@@ -593,7 +593,7 @@ impl ShellSubprocess {
                 shellio.stderr.clone(),
                 event_loop,
                 core::ptr::null_mut(),
-                spawn_result.stderr,
+                spawn_stderr,
                 DEFAULT_MAX_BUFFER_SIZE,
                 true,
             ),
@@ -610,7 +610,6 @@ impl ShellSubprocess {
         // SAFETY: subprocess was just allocated and is uniquely owned here.
         let subproc = unsafe { &mut *subprocess };
         subproc.proc().set_exit_handler(subprocess as *mut (), &SHELL_EXIT_VTABLE);
-        stdio_consumed = true;
         let _ = scopeguard::ScopeGuard::into_inner(stdio_guard);
 
         if let Writable::Pipe(_pipe) = &mut subproc.stdin {
@@ -1960,7 +1959,7 @@ impl PipeReader {
 
         match core::mem::replace(&mut self.state, PipeReaderState::Done(Box::default())) {
             PipeReaderState::Pending => {
-                let stream = ReadableStream::from_pipe(global_object, self, &mut self.reader)?;
+                let stream = ReadableStream::from_pipe(global_object, self as *mut Self, &mut self.reader)?;
                 self.state = PipeReaderState::Done(Box::default());
                 Ok(stream)
             }

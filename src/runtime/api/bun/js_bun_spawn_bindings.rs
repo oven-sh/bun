@@ -1189,16 +1189,16 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             // no-op.
             #[cfg(unix)]
             {
-                if let Some(fd) = spawned.stdout {
+                if let Some(fd) = spawned_stdout {
                     fd.close();
                 }
-                if let Some(fd) = spawned.stderr {
+                if let Some(fd) = spawned_stderr {
                     fd.close();
                 }
             }
             #[cfg(not(unix))]
             {
-                for r in [spawned.stdout, spawned.stderr] {
+                for r in [spawned_stdout, spawned_stderr] {
                     match r {
                         spawn::WindowsStdioResult::Buffer(pipe) => {
                             pipe.close(Subprocess::on_pipe_close)
@@ -1238,7 +1238,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         core::mem::replace(&mut stdio[1], Stdio::Ignore),
         event_loop_nn,
         subprocess_nn,
-        spawned.stdout,
+        spawned_stdout,
         subprocess.stdout_maxbuf,
         IS_SYNC,
     );
@@ -1246,7 +1246,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         core::mem::replace(&mut stdio[2], Stdio::Ignore),
         event_loop_nn,
         subprocess_nn,
-        spawned.stderr,
+        spawned_stderr,
         subprocess.stderr_maxbuf,
         IS_SYNC,
     );

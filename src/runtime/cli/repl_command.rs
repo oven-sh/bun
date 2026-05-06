@@ -44,7 +44,7 @@ impl ReplCommand {
         Self::boot_repl_vm(ctx, &mut repl)
     }
 
-    fn boot_repl_vm(ctx: Command::Context<'_>, repl: &mut Repl<'_>) -> Result<(), bun_core::Error> {
+    fn boot_repl_vm<'a>(ctx: Command::Context<'_>, repl: &'a mut Repl<'a>) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         // Load bunfig if not already loaded
         if !ctx.debug.loaded_bunfig {

@@ -82,7 +82,7 @@ makes it compile crate-by-crate.
 | `std.fs.path.sep` / `sep_str` / `delimiter` / `isAbsolute` | `bun_paths` | `bun_paths::SEP: u8`, `SEP_STR: &str`, `DELIMITER: u8`, `is_absolute(&[u8])` — do NOT use `std::path` (operates on `OsStr`, wrong type) |
 | `bun.windows`, `bun.c`, `bun.darwin`, `bun.linux` | `bun_sys::windows` etc. | `bun.c` is `translated-c-headers` |
 | `bun.hash(...)` | `bun_wyhash::hash` | wraps **`std.hash.Wyhash`** (seed 0), NOT `Wyhash11` |
-| `bun.Wyhash11` | `bun_wyhash::Wyhash11` | distinct algorithm; do not conflate with `bun.hash` |
+| `bun.Wyhash11` | `bun_wyhash::Wyhash11` | port of an *earlier* Zig wyhash — used for **on-disk compatibility** (lockfile, npm manifest cache, integrity). Distinct from `std.hash.Wyhash`. Do NOT swap to `Wyhash` in `bun_install` — existing `.lockb`/`.npm` files would invalidate. |
 | `bun.BoringSSL` | `bun_boringssl` (+ `bun_boringssl_sys`) | |
 | `bun.shell` | `bun_shell` | arena+NodeId, see plan |
 | `bun.bake` | `bun_bake` | |

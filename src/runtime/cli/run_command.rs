@@ -4429,7 +4429,7 @@ impl RunCommand {
                         )?;
 
                         let package_json_path =
-                            root_dir_info.enclosing_package_json.unwrap().source.path.text;
+                            root_dir_info_ref.enclosing_package_json.unwrap().source.path.text;
                         let package_json_dir = strings::without_trailing_slash(
                             strings::without_suffix_comptime(package_json_path, b"package.json"),
                         );
@@ -4638,7 +4638,7 @@ impl RunCommand {
             if let Some(destination) = dest {
                 let out = destination.as_bytes();
                 // SAFETY: non-null `*mut FileSystem` owned by transpiler.
-                let stored = unsafe { &mut *this_transpiler.fs }.dirname_store.append(out)?;
+                let stored = unsafe { &mut *this_transpiler.fs }.dirname_store.append_slice(out)?;
                 Self::run_binary_without_bunx_path(
                     ctx,
                     stored,

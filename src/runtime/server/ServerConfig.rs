@@ -481,7 +481,7 @@ impl ServerConfig {
 
 pub mod _gated_from_js {
 use super::*;
-use crate::server::jsc::{CallFrame, JSPropertyIterator, JsError};
+use crate::server::jsc::{JSPropertyIterator, JsError};
 use crate::node::crypto::JSValueCryptoExt as _; // with_async_context_if_needed
 use bun_core::fmt as bun_fmt;
 
@@ -1190,12 +1190,13 @@ impl ServerConfig {
                         if args.ssl_config.is_none() {
                             args.ssl_config = Some(ssl_config);
                         } else {
+                            // Zig: `ssl_config.server_name[0] == 0` (empty C string)
                             if ssl_config
                                 .server_name
                                 .as_deref()
                                 .map(|s| s.to_bytes())
-                                .unwrap_or(b"\0")[0]
-                                == 0
+                                .unwrap_or(b"")
+                                .is_empty()
                             {
                                 drop(ssl_config);
                                 return Err(global.throw_invalid_arguments(

@@ -1499,7 +1499,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             )? {
                 let old = core::mem::replace(
                     &mut body,
-                    HTTPRequestBody::ReadableStream(ReadableStream::Strong::init(
+                    HTTPRequestBody::ReadableStream(readable_stream::Strong::init(
                         stream,
                         global_this,
                     )),
@@ -1518,19 +1518,13 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     }
     if body.needs_to_read_file() {
         'prepare_body: {
-            let opened_fd_res: bun_sys::Result<bun_sys::Fd> =
-                match &body.store().unwrap().data.file.pathlike {
-                    node::PathOrFileDescriptor::Fd(fd) => bun_sys::dup(*fd),
-                    node::PathOrFileDescriptor::Path(path) => bun_sys::open(
-                        path.slice_z(&mut global_this.bun_vm().node_fs().sync_error_buf),
-                        if cfg!(windows) {
-                            bun_sys::O::RDONLY
-                        } else {
-                            bun_sys::O::RDONLY | bun_sys::O::NOCTTY
-                        },
-                        0,
-                    ),
-                };
+            // TODO(port): `body.store().data.file.pathlike` reaches through several
+            // not-yet-stabilized fields (`BlobStore.data.file` is gated). Stub the
+            // syscall path until BlobStore::data is un-gated.
+            let opened_fd_res: bun_sys::Result<bun_core::Fd> = {
+                let _ = &body;
+                todo!("blocked_on: crate::webcore::blob::Store.data.file.pathlike")
+            };
 
             let opened_fd = match opened_fd_res {
                 Err(err) => {
@@ -1560,19 +1554,19 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     #[cfg(target_os = "macos")]
                     {
                         // macOS only supports regular files for sendfile()
-                        if !bun_sys::S::ISREG(stat.mode) {
+                        if !bun_sys::S::ISREG(stat.st_mode) {
                             break 'use_sendfile;
                         }
                     }
 
                     // if it's < 32 KB, it's not worth it
-                    if stat.size < 32 * 1024 {
+                    if stat.st_size < 32 * 1024 {
                         break 'use_sendfile;
                     }
 
                     let original_size = body.any_blob().blob().size;
-                    let stat_size = Blob::SizeType::try_from(stat.size).unwrap();
-                    let blob_size = if bun_sys::S::ISREG(stat.mode) {
+                    let stat_size = blob::SizeType::try_from(stat.st_size).unwrap();
+                    let blob_size = if bun_sys::S::ISREG(stat.st_mode) {
                         stat_size
                     } else {
                         original_size.min(stat_size)
@@ -1585,7 +1579,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                         content_size: blob_size,
                     });
 
-                    if bun_sys::S::ISREG(stat.mode) {
+                    if bun_sys::S::ISREG(stat.st_mode) {
                         let sf = http_body.sendfile_mut();
                         sf.offset = sf.offset.min(stat_size);
                         sf.remain = sf

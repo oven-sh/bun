@@ -3278,7 +3278,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // the rest of the pipeline never needs to know which transport
         // delivered the bytes.
         if Ctx::IS_H3 {
-            request_object.set_fetch_headers(FetchHeaders::create_from_h3(req as *mut _ as *mut c_void));
+            // SAFETY: create_from_h3 returns a +1-ref FetchHeaders; adopt into RAII wrapper.
+            request_object.set_fetch_headers(Some(unsafe {
+                crate::webcore::response::HeadersRef::adopt(
+                    FetchHeaders::create_from_h3(req as *mut _ as *mut c_void),
+                )
+            }));
             let path = ReqLike::url(req);
             if !path.is_empty() && path[0] == b'/' {
                 if let Some(host) = ReqLike::header(req, b"host") {

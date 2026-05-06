@@ -79,10 +79,8 @@ impl Expansion {
         //
         // Gated until: ast::Atom/SimpleAtom/CompoundAtom, bun_glob::GlobWalker,
         // ShellExecEnv::dupe_for_subshell (for $(...)).
-        
-        {
-            include!("Expansion_next_body.rs");
-        }
+        //
+        // blocked_on: ast::Atom, bun_glob::GlobWalker, ShellExecEnv::dupe_for_subshell
         let parent = interp.as_expansion(this).base.parent;
         interp.child_done(parent, this, 0)
     }

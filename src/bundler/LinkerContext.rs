@@ -2045,7 +2045,13 @@ impl<'a> LinkerContext<'a> {
 #[cfg(feature = "css")]
 #[inline]
 fn css_modules_hash_shim(pretty_path: &[u8]) -> Box<[u8]> {
-    ::bun_css::css_modules::hash(format_args!("{}", bstr::BStr::new(pretty_path)), false)
+    let bump = ::bumpalo::Bump::new();
+    let hashed = ::bun_css::css_modules::hash(
+        &bump,
+        format_args!("{}", bstr::BStr::new(pretty_path)),
+        false,
+    );
+    Box::<[u8]>::from(hashed)
 }
 #[cfg(not(feature = "css"))]
 #[inline]

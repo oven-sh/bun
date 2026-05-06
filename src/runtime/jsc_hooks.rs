@@ -1297,29 +1297,39 @@ fn transpile_source_code_inner(
                 }
 
                 // Spec :561-592 — final ResolvedSource.
+                // TODO(b2-cycle): `package_json` is `Option<*mut c_void>`
+                // (ImportWatcher gated) — spec reads `pj.module_type` to
+                // override `module_type`. Fall back to `module_type` until
+                // `bun_watcher` un-gates the typed `*mut PackageJSON`.
+                let _ = package_json;
                 let tag = match loader {
                     L::Json | L::Jsonc => ResolvedSourceTag::JsonForObjectLoader,
-                    L::Js | L::Jsx | L::Ts | L::Tsx => {
-                        let mt = package_json
-                            .and_then(|pj| unsafe { (*pj).module_type })
-                            .unwrap_or(module_type);
-                        match mt {
-                            ModuleType::Esm => ResolvedSourceTag::PackageJsonTypeModule,
-                            ModuleType::Cjs => ResolvedSourceTag::PackageJsonTypeCommonjs,
-                            ModuleType::Unknown => ResolvedSourceTag::Javascript,
-                        }
-                    }
+                    L::Js | L::Jsx | L::Ts | L::Tsx => match module_type {
+                        ModuleType::Esm => ResolvedSourceTag::PackageJsonTypeModule,
+                        ModuleType::Cjs => ResolvedSourceTag::PackageJsonTypeCommonjs,
+                        _ => ResolvedSourceTag::Javascript,
+                    },
                     _ => ResolvedSourceTag::Javascript,
                 };
 
                 let written = printer.ctx.get_written();
-                let source_code = cache
-                    .output_code
-                    .take()
-                    .unwrap_or_else(|| bun_string::String::clone_latin1(written));
+                // PORT NOTE: bundler-side `cache.output_code` is
+                // `Option<Box<[u8]>>` (T6's `bun.String` wrapper lives in
+                // `bun_jsc::RuntimeTranspilerCache`); clone into a fresh
+                // `bun.String` either way. Spec :573 hands the `bun.String`
+                // straight through.
+                let source_code = match cache.output_code.take() {
+                    Some(b) => bun_string::String::clone_latin1(&b),
+                    None => bun_string::String::clone_latin1(written),
+                };
                 if written.len() > 1024 * 1024 * 2 || unsafe { (*jsc_vm).smol } {
                     // PERF(port): spec deinits the printer buffer; Rust drops on
                     // next `reset()`. TODO(port): expose `BufferWriter::deinit`.
+                }
+
+                // fd close — see PORT NOTE at the top of this block.
+                if should_close_input_file_fd && input_file_fd.is_valid() {
+                    input_file_fd.close();
                 }
 
                 return Ok(ResolvedSource {
@@ -1327,32 +1337,15 @@ fn transpile_source_code_inner(
                     specifier: input_specifier.dupe_ref(),
                     source_url: create_if_different(input_specifier, path.text),
                     is_commonjs_module,
-                    module_info: module_info.unwrap_or(core::ptr::null_mut()),
+                    // TODO(b2-blocked): `analyze_transpiled_module::ModuleInfo::create`.
+                    module_info: core::ptr::null_mut(),
                     tag,
                     ..Default::default()
                 });
             }
-
-            // Un-gated fallthrough: until `__phase_a_draft` compiles, signal
-            // ParseError so the caller routes through `process_fetch_log`.
-            let _ = (
-                macro_remappings,
-                module_type_only_for_wrappables,
-                virtual_source,
-                hash,
-                is_main,
-                fd,
-                input_file_fd,
-                should_close_input_file_fd,
-            );
-            // PORT NOTE: do NOT clear `arena_guard.2` here — no parse ran, so
-            // nothing references the arena. Let the guard give it back to
-            // `vm.module_loader.transpile_source_code_arena` (or drop it).
-            // The spec only sets `give_back_arena = false` after a real parse
-            // so log spans into the arena stay valid; that precondition does
-            // not hold on this un-gated fallthrough.
-            let _ = &mut arena_guard;
-            Err(bun_core::err!("ParseError"))
+            // (parse→link→print arm always `return`s; no fallthrough.)
+            #[allow(unreachable_code)]
+            { unreachable!() }
         }
 
         // Spec :595 — `provideFetch()` should be called.

@@ -658,16 +658,17 @@ impl TSConfigJSON {
                         // and then, if that didn't work, also check "projectRoot/generated/folder1/file2".
                         match &value_prop.data {
                             js_ast::ExprData::EArray(e_array) => {
-                                let array = e_array.slice();
+                                let array = e_array.items.slice();
 
                                 if !array.is_empty() {
                                     let mut values: Vec<Box<[u8]>> =
                                         Vec::with_capacity(array.len());
                                     // errdefer allocator.free(values) — handled by Drop.
                                     for expr in array {
-                                        if let Some(str_) = expr.as_string() {
+                                        if let Some(str_) = expr.as_utf8_string_literal() {
                                             let str = match Self::str_replacing_templates(
-                                                str_, source,
+                                                Box::from(str_),
+                                                source,
                                             ) {
                                                 Ok(v) => v,
                                                 Err(_) => return Ok(None),
@@ -691,18 +692,18 @@ impl TSConfigJSON {
                                         // extends-merge in resolver.zig) pass the stored slice to
                                         // Allocator.free, which requires the original length.
                                         values.shrink_to_fit();
-                                        result.paths.put(key, values);
+                                        let _ = result.paths.put(Box::from(key), values);
                                     }
                                     // else: Every entry was invalid; nothing to store. `values` drops here.
                                 }
                             }
                             _ => {
                                 let _ = log.add_range_warning_fmt(
-                                    source,
+                                    Some(source),
                                     source.range_of_string(key_prop.loc),
                                     format_args!(
                                         "Substitutions for pattern \"{}\" should be an array",
-                                        bstr::BStr::new(&key)
+                                        bstr::BStr::new(key)
                                     ),
                                 );
                             }

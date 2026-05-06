@@ -1044,7 +1044,7 @@ impl EnvironmentVariableName {
 // PORT NOTE: Zig `css.DefineEnumProperty(@This())` provides eql/hash/parse/
 // to_css/deep_clone via comptime reflection over @tagName. Replaced by an
 // `EnumProperty` impl below (kebab-case match) — same protocol surface.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, strum::IntoStaticStr, CssEql, CssHash, DeepClone)]
+#[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum UAEnvironmentVariable {
     /// The safe area inset from the top of the viewport.
     #[strum(serialize = "safe-area-inset-top")]
@@ -1076,6 +1076,22 @@ pub enum UAEnvironmentVariable {
     /// The viewport segment right position.
     #[strum(serialize = "viewport-segment-right")]
     ViewportSegmentRight,
+}
+
+// PORT NOTE: inherent (not `#[derive(CssEql/CssHash/DeepClone)]`) so the
+// `EnvironmentVariableName` derive's method-syntax `__f0.hash(hasher)` /
+// `__f0.deep_clone(bump)` resolve unambiguously — `EnumProperty` provides
+// trait-default `eql(lhs,rhs)` / `deep_clone(&self)` / `hash(&self)` with
+// different shapes that would otherwise collide.
+impl UAEnvironmentVariable {
+    #[inline]
+    pub fn eql(&self, other: &Self) -> bool { *self == *other }
+    #[inline]
+    pub fn hash(&self, hasher: &mut Wyhash) {
+        hasher.update(&(*self as u32).to_ne_bytes());
+    }
+    #[inline]
+    pub fn deep_clone(&self, _bump: &Arena) -> Self { *self }
 }
 
 impl EnumProperty for UAEnvironmentVariable {

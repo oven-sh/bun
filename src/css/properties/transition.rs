@@ -1,3 +1,4 @@
+#![allow(unused_imports, dead_code, unused_macros)]
 use crate::SmallList;
 use crate::Printer;
 use crate::PrintErr;
@@ -30,6 +31,7 @@ pub struct Transition {
     pub timing_function: EasingFunction,
 }
 
+#[cfg(any())] // blocked_on: PropertyId/Time/EasingFunction::{parse,to_css,deep_clone} surface
 impl Transition {
     // TODO(port): PropertyFieldMap was a Zig comptime anonymous struct mapping
     // field names → PropertyIdTag, consumed by reflection-based shorthand helpers.

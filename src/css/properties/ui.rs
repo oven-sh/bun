@@ -126,7 +126,7 @@ pub struct Resize;
 /// A value for the [cursor](https://www.w3.org/TR/2021/WD-css-ui-4-20210316/#cursor) property.
 pub struct Cursor {
     /// A list of cursor images.
-    pub images: SmallList<CursorImage>,
+    pub images: SmallList<CursorImage, 1>,
     /// A pre-defined cursor.
     pub keyword: CursorKeyword,
 }

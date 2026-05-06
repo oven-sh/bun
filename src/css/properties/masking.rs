@@ -1,3 +1,4 @@
+#![allow(unused_imports, dead_code)]
 use crate as css;
 use crate::Printer;
 use crate::PrintErr;
@@ -10,6 +11,8 @@ use crate::css_values::length::LengthOrNumber;
 use crate::css_values::position::Position;
 
 use crate::css_properties::border_radius::BorderRadius;
+// `shape` is still gated; FillRule referenced only by the (gated) BasicShape::Polygon body.
+#[cfg(any())]
 use crate::css_properties::shape::FillRule;
 
 use crate::css_properties::background::BackgroundSize;

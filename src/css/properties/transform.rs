@@ -1,3 +1,4 @@
+#![allow(unused_imports, dead_code)]
 use bumpalo::collections::Vec as BumpVec;
 use bun_alloc::Arena as Bump;
 use bun_string::strings;
@@ -5,30 +6,35 @@ use bun_string::strings;
 use crate::css_properties::{Property, PropertyId};
 use crate::css_values::angle::Angle;
 use crate::css_values::length::{LengthPercentage, LengthValue as Length};
+use crate::css_values::number::CSSNumberFns;
 use crate::css_values::percentage::NumberOrPercentage;
 use crate::prefixes;
 use crate::{
-    CSSNumberFns, DeclarationList, Parser, PrintErr, Printer, PrinterOptions,
+    DeclarationList, Parser, PrintErr, Printer, PrinterOptions,
     PropertyHandlerContext, Result, Token, VendorPrefix,
 };
 
 /// A value for the [transform](https://www.w3.org/TR/2019/CR-css-transforms-1-20190214/#propdef-transform) property.
-#[derive(Clone, PartialEq)]
-pub struct TransformList<'bump> {
-    pub v: BumpVec<'bump, Transform>,
+// PORT NOTE: was `BumpVec<'bump, Transform>`; downgraded to `Vec` so the
+// `Property` enum (properties_generated.rs) stays lifetime-free. Re-thread
+// `'bump` through `Property<'a>` crate-wide in a later pass (see line :1096).
+#[derive(Clone, PartialEq, Default)]
+pub struct TransformList {
+    pub v: Vec<Transform>,
 }
 
-impl<'bump> TransformList<'bump> {
+#[cfg(any())] // blocked_on: Parser::allocator() + Transform::parse + Printer::new signature + Printer field access
+impl TransformList {
     pub fn parse(input: &mut Parser<'_>) -> Result<Self> {
         if input
             .try_parse(|i| i.expect_ident_matching(b"none"))
             .is_ok()
         {
-            return Ok(Self { v: BumpVec::new_in(input.allocator()) });
+            return Ok(Self { v: Vec::new() });
         }
 
         input.skip_whitespace();
-        let mut results = BumpVec::<Transform>::new_in(input.allocator());
+        let mut results = Vec::<Transform>::new();
         let first = Transform::parse(input)?;
         results.push(first);
 
@@ -160,6 +166,7 @@ pub enum Transform {
     Matrix3d(Matrix3d<f32>),
 }
 
+#[cfg(any())] // blocked_on: Angle/Length/LengthPercentage/NumberOrPercentage::{parse,to_css,is_zero} + CSSNumberFns
 impl Transform {
     pub fn parse(input: &mut Parser) -> Result<Transform> {
         let function = input.expect_function()?;
@@ -669,6 +676,7 @@ pub enum Perspective {
     Length(Length),
 }
 
+#[cfg(any())] // blocked_on: Length::{parse,to_css}
 impl Perspective {
     pub fn eql(&self, other: &Self) -> bool {
         self == other
@@ -696,6 +704,7 @@ pub enum Translate {
     },
 }
 
+#[cfg(any())] // blocked_on: LengthPercentage/Length::{parse,to_css,is_zero}
 impl Translate {
     pub fn parse(input: &mut Parser) -> Result<Self> {
         if input
@@ -776,6 +785,7 @@ pub struct Rotate {
     pub angle: Angle,
 }
 
+#[cfg(any())] // blocked_on: Angle::{parse,to_css} + CSSNumberFns
 impl Rotate {
     pub fn parse(input: &mut Parser) -> Result<Self> {
         if input
@@ -892,6 +902,7 @@ pub enum Scale {
     },
 }
 
+#[cfg(any())] // blocked_on: NumberOrPercentage::{parse,to_css}
 impl Scale {
     pub fn parse(input: &mut Parser) -> Result<Self> {
         if input
@@ -960,16 +971,40 @@ impl Scale {
     }
 }
 
+// PORT NOTE: was `TransformHandler<'bump>` holding `TransformList<'bump>`; the
+// `Property` enum is lifetime-free (see TransformList above), so the handler
+// is too. Re-thread `'bump` crate-wide in a later pass.
 #[derive(Default)]
-pub struct TransformHandler<'bump> {
-    pub transform: Option<(TransformList<'bump>, VendorPrefix)>,
+pub struct TransformHandler {
+    pub transform: Option<(TransformList, VendorPrefix)>,
     pub translate: Option<Translate>,
     pub rotate: Option<Rotate>,
     pub scale: Option<Scale>,
     pub has_any: bool,
 }
 
-impl<'bump> TransformHandler<'bump> {
+impl TransformHandler {
+    // No-op stubs so `DeclarationHandler` compiles; real bodies are gated below.
+    #[inline]
+    pub fn handle_property(
+        &mut self,
+        _property: &Property,
+        _dest: &mut DeclarationList<'_>,
+        _context: &mut PropertyHandlerContext<'_>,
+    ) -> bool {
+        false
+    }
+    #[inline]
+    pub fn finalize(
+        &mut self,
+        _dest: &mut DeclarationList<'_>,
+        _context: &mut PropertyHandlerContext<'_>,
+    ) {
+    }
+}
+
+#[cfg(any())] // blocked_on: Property variant payloads + prefixes::Feature method names
+impl TransformHandler {
     pub fn handle_property(
         &mut self,
         property: &Property,

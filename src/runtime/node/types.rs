@@ -770,48 +770,57 @@ impl Encoding {
             .throw()
     }
 
-    pub fn encode_with_size<const SIZE: usize>(
+    /// Zig `encodeWithSize(comptime size, *const [size]u8)`. The `comptime size`
+    /// is taken as a runtime arg here because callers pass non-const expressions
+    /// (e.g. `A::DIGEST_LENGTH`) and stable Rust forbids const-generic
+    /// arithmetic for the stack-buffer optimization anyway.
+    pub fn encode_with_size(
         self,
         global_object: &JSGlobalObject,
-        input: &[u8; SIZE],
+        size: usize,
+        input: &[u8],
     ) -> JsResult<JSValue> {
-        // PERF(port): Zig used comptime-sized stack buffers; stable Rust forbids
-        // const-generic arithmetic in array lengths, so we heap-allocate. Revisit
-        // once `generic_const_exprs` stabilizes or callers pass concrete sizes.
+        debug_assert_eq!(input.len(), size);
+        // PERF(port): Zig used comptime-sized stack buffers; we heap-allocate.
         match self {
             Self::Base64 => {
-                let mut buf = vec![0u8; bun_core::base64::standard_encoder_calc_size(SIZE)];
+                let mut buf = vec![0u8; bun_core::base64::standard_encoder_calc_size(size)];
                 let len = bun_core::base64::encode(&mut buf, input);
-                Ok(ZigString::init(&buf[..len]).to_js(global_object))
+                Ok(jsc::zig_string::ZigString::init(&buf[..len]).to_js(global_object))
             }
             Self::Base64url => {
-                let mut buf = vec![0u8; bun_base64::simdutf_encode_len_url_safe(SIZE)];
+                let mut buf = vec![0u8; bun_base64::simdutf_encode_len_url_safe(size)];
                 let encoded = bun_base64::simdutf_encode_url_safe(&mut buf, input);
-                Ok(ZigString::init(&buf[..encoded]).to_js(global_object))
+                Ok(jsc::zig_string::ZigString::init(&buf[..encoded]).to_js(global_object))
             }
             Self::Hex => {
-                let mut buf = vec![0u8; SIZE * 4];
+                let mut buf = vec![0u8; size * 4];
                 use std::io::Write;
                 let mut cursor: &mut [u8] = &mut buf[..];
                 // TODO(port): Zig "{x}" on a byte slice prints lowercase hex per byte.
                 for b in input {
                     write!(cursor, "{:02x}", b).expect("unreachable");
                 }
-                let written = SIZE * 4 - cursor.len();
+                let written = size * 4 - cursor.len();
                 let out = &buf[..written];
-                Ok(ZigString::init(out).to_js(global_object))
+                Ok(jsc::zig_string::ZigString::init(out).to_js(global_object))
             }
             Self::Buffer => jsc::ArrayBuffer::create_buffer(global_object, input),
             // PERF(port): was comptime monomorphization (`inline else`) — profile in Phase B
-            enc => crate::webcore::encoding::to_string(input, global_object, enc),
+            enc => crate::webcore::encoding::to_string(input, global_object, enc.into()),
         }
     }
 
-    pub fn encode_with_max_size<const MAX_SIZE: usize>(
+    /// Zig `encodeWithMaxSize(comptime max_size, []const u8)`. `max_size` is a
+    /// runtime arg (see `encode_with_size`); callers pass `EVP_MAX_MD_SIZE` etc.
+    pub fn encode_with_max_size(
         self,
         global_object: &JSGlobalObject,
+        max_size: usize,
         input: &[u8],
     ) -> JsResult<JSValue> {
+        #[allow(non_snake_case)]
+        let MAX_SIZE = max_size;
         debug_assert!(
             input.len() <= MAX_SIZE,
             "input length ({}) should not exceed max_size ({})",

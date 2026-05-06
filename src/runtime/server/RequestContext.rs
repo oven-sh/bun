@@ -2471,19 +2471,23 @@ where
                         }
 
                         // Create error message for the stream rejection
+                        // SAFETY: vm/transpiler/fs are live raw pointers.
+                        let cwd = unsafe { (*server.vm().transpiler.fs).top_level_dir.clone() };
                         let fallback_container = Box::new(Api::FallbackMessageContainer {
-                            message: b"Stream error during server-side rendering"
-                                .to_vec()
-                                .into_boxed_slice(),
+                            message: Some(
+                                b"Stream error during server-side rendering"
+                                    .to_vec()
+                                    .into_boxed_slice(),
+                            ),
                             router: None,
                             reason: Some(Api::FallbackStep::fetch_event_handler),
-                            cwd: server.vm().transpiler.fs.top_level_dir.clone(),
-                            problems: Api::Problems {
+                            cwd,
+                            problems: Some(Api::Problems {
                                 code: 500,
-                                name: "StreamError",
+                                name: b"StreamError".to_vec().into_boxed_slice(),
                                 exceptions: exception_list,
                                 build: Api::Log::default(),
-                            },
+                            }),
                         });
 
                         let mut bb: Vec<u8> = Vec::new();

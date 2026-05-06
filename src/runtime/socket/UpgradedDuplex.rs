@@ -135,20 +135,15 @@ impl<'a> UpgradedDuplex<'a> {
         // global is set in `from()` whenever origin is set.
         let Some(global) = self.global else { return };
 
-        let write_or_end = if msg_more {
-            match duplex.get_function(global, "write") {
-                Ok(Some(f)) => f,
-                _ => return,
-            }
-        } else {
-            match duplex.get_function(global, "end") {
-                Ok(Some(f)) => f,
-                _ => return,
-            }
+        // Zig `JSValue.getFunction` — `.get()` + callable check (`catch return orelse return`).
+        let name = if msg_more { "write" } else { "end" };
+        let write_or_end = match duplex.get(global, name) {
+            Ok(Some(f)) if f.is_callable() => f,
+            _ => return,
         };
 
         if let Some(data) = data {
-            let buffer = match bun_jsc::BinaryType::Buffer.to_js(data, global) {
+            let buffer = match bun_jsc::array_buffer::BinaryType::Buffer.to_js(data, global) {
                 Ok(b) => b,
                 Err(err) => {
                     (self.handlers.on_error)(self.handlers.ctx, global.take_exception(err));

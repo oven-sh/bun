@@ -2297,6 +2297,8 @@ pub extern "C" fn Bun__BodyValueBufferer__onRejectStream(
 
 } // mod _jsc_gated
 
+pub use _jsc_gated::{extract, ValueBufferer};
+
 /// Stub `BodyMixin` so `impl BodyMixin for Response/Request {}` type-checks
 /// while the real trait (with `get_text`/`get_json`/etc. host-fn defaults)
 /// is gated above. The real trait extends `BodyOwnerJs` and provides ~9

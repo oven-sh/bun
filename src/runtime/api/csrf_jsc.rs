@@ -13,9 +13,7 @@ use crate::node::Encoding as NodeEncoding;
 /// First argument is secret (required), second is options (optional)
 #[bun_jsc::host_fn]
 pub fn csrf__generate(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    if bun_analytics::Features::csrf_generate() < usize::MAX {
-        bun_analytics::Features::csrf_generate_add(1);
-    }
+    bun_analytics::features::csrf_generate.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
 
     // We should have at least one argument (secret)
     let args = frame.arguments();
@@ -127,9 +125,7 @@ pub fn csrf__generate(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
 /// First argument is token (required), second is options (optional)
 #[bun_jsc::host_fn]
 pub fn csrf__verify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    if bun_analytics::Features::csrf_verify() < usize::MAX {
-        bun_analytics::Features::csrf_verify_add(1);
-    }
+    bun_analytics::features::csrf_verify.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
     // We should have at least one argument (token)
     let args = frame.arguments();
     if args.len() < 1 {

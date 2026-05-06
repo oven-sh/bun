@@ -33,6 +33,7 @@ bun_bundler = { workspace = true, default-features = false }
 bun_clap.workspace = true
 bun_collections.workspace = true
 bun_crash_handler.workspace = true
+bun_csrf.workspace = true
 # phase-c: css is not on the `bun-rs -e` hot path; gate behind a feature so
 # bun_bin does not transitively compile bun_css.
 bun_cares_sys.workspace = true

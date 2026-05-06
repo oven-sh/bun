@@ -1278,7 +1278,7 @@ impl PackageJSON {
             Ok(None) => return None,
             Err(err) => {
                 if cfg!(debug_assertions) {
-                    Output::print_error("{}", format_args!(
+                    Output::print_error(&format_args!(
                         "{}: JSON parse error: {}",
                         bstr::BStr::new(package_json_path),
                         bstr::BStr::new(err.name())

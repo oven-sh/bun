@@ -3939,9 +3939,11 @@ fn wrap_unhandled_rejection_error_for_uncaught_exception(
         return reason;
     }
     // SAFETY: extern "C" FFI; `global_object` is the live VM global.
+    // `vm_ptr()` returns the FFI `*mut VM` directly so the C++ side
+    // (`JSC::VM&`) receives a pointer with mutable provenance.
     let reason_str = unsafe {
         let s = Bun__noSideEffectsToString(
-            global_object.vm() as *const VM as *mut VM,
+            global_object.vm_ptr(),
             global_object.as_ptr(),
             reason,
         );

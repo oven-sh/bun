@@ -231,23 +231,18 @@ pub fn usable_size(ptr: *const u8) -> usize {
 
 // ── out_of_memory ─────────────────────────────────────────────────────────
 // Source: src/bun.zig `outOfMemory()` → `crash_handler.crashHandler(.out_of_memory, ..)`.
-// crash_handler is higher-tier; per PORTREF §Dispatch debug-hooks pattern, T0
-// exposes an AtomicPtr hook the crash_handler crate populates at init.
-
-/// Set by `bun_crash_handler::install_hooks()`. Signature: `extern "C" fn() -> !`.
-pub static OOM_CRASH_HOOK: core::sync::atomic::AtomicPtr<()> =
-    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+//
+// PORTING.md §Forbidden: no fn-ptr hooks to break dep cycles. `bun_alloc` is
+// T0 and must not call up into `bun_crash_handler`, so the OOM path here is a
+// direct abort (Zig's `bun.outOfMemory()` is `noreturn` either way). The rich
+// crash report is produced by the platform's signal/SEH handler installed by
+// `bun_crash_handler` at process startup; aborting here triggers it.
 
 #[cold]
 #[inline(never)]
 pub fn out_of_memory() -> ! {
-    let hook = OOM_CRASH_HOOK.load(core::sync::atomic::Ordering::Acquire);
-    if !hook.is_null() {
-        // SAFETY: `install_hooks` only ever stores an `extern "C" fn() -> !`.
-        let f: extern "C" fn() -> ! = unsafe { core::mem::transmute(hook) };
-        f();
-    }
-    // Fallback before hooks are installed (very early startup / tests).
+    // Best-effort diagnostic before the abort handler takes over.
+    let _ = std::io::Write::write_all(&mut std::io::stderr(), b"bun: out of memory\n");
     std::process::abort()
 }
 

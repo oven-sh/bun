@@ -1562,11 +1562,13 @@ pub mod package_manifest {
                         save_task.cache_dir,
                     ) {
                         if PackageManager::verbose_install() {
-                            Output::warn(format_args!(
+                            Output::warn(
                                 "Error caching manifest for {}: {}",
-                                bstr::BStr::new(save_task.manifest.name()),
-                                err.name(),
-                            ));
+                                (
+                                    bstr::BStr::new(save_task.manifest.name()),
+                                    err.name(),
+                                ),
+                            );
                             Output::flush();
                         }
                     }
@@ -1580,11 +1582,11 @@ pub mod package_manifest {
                 scope,
                 tmpdir,
                 cache_dir,
-                task: ThreadPool::Task { callback: SaveTask::run },
+                task: PoolTask { node: PoolNode::default(), callback: SaveTask::run },
             }));
 
             // SAFETY: task is a valid Box-allocated SaveTask
-            let batch = ThreadPool::Batch::from(unsafe { &mut (*task).task });
+            let batch = PoolBatch::from(unsafe { core::ptr::addr_of_mut!((*task).task) });
             PackageManager::get().thread_pool.schedule(batch);
         }
 

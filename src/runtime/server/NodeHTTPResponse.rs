@@ -1671,10 +1671,10 @@ impl NodeHTTPResponse {
                 }
                 BodyReadState::None => {}
             }
-            if self.body_read_ref.has() {
-                self.body_read_ref.unref(global_object.bun_vm());
+            if self.body_read_ref.has {
+                self.body_read_ref.unref(bun_vm_mut(global_object));
             }
-            return;
+            return Ok(true);
         }
 
         js::on_data_set_cached(
@@ -1684,7 +1684,7 @@ impl NodeHTTPResponse {
         );
         self.flags.insert(Flags::HAS_CUSTOM_ON_DATA);
         if let Some(raw_response) = &self.raw_response {
-            raw_response.on_data::<NodeHTTPResponse>(Self::on_data, self);
+            raw_response.on_data(on_data_shim, self as *mut Self);
         }
         self.flags.remove(Flags::IS_DATA_BUFFERED_DURING_PAUSE);
 
@@ -1692,7 +1692,8 @@ impl NodeHTTPResponse {
         // or sets `is_data_buffered_during_pause_last`, both of which are rejected by the guard above.
         // So reaching here, `body_read_ref` is still held from create(). Do not re-acquire it or
         // `this.ref()` — there would be no balancing release (PR #18564 removed the paired derefs).
-        debug_assert!(self.body_read_ref.has());
+        debug_assert!(self.body_read_ref.has);
+        Ok(true)
     }
 
     #[bun_jsc::host_fn(method)]

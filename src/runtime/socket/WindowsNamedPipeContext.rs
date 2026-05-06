@@ -375,13 +375,14 @@ impl WindowsNamedPipeContext {
         // PORT NOTE: reshaped for borrowck — errdefer references `socket` which was moved into `this`
         let guard = scopeguard::guard(this, |this| {
             // SAFETY: `this` is live; create() returned it and no deref has fired yet
-            let this_ref = unsafe { &mut *this };
-            match &this_ref.socket {
+            match unsafe { (*this).socket } {
                 SocketType::Tls(tls) => {
-                    let _ = tls.handle_connect_error(SystemErrno::ENOENT as i32);
+                    // SAFETY: +1 ref held; live until `Self::deref` below.
+                    let _ = unsafe { (*tls).handle_connect_error(SystemErrno::ENOENT as i32) };
                 }
                 SocketType::Tcp(tcp) => {
-                    let _ = tcp.handle_connect_error(SystemErrno::ENOENT as i32);
+                    // SAFETY: +1 ref held; live until `Self::deref` below.
+                    let _ = unsafe { (*tcp).handle_connect_error(SystemErrno::ENOENT as i32) };
                 }
                 SocketType::None => {}
             }

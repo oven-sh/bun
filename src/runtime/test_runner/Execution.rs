@@ -859,9 +859,7 @@ pub fn step_group(
         let status = step_group_one(buntest_strong, global_this, group_ptr, now)?;
         match status {
             AdvanceStatus::Execute { timeout } => {
-                return Ok(StepResult::Waiting {
-                    timeout: Some(timeout),
-                });
+                return Ok(StepResult::Waiting { timeout });
             }
             AdvanceStatus::Done => {}
         }

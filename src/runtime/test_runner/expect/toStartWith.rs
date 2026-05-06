@@ -41,7 +41,7 @@ pub fn to_start_with(
         let value_string = value.to_slice_or_null(global)?;
         let expected_string = expected.to_slice_or_null(global)?;
         pass = strings::starts_with(value_string.slice(), expected_string.slice())
-            || expected_string.len() == 0;
+            || expected_string.slice().is_empty();
         // `defer *.deinit()` dropped — Utf8Slice/ZigString::Slice impl Drop.
     }
 

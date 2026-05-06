@@ -72,10 +72,7 @@ macro_rules! gated_mod {
 gated_mod!(pub mod extract_tarball = "extract_tarball.rs";);
 gated_mod!(pub mod network_task = "NetworkTask.rs";);
 gated_mod!(pub mod tarball_stream = "TarballStream.rs";);
-// TODO(b2-blocked): npm.rs has ~60 unresolved-import / type errors against the
-// current `bun_str`/`bun_io`/`bun_sys` surface. Re-gated to keep `bun_install`
-// (and transitively `bun_runtime`) green; un-gate once npm.rs is reconciled.
-gated_mod!(pub mod npm = "npm.rs";);
+pub mod npm;
 gated_mod!(pub mod package_manager = "PackageManager.rs";);
 #[path = "PackageManifestMap.rs"]
 pub mod package_manifest_map;
@@ -123,7 +120,7 @@ pub mod extract_tarball { pub struct ExtractTarball; }
 pub mod network_task { pub struct NetworkTask; }
 #[cfg(not(any()))]
 pub mod tarball_stream { pub struct TarballStream; }
-#[cfg(not(any()))]
+#[cfg(any())] // un-gated: real impl in npm.rs
 pub mod npm {
     /// Stub for `npm.PackageManifest` (src/install/npm.zig). Only the fields
     /// read by `PackageManifestMap` are exposed; full layout lives in the
@@ -499,10 +496,22 @@ pub mod lockfile {
     /// fields read by `postinstall_optimizer` are exposed; full layout lives in
     /// the gated `lockfile.rs`.
     pub mod package {
-        #[derive(Clone, Copy, Default)]
+        #[derive(Clone, Copy)]
         pub struct Meta {
             pub arch: crate::npm::Architecture,
             pub os: crate::npm::OperatingSystem,
+        }
+
+        // Spec src/install/lockfile/Package/Meta.zig:10-11 — defaults are `.all`, not `.none`.
+        // Deriving `Default` would yield `Architecture(0)` / `OperatingSystem(0)` which makes
+        // `Meta::isDisabled` true on every platform.
+        impl Default for Meta {
+            fn default() -> Self {
+                Self {
+                    arch: crate::npm::Architecture::ALL,
+                    os: crate::npm::OperatingSystem::ALL,
+                }
+            }
         }
     }
 
@@ -611,7 +620,13 @@ pub mod lockfile {
     }
 }
 #[cfg(not(any()))]
-pub mod bin { pub struct Bin; }
+pub mod bin {
+    /// Stub for `Bin` (src/install/bin.zig). `#[repr(C)]`+`Copy` because
+    /// `npm::PackageVersion` embeds it directly in the manifest binary layout.
+    #[repr(C)]
+    #[derive(Clone, Copy, Default)]
+    pub struct Bin;
+}
 #[cfg(not(any()))]
 pub mod resolvers {
     pub mod folder_resolver { pub struct FolderResolution; }
@@ -1389,29 +1404,38 @@ pub struct StorePathFormatter<'a> {
     str: &'a [u8],
 }
 
-impl<'a> fmt::Display for StorePathFormatter<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl<'a> StorePathFormatter<'a> {
+    /// Spec install.zig:31-37 — `for (this.str) |c| writer.writeByte(c)` emits raw bytes
+    /// verbatim (mapping `/` and `\` to `+`). This is the byte-faithful sink; callers that
+    /// need an on-disk store path (legal non-UTF-8 on Linux) must use this, not `Display`.
+    pub fn write_to<W: std::io::Write>(&self, w: &mut W) -> std::io::Result<()> {
         // if (!this.opts.replace_slashes) {
         //     try writer.writeAll(this.str);
         //     return;
         // }
-
-        use bstr::ByteSlice as _;
-        // Walk in maximal runs between separators so multi-byte UTF-8 sequences
-        // are emitted intact (Zig's `writer.writeByte(c)` writes raw bytes; emitting
-        // each byte individually through bstr::BStr would hex-escape continuation bytes).
-        let mut rest = self.str;
-        while let Some(i) = rest.iter().position(|&c| c == b'/' || c == b'\\') {
-            if i > 0 {
-                f.write_str(&bstr::BStr::new(&rest[..i]).to_str_lossy())?;
+        for &c in self.str {
+            match c {
+                b'/' | b'\\' => w.write_all(b"+")?,
+                _ => w.write_all(core::slice::from_ref(&c))?,
             }
-            f.write_str("+")?;
-            rest = &rest[i + 1..];
-        }
-        if !rest.is_empty() {
-            f.write_str(&bstr::BStr::new(rest).to_str_lossy())?;
         }
         Ok(())
+    }
+}
+
+impl<'a> fmt::Display for StorePathFormatter<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // PORT NOTE: `core::fmt` cannot emit non-UTF-8 bytes. The Zig spec writes raw
+        // bytes via `writer.writeByte(c)`; routing through `to_str_lossy()` here was wrong
+        // (it silently expanded each invalid byte to U+FFFD = 3 bytes, changing on-disk
+        // store directory names). We now build the raw byte sequence via `write_to` and
+        // pass it through only when it is already valid UTF-8 — otherwise we surface
+        // `fmt::Error` rather than corrupt the path.
+        // TODO(port): migrate callers (repository.rs, resolution.rs, isolated_install/*)
+        // to the `write_to` byte sink so non-UTF-8 store paths round-trip exactly.
+        let mut buf = Vec::with_capacity(self.str.len());
+        self.write_to(&mut buf).map_err(|_| fmt::Error)?;
+        f.write_str(core::str::from_utf8(&buf).map_err(|_| fmt::Error)?)
     }
 }
 

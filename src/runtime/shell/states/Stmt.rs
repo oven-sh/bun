@@ -43,23 +43,20 @@ impl Stmt {
     }
 
     pub fn next(interp: &mut Interpreter, this: NodeId) -> Yield {
-        let (idx, len, parent, last) = {
+        let (idx, len, parent, last, shell) = {
             let me = interp.as_stmt(this);
-            (me.idx, Self::expr_count(me), me.base.parent, me.last_exit_code)
+            (me.idx, Self::expr_count(me), me.base.parent, me.last_exit_code, me.base.shell)
         };
         if idx >= len {
             return interp.child_done(parent, this, last.unwrap_or(0));
         }
-        // TODO(b2-blocked): ast::Stmt::exprs — match on the expr kind and
-        // dispatch to Binary/Pipeline/Cmd/Assigns/If/CondExpr/Subshell/Async.
-        // The full body (~120 lines) is preserved gated below; until the AST
-        // type is real, we cannot match on it.
-        #[cfg(any())]
-        {
-            include!("Stmt_next_body.rs");
-        }
-        let _ = idx;
-        Yield::suspended()
+        // SAFETY: `node` points into the AST arena (lives for the interpreter's
+        // lifetime); `idx` was bounds-checked against `expr_count` above.
+        let expr: ast::Expr = unsafe { (*(*interp.as_stmt(this).node).exprs)[idx] };
+        let io = interp.as_stmt(this).io.clone();
+        let (child, y) = interp.spawn_expr(shell, &expr, this, io);
+        interp.as_stmt_mut(this).currently_executing = Some(child);
+        y
     }
 
     pub fn child_done(
@@ -93,15 +90,15 @@ impl Stmt {
     }
 
     #[inline]
-    fn expr_count(_me: &Stmt) -> usize {
-        // TODO(b2-blocked): ast::Stmt::exprs.len()
-        0
+    fn expr_count(me: &Stmt) -> usize {
+        // SAFETY: `node` points into the AST arena which outlives every state
+        // node.
+        unsafe { (*(*me.node).exprs).len() }
     }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/shell/states/Stmt.zig (171 lines)
-//   confidence: medium (NodeId conversion done; expr-dispatch body gated on ast)
-//   blocked_on: ast::Stmt::exprs / ast::Expr enum
+//   confidence: high (NodeId conversion + expr-dispatch wired)
 // ──────────────────────────────────────────────────────────────────────────

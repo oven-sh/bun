@@ -1,3 +1,133 @@
+// ══════════════════════════════════════════════════════════════════════════
+// B-2 un-gated header — real `BundleV2` struct definition.
+// resolver↔bundler cycle broken in O; `bun_resolver` is now a direct dep, so
+// `Transpiler` (which embeds `Resolver`) is referenceable here. Method bodies
+// remain in the gated `__phase_a_draft` module below until `LinkerContext`,
+// `ParseTask`, `ThreadPool`, and the JSBundler/api TYPE_ONLY split land.
+// ══════════════════════════════════════════════════════════════════════════
+
+use core::ptr::NonNull;
+
+use bun_collections::{ArrayHashMap, BabyList};
+use bun_core::ThreadLock;
+
+use crate::bake_types as bake;
+use crate::barrel_imports::RequestedExports;
+use crate::cache::ExternalFreeFunction;
+use crate::dispatch;
+use crate::transpiler::Transpiler;
+use crate::DeferredBatchTask::DeferredBatchTask;
+use crate::Graph::Graph;
+use crate::{Index, IndexInt, LinkerContext};
+
+// ── re-exports for the B-1 inline `pub mod bundle_v2 { … }` shim surface ──
+pub use crate::options::Loader;
+pub use crate::ParseTask;
+/// Stub: see gated `BundleThread` module (`BundleThread.zig` — owns the worker
+/// pool + completion queue for `BundleV2`).
+pub struct BundleThread(());
+
+/// CYCLEBREAK FORWARD_DECL: `jsc::api::JSBundler::Plugin` (`opaque {}` backed by
+/// C++ `BunPlugin`). The bundler only stores a pointer; FFI bodies live in T6
+/// (`bun_runtime::api`) and are reached via `crate::dispatch` hooks.
+#[repr(C)]
+pub struct JSBundlerPlugin {
+    _opaque: [u8; 0],
+}
+
+/// CYCLEBREAK FORWARD_DECL: `BundleV2.JSBundleCompletionTask` — JSC-thread
+/// completion record. The bundler stores a raw pointer; T6 (`bun_bundler_jsc`)
+/// owns the concrete layout and re-exports this name.
+#[repr(C)]
+pub struct JSBundleCompletionTask {
+    _opaque: [u8; 0],
+}
+
+/// CYCLEBREAK FORWARD_DECL: `jsc::api::JSBundler::FileMap` — virtual in-memory
+/// files for the build. TYPE_ONLY moved-down map (real def in the gated
+/// `api::JSBundler` draft below) once `bun_resolver::Result` is real.
+#[repr(C)]
+pub struct FileMap {
+    _opaque: [u8; 0],
+}
+
+#[derive(Clone, Copy)]
+pub struct PendingImport {
+    pub to_source_index: Index,
+    pub import_record_index: u32,
+}
+
+pub struct BundleV2<'a> {
+    // PORT NOTE: raw ptrs — Zig stored `*Transpiler` (and aliased the same
+    // pointer into `ssr_transpiler` when SSR graph isn't separate). `&'a mut`
+    // would forbid that aliasing. TODO(port): lifetime.
+    pub transpiler: *mut Transpiler<'a>,
+    /// When Server Components is enabled, this is used for the client bundles
+    /// and `transpiler` is used for the server bundles.
+    pub client_transpiler: Option<NonNull<Transpiler<'a>>>,
+    /// See `bake.Framework.ServerComponents.separate_ssr_graph`.
+    pub ssr_transpiler: *mut Transpiler<'a>,
+    /// When Bun Bake is used, the resolved framework is passed here.
+    pub framework: Option<bake::Framework>,
+    pub graph: Graph,
+    // TODO(b2-blocked): crate::LinkerContext — module is still gated (depends
+    // on bun_css / Chunk / LinkerGraph). Uses the lib.rs opaque stub for now.
+    pub linker: LinkerContext,
+    // CYCLEBREAK GENUINE: `jsc::hot_reloader::NewHotReloader<BundleV2, …>` is a
+    // T6 generic instantiated over a T5 type. SAFETY: erased — never deref'd here.
+    pub bun_watcher: Option<NonNull<()>>,
+    pub plugins: Option<NonNull<JSBundlerPlugin>>,
+    pub completion: Option<NonNull<JSBundleCompletionTask>>,
+    /// CYCLEBREAK GENUINE: erased `bake::DevServer`. Populated from
+    /// `transpiler.options.dev_server` + the runtime-registered vtable at
+    /// construction. All ~15 DevServer call sites go through this.
+    pub dev_server: Option<dispatch::DevServerHandle>,
+    /// In-memory files that can be used as entrypoints or imported.
+    /// This is a pointer to the FileMap in the completion config.
+    pub file_map: Option<NonNull<FileMap>>,
+    pub source_code_length: usize,
+
+    /// There is a race condition where an onResolve plugin may schedule a task
+    /// on the bundle thread before its parsing task completes.
+    pub resolve_tasks_waiting_for_import_source_index: ArrayHashMap<IndexInt, BabyList<PendingImport>>,
+
+    /// Allocations not tracked by a threadlocal heap.
+    pub free_list: Vec<Box<[u8]>>,
+
+    /// See the comment in `Chunk.OutputPiece`.
+    pub unique_key: u64,
+    pub dynamic_import_entry_points: ArrayHashMap<IndexInt, ()>,
+    pub has_on_parse_plugins: bool,
+
+    pub finalizers: Vec<ExternalFreeFunction>,
+
+    pub drain_defer_task: DeferredBatchTask,
+
+    /// Set true by DevServer. Currently every usage of the transpiler (Bun.build
+    /// and `bun build` CLI) runs at the top of an event loop. When this is true,
+    /// a callback is executed after all work is complete (`finishFromBakeDevServer`).
+    pub asynchronous: bool,
+    pub thread_lock: ThreadLock,
+
+    /// If false we can skip TLA validation and propagation.
+    pub has_any_top_level_await_modules: bool,
+
+    /// Barrel optimization: tracks which exports have been requested from each
+    /// module encountered during barrel BFS. Keys are source indices. Values
+    /// track requested export names for deduplication and cycle detection.
+    /// Persists across calls to `scheduleBarrelDeferredImports` so cross-file
+    /// deduplication is free.
+    pub requested_exports: ArrayHashMap<u32, RequestedExports>,
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// Phase-A draft body — gated until lower-tier crate surfaces solidify.
+// (`bun_fs`/`bun_str`/`bun_node_fallbacks` crate aliases, full `dispatch`
+// vtable slot set, `api::JSBundler` TYPE_ONLY split, `LinkerContext`,
+// `ParseTask`, `ThreadPool`, OUT_DIR codegen for HmrRuntime embeds.)
+// ══════════════════════════════════════════════════════════════════════════
+#[cfg(any())]
+mod __phase_a_draft {
 // This is Bun's JavaScript/TypeScript bundler
 //
 // A lot of the implementation is based on the Go implementation of esbuild. Thank you Evan Wallace.
@@ -3578,9 +3708,11 @@ impl<'a> BundleV2<'a> {
         Ok(())
     }
 
-    /// See barrel_imports.rs for barrel optimization implementation.
-    pub use barrel_imports::apply_barrel_optimization;
-    pub use barrel_imports::schedule_barrel_deferred_imports;
+    // See barrel_imports.rs for barrel optimization implementation.
+    // PORT NOTE: Zig `pub usingnamespace`-style method aliases. `pub use` is not
+    // permitted in `impl` blocks; the underlying fns live in `barrel_imports` and
+    // take `&mut BundleV2` directly — callers reach them as free functions.
+    // (was: pub use barrel_imports::{apply_barrel_optimization, schedule_barrel_deferred_imports})
 
     /// Returns true when barrel optimization is enabled. Barrel optimization
     /// can apply to any package with sideEffects: false or listed in
@@ -5282,3 +5414,4 @@ pub use Logger::Loc;
 // ──────────────────────────────────────────────────────────────────────────
 
 
+}

@@ -31,7 +31,7 @@ pub mod diff {
 // Nothing inside is body-stubbed; the whole tree goes live at once.
 //
 // `cfg_jsc!` lets us flip one token instead of 18.
-macro_rules! cfg_jsc { ($($i:item)*) => { $( #[cfg(any())] $i )* }; }
+macro_rules! cfg_jsc { ($($i:item)*) => { $( $i )* }; }
 
 cfg_jsc! {
     #[path = "bun_test.rs"]       pub mod bun_test;
@@ -83,7 +83,7 @@ pub mod expect {
         matcher_name: &'static str,
         args: &'static str,
         not: bool,
-    ) -> &'static bun_str::ZStr {
+    ) -> &'static str {
         Expect::get_signature(matcher_name, args, not)
     }
 

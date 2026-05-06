@@ -33,24 +33,43 @@ impl Binary {
         }))
     }
 
-    pub fn start(interp: &mut Interpreter, this: NodeId) -> Yield {
+    pub fn start(_interp: &mut Interpreter, this: NodeId) -> Yield {
         log!("Binary {} start", this);
-        // TODO(b2-blocked): ast::Binary::left — spawn the left expr.
-        // Body gated until ast::Expr is real.
-        let _ = interp;
         Yield::Next(this)
     }
 
     pub fn next(interp: &mut Interpreter, this: NodeId) -> Yield {
-        // TODO(b2-blocked): ast::Binary::{op, left, right} — full body (~90
-        // lines) preserved gated. Shape: if left is None spawn left; else if
-        // op==And && left!=0 → done(left); else spawn right; else done(right).
-        #[cfg(any())]
-        {
-            include!("Binary_next_body.rs");
+        let (left_exit, right_exit, parent, shell, node) = {
+            let me = interp.as_binary(this);
+            (me.left, me.right, me.base.parent, me.base.shell, me.node)
+        };
+        // SAFETY: `node` points into the AST arena which outlives every state
+        // node.
+        let n = unsafe { &*node };
+
+        if let Some(right) = right_exit {
+            return interp.child_done(parent, this, right);
         }
-        let parent = interp.as_binary(this).base.parent;
-        interp.child_done(parent, this, 0)
+
+        if let Some(left) = left_exit {
+            // Short-circuit: `&&` stops on nonzero, `||` stops on zero.
+            let short = match n.op {
+                ast::BinaryOp::And => left != 0,
+                ast::BinaryOp::Or => left == 0,
+            };
+            if short {
+                return interp.child_done(parent, this, left);
+            }
+            let io = interp.as_binary(this).io.clone();
+            let (child, y) = interp.spawn_expr(shell, &n.right, this, io);
+            interp.as_binary_mut(this).currently_executing = Some(child);
+            return y;
+        }
+
+        let io = interp.as_binary(this).io.clone();
+        let (child, y) = interp.spawn_expr(shell, &n.left, this, io);
+        interp.as_binary_mut(this).currently_executing = Some(child);
+        y
     }
 
     pub fn child_done(
@@ -84,6 +103,5 @@ impl Binary {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/shell/states/Binary.zig (179 lines)
-//   confidence: medium (NodeId conversion; And/Or dispatch gated on ast)
-//   blocked_on: ast::Binary::{op, left, right}
+//   confidence: high (NodeId conversion + And/Or dispatch wired)
 // ──────────────────────────────────────────────────────────────────────────

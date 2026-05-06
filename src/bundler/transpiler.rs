@@ -1,3 +1,95 @@
+// ══════════════════════════════════════════════════════════════════════════
+// B-2 un-gated header — real `Transpiler` struct definition.
+// resolver↔bundler cycle broken in O; `bun_resolver` is now a direct dep.
+// Method bodies remain in the gated `__phase_a_draft` module below until the
+// remaining lower-tier surfaces (linker, bun_fs alias, PendingResolution::List,
+// js_parser Macro FFI) solidify.
+// ══════════════════════════════════════════════════════════════════════════
+
+use bun_alloc::Arena;
+use bun_collections::HashMap;
+use bun_dotenv as dot_env;
+use bun_js_parser as js_ast;
+use bun_logger as logger;
+use bun_perf::system_timer::Timer as SystemTimer;
+use bun_resolver::{self as resolver, Resolver};
+use bun_resolver::fs as Fs;
+use bun_router::Router;
+
+use crate::options;
+
+/// Port of `transpiler.zig:ResolveResults` — keyed by source path hash.
+pub type ResolveResults = HashMap<u64, ()>;
+/// Port of `transpiler.zig:ResolveQueue` — `std.fifo.LinearFifo(resolver.Result, .Dynamic)`.
+// PORT NOTE: `bun_collections::LinearFifo<T, DynamicBuffer<T>>` would be exact,
+// but `DynamicBuffer` isn't re-exported from `bun_collections` yet. `VecDeque`
+// is structurally equivalent (growable ring buffer); swap once the re-export lands.
+pub type ResolveQueue = std::collections::VecDeque<resolver::Result>;
+
+/// CYCLEBREAK FORWARD_DECL: bundler_jsc::plugin_runner::PluginRunner.
+/// SAFETY: erased — bundler stores/passes through but never dereferences; the
+/// JSC side casts back. Lives here so `crate::transpiler::PluginRunner` resolves
+/// for downstream callers that referenced the B-1 stub.
+#[repr(C)]
+pub struct PluginRunner {
+    _opaque: [u8; 0],
+}
+
+/// CYCLEBREAK FORWARD_DECL: `bundler_jsc::plugin_runner::MacroJSCtx`.
+/// SAFETY: erased — parser receives it and casts back on the runtime side.
+pub type MacroJSCtx = *mut ();
+#[inline]
+pub fn default_macro_js_value() -> MacroJSCtx {
+    core::ptr::null_mut()
+}
+
+/// This structure was the JavaScript transpiler before bundle_v2 was written. It
+/// now acts mostly as a configuration object, but it also contains stateful
+/// logic around logging errors (`log`) and module resolution (`resolve_queue`).
+///
+/// This object is not exclusive to bundle_v2/Bun.build; one of these is stored
+/// on every VM so that the options can be used for transpilation.
+pub struct Transpiler<'a> {
+    pub options: options::BundleOptions<'a>,
+    // PORT NOTE: raw ptr — Zig aliased the same `*Log` into `linker.log` and
+    // `resolver.log` (see `set_log`). `&'a mut` would forbid that aliasing.
+    // TODO(port): lifetime — restructure once linker/resolver own their logs.
+    pub log: *mut logger::Log,
+    // TODO(port): allocator — bundler is an AST crate per PORTING.md so we
+    // thread an arena, but callers usually pass `bun.default_allocator`.
+    // Phase B: confirm whether this should be removed (global mimalloc) or kept.
+    pub allocator: &'a Arena,
+    pub result: options::TransformResult,
+    pub resolver: Resolver,
+    // TODO(port): lifetime — Zig used the global `Fs.FileSystem.instance`
+    // singleton (`&'static mut`). Raw ptr until the singleton accessor lands.
+    pub fs: *mut Fs::FileSystem,
+    pub output_files: Vec<options::OutputFile>,
+    pub resolve_results: Box<ResolveResults>,
+    pub resolve_queue: ResolveQueue,
+    pub elapsed: u64,
+    pub needs_runtime: bool,
+    pub router: Option<Router<'a>>,
+    pub source_map: options::SourceMapOption,
+
+    // TODO(b2-blocked): crate::linker::Linker — `linker` module is still gated
+    // (depends on bun_css / runtime printer surface). Field kept opaque so
+    // `set_log`/`set_allocator` bodies stay in the draft until then.
+    pub linker: crate::Linker,
+    pub timer: SystemTimer,
+    // TODO(port): lifetime — Zig stored `&DotEnv.Loader` (global singleton).
+    pub env: *mut dot_env::Loader<'a>,
+
+    pub macro_context: Option<js_ast::Macro::MacroContext>,
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// Phase-A draft body — gated until lower-tier crate surfaces solidify.
+// (`bun_fs`/`bun_str`/`bun_data_url`/`bun_node_fallbacks` crate aliases,
+// `crate::linker`, `resolver::PendingResolution::List`, parser FFI.)
+// ══════════════════════════════════════════════════════════════════════════
+#[cfg(any())]
+mod __phase_a_draft {
 use bun_alloc::Arena;
 use bun_collections::{HashMap, LinearFifo, StringHashMap};
 use bun_core::{Error, FeatureFlags, Global, Output};
@@ -1892,3 +1984,4 @@ pub type ResolveQueue = LinearFifo<resolver::Result>;
 //   todos:      25
 //   notes:      allocator threading ambiguous (AST crate vs default_allocator); set_log/Drop borrow aliasing; client_entry_point anytype collapsed to concrete type; MacroJSCtx pulled from bundler_jsc (invert in Phase B)
 // ──────────────────────────────────────────────────────────────────────────
+}

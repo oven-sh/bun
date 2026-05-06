@@ -32,19 +32,17 @@ pub mod defines;
 pub mod barrel_imports;
 #[cfg(any())]
 pub mod LinkerGraph;
-#[cfg(any())]
-pub mod Chunk;
+#[path = "Chunk.rs"]
+pub mod chunk;
 #[path = "defines-table.rs"]
 pub mod defines_table;
-#[cfg(any())]
 pub mod transpiler;
-#[cfg(any())]
-pub mod ParseTask;
+#[path = "ParseTask.rs"]
+pub mod parse_task;
 #[path = "options.rs"]
 pub mod options_impl;
-#[cfg(any())]
-pub mod LinkerContext;
-#[cfg(any())]
+#[path = "LinkerContext.rs"]
+pub mod linker_context_mod;
 pub mod bundle_v2;
 
 // ---------------------------------------------------------------------------
@@ -53,24 +51,24 @@ pub mod bundle_v2;
 // B-2.
 // ---------------------------------------------------------------------------
 
-/// Stub: see gated `bundle_v2` module.
-#[derive(Default)]
-pub struct BundleV2(());
-/// Stub: see gated `transpiler` module.
-#[derive(Default)]
-pub struct Transpiler(());
+/// Real `BundleV2` (un-gated B-2). See `bundle_v2`.
+pub use bundle_v2::BundleV2;
+/// Real `Transpiler` (un-gated B-2). See `transpiler`.
+pub use transpiler::Transpiler;
 /// Real `BundleOptions` (un-gated B-2). See `options_impl`.
 pub use options_impl::BundleOptions;
 pub use output_file::OutputFile;
-/// Stub: see gated `Chunk` module.
-pub struct Chunk(());
-/// Stub: see gated `LinkerContext` module.
-pub struct LinkerContext(());
+/// Real `Chunk` (un-gated B-2). See `chunk` module.
+pub use chunk::Chunk;
+/// Real `LinkerContext` (un-gated B-2). See `linker_context_mod` module.
+pub use linker_context_mod::LinkerContext;
+/// Stub: see gated `linker` module — `Transpiler.linker` field placeholder.
+pub struct Linker(());
 /// Stub: see gated `LinkerGraph` module.
 pub struct LinkerGraph(());
 pub use Graph::Graph as GraphStruct;
-/// Stub: see gated `ParseTask` module.
-pub struct ParseTask(());
+/// Real `ParseTask` (un-gated B-2). See `parse_task` module.
+pub use parse_task::ParseTask;
 /// Stub: see gated `entry_points` module.
 pub struct EntryPoint(());
 pub use defines::Define;
@@ -231,12 +229,19 @@ pub mod options {
         /// `api.JsxRuntime` (schema.zig:771). Defined locally — peechy codegen
         /// hasn't emitted it into `bun_options_types::schema` yet.
         #[repr(u8)]
-        #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+        #[derive(Clone, Copy, PartialEq, Eq, Debug)]
         pub enum Runtime {
-            #[default]
-            Automatic,
-            Classic,
-            Solid,
+            #[allow(non_camel_case_types)]
+            _None = 0,
+            Automatic = 1,
+            Classic = 2,
+            Solid = 3,
+        }
+
+        impl Default for Runtime {
+            fn default() -> Self {
+                Runtime::Automatic
+            }
         }
 
         #[derive(Clone, Copy, Debug)]
@@ -361,19 +366,6 @@ pub mod options {
         }
     }
     pub use jsx as JSX;
-}
-pub mod transpiler {
-    pub use super::Transpiler;
-    /// Stub: plugin runner placeholder.
-    pub struct PluginRunner(());
-}
-pub mod bundle_v2 {
-    pub use super::BundleV2;
-    pub use super::ParseTask;
-    pub use super::options::Loader;
-    /// Stub: see gated `BundleThread` module (`BundleThread.zig` — owns the
-    /// worker pool + completion queue for `BundleV2`).
-    pub struct BundleThread(());
 }
 
 pub use cache::Set as Cache;

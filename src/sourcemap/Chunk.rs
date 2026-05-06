@@ -320,6 +320,28 @@ pub struct NewBuilder<T: SourceMapFormatCtx> {
     pub prepend_count: bool,
 }
 
+impl<T: SourceMapFormatCtx + Default> Default for NewBuilder<T> {
+    /// Zig field-defaults; the Zig caller (`get_source_map_builder`) returned
+    /// `undefined` when source maps are disabled, so this only needs to be
+    /// inert (never read) — but we zero everything for sanity.
+    fn default() -> Self {
+        Self {
+            source_map: SourceMapFormat { ctx: T::default() },
+            line_offset_tables: line_offset_table::List::EMPTY,
+            prev_state: SourceMapState::default(),
+            last_generated_update: 0,
+            generated_column: 0,
+            prev_loc: Loc::EMPTY,
+            has_prev_state: false,
+            line_offset_table_byte_offset_list: &[],
+            line_starts_with_mapping: false,
+            cover_lines_without_mappings: false,
+            approximate_input_line_count: 0,
+            prepend_count: false,
+        }
+    }
+}
+
 pub type SourceMapper<T> = SourceMapFormat<T>;
 
 impl<T: SourceMapFormatCtx> NewBuilder<T> {
@@ -469,8 +491,13 @@ impl<T: SourceMapFormatCtx> NewBuilder<T> {
             return;
         }
 
-        let original_line =
-            LineOffsetTable::find_line(self.line_offset_table_byte_offset_list, loc);
+        // Derive the byte-offset column on demand from `line_offset_tables` instead of
+        // relying on the cached `line_offset_table_byte_offset_list` (which can't borrow
+        // `line_offset_tables` without a struct lifetime param — see field comment).
+        let original_line = {
+            use crate::line_offset_table::ListExt as _;
+            LineOffsetTable::find_line(list.items_byte_offset_to_start_of_line(), loc)
+        };
         let line = list.get(usize::try_from(original_line.max(0)).unwrap());
 
         // Use the line to compute the column

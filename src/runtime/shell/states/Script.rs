@@ -128,7 +128,7 @@ impl Script {
         me.base.end_scope();
     }
 
-    // ── AST helpers (opaque until shell parser un-gates) ───────────────────
+    // ── AST helpers ────────────────────────────────────────────────────────
 
     #[inline]
     fn stmt_count(interp: &Interpreter, this: NodeId) -> usize {
@@ -136,21 +136,23 @@ impl Script {
     }
 
     #[inline]
-    fn stmt_count_of(_me: &Script) -> usize {
-        // TODO(b2-blocked): ast::Script::stmts — `(*self.node).stmts.len()`.
-        0
+    fn stmt_count_of(me: &Script) -> usize {
+        // SAFETY: `me.node` points into the AST arena, which the interpreter
+        // holds for its entire lifetime (`ShellArgs::__arena`).
+        unsafe { (*(*me.node).stmts).len() }
     }
 
     #[inline]
-    fn stmt_at(_interp: &Interpreter, _this: NodeId, _idx: usize) -> *const ast::Stmt {
-        // TODO(b2-blocked): ast::Script::stmts — `&(*self.node).stmts[idx]`.
-        core::ptr::null()
+    fn stmt_at(interp: &Interpreter, this: NodeId, idx: usize) -> *const ast::Stmt {
+        let me = interp.as_script(this);
+        // SAFETY: see `stmt_count_of`; `idx` was bounds-checked against
+        // `stmt_count` by the caller.
+        unsafe { &(*(*me.node).stmts)[idx] as *const _ }
     }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/shell/states/Script.zig (133 lines)
-//   confidence: high (NodeId-arena conversion complete)
-//   blocked_on: ast::Script field access (shell parser gated)
+//   confidence: high (NodeId-arena conversion complete; ast field access wired)
 // ──────────────────────────────────────────────────────────────────────────

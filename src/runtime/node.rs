@@ -33,10 +33,39 @@ pub mod os;
 #[path = "node/node_process.rs"]
 pub mod process;
 
-// node_fs.rs (~4.6kL) is JSC-dense throughout (every Arguments/Return pair
-// has `.fromJS`/`.toJS`); kept gated at module level for this round.
-// TODO(b2-blocked): un-gate once bun_jsc method surface lands.
-#[cfg(any())]
+// ─── un-gated in B-2 round 2 (node_fs sync paths live; async re-gated inside) ───
+// Sibling modules node_fs.rs imports by `super::` path. Stat/StatFS/time_like
+// are type-only at the surface; their JSC method bodies are re-gated inside
+// each file. dir_iterator + node_fs_constant are JSC-free.
+#[path = "node/Stat.rs"]
+pub mod stat;
+pub use stat::{Stats, StatsBig, StatsSmall};
+
+#[path = "node/StatFS.rs"]
+pub mod statfs;
+pub use statfs::{StatFS, StatFSBig, StatFSSmall};
+
+#[path = "node/time_like.rs"]
+pub mod time_like;
+pub use time_like::{from_js as time_like_from_js, TimeLike};
+
+#[path = "node/dir_iterator.rs"]
+pub mod dir_iterator;
+
+#[path = "node/node_fs_constant.rs"]
+pub mod node_fs_constant;
+
+#[path = "node/util/validators.rs"]
+mod validators_impl;
+pub mod util {
+    pub use super::validators_impl as validators;
+}
+pub use util::validators;
+
+// node_fs.rs (~4.7kL): async task machinery (AsyncFSTask/UVFSRequest/cp/
+// readdir-recursive) is JSC-dense and re-gated *inside* the file with
+// `#[cfg(any())]`. Sync `impl NodeFS` (read_file/write_file/stat/mkdir et al.),
+// `args::*`, `ret::*` are live.
 #[path = "node/node_fs.rs"]
 pub mod fs;
 

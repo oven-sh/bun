@@ -26,10 +26,18 @@ pub struct Exec {
     pub state: ExecBranch,
     /// Pointer to the current `SmolList<ast::Stmt, 1>` being walked. Points
     /// into the AST arena.
-    pub stmts: *const (),
-    pub stmts_len: u32,
+    pub stmts: *const ast::SmolList<ast::Stmt, 1>,
     pub stmt_idx: u32,
     pub last_exit_code: ExitCode,
+}
+
+impl Exec {
+    #[inline]
+    fn stmts_len(&self) -> u32 {
+        // SAFETY: `stmts` points into the AST arena which outlives every state
+        // node.
+        unsafe { (*self.stmts).len() as u32 }
+    }
 }
 
 pub enum ExecBranch {
@@ -67,40 +75,42 @@ impl If {
             // before calling back into `interp`.
             let action = {
                 let me = interp.as_if_mut(this);
+                // SAFETY: `me.node` points into the AST arena
+                // (`ShellArgs::__arena`), which the interpreter holds for its
+                // entire lifetime.
+                let n = unsafe { &*me.node };
                 match &mut me.state {
                     IfState::Idle => {
-                        // TODO(b2-blocked): ast::If::cond — `&(*me.node).cond`.
                         me.state = IfState::Exec(Exec {
                             state: ExecBranch::Cond,
-                            stmts: core::ptr::null(),
-                            stmts_len: 0,
+                            stmts: &n.cond,
                             stmt_idx: 0,
                             last_exit_code: 0,
                         });
                         continue;
                     }
                     IfState::Exec(exec) => {
-                        if exec.stmt_idx >= exec.stmts_len {
+                        if exec.stmt_idx >= exec.stmts_len() {
                             match &mut exec.state {
                                 ExecBranch::Cond => {
                                     if exec.last_exit_code == 0 {
-                                        // TODO(b2-blocked): ast::If::then
                                         exec.state = ExecBranch::Then;
+                                        exec.stmts = &n.then;
                                         exec.stmt_idx = 0;
                                         continue;
                                     }
-                                    // TODO(b2-blocked): ast::If::else_parts.len()
-                                    let else_len: u32 = 0;
+                                    let else_len = n.else_parts.len() as u32;
                                     match else_len {
                                         0 => Action::Done(0),
                                         1 => {
                                             exec.state = ExecBranch::Else;
+                                            exec.stmts = &n.else_parts[0];
                                             exec.stmt_idx = 0;
-                                            // TODO(b2-blocked): ast::If::else_parts[0]
                                             continue;
                                         }
                                         _ => {
                                             exec.state = ExecBranch::Elif { idx: 0 };
+                                            exec.stmts = &n.else_parts[0];
                                             exec.stmt_idx = 0;
                                             continue;
                                         }
@@ -109,21 +119,25 @@ impl If {
                                 ExecBranch::Then => Action::Done(exec.last_exit_code),
                                 ExecBranch::Elif { idx } => {
                                     if exec.last_exit_code == 0 {
+                                        // The matching `then` arm follows the
+                                        // `elif` cond at `idx + 1`.
+                                        let then_idx = *idx + 1;
                                         exec.state = ExecBranch::Then;
+                                        exec.stmts = &n.else_parts[then_idx as usize];
                                         exec.stmt_idx = 0;
-                                        // TODO(b2-blocked): else_parts[idx+1]
                                         continue;
                                     }
                                     *idx += 2;
-                                    // TODO(b2-blocked): else_parts.len()
-                                    let else_len: u32 = 0;
+                                    let else_len = n.else_parts.len() as u32;
                                     if *idx >= else_len {
                                         Action::Done(0)
-                                    } else if *idx == else_len.saturating_sub(1) {
+                                    } else if *idx == else_len - 1 {
                                         exec.state = ExecBranch::Else;
+                                        exec.stmts = &n.else_parts[(else_len - 1) as usize];
                                         exec.stmt_idx = 0;
                                         continue;
                                     } else {
+                                        exec.stmts = &n.else_parts[*idx as usize];
                                         exec.stmt_idx = 0;
                                         continue;
                                     }
@@ -133,7 +147,11 @@ impl If {
                         } else {
                             let i = exec.stmt_idx;
                             exec.stmt_idx += 1;
-                            Action::SpawnStmt(i)
+                            // SAFETY: `i` was bounds-checked against
+                            // `stmts_len()`.
+                            let stmt_node: *const ast::Stmt =
+                                unsafe { &(*exec.stmts)[i as usize] as *const _ };
+                            Action::SpawnStmt(stmt_node)
                         }
                     }
                     IfState::WaitingWriteErr => return Yield::suspended(),
@@ -142,9 +160,7 @@ impl If {
             };
             return match action {
                 Action::Done(exit) => interp.child_done(parent, this, exit),
-                Action::SpawnStmt(_i) => {
-                    // TODO(b2-blocked): ast — `exec.stmts.get_const(i)` → *const ast::Stmt
-                    let stmt_node: *const ast::Stmt = core::ptr::null();
+                Action::SpawnStmt(stmt_node) => {
                     let (shell, io) = {
                         let me = interp.as_if(this);
                         (me.base.shell, me.io.clone())
@@ -179,12 +195,11 @@ impl If {
 
 enum Action {
     Done(ExitCode),
-    SpawnStmt(u32),
+    SpawnStmt(*const ast::Stmt),
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/shell/states/If.zig (204 lines)
-//   confidence: high (NodeId conversion; control flow preserved)
-//   blocked_on: ast::If field access (cond/then/else_parts)
+//   confidence: high (NodeId conversion; control flow + ast wiring complete)
 // ──────────────────────────────────────────────────────────────────────────

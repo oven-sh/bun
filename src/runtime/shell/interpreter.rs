@@ -481,6 +481,48 @@ impl Interpreter {
         }
     }
 
+    /// Init + start a child state node for an `ast::Expr`. Replaces the
+    /// per-variant `match` Zig inlines at each callsite (Stmt.zig:64-112,
+    /// Binary.zig:64-112). For `.subshell`, dupes the parent shell env first
+    /// (Zig `Subshell.initDupeShellState`); all other variants borrow `shell`.
+    ///
+    /// Note: `Async` must NOT call this — Async.zig restricts its child to
+    /// pipeline/cmd/if/condexpr and inits without starting (see `Async::next`).
+    pub fn spawn_expr(
+        &mut self,
+        shell: *mut ShellExecEnv,
+        expr: &ast::Expr,
+        parent: NodeId,
+        io: IO,
+    ) -> (NodeId, Yield) {
+        let child = match expr {
+            ast::Expr::Cmd(c) => Cmd::init(self, shell, *c, parent, io),
+            ast::Expr::Binary(b) => Binary::init(self, shell, *b, parent, io),
+            ast::Expr::Pipeline(p) => Pipeline::init(self, shell, *p, parent, io),
+            ast::Expr::Assign(a) => {
+                Assigns::init(self, shell, *a as *const [ast::Assign], parent, AssignCtx::Shell, io)
+            }
+            ast::Expr::If(i) => If::init(self, shell, *i, parent, io),
+            ast::Expr::CondExpr(c) => CondExpr::init(self, shell, *c, parent, io),
+            ast::Expr::Subshell(s) => {
+                // Zig `Subshell.initDupeShellState`: Stmt/Binary callers dupe
+                // the env here so `Subshell::start`/`next` can use `base.shell`
+                // as-is. (Pipeline dupes itself and calls `Subshell::init`
+                // directly, so it does NOT go through this path.)
+                match Subshell::init_dupe_shell_state(self, shell, *s, parent, io) {
+                    Ok(id) => id,
+                    Err(e) => {
+                        self.throw(&ShellErr::new_sys(e));
+                        return (NodeId::NONE, Yield::failed());
+                    }
+                }
+            }
+            ast::Expr::Async(e) => Async::init(self, shell, *e, parent, io),
+        };
+        let y = self.start_node(child);
+        (child, y)
+    }
+
     /// Run the per-state cleanup, then recycle the slot. Replaces every
     /// `child.deinit()` + `parent.destroy(child)` pair in Zig.
     pub fn deinit_node(&mut self, id: NodeId) {

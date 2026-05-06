@@ -261,8 +261,12 @@ pub mod registry {
         std::sync::LazyLock::new(|| Wyhash11::hash(0, strings::without_trailing_slash(DEFAULT_URL.as_bytes())));
     pub fn default_url_hash() -> u64 { *DEFAULT_URL_HASH }
 
-    pub type BodyPool = ObjectPool<MutableString, fn() -> MutableString, true, 8>;
-    // TODO(port): ObjectPool init fn = MutableString::init2048
+    // TODO(b2): ObjectPool<T, THREADSAFE, MAX, S> — Zig passes init fn as a
+    // type-level param; Rust ObjectPool routes init via `ObjectPoolType` trait.
+    // Wire `MutableString: ObjectPoolType` (init = MutableString::init2048) then
+    // drop the `S = UnwiredStorage` default. Gated until that lands.
+    #[cfg(any())]
+    pub type BodyPool = ObjectPool<MutableString, true, 8>;
 
     #[derive(Default)]
     pub struct Scope {
@@ -287,7 +291,7 @@ pub mod registry {
 
     impl Scope {
         pub fn hash(str: &[u8]) -> u64 {
-            SemverString::Builder::string_hash(str)
+            bun_semver::semver_string::Builder::string_hash(str)
         }
 
         pub fn get_name(name: &[u8]) -> &[u8] {
@@ -485,7 +489,8 @@ pub mod registry {
         }
     }
 
-    pub type Map = HashMap<u64, Scope, IdentityContext<u64>>;
+    // TODO(b2): Zig used `IdentityContext(u64)` hasher; std HashMap is fine for now.
+    pub type Map = HashMap<u64, Scope>;
 
     pub enum PackageVersionResponse {
         Cached(PackageManifest),
@@ -587,7 +592,7 @@ pub struct ExternVersionMap {
 impl ExternVersionMap {
     pub fn find_key_index(self, buf: &[Semver::Version], find: Semver::Version) -> Option<u32> {
         for (i, key) in self.keys.get(buf).iter().enumerate() {
-            if key.eql(&find) {
+            if key.eql(find) {
                 return Some(i as u32);
             }
         }
@@ -605,7 +610,8 @@ impl ExternVersionMap {
 ///   - `fn negatable(self) -> Negatable<T>`
 // TODO(port): Zig used comptime u16/u8 mixed; bound via a trait in Phase B.
 pub trait NegatableEnum: Copy + Eq {
-    type Int: Copy
+    type Int: 'static
+        + Copy
         + Eq
         + core::ops::BitOr<Output = Self::Int>
         + core::ops::BitAnd<Output = Self::Int>
@@ -712,6 +718,8 @@ impl<T: NegatableEnum> Negatable<T> {
         }
     }
 
+    // TODO(b2): bun_logger::js_ast::Expr surface lacks `as_string()` accessor
+    #[cfg(any())]
     pub fn from_json(expr: JSON::Expr) -> Result<T, AllocError> {
         let mut this = T::NONE.negatable();
         match expr.data {
@@ -791,7 +799,7 @@ impl<T: NegatableEnum> NegatableExt for T {}
 
 /// https://nodejs.org/api/os.html#osplatform
 #[repr(transparent)]
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub struct OperatingSystem(pub u16);
 
 impl OperatingSystem {
@@ -805,6 +813,8 @@ impl OperatingSystem {
     pub const OPENBSD: u16 = 1 << 5;
     pub const SUNOS: u16 = 1 << 6;
     pub const WIN32: u16 = 1 << 7;
+    #[allow(non_upper_case_globals)] // Zig: `OperatingSystem.win32`
+    pub const win32: u16 = Self::WIN32;
     pub const ANDROID: u16 = 1 << 8;
 
     pub const ALL_VALUE: u16 =
@@ -830,15 +840,19 @@ impl OperatingSystem {
         (self.0 & other) != 0
     }
 
+    // Order MUST match Zig's `ComptimeStringMap.kvs` (= `precomputed.sorted_kvs`, sorted by
+    // (key.len asc, then bytewise asc) — src/collections/comptime_string_map.zig:21-27,66).
+    // `Negatable::to_json` iterates this to serialize bun.lock `"os"` arrays; mismatched
+    // order yields non-byte-identical lockfiles vs. Zig.
     pub const NAME_MAP_KVS: &'static [(&'static [u8], u16)] = &[
         (b"aix", Self::AIX),
-        (b"darwin", Self::DARWIN),
-        (b"freebsd", Self::FREEBSD),
         (b"linux", Self::LINUX),
-        (b"openbsd", Self::OPENBSD),
         (b"sunos", Self::SUNOS),
         (b"win32", Self::WIN32),
+        (b"darwin", Self::DARWIN),
         (b"android", Self::ANDROID),
+        (b"freebsd", Self::FREEBSD),
+        (b"openbsd", Self::OPENBSD),
     ];
 
     #[cfg(target_os = "linux")]
@@ -885,7 +899,7 @@ impl NegatableEnum for OperatingSystem {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[repr(transparent)]
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub struct Libc(pub u8);
 
 impl Libc {
@@ -897,9 +911,10 @@ impl Libc {
 
     pub const ALL_VALUE: u8 = Self::GLIBC | Self::MUSL;
 
+    // Order MUST match Zig's `ComptimeStringMap.kvs` (sorted by (key.len asc, bytewise asc)).
     pub const NAME_MAP_KVS: &'static [(&'static [u8], u8)] = &[
-        (b"glibc", Self::GLIBC),
         (b"musl", Self::MUSL),
+        (b"glibc", Self::GLIBC),
     ];
 
     #[inline]
@@ -944,7 +959,7 @@ impl NegatableEnum for Libc {
 /// https://docs.npmjs.com/cli/v8/configuring-npm/package-json#cpu
 /// https://nodejs.org/api/os.html#osarch
 #[repr(transparent)]
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub struct Architecture(pub u16);
 
 impl Architecture {
@@ -985,18 +1000,22 @@ impl Architecture {
     #[cfg(target_arch = "x86_64")]
     pub const CURRENT_NAME: &'static str = "x64";
 
+    // Order MUST match Zig's `ComptimeStringMap.kvs` (= `precomputed.sorted_kvs`, sorted by
+    // (key.len asc, then bytewise asc) — src/collections/comptime_string_map.zig:21-27,66).
+    // `Negatable::to_json` iterates this to serialize bun.lock `"cpu"` arrays; mismatched
+    // order yields non-byte-identical lockfiles vs. Zig.
     pub const NAME_MAP_KVS: &'static [(&'static [u8], u16)] = &[
         (b"arm", Self::ARM),
-        (b"arm64", Self::ARM64),
-        (b"ia32", Self::IA32),
-        (b"mips", Self::MIPS),
-        (b"mipsel", Self::MIPSEL),
         (b"ppc", Self::PPC),
-        (b"ppc64", Self::PPC64),
-        (b"s390", Self::S390),
-        (b"s390x", Self::S390X),
         (b"x32", Self::X32),
         (b"x64", Self::X64),
+        (b"ia32", Self::IA32),
+        (b"mips", Self::MIPS),
+        (b"s390", Self::S390),
+        (b"arm64", Self::ARM64),
+        (b"ppc64", Self::PPC64),
+        (b"s390x", Self::S390X),
+        (b"mipsel", Self::MIPSEL),
     ];
 
     #[inline]
@@ -1134,6 +1153,8 @@ impl PackageVersion {
     }
 }
 
+// TODO(b2): re-enable once Bin is the real #[repr(C)] layout (currently stub)
+#[cfg(any())]
 const _: () = assert!(
     core::mem::size_of::<PackageVersion>() == 240,
     "Npm.PackageVersion has unexpected size"
@@ -1167,7 +1188,7 @@ pub struct NpmPackage {
 
 // ──────────────────────────────────────────────────────────────────────────
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct PackageManifest {
     pub pkg: NpmPackage,
 
@@ -1228,6 +1249,31 @@ pub mod package_manifest {
             "bundled_deps_buf",
         ];
 
+        /// Zig: `Serializer.loadByFileID(allocator, scope, cache_dir, file_id)`.
+        /// Stub kept for `PackageManifestMap`; body lives in gated impl below.
+        pub fn load_by_file_id(
+            _scope: &registry::Scope,
+            _cache_dir: bun_sys::Fd,
+            _file_id: u64,
+        ) -> Result<Option<PackageManifest>, bun_core::Error> {
+            // TODO(b2): npm::PackageManifest::Serializer::load_by_file_id — real body lives
+            // in the `#[cfg(any())]`-gated impl below (blocked on bun_io::FixedBufferStream /
+            // bun_sys::renameat2). Return `Ok(None)` (cache miss) so PackageManifestMap callers
+            // fall through to a network fetch instead of panicking.
+            Ok(None)
+        }
+    }
+
+    const _: () = assert!(
+        Serializer::HEADER_BYTES.len() == 49,
+        "header bytes must be exactly 49 bytes long, length is not serialized"
+    );
+
+    // TODO(b2): bodies gated — bun_io::FixedBufferStream / bun_sys::renameat2 /
+    // bun_core::{perf,mem} / bun_str::buf_print_z surface drift. Keep types
+    // visible above; un-gate once those land.
+    #[cfg(any())]
+    impl Serializer {
         pub fn write_array<W: bun_io::Write, T: Copy>(
             writer: &mut W,
             array: &[T],
@@ -1686,7 +1732,7 @@ pub mod package_manifest {
 // ──────────────────────────────────────────────────────────────────────────
 
 impl PackageManifest {
-    pub fn str(&self, external: &ExternalString) -> &[u8] {
+    pub fn str<'a>(&'a self, external: &'a ExternalString) -> &'a [u8] {
         external.slice(&self.string_buf)
     }
 
@@ -1873,6 +1919,8 @@ impl<'a> FindVersionResult<'a> {
     }
 }
 
+// TODO(b2): bodies gated — bun_semver::query::Op / Version::order signature drift
+#[cfg(any())]
 impl PackageManifest {
     pub fn find_by_dist_tag_with_filter(
         &self,
@@ -2135,7 +2183,8 @@ impl PackageManifest {
     }
 }
 
-type ExternalStringMapDeduper = HashMap<u64, ExternalStringList, IdentityContext<u64>>;
+// TODO(b2): Zig used `IdentityContext(u64)` hasher; std HashMap is fine for now.
+type ExternalStringMapDeduper = HashMap<u64, ExternalStringList>;
 
 struct DependencyGroup {
     prop: &'static str,
@@ -2147,6 +2196,10 @@ const DEPENDENCY_GROUPS: [DependencyGroup; 3] = [
     DependencyGroup { prop: "peerDependencies", field: "peer_dependencies" },
 ];
 
+// TODO(b2): body gated — bun_logger::js_ast::Expr query surface
+// (`as_property`/`as_string`/`get`) and `Bin` field layout not landed yet.
+// ~1200 lines; un-gate once js_ast accessor helpers are ported.
+#[cfg(any())]
 impl PackageManifest {
     /// This parses [Abbreviated metadata](https://github.com/npm/registry/blob/master/docs/responses/package-metadata.md#abbreviated-metadata-format)
     pub fn parse(

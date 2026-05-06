@@ -1,45 +1,163 @@
 //! `globalThis.Bun` — top-level host functions and lazy-property getters.
 
-/// Build a public-path string from `to` against `origin` using `comptime_separator`
-/// for joining. Called by both the bundler dev-server and `BunObject` getters.
+/// Build a public-path string for `to` relative to `dir`, prefixed by `origin`
+/// (and `asset_prefix` when `origin` is absolute). Called by both the bundler
+/// dev-server and `Bun.FileSystemRouter`'s `scriptSrc` getter.
 pub fn get_public_path_with_asset_prefix<W: core::fmt::Write>(
     to: &[u8],
     dir: &[u8],
     origin: &bun_url::URL,
     asset_prefix: &[u8],
     writer: &mut W,
-    comptime_separator: u8,
+    platform: bun_paths::Platform,
 ) {
+    use bun_paths::{resolve_path, Platform};
     use bun_str::strings;
-    if to.is_empty() {
-        return;
+
+    // PERF(port): bun_url::URL::join_write wants a `bun_io::Write`; route all
+    // byte output through a Vec<u8> then forward to the caller's fmt::Write.
+    #[inline]
+    fn write_bytes<W: core::fmt::Write>(w: &mut W, bytes: &[u8]) -> core::fmt::Result {
+        w.write_str(core::str::from_utf8(bytes).unwrap_or(""))
     }
-    let to = if strings::has_prefix(to, dir) { &to[dir.len()..] } else { to };
-    let to = strings::remove_leading_dot_slash(to);
-    if !origin.is_absolute() {
-        if !asset_prefix.is_empty() {
-            let _ = writer.write_str(core::str::from_utf8(asset_prefix).unwrap_or(""));
+
+    let relative_path: &[u8] = if strings::has_prefix(to, dir) {
+        strings::without_trailing_slash(&to[dir.len()..])
+    } else {
+        // PORT NOTE: spec is `VirtualMachine.get().transpiler.fs.relativePlatform(dir, to, platform)`;
+        // that wrapper is stateless and forwards to bun_paths — dispatch on runtime `platform`
+        // here to keep this fn callable without const-generic plumbing through `transpiler.fs`.
+        match platform {
+            Platform::Posix => {
+                resolve_path::relative_platform::<resolve_path::platform::Posix, false>(dir, to)
+            }
+            Platform::Windows => {
+                resolve_path::relative_platform::<resolve_path::platform::Windows, false>(dir, to)
+            }
+            Platform::Loose => {
+                resolve_path::relative_platform::<resolve_path::platform::Loose, false>(dir, to)
+            }
+            Platform::Nt => {
+                resolve_path::relative_platform::<resolve_path::platform::Nt, false>(dir, to)
+            }
         }
-        let to = strings::remove_leading_dot_slash(to);
-        let _ = writer.write_str(core::str::from_utf8(to).unwrap_or(""));
-        return;
+    };
+    if origin.is_absolute() {
+        if strings::has_prefix(relative_path, b"..") || strings::has_prefix(relative_path, b"./") {
+            if write_bytes(writer, origin.origin).is_err() {
+                return;
+            }
+            if write_bytes(writer, b"/abs:").is_err() {
+                return;
+            }
+            if bun_paths::is_absolute(to) {
+                let _ = write_bytes(writer, to);
+            } else {
+                // SAFETY: `transpiler.fs` is the process-lifetime resolver FileSystem
+                // singleton, set during VM init and never freed.
+                let fs = unsafe { &*VirtualMachine::get().transpiler.fs };
+                let _ = write_bytes(writer, fs.abs(&[to]));
+            }
+        } else {
+            let mut buf: Vec<u8> = Vec::new();
+            let _ = origin.join_write(&mut buf, asset_prefix, b"", relative_path, b"");
+            let _ = write_bytes(writer, &buf);
+        }
+    } else {
+        let _ = write_bytes(writer, strings::trim_left(relative_path, b"/"));
     }
-    // TODO(b2): Zig `joinWrite` takes a separator arg; bun_url::URL::join_write
-    // currently does not. Ignore `comptime_separator` until that lands.
-    // PERF(port): bun_url::bun_io::Write is crate-private; route through a
-    // Vec<u8> (which it impls) then forward to the caller's fmt::Write.
-    let _ = comptime_separator;
-    let mut buf: Vec<u8> = Vec::new();
-    let _ = origin.join_write(&mut buf, asset_prefix, b"", to, b"");
-    let _ = writer.write_str(core::str::from_utf8(&buf).unwrap_or(""));
 }
+
+// ─── un-gated host-fn bodies (B-2) ──────────────────────────────────────────
+// `bun_jsc` + `#[bun_jsc::host_fn]` are real now. The self-contained `Bun.*`
+// callbacks below compile against the un-gated bun_jsc surface and export the
+// `BunObject_callback_<name>` symbols C++ links against (BunObject.cpp). The
+// bulk of `bun_object` (export tables, lazy-property fan-out, JSZlib/JSZstd,
+// env-map FFI, serve(), file()) stays in `_jsc_gated` until the sibling api/*
+// modules they fan out to are themselves declared/un-gated.
+
+use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+
+#[bun_jsc::host_fn(export = "BunObject_callback_sleepSync")]
+pub fn sleep_sync(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    let arguments = callframe.arguments();
+
+    // Expect at least one argument.  We allow more than one but ignore them; this
+    //  is useful for supporting things like `[1, 2].map(sleepSync)`
+    if arguments.is_empty() {
+        // TODO(b2): bun_jsc::JSGlobalObject::throw_not_enough_arguments — gated.
+        return Err(global_object.throw_invalid_arguments(format_args!(
+            "Not enough arguments to sleepSync. Expected 1, got 0."
+        )));
+    }
+    let arg = arguments[0];
+
+    // The argument must be a number
+    if !arg.is_number() {
+        return Err(global_object.throw_invalid_argument_type(
+            "sleepSync",
+            "milliseconds",
+            "number",
+        ));
+    }
+
+    //NOTE: if argument is > max(i32) then it will be truncated
+    let milliseconds = arg.coerce::<i32>(global_object)?;
+    if milliseconds < 0 {
+        return Err(global_object.throw_invalid_arguments(format_args!(
+            "argument to sleepSync must not be negative, got {milliseconds}"
+        )));
+    }
+
+    std::thread::sleep(core::time::Duration::from_millis(
+        u64::try_from(milliseconds).unwrap(),
+    ));
+    Ok(JSValue::UNDEFINED)
+}
+
+#[bun_jsc::host_fn(export = "BunObject_callback_nanoseconds")]
+pub fn nanoseconds(global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+    // PORT NOTE: Zig's `std.time.Timer.read()` → `Instant::elapsed().as_nanos()`.
+    let ns = global_this.bun_vm().origin_timer.elapsed().as_nanos() as u64;
+    Ok(JSValue::js_number_from_uint64(ns))
+}
+
+#[bun_jsc::host_fn(export = "BunObject_callback_shrink")]
+pub fn shrink(global_object: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+    global_object.vm().shrink_footprint();
+    Ok(JSValue::UNDEFINED)
+}
+
+pub use Bun__gc as gc;
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__gc(vm: *mut VirtualMachine, sync: bool) -> usize {
+    // SAFETY: caller is C++ passing a live VM.
+    unsafe { (*vm).garbage_collect(sync) }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__reportError(global_object: *mut JSGlobalObject, err: JSValue) {
+    // SAFETY: caller is C++ with a live global.
+    let _ = VirtualMachine::get().uncaught_exception(unsafe { &*global_object }, err, false);
+}
+
+// Lazy-property getters whose target modules are un-gated in `crate::api`
+// (the rest — `hash`, `TOML`, `unsafe`, `semver`, `CSRF`, `Transpiler`,
+// `FileSystemRouter`, … — wait on their sibling `mod` declarations).
+// TODO(b2-blocked): crate::api::{hash_object,toml_object,unsafe_object,
+// json5_object,yaml_object,csrf_jsc} — un-gate these getters once api.rs
+// declares the modules.
 
 // ─── host-fn bodies (the `Bun.*` surface proper) ────────────────────────────
 // ~60 `#[bun_jsc::host_fn]` entry points + lazy-getter shims. Every body
 // touches `JSGlobalObject`/`CallFrame` and most fan out to sibling api/*
 // modules that are themselves gated. Preserved verbatim.
-// TODO(b2-blocked): bun_jsc + #[bun_jsc::host_fn] proc-macro + bun_gen codegen crate
+// TODO(b2-blocked): bun_gen codegen crate + sibling api/* mod declarations
+// (HashObject/FFIObject/Subprocess/webcore::Blob/jsc::api::*). bun_jsc itself
+// is un-gated now — remaining blockers are the fan-out targets.
 #[cfg(any())]
+#[allow(dead_code)]
 mod _jsc_gated {
 use core::ffi::{c_char, c_int, c_void};
 use std::io::Write as _;

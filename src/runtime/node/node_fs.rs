@@ -14,20 +14,42 @@ use bun_jsc::{
     CallFrame, ConcurrentTask, EventLoopHandle, JSGlobalObject, JSPromise, JSValue, JsError,
     JsResult, MiniEventLoop, Task, VirtualMachine, ZigString,
 };
-use bun_jsc::node::{
-    self as node, ArgumentsSlice, Dirent, Encoding, FileSystemFlags, PathLike,
-    PathOrFileDescriptor, Stats, StringOrBuffer, TimeLike, VectorArrayBuffer,
-};
 use bun_jsc::debugger::AsyncTaskTracker;
 use bun_jsc::webcore::{self, AbortSignal, Blob};
 use bun_paths::{self as paths, OSPathBuffer, OSPathChar, OSPathSliceZ, PathBuffer, PathString};
-use bun_str::{self as bstr, strings, String as BunString, ZStr};
+use bun_string::{self as bstr, strings, String as BunString, ZStr};
 use bun_sys::{self as sys, Fd as FD, Maybe, Mode, SystemErrno, E};
 use bun_threading::{WorkPool, WorkPoolTask};
 
+// PORT NOTE: Zig referenced these via `bun.api.node.*`. The Phase-A draft
+// pulled them through `bun_jsc::node` (a re-export shim that no longer exists
+// once `node.rs` owns the module tree). Round 2 wires them to the real
+// sibling modules under `super::` so this file compiles standalone.
+use super::stat::Stats;
+use super::time_like::TimeLike;
+use super::types::{
+    ArgumentsSlice, Dirent, Encoding, FileSystemFlags, PathLike, PathOrFileDescriptor,
+    StringOrBuffer, VectorArrayBuffer,
+};
+
+/// Local alias for the many `node::foo` call sites below — keeps the diff
+/// against `node_fs.zig` readable while routing to `super::*`.
+mod node {
+    pub use super::super::types::{mode_from_js, Buffer, SliceWithUnderlyingString};
+    pub use super::super::statfs::StatFS;
+    pub use super::super::time_like::from_js as time_like_from_js;
+    pub use super::super::util::validators;
+    pub use super::super::{gid_t, uid_t};
+}
+
 pub use super::node_fs_constant as constants;
+// node_fs_binding / node_fs_watcher / node_fs_stat_watcher are JSC-bound and
+// not yet declared in `node.rs`; their re-exports stay gated for round 2.
+#[cfg(any())]
 pub use super::node_fs_binding::Binding;
+#[cfg(any())]
 pub use super::node_fs_watcher::FSWatcher as Watcher;
+#[cfg(any())]
 pub use super::node_fs_stat_watcher::StatWatcher;
 
 use super::dir_iterator as DirIterator;
@@ -45,7 +67,7 @@ use bun_sys::sys_uv as Syscall;
 use bun_sys as Syscall;
 
 type ReadPosition = i64;
-type Buffer = bun_jsc::node::Buffer;
+type Buffer = super::types::Buffer;
 type ArrayBuffer = bun_jsc::MarkedArrayBuffer;
 type GidT = node::gid_t;
 type UidT = node::uid_t;
@@ -73,6 +95,14 @@ pub enum Flavor {
 // ──────────────────────────────────────────────────────────────────────────
 // Async task type aliases
 // ──────────────────────────────────────────────────────────────────────────
+// TODO(b2-blocked): async task machinery (AsyncFSTask / UVFSRequest /
+// NewAsyncCpTask / AsyncReaddirRecursiveTask) depends on JSPromise::Strong,
+// AsyncTaskTracker, ConcurrentTask, EventLoopHandle — all unresolved on the
+// current bun_jsc surface. Gated as a unit; sync `impl NodeFS` below stays live.
+#[cfg(any())]
+mod _async_gated {
+use super::*;
+
 pub mod async_ {
     use super::*;
 
@@ -1364,6 +1394,13 @@ impl ResultListEntryValue {
     fn append_from(&mut self, _other: &mut Self) { /* TODO(port) */ }
 }
 
+} // mod _async_gated
+#[cfg(any())]
+pub use _async_gated::{
+    async_, AsyncCpTask, AsyncFSTask, AsyncReaddirRecursiveTask, FsArgument, NewAsyncCpTask,
+    ShellAsyncCpTask, UVFSRequest,
+};
+
 // ──────────────────────────────────────────────────────────────────────────
 // Arguments
 // ──────────────────────────────────────────────────────────────────────────
@@ -1779,9 +1816,12 @@ pub mod args {
                             else if str.eql_comptime("file") { SymlinkLinkType::File }
                             else if str.eql_comptime("junction") { SymlinkLinkType::Junction }
                             else {
+                                // Build the error before deref() so the format observes a live string
+                                // (Zig used `defer str.deref()` — node_fs.zig:1905-1910).
+                                let err = ctx.err_invalid_arg_value(format_args!("Symlink type must be one of \"dir\", \"file\", or \"junction\". Received \"{}\"", str)).throw();
                                 str.deref();
                                 old_path.deinit(); new_path.deinit();
-                                return Err(ctx.err_invalid_arg_value(format_args!("Symlink type must be one of \"dir\", \"file\", or \"junction\". Received \"{}\"", str)).throw());
+                                return Err(err);
                             };
                         str.deref();
                         break 'link_type lt;
@@ -2604,8 +2644,15 @@ pub mod args {
     }
 
     pub type UnwatchFile = ();
+    // TODO(b2-blocked): Watcher / StatWatcher modules are gated; arg types stubbed.
+    #[cfg(any())]
     pub type Watch = super::Watcher::Arguments;
+    #[cfg(any())]
     pub type WatchFile = super::StatWatcher::Arguments;
+    #[cfg(not(any()))]
+    pub type Watch = ();
+    #[cfg(not(any()))]
+    pub type WatchFile = ();
 
     pub struct Fsync { pub fd: FD }
     impl Fsync {
@@ -2907,13 +2954,19 @@ impl NodeFS {
         // buf_to_free dropped at scope exit
 
         let mut remain = stat_size.max(0) as u64;
+        // VERIFY-FIX(round1): Zig `while (cond) {} else {}` runs the else only when
+        // the loop exits because `cond` became false — never on `break`. The
+        // `if remain == 0` check below was wrong: `break 'toplevel` after
+        // `remain` had already saturated to 0 would still enter the else. Track
+        // an explicit `broke` flag instead.
+        let mut broke = false;
         'toplevel: while remain > 0 {
             let amt = match Syscall::read(src_fd, &mut buf[..(buf.len() as u64).min(remain) as usize]) {
                 Maybe::Ok(result) => result,
                 Maybe::Err(err) => return Maybe::Err(if !src.is_empty() { err.with_path(src) } else { err }),
             };
             // 0 == EOF
-            if amt == 0 { break 'toplevel; }
+            if amt == 0 { broke = true; break 'toplevel; }
             *wrote += amt as u64;
             remain = remain.saturating_sub(amt as u64);
 
@@ -2923,11 +2976,11 @@ impl NodeFS {
                     Maybe::Ok(result) => result,
                     Maybe::Err(err) => return Maybe::Err(if !dest.is_empty() { err.with_path(dest) } else { err }),
                 };
-                if written == 0 { break 'toplevel; }
+                if written == 0 { broke = true; break 'toplevel; }
                 slice = &slice[written..];
             }
         }
-        if remain == 0 {
+        if !broke {
             'outer: loop {
                 let amt = match Syscall::read(src_fd, buf) {
                     Maybe::Ok(result) => result,
@@ -3035,20 +3088,25 @@ impl NodeFS {
                     let _close_src = scopeguard::guard(src_fd, |fd| fd.close());
 
                     let mut flags: Mode = sys::O::CREAT | sys::O::WRONLY;
-                    let mut wrote: usize = 0;
+                    // VERIFY-FIX(round1): was `usize` then passed as `&mut (wrote as u64)` —
+                    // that wrote into a discarded temporary so the deferred ftruncate
+                    // always saw 0. The scopeguard variant also double-borrowed `wrote`.
+                    // The Zig `defer` runs after `copy_file_using_read_write_loop` returns
+                    // into this scope; there are no early returns between open(dest) and
+                    // that call, so inlining the cleanup after is equivalent.
+                    let mut wrote: u64 = 0;
                     if args.mode.shouldnt_overwrite() { flags |= sys::O::EXCL; }
 
                     let dest_fd = match Syscall::open(dest, flags, DEFAULT_PERMISSION) {
                         Maybe::Ok(result) => result,
                         Maybe::Err(err) => return Maybe::Err(err.with_path(args.dest.slice())),
                     };
-                    let _close_dest = scopeguard::guard((dest_fd, &mut wrote, stat_.mode), |(fd, w, m)| {
-                        let _ = Syscall::ftruncate(fd, (*w as u64 & ((1u64 << 63) - 1)) as i64);
-                        let _ = Syscall::fchmod(fd, m);
-                        fd.close();
-                    });
 
-                    return Self::copy_file_using_read_write_loop(src, dest, src_fd, dest_fd, stat_.size.max(0) as usize, &mut wrote);
+                    let result = Self::copy_file_using_read_write_loop(src, dest, src_fd, dest_fd, stat_.size.max(0) as usize, &mut wrote);
+                    let _ = Syscall::ftruncate(dest_fd, (wrote & ((1u64 << 63) - 1)) as i64);
+                    let _ = Syscall::fchmod(dest_fd, stat_.mode);
+                    dest_fd.close();
+                    return result;
                 }
             }
 
@@ -3101,7 +3159,13 @@ impl NodeFS {
             }
 
             let mut flags: i32 = sys::O::CREAT | sys::O::WRONLY;
-            let mut wrote: usize = 0;
+            // VERIFY-FIX(round1): `wrote` is read by the deferred-close scopeguard
+            // *after* the copy loops below mutate it. As a `usize` captured by-copy
+            // the guard always saw 0, and the `&mut (wrote as u64)` call sites
+            // wrote into discarded temporaries. `Cell<u64>` lets the guard borrow
+            // by reference while the loops `get`/`set`, matching Zig's `var wrote: u64`
+            // observed by `defer` at scope-exit time.
+            let wrote: core::cell::Cell<u64> = core::cell::Cell::new(0);
             if args.mode.shouldnt_overwrite() { flags |= sys::O::EXCL; }
 
             let dest_fd = match Syscall::open(dest, flags, DEFAULT_PERMISSION) {
@@ -3137,9 +3201,9 @@ impl NodeFS {
                 sys::disable_ioctl_ficlone();
             }
 
-            let _close_dest = scopeguard::guard((dest_fd, stat_.mode), |(fd, m)| {
+            let _close_dest = scopeguard::guard((dest_fd, stat_.mode, &wrote), |(fd, m, wrote)| {
                 // SAFETY: fd is a valid open dest_fd; ftruncate/fchmod are libc FFI
-                let _ = unsafe { sys::linux::ftruncate(fd.cast(), (wrote as u64 & ((1u64 << 63) - 1)) as i64) };
+                let _ = unsafe { sys::linux::ftruncate(fd.cast(), (wrote.get() & ((1u64 << 63) - 1)) as i64) };
                 // SAFETY: same fd as above
                 let _ = unsafe { sys::linux::fchmod(fd.cast(), m) };
                 fd.close();
@@ -3149,7 +3213,10 @@ impl NodeFS {
             let mut off_out_copy: i64 = 0;
 
             if !sys::can_use_copy_file_range_syscall() {
-                return Self::copy_file_using_sendfile_on_linux_with_read_write_fallback(src, dest, src_fd, dest_fd, size, &mut (wrote as u64));
+                let mut w = wrote.get();
+                let r = Self::copy_file_using_sendfile_on_linux_with_read_write_fallback(src, dest, src_fd, dest_fd, size, &mut w);
+                wrote.set(w);
+                return r;
             }
 
             if size == 0 {
@@ -3164,14 +3231,17 @@ impl NodeFS {
                             E::INTR => continue,
                             E::XDEV | E::NOSYS | E::INVAL | E::OPNOTSUPP => {
                                 if matches!(err.get_errno(), E::NOSYS | E::OPNOTSUPP) { sys::disable_copy_file_range_syscall(); }
-                                return Self::copy_file_using_sendfile_on_linux_with_read_write_fallback(src, dest, src_fd, dest_fd, size, &mut (wrote as u64));
+                                let mut w = wrote.get();
+                                let r = Self::copy_file_using_sendfile_on_linux_with_read_write_fallback(src, dest, src_fd, dest_fd, size, &mut w);
+                                wrote.set(w);
+                                return r;
                             }
                             _ => return err,
                         }
                     }
                     // wrote zero bytes means EOF
                     if written == 0 { break; }
-                    wrote = wrote.saturating_add(written as usize);
+                    wrote.set(wrote.get().saturating_add(written as u64));
                 }
             } else {
                 while size > 0 {
@@ -3182,13 +3252,16 @@ impl NodeFS {
                             E::INTR => continue,
                             E::XDEV | E::NOSYS | E::INVAL | E::OPNOTSUPP => {
                                 if matches!(err.get_errno(), E::NOSYS | E::OPNOTSUPP) { sys::disable_copy_file_range_syscall(); }
-                                return Self::copy_file_using_sendfile_on_linux_with_read_write_fallback(src, dest, src_fd, dest_fd, size, &mut (wrote as u64));
+                                let mut w = wrote.get();
+                                let r = Self::copy_file_using_sendfile_on_linux_with_read_write_fallback(src, dest, src_fd, dest_fd, size, &mut w);
+                                wrote.set(w);
+                                return r;
                             }
                             _ => return err,
                         }
                     }
                     if written == 0 { break; }
-                    wrote = wrote.saturating_add(written as usize);
+                    wrote.set(wrote.get().saturating_add(written as u64));
                     size = size.saturating_sub(written as usize);
                 }
             }
@@ -3473,8 +3546,13 @@ impl NodeFS {
             }
         }
 
-        // SAFETY: sync_error_buf is align(u16); reinterpret as OSPathBuffer
-        let working_mem: &mut OSPathBuffer = unsafe { &mut *(&mut self.sync_error_buf as *mut PathBuffer as *mut OSPathBuffer) };
+        // SAFETY: sync_error_buf is align(u16); reinterpret as OSPathBuffer.
+        // Keep the raw `*mut PathBuffer` so error-return paths can re-derive a fresh
+        // `&mut PathBuffer` without reborrowing `&mut self` (which would alias
+        // `working_mem` under stacked borrows). On every such path `working_mem` is
+        // not used afterward, so the re-derive is sound.
+        let sync_error_buf_ptr: *mut PathBuffer = &mut self.sync_error_buf;
+        let working_mem: &mut OSPathBuffer = unsafe { &mut *(sync_error_buf_ptr as *mut OSPathBuffer) };
         working_mem[..len as usize].copy_from_slice(&path.as_slice()[..len as usize]);
 
         let mut i: u16 = len - 1;
@@ -3495,9 +3573,12 @@ impl NodeFS {
                                     if let Maybe::Ok(res) = sys::directory_exists_at(FD::INVALID, parent) {
                                         // is a directory. break.
                                         if !res {
+                                            // SAFETY: `working_mem` is not used after this return; re-derive
+                                            // the &mut PathBuffer from the stored raw ptr instead of `&mut self`.
+                                            let buf = unsafe { &mut *sync_error_buf_ptr };
                                             return Maybe::Err(sys::Error {
                                                 errno: E::NOTDIR as _, syscall: sys::Tag::mkdir,
-                                                path: self.os_path_into_sync_error_buf(strings::without_nt_prefix(&path.as_slice()[..len as usize])).into(),
+                                                path: Self::os_path_into_buf(buf, strings::without_nt_prefix(&path.as_slice()[..len as usize])).into(),
                                                 ..Default::default()
                                             });
                                         }
@@ -3509,7 +3590,17 @@ impl NodeFS {
                             E::NOENT => { i -= 1; continue; }
                             _ => {
                                 #[cfg(windows)]
-                                let p = self.os_path_into_sync_error_buf_overlap(strings::without_nt_prefix(parent.as_slice()));
+                                let p = {
+                                    // `parent` aliases `working_mem` (== sync_error_buf). Copy it
+                                    // out to a temp before re-deriving `&mut PathBuffer` so we
+                                    // never hold `&mut buf` and `&buf[..]` simultaneously.
+                                    let stripped = strings::without_nt_prefix(parent.as_slice());
+                                    let n = stripped.len();
+                                    let tmp = paths::os_path_buffer_pool().get();
+                                    tmp[..n].copy_from_slice(stripped);
+                                    // SAFETY: `working_mem`/`parent` are not used after this return.
+                                    Self::os_path_into_buf(unsafe { &mut *sync_error_buf_ptr }, &tmp[..n])
+                                };
                                 #[cfg(not(windows))]
                                 let p = strings::without_nt_prefix(parent.as_slice());
                                 return Maybe::Err(err.with_path(p));
@@ -3540,7 +3631,11 @@ impl NodeFS {
                             // handle the race condition
                             E::EXIST => {}
                             // NOENT shouldn't happen here
-                            _ => return Maybe::Err(err.with_path(self.os_path_into_sync_error_buf(strings::without_nt_prefix(path.as_slice())))),
+                            _ => {
+                                // SAFETY: `working_mem` is not used after this return.
+                                let buf = unsafe { &mut *sync_error_buf_ptr };
+                                return Maybe::Err(err.with_path(Self::os_path_into_buf(buf, strings::without_nt_prefix(path.as_slice()))));
+                            }
                         }
                     }
                     Maybe::Ok(_) => {
@@ -3560,7 +3655,11 @@ impl NodeFS {
         match Syscall::mkdir_os_path(final_, mode) {
             Maybe::Err(err) => match err.get_errno() {
                 E::EXIST => {}
-                _ => return Maybe::Err(err.with_path(self.os_path_into_sync_error_buf(strings::without_nt_prefix(path.as_slice())))),
+                _ => {
+                    // SAFETY: `working_mem` is not used after this return.
+                    let buf = unsafe { &mut *sync_error_buf_ptr };
+                    return Maybe::Err(err.with_path(Self::os_path_into_buf(buf, strings::without_nt_prefix(path.as_slice()))));
+                }
             },
             Maybe::Ok(_) => {}
         }
@@ -3592,7 +3691,7 @@ impl NodeFS {
             if let Some(errno) = rc.errno() {
                 return Maybe::Err(sys::Error { errno, syscall: sys::Tag::mkdtemp, path: prefix_buf[..len + 6].into(), ..Default::default() });
             }
-            return Maybe::Ok(ZigString::dupe_for_js(unsafe { bun_str::slice_to_nul(req.path) }).expect("oom"));
+            return Maybe::Ok(ZigString::dupe_for_js(unsafe { bun_string::slice_to_nul(req.path) }).expect("oom"));
         }
 
         let rc = unsafe { bun_sys::c::mkdtemp(prefix_buf.as_mut_ptr().cast()) };
@@ -3805,8 +3904,9 @@ impl NodeFS {
         // Structure: iterate; on err deinit entries and return err.with_path; on each entry
         // append per ExpectedType (Dirent/Buffer/BunString) using encoding helper.
         let _ = (args, fd, basename, entries);
-        // TODO(port): readdir_with_entries
-        Maybe::SUCCESS
+        // TODO(port): readdir_with_entries — fail loudly until ported so
+        // `fs.readdirSync(path)` does not silently return [] (PORTING.md §Forbidden).
+        Maybe::todo()
     }
 
     pub fn readdir_with_entries_recursive_async<T: ReaddirEntry>(
@@ -3826,8 +3926,9 @@ impl NodeFS {
         // TODO(port): full body — see node_fs.zig:4829-4988. LinearFifo of basenames,
         // PERF(port): was stack-fallback alloc for fifo+basenames.
         let _ = (buf, args, root_basename, entries);
-        // TODO(port): readdir_with_entries_recursive_sync
-        Maybe::SUCCESS
+        // TODO(port): readdir_with_entries_recursive_sync — fail loudly until ported so
+        // `fs.readdirSync(path,{recursive:true})` does not silently return [] (PORTING.md §Forbidden).
+        Maybe::todo()
     }
 
     fn should_throw_out_of_memory_early_for_javascript(encoding: Encoding, size: usize, syscall: sys::Tag) -> Option<sys::Error> {
@@ -3888,12 +3989,9 @@ impl NodeFS {
         }
     }
 
-    #[derive(Copy, Clone, PartialEq, Eq)]
-    pub enum StringType { Default, NullTerminated }
-
     pub fn read_file(&mut self, args: &args::ReadFile, flavor: Flavor) -> Maybe<ret::ReadFile> {
         // PERF(port): `flavor` was comptime monomorphization — profile in Phase B
-        let result = self.read_file_with_options(args, flavor, StringType::Default);
+        let result = self.read_file_with_options(args, flavor, ReadFileStringType::Default);
         match result {
             Maybe::Err(err) => Maybe::Err(err),
             Maybe::Ok(result) => match result {
@@ -3916,7 +4014,7 @@ impl NodeFS {
         }
     }
 
-    pub fn read_file_with_options(&mut self, args: &args::ReadFile, flavor: Flavor, string_type: StringType) -> Maybe<ret::ReadFileWithOptions> {
+    pub fn read_file_with_options(&mut self, args: &args::ReadFile, flavor: Flavor, string_type: ReadFileStringType) -> Maybe<ret::ReadFileWithOptions> {
         // TODO(port): full body — see node_fs.zig:5121-5450. ~330 lines:
         // - resolve fd from path/fd (StandaloneModuleGraph fast-path)
         // - makeLibUVOwned, defer close if path
@@ -3928,8 +4026,9 @@ impl NodeFS {
         // - finalize as Buffer/string/null_terminated
         // PERF(port): was comptime monomorphization on (flavor, string_type)
         let _ = (args, flavor, string_type);
-        // TODO(port): read_file_with_options
-        Maybe::<ret::ReadFileWithOptions>::ABORTED
+        // TODO(port): read_file_with_options — fail loudly until ported so
+        // `fs.readFileSync()` does not return a bogus EINTR/access error (PORTING.md §Forbidden).
+        Maybe::<ret::ReadFileWithOptions>::todo()
     }
 
     pub fn write_file_with_path_buffer(pathbuf: &mut PathBuffer, args: &args::WriteFile) -> Maybe<ret::WriteFile> {
@@ -4168,7 +4267,7 @@ impl NodeFS {
                     if args.force { return Maybe::SUCCESS; }
                     E::NOENT
                 } else {
-                    map_anyerror_to_errno(err)
+                    map_anyerror_to_errno_rm_tree(err)
                 };
                 return Maybe::Err(sys::Error::from_code(errno, sys::Tag::rm).with_path(args.path.slice()));
             }
@@ -4190,7 +4289,7 @@ impl NodeFS {
                         if args.force { return Maybe::SUCCESS; }
                         E::NOENT
                     } else {
-                        map_anyerror_to_errno(err2)
+                        map_anyerror_to_errno_rm_narrow(err2)
                     };
                     return Maybe::Err(sys::Error::from_code(code, sys::Tag::rm).with_path(args.path.slice()));
                 }
@@ -4200,7 +4299,7 @@ impl NodeFS {
                 if args.force { return Maybe::SUCCESS; }
                 E::NOENT
             } else {
-                map_anyerror_to_errno(err1)
+                map_anyerror_to_errno_rm_narrow(err1)
             };
             return Maybe::Err(sys::Error::from_code(code, sys::Tag::rm).with_path(args.path.slice()));
         }
@@ -4305,6 +4404,8 @@ impl NodeFS {
             .unwrap_or(Maybe::SUCCESS)
     }
 
+    // TODO(b2-blocked): args::WatchFile = StatWatcher::Arguments — module gated.
+    #[cfg(any())]
     pub fn watch_file(&mut self, args: &args::WatchFile, flavor: Flavor) -> Maybe<ret::WatchFile> {
         debug_assert!(flavor == Flavor::Sync);
         let watcher = match args.create_stat_watcher() {
@@ -4361,6 +4462,8 @@ impl NodeFS {
         }
     }
 
+    // TODO(b2-blocked): args::Watch = Watcher::Arguments — module gated.
+    #[cfg(any())]
     pub fn watch(&mut self, args: &args::Watch, _: Flavor) -> Maybe<ret::Watch> {
         match args.create_fs_watcher() {
             Maybe::Ok(result) => Maybe::Ok(result.js_this),
@@ -4385,12 +4488,20 @@ impl NodeFS {
     }
 
     pub fn os_path_into_sync_error_buf(&mut self, slice: &[OSPathChar]) -> &[u8] {
+        Self::os_path_into_buf(&mut self.sync_error_buf, slice)
+    }
+
+    /// Free-function form of [`os_path_into_sync_error_buf`] that does not borrow
+    /// `&mut self`. Needed by `mkdir_recursive_os_path_impl`, which holds a long-lived
+    /// `&mut OSPathBuffer` reinterpreted from `sync_error_buf` and so must not reborrow
+    /// `&mut self` on its error-return paths (PORTING.md §Forbidden aliased `&mut`).
+    fn os_path_into_buf<'a>(buf: &'a mut PathBuffer, slice: &[OSPathChar]) -> &'a [u8] {
         #[cfg(windows)]
-        { return strings::from_wpath(&mut self.sync_error_buf, slice); }
+        { return strings::from_wpath(buf, slice); }
         #[cfg(not(windows))]
         {
-            self.sync_error_buf[..slice.len()].copy_from_slice(slice);
-            &self.sync_error_buf[..slice.len()]
+            buf[..slice.len()].copy_from_slice(slice);
+            &buf[..slice.len()]
         }
     }
 
@@ -4418,8 +4529,9 @@ impl NodeFS {
         // - openat dir, mkdirRecursiveOSPath dest, iterate entries
         // - guard ENAMETOOLONG, recurse on dirs, _copy_single_file_sync on files
         let _ = (src_buf, src_dir_len, dest_buf, dest_dir_len, args);
-        // TODO(port): cp_sync_inner
-        Maybe::SUCCESS
+        // TODO(port): cp_sync_inner — fail loudly until ported so `fs.cpSync()` does not
+        // report success while copying nothing (PORTING.md §Forbidden).
+        Maybe::todo()
     }
 
     /// On Windows, copying a file onto itself will return EBUSY, which is an
@@ -4528,6 +4640,12 @@ impl NodeFS {
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum RealpathVariant { Native, Emulated }
 
+// PORT NOTE: was `pub enum StringType` inside `impl NodeFS` (Zig allowed
+// nested type decls in struct bodies). Hoisted out — Rust forbids enums in
+// inherent impls.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum ReadFileStringType { Default, NullTerminated }
+
 /// Trait for `mkdirRecursiveImpl` Ctx parameter (`void` does nothing).
 pub trait MkdirCtx {
     fn on_create_dir(&self, _path: OSPathSliceZ) {}
@@ -4552,6 +4670,11 @@ impl ReaddirEntry for Buffer {
     fn into_readdir(v: Vec<Self>) -> ret::Readdir { ret::Readdir::Buffers(v.into_boxed_slice()) }
 }
 
+// VERIFY-FIX(round1): the Zig source has three distinct error→errno tables for
+// rmdir-recursive (node_fs.zig:5757-5788), rm-recursive (node_fs.zig:5789-5824),
+// and rm non-recursive unlinkZ/rmdirZ (node_fs.zig:5842-5887). Phase-A collapsed
+// them into one, which silently mapped AccessDenied→EPERM for `rm` (Node returns
+// EACCES there) and widened the narrow table. Split back out per call site.
 fn map_anyerror_to_errno(err: bun_core::Error) -> E {
     match err.name() {
         "AccessDenied" => E::PERM,
@@ -4568,6 +4691,44 @@ fn map_anyerror_to_errno(err: bun_core::Error) -> E {
         "InvalidUtf8" | "InvalidWtf8" | "BadPathName" => E::INVAL,
         "FileNotFound" => E::NOENT,
         "IsDir" => E::ISDIR,
+        _ => E::FAULT,
+    }
+}
+
+// `rm` recursive (zigDeleteTree) — same shape as the rmdir table above except
+// AccessDenied maps to EACCES, not EPERM (node_fs.zig:5789-5824).
+fn map_anyerror_to_errno_rm_tree(err: bun_core::Error) -> E {
+    match err.name() {
+        "AccessDenied" => E::ACCES,
+        "FileTooBig" => E::FBIG,
+        "SymLinkLoop" => E::LOOP,
+        "ProcessFdQuotaExceeded" => E::NFILE,
+        "NameTooLong" => E::NAMETOOLONG,
+        "SystemFdQuotaExceeded" => E::MFILE,
+        "SystemResources" => E::NOMEM,
+        "ReadOnlyFileSystem" => E::ROFS,
+        "FileSystem" => E::IO,
+        "FileBusy" | "DeviceBusy" => E::BUSY,
+        "NotDir" => E::NOTDIR,
+        "InvalidUtf8" | "InvalidWtf8" | "BadPathName" => E::INVAL,
+        "FileNotFound" => E::NOENT,
+        "IsDir" => E::ISDIR,
+        _ => E::FAULT,
+    }
+}
+
+// `rm` non-recursive unlinkZ/rmdirZ fallback — narrower table; anything not
+// listed here falls through to EFAULT (node_fs.zig:5842-5859 / 5870-5887).
+fn map_anyerror_to_errno_rm_narrow(err: bun_core::Error) -> E {
+    match err.name() {
+        "AccessDenied" => E::ACCES,
+        "SymLinkLoop" => E::LOOP,
+        "NameTooLong" => E::NAMETOOLONG,
+        "SystemResources" => E::NOMEM,
+        "ReadOnlyFileSystem" => E::ROFS,
+        "FileBusy" => E::BUSY,
+        "InvalidUtf8" | "InvalidWtf8" | "BadPathName" => E::INVAL,
+        "FileNotFound" => E::NOENT,
         _ => E::FAULT,
     }
 }
@@ -4610,8 +4771,9 @@ pub fn zig_delete_tree(self_: sys::Dir, sub_path: &[u8], kind_hint: sys::FileKin
     // Structure: explicit StackItem stack (cap 16), iterate entries, treat-as-dir loop,
     // close-then-delete-dir, retry-on-DirNotEmpty.
     let _ = (self_, sub_path, kind_hint);
-    // TODO(port): zig_delete_tree
-    Ok(())
+    // TODO(port): zig_delete_tree — fail loudly until ported so `fs.rmSync()/rmdirSync()`
+    // recursive does not report success while deleting nothing (maps to EFAULT in callers).
+    Err(bun_core::err!("Unimplemented"))
 }
 
 fn zig_delete_tree_open_initial_subpath(self_: sys::Dir, sub_path: &[u8], kind_hint: sys::FileKind) -> Result<Option<sys::Dir>, bun_core::Error> {

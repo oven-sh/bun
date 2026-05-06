@@ -1,13 +1,15 @@
 //! A shell primarily runs commands, so this is the main state node.
 //!
-//! Execution proceeds: expand assigns → expand argv atoms → expand redirects
+//! Execution proceeds: expand assigns → expand redirect → expand argv atoms
 //! → resolve to builtin or spawn subprocess → await exit.
 
 use crate::shell::ast;
 use crate::shell::builtin::Builtin;
 use crate::shell::interpreter::{log, CowFd, Interpreter, Node, NodeId, ShellExecEnv, StateKind};
 use crate::shell::io::IO;
+use crate::shell::states::assigns::{AssignCtx, Assigns};
 use crate::shell::states::base::Base;
+use crate::shell::states::expansion::{Expansion, ExpansionOpts};
 use crate::shell::yield_::Yield;
 use crate::shell::ExitCode;
 
@@ -72,25 +74,95 @@ impl Cmd {
     }
 
     pub fn next(interp: &mut Interpreter, this: NodeId) -> Yield {
-        // The full body (~550 lines) drives the state machine through
-        // ExpandingAssigns → ExpandingArgs → ExpandingRedirect → Exec.
-        // It spawns Assigns/Expansion children, then either constructs a
-        // Builtin (and calls `Builtin::start(interp, this)`) or spawns a
-        // subprocess via `subproc::ShellSubprocess::spawn`.
-        //
-        // Gated until: ast::Cmd::{assigns, name_and_args, redirects},
-        // Builtin::Kind::from_argv0, subproc, IOWriter redirect open.
-        #[cfg(any())]
-        {
-            include!("Cmd_next_body.rs");
-        }
-        match &interp.as_cmd(this).state {
-            CmdState::Done => {
-                let exit = interp.as_cmd(this).exit_code.unwrap_or(0);
-                let parent = interp.as_cmd(this).base.parent;
-                interp.child_done(parent, this, exit)
+        loop {
+            let (shell, node) = {
+                let me = interp.as_cmd(this);
+                (me.base.shell, me.node)
+            };
+            // SAFETY: `node` points into the AST arena which outlives every
+            // state node.
+            let n = unsafe { &*node };
+            log!(
+                "Cmd {} next state={}",
+                this,
+                <&'static str>::from(&interp.as_cmd(this).state)
+            );
+            match interp.as_cmd(this).state {
+                CmdState::Idle => {
+                    // SAFETY: `n.assigns` is an arena slice; see above.
+                    let has_assigns = unsafe { !(*n.assigns).is_empty() };
+                    if has_assigns {
+                        interp.as_cmd_mut(this).state = CmdState::ExpandingAssigns;
+                        let io = interp.as_cmd(this).io.clone();
+                        let child =
+                            Assigns::init(interp, shell, n.assigns, this, AssignCtx::Cmd, io);
+                        return Assigns::start(interp, child);
+                    }
+                    interp.as_cmd_mut(this).state = CmdState::ExpandingRedirect { idx: 0 };
+                    continue;
+                }
+                CmdState::ExpandingAssigns => {
+                    // Spec (Cmd.zig childDone Assigns arm): assigns → redirect.
+                    interp.as_cmd_mut(this).state = CmdState::ExpandingRedirect { idx: 0 };
+                    continue;
+                }
+                CmdState::ExpandingRedirect { idx } => {
+                    match &n.redirect_file {
+                        Some(ast::Redirect::Atom(atom)) if idx == 0 => {
+                            let atom: *const ast::Atom = atom;
+                            let io = interp.as_cmd(this).io.clone();
+                            let child = Expansion::init(
+                                interp,
+                                shell,
+                                atom,
+                                this,
+                                io,
+                                ExpansionOpts { for_spawn: false, single: true },
+                            );
+                            return Expansion::start(interp, child);
+                        }
+                        // JsBuf redirects don't need expansion; nor does the
+                        // "already expanded" re-entry (`idx > 0`).
+                        _ => {}
+                    }
+                    // Spec (Cmd.zig next() expanding_redirect done): → args.
+                    interp.as_cmd_mut(this).state = CmdState::ExpandingArgs { idx: 0 };
+                    continue;
+                }
+                CmdState::ExpandingArgs { idx } => {
+                    // SAFETY: `n.name_and_args` is an arena slice; see above.
+                    let args = unsafe { &*n.name_and_args };
+                    if (idx as usize) >= args.len() {
+                        interp.as_cmd_mut(this).state = CmdState::Exec;
+                        continue;
+                    }
+                    let atom: *const ast::Atom = &args[idx as usize];
+                    let io = interp.as_cmd(this).io.clone();
+                    let child = Expansion::init(
+                        interp,
+                        shell,
+                        atom,
+                        this,
+                        io,
+                        ExpansionOpts { for_spawn: true, single: false },
+                    );
+                    return Expansion::start(interp, child);
+                }
+                CmdState::Exec => {
+                    // TODO(b2-blocked): Builtin::Kind::from_argv0(args[0]) →
+                    // construct Builtin and `Builtin::start`, or spawn
+                    // `subproc::ShellSubprocess`. Both depend on gated bodies
+                    // (Builtin init, IOWriter redirect open, bun_spawn).
+                    let _ = Builtin::start;
+                    return Yield::suspended();
+                }
+                CmdState::WaitingWriteErr => return Yield::suspended(),
+                CmdState::Done => {
+                    let exit = interp.as_cmd(this).exit_code.unwrap_or(0);
+                    let parent = interp.as_cmd(this).base.parent;
+                    return interp.child_done(parent, this, exit);
+                }
             }
-            _ => Yield::suspended(),
         }
     }
 
@@ -100,9 +172,50 @@ impl Cmd {
         child: NodeId,
         exit_code: ExitCode,
     ) -> Yield {
-        // Children are Assigns or Expansion nodes.
+        let child_kind = interp.node(child).kind();
+        // Spec (Cmd.zig childDone lines 364-398): a nonzero exit from an
+        // Assigns or Expansion child aborts the command — write the failing
+        // error to stderr and finish with exit 1. Do NOT advance idx.
+        if exit_code != 0 && matches!(child_kind, StateKind::Assign | StateKind::Expansion) {
+            // TODO(b2-blocked): writeFailingError("{f}\n", err) — extract the
+            // expansion error and enqueue an IOWriter stderr write, then
+            // transition to `WaitingWriteErr`. Until IOWriter is wired, fail
+            // synchronously with the spec's exit code.
+            interp.deinit_node(child);
+            let me = interp.as_cmd_mut(this);
+            me.exit_code = Some(1);
+            me.state = CmdState::Done;
+            return Yield::Next(this);
+        }
+        // Collect output from Expansion children before freeing them; then
+        // advance the state machine.
+        if matches!(child_kind, StateKind::Expansion) {
+            let out = Expansion::take_out(interp, child);
+            match interp.as_cmd_mut(this).state {
+                CmdState::ExpandingArgs { ref mut idx } => {
+                    *idx += 1;
+                    // PORT NOTE: Zig used `out.bounds` to split into multiple
+                    // argv words (glob/IFS); preserved here verbatim.
+                    let me = interp.as_cmd_mut(this);
+                    if out.bounds.is_empty() {
+                        me.args.push(out.buf);
+                    } else {
+                        let mut prev = 0usize;
+                        for &b in &out.bounds {
+                            me.args.push(out.buf[prev..b as usize].to_vec());
+                            prev = b as usize;
+                        }
+                        me.args.push(out.buf[prev..].to_vec());
+                    }
+                }
+                CmdState::ExpandingRedirect { ref mut idx } => {
+                    *idx += 1;
+                    interp.as_cmd_mut(this).redirection_file = out.buf;
+                }
+                _ => {}
+            }
+        }
         interp.deinit_node(child);
-        let _ = exit_code;
         Yield::Next(this)
     }
 
@@ -126,7 +239,8 @@ impl Cmd {
             CowFd::deref(fd);
         }
         me.exec = Exec::None;
-        // TODO(b2-blocked): deinit duped shell env if any.
+        // `base.shell` is borrowed (or, when parent is Pipeline, freed by
+        // `Pipeline::child_done` before this runs) — never freed here.
         me.base.end_scope();
     }
 }
@@ -134,7 +248,7 @@ impl Cmd {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/shell/states/Cmd.zig (1018 lines)
-//   confidence: low (NodeId scaffolding only; main state-machine body gated)
-//   blocked_on: ast::Cmd, Builtin::Kind, subproc::ShellSubprocess,
+//   confidence: medium (state-machine + expansion path wired; Exec gated)
+//   blocked_on: Builtin::Kind::from_argv0, subproc::ShellSubprocess,
 //               IOWriter redirect handling
 // ──────────────────────────────────────────────────────────────────────────

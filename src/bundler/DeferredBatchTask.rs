@@ -32,18 +32,16 @@ impl DeferredBatchTask {
         *self = Self::default();
     }
 
-    pub fn get_bundle_v2(&mut self) -> &mut BundleV2 {
-        #[cfg(any())]
+    pub fn get_bundle_v2(&mut self) -> &mut BundleV2<'static> {
         // SAFETY: `self` is always the `drain_defer_task` field of a live `BundleV2`;
-        // this struct is never instantiated standalone.
+        // this struct is never instantiated standalone. Lifetime erased to 'static
+        // (mirrors Zig raw `*BundleV2`); callers must not outlive the owning bundle.
         unsafe {
-            return &mut *(self as *mut Self as *mut u8)
-                .sub(offset_of!(BundleV2, drain_defer_task))
-                .cast::<BundleV2>();
+            &mut *(self as *mut Self)
+                .cast::<u8>()
+                .sub(offset_of!(BundleV2<'static>, drain_defer_task))
+                .cast::<BundleV2<'static>>()
         }
-        // TODO(b2-blocked): crate::bundle_v2::BundleV2 (field `drain_defer_task`
-        // for offset_of) — bundle_v2 module is still gated.
-        unimplemented!("b2-blocked: BundleV2.drain_defer_task offset_of")
     }
 
     pub fn schedule(&mut self) {

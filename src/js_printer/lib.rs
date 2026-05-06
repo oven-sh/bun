@@ -4,11 +4,12 @@
 //! B-2 UN-GATED. The `Printer<'a, W, ...>` struct and its full method surface
 //! (`print_expr`, `print_stmt`, `print_binding`, `print_property`, …) now
 //! compile against the real `bun_js_parser::ast::{e,s,b,g,op,expr,stmt}`
-//! types. Remaining `#[cfg(any())]` islands are leaf optimizations / entry
-//! points blocked on lower-tier surface (see TODO(b2-blocked) markers below):
-//! the template-inlining fold, the ESM-to-CJS __export emission path,
-//! `print_dev_server_module`, the source-map self-borrow in `init`, and the
-//! top-level `print_*` driver fns in `__gated_entry_points`.
+//! types. The top-level `print` / `print_with_writer{,_and_platform}` /
+//! `print_common_js` / `get_source_map_builder` driver fns are live. Remaining
+//! `#[cfg(any())]` islands are leaf optimizations blocked on lower-tier surface
+//! (see TODO(b2-blocked) markers below): the template-inlining fold, the
+//! ESM-to-CJS __export emission path, `print_dev_server_module`, the source-map
+//! self-borrow in `init`, and the `print_ast` minify-renamer driver / `print_json`.
 
 #![allow(unused, nonstandard_style, clippy::all)]
 #![allow(unsafe_op_in_unsafe_fn)]
@@ -764,13 +765,12 @@ pub struct Whitespacer {
     pub minify: &'static [u8],
 }
 
-impl Whitespacer {
-    // TODO(port): Zig `append` was comptime concatenation; in Rust, build callers via `ws!` macro instead.
-    pub const fn append(self, _str: &'static [u8]) -> Whitespacer {
-        // TODO(port): comptime string concat — use const_format::concatcp! at call sites
-        self
-    }
-}
+// NOTE: Zig `Whitespacer.append` was comptime string concatenation
+// (`.{ .normal = this.normal ++ str, .minify = this.minify ++ str }`).
+// Rust `const fn` can't concatenate `&'static [u8]` at compile time without
+// `const_format::concatcp!` at the call site, and a runtime no-op stub would
+// silently emit wrong bytes. Callers must inline the concatenated literals
+// (see e.g. SExportStar) instead of calling `.append()`.
 
 #[doc(hidden)]
 pub const fn _ws_minify_len(s: &[u8]) -> usize {
@@ -2629,13 +2629,21 @@ where
 
             if let Some(input_files) = self.options.input_files_for_dev_server {
                 debug_assert!(module_type == bundle_opts::Format::InternalBakeDev);
-                self.print_space_before_identifier();
-                self.print_symbol(self.options.hmr_ref);
-                self.print(b".require(");
-                let path = &input_files[record.source_index.get() as usize].path;
-                // TODO(b2-blocked): bun_logger::fs::Path::pretty — field not yet ported; .text is the un-pretty path.
-                self.print_string_literal_utf8(path.text, false);
-                self.print(b")");
+                let _ = input_files;
+                // TODO(b2-blocked): bun_logger::fs::Path::pretty — spec js_printer.zig:1746
+                // prints `path.pretty`, not `path.text`. Emitting `path.text` would produce
+                // the wrong HMR module specifier, so this branch is gated until the field
+                // lands rather than silently emitting incorrect output.
+                #[cfg(any())]
+                {
+                    self.print_space_before_identifier();
+                    self.print_symbol(self.options.hmr_ref);
+                    self.print(b".require(");
+                    let path = &input_files[record.source_index.get() as usize].path;
+                    self.print_string_literal_utf8(path.pretty, false);
+                    self.print(b")");
+                }
+                todo!("bun_logger::fs::Path::pretty not yet ported (b2-blocked)");
             } else if !meta.was_unwrapped_require {
                 // Call the wrapper
                 if meta.wrapper_ref.is_valid() {
@@ -4782,8 +4790,9 @@ where
                 self.add_source_mapping(stmt.loc);
 
                 if s.alias.is_some() {
-                    // TODO(port): comptime ws("export *").append(" as ")
-                    self.print_whitespacer(Whitespacer { normal: b"export * as ", minify: b"export*as " });
+                    // Zig: ws("export *").append(" as ") — append() concatenates verbatim to
+                    // BOTH fields (js_printer.zig:86-88), so minify keeps the " as " literal.
+                    self.print_whitespacer(Whitespacer { normal: b"export * as ", minify: b"export* as " });
                 } else {
                     self.print_whitespacer(ws!(b"export * from "));
                 }
@@ -6157,16 +6166,12 @@ where
             was_lazy_export: false,
             module_info: None,
         };
-        // TODO(b2-blocked): bun_sourcemap::chunk::Builder::line_offset_table_byte_offset_list
-        // — field is `&'static [u32]` upstream pending Phase-B lifetime threading; can't
-        // store a borrow of `line_offset_tables` without transmuting. The Builder uses
-        // its default empty slice until then.
-        #[cfg(any())]
-        if GENERATE_SOURCE_MAP {
-            use SourceMap::line_offset_table::ListExt;
-            printer.source_map_builder.line_offset_table_byte_offset_list =
-                printer.source_map_builder.line_offset_tables.items_byte_offset_to_start_of_line();
-        }
+        // Spec js_printer.zig:5454-5460 caches `line_offset_tables.items(.byte_offset_to_start_of_line)`
+        // into `line_offset_table_byte_offset_list`. The Rust `Builder` field is `&'static [u32]`
+        // pending Phase-B lifetime threading, so instead of caching a self-borrow here,
+        // `Builder::add_source_mapping` derives the slice on demand from `line_offset_tables`
+        // via `ListExt::items_byte_offset_to_start_of_line()` (see Chunk.rs).
+        let _ = GENERATE_SOURCE_MAP;
         printer
     }
 
@@ -6680,50 +6685,65 @@ pub enum Format {
 #[derive(Clone, Copy, PartialEq, Eq, core::marker::ConstParamTy)]
 pub enum GenerateSourceMap { Disable, Lazy, Eager }
 
+impl GenerateSourceMap {
+    /// Const-fn helpers so a `bool` const-generic can pick the variant inside a
+    /// `{ ... }` const argument (`generic_const_exprs` rejects raw `if`).
+    pub const fn lazy_if(generate: bool) -> Self {
+        if generate { Self::Lazy } else { Self::Disable }
+    }
+    pub const fn eager_if(generate: bool) -> Self {
+        if generate { Self::Eager } else { Self::Disable }
+    }
+}
+
 // ───────────────────────────────────────────────────────────────────────────
-// Top-level print entry points — gated on `__gated_printer::Printer` (above)
-// plus the renamer driver path that mutates `Ast.module_scope`.
+// Top-level print entry points — `get_source_map_builder` / `print` /
+// `print_with_writer{,_and_platform}` / `print_common_js` are now live.
+// `print_ast`'s minify-renamer driver and `print_json` remain individually
+// re-gated on lower-tier surface (see TODO(b2-blocked) markers inline).
 // ───────────────────────────────────────────────────────────────────────────
-// TODO(b2-blocked): bun_crash_handler::{set_current_action, current_action}
-// TODO(b2-blocked): bun_core::perf
-// TODO(b2-blocked): bun_logger::Index::{value, is_runtime}
-// TODO(b2-blocked): bun_sourcemap::chunk::Builder::default / SourceMap::init
-// TODO(b2-blocked): bun_js_parser::Ast::init_test
-// TODO(b2-blocked): bun_js_printer::__gated_printer::Printer::print_dev_server_module (re-gated above)
-#[cfg(any())]
 pub mod __gated_entry_points {
 use super::*;
 use super::__gated_printer::*;
 use js_ast::Ast;
 use js_ast::ast::op::Level;
 
-pub fn get_source_map_builder<const GENERATE_SOURCE_MAP: GenerateSourceMap, const IS_BUN_PLATFORM: bool>(
-    opts: &Options,
+// PORT NOTE: Zig had `comptime generate_source_map`; Rust's `generic_const_exprs`
+// can't compute a non-`bool` const-generic from a `bool` const-generic without
+// viral `where` clauses, and the body only does runtime branches anyway. The
+// `IS_BUN_PLATFORM` axis stays const so `prepend_count` is still a compile-time
+// constant in the monomorphized callers.
+pub fn get_source_map_builder<const IS_BUN_PLATFORM: bool>(
+    generate_source_map: GenerateSourceMap,
+    opts: &mut Options,
     source: &logger::Source,
     tree: &Ast,
 ) -> SourceMap::chunk::Builder {
-    if GENERATE_SOURCE_MAP == GenerateSourceMap::Disable {
+    if generate_source_map == GenerateSourceMap::Disable {
         // TODO(port): Zig returned `undefined` here.
         return SourceMap::chunk::Builder::default();
     }
 
     SourceMap::chunk::Builder {
-        source_map: SourceMap::Chunk::SourceMap::init(
+        source_map: SourceMap::chunk::SourceMapFormat::init(
             // opts.source_map_allocator orelse opts.allocator — allocator dropped
-            IS_BUN_PLATFORM && GENERATE_SOURCE_MAP == GenerateSourceMap::Lazy,
+            IS_BUN_PLATFORM && generate_source_map == GenerateSourceMap::Lazy,
         ),
         cover_lines_without_mappings: true,
         approximate_input_line_count: tree.approximate_newline_count,
-        prepend_count: IS_BUN_PLATFORM && GENERATE_SOURCE_MAP == GenerateSourceMap::Lazy,
-        line_offset_tables: opts.line_offset_tables.clone().unwrap_or_else(|| 'brk: {
-            if GENERATE_SOURCE_MAP == GenerateSourceMap::Lazy {
-                break 'brk SourceMap::LineOffsetTable::generate(
+        prepend_count: IS_BUN_PLATFORM && generate_source_map == GenerateSourceMap::Lazy,
+        // PORT NOTE: Zig copied `opts.line_offset_tables orelse generate(...)`.
+        // `MultiArrayList` isn't `Clone`, so we `take()` (Options is consumed by
+        // `Printer::init` immediately after this call anyway).
+        line_offset_tables: opts.line_offset_tables.take().unwrap_or_else(|| 'brk: {
+            if generate_source_map == GenerateSourceMap::Lazy {
+                break 'brk bun_crash_handler::handle_oom::handle_oom(SourceMap::LineOffsetTable::generate(
                     // allocator dropped
-                    &source.contents,
+                    source.contents,
                     i32::try_from(tree.approximate_newline_count).unwrap(),
-                );
+                ));
             }
-            break 'brk SourceMap::LineOffsetTable::List::EMPTY;
+            break 'brk SourceMap::line_offset_table::List::EMPTY;
         }),
         ..Default::default()
     }
@@ -6733,6 +6753,11 @@ pub fn get_source_map_builder<const GENERATE_SOURCE_MAP: GenerateSourceMap, cons
 // Top-level print entry points
 // ───────────────────────────────────────────────────────────────────────────
 
+// TODO(b2-blocked): bun_js_parser::Scope::{children::slice_mut, parent} self-ref
+// TODO(b2-blocked): bun_js_parser::ast::symbol::Map::get → &mut Symbol (must_not_be_renamed write)
+// TODO(b2-blocked): borrowck — `opts` moved into `Printer::init` then re-read for
+//   module_info / runtime_transpiler_cache / source_map_handler
+#[cfg(any())]
 pub fn print_ast<W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOURCE_MAP: bool>(
     _writer: W,
     tree: Ast,
@@ -6886,6 +6911,9 @@ pub fn print_ast<W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOURCE_M
     Ok(usize::try_from(printer.writer.written().max(0)).unwrap())
 }
 
+// TODO(b2-blocked): bun_js_parser::Ast::init_test (re-gated upstream in Ast.rs)
+// TODO(b2-blocked): bun_js_parser::Symbol::{List,NestedList}::from_borrowed_slice_dangerous
+#[cfg(any())]
 pub fn print_json<W: WriterTrait>(
     _writer: W,
     expr: Expr,
@@ -6920,22 +6948,24 @@ pub fn print_json<W: WriterTrait>(
     Ok(usize::try_from(printer.writer.written().max(0)).unwrap())
 }
 
-pub fn print<const GENERATE_SOURCE_MAPS: bool>(
-    target: options::Target,
-    ast: Ast,
+pub fn print<'a, const GENERATE_SOURCE_MAPS: bool>(
+    bump: &'a bumpalo::Bump,
+    target: bundle_opts::Target,
+    ast: &Ast,
     source: &logger::Source,
-    opts: Options,
-    import_records: &[ImportRecord],
+    opts: Options<'a>,
+    import_records: &'a [ImportRecord],
     parts: &[js_ast::Part],
     renamer: rename::Renamer<'a, 'a>,
 ) -> PrintResult {
-    let _trace = bun_core::perf::trace("JSPrinter.print");
+    // TODO(b2-blocked): bun_core::perf::trace("JSPrinter.print")
 
     let buffer_writer = BufferWriter::init();
     let mut buffer_printer = BufferPrinter::init(buffer_writer);
 
     print_with_writer::<&mut BufferPrinter, GENERATE_SOURCE_MAPS>(
         &mut buffer_printer,
+        bump,
         target,
         ast,
         source,
@@ -6946,68 +6976,85 @@ pub fn print<const GENERATE_SOURCE_MAPS: bool>(
     )
 }
 
-pub fn print_with_writer<W: WriterTrait, const GENERATE_SOURCE_MAPS: bool>(
+pub fn print_with_writer<'a, W: WriterTrait, const GENERATE_SOURCE_MAPS: bool>(
     writer: W,
-    target: options::Target,
-    ast: Ast,
+    bump: &'a bumpalo::Bump,
+    target: bundle_opts::Target,
+    ast: &Ast,
     source: &logger::Source,
-    opts: Options,
-    import_records: &[ImportRecord],
+    opts: Options<'a>,
+    import_records: &'a [ImportRecord],
     parts: &[js_ast::Part],
     renamer: rename::Renamer<'a, 'a>,
 ) -> PrintResult {
     if target.is_bun() {
         print_with_writer_and_platform::<W, true, GENERATE_SOURCE_MAPS>(
-            writer, ast, source, opts, import_records, parts, renamer,
+            writer, bump, ast, source, opts, import_records, parts, renamer,
         )
     } else {
         print_with_writer_and_platform::<W, false, GENERATE_SOURCE_MAPS>(
-            writer, ast, source, opts, import_records, parts, renamer,
+            writer, bump, ast, source, opts, import_records, parts, renamer,
         )
     }
 }
 
 /// The real one
-pub fn print_with_writer_and_platform<W: WriterTrait, const IS_BUN_PLATFORM: bool, const GENERATE_SOURCE_MAPS: bool>(
+pub fn print_with_writer_and_platform<'a, W: WriterTrait, const IS_BUN_PLATFORM: bool, const GENERATE_SOURCE_MAPS: bool>(
     writer: W,
-    ast: Ast,
+    bump: &'a bumpalo::Bump,
+    ast: &Ast,
     source: &logger::Source,
-    opts: Options,
-    import_records: &[ImportRecord],
+    opts: Options<'a>,
+    import_records: &'a [ImportRecord],
     parts: &[js_ast::Part],
     renamer: rename::Renamer<'a, 'a>,
 ) -> PrintResult {
     let prev_action = bun_crash_handler::current_action();
     let _restore = scopeguard::guard((), |_| bun_crash_handler::set_current_action(prev_action));
-    bun_crash_handler::set_current_action(bun_crash_handler::Action::Print(source.path.text.clone()));
+    bun_crash_handler::set_current_action(Some(bun_crash_handler::Action::Print(source.path.text)));
 
     type PrinterType<'a, W, const B: bool, const G: bool> = Printer<'a, W, /*ASCII_ONLY=*/B, false, B, false, G>;
+    let module_type = opts.module_type;
+    let mut opts = opts;
+    let source_map_builder = get_source_map_builder::<IS_BUN_PLATFORM>(GenerateSourceMap::eager_if(GENERATE_SOURCE_MAPS), &mut opts, source, ast);
     let mut printer = PrinterType::<W, IS_BUN_PLATFORM, GENERATE_SOURCE_MAPS>::init(
         writer,
+        bump,
         import_records,
         opts,
         renamer,
-        get_source_map_builder::<{ if GENERATE_SOURCE_MAPS { GenerateSourceMap::Eager } else { GenerateSourceMap::Disable } }, IS_BUN_PLATFORM>(&opts, source, &ast),
+        source_map_builder,
     );
     printer.was_lazy_export = ast.has_lazy_export;
+    // PORT NOTE: `Printer::init` already moved `opts.module_info` (it's a field of
+    // `Options`); the Phase-A draft re-assigned it post-construction, which is a
+    // use-after-move in Rust. The field already lives on `printer.options.module_info`
+    // and `printer.module_info` was set to `None` by `init`, so mirror Zig by
+    // taking it back out of `printer.options`.
     if PrinterType::<W, IS_BUN_PLATFORM, GENERATE_SOURCE_MAPS>::MAY_HAVE_MODULE_INFO {
-        printer.module_info = opts.module_info;
+        printer.module_info = printer.options.module_info.take();
     }
     // PERF(port): was stack-fallback allocator
     printer.binary_expression_stack = Vec::new();
     // defer: temporary_bindings.deinit / writer.* = printer.writer.* — handled by move-out below.
 
-    if opts.module_type == bundle_opts::Format::InternalBakeDev && !source.index.is_runtime() {
-        printer.print_dev_server_module(source, &ast, &parts[0]);
+    // `Index::is_runtime` ⇔ `index.value == 0` (src/js_parser/ast/base.zig).
+    if module_type == bundle_opts::Format::InternalBakeDev && source.index.0 != 0 {
+        // TODO(b2-blocked): bun_js_printer::__gated_printer::Printer::print_dev_server_module
+        // (re-gated above on bun_logger::fs::Path::pretty + Part::stmts shape).
+        #[cfg(any())]
+        printer.print_dev_server_module(source, ast, &parts[0]);
+        #[cfg(not(any()))]
+        { let _ = (&ast, &parts); todo!("b2 stub: print_dev_server_module") }
     } else {
         // The IIFE wrapper is done in `postProcessJSChunk`, so we just manually
         // trigger an indent.
-        if opts.module_type == bundle_opts::Format::Iife {
+        if module_type == bundle_opts::Format::Iife {
             printer.indent();
         }
 
         for part in parts {
-            for stmt in &part.stmts {
+            for stmt in slice_of(part.stmts).iter() {
                 if let Err(err) = printer.print_stmt(*stmt, TopLevel::init(IsTopLevel::Yes)) {
                     return PrintResult::Err(err);
                 }
@@ -7043,37 +7090,41 @@ pub fn print_with_writer_and_platform<W: WriterTrait, const IS_BUN_PLATFORM: boo
     let mut buffer: MutableString = printer.writer.take_buffer();
 
     PrintResult::Result(PrintResultSuccess {
-        code: buffer.take_slice(),
+        code: buffer.take_slice().into(),
         source_map,
     })
 }
 
-pub fn print_common_js<W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOURCE_MAP: bool>(
+pub fn print_common_js<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOURCE_MAP: bool>(
     _writer: W,
-    tree: Ast,
+    bump: &'a bumpalo::Bump,
+    tree: &'a Ast,
     symbols: js_ast::ast::symbol::Map,
-    source: &logger::Source,
-    opts: Options,
+    source: &'a logger::Source,
+    opts: Options<'a>,
 ) -> Result<usize, bun_core::Error> {
     let prev_action = bun_crash_handler::current_action();
     let _restore = scopeguard::guard((), |_| bun_crash_handler::set_current_action(prev_action));
-    bun_crash_handler::set_current_action(bun_crash_handler::Action::Print(source.path.text.clone()));
+    bun_crash_handler::set_current_action(Some(bun_crash_handler::Action::Print(source.path.text)));
 
     type PrinterType<'a, W, const A: bool, const G: bool> = Printer<'a, W, A, true, false, false, G>;
     let writer = _writer;
+    let mut opts = opts;
     let mut renamer = rename::NoOpRenamer::init(symbols, source);
+    let source_map_builder = get_source_map_builder::<false>(GenerateSourceMap::lazy_if(GENERATE_SOURCE_MAP), &mut opts, source, tree);
     let mut printer = PrinterType::<W, ASCII_ONLY, GENERATE_SOURCE_MAP>::init(
         writer,
+        bump,
         tree.import_records.slice(),
         opts,
         renamer.to_renamer(),
-        get_source_map_builder::<{ if GENERATE_SOURCE_MAP { GenerateSourceMap::Lazy } else { GenerateSourceMap::Disable } }, false>(&opts, source, &tree),
+        source_map_builder,
     );
     // PERF(port): was stack-fallback allocator
     printer.binary_expression_stack = Vec::new();
 
     for part in tree.parts.slice() {
-        for stmt in &part.stmts {
+        for stmt in slice_of(part.stmts).iter() {
             printer.print_stmt(*stmt, TopLevel::init(IsTopLevel::Yes))?;
             printer.writer.get_error()?;
             printer.print_semicolon_if_needed();
@@ -7084,7 +7135,7 @@ pub fn print_common_js<W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SO
     printer.writer.print_slice(b"\n\n");
 
     if GENERATE_SOURCE_MAP {
-        if let Some(handler) = &opts.source_map_handler {
+        if let Some(handler) = &printer.options.source_map_handler {
             let chunk = printer.source_map_builder.generate_chunk(printer.writer.slice());
             handler.on_source_map_chunk(chunk, source)?;
         }
@@ -7095,6 +7146,7 @@ pub fn print_common_js<W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SO
     Ok(usize::try_from(printer.writer.written().max(0)).unwrap())
 }
 } // mod __gated_entry_points
+pub use self::__gated_entry_points::{get_source_map_builder, print, print_with_writer, print_with_writer_and_platform, print_common_js};
 
 /// Serializes ModuleInfo to an owned byte slice. Returns null on failure.
 /// The caller is responsible for freeing the returned slice.

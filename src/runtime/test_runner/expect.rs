@@ -113,8 +113,16 @@ impl Flags {
 
     #[inline]
     pub fn promise(self) -> Promise {
-        // SAFETY: bits 0..2 always hold a valid Promise discriminant
-        unsafe { core::mem::transmute::<u8, Promise>(self.0 & Self::PROMISE_MASK) }
+        // PORT NOTE: Zig `enum(u2)` tolerates the unused bit pattern 3 inside a
+        // packed struct; Rust does not — transmuting an out-of-range
+        // discriminant is instant UB. `Flags` is fed from C++ via
+        // `from_bitset`/`decode`, so the bits are not statically constrained.
+        match self.0 & Self::PROMISE_MASK {
+            1 => Promise::Resolves,
+            2 => Promise::Rejects,
+            // 0 and the unreachable-in-practice 3 both map to None.
+            _ => Promise::None,
+        }
     }
     #[inline]
     pub fn set_promise(&mut self, p: Promise) {
@@ -130,8 +138,23 @@ impl Flags {
     }
     #[inline]
     pub fn asymmetric_matcher_constructor_type(self) -> AsymmetricMatcherConstructorType {
-        // SAFETY: bits 3..8 always hold a valid discriminant
-        unsafe { core::mem::transmute::<u8, AsymmetricMatcherConstructorType>(self.0 >> Self::AMCT_SHIFT) }
+        // PORT NOTE: Zig `enum(u5)` with 10 variants — values 10..=31 are
+        // representable in the packed bits but are not valid Rust
+        // discriminants, and `Flags` arrives from C++ via `from_bitset`, so
+        // a checked match is required (transmute would be UB).
+        match self.0 >> Self::AMCT_SHIFT {
+            0 => AsymmetricMatcherConstructorType::None,
+            1 => AsymmetricMatcherConstructorType::Symbol,
+            2 => AsymmetricMatcherConstructorType::String,
+            3 => AsymmetricMatcherConstructorType::Object,
+            4 => AsymmetricMatcherConstructorType::Array,
+            5 => AsymmetricMatcherConstructorType::BigInt,
+            6 => AsymmetricMatcherConstructorType::Boolean,
+            7 => AsymmetricMatcherConstructorType::Number,
+            8 => AsymmetricMatcherConstructorType::Promise,
+            9 => AsymmetricMatcherConstructorType::InstanceOf,
+            _ => AsymmetricMatcherConstructorType::None,
+        }
     }
     #[inline]
     pub fn set_asymmetric_matcher_constructor_type(&mut self, t: AsymmetricMatcherConstructorType) {
@@ -177,13 +200,13 @@ impl Expect {
         matcher_name: &'static str,
         args: &'static str,
         not: bool,
-    ) -> &'static bun_str::ZStr {
+    ) -> &'static str {
         // TODO(port): comptime string concatenation — use const_format::concatcp! in Phase B
         // const RECEIVED: &str = "<d>expect(<r><red>received<r><d>).<r>";
         // if not { RECEIVED ++ "not<d>.<r>" ++ matcher_name ++ "<d>(<r>" ++ args ++ "<d>)<r>" }
         // else   { RECEIVED ++ matcher_name ++ "<d>(<r>" ++ args ++ "<d>)<r>" }
         let _ = (matcher_name, args, not);
-        bun_str::ZStr::from_static(b"<d>expect(<r><red>received<r><d>).<r>{TODO}\0")
+        "<d>expect(<r><red>received<r><d>).<r>{TODO}"
     }
 
     pub fn throw_pretty_matcher_error(
@@ -221,6 +244,12 @@ impl Expect {
             }
         };
         // PERF(port): was comptime bool dispatch on use_default_label — profile in Phase B
+        // PORT NOTE: expect.zig:119-128 binds `use_default_label = !custom_label.isEmpty()`
+        // and so prints the *signature* when a custom label is present and the
+        // (empty) `{custom_label}` when it is absent — a misnamed variable in
+        // the Zig spec. The condition below intentionally matches the correct
+        // semantics of `Expect.throw` (expect.zig:373-379) instead: empty label
+        // → default signature header, non-empty label → user's label header.
         if custom_label.is_empty() {
             // TODO(port): comptime fmt-string concatenation with autoFormatLabel; reconstruct in Phase B
             let _ = (chain, &matcher_name, &matcher_params, message_fmt);
@@ -564,22 +593,48 @@ impl Expect {
         Ok(expect_js_value)
     }
 
+    /// Matcher failure path. The 75 `expect/to*.rs` matchers all call this as
+    /// `return this.throw(global, SIGNATURE, format_args!(..))`, so the return
+    /// type is `JsResult<JSValue>` (always `Err`) to slot directly into a
+    /// host_fn body without `Err(..)` wrapping at every call site.
     pub fn throw(
         &self,
         global_this: &JSGlobalObject,
         signature: &'static str,
-        fmt: &'static str,
         args: fmt::Arguments<'_>,
-    ) -> JsError {
-        // TODO(port): comptime string concatenation of signature ++ fmt
-        if self.custom_label.is_empty() {
-            global_this.throw_pretty(
-                const_format::concatcp!("{signature}{fmt}"), // placeholder
-                args,
-            )
+    ) -> JsResult<JSValue> {
+        // TODO(port): Zig comptime-concats `signature ++ fmt` into a single
+        // pretty template; Rust has no comptime string concat across runtime
+        // call sites, so render at runtime. Revisit with const_format if the
+        // matcher set ever passes literal-only fmt strings.
+        Err(if self.custom_label.is_empty() {
+            global_this.throw_pretty("{}{}", format_args!("{}{}", signature, args))
         } else {
             global_this.throw_pretty("{}\n{}", format_args!("{}{}", self.custom_label, args))
-        }
+        })
+    }
+
+    /// Legacy 4-arg form used by a handful of internal call sites in this file
+    /// (snapshot/mock helpers) that were ported with a separate `fmt` literal.
+    /// Folds `fmt` into `args` and delegates.
+    #[inline]
+    pub fn throw_fmt(
+        &self,
+        global_this: &JSGlobalObject,
+        signature: &'static str,
+        _fmt: &'static str,
+        args: fmt::Arguments<'_>,
+    ) -> JsResult<JSValue> {
+        // `_fmt` was the Zig comptime template tail (e.g. "\n\n{s}\n"). Rust
+        // cannot interpolate a runtime-literal format string, so every caller
+        // bakes the rendered tail (literal text + substitutions) into `args`
+        // and passes the original Zig template here only for documentation.
+        // If `args` is empty but `_fmt` is not, a caller forgot to migrate.
+        debug_assert!(
+            _fmt.is_empty() || args.as_str() != Some(""),
+            "throw_fmt: caller passed non-empty fmt tail {_fmt:?} but empty args — message body would be dropped",
+        );
+        self.throw(global_this, signature, args)
     }
 
     #[bun_jsc::host_fn]
@@ -627,7 +682,7 @@ impl Expect {
 
         if not {
             let signature = Self::get_signature("pass", "", true);
-            return Err(this.throw(global_this, signature, "\n\n{s}\n", format_args!("{}", bstr::BStr::new(msg.slice()))));
+            return this.throw_fmt(global_this, signature, "\n\n{s}\n", format_args!("\n\n{}\n", bstr::BStr::new(msg.slice())));
         }
 
         // should never reach here
@@ -672,7 +727,7 @@ impl Expect {
         let msg = _msg.to_slice();
 
         let signature = Self::get_signature("fail", "", true);
-        Err(this.throw(global_this, signature, "\n\n{s}\n", format_args!("{}", bstr::BStr::new(msg.slice()))))
+        this.throw_fmt(global_this, signature, "\n\n{s}\n", format_args!("\n\n{}\n", bstr::BStr::new(msg.slice())))
     }
 }
 
@@ -880,7 +935,7 @@ impl Expect {
         // jest counts inline snapshots towards the snapshot counter for some reason
         let Some(runner) = Jest::runner() else {
             let signature = Self::get_signature(fn_name, "", false);
-            return Err(this.throw(global_this, signature, "\n\n<b>Matcher error<r>: Snapshot matchers cannot be used outside of a test\n", format_args!("")));
+            return this.throw_fmt(global_this, signature, "", format_args!("\n\n<b>Matcher error<r>: Snapshot matchers cannot be used outside of a test\n"));
         };
         match runner.snapshots.add_count(this, b"") {
             Ok(_) => {}
@@ -932,17 +987,20 @@ impl Expect {
                 if !update {
                     let signature = Self::get_signature(fn_name, "", false);
                     // Only creating new snapshots can reach here (updating with mismatches errors earlier with diff)
-                    return Err(this.throw(
+                    return this.throw_fmt(
                         global_this,
                         signature,
-                        "\n\n<b>Matcher error<r>: Inline snapshot creation is disabled in CI environments unless --update-snapshots is used.\nTo override, set the environment variable CI=false.\n\nReceived: {s}",
-                        format_args!("{}", bstr::BStr::new(&pretty_value)),
-                    ));
+                        "",
+                        format_args!(
+                            "\n\n<b>Matcher error<r>: Inline snapshot creation is disabled in CI environments unless --update-snapshots is used.\nTo override, set the environment variable CI=false.\n\nReceived: {}",
+                            bstr::BStr::new(&pretty_value),
+                        ),
+                    );
                 }
             }
             let Some(mut buntest_strong) = this.bun_test() else {
                 let signature = Self::get_signature(fn_name, "", false);
-                return Err(this.throw(global_this, signature, "\n\n<b>Matcher error<r>: Snapshot matchers cannot be used outside of a test\n", format_args!("")));
+                return this.throw_fmt(global_this, signature, "", format_args!("\n\n<b>Matcher error<r>: Snapshot matchers cannot be used outside of a test\n"));
             };
             let buntest = buntest_strong.get();
 
@@ -953,18 +1011,18 @@ impl Expect {
 
             if !srcloc.str.eql_utf8(fget.source.path.text) {
                 let signature = Self::get_signature(fn_name, "", false);
-                return Err(this.throw(
+                return this.throw_fmt(
                     global_this,
                     signature,
-                    "\n\n<b>Matcher error<r>: Inline snapshot matchers must be called from the test file:\n  Expected to be called from file: <green>\"{f}\"<r>\n  {s} called from file: <red>\"{f}\"<r>\n",
+                    "",
                     format_args!(
-                        "{:?} {} {:?}",
+                        "\n\n<b>Matcher error<r>: Inline snapshot matchers must be called from the test file:\n  Expected to be called from file: <green>{:?}<r>\n  {} called from file: <red>{:?}<r>\n",
                         bstr::BStr::new(fget.source.path.text),
                         fn_name,
                         // TODO(port): std.zig.fmtString — escaped string display
                         bstr::BStr::new(srcloc.str.to_utf8().slice()),
                     ),
-                ));
+                );
             }
 
             // 2. save to write later
@@ -994,7 +1052,7 @@ impl Expect {
         if let Some(_prop_matchers) = property_matchers {
             if !value.is_object() {
                 let signature = Self::get_signature(fn_name, "<green>properties<r><d>, <r>hint", false);
-                return Err(self.throw(global_this, signature, "\n\n<b>Matcher error: <red>received<r> values must be an object when the matcher has <green>properties<r>\n", format_args!("")));
+                return self.throw_fmt(global_this, signature, "", format_args!("\n\n<b>Matcher error: <red>received<r> values must be an object when the matcher has <green>properties<r>\n"));
             }
 
             let prop_matchers = _prop_matchers;

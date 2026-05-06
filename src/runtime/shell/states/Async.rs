@@ -2,6 +2,10 @@ use crate::shell::ast;
 use crate::shell::interpreter::{log, EventLoopHandle, Interpreter, Node, NodeId, ShellExecEnv, StateKind};
 use crate::shell::io::IO;
 use crate::shell::states::base::Base;
+use crate::shell::states::cmd::Cmd;
+use crate::shell::states::cond_expr::CondExpr;
+use crate::shell::states::pipeline::Pipeline;
+use crate::shell::states::r#if::If;
 use crate::shell::yield_::Yield;
 use crate::shell::ExitCode;
 
@@ -79,11 +83,33 @@ impl Async {
             }
             NextAction::StartChild(c) => interp.start_node(c),
             NextAction::SpawnChild => {
-                // TODO(b2-blocked): ast::Expr — match on `*me.node` and create
-                // Pipeline/Cmd/If/CondExpr child. Body gated until AST is real.
-                #[cfg(any())]
-                {
-                    include!("Async_spawn_body.rs");
+                let (shell, io, node) = {
+                    let me = interp.as_async(this);
+                    (me.base.shell, me.io.clone(), me.node)
+                };
+                // Spec (Async.zig next() `.exec` arm, child==null): init the
+                // child WITHOUT starting it, store it, enqueue self, return
+                // suspended. The child is started on the NEXT event-loop tick
+                // via the `StartChild` arm above. Restricted to
+                // pipeline/cmd/if/condexpr — other Expr variants panic
+                // (Async.zig:102-104).
+                //
+                // SAFETY: `node` points into the AST arena which outlives every
+                // state node.
+                let child = match unsafe { &*node } {
+                    ast::Expr::Pipeline(p) => Pipeline::init(interp, shell, *p, this, io),
+                    ast::Expr::Cmd(c) => Cmd::init(interp, shell, *c, this, io),
+                    ast::Expr::If(i) => If::init(interp, shell, *i, this, io),
+                    ast::Expr::CondExpr(c) => CondExpr::init(interp, shell, *c, this, io),
+                    ast::Expr::Assign(_)
+                    | ast::Expr::Binary(_)
+                    | ast::Expr::Subshell(_)
+                    | ast::Expr::Async(_) => panic!(
+                        "Unexpected Expr variant as Async child, this indicates a bug in Bun."
+                    ),
+                };
+                if let AsyncState::Exec { child: slot } = &mut interp.as_async_mut(this).state {
+                    *slot = Some(child);
                 }
                 Self::enqueue_self(interp, this);
                 Yield::suspended()

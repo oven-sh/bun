@@ -1,5 +1,7 @@
 use crate::shell::ast;
-use crate::shell::interpreter::{log, Interpreter, Node, NodeId, ShellExecEnv, StateKind};
+use crate::shell::interpreter::{
+    log, Interpreter, Node, NodeId, ShellExecEnv, ShellExecEnvKind, StateKind,
+};
 use crate::shell::io::IO;
 use crate::shell::states::base::Base;
 use crate::shell::states::script::Script;
@@ -25,6 +27,9 @@ pub enum SubshellState {
 }
 
 impl Subshell {
+    /// `shell` must already be a duped env owned by this node (see
+    /// `init_dupe_shell_state` for the Stmt/Binary path; Pipeline dupes the
+    /// env itself before calling this). `Subshell::deinit` frees it.
     pub fn init(
         interp: &mut Interpreter,
         shell: *mut ShellExecEnv,
@@ -41,21 +46,57 @@ impl Subshell {
         }))
     }
 
+    /// Zig `Subshell.initDupeShellState` — dupe the parent env and `init`.
+    /// Called by Stmt/Binary via `Interpreter::spawn_expr`. Pipeline does
+    /// NOT use this (it dupes per-child itself and calls `init` directly).
+    pub fn init_dupe_shell_state(
+        interp: &mut Interpreter,
+        parent_shell: *mut ShellExecEnv,
+        node: *const ast::Subshell,
+        parent: NodeId,
+        io: IO,
+    ) -> bun_sys::Result<NodeId> {
+        // SAFETY: `parent_shell` is a live env owned by the parent state.
+        let duped = unsafe { (*parent_shell).dupe_for_subshell(&io, ShellExecEnvKind::Subshell) }?;
+        Ok(Self::init(interp, duped, node, parent, io))
+    }
+
     pub fn start(_interp: &mut Interpreter, this: NodeId) -> Yield {
         Yield::Next(this)
     }
 
     pub fn next(interp: &mut Interpreter, this: NodeId) -> Yield {
-        // TODO(b2-blocked): ast::Subshell::{script, redirects} + ShellExecEnv::dupe_for_subshell
-        // — full body (~120 lines) gated. Shape: dupe shell env, spawn Script
-        // with parent=this, on done deinit duped env.
-        #[cfg(any())]
-        {
-            include!("Subshell_next_body.rs");
+        let (state_tag, parent) = {
+            let me = interp.as_subshell(this);
+            (<&'static str>::from(&me.state), me.base.parent)
+        };
+        log!("Subshell {} next state={}", this, state_tag);
+        match interp.as_subshell(this).state {
+            SubshellState::Idle => {
+                // Spec (Subshell.zig start()): spawn Script directly with
+                // `this.base.shell`. The env was already duped at construction
+                // (by `init_dupe_shell_state` or by Pipeline) — do NOT dupe
+                // again here.
+                let (shell, io, node) = {
+                    let me = interp.as_subshell(this);
+                    (me.base.shell, me.io.clone(), me.node)
+                };
+                // SAFETY: `node` points into the AST arena which outlives every
+                // state node.
+                let script_node: *const ast::Script = unsafe { &(*node).script };
+                interp.as_subshell_mut(this).state = SubshellState::Exec;
+                // TODO(b2-blocked): apply `(*node).redirect` / `redirect_flags`
+                // to `io` once IOWriter redirect open is wired.
+                let script = Script::init(interp, shell, script_node, this, io);
+                Script::start(interp, script)
+            }
+            SubshellState::Expanding | SubshellState::Exec => Yield::suspended(),
+            SubshellState::WaitWriteErr => Yield::suspended(),
+            SubshellState::Done => {
+                let exit = interp.as_subshell(this).exit_code;
+                interp.child_done(parent, this, exit)
+            }
         }
-        let _ = Script::init; // keep import live
-        let parent = interp.as_subshell(this).base.parent;
-        interp.child_done(parent, this, 0)
     }
 
     pub fn child_done(
@@ -76,7 +117,12 @@ impl Subshell {
     pub fn deinit(interp: &mut Interpreter, this: NodeId) {
         log!("Subshell {} deinit", this);
         let me = interp.as_subshell_mut(this);
-        // TODO(b2-blocked): ShellExecEnv::deinit_impl — owned duped env.
+        // The env was duped at construction (either by Pipeline or by
+        // `init_dupe_shell_state`) — Subshell always owns it.
+        if !me.base.shell.is_null() {
+            ShellExecEnv::deinit_impl(me.base.shell);
+            me.base.shell = core::ptr::null_mut();
+        }
         me.base.end_scope();
     }
 }
@@ -84,6 +130,6 @@ impl Subshell {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/shell/states/Subshell.zig (210 lines)
-//   confidence: medium (NodeId conversion; redirect/dupe body gated)
-//   blocked_on: ast::Subshell, ShellExecEnv::dupe_for_subshell
+//   confidence: medium (NodeId conversion + dupe wired; redirects still gated)
+//   blocked_on: IOWriter redirect open
 // ──────────────────────────────────────────────────────────────────────────

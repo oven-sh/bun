@@ -438,6 +438,20 @@ impl fmt::Display for Action {
     }
 }
 
+/// Snapshot the thread-local `CURRENT_ACTION` for save/restore around a scoped
+/// operation (e.g. `js_printer::print_with_writer_and_platform`).
+#[inline]
+pub fn current_action() -> Option<Action> {
+    CURRENT_ACTION.with(|c| c.get())
+}
+
+/// Set (or clear) the thread-local `CURRENT_ACTION`. Paired with
+/// [`current_action`] for scoped restore via `scopeguard`.
+#[inline]
+pub fn set_current_action(action: Option<Action>) {
+    CURRENT_ACTION.with(|c| c.set(action));
+}
+
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
 fn capture_libc_backtrace(begin_addr: usize, addrs: &mut [usize], stack_trace: &mut StackTrace<'_>) {
     unsafe extern "C" {

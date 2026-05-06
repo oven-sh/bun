@@ -4605,14 +4605,17 @@ pub mod formatter {
             writer.write_all(pf!("<r>").as_bytes());
             writer.write_all(b"<");
 
-            let mut needs_space = false;
+            // PORT NOTE: Zig initialized `needs_space = false` / `tag_name_slice = .empty`,
+            // but both arms of the `type` if/else below assign them, so deferred init
+            // avoids the dead-store warning while keeping semantics identical.
+            let mut needs_space: bool;
             let mut tag_name_str = ZigString::init(b"");
 
             // PORT NOTE: Zig spelled this `ZigString.Slice` with an explicit
             // `defer if (tag_name_slice.isAllocated()) tag_name_slice.deinit()`.
             // The Rust `ZigStringSlice` enum frees on `Drop`, so the scopeguard
             // is unnecessary.
-            let mut tag_name_slice = strings::ZigStringSlice::empty();
+            let tag_name_slice: strings::ZigStringSlice;
             let mut is_tag_kind_primitive = false;
 
             if let Some(type_value) = value.get(self.global_this, "type")? {

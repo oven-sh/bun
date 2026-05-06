@@ -2279,26 +2279,9 @@ impl PackageManager {
         todo!("blocked_on: bun_install::package_manager_real un-gate (reconciler-6) — package_manager_directories::cached_github_folder_name_print_auto")
     }
 
-    /// Port of `directories.cachedNPMPackageFolderName`. Real body in
-    /// `package_manager_real::package_manager_directories`.
-    pub fn cached_npm_package_folder_name(
-        &self,
-        _name: &[u8],
-        _version: bun_semver::Version,
-        _patch_hash: Option<u64>,
-    ) -> &'static bun_core::ZStr {
-        todo!("blocked_on: bun_install::package_manager_real un-gate (reconciler-6) — package_manager_directories::cached_npm_package_folder_name")
-    }
-
-    /// Port of `directories.cachedTarballFolderName`. Real body in
-    /// `package_manager_real::package_manager_directories`.
-    pub fn cached_tarball_folder_name(
-        &self,
-        _url: bun_semver::String,
-        _patch_hash: Option<u64>,
-    ) -> &'static bun_core::ZStr {
-        todo!("blocked_on: bun_install::package_manager_real un-gate (reconciler-6) — package_manager_directories::cached_tarball_folder_name")
-    }
+    // `cached_npm_package_folder_name` / `cached_tarball_folder_name` live in the
+    // impl block below alongside `cached_git_folder_name` / `cached_github_folder_name`
+    // (de-duplicated to resolve E0034).
 
     /// Port of `PackageManager.ensureTempNodeGypScript`
     /// (src/install/PackageManager.zig:451). Real body in

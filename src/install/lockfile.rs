@@ -1725,9 +1725,10 @@ impl<'a> Printer<'a> {
             updates: &[],
         };
 
+        let mut writer = writer;
         match format {
             PrinterFormat::Yarn => {
-                printer::Yarn::print(&mut printer, writer)?;
+                printer::Yarn::print(&mut printer, &mut writer)?;
             }
         }
         Ok(())

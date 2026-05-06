@@ -10,7 +10,7 @@ use bun_install::Dependency;
 use bun_install::dependency::{self, Behavior};
 use bun_install::Lockfile;
 use bun_install::lockfile::package;
-use crate::lockfile_real::package::Alphabetizer;
+use crate::lockfile_real::package::{Alphabetizer, PackageSliceExt as _};
 use crate::lockfile_real::Printer;
 use crate::integrity;
 
@@ -46,13 +46,13 @@ fn packages(
     writer: &mut impl bun_io::Write,
 ) -> Result<(), bun_core::Error> {
     let slice = this.lockfile.packages.slice();
-    let names: &[SemverString] = slice.items_name();
-    let resolved: &[Resolution] = slice.items_resolution();
-    let metas: &[package::Meta] = slice.items_meta();
+    let names: &[SemverString] = slice.name();
+    let resolved: &[Resolution] = slice.resolution();
+    let metas: &[package::Meta] = slice.meta();
     if names.is_empty() {
         return Ok(());
     }
-    let dependency_lists = slice.items_dependencies();
+    let dependency_lists = slice.dependencies();
     let resolutions_buffer: &[PackageID] = this.lockfile.buffers.resolutions.as_slice();
     let dependencies_buffer: &[Dependency] = this.lockfile.buffers.dependencies.as_slice();
 

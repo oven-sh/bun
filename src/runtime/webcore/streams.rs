@@ -1274,9 +1274,8 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             total_written = chunk_len as u64;
 
             if self.requested_end {
-                if let Some(res) = self.res {
-                    // SAFETY: res is a live uWS handle
-                    unsafe { &mut *(res as *mut uws::Response) }.clear_on_writable();
+                if let Some(res) = self.any_res() {
+                    res.clear_on_writable();
                 }
                 self.signal.close(None);
                 let _ = self.flush_promise(); // TODO: properly propagate exception upwards

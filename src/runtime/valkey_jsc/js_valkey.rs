@@ -626,7 +626,7 @@ impl JSValkeyClient {
                 },
                 database,
                 allocator: (), // TODO(port): allocator param dropped (global mimalloc)
-                flags: valkey::Flags {
+                flags: valkey::ConnectionFlags {
                     enable_auto_reconnect: options.enable_auto_reconnect,
                     enable_offline_queue: options.enable_offline_queue,
                     enable_auto_pipelining: options.enable_auto_pipelining,

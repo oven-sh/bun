@@ -176,6 +176,12 @@ unsafe fn init_runtime_state(
         // and hence `vm.transpiler` — is done).
         let allocator: &'static bun_alloc::Arena =
             unsafe { &*(&*(*state).transpiler_arena as *const bun_alloc::Arena) };
+        // TODO(b2): `env_loader_` — spec VirtualMachine.zig:1244 passes
+        // `opts.env_loader` so a worker VM inherits its parent's
+        // `DotEnv.Loader` (set at VirtualMachine.zig:1415/1513). The minimal
+        // `InitOptions` stub (VirtualMachine.rs:78) has no `env_loader` field
+        // yet; passing `None` silently falls back to `dot_env::instance()`.
+        // Thread `_opts.env_loader` here once the stub widens.
         match bun_bundler::Transpiler::init(allocator, log, args, None) {
             Ok(transpiler) => {
                 // SAFETY: `vm` is the unique freshly-boxed VM; `transpiler`
@@ -276,6 +282,24 @@ unsafe fn load_preloads(
 
     // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives the VM.
     let global: *mut JSGlobalObject = unsafe { (*vm).global };
+    // ── guard: zeroed transpiler ────────────────────────────────────────
+    // `init_runtime_state` swallows `Transpiler::init`'s `Err` (logs + leaves
+    // `vm.transpiler` as zeroed bytes — see its `TODO(b2): widen return`).
+    // Spec VirtualMachine.zig:1240 uses `try Transpiler.init(...)`, so
+    // `loadPreloads` is unreachable with an invalid transpiler; in Rust we
+    // must check `fs.is_null()` to avoid null-deref UB on `--preload` until
+    // `Transpiler::init`'s gated tail un-gates and `init_runtime_state`'s
+    // return widens to `Result`. Fail loudly (PORTING.md §Forbidden:
+    // silent-no-op).
+    // SAFETY: per fn contract — reading the raw ptr field itself is fine; only
+    // the deref below would be UB on null.
+    if unsafe { (*vm).transpiler.fs.is_null() } {
+        bun_core::Output::err(
+            "preload",
+            format_args!("transpiler not initialized; ignoring --preload"),
+        );
+        return Ok(ptr::null_mut());
+    }
     // SAFETY: `vm.transpiler.fs` points at the process-global `Fs::FileSystem`
     // singleton (transpiler.rs:66 — Zig used `Fs.FileSystem.instance`).
     let top_level_dir: *const [u8] = unsafe { (*(*vm).transpiler.fs).top_level_dir };

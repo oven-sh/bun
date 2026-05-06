@@ -215,75 +215,13 @@ gated_prop!(css_modules, {
     pub use crate::values::css_modules::Specifier;
 });
 
-// `custom`: data-only stubs for `TokenList`/`EnvironmentVariable`/
-// `CustomPropertyName`/`CustomProperty`/`UnparsedProperty` so
-// `properties_generated` and `media_query.rs`/`rules/unknown.rs` resolve.
-gated_prop!(custom, {
-    use crate::values::ident::{DashedIdent, Ident};
-
-    /// `properties::custom::TokenList` — `BabyList<TokenOrValue>` newtype.
-    #[derive(Default, Clone)]
-    pub struct TokenList;
-    /// Associated-fn namespace for `TokenList` (Zig `TokenListFns`).
-    pub struct TokenListFns;
-    /// CSS `env()` reference. Data-only — parse/to_css live in the gated file.
-    #[derive(Debug, Clone)]
-    pub struct EnvironmentVariable;
-
-    /// Either a `--dashed-ident` or an unknown bare property name.
-    #[derive(Debug, Clone, Copy)]
-    pub enum CustomPropertyName {
-        Custom(DashedIdent),
-        Unknown(Ident),
-    }
-    // PORT NOTE: `DashedIdent`/`Ident` carry `*const [u8]` arena slices and
-    // intentionally don't derive `PartialEq` (pointer-eq would be wrong).
-    // `PropertyId` derives `PartialEq`, so compare the underlying bytes here.
-    impl PartialEq for CustomPropertyName {
-        fn eq(&self, other: &Self) -> bool {
-            // SAFETY: arena-owned slices live for the parse session.
-            unsafe { (&*self.as_ptr()).eq(&*other.as_ptr()) }
-        }
-    }
-    impl CustomPropertyName {
-        #[inline]
-        fn as_ptr(&self) -> *const [u8] {
-            match self {
-                CustomPropertyName::Custom(d) => d.v,
-                CustomPropertyName::Unknown(i) => i.v,
-            }
-        }
-        /// Borrow the underlying name slice. SAFETY: see `DashedIdent::as_slice`.
-        #[inline]
-        pub fn as_str(&self) -> &[u8] {
-            unsafe { &*self.as_ptr() }
-        }
-        pub fn from_str(name: &[u8]) -> CustomPropertyName {
-            if name.starts_with(b"--") {
-                CustomPropertyName::Custom(DashedIdent { v: name as *const [u8] })
-            } else {
-                CustomPropertyName::Unknown(Ident { v: name as *const [u8] })
-            }
-        }
-        pub fn to_css(&self, dest: &mut crate::Printer) -> Result<(), crate::PrintErr> {
-            // TODO(port): real impl serializes via `serialize_identifier` /
-            // `write_dashed_ident`; stubbed until `custom.rs` un-gates.
-            dest.write_str(self.as_str())
-        }
-    }
-
-    /// A known property whose value could not be parsed.
-    pub struct UnparsedProperty {
-        pub property_id: crate::properties::PropertyId,
-        pub value: TokenList,
-    }
-
-    /// A `--custom: <token-list>` declaration.
-    pub struct CustomProperty {
-        pub name: CustomPropertyName,
-        pub value: TokenList,
-    }
-});
+// `custom`: un-gated — real data types (TokenList / TokenOrValue /
+// CustomProperty / CustomPropertyName / UnparsedProperty / EnvironmentVariable
+// / Variable / Function / UnresolvedColor / UAEnvironmentVariable) live in
+// `custom.rs`. parse/to_css/deep_clone/eql/hash bodies remain internally
+// `#[cfg(any())]`-gated there until their leaf deps (ident/url/color/
+// generics) un-gate.
+pub mod custom;
 
 mod properties_generated;
 mod properties_impl;

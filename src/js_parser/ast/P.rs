@@ -4289,7 +4289,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         }
     }
 
-    #[cfg(any())] // blocked_on: Part::Tag path syntax, G::Decl::List, declared_symbols container API
     pub fn append_part(
         &mut self,
         parts: &mut ListManaged<'a, js_ast::Part>,
@@ -4297,44 +4296,50 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     ) -> Result<(), bun_core::Error> {
         // Reuse the memory if possible
         // This is reusable if the last part turned out to be dead
-        self.symbol_uses.clear();
-        self.declared_symbols.clear();
+        self.symbol_uses.clear_retaining_capacity();
+        self.declared_symbols.clear_retaining_capacity();
         self.scopes_for_current_part.clear();
         self.import_records_for_current_part.clear();
-        self.import_symbol_property_uses.clear();
+        self.import_symbol_property_uses.clear_retaining_capacity();
 
         self.had_commonjs_named_exports_this_visit = false;
 
         let allocator = self.allocator;
-        let mut opts = PrependTempRefsOpts::default();
-        let mut part_stmts = BumpVec::from_iter_in(stmts.iter().cloned(), allocator);
+        let opts = PrependTempRefsOpts::default();
+        let mut part_stmts = BumpVec::from_iter_in(stmts.iter().copied(), allocator);
         // PORT NOTE: Zig used ListManaged.fromOwnedSlice; we copy into a bump vec.
 
-        self.visit_stmts_and_prepend_temp_refs(&mut part_stmts, &mut opts)?;
+        self.visit_stmts_and_prepend_temp_refs(&mut part_stmts, opts)?;
 
         // Insert any relocated variable statements now
         if !self.relocated_top_level_vars.is_empty() {
             let mut already_declared = RefMap::default();
             // PERF(port): was stack-fallback alloc — profile in Phase B
 
-            for local in self.relocated_top_level_vars.iter_mut() {
+            for i in 0..self.relocated_top_level_vars.len() {
                 // Follow links because "var" declarations may be merged due to hoisting
-                while let Some(r#ref) = local.r#ref {
-                    let symbol = &self.symbols[r#ref.inner_index() as usize];
+                let mut local = self.relocated_top_level_vars[i];
+                while let Some(ref_) = local.ref_ {
+                    let symbol = &self.symbols[ref_.inner_index() as usize];
                     if !symbol.has_link() {
                         break;
                     }
-                    local.r#ref = Some(symbol.link);
+                    local.ref_ = Some(symbol.link);
                 }
-                let Some(r#ref) = local.r#ref else { continue };
-                let declaration_entry = already_declared.get_or_put(allocator, r#ref)?;
+                self.relocated_top_level_vars[i] = local;
+                let Some(ref_) = local.ref_ else { continue };
+                let declaration_entry = already_declared.get_or_put(ref_)?;
                 if !declaration_entry.found_existing {
-                    let decls = allocator.alloc_slice_copy(&[Decl {
-                        binding: self.b(B::Identifier { r#ref }, local.loc),
-                        value: None,
-                    }]);
-                    part_stmts.push(self.s(S::Local { decls: G::Decl::List::from_owned_slice(decls), ..Default::default() }, local.loc));
-                    self.declared_symbols.push(self.allocator, DeclaredSymbol { r#ref, is_top_level: true })?;
+                    let mut decls = G::DeclList::default();
+                    decls
+                        .append(Decl {
+                            binding: self.b(js_ast::b::Identifier { ref_ }, local.loc),
+                            value: None,
+                        })
+                        .expect("oom");
+                    part_stmts.push(self.s(S::Local { decls, ..Default::default() }, local.loc));
+                    self.declared_symbols
+                        .append(DeclaredSymbol { ref_, is_top_level: true })?;
                 }
             }
             self.relocated_top_level_vars.clear();
@@ -4344,20 +4349,27 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             let final_stmts = part_stmts.into_bump_slice();
 
             parts.push(js_ast::Part {
-                stmts: final_stmts,
+                stmts: final_stmts as *mut [Stmt],
                 symbol_uses: core::mem::take(&mut self.symbol_uses),
                 import_symbol_property_uses: core::mem::take(&mut self.import_symbol_property_uses),
                 declared_symbols: self.declared_symbols.to_owned_slice(),
-                import_record_indices: BabyList::<u32>::from_owned_slice(
-                    core::mem::replace(&mut self.import_records_for_current_part, BumpVec::new_in(self.allocator))
+                // SAFETY: bump-slice wrapped Borrowed; never grown after this point.
+                import_record_indices: unsafe {
+                    BabyList::<u32>::from_bump_slice(
+                        core::mem::replace(
+                            &mut self.import_records_for_current_part,
+                            BumpVec::new_in(self.allocator),
+                        )
                         .into_bump_slice(),
-                ),
-                scopes: core::mem::replace(&mut self.scopes_for_current_part, BumpVec::new_in(self.allocator)).into_bump_slice(),
+                    )
+                },
+                scopes: core::mem::replace(&mut self.scopes_for_current_part, BumpVec::new_in(self.allocator))
+                    .into_bump_slice() as *mut [*mut js_ast::Scope],
                 can_be_removed_if_unused: self.stmts_can_be_removed_if_unused(final_stmts),
                 tag: if self.had_commonjs_named_exports_this_visit {
-                    js_ast::Part::Tag::CommonjsNamedExport
+                    crate::PartTag::CommonjsNamedExport
                 } else {
-                    js_ast::Part::Tag::None
+                    crate::PartTag::None
                 },
                 ..Default::default()
             });
@@ -4367,11 +4379,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         } else if self.declared_symbols.len() > 0 || self.symbol_uses.count() > 0 {
             // if the part is dead, invalidate all the usage counts
             self.clear_symbol_usages_from_dead_part(&js_ast::Part {
-                declared_symbols: self.declared_symbols.clone(),
-                symbol_uses: self.symbol_uses.clone(),
+                declared_symbols: self.declared_symbols.clone()?,
+                symbol_uses: self.symbol_uses.clone()?,
                 ..Default::default()
             });
-            self.declared_symbols.clear();
+            self.declared_symbols.clear_retaining_capacity();
             self.import_records_for_current_part.clear();
         }
         Ok(())

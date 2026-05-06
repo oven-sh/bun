@@ -28,7 +28,7 @@ use bun_logger as logger;
 use bun_paths::{self, OSPathBuffer, OSPathChar, OSPathSlice, OSPathSliceZ, PathBuffer};
 use bun_paths::resolve_path::{self, platform};
 use bun_str::strings;
-use bun_sys::{self, Dir, Fd, FdDirExt, FileKind, Mode, O};
+use bun_sys::{self, Dir, E, Fd, FdExt, FdDirExt, FileKind, Mode, O};
 use bun_threading::{thread_pool, Mutex, ThreadPool};
 
 use crate::bun_fs::FileSystem;
@@ -216,7 +216,10 @@ impl TarballStream {
             bytes_received: 0,
             entry_count: 0,
             fail: None,
-            drain_task: thread_pool::Task { callback: drain_callback },
+            drain_task: thread_pool::Task {
+                node: thread_pool::Node::default(),
+                callback: drain_callback,
+            },
             extract_task,
             network_task,
             package_manager: manager,
@@ -1241,7 +1244,7 @@ fn make_symlink(
         let resolved = resolve_path::join_abs_string_buf::<platform::Posix>(
             b"/packages/",
             &mut join_buf[..],
-            &[symlink_dir, target],
+            &[symlink_dir, target.as_bytes()],
         );
         if !resolved.starts_with(b"/packages/") {
             return;

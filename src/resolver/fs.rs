@@ -3156,6 +3156,7 @@ static SYS_FS_VTABLE: bun_sys::fs::FsVTable = bun_sys::fs::FsVTable {
         // `DirnameStore` singleton (see `string_store_impl!` PORT NOTE).
         Ok(unsafe { launder_static(r) })
     },
+    get_default_temp_dir: RealFS::get_default_temp_dir,
 };
 
 /// One-shot registration; called from `FileSystem::init_with_force`. Idempotent.

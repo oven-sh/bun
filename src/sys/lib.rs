@@ -5388,6 +5388,99 @@ pub mod fs {
         #[inline] pub fn set_max_fd(&self, fd: super::FdNative) {
             (vtable().set_max_fd)(fd)
         }
+        /// `FileSystem.RealFS.getDefaultTempDir()` — `BUN_TMPDIR` or the
+        /// platform fallback. Static (process-global once-computed); routed
+        /// through the vtable so the platform-specific Windows fallback (which
+        /// interns into `DirnameStore`) stays in `bun_resolver`.
+        #[inline] pub fn get_default_temp_dir() -> &'static [u8] {
+            (vtable().get_default_temp_dir)()
+        }
+    }
+
+    // ── RealFS.Tmpfile ─────────────────────────────────────────────────────
+    // MOVE_DOWN(b0): port of `FileSystem.RealFS.Tmpfile` (fs.zig) for callers
+    // in `bun_install` that have no `bun_resolver` dep. The Zig POSIX impl
+    // never touched its `*RealFS` arg (it always opens at cwd); the Windows
+    // impl only needs the temp-dir path, which we route via the vtable.
+    pub struct RealFsTmpfile {
+        pub fd: super::Fd,
+        pub dir_fd: super::Fd,
+        #[cfg(windows)]
+        pub existing_path: Box<[u8]>,
+    }
+    impl Default for RealFsTmpfile {
+        fn default() -> Self {
+            Self {
+                fd: super::Fd::INVALID,
+                dir_fd: super::Fd::INVALID,
+                #[cfg(windows)]
+                existing_path: Box::default(),
+            }
+        }
+    }
+    impl RealFsTmpfile {
+        #[inline] pub fn file(&self) -> super::File { super::File::from_fd(self.fd) }
+
+        pub fn close(&mut self) {
+            if self.fd.is_valid() {
+                let _ = super::close(self.fd);
+                self.fd = super::Fd::INVALID;
+            }
+        }
+
+        /// Zig: `Tmpfile.create(*RealFS, name)` — POSIX path opens at cwd
+        /// (the `*RealFS` arg is unused there); Windows opens under the
+        /// process temp dir.
+        pub fn create(&mut self, name: &bun_core::ZStr) -> core::result::Result<(), bun_core::Error> {
+            #[cfg(not(windows))]
+            {
+                // We originally used a temporary directory, but it caused EXDEV.
+                let dir_fd = super::Fd::cwd();
+                self.dir_fd = dir_fd;
+                let flags = super::O::CREAT | super::O::RDWR | super::O::CLOEXEC;
+                self.fd = super::openat(dir_fd, name, flags, super::S::IRWXU as super::Mode)?;
+                Ok(())
+            }
+            #[cfg(windows)]
+            {
+                let tmp = FileSystem::get_default_temp_dir();
+                let tmp_dir = super::open_dir_at(super::Fd::cwd(), tmp).map(super::Dir::from_fd)?;
+                self.dir_fd = tmp_dir.fd();
+                let flags = super::O::CREAT | super::O::WRONLY | super::O::CLOEXEC;
+                self.fd = super::openat(tmp_dir.fd(), name, flags, 0)?;
+                let mut buf = bun_paths::PathBuffer::uninit();
+                let existing_path = super::get_fd_path(self.fd, &mut buf)?;
+                self.existing_path = Box::<[u8]>::from(&*existing_path);
+                Ok(())
+            }
+        }
+
+        /// Zig: `Tmpfile.promoteToCWD(from_name, name)`.
+        pub fn promote_to_cwd(
+            &mut self,
+            from_name: &bun_core::ZStr,
+            name: &bun_core::ZStr,
+        ) -> core::result::Result<(), bun_core::Error> {
+            #[cfg(not(windows))]
+            {
+                debug_assert!(self.fd != super::Fd::INVALID);
+                debug_assert!(self.dir_fd != super::Fd::INVALID);
+                super::move_file_z_with_handle(self.fd, self.dir_fd, from_name, super::Fd::cwd(), name)?;
+                self.close();
+                Ok(())
+            }
+            #[cfg(windows)]
+            {
+                let _ = from_name;
+                self.close();
+                // TODO(port-windows): MoveFileExW with MOVEFILE_COPY_ALLOWED |
+                // MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH
+                // (fs.zig TmpfileWindows.promoteToCWD). Route via renameat for now.
+                super::renameat_z(self.dir_fd, from_name, super::Fd::cwd(), name)
+                    .unwrap()
+                    .map_err(Into::into)
+            }
+        }
     }
     /// `bun.fs.Entry` — single cached directory entry (name + kind).
     #[repr(C)]

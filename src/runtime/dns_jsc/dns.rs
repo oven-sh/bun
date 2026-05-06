@@ -2321,14 +2321,14 @@ pub mod internal {
     ) -> Option<*mut Request> {
         let preload = is_cache_hit.is_none();
         let key = RequestKey::init(host, port);
-        global_cache().lock.lock();
+        let mut guard = global_cache().lock();
         GETADDRINFO_CALLS.fetch_add(1, Ordering::Relaxed);
         let mut timestamp_to_store: u32 = 0;
         // is there a cache hit?
         if !feature_flag::BUN_FEATURE_FLAG_DISABLE_DNS_CACHE.get() {
-            if let Some(entry) = global_cache().get(&key, &mut timestamp_to_store) {
+            if let Some(entry) = guard.get(&key, &mut timestamp_to_store) {
                 if preload {
-                    global_cache().lock.unlock();
+                    drop(guard);
                     return None;
                 }
 
@@ -2343,7 +2343,7 @@ pub mod internal {
                     DNS_CACHE_HITS_INFLIGHT.fetch_add(1, Ordering::Relaxed);
                 }
 
-                global_cache().lock.unlock();
+                drop(guard);
                 return Some(entry);
             }
         }
@@ -2356,10 +2356,10 @@ pub mod internal {
             if timestamp_to_store == 0 { GlobalCache::get_cache_timestamp() } else { timestamp_to_store },
         );
 
-        let _ = global_cache().try_push(req);
+        let _ = guard.try_push(req);
         DNS_CACHE_MISSES.fetch_add(1, Ordering::Relaxed);
-        DNS_CACHE_SIZE.store(global_cache().len, Ordering::Relaxed);
-        global_cache().lock.unlock();
+        DNS_CACHE_SIZE.store(guard.len, Ordering::Relaxed);
+        drop(guard);
 
         #[cfg(target_os = "macos")]
         {
@@ -2435,8 +2435,7 @@ pub mod internal {
     }
 
     extern "C" fn us_getaddrinfo_set(request: *mut Request, socket: *mut ConnectingSocket) {
-        global_cache().lock.lock();
-        let _g = scopeguard::guard((), |_| global_cache().lock.unlock());
+        let _guard = global_cache().lock();
         let query = DNSRequestOwner::Socket(socket);
         unsafe {
             if (*request).result.is_some() {
@@ -2448,8 +2447,7 @@ pub mod internal {
     }
 
     extern "C" fn us_getaddrinfo_cancel(request: *mut Request, socket: *mut ConnectingSocket) -> c_int {
-        global_cache().lock.lock();
-        let _g = scopeguard::guard((), |_| global_cache().lock.unlock());
+        let _guard = global_cache().lock();
         // afterResult sets result and moves the notify list out under this same
         // lock, so once result is non-null the socket is no longer cancellable
         // (the callback has fired or is about to fire on the worker thread).
@@ -2469,8 +2467,7 @@ pub mod internal {
     }
 
     pub(super) extern "C" fn freeaddrinfo(req: *mut Request, err: c_int) {
-        global_cache().lock.lock();
-        let _g = scopeguard::guard((), |_| global_cache().lock.unlock());
+        let mut guard = global_cache().lock();
 
         unsafe {
             if err != 0 {
@@ -2480,9 +2477,9 @@ pub mod internal {
 
             debug_assert!((*req).refcount > 0);
             (*req).refcount -= 1;
-            if (*req).refcount == 0 && (global_cache().is_nearly_full() || !(*req).valid) {
+            if (*req).refcount == 0 && (guard.is_nearly_full() || !(*req).valid) {
                 bun_output::scoped_log!(dns, "cache --");
-                global_cache().remove(req);
+                guard.remove(req);
                 Request::deinit(req);
             }
         }

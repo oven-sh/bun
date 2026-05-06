@@ -380,9 +380,11 @@ impl CompileC {
 
     pub const DEFAULT_TCC_OPTIONS: &'static str = "-std=c11 -Wl,--export-all-symbols -g -O2";
 
-    // TODO(port): these mutable statics need a safe wrapper (RwLock or OnceLock<Box<ZStr>>)
-    static mut CACHED_DEFAULT_SYSTEM_INCLUDE_DIR: &'static ZStr = ZStr::EMPTY;
-    static mut CACHED_DEFAULT_SYSTEM_LIBRARY_DIR: &'static ZStr = ZStr::EMPTY;
+    // Process-lifetime singletons — PORTING.md §Forbidden: use OnceLock, never
+    // `static mut` + `Box::leak`. `ZBox` is the sanctioned owned-ZStr type
+    // (util.rs forbids `Box<ZStr>` because of DST dealloc-length mismatch).
+    static CACHED_DEFAULT_SYSTEM_INCLUDE_DIR: OnceLock<bun_core::ZBox> = OnceLock::new();
+    static CACHED_DEFAULT_SYSTEM_LIBRARY_DIR: OnceLock<bun_core::ZBox> = OnceLock::new();
     static CACHED_DEFAULT_SYSTEM_INCLUDE_DIR_ONCE: Once = Once::new();
 
     fn get_system_root_dir_once() {
@@ -430,12 +432,11 @@ impl CompileC {
                 if result.is_ok() {
                     let stdout = result.stdout.as_slice();
                     if !stdout.is_empty() {
-                        // SAFETY: writing once-initialized static under Once guard
-                        unsafe {
-                            CACHED_DEFAULT_SYSTEM_INCLUDE_DIR = Box::leak(
-                                ZStr::from_bytes(strings::trim(stdout, b"\n\r")).into(),
-                            );
-                        }
+                        let _ = CACHED_DEFAULT_SYSTEM_INCLUDE_DIR.set(
+                            bun_core::ZBox::from_vec_with_nul(
+                                strings::trim(stdout, b"\n\r").to_vec(),
+                            ),
+                        );
                     }
                 }
             }
@@ -448,52 +449,54 @@ impl CompileC {
 
             #[cfg(target_arch = "x86_64")]
             {
-                // SAFETY: writing once-initialized statics under Once guard
-                unsafe {
-                    if Fd::cwd()
-                        .directory_exists_at(b"/usr/include/x86_64-linux-gnu")
-                        .is_true()
-                    {
-                        CACHED_DEFAULT_SYSTEM_INCLUDE_DIR =
-                            ZStr::from_static(b"/usr/include/x86_64-linux-gnu\0");
-                    } else if Fd::cwd().directory_exists_at(b"/usr/include").is_true() {
-                        CACHED_DEFAULT_SYSTEM_INCLUDE_DIR = ZStr::from_static(b"/usr/include\0");
-                    }
+                if Fd::cwd()
+                    .directory_exists_at(b"/usr/include/x86_64-linux-gnu")
+                    .is_true()
+                {
+                    let _ = CACHED_DEFAULT_SYSTEM_INCLUDE_DIR.set(
+                        bun_core::ZBox::from_vec_with_nul(b"/usr/include/x86_64-linux-gnu".to_vec()),
+                    );
+                } else if Fd::cwd().directory_exists_at(b"/usr/include").is_true() {
+                    let _ = CACHED_DEFAULT_SYSTEM_INCLUDE_DIR
+                        .set(bun_core::ZBox::from_vec_with_nul(b"/usr/include".to_vec()));
+                }
 
-                    if Fd::cwd()
-                        .directory_exists_at(b"/usr/lib/x86_64-linux-gnu")
-                        .is_true()
-                    {
-                        CACHED_DEFAULT_SYSTEM_LIBRARY_DIR =
-                            ZStr::from_static(b"/usr/lib/x86_64-linux-gnu\0");
-                    } else if Fd::cwd().directory_exists_at(b"/usr/lib64").is_true() {
-                        CACHED_DEFAULT_SYSTEM_LIBRARY_DIR = ZStr::from_static(b"/usr/lib64\0");
-                    }
+                if Fd::cwd()
+                    .directory_exists_at(b"/usr/lib/x86_64-linux-gnu")
+                    .is_true()
+                {
+                    let _ = CACHED_DEFAULT_SYSTEM_LIBRARY_DIR.set(
+                        bun_core::ZBox::from_vec_with_nul(b"/usr/lib/x86_64-linux-gnu".to_vec()),
+                    );
+                } else if Fd::cwd().directory_exists_at(b"/usr/lib64").is_true() {
+                    let _ = CACHED_DEFAULT_SYSTEM_LIBRARY_DIR
+                        .set(bun_core::ZBox::from_vec_with_nul(b"/usr/lib64".to_vec()));
                 }
             }
             #[cfg(target_arch = "aarch64")]
             {
-                // SAFETY: writing once-initialized statics under Once guard
-                unsafe {
-                    if Fd::cwd()
-                        .directory_exists_at(b"/usr/include/aarch64-linux-gnu")
-                        .is_true()
-                    {
-                        CACHED_DEFAULT_SYSTEM_INCLUDE_DIR =
-                            ZStr::from_static(b"/usr/include/aarch64-linux-gnu\0");
-                    } else if Fd::cwd().directory_exists_at(b"/usr/include").is_true() {
-                        CACHED_DEFAULT_SYSTEM_INCLUDE_DIR = ZStr::from_static(b"/usr/include\0");
-                    }
+                if Fd::cwd()
+                    .directory_exists_at(b"/usr/include/aarch64-linux-gnu")
+                    .is_true()
+                {
+                    let _ = CACHED_DEFAULT_SYSTEM_INCLUDE_DIR.set(
+                        bun_core::ZBox::from_vec_with_nul(b"/usr/include/aarch64-linux-gnu".to_vec()),
+                    );
+                } else if Fd::cwd().directory_exists_at(b"/usr/include").is_true() {
+                    let _ = CACHED_DEFAULT_SYSTEM_INCLUDE_DIR
+                        .set(bun_core::ZBox::from_vec_with_nul(b"/usr/include".to_vec()));
+                }
 
-                    if Fd::cwd()
-                        .directory_exists_at(b"/usr/lib/aarch64-linux-gnu")
-                        .is_true()
-                    {
-                        CACHED_DEFAULT_SYSTEM_LIBRARY_DIR =
-                            ZStr::from_static(b"/usr/lib/aarch64-linux-gnu\0");
-                    } else if Fd::cwd().directory_exists_at(b"/usr/lib64").is_true() {
-                        CACHED_DEFAULT_SYSTEM_LIBRARY_DIR = ZStr::from_static(b"/usr/lib64\0");
-                    }
+                if Fd::cwd()
+                    .directory_exists_at(b"/usr/lib/aarch64-linux-gnu")
+                    .is_true()
+                {
+                    let _ = CACHED_DEFAULT_SYSTEM_LIBRARY_DIR.set(
+                        bun_core::ZBox::from_vec_with_nul(b"/usr/lib/aarch64-linux-gnu".to_vec()),
+                    );
+                } else if Fd::cwd().directory_exists_at(b"/usr/lib64").is_true() {
+                    let _ = CACHED_DEFAULT_SYSTEM_LIBRARY_DIR
+                        .set(bun_core::ZBox::from_vec_with_nul(b"/usr/lib64".to_vec()));
                 }
             }
         }
@@ -501,22 +504,18 @@ impl CompileC {
 
     fn get_system_include_dir() -> Option<&'static ZStr> {
         Self::CACHED_DEFAULT_SYSTEM_INCLUDE_DIR_ONCE.call_once(Self::get_system_root_dir_once);
-        // SAFETY: read-only after Once initialization
-        let dir = unsafe { CACHED_DEFAULT_SYSTEM_INCLUDE_DIR };
-        if dir.is_empty() {
-            return None;
-        }
-        Some(dir)
+        CACHED_DEFAULT_SYSTEM_INCLUDE_DIR
+            .get()
+            .map(|b| b.as_zstr())
+            .filter(|d| !d.is_empty())
     }
 
     fn get_system_library_dir() -> Option<&'static ZStr> {
         Self::CACHED_DEFAULT_SYSTEM_INCLUDE_DIR_ONCE.call_once(Self::get_system_root_dir_once);
-        // SAFETY: read-only after Once initialization
-        let dir = unsafe { CACHED_DEFAULT_SYSTEM_LIBRARY_DIR };
-        if dir.is_empty() {
-            return None;
-        }
-        Some(dir)
+        CACHED_DEFAULT_SYSTEM_LIBRARY_DIR
+            .get()
+            .map(|b| b.as_zstr())
+            .filter(|d| !d.is_empty())
     }
 
     pub fn compile(
@@ -2834,8 +2833,9 @@ impl fmt::Display for ToJSFormatter<'_> {
 
 struct CompilerRT;
 
-// TODO(port): mutable static — wrap in OnceLock<Box<ZStr>>
-static mut COMPILER_RT_DIR: &'static ZStr = ZStr::EMPTY;
+// Process-lifetime singleton — PORTING.md §Forbidden: use OnceLock, never
+// `static mut` + `Box::leak`.
+static COMPILER_RT_DIR: OnceLock<bun_core::ZBox> = OnceLock::new();
 
 struct CompilerRtSources;
 impl CompilerRtSources {
@@ -2870,20 +2870,15 @@ impl CompilerRT {
         let Ok(p) = bun_sys::get_fd_path(Fd::from_std_dir(&bun_cc), &mut path_buf) else {
             return;
         };
-        // SAFETY: writing once-initialized static under Once guard
-        unsafe {
-            COMPILER_RT_DIR = Box::leak(ZStr::from_bytes(p).into());
-        }
+        let _ = COMPILER_RT_DIR.set(bun_core::ZBox::from_vec_with_nul(p.to_vec()));
     }
 
     pub fn dir() -> Option<&'static ZStr> {
         CREATE_COMPILER_RT_DIR_ONCE.call_once(Self::create_compiler_rt_dir);
-        // SAFETY: read-only after Once initialization
-        let d = unsafe { COMPILER_RT_DIR };
-        if d.is_empty() {
-            return None;
-        }
-        Some(d)
+        COMPILER_RT_DIR
+            .get()
+            .map(|b| b.as_zstr())
+            .filter(|d| !d.is_empty())
     }
 
     #[inline(never)]

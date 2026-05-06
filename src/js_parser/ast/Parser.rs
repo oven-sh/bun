@@ -520,6 +520,15 @@ impl<'a> Parser<'a> {
     }
 
     fn _parse<const TS: bool, JX: JsxT>(&mut self) -> Result<js_ast::Result, Error> {
+        // reconciler-6: full body re-gated below — ~148 port errors against round-G
+        // P surface (p.bump→allocator, Stmt::Data paths, Tracer.end(), etc.).
+        // Body preserved verbatim under #[cfg(any())] sibling for diff-pass.
+        let _ = self;
+        todo!("phase-b2: Parser::_parse re-gated by reconciler-6")
+    }
+
+    #[cfg(any())] // reconciler-6: _parse re-gated (body preserved)
+    fn _parse_gated<const TS: bool, JX: JsxT>(&mut self) -> Result<js_ast::Result, Error> {
         // TODO(port): narrow error set
         let prev_action = (); // TODO(b2-blocked): bun_crash_handler::current_action
         let _restore = scopeguard::guard((), |_| {

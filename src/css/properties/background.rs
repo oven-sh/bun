@@ -875,6 +875,7 @@ impl BackgroundHandler {
             return;
         }
         self.has_any = false;
+        let allocator = dest.bump();
 
         let mut maybe_color: Option<CssColor> = self.color.take();
         let mut maybe_images: Option<SmallList<Image, 1>> = self.images.take();

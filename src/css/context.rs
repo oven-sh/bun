@@ -306,30 +306,18 @@ impl<'a> PropertyHandlerContext<'a> {
             return;
         }
 
-        // blocked_on: properties/custom::TokenList::get_fallbacks (gated on
-        // ColorFallbackKind::supports_condition + TokenList::get_fallback in
-        // values/color.rs). Body is otherwise complete; un-gate this block when
-        // `get_fallbacks` lands and the loop will type-check as-is.
-        
-        {
-            let mut fallbacks = unparsed.value.get_fallbacks(self.targets);
-            // PORT NOTE: Zig `for (fallbacks.slice()) |c|` copies by value;
-            // `SmallList` has no `IntoIterator`, so drain via `pop()`.
-            while let Some(condition_and_fallback) = fallbacks.pop() {
-                self.add_conditional_property(
-                    condition_and_fallback.0,
-                    css::Property::Unparsed(UnparsedProperty {
-                        // `PropertyId` is `Copy`; Zig `deepClone` was identity.
-                        property_id: unparsed.property_id,
-                        value: condition_and_fallback.1,
-                    }),
-                );
-            }
-        }
-        #[cfg(any())]
-        {
-            let _ = unparsed;
-            todo!("add_unparsed_fallbacks: blocked on TokenList::get_fallbacks")
+        let fallbacks = unparsed.value.get_fallbacks(self.targets);
+        // PORT NOTE: Zig `for (fallbacks.slice()) |c|` copies by value; `SmallList`
+        // has no `IntoIterator`, so spill to a Vec to preserve P3-before-LAB order.
+        for condition_and_fallback in fallbacks.to_owned_slice().into_vec() {
+            self.add_conditional_property(
+                condition_and_fallback.0,
+                css::Property::Unparsed(UnparsedProperty {
+                    // `PropertyId` is `Copy`; Zig `deepClone` was identity.
+                    property_id: unparsed.property_id,
+                    value: condition_and_fallback.1,
+                }),
+            );
         }
     }
 }

@@ -272,9 +272,6 @@ impl ImportRule {
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        // blocked_on: dependencies::ImportDependency::new (its impl block is
-        // ``-gated on `to_css::string` + `css_modules::hash`).
-        
         let dep: Option<css::dependencies::ImportDependency> = if dest.dependencies.is_some() {
             Some(css::dependencies::ImportDependency::new(
                 dest.allocator,
@@ -283,20 +280,6 @@ impl ImportRule {
                 dest.local_names,
                 dest.symbols,
             ))
-        } else {
-            None
-        };
-        #[cfg(any())]
-        let dep: Option<css::dependencies::ImportDependency> = if dest.dependencies.is_some() {
-            // Spec import.zig:210-233 — when `dest.dependencies != null`, an
-            // `ImportDependency` is constructed, its `placeholder` is serialized
-            // in place of `this.url`, and the dependency is pushed onto
-            // `dest.dependencies`. Falling through to `None` here would
-            // silently emit the original URL and record no dependency
-            // (PORTING.md §Forbidden: silent no-op). Fail loudly until
-            // ImportDependency::new un-gates — matches the pattern at
-            // CssRuleList::to_css (mod.rs).
-            todo!("blocked_on: dependencies::ImportDependency::new")
         } else {
             None
         };

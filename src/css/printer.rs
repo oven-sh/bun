@@ -199,18 +199,13 @@ impl<'a> Printer<'a> {
         self.lookup_symbol(ident.as_ref().unwrap())
     }
 
-    // TODO(port): Zig checked vtable identity against std.Io.Writer.Allocating to recover
-    // the backing buffer length via @fieldParentPtr. In Rust the dest writer should expose
-    // a `written_len()` method (or be a concrete `Vec<u8>`-backed writer).
+    // Zig checked vtable identity against std.Io.Writer.Allocating and recovered the
+    // backing buffer length via @fieldParentPtr; in Rust the trait exposes `written_len()`
+    // directly (Vec<u8> / MutableString / counting sinks override it, others panic — same
+    // contract as Zig's `@panic("css: got bad writer type")` fallthrough).
     #[inline]
     fn get_written_amt(writer: &dyn Write) -> usize {
-        // TODO(port): replace with writer.written_len() once bun_io::Write provides it.
-        // Zig checked the vtable against std.Io.Writer.Allocating and returned written().len
-        // for the common case; until the trait exposes that, this is a stub — use todo!()
-        // (not unreachable!()) so it is correctly flagged as unimplemented rather than
-        // asserting an invariant that does not hold.
-        let _ = writer;
-        todo!("css: Printer::get_written_amt — bun_io::Write needs written_len()");
+        writer.written_len()
     }
 
     /// Returns the current source filename that is being printed.

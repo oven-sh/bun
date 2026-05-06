@@ -69,6 +69,33 @@ impl AnySocketIsClosed for uws::AnySocket {
     }
 }
 
+/// `bun_jsc::URL` is a `stub_ty!` opaque in lib.rs (the real impl in
+/// `URL.rs` is `cfg(any())`-gated). Shim the surface used here.
+trait UrlShim {
+    fn from_string(str: BunString) -> Option<NonNull<URL>>;
+    fn from_utf8(input: &[u8]) -> Option<NonNull<URL>>;
+    fn protocol(&self) -> BunString;
+    fn username(&self) -> BunString;
+    fn password(&self) -> BunString;
+    fn host(&self) -> BunString;
+    fn pathname(&self) -> BunString;
+    fn port(&self) -> u32;
+}
+impl UrlShim for URL {
+    fn from_string(_str: BunString) -> Option<NonNull<URL>> {
+        todo!("blocked_on: bun_jsc::URL::from_string")
+    }
+    fn from_utf8(_input: &[u8]) -> Option<NonNull<URL>> {
+        todo!("blocked_on: bun_jsc::URL::from_utf8")
+    }
+    fn protocol(&self) -> BunString { todo!("blocked_on: bun_jsc::URL::protocol") }
+    fn username(&self) -> BunString { todo!("blocked_on: bun_jsc::URL::username") }
+    fn password(&self) -> BunString { todo!("blocked_on: bun_jsc::URL::password") }
+    fn host(&self) -> BunString { todo!("blocked_on: bun_jsc::URL::host") }
+    fn pathname(&self) -> BunString { todo!("blocked_on: bun_jsc::URL::pathname") }
+    fn port(&self) -> u32 { todo!("blocked_on: bun_jsc::URL::port") }
+}
+
 /// `JSGlobalObject::queueMicrotask(fn, args)` — JS-callback variant.
 trait GlobalQueueMicrotask {
     fn queue_microtask(&self, function: JSValue, args: &[JSValue]);
@@ -537,7 +564,7 @@ impl JSValkeyClient {
             }
 
             if strings::strings::contains(url_byte_slice, b"://") {
-                break 'get_url match URL::from_string(BunString::borrow_utf8(url_byte_slice)) {
+                break 'get_url match <URL as UrlShim>::from_utf8(url_byte_slice) {
                     Some(u) => u,
                     None => {
                         return Err(global_object.throw_invalid_arguments("Invalid URL format"))

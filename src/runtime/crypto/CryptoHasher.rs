@@ -1253,10 +1253,7 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
     }
 
     pub fn getter(global: &JSGlobalObject, _: &JSObject) -> JSValue {
-        // TODO(port): `@field(jsc.Codegen, "JS" ++ name).getConstructor(global)` —
-        // codegen accessor is per-monomorphization; Phase B wires via #[bun_jsc::JsClass].
-        let _ = global;
-        todo!("blocked_on: bun_jsc::JsClass generic-type support (StaticCryptoHasher<H>)")
+        H::get_constructor(global)
     }
 
     #[bun_jsc::host_fn(method)]

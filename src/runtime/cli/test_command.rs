@@ -1345,7 +1345,7 @@ impl CommandLineReporter {
             if !opts.ignore_patterns.is_empty() {
                 let rel = resolve_path::relative(relative_dir, entry.source_url.slice());
                 let mut skip = false;
-                for p in opts.ignore_patterns {
+                for p in &opts.ignore_patterns {
                     if bun_glob::r#match(p, rel).matches() {
                         skip = true;
                         break;

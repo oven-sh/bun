@@ -452,15 +452,15 @@ pub fn load(
         let _pos: usize = stream.pos;
 
         let tree_list: Vec<tree::External> = read_array(stream)?;
+        // PORT NOTE: Zig did `initCapacity` + `items.len = N` + write each slot.
+        // In Rust, `set_len` then `iter_mut()` would form `&mut Tree` to
+        // uninitialized memory (UB), so we push into the reserved capacity
+        // instead — same allocation pattern, no uninit reads.
         this.trees = tree::List::with_capacity(tree_list.len());
-        // SAFETY: capacity == tree_list.len() reserved above; every slot is
-        // written in the loop below before any read. Matches Zig
-        // `this.trees.items.len = tree_list.items.len;`.
-        unsafe { this.trees.set_len(tree_list.len()) };
-        debug_assert_eq!(tree_list.len(), this.trees.len());
-        for (from, to) in tree_list.iter().zip(this.trees.iter_mut()) {
-            *to = Tree::to_tree(*from);
+        for from in &tree_list {
+            this.trees.push(Tree::to_tree(*from));
         }
+        debug_assert_eq!(tree_list.len(), this.trees.len());
     }
 
     // -- hoisted_dependencies --

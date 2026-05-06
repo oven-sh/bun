@@ -15,7 +15,7 @@ use super::package::PackageListExt as _;
 use crate::config_version::ConfigVersion;
 use crate::dependency;
 use crate::package_manager_real::Options as PackageManagerOptions;
-use crate::resolution::Tag as ResolutionTag;
+use crate::resolution_real::Tag as ResolutionTag;
 use crate::ALIGNMENT_BYTES_TO_REPEAT_BUFFER;
 use super::PatchedDep;
 use bun_install::{

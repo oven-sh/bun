@@ -501,9 +501,9 @@ impl PackageManager {
             let mut dep_id = root_deps.off;
             let end = dep_id.saturating_add(root_deps.len);
             while dep_id < end {
-                let root_dep = self.lockfile.buffers.dependencies[dep_id as usize];
+                let root_dep = &self.lockfile.buffers.dependencies[dep_id as usize];
                 for request in self.update_requests.iter() {
-                    if request.matches(&root_dep, self.lockfile.buffers.string_bytes.as_slice()) {
+                    if request.matches(root_dep, self.lockfile.buffers.string_bytes.as_slice()) {
                         let package_id = self.lockfile.buffers.resolutions[dep_id as usize];
                         if package_id == invalid_package_id {
                             continue;

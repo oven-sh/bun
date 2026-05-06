@@ -1413,24 +1413,62 @@ impl FetchTasklet {
         let fetch_tasklet = unsafe { &mut *fetch_tasklet_ptr };
 
         // This task gets queued on the HTTP thread.
-        // TODO(port): `AsyncHTTP::init` arg ABI drifted from Zig — `headers`
-        // now takes `headers::EntryList` by value (moved out of FetchOptions
-        // above into request_headers), `headers_buf` is `&'static [u8]` (we
-        // have a Vec<u8> on the tasklet), `request_body` is `&'static [u8]`
-        // (slice into FetchTasklet-owned data), and `response_buffer` is
-        // `*mut MutableString`. Most of these need self-referential lifetime
-        // erasure that Zig got for free; route through the upstream init once
-        // its `Options` shape stabilizes.
-        let _ = (url, proxy, fetch_options.method, fetch_options.proxy_headers,
-                 fetch_options.unix_socket_path, fetch_options.disable_timeout,
-                 fetch_options.disable_keepalive, fetch_options.disable_decompression,
-                 fetch_options.verbose, fetch_options.ssl_config, fetch_options.redirect_type,
-                 fetch_tasklet_ptr);
-        fetch_tasklet.http = Some(Box::new({
-            todo!("blocked_on: bun_http::AsyncHTTP::init (self-referential arg lifetimes)");
-            #[allow(unreachable_code)]
-            { unreachable!() }
-        }));
+        // PORT NOTE: `AsyncHTTP::init` takes several `&'static [u8]` borrows
+        // (headers_buf, request_body, hostname) that in Zig were plain slices
+        // into FetchTasklet-owned storage. The tasklet is now heap-pinned via
+        // `Box::into_raw`, so erase the borrow lifetimes through raw pointers.
+        // SAFETY: `fetch_tasklet_ptr` is a stable heap allocation that outlives
+        // the AsyncHTTP (dropped together in `deinit`); the slices below borrow
+        // its `request_headers.buf`, `request_body`, `hostname`, and
+        // `response_buffer` fields which are not reallocated for the lifetime
+        // of the request.
+        let headers_buf: &'static [u8] = unsafe {
+            let buf: *const [u8] = fetch_tasklet.request_headers.buf.as_slice();
+            &*buf
+        };
+        let request_body_slice: &'static [u8] = unsafe {
+            let buf: *const [u8] = fetch_tasklet.request_body.slice();
+            &*buf
+        };
+        let hostname: Option<&'static [u8]> = fetch_tasklet.hostname.as_deref().map(|s| {
+            let p: *const [u8] = s;
+            // SAFETY: see block note above.
+            unsafe { &*p }
+        });
+        let response_buffer: *mut MutableString = &mut fetch_tasklet.response_buffer;
+        // PORT NOTE: Zig passed `fetch_options.headers.entries` by value (shallow
+        // struct copy → shared backing storage). `MultiArrayList` in Rust owns its
+        // allocation, so clone; AsyncHTTP::init clones again for the client.
+        let header_entries =
+            bun_core::handle_oom(fetch_tasklet.request_headers.entries.clone());
+
+        fetch_tasklet.http = Some(Box::new(AsyncHTTP::init(
+            fetch_options.method,
+            url,
+            header_entries,
+            headers_buf,
+            response_buffer,
+            request_body_slice,
+            // handles response events (on headers, on body, etc.)
+            http::HTTPClientResultCallback::new::<FetchTasklet>(
+                fetch_tasklet_ptr,
+                FetchTasklet::callback,
+            ),
+            fetch_options.redirect_type,
+            http::async_http::Options {
+                http_proxy: proxy,
+                proxy_headers: fetch_options.proxy_headers,
+                hostname,
+                signals: Some(fetch_tasklet.signals),
+                unix_socket_path: Some(fetch_options.unix_socket_path),
+                disable_timeout: Some(fetch_options.disable_timeout),
+                disable_keepalive: Some(fetch_options.disable_keepalive),
+                disable_decompression: Some(fetch_options.disable_decompression),
+                reject_unauthorized: Some(fetch_options.reject_unauthorized),
+                verbose: Some(fetch_options.verbose),
+                tls_props: fetch_options.ssl_config,
+            },
+        )));
         // enable streaming the write side
         let is_stream = matches!(fetch_tasklet.request_body, HTTPRequestBody::ReadableStream(_));
         let http_client = fetch_tasklet.http.as_mut().unwrap();

@@ -561,6 +561,19 @@ impl JSValue {
         if v.0 == JSValue::PROPERTY_DOES_NOT_EXIST.0 || v.is_undefined() { Ok(None) } else { Ok(Some(v)) }
     }
 
+    /// Spec JSValue.zig `implementsToString` — safe to use on any JSValue.
+    /// Returns true iff the value is an object whose `toString` property is a callable cell.
+    pub fn implements_to_string(self, global: &JSGlobalObject) -> JsResult<bool> {
+        if !self.is_object() {
+            return Ok(false);
+        }
+        let function = match self.fast_get(global, BuiltinName::toString)? {
+            Some(f) => f,
+            None => return Ok(false),
+        };
+        Ok(function.is_cell() && function.is_callable())
+    }
+
     pub fn get(self, global: &JSGlobalObject, property: impl AsRef<[u8]>) -> JsResult<Option<JSValue>> {
         let property = property.as_ref();
         // Spec (JSValue.zig:1536-1540) only routes to `fastGet` when the key is

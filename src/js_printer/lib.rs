@@ -6820,7 +6820,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
         }
 
         rename::compute_reserved_names_for_scope(module_scope, &symbols, &mut reserved_names);
-        let mut minify_renamer = rename::MinifyRenamer::init(symbols, tree.nested_scope_slot_counts.clone(), reserved_names)?;
+        minify_renamer = rename::MinifyRenamer::init(symbols, tree.nested_scope_slot_counts.clone(), reserved_names)?;
 
         let mut top_level_symbols = rename::StableSymbolCountArray::new();
 

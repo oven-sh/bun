@@ -68,7 +68,8 @@ use bun_jsc::{
     StrongOptional, WorkPoolTask,
 };
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::ConcurrentTask::ConcurrentTask;
+use bun_jsc::ConcurrentTask::{ConcurrentTask, Task};
+use bun_event_loop::Taskable;
 use bun_str::{String as BunString, ZigStringSlice};
 use bun_threading::work_pool::WorkPool;
 use bun_zlib;

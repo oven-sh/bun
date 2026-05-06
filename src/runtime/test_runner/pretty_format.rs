@@ -1773,53 +1773,22 @@ impl<'a> Formatter<'a> {
                     self.add_for_new_line(1);
                 }
                 Tag::Private => {
-                    if let Some(response) = value.as_::<jsc::webcore::Response>() {
-                        if let Err(err) =
-                            response.write_format::<Formatter, _, ENABLE_ANSI_COLORS>(self, writer.ctx)
-                        {
-                            self.failed = true;
-                            // TODO: make this better
-                            if !self.global_this.has_exception() {
-                                return Err(self.global_this.throw_error(err, "failed to print Response"));
-                            }
-                            return Err(JsError::Thrown);
-                        }
-                    } else if let Some(request) = value.as_::<jsc::webcore::Request>() {
-                        if let Err(err) =
-                            request.write_format::<Formatter, _, ENABLE_ANSI_COLORS>(value, self, writer.ctx)
-                        {
-                            self.failed = true;
-                            // TODO: make this better
-                            if !self.global_this.has_exception() {
-                                return Err(self.global_this.throw_error(err, "failed to print Request"));
-                            }
-                            return Err(JsError::Thrown);
-                        }
-                        return Ok(());
-                    } else if let Some(build) = value.as_::<jsc::api::BuildArtifact>() {
-                        if let Err(err) =
-                            build.write_format::<Formatter, _, ENABLE_ANSI_COLORS>(self, writer.ctx)
-                        {
-                            self.failed = true;
-                            // TODO: make this better
-                            if !self.global_this.has_exception() {
-                                return Err(self.global_this.throw_error(err, "failed to print BuildArtifact"));
-                            }
-                            return Err(JsError::Thrown);
-                        }
-                    } else if let Some(blob) = value.as_::<jsc::webcore::Blob>() {
-                        if let Err(err) =
-                            blob.write_format::<Formatter, _, ENABLE_ANSI_COLORS>(self, writer.ctx)
-                        {
-                            self.failed = true;
-                            // TODO: make this better
-                            if !self.global_this.has_exception() {
-                                return Err(self.global_this.throw_error(err, "failed to print Blob"));
-                            }
-                            return Err(JsError::Thrown);
-                        }
-                        return Ok(());
-                    } else if value.as_::<jsc::DOMFormData>().is_some() {
+                    // DIVERGENCE(blocked_on: bun_jsc::webcore::{Response,Request,Blob}::write_format,
+                    // bun_jsc::api::BuildArtifact::write_format, bun_jsc::DOMFormData — JsClass):
+                    // the .zig spec dispatches to per-type `writeFormat` impls (.zig:1212-1239).
+                    // None of those types implement `JsClass` / expose `write_format` in the Rust
+                    // crates yet, so these branches are stubbed `false` and the value falls
+                    // through to the generic Object printer at the bottom of this arm.
+                    if false {
+                        todo!("blocked_on: bun_jsc::webcore::Response::write_format");
+                    } else if false {
+                        todo!("blocked_on: bun_jsc::webcore::Request::write_format");
+                    } else if false {
+                        todo!("blocked_on: bun_jsc::api::BuildArtifact::write_format");
+                    } else if false {
+                        todo!("blocked_on: bun_jsc::webcore::Blob::write_format");
+                    } else if false {
+                        // bun_jsc::DOMFormData — JsClass
                         let to_json_function = value.get(self.global_this, "toJSON")?.unwrap();
 
                         self.add_for_new_line(b"FormData (entries) ".len());
@@ -1844,11 +1813,10 @@ impl<'a> Formatter<'a> {
                         // of this arm instead of printing `Timeout (#N[, repeats])` per
                         // .zig:1242-1254. Replace with `value.as_::<crate::timer::TimeoutObject>()`
                         // once available.
-                        
+                        #[cfg(any())]
                         {
                             value.as_::<crate::timer::TimeoutObject>()
                         }
-                        #[cfg(any())]
                         {
                             None::<*mut crate::timer::TimeoutObject>
                         }

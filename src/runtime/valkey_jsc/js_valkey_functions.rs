@@ -1778,10 +1778,10 @@ impl JSValkeyClient {
                 }
                 Err(_) => {
                     // TODO(port): {f} format spec on ZigString
-                    return global.throw(format_args!(
+                    return Err(global.throw(format_args!(
                         "Failed to remove handler for channel {}",
                         unsafe { &*channel.as_string() }.get_zig_string(global)
-                    ));
+                    )));
                 }
             };
 
@@ -1853,7 +1853,7 @@ impl JSValkeyClient {
         // JSValkeyClient (Box::into_raw); valid for the rest of this scope.
         let new_client: &mut JSValkeyClient = unsafe { &mut *new_client_ptr };
 
-        let new_client_js = new_client.to_js(global);
+        let new_client_js = JSValkeyClient::ptr_to_js(new_client_ptr, global);
         new_client.this_value = JsRef::init_weak(new_client_js);
         new_client._subscription_ctx = SubscriptionCtx::init(new_client)?;
         // If the original client is already connected and not manually closed, start connecting the new client.

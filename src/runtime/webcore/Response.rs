@@ -1046,8 +1046,8 @@ impl Response {
                     let result: bun_s3_signing::SignResult =
                         todo!("blocked_on: bun_s3::S3Credentials::sign_request");
                     // result drops at scope exit
-                    let headers = response.get_or_create_headers(global_this)?;
                     response.redirected = true;
+                    let headers = response.get_or_create_headers(global_this)?;
                     headers.put(HTTPHeaderName::Location, &result.url, global_this)?;
                     return Ok(Box::into_raw(Box::new(response)));
                 }

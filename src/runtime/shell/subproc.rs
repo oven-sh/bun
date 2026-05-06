@@ -1758,7 +1758,7 @@ impl PipeReader {
             this as *mut _ as usize,
             out_kind_str(this.out_type),
             chunk.len(),
-            <&'static str>::from(has_more)
+            read_state_str(has_more)
         );
 
         this.captured_writer.do_write(chunk);
@@ -1837,7 +1837,8 @@ impl PipeReader {
                     }
                     old @ PipeReaderState::Err(_) => {
                         self.state = old;
-                        e.deref();
+                        // PORT NOTE: Zig `e.deref()`; Rust drops the duplicate.
+                        drop(e);
                     }
                     PipeReaderState::Pending => {
                         // unreachable after is_done() guard; mirror Zig.
@@ -1845,12 +1846,13 @@ impl PipeReader {
                     }
                 }
             }
-            let e: Option<SystemError> = 'brk: {
-                if let PipeReaderState::Err(Some(e)) = &self.state {
-                    e.r#ref();
-                    break 'brk Some(e.clone());
-                }
-                break 'brk None;
+            // PORT NOTE: Zig ref'd + cloned the SystemError; `bun_sys::SystemError`
+            // isn't ref-counted nor `Clone`. Move it out (the only reader of
+            // `state.Err` after this point is `Drop`, which tolerates `None`).
+            let e: Option<SystemError> = if let PipeReaderState::Err(slot) = &mut self.state {
+                slot.take()
+            } else {
+                None
             };
             // SAFETY: cmd backref valid.
             return unsafe { (*cmd).buffered_output_close(self.out_type, e) };

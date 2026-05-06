@@ -36,7 +36,46 @@ impl bun_ptr::weak_ptr::HasWeakPtrData for Request {
 }
 pub type WeakRef = bun_ptr::WeakPtr<Request>;
 
-// TODO(b2-blocked): #[bun_jsc::JsClass]
+// PORT NOTE: hand-rolled `JsClass` impl (proc-macro `#[bun_jsc::JsClass]`
+// not yet wired for Request). Mirrors the Blob.rs pattern — bind the
+// generated C++ shims by link-name and wrap.
+const _: () = {
+    unsafe extern "C" {
+        #[link_name = "Request__fromJS"]
+        fn __from_js(value: bun_jsc::JSValue) -> *mut Request;
+        #[link_name = "Request__fromJSDirect"]
+        fn __from_js_direct(value: bun_jsc::JSValue) -> *mut Request;
+        #[link_name = "Request__create"]
+        fn __create(global: *const bun_jsc::JSGlobalObject, ptr: *mut Request) -> bun_jsc::JSValue;
+        #[link_name = "Request__getConstructor"]
+        fn __get_constructor(global: *const bun_jsc::JSGlobalObject) -> bun_jsc::JSValue;
+    }
+
+    impl bun_jsc::JsClass for Request {
+        fn from_js(value: bun_jsc::JSValue) -> Option<*mut Self> {
+            // SAFETY: pure FFI downcast; returns null on type mismatch.
+            let p = unsafe { __from_js(value) };
+            if p.is_null() { None } else { Some(p) }
+        }
+        fn from_js_direct(value: bun_jsc::JSValue) -> Option<*mut Self> {
+            // SAFETY: pure FFI downcast (exact-structure check); null on miss.
+            let p = unsafe { __from_js_direct(value) };
+            if p.is_null() { None } else { Some(p) }
+        }
+        fn to_js(self, global: &bun_jsc::JSGlobalObject) -> bun_jsc::JSValue {
+            let ptr = Box::into_raw(Box::new(self));
+            // SAFETY: `global` is live; ownership of `ptr` transfers to the
+            // C++ wrapper (freed via `RequestClass__finalize`).
+            unsafe { __create(global, ptr) }
+        }
+        fn get_constructor(global: &bun_jsc::JSGlobalObject) -> bun_jsc::JSValue {
+            // SAFETY: `global` is a live JSC global; C++ reads its cached
+            // structure/constructor table.
+            unsafe { __get_constructor(global) }
+        }
+    }
+};
+
 pub struct Request {
     pub url: BunString,
 

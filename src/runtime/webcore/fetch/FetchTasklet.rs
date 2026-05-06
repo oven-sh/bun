@@ -1157,15 +1157,13 @@ impl FetchTasklet {
             return BodyValue::Error(err);
         }
         if self.is_waiting_body {
-            return BodyValue::Locked(body::PendingValue {
-                size_hint: self.get_size_hint(),
-                task: Some(self as *mut _ as *mut c_void),
-                global: self.global_this as *const JSGlobalObject,
-                on_start_streaming: Some(FetchTasklet::on_start_streaming_http_response_body_callback),
-                on_readable_stream_available: Some(FetchTasklet::on_readable_stream_available),
-                on_stream_cancelled: Some(FetchTasklet::on_stream_cancelled_callback),
-                ..Default::default()
-            });
+            let mut pending = body::PendingValue::new(self.global_this);
+            pending.size_hint = self.get_size_hint();
+            pending.task = Some(self as *mut _ as *mut c_void);
+            pending.on_start_streaming = Some(FetchTasklet::on_start_streaming_http_response_body_callback);
+            pending.on_readable_stream_available = Some(FetchTasklet::on_readable_stream_available);
+            pending.on_stream_cancelled = Some(FetchTasklet::on_stream_cancelled_callback);
+            return BodyValue::Locked(pending);
         }
 
         let scheduled_response_buffer = core::mem::take(&mut self.scheduled_response_buffer);
@@ -1186,14 +1184,16 @@ impl FetchTasklet {
         let http_response = &metadata.response;
         self.is_waiting_body = self.result.has_more;
         // PORT NOTE: reshaped for borrowck — capture metadata fields before to_body_value() takes &mut self
-        let headers = FetchHeaders::create_from_pico_headers(&http_response.headers);
+        let headers = FetchHeaders::create_from_pico_headers(http_response.headers.list);
         let status_code = http_response.status_code as u16;
         let status_text = BunString::create_atom_if_possible(&http_response.status);
-        let url = BunString::create_atom_if_possible(&metadata.url);
+        // SAFETY: metadata.url borrows owned_buf inside metadata; valid while &self.metadata.
+        let url = BunString::create_atom_if_possible(unsafe { &*metadata.url });
         let redirected = self.result.redirected;
         Response::init(
             crate::webcore::response::Init {
-                headers,
+                // SAFETY: create_from_pico_headers returns a fresh refcount=1 FetchHeaders*.
+                headers: Some(unsafe { HeadersRef::adopt(headers) }),
                 status_code,
                 status_text,
                 ..Default::default()
@@ -1214,15 +1214,15 @@ impl FetchTasklet {
             http_.enable_response_body_streaming();
         }
         // we should not keep the process alive if we are ignoring the body
-        let vm = self.javascript_vm;
-        self.poll_ref.unref(vm);
+        let _ = self.javascript_vm;
+        self.poll_ref.unref(vm_ctx());
         // clean any remaining references
         self.clear_stream_cancel_handler();
         self.readable_stream_ref.deinit();
-        self.response.deinit();
+        self.response.clear();
 
         if let Some(response) = self.native_response.take() {
-            drop(response); // Arc unref
+            Response::unref(response);
         }
 
         self.ignore_data = true;
@@ -1232,18 +1232,16 @@ impl FetchTasklet {
         bun_output::scoped_log!(FetchTasklet, "onResolve");
         let response = Box::into_raw(Box::new(self.to_response()));
         // SAFETY: response is a freshly allocated Response; makeMaybePooled takes ownership semantics on the JS side
-        let response_js = Response::make_maybe_pooled(self.global_this, unsafe { &mut *response });
+        let response_js = Response::make_maybe_pooled(self.global_this, response);
         response_js.ensure_still_alive();
         self.response = jsc::Weak::<FetchTasklet>::create(
             response_js,
             self.global_this,
             jsc::WeakRefType::FetchResponse,
-            self as *mut _,
+            self,
         );
-        // SAFETY: response is valid; ref() returns Arc-like ref
-        // TODO(port): native_response is Option<Arc<Response>> per LIFETIMES.tsv but Zig uses intrusive ref();
-        // Response is intrusively refcounted so this should be IntrusiveRc/raw ptr in Phase B.
-        self.native_response = Some(unsafe { (*response).ref_() });
+        // Response is intrusively refcounted; bump for native_response.
+        self.native_response = Some(Response::ref_(response));
         response_js
     }
 

@@ -1561,7 +1561,7 @@ struct Destination {
     address: JSValue,
 }
 
-fn get_us_error<const USE_WSA: bool>(res: c_int, tag: bun_sys::Tag) -> Option<bun_sys::Result<()>> {
+fn get_us_error<const USE_WSA: bool>(res: c_int, tag: bun_sys::Tag) -> Option<bun_sys::Error> {
     #[cfg(windows)]
     {
         // setsockopt returns 0 on success, but errnoSys considers 0 to be failure on Windows.
@@ -1575,20 +1575,19 @@ fn get_us_error<const USE_WSA: bool>(res: c_int, tag: bun_sys::Tag) -> Option<bu
                 if wsa != bun_sys::windows::WsaError::SUCCESS {
                     // SAFETY: WSASetLastError is thread-local errno write; always safe.
                     unsafe { bun_sys::windows::ws2_32::WSASetLastError(0) };
-                    return bun_sys::Result::<()>::errno(wsa.to_e(), tag);
+                    return Some(bun_sys::Error::from_code(wsa.to_e(), tag));
                 }
             }
         }
 
         // SAFETY: _errno() returns a valid pointer to thread-local errno.
         let errno_val = unsafe { *bun_sys::c::_errno() };
-        // SAFETY: bun_sys::E is #[repr(i32)] covering valid errno range.
-        return bun_sys::Result::<()>::errno(unsafe { core::mem::transmute::<i32, bun_sys::E>(errno_val) }, tag);
+        return Some(bun_sys::Error::from_code_int(errno_val, tag));
     }
     #[cfg(not(windows))]
     {
         let _ = USE_WSA;
-        bun_sys::Result::<()>::errno_sys(res, tag)
+        errno_sys(res, tag)
     }
 }
 

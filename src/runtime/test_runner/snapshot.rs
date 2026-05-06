@@ -796,7 +796,7 @@ impl<'a> Snapshots<'a> {
                     logger::Loc { start: 0 },
                     format_args!(
                         "Failed to update inline snapshot: Seek file error: {}",
-                        e.name()
+                        bstr::BStr::new(e.name()),
                     ),
                 )?;
                 let _ = scopeguard::ScopeGuard::into_inner(file);
@@ -809,14 +809,14 @@ impl<'a> Snapshots<'a> {
                     logger::Loc { start: 0 },
                     format_args!(
                         "Failed to update inline snapshot: Write file error: {}",
-                        e.name()
+                        bstr::BStr::new(e.name()),
                     ),
                 )?;
                 let _ = scopeguard::ScopeGuard::into_inner(file);
                 continue;
             }
             if result_text.len() < file_text.len() {
-                if file.file.set_end_pos(result_text.len()).is_err() {
+                if bun_sys::ftruncate(file.file.handle, result_text.len() as i64).is_err() {
                     panic!(
                         "Failed to update inline snapshot: File was left in an invalid state"
                     );

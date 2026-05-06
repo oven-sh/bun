@@ -2503,10 +2503,11 @@ pub fn construct_bun_file(
 
     if let PathOrFileDescriptor::Path(ref p) = path {
         if p.slice().starts_with(b"s3://") {
-            return S3File::construct_internal_js(global_object, p.dupe(), options);
+            let _ = (p, options);
+            todo!("blocked_on: webcore::node_types::PathLike vs crate::node::PathLike (S3File::construct_internal_js)");
         }
     }
-    let _path_cleanup = scopeguard::guard((), |_| path.deinit_and_unprotect());
+    let _path_cleanup = scopeguard::guard((), |()| path.deinit_and_unprotect());
 
     let mut blob = Blob::find_or_create_file_from_path(&mut path, global_object, false);
 
@@ -4904,9 +4905,7 @@ impl Blob {
         }
     }
 
-    pub fn is_detached(&self) -> bool {
-        self.store.is_none()
-    }
+    // is_detached: defined once above; duplicate removed to fix E0034.
 
     fn calculate_estimated_byte_size(&mut self) {
         // in-memory size. not the size on disk.
@@ -5572,7 +5571,7 @@ pub(crate) trait ZigStringBlobExt {
 impl ZigStringBlobExt for ZigString {
     #[inline]
     fn to_js(&self, global: &JSGlobalObject) -> JSValue {
-        if self.is_globally_allocated() {
+        if (*self).is_globally_allocated() {
             return self.to_external_value(global);
         }
         // SAFETY: `self` is `#[repr(C)] (ptr,len)`; `global` is live.
@@ -5585,7 +5584,11 @@ impl ZigStringBlobExt for ZigString {
     }
     #[inline]
     fn with_encoding(mut self) -> Self {
-        self.set_output_encoding();
+        // PORT NOTE: `bun_str::ZigString` lacks `set_output_encoding`; mirror
+        // its effect (mark UTF-8 when bytes are not all-ASCII).
+        if !strings::is_all_ascii(self.byte_slice()) {
+            self.mark_utf8();
+        }
         self
     }
     fn to_json_object(&self, _global: &JSGlobalObject) -> JSValue {

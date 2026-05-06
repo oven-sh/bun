@@ -1884,19 +1884,22 @@ impl<'a> BundleV2<'a> {
             client_transpiler: None,
             ssr_transpiler: ssr_alias,
             framework: None,
+            #[allow(unreachable_code)]
             graph: Graph {
                 pool: NonNull::dangling(), // set below
                 heap,
                 kit_referenced_server_data: false,
                 kit_referenced_client_data: false,
-                ..Default::default()
+                ..todo!("blocked_on: Graph::default")
             },
+            #[allow(unreachable_code)]
             linker: LinkerContext {
                 r#loop: event_loop,
+                #[allow(unreachable_code)]
                 graph: LinkerGraph {
-                    ..Default::default()
+                    ..todo!("blocked_on: LinkerGraph::default")
                 },
-                ..Default::default()
+                ..todo!("blocked_on: LinkerContext::default")
             },
             bun_watcher: None,
             plugins: None,
@@ -1954,20 +1957,24 @@ impl<'a> BundleV2<'a> {
         this.linker.options.minify_whitespace = this.transpiler.options.minify_whitespace;
         this.linker.options.emit_dce_annotations = this.transpiler.options.emit_dce_annotations;
         this.linker.options.ignore_dce_annotations = this.transpiler.options.ignore_dce_annotations;
-        this.linker.options.banner = this.transpiler.options.banner.clone();
-        this.linker.options.footer = this.transpiler.options.footer.clone();
+        // SAFETY: `transpiler.options.{banner,footer,public_path,metafile_*}` are
+        // owned by the `'a`-lifetime `Transpiler` which outlives `this.linker`;
+        // `LinkerOptions` stores `&'static [u8]` as a Phase-A lifetime erasure.
+        let leak = |s: &[u8]| -> &'static [u8] { unsafe { core::mem::transmute(s) } };
+        this.linker.options.banner = leak(&this.transpiler.options.banner);
+        this.linker.options.footer = leak(&this.transpiler.options.footer);
         this.linker.options.css_chunking = this.transpiler.options.css_chunking;
         this.linker.options.compile_to_standalone_html = this.transpiler.options.compile_to_standalone_html;
         this.linker.options.source_maps = this.transpiler.options.source_map;
         this.linker.options.tree_shaking = this.transpiler.options.tree_shaking;
-        this.linker.options.public_path = this.transpiler.options.public_path.clone();
+        this.linker.options.public_path = leak(&this.transpiler.options.public_path);
         this.linker.options.target = this.transpiler.options.target;
         this.linker.options.output_format = this.transpiler.options.output_format;
         this.linker.options.generate_bytecode_cache = this.transpiler.options.bytecode;
         this.linker.options.compile = this.transpiler.options.compile;
         this.linker.options.metafile = this.transpiler.options.metafile;
-        this.linker.options.metafile_json_path = this.transpiler.options.metafile_json_path.clone();
-        this.linker.options.metafile_markdown_path = this.transpiler.options.metafile_markdown_path.clone();
+        this.linker.options.metafile_json_path = leak(&this.transpiler.options.metafile_json_path);
+        this.linker.options.metafile_markdown_path = leak(&this.transpiler.options.metafile_markdown_path);
 
         this.linker.dev_server = this.dev_server;
 
@@ -2197,8 +2204,12 @@ impl<'a> BundleV2<'a> {
         self.linker.graph.ast = self.graph.ast.clone()?;
 
         for module_scope in self.linker.graph.ast.items_module_scope_mut() {
+            // SAFETY: `children` are arena-allocated `NonNull<Scope>`s; we re-point
+            // their `parent` BACKREF at the cloned module scope. The raw-pointer
+            // dance mirrors Zig's `child.parent = module_scope`.
+            let parent_ptr = NonNull::from(&mut *module_scope);
             for child in module_scope.children.slice_mut() {
-                child.parent = module_scope;
+                unsafe { child.as_mut() }.parent = Some(parent_ptr);
             }
 
             if FeatureFlags::HELP_CATCH_MEMORY_ISSUES {

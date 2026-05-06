@@ -636,16 +636,18 @@ impl Pending {
         if self.state != PendingState::Pending {
             return;
         }
+        // SAFETY: VirtualMachine::get() returns the per-thread singleton VM; sole
+        // `&`-borrow on this thread, outlives this call.
         let vm = unsafe { &*VirtualMachine::get() };
         if vm.is_shutting_down() {
             return;
         }
 
         let clone = Box::new(core::mem::take(self));
-        // PORT NOTE: Zig copied *self then reset only state+result; mem::take also resets
-        // self.future to Default (Zig left it untouched — no reader observes it after this).
-        self.state = PendingState::None;
-        self.result = StreamResult::Done;
+        // PORT NOTE: Zig copied *self then reset only state+result (zig:451-452);
+        // `mem::take` already resets `state`/`result`/`future` via `Default`, so the
+        // explicit re-assignments are unnecessary here. Zig left `future` untouched —
+        // no reader observes it after this.
         // SAFETY: VM event loop is a singleton; temporary `&mut` is the sole
         // borrow for the duration of `enqueue_task` (no re-entry into Rust).
         unsafe { &mut *vm.event_loop() }
@@ -753,15 +755,17 @@ impl StreamResult {
         promise: *mut JSPromise,
         global_this: &JSGlobalObject,
     ) {
+        // SAFETY: bun_vm() returns the per-global VM singleton; `&`-borrow is
+        // dropped (only used for read-only `event_loop()`) before any re-entrant call.
         let vm = unsafe { &*global_this.bun_vm() };
-        // PORT NOTE: Zig holds `loop` across re-entrant promise.resolve/reject. In
-        // Rust a long-lived `&mut EventLoop` would alias any `&mut` the re-entered
-        // JS path materializes through `vm.event_loop()`. Keep the raw pointer and
-        // form a fresh temporary `&mut` per call so no two `&mut` are live at once.
+        // PORT NOTE: Zig holds `loop` and `promise` across re-entrant resolve/reject.
+        // In Rust a long-lived `&mut EventLoop` / `&mut JSPromise` would alias any
+        // `&mut` the re-entered JS path materializes through `vm.event_loop()` or the
+        // same promise. Keep the raw pointers and form a fresh temporary `&mut` per
+        // call so no two `&mut` are live at once.
         let event_loop = vm.event_loop();
-        // SAFETY: promise is GC-rooted via protect()
-        let promise = unsafe { &mut *promise };
-        let promise_value = promise.to_js();
+        // SAFETY: promise is GC-rooted via protect(); sole `&` for this read-only call.
+        let promise_value = unsafe { &*promise }.to_js();
         let _unprotect = scopeguard::guard((), |_| promise_value.unprotect());
 
         // SAFETY: event_loop is the VM's singleton loop; sole `&mut` for this call.
@@ -780,11 +784,14 @@ impl StreamResult {
                     break 'brk js_err;
                 };
                 *result = StreamResult::Temporary(ByteList::default());
-                let _ = promise.reject_with_async_stack(global_this, Ok(value));
+                // SAFETY: promise GC-rooted; fresh temp `&mut` is sole borrow across
+                // this re-entrant call (no long-lived `&mut JSPromise` held).
+                let _ = unsafe { &mut *promise }.reject_with_async_stack(global_this, Ok(value));
                 // TODO: properly propagate exception upwards
             }
             StreamResult::Done => {
-                let _ = promise.resolve(global_this, JSValue::FALSE);
+                // SAFETY: see reject_with_async_stack above; fresh temp `&mut`.
+                let _ = unsafe { &mut *promise }.resolve(global_this, JSValue::FALSE);
                 // TODO: properly propagate exception upwards
             }
             _ => {
@@ -792,7 +799,8 @@ impl StreamResult {
                     Ok(v) => v,
                     Err(err) => {
                         *result = StreamResult::Temporary(ByteList::default());
-                        let _ = promise.reject(global_this, Err(err));
+                        // SAFETY: see reject_with_async_stack above; fresh temp `&mut`.
+                        let _ = unsafe { &mut *promise }.reject(global_this, Err(err));
                         // TODO: properly propagate exception upwards
                         // SAFETY: see enter() above; sole `&mut` for this call.
                         unsafe { &mut *event_loop }.exit();
@@ -802,7 +810,8 @@ impl StreamResult {
                 value.ensure_still_alive();
 
                 *result = StreamResult::Temporary(ByteList::default());
-                let _ = promise.resolve(global_this, value);
+                // SAFETY: see reject_with_async_stack above; fresh temp `&mut`.
+                let _ = unsafe { &mut *promise }.resolve(global_this, value);
                 // TODO: properly propagate exception upwards
             }
         }
@@ -1900,42 +1909,13 @@ impl NetworkSink {
     }
     // TODO(port): bun.TrivialDeinit → relies on Drop; explicit deinit is no-op here
 
-    pub fn connect(&mut self, signal: Signal) {
-        self.signal = signal;
-    }
-
-    pub fn to_sink(&mut self) -> *mut NetworkSinkJSSink {
-        // SAFETY: JSSink wraps Self at offset 0 (repr guarantee from codegen)
-        self as *mut Self as *mut NetworkSinkJSSink
-        // TODO(port): @ptrCast(this) to JSSink — depends on codegen layout
-    }
-
-    // NOTE: `finalize` / `detach_writable` / `finalize_and_destroy` / `abort` are
-    // intentionally NOT defined in this live impl block. A previous stub
-    // `detach_writable` here did `self.task.take()` without calling the
-    // intrusive `deref()` on the `MultiPartUpload`, leaking one refcount per
-    // teardown (PORTING.md §Forbidden: silent no-op for real Zig logic). The
-    // correct implementations live in the `` block below and are
+    // NOTE: `start` / `connect` / `to_sink` / `flush` / `finalize` / `detach_writable`
+    // / `finalize_and_destroy` / `abort` are intentionally NOT defined in this impl
+    // block. A previous stub `detach_writable` here did `self.task.take()` without
+    // calling the intrusive `deref()` on the `MultiPartUpload`, leaking one refcount
+    // per teardown (PORTING.md §Forbidden: silent no-op for real Zig logic). The
+    // correct implementations live in the `impl NetworkSink` block below and are
     // un-gated together with `bun_s3::MultiPartUpload`.
-
-    pub fn flush(&mut self) -> bun_sys::Result<()> {
-        Ok(())
-    }
-
-    pub fn start(&mut self, stream_start: Start) -> bun_sys::Result<()> {
-        if self.ended {
-            return Ok(());
-        }
-
-        if let Start::ChunkSize(chunk_size) = stream_start {
-            if chunk_size > 0 {
-                self.high_water_mark = chunk_size;
-            }
-        }
-        self.ended = false;
-        self.signal.start();
-        Ok(())
-    }
 
     pub fn to_js(&mut self, global_this: &JSGlobalObject) -> JSValue {
         NetworkSinkJSSink::create_object(global_this, self, 0)

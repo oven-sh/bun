@@ -1564,9 +1564,9 @@ impl<'a> LinkerContext<'a> {
                                 bstr::BStr::new(&input_files[other_source_index as usize].path.pretty),
                             ).unwrap();
                             notes.push(Data {
-                                text: text.into_boxed_slice(),
+                                text: text.into(),
                                 location: Logger::Location::init_or_null(
-                                    &input_files[parent_source_index as usize],
+                                    Some(&input_files[parent_source_index as usize]),
                                     ast_import_records[parent_source_index as usize].slice()
                                         [tla_checks[parent_source_index as usize].import_record_index as usize]
                                         .range,
@@ -1585,7 +1585,7 @@ impl<'a> LinkerContext<'a> {
                             write!(&mut text, "This require call is not allowed because the transitive dependency \"{}\" contains a top-level await", bstr::BStr::new(tla_pretty_path)).unwrap();
                         }
 
-                        self.log.add_range_error_with_notes(source, record.range, text.into_boxed_slice(), notes)?;
+                        self.log.add_range_error_with_notes(Some(source), record.range, &text, notes.into_boxed_slice())?;
                     }
                 }
             }
@@ -1787,35 +1787,14 @@ impl<'a> LinkerContext<'a> {
 
         let enable_source_maps = self.options.source_maps != SourceMapOption::None && !source_index.is_runtime();
         // PERF(port): was comptime bool dispatch — profile in Phase B
-        let fat_ast = ast.clone().to_ast();
-        let result = if enable_source_maps {
-            js_printer::print_with_writer::<js_printer::BufferPrinter, true>(
-                printer,
-                alloc,
-                ast.target,
-                &fat_ast,
-                source,
-                print_options,
-                ast.import_records.slice(),
-                parts_to_print,
-                r,
-            )
-        } else {
-            js_printer::print_with_writer::<js_printer::BufferPrinter, false>(
-                printer,
-                alloc,
-                ast.target,
-                &fat_ast,
-                source,
-                print_options,
-                ast.import_records.slice(),
-                parts_to_print,
-                r,
-            )
-        };
-        // TODO(b3): write `printer.ctx` back into `*writer` once
-        // `print_with_writer` returns the writer (Zig's `defer writer.* = printer.ctx`).
-        result
+        // PORT NOTE: `print_with_writer<_, true/false>` ties `Renamer<'r,'src>`,
+        // `&Bump`, `&Ast`, `&self` lifetimes invariantly together; the inputs
+        // here come from disjoint borrows (`&mut self`, `r`, `alloc`, `ast`).
+        // The Zig original threads raw pointers, so the actual lifetimes are
+        // all "outlive this call". Body un-gates once `print_with_writer`
+        // relaxes its variance or `BundledAst::to_ast` is borrow-based.
+        let _ = (printer, alloc, ast, source, print_options, r, parts_to_print, enable_source_maps);
+        todo!("blocked_on: js_printer::print_with_writer lifetime variance")
     }
 
     pub fn require_or_import_meta_for_source(
@@ -1890,7 +1869,9 @@ impl<'a> LinkerContext<'a> {
 
                         let source = &all_sources[r#ref.source_index() as usize];
 
-                        let original_name = &symbol.original_name;
+                        // SAFETY: `Symbol.original_name` is a `*const [u8]` arena
+                        // pointer; valid for the link step.
+                        let original_name: &[u8] = unsafe { &*symbol.original_name };
                         // CYCLEBREAK FORWARD_DECL: `bun_css::css_modules::hash`
                         // is feature-gated; route through the local shim until
                         // the `css` feature is the default. The shim mirrors the
@@ -1954,7 +1935,7 @@ impl<'a> LinkerContext<'a> {
         for (kind, piece_index) in piece_queries {
             match kind {
                 crate::chunk::QueryKind::Asset => {
-                    let mut from_chunk_dir = bun_paths::dirname_posix(&final_rel_path).unwrap_or(b"");
+                    let mut from_chunk_dir = bun_paths::resolve_path::dirname::<bun_paths::resolve_path::platform::Posix>(&final_rel_path);
                     if from_chunk_dir == b"." {
                         from_chunk_dir = b"";
                     }
@@ -1968,7 +1949,7 @@ impl<'a> LinkerContext<'a> {
                     match &additional_files[0] {
                         AdditionalFile::OutputFile(output_file_id) => {
                             let path = &parse_graph.additional_output_files[*output_file_id as usize].dest_path;
-                            hash.write(bun_paths::relative_platform(from_chunk_dir, path, bun_paths::Platform::Posix, false));
+                            hash.write(bun_paths::resolve_path::relative_platform::<bun_paths::resolve_path::platform::Posix, false>(from_chunk_dir, path));
                         }
                         AdditionalFile::SourceIndex(_) => {}
                     }
@@ -2012,7 +1993,7 @@ impl<'a> LinkerContext<'a> {
                 let sym = unsafe { &*self.graph.symbols.get(export_ref).unwrap() };
                 debug_tree_shake!(
                     "Export name: {} (in {})",
-                    bstr::BStr::new(&sym.original_name),
+                    bstr::BStr::new(unsafe { &*sym.original_name }),
                     bstr::BStr::new(unsafe {
                         &(*self.parse_graph).input_files.items_source()
                             [export_ref.source_index() as usize].path.text
@@ -2020,11 +2001,13 @@ impl<'a> LinkerContext<'a> {
                 );
             }
             list.push(StableRef {
-                stable_source_index: self.graph.stable_source_indices[export_ref.source_index() as usize],
+                stable_source_index: *self.graph.stable_source_indices.at(export_ref.source_index() as usize),
                 r#ref: export_ref,
             });
         }
-        list.sort_by(StableRef::is_less_than);
+        list.sort_by(|a, b| {
+            if StableRef::is_less_than((), *a, *b) { core::cmp::Ordering::Less } else { core::cmp::Ordering::Greater }
+        });
     }
 } // end  — split: tree-shaking trio un-gated below (B-2 second pass)
 
@@ -2041,7 +2024,7 @@ fn css_modules_hash_shim(pretty_path: &[u8]) -> Box<[u8]> {
 #[cfg(not(feature = "css"))]
 #[inline]
 fn css_modules_hash_shim(pretty_path: &[u8]) -> Box<[u8]> {
-    let h = bun_hash::wyhash(pretty_path) as u32;
+    let h = bun_core::hash::wyhash(pretty_path) as u32;
     let mut out = Vec::with_capacity(6);
     let mut n = h;
     const ALPHA: &[u8; 62] = b"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";

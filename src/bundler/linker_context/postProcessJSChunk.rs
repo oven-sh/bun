@@ -540,7 +540,7 @@ pub fn post_process_js_chunk(
     let targets: &[options::Target] = unsafe { &(*c.parse_graph).ast }.items_target();
     for compile_result in compile_results.iter() {
         let source_index = compile_result.source_index();
-        let is_runtime = source_index == Index::runtime().value();
+        let is_runtime = source_index == Index::RUNTIME.value;
 
         // TODO: extracated legal comments
 
@@ -624,8 +624,11 @@ pub fn post_process_js_chunk(
             if let Some(source_map_chunk) = compile_result.source_map_chunk() {
                 if c.options.source_maps != options::SourceMapOption::None {
                     compile_results_for_source_map.append(CompileResultForSourceMap {
-                        source_map_chunk,
-                        generated_offset: line_offset.value(),
+                        source_map_chunk: source_map_chunk.clone(),
+                        generated_offset: match line_offset {
+                            SourceMap::LineColumnOffsetOptional::Value(v) => v,
+                            SourceMap::LineColumnOffsetOptional::Null => Default::default(),
+                        },
                         source_index: compile_result.source_index(),
                     })?;
                 }
@@ -649,12 +652,14 @@ pub fn post_process_js_chunk(
     }
 
     // Put the cross-chunk suffix inside the IIFE
-    if !cross_chunk_suffix.result.code.is_empty() {
-        if newline_before_comment {
-            j.push_static(b"\n");
+    {
+        let code = print_result_code(&cross_chunk_suffix);
+        if !code.is_empty() {
+            if newline_before_comment {
+                j.push_static(b"\n");
+            }
+            j.push(code);
         }
-
-        j.push(&cross_chunk_suffix.result.code);
     }
 
     match output_format {
@@ -721,21 +726,21 @@ pub fn post_process_js_chunk(
     }
 
     chunk.intermediate_output = c
-        .break_output_into_pieces(worker.allocator, &mut j, ctx.chunks.len() as u32)
+        .break_output_into_pieces(worker_allocator, &mut j, ctx.chunks.len() as u32)
         .unwrap_or_else(|_| panic!("Unhandled out of memory error in breakOutputIntoPieces()"));
 
     // TODO: meta contents
 
     chunk.isolated_hash = c.generate_isolated_hash(chunk);
-    chunk.flags.is_executable = is_executable;
+    chunk.flags.set(crate::chunk::Flags::IS_EXECUTABLE, is_executable);
 
     if c.options.source_maps != options::SourceMapOption::None {
-        let can_have_shifts = matches!(chunk.intermediate_output, Chunk::IntermediateOutput::Pieces(_));
+        let can_have_shifts = matches!(chunk.intermediate_output, crate::chunk::IntermediateOutput::Pieces(_));
         chunk.output_source_map = c.generate_source_map_for_chunk(
             chunk.isolated_hash,
             worker,
             compile_results_for_source_map,
-            unsafe { &(*c.resolver).opts }.output_dir,
+            &unsafe { &(*c.resolver).opts }.output_dir,
             can_have_shifts,
         )?;
     }
@@ -749,28 +754,34 @@ fn add_binding_vars_to_module_info(
     mi: &mut ModuleInfo,
     binding: Binding,
     var_kind: analyze_transpiled_module::VarKind,
-    r: renamer::Renamer,
+    r: &mut renamer::ChunkRenamer,
     symbols: &js_ast::symbol::Map,
 ) {
     match binding.data {
-        BindingData::BIdentifier(b) => {
+        B::B::BIdentifier(b) => {
+            // SAFETY: arena `*mut B::Identifier` is always non-null.
+            let b = unsafe { &*b };
             let name = r.name_for_symbol(symbols.follow(b.r#ref));
             if !name.is_empty() {
-                let Ok(str_id) = mi.str(name) else { return };
-                let _ = mi.add_var(str_id, var_kind);
+                let str_id = mi.str(name);
+                mi.add_var(str_id, var_kind);
             }
         }
-        BindingData::BArray(b) => {
+        B::B::BArray(b) => {
+            // SAFETY: arena `*mut B::Array` is always non-null.
+            let b = unsafe { &*b };
             for item in b.items.iter() {
                 add_binding_vars_to_module_info(mi, item.binding, var_kind, r, symbols);
             }
         }
-        BindingData::BObject(b) => {
+        B::B::BObject(b) => {
+            // SAFETY: arena `*mut B::Object` is always non-null.
+            let b = unsafe { &*b };
             for prop in b.properties.iter() {
                 add_binding_vars_to_module_info(mi, prop.value, var_kind, r, symbols);
             }
         }
-        BindingData::BMissing => {}
+        B::B::BMissing(_) => {}
     }
 }
 

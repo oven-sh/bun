@@ -268,7 +268,16 @@ impl<'a> ReplRunner<'a> {
 
         // Set up require(), module, __filename, __dirname relative to cwd
         // SAFETY: transpiler.fs is a valid *mut FileSystem set during VM init.
-        let cwd = unsafe { (*vm.transpiler.fs).top_level_dir_without_trailing_slash() };
+        // PORT NOTE: `bun_resolver::fs::FileSystem` (the inline stub re-exported as
+        // `bun_bundler::bun_fs`) doesn't expose `top_level_dir_without_trailing_slash()`
+        // yet — inline the trivial trailing-sep strip here.
+        let cwd = unsafe {
+            let tld = (*vm.transpiler.fs).top_level_dir;
+            match tld.split_last() {
+                Some((&last, rest)) if rest.len() > 0 && bun_paths::is_sep_any(last) => rest,
+                _ => tld,
+            }
+        };
         // SAFETY: cwd is a valid byte slice; FFI fn reads exactly `len` bytes.
         unsafe {
             Bun__REPL__setupGlobalRequire(vm.global, cwd.as_ptr() as *const c_char, cwd.len())?;
@@ -278,8 +287,10 @@ impl<'a> ReplRunner<'a> {
         // SAFETY: transpiler.env is a valid *mut Loader set during VM init.
         if let Some(tz) = unsafe { (*vm.transpiler.env).get(b"TZ") } {
             if !tz.is_empty() {
-                // SAFETY: vm.global is valid.
-                let _ = unsafe { (*vm.global).set_time_zone(&ZigString::init(tz)) };
+                // SAFETY: vm.global is valid; ZigString borrows `tz` for the FFI call duration.
+                // PORT NOTE: `JSGlobalObject::set_time_zone` isn't exposed on the Rust
+                // wrapper yet — call the underlying C++ export directly.
+                let _ = unsafe { JSGlobalObject__setTimeZone(vm.global, &ZigString::init(tz)) };
             }
         }
 

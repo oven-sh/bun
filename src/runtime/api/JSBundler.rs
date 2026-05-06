@@ -23,10 +23,9 @@ impl OutputKind {
     }
 }
 
-/// Opaque surface — full `.classes.ts` payload wraps a `webcore::Blob` plus
-/// `loader/path/hash/output_kind/sourcemap` and lives in `_jsc_gated`.
-// TODO(b2-blocked): bun_jsc::JsClass + crate::webcore::Blob — replace with _jsc_gated::BuildArtifact.
-pub struct BuildArtifact(());
+/// Full `.classes.ts` payload wraps a `webcore::Blob` plus
+/// `loader/path/hash/output_kind/sourcemap` — re-exported from `_jsc_gated`.
+pub use _jsc_gated::BuildArtifact;
 /// Opaque surface — `JSBundler::Config` + plugin pipeline.
 pub struct JSBundler(());
 

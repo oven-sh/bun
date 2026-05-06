@@ -23,7 +23,27 @@ use bun_jsc::{self as jsc, JSGlobalObject, CallFrame, JSValue, JsResult};
 #[allow(unused_imports)]
 use bun_string::ZigString;
 
+use crate::api::bun::process::sync as spawn_sync;
+use crate::api::bun::process::Status;
 use crate::cli::Command;
+
+// PORT NOTE: `sync::Options.argv` is `Vec<Box<[u8]>>` (owns its rows). Helper
+// to build it from borrowed slices — Zig was `&.{...}` of `[]const u8`.
+#[inline]
+fn build_argv(parts: &[&[u8]]) -> Vec<Box<[u8]>> {
+    parts.iter().map(|p| Box::<[u8]>::from(*p)).collect()
+}
+
+#[cfg(windows)]
+#[inline]
+fn spawn_windows_options() -> crate::api::bun::process::WindowsOptions {
+    crate::api::bun::process::WindowsOptions {
+        loop_: bun_event_loop::EventLoopHandle::init_mini(
+            bun_event_loop::MiniEventLoop::init_global(None, None),
+        ),
+        ..Default::default()
+    }
+}
 
 // PORT NOTE: `bun_resolver::fs::FileSystem` (the inline canonical type surface
 // in `resolver/lib.rs`) does not yet expose `tmpdir()`; the full impl lives in

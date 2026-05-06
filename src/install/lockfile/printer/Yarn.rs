@@ -265,7 +265,6 @@ fn packages(
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/install/lockfile/printer/Yarn.zig (235 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      reshaped requested_versions map to (start,len) ranges for borrowck; all_requested_versions uses push into pre-reserved Vec (Zig's raw alloc+cursor would be unsound under Drop); debug JSON dump stubbed; MultiArrayList .items(.field) accessors and Resolution::fmt enum need verification
+//   confidence: high
+//   notes:      reshaped requested_versions map to (start,len) ranges for borrowck; all_requested_versions uses push into pre-reserved Vec (Zig's raw alloc+cursor would be unsound under Drop); debug-only JSON dump (std.json.Stringify of Lockfile) intentionally omitted — no auto-derive equivalent
 // ──────────────────────────────────────────────────────────────────────────

@@ -1409,7 +1409,7 @@ impl<'a> SecurityScanSubprocess<'a> {
             return Err(err!("MissingIPCType"));
         };
 
-        let Some(type_str) = type_expr.as_string() else {
+        let Some(type_str) = type_expr.as_string(&bump) else {
             Output::err_generic("Security scanner IPC 'type' must be a string", ());
             return Err(err!("InvalidIPCType"));
         };
@@ -1420,7 +1420,7 @@ impl<'a> SecurityScanSubprocess<'a> {
                 return Err(err!("MissingErrorCode"));
             };
 
-            let Some(code_str) = code_expr.as_string() else {
+            let Some(code_str) = code_expr.as_string(&bump) else {
                 Output::err_generic("Security scanner error 'code' must be a string", ());
                 return Err(err!("InvalidErrorCode"));
             };

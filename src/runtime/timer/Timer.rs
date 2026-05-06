@@ -17,9 +17,13 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc};
 use bun_str::String as BunString;
 use bun_uws::Loop as UwsLoop;
 
+use crate::jsc::generated::{JSImmediate, JSTimeout};
+use crate::jsc::{Debugger, EnsureStillAlive};
+
 use super::{
-    All, CountdownOverflowBehavior, DateHeaderTimer, EventLoopTimer, EventLoopTimerTag,
-    ImmediateObject, Kind, TimeoutObject, TimeoutWarning, TimerObjectInternals,
+    All, CountdownOverflowBehavior, DateHeaderTimer, ElTimespec, EventLoopTimer,
+    EventLoopTimerState, EventLoopTimerTag, ImmediateObject, Kind, KindBig, TimeoutObject,
+    TimeoutWarning, TimerObjectInternals, ID,
 };
 
 // ─── local FFI shims (blocked_on: bun_jsc crate-root JSGlobalObject lacks

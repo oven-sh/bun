@@ -211,40 +211,40 @@ impl PmVersionCommand {
                 .put_string(&json_bump, b"version", &new_version_str)?;
 
             let mut buffer_writer = JSPrinter::BufferWriter::init();
-                buffer_writer.append_newline = !package_json_contents.is_empty()
-                    && package_json_contents[package_json_contents.len() - 1] == b'\n';
-                let mut package_json_writer = JSPrinter::BufferPrinter::init(buffer_writer);
+            buffer_writer.append_newline = !package_json_contents.is_empty()
+                && package_json_contents[package_json_contents.len() - 1] == b'\n';
+            let mut package_json_writer = JSPrinter::BufferPrinter::init(buffer_writer);
 
-                let printer_indent = JSPrinter::Indentation {
-                    scalar: json_result.indentation.scalar,
-                    count: json_result.indentation.count,
-                    character: match json_result.indentation.character {
-                        logger::js_printer::IndentationCharacter::Tab => {
-                            JSPrinter::IndentationCharacter::Tab
-                        }
-                        logger::js_printer::IndentationCharacter::Space => {
-                            JSPrinter::IndentationCharacter::Space
-                        }
-                    },
-                };
+            let printer_indent = JSPrinter::Indentation {
+                scalar: json_result.indentation.scalar,
+                count: json_result.indentation.count,
+                character: match json_result.indentation.character {
+                    logger::js_printer::IndentationCharacter::Tab => {
+                        JSPrinter::IndentationCharacter::Tab
+                    }
+                    logger::js_printer::IndentationCharacter::Space => {
+                        JSPrinter::IndentationCharacter::Space
+                    }
+                },
+            };
 
-                if let Err(err) = JSPrinter::print_json(
-                    &mut package_json_writer,
-                    bun_js_parser::Expr::from(json),
-                    &package_json_source,
-                    JSPrinter::PrintJsonOptions {
-                        indent: printer_indent,
-                        mangled_props: None,
-                    },
-                ) {
-                    Output::err_generic(
-                        "Failed to save package.json: {}",
-                        (err.name(),),
-                    );
-                    Global::exit(1);
-                }
+            if let Err(err) = JSPrinter::print_json(
+                &mut package_json_writer,
+                bun_js_parser::Expr::from(json),
+                &package_json_source,
+                JSPrinter::PrintJsonOptions {
+                    indent: printer_indent,
+                    mangled_props: None,
+                },
+            ) {
+                Output::err_generic(
+                    "Failed to save package.json: {}",
+                    (err.name(),),
+                );
+                Global::exit(1);
+            }
 
-                // Zig used `std.fs.cwd().writeFile`; ported to bun_sys (no std::fs).
+            // Zig used `std.fs.cwd().writeFile`; ported to bun_sys (no std::fs).
             if let Err(err) = bun_sys::File::write_file(
                 Fd::cwd(),
                 package_json_path,

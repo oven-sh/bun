@@ -1002,18 +1002,21 @@ pub extern "C" fn MarkedArrayBuffer_deallocator(bytes: *mut c_void, _ctx: *mut c
     unsafe { mimalloc::mi_free(bytes) };
 }
 
-// TODO(port): `bun_runtime::webcore::blob::Store` is tier-6 (cycle). The
-// opaque `crate::webcore::blob::Store` shim has no `deref_()`; the real
-// `Store::deref` lives in `bun_runtime` (forward-dep). Keep the export symbol
-// so C++ links, but body is blocked on a C-ABI trampoline for `Store::deref`.
+// PORT NOTE: `webcore::Blob::Store` lives in `bun_runtime` (forward-dep on this
+// crate). Same dep-cycle break as `Bun__Blob__sharedView` / `Bun__Blob__Store__initFile`:
+// call through a C-ABI trampoline exported by `bun_runtime::webcore::blob::Store`.
 #[unsafe(no_mangle)]
 pub extern "C" fn BlobArrayBuffer_deallocator(_bytes: *mut c_void, blob: *mut c_void) {
     // zig's memory allocator interface won't work here
     // mimalloc knows the size of things
     // but we don't
-    // SAFETY: blob is a *Blob.Store passed by C++ as the deallocator context.
-    let _store = blob.cast::<crate::webcore::blob::Store>();
-    todo!("blocked_on: bun_runtime::webcore::blob::Store::deref")
+    unsafe extern "C" {
+        fn Bun__Blob__Store__deref(store: *mut crate::webcore::blob::Store);
+    }
+    // SAFETY: `blob` is a `*Blob.Store` passed by C++ as the deallocator context;
+    // it owns one outstanding reference being released here. Trampoline is exported
+    // by `bun_runtime` and forwards to `Store::deref`.
+    unsafe { Bun__Blob__Store__deref(blob.cast::<crate::webcore::blob::Store>()) };
 }
 
 // ──────────────────────────────────────────────────────────────────────────

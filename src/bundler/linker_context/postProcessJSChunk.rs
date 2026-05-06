@@ -507,7 +507,6 @@ pub fn post_process_js_chunk(
 
     match c.options.output_format {
         options::OutputFormat::InternalBakeDev => {
-            // TODO(b0): get_hmr_runtime / HmrRuntimeSide arrive from move-in (MOVE_DOWN bake → bundler)
             let start = get_hmr_runtime(if c.options.target.is_server_side() {
                 HmrRuntimeSide::Server
             } else {

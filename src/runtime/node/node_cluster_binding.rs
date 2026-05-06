@@ -4,12 +4,16 @@
 //   at all. It should happen in the protocol before it reaches JS.
 // - We should not be creating JSFunction's in process.nextTick.
 
-use bun_collections::ArrayHashMap;
 use bun_jsc::ipc::{IsInternal, SerializeAndSendResult};
 use bun_jsc::{CallFrame, ErrorCode, JSGlobalObject, JSValue, JsError, JsResult, StringJsc, StrongOptional};
 use bun_str::String as BunString;
 
 use crate::api::bun::subprocess::Subprocess;
+
+// PORT NOTE: struct moved to `bun_jsc::ipc` (cycle-break per docs/PORTING.md) —
+// `SendQueue` stores one inline so it must live at that tier. Re-exported here so
+// existing `bun_runtime` paths (`node_cluster_binding::InternalMsgHolder`) keep working.
+pub use bun_jsc::ipc::InternalMsgHolder;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Local shim — `throw_missing_arguments_value` lives in the gated

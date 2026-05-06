@@ -350,11 +350,24 @@ impl NodeHTTPResponse {
 }
 
 /// Unpack the `AnyServer` tagged-pointer u64 handed across FFI from C++.
-/// Zig used `bun.ptr.TaggedPointerUnion`; the Rust port stores `(tag, ptr)`
-/// separately. C++ still passes the packed form, so unpack here.
+///
+/// Zig: `AnyServer{ .ptr = AnyServer.Ptr.from(@ptrFromInt(any_server_tag)) }`
+/// where `Ptr = bun.TaggedPointerUnion(.{HTTPServer, HTTPSServer,
+/// DebugHTTPServer, DebugHTTPSServer})`. The packed repr is bits 0..49 = ptr,
+/// bits 49..64 = tag, with tag = `1024 - index` (see `bun_ptr::tagged_pointer`).
+/// The Rust `AnyServer` stores `(tag, ptr)` unpacked, so map the wire tag back
+/// to `AnyServerTag` here.
 #[inline]
-fn any_server_from_packed(_packed: u64) -> AnyServer {
-    todo!("blocked_on: bun_ptr::TaggedPointerUnion unpack for AnyServer")
+fn any_server_from_packed(packed: u64) -> AnyServer {
+    let repr = bun_ptr::TaggedPointer::from(packed);
+    let tag = match repr.data() {
+        1024 => AnyServerTag::HTTPServer,
+        1023 => AnyServerTag::HTTPSServer,
+        1022 => AnyServerTag::DebugHTTPServer,
+        1021 => AnyServerTag::DebugHTTPSServer,
+        _ => unreachable!("Invalid pointer tag"),
+    };
+    AnyServer { tag, ptr: repr.get::<()>() }
 }
 
 // Codegen: JSNodeHTTPResponse wrapper (toJS/fromJS/fromJSDirect + cached property accessors).

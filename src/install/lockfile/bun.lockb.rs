@@ -709,45 +709,37 @@ pub fn load(
         .package_index
         .ensure_total_capacity(lockfile.packages.len())?;
 
+    // PORT NOTE: reshaped for borrowck — Zig holds `slice.items(.name_hash)` /
+    // `slice.items(.resolution)` across `lockfile.getOrPutID(&mut self, …)`.
+    // `get_or_put_id` only mutates `package_index` (and reads `packages` /
+    // `buffers.string_bytes`), and `workspace_paths.put` only mutates
+    // `workspace_paths`, so re-reading the columns by index each iteration is
+    // sound and avoids the overlapping borrow.
     if !has_workspace_name_hashes {
-        // TODO(port): blocked_on `Package<u64>: MultiArrayElement` derive —
-        // `lockfile.packages.slice().items(.name_hash)` / `.items(.resolution)`
-        // need typed column access. Until the derive lands there is no way to
-        // read the per-package `name_hash`/`resolution` columns.
-        let _ = ResolutionTag::Workspace;
-        let _: PackageID = 0;
-        if lockfile.packages.len() > 0 {
-            todo!(
-                "blocked_on: Package<u64> MultiArrayElement derive — \
-                 lockfile.packages.slice().items(.name_hash/.resolution) for get_or_put_id"
-            );
+        let len = lockfile.packages.len();
+        for id in 0..len {
+            let name_hash = lockfile.packages.items_name_hash()[id];
+            let resolution = lockfile.packages.items_resolution()[id];
+            lockfile.get_or_put_id(id as PackageID, name_hash)?;
+
+            // compatibility with < Bun v1.0.4
+            #[allow(clippy::single_match)]
+            match resolution.tag {
+                ResolutionTag::Workspace => {
+                    // SAFETY: tag == Workspace discriminates the active union field.
+                    lockfile
+                        .workspace_paths
+                        .put(name_hash, unsafe { resolution.value.workspace })?;
+                }
+                _ => {}
+            }
         }
-        // for (id, (name_hash, resolution)) in
-        //     name_hashes.iter().zip(resolutions.iter()).enumerate()
-        // {
-        //     lockfile.get_or_put_id(id as PackageID, *name_hash)?;
-        //     // compatibility with < Bun v1.0.4
-        //     match resolution.tag {
-        //         ResolutionTag::Workspace => {
-        //             lockfile
-        //                 .workspace_paths
-        //                 .put(*name_hash, unsafe { resolution.value.workspace })?;
-        //         }
-        //         _ => {}
-        //     }
-        // }
     } else {
-        // TODO(port): blocked_on `Package<u64>: MultiArrayElement` derive —
-        // see above.
-        if lockfile.packages.len() > 0 {
-            todo!(
-                "blocked_on: Package<u64> MultiArrayElement derive — \
-                 lockfile.packages.slice().items(.name_hash) for get_or_put_id"
-            );
+        let len = lockfile.packages.len();
+        for id in 0..len {
+            let name_hash = lockfile.packages.items_name_hash()[id];
+            lockfile.get_or_put_id(id as PackageID, name_hash)?;
         }
-        // for (id, name_hash) in name_hashes.iter().enumerate() {
-        //     lockfile.get_or_put_id(id as PackageID, *name_hash)?;
-        // }
     }
 
     if cfg!(debug_assertions) {

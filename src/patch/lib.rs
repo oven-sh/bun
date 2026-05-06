@@ -134,9 +134,14 @@ impl<'a> PatchFile<'a> {
 
                     if !filedir.is_empty() {
                         // CYCLEBREAK(b0): was bun_runtime::node::fs::NodeFs::mkdir_recursive — moved down to bun_sys (T1).
-                        // TODO(b2-blocked): bun_sys::mkdir_recursive — using mkdir_recursive_at (drops mode arg).
+                        // PORT NOTE: Zig calls `NodeFS.mkdirRecursive` with the bare relative
+                        // `filedir` (resolved against process CWD), then immediately `openat`s
+                        // the same path against `patch_dir`. That is internally inconsistent
+                        // when `patch_dir != cwd`. We intentionally diverge and create the
+                        // directory under `patch_dir` so the subsequent `openat` succeeds.
+                        // Consider back-porting this fix to patch.zig.
                         if let sys::Result::Err(e) =
-                            sys::mkdir_recursive_at(patch_dir, filedir)
+                            sys::mkdir_recursive_at_mode(patch_dir, filedir, mode.to_bun_mode())
                         {
                             return Some(e.without_path());
                         }

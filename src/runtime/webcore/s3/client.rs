@@ -42,7 +42,7 @@ pub use crate::webcore::s3::list_objects::get_list_objects_options_from_js;
 
 use crate::webcore::s3::simple_request as s3_simple_request;
 
-use crate::webcore::resumable_sink::ResumableS3UploadSink;
+use crate::webcore::resumable_sink::{ResumableS3UploadSink, ResumableSinkContext};
 use crate::webcore::ResumableSinkBackpressure;
 
 use crate::webcore::ByteStream;
@@ -606,6 +606,17 @@ impl S3UploadStreamWrapper {
         Ok(())
     }
 
+}
+
+impl ResumableSinkContext for S3UploadStreamWrapper {
+    #[inline]
+    fn write_request_data(&mut self, bytes: &[u8]) -> ResumableSinkBackpressure {
+        S3UploadStreamWrapper::write_request_data(self, bytes)
+    }
+    #[inline]
+    fn write_end_request(&mut self, err: Option<JSValue>) {
+        S3UploadStreamWrapper::write_end_request(self, err)
+    }
 }
 
 impl Drop for S3UploadStreamWrapper {

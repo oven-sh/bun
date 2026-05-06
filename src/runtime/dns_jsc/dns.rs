@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use bun_jsc::{
     self as jsc, host_fn, CallFrame, JSGlobalObject, JSPromise, JSPromiseStrong, JSValue, JsResult,
-    SystemError, ZigString,
+    SystemError,
 };
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_aio::{self as Async, FilePoll, KeepAlive};
@@ -20,7 +20,7 @@ use bun_dns::{
     ResultAny as GetAddrInfoResultAny, ResultList as GetAddrInfoResultList,
 };
 use bun_paths::{PathBuffer, MAX_PATH_BYTES};
-use bun_str::{self, strings, ZStr, ZigString as ZigStringSlice};
+use bun_str::{self, strings, ZStr, ZigString};
 use bun_sys::{self as sys};
 #[cfg(windows)]
 use bun_sys::windows::libuv;
@@ -2929,7 +2929,7 @@ impl RecordType {
 }
 
 struct DNSQuery {
-    name: ZigStringSlice,
+    name: ZigString,
     record_type: RecordType,
     ttl: i32,
 }

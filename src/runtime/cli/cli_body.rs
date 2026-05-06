@@ -1,3 +1,5 @@
+#![allow(unexpected_cfgs)] // `feature = "show_crash_trace"` maps to Zig `Environment.show_crash_trace`; not yet a declared cargo feature in bun_runtime.
+
 use core::cell::Cell;
 use core::ffi::c_int;
 

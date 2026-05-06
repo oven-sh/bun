@@ -360,6 +360,8 @@ pub fn get_cwd_t<T: PathChar>(buf: &mut [T]) -> MaybeBuf<'_, T> {
 // Alias for naming consistency.
 pub use get_cwd_u8 as get_cwd;
 } // mod _cwd
+#[allow(unused_imports)]
+pub use _cwd::{get_cwd, get_cwd_t, get_cwd_u8, get_cwd_u16, posix_cwd_t};
 
 /// Based on Node v21.6.1 path.posix.basename:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L1309
@@ -3359,14 +3361,10 @@ pub fn resolve_windows_t<'a, T: PathChar>(
 // PORT NOTE: `bun.String.createUTF8ForJS` is tier-6 jsc — lives as a free fn in
 // `bun_jsc::bun_string_jsc`, not a method on `bun_string::String`. Alias the
 // module so the Zig-mirrored `BunString::create_utf8_for_js(...)` call shape
-// resolves throughout `mod _rest`.
-#[allow(unused_imports)]
-use crate::jsc::bun_string_jsc as BunString;
-#[allow(unused_imports)]
-use crate::node::validators_impl::validate_string;
+// resolves throughout `mod _rest`. (Imported once at top of `mod _rest`.)
 
 // path.zig:2749 — `extern "c" fn Process__getCachedCwd(*jsc.JSGlobalObject) jsc.JSValue;`
-extern "C" {
+unsafe extern "C" {
     fn Process__getCachedCwd(global: *const JSGlobalObject) -> JSValue;
 }
 

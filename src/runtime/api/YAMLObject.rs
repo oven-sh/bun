@@ -7,8 +7,9 @@ use bun_js_parser::ast::{self, Expr};
 use bun_jsc::wtf;
 use bun_jsc::{
     CallFrame, JSFunction, JSGlobalObject, JSPropertyIterator, JSValue, JsError, JsResult,
-    MarkedArgumentBuffer, ZigString,
+    MarkedArgumentBuffer,
 };
+use bun_string::ZigString;
 use bun_logger as logger;
 use crate::node::BlobOrStringOrBuffer;
 use bun_str::String;
@@ -244,7 +245,8 @@ impl Stringifier {
             return Ok(());
         }
 
-        #[cfg(feature = "ci_assert")]
+        // PORT NOTE: `bun.Environment.ci_assert` → `cfg!(debug_assertions)` (closest analogue).
+        #[cfg(debug_assertions)]
         {
             bun_core::assert_with_location(unwrapped.is_object(), core::panic::Location::caller());
         }

@@ -12,7 +12,7 @@ use bun_threading::UnboundedQueue;
 use bun_core::Environment;
 use bun_jsc::{
     CallFrame, EventLoopHandle, JSGlobalObject, JSPromise, JSValue, JsError,
-    JsResult, Task, ZigString,
+    JsResult, Task,
 };
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::AbortSignal;
@@ -21,7 +21,7 @@ use bun_event_loop::ConcurrentTask::ConcurrentTask as ConcurrentTaskItem;
 use bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
 use bun_event_loop::MiniEventLoop::MiniEventLoop;
 use bun_paths::{self as paths, OSPathBuffer, OSPathChar, OSPathSliceZ, PathBuffer};
-use bun_string::{self as bstr, strings, String as BunString, ZStr, PathString};
+use bun_string::{self as bstr, strings, String as BunString, ZStr, PathString, ZigString};
 use bun_sys::{self as sys, Fd as FD, Maybe, Mode, SystemErrno, E};
 use bun_threading::work_pool::{WorkPool, Task as WorkPoolTask};
 use crate::webcore;

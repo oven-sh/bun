@@ -1,4 +1,3 @@
-use core::cell::Cell;
 use core::ptr::NonNull;
 
 use bun_aio::Loop as AsyncLoop;
@@ -6,7 +5,7 @@ use bun_io::BufferedReader;
 use bun_io::max_buf::MaxBuf;
 use bun_jsc::event_loop::EventLoop;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult, MarkedArrayBuffer};
-use bun_ptr::IntrusiveRc;
+use bun_ptr::{IntrusiveRc, RefCount, RefCounted};
 use crate::webcore::ReadableStream;
 use bun_sys;
 

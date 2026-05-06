@@ -125,13 +125,13 @@ impl OutdatedCommand {
                 Self::find_matching_workspaces(original_cwd, manager, filters)?;
             // defer bun.default_allocator.free(workspace_pkg_ids) — Drop frees Box<[PackageID]>
 
-            manager.populate_manifest_cache(package_manager::populate_manifest_cache::Packages::Ids(&workspace_pkg_ids))?;
+            manager.populate_manifest_cache(package_manager::ManifestCacheOptions::Ids(&workspace_pkg_ids))?;
             Self::print_outdated_info_table::<ENABLE_ANSI_COLORS>(manager, &workspace_pkg_ids, true)?;
         } else if manager.options.do_.recursive {
             let all_workspaces = Self::get_all_workspaces(manager)?;
             // defer bun.default_allocator.free(all_workspaces) — Drop frees Box<[PackageID]>
 
-            manager.populate_manifest_cache(package_manager::populate_manifest_cache::Packages::Ids(&all_workspaces))?;
+            manager.populate_manifest_cache(package_manager::ManifestCacheOptions::Ids(&all_workspaces))?;
             Self::print_outdated_info_table::<ENABLE_ANSI_COLORS>(manager, &all_workspaces, true)?;
         } else {
             let root_pkg_id = manager
@@ -141,7 +141,7 @@ impl OutdatedCommand {
                 return Ok(());
             }
 
-            manager.populate_manifest_cache(package_manager::populate_manifest_cache::Packages::Ids(&[root_pkg_id]))?;
+            manager.populate_manifest_cache(package_manager::ManifestCacheOptions::Ids(&[root_pkg_id]))?;
             Self::print_outdated_info_table::<ENABLE_ANSI_COLORS>(manager, &[root_pkg_id], false)?;
         }
         Ok(())

@@ -540,7 +540,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                         );
                         Output::flush();
 
-                        if bun_core::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN.get() {
+                        if bun_core::env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN.get() {
                             bun_crash_handler::suppress_reporting();
                         }
 
@@ -574,7 +574,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                         Output::flush();
                     }
 
-                    if bun_core::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN.get() {
+                    if bun_core::env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN.get() {
                         bun_crash_handler::suppress_reporting();
                     }
 
@@ -714,9 +714,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // Bun process the script spawns enables its own watchdog. The env
         // loader snapshots `environ` before flag parsing runs, so the
         // `setenv()` in `enable()` isn't reflected here.
-        // TODO(b2-blocked): `bun_core::ParentDeathWatchdog` not yet ported.
-        
-        if bun_core::ParentDeathWatchdog::is_enabled() {
+        if bun_aio::ParentDeathWatchdog::is_enabled() {
             env_loader.map.put(b"BUN_FEATURE_FLAG_NO_ORPHANS", b"1").expect("unreachable");
         }
 
@@ -2321,7 +2319,7 @@ impl RunCommand {
                     );
                     Output::flush();
 
-                    if bun_core::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN.get() {
+                    if bun_core::env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN.get() {
                         bun_crash_handler::suppress_reporting();
                     }
 
@@ -2350,7 +2348,7 @@ impl RunCommand {
                     Output::flush();
                 }
 
-                if bun_core::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN.get() {
+                if bun_core::env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN.get() {
                     bun_crash_handler::suppress_reporting();
                 }
 
@@ -2569,7 +2567,7 @@ impl RunCommand {
                             );
                         }
 
-                        if bun_core::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN.get() {
+                        if bun_core::env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN.get() {
                             bun_crash_handler::suppress_reporting();
                         }
 
@@ -2589,7 +2587,7 @@ impl RunCommand {
                                 );
                             }
 
-                            if bun_core::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN.get() {
+                            if bun_core::env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN.get() {
                                 bun_crash_handler::suppress_reporting();
                             }
 
@@ -3000,7 +2998,7 @@ impl RunCommand {
         // Bun process the script spawns enables its own watchdog. The env
         // loader snapshots `environ` before flag parsing runs, so the
         // `setenv()` in `enable()` isn't reflected here.
-        if bun_core::ParentDeathWatchdog::is_enabled() {
+        if bun_aio::ParentDeathWatchdog::is_enabled() {
             this_transpiler
                 .env
                 .map

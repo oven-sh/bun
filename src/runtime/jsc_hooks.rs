@@ -1461,10 +1461,34 @@ unsafe fn transpile_file(
     ptr::null_mut()
 }
 
+/// `LoaderHooks::get_hardcoded_module` body — thin adaptor over the local
+/// [`get_hardcoded_module`] that writes through an out-param (the §Dispatch
+/// fn-ptr can't return `Option<ResolvedSource>` by value across the boundary
+/// without naming the high-tier `ResolvedSource` move semantics).
+///
+/// # Safety
+/// `jsc_vm` is the live per-thread VM; `out` is a valid out-param.
+unsafe fn get_hardcoded_module_hook(
+    jsc_vm: *mut VirtualMachine,
+    specifier: &bun_string::String,
+    hardcoded: HardcodedModule,
+    out: *mut ResolvedSource,
+) -> bool {
+    match get_hardcoded_module(jsc_vm, specifier, hardcoded) {
+        Some(resolved) => {
+            // SAFETY: per fn contract — `out` is a valid out-param.
+            unsafe { *out = resolved };
+            true
+        }
+        None => false,
+    }
+}
+
 /// The static `LoaderHooks` instance handed to `bun_jsc`.
 pub static LOADER_HOOKS_INSTANCE: LoaderHooks = LoaderHooks {
     transpile_source_code,
     fetch_builtin_module,
+    get_hardcoded_module: get_hardcoded_module_hook,
     transpile_file,
 };
 

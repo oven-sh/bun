@@ -1415,7 +1415,7 @@ fn transpile_source_code_inner(
                                 // `'static` (dir_info.rs).
                                 let dir_info = unsafe { &*dir_info };
                                 dir_info
-                                    .package_json
+                                    .package_json()
                                     .or(dir_info.enclosing_package_json)
                             }
                             _ => None,
@@ -2320,7 +2320,7 @@ unsafe fn get_loader_and_virtual_source<'a>(
                 // (`*mut DirInfo`) owned by the resolver's interned arena; the
                 // PackageJSON it points at is `'static` per dir_info.rs.
                 let dir_info = unsafe { &*dir_info };
-                dir_info.package_json.or(dir_info.enclosing_package_json)
+                dir_info.package_json().or(dir_info.enclosing_package_json)
             }
             _ => None,
         }

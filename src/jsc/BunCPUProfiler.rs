@@ -54,21 +54,26 @@ pub fn set_sampling_interval(interval: u32) {
     unsafe { Bun__setSamplingInterval(c_int::try_from(interval).unwrap()) };
 }
 
-pub fn start_cpu_profiler(vm: &VM) {
-    // SAFETY: vm is a valid borrowed VM reference for the duration of the call.
-    unsafe { Bun__startCPUProfiler(vm as *const VM as *mut VM) };
+pub fn start_cpu_profiler(vm: &mut VM) {
+    // SAFETY: vm is a valid exclusive reference to the opaque JSC VM for the
+    // duration of the call; C++ mutates profiler state behind it.
+    unsafe { Bun__startCPUProfiler(vm) };
 }
 
-pub fn stop_and_write_profile(vm: &VM, config: &CPUProfilerConfig) -> Result<(), ProfilerError> {
+pub fn stop_and_write_profile(
+    vm: &mut VM,
+    config: &CPUProfilerConfig,
+) -> Result<(), ProfilerError> {
     // TODO(port): narrow error set
     let mut json_string = BunString::empty();
     let mut text_string = BunString::empty();
 
     // Call the unified C++ function with pointers for requested formats
-    // SAFETY: vm is valid; out pointers are either valid &mut BunString or null.
+    // SAFETY: vm is a valid exclusive reference to the opaque JSC VM; out
+    // pointers are either valid exclusive &mut BunString or null.
     unsafe {
         Bun__stopCPUProfiler(
-            vm as *const VM as *mut VM,
+            vm,
             if config.json_format { &mut json_string as *mut BunString } else { core::ptr::null_mut() },
             if config.md_format { &mut text_string as *mut BunString } else { core::ptr::null_mut() },
         );

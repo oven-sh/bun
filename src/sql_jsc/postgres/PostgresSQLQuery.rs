@@ -34,7 +34,7 @@ pub struct PostgresSQLQuery {
     pub query: BunString,
     pub cursor_name: BunString,
 
-    this_value: JsRef,
+    pub this_value: JsRef,
 
     pub status: Status,
 

@@ -1263,7 +1263,7 @@ impl PostgresSQLConnection {
             match request.status {
                 // pending we will fail the request and the stmt will be marked as error ConnectionClosed too
                 QueryStatus::Pending => {
-                    let Some(stmt) = request.statement_ptr() else {
+                    let Some(stmt) = request.statement else {
                         // `continue` in Zig with `orelse continue` — but we still need to deref+discard.
                         // PORT NOTE: Zig `orelse continue` skips the deref/discard at the bottom too;
                         // matching that behavior here.
@@ -1584,7 +1584,7 @@ impl PostgresSQLConnection {
             let req = unsafe { &mut *req_ptr };
             match req.status {
                 QueryStatus::Pending => {
-                    if req.flags.simple() {
+                    if req.flags.simple {
                         if self.pipelined_requests > 0 || !self.flags.contains(ConnectionFlags::IS_READY_FOR_QUERY) {
                             debug!(
                                 "cannot execute simple query, pipelined_requests: {}, is_ready_for_query: {}",
@@ -1621,7 +1621,7 @@ impl PostgresSQLConnection {
                         defer_cleanup!(self);
                         return;
                     } else {
-                        if let Some(statement_ptr) = req.statement_ptr() {
+                        if let Some(statement_ptr) = req.statement {
                             // SAFETY: statement is a valid *mut PostgresSQLStatement.
                             let statement = unsafe { &mut *statement_ptr };
                             match statement.status {
@@ -1661,7 +1661,7 @@ impl PostgresSQLConnection {
                                     };
                                     let binding_value = postgres_sql_query::js::binding_get_cached(this_value).unwrap_or(JSValue::ZERO);
                                     let columns_value = postgres_sql_query::js::columns_get_cached(this_value).unwrap_or(JSValue::ZERO);
-                                    req.flags.set_binary(!statement.fields.is_empty());
+                                    req.flags.binary = !statement.fields.is_empty();
 
                                     if self.flags.contains(ConnectionFlags::USE_UNNAMED_PREPARED_STATEMENTS) {
                                         // For unnamed prepared statements, always include Parse
@@ -1725,7 +1725,7 @@ impl PostgresSQLConnection {
 
                                     self.flags.remove(ConnectionFlags::IS_READY_FOR_QUERY);
                                     req.status = QueryStatus::Binding;
-                                    req.flags.set_pipelined(true);
+                                    req.flags.pipelined = true;
                                     self.pipelined_requests += 1;
 
                                     if self.flags.contains(ConnectionFlags::USE_UNNAMED_PREPARED_STATEMENTS) || !self.can_pipeline() {
@@ -1839,7 +1839,7 @@ impl PostgresSQLConnection {
                                         self.flags.insert(ConnectionFlags::WAITING_TO_PREPARE);
                                         req.status = QueryStatus::Binding;
                                         statement.status = StatementStatus::Parsing;
-                                        req.flags.set_pipelined(true);
+                                        req.flags.pipelined = true;
                                         self.pipelined_requests += 1;
                                         self.flush_data_and_reset_timeout();
                                         defer_cleanup!(self);
@@ -1976,13 +1976,13 @@ impl PostgresSQLConnection {
                 // SAFETY: request is a valid *mut PostgresSQLQuery owned by the queue.
                 let request = unsafe { &mut *request_ptr };
 
-                let statement_ptr = request.statement_ptr().ok_or(AnyPostgresError::ExpectedStatement)?;
+                let statement_ptr = request.statement.ok_or(AnyPostgresError::ExpectedStatement)?;
                 // SAFETY: statement is valid for the duration of the request.
                 let statement = unsafe { &mut *statement_ptr };
                 let mut structure: JSValue = JSValue::UNDEFINED;
                 let mut cached_structure: Option<PostgresCachedStructure> = None;
                 // explicit use switch without else so if new modes are added, we don't forget to check for duplicate fields
-                match request.flags.result_mode() {
+                match request.flags.result_mode {
                     SQLQueryResultMode::Objects => {
                         cached_structure = Some(statement.structure(self.js_value.get(), self.global()));
                         structure = cached_structure.as_ref().unwrap().js_value().unwrap_or(JSValue::UNDEFINED);
@@ -1995,8 +1995,8 @@ impl PostgresSQLConnection {
                 let mut putter = DataCell::Putter {
                     list: &mut [],
                     fields: &statement.fields,
-                    binary: request.flags.binary(),
-                    bigint: request.flags.bigint(),
+                    binary: request.flags.binary,
+                    bigint: request.flags.bigint,
                     global_object: self.global(),
                     count: 0,
                     // TODO(port): other Putter default fields
@@ -2023,7 +2023,7 @@ impl PostgresSQLConnection {
                 // PORT NOTE: DataRow::decode takes the context by-value (Copy) and calls the
                 // callback with it; pass a raw `*mut Putter` so the closure can mutate it.
                 let putter_ptr: *mut DataCell::Putter<'_> = &mut putter;
-                let decode_result = if request.flags.result_mode() == SQLQueryResultMode::Raw {
+                let decode_result = if request.flags.result_mode == SQLQueryResultMode::Raw {
                     protocol::DataRow::decode(putter_ptr, &mut reader, |p, i, b| {
                         // SAFETY: putter outlives this call.
                         unsafe { &mut *p }.put_raw(i, b)
@@ -2062,7 +2062,7 @@ impl PostgresSQLConnection {
                     pending_value,
                     structure,
                     statement.fields_flags,
-                    request.flags.result_mode(),
+                    request.flags.result_mode,
                     cached_structure.as_ref(),
                 ).map_err(pg_err)?;
 
@@ -2134,7 +2134,7 @@ impl PostgresSQLConnection {
                 let request_ptr = self.current().ok_or(AnyPostgresError::ExpectedRequest)?;
                 // SAFETY: valid *mut PostgresSQLQuery owned by self.requests queue.
                 let request = unsafe { &*request_ptr };
-                if let Some(statement_ptr) = request.statement_ptr() {
+                if let Some(statement_ptr) = request.statement {
                     // SAFETY: request holds a ref on its statement; valid while request is queued.
                     let statement = unsafe { &mut *statement_ptr };
                     // if we have params wait for parameter description
@@ -2156,7 +2156,7 @@ impl PostgresSQLConnection {
                 };
                 // SAFETY: valid *mut PostgresSQLQuery owned by self.requests queue.
                 let request = unsafe { &*request_ptr };
-                let statement_ptr = match request.statement_ptr() {
+                let statement_ptr = match request.statement {
                     Some(s) => s,
                     None => {
                         drop(description.parameters);
@@ -2183,7 +2183,7 @@ impl PostgresSQLConnection {
                 };
                 // SAFETY: valid *mut PostgresSQLQuery owned by self.requests queue.
                 let request = unsafe { &*request_ptr };
-                let statement_ptr = match request.statement_ptr() {
+                let statement_ptr = match request.statement {
                     Some(s) => s,
                     None => return Err(AnyPostgresError::ExpectedStatement),
                 };
@@ -2469,7 +2469,7 @@ impl PostgresSQLConnection {
                 // calls `err.toJS`, so materialize the JS value once and route through
                 // `on_js_error` to avoid double-ownership of the non-Clone ErrorResponse.
                 let js_err = crate::postgres::protocol::error_response_jsc::to_js(&err, self.global());
-                if let Some(stmt_ptr) = request.statement_ptr() {
+                if let Some(stmt_ptr) = request.statement {
                     // SAFETY: request holds a ref on its statement; valid while request is queued.
                     let stmt = unsafe { &mut *stmt_ptr };
                     if stmt.status == StatementStatus::Parsing {

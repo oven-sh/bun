@@ -124,11 +124,11 @@ Select which CA certificate store Bun uses for TLS verification in the runtime (
 CA = "system"
 ```
 
-| Value       | Source of trusted CAs                                               |
-| ----------- | ------------------------------------------------------------------- |
-| `"bundled"` | Bun's bundled Mozilla CA list (default).                            |
+| Value       | Source of trusted CAs                                                                                                             |
+| ----------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `"bundled"` | Bun's bundled Mozilla CA list (default).                                                                                          |
 | `"system"`  | Bundled CAs merged with the OS trust store (Keychain on macOS, Windows Certificate Store on Windows, system PEM bundle on Linux). |
-| `"openssl"` | OpenSSL's default CA store.                                         |
+| `"openssl"` | OpenSSL's default CA store.                                                                                                       |
 
 Precedence: CLI flag > `NODE_USE_SYSTEM_CA` env var > `bunfig.toml` `CA` > `"bundled"` (default). This does not affect `bun install`'s registry client — for that, see [`install.ca`](#install-ca) and [`install.cafile`](#install-cafile).
 

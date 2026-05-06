@@ -552,5 +552,5 @@ pub fn load(
 //   source:     src/install/lockfile/Buffers.zig (406 lines)
 //   confidence: medium
 //   todos:      9
-//   notes:      `sizes` comptime reflection hand-unrolled (sort was no-op); `write_array` prefix built at runtime from caller-supplied type_name/size/align (formatcp! can't take generic-T args) — still needs @typeName byte parity for on-disk compat; several borrowck reshapes in load().
+//   notes:      `sizes` comptime reflection hand-unrolled (sort was no-op); ALIGN_TYPE_0 = align_of<usize> matching Zig @alignOf([]Tree); `write_array` prefix built at runtime from caller-supplied type_name/size/align (formatcp! can't take generic-T args) — still needs @typeName byte parity for on-disk compat; load() uses push-into-reserved-capacity instead of set_len+iter_mut to avoid uninit-ref UB; several borrowck reshapes in load().
 // ──────────────────────────────────────────────────────────────────────────

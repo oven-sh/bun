@@ -3503,11 +3503,25 @@ pub mod formatter {
 
                     if writer.failed { self.failed = true; }
                     drop(writer);
-                    // TODO(port): `VirtualMachine::print_errorlike_object` takes
-                    // `&mut bun_core::io::Writer`, not `&mut dyn bun_io::Write`;
-                    // adapter pending. Suppress unused for now.
-                    let _ = (value, &mut *self, &mut *writer_, ENABLE_ANSI_COLORS);
-                    todo!("blocked_on: VirtualMachine::print_errorlike_object writer adapter");
+                    {
+                        let mut adapter = DynWriteAdapter::new(&mut *writer_);
+                        // SAFETY: per-thread VM.
+                        let vm = unsafe { &mut *VirtualMachine::get() };
+                        vm.print_errorlike_object(
+                            value,
+                            None,
+                            None,
+                            self,
+                            adapter.interface(),
+                            ENABLE_ANSI_COLORS,
+                            false,
+                        );
+                    }
+                    writer = WrappedWriter {
+                        ctx: writer_,
+                        failed: false,
+                        estimated_line_length: &mut self.estimated_line_length,
+                    };
                 }
                 Tag::Class => {
                     // Prefer the constructor's own `.name` property over

@@ -283,9 +283,13 @@ pub struct TestingBatch {
     pub entry_points: EntryPointList,
 }
 impl TestingBatch {
-    /// `TestingBatch.append` — DevServer.zig. Full body in gated draft.
-    pub fn append(&mut self, _entry_points: &EntryPointList) {
-        todo!("blocked_on: dev_server::TestingBatch::append body un-gate")
+    /// `TestingBatch.append` — DevServer.zig:4485.
+    pub fn append(&mut self, entry_points: &EntryPointList) -> Result<(), bun_core::Error> {
+        debug_assert!(entry_points.set.count() > 0);
+        for (k, v) in entry_points.set.keys().iter().zip(entry_points.set.values()) {
+            self.entry_points.append(k, *v)?;
+        }
+        Ok(())
     }
 }
 pub enum TestingBatchEvents {

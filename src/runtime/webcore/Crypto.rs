@@ -393,7 +393,6 @@ pub fn bun_random_uuid_v7(global: &JSGlobalObject, callframe: &CallFrame) -> JsR
             .unwrap();
         }
 
-        // TODO(port): std.time.milliTimestamp() — confirm bun_core::time API
         break 'brk u64::try_from(bun_core::time::milli_timestamp().max(0)).unwrap();
     };
 

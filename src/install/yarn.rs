@@ -1483,18 +1483,11 @@ pub fn migrate_yarn_lockfile<'a>(
         versions.sort_by(|a, b| a.package_id.cmp(&b.package_id));
 
         let original_name_hash = string_hash(base_name);
-        if let Some(original_entry) = this.package_index.get_mut(&original_name_hash) {
-            match original_entry {
-                lockfile::PackageIndexEntry::Id(_) => {
-                    let _ = this.package_index.remove(&original_name_hash);
-                }
-                lockfile::PackageIndexEntry::Ids(existing_ids) => {
-                    drop(core::mem::take(existing_ids));
-                    let _ = this.package_index.remove(&original_name_hash);
-                }
-            }
-        } else {
-        }
+        // PORT NOTE: reshaped for borrowck — Zig matches on the entry only to
+        // call `existing_ids.deinit()` before `remove`; Rust's `remove` drops
+        // the value (and thus the `Ids` Vec) automatically, so the match is
+        // unnecessary and we avoid the overlapping `get_mut`/`remove` borrow.
+        let _ = this.package_index.remove(&original_name_hash);
     }
 
     for (base_name, versions) in scoped_packages.iter() {

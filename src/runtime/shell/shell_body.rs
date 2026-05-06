@@ -357,11 +357,16 @@ impl<'a> GlobalJS<'a> {
     }
 
     #[inline]
-    pub fn enqueue_task_concurrent_wait_pid<T>(self, task: T) {
-        // TODO(port): jsc::ConcurrentTask::create + jsc::Task::init are FFI helpers
-        // `ConcurrentTask` is a *module* re-export in bun_jsc; the type lives inside it.
-        let _ = task;
-        todo!("blocked_on: bun_jsc::JSGlobalObject::bun_vm_concurrently")
+    pub fn enqueue_task_concurrent_wait_pid<T: bun_event_loop::Taskable>(self, task: *mut T) {
+        // Spec shell.zig GlobalJS.enqueueTaskConcurrentWaitPid:
+        //   `globalThis.bunVMConcurrently().enqueueTaskConcurrent(ConcurrentTask.create(Task.init(task)))`
+        // SAFETY: bun_vm_concurrently() returns a valid &VirtualMachine; we need &mut for the
+        // intrusive concurrent queue push (which is itself thread-safe). The VM outlives the call.
+        let vm = self.global_this.bun_vm_concurrently() as *const VirtualMachine as *mut VirtualMachine;
+        let concurrent =
+            bun_event_loop::ConcurrentTask::create(bun_event_loop::Task::init(task));
+        // SAFETY: see above — `enqueue_task_concurrent` only touches the lock-free queue.
+        unsafe { (*vm).enqueue_task_concurrent(concurrent) };
     }
 
     #[inline]

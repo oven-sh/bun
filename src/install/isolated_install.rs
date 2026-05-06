@@ -1725,14 +1725,17 @@ pub fn install_isolated_packages(
                         let mut workspace_node_modules =
                             AutoRelPath::from(workspace_path.slice(&lockfile.buffers.string_bytes));
 
-                        let basename = workspace_node_modules.basename();
+                        // PORT NOTE: reshaped for borrowck — clone basename before
+                        // mutating `workspace_node_modules` (Zig held a slice into
+                        // the buffer across an append-with-separator).
+                        let basename = workspace_node_modules.basename().to_vec();
 
                         workspace_node_modules.append(b"node_modules");
 
-                        let rename_path_save = rename_path.save();
-                        let _restore_rename = scopeguard::guard((), |_| rename_path_save.restore());
-
-                        rename_path.append_fmt(format_args!(".old_{}_modules", BStr::new(basename)));
+                        // PORT NOTE: reshaped for borrowck — capture length instead
+                        // of `save()` so `rename_path` stays unborrowed.
+                        let rename_path_save = rename_path.len();
+                        rename_path.append_fmt(format_args!(".old_{}_modules", BStr::new(&basename)));
 
                         let _ = sys::renameat(
                             Fd::cwd(),
@@ -1741,6 +1744,8 @@ pub fn install_isolated_packages(
                             rename_path.slice_z(),
                         )
                         .unwrap();
+
+                        rename_path.set_length(rename_path_save);
                     }
                 }
                 #[cfg(not(windows))]

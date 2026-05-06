@@ -13,7 +13,9 @@ impl TestingAPIs {
     // TODO(b2-blocked): bun_jsc::host_fn — proc-macro attribute not yet provided.
     pub fn make_diff(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let arguments_ = frame.arguments_old::<2>();
-        let mut arguments = ArgumentsSlice::init(global.bun_vm(), arguments_.slice());
+        // SAFETY: `bun_vm()` never returns null for a Bun-owned global; the VM
+        // outlives this call frame.
+        let mut arguments = ArgumentsSlice::init(unsafe { &*global.bun_vm() }, arguments_.slice());
 
         let Some(old_folder_jsval) = arguments.next_eat() else {
             return Err(global.throw(format_args!("expected 2 strings")));
@@ -74,7 +76,9 @@ impl TestingAPIs {
     // TODO(b2-blocked): bun_jsc::host_fn — proc-macro attribute not yet provided.
     pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let arguments_ = frame.arguments_old::<2>();
-        let mut arguments = ArgumentsSlice::init(global.bun_vm(), arguments_.slice());
+        // SAFETY: `bun_vm()` never returns null for a Bun-owned global; the VM
+        // outlives this call frame.
+        let mut arguments = ArgumentsSlice::init(unsafe { &*global.bun_vm() }, arguments_.slice());
 
         let Some(patchfile_src_js) = arguments.next_eat() else {
             return Err(global.throw(format_args!(
@@ -112,7 +116,9 @@ impl TestingAPIs {
     ) -> Result<ApplyArgs, JSValue> {
         // TODO(port): Zig return type was `bun.jsc.Node.Maybe(ApplyArgs, jsc.JSValue)`; mapped to plain Result.
         let arguments_ = frame.arguments_old::<2>();
-        let mut arguments = ArgumentsSlice::init(global.bun_vm(), arguments_.slice());
+        // SAFETY: `bun_vm()` never returns null for a Bun-owned global; the VM
+        // outlives this call frame.
+        let mut arguments = ArgumentsSlice::init(unsafe { &*global.bun_vm() }, arguments_.slice());
 
         let Some(patchfile_js) = arguments.next_eat() else {
             let _ = global.throw(format_args!("apply: expected at least 1 argument, got 0"));

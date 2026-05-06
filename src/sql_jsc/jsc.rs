@@ -1450,7 +1450,7 @@ pub mod codegen {
             MySQLQueryPrototype__targetGetCachedValue,
             MySQLQueryPrototype__targetSetCachedValue);
         get_constructor!(MySQLQuery__getConstructor);
-        js_class_fns!(crate::mysql::JSMySQLQuery,
+        js_class_fns!(crate::mysql::js_mysql_query::JSMySQLQuery,
             MySQLQuery__create,
             MySQLQuery__fromJS,
             MySQLQuery__fromJSDirect);
@@ -1632,6 +1632,11 @@ impl JSValue {
     pub fn as_<T: JsClass>(self) -> Option<*mut T> {
         if !self.is_cell() { return None; }
         T::from_js(self)
+    }
+    /// `JSValue.coerceToInt32` (JSValue.zig) — `ToInt32` abstract op, may throw.
+    pub fn coerce_to_int32(self, global: &JSGlobalObject) -> JsResult<i32> {
+        // SAFETY: `global` is live; FFI may set an exception.
+        from_js_host_call_generic(global, unsafe { JSC__JSValue__coerceToInt32(self, global.as_mut_ptr()) })
     }
     pub fn to_int32(self) -> i32 {
         if self.is_int32() { return self.as_int32(); }

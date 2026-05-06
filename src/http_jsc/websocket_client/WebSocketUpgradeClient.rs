@@ -740,7 +740,9 @@ impl<const SSL: bool> HTTPClient<SSL> {
                     return;
                 }
                 // SAFETY: native handle on a TLS socket is `*SSL`.
-                let ssl_ptr = unsafe { socket.get_native_handle().cast::<boringssl::c::SSL>() };
+                let ssl_ptr = socket
+                    .get_native_handle()
+                    .map_or(core::ptr::null_mut(), |h| h.cast::<boringssl::c::SSL>());
                 // SAFETY: ssl_ptr is a live *SSL from the open socket; SSL_get_servername
                 // returns a nullable borrowed C string valid for the SSL's lifetime.
                 if let Some(servername) =
@@ -777,13 +779,16 @@ impl<const SSL: bool> HTTPClient<SSL> {
 
         if SSL {
             if !me.hostname.is_empty() {
-                if let Some(handle) = socket.get_native_handle_ref() {
+                if let Some(handle) = socket.get_native_handle() {
+                    // SAFETY: native handle on a TLS socket is `*SSL`; live for the
+                    // open socket's lifetime.
+                    let handle = unsafe { &mut *handle.cast::<boringssl::c::SSL>() };
                     // TODO(port): ZStr — hostname includes trailing NUL.
                     let len = me.hostname.len() - 1;
                     // SAFETY: hostname[len] == 0 (written by dupe_z); the buffer
                     // outlives this borrow.
                     let zstr = unsafe {
-                        bun_str::ZStr::from_raw(me.hostname.as_ptr(), len)
+                        bun_string::ZStr::from_raw(me.hostname.as_ptr(), len)
                     };
                     handle.configure_http_client(zstr);
                 }
@@ -807,7 +812,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
     }
 
     pub fn is_same_socket(&self, socket: Socket<SSL>) -> bool {
-        socket.socket().eq(&self.tcp.socket())
+        socket.socket.eq(&self.tcp.socket)
     }
 
     /// # Safety
@@ -1561,7 +1566,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
 
             // Normal mode: pass socket directly to WebSocket client
             unsafe { (*this).tcp.detach() };
-            if let Some(native_socket) = socket.socket().get() {
+            if let Some(native_socket) = socket.socket.get() {
                 // SAFETY: live C++ back-reference.
                 unsafe {
                     (*ws).did_connect(
@@ -1858,11 +1863,14 @@ fn build_connect_request(
 
     // Custom proxy headers
     if let Some(hdrs) = proxy_headers {
+        use bun_http_types::ETag::{HeaderEntryField, StringPointer as HeaderStringPointer};
         let slice = hdrs.entries.slice();
-        let names = slice.items_name();
-        let values = slice.items_value();
-        // TODO(port): bun_http::Headers MultiArrayList accessors — Zig is
-        // `slice.items(.name)` / `slice.items(.value)`.
+        // SAFETY: column type for both fields is `StringPointer` (see
+        // `HeaderEntry::FIELD_SIZES`); `items` returns `&[F]` over live storage.
+        let names: &[HeaderStringPointer] =
+            unsafe { slice.items::<HeaderStringPointer>(HeaderEntryField::Name) };
+        let values: &[HeaderStringPointer] =
+            unsafe { slice.items::<HeaderStringPointer>(HeaderEntryField::Value) };
         debug_assert_eq!(names.len(), values.len());
         for (idx, name_ptr) in names.iter().enumerate() {
             // Skip Proxy-Authorization if user provided one (we already added it)
@@ -1895,7 +1903,7 @@ struct BuildRequestResult {
 
 #[allow(clippy::too_many_arguments)]
 fn build_request_body(
-    vm: &VirtualMachine,
+    vm: &mut VirtualMachineRef,
     pathname: &[u8],
     is_https: bool,
     host: &[u8],
@@ -1933,36 +1941,36 @@ fn build_request_body(
     }
 
     // Validate and use user key, or generate a new one
+    use bun_base64::zig_base64::STANDARD as B64_STD;
     let mut encoded_buf = [0u8; 24];
     let key: &[u8] = 'blk: {
         if let Some(k_slice) = user_key {
             // Validate that it's a valid base64-encoded 16-byte value
             let mut decoded_buf = [0u8; 24]; // Max possible decoded size
-            let Some(decoded_len) = bun_base64::standard_calc_size_for_slice(k_slice) else {
+            let Ok(decoded_len) = B64_STD.decoder.calc_size_for_slice(k_slice) else {
                 // Invalid base64, fall through to generate
-                break 'blk bun_base64::standard_encode(
-                    &mut encoded_buf,
-                    &vm.rare_data().next_uuid().bytes,
-                );
+                break 'blk B64_STD
+                    .encoder
+                    .encode(&mut encoded_buf, &vm.rare_data().next_uuid().bytes);
             };
 
             if decoded_len == 16 {
                 // Try to decode to verify it's valid base64
-                if bun_base64::standard_decode(&mut decoded_buf, k_slice).is_err() {
+                if B64_STD.decoder.decode(&mut decoded_buf, k_slice).is_err() {
                     // Invalid base64, fall through to generate
-                    break 'blk bun_base64::standard_encode(
-                        &mut encoded_buf,
-                        &vm.rare_data().next_uuid().bytes,
-                    );
+                    break 'blk B64_STD
+                        .encoder
+                        .encode(&mut encoded_buf, &vm.rare_data().next_uuid().bytes);
                 }
                 // Valid 16-byte key, use it as-is
                 break 'blk k_slice;
             }
         }
         // Generate a new key if user key is invalid or not provided
-        bun_base64::standard_encode(&mut encoded_buf, &vm.rare_data().next_uuid().bytes)
+        B64_STD
+            .encoder
+            .encode(&mut encoded_buf, &vm.rare_data().next_uuid().bytes)
     };
-    // TODO(port): bun_base64 API names — Zig std.base64.standard.Encoder/Decoder.
 
     // Compute the expected Sec-WebSocket-Accept value per RFC 6455 §4.2.2:
     // base64(SHA-1(Sec-WebSocket-Key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"))
@@ -1973,7 +1981,7 @@ fn build_request_body(
     let host_fmt = HostFormatter {
         is_https,
         host,
-        port,
+        port: Some(port),
     };
 
     let static_headers = [
@@ -2068,13 +2076,13 @@ fn build_request_body(
 /// Compute the expected Sec-WebSocket-Accept value per RFC 6455 §4.2.2:
 /// base64(SHA-1(key ++ "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"))
 fn compute_accept_value(key: &[u8]) -> [u8; 28] {
+    use bun_sha_hmac::hashers::SHA1;
     const WEBSOCKET_GUID: &[u8] = b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
-    let mut hasher = bun_sha::hashers::Sha1::init();
+    let mut hasher = SHA1::init();
     hasher.update(key);
     hasher.update(WEBSOCKET_GUID);
-    let mut hash = bun_sha::hashers::Sha1::Digest::default();
-    // TODO(port): SHA1 Digest type — Zig is `[20]u8`.
-    hasher.final_(&mut hash);
+    let mut hash = [0u8; SHA1::DIGEST];
+    hasher.r#final(&mut hash);
     let mut result = [0u8; 28];
     let _ = bun_base64::encode(&mut result, &hash);
     result
@@ -2089,23 +2097,24 @@ pub extern "C" fn Bun__WebSocket__parseSSLConfig(
     global_this: &JSGlobalObject,
     tls_value: JSValue,
 ) -> Option<Box<SSLConfig>> {
-    let vm = global_this.bun_vm();
-
-    // Use SSLConfig::from_js for clean and safe parsing
-    let config_opt = match SSLConfig::from_js(vm, global_this, tls_value) {
-        Ok(c) => c,
-        Err(_) => {
-            // Exception is already set on global_this
-            return None;
+    // CYCLEBREAK: `SSLConfig::from_js` lives in `bun_runtime::socket::SSLConfig`
+    // (it dereferences Blob/JSCArrayBuffer values, tier-6). bun_http_jsc cannot
+    // depend on bun_runtime (runtime → http_jsc), so this body is gated and the
+    // canonical export lives in bun_runtime/socket/SSLConfig.rs which already
+    // owns `from_js`. Phase B: route the C++ caller to the runtime-crate export
+    // or hoist `from_js` into a shared lower crate per docs/PORTING.md.
+    let _ = (global_this, tls_value);
+    #[cfg(any())]
+    {
+        let vm = global_this.bun_vm();
+        let config_opt = match SSLConfig::from_js(vm, global_this, tls_value) {
+            Ok(c) => c,
+            Err(_) => return None,
+        };
+        if let Some(config) = config_opt {
+            return Some(Box::new(config));
         }
-    };
-
-    if let Some(config) = config_opt {
-        // Allocate on heap and return pointer (ownership transferred to caller)
-        return Some(Box::new(config));
     }
-
-    // No TLS options provided or all defaults, return null
     None
 }
 
@@ -2131,10 +2140,10 @@ pub unsafe extern "C" fn Bun__WebSocket__freeSSLConfig(config: *mut SSLConfig) {
 // ──────────────────────────────────────────────────────────────────────────
 
 macro_rules! export_http_client {
-    ($ssl:literal, $name:literal) => {
+    ($ssl:literal, $connect:ident, $cancel:ident, $memory_cost:ident) => {
         const _: () = {
             #[unsafe(no_mangle)]
-            pub unsafe extern "C" fn ${concat(Bun__, $name, __connect)}(
+            pub unsafe extern "C" fn $connect(
                 global: &JSGlobalObject,
                 websocket: *mut CppWebSocket,
                 host: &BunString,
@@ -2184,7 +2193,7 @@ macro_rules! export_http_client {
             }
 
             #[unsafe(no_mangle)]
-            pub unsafe extern "C" fn ${concat(Bun__, $name, __cancel)}(
+            pub unsafe extern "C" fn $cancel(
                 this: *mut HTTPClient<$ssl>,
             ) {
                 // SAFETY: caller (C++) holds a live ref; `this` carries root
@@ -2193,7 +2202,7 @@ macro_rules! export_http_client {
             }
 
             #[unsafe(no_mangle)]
-            pub unsafe extern "C" fn ${concat(Bun__, $name, __memoryCost)}(
+            pub unsafe extern "C" fn $memory_cost(
                 this: *mut HTTPClient<$ssl>,
             ) -> usize {
                 // SAFETY: caller (C++) holds a live ref.
@@ -2202,11 +2211,26 @@ macro_rules! export_http_client {
         };
     };
 }
-// TODO(port): `${concat(...)}` metavariable-expr is unstable (`macro_metavar_expr_concat`).
-// Phase B: replace with `paste::paste!` or hand-expand the two instantiations.
+// PORT NOTE: `${concat(...)}` metavar-expr is unstable; hand-expand the two
+// instantiations by passing the pre-concatenated idents.
 
-export_http_client!(false, "WebSocketHTTPClient");
-export_http_client!(true, "WebSocketHTTPSClient");
+export_http_client!(
+    false,
+    Bun__WebSocketHTTPClient__connect,
+    Bun__WebSocketHTTPClient__cancel,
+    Bun__WebSocketHTTPClient__memoryCost
+);
+export_http_client!(
+    true,
+    Bun__WebSocketHTTPSClient__connect,
+    Bun__WebSocketHTTPSClient__cancel,
+    Bun__WebSocketHTTPSClient__memoryCost
+);
+
+/// Aliases for `WebSocketProxyTunnel` (matches Zig `HTTPClient` / `HTTPSClient`).
+pub type NewHttpUpgradeClient<const SSL: bool> = HTTPClient<SSL>;
+pub type HttpUpgradeClient = HTTPClient<false>;
+pub type HttpsUpgradeClient = HTTPClient<true>;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

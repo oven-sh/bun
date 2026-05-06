@@ -11,7 +11,6 @@ use core::cell::Cell;
 use core::ffi::{c_int, c_void};
 use core::mem::size_of;
 use core::ptr::NonNull;
-use bun_ptr::IntrusiveArc;
 
 use bun_aio::KeepAlive;
 use bun_boringssl as boringssl;
@@ -111,7 +110,13 @@ pub struct WebSocket<const SSL: bool> {
     /// Proxy tunnel for wss:// through HTTP proxy.
     /// When set, all I/O goes through the tunnel (TLS encryption/decryption).
     /// The tunnel handles the TLS layer, so this is used with ssl=false.
-    pub proxy_tunnel: Option<IntrusiveArc<WebSocketProxyTunnel>>,
+    ///
+    /// PORT NOTE: intrusive refcount is hand-rolled on `WebSocketProxyTunnel`
+    /// (`ref_()`/`deref()`); stored as `NonNull` rather than `RefPtr` because
+    /// the tunnel does not (yet) implement `bun_ptr::RefCounted`. Ownership
+    /// semantics match `RefPtr`: assigning here implies a held ref, released
+    /// in `clear_data` via `WebSocketProxyTunnel::deref`.
+    pub proxy_tunnel: Option<NonNull<WebSocketProxyTunnel>>,
 }
 
 // IntrusiveRc wiring: ref/deref forward to ref_count; final deref calls deinit()
@@ -152,7 +157,7 @@ impl<const SSL: bool> WebSocket<SSL> {
 /// `platform_event_loop` is reached on the `KeepAlive` paths used here.
 // TODO(port): hoist into `bun_jsc::virtual_machine` once that crate exports
 // the canonical vtable; this is a faithful subset.
-static WS_VM_EVENT_LOOP_CTX_VTABLE: bun_aio::EventLoopCtxVTable = bun_aio::EventLoopCtxVTable {
+pub(crate) static WS_VM_EVENT_LOOP_CTX_VTABLE: bun_aio::EventLoopCtxVTable = bun_aio::EventLoopCtxVTable {
     platform_event_loop: {
         unsafe fn f(owner: *mut ()) -> *mut bun_aio::Loop {
             // SAFETY: `owner` is `&VirtualMachine` (erased in `vm_loop_ctx`).
@@ -190,7 +195,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         // as `&VirtualMachine` in `platform_event_loop`, but keeping mut
         // provenance matches the Zig spec and the `EventLoopCtxVTable` shape.
         bun_aio::EventLoopCtx {
-            owner: global_this.bun_vm_ptr() as *mut (),
+            owner: global_this.bun_vm() as *mut (),
             vtable: &WS_VM_EVENT_LOOP_CTX_VTABLE,
         }
     }
@@ -250,9 +255,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             // Detach the websocket from the tunnel before shutdown so the
             // tunnel's onClose callback doesn't dispatch a spurious 1006
             // after we've already handled a clean close.
-            // PORT NOTE: `RefPtr<T>` has no `Deref` (intentional — explicit
-            // ref-count tracking); reach the inner via `.data`.
-            let tunnel_ptr = tunnel.data.as_ptr();
+            let tunnel_ptr = tunnel.as_ptr();
             // SAFETY: `tunnel` holds a live ref. `clear_connected_web_socket`
             // is a single non-reentrant field write; the brief auto-ref `&mut`
             // is the only Rust borrow of the tunnel at this point.
@@ -262,8 +265,8 @@ impl<const SSL: bool> WebSocket<SSL> {
             // so call the raw-ptr overload which never holds a `&mut Self`
             // across the dispatch (see WebSocketProxyTunnel::shutdown).
             unsafe { WebSocketProxyTunnel::shutdown(tunnel_ptr) };
-            // tunnel.deref() → IntrusiveArc::drop decrements the embedded refcount
-            drop(tunnel);
+            // SAFETY: `tunnel` (NonNull) held a live intrusive ref; release it.
+            unsafe { WebSocketProxyTunnel::deref(tunnel_ptr) };
             // Release the I/O-layer ref taken in init_with_tunnel() — the
             // tunnel was this struct's socket-equivalent owner. In the
             // non-tunnel path this same ref is released by handle_close()
@@ -1124,7 +1127,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             // `write_data()` may fire `write_encrypted(ctx)` which reborrows
             // the tunnel allocation, so call the raw-ptr overload that never
             // holds a `&mut WebSocketProxyTunnel` across the dispatch.
-            let wrote = match unsafe { WebSocketProxyTunnel::write(tunnel.data.as_ptr(), bytes) } {
+            let wrote = match unsafe { WebSocketProxyTunnel::write(tunnel.as_ptr(), bytes) } {
                 Ok(w) => w,
                 Err(_) => {
                     self.terminate(ErrorCode::FailedToWrite);
@@ -1306,7 +1309,7 @@ impl<const SSL: bool> WebSocket<SSL> {
                 // Use the raw-ptr `write` overload — `write_data()` may fire
                 // `write_encrypted(ctx)` which reborrows the tunnel; never
                 // hold a `&mut WebSocketProxyTunnel` across that dispatch.
-                match unsafe { WebSocketProxyTunnel::write(tunnel.data.as_ptr(), out_buf) } {
+                match unsafe { WebSocketProxyTunnel::write(tunnel.as_ptr(), out_buf) } {
                     Ok(w) => Ok(w),
                     Err(_) => Err(true),
                 }
@@ -1489,7 +1492,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
         if let Some(tunnel) = &self.proxy_tunnel {
             // SAFETY: `tunnel` holds a live ref (RefPtr has no `Deref`).
-            return unsafe { tunnel.data.as_ref() }.has_backpressure();
+            return unsafe { tunnel.as_ref() }.has_backpressure();
         }
         false
     }
@@ -1723,13 +1726,9 @@ impl<const SSL: bool> WebSocket<SSL> {
                 if str.is_16bit() {
                     // Allocates; close-reason is bounded ≤125 bytes and this
                     // path is cold (close handshake).
-                    match str.to_owned_slice() {
-                        Ok(utf8) => {
-                            if cursor.write_all(&utf8).is_err() {
-                                break 'inner;
-                            }
-                        }
-                        Err(_) => break 'inner,
+                    let utf8 = str.to_owned_slice();
+                    if cursor.write_all(&utf8).is_err() {
+                        break 'inner;
                     }
                 } else if str.is_utf8() {
                     // Already UTF-8-tagged: bytes are valid UTF-8 verbatim.
@@ -1772,7 +1771,9 @@ impl<const SSL: bool> WebSocket<SSL> {
         secure_ptr: *mut c_void,
     ) -> *mut c_void {
         let tcp = input_socket as *mut us_socket_t;
-        let vm = global_this.bun_vm();
+        // SAFETY: `bun_vm()` never returns null for a Bun-owned global; VM
+        // outlives this call.
+        let vm = unsafe { &mut *global_this.bun_vm() };
         let ws = Box::into_raw(Box::new(WebSocket::<SSL> {
             ref_count: Cell::new(1),
             tcp: Socket::<SSL>::detached(),
@@ -1800,7 +1801,8 @@ impl<const SSL: bool> WebSocket<SSL> {
             // PORT NOTE: reshaped for borrowck — `vm.event_loop()` returns a
             // `&'static`-tied borrow that would lock `vm` for the rest of the
             // fn; re-derive from `global_this` so `vm` stays usable below.
-            event_loop: global_this.bun_vm().event_loop(),
+            // SAFETY: bun_vm() never returns null; event_loop ptr is live for VM lifetime.
+            event_loop: unsafe { &*(*global_this.bun_vm()).event_loop() },
             deflate: None,
             receiving_compressed: false,
             message_is_compressed: false,
@@ -1907,12 +1909,14 @@ impl<const SSL: bool> WebSocket<SSL> {
         // SAFETY: tunnel_ptr is a valid *WebSocketProxyTunnel from C++ with an
         // intrusive refcount. The caller retains its own ref; we bump to take
         // ownership (Zig: tunnel.ref()).
-        // TODO(port): LIFETIMES.tsv row for proxy_tunnel says Arc — update to
-        // IntrusiveArc in Phase B (pointer crosses FFI; Arc header is wrong).
-        let tunnel_owned: IntrusiveArc<WebSocketProxyTunnel> = unsafe {
-            // PORT NOTE: Zig `tunnel.ref()` then store — `RefPtr::init_ref`
-            // bumps the intrusive count and returns an owning handle.
-            IntrusiveArc::init_ref(tunnel_ptr as *mut WebSocketProxyTunnel)
+        // PORT NOTE: Zig `tunnel.ref()` then store — bump the intrusive count
+        // and store the raw owning handle (released in `clear_data`).
+        let tunnel_owned: NonNull<WebSocketProxyTunnel> = {
+            let p = tunnel_ptr as *mut WebSocketProxyTunnel;
+            // SAFETY: caller passes a live tunnel pointer (extern-C contract).
+            unsafe { (*p).ref_() };
+            // SAFETY: caller guarantees non-null (extern-C contract).
+            unsafe { NonNull::new_unchecked(p) }
         };
 
         // ref_count starts at 1: this is the I/O-layer ref, owned by the
@@ -1920,7 +1924,9 @@ impl<const SSL: bool> WebSocket<SSL> {
         // that handle_close() releases). It is released in clear_data() when
         // proxy_tunnel is detached. The ws.ref() below adds the C++ ref
         // paired with m_connectedWebSocket.
-        let vm = global_this.bun_vm();
+        // SAFETY: `bun_vm()` never returns null for a Bun-owned global; VM
+        // outlives this call.
+        let vm = unsafe { &mut *global_this.bun_vm() };
         let ws = Box::into_raw(Box::new(WebSocket::<SSL> {
             ref_count: Cell::new(1),
             tcp: Socket::<SSL>::detached(), // No direct socket - using tunnel
@@ -1948,7 +1954,8 @@ impl<const SSL: bool> WebSocket<SSL> {
             // PORT NOTE: reshaped for borrowck — `vm.event_loop()` returns a
             // `&'static`-tied borrow that would lock `vm` for the rest of the
             // fn; re-derive from `global_this` so `vm` stays usable below.
-            event_loop: global_this.bun_vm().event_loop(),
+            // SAFETY: bun_vm() never returns null; event_loop ptr is live for VM lifetime.
+            event_loop: unsafe { &*(*global_this.bun_vm()).event_loop() },
             deflate: None,
             receiving_compressed: false,
             message_is_compressed: false,
@@ -2344,7 +2351,8 @@ impl Mask {
         output: &mut [u8],
         input: &[u8],
     ) {
-        let entropy = global_this.bun_vm().rare_data().entropy_slice(4);
+        // SAFETY: bun_vm() never returns null for a Bun-owned global.
+        let entropy = unsafe { &mut *global_this.bun_vm() }.rare_data().entropy_slice(4);
         mask_buf.copy_from_slice(&entropy[..4]);
         let mask = *mask_buf;
 
@@ -2356,7 +2364,8 @@ impl Mask {
     /// PORT NOTE: Zig's `fill` allowed output==input; Rust borrowck forbids
     /// `&mut [u8]` + `&[u8]` aliasing. Callers that masked in-place use this.
     pub fn fill_in_place(global_this: &JSGlobalObject, mask_buf: &mut [u8; 4], buf: &mut [u8]) {
-        let entropy = global_this.bun_vm().rare_data().entropy_slice(4);
+        // SAFETY: bun_vm() never returns null for a Bun-owned global.
+        let entropy = unsafe { &mut *global_this.bun_vm() }.rare_data().entropy_slice(4);
         mask_buf.copy_from_slice(&entropy[..4]);
         let mask = *mask_buf;
 

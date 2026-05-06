@@ -107,6 +107,31 @@ describe.concurrent("bunfig.toml CA", () => {
     expect(bunfigCount).toBeGreaterThanOrEqual(baselineCount);
   });
 
+  // `bun run <file>` defers its bunfig load to RunCommand.exec (it has to
+  // resolve the script's directory first), so the CA precedence block in
+  // Arguments.parse runs before ctx.runtime_options.ca_store is set. Make
+  // sure the deferred load re-applies the bunfig value.
+  test(`bun run <file> honors bunfig.toml CA`, async () => {
+    const dir = tempDirWithFiles("bunfig-ca-run", {
+      "bunfig.toml": `CA = "system"\n`,
+      "probe.ts": `console.log(require("tls").getCACertificates("default").length);`,
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "run", "probe.ts"],
+      env: { ...bunEnv, NODE_USE_SYSTEM_CA: undefined } as Record<string, string>,
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const runCount = parseInt(stdout.trim(), 10);
+    const flagCount = await defaultCertCount(["--use-system-ca"]);
+    expect(runCount).toBe(flagCount);
+    expect(exitCode).toBe(0);
+  });
+
   test(`CA = "bundled" in bunfig.toml matches bundled-only default`, async () => {
     const dir = tempDirWithFiles("bunfig-ca-bundled", {
       "bunfig.toml": `CA = "bundled"\n`,

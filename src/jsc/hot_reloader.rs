@@ -687,7 +687,7 @@ where
                             "File changed: {}",
                             // TODO(port): Zig used `fs.relativeTo(file_path)`; resolver's
                             // inline `fs::FileSystem` doesn't expose `relative_to` yet.
-                            bstr::BStr::new(bun_paths::relative(fs.top_level_dir, file_path))
+                            bstr::BStr::new(bun_paths::resolve_path::relative(fs.top_level_dir, file_path))
                         ));
                     }
 
@@ -984,7 +984,7 @@ where
                                     if self.verbose {
                                         Self::debug(format_args!(
                                             "File change: {}",
-                                            bstr::BStr::new(bun_paths::relative(
+                                            bstr::BStr::new(bun_paths::resolve_path::relative(
                                                 fs.top_level_dir,
                                                 abs_path,
                                             ))
@@ -997,7 +997,7 @@ where
                         if self.verbose {
                             Self::debug(format_args!(
                                 "Dir change: {} (affecting {})",
-                                bstr::BStr::new(bun_paths::relative(fs.top_level_dir, file_path)),
+                                bstr::BStr::new(bun_paths::resolve_path::relative(fs.top_level_dir, file_path)),
                                 affected_len
                             ));
                         }
@@ -1030,7 +1030,7 @@ where
         Self::on_file_update(self, events, changed_files, watchlist);
     }
 
-    fn on_watch_error(&mut self, err: bun_sys::Error) {
+    fn on_error(&mut self, err: bun_sys::Error) {
         Self::on_error(self, err);
     }
 }

@@ -274,7 +274,22 @@ fn vm_console(global: &JSGlobalObject) -> *mut ConsoleObject {
     // before that. Returned as a raw pointer (not `&'static mut`) so callers
     // dereference at each use site without holding overlapping `&mut`
     // references — matches the Zig shape (`*ConsoleObject` field).
-    global.bun_vm().console as *mut ConsoleObject
+    unsafe { (*global.bun_vm()).console as *mut ConsoleObject }
+}
+
+/// Newtype adapter so `bun_core::io::Writer` (vtable-struct) satisfies the
+/// `bun_io::Write` trait. Both error types are `bun_core::Error`, so this is a
+/// straight delegation. Kept local to avoid an orphan-rule edit in `bun_core`.
+struct IoWriterAdapter<'a>(&'a mut bun_core::io::Writer);
+impl bun_io::Write for IoWriterAdapter<'_> {
+    #[inline]
+    fn write_all(&mut self, buf: &[u8]) -> bun_io::Result<()> {
+        self.0.write_all(buf)
+    }
+    #[inline]
+    fn flush(&mut self) -> bun_io::Result<()> {
+        self.0.flush()
+    }
 }
 
 static STDERR_MUTEX: Mutex = Mutex::new();
@@ -298,7 +313,12 @@ pub extern "C" fn message_with_type_and_level(
     if let Err(err) =
         message_with_type_and_level_(ctype, message_type, level, global, vals, len)
     {
-        crate::host_fn::void_from_js_error(err, global);
+        // The exception is already set on the VM (`JsError::Thrown`); for OOM
+        // make sure something is pending. Mirrors `host_fn::void_from_js_error`.
+        if matches!(err, jsc::JsError::OutOfMemory) {
+            global.throw_out_of_memory_value();
+        }
+        debug_assert!(global.has_exception());
     }
 }
 
@@ -396,11 +416,14 @@ fn message_with_type_and_level_(
         Output::enable_ansi_colors_stdout()
     };
 
-    let writer: &mut dyn bun_io::Write = if matches!(level, MessageLevel::Warning | MessageLevel::Error) {
-        unsafe { (*console).error_writer() }
-    } else {
-        unsafe { (*console).writer() }
-    };
+    let raw_writer: &mut bun_core::io::Writer =
+        if matches!(level, MessageLevel::Warning | MessageLevel::Error) {
+            unsafe { (*console).error_writer() }
+        } else {
+            unsafe { (*console).writer() }
+        };
+    let mut writer_adapter = IoWriterAdapter(raw_writer);
+    let writer: &mut dyn bun_io::Write = &mut writer_adapter;
 
     // TODO(port-cycle): `crate::Jest::runner()?.bun_test_root.on_before_print()`
     // — Jest runner lives in `bun_runtime` (high-tier cycle); restored when
@@ -1912,6 +1935,8 @@ pub mod formatter {
                 && js_type != jsc::JSType::ProxyObject
                 && value.is_callable()
             {
+                // TODO(phase-c): `JSValue::is_class` not yet ported.
+                #[cfg(any())]
                 if value.is_class(global_this) {
                     return Ok(TagResult { tag: TagPayload::Class, cell: js_type });
                 }
@@ -1933,16 +1958,16 @@ pub mod formatter {
             }
 
             if js_type == jsc::JSType::GlobalProxy {
-                if !opts.contains(TagOptions::HIDE_GLOBAL) {
-                    return Tag::get(
-                        JSValue::c(jsc::C::JSObjectGetProxyTarget(value.as_object_ref())),
-                        global_this,
-                    );
-                }
+                // TODO(phase-c): `JSValue::c` / `as_object_ref` /
+                // `JSObjectGetProxyTarget` not yet ported — fall through to
+                // GlobalObject for now (no recursion into proxy target).
                 return Ok(TagResult { tag: TagPayload::GlobalObject, cell: js_type });
             }
 
             // Is this a react element?
+            // TODO(phase-c): `JSValue::get_own_truthy` / `symbol_for` not yet
+            // ported — JSX detection re-gated.
+            #[cfg(any())]
             if js_type.is_object() && js_type != jsc::JSType::ProxyObject {
                 if let Some(typeof_symbol) = value.get_own_truthy(global_this, "$$typeof")? {
                     // React 18 and below
@@ -1995,12 +2020,16 @@ pub mod formatter {
                 | T::ModuleNamespaceObject => TagPayload::Object,
 
                 T::ProxyObject => {
-                    let handler = value.get_proxy_internal_field(jsc::ProxyField::Handler);
-                    if handler.is_empty() || handler.is_undefined_or_null() {
-                        TagPayload::RevokedProxy
-                    } else {
-                        TagPayload::Proxy
+                    // TODO(phase-c): `JSValue::get_proxy_internal_field` /
+                    // `jsc::ProxyField` not yet ported — assume live proxy.
+                    #[cfg(any())]
+                    {
+                        let handler = value.get_proxy_internal_field(jsc::ProxyField::Handler);
+                        if handler.is_empty() || handler.is_undefined_or_null() {
+                            return Ok(TagResult { tag: TagPayload::RevokedProxy, cell: js_type });
+                        }
                     }
+                    TagPayload::Proxy
                 }
 
                 T::GlobalObject => {

@@ -943,6 +943,38 @@ pub struct JSPropertyIteratorOptions {
     pub only_non_index_properties: bool,
 }
 
+/// Shorthand of `JSPropertyIteratorOptions` matching the Zig spec's most common
+/// call-site shape (`.{ .skip_empty_name = …, .include_value = … }`). Runtime
+/// values are accepted by `JSPropertyIterator::init` for source-level parity
+/// with Zig; the const-generic params on the iterator type still drive the
+/// actual behaviour.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PropertyIteratorOptions {
+    pub skip_empty_name: bool,
+    pub include_value: bool,
+}
+
+/// Conversion shim so `JSPropertyIterator::init`'s `object` argument accepts
+/// the same operand shapes Zig callers use (`JSValue`, `*JSObject`, `&JSObject`).
+pub trait IntoIterObject {
+    fn into_iter_object(self) -> JSValue;
+}
+impl IntoIterObject for JSValue {
+    #[inline] fn into_iter_object(self) -> JSValue { self }
+}
+impl IntoIterObject for *mut JSObject {
+    #[inline] fn into_iter_object(self) -> JSValue { JSValue::from_cell(self) }
+}
+impl IntoIterObject for *const JSObject {
+    #[inline] fn into_iter_object(self) -> JSValue { JSValue::from_cell(self) }
+}
+impl IntoIterObject for &JSObject {
+    #[inline] fn into_iter_object(self) -> JSValue { JSValue::from_cell(self) }
+}
+impl IntoIterObject for &mut JSObject {
+    #[inline] fn into_iter_object(self) -> JSValue { JSValue::from_cell(&*self) }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // B-2 Track A — JSGlobalObject surface (signatures from JSGlobalObject.zig).
 // ──────────────────────────────────────────────────────────────────────────
@@ -1108,8 +1140,8 @@ impl JSGlobalObject {
         // TODO(b2): SystemError/JSError dispatch — for now, format both.
         self.throw(format_args!("{msg}: {err:?}"))
     }
-    pub fn throw_type_error(&self, args: core::fmt::Arguments<'_>) -> JsError {
-        let err = self.create_type_error_instance(args);
+    pub fn throw_type_error(&self, args: impl core::fmt::Display) -> JsError {
+        let err = self.create_type_error_instance(format_args!("{args}"));
         self.throw_value(err)
     }
     pub fn throw_range_error<V: bun_core::fmt::OutOfRangeValue>(&self, value: V, options: RangeErrorOptions<'_>) -> JsError {
@@ -1519,7 +1551,12 @@ pub mod js_property_iterator {
     impl<const SKIP_EMPTY_NAME: bool, const INCLUDE_VALUE: bool, const OWN_ONLY: bool>
         JSPropertyIterator<SKIP_EMPTY_NAME, INCLUDE_VALUE, OWN_ONLY>
     {
-        pub fn init(global: &JSGlobalObject, object: JSValue) -> JsResult<Self> {
+        pub fn init(
+            global: &JSGlobalObject,
+            object: impl super::IntoIterObject,
+            _options: super::PropertyIteratorOptions,
+        ) -> JsResult<Self> {
+            let object = object.into_iter_object();
             let mut len: usize = 0;
             // SAFETY: `global` is live; `len` valid out-param.
             let impl_ = unsafe {
@@ -1823,6 +1860,24 @@ impl StringJsc for bun_string::String {
     }
     fn to_type_error_instance(&self, global: &JSGlobalObject) -> JSValue {
         bun_string_jsc::to_type_error_instance(self, global)
+    }
+}
+
+/// Extension trait providing JSC-aware methods on `bun_string::ZigString`.
+/// Mirrors `ZigString.toErrorInstance` / `ZigString.toTypeErrorInstance`
+/// (src/string/ZigString.zig) which are used directly at call sites in Zig.
+pub trait ZigStringJsc {
+    fn to_error_instance(&self, global: &JSGlobalObject) -> JSValue;
+    fn to_type_error_instance(&self, global: &JSGlobalObject) -> JSValue;
+}
+impl ZigStringJsc for bun_string::ZigString {
+    fn to_error_instance(&self, global: &JSGlobalObject) -> JSValue {
+        // SAFETY: `self` is borrowed for the call; `global` is live.
+        unsafe { ZigString__toErrorInstance(self, global) }
+    }
+    fn to_type_error_instance(&self, global: &JSGlobalObject) -> JSValue {
+        // SAFETY: `self` is borrowed for the call; `global` is live.
+        unsafe { ZigString__toTypeErrorInstance(self, global) }
     }
 }
 

@@ -1591,6 +1591,24 @@ fn shell_get_path<'a>(
     ))
 }
 
+/// Spec: interpreter.zig `ShellSyscall.statat` (interpreter.zig:1861-1877).
+/// Windows: rewrite the path via `shell_get_path` then `bun_sys::stat`, tagging
+/// the error with the *original* `path_` (not the rewritten one). POSIX: plain
+/// `bun_sys::fstatat(dir, path_)`.
+#[allow(dead_code)] // consumed by states/CondExpr (`[[ -e/-f/-d ... ]]`)
+pub fn shell_statat(dir: Fd, path_: &bun_core::ZStr) -> bun_sys::Result<bun_sys::Stat> {
+    #[cfg(windows)]
+    {
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let p = shell_get_path(dir, path_, &mut buf)?;
+        return bun_sys::stat(p).map_err(|e| e.with_path(path_.as_bytes()));
+    }
+    #[cfg(not(windows))]
+    {
+        bun_sys::fstatat(dir, path_)
+    }
+}
+
 /// Spec: interpreter.zig `ShellSyscall.openat` (interpreter.zig:1881-1918).
 /// POSIX: `bun_sys::openat` with the error tagged `.with_path(path)`.
 /// Windows: for `O_DIRECTORY` opens, rewrite POSIX-absolute paths via

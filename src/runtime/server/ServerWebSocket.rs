@@ -504,7 +504,7 @@ impl ServerWebSocket {
     pub fn constructor(
         global_object: &JSGlobalObject,
         _frame: &CallFrame,
-    ) -> JsResult<*mut ServerWebSocket<'a>> {
+    ) -> JsResult<*mut ServerWebSocket> {
         global_object.throw("Cannot construct ServerWebSocket")
     }
 

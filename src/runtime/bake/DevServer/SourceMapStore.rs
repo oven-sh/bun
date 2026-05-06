@@ -376,9 +376,8 @@ impl Entry {
                     // have been freed already. For example, a HMR chunk is never persisted.
                     // We could return an error here but what would be a better behavior for renderJSON and renderMappings?
                     // This is a dev server, crashing is not a good DX, we could fail the request but that's not a good DX either.
-                    if cfg!(feature = "debug_logs") {
-                        bun_output::scoped_log!(
-                            map_log,
+                    if cfg!(debug_assertions) {
+                        map_log!(
                             "Skipping source map entry with missing line count at index {}",
                             i
                         );

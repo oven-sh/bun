@@ -1597,6 +1597,9 @@ pub struct PerThreadOptions<'a> {
 }
 
 // TODO(port): move to bake_sys
+// C++ treats `PerThread` as an opaque pointer (Bake::ProductionPerThread*); the Rust
+// layout is irrelevant across the FFI boundary, so silence the improper_ctypes lint.
+#[allow(improper_ctypes)]
 unsafe extern "C" {
     fn BakeGlobalObject__attachPerThreadData(
         global: *const JSGlobalObject,

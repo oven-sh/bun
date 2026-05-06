@@ -3966,8 +3966,28 @@ pub struct ResolveImportRecordResult {
 // CYCLEBREAK TYPE_ONLY: `bun_paths::fs::Path` / `bun_resolver::fs::Path` /
 // `bun_logger::fs::Path` are field-identical mirrors of the same Zig `Fs.Path`.
 // Re-construct field-by-field rather than transmute non-`repr(C)` structs.
+// SAFETY: Phase-A lifetime erasure — backing slices are arena/BSSStringList-owned
+// and outlive the bundle pass (TODO(port): unify Path types to remove this).
 #[inline]
-fn ir_path_from_fs(p: &Fs::Path<'static>) -> bun_paths::fs::Path<'static> {
+pub(crate) fn ir_path_from_fs(p: &Fs::Path<'_>) -> bun_paths::fs::Path<'static> {
+    let s = |b: &[u8]| -> &'static [u8] { unsafe { core::mem::transmute(b) } };
+    bun_paths::fs::Path {
+        pretty: s(p.pretty),
+        text: s(p.text),
+        namespace: s(p.namespace),
+        name: bun_paths::fs::PathName {
+            base: s(p.name.base),
+            dir: s(p.name.dir),
+            ext: s(p.name.ext),
+            filename: s(p.name.filename),
+        },
+        is_disabled: p.is_disabled,
+        is_symlink: p.is_symlink,
+    }
+}
+
+#[inline]
+pub(crate) fn ir_path_from_logger(p: &bun_logger::fs::Path) -> bun_paths::fs::Path<'static> {
     bun_paths::fs::Path {
         pretty: p.pretty,
         text: p.text,
@@ -3984,33 +4004,17 @@ fn ir_path_from_fs(p: &Fs::Path<'static>) -> bun_paths::fs::Path<'static> {
 }
 
 #[inline]
-fn ir_path_from_logger(p: &bun_logger::fs::Path) -> bun_paths::fs::Path<'static> {
-    bun_paths::fs::Path {
-        pretty: p.pretty,
-        text: p.text,
-        namespace: p.namespace,
-        name: bun_paths::fs::PathName {
-            base: p.name.base,
-            dir: p.name.dir,
-            ext: p.name.ext,
-            filename: p.name.filename,
-        },
-        is_disabled: p.is_disabled,
-        is_symlink: p.is_symlink,
-    }
-}
-
-#[inline]
-fn logger_path_from_fs(p: &Fs::Path<'static>) -> bun_logger::fs::Path {
+pub(crate) fn logger_path_from_fs(p: &Fs::Path<'_>) -> bun_logger::fs::Path {
+    let s = |b: &[u8]| -> &'static [u8] { unsafe { core::mem::transmute(b) } };
     bun_logger::fs::Path {
-        pretty: p.pretty,
-        text: p.text,
-        namespace: p.namespace,
+        pretty: s(p.pretty),
+        text: s(p.text),
+        namespace: s(p.namespace),
         name: bun_logger::fs::PathName {
-            base: p.name.base,
-            dir: p.name.dir,
-            ext: p.name.ext,
-            filename: p.name.filename,
+            base: s(p.name.base),
+            dir: s(p.name.dir),
+            ext: s(p.name.ext),
+            filename: s(p.name.filename),
         },
         is_disabled: p.is_disabled,
         is_symlink: p.is_symlink,

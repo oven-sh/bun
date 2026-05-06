@@ -93,6 +93,13 @@ impl LinkerGraph {
 
 impl LinkerGraph {
     pub fn init(bump: &Arena, file_count: usize) -> Result<Self, bun_core::Error> {
+        let mut this = Self::default();
+        this.bump = bump as *const Arena;
+        this.files_live = BitSet::init_empty(file_count)?;
+        Ok(this)
+    }
+
+    fn _init_full(bump: &Arena, file_count: usize) -> Result<Self, bun_core::Error> {
         // TODO(port): narrow error set
         Ok(LinkerGraph {
             files: FileList::default(),

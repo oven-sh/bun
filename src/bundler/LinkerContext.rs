@@ -1587,7 +1587,11 @@ impl<'a> LinkerContext<'a> {
                             write!(&mut text, "This require call is not allowed because the transitive dependency \"{}\" contains a top-level await", bstr::BStr::new(tla_pretty_path)).unwrap();
                         }
 
-                        self.log.add_range_error_with_notes(Some(source), record.range, &text, notes.into_boxed_slice())?;
+                        // PORT NOTE: `Log::add_range_error_with_notes` takes
+                        // `&'static [u8]` (interned in Zig); leak the formatted
+                        // buffer. PERF(port): switch to Cow once Log::Str does.
+                        let text: &'static [u8] = Box::leak(text.into_boxed_slice());
+                        self.log.add_range_error_with_notes(Some(source), record.range, text, notes.into_boxed_slice())?;
                     }
                 }
             }

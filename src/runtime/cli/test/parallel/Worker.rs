@@ -27,7 +27,10 @@ pub struct Worker {
     // TODO(port): LIFETIMES.tsv classifies this BACKREF → *const, but the Zig
     // mutates through it (live_workers, onWorkerExit, frame). Phase B: either
     // *mut or interior mutability on Coordinator.
-    pub coord: *const Coordinator,
+    // PORT NOTE: `Coordinator<'a>` carries borrowed slices; the lifetime is
+    // erased to `'static` here because this is a raw backref pointer that is
+    // only ever dereferenced unsafely (constructor casts via `as *const _`).
+    pub coord: *const Coordinator<'static>,
     pub idx: u32,
     pub process: Option<Arc<Process>>,
 

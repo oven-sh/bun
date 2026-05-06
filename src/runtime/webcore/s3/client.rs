@@ -490,9 +490,9 @@ pub struct S3UploadStreamWrapper {
     // intrusive ref_count — bun.ptr.RefCount(@This(), "ref_count", deinit, .{}) → bun_ptr::IntrusiveRc<Self>
     pub ref_count: core::cell::Cell<u32>,
 
-    pub sink: Option<Rc<ResumableS3UploadSink>>,
+    pub sink: Option<Rc<ResumableS3UploadSink<'static>>>,
     pub task: Rc<MultiPartUpload>,
-    pub end_promise: bun_jsc::JSPromise::Strong,
+    pub end_promise: bun_jsc::JSPromiseStrong,
     pub callback: Option<fn(S3UploadResult, *mut c_void)>,
     pub callback_context: *mut c_void,
     /// this is owned by the task not by the wrapper

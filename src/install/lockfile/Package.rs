@@ -355,10 +355,7 @@ impl<SemverIntType> Package<SemverIntType> {
             package.name_hash = package_name.hash;
             package.name = package_name.value;
 
-            package.resolution = Resolution::<SemverIntType> {
-                tag: lockfile::ResolutionTag::Root,
-                value: lockfile::ResolutionValue::root(),
-            };
+            package.resolution = Resolution::<SemverIntType>::init(TaggedValue::Root);
 
             let total_len = dependencies_list.len() + total_dependencies_count as usize;
             if cfg!(debug_assertions) {
@@ -508,14 +505,12 @@ impl<SemverIntType> Package<SemverIntType> {
                 .append_with_hash::<ExternalString>(manifest.name(), manifest.pkg.name.hash);
             package.name_hash = package_name.hash;
             package.name = package_name.value;
-            package.resolution = Resolution::<SemverIntType> {
-                value: lockfile::ResolutionValue::npm(lockfile::NpmResolution {
+            package.resolution =
+                Resolution::<SemverIntType>::init(TaggedValue::Npm(VersionedURLType {
                     version: version.append(manifest.string_buf, &mut string_builder),
                     url: string_builder
                         .append::<String>(manifest.str(&package_version_ptr.tarball_url)),
-                }),
-                tag: lockfile::ResolutionTag::Npm,
-            };
+                }));
 
             let total_len = dependencies_list.len() + total_dependencies_count as usize;
             if cfg!(debug_assertions) {
@@ -736,7 +731,7 @@ impl Diff {
         to_lockfile: &mut Lockfile,
         from: &mut Package<SemverIntType>,
         to: &mut Package<SemverIntType>,
-        update_requests: Option<&[PackageManager::UpdateRequest]>,
+        update_requests: Option<&[UpdateRequest]>,
         id_mapping: Option<&mut [PackageID]>,
     ) -> Result<DiffSummary, bun_core::Error> {
         // TODO(port): narrow error set
@@ -1120,8 +1115,8 @@ impl Diff {
                             break 'update_mapping false;
                         };
 
-                        let mut package_json_path: AbsPath =
-                            AbsPath::init_top_level_dir(path::Sep::Auto);
+                        let mut package_json_path: AutoAbsPath =
+                            AutoAbsPath::init_top_level_dir();
                         // defer package_json_path.deinit(); — Drop handles it
 
                         package_json_path.append(
@@ -1209,7 +1204,7 @@ impl Diff {
             .saturating_sub(from_deps.len().saturating_sub(summary.remove as usize)))
             as u32;
 
-        if from.resolution.tag != lockfile::ResolutionTag::Root {
+        if from.resolution.tag != ResolutionTag::Root {
             // PERF(port): was `inline for` over Lockfile.Scripts.names — profile in Phase B
             for hook in lockfile::Scripts::NAMES {
                 // TODO(port): @field reflection. Phase B: add `Scripts::field(name) -> &String`.
@@ -1252,7 +1247,7 @@ impl<SemverIntType> Package<SemverIntType> {
     ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         initialize_store();
-        let json = match bun_json::parse_package_json_utf8(source, log) {
+        let json = match crate::bun_json::parse_package_json_utf8(source, log) {
             Ok(j) => j,
             Err(err) => {
                 let _ = log.print(Output::error_writer());
@@ -1276,10 +1271,10 @@ impl<SemverIntType> Package<SemverIntType> {
         log: &mut logger::Log,
         source: &logger::Source,
         group: &DependencyGroup,
-        string_builder: &mut StringBuilder,
+        string_builder: &mut impl StringBuilder,
         package_dependencies: &mut [Dependency],
         dependencies_count: u32,
-        tag: Option<Dependency::version::Tag>,
+        tag: Option<dependency::version::Tag>,
         workspace_ver: Option<SemverVersion>,
         external_alias: ExternalString,
         version: &[u8],
@@ -1290,11 +1285,11 @@ impl<SemverIntType> Package<SemverIntType> {
         let external_version = 'brk: {
             #[cfg(windows)]
             {
-                match tag.unwrap_or_else(|| Dependency::version::Tag::infer(version)) {
-                    Dependency::version::Tag::Workspace
-                    | Dependency::version::Tag::Folder
-                    | Dependency::version::Tag::Symlink
-                    | Dependency::version::Tag::Tarball => {
+                match tag.unwrap_or_else(|| dependency::version::Tag::infer(version)) {
+                    dependency::version::Tag::Workspace
+                    | dependency::version::Tag::Folder
+                    | dependency::version::Tag::Symlink
+                    | dependency::version::Tag::Tarball => {
                         if String::can_inline(version) {
                             let mut copy = string_builder.append::<String>(version);
                             path::dangerously_convert_path_to_posix_in_place::<u8>(
@@ -1333,10 +1328,10 @@ impl<SemverIntType> Package<SemverIntType> {
         .unwrap_or_default();
         let mut workspace_range: Option<semver::query::Group> = None;
         let name_hash = match dependency_version.tag {
-            Dependency::version::Tag::Npm => {
+            dependency::version::Tag::Npm => {
                 String::Builder::string_hash(dependency_version.value.npm.name.slice(buf))
             }
-            Dependency::version::Tag::Workspace => {
+            dependency::version::Tag::Workspace => {
                 if strings::has_prefix(sliced.slice, b"workspace:") {
                     'brk: {
                         let input = &sliced.slice[b"workspace:".len()..];
@@ -1375,16 +1370,16 @@ impl<SemverIntType> Package<SemverIntType> {
 
         if tag.is_some() {
             debug_assert!(
-                dependency_version.tag != Dependency::version::Tag::Npm
-                    && dependency_version.tag != Dependency::version::Tag::DistTag
+                dependency_version.tag != dependency::version::Tag::Npm
+                    && dependency_version.tag != dependency::version::Tag::DistTag
             );
         }
 
         match dependency_version.tag {
-            Dependency::version::Tag::Folder => {
-                let relative = path::relative(
+            dependency::version::Tag::Folder => {
+                let relative = resolve_path::relative(
                     FileSystem::instance().top_level_dir,
-                    path::join_abs_string(
+                    resolve_path::join_abs_string(
                         FileSystem::instance().top_level_dir,
                         &[
                             source.path.name.dir,
@@ -1397,7 +1392,7 @@ impl<SemverIntType> Package<SemverIntType> {
                 dependency_version.value.folder = string_builder
                     .append::<String>(if relative.is_empty() { b"." } else { relative });
             }
-            Dependency::version::Tag::Npm => {
+            dependency::version::Tag::Npm => {
                 let npm = dependency_version.value.npm;
                 if workspace_version.is_some() {
                     if pm.options.link_workspace_packages
@@ -1408,7 +1403,7 @@ impl<SemverIntType> Package<SemverIntType> {
                             external_alias.value,
                             external_alias.hash,
                             path.slice,
-                            Dependency::version::Tag::Workspace,
+                            dependency::version::Tag::Workspace,
                             &path,
                             log,
                             pm,
@@ -1432,7 +1427,7 @@ impl<SemverIntType> Package<SemverIntType> {
                     }
                 }
             }
-            Dependency::version::Tag::Workspace => 'workspace: {
+            dependency::version::Tag::Workspace => 'workspace: {
                 if let Some(path) = workspace_path {
                     if let Some(range) = &workspace_range {
                         if let Some(ver) = workspace_version {
@@ -1475,9 +1470,9 @@ impl<SemverIntType> Package<SemverIntType> {
                     } else {
                         'brk: {
                             let mut buf2 = PathBuffer::uninit();
-                            let rel = path::relative_platform(
+                            let rel = resolve_path::relative_platform(
                                 FileSystem::instance().top_level_dir,
-                                path::join_abs_string_buf(
+                                resolve_path::join_abs_string_buf(
                                     FileSystem::instance().top_level_dir,
                                     &mut buf2,
                                     &[source.path.name.dir, workspace],
@@ -1511,7 +1506,7 @@ impl<SemverIntType> Package<SemverIntType> {
                         {
                             if match package_dep.version.tag {
                                 // `dependencies` & `workspaces` defined within the same `package.json`
-                                Dependency::version::Tag::Npm => {
+                                dependency::version::Tag::Npm => {
                                     String::Builder::string_hash(
                                         package_dep.realname().slice(buf),
                                     ) == name_hash
@@ -1523,7 +1518,7 @@ impl<SemverIntType> Package<SemverIntType> {
                                             .satisfies(ver, buf, buf)
                                 }
                                 // `workspace:*`
-                                Dependency::version::Tag::Workspace => {
+                                dependency::version::Tag::Workspace => {
                                     found_matching_workspace
                                         && String::Builder::string_hash(
                                             package_dep.realname().slice(buf),
@@ -1540,7 +1535,7 @@ impl<SemverIntType> Package<SemverIntType> {
                         for package_dep in
                             &mut package_dependencies[0..dependencies_count as usize]
                         {
-                            if package_dep.version.tag == Dependency::version::Tag::Workspace
+                            if package_dep.version.tag == dependency::version::Tag::Workspace
                                 && String::Builder::string_hash(
                                     package_dep.realname().slice(buf),
                                 ) == name_hash
@@ -1666,8 +1661,8 @@ impl<SemverIntType> Package<SemverIntType> {
             if R::IS_GIT_RESOLVER {
                 let resolution: &Resolution<SemverIntType> = resolver.resolution();
                 let repo = match resolution.tag {
-                    lockfile::ResolutionTag::Git => resolution.value.git,
-                    lockfile::ResolutionTag::Github => resolution.value.github,
+                    ResolutionTag::Git => resolution.value.git,
+                    ResolutionTag::Github => resolution.value.github,
                     _ => break 'name,
                 };
 
@@ -1764,7 +1759,7 @@ impl<SemverIntType> Package<SemverIntType> {
             out
         };
 
-        let mut workspace_names = WorkspaceMap::init();
+        let mut workspace_names = workspace_map::WorkspaceMap::init();
         // defer workspace_names.deinit(); — Drop handles it
 
         // pnpm/yarn synthesise an implicit `"*"` optional peer for entries
@@ -1896,9 +1891,9 @@ impl<SemverIntType> Package<SemverIntType> {
                                 string_builder.count(value);
 
                                 // If it's a folder or workspace, pessimistically assume we will need a maximum path
-                                match Dependency::version::Tag::infer(value) {
-                                    Dependency::version::Tag::Folder
-                                    | Dependency::version::Tag::Workspace => {
+                                match dependency::version::Tag::infer(value) {
+                                    dependency::version::Tag::Folder
+                                    | dependency::version::Tag::Workspace => {
                                         string_builder.cap += MAX_PATH_BYTES;
                                     }
                                     _ => {}
@@ -2059,10 +2054,7 @@ impl<SemverIntType> Package<SemverIntType> {
                 self.resolution = resolver.resolve(&mut string_builder, &json)?;
             }
         } else {
-            self.resolution = Resolution::<SemverIntType> {
-                tag: lockfile::ResolutionTag::Root,
-                value: lockfile::ResolutionValue::root(),
-            };
+            self.resolution = Resolution::<SemverIntType>::init(TaggedValue::Root);
         }
 
         if let Some(patched_deps) = json.as_property(b"patchedDependencies") {
@@ -2083,7 +2075,7 @@ impl<SemverIntType> Package<SemverIntType> {
                         string_builder.append::<String>(value.as_string().unwrap());
                     lockfile
                         .patched_dependencies
-                        .put(keyhash, lockfile::PatchedDependency { path: patch_path })
+                        .put(keyhash, PatchedDep { path: patch_path, ..Default::default() })
                         .expect("unreachable");
                 }
             }
@@ -2282,7 +2274,7 @@ impl<SemverIntType> Package<SemverIntType> {
                                     continue;
                                 }
                                 if strings::eql_long(&value.name, &entry.name, true) {
-                                    let note_abs_path = path::join_abs_string_z(
+                                    let note_abs_path = resolve_path::join_abs_string_z(
                                         cwd,
                                         &[note_path, b"package.json"],
                                         path::Platform::Auto,
@@ -2315,7 +2307,7 @@ impl<SemverIntType> Package<SemverIntType> {
                             break 'notes notes;
                         };
 
-                        let abs_path = path::join_abs_string_z(
+                        let abs_path = resolve_path::join_abs_string_z(
                             cwd,
                             &[path_, b"package.json"],
                             path::Platform::Auto,
@@ -2349,7 +2341,7 @@ impl<SemverIntType> Package<SemverIntType> {
                                 .value
                                 .sliced(lockfile.buffers.string_bytes.as_slice());
                             let result = SemverVersion::parse(sliced);
-                            if result.valid && result.wildcard == semver::Wildcard::None {
+                            if result.valid && result.wildcard == Wildcard::None {
                                 break 'brk Some(result.version.min());
                             }
                         }
@@ -2366,7 +2358,7 @@ impl<SemverIntType> Package<SemverIntType> {
                         &mut string_builder,
                         package_dependencies,
                         total_dependencies_count,
-                        Some(Dependency::version::Tag::Workspace),
+                        Some(dependency::version::Tag::Workspace),
                         workspace_version,
                         external_name,
                         path_,
@@ -2600,7 +2592,7 @@ pub mod serializer {
         writer: &mut W,
     ) -> Result<(), bun_core::Error>
     where
-        S: lockfile::SeekablePwrite,
+        S: PositionalStream,
         W: bun_io::Write,
     {
         // TODO(port): narrow error set

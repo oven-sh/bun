@@ -189,7 +189,7 @@ pub mod resolution {
         pub version: bun_semver::Version,
         pub url: bun_semver::String,
     }
-    #[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
+    #[derive(Default, Clone, Copy, PartialEq, Eq, Debug, core::marker::ConstParamTy)]
     #[repr(u8)]
     pub enum Tag {
         #[default] Uninitialized, Root, Npm, Folder, LocalTarball, Github, Git,

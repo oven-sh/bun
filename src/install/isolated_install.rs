@@ -135,19 +135,19 @@ impl<'a> std::io::Write for WyhashWriter<'a> {
     }
 }
 
-struct Wait<'a> {
-    installer: &'a mut store::Installer,
+struct Wait<'a, 'b> {
+    installer: &'a mut store::Installer<'b>,
     err: Option<bun_core::Error>,
 }
 
-impl<'a> Wait<'a> {
+impl<'a, 'b> Wait<'a, 'b> {
     pub fn is_done(&mut self) -> bool {
         let pkg_manager = self.installer.manager;
         if let Err(err) = pkg_manager.run_tasks(
             self.installer,
             // TODO(port): Zig passed an anon struct of callbacks; model as a
             // RunTasksCallbacks struct in Phase B.
-            store::installer::RunTasksCallbacks {
+            PackageManager::RunTasksCallbacks {
                 on_extract: store::Installer::on_package_extracted,
                 on_resolve: (),
                 on_package_manifest_error: (),
@@ -184,8 +184,8 @@ pub fn install_isolated_packages(
     install_root_dependencies: bool,
     workspace_filters: &[WorkspaceFilter],
     packages_to_install: Option<&[PackageID]>,
-) -> Result<PackageInstall::Summary, AllocError> {
-    analytics::Features::isolated_bun_install.fetch_add(1);
+) -> Result<crate::package_install::Summary, AllocError> {
+    analytics::features::isolated_bun_install.fetch_add(1, Ordering::Relaxed);
 
     let lockfile = manager.lockfile;
 
@@ -531,7 +531,7 @@ pub fn install_isolated_packages(
                         // ancestor chain marking each node with its leaking peers.
                         // DFS guarantees `dedupe_node`'s subtree is fully processed,
                         // so its `peers` is exactly that set; propagate it here.
-                        let set_ctx = store::node::transitive_peer::OrderedArraySetCtx {
+                        let set_ctx = store::node::TransitivePeerOrderedArraySetCtx {
                             string_buf,
                             pkg_names,
                         };
@@ -781,7 +781,7 @@ pub fn install_isolated_packages(
                 }
 
                 for &visited_parent_id in &visited_parent_node_ids {
-                    let ctx = store::node::transitive_peer::OrderedArraySetCtx {
+                    let ctx = store::node::TransitivePeerOrderedArraySetCtx {
                         string_buf,
                         pkg_names,
                     };
@@ -876,7 +876,7 @@ pub fn install_isolated_packages(
                         }
                     }
 
-                    let eql_ctx = store::node::transitive_peer::OrderedArraySetCtx {
+                    let eql_ctx = store::node::TransitivePeerOrderedArraySetCtx {
                         string_buf,
                         pkg_names,
                     };
@@ -901,7 +901,7 @@ pub fn install_isolated_packages(
                             dependencies,
                         };
                         entry_dependencies[entry.entry_parent_id.get()].insert(
-                            store::entry::DependencyRef {
+                            store::entry::DependenciesItem {
                                 entry_id: info.entry_id,
                                 dep_id: curr_dep_id,
                             },
@@ -926,7 +926,7 @@ pub fn install_isolated_packages(
                     hasher.update(pkg_name.slice(string_buf));
                     let pkg_res = &pkg_resolutions[peer_ids.pkg_id as usize];
                     res_fmt_buf.clear();
-                    write!(&mut res_fmt_buf, "{}", pkg_res.fmt(string_buf, paths::Style::Posix))?;
+                    write!(&mut res_fmt_buf, "{}", pkg_res.fmt(string_buf, bun_fmt::PathSep::Posix))?;
                     hasher.update(&res_fmt_buf);
                 }
                 break 'peer_hash store::entry::PeerHash::from(hasher.final_());
@@ -996,7 +996,7 @@ pub fn install_isolated_packages(
                         dependencies,
                     };
                     entry_dependencies[entry_parent_id].insert(
-                        store::entry::DependencyRef {
+                        store::entry::DependenciesItem {
                             entry_id: new_entry_id,
                             dep_id: new_entry_dep_id,
                         },
@@ -1016,7 +1016,7 @@ pub fn install_isolated_packages(
                                     let hoist_entry = public_hoisted.get_or_put(dep_name);
                                     if !hoist_entry.found_existing {
                                         entry_dependencies[0].insert(
-                                            store::entry::DependencyRef {
+                                            store::entry::DependenciesItem {
                                                 entry_id: new_entry_id,
                                                 dep_id: new_entry_dep_id,
                                             },
@@ -1134,7 +1134,7 @@ pub fn install_isolated_packages(
                                         &mut &mut name_version_buf[..],
                                         "{}@{}",
                                         BStr::new(pkg_names[pkg_id as usize].slice(string_buf)),
-                                        pkg_res.fmt(string_buf, paths::Style::Posix),
+                                        pkg_res.fmt(string_buf, bun_fmt::PathSep::Posix),
                                     ) {
                                         // TODO(port): std.fmt.bufPrint returned the written slice;
                                         // emulate via cursor tracking in Phase B.
@@ -1843,7 +1843,7 @@ pub fn install_isolated_packages(
                     if dep_id == invalid_dependency_id {
                         // .monotonic is okay in this block because the task isn't running on another
                         // thread.
-                        entry_steps[entry_id.get()].store(store::entry::Step::SymlinkDependencies, Ordering::Relaxed);
+                        entry_steps[entry_id.get()].store(installer::Step::SymlinkDependencies, Ordering::Relaxed);
                     } else {
                         // dep_id is valid meaning this was a dependency that resolved to the root
                         // package. it gets an entry in the store.
@@ -1857,20 +1857,20 @@ pub fn install_isolated_packages(
 
                     // if injected=true this might be false
                     if !seen_workspace_ids.get_or_put(pkg_id).found_existing {
-                        entry_steps[entry_id.get()].store(store::entry::Step::SymlinkDependencies, Ordering::Relaxed);
+                        entry_steps[entry_id.get()].store(installer::Step::SymlinkDependencies, Ordering::Relaxed);
                         installer.start_task(entry_id);
                         continue;
                     }
-                    entry_steps[entry_id.get()].store(store::entry::Step::Done, Ordering::Relaxed);
-                    installer.on_task_complete(entry_id, store::installer::Result::Skipped);
+                    entry_steps[entry_id.get()].store(installer::Step::Done, Ordering::Relaxed);
+                    installer.on_task_complete(entry_id, installer::CompleteState::Skipped);
                     continue;
                 }
                 ResolutionTag::Symlink => {
                     // no installation required, will only need to be linked to packages that depend on it.
                     debug_assert!(entry_dependencies[entry_id.get()].list.is_empty());
                     // .monotonic is okay because the task isn't running on another thread.
-                    entry_steps[entry_id.get()].store(store::entry::Step::Done, Ordering::Relaxed);
-                    installer.on_task_complete(entry_id, store::installer::Result::Skipped);
+                    entry_steps[entry_id.get()].store(installer::Step::Done, Ordering::Relaxed);
+                    installer.on_task_complete(entry_id, installer::CompleteState::Skipped);
                     continue;
                 }
                 ResolutionTag::Folder => {
@@ -1943,12 +1943,12 @@ pub fn install_isolated_packages(
                                 // staging path and renamed into place as the
                                 // final step, so the directory existing at its
                                 // final path is the completeness signal.
-                                installer.append_global_store_entry_path(&mut store_path, entry_id, store::PathKind::Final);
+                                installer.append_global_store_entry_path(&mut store_path, entry_id, installer::Which::Final);
                                 break 'needs_install !sys::directory_exists_at(Fd::cwd(), store_path.slice_z())
                                     .as_value()
                                     .unwrap_or(false);
                             }
-                            installer.append_real_store_path(&mut store_path, entry_id, store::PathKind::Final);
+                            installer.append_real_store_path(&mut store_path, entry_id, installer::Which::Final);
                             let scope_for_patch_tag_path = store_path.save();
                             if pkg_res_tag == ResolutionTag::Npm {
                                 // if it's from npm, it should always have a package.json.
@@ -1980,8 +1980,8 @@ pub fn install_isolated_packages(
                             match installer.link_project_to_global_store(entry_id) {
                                 bun_sys::Result::Ok(()) => {}
                                 bun_sys::Result::Err(err) => {
-                                    entry_steps[entry_id.get()].store(store::entry::Step::Done, Ordering::Relaxed);
-                                    installer.on_task_fail(entry_id, store::installer::Fail::SymlinkDependencies(err));
+                                    entry_steps[entry_id.get()].store(installer::Step::Done, Ordering::Relaxed);
+                                    installer.on_task_fail(entry_id, installer::TaskError::SymlinkDependencies(err));
                                     continue;
                                 }
                             }
@@ -1990,8 +1990,8 @@ pub fn install_isolated_packages(
                             installer.link_to_hidden_node_modules(entry_id);
                         }
                         // .monotonic is okay because the task isn't running on another thread.
-                        entry_steps[entry_id.get()].store(store::entry::Step::Done, Ordering::Relaxed);
-                        installer.on_task_complete(entry_id, store::installer::Result::Skipped);
+                        entry_steps[entry_id.get()].store(installer::Step::Done, Ordering::Relaxed);
+                        installer.on_task_complete(entry_id, installer::CompleteState::Skipped);
                         continue;
                     }
 
@@ -2050,8 +2050,8 @@ pub fn install_isolated_packages(
                             if patch_log.has_errors() {
                                 // monotonic is okay because we haven't started the task yet (it isn't running
                                 // on another thread)
-                                entry_steps[entry_id.get()].store(store::entry::Step::Done, Ordering::Relaxed);
-                                installer.on_task_fail(entry_id, store::installer::Fail::Patching(patch_log));
+                                entry_steps[entry_id.get()].store(installer::Step::Done, Ordering::Relaxed);
+                                installer.on_task_fail(entry_id, installer::TaskError::Patching(patch_log));
                                 continue;
                             }
                         }
@@ -2084,7 +2084,7 @@ pub fn install_isolated_packages(
                                         format_args!(
                                             "{}@{}",
                                             BStr::new(pkg_name.slice(string_buf)),
-                                            pkg_res.fmt(string_buf, paths::Style::Auto)
+                                            pkg_res.fmt(string_buf, bun_fmt::PathSep::Auto)
                                         ),
                                     );
                                     Output::flush();
@@ -2093,8 +2093,8 @@ pub fn install_isolated_packages(
                                     }
                                     // .monotonic is okay because an error means the task isn't
                                     // running on another thread.
-                                    entry_steps[entry_id.get()].store(store::entry::Step::Done, Ordering::Relaxed);
-                                    installer.on_task_complete(entry_id, store::installer::Result::Fail);
+                                    entry_steps[entry_id.get()].store(installer::Step::Done, Ordering::Relaxed);
+                                    installer.on_task_complete(entry_id, installer::CompleteState::Fail);
                                     continue;
                                 }
                             }
@@ -2127,7 +2127,7 @@ pub fn install_isolated_packages(
                                         format_args!(
                                             "{}@{}",
                                             BStr::new(pkg_name.slice(string_buf)),
-                                            pkg_res.fmt(string_buf, paths::Style::Auto)
+                                            pkg_res.fmt(string_buf, bun_fmt::PathSep::Auto)
                                         ),
                                     );
                                     Output::flush();
@@ -2136,8 +2136,8 @@ pub fn install_isolated_packages(
                                     }
                                     // .monotonic is okay because an error means the task isn't
                                     // running on another thread.
-                                    entry_steps[entry_id.get()].store(store::entry::Step::Done, Ordering::Relaxed);
-                                    installer.on_task_complete(entry_id, store::installer::Result::Fail);
+                                    entry_steps[entry_id.get()].store(installer::Step::Done, Ordering::Relaxed);
+                                    installer.on_task_complete(entry_id, installer::CompleteState::Fail);
                                     continue;
                                 }
                             }
@@ -2168,7 +2168,7 @@ pub fn install_isolated_packages(
                                         format_args!(
                                             "{}@{}",
                                             BStr::new(pkg_name.slice(string_buf)),
-                                            pkg_res.fmt(string_buf, paths::Style::Auto)
+                                            pkg_res.fmt(string_buf, bun_fmt::PathSep::Auto)
                                         ),
                                     );
                                     Output::flush();
@@ -2177,8 +2177,8 @@ pub fn install_isolated_packages(
                                     }
                                     // .monotonic is okay because an error means the task isn't
                                     // running on another thread.
-                                    entry_steps[entry_id.get()].store(store::entry::Step::Done, Ordering::Relaxed);
-                                    installer.on_task_complete(entry_id, store::installer::Result::Fail);
+                                    entry_steps[entry_id.get()].store(installer::Step::Done, Ordering::Relaxed);
+                                    installer.on_task_complete(entry_id, installer::CompleteState::Fail);
                                     continue;
                                 }
                             }
@@ -2191,8 +2191,8 @@ pub fn install_isolated_packages(
                     // this is `uninitialized` or `single_file_module`.
                     debug_assert!(false);
                     // .monotonic is okay because the task isn't running on another thread.
-                    entry_steps[entry_id.get()].store(store::entry::Step::Done, Ordering::Relaxed);
-                    installer.on_task_complete(entry_id, store::installer::Result::Skipped);
+                    entry_steps[entry_id.get()].store(installer::Step::Done, Ordering::Relaxed);
+                    installer.on_task_complete(entry_id, installer::CompleteState::Skipped);
                     continue;
                 }
             }
@@ -2226,7 +2226,7 @@ pub fn install_isolated_packages(
                 // and the .acquire load `pendingTaskCount`.
                 let step = entry_step.load(Ordering::Relaxed);
 
-                if step == store::entry::Step::Done {
+                if step == installer::Step::Done {
                     continue;
                 }
 
@@ -2238,7 +2238,7 @@ pub fn install_isolated_packages(
                 for dep in deps.slice() {
                     // .monotonic is okay because `Wait.isDone` already synchronized with the tasks.
                     let dep_step = entry_steps[dep.entry_id.get()].load(Ordering::Relaxed);
-                    if dep_step != store::entry::Step::Done {
+                    if dep_step != installer::Step::Done {
                         log!(", parents:\n - ");
                         let parent_ids = StoreEntry::debug_gather_all_parents(entry_id, installer.store);
                         for &parent_id in &parent_ids {

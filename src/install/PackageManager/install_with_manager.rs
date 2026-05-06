@@ -10,12 +10,17 @@ use bun_paths as Path;
 use bun_glob as glob;
 
 use crate::{
-    Dependency, DependencyID, Features, PackageID, PackageInstall, PackageNameHash, PatchTask,
-    Resolution, TextLockfile, invalid_package_id,
+    Dependency, DependencyID, Features, PackageID, PackageNameHash, PatchTask,
+    Resolution, invalid_package_id,
 };
+use crate::GetJsonResult as WorkspacePackageJsonCacheResult;
 use crate::lockfile::{self, Lockfile, Package};
+use crate::lockfile_real::bun_lock as TextLockfile;
+use crate::package_install::Summary as PackageInstallSummary;
 use crate::PackageManager;
-use crate::package_manager::{Command, Options, WorkspaceFilter};
+use crate::package_manager::{Options, WorkspaceFilter};
+use super::Command;
+use super::options::{NodeLinker, ConfigVersion};
 use crate::hoisted_install::install_hoisted_packages;
 use crate::isolated_install::install_isolated_packages;
 
@@ -197,15 +202,15 @@ pub fn install_with_manager(
                     root_package_json_path,
                     Default::default(),
                 ) {
-                    crate::WorkspacePackageJsonCacheResult::Entry(entry) => entry,
-                    crate::WorkspacePackageJsonCacheResult::ReadErr(err) => {
+                    WorkspacePackageJsonCacheResult::Entry(entry) => entry,
+                    WorkspacePackageJsonCacheResult::ReadErr(err) => {
                         if ctx.log.errors > 0 {
                             manager.log.print(Output::error_writer())?;
                         }
                         Output::err(err, "failed to read '{}'", format_args!("{}", bstr::BStr::new(root_package_json_path.as_bytes())));
                         Global::exit(1);
                     }
-                    crate::WorkspacePackageJsonCacheResult::ParseErr(err) => {
+                    WorkspacePackageJsonCacheResult::ParseErr(err) => {
                         if ctx.log.errors > 0 {
                             manager.log.print(Output::error_writer())?;
                         }

@@ -19,15 +19,16 @@
 //! without holding the full compressed or decompressed tarball in memory.
 
 use core::ffi::{c_int, c_void};
-use core::mem::offset_of;
+use core::mem::{offset_of, ManuallyDrop};
 use core::sync::atomic::{AtomicBool, Ordering};
 
-use bun_core::{self, Output, env_var, fmt as bun_fmt};
+use bun_core::{self, Output, ZBox, env_var, fmt as bun_fmt};
 use bun_libarchive::lib;
 use bun_logger as logger;
-use bun_paths::{self, OSPathBuffer, OSPathChar, OSPathSlice, PathBuffer};
+use bun_paths::{self, OSPathBuffer, OSPathChar, OSPathSlice, OSPathSliceZ, PathBuffer};
+use bun_paths::resolve_path::{self, platform};
 use bun_str::strings;
-use bun_sys::{self, Fd, Mode, O};
+use bun_sys::{self, Dir, Fd, FdDirExt, FileKind, Mode, O};
 use bun_threading::{thread_pool, Mutex, ThreadPool};
 
 use crate::bun_fs::FileSystem;
@@ -36,10 +37,9 @@ use crate::integrity::{self, Integrity};
 
 bun_output::declare_scope!(TarballStream, hidden);
 
-// TODO(port): OS-path sentinel-slice types — confirm bun_paths exports these.
 // Zig: `[:0]const bun.OSPathChar` / `[:0]bun.OSPathChar` / `bun.OSPathSliceZ`.
-type OSPathZ<'a> = &'a bun_paths::OSPathZStr;
-type OSPathZMut<'a> = &'a mut bun_paths::OSPathZStr;
+type OSPathZ<'a> = &'a OSPathSliceZ;
+type OSPathZMut<'a> = &'a mut OSPathSliceZ;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Phase {
@@ -120,9 +120,9 @@ pub struct TarballStream {
     /// touches the filesystem.
     dest: Option<Fd>,
     /// Owned copy of the temp-directory name; freed in `Drop`.
-    // TODO(port): owned NUL-terminated string. Zig `[:0]const u8` field freed
-    // via `allocator.free`. Using Box<CStr>; default is empty (`c""`).
-    tmpname: Box<core::ffi::CStr>,
+    // Zig `[:0]const u8` field freed via `allocator.free`. `ZBox` is the
+    // owned NUL-terminated counterpart of `&ZStr` (port of `dupeZ`).
+    tmpname: ZBox,
 
     /// Incremental SHA over the *compressed* bytes, matching
     /// `Integrity.verify` / `Integrity.forBytes` in the buffered path.
@@ -203,7 +203,7 @@ impl TarballStream {
             entry_actual_offset: 0,
             entry_final_offset: 0,
             dest: None,
-            tmpname: c"".into(),
+            tmpname: ZBox::from_bytes(b""),
             hasher,
             resolved_github_dirname: b"",
             want_first_dirname,
@@ -442,21 +442,21 @@ impl TarballStream {
             match self.phase {
                 Phase::Done => return Ok(()),
                 Phase::WantHeader => {
-                    let mut entry: *mut lib::archive::Entry = core::ptr::null_mut();
+                    let mut entry: *mut lib::Entry = core::ptr::null_mut();
                     match archive.read_next_header(&mut entry) {
-                        lib::archive::Result::Retry => return Ok(()),
-                        lib::archive::Result::Eof => {
+                        lib::Result::Retry => return Ok(()),
+                        lib::Result::Eof => {
                             self.phase = Phase::Done;
                             return Ok(());
                         }
-                        lib::archive::Result::Ok | lib::archive::Result::Warn => {
+                        lib::Result::Ok | lib::Result::Warn => {
                             // SAFETY: libarchive returned OK/WARN with a valid
                             // entry pointer owned by `archive`; it stays valid
                             // until the next `read_next_header`. No other Rust
                             // reference to it exists.
                             self.begin_entry(unsafe { &mut *entry })?;
                         }
-                        lib::archive::Result::Failed | lib::archive::Result::Fatal => {
+                        lib::Result::Failed | lib::Result::Fatal => {
                             bun_output::scoped_log!(
                                 TarballStream,
                                 "readNextHeader: {}",
@@ -475,8 +475,8 @@ impl TarballStream {
                         continue;
                     };
                     match block.result {
-                        lib::archive::Result::Retry => return Ok(()),
-                        lib::archive::Result::Ok | lib::archive::Result::Warn => {
+                        lib::Result::Retry => return Ok(()),
+                        lib::Result::Ok | lib::Result::Warn => {
                             if let Some(fd) = self.out_fd {
                                 self.write_data_block(fd, block)?;
                             }
@@ -531,17 +531,17 @@ impl TarballStream {
         // PORTING.md §Forbidden: `transmute::<c_int, enum>` is UB for any value not
         // declared as a discriminant. Map known ARCHIVE_* codes explicitly and treat
         // anything else as Fatal.
-        let rc: lib::archive::Result = match rc_raw {
-            x if x == lib::archive::Result::Ok as c_int => lib::archive::Result::Ok,
-            x if x == lib::archive::Result::Eof as c_int => lib::archive::Result::Eof,
-            x if x == lib::archive::Result::Retry as c_int => lib::archive::Result::Retry,
-            x if x == lib::archive::Result::Warn as c_int => lib::archive::Result::Warn,
-            x if x == lib::archive::Result::Failed as c_int => lib::archive::Result::Failed,
-            _ => lib::archive::Result::Fatal,
+        let rc: lib::Result = match rc_raw {
+            x if x == lib::Result::Ok as c_int => lib::Result::Ok,
+            x if x == lib::Result::Eof as c_int => lib::Result::Eof,
+            x if x == lib::Result::Retry as c_int => lib::Result::Retry,
+            x if x == lib::Result::Warn as c_int => lib::Result::Warn,
+            x if x == lib::Result::Failed as c_int => lib::Result::Failed,
+            _ => lib::Result::Fatal,
         };
         match rc {
-            lib::archive::Result::Ok | lib::archive::Result::Warn => {}
-            lib::archive::Result::Retry => {
+            lib::Result::Ok | lib::Result::Warn => {}
+            lib::Result::Retry => {
                 // open() runs the filter bidder which we bypassed, but the
                 // client open path may still probe; treat as transient.
                 self.archive = Some(scopeguard::ScopeGuard::into_inner(guard));
@@ -598,7 +598,7 @@ impl TarballStream {
     /// Process one entry header returned by `read_next_header`. Opens the
     /// output file (or creates the directory/symlink) and transitions to
     /// `WantData` so the next `step()` iteration starts pulling its body.
-    fn begin_entry(&mut self, entry: &mut lib::archive::Entry) -> Result<(), bun_core::Error> {
+    fn begin_entry(&mut self, entry: &mut lib::Entry) -> Result<(), bun_core::Error> {
         #[cfg(windows)]
         let mut pathname: OSPathZ = entry.pathname_w();
         #[cfg(not(windows))]
@@ -1120,7 +1120,7 @@ extern "C" fn archive_read_callback(
     // in vendor/libarchive make every layer (filter_ahead → gzip → tar)
     // preserve its state and propagate ARCHIVE_RETRY to our `step()`
     // loop, which then returns so this worker can be reused.
-    lib::archive::Result::Retry as lib::la_ssize_t
+    lib::Result::Retry as lib::la_ssize_t
 }
 
 fn open_output_file(
@@ -1167,7 +1167,7 @@ fn open_output_file(
 }
 
 fn make_directory(
-    entry: &mut lib::archive::Entry,
+    entry: &mut lib::Entry,
     dest_fd: Fd,
     path: OSPathZ,
     path_slice: &[OSPathChar],
@@ -1209,7 +1209,7 @@ fn make_directory(
 
 #[cfg(unix)]
 fn make_symlink(
-    entry: &mut lib::archive::Entry,
+    entry: &mut lib::Entry,
     dest_fd: Fd,
     path: OSPathZ,
     path_slice: &[OSPathChar],

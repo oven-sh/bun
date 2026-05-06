@@ -86,6 +86,16 @@ pub mod lib {
             offset: *mut la_int64_t,
         ) -> Result;
         fn archive_error_string(a: *mut Archive) -> *const c_char;
+        // streaming-read setup (used by TarballStream's resumable extractor)
+        pub fn archive_read_set_format(a: *mut Archive, code: c_int) -> c_int;
+        pub fn archive_read_append_filter(a: *mut Archive, code: c_int) -> c_int;
+        pub fn archive_read_open(
+            a: *mut Archive,
+            client_data: *mut c_void,
+            open: Option<archive_open_callback>,
+            read: Option<archive_read_callback>,
+            close: Option<archive_close_callback>,
+        ) -> c_int;
 
         // write side
         fn archive_write_new() -> *mut Archive;
@@ -236,7 +246,7 @@ pub mod lib {
             Some(Block { bytes, offset: *offset, result: r })
         }
 
-        fn write_zeros_to_file(file: &bun_sys::File, count: usize) -> Result {
+        pub fn write_zeros_to_file(file: &bun_sys::File, count: usize) -> Result {
             // Use a runtime memset (vs `[0u8; _]`) to keep .rodata small,
             // matching the Zig (`@memset(&zero_buf, 0)`).
             let mut zero_buf = [0u8; 16 * 1024];
@@ -471,6 +481,8 @@ pub mod lib {
 
     // ── write-open callback surface (libarchive `archive_write_open2`) ─────
     pub type archive_open_callback = unsafe extern "C" fn(*mut Archive, *mut c_void) -> c_int;
+    pub type archive_read_callback =
+        unsafe extern "C" fn(*mut Archive, *mut c_void, *mut *const c_void) -> la_ssize_t;
     pub type archive_write_callback =
         unsafe extern "C" fn(*mut Archive, *mut c_void, *const c_void, usize) -> la_ssize_t;
     pub type archive_close_callback = unsafe extern "C" fn(*mut Archive, *mut c_void) -> c_int;

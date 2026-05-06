@@ -99,24 +99,27 @@ pub fn hash(normalized_path: &[u8]) -> u64 {
 }
 
 // ── NewResolver(comptime tag: Resolution.Tag) type ────────────────────────
-// TODO(port): requires `#[derive(core::marker::ConstParamTy, PartialEq, Eq)]` on `Resolution::Tag`
-pub struct NewResolver<'a, const TAG: Resolution::Tag> {
+// PORT NOTE: `Resolution.Tag` (Zig nested decl) is `crate::resolution::Tag` in Rust;
+// const-generic requires `#[derive(ConstParamTy)]` on that enum (added in lib.rs stub).
+pub struct NewResolver<'a, const TAG: ResolutionTag> {
     pub folder_path: &'a [u8],
 }
 
-impl<'a, const TAG: Resolution::Tag> NewResolver<'a, TAG> {
+impl<'a, const TAG: ResolutionTag> NewResolver<'a, TAG> {
     pub fn resolve<B>(&self, builder: B, _json: js_ast::Expr) -> Result<Resolution, bun_core::Error> {
         // TODO(port): narrow error set
         // Zig: @unionInit(Resolution.Value, @tagName(tag), builder.append(String, this.folder_path))
         let appended = builder.append::<SemverString>(self.folder_path);
-        // TODO(port): @unionInit by tag name — Resolution::Value variant chosen by TAG.
-        let value = match TAG {
-            Resolution::Tag::Folder => Resolution::Value::Folder(appended),
-            Resolution::Tag::Symlink => Resolution::Value::Symlink(appended),
-            Resolution::Tag::Workspace => Resolution::Value::Workspace(appended),
+        // PORT NOTE: stub `resolution::Value` is a struct mirroring the Zig `extern union`
+        // (one field per variant), not a Rust enum — assign the matching field by TAG.
+        let mut value = ResolutionValue::default();
+        match TAG {
+            ResolutionTag::Folder => value.folder = appended,
+            ResolutionTag::Symlink => value.symlink = appended,
+            ResolutionTag::Workspace => value.workspace = appended,
             _ => unreachable!(),
-        };
-        Ok(Resolution { tag: TAG, value })
+        }
+        Ok(Resolution { tag: TAG, value, ..Default::default() })
     }
 
     pub fn count<B>(&self, builder: B, _json: js_ast::Expr) {
@@ -124,13 +127,13 @@ impl<'a, const TAG: Resolution::Tag> NewResolver<'a, TAG> {
     }
 
     pub const fn check_bundled_dependencies() -> bool {
-        matches!(TAG, Resolution::Tag::Folder | Resolution::Tag::Symlink)
+        matches!(TAG, ResolutionTag::Folder | ResolutionTag::Symlink)
     }
 }
 
-type Resolver<'a> = NewResolver<'a, { Resolution::Tag::Folder }>;
-type SymlinkResolver<'a> = NewResolver<'a, { Resolution::Tag::Symlink }>;
-type WorkspaceResolver<'a> = NewResolver<'a, { Resolution::Tag::Workspace }>;
+type Resolver<'a> = NewResolver<'a, { ResolutionTag::Folder }>;
+type SymlinkResolver<'a> = NewResolver<'a, { ResolutionTag::Symlink }>;
+type WorkspaceResolver<'a> = NewResolver<'a, { ResolutionTag::Workspace }>;
 
 pub struct CacheFolderResolver {
     pub version: semver::Version,
@@ -140,11 +143,15 @@ impl CacheFolderResolver {
     pub fn resolve<B>(&self, _builder: B, _json: js_ast::Expr) -> Result<Resolution, bun_core::Error> {
         // TODO(port): narrow error set
         Ok(Resolution {
-            tag: Resolution::Tag::Npm,
-            value: Resolution::Value::Npm(crate::resolution::NpmResolution {
-                version: self.version,
-                url: SemverString::from(b""),
-            }),
+            tag: ResolutionTag::Npm,
+            value: ResolutionValue {
+                npm: NpmVersionInfo {
+                    version: self.version,
+                    url: SemverString::from(b""),
+                },
+                ..Default::default()
+            },
+            ..Default::default()
         })
     }
 
@@ -161,8 +168,8 @@ impl CacheFolderResolver {
 pub trait FolderResolverImpl {
     const IS_WORKSPACE: bool;
 }
-impl<'a, const TAG: Resolution::Tag> FolderResolverImpl for NewResolver<'a, TAG> {
-    const IS_WORKSPACE: bool = matches!(TAG, Resolution::Tag::Workspace);
+impl<'a, const TAG: ResolutionTag> FolderResolverImpl for NewResolver<'a, TAG> {
+    const IS_WORKSPACE: bool = matches!(TAG, ResolutionTag::Workspace);
 }
 impl FolderResolverImpl for CacheFolderResolver {
     const IS_WORKSPACE: bool = false;
@@ -262,12 +269,12 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
     features: Features,
     // PERF(port): was comptime monomorphization (features + ResolverType) — profile in Phase B
     resolver: &mut R,
-) -> Result<Lockfile::Package, bun_core::Error> {
+) -> Result<LockfilePackage, bun_core::Error> {
     // TODO(port): narrow error set
     let mut body = npm::Registry::BodyPool::get();
     // defer Npm.Registry.BodyPool.release(body) — handled by guard Drop
 
-    let mut package = Lockfile::Package::default();
+    let mut package = LockfilePackage::default();
 
     if R::IS_WORKSPACE {
         let _tracer = bun_perf::trace("FolderResolver.readPackageJSONFromDisk.workspace");
@@ -298,7 +305,7 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
             {
                 body.data.reset();
                 // TODO(port): toManaged/moveToUnmanaged dance is a no-op in Rust (Vec owns its allocator)
-                file.read_to_end_with_array_list(&mut body.data.list, bun_sys::ReadHint::ProbablySmall)
+                file.read_to_end_with_array_list(&mut body.data.list, bun_sys::SizeHint::ProbablySmall)
                     .unwrap()?;
             }
 
@@ -317,12 +324,12 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
 
     let has_scripts = package.scripts.has_any() || 'brk: {
         let dir = bun_paths::dirname(abs.as_bytes()).unwrap_or(b"");
-        let binding_dot_gyp_path = bun_paths::join_abs_string_z(
-            dir,
-            &[b"binding.gyp" as &[u8]],
-            bun_paths::Platform::Auto,
-        );
-        break 'brk bun_sys::exists(binding_dot_gyp_path);
+        let binding_dot_gyp_path =
+            bun_paths::resolve_path::join_abs_string_z::<bun_paths::platform::Auto>(
+                dir,
+                &[b"binding.gyp" as &[u8]],
+            );
+        break 'brk bun_sys::exists(binding_dot_gyp_path.as_bytes());
     };
 
     package.meta.set_has_install_script(has_scripts);
@@ -379,7 +386,7 @@ pub fn get_or_put(
         return *existing;
     }
 
-    let result: Result<Lockfile::Package, bun_core::Error> = match global_or_relative {
+    let result: Result<LockfilePackage, bun_core::Error> = match global_or_relative {
         GlobalOrRelative::Global(_) => 'global: {
             let mut path = PathBuffer::uninit();
             path[..non_normalized_path.len()].copy_from_slice(non_normalized_path);

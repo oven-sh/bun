@@ -1429,12 +1429,19 @@ where
                 if auto_close {
                     fd.close();
                 }
+                // TODO(port): Zig `withPathLike(file.pathlike)` also sets `.fd`
+                // for the Fd arm; `bun_sys::Error::with_path` only carries a
+                // path slice, so the fd arm gets no path attached.
+                let path_bytes: &[u8] = match &file.pathlike {
+                    crate::webcore::node_types::PathOrFileDescriptor::Path(p) => p.slice(),
+                    crate::webcore::node_types::PathOrFileDescriptor::Fd(_) => b"",
+                };
                 let mut sys = bun_sys::Error {
                     errno: bun_sys::E::EISDIR as _,
                     syscall: bun_sys::Tag::read,
                     ..Default::default()
                 }
-                .with_path(&file.pathlike)
+                .with_path(path_bytes)
                 .to_system_error();
                 sys.message = BunString::static_("Cannot stream a directory as a response body");
                 let _ = (sys, global_this);

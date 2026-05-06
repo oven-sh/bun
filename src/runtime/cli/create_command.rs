@@ -262,7 +262,14 @@ impl CreateOptions {
         };
 
         let mut opts = CreateOptions {
-            positionals: args.positionals().into(),
+            // PORT NOTE: clap positionals borrow from process argv; copy+leak each
+            // entry to obtain `&'static [u8]` (mirrors Zig where argv is process-static).
+            positionals: args
+                .positionals()
+                .iter()
+                .map(|p| &*Box::leak(Box::<[u8]>::from(*p)))
+                .collect::<Vec<&'static [u8]>>()
+                .into_boxed_slice(),
             ..Default::default()
         };
 

@@ -4626,9 +4626,10 @@ impl H2FrameParser {
         // max header name length for lshpack
         let mut name_buffer = [0u8; 4096];
 
-        let mut iter = bun_jsc::JSPropertyIterator::<{ bun_jsc::JSPropertyIteratorOptions::new(false, true) }>::init(
+        let mut iter = bun_jsc::JSPropertyIterator::init(
             global_object,
             headers_obj,
+            bun_jsc::JSPropertyIteratorOptions { skip_empty_name: false, include_value: true, ..Default::default() },
         )?;
 
         let mut single_value_headers = [false; SINGLE_VALUE_HEADERS_LEN];
@@ -5487,7 +5488,7 @@ impl H2FrameParser {
             // Handle padding
             if padding != 0 {
                 if encoded_headers.try_reserve(encoded_size + padding_overhead - encoded_headers.len()).is_err() {
-                    return global_object.throw("Failed to allocate padding buffer");
+                    return Err(global_object.throw("Failed to allocate padding buffer"));
                 }
                 // SAFETY: capacity ensured above; we treat allocatedSlice manually
                 unsafe { encoded_headers.set_len(encoded_headers.capacity()) };

@@ -8,8 +8,10 @@
 //! `MediaFeatureName`, `MediaFeatureComparison`, `MediaFeatureType`,
 //! `Operator`, `Qualifier`, `MediaType`, `QueryConditionFlags`) compile for
 //! real so `rules::{media,import,custom_media}` and
-//! `css_parser::AtRulePrelude` can hold them. The `parse`/`to_css`/
-//! `deep_clone` impl bodies — which compile against
+//! `css_parser::AtRulePrelude` can hold them. `to_css` and arena-aware
+//! `deep_clone` are real; the `rules::dc::{media_list,query_feature}`
+//! bridges now route through them. The `parse` impl bodies — which
+//! compile against
 //! `values::{length,number,resolution,ratio}` (calc lattice, gated),
 //! `IdentFns`/`CSSNumberFns` associated-fn namespaces (gated), and
 //! `compat::Feature::Media{Range,Interval}Syntax` (not yet emitted by the
@@ -988,13 +990,148 @@ fn write_min_max<FeatureId: FeatureIdTrait>(
     dest.write_char(b')')
 }
 
+// ───────────────────────── deep_clone ─────────────────────────
+// Arena-aware `deep_clone` — port of Zig's per-type `deepClone(allocator)`
+// bodies. Un-gated this round so `rules::dc::{media_list,query_feature}` can
+// route through real impls instead of `#[derive(Clone)]` passthroughs.
+//
+// PORT NOTE: written as **inherent** methods (not `#[derive(DeepClone)]`) to
+// match the Zig hand-written bodies exactly: Zig copies `name`/`qualifier`/
+// `media_type`/`operator` fields by value (they are `Copy`/arena-slice types
+// under the generics.zig "const strings" rule) and only recurses into the
+// allocating payloads (`Vec`, `Box`, `MediaFeatureValue`). The derive would
+// instead add a spurious `FeatureId: DeepClone<'bump>` where-bound.
+
+impl MediaList {
+    /// Zig: `MediaList.deepClone` — element-wise clone of `media_queries`.
+    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+        Self {
+            media_queries: self
+                .media_queries
+                .iter()
+                .map(|q| q.deep_clone(bump))
+                .collect(),
+        }
+    }
+
+    /// Zig: `pub fn clone(this, allocator)` — alias for `deepClone`.
+    #[inline]
+    pub fn clone_in(&self, bump: &bun_alloc::Arena) -> Self {
+        self.deep_clone(bump)
+    }
+}
+
+impl MediaQuery {
+    /// Zig: `MediaQuery.deepClone` — field-wise.
+    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+        Self {
+            qualifier: self.qualifier,
+            media_type: self.media_type.deep_clone(bump),
+            condition: self.condition.as_ref().map(|c| c.deep_clone(bump)),
+        }
+    }
+}
+
+impl MediaType {
+    /// Zig: `css.implementDeepClone` — `Custom([]const u8)` is an arena-owned
+    /// slice (identity copy under the generics.zig "const strings" rule).
+    #[inline]
+    pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+        self.clone()
+    }
+}
+
+impl MediaCondition {
+    /// Zig: `MediaCondition.deepClone` — variant-wise recursion.
+    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+        match self {
+            MediaCondition::Feature(f) => MediaCondition::Feature(f.deep_clone(bump)),
+            // Zig: `bun.create(allocator, MediaCondition, c.deepClone(allocator))`
+            MediaCondition::Not(c) => MediaCondition::Not(Box::new(c.deep_clone(bump))),
+            MediaCondition::Operation { operator, conditions } => MediaCondition::Operation {
+                operator: *operator,
+                conditions: conditions.iter().map(|c| c.deep_clone(bump)).collect(),
+            },
+        }
+    }
+}
+
+impl<FeatureId: FeatureIdTrait> MediaFeatureName<FeatureId> {
+    /// Zig: struct-copy (`name = this.plain.name`). All payloads are `Copy` /
+    /// arena-slice idents; `derive(Clone)` is the faithful deep clone.
+    #[inline]
+    pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+        self.clone()
+    }
+}
+
+impl<FeatureId: FeatureIdTrait> QueryFeature<FeatureId> {
+    /// Zig: `QueryFeature.deepClone` — variant-wise; `name`/`operator` are
+    /// value-copied, `MediaFeatureValue` recurses.
+    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+        match self {
+            QueryFeature::Plain { name, value } => QueryFeature::Plain {
+                name: name.deep_clone(bump),
+                value: value.deep_clone(bump),
+            },
+            QueryFeature::Boolean { name } => QueryFeature::Boolean {
+                name: name.deep_clone(bump),
+            },
+            QueryFeature::Range { name, operator, value } => QueryFeature::Range {
+                name: name.deep_clone(bump),
+                operator: *operator,
+                value: value.deep_clone(bump),
+            },
+            QueryFeature::Interval {
+                name,
+                start,
+                start_operator,
+                end,
+                end_operator,
+            } => QueryFeature::Interval {
+                name: name.deep_clone(bump),
+                start: start.deep_clone(bump),
+                start_operator: *start_operator,
+                end: end.deep_clone(bump),
+                end_operator: *end_operator,
+            },
+        }
+    }
+}
+
+impl MediaFeatureValue {
+    /// Zig: `MediaFeatureValue.deepClone` — variant-wise.
+    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+        use MediaFeatureValue as V;
+        match self {
+            // Zig: `l.deepClone(allocator)` — real `values::length::Length`
+            // owns a calc tree. The local `value_shims::Length` stand-in is a
+            // unit struct, so `Clone` is faithful until the calc lattice
+            // un-gates and the shim is replaced.
+            V::Length(l) => V::Length(l.clone()),
+            V::Number(n) => V::Number(*n),
+            V::Integer(i) => V::Integer(*i),
+            V::Boolean(b) => V::Boolean(*b),
+            V::Resolution(r) => V::Resolution(*r),
+            V::Ratio(r) => V::Ratio(*r),
+            V::Ident(i) => V::Ident(i.deep_clone(bump)),
+            // Zig: `e.deepClone(allocator)` — `EnvironmentVariable` carries
+            // `Vec<CSSInteger>` + `Option<TokenList>`; route through its
+            // `#[derive(DeepClone)]` impl.
+            V::Env(e) => {
+                use crate::generics::DeepClone as _;
+                V::Env(e.deep_clone(bump))
+            }
+        }
+    }
+}
+
 // ───────────────────────── gated impl bodies ─────────────────────────
-// Every `parse`/`to_css`/`deep_clone` body below compiles against the
-// gated `values/` lattice + `compat::Feature::Media{Range,Interval}Syntax`
-// + `ParserError::{InvalidMediaQuery,InvalidValue}` and the (still-shim)
-// `Delimiters`-as-struct calling convention. They are preserved here
-// `#[cfg(any())]`-gated so the next round can flip them on without
-// re-porting from Zig.
+// The remaining `parse` bodies compile against the gated `values/`
+// lattice + `ParserError::{InvalidMediaQuery,InvalidValue}` and the
+// (still-shim) `Delimiters`-as-struct calling convention. They are
+// preserved here `#[cfg(any())]`-gated so the next round can flip them
+// on without re-porting from Zig.
 #[cfg(any())]
 mod __impl_bodies {
     // (full 1500-line port body — see git rev 8b7b16543a:src/css/media_query.rs)
@@ -1005,5 +1142,5 @@ mod __impl_bodies {
 //   source:     src/css/media_query.zig (1494 lines)
 //   confidence: medium
 //   todos:      3
-//   notes:      module un-gated; all data types real; parse/to_css impl bodies internally gated on values/{length,number,resolution,ratio} + IdentFns/CSSNumberFns + compat::Feature media-range variants; PartialEq for MediaFeatureValue/MediaFeatureName hand-rolled until Ident/EnvironmentVariable gain PartialEq
+//   notes:      module un-gated; all data types real; arena-aware deep_clone real (rules::dc bridges unblocked); parse impl bodies internally gated on values/{length,number,resolution,ratio} + IdentFns/CSSNumberFns; PartialEq for MediaFeatureValue/MediaFeatureName hand-rolled until Ident/EnvironmentVariable gain PartialEq
 // ──────────────────────────────────────────────────────────────────────────

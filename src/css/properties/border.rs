@@ -221,8 +221,7 @@ impl Default for LineStyle {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// A value for the [border-width](https://www.w3.org/TR/css-backgrounds-3/#border-width) property.
-#[derive(Clone, PartialEq)]
-#[cfg_attr(any(), derive(css::DeriveParse, css::DeriveToCss))] // blocked_on: Length::{parse,to_css}
+#[derive(Clone, PartialEq, css::DeriveParse, css::DeriveToCss)]
 pub enum BorderSideWidth {
     /// A UA defined `thin` value.
     Thin,

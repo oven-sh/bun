@@ -1866,7 +1866,7 @@ impl<'a> Parser<'a> {
             p.jsx_imports = jsx_imports;
         }
 
-        #[cfg(any())] // blocked_on: P::generate_react_refresh_import (gated in P.rs); options::Framework::{server_components,react_fast_refresh}
+        #[cfg(any())] // blocked_on: options::Framework::{server_components,react_fast_refresh} — `options::Framework` is still a unit-struct stub (parser.rs); real fields live in bun_runtime::bake::Framework
         if p.server_components_wrap_ref.is_valid() {
             let fw = p
                 .options
@@ -1884,7 +1884,7 @@ impl<'a> Parser<'a> {
             )?;
         }
 
-        #[cfg(any())] // blocked_on: P::generate_react_refresh_import (gated in P.rs); options::Framework::react_fast_refresh
+        #[cfg(any())] // blocked_on: options::Framework::react_fast_refresh — `options::Framework` is still a unit-struct stub (parser.rs); real field lives in bun_runtime::bake::Framework
         if p.react_refresh.register_used || p.react_refresh.signature_used {
             p.generate_react_refresh_import(
                 &mut before,

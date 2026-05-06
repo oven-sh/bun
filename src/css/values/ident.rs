@@ -16,8 +16,9 @@ unsafe fn arena_str(s: &[u8]) -> &'static [u8] {
 
 // ───────────────────────── DashedIdentReference ──────────────────────────
 // `properties::css_modules::Specifier` is real (parse/to_css/eql/hash); the
-// `from` field below uses it directly. Only `to_css`'s CSS-Modules remapping
-// branch remains gated on `CssModule::reference_dashed`.
+// `from` field below uses it directly. `parse_with_options` is real and honors
+// `ParserOptions.css_modules.dashed_idents`. Only `to_css`'s CSS-Modules
+// remapping branch remains gated on `CssModule::reference_dashed`.
 
 /// A CSS [`<dashed-ident>`](https://www.w3.org/TR/css-values-4/#dashed-idents) reference.
 ///
@@ -56,7 +57,6 @@ impl DashedIdentReference {
         *self
     }
 
-    #[cfg(any())] // blocked_on: ParserOptions.css_modules + Specifier::parse
     pub fn parse_with_options(
         input: &mut Parser,
         options: &css::ParserOptions,
@@ -65,7 +65,7 @@ impl DashedIdentReference {
         let from = if options
             .css_modules
             .as_ref()
-            .map_or(false, |m| m.dashed_idents)
+            .is_some_and(|m| m.dashed_idents)
         {
             if input
                 .try_parse(|i| i.expect_ident_matching(b"from"))
@@ -81,7 +81,7 @@ impl DashedIdentReference {
         Ok(DashedIdentReference { ident, from })
     }
 
-    #[cfg(any())] // blocked_on: Printer::{css_module, write_dashed_ident}
+    #[cfg(any())] // blocked_on: CssModule::reference_dashed (css_modules.rs) — Printer::{css_module, write_dashed_ident} are real now
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         if let Some(css_module) = &mut dest.css_module {
             if css_module.config.dashed_idents {
@@ -499,5 +499,5 @@ pub type CustomIdentList = SmallList<CustomIdent, 1>;
 //   source:     src/css/values/ident.zig (324 lines)
 //   confidence: medium
 //   todos:      8
-//   notes:      `v: []const u8` fields use raw *const [u8] (arena-owned) pending 'bump threading; IdentOrRef.hash preserves suspicious Zig 2-byte hash; inherent assoc type alias (HashMap<V>) hoisted to free alias; debug_ident is debug-only (no release stub — Rust compile_error! is eager). DashedIdentReference::{parse_with_options,to_css} gated on ParserOptions.css_modules + CssModule::reference_dashed.
+//   notes:      `v: []const u8` fields use raw *const [u8] (arena-owned) pending 'bump threading; IdentOrRef.hash preserves suspicious Zig 2-byte hash; inherent assoc type alias (HashMap<V>) hoisted to free alias; debug_ident is debug-only (no release stub — Rust compile_error! is eager). DashedIdentReference::parse_with_options is real; to_css gated on CssModule::reference_dashed.
 // ──────────────────────────────────────────────────────────────────────────

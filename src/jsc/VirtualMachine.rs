@@ -504,6 +504,21 @@ impl VirtualMachine {
         &mut self.source_mappings
     }
 
+    /// Port of `VirtualMachine.sourceMapHandler` (VirtualMachine.zig:441).
+    /// Returns a small adaptor whose `get()` produces the erased
+    /// `js_printer::SourceMapHandler` for `print_with_source_map`.
+    #[inline]
+    pub fn source_map_handler<'a>(
+        &'a mut self,
+        printer: &'a mut bun_js_printer::BufferPrinter,
+    ) -> SourceMapHandlerGetter<'a> {
+        SourceMapHandlerGetter {
+            vm: self,
+            printer,
+            _marker: core::marker::PhantomData,
+        }
+    }
+
     #[inline]
     pub fn rare_data(&mut self) -> &mut RareData {
         if self.rare_data.is_none() {

@@ -22,9 +22,23 @@ pub enum LengthOrNumber {
 }
 
 impl LengthOrNumber {
-    // pub const parse = css.DeriveParse(@This()).parse;
-    // pub const toCss = css.DeriveToCss(@This()).toCss;
-    // TODO(port): derive Parse + ToCss traits
+    // Zig: `pub const parse = css.DeriveParse(@This()).parse;`
+    // `DeriveParse` for a 2-payload union(enum) tries each payload's `parse`
+    // in declaration order, with the last one's error propagating.
+    pub fn parse(input: &mut Parser) -> CssResult<Self> {
+        if let Ok(n) = input.try_parse(CSSNumberFns::parse) {
+            return Ok(LengthOrNumber::Number(n));
+        }
+        Length::parse(input).map(LengthOrNumber::Length)
+    }
+
+    // Zig: `pub const toCss = css.DeriveToCss(@This()).toCss;`
+    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+        match self {
+            LengthOrNumber::Number(n) => CSSNumberFns::to_css(n, dest),
+            LengthOrNumber::Length(l) => l.to_css(dest),
+        }
+    }
 
     pub fn is_compatible(&self, browsers: Browsers) -> bool {
         match self {
@@ -56,8 +70,22 @@ pub enum LengthPercentageOrAuto {
 }
 
 impl LengthPercentageOrAuto {
-    // pub const parse = css.DeriveParse(@This()).parse;
-    // pub const toCss = css.DeriveToCss(@This()).toCss;
+    // Zig: `pub const parse = css.DeriveParse(@This()).parse;`
+    // Unit variant (`auto`) first → try the keyword, fall through to payload.
+    pub fn parse(input: &mut Parser) -> CssResult<Self> {
+        if input.try_parse(|p| p.expect_ident_matching(b"auto")).is_ok() {
+            return Ok(LengthPercentageOrAuto::Auto);
+        }
+        LengthPercentage::parse(input).map(LengthPercentageOrAuto::Length)
+    }
+
+    // Zig: `pub const toCss = css.DeriveToCss(@This()).toCss;`
+    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+        match self {
+            LengthPercentageOrAuto::Auto => dest.write_str(b"auto"),
+            LengthPercentageOrAuto::Length(lp) => lp.to_css(dest),
+        }
+    }
     // TODO(port): derive Parse + ToCss traits
 
     pub fn is_compatible(&self, browsers: Browsers) -> bool {

@@ -2697,9 +2697,22 @@ mod options {
     }
 
     pub mod bundle_options {
+        pub use super::ForceNodeEnv;
         pub mod defaults {
             pub const CSS_EXTENSION_ORDER: &[&[u8]] = &[b".css"];
         }
+    }
+
+    /// FORWARD_DECL: `bun_bundler::options::BundleOptions::ForceNodeEnv`
+    /// (options.zig:1815). Set by the process environment to override JSX
+    /// configuration; when `Unspecified`, tsconfig.json drives the choice
+    /// between "react-jsx" and "react-jsx-dev-runtime".
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+    pub enum ForceNodeEnv {
+        #[default]
+        Unspecified,
+        Development,
+        Production,
     }
 
     /// FORWARD_DECL: `bun_bundler::options::Framework` (Bake).
@@ -2731,6 +2744,18 @@ mod options {
         pub preserve_symlinks: bool,
         pub rewrite_jest_for_tests: bool,
         pub tsconfig_override: Option<Box<[u8]>>,
+        pub production: bool,
+        pub force_node_env: ForceNodeEnv,
+    }
+
+    impl BundleOptions {
+        /// Port of `options.zig:1825 BundleOptions.setProduction`.
+        pub fn set_production(&mut self, value: bool) {
+            if self.force_node_env == ForceNodeEnv::Unspecified {
+                self.production = value;
+                self.jsx.development = !value;
+            }
+        }
     }
 
     // TODO(b2-blocked): real per-target main-field tables (bundler/options.zig).

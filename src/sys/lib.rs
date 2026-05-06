@@ -368,9 +368,70 @@ pub const MAX_COUNT: usize = i32::MAX as usize;
 #[cfg(windows)]
 pub const MAX_COUNT: usize = u32::MAX as usize;
 
+// ── Darwin `$NOCANCEL` syscall variants (sys.zig:1708,1853,2077,2139,2253,2297)
+// — the plain libc symbols are pthread cancellation points; a cancelled thread
+// torn down mid-syscall leaks fds / corrupts state. Bun always uses the
+// non-cancellable variants on macOS (`bun.darwin.nocancel`).
+#[cfg(target_os = "macos")]
+mod nocancel {
+    use core::ffi::c_int;
+    unsafe extern "C" {
+        #[link_name = "open$NOCANCEL"]
+        pub fn open(path: *const libc::c_char, flags: c_int, mode: libc::c_uint) -> c_int;
+        #[link_name = "openat$NOCANCEL"]
+        pub fn openat(dirfd: c_int, path: *const libc::c_char, flags: c_int, mode: libc::c_uint) -> c_int;
+        #[link_name = "read$NOCANCEL"]
+        pub fn read(fd: c_int, buf: *mut libc::c_void, count: usize) -> isize;
+        #[link_name = "write$NOCANCEL"]
+        pub fn write(fd: c_int, buf: *const libc::c_void, count: usize) -> isize;
+        #[link_name = "pread$NOCANCEL"]
+        pub fn pread(fd: c_int, buf: *mut libc::c_void, count: usize, off: libc::off_t) -> isize;
+        #[link_name = "pwrite$NOCANCEL"]
+        pub fn pwrite(fd: c_int, buf: *const libc::c_void, count: usize, off: libc::off_t) -> isize;
+        #[link_name = "recvfrom$NOCANCEL"]
+        pub fn recvfrom(fd: c_int, buf: *mut libc::c_void, len: usize, flags: c_int, addr: *mut libc::sockaddr, alen: *mut libc::socklen_t) -> isize;
+        #[link_name = "sendto$NOCANCEL"]
+        pub fn sendto(fd: c_int, buf: *const libc::c_void, len: usize, flags: c_int, addr: *const libc::sockaddr, alen: libc::socklen_t) -> isize;
+    }
+}
+
 #[cfg(unix)]
 mod posix_impl {
     use super::*;
+    // Per-platform raw syscall dispatch — macOS uses `$NOCANCEL`, everything
+    // else goes straight to libc.
+    #[inline] unsafe fn sys_open(p: *const libc::c_char, f: i32, m: libc::c_uint) -> i32 {
+        #[cfg(target_os = "macos")] { unsafe { super::nocancel::open(p, f, m) } }
+        #[cfg(not(target_os = "macos"))] { unsafe { libc::open(p, f, m) } }
+    }
+    #[inline] unsafe fn sys_openat(d: i32, p: *const libc::c_char, f: i32, m: libc::c_uint) -> i32 {
+        #[cfg(target_os = "macos")] { unsafe { super::nocancel::openat(d, p, f, m) } }
+        #[cfg(not(target_os = "macos"))] { unsafe { libc::openat(d, p, f, m) } }
+    }
+    #[inline] unsafe fn sys_read(fd: i32, buf: *mut libc::c_void, n: usize) -> isize {
+        #[cfg(target_os = "macos")] { unsafe { super::nocancel::read(fd, buf, n) } }
+        #[cfg(not(target_os = "macos"))] { unsafe { libc::read(fd, buf, n) } }
+    }
+    #[inline] unsafe fn sys_write(fd: i32, buf: *const libc::c_void, n: usize) -> isize {
+        #[cfg(target_os = "macos")] { unsafe { super::nocancel::write(fd, buf, n) } }
+        #[cfg(not(target_os = "macos"))] { unsafe { libc::write(fd, buf, n) } }
+    }
+    #[inline] unsafe fn sys_pread(fd: i32, buf: *mut libc::c_void, n: usize, off: i64) -> isize {
+        #[cfg(target_os = "macos")] { unsafe { super::nocancel::pread(fd, buf, n, off) } }
+        #[cfg(not(target_os = "macos"))] { unsafe { libc::pread(fd, buf, n, off) } }
+    }
+    #[inline] unsafe fn sys_pwrite(fd: i32, buf: *const libc::c_void, n: usize, off: i64) -> isize {
+        #[cfg(target_os = "macos")] { unsafe { super::nocancel::pwrite(fd, buf, n, off) } }
+        #[cfg(not(target_os = "macos"))] { unsafe { libc::pwrite(fd, buf, n, off) } }
+    }
+    #[inline] unsafe fn sys_recv(fd: i32, buf: *mut libc::c_void, n: usize, flags: i32) -> isize {
+        #[cfg(target_os = "macos")] { unsafe { super::nocancel::recvfrom(fd, buf, n, flags, core::ptr::null_mut(), core::ptr::null_mut()) } }
+        #[cfg(not(target_os = "macos"))] { unsafe { libc::recv(fd, buf, n, flags) } }
+    }
+    #[inline] unsafe fn sys_send(fd: i32, buf: *const libc::c_void, n: usize, flags: i32) -> isize {
+        #[cfg(target_os = "macos")] { unsafe { super::nocancel::sendto(fd, buf, n, flags, core::ptr::null(), 0) } }
+        #[cfg(not(target_os = "macos"))] { unsafe { libc::send(fd, buf, n, flags) } }
+    }
     // EINTR-retry: every syscall in sys.zig is wrapped in
     // `while (true) { ...; if errno == .INTR continue; }`. We do the same in the
     // check macro so every caller below gets it for free.
@@ -398,11 +459,11 @@ mod posix_impl {
     }}}
 
     pub fn open(path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
-        let rc = check_p!(unsafe { libc::open(path.as_ptr(), flags, mode as libc::c_uint) }, Tag::open, path);
+        let rc = check_p!(unsafe { sys_open(path.as_ptr(), flags, mode as libc::c_uint) }, Tag::open, path);
         Ok(Fd::from_native(rc))
     }
     pub fn openat(dir: Fd, path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
-        let rc = check_p!(unsafe { libc::openat(dir.native(), path.as_ptr(), flags, mode as libc::c_uint) }, Tag::open, path);
+        let rc = check_p!(unsafe { sys_openat(dir.native(), path.as_ptr(), flags, mode as libc::c_uint) }, Tag::open, path);
         Ok(Fd::from_native(rc))
     }
     pub fn close(fd: Fd) -> Maybe<()> {
@@ -1759,8 +1820,13 @@ impl DynLib {
     /// `dlopen(path, RTLD_LAZY)` / `LoadLibraryA(path)`.
     pub fn open(path: &[u8]) -> core::result::Result<Self, bun_core::Error> {
         let mut buf = bun_paths::PathBuffer::default();
-        let len = path.len().min(buf.0.len() - 1);
-        buf.0[..len].copy_from_slice(&path[..len]);
+        // `std.DynLib.open` returns `error.NameTooLong`; never truncate (could
+        // dlopen a different library whose path is a prefix of the requested one).
+        if path.len() >= buf.0.len() {
+            return Err(bun_core::err!("NameTooLong"));
+        }
+        let len = path.len();
+        buf.0[..len].copy_from_slice(path);
         buf.0[len] = 0;
         // SAFETY: NUL-terminated above.
         let z = unsafe { ZStr::from_raw(buf.0.as_ptr(), len) };

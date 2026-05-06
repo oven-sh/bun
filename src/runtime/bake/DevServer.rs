@@ -774,7 +774,9 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
         Ok(f) => f,
         Err(_) => {
             if dev.framework.is_built_in_react {
-                bake::Framework::add_react_install_command_note(&mut dev.log)?;
+                // TODO(port): blocked_on: bake::Framework / bake_body::Framework unification
+                // — `add_react_install_command_note` lives on `bake_body::Framework`.
+                let _ = &mut dev.log;
             }
             return Err(global.throw_value(
                 dev.log
@@ -793,7 +795,6 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
             let stat = sys::stat(
                 bun_core::self_exe_path().unwrap_or_else(|e| Output::panic(format_args!("unhandled {}", e))),
             )
-            .unwrap()
             .unwrap_or_else(|e| Output::panic(format_args!("unhandled {}", e)));
             bun_core::write_any_to_hasher(&mut h, &stat.mtime());
             h.update(crate::bake::bake_body::get_hmr_runtime(bake::Side::Client).code);
@@ -803,8 +804,8 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
         }
 
         for fsr in &dev.framework.file_system_router_types {
-            bun_core::write_any_to_hasher(&mut h, &fsr.allow_layouts);
-            bun_core::write_any_to_hasher(&mut h, &fsr.ignore_underscores);
+            bun_core::write_any_to_hasher(&mut h, &(fsr.allow_layouts as u8));
+            bun_core::write_any_to_hasher(&mut h, &(fsr.ignore_underscores as u8));
             h.update(&fsr.entry_server);
             h.update(&[0]);
             h.update(fsr.entry_client.as_deref().unwrap_or(b""));
@@ -826,8 +827,8 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
         }
 
         if let Some(sc) = &dev.framework.server_components {
-            bun_core::write_any_to_hasher(&mut h, &true);
-            bun_core::write_any_to_hasher(&mut h, &sc.separate_ssr_graph);
+            bun_core::write_any_to_hasher(&mut h, &1u8);
+            bun_core::write_any_to_hasher(&mut h, &(sc.separate_ssr_graph as u8));
             h.update(&sc.client_register_server_reference);
             h.update(&[0]);
             h.update(&sc.server_register_client_reference);

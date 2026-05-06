@@ -4945,7 +4945,17 @@ impl NodeFS {
         buf: &mut PathBuffer, args: &args::Readdir, async_task: &mut AsyncReaddirRecursiveTask,
         basename: &ZStr, entries: &mut Vec<T>, is_root: bool,
     ) -> Maybe<()> {
-        let root_basename = async_task.root_path.slice();
+        // PORT NOTE: `root_path` is never mutated for the lifetime of the task, but
+        // borrowck can't see that across `async_task.enqueue(&mut self, …)`. Detach
+        // the slice via raw-pointer round-trip — same bytes Zig's `[]const u8` saw.
+        // SAFETY: `async_task.root_path`'s backing storage is fixed at `create()` and
+        // outlives every `enqueue` call below.
+        let root_basename: &[u8] = unsafe {
+            core::slice::from_raw_parts(
+                async_task.root_path.slice().as_ptr(),
+                async_task.root_path.slice().len(),
+            )
+        };
         let flags = sys::O::DIRECTORY | sys::O::RDONLY;
         let atfd = if is_root { FD::cwd() } else { async_task.root_fd };
         #[cfg(not(windows))]
@@ -5094,7 +5104,7 @@ impl NodeFS {
         let mut first_is_root = true;
 
         let mut root_fd = FD::INVALID;
-        let _close_root = scopeguard::guard(&mut root_fd, |root_fd| {
+        let mut _close_root = scopeguard::guard(&mut root_fd, |root_fd| {
             // all other paths are relative to the root directory
             // so we can only close it once we're 100% done
             if *root_fd != FD::INVALID { root_fd.close(); }
@@ -7232,7 +7242,7 @@ pub fn zig_delete_tree(self_: sys::Dir, sub_path: &[u8], kind_hint: sys::FileKin
     let close_all = |stack: &mut Vec<DeleteTreeStackItem>| {
         for item in stack.drain(..) { item.iter.iter.dir.close(); }
     };
-    let _close_all = scopeguard::guard(&mut stack, |s| close_all(s));
+    let mut _close_all = scopeguard::guard(&mut stack, |s| close_all(s));
     let stack: &mut Vec<DeleteTreeStackItem> = &mut *_close_all;
 
     stack.push(DeleteTreeStackItem {

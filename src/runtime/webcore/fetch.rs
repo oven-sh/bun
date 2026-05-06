@@ -86,6 +86,7 @@ use crate::socket::ssl_config::SSLConfig;
 #[allow(unused_imports)]
 use crate::socket::ssl_config;
 use crate::webcore::{AbortSignal, Blob, Body, FetchHeaders, ObjectURLRegistry, ReadableStream, Request, Response};
+use crate::api::h2_frame_parser_body::abort_signal_shim::AbortSignalExt as _;
 use crate::webcore::{body, response, readable_stream, blob};
 use crate::webcore::body::{Value as BodyValue, Action as BodyValueLockedAction, InternalBlob};
 use crate::webcore::s3_client::S3CredentialsExt as _;

@@ -1590,13 +1590,13 @@ fn write_file_with_empty_source_to_destination(
                                     );
                                     match open_res {
                                         bun_sys::Result::Err(e) => {
-                                            if e.get_errno() == bun_sys::E::INTR { continue; }
+                                            if e.get_errno() == bun_sys::E::EINTR { continue; }
                                             *err = e;
                                             break 'err;
                                         }
                                         bun_sys::Result::Ok(fd) => {
                                             fd.close();
-                                            return Ok(JSPromise::resolved_promise_value(ctx, JSValue::js_number(0)));
+                                            return Ok(JSPromise::resolved_promise_value(ctx, JSValue::js_number(0.0)));
                                         }
                                     }
                                 }
@@ -1606,7 +1606,7 @@ fn write_file_with_empty_source_to_destination(
                     }
                 }
 
-                *err = err.with_path_like(&file.pathlike);
+                *err = sys_error_with_path_like(err, &file.pathlike);
                 return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                     ctx,
                     result.to_js(ctx)?,

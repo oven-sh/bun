@@ -738,14 +738,14 @@ pub fn get_bucket_name(this: &Blob) -> Option<&[u8]> {
 // so the proc-macro shim is not used here — the raw ABI shim is hand-wired.
 pub fn get_bucket(this: &Blob, global: &JSGlobalObject) -> JsResult<JSValue> {
     if let Some(name) = get_bucket_name(this) {
-        return bun_str::String::create_utf8_for_js(global, name);
+        return bun_jsc::bun_string_jsc::create_utf8_for_js(global, name);
     }
     Ok(JSValue::UNDEFINED)
 }
 
 pub fn get_presign_url(this: &mut Blob, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let args = callframe.arguments_old(1);
-    get_presign_url_from(this, global, if args.len() > 0 { Some(args.ptr[0]) } else { None })
+    let args = callframe.arguments_old::<1>();
+    get_presign_url_from(this, global, if args.len > 0 { Some(args.ptr[0]) } else { None })
 }
 
 pub fn get_stat(this: &mut Blob, global: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<JSValue> {
@@ -754,15 +754,16 @@ pub fn get_stat(this: &mut Blob, global: &JSGlobalObject, _callframe: &CallFrame
 
 #[bun_jsc::host_fn]
 pub fn stat(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let arguments = callframe.arguments_old(3).slice();
-    let mut args = bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), arguments);
+    let arguments = callframe.arguments_old::<3>();
+    // SAFETY: bun_vm() returns the live VM raw ptr.
+    let mut args = bun_jsc::call_frame::ArgumentsSlice::init(unsafe { &*global.bun_vm() }, arguments.slice());
 
     // accept a path or a blob
     let mut path_or_blob = PathOrBlob::from_js_no_copy(global, &mut args)?;
 
     if let PathOrBlob::Blob(blob) = &path_or_blob {
         if blob.store.is_none() || !matches!(blob.store.as_ref().unwrap().data, blob::store::Data::S3(_)) {
-            return global.throw_invalid_arguments("Expected a S3 or path to get size", &[]);
+            return Err(global.throw_invalid_arguments("Expected a S3 or path to get size"));
         }
     }
 
@@ -770,9 +771,9 @@ pub fn stat(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue>
         PathOrBlob::Path(path) => {
             let options = args.next_eat();
             if matches!(path, crate::node::PathOrFileDescriptor::Fd(_)) {
-                return global.throw_invalid_arguments("Expected a S3 or path to get size", &[]);
+                return Err(global.throw_invalid_arguments("Expected a S3 or path to get size"));
             }
-            let mut blob = construct_s3_file_internal_store(global, path.path(), options)?;
+            let mut blob = construct_s3_file_internal_store(global, path.path().clone(), options)?;
 
             S3BlobStatTask::stat(global, &mut blob)
         }

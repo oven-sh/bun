@@ -100,6 +100,22 @@ impl Default for ServerConfig {
     }
 }
 
+/// Parse `bytes` into a `URL<'static>` by erasing the borrow lifetime.
+///
+/// # Safety
+/// The returned `URL` borrows directly into `bytes`. Caller must guarantee the
+/// backing allocation (ServerConfig::base_uri's heap buffer) outlives every
+/// read of the returned URL's fields, and that `base_url` is reset to
+/// `URL::default()` *before* `base_uri` is freed or reassigned. This mirrors
+/// the self-referential `base_url -> base_uri` layout from ServerConfig.zig
+/// until an owned-URL reshape lands (see PORT NOTE on the struct fields).
+#[inline]
+unsafe fn parse_base_url_static(bytes: &[u8]) -> URL<'static> {
+    let extended: &'static [u8] =
+        unsafe { core::slice::from_raw_parts(bytes.as_ptr(), bytes.len()) };
+    URL::parse(extended)
+}
+
 pub enum Address {
     Tcp { port: u16, hostname: Option<CString> },
     Unix(CString),

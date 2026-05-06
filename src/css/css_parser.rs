@@ -2518,15 +2518,18 @@ mod stylesheet_impl { use super::*;
 
 impl<AtRule> StyleSheet<AtRule> {
     /// Minify and transform the style sheet for the provided browser targets.
+    ///
+    /// PORT NOTE: `allocator` is the arena that owns this stylesheet's AST
+    /// (Zig: `allocator: Allocator`). It is threaded into `MinifyContext` so
+    /// downstream `deep_clone` calls allocate alongside the existing tree.
     pub fn minify(
         &mut self,
+        allocator: &Bump,
         options: &MinifyOptions,
         extra: &StylesheetExtra,
     ) -> Maybe<(), Err<MinifyErrorKind>> {
-        // blocked_on: MinifyContext full field set (rules/mod.rs), CssRuleList::minify
-        // (rules/mod.rs), PropertyHandlerContext::new unused_symbols arg type
-        // (`&HashSet<String>` vs `&ArrayHashMap<Box<[u8]>,()>`), CustomMediaRule::deep_clone
-        // arena arg.
+        // blocked_on: PropertyHandlerContext::new unused_symbols arg type
+        // (`&HashSet<String>` vs `&ArrayHashMap<Box<[u8]>,()>`).
         let ctx = PropertyHandlerContext::new(options.targets, &options.unused_symbols);
         let mut handler = DeclarationHandler::default();
         let mut important_handler = DeclarationHandler::default();
@@ -2541,7 +2544,7 @@ impl<AtRule> StyleSheet<AtRule> {
                 let mut custom_media = ArrayHashMap::default();
                 for rule in self.rules.v.iter() {
                     if let CssRule::CustomMedia(cm) = rule {
-                        custom_media.insert(cm.name.v.into(), cm.deep_clone());
+                        custom_media.insert(cm.name.v.into(), cm.deep_clone(allocator));
                     }
                 }
                 Some(custom_media)
@@ -2550,6 +2553,7 @@ impl<AtRule> StyleSheet<AtRule> {
             };
 
         let mut minify_ctx = MinifyContext {
+            allocator,
             targets: &options.targets,
             handler: &mut handler,
             important_handler: &mut important_handler,
@@ -2558,6 +2562,7 @@ impl<AtRule> StyleSheet<AtRule> {
             custom_media,
             css_modules: self.options.css_modules.is_some(),
             extra,
+            err: None,
         };
 
         if self.rules.minify(&mut minify_ctx, false).is_err() {

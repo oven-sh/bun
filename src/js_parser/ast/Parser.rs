@@ -273,7 +273,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn scan_imports(&mut self, scan_pass: &mut ScanPassResult) -> Result<(), Error> {
+    pub fn scan_imports(&mut self, scan_pass: &'a mut ScanPassResult) -> Result<(), Error> {
         if self.options.ts && self.options.jsx.parse {
             self._scan_imports::<true, JsxReact>(scan_pass)
         } else if self.options.ts {
@@ -288,7 +288,7 @@ impl<'a> Parser<'a> {
      // blocked_on: P::init / parse_stmts_up_to / add_import_record (P.rs gated)
     fn _scan_imports<const TS: bool, JX: JsxT>(
         &mut self,
-        scan_pass: &mut ScanPassResult,
+        scan_pass: &'a mut ScanPassResult,
     ) -> Result<(), Error> {
         type Pi<'a, const TS: bool, JX> = P<'a, TS, JX, true>;
         let mut p = Pi::<TS, JX>::init(
@@ -348,7 +348,7 @@ impl<'a> Parser<'a> {
 
         //
         if TS {
-            for import_record in scan_pass.import_records.as_mut_slice() {
+            for import_record in p.import_records.items_mut() {
                 // Mark everything as unused
                 // Except:
                 // - export * as ns from 'foo';
@@ -363,11 +363,19 @@ impl<'a> Parser<'a> {
                 import_record.flags.set(ImportRecordFlags::IS_UNUSED, new_unused);
             }
 
-            let mut iter = scan_pass.used_symbols.iterator();
+            // PORT NOTE: `scan_pass.used_symbols`/`import_records` are still
+            // exclusively borrowed inside `p`; route through `p`'s fields so the
+            // borrow checker sees disjoint field access on the same struct.
+            let import_records = p.import_records.items_mut();
+            let mut iter = p
+                .parse_pass_symbol_uses
+                .as_deref_mut()
+                .expect("set above for TS")
+                .iterator();
             while let Some(entry) = iter.next() {
                 let val = entry.value_ptr;
                 if val.used {
-                    scan_pass.import_records.as_mut_slice()[val.import_record_index as usize]
+                    import_records[val.import_record_index as usize]
                         .flags
                         .remove(ImportRecordFlags::IS_UNUSED);
                 }

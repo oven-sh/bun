@@ -833,60 +833,76 @@ fn minify_style_arm<R>(
 
 // ─── StyleRuleKey ──────────────────────────────────────────────────────────
 /// A key to a `StyleRule` meant for use in a hash map for quickly detecting
-/// duplicates. It stores a raw pointer to the backing `Vec` and an index so it
-/// can access items without cloning even when the list is reallocated. A hash
-/// is also pre-computed for fast lookups.
-pub struct StyleRuleKey<R> {
-    list: *const Vec<CssRule<R>>,
+/// duplicates. It stores an index into the live `rules` Vec plus a
+/// pre-computed hash for fast lookups.
+///
+/// PORT NOTE: the Zig spec (`rules.zig:StyleRuleKey`) additionally stores
+/// `list: *const ArrayList(CssRule(R))` and dereferences it inside `eql()`.
+/// That pattern is unsound in Rust under Stacked/Tree Borrows — keys persist
+/// in the dedup map across iterations of `minify_style_arm`, and between
+/// iterations the same `Vec` is written through fresh `&mut` reborrows
+/// (`rules.push`, `rules[i] = Ignored`), invalidating any previously-derived
+/// `*const Vec` provenance. Instead we keep only `(index, hash)` here and do
+/// the equality check in `StyleRuleKeyMap::remove_duplicate`, which receives
+/// the live `&[CssRule<R>]` slice explicitly at the call site.
+#[derive(Clone, Copy)]
+pub struct StyleRuleKey {
     index: usize,
     hash: u64,
 }
 
-impl<R> StyleRuleKey<R> {
-    pub fn new(list: &Vec<CssRule<R>>, index: usize) -> Self {
-        
+impl StyleRuleKey {
+    pub fn new<R>(list: &[CssRule<R>], index: usize) -> Self {
         let hash = match &list[index] {
             CssRule::Style(rule) => rule.hash_key(),
             _ => 0,
         };
-        // blocked_on: StyleRule::hash_key (gated in style.rs).
-        #[cfg(any())]
-        let hash = index as u64;
-        Self { list: list as *const _, index, hash }
+        Self { index, hash }
     }
 }
 
-impl<R> core::hash::Hash for StyleRuleKey<R> {
-    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
-        state.write_u64(self.hash);
-    }
+/// Dedup table for [`StyleRuleKey`]s — the Rust-side equivalent of Zig's
+/// `StyleRuleKey(R).HashMap(usize)`.
+///
+/// Buckets keyed by the pre-computed `StyleRule::hash_key()` hold indices into
+/// the caller's `rules` Vec; equality (`StyleRule::is_duplicate`) is evaluated
+/// against an explicitly-passed `&[CssRule<R>]` so we never smuggle a stale
+/// raw pointer across `&mut rules` writes (see PORT NOTE on `StyleRuleKey`).
+#[derive(Default)]
+pub struct StyleRuleKeyMap {
+    buckets: std::collections::HashMap<u64, Vec<usize>>,
 }
 
-impl<R> PartialEq for StyleRuleKey<R> {
-    fn eq(&self, other: &Self) -> bool {
-        // blocked_on: StyleRule::is_duplicate (gated in style.rs).
-        
-        {
-            // SAFETY: keys are only compared while the backing Vec is alive
-            // (scoped to a single `CssRuleList::minify` frame).
-            let (a, b) = unsafe { (&*self.list, &*other.list) };
-            let rule = match a.get(self.index) {
-                Some(CssRule::Style(r)) => r,
-                _ => return false,
-            };
-            let other_rule = match b.get(other.index) {
-                Some(CssRule::Style(r)) => r,
-                _ => return false,
-            };
-            return rule.is_duplicate(other_rule);
-        }
-        #[cfg(any())]
-        {
-            core::ptr::eq(self.list, other.list) && self.index == other.index
-        }
+impl StyleRuleKeyMap {
+    /// Zig `style_rules.fetchSwapRemove(key)` — find and remove an earlier
+    /// index whose rule `is_duplicate` of `rules[key.index]`.
+    pub fn remove_duplicate<R>(
+        &mut self,
+        rules: &[CssRule<R>],
+        key: &StyleRuleKey,
+    ) -> Option<usize> {
+        let bucket = self.buckets.get_mut(&key.hash)?;
+        let CssRule::Style(rule) = &rules[key.index] else { return None };
+        let pos = bucket.iter().position(|&other_idx| {
+            // Mirrors `StyleRuleKey.eql` from rules.zig: bounds-check + .style
+            // tag-check + `isDuplicate`.
+            match rules.get(other_idx) {
+                Some(CssRule::Style(other_rule)) => rule.is_duplicate(other_rule),
+                _ => false,
+            }
+        })?;
+        Some(bucket.swap_remove(pos))
+    }
+
+    /// Zig `style_rules.put(ctx.allocator, key, idx)`.
+    pub fn insert(&mut self, key: StyleRuleKey) {
+        self.buckets.entry(key.hash).or_default().push(key.index);
+    }
+
+    pub fn clear(&mut self) {
+        self.buckets.clear();
     }
 }
-impl<R> Eq for StyleRuleKey<R> {}
 
 // ─── merge_style_rules ─────────────────────────────────────────────────────
 
@@ -897,12 +913,7 @@ pub fn merge_style_rules<R>(
     last_style_rule: &mut style::StyleRule<R>,
     context: &mut MinifyContext<'_>,
 ) -> bool {
-    // blocked_on: StyleRule::is_compatible, SelectorList::eql,
-    // selector::is_equivalent, DeclarationBlock::{eql,minify},
-    // DeclarationList::extend_from_slice — all gated.
-    
-    {
-        use css::VendorPrefix;
+    use css::VendorPrefix;
         // Merge declarations if the selectors are equivalent, and both are compatible with all targets.
         // Does not apply if css modules are enabled.
         if sty.selectors.eql(&last_style_rule.selectors)
@@ -968,13 +979,7 @@ pub fn merge_style_rules<R>(
                 return true;
             }
         }
-        false
-    }
-    #[cfg(any())]
-    {
-        let _ = (sty, last_style_rule, context);
-        false
-    }
+    false
 }
 
 // ─── Location / StyleContext / MinifyContext ──────────────────────────────

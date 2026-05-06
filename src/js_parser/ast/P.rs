@@ -3359,10 +3359,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         let mut initializer: Option<ExprNodeIndex> = None;
         let mut expr = _expr;
         // zig syntax is sometimes painful
-        if let js_ast::ExprData::EBinary(mut bin) = expr.data {
+        if let js_ast::ExprData::EBinary(bin) = expr.data {
             if bin.op == js_ast::op::Code::BinAssign {
                 initializer = Some(bin.right);
-                expr = &mut bin.left;
+                // SAFETY: StoreRef points into the AST arena (lifetime 'a); reborrow
+                // bin.left mutably so the &mut on `_expr.data` above can end.
+                expr = unsafe { &mut (*bin.as_ptr()).left };
             }
         }
 

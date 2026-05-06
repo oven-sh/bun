@@ -312,6 +312,7 @@ pub extern "C" fn select_alpn_callback(
 // set of `${Name}__fromJS`/`__create` externs, but this type maps to TWO
 // codegen classes (`JSTCPSocket` / `JSTLSSocket`). The codegen accessors are
 // hand-dispatched per-monomorphisation in the `impl` block below instead.
+#[repr(C)]
 pub struct NewSocket<const SSL: bool> {
     pub socket: uws::NewSocketHandler<SSL>,
     /// `SSL_CTX*` this client connection was opened with. One owned ref —
@@ -482,9 +483,12 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // SAFETY: short-lived read; see `get_handlers` contract.
         let vm = unsafe { (*self.get_handlers()).vm };
-        // SAFETY: per-thread VM singleton; no aliasing `&mut` held across the
-        // `rare_data()` borrow — `vm` reborrowed immutably for the 2nd arg.
-        let group = unsafe { &mut *(vm as *const VirtualMachine as *mut VirtualMachine) }
+        // SAFETY: per-thread VM singleton; `VirtualMachine::get()` yields the
+        // canonical `*mut` (write provenance) — never derive `&mut` from the
+        // `&'static` borrow stored on Handlers (that's `invalid_reference_casting`).
+        // No aliasing `&mut` held across the `rare_data()` borrow — `vm`
+        // reborrowed immutably for the 2nd arg.
+        let group = unsafe { &mut *VirtualMachine::get() }
             .rare_data()
             .bun_connect_group::<SSL>(vm);
         let kind: uws::SocketKind = if SSL {

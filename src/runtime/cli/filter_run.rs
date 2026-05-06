@@ -967,20 +967,14 @@ pub fn run_scripts_with_filter(ctx: Command::Context) -> Result<core::convert::I
     }
     // compute dependencies (TODO: maybe we should do this only in a workspace?)
     for handle in state.handles.iter_mut() {
-        let source_buf = handle.config.deps.source_buf;
-        // PORT NOTE: `ArrayHashMap::iterator` takes `&mut self`; `config` is a
-        // shared borrow into `scripts`. Cast through raw to obtain `&mut` for the
-        // iteration only — `scripts` is not otherwise borrowed across this loop
-        // (Zig: aliased `*const` freely).
-        // SAFETY: `scripts` outlives the loop; no other live borrow of
-        // `handle.config.deps.map` exists.
-        let deps_map = unsafe {
-            &mut *(&handle.config.deps.map as *const _
-                as *mut bun_resolver::package_json::DependencyHashMap)
-        };
-        let mut iter = deps_map.iterator();
-        while let Some(entry) = iter.next() {
-            let name = entry.key_ptr.slice(source_buf);
+        // PORT NOTE: `ArrayHashMap::iterator` takes `&mut self` but `config` is a
+        // shared borrow into `scripts`. We only need read access to the keys, so
+        // copy the `&ScriptConfig` out (refs are `Copy`) and iterate `.keys()`
+        // instead — avoids the `&T -> &mut T` cast Zig allowed via aliased `*const`.
+        let config = handle.config;
+        let source_buf = config.deps.source_buf;
+        for key in config.deps.map.keys() {
+            let name = key.slice(source_buf);
             // is it a workspace dependency?
             if let Some(pkgs) = map.get(name) {
                 for &dep in pkgs {

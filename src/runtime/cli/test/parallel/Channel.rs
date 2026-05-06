@@ -181,13 +181,15 @@ impl<Owner: ChannelOwner> Channel<Owner> {
     /// socketpair end. Windows: the inherited named-pipe end (worker side).
     // PORT NOTE: callers (`runner.rs`, `Worker.rs`) only hold `&VirtualMachine`;
     // the upstream `rare_data()` / `test_parallel_ipc_group()` accessors require
-    // `&mut`. We cast away const locally — single-threaded init path, mirrors
-    // Zig's `*jsc.VirtualMachine`.
-    pub fn adopt(&mut self, vm: &VirtualMachine, fd: Fd) -> bool {
+    // `&mut`. Take a raw `*const` (matches Zig `*jsc.VirtualMachine`) and cast
+    // away const locally — single-threaded init path. A `&VirtualMachine`
+    // parameter would trip `invalid_reference_casting` on the `&T → &mut T`
+    // promotion; the raw-pointer route sidesteps that lint while keeping both
+    // call sites (which pass `&`/`&mut` and coerce) unchanged.
+    pub fn adopt(&mut self, vm: *const VirtualMachine, fd: Fd) -> bool {
         // SAFETY: see PORT NOTE — VM is process-singleton and accessed only
-        // from the main thread here.
-        let vm: &mut VirtualMachine =
-            unsafe { &mut *(vm as *const VirtualMachine as *mut VirtualMachine) };
+        // from the main thread here; `vm` is non-null and live for the call.
+        let vm: &mut VirtualMachine = unsafe { &mut *vm.cast_mut() };
         #[cfg(windows)]
         {
             let _ = vm;

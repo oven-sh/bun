@@ -1307,18 +1307,20 @@ impl FetchTasklet {
 
         let mut url = fetch_options.url;
         let mut proxy: Option<ZigURL> = None;
+        // SAFETY: transpiler is a self-ptr field on the VM; uniquely accessed here.
+        let env = unsafe { &mut (*global_this.bun_vm()).transpiler.env };
         if let Some(proxy_opt) = &fetch_options.proxy {
             if !proxy_opt.is_empty() {
                 //if is empty just ignore proxy
                 // Check NO_PROXY even for explicitly-provided proxies
-                if !jsc_vm.transpiler.env.is_no_proxy(url.hostname, url.host) {
+                if !env.is_no_proxy(Some(url.hostname), Some(url.host)) {
                     proxy = Some(proxy_opt.clone());
                 }
             }
             // else: proxy: "" means explicitly no proxy (direct connection)
         } else {
             // no proxy provided, use default proxy resolution
-            if let Some(env_proxy) = jsc_vm.transpiler.env.get_http_proxy_for(&url) {
+            if let Some(env_proxy) = env.get_http_proxy_for(&url) {
                 // env_proxy.href may be a slice into a RefCountedEnvValue's bytes which can
                 // be freed by a subsequent `process.env.HTTP_PROXY = "..."` assignment while
                 // this fetch is in flight on the HTTP thread. Clone it into url_proxy_buffer

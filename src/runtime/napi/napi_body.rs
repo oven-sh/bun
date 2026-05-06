@@ -48,7 +48,7 @@ trait JSValueNapiExt {
 unsafe extern "C" {
     fn JSC__JSValue__isStrictEqual(this: JSValue, other: JSValue, global: *mut JSGlobalObject) -> bool;
     fn Bun__JSValue__isAsyncContextFrame(value: JSValue) -> bool;
-    fn AsyncContextFrame__withAsyncContextIfNeeded(global: *mut JSGlobalObject, callback: JSValue) -> JSValue;
+    fn AsyncContextFrame__withAsyncContextIfNeeded(global: *const JSGlobalObject, callback: JSValue) -> JSValue;
     fn JSBuffer__bufferFromLength(global: *mut JSGlobalObject, len: i64) -> JSValue;
 }
 
@@ -515,7 +515,7 @@ type napi_key_filter = c_uint;
 type napi_key_conversion = c_uint;
 
 #[repr(C)]
-struct napi_type_tag {
+pub struct napi_type_tag {
     lower: u64,
     upper: u64,
 }

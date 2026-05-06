@@ -1781,7 +1781,7 @@ pub trait BodyMixin: BodyOwnerJs + Sized {
                     return Ok(handle_body_already_used(global_object));
                 }
                 // PORT NOTE: reshaped for borrowck
-                drop(locked);
+                let _ = locked;
                 let value = self.get_body_value();
                 value.to_blob_if_possible();
                 if let Value::Locked(locked) = value {
@@ -1828,7 +1828,7 @@ pub trait BodyMixin: BodyOwnerJs + Sized {
                 {
                     return Ok(handle_body_already_used(global_object));
                 }
-                drop(locked);
+                let _ = locked;
                 let value = self.get_body_value();
                 value.to_blob_if_possible();
                 if let Value::Locked(locked) = value {
@@ -1875,7 +1875,7 @@ pub trait BodyMixin: BodyOwnerJs + Sized {
                 {
                     return Ok(handle_body_already_used(global_object));
                 }
-                drop(locked);
+                let _ = locked;
                 let value = self.get_body_value();
                 value.to_blob_if_possible();
                 if let Value::Locked(locked) = value {
@@ -1920,7 +1920,7 @@ pub trait BodyMixin: BodyOwnerJs + Sized {
                 {
                     return Ok(handle_body_already_used(global_object));
                 }
-                drop(locked);
+                let _ = locked;
                 let value = self.get_body_value();
                 value.to_blob_if_possible();
             }
@@ -2019,7 +2019,7 @@ pub trait BodyMixin: BodyOwnerJs + Sized {
                 {
                     return Ok(handle_body_already_used(global_object));
                 }
-                drop(locked);
+                let _ = locked;
                 let value = self.get_body_value();
                 value.to_blob_if_possible();
                 if let Value::Locked(locked) = value {

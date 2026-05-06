@@ -3157,15 +3157,17 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
     pub fn on_saved_request<const ARG_COUNT: usize>(
         &mut self,
-        req: SavedRequestUnion,
+        mut req: SavedRequestUnion,
         resp: &mut uws_sys::NewAppResponse<SSL>,
         callback: JSValue,
         extra_args: [JSValue; ARG_COUNT],
     ) {
         let self_ptr: *mut Self = self;
-        let prepared: ServerPreparedRequest<'_, SSL, DEBUG> = match &req {
+        let prepared: ServerPreparedRequest<'_, SSL, DEBUG> = match &mut req {
             SavedRequestUnion::Stack(r) => {
-                let r: *mut uws::Request = &**r as *const uws::Request as *mut uws::Request;
+                // Reborrow the inner `&mut uws::Request` as a raw *mut to decouple
+                // its lifetime from the `req` borrow used by the match guard.
+                let r: *mut uws::Request = *r;
                 match self.prepare_js_request_context(
                     // SAFETY: stack uws::Request still alive
                     unsafe { &mut *r },

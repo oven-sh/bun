@@ -8,7 +8,7 @@ use crate::strong::Optional as Strong;
 use bun_uws::{self as uws, SocketGroup, SslCtx};
 use bun_boringssl as boring_ssl;
 use bun_aio::{self as Async, FilePoll};
-use bun_sys::{self as syscall, Fd};
+use bun_sys::{self as syscall, Fd, FdExt as _};
 use bun_core::{Output, Mutex};
 use bun_collections::{StringArrayHashMap, TaggedPtrUnion};
 use bun_string::{self as strings, ZStr};
@@ -99,7 +99,7 @@ impl HotMap {
     /// Untyped insert — typed `insert<T>` stays gated until `TaggedPtrUnion`
     /// over the high-tier `api::*` types is wired.
     pub fn insert_raw(&mut self, key: &[u8], entry: HotMapEntry) {
-        let gop = bun_core::handle_oom(self._map.get_or_put(key));
+        let gop = self._map.get_or_put(key).expect("oom");
         if gop.found_existing {
             panic!("HotMap already contains key");
         }
@@ -1523,14 +1523,8 @@ impl RareData {
             // PORT NOTE: in-place out-param init — Zig used Owned::new(undefined)
             // then ptr.init(vm). `event_loop` inside captures `self`-addr, so the
             // value must not move after init; allocate the Box first, init into it.
-            let mut boxed = Box::<core::mem::MaybeUninit<SpawnSyncEventLoop>>::new_uninit();
-            SpawnSyncEventLoop::init(
-                // SAFETY: `MaybeUninit<MaybeUninit<T>>` and `MaybeUninit<T>` have
-                // identical layout; `assume_init_mut` here just peels the outer
-                // wrapper around still-uninitialised storage.
-                unsafe { boxed.assume_init_mut() },
-                vm as *mut VirtualMachine as *mut (),
-            );
+            let mut boxed = Box::<SpawnSyncEventLoop>::new_uninit();
+            SpawnSyncEventLoop::init(&mut *boxed, vm as *mut VirtualMachine as *mut ());
             // SAFETY: `init` fully initialised the slot.
             self.spawn_sync_event_loop_ = Some(unsafe { boxed.assume_init() });
         }
@@ -1559,7 +1553,7 @@ impl RareData {
         for socket in self.listening_sockets_for_watch_mode.drain(..) {
             // Prevent TIME_WAIT state.
             // SAFETY: FFI; `socket` is a live fd we registered.
-            unsafe { Bun__disableSOLinger(socket.cast()) };
+            unsafe { Bun__disableSOLinger(socket.native()) };
             socket.close();
         }
     }

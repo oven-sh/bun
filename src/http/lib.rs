@@ -3647,8 +3647,14 @@ impl HTTPClient {
         if self.flags.protocol != Protocol::Http1_1 {
             return self.send_progress_update_multiplexed();
         }
-        // PORT NOTE: reshaped for borrowck — read Copy fields before to_result()
-        // takes &mut self, then re-borrow via raw pointer for the post-mutations.
+        // PORT NOTE: reshaped for borrowck — `to_result()` returns an
+        // `HTTPClientResult<'_>` whose lifetime is tied to `&mut self` (via the
+        // `body: &mut MutableString` borrow). Holding that result across the
+        // `is_done` mutations below would require a second live `&mut Self`,
+        // which PORTING.md §Forbidden flags as aliased `&mut`. Instead:
+        // snapshot every owned/Copy field out of the result, drop it, mutate
+        // `self` directly, then rebuild a fresh `HTTPClientResult` for the
+        // callback from the snapshotted fields + the restored body.
         let body = self.state.body_out_str;
         // Snapshot the body buffer's CONTENTS by value (http.zig:2238-2239
         // `const body = out_str.*`) so that `state.reset()` — which calls
@@ -3658,18 +3664,26 @@ impl HTTPClient {
         // SAFETY: body points at the caller-owned MutableString.
         let body_snapshot = body.map(|p| unsafe { core::mem::take(&mut (*p.as_ptr()).list) });
         let callback = self.result_callback;
-        let this_ptr = self as *mut Self;
-        let mut result = self.to_result();
-        let is_done = !result.has_more;
+
+        let (has_more, redirected, can_stream, is_http2, fail, metadata, body_size, certificate_info) = {
+            let r = self.to_result();
+            (
+                r.has_more,
+                r.redirected,
+                r.can_stream,
+                r.is_http2,
+                r.fail,
+                r.metadata,
+                r.body_size,
+                r.certificate_info,
+            )
+        }; // r (and its &mut borrow of self) dropped here
+        let is_done = !has_more;
 
         bun_core::scoped_log!(fetch, "progressUpdate {}", is_done);
 
-        // SAFETY: this_ptr aliases *self; used only for disjoint-field writes
-        // while `result` (which borrows self.state.body_out_str) is live.
-        let self_ = unsafe { &mut *this_ptr };
-
         if is_done {
-            self_.unregister_abort_tracker();
+            self.unregister_abort_tracker();
             // is_done is response-driven. A server can reply early (HTTP 413)
             // with keep-alive while request_stage is still .proxy_body or the
             // tunnel still has buffered encrypted writes. Pooling that tunnel
@@ -3682,25 +3696,25 @@ impl HTTPClient {
             // ends on inner-TLS close; ProxyTunnel.onClose fires but the outer
             // socket is still alive. Pooling that dead wrapper would hang the
             // next request (proxy.write() → error.ConnectionClosed, swallowed).
-            let tunnel_poolable = if let Some(t) = self_.proxy_tunnel {
+            let tunnel_poolable = if let Some(t) = self.proxy_tunnel {
                 // SAFETY: t is a live intrusive-refcounted ProxyTunnel
                 let t = unsafe { &*t.as_ptr() };
-                self_.state.request_stage == RequestStage::Done
+                self.state.request_stage == RequestStage::Done
                     && t.write_buffer.is_empty()
                     && t.wrapper.as_ref().map(|w| !w.is_shutdown()).unwrap_or(false)
             } else {
                 true
             };
 
-            if self_.is_keep_alive_possible()
+            if self.is_keep_alive_possible()
                 && !socket_is_closed_or_has_error(&socket)
                 && tunnel_poolable
             {
                 bun_core::scoped_log!(fetch, "release socket");
-                let tunnel = self_.proxy_tunnel.take();
+                let tunnel = self.proxy_tunnel.take();
                 if let Some(t) = tunnel {
                     // SAFETY: t is a live intrusive-refcounted ProxyTunnel
-                    unsafe { (*t.as_ptr()).detach_owner(&*this_ptr) };
+                    unsafe { (*t.as_ptr()).detach_owner(&*self) };
                 }
                 // target_hostname = url.hostname (the CONNECT TCP target at
                 // writeProxyConnect line 346). The SNI override (hostname) is
@@ -3710,20 +3724,20 @@ impl HTTPClient {
                 unsafe {
                     (*ctx).release_socket(
                         socket,
-                        self_.flags.did_have_handshaking_error
-                            && !self_.flags.reject_unauthorized,
-                        self_.connected_url.hostname,
-                        self_.connected_url.get_port_auto(),
-                        self_.tls_props.as_ref(),
+                        self.flags.did_have_handshaking_error
+                            && !self.flags.reject_unauthorized,
+                        self.connected_url.hostname,
+                        self.connected_url.get_port_auto(),
+                        self.tls_props.as_ref(),
                         tunnel,
-                        if tunnel.is_some() { self_.url.hostname } else { b"" },
-                        if tunnel.is_some() { self_.url.get_port_auto() } else { 0 },
-                        if tunnel.is_some() { self_.proxy_auth_hash() } else { 0 },
+                        if tunnel.is_some() { self.url.hostname } else { b"" },
+                        if tunnel.is_some() { self.url.get_port_auto() } else { 0 },
+                        if tunnel.is_some() { self.proxy_auth_hash() } else { 0 },
                         None,
                     );
                 }
             } else {
-                if let Some(tunnel) = self_.proxy_tunnel.take() {
+                if let Some(tunnel) = self.proxy_tunnel.take() {
                     bun_core::scoped_log!(fetch, "close the tunnel");
                     // SAFETY: tunnel is a live intrusive-refcounted ProxyTunnel
                     let tunnel = unsafe { &mut *tunnel.as_ptr() };
@@ -3733,11 +3747,11 @@ impl HTTPClient {
                 GenHttpContext::<IS_SSL>::close_socket(socket);
             }
 
-            self_.state.reset();
-            self_.state.response_stage = ResponseStage::Done;
-            self_.state.request_stage = RequestStage::Done;
-            self_.state.stage = Stage::Done;
-            self_.flags.proxy_tunneling = false;
+            self.state.reset();
+            self.state.response_stage = ResponseStage::Done;
+            self.state.request_stage = RequestStage::Done;
+            self.state.stage = Stage::Done;
+            self.flags.proxy_tunneling = false;
             bun_core::scoped_log!(fetch, "done");
         }
 
@@ -3746,11 +3760,22 @@ impl HTTPClient {
             // SAFETY: p points at the caller-owned MutableString.
             unsafe { (*p.as_ptr()).list = v };
         }
-        // SAFETY: result.body aliases self_.state.body_out_str's pointee; the
-        // caller-owned MutableString outlives both.
-        result.body = body.map(|p| unsafe { &mut *p.as_ptr() });
-        // SAFETY: this_ptr points at *self; result borrows fields disjoint from parent_async_http.
-        callback.run(unsafe { (*this_ptr).parent_async_http() }, result);
+        let async_http = self.parent_async_http();
+        // Rebuild the result from snapshotted fields now that all `&mut self`
+        // mutations are finished — no aliased borrows remain.
+        let result = HTTPClientResult {
+            // SAFETY: body points at the caller-owned MutableString which outlives the callback.
+            body: body.map(|p| unsafe { &mut *p.as_ptr() }),
+            has_more,
+            redirected,
+            can_stream,
+            is_http2,
+            fail,
+            metadata,
+            body_size,
+            certificate_info,
+        };
+        callback.run(async_http, result);
 
         if PRINT_EVERY > 0 {
             // SAFETY: single-threaded HTTP thread

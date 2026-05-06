@@ -502,8 +502,28 @@ impl All {
         #[cfg(not(unix))]
         let _ = has_pending_immediate;
 
+        // PORT NOTE (§Forbidden aliased-&mut): the WTFTimer arm below calls
+        // `(*min).fire(...)` → `WTFTimer__fire` → C++ may call back into
+        // `WTFTimer__update` → `(*runtime_state()).timer.update(...)`, minting
+        // a fresh `&mut All` to this same allocation while the outer
+        // `&mut self` is live → aliased-`&mut` UB. Mirror `drain_timers`:
+        // convert `self` to a raw pointer up-front and form *short-lived*
+        // `&mut *this` borrows only around `peek()`/`delete_min()`, dropping
+        // them before `fire()` so no `&mut All` is held across the re-entrant
+        // call. Spec Timer.zig:247 takes `*All` (raw pointer) for the same
+        // reason.
+        //
+        // TODO(b2): same caveat as `drain_timers` — the call-site auto-ref
+        // still creates a `&mut All` for the call frame; switch the signature
+        // to `this: *mut Self` (see jsc_hooks.rs:525).
+        let this: *mut Self = self;
         let mut maybe_now: Option<Timespec> = None;
-        while let Some(min) = self.timers.peek() {
+        loop {
+            // SAFETY: `this` derived from `&mut self`; short-lived exclusive
+            // borrow scoped to this `peek()` call only.
+            let Some(min) = (unsafe { &mut *this }).timers.peek() else {
+                break;
+            };
             // SAFETY: peek returns a live heap node.
             // PORT NOTE (§Forbidden aliased-&mut): `delete_min()` writes
             // `(*min).heap` through a fresh `&mut EventLoopTimer`, so we must
@@ -522,10 +542,13 @@ impl All {
                 core::cmp::Ordering::Greater | core::cmp::Ordering::Equal => {
                     // Side-effect: potentially call the StopIfNecessary timer.
                     if min_tag == EventLoopTimerTag::WTFTimer {
-                        let _ = self.timers.delete_min();
+                        // SAFETY: short-lived `&mut All` scoped to
+                        // `delete_min()`; dropped before `fire()`.
+                        let _ = unsafe { &mut *this }.timers.delete_min();
                         let el_now = ElTimespec { sec: now.sec, nsec: now.nsec };
                         // SAFETY: `min` was just popped and is live; no `&mut`
-                        // to it is held across `delete_min()`.
+                        // to `All` or to `*min` is held across `fire()`, which
+                        // may re-enter `(*runtime_state()).timer`.
                         unsafe { (*min).fire(&el_now, vm) };
                         continue;
                     }

@@ -914,7 +914,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 let should_unwrap_require = self.options.features.unwrap_commonjs_to_esm
                     && (self.unwrap_all_requires
                         || path_package_name(&path)
-                            .map(|pkg| self.options.features.should_unwrap_require(pkg))
+                            // TODO(b2-blocked): stub `Runtime::Features.should_unwrap_require`
+                            // is a bool, not the per-package predicate. The real
+                            // `runtime.rs::Features::should_unwrap_require(pkg)` matches
+                            // against `unwrap_commonjs_packages`; restore once
+                            // `RuntimeFeatures` aliases the real struct.
+                            .map(|_pkg| self.options.features.should_unwrap_require)
                             .unwrap_or(false))
                     // We cannot unwrap a require wrapped in a try/catch because
                     // import statements cannot be wrapped in a try/catch and
@@ -934,15 +939,15 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     // Zig: `path_name.nonUniqueNameString(allocator)` — render the
                     // sanitized-identifier formatter into the bump arena.
                     let name: &'a [u8] = {
-                        use std::io::Write as _;
-                        let mut buf = BumpVec::<u8>::new_in(self.allocator);
+                        use core::fmt::Write as _;
+                        let mut buf = bumpalo::collections::String::new_in(self.allocator);
                         write!(
                             &mut buf,
                             "{}",
                             bun_core::fmt::fmt_identifier(path_name.non_unique_name_string_base())
                         )
                         .expect("unreachable");
-                        buf.into_bump_slice()
+                        buf.into_bump_str().as_bytes()
                     };
                     let namespace_ref = self.new_symbol(js_ast::symbol::Kind::Other, name).expect("oom");
 
@@ -5452,6 +5457,149 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         let target = self.runtime_identifier(loc, name);
         self.new_expr(E::Call { target, args, ..Default::default() }, loc)
     }
+
+    pub fn value_for_define(
+        &mut self,
+        loc: logger::Loc,
+        assign_target: js_ast::AssignTarget,
+        is_delete_target: bool,
+        define_data: &DefineData,
+    ) -> Expr {
+        // Active `defines::DefineData.value` is `Option<expr::Data>` (the round-C
+        // stub); Zig's `valueless` flag is encoded as `None`. Callers gate on
+        // `value.is_some()` before reaching here, so unwrap is safe by contract.
+        let value = define_data.value.expect("value_for_define on valueless DefineData");
+        match value {
+            js_ast::ExprData::EIdentifier(id) => {
+                // SAFETY: `define_data` borrows `p.define: &'a Define`; the boxed
+                // `original_name` lives for `'a`. Erase the local borrow lifetime
+                // to satisfy `handle_identifier`'s `Option<&'a [u8]>` param.
+                let original_name: Option<&'a [u8]> = define_data
+                    .original_name
+                    .as_deref()
+                    .map(|s| unsafe { core::mem::transmute::<&[u8], &'a [u8]>(s) });
+                return self.handle_identifier(
+                    loc,
+                    id,
+                    original_name,
+                    IdentifierOpts::new()
+                        .with_assign_target(assign_target)
+                        .with_is_delete_target(is_delete_target)
+                        .with_was_originally_identifier(true),
+                );
+            }
+            js_ast::ExprData::EString(str_) => {
+                return self.new_expr(&*str_, loc);
+            }
+            _ => {}
+        }
+        Expr { data: value, loc }
+    }
+
+    // `parts` is `&[Box<[u8]>]` to match the active round-C `DotDefine.parts:
+    // Vec<Box<[u8]>>` shape (auto-derefs at call sites). The full draft uses
+    // `*const [*const [u8]]`; both index to a `[u8]` so the body is unchanged.
+    pub fn is_dot_define_match(&mut self, expr: Expr, parts: &[Box<[u8]>]) -> bool {
+        match expr.data {
+            js_ast::ExprData::EDot(ex) => {
+                if parts.len() > 1 {
+                    if ex.optional_chain.is_some() {
+                        return false;
+                    }
+                    // Intermediates must be dot expressions
+                    let last = parts.len() - 1;
+                    let is_tail_match = strings::eql(&parts[last], ex.name);
+                    return is_tail_match && self.is_dot_define_match(ex.target, &parts[..last]);
+                }
+            }
+            js_ast::ExprData::EImportMeta(_) => {
+                return parts.len() == 2 && &*parts[0] == b"import" && &*parts[1] == b"meta";
+            }
+            // Note: this behavior differs from esbuild
+            // esbuild does not try to match index accessors
+            // we do, but only if it's a UTF8 string
+            // the intent is to handle people using this form instead of E.Dot. So we really only want to do this if the accessor can also be an identifier
+            js_ast::ExprData::EIndex(index) => {
+                if parts.len() > 1 {
+                    if let js_ast::ExprData::EString(mut s) = index.index.data {
+                        if s.is_utf8() {
+                            if index.optional_chain.is_some() {
+                                return false;
+                            }
+                            let last = parts.len() - 1;
+                            let is_tail_match = strings::eql(&parts[last], s.slice(self.allocator));
+                            return is_tail_match && self.is_dot_define_match(index.target, &parts[..last]);
+                        }
+                    }
+                }
+            }
+            js_ast::ExprData::EIdentifier(ex) => {
+                // The last expression must be an identifier
+                if parts.len() == 1 {
+                    let name = self.load_name_from_ref(ex.ref_);
+                    if !strings::eql(name, &parts[0]) {
+                        return false;
+                    }
+
+                    let Ok(result) = self.find_symbol_with_record_usage::<false>(expr.loc, name) else {
+                        return false;
+                    };
+
+                    // We must not be in a "with" statement scope
+                    if result.is_inside_with_scope {
+                        return false;
+                    }
+
+                    // when there's actually no symbol by that name, we return Ref.None
+                    // If a symbol had already existed by that name, we return .unbound
+                    return result.r#ref.is_null()
+                        || self.symbols[result.r#ref.inner_index() as usize].kind == js_ast::symbol::Kind::Unbound;
+                }
+            }
+            _ => {}
+        }
+        false
+    }
+}
+
+// Free fn: Zig `fs.Path.packageName`. `bun_paths::fs::Path` lacks this method
+// (it lives on the resolver `Path`, which `bun_js_parser` cannot depend on), so
+// the slice logic is inlined here. Mirrors `src/resolver/fs.rs::Path::packageName`.
+fn path_package_name<'a>(path: &fs::Path<'a>) -> Option<&'a [u8]> {
+    let mut name_to_use = path.pretty;
+    // SEP_STR ++ "node_modules" ++ SEP_STR
+    let needle = const_format::concatcp!(bun_paths::SEP_STR, "node_modules", bun_paths::SEP_STR).as_bytes();
+    if let Some(node_modules) = strings::last_index_of(path.text, needle) {
+        name_to_use = &path.text[node_modules + 14..];
+    }
+
+    // Zig: `bun.options.JSX.Pragma.parsePackageName` — pure slice helper.
+    let pkgname = {
+        let str = name_to_use;
+        'brk: {
+            if str.is_empty() {
+                break 'brk str;
+            }
+            if str[0] == b'@' {
+                if let Some(first_slash) = strings::index_of_char(&str[1..], b'/') {
+                    let first_slash = first_slash as usize;
+                    let remainder = &str[1 + first_slash + 1..];
+                    if let Some(last_slash) = strings::index_of_char(remainder, b'/') {
+                        let last_slash = last_slash as usize;
+                        break 'brk &str[0..first_slash + 1 + last_slash + 1];
+                    }
+                }
+            }
+            if let Some(first_slash) = strings::index_of_char(str, b'/') {
+                break 'brk &str[0..first_slash as usize];
+            }
+            str
+        }
+    };
+    if pkgname.is_empty() || !pkgname[0].is_ascii_alphanumeric() {
+        return None;
+    }
+    Some(pkgname)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

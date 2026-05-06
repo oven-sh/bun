@@ -1804,7 +1804,7 @@ impl Comment {
 
     fn content_handler(
         &mut self,
-        callback: fn(*mut lolhtml::Comment, &[u8], bool) -> Result<(), lolhtml::Error>,
+        callback: unsafe fn(*mut lolhtml::Comment, &[u8], bool) -> Result<(), lolhtml::Error>,
         this_object: JSValue,
         global_object: &JSGlobalObject,
         content: ZigString,
@@ -1815,11 +1815,13 @@ impl Comment {
         }
         let content_slice = content.to_slice();
 
-        if callback(
+        // SAFETY: self.comment is non-null (checked above) and valid for the
+        // duration of the lol-html callback.
+        if unsafe { callback(
             self.comment,
             content_slice.slice(),
             content_options.map_or(false, |o| o.html),
-        )
+        ) }
         .is_err()
         {
             return create_lolhtml_error(global_object);

@@ -1424,7 +1424,8 @@ impl CapturedWriter {
         );
         // `dead == false` ⇒ writer.is_some() (set in PipeReader::create).
         let writer = self.writer.clone().expect("CapturedWriter live without writer");
-        writer.enqueue(self, None, chunk).run();
+        let y = writer.enqueue(self, None, chunk);
+        self.parent().run_yield(y);
     }
 
     pub fn get_buffer(&self) -> &[u8] {

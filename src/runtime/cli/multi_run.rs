@@ -857,7 +857,7 @@ pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, 
             let Some(pkgjson) = bun_resolver::PackageJSON::parse::<{ IncludeDependencies::Main }>(
                 &mut this_transpiler.resolver,
                 &dirpath,
-                bun_sys::Fd::invalid(),
+                bun_sys::Fd::INVALID,
                 None,
                 IncludeScripts::IncludeScripts,
             ) else {

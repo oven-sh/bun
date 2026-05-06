@@ -2105,7 +2105,9 @@ pub struct ThreadSafeFunction {
     // for std.condvar
     pub lock: Mutex,
 
-    pub event_loop: &'static EventLoop,
+    // PORT NOTE: `*mut` (not `&'static`) — `enqueue_task`/`drain_microtasks`
+    // need `&mut EventLoop`; reborrowed at use sites (single JS thread).
+    pub event_loop: *mut EventLoop,
     pub tracker: Debugger::AsyncTaskTracker,
 
     pub env: NapiEnvRef,
@@ -2158,7 +2160,7 @@ pub struct TsfnQueue {
 impl TsfnQueue {
     pub fn init(max_queue_size: usize) -> TsfnQueue {
         TsfnQueue {
-            data: LinearFifo::init(),
+            data: LinearFifo::<*mut c_void, DynamicBuffer<*mut c_void>>::init(),
             max_queue_size,
             count: AtomicU32::new(0),
         }

@@ -671,7 +671,7 @@ impl NodeHTTPResponse {
         _frame: &CallFrame,
     ) -> JsResult<JSValue> {
         if !self.is_done() {
-            self.poll_ref.ref_(global_object.bun_vm());
+            self.poll_ref.r#ref(bun_vm_mut(global_object));
         }
         Ok(JSValue::UNDEFINED)
     }
@@ -683,7 +683,7 @@ impl NodeHTTPResponse {
         _frame: &CallFrame,
     ) -> JsResult<JSValue> {
         if !self.is_done() {
-            self.poll_ref.unref(global_object.bun_vm());
+            self.poll_ref.unref(bun_vm_mut(global_object));
         }
         Ok(JSValue::UNDEFINED)
     }

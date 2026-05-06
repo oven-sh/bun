@@ -113,9 +113,12 @@ pub fn to_contain_equal(
     }
 
     // handle failure
+    // PORT NOTE: Zig shared one Formatter for both `toFmt` calls; Rust borrowck forbids two
+    // live `&mut formatter` borrows, so allocate a second Formatter for the expected value.
     let mut formatter = super::make_formatter(global);
+    let mut formatter2 = super::make_formatter(global);
     let value_fmt = value.to_fmt(&mut formatter);
-    let expected_fmt = expected.to_fmt(&mut formatter);
+    let expected_fmt = expected.to_fmt(&mut formatter2);
     if not {
         let signature: &str = get_signature("toContainEqual", "<green>expected<r>", true);
         return this.throw_fmt(

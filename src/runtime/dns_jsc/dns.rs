@@ -2743,9 +2743,10 @@ pub enum PendingCacheField {
 // ──────────────────────────────────────────────────────────────────────────
 
 macro_rules! impl_cares_record_type {
-    ($ty:ty, $tag:literal, $field:ident, $to_js:path, $destroy:expr) => {
+    ($ty:ty, $tag:literal, $syscall:literal, $field:ident, $to_js:path, $destroy:expr) => {
         impl CAresRecordType for $ty {
             const TYPE_NAME: &'static str = $tag;
+            const SYSCALL: &'static str = $syscall;
             const CACHE_FIELD: PendingCacheField = PendingCacheField::$field;
             fn to_js_response(&mut self, global: &JSGlobalObject, type_name: &'static str) -> JsResult<JSValue> {
                 $to_js(self, global, type_name.as_bytes())
@@ -2759,19 +2760,19 @@ macro_rules! impl_cares_record_type {
     };
 }
 
-impl_cares_record_type!(c_ares::struct_ares_srv_reply, "srv", PendingSrvCacheCares,
+impl_cares_record_type!(c_ares::struct_ares_srv_reply, "srv", "querySrv", PendingSrvCacheCares,
     super::cares_jsc::srv_reply_to_js_response, c_ares::struct_ares_srv_reply::destroy);
-impl_cares_record_type!(c_ares::struct_ares_soa_reply, "soa", PendingSoaCacheCares,
+impl_cares_record_type!(c_ares::struct_ares_soa_reply, "soa", "querySoa", PendingSoaCacheCares,
     super::cares_jsc::soa_reply_to_js_response, c_ares::struct_ares_soa_reply::destroy);
-impl_cares_record_type!(c_ares::struct_ares_txt_reply, "txt", PendingTxtCacheCares,
+impl_cares_record_type!(c_ares::struct_ares_txt_reply, "txt", "queryTxt", PendingTxtCacheCares,
     super::cares_jsc::txt_reply_to_js_response, c_ares::struct_ares_txt_reply::destroy);
-impl_cares_record_type!(c_ares::struct_ares_naptr_reply, "naptr", PendingNaptrCacheCares,
+impl_cares_record_type!(c_ares::struct_ares_naptr_reply, "naptr", "queryNaptr", PendingNaptrCacheCares,
     super::cares_jsc::naptr_reply_to_js_response, c_ares::struct_ares_naptr_reply::destroy);
-impl_cares_record_type!(c_ares::struct_ares_mx_reply, "mx", PendingMxCacheCares,
+impl_cares_record_type!(c_ares::struct_ares_mx_reply, "mx", "queryMx", PendingMxCacheCares,
     super::cares_jsc::mx_reply_to_js_response, c_ares::struct_ares_mx_reply::destroy);
-impl_cares_record_type!(c_ares::struct_ares_caa_reply, "caa", PendingCaaCacheCares,
+impl_cares_record_type!(c_ares::struct_ares_caa_reply, "caa", "queryCaa", PendingCaaCacheCares,
     super::cares_jsc::caa_reply_to_js_response, c_ares::struct_ares_caa_reply::destroy);
-impl_cares_record_type!(c_ares::struct_any_reply, "any", PendingAnyCacheCares,
+impl_cares_record_type!(c_ares::struct_any_reply, "any", "queryAny", PendingAnyCacheCares,
     super::cares_jsc::any_reply_to_js_response,
     // `struct_any_reply` is heap-boxed (parser returns `Box<_>`); Drop frees inner replies.
     |p: *mut c_ares::struct_any_reply| drop(Box::from_raw(p)));

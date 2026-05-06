@@ -347,16 +347,16 @@ pub fn on_create(
     if let Some(value) = object.get(global_object, "idleTimeout")? {
         if !value.is_undefined_or_null() {
             if !value.is_any_int() {
-                return global_object.throw_invalid_arguments(format_args!(
+                return Err(global_object.throw_invalid_arguments(format_args!(
                     "websocket expects idleTimeout to be an integer"
-                ));
+                )));
             }
 
             let mut idle_timeout: u16 = value.to_int64().max(0) as u16;
             if idle_timeout > 960 {
-                return global_object.throw_invalid_arguments(format_args!(
+                return Err(global_object.throw_invalid_arguments(format_args!(
                     "websocket expects idleTimeout to be 960 or less"
-                ));
+                )));
             } else if idle_timeout > 0 {
                 // uws does not allow idleTimeout to be between (0, 8),
                 // since its timer is not that accurate, therefore round up.
@@ -369,9 +369,9 @@ pub fn on_create(
     if let Some(value) = object.get(global_object, "backpressureLimit")? {
         if !value.is_undefined_or_null() {
             if !value.is_any_int() {
-                return global_object.throw_invalid_arguments(format_args!(
+                return Err(global_object.throw_invalid_arguments(format_args!(
                     "websocket expects backpressureLimit to be an integer"
-                ));
+                )));
             }
 
             server.backpressure_limit = value.to_int64().max(0) as u32;

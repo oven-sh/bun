@@ -812,34 +812,27 @@ impl CryptoHasherZig {
         output: Option<StringOrBuffer>,
     ) -> JsResult<JSValue> {
         if let Some(string_or_buffer) = output {
-            match string_or_buffer {
-                StringOrBuffer::Buffer(buffer) => {
-                    return Self::hash_by_name_inner_to_bytes::<A>(
-                        global,
-                        input,
-                        Some(buffer.buffer),
-                    );
-                }
-                other => {
-                    let Some(encoding) = Encoding::from(other.slice()) else {
-                        return Err(global
-                            .err(
-                                ErrorCode::INVALID_ARG_VALUE,
-                                format_args!(
-                                    "Unknown encoding: {}",
-                                    bstr::BStr::new(other.slice())
-                                ),
-                            )
-                            .throw());
-                    };
-
-                    if encoding == Encoding::Buffer {
-                        return Self::hash_by_name_inner_to_bytes::<A>(global, input, None);
-                    }
-
-                    return Self::hash_by_name_inner_to_string::<A>(global, input, encoding);
-                }
+            if let StringOrBuffer::Buffer(buffer) = &string_or_buffer {
+                let ab = buffer.buffer;
+                return Self::hash_by_name_inner_to_bytes::<A>(global, input, Some(ab));
             }
+            let Some(encoding) = Encoding::from(string_or_buffer.slice()) else {
+                return Err(global
+                    .err(
+                        ErrorCode::INVALID_ARG_VALUE,
+                        format_args!(
+                            "Unknown encoding: {}",
+                            bstr::BStr::new(string_or_buffer.slice())
+                        ),
+                    )
+                    .throw());
+            };
+
+            if encoding == Encoding::Buffer {
+                return Self::hash_by_name_inner_to_bytes::<A>(global, input, None);
+            }
+
+            return Self::hash_by_name_inner_to_string::<A>(global, input, encoding);
         }
         Self::hash_by_name_inner_to_bytes::<A>(global, input, None)
     }

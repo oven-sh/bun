@@ -1728,7 +1728,7 @@ impl FFI {
                         function.symbol_from_dynamic_library,
                     );
                     compiled.js_function = cb;
-                    obj.put(global, &str, cb);
+                    obj.put(global, str.slice(), cb);
                 }
             }
         }

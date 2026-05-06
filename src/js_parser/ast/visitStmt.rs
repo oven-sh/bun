@@ -492,32 +492,341 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     data.default_name = p.create_default_name(expr.loc).expect("unreachable");
                 }
 
-                // blocked_on: react_fast_refresh temp-var emit (E::Call/E::Arrow accessors,
-                //   G::Decl::List::from_slice arity), server_components.wraps_exports(),
-                //   will_wrap_module_in_try_catch_for_using lowering, mark_for_replace path.
-                //   See _draft for the full tail. Gate loud so we don't silently emit
-                //   wrong AST when any of these features is active.
-                if p.options.features.react_fast_refresh {
-                    todo!("s_export_default: react_fast_refresh temp-var emit — see _draft");
+                let should_emit_temp_var = p.options.features.react_fast_refresh
+                    && match expr.data {
+                        js_ast::ExprData::EArrow(_) => true,
+                        js_ast::ExprData::ECall(call) => match call.target.data {
+                            js_ast::ExprData::EIdentifier(id) => {
+                                id.ref_ == p.react_refresh.latest_signature_ref
+                            }
+                            _ => false,
+                        },
+                        _ => false,
+                    };
+                if should_emit_temp_var {
+                    // declare a temporary ref for this
+                    let temp_id = p.generate_temp_ref(Some(b"default_export"));
+                    p.cur_scope().generated.append(temp_id).expect("oom");
+
+                    let value_expr = *expr;
+                    stmts.push(Stmt::alloc(
+                        S::Local {
+                            kind: S::Kind::KConst,
+                            decls: G::DeclList::from_slice(&[G::Decl {
+                                binding: Binding::alloc(B::Identifier { r#ref: temp_id }, stmt.loc),
+                                value: Some(value_expr),
+                            }])
+                            .expect("oom"),
+                            ..Default::default()
+                        },
+                        stmt.loc,
+                    ));
+
+                    *expr = Expr::init_identifier(temp_id, stmt.loc);
+
+                    p.emit_react_refresh_register(stmts, b"default", temp_id, ReactRefreshExportKind::Default)?;
                 }
-                if SERVER_COMPONENTS_WRAPS_EXPORTS {
-                    todo!("s_export_default: server_components.wraps_exports — see _draft");
+
+                if p.options.features.server_components.wraps_exports() {
+                    *expr = p.wrap_value_for_server_component_reference(*expr, b"default");
                 }
-                if p.will_wrap_module_in_try_catch_for_using
-                    && unsafe { &*p.current_scope }.parent.is_none()
+
+                // If there are lowered "using" declarations, change this into a "var"
+                if unsafe { &*p.current_scope }.parent.is_none()
+                    && p.will_wrap_module_in_try_catch_for_using
                 {
-                    todo!("s_export_default: will_wrap_module_in_try_catch_for_using lowering — see _draft");
+                    stmts.reserve(2);
+
+                    let mut decls = G::DeclList::init_capacity(1).expect("oom");
+                    decls
+                        .append(G::Decl {
+                            binding: p.b(
+                                B::Identifier { r#ref: data.default_name.ref_.unwrap() },
+                                data.default_name.loc,
+                            ),
+                            value: Some(*expr),
+                        })
+                        .expect("oom");
+                    // PERF(port): was assume_capacity
+                    stmts.push(p.s(
+                        S::Local { decls, ..Default::default() },
+                        stmt.loc,
+                    ));
+                    let items = p.allocator.alloc_slice_copy(&[js_ast::ClauseItem {
+                        alias: b"default" as *const [u8],
+                        alias_loc: data.default_name.loc,
+                        name: data.default_name,
+                        ..Default::default()
+                    }]);
+                    // PERF(port): was assume_capacity
+                    stmts.push(p.s(
+                        S::ExportClause { items: items as *mut [_], is_single_line: false },
+                        stmt.loc,
+                    ));
                 }
+
                 if mark_for_replace {
-                    todo!("s_export_default: mark_for_replace substitution — see _draft");
+                    let entry = p
+                        .options
+                        .features
+                        .replace_exports
+                        .get_ptr(b"default")
+                        .cloned()
+                        .unwrap();
+                    if let crate::parser::Runtime::ReplaceableExport::Replace(replace_expr) = entry {
+                        *expr = replace_expr;
+                    } else {
+                        let _ = p.inject_replacement_export(stmts, Ref::NONE, logger::Loc::EMPTY, &entry);
+                        restore_dead!();
+                        record_on_exit!();
+                        return Ok(());
+                    }
                 }
             }
 
-            js_ast::StmtOrExpr::Stmt(_s2) => {
-                // blocked_on: see comment above. Full SFunction/SClass branches in _draft.
-                restore_dead!();
-                record_on_exit!();
-                todo!("s_export_default: StmtOrExpr::Stmt branch — see _draft");
+            js_ast::StmtOrExpr::Stmt(s2) => {
+                // PORT NOTE: reshaped for borrowck — `s2` borrows from `data.value`; copy
+                // `s2.loc`/`s2.data` (both Copy) so we can mutate `data.value` below.
+                let s2_loc = s2.loc;
+                let s2_data = s2.data;
+                let s2_copy = *s2;
+                match s2_data {
+                    StmtData::SFunction(mut func_ref) => {
+                        let func: &mut S::Function = &mut *func_ref;
+                        let name: &'a [u8] = if let Some(func_loc) = func.func.name {
+                            p.load_name_from_ref(func_loc.ref_.unwrap())
+                        } else {
+                            func.func.name = Some(data.default_name);
+                            js_ast::ClauseItem::DEFAULT_ALIAS
+                        };
+
+                        let mut react_hook_data: Option<crate::parser::HookContext> = None;
+                        let prev = p.react_refresh.hook_ctx_storage;
+                        p.react_refresh.hook_ctx_storage =
+                            Some(core::ptr::NonNull::from(&mut react_hook_data));
+
+                        let open_parens_loc = func.func.open_parens_loc;
+                        func.func = p.visit_func(core::mem::take(&mut func.func), open_parens_loc);
+
+                        if p.is_control_flow_dead {
+                            p.react_refresh.hook_ctx_storage = prev;
+                            restore_dead!();
+                            record_on_exit!();
+                            return Ok(());
+                        }
+
+                        if data.default_name.ref_.unwrap().is_source_contents_slice() {
+                            data.default_name = p.create_default_name(stmt.loc).expect("unreachable");
+                        }
+
+                        if let Some(hook) = react_hook_data.as_mut() {
+                            let signature_cb = hook.signature_cb;
+                            stmts.push(p.get_react_refresh_hook_signal_decl(signature_cb));
+
+                            let func_expr =
+                                p.new_expr(E::Function { func: core::mem::take(&mut func.func) }, stmt.loc);
+                            data.value = js_ast::StmtOrExpr::Expr(
+                                p.get_react_refresh_hook_signal_init(hook, func_expr),
+                            );
+                        }
+
+                        if mark_for_replace {
+                            let entry = p
+                                .options
+                                .features
+                                .replace_exports
+                                .get_ptr(b"default")
+                                .cloned()
+                                .unwrap();
+                            if let crate::parser::Runtime::ReplaceableExport::Replace(replace_expr) = entry {
+                                data.value = js_ast::StmtOrExpr::Expr(replace_expr);
+                            } else {
+                                let _ = p.inject_replacement_export(stmts, Ref::NONE, logger::Loc::EMPTY, &entry);
+                                p.react_refresh.hook_ctx_storage = prev;
+                                restore_dead!();
+                                record_on_exit!();
+                                return Ok(());
+                            }
+                        }
+
+                        if p.options.features.react_fast_refresh
+                            && (ReactRefresh::is_componentish_name(name)
+                                || name == js_ast::ClauseItem::DEFAULT_ALIAS)
+                        {
+                            // If server components or react refresh had wrapped the value (convert to .expr)
+                            // then a temporary variable must be emitted.
+                            //
+                            // > export default _s(function App() { ... }, "...")
+                            // > $RefreshReg(App, "App.tsx:default")
+                            //
+                            // > const default_export = _s(function App() { ... }, "...")
+                            // > export default default_export;
+                            // > $RefreshReg(default_export, "App.tsx:default")
+                            let ref_ = if let js_ast::StmtOrExpr::Expr(e) = data.value {
+                                'emit_temp_var: {
+                                    let ref_to_use = 'brk: {
+                                        if let Some(loc_ref) = func.func.name {
+                                            // Input:
+                                            //
+                                            //  export default function Foo() {}
+                                            //
+                                            // Output:
+                                            //
+                                            //  const Foo = _s(function Foo() {})
+                                            //  export default Foo;
+                                            if let Some(r) = loc_ref.ref_ {
+                                                break 'brk r;
+                                            }
+                                        }
+
+                                        let temp_id = p.generate_temp_ref(Some(b"default_export"));
+                                        p.cur_scope().generated.append(temp_id).expect("oom");
+                                        break 'brk temp_id;
+                                    };
+
+                                    stmts.push(Stmt::alloc(
+                                        S::Local {
+                                            kind: S::Kind::KConst,
+                                            decls: G::DeclList::from_slice(&[G::Decl {
+                                                binding: Binding::alloc(
+                                                    B::Identifier { r#ref: ref_to_use },
+                                                    stmt.loc,
+                                                ),
+                                                value: Some(e),
+                                            }])
+                                            .expect("oom"),
+                                            ..Default::default()
+                                        },
+                                        stmt.loc,
+                                    ));
+
+                                    data.value = js_ast::StmtOrExpr::Expr(
+                                        Expr::init_identifier(ref_to_use, stmt.loc),
+                                    );
+
+                                    break 'emit_temp_var ref_to_use;
+                                }
+                            } else {
+                                data.default_name.ref_.unwrap()
+                            };
+
+                            if p.options.features.server_components.wraps_exports() {
+                                let inner = if let js_ast::StmtOrExpr::Expr(e) = data.value {
+                                    e
+                                } else {
+                                    p.new_expr(
+                                        E::Function { func: core::mem::take(&mut func.func) },
+                                        stmt.loc,
+                                    )
+                                };
+                                data.value = js_ast::StmtOrExpr::Expr(
+                                    p.wrap_value_for_server_component_reference(inner, b"default"),
+                                );
+                            }
+
+                            stmts.push(*stmt);
+                            p.emit_react_refresh_register(stmts, name, ref_, ReactRefreshExportKind::Default)?;
+                        } else {
+                            if p.options.features.server_components.wraps_exports() {
+                                let func_expr =
+                                    p.new_expr(E::Function { func: core::mem::take(&mut func.func) }, stmt.loc);
+                                data.value = js_ast::StmtOrExpr::Expr(
+                                    p.wrap_value_for_server_component_reference(func_expr, b"default"),
+                                );
+                            }
+
+                            stmts.push(*stmt);
+                        }
+
+                        // if (func.func.name != null and func.func.name.?.ref != null) {
+                        //     stmts.append(p.keepStmtSymbolName(func.func.name.?.loc, func.func.name.?.ref.?, name)) catch unreachable;
+                        // }
+                        p.react_refresh.hook_ctx_storage = prev;
+                        restore_dead!();
+                        record_on_exit!();
+                        return Ok(());
+                    }
+                    StmtData::SClass(mut class_ref) => {
+                        let class: &mut S::Class = &mut *class_ref;
+                        let _ = p.visit_class(s2_loc, &mut class.class, data.default_name.ref_.unwrap());
+
+                        if p.is_control_flow_dead {
+                            restore_dead!();
+                            record_on_exit!();
+                            return Ok(());
+                        }
+
+                        if mark_for_replace {
+                            let entry = p
+                                .options
+                                .features
+                                .replace_exports
+                                .get_ptr(b"default")
+                                .cloned()
+                                .unwrap();
+                            if let crate::parser::Runtime::ReplaceableExport::Replace(replace_expr) = entry {
+                                data.value = js_ast::StmtOrExpr::Expr(replace_expr);
+                            } else {
+                                let _ = p.inject_replacement_export(stmts, Ref::NONE, logger::Loc::EMPTY, &entry);
+                                restore_dead!();
+                                record_on_exit!();
+                                return Ok(());
+                            }
+                        }
+
+                        if data.default_name.ref_.unwrap().is_source_contents_slice() {
+                            data.default_name = p.create_default_name(stmt.loc).expect("unreachable");
+                        }
+
+                        // We only inject a name into classes when there is a decorator
+                        if class.class.has_decorators() {
+                            if class.class.class_name.is_none()
+                                || class.class.class_name.unwrap().ref_.is_none()
+                            {
+                                class.class.class_name = Some(data.default_name);
+                            }
+                        }
+
+                        // Lower the class (handles both TS legacy and standard decorators).
+                        // Standard decorator lowering may produce prefix statements
+                        // (variable declarations) before the class statement.
+                        let class_stmts = p.lower_class(js_ast::StmtOrExpr::Stmt(s2_copy));
+
+                        // Find the s_class statement in the returned list
+                        let mut class_stmt_idx: usize = 0;
+                        for (idx, cs) in class_stmts.iter().enumerate() {
+                            if matches!(cs.data, StmtData::SClass(_)) {
+                                class_stmt_idx = idx;
+                                break;
+                            }
+                        }
+
+                        // Emit any prefix statements before the export default
+                        stmts.extend_from_slice(&class_stmts[0..class_stmt_idx]);
+
+                        data.value = js_ast::StmtOrExpr::Stmt(class_stmts[class_stmt_idx]);
+                        stmts.push(*stmt);
+
+                        // Emit any suffix statements after the export default
+                        if class_stmt_idx + 1 < class_stmts.len() {
+                            stmts.extend_from_slice(&class_stmts[class_stmt_idx + 1..]);
+                        }
+
+                        if p.options.features.server_components.wraps_exports() {
+                            // TODO(port): Zig spec mutates `data.value` *after* pushing `stmt` —
+                            // mirrored bug-for-bug. The class expr wrap likely belongs before push.
+                            let class_expr = p.new_expr(core::mem::take(&mut class.class), stmt.loc);
+                            data.value = js_ast::StmtOrExpr::Expr(
+                                p.wrap_value_for_server_component_reference(class_expr, b"default"),
+                            );
+                        }
+
+                        restore_dead!();
+                        record_on_exit!();
+                        return Ok(());
+                    }
+                    _ => {}
+                }
             }
         }
 

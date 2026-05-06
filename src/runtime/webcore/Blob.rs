@@ -2876,11 +2876,18 @@ impl Blob {
 pub struct FileStreamWrapper {
     pub promise: jsc::JSPromiseStrong,
     pub readable_stream_ref: webcore::ReadableStreamStrong,
-    // LIFETIMES.tsv: SHARED → Arc<FileSink>
-    pub sink: Arc<webcore::FileSink>,
+    // LIFETIMES.tsv: SHARED — but FileSink uses an intrusive single-thread refcount
+    // (`ref_`/`deref`) and crosses FFI as a raw pointer, so this stays `*mut`
+    // rather than `Arc<T>` (matches Zig `sink: *jsc.WebCore.FileSink`).
+    pub sink: *mut webcore::FileSink,
 }
 
-// Drop for FileStreamWrapper: promise/readable_stream_ref/sink all impl Drop.
+impl Drop for FileStreamWrapper {
+    fn drop(&mut self) {
+        // SAFETY: `sink` is the +1 ref handed over by `pipe_readable_stream_to_blob`.
+        unsafe { (*self.sink).deref() };
+    }
+}
 
 // TODO(b2-blocked): #[bun_jsc::host_fn]
 pub fn on_file_stream_resolve_request_stream(
@@ -2906,12 +2913,12 @@ pub fn on_file_stream_reject_request_stream(
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
     let args = callframe.arguments_old(2);
+    // PORT NOTE: Zig defers `this.sink.deref()` here but does NOT call `this.deinit()`
+    // (leaks the wrapper). We take ownership via Box so Drop runs `sink.deref()`
+    // and frees the wrapper — same observable effect on the sink, fixes the leak.
     let this = unsafe {
         Box::from_raw(args.ptr()[args.len() - 1].as_promise_ptr::<FileStreamWrapper>())
     };
-    // PORT NOTE: Zig defers `this.sink.deref()` here but does not deinit `this`;
-    // matches by holding Arc until end of scope only.
-    let _sink_hold = this.sink.clone();
     let err = args.ptr()[0];
 
     let mut strong = core::mem::take(&mut this.readable_stream_ref);

@@ -329,7 +329,7 @@ impl<'a> Scanner<'a> {
                     dir_path: entry.dir,
                 });
             }
-            bun_fs::EntryKind::File => {
+            fs::EntryKind::File => {
                 // already seen it!
                 if !entry.abs_path.is_empty() {
                     return;

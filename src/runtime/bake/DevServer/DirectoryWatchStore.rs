@@ -20,7 +20,10 @@ use bun_str::strings;
 use bun_sys::{self, Fd, O};
 use bun_watcher::Watcher;
 
-bun_output::declare_scope!(DevServer, hidden);
+// Re-use the parent module's `DevServer` ScopedLogger (Zig: `const debug = DevServer.debug`).
+// The `use crate::bake::dev_server::DevServer` import above brings in both the
+// `struct DevServer` (type namespace) and the `static DevServer: ScopedLogger`
+// (value namespace) declared in `dev_server/mod.rs`.
 
 /// List of active watchers. Can be re-ordered on removal
 pub struct DirectoryWatchStore {

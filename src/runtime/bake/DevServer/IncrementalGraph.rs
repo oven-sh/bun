@@ -1897,13 +1897,16 @@ impl<S: GraphSide> IncrementalGraph<S> {
 
         debug_log!("Insert stale: {}", bstr::BStr::new(abs_path));
         let gop = self.bundled_files.get_or_put(Box::<[u8]>::from(abs_path))?;
-        let file_index = FileIndex::init(u32::try_from(gop.index).unwrap());
+        let gop_index = gop.index;
+        let found_existing = gop.found_existing;
+        let file_index = FileIndex::init(u32::try_from(gop_index).unwrap());
+        drop(gop);
 
-        if gop.found_existing {
+        if found_existing {
             if S::SIDE == Side::Server && is_route {
                 // SAFETY: S == Server, FilePacked == ServerFile
                 unsafe {
-                    (&mut *(gop.value_ptr as *mut S::FilePacked as *mut ServerFile)).is_route = true;
+                    (&mut *((&mut self.bundled_files.values_mut()[gop_index]) as *mut S::FilePacked as *mut ServerFile)).is_route = true;
                 }
             }
         } else {
@@ -1911,8 +1914,8 @@ impl<S: GraphSide> IncrementalGraph<S> {
             self.first_import.push(OptionalEdgeIndex::NONE);
         }
 
-        if self.stale_files.unmanaged.bit_length > gop.index {
-            self.stale_files.set(gop.index);
+        if self.stale_files.unmanaged.bit_length > gop_index {
+            self.stale_files.set(gop_index);
         }
 
         match S::SIDE {
@@ -1920,24 +1923,24 @@ impl<S: GraphSide> IncrementalGraph<S> {
                 // SAFETY: S == Client.
                 let g: &mut IncrementalGraph<Client> =
                     unsafe { &mut *(self as *mut Self as *mut IncrementalGraph<Client>) };
-                let value_ptr = &mut g.bundled_files.values_mut()[file_index.get() as usize];
-                let new_file: ClientFile = if gop.found_existing {
+                let new_file: ClientFile = if found_existing {
+                    let value_ptr = &mut g.bundled_files.values_mut()[gop_index];
                     let mut existing = core::mem::replace(value_ptr, ClientFile::default().pack()).unpack();
                     // sets .content to .unknown
-                    let key = g.bundled_files.keys()[file_index.get() as usize].clone();
+                    let key = g.bundled_files.keys()[gop_index].clone();
                     g.free_file_content(&key, &mut existing, FreeCssMode::UnrefCss);
                     existing
                 } else {
                     ClientFile { content: Content::Unknown, ..Default::default() }
                 };
-                g.bundled_files.values_mut()[file_index.get() as usize] = new_file.pack();
+                g.bundled_files.values_mut()[gop_index] = new_file.pack();
             }
             Side::Server => {
                 // SAFETY: S == Server.
                 let value_ptr = unsafe {
-                    &mut *(gop.value_ptr as *mut S::FilePacked as *mut ServerFile)
+                    &mut *((&mut self.bundled_files.values_mut()[gop_index]) as *mut S::FilePacked as *mut ServerFile)
                 };
-                if !gop.found_existing {
+                if !found_existing {
                     *value_ptr = ServerFile {
                         is_rsc: !is_ssr_graph,
                         is_ssr: is_ssr_graph,

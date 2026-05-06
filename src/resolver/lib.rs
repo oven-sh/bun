@@ -1021,6 +1021,428 @@ pub mod fs {
         }
     }
 }
+
+// ──────────────────────────────────────────────────────────────────────────
+// `cache` — port of `src/bundler/cache.zig` (`Set`/`Fs`/`Entry`/`JavaScript`/
+// `Json`). CYCLEBREAK MOVE_DOWN: these types must live below `bun_bundler` in
+// the crate graph because `Resolver.caches` is typed by them and the bundler
+// constructs/assigns it (`transpiler.resolver.caches = Set::init()`). The
+// bundler crate re-exports/extends these as `bun_bundler::cache::*`.
+// ──────────────────────────────────────────────────────────────────────────
+pub mod cache {
+    use core::ffi::c_void;
+
+    use bun_core::{feature_flags, Output};
+    use bun_string::MutableString;
+    use bun_sys::{self, Fd};
+
+    use crate::fs as fs_mod;
+    pub use crate::tsconfig_json::JsonCache as Json;
+
+    bun_core::declare_scope!(CacheFs, visible);
+
+    /// Port of `cache::Set` (cache.zig:1).
+    pub struct Set {
+        pub js: JavaScript,
+        pub fs: Fs,
+        pub json: Json,
+    }
+
+    impl Set {
+        pub fn init() -> Set {
+            Set {
+                js: JavaScript::init(),
+                fs: Fs {
+                    shared_buffer: MutableString::init(0).expect("unreachable"),
+                    macro_shared_buffer: MutableString::init(0).expect("unreachable"),
+                    use_alternate_source_cache: false,
+                    stream: false,
+                },
+                json: Json::noop(),
+            }
+        }
+    }
+
+    /// Port of `cache::Fs` (cache.zig:18).
+    pub struct Fs {
+        pub shared_buffer: MutableString,
+        pub macro_shared_buffer: MutableString,
+
+        pub use_alternate_source_cache: bool,
+        pub stream: bool,
+    }
+
+    impl Default for Fs {
+        fn default() -> Self {
+            Self {
+                shared_buffer: MutableString::init(0).expect("unreachable"),
+                macro_shared_buffer: MutableString::init(0).expect("unreachable"),
+                use_alternate_source_cache: false,
+                stream: false,
+            }
+        }
+    }
+
+    /// Port of `Fs.Entry.ExternalFreeFunction` (cache.zig:26).
+    #[repr(C)]
+    pub struct ExternalFreeFunction {
+        pub ctx: *mut c_void,
+        pub function: Option<unsafe extern "C" fn(*mut c_void)>,
+    }
+
+    impl ExternalFreeFunction {
+        pub const NONE: ExternalFreeFunction = ExternalFreeFunction {
+            ctx: core::ptr::null_mut(),
+            function: None,
+        };
+
+        pub fn call(&self) {
+            if let Some(func) = self.function {
+                // SAFETY: ctx was provided by the same native plugin that provided `function`.
+                unsafe { func(self.ctx) };
+            }
+        }
+    }
+
+    impl Default for ExternalFreeFunction {
+        fn default() -> Self { Self::NONE }
+    }
+
+    /// Port of `Fs.Entry` (cache.zig:19). `contents` is a lifetime-erased slice
+    /// (`string` in Zig) that may borrow:
+    ///   • the per-thread `shared_buffer` (when `use_shared_buffer`),
+    ///   • a `Box::leak`ed allocation owned by this entry (default-allocator path),
+    ///   • native-plugin memory freed via `external_free_function`, or
+    ///   • static/arena bytes the caller keeps alive.
+    /// Ownership is **manual** (`deinit`), matching Zig — callers thread `Entry`
+    /// through `logger::Source.contents: &'static [u8]` and free explicitly.
+    pub struct Entry {
+        pub contents: &'static [u8],
+        pub fd: Fd,
+        /// When `contents` comes from a native plugin, this field is populated
+        /// with information on how to free it.
+        pub external_free_function: ExternalFreeFunction,
+    }
+
+    impl Default for Entry {
+        fn default() -> Self {
+            Entry { contents: b"", fd: Fd::INVALID, external_free_function: ExternalFreeFunction::NONE }
+        }
+    }
+
+    impl Entry {
+        /// Convenience: take ownership of a heap buffer, leak it into the
+        /// lifetime-erased `contents` slot. `deinit` reconstitutes and frees it.
+        pub fn new(contents: Box<[u8]>, fd: Fd, external_free_function: ExternalFreeFunction) -> Entry {
+            // PORT NOTE: Zig stored an allocator+slice pair; Rust leaks the Box
+            // and reclaims it in `deinit` to keep `contents` a plain `&[u8]`
+            // assignable to `logger::Source.contents`.
+            let contents: &'static [u8] =
+                if contents.is_empty() { b"" } else { Box::leak(contents) };
+            Entry { contents, fd, external_free_function }
+        }
+
+        #[inline]
+        pub fn contents(&self) -> &[u8] { self.contents }
+
+        /// Port of `Entry.deinit` (cache.zig:39). NOT `Drop` — Zig callers free
+        /// explicitly (and frequently hand `contents` off to a `Source` that
+        /// outlives the `Entry`).
+        pub fn deinit(&mut self) {
+            if let Some(func) = self.external_free_function.function {
+                // SAFETY: ctx/function pair was supplied together by the native plugin.
+                unsafe { func(self.external_free_function.ctx) };
+            } else if !self.contents.is_empty() {
+                // SAFETY: ARENA — `contents` was produced by `Box::leak` in
+                // `Entry::new` / `read_file*`; reconstructing the Box matches Zig's
+                // `allocator.free(entry.contents)`. Callers that stored a borrowed
+                // (shared-buffer / static) slice must NOT call `deinit` — same
+                // contract as the Zig original.
+                unsafe {
+                    drop(Box::<[u8]>::from_raw(core::ptr::slice_from_raw_parts_mut(
+                        self.contents.as_ptr() as *mut u8,
+                        self.contents.len(),
+                    )));
+                }
+                self.contents = b"";
+            }
+        }
+
+        /// Port of `Entry.closeFD` (cache.zig:48).
+        pub fn close_fd(&mut self) -> Option<bun_sys::Error> {
+            use bun_sys::FdExt as _;
+            if self.fd.is_valid() {
+                let fd = self.fd;
+                self.fd = Fd::INVALID;
+                // TODO(port): @returnAddress() has no stable Rust equivalent; pass None.
+                return fd.close_allowing_bad_file_descriptor(None);
+            }
+            None
+        }
+    }
+
+    impl Fs {
+        // When we are in a macro, the shared buffer may be in use by the in-progress macro.
+        // so we have to dynamically switch it out.
+        #[inline]
+        pub fn shared_buffer(&mut self) -> &mut MutableString {
+            if !self.use_alternate_source_cache {
+                &mut self.shared_buffer
+            } else {
+                &mut self.macro_shared_buffer
+            }
+        }
+
+        /// When we need to suspend/resume something that has pointers into the shared buffer, we need to
+        /// switch out the shared buffer so that it is not in use.
+        ///
+        /// Ownership transfer: in Zig (cache.zig:77/79) the field is overwritten WITHOUT freeing
+        /// the old buffer, because the suspended parse keeps pointers into it (see ModuleLoader.zig:488,
+        /// "this shared buffer is about to become owned by the AsyncModule struct"). In Rust, plain
+        /// field assignment would drop+free the old buffer → use-after-free on resume. So we return
+        /// the detached buffer; the caller MUST take ownership of it and keep it alive for as long as
+        /// `parse_result.source.contents` may be read.
+        pub fn reset_shared_buffer(&mut self, buffer: *const MutableString) -> MutableString {
+            if core::ptr::eq(buffer, &self.shared_buffer) {
+                core::mem::replace(&mut self.shared_buffer, MutableString::init_empty())
+            } else if core::ptr::eq(buffer, &self.macro_shared_buffer) {
+                core::mem::replace(&mut self.macro_shared_buffer, MutableString::init_empty())
+            } else {
+                unreachable!("resetSharedBuffer: invalid buffer");
+            }
+        }
+
+        // TODO(port): Zig `Fs.deinit` references `c.entries` which is not a field on `Fs` —
+        // dead code (Zig lazy compilation never instantiated it). No Drop impl needed beyond
+        // the auto-drop of `shared_buffer` / `macro_shared_buffer`.
+
+        /// Port of `Fs.readFileShared` (cache.zig:87) — read `path` into the
+        /// caller's `shared` buffer (HMR / dev-server path).
+        pub fn read_file_shared(
+            &mut self,
+            _fs: &mut fs_mod::FileSystem,
+            path: &bun_core::ZStr,
+            cached_file_descriptor: Option<Fd>,
+            shared: &mut MutableString,
+        ) -> Result<Entry, bun_core::Error> {
+            let rfs = &_fs.fs;
+
+            let file_handle: bun_sys::File = if let Some(fd) = cached_file_descriptor {
+                // `try handle.seekTo(0)` — rewind a cached fd before re-reading.
+                bun_sys::lseek(fd, 0, libc::SEEK_SET).map_err(bun_core::Error::from)?;
+                bun_sys::File::from_fd(fd)
+            } else {
+                bun_sys::open_file_absolute_z(path, bun_sys::OpenFlags::READ_ONLY)
+                    .map_err(bun_core::Error::from)?
+            };
+
+            let will_close = rfs.need_to_close_files() && cached_file_descriptor.is_none();
+            let fd = file_handle.handle();
+            let file_handle = scopeguard::guard(file_handle, move |fh| {
+                if will_close {
+                    let _ = fh.close();
+                }
+            });
+
+            let contents =
+                match Self::read_handle_into(&file_handle, path.as_bytes(), true, shared, self.stream) {
+                    Ok(c) => c,
+                    Err(err) => {
+                        if cfg!(debug_assertions) {
+                            Output::print_error(format_args!(
+                                "{}: readFile error -- {}",
+                                bstr::BStr::new(path.as_bytes()),
+                                bstr::BStr::new(err.name()),
+                            ));
+                        }
+                        return Err(err);
+                    }
+                };
+
+            Ok(Entry {
+                contents,
+                fd: if feature_flags::STORE_FILE_DESCRIPTORS { fd } else { Fd::INVALID },
+                external_free_function: ExternalFreeFunction::NONE,
+            })
+        }
+
+        /// Port of `Fs.readFile` (cache.zig:126).
+        pub fn read_file(
+            &mut self,
+            _fs: &mut fs_mod::FileSystem,
+            path: &[u8],
+            dirname_fd: Fd,
+            use_shared_buffer: bool,
+            _file_handle: Option<Fd>,
+        ) -> Result<Entry, bun_core::Error> {
+            self.read_file_with_allocator(_fs, path, dirname_fd, use_shared_buffer, _file_handle)
+        }
+
+        /// Port of `Fs.readFileWithAllocator` (cache.zig:146).
+        ///
+        /// PORT NOTE: `comptime use_shared_buffer` is taken at runtime — the live
+        /// callers (`ParseTask::get_code_for_parse_task_without_plugins`,
+        /// `Transpiler::parse`) pass a value computed from runtime state, and the
+        /// resolver's earlier CYCLEBREAK forward-decl already pinned this shape.
+        /// PERF(port): re-monomorphize once both callers stabilize.
+        ///
+        /// PORT NOTE: `allocator` is dropped — Zig forwarded it to
+        /// `readFileWithHandleAndAllocator`; the only effect was choosing which
+        /// heap owns the non-shared-buffer read. The Rust path always allocates
+        /// from the global heap (via `Box::leak`); arena callers can route through
+        /// a bump in a follow-up.
+        pub fn read_file_with_allocator(
+            &mut self,
+            _fs: &mut fs_mod::FileSystem,
+            path: &[u8],
+            dirname_fd: Fd,
+            use_shared_buffer: bool,
+            _file_handle: Option<Fd>,
+        ) -> Result<Entry, bun_core::Error> {
+            let rfs = &_fs.fs;
+
+            // PORT NOTE: reshaped — Zig declared `file_handle = undefined` then assigned on each
+            // branch; restructured into a single let-expression to avoid `mem::zeroed()` on a
+            // type that may have niche (NonZero) fields.
+            let file_handle: bun_sys::File = if let Some(f) = _file_handle {
+                bun_sys::lseek(f, 0, libc::SEEK_SET).map_err(bun_core::Error::from)?;
+                bun_sys::File::from_fd(f)
+            } else if feature_flags::STORE_FILE_DESCRIPTORS && dirname_fd.is_valid() {
+                match bun_sys::openat_a(dirname_fd, bun_paths::basename(path), bun_sys::O::RDONLY, 0) {
+                    Ok(fd) => bun_sys::File::from_fd(fd),
+                    Err(err) if err.get_errno() == bun_sys::E::ENOENT => {
+                        let handle = bun_sys::open_file(path, bun_sys::OpenFlags::READ_ONLY)
+                            .map_err(bun_core::Error::from)?;
+                        Output::pretty_errorln(format_args!(
+                            "<r><d>Internal error: directory mismatch for directory \"{}\", fd {}<r>. You don't need to do anything, but this indicates a bug.",
+                            bstr::BStr::new(path),
+                            dirname_fd,
+                        ));
+                        handle
+                    }
+                    Err(err) => return Err(err.into()),
+                }
+            } else {
+                bun_sys::open_file(path, bun_sys::OpenFlags::READ_ONLY)
+                    .map_err(bun_core::Error::from)?
+            };
+
+            let fd = file_handle.handle();
+
+            #[cfg(not(windows))] // skip on Windows because NTCreateFile will do it.
+            bun_core::scoped_log!(CacheFs, "openat({}, {}) = {}", dirname_fd, bstr::BStr::new(path), fd);
+
+            let will_close = rfs.need_to_close_files() && _file_handle.is_none();
+            let file_handle = scopeguard::guard(file_handle, move |fh| {
+                if will_close {
+                    bun_core::scoped_log!(CacheFs, "readFileWithAllocator close({})", fh.handle());
+                    let _ = fh.close();
+                }
+            });
+
+            // PORT NOTE: reshaped for borrowck — capture `stream` scalar before borrowing
+            // the shared buffer.
+            let stream = self.stream;
+            let shared = self.shared_buffer();
+
+            let contents =
+                match Self::read_handle_into(&file_handle, path, use_shared_buffer, shared, stream) {
+                    Ok(c) => c,
+                    Err(err) => {
+                        if cfg!(debug_assertions) {
+                            Output::print_error(format_args!(
+                                "{}: readFile error -- {}",
+                                bstr::BStr::new(path),
+                                bstr::BStr::new(err.name()),
+                            ));
+                        }
+                        return Err(err);
+                    }
+                };
+
+            Ok(Entry {
+                contents,
+                fd: if feature_flags::STORE_FILE_DESCRIPTORS && !will_close { fd } else { Fd::INVALID },
+                external_free_function: ExternalFreeFunction::NONE,
+            })
+        }
+
+        /// Inlined subset of `RealFS.readFileWithHandleAndAllocator` (fs.zig:1564) —
+        /// the resolver's full port of that method is in the gated `fs.rs` Phase-A
+        /// draft, so we go to `bun_sys` directly. Returns a `'static` slice per the
+        /// `Entry` contract above (borrows `shared_buffer` when `use_shared_buffer`,
+        /// else a `Box::leak`).
+        // TODO(port): switch back to `rfs.read_file_with_handle_and_allocator` once
+        // `fs_full` un-gates; this drops the BOM-strip / pread-loop refinements
+        // that path carries.
+        fn read_handle_into(
+            file: &bun_sys::File,
+            _path: &[u8],
+            use_shared_buffer: bool,
+            shared: &mut MutableString,
+            _stream: bool,
+        ) -> Result<&'static [u8], bun_core::Error> {
+            if use_shared_buffer {
+                shared.reset();
+                let size = file.get_end_pos().map_err(bun_core::Error::from)?;
+                if size == 0 {
+                    // SAFETY: ARENA — the empty slice into `shared.list` is what Zig
+                    // returned; callers treat it as borrowed-until-reset.
+                    return Ok(b"");
+                }
+                shared.list.reserve(size + 1);
+                // SAFETY: capacity reserved above; `read_all` writes initialized bytes
+                // and we set_len to exactly the count returned.
+                let n = unsafe {
+                    let dst = core::slice::from_raw_parts_mut(
+                        shared.list.as_mut_ptr(),
+                        shared.list.capacity(),
+                    );
+                    let n = file.read_all(dst).map_err(bun_core::Error::from)?;
+                    shared.list.set_len(n);
+                    n
+                };
+                // Sentinel NUL past len when capacity allows (matches fs.zig:1671).
+                if shared.list.capacity() > n {
+                    // SAFETY: capacity > len, so writing one byte past len is in-bounds.
+                    unsafe { *shared.list.as_mut_ptr().add(n) = 0 };
+                }
+                // SAFETY: ARENA — lifetime-erase the borrow of `shared.list`. Zig
+                // hands this slice straight to `logger::Source.contents`; the
+                // caller owns `shared` and resets it via `reset_shared_buffer`
+                // before reuse.
+                Ok(unsafe { core::slice::from_raw_parts(shared.list.as_ptr(), n) })
+            } else {
+                let bytes = file.read_to_end().map_err(bun_core::Error::from)?;
+                if bytes.is_empty() {
+                    return Ok(b"");
+                }
+                // SAFETY: see `Entry::deinit` — reclaimed there via `Box::from_raw`.
+                Ok(Box::leak(bytes.into_boxed_slice()))
+            }
+        }
+    }
+
+    /// Port of `cache::JavaScript` (cache.zig:204) — unit struct; AST caching is
+    /// "probably only relevant when bundling for production" (per the Zig
+    /// comment), so the struct is empty and `parse`/`scan` are stateless.
+    ///
+    /// CYCLEBREAK: `parse`/`scan` need `bun_js_parser::Parser::init` + the
+    /// `Define` table type, both of which are mid-unification with the bundler's
+    /// `defines.rs`. Until that lands, the bodies live in
+    /// `bun_bundler::cache::JavaScript` (which can name those types directly);
+    /// the resolver only needs the field shape so `Resolver.caches.js` exists.
+    #[derive(Default)]
+    pub struct JavaScript {}
+
+    pub type JavaScriptResult = bun_js_parser::ast::Result;
+
+    impl JavaScript {
+        #[inline]
+        pub fn init() -> JavaScript { JavaScript {} }
+    }
+}
+
 pub fn is_package_path(path: &[u8]) -> bool {
     // Always check for posix absolute paths (starts with "/")
     // But don't check window's style on posix

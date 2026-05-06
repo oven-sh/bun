@@ -43,10 +43,22 @@ pub struct Stream {
 
 impl Stream {
     /// Zig: `pub const new = bun.TrivialNew(@This());`
-    /// Heap-allocates a `Stream`. Callers in Zig wrote `Stream.new(.{ ... })`;
-    /// in Rust, construct the value and box it.
-    pub fn new(init: Stream) -> Box<Stream> {
-        Box::new(init)
+    /// Heap-allocates a `Stream` and returns the raw pointer; ownership is held
+    /// by `ClientSession.pending` until `ClientSession::detach` reclaims it via
+    /// `Box::from_raw`.
+    pub fn new(session: *mut ClientSession, client: &mut HttpClient) -> *mut Stream {
+        Box::into_raw(Box::new(Stream {
+            session,
+            client: Some(NonNull::from(client)),
+            qstream: None,
+            decoded_headers: Vec::new(),
+            body_buffer: Vec::new(),
+            status_code: 0,
+            pending_body: b"" as &[u8] as *const [u8],
+            request_body_done: false,
+            is_streaming_body: false,
+            headers_delivered: false,
+        }))
     }
 
     pub fn abort(&mut self) {

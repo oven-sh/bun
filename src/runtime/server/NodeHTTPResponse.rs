@@ -202,10 +202,160 @@ use super::*;
 use bstr::BStr;
 use bun_core::scoped_log;
 use bun_http::Method as HttpMethod;
-use bun_str::ZigString;
-use crate::server::jsc::CallFrame;
+use bun_str::{ZigString, ZigStringSlice};
+use crate::server::jsc::{CallFrame, ErrorCode};
+use crate::webcore::HasAutoFlusher;
 
 bun_core::declare_scope!(NodeHTTPResponse, visible);
+
+// ─── Local shims (upstream methods gated/missing) ────────────────────────────
+
+/// `VirtualMachine::get()` returns `*mut`; deref once for callers that need `&mut`.
+#[inline]
+fn vm_get<'a>() -> &'a mut VirtualMachine {
+    // SAFETY: JS-thread only; the global VM pointer is non-null once the runtime is up.
+    unsafe { &mut *VirtualMachine::get() }
+}
+
+/// `JSGlobalObject::bun_vm()` (lib.rs variant) returns `*mut`; deref for `Ref::ref/unref`.
+#[inline]
+fn bun_vm_mut(global: &JSGlobalObject) -> &mut VirtualMachine {
+    // SAFETY: JS-thread only; bun_vm() returns the live VM for this global.
+    unsafe { &mut *global.bun_vm() }
+}
+
+/// Local extension for `JSValue::with_async_context_if_needed` (upstream gated).
+trait JSValueAsyncCtxExt {
+    fn with_async_context_if_needed(self, global: &JSGlobalObject) -> JSValue;
+}
+impl JSValueAsyncCtxExt for JSValue {
+    #[inline]
+    fn with_async_context_if_needed(self, _global: &JSGlobalObject) -> JSValue {
+        // TODO(port): blocked_on: bun_jsc::JSValue::with_async_context_if_needed
+        let _ = _global;
+        self
+    }
+}
+
+/// Local shim for `globalObject.ERR(.CODE, msg, .{}).throw()` (Zig codegen helpers).
+struct NodeHttpErrBuilder<'a> {
+    global: &'a JSGlobalObject,
+    code: ErrorCode,
+    msg: &'static str,
+}
+impl<'a> NodeHttpErrBuilder<'a> {
+    #[inline]
+    fn throw<T>(self) -> JsResult<T> {
+        Err(self.global.err(self.code, format_args!("{}", self.msg)).throw())
+    }
+}
+trait NodeHttpGlobalErrExt {
+    fn err_http_headers_sent(&self, msg: &'static str) -> NodeHttpErrBuilder<'_>;
+    fn err_stream_already_finished(&self, msg: &'static str) -> NodeHttpErrBuilder<'_>;
+    fn err_stream_write_after_end(&self, msg: &'static str) -> NodeHttpErrBuilder<'_>;
+    fn err_http_content_length_mismatch(&self, msg: &'static str) -> NodeHttpErrBuilder<'_>;
+    fn err_invalid_char(&self, msg: &'static str) -> NodeHttpErrBuilder<'_>;
+}
+impl NodeHttpGlobalErrExt for JSGlobalObject {
+    #[inline]
+    fn err_http_headers_sent(&self, msg: &'static str) -> NodeHttpErrBuilder<'_> {
+        NodeHttpErrBuilder { global: self, code: ErrorCode::ERR_HTTP_HEADERS_SENT, msg }
+    }
+    #[inline]
+    fn err_stream_already_finished(&self, msg: &'static str) -> NodeHttpErrBuilder<'_> {
+        NodeHttpErrBuilder { global: self, code: ErrorCode::ERR_STREAM_ALREADY_FINISHED, msg }
+    }
+    #[inline]
+    fn err_stream_write_after_end(&self, msg: &'static str) -> NodeHttpErrBuilder<'_> {
+        NodeHttpErrBuilder { global: self, code: ErrorCode::ERR_STREAM_WRITE_AFTER_END, msg }
+    }
+    #[inline]
+    fn err_http_content_length_mismatch(&self, msg: &'static str) -> NodeHttpErrBuilder<'_> {
+        NodeHttpErrBuilder { global: self, code: ErrorCode::ERR_HTTP_CONTENT_LENGTH_MISMATCH, msg }
+    }
+    #[inline]
+    fn err_invalid_char(&self, msg: &'static str) -> NodeHttpErrBuilder<'_> {
+        NodeHttpErrBuilder { global: self, code: ErrorCode::ERR_INVALID_CHAR, msg }
+    }
+}
+
+/// AnyResponse `is_ssl()` shim (upstream lacks this accessor).
+#[inline]
+fn any_response_is_ssl(r: &uws::AnyResponse) -> bool {
+    matches!(r, uws::AnyResponse::SSL(_))
+}
+
+// uSockets callback adapters: AnyResponse::on_data/on_timeout/on_writable expect
+// `Fn(*mut U, ...)` (capture-less); adapt to `&mut self` method bodies.
+fn on_timeout_shim(this: *mut NodeHTTPResponse, resp: uws::AnyResponse) {
+    // SAFETY: registered with `self as *mut _`; live while callback is armed.
+    unsafe { (*this).on_timeout(resp) }
+}
+fn on_data_shim(this: *mut NodeHTTPResponse, chunk: &[u8], last: bool) {
+    // SAFETY: see on_timeout_shim.
+    unsafe { (*this).on_data(chunk, last) }
+}
+fn on_buffer_paused_shim(this: *mut NodeHTTPResponse, chunk: &[u8], last: bool) {
+    // SAFETY: see on_timeout_shim.
+    unsafe { (*this).on_buffer_request_body_while_paused(chunk, last) }
+}
+fn on_drain_shim(this: *mut NodeHTTPResponse, off: u64, resp: uws::AnyResponse) -> bool {
+    // SAFETY: see on_timeout_shim.
+    unsafe { (*this).on_drain(off, resp) }
+}
+
+impl HasAutoFlusher for NodeHTTPResponse {
+    #[inline]
+    fn auto_flusher(&mut self) -> &mut AutoFlusher {
+        &mut self.auto_flusher
+    }
+    fn on_auto_flush(this: *mut Self) -> bool {
+        // SAFETY: registered as `&mut Self` cast to `*mut c_void`; drained on JS thread.
+        unsafe { (*this).on_auto_flush() }
+    }
+}
+
+// JsClass impl: hand-roll the codegen externs (`.classes.ts` emits
+// `NodeHTTPResponse__{fromJS,fromJSDirect,create,getConstructor}`).
+unsafe extern "C" {
+    fn NodeHTTPResponse__fromJS(value: JSValue) -> Option<core::ptr::NonNull<NodeHTTPResponse>>;
+    fn NodeHTTPResponse__fromJSDirect(value: JSValue) -> Option<core::ptr::NonNull<NodeHTTPResponse>>;
+    fn NodeHTTPResponse__create(ptr: *mut NodeHTTPResponse, global: *mut JSGlobalObject) -> JSValue;
+    fn NodeHTTPResponse__getConstructor(global: *mut JSGlobalObject) -> JSValue;
+}
+impl jsc::JsClass for NodeHTTPResponse {
+    fn from_js(value: JSValue) -> Option<*mut Self> {
+        // SAFETY: codegen extern; `value` is a valid JSValue.
+        unsafe { NodeHTTPResponse__fromJS(value) }.map(|p| p.as_ptr())
+    }
+    fn from_js_direct(value: JSValue) -> Option<*mut Self> {
+        // SAFETY: codegen extern.
+        unsafe { NodeHTTPResponse__fromJSDirect(value) }.map(|p| p.as_ptr())
+    }
+    fn to_js(self, _global: &JSGlobalObject) -> JSValue {
+        // Never called by-value; callers go through `to_js_ptr` below.
+        unreachable!("NodeHTTPResponse::to_js by-value")
+    }
+    fn get_constructor(global: &JSGlobalObject) -> JSValue {
+        // SAFETY: codegen extern.
+        unsafe { NodeHTTPResponse__getConstructor(global as *const _ as *mut _) }
+    }
+}
+impl NodeHTTPResponse {
+    #[inline]
+    fn to_js_ptr(this: *mut Self, global: &JSGlobalObject) -> JSValue {
+        // SAFETY: `this` is a heap-allocated `Box::into_raw` from `create`.
+        unsafe { NodeHTTPResponse__create(this, global as *const _ as *mut _) }
+    }
+}
+
+/// Unpack the `AnyServer` tagged-pointer u64 handed across FFI from C++.
+/// Zig used `bun.ptr.TaggedPointerUnion`; the Rust port stores `(tag, ptr)`
+/// separately. C++ still passes the packed form, so unpack here.
+#[inline]
+fn any_server_from_packed(_packed: u64) -> AnyServer {
+    todo!("blocked_on: bun_ptr::TaggedPointerUnion unpack for AnyServer")
+}
 
 // Codegen: JSNodeHTTPResponse wrapper (toJS/fromJS/fromJSDirect + cached property accessors).
 // TODO(port): generated by .classes.ts codegen — `js::*` accessors below are emitted there.

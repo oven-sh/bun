@@ -1436,7 +1436,7 @@ fn transpile_source_code_inner(
                     // `.cjs`.
                     use bun_bundler::cache::MetadataModuleType;
                     let is_commonjs_module =
-                        entry.metadata.module_type == MetadataModuleType::Cjs;
+                        matches!(entry.metadata.module_type, MetadataModuleType::Cjs);
                     // Spec :448-464 — when the cached entry was detected as
                     // CJS but lives inside a `"type":"module"` package, emit
                     // `package_json_type_module` so the C++ loader applies the

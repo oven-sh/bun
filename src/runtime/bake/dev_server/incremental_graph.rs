@@ -18,6 +18,10 @@ pub use super::incremental_graph_body::{
     InsertFailureKey, ProcessMode, ReceiveChunkContent, ReceiveChunkSourceMap,
     TakeJSBundleOptionsClient, TakeJSBundleOptionsServer, TraceDependencyGoal,
 };
+/// Re-export of the body draft's non-const-generic `FileIndex` so DevServer.rs
+/// can name it for `CachedFileIndex: From<Option<_>>` without seeing the
+/// private `_body` mod.
+pub use super::incremental_graph_body::FileIndex as BodyFileIndex;
 
 /// `bun.GenericIndex(u32, File)` — file index into `bundled_files`.
 ///

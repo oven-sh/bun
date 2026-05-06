@@ -29,7 +29,7 @@ impl Expect {
 
         let expected = arguments[0];
         if !expected.js_type().is_array() {
-            return global.throw_invalid_argument_type("toContainValues", "expected", "array");
+            return Err(global.throw_invalid_argument_type("toContainValues", "expected", "array"));
         }
         expected.ensure_still_alive();
         let value: JSValue = this.get_value(global, this_value, "toContainValues", "<green>expected<r>")?;
@@ -42,12 +42,12 @@ impl Expect {
             let mut itr = expected.array_iterator(global)?;
             let count = values.get_length(global)?;
 
-            'outer: while let Some(item) = itr.next(global)? {
+            'outer: while let Some(item) = itr.next()? {
                 // PORT NOTE: reshaped for borrowck — Zig `while ... else` has no Rust equivalent;
                 // tracked via `found` flag instead.
                 let mut found = false;
                 let mut i: u32 = 0;
-                while (i as usize) < count {
+                while (i as u64) < count {
                     let key = values.get_index(global, i)?;
                     if key.jest_deep_equals(item, global)? {
                         found = true;

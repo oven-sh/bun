@@ -1048,7 +1048,7 @@ pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, 
     }
 
     if configs.is_empty() {
-        Output::pretty_errorln("<r><red>error<r>: No scripts to run", ());
+        Output::pretty_errorln("<r><red>error<r>: No scripts to run");
         Global::exit(1);
     }
 

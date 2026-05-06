@@ -2141,7 +2141,7 @@ pub fn normalize_posix_js_t<T: PathChar>(
     path: &[T],
     buf: &mut [T],
 ) -> JsResult<JSValue> {
-    BunString::create_utf8_for_js(global_object, normalize_posix_t(path, buf))
+    create_js_string_t::<T>(global_object, normalize_posix_t(path, buf))
 }
 
 pub fn normalize_windows_js_t<T: PathChar>(
@@ -2149,7 +2149,7 @@ pub fn normalize_windows_js_t<T: PathChar>(
     path: &[T],
     buf: &mut [T],
 ) -> JsResult<JSValue> {
-    BunString::create_utf8_for_js(global_object, normalize_windows_t(path, buf))
+    create_js_string_t::<T>(global_object, normalize_windows_t(path, buf))
 }
 
 pub fn normalize_js_t<T: PathChar>(

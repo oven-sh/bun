@@ -2615,11 +2615,13 @@ impl DevServer<'_> {
         }
 
         let client_file: Option<incremental_graph::ClientFileIndex> = match &route_bundle.data {
-            route_bundle::Data::Framework(fw) => self
-                .router
-                .type_ptr(self.router.route_ptr(fw.route_index).r#type)
-                .client_file
-                .map(|ofi| from_opaque_file_id::<{ bake::Side::Client }>(ofi)),
+            route_bundle::Data::Framework(fw) => {
+                let type_idx = self.router.route_ptr(fw.route_index).r#type;
+                self.router
+                    .type_ptr(type_idx)
+                    .client_file
+                    .map(|ofi| from_opaque_file_id::<{ bake::Side::Client }>(ofi))
+            }
             route_bundle::Data::Html(html) => Some(html.bundled_file),
         };
 
@@ -2800,8 +2802,8 @@ impl<const SIDE: bake::Side> From<Option<incremental_graph::FileIndex<SIDE>>> fo
 }
 // Body-module `FileIndex` (non-const-generic) — same wire shape as the header
 // `FileIndex<SIDE>`; provided so `incremental_graph_body` call sites can `.into()`.
-impl From<Option<crate::bake::dev_server::incremental_graph_body::FileIndex>> for CachedFileIndex {
-    fn from(v: Option<crate::bake::dev_server::incremental_graph_body::FileIndex>) -> Self {
+impl From<Option<crate::bake::dev_server::incremental_graph::BodyFileIndex>> for CachedFileIndex {
+    fn from(v: Option<crate::bake::dev_server::incremental_graph::BodyFileIndex>) -> Self {
         match v { Some(i) => Self(i.get()), None => Self::NONE }
     }
 }
@@ -3091,7 +3093,7 @@ pub fn finalize_bundle(
 
         if let Some(_blob) = html.cached_response.take() {
             // Arc<StaticRoute> drop releases the ref.
-            route_bundle.invalidate_client_bundle(dev);
+            route_bundle.invalidate_client_bundle(dev_ptr.cast());
         }
         if let Some(_slice) = html.bundled_html_text.take() {
             // freed by Drop

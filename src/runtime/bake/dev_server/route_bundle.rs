@@ -58,7 +58,7 @@ pub struct Html {
     /// `bun_ptr::RefCounted` (gated server-side).
     // TODO(b2-blocked): bun_ptr::RefPtr<HTMLBundleRoute> once RefCounted impl is real.
     pub html_bundle: *mut HTMLBundleRoute,
-    pub bundled_file: incremental_graph::FileIndex,
+    pub bundled_file: incremental_graph::ClientFileIndex,
     pub script_injection_offset: Option<ByteOffset>,
     pub bundled_html_text: Option<Box<[u8]>>,
     /// SHARED (LIFETIMES.tsv): deinit calls `cached_response.deref()`.
@@ -102,7 +102,9 @@ impl Data {
 impl RouteBundle {
     /// `RouteBundle.invalidateClientBundle` — full body in gated
     /// `../DevServer/RouteBundle.rs` draft.
-    pub fn invalidate_client_bundle(&mut self, _dev: *mut super::DevServer) {
+    // PORT NOTE: `_dev` erased to `*mut ()` because `dev_server::DevServer` and
+    // `dev_server_body::DevServer` are distinct keystone types pending unification.
+    pub fn invalidate_client_bundle(&mut self, _dev: *mut ()) {
         todo!("blocked_on: dev_server::RouteBundle::invalidate_client_bundle body un-gate")
     }
 }

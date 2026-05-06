@@ -1146,84 +1146,89 @@ impl CreateCommand {
                 //     }
                 // }
 
-                package_json_expr.data.e_object_mut().is_single_line = false;
+                package_json_expr.data.e_object_mut().unwrap().is_single_line = false;
 
-                package_json_expr.data.e_object_mut().properties =
-                    js_ast::G::Property::List::move_from_list(&mut properties_list);
+                package_json_expr.data.e_object_mut().unwrap().properties =
+                    bun_logger::js_ast::G::PropertyList::move_from_list(properties_list);
                 {
+                    use bun_logger::js_ast::expr::Data as LExprData;
                     let mut i: usize = 0;
                     let mut property_i: usize = 0;
-                    let props = &mut package_json_expr.data.e_object_mut().properties;
-                    while i < props.len() {
-                        let property: js_ast::G::Property = props.ptr()[i];
-                        let key = property.key.unwrap().as_string().unwrap();
+                    let props = &mut package_json_expr.data.e_object_mut().unwrap().properties;
+                    while i < props.len as usize {
+                        let key_expr = props.slice()[i].key.unwrap();
+                        let key = key_expr.as_utf8_string_literal().unwrap();
 
                         if key == b"scripts" {
-                            if property.value.unwrap().data.is_e_object() {
-                                let scripts_properties = property.value.unwrap().data.e_object_mut().properties.slice_mut();
-
-                                // if they're starting the app with "react-scripts start" or "next dev", that won't make sense
-                                // if they launch with npm run start it will just be slower
-                                let mut script_property_i: usize = 0;
+                            let mut value_data = props.slice()[i].value.unwrap().data;
+                            if value_data.is_e_object() {
+                                // SAFETY: StoreRef<E::Object> derefs to arena-backed storage; mutating
+                                // through the local `value_data` copy mutates the same arena E::Object.
+                                let scripts_obj = value_data.e_object_mut().unwrap();
                                 let mut script_property_out_i: usize = 0;
+                                {
+                                    let scripts_properties = scripts_obj.properties.slice_mut();
 
-                                while script_property_i < scripts_properties.len() {
-                                    let script = scripts_properties[script_property_i]
-                                        .value
-                                        .unwrap()
-                                        .data
-                                        .e_string()
-                                        .data;
+                                    // if they're starting the app with "react-scripts start" or "next dev", that won't make sense
+                                    // if they launch with npm run start it will just be slower
+                                    let mut script_property_i: usize = 0;
 
-                                    if strings::contains(script, b"react-scripts start")
-                                        || strings::contains(script, b"next dev")
-                                        || strings::contains(script, b"react-scripts eject")
-                                    {
-                                        if create_options.verbose {
-                                            Output::pretty_errorln(
-                                                "<r><d>[package.json] Pruned unnecessary script: {}<r>",
-                                                format_args!("{}", bstr::BStr::new(script)),
-                                            );
+                                    while script_property_i < scripts_properties.len() {
+                                        let script = scripts_properties[script_property_i]
+                                            .value
+                                            .unwrap()
+                                            .data
+                                            .e_string()
+                                            .unwrap()
+                                            .data;
+
+                                        if strings::contains(script, b"react-scripts start")
+                                            || strings::contains(script, b"next dev")
+                                            || strings::contains(script, b"react-scripts eject")
+                                        {
+                                            if create_options.verbose {
+                                                Output::pretty_errorln(format_args!(
+                                                    "<r><d>[package.json] Pruned unnecessary script: {}<r>",
+                                                    bstr::BStr::new(script),
+                                                ));
+                                            }
+
+                                            script_property_i += 1;
+                                            continue;
                                         }
 
+                                        if strings::contains(script, b"react-scripts build") {
+                                            scripts_properties[script_property_i].value =
+                                                Some(injection_prefill::npx_react_scripts_build());
+                                        }
+
+                                        scripts_properties.swap(script_property_out_i, script_property_i);
+                                        script_property_out_i += 1;
                                         script_property_i += 1;
-                                        continue;
                                     }
-
-                                    if strings::contains(script, b"react-scripts build") {
-                                        scripts_properties[script_property_i].value =
-                                            Some(injection_prefill::npx_react_scripts_build());
-                                    }
-
-                                    scripts_properties[script_property_out_i] = scripts_properties[script_property_i];
-                                    script_property_out_i += 1;
-                                    script_property_i += 1;
                                 }
 
-                                property.value.unwrap().data.e_object_mut().properties =
-                                    js_ast::G::Property::List::from_borrowed_slice_dangerous(
-                                        &mut scripts_properties[0..script_property_out_i],
-                                    );
+                                scripts_obj.properties.shrink_retaining_capacity(script_property_out_i);
                             }
                         }
 
                         if key.is_empty() || key != b"bun-create" {
-                            props.ptr_mut()[property_i] = property;
+                            props.slice_mut().swap(property_i, i);
                             property_i += 1;
                             i += 1;
                             continue;
                         }
 
-                        let value = property.value.unwrap();
+                        let value = props.slice()[i].value.unwrap();
                         if let Some(postinstall) = value.as_property(b"postinstall") {
                             match &postinstall.expr.data {
-                                js_ast::Expr::Data::EString(single_task) => {
-                                    postinstall_tasks.push(single_task.string()?);
+                                LExprData::EString(single_task) => {
+                                    postinstall_tasks.push(single_task.data);
                                 }
-                                js_ast::Expr::Data::EArray(tasks) => {
+                                LExprData::EArray(tasks) => {
                                     let items = tasks.slice();
                                     for task in items {
-                                        if let Some(task_entry) = task.as_string() {
+                                        if let Some(task_entry) = task.as_utf8_string_literal() {
                                             // if (needs.bun_bun_for_nextjs or bun_bun_for_react_scripts) {
                                             //     var iter = std.mem.splitScalar(u8, task_entry, ' ');
                                             //     var last_was_bun = false;
@@ -1249,12 +1254,12 @@ impl CreateCommand {
 
                         if let Some(preinstall) = value.as_property(b"preinstall") {
                             match &preinstall.expr.data {
-                                js_ast::Expr::Data::EString(single_task) => {
-                                    preinstall_tasks.push(single_task.string()?);
+                                LExprData::EString(single_task) => {
+                                    preinstall_tasks.push(single_task.data);
                                 }
-                                js_ast::Expr::Data::EArray(tasks) => {
+                                LExprData::EArray(tasks) => {
                                     for task in tasks.items.slice() {
-                                        if let Some(task_entry) = task.as_string() {
+                                        if let Some(task_entry) = task.as_utf8_string_literal() {
                                             preinstall_tasks.push(task_entry);
                                         }
                                     }
@@ -1264,7 +1269,7 @@ impl CreateCommand {
                         }
 
                         if let Some(start) = value.as_property(b"start") {
-                            if let Some(start_str) = start.expr.as_string() {
+                            if let Some(start_str) = start.expr.as_utf8_string_literal() {
                                 if !start_str.is_empty() {
                                     start_command = start_str;
                                 }

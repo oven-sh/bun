@@ -63,7 +63,7 @@ impl Raw {
 /// optional whitespace before "=". https://fetch.spec.whatwg.org/#simple-range-header-value
 pub fn parse_raw(header: &[u8]) -> Raw {
     let mut rest = header;
-    if rest.len() < 5 || !strings::eql_case_insensitive_ascii::<false>(&rest[0..5], b"bytes") {
+    if rest.len() < 5 || !strings::eql_case_insensitive_ascii(&rest[0..5], b"bytes", false) {
         return Raw::None;
     }
     rest = strings::trim(&rest[5..], b" \t");

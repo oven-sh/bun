@@ -724,7 +724,13 @@ impl Image {
         match &self.source {
             Source::JsBuffer => Self::source_js_get_cached(this_value)
                 .and_then(|v: JSValue| v.as_array_buffer(global))
-                .map(|ab| ab.byte_slice()),
+                .map(|ab| {
+                    // SAFETY: `ArrayBuffer` is a view struct (ptr+len); the
+                    // bytes live in the JS heap, not in `ab`. `this_value`
+                    // keeps the buffer alive for this JS-thread call — see fn
+                    // doc + TODO(port) above re: borrow-into-JS-heap.
+                    unsafe { &*(ab.byte_slice() as *const [u8]) }
+                }),
             Source::Owned(b) => Some(b.as_slice()),
             Source::Path(_) | Source::Blob(_) => None,
         }

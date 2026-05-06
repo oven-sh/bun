@@ -1650,12 +1650,12 @@ pub fn install_isolated_packages(
         // matches `Installer::NODE_MODULES_BUN`.
         let bun_modules_path = paths::os_path_literal!("node_modules/.bun");
 
-        match sys::mkdirat(Fd::cwd(), node_modules_path, 0o755).unwrap() {
+        match sys::mkdirat(Fd::cwd(), node_modules_path, 0o755) {
             Ok(()) => {
                 // fallthrough to creating bun_modules below
             }
             Err(_) => {
-                match sys::mkdirat(Fd::cwd(), bun_modules_path, 0o755).unwrap() {
+                match sys::mkdirat(Fd::cwd(), bun_modules_path, 0o755) {
                     Err(_) => break 'is_new_bun_modules false,
                     Ok(()) => {}
                 }

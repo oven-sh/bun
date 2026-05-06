@@ -960,8 +960,15 @@ impl<'a> BufferedReaderParent for SecurityScanSubprocess<'a> {
     unsafe fn loop_(this: *mut Self) -> *mut AsyncLoop {
         unsafe { (*this).loop_() }
     }
-    unsafe fn event_loop(this: *mut Self) -> EventLoopHandle {
-        unsafe { EventLoopHandle::from_any(&mut (*this).manager.event_loop) }
+    unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
+        // CYCLEBREAK: `bun_io::EventLoopHandle` is an opaque `*mut c_void`; pass
+        // the address of the manager's `AnyEventLoop` and let the registered
+        // FilePoll vtable downcast it (see `bun_io::EventLoopHandle` note).
+        unsafe {
+            bun_io::EventLoopHandle(
+                &(*this).manager.event_loop as *const AnyEventLoop<'static> as *mut core::ffi::c_void,
+            )
+        }
     }
 }
 
@@ -1365,7 +1372,7 @@ impl<'a> SecurityScanSubprocess<'a> {
             logger::Source::init_path_string("ipc-message.json", self.ipc_data.as_slice());
 
         let mut temp_log = logger::Log::init();
-        let bump = bumpalo::Bump::new();
+        let bump = bun_alloc::Arena::new();
 
         let json_expr = match crate::bun_json::parse_utf8(&json_source, &mut temp_log, &bump) {
             Ok(e) => e,

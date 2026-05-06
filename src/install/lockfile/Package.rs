@@ -2957,49 +2957,53 @@ pub mod serializer {
                     dependencies: old.dependencies,
                     resolutions: old.resolutions,
                     scripts: old.scripts,
-                    resolution: match old.resolution.tag {
-                        ResolutionTag::Uninitialized => {
-                            Resolution::init(TaggedValue::Uninitialized)
+                    // SAFETY: `tag` selects the active union member.
+                    resolution: unsafe {
+                        match old.resolution.tag {
+                            ResolutionTag::Uninitialized => {
+                                Resolution::init(TaggedValue::Uninitialized)
+                            }
+                            ResolutionTag::Root => Resolution::init(TaggedValue::Root),
+                            ResolutionTag::Npm => Resolution::init(TaggedValue::Npm(
+                                old.resolution.value.npm.migrate(),
+                            )),
+                            ResolutionTag::Folder => {
+                                Resolution::init(TaggedValue::Folder(old.resolution.value.folder))
+                            }
+                            ResolutionTag::LocalTarball => Resolution::init(
+                                TaggedValue::LocalTarball(old.resolution.value.local_tarball),
+                            ),
+                            ResolutionTag::Github => {
+                                Resolution::init(TaggedValue::Github(old.resolution.value.github))
+                            }
+                            ResolutionTag::Git => {
+                                Resolution::init(TaggedValue::Git(old.resolution.value.git))
+                            }
+                            ResolutionTag::Symlink => Resolution::init(TaggedValue::Symlink(
+                                old.resolution.value.symlink,
+                            )),
+                            ResolutionTag::Workspace => Resolution::init(
+                                TaggedValue::Workspace(old.resolution.value.workspace),
+                            ),
+                            ResolutionTag::RemoteTarball => Resolution::init(
+                                TaggedValue::RemoteTarball(old.resolution.value.remote_tarball),
+                            ),
+                            ResolutionTag::SingleFileModule => {
+                                Resolution::init(TaggedValue::SingleFileModule(
+                                    old.resolution.value.single_file_module,
+                                ))
+                            }
+                            _ => Resolution::init(TaggedValue::Uninitialized),
                         }
-                        ResolutionTag::Root => Resolution::init(TaggedValue::Root),
-                        ResolutionTag::Npm => Resolution::init(TaggedValue::Npm(
-                            old.resolution.value.npm.migrate(),
-                        )),
-                        ResolutionTag::Folder => {
-                            Resolution::init(TaggedValue::Folder(old.resolution.value.folder))
-                        }
-                        ResolutionTag::LocalTarball => Resolution::init(
-                            TaggedValue::LocalTarball(old.resolution.value.local_tarball),
-                        ),
-                        ResolutionTag::Github => {
-                            Resolution::init(TaggedValue::Github(old.resolution.value.github))
-                        }
-                        ResolutionTag::Git => {
-                            Resolution::init(TaggedValue::Git(old.resolution.value.git))
-                        }
-                        ResolutionTag::Symlink => Resolution::init(TaggedValue::Symlink(
-                            old.resolution.value.symlink,
-                        )),
-                        ResolutionTag::Workspace => Resolution::init(TaggedValue::Workspace(
-                            old.resolution.value.workspace,
-                        )),
-                        ResolutionTag::RemoteTarball => Resolution::init(
-                            TaggedValue::RemoteTarball(old.resolution.value.remote_tarball),
-                        ),
-                        ResolutionTag::SingleFileModule => {
-                            Resolution::init(TaggedValue::SingleFileModule(
-                                old.resolution.value.single_file_module,
-                            ))
-                        }
-                        _ => Resolution::init(TaggedValue::Uninitialized),
                     },
                 };
 
                 // PERF(port): was assume_capacity
-                list.push(new);
+                list.append(new)?;
             }
         } else {
-            list.set_len(list_len as usize);
+            // SAFETY: capacity reserved above; `load_fields` writes every column.
+            unsafe { list.set_len(list_len as usize) };
             load_fields::<SemverIntType>(stream, end_at as u64, &mut list, &mut needs_update)?;
         }
 

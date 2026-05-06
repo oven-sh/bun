@@ -2102,26 +2102,26 @@ pub fn init_with_runtime_once(
             manager_ptr,
             PackageManager {
                 cache_directory_: None,
-                cache_directory_path: ZStr::EMPTY_BOX, // TODO(port): default
+                cache_directory_path: ZBox::from_bytes(b""), // TODO(port): default
                 preallocated_network_tasks: PreallocatedNetworkTasks::init(),
                 preallocated_resolve_tasks: PreallocatedTaskStore::init(),
                 options: Options {
                     max_concurrent_lifecycle_scripts: cli
                         .concurrent_scripts
-                        .unwrap_or(cpu_count * 2),
+                        .unwrap_or((cpu_count * 2) as usize),
                     ..Default::default()
                 },
                 active_lifecycle_scripts: crate::lifecycle_script_runner::List {
                     root: core::ptr::null_mut(),
-                    context: manager_ptr,
+                    context: manager_ptr as *mut crate::PackageManager,
                 },
                 network_task_fifo: NetworkQueue::init(),
                 log: log as *mut _,
-                root_dir: root_dir.entries(),
+                root_dir,
                 env: Some(NonNull::from(env)),
                 cpu_count,
                 thread_pool: ThreadPool::init(thread_pool::Config {
-                    max_threads: cpu_count,
+                    max_threads: cpu_count as u32,
                     ..Default::default()
                 }),
                 // SAFETY: placeholder — Lockfile is NOT all-zero-valid POD. Zig leaves this
@@ -2136,7 +2136,7 @@ pub fn init_with_runtime_once(
                 // erased *mut () set by tier-6; bun_event_loop::AnyEventLoop::js_current() reads
                 // the JS_EVENT_LOOP_HOOK registered by bun_runtime::init().
                 event_loop: AnyEventLoop::js_current(),
-                original_package_json_path: ZStr::from_vec(original_package_json_path),
+                original_package_json_path: ZBox::from_vec_with_nul(original_package_json_path),
                 subcommand: Subcommand::Install,
 
                 // remaining defaults:

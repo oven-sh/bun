@@ -552,7 +552,9 @@ impl CreateCommand {
                     }
                 };
 
-                let _ = bun_sys::delete_tree_absolute(destination);
+                // TODO(port): std.fs.deleteTreeAbsolute — bun_sys lacks an absolute helper;
+                // route through cwd-relative delete_tree (absolute paths bypass dirfd on POSIX).
+                let _ = bun_sys::Dir::cwd().delete_tree(destination);
                 let destination_dir__ = match bun_sys::Fd::cwd().make_open_path(destination) {
                     Ok(d) => d,
                     Err(err) => {

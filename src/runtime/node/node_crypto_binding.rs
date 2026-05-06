@@ -283,8 +283,16 @@ impl<Ctx: CryptoJobCtx> CryptoJob<Ctx> {
         unsafe { (**guard).ctx.init(global)? };
         let job = scopeguard::ScopeGuard::into_inner(guard);
         // SAFETY: job is exclusively owned here.
+        // Zig: `AnyTask.New(@This(), &runFromJS).init(job)`. Rust's `New<T>` cannot carry a
+        // comptime callback, so build the erased AnyTask directly with a non-capturing shim.
         unsafe {
-            (*job).any_task = jsc::AnyTask::new::<Self>(Self::run_from_js).init(job);
+            (*job).any_task = AnyTask {
+                ctx: core::ptr::NonNull::new(job.cast::<c_void>()),
+                callback: |ctx: *mut c_void| {
+                    Self::run_from_js(ctx.cast::<Self>());
+                    Ok(())
+                },
+            };
         }
         Ok(job)
     }

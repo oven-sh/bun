@@ -4426,6 +4426,15 @@ export_host_fn!(Resolver::global_reverse, "Bun__DNS__reverse");
 export_host_fn!(Resolver::global_lookup_service, "Bun__DNS__lookupService");
 export_host_fn!(internal::prefetch_from_js, "Bun__DNS__prefetch");
 export_host_fn!(internal::get_dns_cache_stats, "Bun__DNS__getCacheStats");
+// JS2Native ($newZigFunction) entry points — see GeneratedJS2Native.h
+export_host_fn!(
+    Resolver::new_resolver,
+    "JS2Zig___src_runtime_dns_jsc_dns_zig__Resolver_newResolver"
+);
+export_host_fn!(
+    Resolver::get_runtime_default_result_order_option,
+    "JS2Zig___src_runtime_dns_jsc_dns_zig__Resolver_getRuntimeDefaultResultOrderOption"
+);
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

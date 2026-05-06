@@ -334,7 +334,9 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         // Compute the final hashes of each chunk, then use those to create the final
         // paths of each chunk. This can technically be done in parallel but it
         // probably doesn't matter so much because we're not hashing that much data.
-        for (index, chunk) in chunks.iter_mut().enumerate() {
+        // PORT NOTE: reshaped for borrowck — index loop so `chunks` can be passed
+        // whole to `append_isolated_hashes_for_imported_chunks` and then indexed.
+        for index in 0..chunks.len() {
             let mut hash = ContentHasher::default();
             c.append_isolated_hashes_for_imported_chunks(
                 &mut hash,
@@ -343,6 +345,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 &mut chunk_visit_map,
             );
             chunk_visit_map.set_all(false);
+            let chunk = &mut chunks[index];
             chunk.template.placeholder.hash = Some(hash.digest());
 
             let mut rel_path: Vec<u8> = Vec::new();
@@ -525,11 +528,12 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
     // Generate metafile JSON fragments for each chunk (after paths are resolved)
     if c.options.metafile {
-        for chunk in chunks.iter_mut() {
-            chunk.metafile_chunk_json = leak_static(
-                metafile_builder::generate_chunk_json(c, chunk, chunks)
-                    .unwrap_or_default(),
-            );
+        // PORT NOTE: reshaped for borrowck — `generate_chunk_json` reads all chunks
+        // immutably while we write one chunk's `metafile_chunk_json`; index split.
+        for i in 0..chunks.len() {
+            let json = metafile_builder::generate_chunk_json(c, &chunks[i], chunks)
+                .unwrap_or_default();
+            chunks[i].metafile_chunk_json = leak_static(json);
         }
     }
 
@@ -560,7 +564,10 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             .cast::<BundleV2>())
     };
     let mut static_route_visitor = StaticRouteVisitor {
-        c,
+        // SAFETY: Zig stores `c: *LinkerContext` (raw). Launder via raw ptr so this
+        // long-lived shared borrow doesn't conflict with `c.log.add_error_fmt(&mut)`
+        // inside the chunk loop below. `c` outlives `static_route_visitor`.
+        c: unsafe { &*(c as *const LinkerContext) },
         cache: bun_collections::ArrayHashMap::default(),
         visited: AutoBitSet::init_empty(c.graph.files.len()).expect("oom"),
     };

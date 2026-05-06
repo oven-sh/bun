@@ -629,16 +629,24 @@ pub fn get_runtime_source(target: options::Target) -> RuntimeSource {
 // `Parser::to_lazy_export_ast`); `bun_css::BundlerStyleSheet` (gated upstream);
 // `Expr::init` overload set for arbitrary `E::*` defaults.
 
+// PORT NOTE: `transpiler: *mut Transpiler` (raw, Zig `*Transpiler`). Callers
+// (`get_ast`, `run_with_source_code`) may also hold a raw pointer to
+// `(*transpiler).resolver`; materializing `&mut Transpiler` here would assert
+// exclusive access to the whole struct and invalidate that sibling pointer.
+// We only touch the disjoint `options.define` field.
 fn get_empty_css_ast(
     log: &mut Log,
-    transpiler: &mut Transpiler,
+    transpiler: *mut Transpiler,
     opts: ParserOptions,
     bump: &'static Bump,
     source: &Source,
 ) -> core::result::Result<JSAst, AnyError> {
     let root = Expr::init(E::Object::default(), Loc { start: 0 });
+    // SAFETY: `transpiler` is a live worker-owned `*mut Transpiler`; `options`
+    // is disjoint from any other field the caller may hold a pointer to.
+    let define = unsafe { &mut (*transpiler).options.define };
     let mut ast = JSAst::init(
-        js_parser::new_lazy_export_ast(bump, &mut transpiler.options.define, opts, log, root, source, b"")?
+        js_parser::new_lazy_export_ast(bump, define, opts, log, root, source, b"")?
             .unwrap(),
     );
     ast.css = Some(bump.alloc(bun_css::BundlerStyleSheet::empty()) as *mut _ as *mut c_void);
@@ -647,14 +655,16 @@ fn get_empty_css_ast(
 
 fn get_empty_ast<RootType: Default + ast::expr::IntoExprData>(
     log: &mut Log,
-    transpiler: &mut Transpiler,
+    transpiler: *mut Transpiler,
     opts: ParserOptions,
     bump: &'static Bump,
     source: &Source,
 ) -> core::result::Result<JSAst, AnyError> {
     let root = Expr::init(RootType::default(), Loc::EMPTY);
+    // SAFETY: see `get_empty_css_ast` — disjoint field of a live `*mut Transpiler`.
+    let define = unsafe { &mut (*transpiler).options.define };
     Ok(JSAst::init(
-        js_parser::new_lazy_export_ast(bump, &mut transpiler.options.define, opts, log, root, source, b"")?
+        js_parser::new_lazy_export_ast(bump, define, opts, log, root, source, b"")?
             .unwrap(),
     ))
 }
@@ -684,13 +694,18 @@ pub struct FileLoaderHash {
 // The signature now names the real `ParserOptions`; body un-gates in lockstep
 // with the above.
 
+// PORT NOTE: `transpiler`/`resolver` are raw `*mut` (Zig `*Transpiler` /
+// `*Resolver`). In Zig the caller passes `resolver = &transpiler.resolver`, so
+// the two may point into the same allocation. Taking `&mut Transpiler` +
+// `&mut Resolver` would be aliased-`&mut` UB. We instead reborrow only the
+// disjoint `(*transpiler).options` field, never the whole struct.
 #[allow(clippy::too_many_arguments)]
 fn get_ast(
     log: &mut Log,
-    transpiler: &mut Transpiler,
+    transpiler: *mut Transpiler,
     opts: ParserOptions,
     bump: &'static Bump,
-    resolver: &mut Resolver,
+    resolver: *mut Resolver,
     source: &Source,
     loader: Loader,
     unique_key_prefix: u64,
@@ -698,6 +713,11 @@ fn get_ast(
     has_any_css_locals: &AtomicU32,
 ) -> core::result::Result<JSAst, AnyError> {
     use core::fmt::Write as _;
+
+    // SAFETY: `transpiler` is a live worker-owned `*mut Transpiler`.
+    // `options` and `resolver` are disjoint fields of `Transpiler`; reborrowing
+    // `options` here does not overlap any access through `resolver` below.
+    let topts = unsafe { &mut (*transpiler).options };
 
     match loader {
         Loader::Jsx | Loader::Tsx | Loader::Js | Loader::Ts => {

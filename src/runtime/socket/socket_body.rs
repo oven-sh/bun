@@ -2349,7 +2349,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         scopeguard::ScopeGuard::into_inner(handlers_guard);
         let vm = handlers_taken.vm;
         // TODO(port): Rc<Handlers> vs Box — Zig allocates a raw `*Handlers` here.
-        let handlers_ptr = Rc::new(handlers_taken);
+        let handlers_ptr = Rc::new(UnsafeCell::new(handlers_taken));
 
         let cfg = ssl_opts.as_ref();
         let mut tls = TLSSocket::new(TLSSocket {
@@ -3046,17 +3046,15 @@ pub fn js_upgrade_duplex_to_tls(
     let handlers_taken = handlers_guard.take().unwrap();
     scopeguard::ScopeGuard::into_inner(handlers_guard);
     // TODO(port): Rc<Handlers> vs Box — Zig allocates a raw `*Handlers` here.
-    let mut handlers_rc = Rc::new(handlers_taken);
+    let mut handlers_rc = Rc::new(UnsafeCell::new(handlers_taken));
     // Set mode to duplex_server so TLSSocket.isServer() returns true for ALPN server mode
     // without affecting markInactive lifecycle (which requires a Listener parent).
-    // SAFETY: freshly allocated, sole owner.
-    unsafe {
-        Rc::get_mut(&mut handlers_rc).unwrap().mode = if is_server {
-            SocketMode::DuplexServer
-        } else {
-            SocketMode::Client
-        };
-    }
+    // Freshly allocated, sole owner — `Rc::get_mut` + `UnsafeCell::get_mut` are both safe.
+    Rc::get_mut(&mut handlers_rc).unwrap().get_mut().mode = if is_server {
+        SocketMode::DuplexServer
+    } else {
+        SocketMode::Client
+    };
     let tls = TLSSocket::new(TLSSocket {
         ref_count: Cell::new(1),
         handlers: Some(handlers_rc),
@@ -3294,5 +3292,5 @@ pub fn js_set_socket_options(global: &JSGlobalObject, callframe: &CallFrame) -> 
 //   source:     src/runtime/socket/socket.zig (2286 lines)
 //   confidence: medium
 //   todos:      16
-//   notes:      `twin`/`DuplexUpgradeContext.tls`/`NativeCallbacks::H2` switched to IntrusiveRc (intrusive RefCount + raw *T crosses FFI). `handlers: Rc<Handlers>` still pending (heavy mutation; Phase B → raw *mut or IntrusiveRc). DuplexUpgradeContext upgrade/task need MaybeUninit two-phase init (self-referential ctx). Handlers scope.exit() defer-pattern reshaped to tail-calls; verify ordering vs Zig defers.
+//   notes:      `twin`/`DuplexUpgradeContext.tls`/`NativeCallbacks::H2` switched to IntrusiveRc (intrusive RefCount + raw *T crosses FFI). `handlers: Rc<UnsafeCell<Handlers>>` for sound interior-mut (reload()/Scope) — Phase B may flatten to raw *mut or IntrusiveRc to converge with Listener.rs. DuplexUpgradeContext upgrade/task need MaybeUninit two-phase init (self-referential ctx). Handlers scope.exit() defer-pattern reshaped to tail-calls; verify ordering vs Zig defers.
 // ──────────────────────────────────────────────────────────────────────────

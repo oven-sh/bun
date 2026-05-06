@@ -227,7 +227,6 @@ macro_rules! mark_binding {
         if cfg!(feature = "debug_logs") && $crate::Global::JSC_SCOPE.is_visible() {
             $crate::Global::JSC_SCOPE.log(
                 ::core::format_args!("[JSC] {} ({}:{})\n", $fn_name, ::core::file!(), ::core::line!()),
-                ::core::format_args!("[JSC] {} ({}:{})\n", $fn_name, ::core::file!(), ::core::line!()),
             );
         }
     };

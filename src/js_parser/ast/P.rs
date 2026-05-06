@@ -6203,14 +6203,24 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         })
     }
 
-    fn wrap_identifier_namespace(&mut self, loc: logger::Loc, r#ref: Ref) -> Expr {
+    pub fn wrap_identifier_namespace(&mut self, loc: logger::Loc, r#ref: Ref) -> Expr {
         let enclosing_ref = self.enclosing_namespace_arg_ref.unwrap();
         self.record_usage(enclosing_ref);
+
+        // TODO(port): E::Dot.name is `&'static [u8]` pending crate-wide 'bump
+        // threading. The slice is arena-owned (lives for parser 'a, which outlives
+        // every Expr). Erase the lifetime to fit the placeholder field type.
+        // SAFETY: arena-owned slice valid for the AST lifetime.
+        let name: &'static [u8] = unsafe {
+            core::mem::transmute::<&'a [u8], &'static [u8]>(
+                self.symbols[r#ref.inner_index() as usize].original_name,
+            )
+        };
 
         self.new_expr(
             E::Dot {
                 target: Expr::init_identifier(enclosing_ref, loc),
-                name: self.symbols[r#ref.inner_index() as usize].original_name,
+                name,
                 name_loc: loc,
                 ..Default::default()
             },
@@ -6218,12 +6228,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         )
     }
 
-    fn wrap_identifier_hoisting(&mut self, loc: logger::Loc, r#ref: Ref) -> Expr {
+    pub fn wrap_identifier_hoisting(&mut self, loc: logger::Loc, r#ref: Ref) -> Expr {
         // There was a Zig stage1 bug here we had to copy `ref` into a local
         // const variable or else the result would be wrong
         // I remember that bug in particular took hours, possibly days to uncover.
 
-        self.relocated_top_level_vars.push(LocRef { loc, r#ref: Some(r#ref) });
+        self.relocated_top_level_vars.push(LocRef { loc, ref_: Some(r#ref) });
         self.record_usage(r#ref);
         Expr::init_identifier(r#ref, loc)
     }

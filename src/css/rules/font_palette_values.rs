@@ -92,14 +92,10 @@ impl FontPaletteValuesRule {
 impl FontPaletteValuesProperty {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
-            FontPaletteValuesProperty::FontFamily(_f) => {
+            FontPaletteValuesProperty::FontFamily(f) => {
                 dest.write_str("font-family")?;
                 dest.delim(b':', false)?;
-                // blocked_on: properties::font::FontFamily::to_css un-gate.
-                #[cfg(any())]
-                { _f.to_css(dest) }
-                #[cfg(not(any()))]
-                todo!("blocked_on: FontFamily::to_css — properties/font.rs un-gate")
+                f.to_css(dest)
             }
             FontPaletteValuesProperty::BasePalette(b) => {
                 dest.write_str("base-palette")?;
@@ -121,17 +117,8 @@ impl FontPaletteValuesProperty {
 
     pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         // PORT NOTE: `css.implementDeepClone` variant-walk.
-        #[allow(unused_imports)]
-        use crate::generics::DeepClone as _;
         match self {
-            // blocked_on: properties::font::FontFamily DeepClone (its
-            // `*const [u8]` payload is arena-owned → identity once un-gated).
-            #[cfg(any())]
             Self::FontFamily(f) => Self::FontFamily(f.deep_clone(bump)),
-            #[cfg(not(any()))]
-            Self::FontFamily(_) => {
-                todo!("blocked_on: FontFamily::deep_clone — properties/font.rs un-gate")
-            }
             Self::BasePalette(b) => Self::BasePalette(b.deep_clone(bump)),
             Self::OverrideColors(o) => {
                 Self::OverrideColors(o.iter().map(|c| c.deep_clone(bump)).collect())
@@ -264,16 +251,12 @@ const _: () = {
             // todo_stuff.match_ignore_ascii_case
             if strings::eql_case_insensitive_ascii_check_length(b"font-family", name) {
                 // https://drafts.csswg.org/css-fonts-4/#font-family-2-desc
-                // blocked_on: properties::font::FontFamily::parse un-gate.
-                #[cfg(any())]
                 if let Ok(font_family) = FontFamily::parse(input) {
                     if matches!(font_family, FontFamily::Generic(_)) {
                         return Err(input.new_custom_error(ParserError::invalid_declaration));
                     }
                     return Ok(FontPaletteValuesProperty::FontFamily(font_family));
                 }
-                #[cfg(not(any()))]
-                { let _ = (FontFamily::Generic as fn(_) -> _, &state); }
             } else if strings::eql_case_insensitive_ascii_check_length(b"base-palette", name) {
                 // https://drafts.csswg.org/css-fonts-4/#base-palette-desc
                 if let Ok(base_palette) = BasePalette::parse(input) {

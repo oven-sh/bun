@@ -1272,16 +1272,34 @@ fn transpile_source_code_inner(
                     // PORT NOTE: bundler-side `Entry::output_code` is a flat
                     // `Box<[u8]>` (the `OutputCode::{String,Utf8}` enum lives
                     // on the T6 `bun_jsc::RuntimeTranspilerCache` mirror).
-                    // Spec dispatches on `entry.metadata.output_encoding` to
-                    // pick latin1 vs utf8; mirror that here.
-                    let source_code = if entry.metadata.output_encoding
-                        == bun_js_parser::ExportsKind::None as u8
-                    {
-                        // encoding == .none unreachable per spec :430; clone as
-                        // latin1 (lossless byte → WTFString).
-                        bun_string::String::clone_latin1(&entry.output_code)
-                    } else {
-                        bun_string::String::clone_utf8(&entry.output_code)
+                    // Spec dispatches on `entry.metadata.output_encoding`
+                    // (RuntimeTranspilerCache.zig:405 `Encoding`: none=0,
+                    // utf8=1, utf16=2, latin1=3) to pick the WTFString clone
+                    // path; mirror that here. Do NOT compare against
+                    // `ExportsKind` — unrelated AST enum.
+                    let source_code = match entry.metadata.output_encoding {
+                        // Encoding::UTF8
+                        1 => bun_string::String::clone_utf8(&entry.output_code),
+                        // Encoding::LATIN1
+                        3 => bun_string::String::clone_latin1(&entry.output_code),
+                        // Encoding::UTF16 — bytes are raw native-endian u16s.
+                        2 => {
+                            debug_assert!(entry.output_code.len() % 2 == 0);
+                            // SAFETY: cache writer stored a `[u16]` view
+                            // byte-for-byte (RuntimeTranspilerCache.rs:510);
+                            // simdutf reads byte-aligned on every supported
+                            // target (see resolver/fs.rs `BOM` PORT NOTE).
+                            let utf16: &[u16] = unsafe {
+                                core::slice::from_raw_parts(
+                                    entry.output_code.as_ptr().cast::<u16>(),
+                                    entry.output_code.len() / 2,
+                                )
+                            };
+                            bun_string::String::clone_utf16(utf16)
+                        }
+                        // Encoding::none — unreachable per spec :430 (rejected
+                        // as `error.UnknownEncoding` at decode time).
+                        _ => unreachable!("RuntimeTranspilerCache: Encoding::none"),
                     };
                     // PORT NOTE: spec frees via `cache.output_code_allocator`;
                     // `Box<[u8]>` drops on its own.

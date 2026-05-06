@@ -226,33 +226,26 @@ pub enum MaxSize {
     Contain,
 }
 
-#[cfg(any())] // blocked_on: css::match_ignore_ascii_case! macro + LengthPercentage::{parse,to_css,is_compatible}
 impl MaxSize {
     pub fn parse(input: &mut css::Parser) -> css::Result<MaxSize> {
-        // TODO(port): bun.ComptimeStringMap + getASCIIICaseInsensitive — phf custom hasher.
-        // Expanded inline as a case-insensitive match.
         let res = input.try_parse(|i: &mut css::Parser| -> css::Result<MaxSize> {
-            let ident = match i.expect_ident() {
-                Ok(v) => v,
-                Err(e) => return Err(e),
-            };
-            css::match_ignore_ascii_case! { ident,
-                "none" => Ok(MaxSize::None),
-                "min-content" => Ok(MaxSize::MinContent(VendorPrefix::NONE)),
-                "-webkit-min-content" => Ok(MaxSize::MinContent(VendorPrefix::WEBKIT)),
-                "-moz-min-content" => Ok(MaxSize::MinContent(VendorPrefix::MOZ)),
-                "max-content" => Ok(MaxSize::MaxContent(VendorPrefix::NONE)),
-                "-webkit-max-content" => Ok(MaxSize::MaxContent(VendorPrefix::WEBKIT)),
-                "-moz-max-content" => Ok(MaxSize::MaxContent(VendorPrefix::MOZ)),
-                "stretch" => Ok(MaxSize::Stretch(VendorPrefix::NONE)),
-                "-webkit-fill-available" => Ok(MaxSize::Stretch(VendorPrefix::WEBKIT)),
-                "-moz-available" => Ok(MaxSize::Stretch(VendorPrefix::MOZ)),
-                "fit-content" => Ok(MaxSize::FitContent(VendorPrefix::NONE)),
-                "-webkit-fit-content" => Ok(MaxSize::FitContent(VendorPrefix::WEBKIT)),
-                "-moz-fit-content" => Ok(MaxSize::FitContent(VendorPrefix::MOZ)),
-                "contain" => Ok(MaxSize::Contain),
-                _ => Err(i.new_custom_error(css::ParserError::InvalidValue)),
-            }
+            let ident = i.expect_ident()?;
+            size_ident_match!(ident, {
+                b"none" => MaxSize::None,
+                b"min-content" => MaxSize::MinContent(VendorPrefix::NONE),
+                b"-webkit-min-content" => MaxSize::MinContent(VendorPrefix::WEBKIT),
+                b"-moz-min-content" => MaxSize::MinContent(VendorPrefix::MOZ),
+                b"max-content" => MaxSize::MaxContent(VendorPrefix::NONE),
+                b"-webkit-max-content" => MaxSize::MaxContent(VendorPrefix::WEBKIT),
+                b"-moz-max-content" => MaxSize::MaxContent(VendorPrefix::MOZ),
+                b"stretch" => MaxSize::Stretch(VendorPrefix::NONE),
+                b"-webkit-fill-available" => MaxSize::Stretch(VendorPrefix::WEBKIT),
+                b"-moz-available" => MaxSize::Stretch(VendorPrefix::MOZ),
+                b"fit-content" => MaxSize::FitContent(VendorPrefix::NONE),
+                b"-webkit-fit-content" => MaxSize::FitContent(VendorPrefix::WEBKIT),
+                b"-moz-fit-content" => MaxSize::FitContent(VendorPrefix::MOZ),
+                b"contain" => MaxSize::Contain,
+            } else Err(i.new_custom_error(css::ParserError::invalid_value)))
         });
 
         if res.is_ok() {
@@ -357,7 +350,6 @@ pub struct AspectRatio {
     pub ratio: Option<Ratio>,
 }
 
-#[cfg(any())] // blocked_on: expect_ident_matching(&str) + Ratio::{parse,to_css} surface
 impl AspectRatio {
     pub fn parse(input: &mut css::Parser) -> css::Result<AspectRatio> {
         let location = input.current_source_location();
@@ -368,7 +360,7 @@ impl AspectRatio {
             auto = input.try_parse(|i| i.expect_ident_matching(b"auto"));
         }
         if auto.is_err() && ratio.is_err() {
-            return Err(location.new_custom_error(css::ParserError::InvalidValue));
+            return Err(location.new_custom_error(css::ParserError::invalid_value));
         }
 
         Ok(AspectRatio {
@@ -391,9 +383,9 @@ impl AspectRatio {
         Ok(())
     }
 
-    pub fn deep_clone(&self, bump: &Bump) -> Self {
-        // TODO(port): css.implementDeepClone — comptime field-walk; map to DeepClone trait/derive.
-        css::implement_deep_clone(self, bump)
+    pub fn deep_clone(&self, _bump: &Bump) -> Self {
+        // PORT NOTE: css.implementDeepClone — `Ratio` is two `f32`s; #[derive(Clone)] is exact.
+        self.clone()
     }
 
     pub fn eql(lhs: &Self, rhs: &Self) -> bool {
@@ -401,12 +393,9 @@ impl AspectRatio {
     }
 }
 
-#[cfg(any())] // blocked_on: LengthPercentage::parse
 fn parse_fit_content(input: &mut css::Parser) -> css::Result<LengthPercentage> {
-    if let Err(e) = input.expect_function_matching("fit-content") {
-        return Err(e);
-    }
-    input.parse_nested_block((), css::void_wrap(LengthPercentage::parse))
+    input.expect_function_matching(b"fit-content")?;
+    input.parse_nested_block(LengthPercentage::parse)
 }
 
 bitflags::bitflags! {

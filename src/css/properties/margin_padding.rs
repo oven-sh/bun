@@ -1192,21 +1192,13 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
         } else if inline_start.is_some() || inline_end.is_some() {
             // Zig: `inline_start.? == @field(Property, @tagName(inline_start_prop))`
             // — raw union-tag equality, which is `false` for `.unparsed`.
-            // `property_id().tag()` would be `true` for an Unparsed whose inner
-            // id is inline-start, so exclude Unparsed explicitly.
             let start_matches = inline_start
                 .as_ref()
-                .map(|p| {
-                    !matches!(p, Property::Unparsed(_))
-                        && p.property_id().tag() == S::INLINE_START
-                })
+                .map(|p| p.variant_tag() == S::INLINE_START)
                 .unwrap_or(false);
             let end_matches = inline_end
                 .as_ref()
-                .map(|p| {
-                    !matches!(p, Property::Unparsed(_))
-                        && p.property_id().tag() == S::INLINE_END
-                })
+                .map(|p| p.variant_tag() == S::INLINE_END)
                 .unwrap_or(false);
             let values_equal = if start_matches && end_matches {
                 S::extract_inline_start(inline_start.as_ref().unwrap())
@@ -1275,21 +1267,17 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
         context: &mut PropertyHandlerContext,
     ) {
         // _ = this; // autofix
-        let _ = logical;
         let bump = dest.bump();
         if let Some(v_) = val.as_ref() {
             // Zig: `@as(css.PropertyIdTag, _v.*) == logical` — raw discriminant.
-            // Match `Unparsed` first; otherwise `property_id().tag()` on an
-            // Unparsed-with-inner-id-`logical` would take the parsed path and
-            // panic in `extract_logical`.
-            if let Property::Unparsed(v) = v_ {
+            if v_.variant_tag() == logical {
+                let v = extract_logical(v_);
+                context.add_logical_rule(make_ltr(v.clone()), make_rtl(v.clone()));
+            } else if let Property::Unparsed(v) = v_ {
                 context.add_logical_rule(
                     Property::Unparsed(v.with_property_id(bump, ltr)),
                     Property::Unparsed(v.with_property_id(bump, rtl)),
                 );
-            } else {
-                let v = extract_logical(v_);
-                context.add_logical_rule(make_ltr(v.clone()), make_rtl(v.clone()));
             }
         }
     }
@@ -1316,16 +1304,16 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
         };
 
         // Zig: `@as(PropertyIdTag, start.*.?) == start_prop` — raw
-        // discriminant. Exclude `Unparsed` so an unparsed longhand falls
-        // through to the else branch and is appended as-is, instead of
-        // hitting `unreachable!()` in `extract_*`.
+        // discriminant. `variant_tag()` keeps `Unparsed` distinct so an
+        // unparsed longhand falls through to the else branch and is appended
+        // as-is, instead of hitting `unreachable!()` in `extract_*`.
         if start
             .as_ref()
-            .map(|p| !matches!(p, Property::Unparsed(_)) && p.property_id().tag() == start_prop)
+            .map(|p| p.variant_tag() == start_prop)
             .unwrap_or(false)
             && end
                 .as_ref()
-                .map(|p| !matches!(p, Property::Unparsed(_)) && p.property_id().tag() == end_prop)
+                .map(|p| p.variant_tag() == end_prop)
                 .unwrap_or(false)
             && shorthand_supported
         {
@@ -1373,19 +1361,16 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
     ) {
         // _ = this; // autofix
         let _ = context;
-        let _ = logical;
         let bump = dest.bump();
         if let Some(v) = val.as_ref() {
             // Zig: `@as(css.PropertyIdTag, v.*) == logical` — raw discriminant.
-            // Match `Unparsed` first so an unparsed `*-block-start: var(--x)`
-            // emits `*-top: var(--x)` instead of panicking in `extract_logical`.
-            if let Property::Unparsed(u) = v {
-                dest.push(Property::Unparsed(u.with_property_id(bump, physical)));
-            } else {
+            if v.variant_tag() == logical {
                 // Zig moved the payload (`@field(v, @tagName(logical))`) by value.
                 // PORT NOTE: reshaped for borrowck — clone instead of moving out
                 // of `&Property`; `LengthPercentageOrAuto` is small.
                 dest.push(make_physical(extract_logical(v).clone()));
+            } else if let Property::Unparsed(u) = v {
+                dest.push(Property::Unparsed(u.with_property_id(bump, physical)));
             }
         }
     }

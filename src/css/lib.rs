@@ -566,6 +566,21 @@ pub type Error = Err<ParserError>;
 pub use targets::{Browsers, Features, Targets};
 pub use logical::{LogicalGroup, PropertyCategory};
 
+// Bundler-facing surface (`bun_bundler::Chunk` / `scanImportsAndExports`
+// reach for these via `bun_css::*`).
+pub use rules::import::ImportConditions;
+pub use properties::PropertyIdTag;
+pub use css_parser::BundlerStyleSheet;
+/// `composes: ... from ...` source kind. The real enum lives in the gated
+/// `css_modules.rs` body; until that un-gates, expose a data-only mirror so
+/// `scanImportsAndExports::__css_validation` type-checks.
+// TODO(port): replace with `pub use css_modules::ComposeFrom` once that body
+// un-gates.
+pub enum ComposeFrom {
+    Global,
+    File(Str),
+}
+
 // ───────────────────────────── VendorPrefix ─────────────────────────────
 // Hoisted from css_parser.rs so leaf modules (targets, prefixes) can compile
 // without pulling in the 6k-line parser hub. css_parser.rs re-exports this

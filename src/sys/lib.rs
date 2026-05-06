@@ -761,10 +761,20 @@ mod nocancel {
         pub fn pwrite(fd: c_int, buf: *const libc::c_void, count: usize, off: libc::off_t) -> isize;
         #[link_name = "pwritev$NOCANCEL"]
         pub fn pwritev(fd: c_int, iov: *const libc::iovec, iovcnt: c_int, off: libc::off_t) -> isize;
+        #[link_name = "preadv$NOCANCEL"]
+        pub fn preadv(fd: c_int, iov: *const libc::iovec, iovcnt: c_int, off: libc::off_t) -> isize;
+        #[link_name = "readv$NOCANCEL"]
+        pub fn readv(fd: c_int, iov: *const libc::iovec, iovcnt: c_int) -> isize;
+        #[link_name = "writev$NOCANCEL"]
+        pub fn writev(fd: c_int, iov: *const libc::iovec, iovcnt: c_int) -> isize;
         #[link_name = "recvfrom$NOCANCEL"]
         pub fn recvfrom(fd: c_int, buf: *mut libc::c_void, len: usize, flags: c_int, addr: *mut libc::sockaddr, alen: *mut libc::socklen_t) -> isize;
         #[link_name = "sendto$NOCANCEL"]
         pub fn sendto(fd: c_int, buf: *const libc::c_void, len: usize, flags: c_int, addr: *const libc::sockaddr, alen: libc::socklen_t) -> isize;
+        #[link_name = "poll$NOCANCEL"]
+        pub fn poll(fds: *mut libc::pollfd, nfds: libc::nfds_t, timeout: c_int) -> c_int;
+        #[link_name = "ppoll$NOCANCEL"]
+        pub fn ppoll(fds: *mut libc::pollfd, nfds: libc::nfds_t, ts: *const libc::timespec, sigmask: *const libc::sigset_t) -> c_int;
     }
 }
 

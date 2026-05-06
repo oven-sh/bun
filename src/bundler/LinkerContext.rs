@@ -258,6 +258,8 @@ pub mod EntryPoint {
     }
 }
 use crate::Graph::{InputFileListExt as _, SideEffects as _GraphSideEffects};
+use crate::ungate_support::js_meta::JSMetaListExt as _;
+use bun_js_parser::ast::bundled_ast::BundledAstListExt as _;
 
 // TODO(b2-blocked): method bodies depend on `LinkerGraph` SoA accessors
 // (`graph.files.items_*()`, `graph.ast.items_*()`, `graph.meta.items_*()`),
@@ -2101,7 +2103,7 @@ impl<'a> LinkerContext<'a> {
             // PORT NOTE: clone indices to avoid holding borrow across recursive call
             let import_indices: Vec<u32> = part.import_record_indices.slice().to_vec();
             for import_index in import_indices {
-                let record = import_records[source_index as usize].at(import_index);
+                let record = import_records[source_index as usize].at(import_index as usize);
                 if record.kind != ImportKind::Stmt {
                     continue;
                 }

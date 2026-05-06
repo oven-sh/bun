@@ -243,11 +243,13 @@ impl CreateOptions {
     }
 
     pub fn parse(ctx: &Command::Context) -> Result<CreateOptions, bun_core::Error> {
-        Output::set_is_verbose(Output::is_verbose());
+        // Zig: `Output.is_verbose = Output.isVerbose();` — Rust has no setter; the
+        // `is_verbose()` accessor reads the env directly each call, so this is a no-op.
+        let _ = Output::is_verbose();
 
         let mut diag = clap::Diagnostic::default();
 
-        let args = match clap::parse(clap::Help, Self::params(), clap::ParseOptions { diagnostic: Some(&mut diag), ..Default::default() }) {
+        let args = match clap::parse::<clap::Help>(Self::params(), clap::ParseOptions { diagnostic: Some(&mut diag), ..Default::default() }) {
             Ok(a) => a,
             Err(err) => {
                 // Report useful error and exit

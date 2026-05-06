@@ -203,7 +203,7 @@ mod _gated {
 use super::*;
 use bstr::BStr;
 use bun_core::scoped_log;
-use bun_http_types::Method as HttpMethod;
+use bun_http::Method as HttpMethod;
 use bun_str::ZigString;
 use crate::server::jsc::CallFrame;
 

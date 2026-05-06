@@ -1026,10 +1026,14 @@ impl<'a> BunTest<'a> {
         group_begin!();
         let _g = scopeguard::guard((), |_| debug::group::end());
         bun_core::scoped_log!(bun_test_group, "advance from {}", <&'static str>::from(self.phase));
-        let _g2 = scopeguard::guard((), |_| {
-            bun_core::scoped_log!(bun_test_group, "advance -> {}", <&'static str>::from(self.phase));
+        // PORT NOTE: capture `self.phase` by raw ptr so the deferred log doesn't
+        // hold a `&self` borrow across the `self.phase = …` writes below
+        // (Zig `defer` closes over `*BunTest` by pointer, not by borrow).
+        let phase_ptr: *const Phase = &self.phase;
+        let _g2 = scopeguard::guard((), move |_| {
+            // SAFETY: `self` outlives `_g2` (guard drops at end of this fn body).
+            bun_core::scoped_log!(bun_test_group, "advance -> {}", <&'static str>::from(unsafe { *phase_ptr }));
         });
-        // TODO(port): defer captures &self.phase; reshape for borrowck
 
         match self.phase {
             Phase::Collection => {
@@ -1282,9 +1286,16 @@ impl<'a> BunTest<'a> {
             HandleUncaughtExceptionResult::ShowUnhandledErrorBetweenTests
                 | HandleUncaughtExceptionResult::ShowUnhandledErrorInDescribe
         ) {
-            // TODO(port): reporter is Option<&'a> but mutated here; needs reshaping
-            self.reporter.unwrap().jest.unhandled_errors_between_tests += 1;
-            // TODO(port): the line above mutates through &; cast away in Phase B or make field Cell
+            // PORT NOTE: Zig stores `?*CommandLineReporter` (mutable). The Rust
+            // field is `Option<&'a CommandLineReporter>` so cast through raw to
+            // bump the counter — `CommandLineReporter` lives in an `UnsafeCell`-
+            // equivalent slot owned by `test_command::exec`; single-threaded.
+            // SAFETY: reporter is Some (asserted by call sites that reach here);
+            // no other `&` to `jest.unhandled_errors_between_tests` is live.
+            unsafe {
+                let reporter_mut = self.reporter.unwrap() as *const CommandLineReporter as *mut CommandLineReporter;
+                (*reporter_mut).jest.unhandled_errors_between_tests += 1;
+            }
             bun_core::pretty_errorln!(
                 "<r>\n<b><d>#<r> <red><b>Unhandled error<r><d> between tests<r>\n<d>-------------------------------<r>\n",
             );

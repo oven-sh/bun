@@ -757,8 +757,15 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
         {
             h.update(k);
             h.update(&[0]);
-            bun_core::write_any_to_hasher(&mut h, &v.tag()); // TODO(port): activeTag
-            h.update(v.data_slice()); // TODO(port): switch (v) { inline else => |data| data }
+            // Zig: `@intFromEnum(v)` for the active tag, then `switch (v) { inline else => |data| data }`
+            // for the payload. `bun_bundler::bake_types::BuiltInModule` has no `.tag()`/`.data_slice()`;
+            // shim locally with a match (upstream type — cannot add inherent methods).
+            let (tag, data): (u8, &[u8]) = match v {
+                bun_bundler::bake_types::BuiltInModule::Import(d) => (0, &d[..]),
+                bun_bundler::bake_types::BuiltInModule::Code(d) => (1, &d[..]),
+            };
+            bun_core::write_any_to_hasher(&mut h, &tag);
+            h.update(data);
             h.update(&[0]);
         }
         h.update(&[0]);

@@ -51,6 +51,17 @@ impl Assets {
         }
     }
 
+    /// `Assets.memoryCost` (Assets.zig:167).
+    pub fn memory_cost(&self) -> usize {
+        let mut cost: usize = 0;
+        // TODO(port): `path_map`/`files` capacityInBytes — blocked_on:
+        // bun_collections::ArrayHashMap::capacity_in_bytes
+        // TODO(port): per-blob `StaticRoute::memory_cost` — blocked_on:
+        // crate::server::StaticRoute::memory_cost
+        cost += self.refs.capacity() * core::mem::size_of::<u32>();
+        cost
+    }
+
     /// `Assets.reindexIfNeeded` — full body in gated `../DevServer/Assets.rs`.
     pub fn reindex_if_needed(&mut self) -> Result<(), bun_alloc::AllocError> {
         if !self.needs_reindex { return Ok(()); }

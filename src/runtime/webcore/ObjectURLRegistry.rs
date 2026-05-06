@@ -101,7 +101,7 @@ impl ObjectURLRegistry {
         let entry = Entry::init(blob);
 
         let map = self.map.lock();
-        map.insert(uuid, entry);
+        map.insert(uuid.bytes, entry);
         self.map.unlock();
         uuid
     }
@@ -113,7 +113,7 @@ impl ObjectURLRegistry {
 
     fn get_duped_blob(&self, uuid: &UUID) -> Option<Blob> {
         let map = self.map.lock();
-        let result = map.get(uuid).map(|e| e.blob.dupe_with_content_type(true));
+        let result = map.get(&uuid.bytes).map(|e| e.blob.dupe_with_content_type(true));
         self.map.unlock();
         result
     }
@@ -122,7 +122,7 @@ impl ObjectURLRegistry {
         let uuid = uuid_from_pathname(pathname)?;
         let map = self.map.lock();
         let result = map
-            .get(&uuid)
+            .get(&uuid.bytes)
             .map(|e| e.blob.dupe_with_content_type(true));
         self.map.unlock();
         result

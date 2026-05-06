@@ -208,7 +208,7 @@ impl HTTPRequestBody {
                 .err(jsc::ErrorCode::BODY_ALREADY_USED, format_args!("body already used"))
                 .throw());
         }
-        if let BodyValue::Locked(locked) = &body_value {
+        if let BodyValue::Locked(locked) = &mut body_value {
             if locked.readable.has() {
                 // just grab the ref
                 // TODO(port): partial move out of body_value.Locked.readable
@@ -221,7 +221,7 @@ impl HTTPRequestBody {
         if matches!(&body_value, BodyValue::Locked(_)) {
             let readable = body_value.to_readable_stream(global_this)?;
             if !readable.is_empty_or_undefined_or_null() {
-                if let BodyValue::Locked(l) = &body_value {
+                if let BodyValue::Locked(l) = &mut body_value {
                     if l.readable.has() {
                         if let BodyValue::Locked(l) = body_value {
                             return Ok(HTTPRequestBody::ReadableStream(l.readable));
@@ -329,11 +329,13 @@ impl FetchTasklet {
             unsafe { (*sink).deref_() };
         }
         if let Some(buffer) = self.request_body_streaming_buffer.take() {
-            // TODO(port): ThreadSafeStreamBuffer::clear_drain_callback takes `&mut self`
-            // but Arc<_> can't be mutably borrowed; needs intrusive-ref or
-            // interior mutability upstream.
-            let _ = buffer;
-            todo!("blocked_on: bun_http::ThreadSafeStreamBuffer::clear_drain_callback (Arc<> aliasing)");
+            // SAFETY: intrusive-refcounted heap allocation from `ThreadSafeStreamBuffer::new`;
+            // this side holds one of the two initial refs. Mutex guards cross-thread access
+            // to `buffer`, and `callback` is only touched on the main thread (here).
+            unsafe {
+                (*buffer.as_ptr()).clear_drain_callback();
+                ThreadSafeStreamBuffer::deref(buffer.as_ptr());
+            }
         }
     }
 

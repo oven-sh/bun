@@ -158,6 +158,14 @@ impl BodyMixin for Request {}
 
 // ─── un-gated header accessors & simple getters ─────────────────────────────
 impl Request {
+    /// Zig: `pub fn getBodyValue(this: *Request) *Body.Value`.
+    /// Inherent shim until the real `BodyMixin` (body::_jsc_gated) is un-gated
+    /// and `impl BodyMixin for Request` supplies this as a trait method.
+    #[inline]
+    pub fn get_body_value(&mut self) -> &mut BodyValue {
+        &mut self.body
+    }
+
     // Returns if the request has headers already cached/set.
     pub fn has_fetch_headers(&self) -> bool {
         self.headers.is_some()

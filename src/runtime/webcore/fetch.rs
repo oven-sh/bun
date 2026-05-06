@@ -82,7 +82,7 @@ use bun_http_types::Method::Method;
 use bun_url::URL as ZigURL;
 use bun_url::PercentEncoding;
 use bun_resolver::data_url::DataURL;
-use crate::socket::ssl_config::{self, SSLConfig};
+use crate::socket::ssl_config::SSLConfig;
 use crate::webcore::{AbortSignal, Blob, Body, FetchHeaders, ObjectURLRegistry, ReadableStream, Request, Response};
 use crate::webcore::{body, response, readable_stream, blob};
 use crate::webcore::body::{Value as BodyValue, Action as BodyValueLockedAction, InternalBlob};
@@ -1847,40 +1847,45 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         }
     };
 
-    let _ = FetchTasklet::queue(
-        global_this,
-        FetchOptions {
+    // TODO(port): self-referential — `url`/`proxy` borrow `url_proxy_buffer`
+    // which is moved into `FetchOptions` here. Zig's struct copy is fine; Rust
+    // forbids it without `unsafe` lifetime erasure. FetchTasklet then re-parses
+    // `url` from the owned buffer, so the borrow is sound in practice.
+    let fetch_options: FetchOptions = {
+        let _ = (
             method,
             url,
-            headers: headers.take().unwrap_or_else(Headers::default),
-            body: http_body,
+            headers.take(),
+            http_body,
             disable_keepalive,
             disable_timeout,
             disable_decompression,
             reject_unauthorized,
             redirect_type,
             verbose,
-            proxy: proxy.take(),
-            proxy_headers: proxy_headers.take(),
-            url_proxy_buffer: core::mem::take(&mut url_proxy_buffer).into_boxed_slice(),
-            signal: signal.take().map(|p| p.as_ptr()),
-            global_this: Some(global_this),
-            ssl_config: ssl_config.take(),
-            hostname: hostname.take().map(|z| z.as_bytes().to_vec().into_boxed_slice()),
+            proxy.take(),
+            proxy_headers.take(),
+            core::mem::take(&mut url_proxy_buffer),
+            signal.take().map(|p| p.as_ptr()),
+            global_this,
+            ssl_config.take(),
+            hostname.take(),
             upgraded_connection,
             force_http2,
             force_http3,
             force_http1,
-            check_server_identity: if check_server_identity.is_empty_or_undefined_or_null() {
+            if check_server_identity.is_empty_or_undefined_or_null() {
                 jsc::strong::Optional::empty()
             } else {
                 jsc::strong::Optional::create(check_server_identity, global_this)
             },
-            unix_socket_path: core::mem::replace(
-                &mut unix_socket_path,
-                ZigStringSlice::empty(),
-            ),
-        },
+            core::mem::replace(&mut unix_socket_path, ZigStringSlice::empty()),
+        );
+        todo!("blocked_on: FetchOptions self-referential url/url_proxy_buffer (ZigURL<'static>)")
+    };
+    let _ = FetchTasklet::queue(
+        global_this,
+        fetch_options,
         // Pass the Strong value instead of creating a new one, or else we
         // will leak it
         // see https://github.com/oven-sh/bun/issues/2985

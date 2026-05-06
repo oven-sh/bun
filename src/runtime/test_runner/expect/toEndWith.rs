@@ -54,13 +54,12 @@ pub fn to_end_with(
         return Ok(JSValue::UNDEFINED);
     }
 
-    // TODO(port): ConsoleObject.Formatter construction — Zig used struct-literal defaults.
+    // PORT NOTE: Zig shares one `*Formatter` across both `toFmt` calls; in Rust the
+    // `ZigFormatter` adapter holds `&'a mut Formatter`, so two live adapters cannot alias
+    // the same backing formatter. Use a second formatter for the received value —
+    // `make_formatter` is a trivial struct init with no shared state between values.
     let mut formatter = super::make_formatter(global);
-    // TODO(port): borrowck — Zig holds two `*Formatter` simultaneously via toFmt; Rust can't
-    // hand out two `&mut formatter`. Phase B: make `to_fmt` take `&Formatter` (interior mut)
-    // or inline the format calls.
-    let value_fmt = value.to_fmt(&mut formatter);
-    let expected_fmt = expected.to_fmt(&mut formatter);
+    let mut formatter2 = super::make_formatter(global);
 
     if not {
         const EXPECTED_LINE: &str = "Expected to not end with: <green>{}<r>\n";
@@ -77,8 +76,8 @@ pub fn to_end_with(
                     "Expected to not end with: <green>{}<r>\n",
                     "Received: <red>{}<r>\n"
                 ),
-                expected_fmt,
-                value_fmt
+                expected.to_fmt(&mut formatter),
+                value.to_fmt(&mut formatter2),
             ),
         );
     }
@@ -95,8 +94,8 @@ pub fn to_end_with(
                 "Expected to end with: <green>{}<r>\n",
                 "Received: <red>{}<r>\n"
             ),
-            expected_fmt,
-            value_fmt
+            expected.to_fmt(&mut formatter),
+            value.to_fmt(&mut formatter2),
         ),
     )
     // `this` (scopeguard) drops here → post_match(global)

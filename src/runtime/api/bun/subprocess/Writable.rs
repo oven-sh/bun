@@ -386,11 +386,15 @@ impl<'a> Writable<'a> {
             }
         }
 
+        let self_ptr = NonNull::new(self as *mut Self as *mut c_void);
         match self {
             Writable::Pipe(pipe_nn) => {
+                // Copy the NonNull out so the match binding's borrow of `*self`
+                // ends, allowing `*self = Ignore` below.
+                let pipe_nn = *pipe_nn;
                 // SAFETY: pipe is live for the duration of the variant.
-                let pipe = unsafe { pipe_nn.as_mut() };
-                if pipe.signal.ptr == NonNull::new(self as *mut _ as *mut c_void) {
+                let pipe = unsafe { &mut *pipe_nn.as_ptr() };
+                if pipe.signal.ptr == self_ptr {
                     pipe.signal.clear();
                 }
 

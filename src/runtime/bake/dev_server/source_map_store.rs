@@ -8,8 +8,16 @@ use bun_collections::{linear_fifo::StaticBuffer, ArrayHashMap, LinearFifo, Multi
 
 use super::{packed_map, ChunkKind, EventLoopTimer, TimerTag};
 
-// Re-export body types so `DevServer.rs` can name them via `source_map_store::*`.
-pub use super::source_map_store_body::PutOrIncrementRefCount;
+/// Result of `SourceMapStore::put_or_increment_ref_count` (Zig: `PutOrIncrementRefCount`).
+/// Defined locally over the stub `Entry` so `DevServer.rs` and
+/// `incremental_graph::take_source_map` agree on the entry type; the gated
+/// body draft has its own copy over its own `Entry`.
+pub enum PutOrIncrementRefCount<'a> {
+    /// Newly inserted; caller must populate `files`/`paths`.
+    Uninitialized(&'a mut Entry),
+    /// Existing entry; ref_count was bumped.
+    Shared(&'a mut Entry),
+}
 
 /// See `SourceId` for the bit layout.
 #[repr(transparent)]

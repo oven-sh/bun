@@ -10,9 +10,10 @@ pub fn to_match_inline_snapshot(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    // TODO(port): `defer this.postMatch(globalThis)` — scopeguard here overlaps with &mut this;
-    // Phase B should reshape (raw-ptr guard or RAII helper on Expect).
-    scopeguard::defer! { this.post_match(global); }
+    // PORT NOTE: `defer this.postMatch(globalThis)` — wrap `this` in a scopeguard that owns the
+    // &mut Expect and runs post_match on drop, so the body can borrow through DerefMut without
+    // overlapping with the deferred call (matches toThrowErrorMatchingInlineSnapshot.rs).
+    let mut this = scopeguard::guard(this, |this| this.post_match(global));
 
     let this_value = frame.this();
     let arguments_ = frame.arguments_old::<2>(); let arguments: &[JSValue] = arguments_.slice();

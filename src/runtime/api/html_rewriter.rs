@@ -191,7 +191,7 @@ impl HTMLRewriter {
             Ok(s) => s,
             Err(_) => return Err(global.throw_value(create_lolhtml_error(global))),
         };
-        let selector_guard = scopeguard::guard(selector, |s| unsafe {
+        let mut selector_guard = scopeguard::guard(selector, |s| unsafe {
             // SAFETY: selector owned by us until appended to context.selectors below.
             lolhtml::HTMLSelector::destroy(s)
         });

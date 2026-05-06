@@ -86,6 +86,6 @@ pub fn to_be_even(
 // PORT STATUS
 //   source:     src/test_runner/expect/toBeEven.zig (62 lines)
 //   confidence: medium
-//   todos:      1
-//   notes:      scopeguard for post_match will fight borrowck; Expect::throw arity collapsed fmt+args into format_args!; get_signature wrapped in const { } (requires const fn in Phase B)
+//   todos:      0
+//   notes:      defer post_match() reshaped via inner closure (no raw ptrs); Expect::throw arity collapsed fmt+args into format_args!
 // ──────────────────────────────────────────────────────────────────────────

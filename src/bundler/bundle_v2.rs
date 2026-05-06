@@ -2820,8 +2820,7 @@ impl<'a> BundleV2<'a> {
 
         this.wait_for_parse();
 
-        // SAFETY: `bun.start_time` is a process-global written once at CLI init.
-        *minify_duration = (((bun_core::time::nano_timestamp() as i64) - (unsafe { bun_core::start_time } as i64)) / (bun_core::time::NS_PER_MS as i64)) as u64;
+        *minify_duration = (((bun_core::time::nano_timestamp() as i64) - (bun_core::start_time() as i64)) / (bun_core::time::NS_PER_MS as i64)) as u64;
         *source_code_size = this.source_code_length as u64;
 
         if this.transpiler.log.has_errors() {

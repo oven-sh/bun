@@ -915,11 +915,15 @@ pub fn get_loader_and_virtual_source<'a>(
     if let Some(eval_source) = unsafe { (vt.eval_source)(jsc_vm.vm) } {
         // SAFETY: eval_source outlives jsc_vm
         let eval_source: &'a logger::Source = unsafe { &*eval_source };
-        if strings::ends_with(specifier, bun_paths::sep_literal!(b"/[eval]")) {
+        // PORT NOTE: Zig used `bun.OSPathLiteral("/[eval]")` (slash on POSIX,
+        // backslash on Windows). The `[eval]`/`[stdin]` virtual specifiers are
+        // always emitted with forward slashes by the loader, so a plain literal
+        // is correct on both platforms.
+        if strings::ends_with(specifier, b"/[eval]") {
             virtual_source = Some(eval_source);
             loader = Some(Loader::Tsx);
         }
-        if strings::ends_with(specifier, bun_paths::sep_literal!(b"/[stdin]")) {
+        if strings::ends_with(specifier, b"/[stdin]") {
             virtual_source = Some(eval_source);
             loader = Some(Loader::Tsx);
         }

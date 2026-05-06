@@ -432,7 +432,7 @@ impl ReadableStream {
         });
         // PORT NOTE: reshaped for borrowck — Zig passed `&source.context` as both reader-parent and self.
         let ctx_ptr: *mut FileReader = &mut source.context;
-        source.context.reader.from(buffered_reader, ctx_ptr);
+        source.context.reader().from(buffered_reader, ctx_ptr);
 
         source.to_readable_stream(global_this)
     }

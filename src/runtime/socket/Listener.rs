@@ -53,7 +53,13 @@ pub struct Listener {
 
 pub enum ListenerType {
     Uws(*mut uws_sys::ListenSocket),
-    NamedPipe(Box<WindowsNamedPipeListeningContext>),
+    /// Raw heap pointer (not `Box`) to match .zig:31 `*WindowsNamedPipeListeningContext`.
+    /// The context's address is registered with libuv (`uv_pipe.data`) for the
+    /// lifetime of the handle, so we must never assert `noalias` over it via a
+    /// Box move or `&mut Listener` that transitively covers the context — that
+    /// would invalidate the pointer libuv holds under Stacked Borrows. Ownership
+    /// is still unique; freed via `close_pipe_and_deinit` → `on_pipe_closed` → `deinit`.
+    NamedPipe(NonNull<WindowsNamedPipeListeningContext>),
     None,
 }
 

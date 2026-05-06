@@ -47,7 +47,6 @@ pub type ReaderImpl = bun_io::BufferedReader;
 
 struct State {
     fd: Fd,
-    reader: ReaderImpl,
     buf: Vec<u8>,
     readers: Readers,
     read: usize,

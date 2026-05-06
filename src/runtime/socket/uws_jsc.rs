@@ -113,12 +113,17 @@ pub extern "C" fn us_socket_buffered_js_write(
     data: JSValue,
     encoding: JSValue,
 ) -> JSValue {
-    // SAFETY: caller (JSNodeHTTPServerSocket.cpp) guarantees socket and buffer are valid for the call.
-    let socket = unsafe { &mut *socket };
-    // SAFETY: see above.
-    let buffer = unsafe { &mut *buffer };
+    // NOTE: `socket`/`buffer` are kept as raw `*mut` for the function lifetime and only
+    // dereferenced to `&mut` at each point of use. The JS calls below
+    // (`from_js_with_encoding_value_allow_request_response`, `throw_*`) can re-enter
+    // `JSNodeHTTPServerSocket.write` on the same socket, which would alias a long-lived
+    // `&mut *socket` / `&mut *buffer` under Stacked Borrows. The Zig spec uses raw
+    // pointers (`*uws.us_socket_t` / `*us_socket_stream_buffer_t`) with no uniqueness
+    // assertion, so we mirror that here.
 
-    let mut stream_buffer = buffer.to_stream_buffer();
+    // SAFETY: caller (JSNodeHTTPServerSocket.cpp) guarantees `buffer` is valid for the call;
+    // borrow is dropped before any JS execution below.
+    let mut stream_buffer = unsafe { &mut *buffer }.to_stream_buffer();
     let mut total_written: usize = 0;
 
     // PORT NOTE: Zig `defer { buffer.update(stream_buffer); buffer.wrote(total_written); }`

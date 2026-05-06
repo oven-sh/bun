@@ -73,6 +73,7 @@
 //! the FFI exports route through `RuntimeHooks` / `todo!()`.
 //! ──────────────────────────────────────────────────────────────────────────
 
+use core::cell::{Cell, UnsafeCell};
 use core::ffi::c_void;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 

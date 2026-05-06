@@ -1315,8 +1315,15 @@ mod posix_impl {
             renameat(from_dir, from, to_dir, to)
         }
     }
-    pub fn unlinkat(dir: Fd, path: &ZStr, flags: i32) -> Maybe<()> {
+    /// sys.zig:2884 `unlinkatWithFlags` — explicit `flags` (e.g. `AT_REMOVEDIR`).
+    pub fn unlinkat_with_flags(dir: Fd, path: &ZStr, flags: i32) -> Maybe<()> {
         check_p!(unsafe { libc::unlinkat(dir.native(), path.as_ptr(), flags) }, Tag::unlink, path); Ok(())
+    }
+    /// sys.zig:2912 `unlinkat` — 2-arg form (`flags = 0`). Zig's surface is
+    /// 2-arg; the 3-arg variant is `unlinkatWithFlags`.
+    #[inline]
+    pub fn unlinkat(dir: Fd, path: &ZStr) -> Maybe<()> {
+        unlinkat_with_flags(dir, path, 0)
     }
     pub fn symlink(target: &ZStr, link: &ZStr) -> Maybe<()> {
         check_p!(unsafe { libc::symlink(target.as_ptr(), link.as_ptr()) }, Tag::symlink, link); Ok(())
@@ -1915,7 +1922,7 @@ mod windows_impl {
         let _ = flags;
         renameat(from_dir, from, to_dir, to)
     }
-    pub fn unlinkat(dir: Fd, path: &ZStr, flags: i32) -> Maybe<()> {
+    pub fn unlinkat_with_flags(dir: Fd, path: &ZStr, flags: i32) -> Maybe<()> {
         // sys.zig:2884-2896 `unlinkatWithFlags` windows arm: convert to NT path
         // and call `DeleteFileBun` with `.dir = if (dirfd != bun.invalid_fd)
         // dirfd.cast() else null` and `.remove_dir = flags & AT.REMOVEDIR != 0`.
@@ -1927,6 +1934,11 @@ mod windows_impl {
             dir: if dir.is_valid() { Some(dir) } else { None },
             remove_dir: (flags & AT_REMOVEDIR) != 0,
         })
+    }
+    /// sys.zig:2912 `unlinkat` — 2-arg form (`flags = 0`).
+    #[inline]
+    pub fn unlinkat(dir: Fd, path: &ZStr) -> Maybe<()> {
+        unlinkat_with_flags(dir, path, 0)
     }
     pub fn mkdir_recursive_at(dir: Fd, sub: &[u8]) -> Maybe<()> {
         // Port of `bun.makePath` — split on sep and create each component.

@@ -199,7 +199,11 @@ impl UnicodeRange {
         // This deviates from the spec in case there are CSS comments
         // between tokens in the middle of one <unicode-range>,
         // but oh well…
-        let concatenated_tokens = input.slice_from(after_u);
+        // SAFETY: `slice_from` borrows the parser's source/arena; `Token::Ident`
+        // payloads are `&'static [u8]` under the crate-wide `'bump`-erasure
+        // placeholder (see `css_parser::src_str` PORT NOTE) — same lifetime in
+        // practice, re-threads when `Token<'a>` lands.
+        let concatenated_tokens = unsafe { css::css_parser::src_str(input.slice_from(after_u)) };
 
         let range = if let Some(range) = Self::parse_concatenated(concatenated_tokens) {
             range
@@ -216,11 +220,11 @@ impl UnicodeRange {
 
     fn parse_tokens(input: &mut css::Parser) -> css::Result<()> {
         let tok = match input.next_including_whitespace() {
-            Ok(vv) => vv,
+            Ok(vv) => vv.clone(),
             Err(e) => return Err(e),
         };
         // TODO(port): exact `Token` variant shapes (Dimension/Number payloads) may differ in Phase B.
-        match *tok {
+        match tok {
             css::Token::Dimension { .. } => return Self::parse_question_marks(input),
             css::Token::Number { .. } => {
                 let after_number = input.state();
@@ -243,18 +247,18 @@ impl UnicodeRange {
             css::Token::Delim(c) => {
                 if c == '+' as u32 {
                     let next = match input.next_including_whitespace() {
-                        Ok(vv) => vv,
+                        Ok(vv) => vv.clone(),
                         Err(e) => return Err(e),
                     };
-                    if !(matches!(*next, css::Token::Ident(_)) || matches!(*next, css::Token::Delim(d) if d == '?' as u32)) {
-                        return Err(input.new_basic_unexpected_token_error(next.clone()));
+                    if !(matches!(next, css::Token::Ident(_)) || matches!(next, css::Token::Delim(d) if d == '?' as u32)) {
+                        return Err(input.new_basic_unexpected_token_error(next));
                     }
                     return Self::parse_question_marks(input);
                 }
             }
             _ => {}
         }
-        Err(input.new_basic_unexpected_token_error(tok.clone()))
+        Err(input.new_basic_unexpected_token_error(tok))
     }
 
     /// Consume as many '?' as possible

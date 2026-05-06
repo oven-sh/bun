@@ -798,7 +798,7 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
         let mut clone = style::StyleRule::<R> {
             selectors: list,
             vendor_prefix: sty.vendor_prefix,
-            declarations: sty.declarations.deep_clone(context.allocator),
+            declarations: dc::decl_block_static(&sty.declarations, context.allocator),
             rules: sty.rules.deep_clone(context.allocator),
             loc: sty.loc,
         };
@@ -983,8 +983,8 @@ pub fn merge_style_rules<R>(
                 .important_declarations
                 .extend(sty.declarations.important_declarations.drain(..));
             last_style_rule.declarations.minify(
-                context.handler,
-                context.important_handler,
+                dc::decl_handler_static(&mut *context.handler),
+                dc::decl_handler_static(&mut *context.important_handler),
                 &mut context.handler_context,
             );
             return true;

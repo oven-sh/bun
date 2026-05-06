@@ -221,9 +221,9 @@ impl<'a> Task<'a> {
                         body.slice(),
                         &mut this.log,
                         manifest.name.slice(),
-                        manifest.network.callback.package_manifest.loaded_manifest.clone(),
+                        network.callback.package_manifest.loaded_manifest.clone(),
                         manager,
-                        manifest.network.callback.package_manifest.is_extended_manifest,
+                        network.callback.package_manifest.is_extended_manifest,
                     ) {
                         Ok(v) => v,
                         Err(err) => {

@@ -819,7 +819,7 @@ pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, 
 
     if !ctx.filters.is_empty() || ctx.workspaces {
         // Workspace-aware mode: iterate over matching workspace packages
-        let mut filter_instance = if ctx.workspaces {
+        let filter_instance = if ctx.workspaces {
             FilterArg::FilterSet::init::<&[u8]>(&[b"*"], cwd)?
         } else {
             FilterArg::FilterSet::init(&ctx.filters, cwd)?

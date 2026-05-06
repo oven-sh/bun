@@ -1,4 +1,4 @@
-use core::ffi::{c_char, c_int};
+use core::ffi::c_int;
 use core::marker::PhantomData;
 
 use bun_aio::KeepAlive;
@@ -10,9 +10,8 @@ use bun_aio::KeepAlive;
 /// (write_in_progress, pending_close, pending_reset, closed, stream, this_value,
 /// write_result, task, poll_ref, globalThis) plus `T.js.*` codegen accessors and
 /// `T.ref()/deref()`.
-// TODO(port): Phase B — decide between (a) marker struct + associated fns (current),
-// or (b) extension trait with required accessor methods. Field accesses on `T` below
-// will not compile without a trait bound exposing those fields.
+// PORT NOTE: Phase D — expressed as a marker struct + trait bound. Field
+// accesses on `T` go through the [`CompressionStreamImpl`] trait below.
 pub struct CompressionStream<T>(PhantomData<T>);
 
 #[derive(Default)]
@@ -29,25 +28,25 @@ impl Drop for CountedKeepAlive {
 
 #[derive(Clone, Copy)]
 pub struct Error {
-    pub msg: *const c_char,
+    pub msg: Option<&'static str>,
     pub err: c_int,
-    pub code: *const c_char,
+    pub code: Option<&'static str>,
 }
 
 impl Error {
-    pub const OK: Error = Error::init(core::ptr::null(), 0, core::ptr::null());
+    pub const OK: Error = Error { msg: None, err: 0, code: None };
 
     #[inline]
     pub const fn ok() -> Error {
         Self::OK
     }
 
-    pub const fn init(msg: *const c_char, err: c_int, code: *const c_char) -> Error {
-        Error { msg, err, code }
+    pub const fn init(msg: &'static str, err: c_int, code: &'static str) -> Error {
+        Error { msg: Some(msg), err, code: Some(code) }
     }
 
     pub fn is_error(&self) -> bool {
-        !self.msg.is_null()
+        self.msg.is_some()
     }
 }
 
@@ -57,69 +56,103 @@ impl Error {
 // glue (`ConcurrentTask`, `WorkPool::schedule`, `VirtualMachine`) whose method
 // surface in `bun_jsc` / `bun_threading` is still in flux. Type defs (Error,
 // CountedKeepAlive, CompressionStream<T> marker) hoisted above.
-// TODO(b2-blocked): un-gate once bun_jsc method surface + WorkPoolTask export land.
 
 mod _impl {
 use super::*;
-use core::mem::offset_of;
 
-use bun_core::Output;
 use bun_jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, Task,
+    self as jsc, CallFrame, ErrorCode, JSGlobalObject, JSValue, JsResult, StringJsc as _,
+    StrongOptional, WorkPoolTask,
 };
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::ConcurrentTask::ConcurrentTask;
-use crate::node::types::Buffer;
-use bun_str::{self, String as BunString, ZigString};
-use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
+use bun_str::{String as BunString, ZigStringSlice};
+use bun_threading::work_pool::WorkPool;
 use bun_zlib;
 
 bun_output::declare_scope!(zlib, hidden);
 
+// ─── local shims (upstream-crate gaps) ────────────────────────────────────
+
+/// JS-thread `EventLoopCtx` for `KeepAlive::ref_/unref`. Zig passed the
+/// `*VirtualMachine` directly (anytype dispatch); the Rust split routes through
+/// the aio hook registered by `crate::init()`.
+#[inline]
+fn vm_ctx() -> bun_aio::EventLoopCtx {
+    bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js)
+}
+
+/// Local `JSValue::toU32` shim — `bun_jsc::JSValue` doesn't expose `to_u32()`
+/// in this crate's view yet; mirror Zig's `@intFromFloat(value.asNumber())`.
+#[inline]
+fn jsv_to_u32(v: JSValue) -> u32 {
+    v.as_number() as u32
+}
+
+/// Local `std.meta.intToEnum(FlushValue, n)` shim — `bun_zlib::FlushValue` has
+/// no `TryFrom<u32>` impl upstream.
+#[inline]
+fn flush_value_is_valid(n: u32) -> bool {
+    // FlushValue is `#[repr(C)]` with discriminants 0..=6.
+    n <= 6
+}
+
+/// Local `JSValue::withAsyncContextIfNeeded` shim.
+// TODO(port): blocked_on: bun_jsc::JSValue::with_async_context_if_needed
+#[inline]
+fn with_async_context_if_needed(v: JSValue, _global: &JSGlobalObject) -> JSValue {
+    v
+}
+
 impl CountedKeepAlive {
-    pub fn ref_(&mut self, vm: &VirtualMachine) {
+    pub fn ref_(&mut self, _vm: &VirtualMachine) {
         if self.ref_count == 0 {
-            self.keep_alive.ref_(vm);
+            self.keep_alive.ref_(vm_ctx());
         }
         self.ref_count += 1;
     }
 
-    pub fn unref(&mut self, vm: &VirtualMachine) {
+    pub fn unref(&mut self, _vm: &VirtualMachine) {
         self.ref_count -= 1;
         if self.ref_count == 0 {
-            self.keep_alive.unref(vm);
+            self.keep_alive.unref(vm_ctx());
         }
     }
 }
 
 #[bun_jsc::host_fn]
 pub fn crc32(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let arguments = callframe.arguments_old(2).ptr;
+    let arguments = callframe.arguments_old::<2>().ptr;
 
-    let data: ZigString::Slice = 'blk: {
+    let data: ZigStringSlice = 'blk: {
         let data: JSValue = arguments[0];
 
         if data.is_empty() {
-            return global_this.throw_invalid_argument_type_value(
-                "data",
-                "string or an instance of Buffer, TypedArray, or DataView",
+            return Err(global_this.throw_invalid_argument_type_value(
+                b"data",
+                b"string or an instance of Buffer, TypedArray, or DataView",
                 JSValue::UNDEFINED,
-            );
+            ));
         }
         if data.is_string() {
-            break 'blk data.as_string().to_slice(global_this);
+            // SAFETY: `is_string()` guarantees `as_string()` is non-null and
+            // points to a live JSString cell on the JSC heap.
+            break 'blk unsafe { &*data.as_string() }.to_slice(global_this);
         }
-        let Some(buffer) = Buffer::from_js(global_this, data) else {
+        let Some(buffer) = data.as_array_buffer(global_this) else {
             let ty_str = data.js_type_string(global_this).to_slice(global_this);
             // ty_str drops at end of scope
-            return global_this
-                .err_invalid_arg_type(
-                    "The \"data\" property must be an instance of Buffer, TypedArray, DataView, or ArrayBuffer. Received {}",
-                    format_args!("{}", bstr::BStr::new(ty_str.slice())),
+            return Err(global_this
+                .err(
+                    ErrorCode::INVALID_ARG_TYPE,
+                    format_args!(
+                        "The \"data\" property must be an instance of Buffer, TypedArray, DataView, or ArrayBuffer. Received {}",
+                        bstr::BStr::new(ty_str.slice()),
+                    ),
                 )
-                .throw();
+                .throw());
         };
-        break 'blk ZigString::Slice::from_utf8_never_free(buffer.slice());
+        break 'blk ZigStringSlice::from_utf8_never_free(buffer.byte_slice());
     };
     // `data` drops at end of scope
 
@@ -129,79 +162,135 @@ pub fn crc32(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
             break 'blk 0;
         }
         if !value.is_number() {
-            return global_this.throw_invalid_argument_type_value("value", "number", value);
+            return Err(global_this.throw_invalid_argument_type_value(b"value", b"number", value));
         }
         let valuef = value.as_number();
-        let min = 0;
-        let max = u32::MAX;
+        let min: u32 = 0;
+        let max: u32 = u32::MAX;
 
         if valuef.floor() != valuef {
-            return global_this
-                .err_out_of_range(
-                    "The value of \"{}\" is out of range. It must be an integer. Received {}",
-                    format_args!("{} {}", "value", valuef),
+            return Err(global_this
+                .err(
+                    ErrorCode::OUT_OF_RANGE,
+                    format_args!(
+                        "The value of \"{}\" is out of range. It must be an integer. Received {}",
+                        "value", valuef,
+                    ),
                 )
-                .throw();
-            // TODO(port): ERR(.OUT_OF_RANGE, fmt, args) — exact formatting API for ERR_* macros
+                .throw());
         }
         if valuef < min as f64 || valuef > max as f64 {
-            return global_this
-                .err_out_of_range(
-                    "The value of \"{}\" is out of range. It must be >= {} and <= {}. Received {}",
-                    format_args!("{} {} {} {}", "value", min, max, valuef),
+            return Err(global_this
+                .err(
+                    ErrorCode::OUT_OF_RANGE,
+                    format_args!(
+                        "The value of \"{}\" is out of range. It must be >= {} and <= {}. Received {}",
+                        "value", min, max, valuef,
+                    ),
                 )
-                .throw();
+                .throw());
         }
         break 'blk valuef as u32;
     };
 
     // crc32 returns a u64 but the data will always be within a u32 range so the outer cast is always safe.
     let slice_u8 = data.slice();
-    Ok(JSValue::js_number(
-        u32::try_from(bun_zlib::crc32(
-            value,
+    // SAFETY: `crc32` is a pure FFI hash over `(ptr, len)`; `slice_u8` is valid
+    // for the call (borrowed from `data`, which lives to end of scope).
+    let crc = unsafe {
+        bun_zlib::crc32(
+            u64::from(value),
             slice_u8.as_ptr(),
             u32::try_from(slice_u8.len()).unwrap(),
-        ))
-        .unwrap(),
-    ))
+        )
+    };
+    Ok(JSValue::js_number(f64::from(u32::try_from(crc).unwrap())))
 }
 
-impl<T> CompressionStream<T> {
-    #[bun_jsc::host_fn(method)]
+// ─── CompressionStream mixin trait ────────────────────────────────────────
+// Zig's `CompressionStream(T)` reaches into `T`'s fields directly (comptime
+// duck-typing). Rust can't, so each `Native{Zlib,Brotli,Zstd}` implements this
+// trait to expose its fields + per-class codegen accessors.
+
+/// Backing-stream surface used by [`CompressionStream`] (zlib / brotli / zstd
+/// `Context` types). Mirrors the Zig `this.stream.*` calls.
+pub trait CompressionContext {
+    fn set_buffers(&mut self, in_: Option<&[u8]>, out: Option<&mut [u8]>);
+    fn set_flush(&mut self, flush: i32);
+    fn do_work(&mut self);
+    fn reset(&mut self) -> Error;
+    fn close(&mut self);
+    fn get_error_info(&self) -> Error;
+    fn update_write_result(&mut self, avail_in: &mut u32, avail_out: &mut u32);
+}
+
+pub trait CompressionStreamImpl: Sized + 'static {
+    type Stream: CompressionContext;
+
+    // Field accessors (split-borrow is the impl's responsibility).
+    fn global_this(&self) -> *mut JSGlobalObject;
+    fn stream_mut(&mut self) -> &mut Self::Stream;
+    fn write_result_ptr(&mut self) -> Option<*mut u32>;
+    fn poll_ref_mut(&mut self) -> &mut CountedKeepAlive;
+    fn this_value_mut(&mut self) -> &mut StrongOptional;
+    fn task_mut(&mut self) -> &mut WorkPoolTask;
+    fn write_in_progress_mut(&mut self) -> &mut bool;
+    fn pending_close_mut(&mut self) -> &mut bool;
+    fn pending_reset_mut(&mut self) -> &mut bool;
+    fn closed_mut(&mut self) -> &mut bool;
+
+    /// Recover `*mut Self` from the embedded `WorkPoolTask` (Zig `@fieldParentPtr`).
+    /// SAFETY: caller guarantees `task` points at the `task` field of a live `Self`.
+    unsafe fn from_task(task: *mut WorkPoolTask) -> *mut Self;
+
+    // Intrusive refcount (Zig `bun.ptr.RefCount`).
+    fn ref_(&self);
+    fn deref(&self);
+
+    // Per-class codegen (`T.js.*` cached-property accessors).
+    fn write_callback_get_cached(this_value: JSValue) -> Option<JSValue>;
+    fn error_callback_get_cached(this_value: JSValue) -> Option<JSValue>;
+    fn error_callback_set_cached(this_value: JSValue, global: &JSGlobalObject, cb: JSValue);
+}
+
+impl<T: CompressionStreamImpl> CompressionStream<T> {
     pub fn write(
         this: &mut T,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_undef(7).slice();
+        let args = callframe.arguments_undef::<7>();
+        let arguments = args.slice();
 
         if arguments.len() != 7 {
-            return global_this
-                .err_missing_args("write(flush, in, in_off, in_len, out, out_off, out_len)")
-                .throw();
+            return Err(global_this
+                .err(
+                    ErrorCode::MISSING_ARGS,
+                    format_args!("write(flush, in, in_off, in_len, out, out_off, out_len)"),
+                )
+                .throw());
         }
 
         let mut in_off: u32 = 0;
         let mut in_len: u32 = 0;
-        let mut out_off: u32;
-        let mut out_len: u32;
-        let mut flush: u32;
+        let out_off: u32;
+        let out_len: u32;
+        let flush: u32;
         let mut in_: Option<&[u8]> = None;
-        let mut out: Option<&mut [u8]>;
+        let out: Option<&mut [u8]>;
 
         let this_value = callframe.this();
 
         if arguments[0].is_undefined() {
-            return global_this
-                .err_invalid_arg_value("flush value is required")
-                .throw();
+            return Err(global_this
+                .err(ErrorCode::INVALID_ARG_VALUE, format_args!("flush value is required"))
+                .throw());
         }
-        flush = arguments[0].to_u32();
-        if bun_zlib::FlushValue::try_from(flush).is_err() {
-            return global_this
-                .err_invalid_arg_value("Invalid flush value")
-                .throw();
+        flush = jsv_to_u32(arguments[0]);
+        if !flush_value_is_valid(flush) {
+            return Err(global_this
+                .err(ErrorCode::INVALID_ARG_VALUE, format_args!("Invalid flush value"))
+                .throw());
         }
 
         if arguments[1].is_null() {
@@ -211,168 +300,195 @@ impl<T> CompressionStream<T> {
             in_off = 0;
         } else {
             let Some(in_buf) = arguments[1].as_array_buffer(global_this) else {
-                return global_this
-                    .err_invalid_arg_type("The \"in\" argument must be a TypedArray or DataView")
-                    .throw();
+                return Err(global_this
+                    .err(
+                        ErrorCode::INVALID_ARG_TYPE,
+                        format_args!("The \"in\" argument must be a TypedArray or DataView"),
+                    )
+                    .throw());
             };
-            in_off = arguments[2].to_u32();
-            in_len = arguments[3].to_u32();
+            in_off = jsv_to_u32(arguments[2]);
+            in_len = jsv_to_u32(arguments[3]);
             if in_buf.byte_len < in_off as usize + in_len as usize {
-                return global_this
-                    .err_out_of_range(format_args!(
-                        "in_off + in_len ({}) exceeds input buffer length ({})",
-                        in_off as usize + in_len as usize,
-                        in_buf.byte_len
-                    ))
-                    .throw();
+                return Err(global_this
+                    .err(
+                        ErrorCode::OUT_OF_RANGE,
+                        format_args!(
+                            "in_off + in_len ({}) exceeds input buffer length ({})",
+                            in_off as usize + in_len as usize,
+                            in_buf.byte_len,
+                        ),
+                    )
+                    .throw());
             }
             in_ = Some(&in_buf.byte_slice()[in_off as usize..][..in_len as usize]);
         }
 
         let Some(out_buf) = arguments[4].as_array_buffer(global_this) else {
-            return global_this
-                .err_invalid_arg_type("The \"out\" argument must be a TypedArray or DataView")
-                .throw();
+            return Err(global_this
+                .err(
+                    ErrorCode::INVALID_ARG_TYPE,
+                    format_args!("The \"out\" argument must be a TypedArray or DataView"),
+                )
+                .throw());
         };
-        out_off = arguments[5].to_u32();
-        out_len = arguments[6].to_u32();
+        out_off = jsv_to_u32(arguments[5]);
+        out_len = jsv_to_u32(arguments[6]);
         if out_buf.byte_len < out_off as usize + out_len as usize {
-            return global_this
-                .err_out_of_range(format_args!(
-                    "out_off + out_len ({}) exceeds output buffer length ({})",
-                    out_off as usize + out_len as usize,
-                    out_buf.byte_len
-                ))
-                .throw();
+            return Err(global_this
+                .err(
+                    ErrorCode::OUT_OF_RANGE,
+                    format_args!(
+                        "out_off + out_len ({}) exceeds output buffer length ({})",
+                        out_off as usize + out_len as usize,
+                        out_buf.byte_len,
+                    ),
+                )
+                .throw());
         }
-        out = Some(&mut out_buf.byte_slice()[out_off as usize..][..out_len as usize]);
+        out = todo!("blocked_on: bun_jsc::ArrayBuffer::byte_slice_mut — need &mut [u8] view");
+        let _ = (in_off, in_len, out_off, out_len);
 
-        if this.write_in_progress {
-            return global_this
-                .err_invalid_state("Write already in progress")
-                .throw();
+        if *this.write_in_progress_mut() {
+            return Err(global_this
+                .err(ErrorCode::INVALID_STATE, format_args!("Write already in progress"))
+                .throw());
         }
-        if this.pending_close {
-            return global_this.err_invalid_state("Pending close").throw();
+        if *this.pending_close_mut() {
+            return Err(global_this
+                .err(ErrorCode::INVALID_STATE, format_args!("Pending close"))
+                .throw());
         }
-        this.write_in_progress = true;
+        *this.write_in_progress_mut() = true;
         this.ref_();
 
-        this.stream.set_buffers(in_, out);
-        this.stream.set_flush(i32::try_from(flush).unwrap());
+        this.stream_mut().set_buffers(in_, out);
+        this.stream_mut().set_flush(i32::try_from(flush).unwrap());
 
         // Only create the strong handle when we have a pending write
         // And make sure to clear it when we are done.
-        this.this_value.set(global_this, this_value);
+        this.this_value_mut().set(global_this, this_value);
 
-        let vm = global_this.bun_vm();
-        this.task = WorkPoolTask {
+        // SAFETY: `bun_vm()` never returns null for a Bun-owned global.
+        let vm = unsafe { &*global_this.bun_vm() };
+        *this.task_mut() = WorkPoolTask {
+            node: Default::default(),
             callback: Self::async_job_run_task,
         };
-        this.poll_ref.ref_(vm);
-        WorkPool::schedule(&mut this.task);
+        this.poll_ref_mut().ref_(vm);
+        WorkPool::schedule(this.task_mut());
 
         Ok(JSValue::UNDEFINED)
     }
 
     // Zig: nested `const AsyncJob = struct { ... }` — namespacing only.
-    fn async_job_run_task(task: *mut WorkPoolTask) {
+    unsafe fn async_job_run_task(task: *mut WorkPoolTask) {
         // SAFETY: task points to T.task; recover &mut T via container_of
-        let this: &mut T = unsafe {
-            &mut *(task as *mut u8)
-                .sub(offset_of!(T, task))
-                .cast::<T>()
-        };
+        // (`CompressionStreamImpl::from_task`).
+        let this: &mut T = unsafe { &mut *T::from_task(task) };
         Self::async_job_run(this);
     }
 
     fn async_job_run(this: &mut T) {
-        let global_this: &JSGlobalObject = this.global_this;
+        // SAFETY: `global_this` is the JSC_BORROW backref stored at construct
+        // time; the global outlives this m_ctx payload.
+        let global_this: &JSGlobalObject = unsafe { &*this.global_this() };
         let vm = global_this.bun_vm_concurrently();
 
-        this.stream.do_work();
+        this.stream_mut().do_work();
 
-        vm.enqueue_task_concurrent(ConcurrentTask::create(Task::init(this)));
+        let _ = vm;
+        todo!("blocked_on: bun_event_loop::Taskable for Native{{Zlib,Brotli,Zstd}} — vm.enqueue_task_concurrent(ConcurrentTask::create(Task::init(this)))");
     }
 
     pub fn run_from_js_thread(this: &mut T) {
-        let global: &JSGlobalObject = this.global_this;
-        let vm = global.bun_vm();
-        // PORT NOTE: reshaped for borrowck — Zig used `defer this.deref(); defer this.poll_ref.unref(vm);`
-        // which run at scope exit in reverse order. We use scopeguard to preserve ordering.
-        let guard = scopeguard::guard((), |_| {
-            this.poll_ref.unref(vm);
-            this.deref();
-        });
-        // TODO(port): scopeguard captures &mut this across the body below — Phase B may need
-        // to restructure (move unref/deref to explicit tail calls on every return path).
+        // SAFETY: `global_this` backref is valid for the lifetime of `this`.
+        let global: &JSGlobalObject = unsafe { &*this.global_this() };
+        // SAFETY: `bun_vm()` never returns null for a Bun-owned global.
+        let vm = unsafe { &*global.bun_vm() };
+        // PORT NOTE: reshaped for borrowck — Zig used `defer this.deref(); defer
+        // this.poll_ref.unref(vm);` (run at scope exit in reverse order). We
+        // call them explicitly on every return path instead of via scopeguard,
+        // since scopeguard would capture `&mut this` across the body.
 
-        this.write_in_progress = false;
+        *this.write_in_progress_mut() = false;
 
         // Clear the strong handle before we call any callbacks.
-        let Some(this_value) = this.this_value.try_swap() else {
+        let Some(this_value) = this.this_value_mut().try_swap() else {
             bun_output::scoped_log!(zlib, "this_value is null in runFromJSThread");
+            this.poll_ref_mut().unref(vm);
+            this.deref();
             return;
         };
 
         this_value.ensure_still_alive();
 
         if !Self::check_error(this, global, this_value) {
+            this.poll_ref_mut().unref(vm);
+            this.deref();
             return;
         }
 
-        let write_result = this.write_result.as_mut().unwrap();
-        this.stream
-            .update_write_result(&mut write_result[1], &mut write_result[0]);
+        if let Some(write_result) = this.write_result_ptr() {
+            // SAFETY: `write_result` points at a 2-element u32[] owned by JS
+            // (set in `init()`); both indices are in-bounds.
+            let (r1, r0) = unsafe { (&mut *write_result.add(1), &mut *write_result) };
+            this.stream_mut().update_write_result(r1, r0);
+        }
         this_value.ensure_still_alive();
 
-        let write_callback: JSValue = T::js::write_callback_get_cached(this_value).unwrap();
+        let write_callback: JSValue = T::write_callback_get_cached(this_value).unwrap();
 
-        vm.event_loop()
+        // SAFETY: `event_loop()` returns a non-null pointer for a live VM.
+        unsafe { &mut *vm.event_loop() }
             .run_callback(write_callback, global, this_value, &[]);
 
-        if this.pending_reset {
+        if *this.pending_reset_mut() {
             Self::reset_internal(this, global, this_value);
         }
-        if this.pending_close {
+        if *this.pending_close_mut() {
             let _ = Self::close_internal(this);
         }
 
-        drop(guard);
+        this.poll_ref_mut().unref(vm);
+        this.deref();
     }
 
-    #[bun_jsc::host_fn(method)]
     pub fn write_sync(
         this: &mut T,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_undef(7).slice();
+        let args = callframe.arguments_undef::<7>();
+        let arguments = args.slice();
 
         if arguments.len() != 7 {
-            return global_this
-                .err_missing_args("writeSync(flush, in, in_off, in_len, out, out_off, out_len)")
-                .throw();
+            return Err(global_this
+                .err(
+                    ErrorCode::MISSING_ARGS,
+                    format_args!("writeSync(flush, in, in_off, in_len, out, out_off, out_len)"),
+                )
+                .throw());
         }
 
         let mut in_off: u32 = 0;
         let mut in_len: u32 = 0;
-        let mut out_off: u32;
-        let mut out_len: u32;
-        let mut flush: u32;
+        let out_off: u32;
+        let out_len: u32;
+        let flush: u32;
         let mut in_: Option<&[u8]> = None;
-        let mut out: Option<&mut [u8]>;
+        let out: Option<&mut [u8]>;
 
         if arguments[0].is_undefined() {
-            return global_this
-                .err_invalid_arg_value("flush value is required")
-                .throw();
+            return Err(global_this
+                .err(ErrorCode::INVALID_ARG_VALUE, format_args!("flush value is required"))
+                .throw());
         }
-        flush = arguments[0].to_u32();
-        if bun_zlib::FlushValue::try_from(flush).is_err() {
-            return global_this
-                .err_invalid_arg_value("Invalid flush value")
-                .throw();
+        flush = jsv_to_u32(arguments[0]);
+        if !flush_value_is_valid(flush) {
+            return Err(global_this
+                .err(ErrorCode::INVALID_ARG_VALUE, format_args!("Invalid flush value"))
+                .throw());
         }
 
         if arguments[1].is_null() {
@@ -382,70 +498,86 @@ impl<T> CompressionStream<T> {
             in_off = 0;
         } else {
             let Some(in_buf) = arguments[1].as_array_buffer(global_this) else {
-                return global_this
-                    .err_invalid_arg_type("The \"in\" argument must be a TypedArray or DataView")
-                    .throw();
+                return Err(global_this
+                    .err(
+                        ErrorCode::INVALID_ARG_TYPE,
+                        format_args!("The \"in\" argument must be a TypedArray or DataView"),
+                    )
+                    .throw());
             };
-            in_off = arguments[2].to_u32();
-            in_len = arguments[3].to_u32();
+            in_off = jsv_to_u32(arguments[2]);
+            in_len = jsv_to_u32(arguments[3]);
             if in_buf.byte_len < in_off as usize + in_len as usize {
-                return global_this
-                    .err_out_of_range(format_args!(
-                        "in_off + in_len ({}) exceeds input buffer length ({})",
-                        in_off as usize + in_len as usize,
-                        in_buf.byte_len
-                    ))
-                    .throw();
+                return Err(global_this
+                    .err(
+                        ErrorCode::OUT_OF_RANGE,
+                        format_args!(
+                            "in_off + in_len ({}) exceeds input buffer length ({})",
+                            in_off as usize + in_len as usize,
+                            in_buf.byte_len,
+                        ),
+                    )
+                    .throw());
             }
             in_ = Some(&in_buf.byte_slice()[in_off as usize..][..in_len as usize]);
         }
 
         let Some(out_buf) = arguments[4].as_array_buffer(global_this) else {
-            return global_this
-                .err_invalid_arg_type("The \"out\" argument must be a TypedArray or DataView")
-                .throw();
+            return Err(global_this
+                .err(
+                    ErrorCode::INVALID_ARG_TYPE,
+                    format_args!("The \"out\" argument must be a TypedArray or DataView"),
+                )
+                .throw());
         };
-        out_off = arguments[5].to_u32();
-        out_len = arguments[6].to_u32();
+        out_off = jsv_to_u32(arguments[5]);
+        out_len = jsv_to_u32(arguments[6]);
         if out_buf.byte_len < out_off as usize + out_len as usize {
-            return global_this
-                .err_out_of_range(format_args!(
-                    "out_off + out_len ({}) exceeds output buffer length ({})",
-                    out_off as usize + out_len as usize,
-                    out_buf.byte_len
-                ))
-                .throw();
+            return Err(global_this
+                .err(
+                    ErrorCode::OUT_OF_RANGE,
+                    format_args!(
+                        "out_off + out_len ({}) exceeds output buffer length ({})",
+                        out_off as usize + out_len as usize,
+                        out_buf.byte_len,
+                    ),
+                )
+                .throw());
         }
-        out = Some(&mut out_buf.byte_slice()[out_off as usize..][..out_len as usize]);
+        out = todo!("blocked_on: bun_jsc::ArrayBuffer::byte_slice_mut — need &mut [u8] view");
+        let _ = (in_off, in_len, out_off, out_len);
 
-        if this.write_in_progress {
-            return global_this
-                .err_invalid_state("Write already in progress")
-                .throw();
+        if *this.write_in_progress_mut() {
+            return Err(global_this
+                .err(ErrorCode::INVALID_STATE, format_args!("Write already in progress"))
+                .throw());
         }
-        if this.pending_close {
-            return global_this.err_invalid_state("Pending close").throw();
+        if *this.pending_close_mut() {
+            return Err(global_this
+                .err(ErrorCode::INVALID_STATE, format_args!("Pending close"))
+                .throw());
         }
-        this.write_in_progress = true;
+        *this.write_in_progress_mut() = true;
         this.ref_();
 
-        this.stream.set_buffers(in_, out);
-        this.stream.set_flush(i32::try_from(flush).unwrap());
+        this.stream_mut().set_buffers(in_, out);
+        this.stream_mut().set_flush(i32::try_from(flush).unwrap());
         let this_value = callframe.this();
 
-        this.stream.do_work();
+        this.stream_mut().do_work();
         if Self::check_error(this, global_this, this_value) {
-            let write_result = this.write_result.as_mut().unwrap();
-            this.stream
-                .update_write_result(&mut write_result[1], &mut write_result[0]);
-            this.write_in_progress = false;
+            if let Some(write_result) = this.write_result_ptr() {
+                // SAFETY: `write_result` points at a 2-element u32[] owned by JS.
+                let (r1, r0) = unsafe { (&mut *write_result.add(1), &mut *write_result) };
+                this.stream_mut().update_write_result(r1, r0);
+            }
+            *this.write_in_progress_mut() = false;
         }
         this.deref();
 
         Ok(JSValue::UNDEFINED)
     }
 
-    #[bun_jsc::host_fn(method)]
     pub fn reset(this: &mut T, global_this: &JSGlobalObject, callframe: &CallFrame) -> JSValue {
         Self::reset_internal(this, global_this, callframe.this());
         JSValue::UNDEFINED
@@ -456,21 +588,20 @@ impl<T> CompressionStream<T> {
         // mutates the z_stream). Doing so while an async write is running on
         // the threadpool would be a use-after-free / data race, so defer it
         // until the in-flight write completes (mirrors pending_close).
-        if this.write_in_progress {
-            this.pending_reset = true;
+        if *this.write_in_progress_mut() {
+            *this.pending_reset_mut() = true;
             return;
         }
-        this.pending_reset = false;
-        if this.closed {
+        *this.pending_reset_mut() = false;
+        if *this.closed_mut() {
             return;
         }
-        let err = this.stream.reset();
+        let err = this.stream_mut().reset();
         if err.is_error() {
             Self::emit_error(this, global_this, this_value, err);
         }
     }
 
-    #[bun_jsc::host_fn(method)]
     pub fn close(
         this: &mut T,
         _global_this: &JSGlobalObject,
@@ -481,18 +612,16 @@ impl<T> CompressionStream<T> {
     }
 
     fn close_internal(this: &mut T) {
-        if this.write_in_progress {
-            this.pending_close = true;
+        if *this.write_in_progress_mut() {
+            *this.pending_close_mut() = true;
             return;
         }
-        this.pending_close = false;
-        this.closed = true;
-        this.this_value.deinit();
-        // TODO(port): JsRef::deinit — likely `clear()`/`finalize()` in Rust API
-        this.stream.close();
+        *this.pending_close_mut() = false;
+        *this.closed_mut() = true;
+        this.this_value_mut().deinit();
+        this.stream_mut().close();
     }
 
-    #[bun_jsc::host_fn(setter)]
     pub fn set_on_error(
         _this: &mut T,
         this_value: JSValue,
@@ -500,22 +629,21 @@ impl<T> CompressionStream<T> {
         value: JSValue,
     ) {
         if value.is_function() {
-            T::js::error_callback_set_cached(
+            T::error_callback_set_cached(
                 this_value,
                 global_object,
-                value.with_async_context_if_needed(global_object),
+                with_async_context_if_needed(value, global_object),
             );
         }
     }
 
-    #[bun_jsc::host_fn(getter)]
     pub fn get_on_error(_this: &T, this_value: JSValue, _global: &JSGlobalObject) -> JSValue {
-        T::js::error_callback_get_cached(this_value).unwrap_or(JSValue::UNDEFINED)
+        T::error_callback_get_cached(this_value).unwrap_or(JSValue::UNDEFINED)
     }
 
     /// returns true if no error was detected/emitted
     fn check_error(this: &mut T, global_this: &JSGlobalObject, this_value: JSValue) -> bool {
-        let err = this.stream.get_error_info();
+        let err = this.stream_mut().get_error_info();
         if !err.is_error() {
             return true;
         }
@@ -536,52 +664,39 @@ impl<T> CompressionStream<T> {
         // below could free the native zlib/brotli/zstd state while a task is
         // still queued, leading to a use-after-free when the worker thread
         // runs doWork().
-        this.write_in_progress = false;
+        *this.write_in_progress_mut() = false;
 
-        let msg_bytes: &[u8] = if err_.msg.is_null() {
-            b""
-        } else {
-            // SAFETY: err_.msg is a NUL-terminated C string from zlib/brotli/zstd
-            unsafe { core::ffi::CStr::from_ptr(err_.msg) }.to_bytes()
-        };
-        let mut msg_str = BunString::create_format(format_args!("{}", bstr::BStr::new(msg_bytes)));
+        let mut msg_str = BunString::create_format(format_args!("{}", err_.msg.unwrap_or("")));
         let msg_value = match msg_str.transfer_to_js(global_this) {
             Ok(v) => v,
             Err(_) => return,
         };
-        let err_value: JSValue = JSValue::js_number(err_.err);
-        let code_bytes: &[u8] = if err_.code.is_null() {
-            b""
-        } else {
-            // SAFETY: err_.code is a NUL-terminated C string from zlib/brotli/zstd
-            unsafe { core::ffi::CStr::from_ptr(err_.code) }.to_bytes()
-        };
-        let mut code_str =
-            BunString::create_format(format_args!("{}", bstr::BStr::new(code_bytes)));
+        let err_value: JSValue = JSValue::js_number(f64::from(err_.err));
+        let mut code_str = BunString::create_format(format_args!("{}", err_.code.unwrap_or("")));
         let code_value = match code_str.transfer_to_js(global_this) {
             Ok(v) => v,
             Err(_) => return,
         };
 
-        let callback: JSValue = T::js::error_callback_get_cached(this_value).unwrap_or_else(|| {
-            Output::panic(
+        let callback: JSValue = T::error_callback_get_cached(this_value).unwrap_or_else(|| {
+            bun_core::Output::panic(format_args!(
                 "Assertion failure: cachedErrorCallback is null in node:zlib binding",
-                format_args!(""),
-            )
+            ))
         });
 
-        let vm = global_this.bun_vm();
-        vm.event_loop().run_callback(
+        // SAFETY: `bun_vm()` and `event_loop()` are non-null for a Bun-owned global.
+        let vm = unsafe { &*global_this.bun_vm() };
+        unsafe { &mut *vm.event_loop() }.run_callback(
             callback,
             global_this,
             this_value,
             &[msg_value, err_value, code_value],
         );
 
-        if this.pending_reset {
+        if *this.pending_reset_mut() {
             Self::reset_internal(this, global_this, this_value);
         }
-        if this.pending_close {
+        if *this.pending_close_mut() {
             let _ = Self::close_internal(this);
         }
     }
@@ -591,6 +706,10 @@ impl<T> CompressionStream<T> {
         unsafe { (*this).deref() };
     }
 }
+
+// Silence unused-import for `ConcurrentTask` until `async_job_run` un-stubs.
+#[allow(dead_code)]
+fn _concurrent_task_anchor() -> *const ConcurrentTask { core::ptr::null() }
 
 // Zig: `pub const NativeZlib = jsc.Codegen.JSNativeZlib.getConstructor;` (etc.) —
 // in Rust the per-class `JS*` codegen submodules collapse into the generic
@@ -612,10 +731,16 @@ pub fn NativeZstd(global: &JSGlobalObject) -> JSValue {
 }
 } // mod _impl
 
+pub use _impl::{CompressionContext, CompressionStreamImpl};
+
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/node/node_zlib_binding.zig (396 lines)
 //   confidence: medium
-//   todos:      4
-//   notes:      CompressionStream is a mixin (usingnamespace pattern) — field access on generic T needs trait bound in Phase B; ERR_* macro call shapes are approximate; run_from_js_thread defer→scopeguard captures &mut this and will need restructuring.
+//   todos:      3
+//   notes:      CompressionStream is a Zig mixin (usingnamespace pattern) — Rust
+//               port routes field access through the CompressionStreamImpl trait;
+//               Native{Zlib,Brotli,Zstd} must impl it. host_fn attrs were dropped
+//               (the macro can't handle `&mut T` self); per-class wrapper shims
+//               will be needed when codegen wires these up.
 // ──────────────────────────────────────────────────────────────────────────

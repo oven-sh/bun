@@ -1755,10 +1755,12 @@ impl<const SSL: bool> NewSocket<SSL> {
             #[cfg(unix)]
             if !SSL {
                 // fast-ish path: use writev() to avoid cloning to another buffer.
-                if let uws::InternalSocket::Connected(connected) = &self.socket.socket {
+                if let uws::InternalSocket::Connected(connected) = self.socket.socket {
                     if !buffer.slice().is_empty() {
-                        let rc = connected
-                            .write2(self.buffered_data_for_node_net.slice(), buffer.slice());
+                        // SAFETY: `connected` is a live `*mut us_socket_t` (guard above).
+                        let rc = unsafe {
+                            (*connected).write2(self.buffered_data_for_node_net.slice(), buffer.slice())
+                        };
                         let written: usize = usize::try_from(rc.max(0)).unwrap();
                         let leftover = total_to_write.saturating_sub(written);
                         if leftover == 0 {

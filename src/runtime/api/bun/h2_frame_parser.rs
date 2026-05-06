@@ -4665,7 +4665,7 @@ impl H2FrameParser {
                         .or(sensitive_arg.get_truthy(global_object, name)?)
                         .is_some();
 
-                    let value_slice = value_str.to_slice(global_object);
+                    let value_slice = unsafe { (*value_str).to_slice(global_object) };
                     let value = value_slice.slice();
 
                     if let Some(ret) = handle_encode(this, value, never_index)? {
@@ -4693,7 +4693,7 @@ impl H2FrameParser {
                     .or(sensitive_arg.get_truthy(global_object, name)?)
                     .is_some();
 
-                let value_slice = value_str.to_slice(global_object);
+                let value_slice = unsafe { (*value_str).to_slice(global_object) };
                 let value = value_slice.slice();
                 bun_output::scoped_log!(H2FrameParser, "encode header {} {}", BStr::new(name), BStr::new(value));
 
@@ -5149,7 +5149,7 @@ impl H2FrameParser {
                             .or(sensitive_arg.get_truthy(global_object, name)?)
                             .is_some();
 
-                        let value_slice = value_str.to_slice(global_object);
+                        let value_slice = unsafe { (*value_str).to_slice(global_object) };
                         let value = value_slice.slice();
                         bun_output::scoped_log!(H2FrameParser, "encode header {} {}", BStr::new(validated_name), BStr::new(value));
 
@@ -5192,7 +5192,7 @@ impl H2FrameParser {
                         .or(sensitive_arg.get_truthy(global_object, name)?)
                         .is_some();
 
-                    let value_slice = value_str.to_slice(global_object);
+                    let value_slice = unsafe { (*value_str).to_slice(global_object) };
                     let value = value_slice.slice();
                     bun_output::scoped_log!(H2FrameParser, "encode header {} {}", BStr::new(validated_name), BStr::new(value));
 
@@ -5763,7 +5763,7 @@ impl H2FrameParser {
 
         this_ref.strong_this.set_strong(this_value, global_object);
 
-        this_ref.hpack = Some(lshpack::HPACK::init(this_ref.local_settings.header_table_size));
+        this_ref.hpack = Some(unsafe { Box::from_raw(lshpack::HPACK::init(this_ref.local_settings.header_table_size)) });
         if is_server {
             let _ = this_ref.set_settings(this_ref.local_settings);
         } else {
@@ -5804,7 +5804,7 @@ impl H2FrameParser {
         self.unregister_auto_flush();
         self.detach_native_socket();
 
-        self.read_buffer.deinit();
+        self.read_buffer.reset();
         self.write_buffer.clear_and_free();
         self.write_buffer_offset = 0;
 

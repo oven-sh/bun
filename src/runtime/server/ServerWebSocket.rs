@@ -1204,7 +1204,7 @@ impl ServerWebSocket {
     ) -> JSValue {
         if self.is_closed() {
             bun_output::scoped_log!(WebSocketServer, "sendBinary() closed");
-            return JSValue::js_number(0);
+            return JSValue::js_number(0.0);
         }
 
         let buffer = array_buffer.slice();
@@ -1212,15 +1212,15 @@ impl ServerWebSocket {
         match self.websocket().send(buffer, Opcode::Binary, compress, true) {
             SendStatus::Backpressure => {
                 bun_output::scoped_log!(WebSocketServer, "sendBinary() backpressure ({} bytes)", buffer.len());
-                JSValue::js_number(-1)
+                JSValue::js_number(-1.0)
             }
             SendStatus::Success => {
                 bun_output::scoped_log!(WebSocketServer, "sendBinary() success ({} bytes)", buffer.len());
-                JSValue::js_number(buffer.len())
+                JSValue::js_number(buffer.len() as f64)
             }
             SendStatus::Dropped => {
                 bun_output::scoped_log!(WebSocketServer, "sendBinary() dropped ({} bytes)", buffer.len());
-                JSValue::js_number(0)
+                JSValue::js_number(0.0)
             }
         }
     }

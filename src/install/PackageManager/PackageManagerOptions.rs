@@ -7,9 +7,9 @@ use bun_url::URL;
 // TODO(port): move to <area>_sys / verify crate path for schema API
 use crate::bun_schema::api as Api;
 
-use bun_install::{Features, Npm, PackageInstall, PnpmMatcher};
-use bun_install::package_manager::{PackageManager, Subcommand};
-use super::command_line_arguments::CommandLineArguments;
+use bun_install::{Features, Npm, PnpmMatcher};
+use super::Subcommand;
+use super::command_line_arguments::{self, CommandLineArguments};
 use bun_dotenv::Loader as DotEnvLoader;
 
 // PORT NOTE: `string` fields are `[]const u8` borrowed from CLI args / bunfig config,

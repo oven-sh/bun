@@ -156,7 +156,7 @@ impl Lazy {
                     {
                         if fd.stdio_tag().is_none() {
                             is_nonblocking = match sys::get_fcntl_flags(fd) {
-                                Ok(flags) => (flags & sys::O::NONBLOCK) != 0,
+                                Ok(flags) => (flags & sys::O::NONBLOCK as isize) != 0,
                                 Err(_) => false,
                             };
                         }

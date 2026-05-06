@@ -106,7 +106,7 @@ impl Order {
 
         // gather afterAll
         let afterall_order: AllOrderResult = if use_hooks {
-            self.generate_all_order(&mut current.after_all)?
+            self.generate_all_order(&current.after_all)?
         } else {
             AllOrderResult::EMPTY
         };

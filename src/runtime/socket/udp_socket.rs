@@ -194,8 +194,8 @@ extern "C" fn on_data(socket: *mut uws::udp::Socket, buf: *mut uws::udp::PacketB
             continue;
         }
 
-        let slice = buf.get_payload(i);
         let truncated = buf.get_truncated(i);
+        let slice = buf.get_payload(i);
 
         // SAFETY: inet_ntop returned non-null NUL-terminated string into addr_buf.
         let span = unsafe { core::ffi::CStr::from_ptr(hostname) }.to_bytes();

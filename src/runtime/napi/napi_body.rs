@@ -312,37 +312,37 @@ pub enum napi_typedarray_type {
 
 impl napi_typedarray_type {
     pub fn from_js_type(this: jsc::JSType) -> Option<napi_typedarray_type> {
-        use jsc::JSType::*;
+        // PORT NOTE: jsc::JSType is a newtype struct with associated consts (not an enum),
+        // so glob-import is unavailable; match on the qualified const paths instead.
         Some(match this {
-            Int8Array => napi_typedarray_type::int8_array,
-            Uint8Array => napi_typedarray_type::uint8_array,
-            Uint8ClampedArray => napi_typedarray_type::uint8_clamped_array,
-            Int16Array => napi_typedarray_type::int16_array,
-            Uint16Array => napi_typedarray_type::uint16_array,
-            Int32Array => napi_typedarray_type::int32_array,
-            Uint32Array => napi_typedarray_type::uint32_array,
-            Float32Array => napi_typedarray_type::float32_array,
-            Float64Array => napi_typedarray_type::float64_array,
-            BigInt64Array => napi_typedarray_type::bigint64_array,
-            BigUint64Array => napi_typedarray_type::biguint64_array,
+            jsc::JSType::Int8Array => napi_typedarray_type::int8_array,
+            jsc::JSType::Uint8Array => napi_typedarray_type::uint8_array,
+            jsc::JSType::Uint8ClampedArray => napi_typedarray_type::uint8_clamped_array,
+            jsc::JSType::Int16Array => napi_typedarray_type::int16_array,
+            jsc::JSType::Uint16Array => napi_typedarray_type::uint16_array,
+            jsc::JSType::Int32Array => napi_typedarray_type::int32_array,
+            jsc::JSType::Uint32Array => napi_typedarray_type::uint32_array,
+            jsc::JSType::Float32Array => napi_typedarray_type::float32_array,
+            jsc::JSType::Float64Array => napi_typedarray_type::float64_array,
+            jsc::JSType::BigInt64Array => napi_typedarray_type::bigint64_array,
+            jsc::JSType::BigUint64Array => napi_typedarray_type::biguint64_array,
             _ => return None,
         })
     }
 
     pub fn to_js_type(self) -> jsc::JSType {
-        use jsc::JSType::*;
         match self {
-            napi_typedarray_type::int8_array => Int8Array,
-            napi_typedarray_type::uint8_array => Uint8Array,
-            napi_typedarray_type::uint8_clamped_array => Uint8ClampedArray,
-            napi_typedarray_type::int16_array => Int16Array,
-            napi_typedarray_type::uint16_array => Uint16Array,
-            napi_typedarray_type::int32_array => Int32Array,
-            napi_typedarray_type::uint32_array => Uint32Array,
-            napi_typedarray_type::float32_array => Float32Array,
-            napi_typedarray_type::float64_array => Float64Array,
-            napi_typedarray_type::bigint64_array => BigInt64Array,
-            napi_typedarray_type::biguint64_array => BigUint64Array,
+            napi_typedarray_type::int8_array => jsc::JSType::Int8Array,
+            napi_typedarray_type::uint8_array => jsc::JSType::Uint8Array,
+            napi_typedarray_type::uint8_clamped_array => jsc::JSType::Uint8ClampedArray,
+            napi_typedarray_type::int16_array => jsc::JSType::Int16Array,
+            napi_typedarray_type::uint16_array => jsc::JSType::Uint16Array,
+            napi_typedarray_type::int32_array => jsc::JSType::Int32Array,
+            napi_typedarray_type::uint32_array => jsc::JSType::Uint32Array,
+            napi_typedarray_type::float32_array => jsc::JSType::Float32Array,
+            napi_typedarray_type::float64_array => jsc::JSType::Float64Array,
+            napi_typedarray_type::bigint64_array => jsc::JSType::BigInt64Array,
+            napi_typedarray_type::biguint64_array => jsc::JSType::BigUint64Array,
         }
     }
 

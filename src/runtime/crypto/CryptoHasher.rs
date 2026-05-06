@@ -54,15 +54,15 @@ impl CryptoHasher {
             return Some(CryptoHasher::new(CryptoHasher::Zig(inner)));
         }
 
-        let Some(algorithm) = EVP::Algorithm::map().get(name) else {
+        let Some(algorithm) = evp::Algorithm::map().get(name) else {
             return None;
         };
 
         match algorithm {
-            EVP::Algorithm::ripemd160
-            | EVP::Algorithm::blake2b256
-            | EVP::Algorithm::blake2b512
-            | EVP::Algorithm::sha512_224 => {
+            evp::Algorithm::ripemd160
+            | evp::Algorithm::blake2b256
+            | evp::Algorithm::blake2b512
+            | evp::Algorithm::sha512_224 => {
                 if let Some(md) = algorithm.md() {
                     return Some(CryptoHasher::new(CryptoHasher::Evp(EVP::init(
                         algorithm,
@@ -209,7 +209,7 @@ impl CryptoHasher {
         _: JSValue,
         _: JSValue,
     ) -> JsResult<JSValue> {
-        bun_str::String::to_js_array(global, EVP::Algorithm::names().values())
+        bun_str::String::to_js_array(global, evp::Algorithm::names().values())
     }
 
     fn hash_to_encoding(
@@ -393,10 +393,10 @@ impl CryptoHasher {
 
         let init = 'brk: {
             if let Some(key) = &hmac_key {
-                let chosen_algorithm = algorithm_name.to_enum_from_map::<EVP::Algorithm>(
+                let chosen_algorithm = algorithm_name.to_enum_from_map::<evp::Algorithm>(
                     global,
                     "algorithm",
-                    EVP::Algorithm::map(),
+                    evp::Algorithm::map(),
                 )?;
 
                 break 'brk CryptoHasher::Hmac(Some(match HMAC::init(chosen_algorithm, key.slice()) {
@@ -570,8 +570,8 @@ impl CryptoHasher {
         global: &JSGlobalObject,
         output: Option<ArrayBuffer>,
     ) -> JsResult<JSValue> {
-        let mut output_digest_buf: EVP::Digest = unsafe { core::mem::zeroed() };
-        // SAFETY: EVP::Digest = [u8; N] is POD; all-zero is valid.
+        let mut output_digest_buf: evp::Digest = unsafe { core::mem::zeroed() };
+        // SAFETY: evp::Digest = [u8; N] is POD; all-zero is valid.
         let buf_len = output_digest_buf.len();
         let output_digest_slice: &mut [u8];
         if let Some(output_buf) = &output {
@@ -616,8 +616,8 @@ impl CryptoHasher {
         global: &JSGlobalObject,
         encoding: Encoding,
     ) -> JsResult<JSValue> {
-        let mut output_digest_buf: EVP::Digest = unsafe { core::mem::zeroed() };
-        // SAFETY: EVP::Digest = [u8; N] is POD; all-zero is valid.
+        let mut output_digest_buf: evp::Digest = unsafe { core::mem::zeroed() };
+        // SAFETY: evp::Digest = [u8; N] is POD; all-zero is valid.
         let output_digest_slice: &mut [u8] = &mut output_digest_buf;
         let out = match self.final_(global, output_digest_slice) {
             Ok(r) => r,
@@ -679,7 +679,7 @@ impl CryptoHasher {
 // ───────────────────────────────────────────────────────────────────────────
 
 pub struct CryptoHasherZig {
-    pub algorithm: EVP::Algorithm,
+    pub algorithm: evp::Algorithm,
     pub state: Box<dyn Any>,
     pub digest_length: u8,
 }
@@ -689,7 +689,7 @@ pub struct CryptoHasherZig {
 // TODO(port): impl this trait for each algo in `bun_crypto_std` (Phase B).
 pub trait ZigHashAlgo: Default + Clone + 'static {
     const NAME: &'static [u8];
-    const ALGORITHM: EVP::Algorithm;
+    const ALGORITHM: evp::Algorithm;
     /// Replaces `digestLength(Algorithm)` (Shake128→16, Shake256→32, else `T.digest_length`).
     const DIGEST_LENGTH: u8;
     fn init() -> Self {

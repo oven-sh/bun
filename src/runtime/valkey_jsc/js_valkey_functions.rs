@@ -1688,7 +1688,7 @@ impl JSValkeyClient {
             return global.throw_invalid_argument_type("subscribe", "channel", "string or array");
         }
 
-        let command = valkey::Command {
+        let command = Command {
             command: b"SUBSCRIBE",
             args: CommandArgs::Args(&redis_channels),
             meta: CommandMeta {
@@ -1723,7 +1723,7 @@ impl JSValkeyClient {
     ) -> JsResult<JSValue> {
         // TODO(port): narrow error set
         // Send UNSUBSCRIBE command
-        let command = valkey::Command {
+        let command = Command {
             command: b"UNSUBSCRIBE",
             args: CommandArgs::Args(redis_channels),
             meta: CommandMeta::default(),

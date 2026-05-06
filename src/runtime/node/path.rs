@@ -245,7 +245,6 @@ fn format_ext_t<'a, T: PathChar>(ext: &'a [T], buf: &'a mut [T]) -> &'a [T] {
 
 /// Based on Node v21.6.1 private helper posixCwd:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L1074
-#[inline]
 // ─── gated: cwd helpers (bun_fs::FileSystem not yet a crate) ──────────────
 // TODO(b2-blocked): un-gate once bun_fs::FileSystem + strings::convert_utf8_to_utf16_in_buffer land.
 

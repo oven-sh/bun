@@ -45,7 +45,8 @@ use crate::webcore::s3::simple_request as s3_simple_request;
 use crate::webcore::resumable_sink::ResumableS3UploadSink;
 use crate::webcore::ResumableSinkBackpressure;
 
-use crate::webcore::{ByteStream, NetworkSink};
+use crate::webcore::ByteStream;
+use crate::webcore::streams::NetworkSink;
 use crate::webcore::ReadableStream;
 use crate::webcore::readable_stream::Strong as ReadableStreamStrong;
 use crate::webcore::readable_stream::Source as ReadableStreamPtr;

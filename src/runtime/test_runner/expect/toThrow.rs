@@ -83,21 +83,21 @@ pub fn to_throw(
                 let message: JSValue = err
                     .get_truthy(global, "message")?
                     .unwrap_or(JSValue::UNDEFINED);
-                return global.throw_pretty(
+                return Err(global.throw_pretty(
                     signature_no_args,
                     format_args!(
                         "\n\nError name: <red>{}<r>\nError message: <red>{}<r>\n",
                         name.to_fmt(&mut formatter),
                         message.to_fmt(&mut formatter),
                     ),
-                );
+                ));
             }
 
             // non error thrown
-            return global.throw_pretty(
+            return Err(global.throw_pretty(
                 signature_no_args,
                 format_args!("\n\nThrown value: <red>{}<r>\n", result.to_fmt(&mut formatter)),
-            );
+            ));
         }
 
         if expected_value.is_string() {

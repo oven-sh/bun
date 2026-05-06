@@ -1129,7 +1129,7 @@ impl PublishCommand {
         }
 
         // classic
-        match prompt(b"\nThis operation requires a one-time password.\nEnter OTP: ", b"") {
+        match InitCommand::prompt("\nThis operation requires a one-time password.\nEnter OTP: ", b"") {
             Ok(v) => Ok(v),
             Err(e) => {
                 if e == err!(OutOfMemory) {

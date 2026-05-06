@@ -1393,6 +1393,33 @@ pub struct ResultListEntry {
     pub value: ResultListEntryValue,
 }
 
+// SAFETY: all four accessors route through the same `next` field; the atomic
+// variants reinterpret it in-place as `AtomicPtr<Self>` (identical layout/
+// alignment to `*mut Self`). `UnboundedQueue` only ever calls these with a
+// live, properly aligned `*mut ResultListEntry` it previously had pushed.
+unsafe impl bun_threading::unbounded_queue::Node for ResultListEntry {
+    unsafe fn get_next(item: *mut Self) -> *mut Self {
+        unsafe { (*item).next }
+    }
+    unsafe fn set_next(item: *mut Self, ptr: *mut Self) {
+        unsafe { (*item).next = ptr };
+    }
+    unsafe fn atomic_load_next(item: *mut Self, ordering: Ordering) -> *mut Self {
+        unsafe {
+            (*(core::ptr::addr_of!((*item).next)
+                as *const core::sync::atomic::AtomicPtr<Self>))
+                .load(ordering)
+        }
+    }
+    unsafe fn atomic_store_next(item: *mut Self, ptr: *mut Self, ordering: Ordering) {
+        unsafe {
+            (*(core::ptr::addr_of!((*item).next)
+                as *const core::sync::atomic::AtomicPtr<Self>))
+                .store(ptr, ordering)
+        };
+    }
+}
+
 pub struct ReaddirSubtask {
     pub readdir_task: *mut AsyncReaddirRecursiveTask, // BACKREF
     pub basename: PathString,

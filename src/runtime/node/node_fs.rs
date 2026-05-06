@@ -1298,7 +1298,7 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
                     let src_z = unsafe { OSPathSliceZ::from_raw(raw.as_ptr(), sd + 1 + cname.len()) };
                     // SAFETY: raw[dest_off+dd+1+cname.len()] == 0 written above
                     let dest_z = unsafe { OSPathSliceZ::from_raw(raw.as_ptr().add(dest_off), dd + 1 + cname.len()) };
-                    CpSingleTask::<IS_SHELL>::create(this as *const Self as *mut Self, src_z, dest_z);
+                    CpSingleTask::<IS_SHELL>::create(this, src_z, dest_z);
                 }
             }
             entry = iterator.next();
@@ -6208,7 +6208,7 @@ impl NodeFS {
 
     // returns boolean `should_continue`
     fn _cp_async_directory(
-        &mut self, args: args::CpFlags, task: &AsyncCpTask,
+        &mut self, args: args::CpFlags, task: *mut AsyncCpTask,
         src_buf: &mut OSPathBuffer, src_dir_len: PathInt,
         dest_buf: &mut OSPathBuffer, dest_dir_len: PathInt,
     ) -> bool {

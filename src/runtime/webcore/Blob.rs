@@ -4086,7 +4086,7 @@ impl Blob {
             // If all it contained was the bom, we need to free the bytes
             if LIFETIME == Lifetime::Temporary {
                 // SAFETY: temporary lifetime means raw_bytes is a leaked default-allocator buffer.
-                unsafe { drop(Box::from_raw(raw_bytes as *const [u8] as *mut [u8])) };
+                unsafe { drop(Box::from_raw(raw_bytes)) };
             }
             return Ok(ZigString::EMPTY.to_js(global));
         }
@@ -4094,7 +4094,7 @@ impl Blob {
         if bom == Some(strings::BOM::Utf16Le) {
             let _free = scopeguard::guard((), |_| {
                 if LIFETIME == Lifetime::Temporary {
-                    unsafe { drop(Box::from_raw(raw_bytes as *const [u8] as *mut [u8])) };
+                    unsafe { drop(Box::from_raw(raw_bytes)) };
                 }
             });
             let out = BunString::clone_utf16(bun_core::reinterpret_slice::<u16>(buf));
@@ -4117,7 +4117,7 @@ impl Blob {
                     self.detach();
                 }
                 if LIFETIME == Lifetime::Temporary {
-                    unsafe { drop(Box::from_raw(raw_bytes as *const [u8] as *mut [u8])) };
+                    unsafe { drop(Box::from_raw(raw_bytes)) };
                 }
                 return Ok(ZigString::to_external_u16(external.as_ptr(), external.len(), global));
             }
@@ -4211,7 +4211,7 @@ impl Blob {
         let (bom, buf) = strings::BOM::detect_and_split(unsafe { &*raw_bytes });
         if buf.is_empty() {
             if LIFETIME == Lifetime::Temporary {
-                unsafe { drop(Box::from_raw(raw_bytes as *const [u8] as *mut [u8])) };
+                unsafe { drop(Box::from_raw(raw_bytes)) };
             }
             return Ok(global.create_syntax_error_instance("Unexpected end of JSON input"));
         }
@@ -4220,7 +4220,7 @@ impl Blob {
             let out = BunString::clone_utf16(bun_core::reinterpret_slice::<u16>(buf));
             let _free = scopeguard::guard((), |_| {
                 if LIFETIME == Lifetime::Temporary {
-                    unsafe { drop(Box::from_raw(raw_bytes as *const [u8] as *mut [u8])) };
+                    unsafe { drop(Box::from_raw(raw_bytes)) };
                 }
                 if LIFETIME == Lifetime::Transfer {
                     self.detach();
@@ -4235,7 +4235,7 @@ impl Blob {
         // free the original allocation, not the offset pointer.
         let _free = scopeguard::guard((), |_| {
             if LIFETIME == Lifetime::Temporary {
-                unsafe { drop(Box::from_raw(raw_bytes as *const [u8] as *mut [u8])) };
+                unsafe { drop(Box::from_raw(raw_bytes)) };
             }
         });
 

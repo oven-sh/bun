@@ -58,23 +58,26 @@ impl ProcessAutoKiller {
         self.processes.clear();
     }
 
-    pub fn on_subprocess_spawn(&mut self, process: &Process) {
+    /// Spec: `onSubprocessSpawn(*ProcessAutoKiller, *bun.spawn.Process)`.
+    /// Takes a raw `*mut Process` (not `&Process`) to preserve Zig's pointer
+    /// identity semantics for the map key without a const→mut provenance cast.
+    pub fn on_subprocess_spawn(&mut self, process: *mut Process) {
         if self.enabled {
             // Map key is identity (raw ptr) — see TODO(port) on the field.
-            let key = process as *const Process as *mut Process;
-            self.processes.insert(key, ());
-            // We take a ref to extend the process's lifetime for as long as it
-            // sits in `processes`.
-            process.ref_();
+            self.processes.insert(process, ());
+            // SAFETY: caller passes a live Process; we take a ref to extend its
+            // lifetime for as long as it sits in `processes`.
+            unsafe { (*process).ref_() };
         }
     }
 
-    pub fn on_subprocess_exit(&mut self, process: &Process) {
+    /// Spec: `onSubprocessExit(*ProcessAutoKiller, *bun.spawn.Process)`.
+    pub fn on_subprocess_exit(&mut self, process: *mut Process) {
         if self.ever_enabled {
-            let key = process as *const Process as *mut Process;
-            if self.processes.swap_remove(&key) {
-                // We held a ref from on_subprocess_spawn; release it.
-                process.deref();
+            if self.processes.swap_remove(&process) {
+                // SAFETY: we held a ref from on_subprocess_spawn; the pointee
+                // is live until this deref() releases it.
+                unsafe { (*process).deref() };
             }
         }
     }

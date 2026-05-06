@@ -296,7 +296,7 @@ pub fn fetch_builtin_module(
 /// `import` / `require.resolve`, dominated by the resolver's dir-cache walk.
 pub fn resolve_maybe_needs_trailing_slash(
     res: &mut ErrorableString,
-    global: &JSGlobalObject,
+    global: *mut JSGlobalObject,
     specifier: bun_string::String,
     source: bun_string::String,
     query_string: Option<&mut bun_string::String>,
@@ -313,12 +313,13 @@ pub fn resolve_maybe_needs_trailing_slash(
     let qs = query_string
         .map(|q| q as *mut bun_string::String)
         .unwrap_or(core::ptr::null_mut());
-    // SAFETY: hook contract — `global` is the live JS-thread global; `res`/`qs`
-    // are valid out-params for the call (single-threaded, no aliasing).
+    // SAFETY: hook contract — `global` is the live JS-thread global (Zig
+    // `*JSGlobalObject`, mutable: hook may throw on it); `res`/`qs` are valid
+    // out-params for the call (single-threaded, no aliasing).
     let ok = unsafe {
         (hooks.resolve)(
             res,
-            global as *const _ as *mut _,
+            global,
             specifier,
             source,
             qs,

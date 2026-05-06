@@ -65,8 +65,10 @@ impl SystemError {
 
     pub fn to_error_instance(&self, global: &JSGlobalObject) -> JSValue {
         // Zig: defer this.deref();
-        // SAFETY: self is a valid #[repr(C)] SystemError; global is a live JSGlobalObject.
-        let result = unsafe { SystemError__toErrorInstance(self, global as *const _ as *mut _) };
+        // SAFETY: self is a valid #[repr(C)] SystemError read-only by C++; `global.as_mut_ptr()`
+        // yields a write-provenance `*mut` via the `UnsafeCell` in `JSGlobalObject`, matching the
+        // Zig spec's `*JSGlobalObject` (C++ may mutate VM/exception state through it).
+        let result = unsafe { SystemError__toErrorInstance(self, global.as_mut_ptr()) };
         self.deref();
         result
     }

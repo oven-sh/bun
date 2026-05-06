@@ -1783,7 +1783,7 @@ impl PackageJSON {
         // `logger::Source` isn't `Clone`; reconstruct from its (all-Copy/Clone) fields.
         package_json.source = logger::Source {
             path: json_source.path.clone(),
-            contents: json_source.contents,
+            contents: std::borrow::Cow::Borrowed(contents_static),
             contents_is_recycled: json_source.contents_is_recycled,
             identifier_name: json_source.identifier_name.clone(),
             index: json_source.index,

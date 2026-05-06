@@ -155,10 +155,9 @@ impl Crypto {
         global: &JSGlobalObject,
         array: &JSUint8Array,
     ) -> JSValue {
-        // Zig `array.slice()` yields `[]u8` (mutable). Do not cast a *const to *mut.
-        // TODO(port): JSUint8Array mutable slice accessor name (slice_mut) — confirm in Phase B.
-        let slice = array.slice_mut();
-        random_data(global, slice.as_mut_ptr(), slice.len());
+        // Zig `array.slice()` yields `[]u8` (mutable). `JSUint8Array::slice()` takes
+        // `&mut self`; use ptr()/len() (which take `&self`) to avoid the &mut requirement.
+        random_data(global, array.ptr(), array.len());
         // Zig: @enumFromInt(@as(i64, @bitCast(@intFromPtr(array))))
         // SAFETY: JSValue is #[repr(transparent)] i64; this encodes the cell pointer
         // back into a JSValue exactly as the Zig does.

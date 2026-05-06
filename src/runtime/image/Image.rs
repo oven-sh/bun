@@ -1611,15 +1611,31 @@ impl<'a> PipelineTask<'a> {
             _ => {}
         }
         match self.result {
-            TaskResult::Encoded { out, format, .. } => match &mut self.deliver {
+            TaskResult::Encoded { out, format, .. } => {
+                // Ownership of `out.bytes` is transferred to JS below; suppress
+                // the codec `Drop` so the deallocator runs exactly once (via the
+                // ArrayBuffer/Buffer finalizer or explicit drop).
+                let out = mem::ManuallyDrop::new(out);
+                // SAFETY: `out.bytes` is a non-null fat pointer into a live
+                // codec allocation; valid until `out.free` runs.
+                let out_slice: &[u8] = unsafe { out.bytes.as_ref() };
+                match &mut self.deliver {
                 // The codec's own allocation is handed straight to JS with the
                 // codec's free as the finalizer — no dupe of the output.
                 Deliver::Uint8Array => {
-                    let v = ArrayBuffer::from_bytes(out.bytes, jsc::TypedArrayType::Uint8Array)
-                        .to_js_with_context(global, core::ptr::null_mut(), out.free);
+                    // SAFETY: see `out_slice` above; mutability is for the
+                    // `from_bytes` signature only — JS takes ownership.
+                    let mut_slice = unsafe {
+                        core::slice::from_raw_parts_mut(
+                            out.bytes.as_ptr() as *mut u8,
+                            out_slice.len(),
+                        )
+                    };
+                    let v = ArrayBuffer::from_bytes(mut_slice, jsc::JSType::Uint8Array)
+                        .to_js_with_context(global, core::ptr::null_mut(), Some(out.free));
                     match v {
                         Ok(v) => promise.resolve(global, v)?,
-                        Err(_) => return promise.reject(global, jsc::JsError::Thrown.into()),
+                        Err(_) => return promise.reject(global, Err(jsc::JsError::Thrown)),
                     }
                 }
                 // createBufferWithCtx returns plain JSValue (its C++ side asserts
@@ -1627,20 +1643,25 @@ impl<'a> PipelineTask<'a> {
                 // here by construction, not omission.
                 Deliver::Buffer => promise.resolve(
                     global,
-                    JSValue::create_buffer_with_ctx(global, out.bytes, core::ptr::null_mut(), out.free),
+                    create_buffer_with_ctx(global, out.bytes, core::ptr::null_mut(), out.free),
                 )?,
                 Deliver::Blob => {
                     // Blob.Store frees via an Allocator; dupe for that path.
-                    let owned = out.bytes.to_vec();
-                    out.deinit();
+                    let owned = out_slice.to_vec();
+                    // SAFETY: explicit free in lieu of suppressed `Drop`.
+                    unsafe { (out.free)(out.bytes.as_ptr() as *mut _, core::ptr::null_mut()) };
                     let mut blob = Blob::init(owned, global);
-                    blob.content_type = format.mime();
+                    blob.content_type = format.mime().as_bytes() as *const [u8];
                     blob.content_type_was_set = true;
-                    promise.resolve(global, Box::new(blob).to_js(global))?;
+                    let _ = (promise, blob);
+                    todo!("blocked_on: webcore::blob::Blob::to_js (ambiguous inherent impls)");
                 }
                 tag @ (Deliver::Base64 | Deliver::DataUrl) => {
                     // PERF(port): was comptime tag dispatch — profile in Phase B.
-                    let _guard = scopeguard::guard((), |_| out.deinit());
+                    let _guard = scopeguard::guard((), |_| {
+                        // SAFETY: explicit free in lieu of suppressed `Drop`.
+                        unsafe { (out.free)(out.bytes.as_ptr() as *mut _, core::ptr::null_mut()) };
+                    });
                     // `data:` and `;base64,` are both ASCII so the prefix
                     // length is exact; one buffer holds prefix+payload.
                     let mut pre_buf = [0u8; 40];
@@ -1654,12 +1675,12 @@ impl<'a> PipelineTask<'a> {
                     } else {
                         b""
                     };
-                    let mut buf = vec![0u8; pre.len() + base64::encode_len(out.bytes)];
+                    let mut buf = vec![0u8; pre.len() + base64::encode_len(out_slice)];
                     buf[..pre.len()].copy_from_slice(pre);
-                    let wrote = pre.len() + base64::encode(&mut buf[pre.len()..], out.bytes);
-                    let str = match bun_str::String::create_utf8_for_js(global, &buf[..wrote]) {
+                    let wrote = pre.len() + base64::encode(&mut buf[pre.len()..], out_slice);
+                    let str = match jsc::bun_string_jsc::create_utf8_for_js(global, &buf[..wrote]) {
                         Ok(s) => s,
-                        Err(_) => return promise.reject(global, jsc::JsError::Thrown.into()),
+                        Err(_) => return promise.reject(global, Err(jsc::JsError::Thrown)),
                     };
                     promise.resolve(global, str)?;
                 }
@@ -1670,60 +1691,50 @@ impl<'a> PipelineTask<'a> {
                 // `Bun.file()`, `Bun.s3()`, or an fd — anything `Bun.write`
                 // accepts — and we don't reimplement any of it.
                 Deliver::WriteDest(dest) => {
-                    let Some(dest_js) = dest.get() else {
-                        out.deinit();
-                        return promise.reject(
-                            global,
-                            global.create_error_instance(format_args!(
-                                "Image.write: destination was collected"
-                            )),
-                        );
-                    };
-                    let data = JSValue::create_buffer_with_ctx(
+                    let dest_js = dest.get();
+                    let data = create_buffer_with_ctx(
                         global,
                         out.bytes,
                         core::ptr::null_mut(),
                         out.free,
                     );
                     let mut arg_slice =
-                        jsc::CallFrame::ArgumentsSlice::init(global.bun_vm(), &[dest_js]);
-                    // TODO(port): `PathOrBlob::from_js_no_copy` signature.
+                        jsc::ArgumentsSlice::init(global.bun_vm(), &[dest_js]);
                     let mut path_or_blob =
                         match crate::node::PathOrBlob::from_js_no_copy(global, &mut arg_slice)
                         {
                             Ok(p) => p,
-                            Err(_) => return promise.reject(global, jsc::JsError::Thrown.into()),
+                            Err(_) => return promise.reject(global, Err(jsc::JsError::Thrown)),
                         };
-                    let _path_guard = scopeguard::guard((), |_| {
-                        if path_or_blob.is_path() {
-                            path_or_blob.path_deinit();
-                        }
-                    });
-                    let write_promise = match Blob::write_file_internal(
+                    // PORT NOTE: `PathOrBlob::Path` owns its `PathOrFileDescriptor`
+                    // and frees on Drop — no explicit `path.deinit()` needed.
+                    let write_promise = match crate::webcore::blob::write_file_internal(
                         global,
                         &mut path_or_blob,
                         data,
                         Default::default(),
                     ) {
                         Ok(p) => p,
-                        Err(_) => return promise.reject(global, jsc::JsError::Thrown.into()),
+                        Err(_) => return promise.reject(global, Err(jsc::JsError::Thrown)),
                     };
                     promise.resolve(global, write_promise)?;
                 }
-            },
+            }
+            }
             TaskResult::Meta { w, h, format } => {
                 let obj = JSValue::create_empty_object(global, 3);
-                obj.put(global, ZigString::static_(b"width"), JSValue::js_number(w));
-                obj.put(global, ZigString::static_(b"height"), JSValue::js_number(h));
-                obj.put(
+                obj.put(global, b"width", JSValue::js_number(f64::from(w)));
+                obj.put(global, b"height", JSValue::js_number(f64::from(h)));
+                let fmt_js = jsc::bun_string_jsc::create_utf8_for_js(
                     global,
-                    ZigString::static_(b"format"),
-                    ZigString::init(<&'static str>::from(format).as_bytes()).to_js(global),
-                );
+                    format_name(format).as_bytes(),
+                )
+                .unwrap_or(JSValue::UNDEFINED);
+                obj.put(global, b"format", fmt_js);
                 promise.resolve(global, obj)?;
             }
-            TaskResult::Err(e) => promise.reject(global, reject_error(global, e))?,
-            TaskResult::IoErr(e) => promise.reject(global, e.to_js(global))?,
+            TaskResult::Err(e) => promise.reject(global, Ok(reject_error(global, e)))?,
+            TaskResult::IoErr(e) => promise.reject(global, Ok(e.to_js(global)))?,
         }
         Ok(())
     }

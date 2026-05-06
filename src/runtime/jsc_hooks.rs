@@ -1257,7 +1257,7 @@ fn transpile_source_code_inner(
                 // Spec :343-351 — raw JSON: hand the source bytes straight to JSC.
                 if loader == L::Json {
                     return Ok(ResolvedSource {
-                        source_code: bun_string::String::clone_utf8(source.contents),
+                        source_code: bun_string::String::clone_utf8(&source.contents),
                         specifier: input_specifier.dupe_ref(),
                         source_url: create_if_different(input_specifier, path.text),
                         tag: ResolvedSourceTag::JsonForObjectLoader,
@@ -1269,7 +1269,7 @@ fn transpile_source_code_inner(
                 if disable_transpilying {
                     let source_code = match args.flags {
                         FetchFlags::PrintSourceAndClone => {
-                            bun_string::String::clone_utf8(source.contents)
+                            bun_string::String::clone_utf8(&source.contents)
                         }
                         FetchFlags::PrintSource => {
                             // PORT NOTE: spec ModuleLoader.zig:358 borrows
@@ -1281,7 +1281,7 @@ fn transpile_source_code_inner(
                             // borrow would dangle once `parse_result` drops on
                             // return. Clone instead — matches the
                             // `PrintSourceAndClone` arm.
-                            bun_string::String::clone_utf8(source.contents)
+                            bun_string::String::clone_utf8(&source.contents)
                         }
                         FetchFlags::Transpile => unreachable!(),
                     };
@@ -1347,7 +1347,7 @@ fn transpile_source_code_inner(
                         _ => (core::ptr::null_mut(), 0),
                     };
                     return Ok(ResolvedSource {
-                        source_code: bun_string::String::clone_latin1(source.contents),
+                        source_code: bun_string::String::clone_latin1(&source.contents),
                         specifier: input_specifier.dupe_ref(),
                         source_url: create_if_different(input_specifier, path.text),
                         already_bundled: true,

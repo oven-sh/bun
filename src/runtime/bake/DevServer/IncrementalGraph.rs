@@ -689,8 +689,7 @@ impl<S: GraphSide> IncrementalGraph<S> {
                 .sub(offset)
                 .cast::<DevServer::DevServer>()
         };
-        let _ = dev_server;
-        todo!("blocked_on: dev_server::DevServer::dev_allocator")
+        dev_server.dev_allocator()
     }
 
     /// When we delete an edge, we need to delete it by connecting the
@@ -772,9 +771,9 @@ impl<S: GraphSide> IncrementalGraph<S> {
 
         // DirectoryWatchStore.Dep.source_file_path borrows this key; remove
         // any such dependencies before freeing it so they do not dangle.
-        let _ = &self.owner().directory_watchers;
-        // TODO(port): blocked_on: dev_server::DirectoryWatchStore::remove_dependencies_for_file
-        let _ = &key;
+        self.owner()
+            .directory_watchers
+            .remove_dependencies_for_file(&key);
 
         drop(key);
 

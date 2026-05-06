@@ -1111,13 +1111,12 @@ impl FFI {
         {
             return Err(global_this.throw(
                 "bun:ffi cc() is not available in this build (TinyCC is disabled)",
-                &[],
             ));
         }
-        let arguments = callframe.arguments_old(1);
+        let arguments = callframe.arguments_old::<1>();
         let arguments = arguments.slice();
         if arguments.is_empty() || !arguments[0].is_object() {
-            return Err(global_this.throw_invalid_arguments("Expected object", &[]));
+            return Err(global_this.throw_invalid_arguments("Expected object"));
         }
 
         // Step 1. compile the user's code

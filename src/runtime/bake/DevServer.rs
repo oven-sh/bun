@@ -2405,10 +2405,11 @@ impl DevServer<'_> {
         }
 
         self.incremental_result.reset();
-
-        // Ref server to keep it from closing.
-        if let Some(server) = &self.server {
-            server.on_pending_request();
+        let alloc = &heap;
+        // TODO(port): ASTMemoryAllocator scope — bake is an AST crate; arena threading required
+        let _ = alloc;
+        todo!("blocked_on: bun_js_parser::ASTMemoryAllocator::enter (arena threading)");
+        #[allow(unreachable_code)]
         }
 
         let mut heap = bun_alloc::MimallocArena::new();

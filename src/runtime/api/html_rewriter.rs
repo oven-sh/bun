@@ -909,7 +909,7 @@ impl BufferOutputSink {
             if is_async {
                 // SAFETY: response == self.response, kept alive by response_value Strong.
                 let _ = unsafe { (*response).get_body_value() }
-                    .to_error_instance(webcore::body::Value::ValueError::Message(create_lolhtml_string_error()), global);
+                    .to_error_instance(webcore::body::ValueError::Message(create_lolhtml_string_error()), global);
                 // TODO: properly propagate exception upwards
                 return None;
             } else {
@@ -922,7 +922,7 @@ impl BufferOutputSink {
             if is_async {
                 // SAFETY: response == self.response, kept alive by response_value Strong.
                 let _ = unsafe { (*response).get_body_value() }
-                    .to_error_instance(webcore::body::Value::ValueError::Message(create_lolhtml_string_error()), global);
+                    .to_error_instance(webcore::body::ValueError::Message(create_lolhtml_string_error()), global);
                 // TODO: properly propagate exception upwards
                 return None;
             } else {
@@ -940,11 +940,12 @@ impl BufferOutputSink {
         let mut prev_value = core::mem::replace(
             body_value,
             webcore::body::Value::InternalBlob(webcore::InternalBlob {
-                bytes: core::mem::replace(&mut self.bytes, MutableString::init_empty()).into_list(),
+                bytes: core::mem::replace(&mut self.bytes, MutableString::init_empty()).list,
+                was_string: false,
             }),
         );
 
-        let _ = prev_value.resolve(body_value, self.global, None);
+        let _ = webcore::body::Value::resolve(&mut prev_value, body_value, self.global, None);
         // TODO: properly propagate exception upwards
     }
 
@@ -974,7 +975,7 @@ impl Drop for BufferOutputSink {
         // bytes, body_value_bufferer, context (Rc), response_value (Strong) drop automatically.
         if !self.rewriter.is_null() {
             // SAFETY: rewriter created via builder.build() and not yet freed.
-            unsafe { lolhtml::HTMLRewriter::deinit(self.rewriter) };
+            unsafe { lolhtml::HTMLRewriter::destroy(self.rewriter) };
         }
     }
 }
@@ -1030,7 +1031,7 @@ impl DocumentHandler {
 
     pub fn init(global: &JSGlobalObject, this_object: JSValue) -> JsResult<DocumentHandler> {
         if !this_object.is_object() {
-            return global.throw_invalid_arguments("Expected object");
+            return Err(global.throw_invalid_arguments("Expected object"));
         }
 
         // SAFETY: JSC_BORROW — JSGlobalObject outlives every handler (VM-lifetime).

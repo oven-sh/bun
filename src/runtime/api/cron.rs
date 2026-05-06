@@ -1960,18 +1960,29 @@ fn spawn_cmd_generic<T: SpawnCmdTarget>(
         }
     }
 
-    let process = spawned.to_process(VirtualMachine::get().event_loop(), false);
-    *this.process_slot() = Some(Arc::clone(&process));
-    process.set_exit_handler(this);
-    match process.watch_or_reap() {
-        bun_sys::Result::Err(err) => {
-            if !process.has_exited() {
-                // SAFETY: all-zero is a valid Rusage.
-                let rusage = unsafe { core::mem::zeroed::<Rusage>() };
-                process.on_exit(Status::Err(err), &rusage);
+    // SAFETY: per-thread VM singleton.
+    let ev_handle = EventLoopHandle::init(unsafe { vm_mut() }.event_loop());
+    let process = spawned.to_process(ev_handle, false);
+    *this.process_slot() = Some(process);
+    // TODO(port): `Process::set_exit_handler` now takes `(owner, &'static
+    // ProcessExitVTable)`; the per-type vtables (CronRegisterJob/CronRemoveJob)
+    // are owned by `api::bun::process`'s ProcessExitHandler dispatch table.
+    // Wire once that table publishes static entries for these types.
+    let _ = this as *mut T; // owner pointer (unused until vtable lands)
+    todo!("blocked_on: bun_runtime::api::bun::process::ProcessExitVTable for CronRegisterJob/CronRemoveJob");
+    #[allow(unreachable_code)]
+    {
+        // SAFETY: `process` was just allocated by `to_process`; we hold the only ref.
+        match unsafe { (*process).watch_or_reap() } {
+            Err(err) => {
+                if !unsafe { (*process).has_exited() } {
+                    // SAFETY: all-zero is a valid Rusage.
+                    let rusage = unsafe { core::mem::zeroed::<Rusage>() };
+                    unsafe { (*process).on_exit(Status::Err(err), &rusage) };
+                }
             }
+            Ok(_) => {}
         }
-        bun_sys::Result::Ok(_) => {}
     }
 }
 

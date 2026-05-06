@@ -1,7 +1,7 @@
 //! A generic wrapper for the HTTP(s) Server `RequestContext`s.
 //! Only really exists because of `NewServer()` and `NewRequestContext()` generics.
 
-use core::ffi::c_uint;
+use core::ffi::{c_uint, c_void};
 
 use bun_uws as uws;
 

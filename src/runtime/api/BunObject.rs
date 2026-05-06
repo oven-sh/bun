@@ -2455,7 +2455,8 @@ pub mod JSZlib {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<(node::StringOrBuffer, Option<JSValue>)> {
-        let arguments = callframe.arguments_old(2).slice();
+        let arguments_ = callframe.arguments_old::<2>();
+        let arguments = arguments_.slice();
         let buffer_value: JSValue = if arguments.len() > 0 {
             arguments[0]
         } else {

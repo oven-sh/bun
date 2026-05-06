@@ -9,11 +9,16 @@
 
 use core::ffi::{c_int, c_void};
 
-use bun_uws::{self as uws, us_bun_verify_error_t, us_socket_t, ConnectingSocket, SocketKind};
+use bun_uws::{self as uws, NewSocketHandler};
+// `SocketKind` / `us_bun_verify_error_t` must come from `bun_uws_sys` — that's
+// what `us_socket_t::kind()` and the `VTable` callback signatures use. The
+// `bun_uws` crate defines its own (distinct) mirrors of both; mixing them is a
+// type error.
 use bun_uws_sys::socket_group::VTable;
-use bun_uws_sys::vtable;
+use bun_uws_sys::{us_bun_verify_error_t, us_socket_t, vtable, ConnectingSocket, SocketKind};
 
 use super::uws_handlers as handlers;
+use handlers::SocketEvents;
 
 // (Zig had a `comptime { _ = us_dispatch_*; }` force-reference block here to
 // keep the exports in the link even if nothing in Zig calls them. Rust links
@@ -123,7 +128,7 @@ pub extern "C" fn us_dispatch_open(
     ip: *mut u8,
     ip_len: c_int,
 ) -> *mut us_socket_t {
-    if let Some(f) = vt(s).on_open { f(s, is_client, ip, ip_len) } else { s }
+    if let Some(f) = vt(s).on_open { unsafe { f(s, is_client, ip, ip_len) } } else { s }
 }
 
 #[unsafe(no_mangle)]
@@ -132,7 +137,7 @@ pub extern "C" fn us_dispatch_data(
     data: *mut u8,
     len: c_int,
 ) -> *mut us_socket_t {
-    if let Some(f) = vt(s).on_data { f(s, data, len) } else { s }
+    if let Some(f) = vt(s).on_data { unsafe { f(s, data, len) } } else { s }
 }
 
 #[unsafe(no_mangle)]

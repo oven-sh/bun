@@ -1053,26 +1053,26 @@ impl UpgradeCommand {
 
             if use_canary {
                 // Check if the versions are the same
-                let target_stat = match target_dir.stat_file(target_filename.as_bytes()) {
+                let target_stat = match sys::fstatat(target_dir.fd(), target_filename) {
                     Ok(s) => s,
                     Err(err) => {
                         let _ = save_dir_.delete_tree(&version_name);
                         Output::pretty_errorln(format_args!(
                             "<r><red>error:<r> {} while trying to stat target {} ",
-                            err.name(),
+                            bstr::BStr::new(err.name()),
                             bstr::BStr::new(target_filename.as_bytes())
                         ));
                         Global::exit(1);
                     }
                 };
 
-                let dest_stat = match save_dir.stat_file(exe) {
+                let dest_stat = match sys::fstatat(save_dir.fd(), exe_z) {
                     Ok(s) => s,
                     Err(err) => {
                         let _ = save_dir_.delete_tree(&version_name);
                         Output::pretty_errorln(format_args!(
                             "<r><red>error:<r> {} while trying to stat source {}",
-                            err.name(),
+                            bstr::BStr::new(err.name()),
                             bstr::BStr::new(exe)
                         ));
                         Global::exit(1);
@@ -1082,27 +1082,46 @@ impl UpgradeCommand {
                 if target_stat.size == dest_stat.size && target_stat.size > 0 {
                     let mut input_buf = vec![0u8; target_stat.size as usize];
 
-                    let target_hash = hash(match target_dir
-                        .read_file(target_filename.as_bytes(), &mut input_buf)
-                    {
-                        Ok(b) => b,
+                    // PORT NOTE: `Dir::read_file` (Zig std.fs.Dir.readFile) is open + read_all + close.
+                    let target_hash = hash(match sys::File::openat(
+                        target_dir.fd(),
+                        target_filename.as_bytes(),
+                        sys::O::RDONLY,
+                        0,
+                    )
+                    .and_then(|f| {
+                        let n = f.read_all(&mut input_buf);
+                        f.close();
+                        n
+                    }) {
+                        Ok(n) => &input_buf[..n],
                         Err(err) => {
                             let _ = save_dir_.delete_tree(&version_name);
                             Output::pretty_errorln(format_args!(
                                 "<r><red>error:<r> Failed to read target bun {}",
-                                err.name()
+                                bstr::BStr::new(err.name())
                             ));
                             Global::exit(1);
                         }
                     });
 
-                    let source_hash = hash(match save_dir.read_file(exe, &mut input_buf) {
-                        Ok(b) => b,
+                    let source_hash = hash(match sys::File::openat(
+                        save_dir.fd(),
+                        exe,
+                        sys::O::RDONLY,
+                        0,
+                    )
+                    .and_then(|f| {
+                        let n = f.read_all(&mut input_buf);
+                        f.close();
+                        n
+                    }) {
+                        Ok(n) => &input_buf[..n],
                         Err(err) => {
                             let _ = save_dir_.delete_tree(&version_name);
                             Output::pretty_errorln(format_args!(
                                 "<r><red>error:<r> Failed to read source bun {}",
-                                err.name()
+                                bstr::BStr::new(err.name())
                             ));
                             Global::exit(1);
                         }
@@ -1157,9 +1176,9 @@ impl UpgradeCommand {
                 }
 
                 if let Err(err) = sys::move_file_z(
-                    sys::Fd::from_std_dir(&save_dir),
-                    exe,
-                    sys::Fd::from_std_dir(&target_dir),
+                    save_dir.fd(),
+                    exe_z,
+                    target_dir.fd(),
                     target_filename,
                 ) {
                     let _delete_guard = scopeguard::guard((), |_| {

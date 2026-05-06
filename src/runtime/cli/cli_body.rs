@@ -1400,17 +1400,16 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>
         let trigger: &[u8] = if cfg!(windows) { b"\\[eval]" } else { b"/[eval]" };
         let mut entry_point_buf = [0u8; bun_paths::MAX_PATH_BYTES + 8 /* trigger.len() */];
         // TODO(port): const-fold trigger.len() into array length once path_literal is const fn
-        let cwd = bun_sys::getcwd(&mut entry_point_buf)
-            .unwrap()
+        let cwd_len = bun_sys::getcwd(&mut entry_point_buf[..bun_paths::MAX_PATH_BYTES])
             .map_err(bun_core::Error::from)?;
         // TODO(port): Zig used std.posix.getcwd; use bun_sys::getcwd
-        let cwd_len = cwd.len();
         entry_point_buf[cwd_len..cwd_len + trigger.len()].copy_from_slice(trigger);
         // TODO(port): std.mem.concat — Vec concat
-        let mut concatenated: Vec<&[u8]> = Vec::with_capacity(ctx.positionals.len() + ctx.passthrough.len());
-        concatenated.extend_from_slice(ctx.positionals);
-        concatenated.extend_from_slice(ctx.passthrough);
-        ctx.passthrough = concatenated.leak();
+        let mut concatenated: Vec<Box<[u8]>> =
+            Vec::with_capacity(ctx.positionals.len() + ctx.passthrough.len());
+        concatenated.extend(ctx.positionals.iter().cloned());
+        concatenated.extend(ctx.passthrough.iter().cloned());
+        ctx.passthrough = concatenated;
         bun_bun_js::Run::boot(ctx, &entry_point_buf[0..cwd_len + trigger.len()], None)?;
         Ok(())
     }

@@ -503,7 +503,7 @@ pub mod random {
         if !args.is_empty() {
             let options = args[0];
             if !options.is_undefined() {
-                validators::validate_object(global, options, "options", (), ())?;
+                validators::validate_object(global, options, "options", Default::default())?;
                 if let Some(disable_entropy_cache_value) =
                     options.get(global, "disableEntropyCache")?
                 {
@@ -511,7 +511,6 @@ pub mod random {
                         global,
                         disable_entropy_cache_value,
                         "options.disableEntropyCache",
-                        (),
                     )?;
                 }
             }
@@ -955,7 +954,7 @@ impl Scrypt {
         });
 
         if IS_ASYNC {
-            let _ = validators::validate_function(global, b"callback", callback)?;
+            let _ = validators::validate_function(global, "callback", callback)?;
         }
 
         ctx.check_scrypt_params(global)?;

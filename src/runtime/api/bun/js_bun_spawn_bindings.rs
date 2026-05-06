@@ -904,29 +904,31 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             sys::Result::Err(err) => {
                 drop(spawn_options);
                 match err.get_errno() {
-                    errno @ (sys::Errno::ACCES
-                    | sys::Errno::NOENT
-                    | sys::Errno::PERM
-                    | sys::Errno::ISDIR
-                    | sys::Errno::NOTDIR) => {
+                    errno @ (sys::Errno::EACCES
+                    | sys::Errno::ENOENT
+                    | sys::Errno::EPERM
+                    | sys::Errno::EISDIR
+                    | sys::Errno::ENOTDIR) => {
                         let display_path: &ZStr = if !argv.is_empty() && argv[0].is_some() {
                             // SAFETY: argv[0] is a NUL-terminated string we built above.
-                            unsafe { ZStr::from_ptr(argv[0].unwrap() as *const u8) }
+                            unsafe { &*(CStr::from_ptr(argv[0].unwrap()).to_bytes() as *const [u8] as *const ZStr) }
                         } else {
                             ZStr::EMPTY
                         };
                         if !display_path.as_bytes().is_empty() {
                             let mut systemerror = err.with_path(display_path).to_system_error();
-                            if errno == sys::Errno::NOENT {
+                            if errno == sys::Errno::ENOENT {
                                 systemerror.errno = -UV_E::NOENT;
                             }
-                            return global_this.throw_value(systemerror.to_error_instance(global_this));
+                            return Err(global_this.throw_value(
+                                SystemError::from(systemerror).to_error_instance(global_this),
+                            ));
                         }
                     }
                     _ => {}
                 }
 
-                return global_this.throw_value(err.to_js(global_this)?);
+                return Err(global_this.throw_value(err.to_js(global_this)));
             }
             sys::Result::Ok(result) => result,
         },

@@ -199,11 +199,11 @@ impl CPUTimes {
     pub fn to_value(self, global_this: &JSGlobalObject) -> JSValue {
         // Zig used comptime std.meta.fieldNames + inline for; expand manually.
         let ret = JSValue::create_empty_object(global_this, 5);
-        ret.put(global_this, ZigString::static_("user"), JSValue::js_number_from_uint64(self.user));
-        ret.put(global_this, ZigString::static_("nice"), JSValue::js_number_from_uint64(self.nice));
-        ret.put(global_this, ZigString::static_("sys"), JSValue::js_number_from_uint64(self.sys));
-        ret.put(global_this, ZigString::static_("idle"), JSValue::js_number_from_uint64(self.idle));
-        ret.put(global_this, ZigString::static_("irq"), JSValue::js_number_from_uint64(self.irq));
+        ret.put(global_this, b"user", JSValue::js_number_from_uint64(self.user));
+        ret.put(global_this, b"nice", JSValue::js_number_from_uint64(self.nice));
+        ret.put(global_this, b"sys", JSValue::js_number_from_uint64(self.sys));
+        ret.put(global_this, b"idle", JSValue::js_number_from_uint64(self.idle));
+        ret.put(global_this, b"irq", JSValue::js_number_from_uint64(self.irq));
         ret
     }
 }
@@ -224,9 +224,9 @@ pub fn cpus(global: &JSGlobalObject) -> JsResult<JSValue> {
             let err = SystemError {
                 message: BunString::static_("Failed to get CPU information"),
                 code: BunString::static_(<&'static str>::from(ErrorCode::ERR_SYSTEM_ERROR)),
-                ..Default::default()
+                ..system_error_default()
             };
-            global.throw_value(err.to_error_instance(global))
+            Err(global.throw_value(err.to_error_instance(global)))
         }
     }
 }

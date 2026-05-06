@@ -166,7 +166,7 @@ impl NativeZstd {
         }
         this.write_result = Some(write_state.as_u32().as_mut_ptr());
 
-        let write_js_callback = validators::validate_function(global, b"processCallback", process_callback_value)?;
+        let write_js_callback = validators::validate_function(global, "processCallback", process_callback_value)?;
         // js.writeCallbackSetCached — codegen'd cached-property setter on the C++ wrapper.
         js::write_callback_set_cached(this_value, global, write_js_callback.with_async_context_if_needed(global));
 

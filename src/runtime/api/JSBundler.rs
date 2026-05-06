@@ -1632,7 +1632,7 @@ pub mod js_bundler {
     /// `Bun.build(config)`
     #[bun_jsc::host_fn]
     pub fn build_fn(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old(1);
+        let arguments = callframe.arguments_old::<1>();
         build(global_this, arguments.slice())
     }
 

@@ -34,6 +34,59 @@ pub struct HTMLBundle {
     pub path: Box<[u8]>,
 }
 
+// `jsc.Codegen.JSHTMLBundle` — hand-expansion of what the `#[bun_jsc::JsClass]`
+// derive would emit. Symbol names match generate-classes.ts
+// (`${typeName}__fromJS` / `__fromJSDirect` / `__create` / `__getConstructor`).
+// Hand-written (rather than `#[bun_jsc::JsClass]`) because HTMLBundle has a
+// custom `finalize` that derefs an intrusive refcount instead of Box-dropping.
+const _: () = {
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    unsafe extern "sysv64" {
+        #[link_name = "HTMLBundle__fromJS"]
+        fn __from_js(value: JSValue) -> *mut HTMLBundle;
+        #[link_name = "HTMLBundle__fromJSDirect"]
+        fn __from_js_direct(value: JSValue) -> *mut HTMLBundle;
+        #[link_name = "HTMLBundle__create"]
+        fn __create(global: *mut JSGlobalObject, ptr: *mut HTMLBundle) -> JSValue;
+        #[link_name = "HTMLBundle__getConstructor"]
+        fn __get_constructor(global: *mut JSGlobalObject) -> JSValue;
+    }
+    #[cfg(not(all(windows, target_arch = "x86_64")))]
+    unsafe extern "C" {
+        #[link_name = "HTMLBundle__fromJS"]
+        fn __from_js(value: JSValue) -> *mut HTMLBundle;
+        #[link_name = "HTMLBundle__fromJSDirect"]
+        fn __from_js_direct(value: JSValue) -> *mut HTMLBundle;
+        #[link_name = "HTMLBundle__create"]
+        fn __create(global: *mut JSGlobalObject, ptr: *mut HTMLBundle) -> JSValue;
+        #[link_name = "HTMLBundle__getConstructor"]
+        fn __get_constructor(global: *mut JSGlobalObject) -> JSValue;
+    }
+
+    impl bun_jsc::JsClass for HTMLBundle {
+        fn from_js(value: JSValue) -> Option<*mut Self> {
+            // SAFETY: pure FFI downcast; returns null on type mismatch.
+            let p = unsafe { __from_js(value) };
+            if p.is_null() { None } else { Some(p) }
+        }
+        fn from_js_direct(value: JSValue) -> Option<*mut Self> {
+            // SAFETY: exact-structure FFI downcast; null on miss.
+            let p = unsafe { __from_js_direct(value) };
+            if p.is_null() { None } else { Some(p) }
+        }
+        fn to_js(self, global: &JSGlobalObject) -> JSValue {
+            let ptr = Box::into_raw(Box::new(self));
+            // SAFETY: `global` is live; ownership of `ptr` transfers to the
+            // C++ wrapper (deref'd via `HTMLBundleClass__finalize` → `finalize()`).
+            unsafe { __create(global.as_ptr(), ptr) }
+        }
+        fn get_constructor(global: &JSGlobalObject) -> JSValue {
+            // SAFETY: `global` is live; codegen extern returns the cached ctor.
+            unsafe { __get_constructor(global.as_ptr()) }
+        }
+    }
+};
+
 // `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})`
 impl RefCounted for HTMLBundle {
     type DestructorCtx = ();

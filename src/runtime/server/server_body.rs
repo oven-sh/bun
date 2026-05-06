@@ -692,7 +692,7 @@ impl ServePlugins {
         // raw pointer preserves that provenance for the paired deref_ on scope exit.
         let _deref_guard = scopeguard::guard((), move |_| unsafe { Self::deref_(this_ptr) });
 
-        let plugin = JSBundler::Plugin::create(global, bun_bundler::options::Target::Browser);
+        let plugin = JSBundler::Plugin::create(global, bun_jsc::BunPluginTarget::Browser);
         // PERF(port): was stack-fallback alloc
         let mut bunstring_array: Vec<BunString> = Vec::with_capacity(plugin_list.len());
         for raw_plugin in &plugin_list {
@@ -780,7 +780,7 @@ impl ServePlugins {
         for route in html_bundle_routes {
             // SAFETY: route was ref'd when stored
             let route = unsafe { &mut *route };
-            route.on_plugins_resolved(plugin_ref); // bun.handleOom — aborts on OOM
+            route.on_plugins_resolved(Some(plugin_ref)); // bun.handleOom — aborts on OOM
             route.deref_();
         }
         if let Some(server) = dev_server {

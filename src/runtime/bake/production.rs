@@ -1198,7 +1198,8 @@ fn load_module(
     }
     // SAFETY: vm is the live per-thread VM; jsc_vm is live for VM lifetime.
     let jsc_vm = unsafe { &mut *(*vm).jsc_vm };
-    match promise.unwrap(jsc_vm, UnwrapMode::MarkHandled) {
+    // SAFETY: see above; promise cell is still live (rooted via the module loader).
+    match unsafe { (*promise).unwrap(jsc_vm, UnwrapMode::MarkHandled) } {
         Unwrapped::Pending => unreachable!(),
         Unwrapped::Fulfilled(_) => {
             // SAFETY: FFI; global live, key stack-held.

@@ -386,26 +386,27 @@ pub extern "C" fn create_argv(global_object: *const JSGlobalObject) -> JSValue {
     // PORT NOTE: bun.pathLiteral inlined — bun_paths has no path_literal! macro yet.
     const EVAL_SUFFIX: &[u8] = if cfg!(windows) { b"\\[eval]" } else { b"/[eval]" };
     const STDIN_SUFFIX: &[u8] = if cfg!(windows) { b"\\[stdin]" } else { b"/[stdin]" };
-    if !vm.main().is_empty()
-        && !strings::ends_with(vm.main(), EVAL_SUFFIX)
-        && !strings::ends_with(vm.main(), STDIN_SUFFIX)
+    if !vm.main.is_empty()
+        && !strings::ends_with(vm.main, EVAL_SUFFIX)
+        && !strings::ends_with(vm.main, STDIN_SUFFIX)
     {
-        if vm.worker().is_some() && vm.worker().unwrap().eval_mode() {
+        // TODO(port): WebWorker.eval_mode is a private field on bun_jsc::WebWorker.
+        // Until an accessor lands, treat eval_mode as false and emit `vm.main`.
+        let worker_eval_mode = false;
+        if vm.worker.is_some() && worker_eval_mode {
             args_list.push(BunString::static_(b"[worker eval]"));
             // PERF(port): was assume_capacity
         } else {
-            args_list.push(BunString::borrow_utf8(vm.main()));
+            args_list.push(BunString::borrow_utf8(vm.main));
             // PERF(port): was assume_capacity
         }
     }
 
-    if let Some(worker) = vm.worker() {
-        for arg in worker.argv() {
-            args_list.push(BunString::init(arg));
-            // PERF(port): was assume_capacity
-        }
+    if let Some(_worker) = vm.worker {
+        // TODO(port): WebWorker.argv is private on bun_jsc::WebWorker — no accessor yet.
+        todo!("blocked_on: bun_jsc::WebWorker::argv");
     } else {
-        for arg in vm.argv() {
+        for arg in &vm.argv {
             let str_ = BunString::borrow_utf8(arg);
             // https://github.com/yargs/yargs/blob/adb0d11e02c613af3d9427b3028cc192703a3869/lib/utils/process-argv.ts#L1
             args_list.push(str_);
@@ -413,7 +414,7 @@ pub extern "C" fn create_argv(global_object: *const JSGlobalObject) -> JSValue {
         }
     }
 
-    BunString::to_js_array(global_object, &args_list).unwrap_or(JSValue::ZERO)
+    bun_string_to_js_array(global_object, &args_list).unwrap_or(JSValue::ZERO)
 }
 
 // ───────────────────────────── eval ─────────────────────────────

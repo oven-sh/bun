@@ -914,8 +914,8 @@ pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, 
                     // Glob: expand against this package's scripts
                     let mut matches: Vec<&[u8]> = Vec::new();
                     for key in pkg.scripts.keys() {
-                        if matches_glob(raw_name, key.as_bytes()) {
-                            matches.push(key.as_bytes());
+                        if matches_glob(raw_name, key) {
+                            matches.push(key);
                         }
                     }
                     matches.sort();
@@ -924,7 +924,7 @@ pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, 
                             &mut configs,
                             &mut group_infos,
                             matched_name,
-                            Some(pkg.scripts),
+                            Some(&pkg.scripts),
                             &pkg.dirpath,
                             &pkg.path,
                             Some(&pkg.name),
@@ -936,19 +936,17 @@ pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, 
                             &mut configs,
                             &mut group_infos,
                             raw_name,
-                            Some(pkg.scripts),
+                            Some(&pkg.scripts),
                             &pkg.dirpath,
                             &pkg.path,
                             Some(&pkg.name),
                         )?;
                     } else if ctx.workspaces && !ctx.if_present {
-                        Output::pretty_errorln(
-                            "<r><red>error<r>: Missing \"{s}\" script in package \"{s}\"",
-                            (
-                                bstr::BStr::new(raw_name),
-                                bstr::BStr::new(&pkg.name),
-                            ),
-                        );
+                        Output::pretty_errorln(format_args!(
+                            "<r><red>error<r>: Missing \"{}\" script in package \"{}\"",
+                            bstr::BStr::new(raw_name),
+                            bstr::BStr::new(&pkg.name),
+                        ));
                         Global::exit(1);
                     }
                 }
@@ -962,13 +960,9 @@ pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, 
             if ctx.workspaces {
                 Output::pretty_errorln(
                     "<r><red>error<r>: No workspace packages have matching scripts",
-                    (),
                 );
             } else {
-                Output::pretty_errorln(
-                    "<r><red>error<r>: No packages matched the filter",
-                    (),
-                );
+                Output::pretty_errorln("<r><red>error<r>: No packages matched the filter");
             }
             Global::exit(1);
         }

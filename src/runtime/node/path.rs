@@ -173,7 +173,7 @@ fn eql_ignore_case_t<T: PathChar>(a: &[T], b: &[T]) -> bool {
         // TODO(port): avoid transmute once specialization lands
         let a8: &[u8] = unsafe { core::mem::transmute(a) };
         let b8: &[u8] = unsafe { core::mem::transmute(b) };
-        return strings::eql_case_insensitive_ascii::<true>(a8, b8);
+        return strings::eql_case_insensitive_ascii(a8, b8, true);
     }
     // TODO(port): Zig body for u16 falls through with no return; matches comptime-only u8 path.
     // Phase B: add u16 case-insensitive compare if ever called with T=u16.
@@ -246,12 +246,11 @@ impl<'a, T: PathChar> PathParsed<'a, T> {
         // PORT NOTE: alias the free-fn module so the Zig-mirrored
         // `BunString::create_utf8_for_js(...)` call shape resolves (same pattern
         // as the per-submodule imports below).
-        use crate::jsc::bun_string_jsc as BunString;
-        let root = BunString::create_utf8_for_js(global_object, self.root)?;
-        let dir = BunString::create_utf8_for_js(global_object, self.dir)?;
-        let base = BunString::create_utf8_for_js(global_object, self.base)?;
-        let ext = BunString::create_utf8_for_js(global_object, self.ext)?;
-        let name_val = BunString::create_utf8_for_js(global_object, self.name)?;
+        let root = create_js_string_t::<T>(global_object, self.root)?;
+        let dir = create_js_string_t::<T>(global_object, self.dir)?;
+        let base = create_js_string_t::<T>(global_object, self.base)?;
+        let ext = create_js_string_t::<T>(global_object, self.ext)?;
+        let name_val = create_js_string_t::<T>(global_object, self.name)?;
         // SAFETY: FFI call with valid global object pointer.
         Ok(unsafe { PathParsedObject__create(global_object, root, dir, base, ext, name_val) })
     }

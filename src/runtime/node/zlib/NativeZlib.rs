@@ -129,10 +129,10 @@ impl NativeZlib {
                 .throw());
         }
 
-        let window_bits = validators::validate_int32(global, arguments[0], "windowBits", Default::default(), None, None)?;
-        let level = validators::validate_int32(global, arguments[1], "level", Default::default(), None, None)?;
-        let mem_level = validators::validate_int32(global, arguments[2], "memLevel", Default::default(), None, None)?;
-        let strategy = validators::validate_int32(global, arguments[3], "strategy", Default::default(), None, None)?;
+        let window_bits = validators::validate_int32(global, arguments[0], "windowBits", None, None)?;
+        let level = validators::validate_int32(global, arguments[1], "level", None, None)?;
+        let mem_level = validators::validate_int32(global, arguments[2], "memLevel", None, None)?;
+        let strategy = validators::validate_int32(global, arguments[3], "strategy", None, None)?;
         // this does not get gc'd because it is stored in the JS object's `this._writeState`. and the JS object is tied to the native handle as `_handle[owner_symbol]`.
         let write_result = arguments[4]
             .as_array_buffer(global)
@@ -170,8 +170,8 @@ impl NativeZlib {
                 .throw());
         }
 
-        let level = validators::validate_int32(global, arguments[0], "level", Default::default(), None, None)?;
-        let strategy = validators::validate_int32(global, arguments[1], "strategy", Default::default(), None, None)?;
+        let level = validators::validate_int32(global, arguments[0], "level", None, None)?;
+        let strategy = validators::validate_int32(global, arguments[1], "strategy", None, None)?;
 
         let err = self.stream.set_params(level, strategy);
         if err.is_error() {

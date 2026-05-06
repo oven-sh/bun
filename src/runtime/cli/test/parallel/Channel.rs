@@ -478,22 +478,22 @@ impl<Owner: ChannelOwner> Channel<Owner> {
                 continue;
             };
             // PORT NOTE: borrowck split — `rd` borrows `self.r#in` while
-            // `owner()` would re-borrow `*self` mutably. Recover the owner via
-            // the same `@fieldParentPtr` raw-pointer arithmetic `owner()` uses,
-            // bypassing the `&mut self` reborrow. The callback never touches
-            // `self.r#in` (it only reads `rd` and may write other channel
-            // fields / call `send()`), so the aliasing is sound.
+            // `owner()` would re-borrow `*self` mutably. Capture the owner raw
+            // pointer *before* forming `rd` (so the `&mut *self` reborrow ends
+            // immediately), then recover `&mut Owner` from it after. Same
+            // `@fieldParentPtr` arithmetic as `owner()`. The callback never
+            // touches `self.r#in` (it only reads `rd` and may write other
+            // channel fields / call `send()`), so the aliasing is sound.
+            let owner_ptr: *mut Owner = (self as *mut Self)
+                .cast::<u8>()
+                .wrapping_sub(Owner::CHANNEL_OFFSET)
+                .cast::<Owner>();
             let mut rd = frame::Reader {
                 p: &self.r#in[head + 5..][..len as usize],
             };
             // SAFETY: see `Channel::owner()` — `self` is embedded at
             // `CHANNEL_OFFSET` inside an `Owner` that outlives all callbacks.
-            let owner: &mut Owner = unsafe {
-                &mut *(self as *mut Self)
-                    .cast::<u8>()
-                    .sub(Owner::CHANNEL_OFFSET)
-                    .cast::<Owner>()
-            };
+            let owner: &mut Owner = unsafe { &mut *owner_ptr };
             owner.on_channel_frame(kind, &mut rd);
             head += 5usize + len as usize;
         }

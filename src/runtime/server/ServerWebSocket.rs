@@ -251,8 +251,9 @@ impl ServerWebSocket {
         let args = [this_value];
 
         let loop_ = vm.event_loop();
-        loop_.enter();
-        let _exit = scopeguard::guard((), |_| loop_.exit());
+        // SAFETY: event_loop() returns a live raw ptr owned by the VM.
+        unsafe { (*loop_).enter() };
+        let _exit = scopeguard::guard((), move |_| unsafe { (*loop_).exit() });
 
         let mut corker = Corker {
             args: &args,
@@ -302,8 +303,9 @@ impl ServerWebSocket {
         }
 
         let loop_ = vm.event_loop();
-        loop_.enter();
-        let _exit = scopeguard::guard((), |_| loop_.exit());
+        // SAFETY: event_loop() returns a live raw ptr owned by the VM.
+        unsafe { (*loop_).enter() };
+        let _exit = scopeguard::guard((), move |_| unsafe { (*loop_).exit() });
 
         let arguments = [
             self.this_value.try_get().unwrap_or(JSValue::UNDEFINED),
@@ -378,8 +380,9 @@ impl ServerWebSocket {
                 result: JSValue::ZERO,
             };
             let loop_ = vm.event_loop();
-            loop_.enter();
-            let _exit = scopeguard::guard((), |_| loop_.exit());
+            // SAFETY: event_loop() returns a live raw ptr owned by the VM.
+            unsafe { (*loop_).enter() };
+            let _exit = scopeguard::guard((), move |_| unsafe { (*loop_).exit() });
             self.websocket().cork(&mut corker, Corker::run);
             let result = corker.result;
 
@@ -410,8 +413,9 @@ impl ServerWebSocket {
 
         // This is the start of a task.
         let loop_ = vm.event_loop();
-        loop_.enter();
-        let _exit = scopeguard::guard((), |_| loop_.exit());
+        // SAFETY: event_loop() returns a live raw ptr owned by the VM.
+        unsafe { (*loop_).enter() };
+        let _exit = scopeguard::guard((), move |_| unsafe { (*loop_).exit() });
 
         let args = [
             self.this_value.try_get().unwrap_or(JSValue::UNDEFINED),
@@ -442,8 +446,9 @@ impl ServerWebSocket {
 
         // This is the start of a task.
         let loop_ = vm.event_loop();
-        loop_.enter();
-        let _exit = scopeguard::guard((), |_| loop_.exit());
+        // SAFETY: event_loop() returns a live raw ptr owned by the VM.
+        unsafe { (*loop_).enter() };
+        let _exit = scopeguard::guard((), move |_| unsafe { (*loop_).exit() });
 
         let args = [
             self.this_value.try_get().unwrap_or(JSValue::UNDEFINED),
@@ -493,8 +498,9 @@ impl ServerWebSocket {
             let global_object = handler.global_object();
             let loop_ = vm.event_loop();
 
-            loop_.enter();
-            let _exit = scopeguard::guard((), |_| loop_.exit());
+            // SAFETY: event_loop() returns a live raw ptr owned by the VM.
+            unsafe { (*loop_).enter() };
+            let _exit = scopeguard::guard((), move |_| unsafe { (*loop_).exit() });
 
             if let Some(sig) = &signal {
                 if !AbortSignalExt::aborted(&**sig) {
@@ -537,8 +543,9 @@ impl ServerWebSocket {
         } else if let Some(sig) = &signal {
             let loop_ = vm.event_loop();
 
-            loop_.enter();
-            let _exit = scopeguard::guard((), |_| loop_.exit());
+            // SAFETY: event_loop() returns a live raw ptr owned by the VM.
+            unsafe { (*loop_).enter() };
+            let _exit = scopeguard::guard((), move |_| unsafe { (*loop_).exit() });
 
             if !AbortSignalExt::aborted(&**sig) {
                 AbortSignalExt::signal(&**sig, handler.global_object(), jsc::CommonAbortReason::ConnectionClosed);
@@ -609,7 +616,7 @@ impl ServerWebSocket {
         }
 
         let topic_slice = topic_value.to_slice(global_this)?;
-        if topic_slice.len() == 0 {
+        if topic_slice.slice().is_empty() {
             return Err(global_this.throw("publish requires a non-empty topic"));
         }
 
@@ -795,7 +802,7 @@ impl ServerWebSocket {
         }
 
         let topic_slice = topic_value.to_slice(global_this)?;
-        if topic_slice.len() == 0 {
+        if topic_slice.slice().is_empty() {
             return Err(global_this.throw("publishBinary requires a non-empty topic"));
         }
 
@@ -844,7 +851,7 @@ impl ServerWebSocket {
         &mut self,
         global_this: &JSGlobalObject,
         topic_str: &JSString,
-        array: &JSUint8Array,
+        array: &mut JSUint8Array,
     ) -> JsResult<JSValue> {
         let handler = self.handler();
         let Some(app) = handler.app else {
@@ -1242,7 +1249,7 @@ impl ServerWebSocket {
     pub fn send_binary_without_type_checks(
         &mut self,
         _global_this: &JSGlobalObject,
-        array_buffer: &JSUint8Array,
+        array_buffer: &mut JSUint8Array,
         compress: bool,
     ) -> JSValue {
         if self.is_closed() {
@@ -1337,7 +1344,9 @@ impl ServerWebSocket {
                         }
                     });
                 } else if value.is_string() {
-                    let string_value = value.to_js_string(global_this)?.to_slice(global_this);
+                    // SAFETY: to_js_string returns a non-null *mut JSString on the Ok path.
+                    let string_value =
+                        unsafe { &*value.to_js_string(global_this)? }.to_slice(global_this);
                     let buffer = string_value.slice();
 
                     return Ok(match self.websocket().send(buffer, opcode, false, true) {

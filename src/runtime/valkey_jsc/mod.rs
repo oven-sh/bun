@@ -257,6 +257,84 @@ pub mod valkey {
         pub vm: *mut c_void,
     }
 
+    // ── ValkeyClient method surface (bodies live in the gated `valkey_body`
+    // draft; declared here so `js_valkey.rs` compiles) ────────────────────────
+    #[allow(unused_variables)]
+    impl ValkeyClient {
+        pub fn disconnect(&mut self) {
+            todo!("blocked_on: crate::valkey_jsc::valkey_body::ValkeyClient::disconnect")
+        }
+        pub fn get_timeout_interval(&self) -> u32 {
+            match self.status {
+                Status::Connected => self.idle_timeout_interval_ms,
+                _ => self.connection_timeout_ms,
+            }
+        }
+        pub fn get_reconnect_delay(&self) -> u32 {
+            todo!("blocked_on: crate::valkey_jsc::valkey_body::ValkeyClient::get_reconnect_delay")
+        }
+        pub fn has_any_pending_commands(&self) -> bool {
+            self.in_flight.readable_length() > 0 || self.queue.readable_length() > 0
+        }
+        pub fn on_writable(&mut self) {
+            todo!("blocked_on: crate::valkey_jsc::valkey_body::ValkeyClient::on_writable")
+        }
+        pub fn on_data(&mut self, data: &[u8]) -> Result<(), bun_jsc::JsTerminated> {
+            todo!("blocked_on: crate::valkey_jsc::valkey_body::ValkeyClient::on_data")
+        }
+        pub fn on_open(&mut self, socket: AnySocket) -> Result<(), bun_jsc::JsTerminated> {
+            todo!("blocked_on: crate::valkey_jsc::valkey_body::ValkeyClient::on_open")
+        }
+        pub fn on_close(&mut self) -> Result<(), bun_jsc::JsTerminated> {
+            todo!("blocked_on: crate::valkey_jsc::valkey_body::ValkeyClient::on_close")
+        }
+        pub fn start(&mut self) -> Result<(), bun_jsc::JsTerminated> {
+            todo!("blocked_on: crate::valkey_jsc::valkey_body::ValkeyClient::start")
+        }
+        pub fn close(&mut self) {
+            todo!("blocked_on: crate::valkey_jsc::valkey_body::ValkeyClient::close")
+        }
+        pub fn fail(
+            &mut self,
+            message: &[u8],
+            err: RedisError,
+        ) -> Result<(), bun_jsc::JsTerminated> {
+            todo!("blocked_on: crate::valkey_jsc::valkey_body::ValkeyClient::fail")
+        }
+        pub fn fail_with_js_value(
+            &mut self,
+            global: &JSGlobalObject,
+            value: JSValue,
+        ) -> Result<(), bun_jsc::JsTerminated> {
+            todo!("blocked_on: crate::valkey_jsc::valkey_body::ValkeyClient::fail_with_js_value")
+        }
+        pub fn send(
+            &mut self,
+            global: &JSGlobalObject,
+            command: &super::valkey_command_body::Command<'_>,
+        ) -> Result<*mut bun_jsc::JSPromise, bun_core::Error> {
+            todo!("blocked_on: crate::valkey_jsc::valkey_body::ValkeyClient::send")
+        }
+        pub fn deinit(&mut self, deferred: Option<&mut DeferredFailure>) {
+            todo!("blocked_on: crate::valkey_jsc::valkey_body::ValkeyClient::deinit")
+        }
+    }
+
+    impl TLS {
+        /// Spec valkey.zig `TLS.rejectUnauthorized` — whether to verify the
+        /// server certificate chain.
+        pub fn reject_unauthorized(&self, _vm: *mut c_void) -> bool {
+            match self {
+                TLS::None => false,
+                TLS::Enabled => true,
+                TLS::Custom(cfg) => {
+                    let _ = cfg;
+                    todo!("blocked_on: crate::socket::SSLConfig::reject_unauthorized")
+                }
+            }
+        }
+    }
+
     pub struct DeferredFailure {
         pub message: Box<[u8]>,
         pub err: RedisError,

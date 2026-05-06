@@ -2730,7 +2730,11 @@ impl DevServer<'_> {
                 }
             }
 
-            for entry in &self.incremental_result.framework_routes_affected {
+            // PORT NOTE: iterate by index — the loop bodies need
+            // `&mut self.route_bundles` / `&mut self.router`, which conflicts
+            // with the `&self.incremental_result` iterator borrow.
+            for i in 0..self.incremental_result.framework_routes_affected.len() {
+                let entry = self.incremental_result.framework_routes_affected[i];
                 if let Some(index) = self.router.route_ptr(entry.route_index()).bundle {
                     self.route_bundle_ptr(index).server_state =
                         route_bundle::State::PossibleBundlingFailures;
@@ -2740,13 +2744,15 @@ impl DevServer<'_> {
                 }
             }
 
-            for index in &self.incremental_result.html_routes_soft_affected {
-                self.route_bundle_ptr(*index).server_state =
+            for i in 0..self.incremental_result.html_routes_soft_affected.len() {
+                let index = self.incremental_result.html_routes_soft_affected[i];
+                self.route_bundle_ptr(index).server_state =
                     route_bundle::State::PossibleBundlingFailures;
             }
 
-            for index in &self.incremental_result.html_routes_hard_affected {
-                self.route_bundle_ptr(*index).server_state =
+            for i in 0..self.incremental_result.html_routes_hard_affected.len() {
+                let index = self.incremental_result.html_routes_hard_affected[i];
+                self.route_bundle_ptr(index).server_state =
                     route_bundle::State::PossibleBundlingFailures;
             }
 
@@ -2861,7 +2867,12 @@ impl DevServer<'_> {
         debug_assert!(route_bundle.server_state == route_bundle::State::Loaded);
 
         self.graph_safety_lock.lock();
-        let _lock = scopeguard::guard((), |_| self.graph_safety_lock.unlock());
+        // PORT NOTE: scopeguard captured `&mut self`; erase to raw pointer.
+        let self_ptr = self as *mut Self;
+        let _lock = scopeguard::guard((), move |_| {
+            // SAFETY: runs at scope exit, no other `self` borrow live.
+            unsafe { (*self_ptr).graph_safety_lock.unlock() }
+        });
 
         // Prepare bitsets
         // PERF(port): was stack-fallback (65536)
@@ -2877,6 +2888,7 @@ impl DevServer<'_> {
         let arr = jsc::JSArray::create_empty(global, names.len())?;
         for (i, item) in names.iter().enumerate() {
             let mut buf = [0u8; ASSET_PREFIX.len() + ::core::mem::size_of::<u64>() * 2 + "/.css".len()];
+            let buf_len = buf.len();
             let path = {
                 let mut cursor = &mut buf[..];
                 write!(
@@ -2886,7 +2898,7 @@ impl DevServer<'_> {
                     bstr::BStr::new(bun_core::fmt::bytes_to_hex_lower_string(&item.to_ne_bytes()).as_bytes()),
                 )
                 .expect("unreachable");
-                let written = buf.len() - cursor.len();
+                let written = buf_len - cursor.len();
                 &buf[..written]
             };
             let s = BunString::clone_utf8(path);
@@ -2959,7 +2971,7 @@ impl DevServer<'_> {
         let arr = jsc::JSArray::create_empty(global, items.len())?;
         let names = self.server_graph.bundled_files.keys();
         for (i, item) in items.iter().enumerate() {
-            let buf = paths::path_buffer_pool::get();
+            let mut buf = paths::path_buffer_pool::get();
             let s = BunString::clone_utf8(self.relative_path(&mut *buf, &names[item.get() as usize]));
             let _deref = scopeguard::guard((), |_| s.deref());
             arr.put_index(global, u32::try_from(i).unwrap(), s.to_js(global)?)?;
@@ -4003,10 +4015,14 @@ impl DevServer<'_> {
                 (false, Instant::now())
             };
 
-            for route_bundle_index in self.next_bundle.route_queue.keys() {
-                let rb = self.route_bundle_ptr(*route_bundle_index);
+            // PORT NOTE: iterate by index — `route_bundle_ptr` /
+            // `append_route_entry_points_if_not_stale` need `&mut self`,
+            // conflicting with the `keys()` iterator borrow.
+            for i in 0..self.next_bundle.route_queue.len() {
+                let route_bundle_index = self.next_bundle.route_queue.keys()[i];
+                let rb = self.route_bundle_ptr(route_bundle_index);
                 rb.server_state = route_bundle::State::Bundling;
-                self.append_route_entry_points_if_not_stale(&mut entry_points, *route_bundle_index)
+                self.append_route_entry_points_if_not_stale(&mut entry_points, route_bundle_index)
                     .expect("oom");
             }
 

@@ -191,7 +191,11 @@ impl FileSystemRouter {
                 // PERF(port): was appendAssumeCapacity
                 // TODO(port): `toUTF8Bytes(allocator)[1..]` — slices off leading '.'; arena owns the bytes.
                 let bytes = val.to_slice(global_this)?.into_vec();
-                let leaked: &'static [u8] = arena.alloc_slice_copy(&bytes);
+                // SAFETY: arena is boxed and moved into the returned `FileSystemRouter`, so the
+                // backing allocation outlives this slice. Cast through raw ptr to detach the
+                // borrow from `arena` so it can be moved below.
+                let leaked: &'static [u8] =
+                    unsafe { &*(arena.alloc_slice_copy(&bytes) as *const [u8]) };
                 extensions.push(&leaked[1..]);
             }
         }

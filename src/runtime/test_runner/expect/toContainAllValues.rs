@@ -88,6 +88,7 @@ pub fn to_contain_all_values(
         );
     }
 
+    let value_fmt = value.to_fmt(&mut formatter);
     return this.throw(
         global,
         Expect::get_signature("toContainAllValues", "<green>expected<r>", false),

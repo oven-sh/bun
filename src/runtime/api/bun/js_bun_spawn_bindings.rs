@@ -1327,8 +1327,10 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         {
             if let Some(posix_ipc_info) = posix_ipc_info {
                 if let Some(ctx) = posix_ipc_info.ext::<*mut IPC::SendQueue>() {
-                    *ctx = subprocess.ipc_data.as_mut().unwrap() as *mut _;
-                    subprocess.ipc_data.as_mut().unwrap().socket = IPC::SocketUnion::Open(posix_ipc_info);
+                    // SAFETY: `ctx` is the live ext-slot pointer returned by uSockets;
+                    // it stays valid for the socket's lifetime.
+                    unsafe { *ctx = ipc_data as *mut _ };
+                    ipc_data.socket = IPC::SocketUnion::Open(posix_ipc_info);
                 }
             }
             // uws owns the fd now (owns_fd=1); neutralize the slot so finalizeStreams doesn't double-close.

@@ -190,6 +190,19 @@ fn any_blob_ref<'a>(_b: Option<&'a mut blob::Any>) -> Option<bun_http::headers::
     todo!("blocked_on: bun_http::headers::AnyBlobRef::from(&webcore::blob::Any)")
 }
 
+/// `Blob.Any` accessor shim — Zig union-field access `body.AnyBlob.Blob`.
+trait AnyBlobExt {
+    fn blob(&self) -> &Blob;
+}
+impl AnyBlobExt for blob::Any {
+    fn blob(&self) -> &Blob {
+        match self {
+            blob::Any::Blob(b) => b,
+            _ => unreachable!("Blob.Any::blob() on non-Blob variant"),
+        }
+    }
+}
+
 /// `HTTPRequestBody` accessor shims missing from FetchTasklet.rs.
 trait HTTPRequestBodyExt {
     fn any_blob(&self) -> &blob::Any;

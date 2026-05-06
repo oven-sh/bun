@@ -2115,7 +2115,7 @@ pub fn install_isolated_packages(
                         continue;
                     }
 
-                    let mut pkg_cache_dir_subpath: AutoRelPath = AutoRelPath::from(match pkg_res_tag {
+                    let cache_subpath_z: &bun_str::ZStr = match pkg_res_tag {
                         ResolutionTag::Npm => manager.cached_npm_package_folder_name(
                             pkg_name.slice(string_buf),
                             &pkg_res.value.npm.version,
@@ -2133,7 +2133,9 @@ pub fn install_isolated_packages(
                             .cached_tarball_folder_name(pkg_res.value.remote_tarball, patch_info.contents_hash()),
 
                         _ => unreachable!(),
-                    });
+                    };
+                    let mut pkg_cache_dir_subpath: AutoRelPath =
+                        bun_core::handle_oom(AutoRelPath::from(cache_subpath_z.as_bytes()));
 
                     let (cache_dir, cache_dir_path) = manager.get_cache_directory_and_abs_path();
                     let _ = &cache_dir_path; // dropped at scope exit (Zig: defer cache_dir_path.deinit())

@@ -1724,6 +1724,8 @@ pub fn init(
         ini::load_npmrc_config(install_ref, env, true, &[&*npmrc_local]);
     }
     let cpu_count = bun_core::get_thread_count();
+    // Captured before `cli` is moved into `options.load(Some(cli), ...)` below.
+    let cli_network_concurrency = cli.network_concurrency;
 
     let options = Options {
         global: cli.global,
@@ -1972,7 +1974,7 @@ pub fn init(
 
     http::async_http::MAX_SIMULTANEOUS_REQUESTS.store(
         'brk: {
-            if let Some(network_concurrency) = cli.network_concurrency {
+            if let Some(network_concurrency) = cli_network_concurrency {
                 break 'brk network_concurrency.max(1) as usize;
             }
 

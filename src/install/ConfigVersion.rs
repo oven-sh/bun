@@ -10,7 +10,7 @@ pub enum ConfigVersion {
 impl ConfigVersion {
     pub const CURRENT: ConfigVersion = ConfigVersion::V1;
 
-    pub fn from_expr(expr: Expr) -> Option<ConfigVersion> {
+    pub fn from_expr(expr: &Expr) -> Option<ConfigVersion> {
         let version: f64 = {
             let bun_js_parser::ast::expr::Data::ENumber(e_number) = &expr.data else {
                 return None;

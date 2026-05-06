@@ -623,7 +623,7 @@ pub fn get_ephemeral_key_info(this: &mut This, global: &JSGlobalObject, _frame: 
     }
 
     // SAFETY: raw_key is a non-null *mut EVP_PKEY (null-checked above).
-    let kid = unsafe { boringssl::EVP_PKEY_id(raw_key) };
+    let kid = unsafe { ffi::EVP_PKEY_id(raw_key) };
     // SAFETY: raw_key is a non-null *mut EVP_PKEY (null-checked above).
     let bits = unsafe { boringssl::EVP_PKEY_bits(raw_key) };
 

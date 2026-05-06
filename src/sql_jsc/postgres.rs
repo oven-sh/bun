@@ -1,26 +1,50 @@
-use crate::jsc::{JSFunction, JSGlobalObject, JSValue};
+use crate::jsc::{CallFrame, JSFunction, JSGlobalObject, JSHostFn, JSValue};
+
+// ──────────────────────────────────────────────────────────────────────────
+// C-ABI thunks (Zig: `jsc.toJSHostFn(fn)`). `JSFunction::create` needs a real
+// `unsafe extern "C" fn` pointer; the safe Rust-signature impls are wrapped
+// here. `JsResult::Err` → `JSValue::ZERO` (exception already pending).
+// ──────────────────────────────────────────────────────────────────────────
+unsafe extern "C" fn js_init(g: *mut JSGlobalObject, f: *mut CallFrame) -> JSValue {
+    // SAFETY: JSC guarantees both pointers are live for the host call.
+    PostgresSQLContext::init(unsafe { &*g }, unsafe { &*f })
+}
+unsafe extern "C" fn js_create_query(g: *mut JSGlobalObject, f: *mut CallFrame) -> JSValue {
+    // SAFETY: JSC guarantees both pointers are live for the host call.
+    match PostgresSQLQuery::call(unsafe { &*g }, unsafe { &*f }) {
+        Ok(v) => v,
+        Err(_) => JSValue::ZERO,
+    }
+}
+unsafe extern "C" fn js_create_connection(g: *mut JSGlobalObject, f: *mut CallFrame) -> JSValue {
+    // SAFETY: JSC guarantees both pointers are live for the host call.
+    match postgres_sql_connection::call(unsafe { &*g }, unsafe { &*f }) {
+        Ok(v) => v,
+        Err(_) => JSValue::ZERO,
+    }
+}
 
 pub fn create_binding(global_object: &JSGlobalObject) -> JSValue {
     let binding = JSValue::create_empty_object_with_null_prototype(global_object);
     binding.put(
         global_object,
-        bun_string::ZigString::static_str(b"PostgresSQLConnection"),
+        b"PostgresSQLConnection",
         postgres_sql_connection::js::get_constructor(global_object),
     );
     binding.put(
         global_object,
-        bun_string::ZigString::static_str(b"init"),
-        JSFunction::create(global_object, "init", PostgresSQLContext::init, 0, Default::default()),
+        b"init",
+        JSFunction::create(global_object, "init", js_init as JSHostFn, 0, Default::default()),
     );
     binding.put(
         global_object,
-        bun_string::ZigString::static_str(b"createQuery"),
-        JSFunction::create(global_object, "createQuery", PostgresSQLQuery::call, 6, Default::default()),
+        b"createQuery",
+        JSFunction::create(global_object, "createQuery", js_create_query as JSHostFn, 6, Default::default()),
     );
     binding.put(
         global_object,
-        bun_string::ZigString::static_str(b"createConnection"),
-        JSFunction::create(global_object, "createConnection", postgres_sql_connection::call, 2, Default::default()),
+        b"createConnection",
+        JSFunction::create(global_object, "createConnection", js_create_connection as JSHostFn, 2, Default::default()),
     );
     binding
 }

@@ -17,6 +17,7 @@ use bun_string::wtf::{WTFStringImpl, WTFStringImplStruct};
 // `deinit`. Phase B: revisit once the C++ side is ported.
 
 #[repr(C)]
+#[derive(Copy, Clone)]
 pub struct SQLDataCell {
     pub tag: Tag,
 
@@ -59,6 +60,7 @@ pub enum Tag {
 }
 
 #[repr(C)]
+#[derive(Copy, Clone)]
 pub union Value {
     pub null: u8,
     // LIFETIMES.tsv: SHARED → conceptually `Option<RefPtr<WTFStringImpl>>`.
@@ -250,8 +252,8 @@ impl SQLDataCell {
         }
     }
 
-    pub fn raw(optional_bytes: Option<&Data>) -> SQLDataCell {
-        if let Some(bytes) = optional_bytes {
+    pub fn raw<'a>(optional_bytes: impl IntoOptionalData<'a>) -> SQLDataCell {
+        if let Some(bytes) = optional_bytes.into_optional_data() {
             let bytes_slice = bytes.slice();
             return SQLDataCell {
                 tag: Tag::Raw,
@@ -281,10 +283,12 @@ impl SQLDataCell {
         count: u32,
         flags: Flags,
         result_mode: u8,
-        names_ptr: Option<*mut ExternColumnIdentifier>,
+        // Zig: `?[*]ExternColumnIdentifier` — nullable many-pointer maps to a
+        // raw `*mut` (null == None) for FFI; callers pass `ptr::null_mut()`
+        // for the absent case.
+        names_ptr: *mut ExternColumnIdentifier,
         names_count: u32,
     ) -> JsResult<JSValue> {
-        let names_ptr = names_ptr.unwrap_or(ptr::null_mut());
         // TODO(port): bun.Environment.ci_assert — when set, wrap this call in
         // `ExceptionValidationScope` and `assert_exception_presence_matches`.
         // TODO(b2-blocked): bun_jsc::ExceptionValidationScope (ci_assert path)
@@ -307,6 +311,37 @@ impl SQLDataCell {
             return Err(JsError::Thrown);
         }
         Ok(value)
+    }
+}
+
+/// Coercion helper mirroring Zig's implicit `*const Data` → `?*const Data`
+/// promotion at `raw()` call sites. Lets callers pass `&Data`, `&mut Data`,
+/// `Option<&Data>`, or `Option<&mut Data>` without wrapping.
+pub trait IntoOptionalData<'a> {
+    fn into_optional_data(self) -> Option<&'a Data>;
+}
+impl<'a> IntoOptionalData<'a> for &'a Data {
+    #[inline]
+    fn into_optional_data(self) -> Option<&'a Data> {
+        Some(self)
+    }
+}
+impl<'a> IntoOptionalData<'a> for &'a mut Data {
+    #[inline]
+    fn into_optional_data(self) -> Option<&'a Data> {
+        Some(&*self)
+    }
+}
+impl<'a> IntoOptionalData<'a> for Option<&'a Data> {
+    #[inline]
+    fn into_optional_data(self) -> Option<&'a Data> {
+        self
+    }
+}
+impl<'a> IntoOptionalData<'a> for Option<&'a mut Data> {
+    #[inline]
+    fn into_optional_data(self) -> Option<&'a Data> {
+        self.map(|d| &*d)
     }
 }
 

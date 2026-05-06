@@ -1457,7 +1457,7 @@ impl AnyServer {
         any_server_dispatch!(self, |s| match &s.plugins {
             None => GetOrStartLoadResult::Ready(None),
             Some(p) => match &p.state {
-                ServePluginsState::Unqueued | ServePluginsState::Pending => {
+                ServePluginsState::Unqueued(_) | ServePluginsState::Pending => {
                     // TODO(port): once `ServePlugins::get_or_start_load` lands on
                     // the unified type, store `_callback` and kick the loader.
                     GetOrStartLoadResult::Pending

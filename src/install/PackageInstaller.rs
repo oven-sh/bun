@@ -578,7 +578,7 @@ impl<'a> PackageInstaller<'a> {
                         }
                     }
 
-                    if self.options.enable.fail_early() {
+                    if self.options.enable.fail_early {
                         manager.crash();
                     }
                 }

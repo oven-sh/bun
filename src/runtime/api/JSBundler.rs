@@ -1667,8 +1667,24 @@ pub mod js_bundler {
 
         // SAFETY: bun_vm() returns the live process VirtualMachine pointer.
         let event_loop = unsafe { (*vm).event_loop() };
-        let _ = (config, plugins, event_loop);
-        todo!("blocked_on: bun_bundler::BundleV2::generate_from_javascript")
+
+        // `BundleV2.generateFromJavaScript` — the completion-task struct lives in
+        // `crate::api::js_bundle_completion_task` (bun_runtime owns it because its
+        // fields name `Config`/`Plugin`/`HTMLBundle::Route`; lower-tier crates
+        // cannot depend on those).
+        let completion = crate::api::js_bundle_completion_task::create_and_schedule_completion_task(
+            config,
+            plugins.and_then(core::ptr::NonNull::new),
+            global_this,
+            event_loop,
+        )
+        .map_err(|_| JsError::OutOfMemory)?;
+        // SAFETY: `completion` is the freshly-boxed allocation returned above;
+        // sole owner on the JS thread until enqueued task runs.
+        unsafe {
+            (*completion).promise = jsc::JSPromiseStrong::init(global_this);
+            Ok((*completion).promise.value())
+        }
     }
 
     /// `Bun.build(config)`

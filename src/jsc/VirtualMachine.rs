@@ -2139,21 +2139,6 @@ fn normalize_source(source: &[u8]) -> &[u8] {
     source
 }
 
-/// Spec VirtualMachine.zig:1712 `normalizeSpecifierForResolution`.
-#[inline]
-fn normalize_specifier_for_resolution<'a>(
-    specifier: &'a [u8],
-    query_string: &mut &'a [u8],
-) -> &'a [u8] {
-    if let Some(i) = bun_string::strings::index_of_char(specifier, b'?') {
-        let i = i as usize;
-        *query_string = &specifier[i..];
-        &specifier[..i]
-    } else {
-        specifier
-    }
-}
-
 /// `bun.String.createIfDifferent` — `clone_utf8(other)` unless `other` is
 /// byte-equal to `s`, in which case bump `s`'s refcount instead.
 // PERF(port): hoist into `bun_string` once `lib_draft_b1.rs` un-gates.
@@ -2163,13 +2148,6 @@ fn create_if_different(s: &bun_string::String, other: &[u8]) -> bun_string::Stri
         return s.dupe_ref();
     }
     bun_string::String::clone_utf8(other)
-}
-
-/// Spec VirtualMachine.zig:1645 `freeRefString` — WTF external-string finalizer.
-extern "C" fn free_ref_string(str_: *mut crate::ref_string::RefString, _: *mut c_void, _: u32) {
-    // SAFETY: `str_` is the ctx pointer passed to `String::create_external`;
-    // refcount just hit zero so this is the unique live reference.
-    unsafe { crate::ref_string::RefString::destroy(str_) };
 }
 
 // Additional FFI used by the formerly-gated impl.

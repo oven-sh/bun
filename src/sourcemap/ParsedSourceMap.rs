@@ -198,6 +198,36 @@ impl SourceContentPtr {
 }
 
 impl ParsedSourceMap {
+    /// Intrusive thread-safe ref-count helpers (Zig: `ThreadSafeRefCount.ref/deref`).
+    /// Operates directly on the embedded `AtomicU32` to avoid the
+    /// `bun_ptr::ThreadSafeRefCounted` field-type coupling until that wiring
+    /// lands (see TODO on `ref_count`). `deref` reaching 0 reconstitutes and
+    /// drops the `Box` allocated by callers (e.g. `SavedSourceMap::get_with_content`).
+    ///
+    /// # Safety
+    /// `this` must point to a live, `Box`-allocated `ParsedSourceMap`.
+    #[inline]
+    pub unsafe fn ref_(this: *mut Self) {
+        // SAFETY: caller contract — `this` is live.
+        let old = unsafe { (*this).ref_count.fetch_add(1, core::sync::atomic::Ordering::SeqCst) };
+        debug_assert!(old > 0);
+    }
+
+    /// See [`ref_`].
+    ///
+    /// # Safety
+    /// `this` must point to a live, `Box`-allocated `ParsedSourceMap`.
+    #[inline]
+    pub unsafe fn deref(this: *mut Self) {
+        // SAFETY: caller contract — `this` is live.
+        let old = unsafe { (*this).ref_count.fetch_sub(1, core::sync::atomic::Ordering::SeqCst) };
+        debug_assert!(old > 0);
+        if old == 1 {
+            // SAFETY: last ref dropped; allocation came from `Box::into_raw`.
+            drop(unsafe { Box::from_raw(this) });
+        }
+    }
+
     /// Construct a `ParsedSourceMap` whose mappings are backed by an
     /// `InternalSourceMap` blob (e.g. one embedded in a `bun build --compile`
     /// executable's standalone module graph) instead of a materialized

@@ -193,9 +193,7 @@ impl SavedSourceMap {
                 if (prov.ptr() as usize) == (opaque_source_provider as usize) {
                     map.remove(&key);
                     // SAFETY: we held a strong ref while in the table; release it.
-                    unsafe {
-                        bun_ptr::ThreadSafeRefCount::<ParsedSourceMap>::deref(parsed)
-                    };
+                    unsafe { ParsedSourceMap::deref(parsed) };
                 }
             }
         }
@@ -240,9 +238,7 @@ impl SavedSourceMap {
                 if (prov.ptr() as usize) == (opaque_source_provider as usize) {
                     map.remove(&key);
                     // SAFETY: we held a strong ref while in the table; release it.
-                    unsafe {
-                        bun_ptr::ThreadSafeRefCount::<ParsedSourceMap>::deref(parsed)
-                    };
+                    unsafe { ParsedSourceMap::deref(parsed) };
                 }
             }
         }
@@ -280,9 +276,7 @@ impl Drop for SavedSourceMap {
                 let value = Value::from(Some(*val));
                 if let Some(source_map) = value.get::<ParsedSourceMap>() {
                     // SAFETY: pointer was stored by us and is live until table teardown.
-                    unsafe {
-                        bun_ptr::ThreadSafeRefCount::<ParsedSourceMap>::deref(source_map)
-                    };
+                    unsafe { ParsedSourceMap::deref(source_map) };
                 } else if let Some(_provider) = value.get::<SourceProviderMap>() {
                     // do nothing, we did not hold a ref to ZigSourceProvider
                 } else if let Some(ism) = value.get::<InternalSourceMap>() {

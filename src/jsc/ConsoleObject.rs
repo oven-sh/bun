@@ -3466,11 +3466,11 @@ pub mod formatter {
 
                     // SAFETY: value is a Promise (Tag::Promise).
                     let promise: &JSPromise =
-                        unsafe { &*(value.as_object_ref().unwrap() as *const JSPromise) };
+                        unsafe { &*(value.as_object_ref() as *const JSPromise) };
                     match promise.status() {
-                        jsc::PromiseStatus::Pending => writer.write_all(b"<pending>"),
-                        jsc::PromiseStatus::Fulfilled => writer.write_all(b"<resolved>"),
-                        jsc::PromiseStatus::Rejected => writer.write_all(b"<rejected>"),
+                        jsc::js_promise::Status::Pending => writer.write_all(b"<pending>"),
+                        jsc::js_promise::Status::Fulfilled => writer.write_all(b"<resolved>"),
+                        jsc::js_promise::Status::Rejected => writer.write_all(b"<rejected>"),
                     }
 
                     writer.write_all(pf!("<r>").as_bytes());
@@ -3541,7 +3541,11 @@ pub mod formatter {
                     if let Some(func) = value.get(self.global_this, "toJSON")? {
                         match func.call(self.global_this, value, &[]) {
                             Err(_) => {
-                                self.global_this.clear_exception();
+                                // PORT NOTE: `JSGlobalObject::clear_exception`
+                                // lives on the gated `JSGlobalObject.rs` impl;
+                                // `try_take_exception()` clears + returns it,
+                                // so discard the value to get the same effect.
+                                let _ = self.global_this.try_take_exception();
                             }
                             Ok(result) => {
                                 let prev_quote_keys = self.quote_keys;

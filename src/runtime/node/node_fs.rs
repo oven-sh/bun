@@ -1215,8 +1215,8 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
 
         let mkdir_ = nodefs.mkdir_recursive_os_path(normdest, args::Mkdir::DEFAULT_MODE, false);
         match mkdir_ {
-            Maybe::Err(err) => { this.finish_concurrently(Maybe::Err(err)); return false; }
-            Maybe::Ok(_) => { this.on_copy(src, normdest); }
+            Maybe::Err(err) => { this_ref.finish_concurrently(Maybe::Err(err)); return false; }
+            Maybe::Ok(_) => { this_ref.on_copy(src, normdest); }
         }
 
         // PORT NOTE: `DirIterator.iterate(dir, kind)` (Zig runtime arg) maps to a

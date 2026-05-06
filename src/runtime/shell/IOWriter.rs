@@ -222,9 +222,14 @@ impl IOWriter {
         });
         // PORT NOTE: reshaped for borrowck — set the parent backref after Arc
         // allocation so the address is stable.
-        let parent = std::sync::Arc::as_ptr(&this) as *mut IOWriter;
-        // SAFETY: single owner at this point; address stable for Arc lifetime.
-        unsafe { (*parent).state().writer.set_parent(parent) };
+        // SAFETY: `Arc::as_ptr` yields `*const IOWriter`; cast to `*mut` only
+        // because the `BufferedWriterParent` callback ABI is `*mut Self`. The
+        // pointer is never used to materialize `&mut IOWriter` — every callback
+        // (`on_write`/`on_error`/`get_buffer`/…) re-enters via `&*this` and
+        // mutates solely through `UnsafeCell<State>` (`state()`), which carries
+        // its own write provenance. No const→mut UB.
+        let parent: *mut IOWriter = std::sync::Arc::as_ptr(&this).cast_mut();
+        this.state().writer.set_parent(parent);
         crate::shell_log!("IOWriter(0x{:x}, fd={}) init", parent as usize, fd);
         this
     }

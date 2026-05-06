@@ -118,7 +118,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 });
             }
 
-            // SAFETY: module_scope is arena-owned and valid for 'a.
+            // SAFETY: module_scope is arena-owned and valid for 'a. Exclusive access: the
+            // scope-walk loop above has ended, so its `scope: &Scope` borrow (which may have
+            // aliased module_scope on the final iteration) is dead; no other `&`/`&mut` to this
+            // Scope is live, and the allocation is disjoint from `*self`.
             let module_scope = unsafe { &mut *self.module_scope };
             let gpe = module_scope.get_or_put_member_with_hash(name, hash);
 
@@ -136,7 +139,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 .new_symbol(js_ast::symbol::Kind::Unbound, name)
                 .expect("unreachable");
 
-            // SAFETY: module_scope is arena-owned and valid for 'a.
+            // SAFETY: module_scope is arena-owned and valid for 'a. Exclusive access: the prior
+            // `module_scope`/`gpe` borrows were dropped above, and `new_symbol` only mutates
+            // `self.symbols`/`self.ts_use_counts` (never any Scope), so no other reference to
+            // this Scope is live.
             let module_scope = unsafe { &mut *self.module_scope };
             *module_scope
                 .get_or_put_member_with_hash(name, hash)

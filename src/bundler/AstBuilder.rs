@@ -124,7 +124,10 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
     // PORT NOTE: Zig signature lacks `!` but body uses `try` — porting as fallible.
     pub fn push_scope(&mut self, kind: ScopeKind) -> Result<*mut Scope, OOM> {
         self.scopes.reserve(1);
-        // SAFETY: current_scope is always a live arena allocation (set in init/push_scope)
+        // SAFETY: `current_scope` is a live bump-arena allocation (set in `init`/`push_scope`)
+        // and is uniquely accessed here — other copies of this pointer (in `self.scopes`
+        // / child `parent` links) are raw and not dereferenced for the duration of this
+        // temporary `&mut`.
         unsafe { &mut *self.current_scope }
             .children
             .ensure_unused_capacity(1)?;
@@ -135,8 +138,9 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             generated: Default::default(),
             ..Default::default()
         });
-        // SAFETY: current_scope is always a live arena allocation; scope is a fresh
-        // arena allocation so the NonNull cast is sound.
+        // SAFETY: `current_scope` is a live bump-arena allocation and uniquely accessed
+        // here (the prior `&mut` temporary above has ended; `scope` points to a distinct
+        // fresh allocation). `scope` came from `bump.alloc`, so it is non-null.
         unsafe { &mut *self.current_scope }
             .children
             .append_assume_capacity(unsafe { NonNull::new_unchecked(scope) });

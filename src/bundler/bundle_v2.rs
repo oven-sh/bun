@@ -2675,19 +2675,18 @@ impl<'a> BundleV2<'a> {
 
         this.clone_ast()?;
 
-        // SAFETY: `Graph::entry_points` is `Vec<bun_js_parser::Index>` while
-        // `LinkerContext::link` takes `&mut [crate::Index]`; both are
-        // `repr(transparent)` u32 newtypes so the slice cast is sound. The
-        // raw-ptr dance also sidesteps the `&mut self.linker` / `&mut *this`
-        // / `&mut this.graph` borrow overlap (Zig stored all as raw ptrs).
+        // SAFETY: `Graph::entry_points` is `Vec<js_ast::Index>` and
+        // `LinkerContext::link` takes `&[js_ast::Index]`; the raw-ptr dance
+        // sidesteps the `&mut self.linker` / `&mut *this` / `&this.graph`
+        // borrow overlap (Zig stored all as raw ptrs).
         let mut chunks = unsafe {
             let bundle_ptr: *mut BundleV2 = &mut *this;
             let ep_len = (*bundle_ptr).graph.entry_points.len();
-            let ep: *mut Index = (*bundle_ptr).graph.entry_points.as_mut_ptr().cast();
+            let ep = (*bundle_ptr).graph.entry_points.as_ptr();
             let scbs = core::mem::take(&mut (*bundle_ptr).graph.server_component_boundaries);
             this.linker.link(
                 &mut *bundle_ptr,
-                core::slice::from_raw_parts_mut(ep, ep_len),
+                core::slice::from_raw_parts(ep, ep_len),
                 scbs,
                 &mut reachable_files,
             )?
@@ -2821,16 +2820,16 @@ impl<'a> BundleV2<'a> {
 
         this.clone_ast()?;
 
-        // SAFETY: see `generate_from_cli` — repr(transparent) Index slice cast +
-        // raw-ptr borrow sidestep.
+        // SAFETY: see `generate_from_cli` — raw-ptr borrow sidestep for
+        // `&mut self.linker` / `&mut *this` / `&this.graph.entry_points`.
         let mut chunks = unsafe {
             let bundle_ptr: *mut BundleV2 = &mut *this;
             let ep_len = (*bundle_ptr).graph.entry_points.len();
-            let ep: *mut Index = (*bundle_ptr).graph.entry_points.as_mut_ptr().cast();
+            let ep = (*bundle_ptr).graph.entry_points.as_ptr();
             let scbs = core::mem::take(&mut (*bundle_ptr).graph.server_component_boundaries);
             this.linker.link(
                 &mut *bundle_ptr,
-                core::slice::from_raw_parts_mut(ep, ep_len),
+                core::slice::from_raw_parts(ep, ep_len),
                 scbs,
                 &mut reachable_files,
             )?
@@ -3059,9 +3058,10 @@ impl<'a> BundleV2<'a> {
                         // only on macOS (kqueue needs an open fd per file).
                         let fd = if cfg!(target_os = "macos") {
                             let mut buf = bun_paths::path_buffer_pool::get();
-                            let posix_path = bun_paths::resolve_path::path_to_posix_buf(load.path.as_ref(), &mut **buf);
-                            // PORT NOTE: `Watcher.WATCH_OPEN_FLAGS` = `O_EVTONLY` on macOS.
-                            match bun_sys::open(bun_paths::resolve_path::z(posix_path, &mut **buf), 0x8000 /* O_EVTONLY */, 0) {
+                            // PORT NOTE: Zig used `std.posix.toPosixPath` (copy + NUL-
+                            // terminate); on macOS paths are already posix-separated so
+                            // `z()` alone suffices. `Watcher.WATCH_OPEN_FLAGS` = `O_EVTONLY`.
+                            match bun_sys::open(bun_paths::resolve_path::z(load.path.as_ref(), &mut buf), 0x8000 /* O_EVTONLY */, 0) {
                                 bun_sys::Result::Ok(fd) => fd,
                                 bun_sys::Result::Err(_) => break 'add_watchers,
                             }

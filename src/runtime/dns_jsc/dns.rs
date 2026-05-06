@@ -2629,15 +2629,102 @@ pub enum CacheHit {
     Disabled,
 }
 
-pub enum LookupCacheHit<R> {
-    // TODO(port): Zig's `LookupCacheHit(request_type)` referenced `request_type.PendingCacheKey`.
-    // We thread the request type via `R` and resolve `PendingCacheKey` per-impl below.
+pub enum LookupCacheHit<R: HasPendingCacheKey> {
+    // PORT NOTE: Zig's `LookupCacheHit(request_type)` referenced `request_type.PendingCacheKey`.
+    // We thread the request type via `R` and resolve `PendingCacheKey` through `HasPendingCacheKey`.
     Inflight(*mut R::PendingCacheKey), // BORROW_FIELD
     New(*mut R::PendingCacheKey),      // BORROW_FIELD
     Disabled,
 }
-// TODO(port): replace `R::PendingCacheKey` projection with an associated-type trait
-// `pub trait HasPendingCacheKey { type PendingCacheKey; }` impl'd by each request type.
+
+/// Associates a request type with its `PendingCacheKey` and the matching `HiveArray`
+/// field on `Resolver`. Stands in for Zig's `request_type.PendingCacheKey` projection
+/// and `@field(resolver, comptime cache_name)` reflection.
+pub trait HasPendingCacheKey {
+    type PendingCacheKey;
+
+    /// Return `&mut @field(resolver, cache_name)` — the per-request-type pending HiveArray.
+    /// `field` is the runtime tag of the comptime field name (some request types are reachable
+    /// via more than one field, e.g. `pending_host_cache_{cares,native}`).
+    fn pending_cache(
+        resolver: &mut Resolver,
+        field: PendingCacheField,
+    ) -> &mut HiveArray<Self::PendingCacheKey, 32>;
+
+    /// `key.hash` — all `PendingCacheKey` shapes carry `{ hash: u64, len: u16, lookup: *mut _ }`.
+    fn key_hash(key: &Self::PendingCacheKey) -> u64;
+    /// `key.len`
+    fn key_len(key: &Self::PendingCacheKey) -> u16;
+    /// Partially initialize a freshly-claimed slot's `{hash, len}`; `lookup` is filled in later
+    /// by `*Request::init` once the request has been heap-allocated.
+    ///
+    /// SAFETY: `slot` must point at a valid (possibly uninitialized) `PendingCacheKey` slot
+    /// inside the resolver's HiveArray buffer.
+    unsafe fn key_write_hash_len(slot: *mut Self::PendingCacheKey, hash: u64, len: u16);
+}
+
+impl<T: CAresRecordType> HasPendingCacheKey for ResolveInfoRequest<T> {
+    type PendingCacheKey = resolve_info_request::PendingCacheKey<T>;
+
+    #[inline]
+    fn pending_cache(
+        resolver: &mut Resolver,
+        field: PendingCacheField,
+    ) -> &mut HiveArray<Self::PendingCacheKey, 32> {
+        resolver.pending_cache_for::<T>(field)
+    }
+    #[inline]
+    fn key_hash(key: &Self::PendingCacheKey) -> u64 { key.hash }
+    #[inline]
+    fn key_len(key: &Self::PendingCacheKey) -> u16 { key.len }
+    #[inline]
+    unsafe fn key_write_hash_len(slot: *mut Self::PendingCacheKey, hash: u64, len: u16) {
+        ptr::addr_of_mut!((*slot).hash).write(hash);
+        ptr::addr_of_mut!((*slot).len).write(len);
+    }
+}
+
+impl HasPendingCacheKey for GetHostByAddrInfoRequest {
+    type PendingCacheKey = get_host_by_addr_info_request::PendingCacheKey;
+
+    #[inline]
+    fn pending_cache(
+        resolver: &mut Resolver,
+        _field: PendingCacheField,
+    ) -> &mut HiveArray<Self::PendingCacheKey, 32> {
+        &mut resolver.pending_addr_cache_cares
+    }
+    #[inline]
+    fn key_hash(key: &Self::PendingCacheKey) -> u64 { key.hash }
+    #[inline]
+    fn key_len(key: &Self::PendingCacheKey) -> u16 { key.len }
+    #[inline]
+    unsafe fn key_write_hash_len(slot: *mut Self::PendingCacheKey, hash: u64, len: u16) {
+        ptr::addr_of_mut!((*slot).hash).write(hash);
+        ptr::addr_of_mut!((*slot).len).write(len);
+    }
+}
+
+impl HasPendingCacheKey for GetNameInfoRequest {
+    type PendingCacheKey = get_name_info_request::PendingCacheKey;
+
+    #[inline]
+    fn pending_cache(
+        resolver: &mut Resolver,
+        _field: PendingCacheField,
+    ) -> &mut HiveArray<Self::PendingCacheKey, 32> {
+        &mut resolver.pending_nameinfo_cache_cares
+    }
+    #[inline]
+    fn key_hash(key: &Self::PendingCacheKey) -> u64 { key.hash }
+    #[inline]
+    fn key_len(key: &Self::PendingCacheKey) -> u16 { key.len }
+    #[inline]
+    unsafe fn key_write_hash_len(slot: *mut Self::PendingCacheKey, hash: u64, len: u16) {
+        ptr::addr_of_mut!((*slot).hash).write(hash);
+        ptr::addr_of_mut!((*slot).len).write(len);
+    }
+}
 
 pub enum ChannelResult<'a> {
     Err(c_ares::Error),

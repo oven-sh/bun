@@ -157,9 +157,6 @@ impl DirInfo {
 // the comptime-returned struct). Rust `BSSMapInner<DirInfo, ..>` cannot host a
 // per-generic-instantiation static on stable, so the singleton pointer lives here at
 // the use site and `bun_alloc::BSSMapInner::init()` hands back the storage.
-// TODO(b2-blocked): bun_alloc::BSSMapInner per-type storage — `init()` body is
-// currently `unimplemented!()`; this becomes real once bun_alloc un-gates its BSS
-// backing arrays.
 static mut DIR_INFO_MAP: Option<NonNull<HashMap>> = None;
 
 #[inline]

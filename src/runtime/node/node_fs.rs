@@ -214,11 +214,13 @@ use super::stat::PosixStat;
 
 /// Node `fs.rm` mapping helper — `bun_core::err!("Name")` produces a
 /// `bun_core::Error` from a static error-set name; the *reverse* (name →
-/// `Error` for return) needs the same constructor. `bun_core` has the macro
-/// but no free fn, so wrap it.
+/// `Error` for return) needs the same constructor. The macro caches per
+/// *call site*, but `dt_err` feeds a runtime-selected name from a `match`,
+/// so route through the underlying `Error::intern` (process-global string→u16
+/// table; idempotent, lock-free after first hit on the SEED set).
 #[inline]
 fn err_from_static(name: &'static str) -> bun_core::Error {
-    todo!("blocked_on: bun_core::err_from_static")
+    bun_core::Error::intern(name)
 }
 
 /// `bun.sys.preallocate_supported` / `preallocate_length` — the Zig consts

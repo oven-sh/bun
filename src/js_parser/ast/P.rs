@@ -6656,10 +6656,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         res
     }
 
-    // TODO(port): keepStmtSymbolName was @compileError("not implemented") in Zig — keep as todo!()
+    // Zig: `@compileError("not implemented")` — the body is a compile-time error
+    // there, i.e. provably uncalled (Zig would refuse to build if any caller
+    // existed). Port as `unreachable!()` per the @compileError convention used
+    // elsewhere in this file (see `wrap_identifier` arm).
     #[allow(unused)]
     fn keep_stmt_symbol_name(&mut self, _loc: logger::Loc, _ref: Ref, _name: &[u8]) -> Stmt {
-        todo!("not implemented")
+        unreachable!("not implemented")
     }
 
     // runtime_identifier_ref / runtime_identifier / call_runtime: moved to ungated impl (round-G).

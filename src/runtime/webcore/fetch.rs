@@ -1638,10 +1638,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
             let opened_fd = match opened_fd_res {
                 Err(err) => {
-                    let err_js = match err.to_js(global_this) {
-                        Ok(v) => v,
-                        Err(_) => return Ok(JSValue::ZERO),
-                    };
+                    let err_js = err.to_js(global_this);
                     let rejected_value =
                         JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                             global_this,

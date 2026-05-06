@@ -787,7 +787,8 @@ pub fn construct_internal_js(
     options: Option<JSValue>,
 ) -> JsResult<JSValue> {
     let blob = construct_s3_file_internal(global, path, options)?;
-    Ok(blob.to_js(global))
+    // SAFETY: `blob` is a freshly heap-allocated `*mut Blob` from `Blob::new`.
+    Ok(unsafe { (*blob).to_js(global) })
 }
 
 pub fn to_js_unchecked(global: &JSGlobalObject, this: *mut Blob) -> JSValue {
@@ -795,37 +796,39 @@ pub fn to_js_unchecked(global: &JSGlobalObject, this: *mut Blob) -> JSValue {
     unsafe { BUN__createJSS3FileUnsafely(global, this) }
 }
 
-pub fn construct_internal(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<Box<Blob>> {
-    let vm = global.bun_vm();
-    let arguments = callframe.arguments_old(2).slice();
-    let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, arguments);
+pub fn construct_internal(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<*mut Blob> {
+    // SAFETY: bun_vm() returns the live VM raw ptr.
+    let vm = unsafe { &*global.bun_vm() };
+    let arguments = callframe.arguments_old::<2>();
+    let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, arguments.slice());
 
     let Some(path) = PathLike::from_js(global, &mut args)? else {
-        return global.throw_invalid_arguments("Expected file path string", &[]);
+        return Err(global.throw_invalid_arguments("Expected file path string"));
     };
     construct_s3_file_internal(global, path, args.next_eat())
 }
 
 // TODO(port): callconv(jsc.conv) — #[bun_jsc::host_fn] macro emits the raw ABI shim; @export name handled below
-pub fn construct(global: &JSGlobalObject, callframe: &CallFrame) -> Option<Box<Blob>> {
+pub fn construct(global: &JSGlobalObject, callframe: &CallFrame) -> *mut Blob {
     match construct_internal(global, callframe) {
-        Ok(b) => Some(b),
-        Err(JsError::Thrown) => None,
+        Ok(b) => b,
+        Err(JsError::Thrown) => core::ptr::null_mut(),
         Err(JsError::OutOfMemory) => {
             let _ = global.throw_out_of_memory_value();
-            None
+            core::ptr::null_mut()
         }
-        Err(JsError::Terminated) => None,
+        Err(JsError::Terminated) => core::ptr::null_mut(),
     }
 }
 
 // TODO(port): callconv(jsc.conv) — raw ABI shim emitted by #[bun_jsc::host_fn]
 pub fn has_instance(_: JSValue, _global: &JSGlobalObject, value: JSValue) -> bool {
-    bun_jsc::mark_binding(core::panic::Location::caller());
+    bun_jsc::mark_binding();
     let Some(blob) = value.as_::<Blob>() else {
         return false;
     };
-    blob.is_s3()
+    // SAFETY: `as_::<Blob>()` returns a non-null `*mut Blob` for a live Blob cell.
+    unsafe { (*blob).is_s3() }
 }
 
 // @export block — symbols exported with C linkage and JSC calling convention.

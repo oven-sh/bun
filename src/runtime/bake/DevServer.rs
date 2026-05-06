@@ -870,7 +870,9 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
         }
         h.update(&[0]);
 
-        break 'hash_key bun_core::fmt::bytes_to_hex_lower(&h.final_().to_ne_bytes());
+        let mut out = [0u8; 16];
+        bun_core::fmt::bytes_to_hex_lower(&h.final_().to_ne_bytes(), &mut out);
+        break 'hash_key out;
     };
 
     // Add react fast refresh if needed. This is the first file on the client side,

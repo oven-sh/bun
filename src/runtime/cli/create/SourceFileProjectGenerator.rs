@@ -672,13 +672,13 @@ fn find_react_component_export<'r>(bundler: &'r BundleV2<'_>) -> Option<&'r [u8]
 
     let entry_point_ids = bundler.graph.entry_points.as_slice();
     for entry_point_id in entry_point_ids {
-        let loader = loaders[entry_point_id.get()];
+        let loader = loaders[entry_point_id.get() as usize];
         if matches!(
             loader,
             bun_bundler::options::Loader::Jsx | bun_bundler::options::Loader::Tsx
         ) {
-            let source: &LoggerSource = &sources[entry_point_id.get()];
-            let exports = &resolved_exports[entry_point_id.get()];
+            let source: &LoggerSource = &sources[entry_point_id.get() as usize];
+            let exports = &resolved_exports[entry_point_id.get() as usize];
 
             // 1. Prioritize the default export
             if exports.contains(b"default") {

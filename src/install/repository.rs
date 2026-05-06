@@ -484,7 +484,8 @@ impl Repository {
 
     pub fn try_ssh(url: &[u8]) -> Option<&[u8]> {
         // TODO(port): lifetime — returns slice into thread-local buffer; see tl_bufs().
-        let ssh_path_buf = &mut tl_bufs().ssh_path_buf;
+        // SAFETY: raw-ptr field projection — retags only `ssh_path_buf`. See tl_bufs().
+        let ssh_path_buf = unsafe { &mut (*tl_bufs()).ssh_path_buf };
         // Do not cast explicit http(s) URLs to SSH
         if url.starts_with(b"http") {
             return None;
@@ -554,7 +555,8 @@ impl Repository {
 
     pub fn try_https(url: &[u8]) -> Option<&[u8]> {
         // TODO(port): lifetime — returns slice into thread-local buffer; see tl_bufs().
-        let final_path_buf = &mut tl_bufs().final_path_buf;
+        // SAFETY: raw-ptr field projection — retags only `final_path_buf`. See tl_bufs().
+        let final_path_buf = unsafe { &mut (*tl_bufs()).final_path_buf };
         if url.starts_with(b"http") {
             return Some(url);
         }
@@ -609,7 +611,10 @@ impl Repository {
     ) -> Result<bun_sys::Dir, Error> {
         // TODO(port): std::fs::Dir is banned — using bun_sys::Dir placeholder; verify API in Phase B.
         bun_analytics::Features::git_dependencies_inc();
-        let folder_name_buf = &mut tl_bufs().folder_name_buf;
+        // SAFETY: raw-ptr field projection — retags only `folder_name_buf`, leaving any
+        // live shared borrow of `final_path_buf`/`ssh_path_buf` (the `url` argument, per
+        // PackageManagerTask.zig:179,206) valid under Stacked Borrows. See tl_bufs().
+        let folder_name_buf = unsafe { &mut (*tl_bufs()).folder_name_buf };
         let folder_name = {
             use std::io::Write;
             let mut cursor = &mut folder_name_buf[..];
@@ -695,7 +700,8 @@ impl Repository {
         committish: &[u8],
         task_id: Install::task::Id,
     ) -> Result<Vec<u8>, Error> {
-        let folder_name_buf = &mut tl_bufs().folder_name_buf;
+        // SAFETY: raw-ptr field projection — retags only `folder_name_buf`. See tl_bufs().
+        let folder_name_buf = unsafe { &mut (*tl_bufs()).folder_name_buf };
         let folder_name = {
             use std::io::Write;
             let mut cursor = &mut folder_name_buf[..];
@@ -763,8 +769,9 @@ impl Repository {
         // TODO(port): std::fs::Dir is banned — using bun_sys::Dir placeholder; verify API in Phase B.
         bun_analytics::Features::git_dependencies_inc();
         let bufs = tl_bufs();
+        // SAFETY: raw-ptr field projection — retags only `folder_name_buf`. See tl_bufs().
         let folder_name =
-            PackageManager::cached_git_folder_name_print(&mut bufs.folder_name_buf, resolved, None);
+            PackageManager::cached_git_folder_name_print(unsafe { &mut (*bufs).folder_name_buf }, resolved, None);
 
         let mut package_dir = match bun_sys::open_dir(cache_dir, folder_name) {
             Ok(d) => d,
@@ -781,7 +788,9 @@ impl Repository {
 
                 let repo_path = bun_sys::get_fd_path(
                     bun_sys::Fd::from_std_dir(repo_dir),
-                    &mut bufs.final_path_buf,
+                    // SAFETY: raw-ptr field projection — disjoint from `folder_name_buf`
+                    // borrow above. See tl_bufs().
+                    unsafe { &mut (*bufs).final_path_buf },
                 )?;
 
                 if let Err(err) = Self::exec(
@@ -877,7 +886,8 @@ impl Repository {
                 }
             };
 
-        let json_path = match json_file.get_path(&mut bufs.json_path_buf).unwrap() {
+        // SAFETY: raw-ptr field projection — retags only `json_path_buf`. See tl_bufs().
+        let json_path = match json_file.get_path(unsafe { &mut (*bufs).json_path_buf }).unwrap() {
             Ok(p) => p,
             Err(err) => {
                 log.add_error_fmt(

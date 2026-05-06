@@ -373,28 +373,34 @@ impl TarballStream {
     /// Move any bytes still sitting in `pending` into `reading` so the read
     /// callback can hand them to libarchive. Returns true if new bytes were
     /// added or the stream is now closed.
-    fn take_pending(&mut self) -> bool {
-        self.mutex.lock();
-        let guard = scopeguard::guard(&mut self.mutex, |m| m.unlock());
-        // PORT NOTE: `defer this.mutex.unlock()` → scopeguard; the early-return
-        // path below must release the lock.
+    ///
+    /// # Safety
+    /// `this` must be live. Called re-entrantly from inside libarchive's
+    /// read callback while `step()`'s `&mut self` is on the stack, so this
+    /// must NOT materialise `&mut TarballStream` — all access is via
+    /// raw-ptr field projection (matches Zig's freely-aliasing
+    /// `*TarballStream`). Producer fields (`pending`/`closed`) are
+    /// synchronised by `mutex`; drain-side fields (`reading`/`read_pos`/
+    /// `hasher`) are owned by the single active drain task.
+    unsafe fn take_pending(this: *mut Self) -> bool {
+        (*this).mutex.lock();
 
-        if self.pending.is_empty() {
-            let closed = self.closed;
-            drop(guard);
+        if (*this).pending.is_empty() {
+            let closed = (*this).closed;
+            (*this).mutex.unlock();
             return closed;
         }
 
         // Hash before libarchive sees the bytes so integrity covers exactly
         // what came off the socket.
-        self.hasher.update(&self.pending);
+        (*this).hasher.update(&(*this).pending);
 
-        if self.reading.len() == self.read_pos {
+        if (*this).reading.len() == (*this).read_pos {
             // Previous buffer fully consumed — swap so the HTTP thread can
             // reuse its capacity without reallocating.
-            self.reading.clear();
-            core::mem::swap(&mut self.reading, &mut self.pending);
-            self.read_pos = 0;
+            (*this).reading.clear();
+            core::mem::swap(&mut (*this).reading, &mut (*this).pending);
+            (*this).read_pos = 0;
         } else {
             // libarchive still holds a slice into `reading` (the read
             // callback contract keeps the last-returned buffer valid until
@@ -403,18 +409,16 @@ impl TarballStream {
             // in place — the callback is not running concurrently with us
             // (single drain at a time) and will be re-primed with the new
             // base on its next invocation.
-            let remaining = self.reading.len() - self.read_pos;
-            self.reading.copy_within(self.read_pos.., 0);
-            self.reading.truncate(remaining);
-            self.read_pos = 0;
-            self.reading.extend_from_slice(&self.pending);
-            self.pending.clear();
+            let read_pos = (*this).read_pos;
+            let remaining = (*this).reading.len() - read_pos;
+            (*this).reading.copy_within(read_pos.., 0);
+            (*this).reading.truncate(remaining);
+            (*this).read_pos = 0;
+            (*this).reading.extend_from_slice(&(*this).pending);
+            (*this).pending.clear();
         }
-        drop(guard);
+        (*this).mutex.unlock();
         true
-        // TODO(port): scopeguard above borrows `&mut self.mutex` while other
-        // fields are also borrowed; Phase B may need to split borrows or
-        // restructure as explicit unlock calls (the Zig path is linear).
     }
 
     /// Run libarchive until it needs more input (`Retry`) or hits a

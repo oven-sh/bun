@@ -418,7 +418,11 @@ impl<'a> LinkerContext<'a> {
     }
 
     fn process_html_import_files(&mut self) {
-        // SAFETY: parse_graph backref valid for self lifetime
+        // SAFETY: `parse_graph` is a backref to `BundleV2.graph`, a sibling
+        // field of `BundleV2.linker` (= `*self`). The two are disjoint, and no
+        // other `&`/`&mut` to `BundleV2.graph` is live for this scope —
+        // `self.graph` below is `LinkerGraph`, a distinct allocation, and
+        // `self.allocator()` reads `self.graph`, not `*parse_graph`.
         let parse_graph = unsafe { &mut *self.parse_graph };
         let server_source_indices = &parse_graph.html_imports.server_source_indices;
         let html_source_indices = &mut parse_graph.html_imports.html_source_indices;
@@ -490,7 +494,10 @@ impl<'a> LinkerContext<'a> {
 
         // Validate top-level await for all files first.
         if bundle.has_any_top_level_await_modules {
-            // SAFETY: parse_graph backref
+            // SAFETY: `parse_graph` is a backref to `BundleV2.graph`, disjoint
+            // from `*self` (= `BundleV2.linker`). Sole live `&mut` into that
+            // allocation here — `validate_tla` receives only the reborrowed
+            // column slices below and does not itself touch `*self.parse_graph`.
             let parse_graph = unsafe { &mut *self.parse_graph };
             let import_records_list: &[ImportRecord::List] = self.graph.ast.items_import_records();
             let tla_keywords = parse_graph.ast.items_top_level_await_keyword();
@@ -1132,39 +1139,71 @@ impl SourceMapDataTask {
 // TODO(b2-blocked): see SourceMapDataTask above.
 
 impl SourceMapData {
-    pub fn compute_line_offsets(this: &mut LinkerContext, alloc: &Bump, source_index: crate::IndexInt) {
+    /// Runs concurrently across the worker pool (one task per `source_index`).
+    /// Takes `*mut LinkerContext` (not `&mut`) because Zig's `*LinkerContext`
+    /// freely aliases across threads — materializing `&mut LinkerContext` here
+    /// while peer tasks hold the same pointer would be aliased-mut UB. Each
+    /// task writes only `graph.files[source_index].line_offset_table`
+    /// (disjoint by `source_index`); all other access is read-only.
+    pub fn compute_line_offsets(this: *mut LinkerContext, alloc: &Bump, source_index: crate::IndexInt) {
+        use crate::linker_graph::FileField;
         debug!("Computing LineOffsetTable: {}", source_index);
-        let line_offset_table: &mut LineOffsetTable::List =
-            &mut this.graph.files.items_line_offset_table_mut()[source_index as usize];
+        // SAFETY: `this` is a backref to `BundleV2.linker`, valid for the link
+        // step. We only take transient `&` (autoref) to read SoA column base
+        // pointers via `Slice::items_raw`; the underlying `MultiArrayList`
+        // header is not mutated for the duration of these tasks. The write
+        // target is the per-source_index slot, addressed by raw pointer —
+        // disjoint across concurrent tasks.
+        let line_offset_table: *mut LineOffsetTable::List = unsafe {
+            (*this).graph.files.slice()
+                .items_raw::<LineOffsetTable::List>(FileField::line_offset_table)
+                .add(source_index as usize)
+        };
 
-        // SAFETY: parse_graph backref
-        let parse_graph = unsafe { &*this.parse_graph };
+        // SAFETY: parse_graph backref; read-only across all tasks.
+        let parse_graph = unsafe { &*(*this).parse_graph };
         let source: &Source = &parse_graph.input_files.items_source()[source_index as usize];
         let loader: Loader = parse_graph.input_files.items_loader()[source_index as usize];
 
         if !loader.can_have_source_map() {
             // This is not a file which we support generating source maps for
-            *line_offset_table = Default::default();
+            // SAFETY: sole writer to this slot (disjoint by source_index).
+            unsafe { *line_offset_table = Default::default() };
             return;
         }
 
-        let approximate_line_count = this.graph.ast.items_approximate_newline_count()[source_index as usize];
+        // SAFETY: `graph.ast` is read-only for the duration of these tasks.
+        let approximate_line_count =
+            unsafe { (*this).graph.ast.items_approximate_newline_count()[source_index as usize] };
 
-        *line_offset_table = LineOffsetTable::generate(
-            alloc,
-            &source.contents,
-            // We don't support sourcemaps for source files with more than 2^31 lines
-            (approximate_line_count as u32 & 0x7FFF_FFFF) as i32, // @intCast(@truncate to u31)
-        );
+        // SAFETY: sole writer to this slot (disjoint by source_index).
+        unsafe {
+            *line_offset_table = LineOffsetTable::generate(
+                alloc,
+                &source.contents,
+                // We don't support sourcemaps for source files with more than 2^31 lines
+                (approximate_line_count as u32 & 0x7FFF_FFFF) as i32, // @intCast(@truncate to u31)
+            );
+        }
     }
 
-    pub fn compute_quoted_source_contents(this: &mut LinkerContext, _alloc: &Bump, source_index: crate::IndexInt) {
+    /// Runs concurrently across the worker pool — see `compute_line_offsets`
+    /// for the raw-pointer aliasing contract.
+    pub fn compute_quoted_source_contents(this: *mut LinkerContext, _alloc: &Bump, source_index: crate::IndexInt) {
+        use crate::linker_graph::FileField;
         debug!("Computing Quoted Source Contents: {}", source_index);
-        let quoted_source_contents = &mut this.graph.files.items_quoted_source_contents_mut()[source_index as usize];
+        // SAFETY: see `compute_line_offsets` — transient `&` to read the SoA
+        // column base, then raw-ptr offset to the per-source_index slot. Sole
+        // writer to this slot (disjoint across concurrent tasks).
+        let quoted_source_contents = unsafe {
+            &mut *(*this).graph.files.slice()
+                .items_raw::<Option<Box<[u8]>>>(FileField::quoted_source_contents)
+                .add(source_index as usize)
+        };
         quoted_source_contents.reset();
 
-        // SAFETY: parse_graph backref
-        let parse_graph = unsafe { &*this.parse_graph };
+        // SAFETY: parse_graph backref; read-only across all tasks.
+        let parse_graph = unsafe { &*(*this).parse_graph };
         let loader: Loader = parse_graph.input_files.items_loader()[source_index as usize];
         if !loader.can_have_source_map() {
             return;
@@ -3377,7 +3416,13 @@ impl<'a> LinkerContext<'a> {
         self.create_exports_for_file(
             allocator,
             id,
-            // SAFETY: see above.
+            // SAFETY: `resolved_exports` points at one slot of the
+            // `meta.resolved_exports` SoA column; `imports_to_bind` is a
+            // distinct SoA column (disjoint allocation). The earlier iterator
+            // over `*resolved_exports` ended above, so this is the sole live
+            // `&mut` into that slot. `create_exports_for_file` writes only via
+            // this param and never re-borrows `meta.resolved_exports` through
+            // `self`.
             unsafe { &mut *resolved_exports },
             unsafe { &*imports_to_bind },
             export_aliases,

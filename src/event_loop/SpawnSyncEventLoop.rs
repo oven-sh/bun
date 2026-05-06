@@ -256,16 +256,23 @@ impl SpawnSyncEventLoop {
 
 #[cfg(windows)]
 extern "C" fn on_uv_timer(timer_: *mut libuv::Timer) {
-    // SAFETY: `data` was set to `self` in `prepare_timer_on_windows`; the SpawnSyncEventLoop
-    // outlives the timer (timer is stopped/closed in `cleanup`/`Drop`).
+    // SAFETY: `data` was set to `self` in `tick_with_timeout` immediately before the uws tick;
+    // the SpawnSyncEventLoop outlives the timer (timer is stopped/closed in `cleanup`/`Drop`).
+    //
     // ALIASING: this callback fires re-entrantly from inside `tick_with_timeout`'s uws tick
-    // (uv_run) while that frame still holds `&mut self`. Zig's `*T` freely aliases, but in
-    // Rust materializing a second `&mut SpawnSyncEventLoop` here would violate noalias — so
-    // operate through the raw pointer only (no `&mut *this`).
+    // (uv_run) while that frame still holds `&mut self` (LLVM `noalias`) AND a live
+    // `&mut uws::Loop` (Loop::tick_with_timeout takes `&mut self`). Zig's `*T` freely aliases,
+    // but in Rust we must not:
+    //   (a) materialize a second `&mut SpawnSyncEventLoop` here, nor
+    //   (b) read `(*this).uws_loop` — the outer frame's `&mut self` access to `uws_loop` at the
+    //       tick call popped the raw `*mut Self`'s Stacked-Borrows tag at those bytes, and the
+    //       `&mut uws::Loop` it produced is still live around us.
+    // So: touch only `(*this).did_timeout` (a `Cell`, interior-mutable), and obtain the uv loop
+    // from the timer handle itself rather than routing through `*this`.
     unsafe {
         let this: *mut SpawnSyncEventLoop = (*timer_).data.cast::<SpawnSyncEventLoop>();
-        (*this).did_timeout = true;
-        (*(*(*this).uws_loop.as_ptr()).uv_loop).stop();
+        (*this).did_timeout.set(true);
+        (*libuv::uv_handle_get_loop(timer_.cast())).stop();
     }
 }
 
@@ -292,10 +299,12 @@ impl SpawnSyncEventLoop {
         };
 
         // SAFETY: timer is a valid initialized libuv timer handle.
+        // NOTE: `timer.data` is assigned later in `tick_with_timeout`, immediately before the
+        // uws tick, so the stored `*mut Self` derives directly from that frame's live `&mut self`
+        // (not from this function's reborrow, which would be invalidated on return).
         unsafe {
             (*timer.as_ptr()).start(ts.ms_unsigned(), 0, on_uv_timer);
             (*timer.as_ptr()).ref_();
-            (*timer.as_ptr()).data = (self as *mut Self).cast();
         }
         self.uv_timer = Some(timer);
     }

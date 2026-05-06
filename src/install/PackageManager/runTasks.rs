@@ -1566,16 +1566,12 @@ pub fn generate_network_task_for_tarball(
         return Ok(None);
     }
 
-    let network_task = this.get_network_task();
-
     // PORT NOTE: reshaped for borrowck — Zig writes the whole struct via `.* = .{}`.
-    // Here we set fields individually since `network_task` is `&mut NetworkTask`
-    // borrowed from a pool, and `apply_patch_task` needs `this`.
-    network_task.task_id = task_id;
-    // `callback` left to be set by `for_tarball` below (Zig: `undefined`).
-    // TODO(port): allocator field dropped (global allocator).
-    network_task.package_manager = this as *mut PackageManager; // TODO(port): lifetime — BACKREF
-    network_task.apply_patch_task = if let Some(h) = patch_name_and_version_hash {
+    // `get_network_task()` borrows `&mut this.preallocated_network_tasks`, so we
+    // compute every value that needs `this` *before* taking that borrow, then
+    // populate `network_task` without touching `this`.
+    let this_ptr: *mut PackageManager = this; // TODO(port): lifetime — BACKREF
+    let apply_patch_task = if let Some(h) = patch_name_and_version_hash {
         'brk: {
             let patch_hash = this
                 .lockfile
@@ -1591,40 +1587,63 @@ pub fn generate_network_task_for_tarball(
     } else {
         None
     };
+    let pkg_name = this.lockfile.str(&package.name);
+    let scope = this.scope_for_package_name(pkg_name);
+    let extract_tarball = ExtractTarball {
+        package_manager: this_ptr, // TODO(port): lifetime — BACKREF
+        name: strings::StringOrTinyString::init_append_if_needed(
+            pkg_name,
+            FileSystem::FilenameStore::instance(),
+        ),
+        resolution: package.resolution,
+        cache_dir: this.get_cache_directory(),
+        temp_dir: this.get_temporary_directory().handle,
+        dependency_id,
+        integrity: package.meta.integrity,
+        url: strings::StringOrTinyString::init_append_if_needed(
+            url,
+            FileSystem::FilenameStore::instance(),
+        ),
+    };
 
-    let scope = this.scope_for_package_name(this.lockfile.str(&package.name));
+    let network_task = this.get_network_task();
 
-    network_task.for_tarball(
-        &ExtractTarball {
-            package_manager: this as *mut PackageManager, // TODO(port): lifetime — BACKREF
-            name: strings::StringOrTinyString::init_append_if_needed(
-                this.lockfile.str(&package.name),
-                FileSystem::FilenameStore::instance(),
-            ),
-            resolution: package.resolution,
-            cache_dir: this.get_cache_directory(),
-            temp_dir: this.get_temporary_directory().handle,
-            dependency_id,
-            integrity: package.meta.integrity,
-            url: strings::StringOrTinyString::init_append_if_needed(
-                url,
-                FileSystem::FilenameStore::instance(),
-            ),
-        },
-        scope,
-        authorization,
-    )?;
+    network_task.task_id = task_id;
+    // `callback` left to be set by `for_tarball` below (Zig: `undefined`).
+    // TODO(port): allocator field dropped (global allocator).
+    network_task.package_manager = this_ptr;
+    network_task.apply_patch_task = apply_patch_task;
+
+    network_task.for_tarball(&extract_tarball, scope, authorization)?;
 
     if ExtractTarball::uses_streaming_extraction() {
         // Pre-create the extract Task and streaming state here on the
         // main thread: `preallocated_resolve_tasks` is not thread-safe,
         // and the streaming extractor needs a stable `Task` pointer so
         // it can push the result onto `resolve_tasks` when it finishes.
-        let extract_task =
-            this.create_extract_task_for_streaming(&mut network_task.callback.extract_mut(), network_task);
-        network_task.streaming_extract_task = Some(extract_task);
-        network_task.tarball_stream =
-            Some(TarballStream::init(extract_task, network_task, this));
+        //
+        // Borrowck: `create_extract_task_for_streaming` / `TarballStream::init`
+        // need `&mut PackageManager` while `network_task` (a borrow into
+        // `this.preallocated_network_tasks`) is still live. The pool slot is
+        // disjoint from every other `this` field these calls touch, so we go
+        // through a raw pointer for `network_task` and reborrow per-statement.
+        let net_ptr: *mut NetworkTask = network_task;
+        // SAFETY: `net_ptr` points into `this.preallocated_network_tasks`; the
+        // calls below access disjoint fields of `this` (resolve-task pool,
+        // allocator, options) and never reallocate/put the network-task pool,
+        // so the slot stays valid and unaliased for the duration.
+        let this = unsafe { &mut *this_ptr };
+        let extract_task = unsafe {
+            this.create_extract_task_for_streaming(&mut (*net_ptr).callback.extract_mut(), &mut *net_ptr)
+        };
+        unsafe {
+            (*net_ptr).streaming_extract_task = Some(extract_task);
+            (*net_ptr).tarball_stream = Some(TarballStream::init(extract_task, &mut *net_ptr, this));
+        }
+        // SAFETY: re-derive the returned `&mut` from `net_ptr` so its tag is on
+        // top of the borrow stack (the `this` reborrow above popped the earlier
+        // `network_task` Unique).
+        return Ok(Some(unsafe { &mut *net_ptr }));
     }
 
     Ok(Some(network_task))

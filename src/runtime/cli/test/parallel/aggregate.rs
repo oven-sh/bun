@@ -145,7 +145,7 @@ pub fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
 
     let mut by_file: StringArrayHashMap<FileCoverage> = StringArrayHashMap::default();
 
-    for path in paths {
+    for &path in paths {
         let data = match File::read_from(Fd::cwd(), path) {
             bun_sys::Result::Ok(r) => r,
             bun_sys::Result::Err(_) => continue,

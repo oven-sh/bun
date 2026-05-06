@@ -1659,7 +1659,7 @@ To create a project with the official Next.js scaffolding tool, run
             Global::exit(1);
         }
 
-        let create_command_info = CreateCommand::extract_info(&mut *ctx)?;
+        let create_command_info = CreateCommand::extract_info(&ctx)?;
         let template = create_command_info.template;
         let example_tag = create_command_info.example_tag;
 
@@ -1698,7 +1698,7 @@ To create a project with the official Next.js scaffolding tool, run
             return Ok(());
         }
 
-        CreateCommand::exec(&mut *ctx, example_tag, template)?;
+        CreateCommand::exec(&ctx, example_tag, template)?;
         Ok(())
     }
 

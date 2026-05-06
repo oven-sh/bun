@@ -1075,7 +1075,8 @@ impl CronRemoveJob {
     fn start_linux(&mut self) {
         self.state = RemoveState::ReadingCrontab;
         self.stdout_reader = OutputReader::init::<CronRemoveJob>();
-        self.stdout_reader.set_parent(self as *mut Self as *mut _);
+        let self_ptr = self as *mut Self as *mut _;
+        self.stdout_reader.set_parent(self_ptr);
         let Some(crontab_path) = find_crontab() else {
             self.set_err(format_args!("crontab not found in PATH"));
             return Self::finish(self);
@@ -1867,7 +1868,7 @@ fn spawn_cmd_generic<T: SpawnCmdTarget>(
         )));
     }
     // SAFETY: per-thread VM singleton.
-    let cwd = unsafe { vm_mut() }.transpiler.fs.top_level_dir;
+    let cwd = unsafe { (*vm_mut().transpiler.fs).top_level_dir };
     let spawn_options = SpawnOptions {
         stdin: stdin_opt,
         stdout: stdout_opt,
@@ -1917,7 +1918,10 @@ fn spawn_cmd_generic<T: SpawnCmdTarget>(
     let spawned = match spawn::spawn_process(&spawn_options, argv.as_mut_ptr().cast(), envp) {
         Ok(Ok(s)) => s,
         Ok(Err(err)) => {
-            this.set_err(format_args!("Failed to spawn process: {}", err.name()));
+            this.set_err(format_args!(
+                "Failed to spawn process: {}",
+                bstr::BStr::new(err.name())
+            ));
             return T::finish(this);
         }
         Err(e) => {

@@ -184,11 +184,12 @@ pub fn populate_manifest_cache(
                 // callback, so this is the unique live borrow.
                 let manager = unsafe { &mut *closure.manager };
                 let log_level = manager.options.log_level;
+                // PORT NOTE: void RunTasksCallbacks — `extract_ctx` is unit. Do NOT pass `manager`
+                // as both receiver and ctx (aliased &mut). Zig passed `(comptime *PackageManager,
+                // closure.manager)`; the generic context pair collapses to `&mut ()` in Rust.
                 if let Err(err) = manager.run_tasks(
-                    // TODO(port): Zig passed `(comptime *PackageManager, closure.manager)` — the
-                    // generic context pair collapses to a single &mut in Rust.
-                    manager,
-                    crate::RunTasksOptions {
+                    &mut (),
+                    PackageManager::RunTasksCallbacks {
                         on_extract: (),
                         on_resolve: (),
                         on_package_manifest_error: (),
@@ -232,9 +233,9 @@ pub fn populate_manifest_cache(
     Ok(())
 }
 
-// TODO(port): `.load_from_memory_fallback_to_disk` enum literal — actual enum lives elsewhere in
-// `bun_install`; placeholder name used here.
-use crate::manifests::ManifestLoad;
+// `.load_from_memory_fallback_to_disk` enum literal — `PackageManifestMap.When` in Zig,
+// re-exported at the crate root as `ManifestLoad`.
+use crate::ManifestLoad;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

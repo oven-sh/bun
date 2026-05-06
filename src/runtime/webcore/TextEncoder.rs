@@ -216,9 +216,9 @@ impl<'a> RopeStringEncoder<'a> {
         unsafe { (*it).stop = 1 };
     }
 
-    pub fn iter(&mut self) -> JSString::Iterator {
-        JSString::Iterator {
-            data: Some(core::ptr::NonNull::from(self).cast::<c_void>()),
+    pub fn iter(&mut self) -> JSStringIterator {
+        JSStringIterator {
+            data: self as *mut RopeStringEncoder as *mut c_void,
             stop: 0,
             append8: Some(Self::append8),
             append16: Some(Self::append16),
@@ -258,7 +258,7 @@ pub extern "C" fn TextEncoder__encodeRopeString(
     };
     let mut iter = encoder.iter();
     array.ensure_still_alive();
-    rope_str.iterator(global_this, &mut iter);
+    rope_str.iterator(global_this, &mut iter as *mut JSStringIterator as *mut c_void);
     array.ensure_still_alive();
 
     if encoder.any_non_ascii {

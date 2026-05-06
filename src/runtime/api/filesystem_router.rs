@@ -71,7 +71,8 @@ const DEFAULT_EXTENSIONS: &[&[u8]] = &[
 pub struct FileSystemRouter {
     pub origin: Option<Arc<jsc::RefString>>,
     pub base_dir: Option<Arc<jsc::RefString>>,
-    pub router: Router::Router,
+    // PORT NOTE: Router<'a> only borrows the global FileSystem singleton — `'static` is faithful.
+    pub router: Router::Router<'static>,
     // PERF(port): was arena bulk-free — Router borrows slices from this arena across calls;
     // kept as boxed arena per LIFETIMES.tsv (OWNED). Phase B: confirm bumpalo vs ArenaAllocator.
     pub arena: Box<ArenaAllocator>,
@@ -566,8 +567,10 @@ impl FileSystemRouter {
 #[bun_jsc::JsClass]
 pub struct MatchedRoute {
     /// Self-referential: always points at `self.route_holder`. See `init`.
-    pub route: *const RouterMatch,
-    pub route_holder: RouterMatch,
+    // PORT NOTE: `Match<'a>` borrows arena/request bytes that outlive this object via
+    // intentional leaks (see `r#match`); `'static` matches the Zig raw-slice semantics.
+    pub route: *const RouterMatch<'static>,
+    pub route_holder: RouterMatch<'static>,
     pub query_string_map: Option<QueryStringMap>,
     pub param_map: Option<QueryStringMap>,
     pub params_list_holder: Router::ParamList,

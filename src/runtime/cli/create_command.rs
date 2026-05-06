@@ -2,12 +2,13 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use std::cell::Cell;
 use std::io::Write as _;
 
-use bun_core::{Global, Output, Progress, Futex};
+use bun_core::{Global, Output, Progress};
+use bun_threading::Futex;
 use bun_str::{strings, MutableString};
 use bun_paths::{self as resolve_path, PathBuffer, OSPathSlice};
 use bun_logger as logger;
 use bun_js_parser::ast as js_ast;
-use bun_json as JSON;
+use bun_interchange::json as JSON;
 use bun_js_printer as JSPrinter;
 use bun_http as HTTP;
 use bun_http::Headers;

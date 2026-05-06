@@ -32,12 +32,15 @@ fn glob_ignore_fn(val: &[u8]) -> bool {
     false
 }
 
-// TODO(port): Zig `glob.GlobWalker(globIgnoreFn, glob.walk.DirEntryAccessor, false)` is a
-// comptime type-generator taking (ignore_fn, Accessor type, sentinel: bool). The Rust
-// `bun_glob::GlobWalker` generic shape is TBD in Phase B; this alias documents intent.
-type GlobWalker = glob::GlobWalker</* ignore = */ glob_ignore_fn, glob::walk::DirEntryAccessor, false>;
-type GlobWalkerIterator = <GlobWalker as glob::Walker>::Iterator;
-// TODO(port): ^ exact associated-type path for `GlobWalker.Iterator` — adjust to bun_glob API.
+// PORT NOTE: Zig `glob.GlobWalker(globIgnoreFn, glob.walk.DirEntryAccessor, false)` is a
+// comptime type-generator taking (ignore_fn, Accessor type, sentinel: bool). In Rust the
+// ignore filter is a runtime parameter on `init_with_cwd`, and `DirEntryAccessor` lives in
+// `bun_resolver` (it depends on the resolver's DirEntry cache).
+type GlobWalker = glob::GlobWalker<bun_resolver::DirEntryAccessor, false>;
+// TODO(port): self-referential — Iterator borrows the GlobWalker stored alongside it in
+// `PackageFilterIterator`. Forced to `'static` here; see `init_walker` for the unsafe
+// lifetime erasure. Phase B: Pin<Box<Self>> or fold walker+iter into one type.
+type GlobWalkerIterator = glob::walk::Iterator<'static, bun_resolver::DirEntryAccessor, false>;
 
 pub fn get_candidate_package_patterns<'a>(
     log: &mut Log,

@@ -18,8 +18,7 @@ use bun_jsc::{host_fn, CallFrame, JSGlobalObject, JSValue, JsResult, Strong, Vir
 use bun_uws::us_bun_verify_error_t;
 
 use super::ssl_wrapper::SSLWrapper;
-// TODO(port): confirm crate path for EventLoopTimer (bun.api.Timer.EventLoopTimer)
-use crate::api::timer::EventLoopTimer;
+use crate::timer::{EventLoopTimer, EventLoopTimerTag};
 
 bun_output::declare_scope!(UpgradedDuplex, visible);
 

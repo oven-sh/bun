@@ -261,7 +261,7 @@ impl<'a> State<'a> {
     }
 
     // TODO(port): narrow error set — was `(std.Io.Writer.Error || bun.OOM)!void`
-    fn read_chunk(&mut self, pipe: &mut PipeReader, chunk: &[u8]) -> Result<(), Error> {
+    fn read_chunk(&mut self, pipe: &mut PipeReader<'a>, chunk: &[u8]) -> Result<(), Error> {
         pipe.line_buffer.extend_from_slice(chunk);
 
         // Route to correct parent stream: child stdout -> parent stdout, child stderr -> parent stderr
@@ -320,8 +320,8 @@ impl<'a> State<'a> {
     // TODO(port): narrow error set — was `std.Io.Writer.Error!void`
     fn flush_pipe_buffer(
         &self,
-        handle: &ProcessHandle,
-        pipe: &mut PipeReader,
+        handle: &ProcessHandle<'a>,
+        pipe: &mut PipeReader<'a>,
     ) -> Result<(), Error> {
         if !pipe.line_buffer.is_empty() {
             let line = &pipe.line_buffer[..];

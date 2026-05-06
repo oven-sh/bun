@@ -170,8 +170,7 @@ pub extern "C" fn get_title(_global: *const JSGlobalObject, title: *mut BunStrin
 }
 
 // TODO: https://github.com/nodejs/node/blob/master/deps/uv/src/unix/darwin-proctitle.c
-#[unsafe(no_mangle)]
-#[export_name = "Bun__Process__setTitle"]
+#[unsafe(export_name = "Bun__Process__setTitle")]
 pub extern "C" fn set_title(global_object: *const JSGlobalObject, newvalue: *mut BunString) {
     // SAFETY: newvalue is a valid pointer from C++; we consume one ref before returning
     let newvalue = unsafe { &mut *newvalue };
@@ -191,7 +190,7 @@ pub extern "C" fn set_title(global_object: *const JSGlobalObject, newvalue: *mut
 // ───────────────────────────── execArgv ─────────────────────────────
 
 #[bun_jsc::host_fn]
-#[export_name = "Bun__Process__createExecArgv"]
+#[unsafe(export_name = "Bun__Process__createExecArgv")]
 pub fn create_exec_argv(global_object: &JSGlobalObject) -> JsResult<JSValue> {
     // PERF(port): was stack-fallback alloc (4096 bytes) — profile in Phase B
     let vm = global_object.bun_vm();
@@ -304,8 +303,7 @@ pub fn create_exec_argv(global_object: &JSGlobalObject) -> JsResult<JSValue> {
 
 // ───────────────────────────── argv ─────────────────────────────
 
-#[unsafe(no_mangle)]
-#[export_name = "Bun__Process__createArgv"]
+#[unsafe(export_name = "Bun__Process__createArgv")]
 pub extern "C" fn create_argv(global_object: *const JSGlobalObject) -> JSValue {
     // SAFETY: global_object is valid for the duration of this call
     let global_object = unsafe { &*global_object };
@@ -368,8 +366,7 @@ pub extern "C" fn create_argv(global_object: *const JSGlobalObject) -> JSValue {
 
 // ───────────────────────────── eval ─────────────────────────────
 
-#[unsafe(no_mangle)]
-#[export_name = "Bun__Process__getEval"]
+#[unsafe(export_name = "Bun__Process__getEval")]
 pub extern "C" fn get_eval(global_object: *const JSGlobalObject) -> JSValue {
     // SAFETY: global_object is valid for the duration of this call
     let global_object = unsafe { &*global_object };

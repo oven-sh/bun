@@ -1731,41 +1731,15 @@ pub fn print_revision_and_exit() -> ! {
 }
 
 // ───────────────── module declarations / cross-file refs ────────────────────
-mod add_completions;
-mod filter_run;
-mod multi_run;
-mod pm_view_command;
-mod colon_list_type;
-mod run_command;
-mod test_command;
-mod build_command;
-mod add_command;
-mod create_command;
-mod discord_command;
-mod install_command;
-mod link_command;
-mod unlink_command;
-mod install_completions_command;
-mod package_manager_command;
-mod remove_command;
-mod shell_completions;
-mod update_command;
-mod upgrade_command;
-mod bunx_command;
-mod exec_command;
-mod patch_command;
-mod patch_commit_command;
-mod outdated_command;
-mod update_interactive_command;
-mod publish_command;
-mod pack_command;
-mod audit_command;
-mod init_command;
-mod why_command;
-mod fuzzilli_command;
-mod repl_command;
+// Sibling `*_command.rs` files are mounted once in the parent `cli/mod.rs`;
+// re-use those module trees instead of re-declaring `mod` here (which would
+// compile every command file a second time under `cli::cli_body::*`).
+use crate::cli::{
+    add_completions, colon_list_type, filter_run, multi_run, pm_view_command, run_command,
+    shell_completions, test_command,
+};
 
-use bun_bun_js;
+use bun_js as bun_bun_js;
 use bun_install;
 
 // ──────────────────────────────────────────────────────────────────────────

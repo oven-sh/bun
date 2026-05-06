@@ -16,10 +16,10 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use bun_aio::Loop as AsyncLoop;
 use bun_core::SignalCode;
 use bun_io::{BufferedReader, ReadState, StreamingWriter, WriteStatus};
-use bun_jsc::node::StringOrBuffer;
+use crate::node::StringOrBuffer;
 use bun_jsc::{
     self as jsc, CallFrame, EventLoopHandle, JSGlobalObject, JSValue, JsRef, JsResult,
-    MarkedArrayBuffer, ZigString,
+    MarkedArrayBuffer, ZigString, ZigStringSlice,
 };
 use bun_sys::{self as sys, Fd};
 

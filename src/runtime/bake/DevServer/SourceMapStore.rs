@@ -588,12 +588,7 @@ impl SourceMapStore {
             self.owner().vm.timer.update(&mut self.weak_ref_sweep_timer, &expire);
             // TODO(port): borrowck — same overlapping &mut as above.
         }
-        bun_output::scoped_log!(
-            map_log,
-            "addWeakRef {:x}, ref_count: {}",
-            key.get(),
-            entry_ref_count
-        );
+        map_log!("addWeakRef {:x}, ref_count: {}", key.get(), entry_ref_count);
     }
 
     /// Returns true if the ref count was incremented (meaning there was a source map to transfer)
@@ -622,8 +617,7 @@ impl SourceMapStore {
             entry.ref_count += mode as u32;
         }
         let entry_ref_count = self.entries.get(&key).map(|e| e.ref_count).unwrap_or(0);
-        bun_output::scoped_log!(
-            map_log,
+        map_log!(
             "maybeUpgradeWeakRef {:x}, ref_count: {}",
             key.get(),
             entry_ref_count

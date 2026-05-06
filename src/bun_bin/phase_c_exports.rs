@@ -81,14 +81,8 @@ pub extern "C" fn Bun__panic(msg: *const u8, len: usize) -> ! {
 // REAL: now provided by bun_jsc (src/jsc/ZigString.rs).
 // ZigString__freeGlobal
 
-// PHASE-C: C++ callback — Zig: `export fn Bun__NODE_NO_WARNINGS() bool`
-// REAL: src/runtime/node/node_process.rs (gated under `mod _impl`)
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__NODE_NO_WARNINGS() -> bool {
-    // Real impl reads VirtualMachine env loader; until that's wired, honour
-    // the env var directly so `--no-warnings` plumbing isn't silently broken.
-    std::env::var_os("NODE_NO_WARNINGS").is_some_and(|v| v == "1")
-}
+// REAL: now provided by bun_runtime (src/runtime/node/node_process.rs).
+// Bun__NODE_NO_WARNINGS
 
 // PHASE-C: C++ callback — Zig: `export fn Bun__getTLSRejectUnauthorizedValue() i32`
 // REAL: src/jsc/virtual_machine_exports.rs (gated under `mod _gated`)
@@ -111,27 +105,11 @@ pub extern "C" fn Bun__isNoProxy(
     false
 }
 
-// PHASE-C: C++ callback — Zig: `export fn napi_internal_suppress_crash_on_abort_if_desired() void`
-// REAL: src/runtime/napi/napi_body.rs (gated ` mod napi_body`)
-#[unsafe(no_mangle)]
-pub extern "C" fn napi_internal_suppress_crash_on_abort_if_desired() {
-    // No-op until crash_handler exposes the suppression hook.
-}
+// REAL: now provided by bun_runtime (src/runtime/napi/napi_body.rs).
+// napi_internal_suppress_crash_on_abort_if_desired
 
-// PHASE-C: C++ callback — Zig: `export fn bun_ssl_ctx_cache_on_free(...) void`
-// REAL: src/runtime/api/bun/SSLContextCache.rs (gated ` mod bun_ssl_context_cache`)
-// CRYPTO_EX_free signature; safe no-op until SSLContextCache is wired.
-#[unsafe(no_mangle)]
-pub extern "C" fn bun_ssl_ctx_cache_on_free(
-    parent: *mut c_void,
-    ptr: *mut c_void,
-    ad: *mut c_void,
-    index: c_int,
-    argl: c_long,
-    argp: *mut c_void,
-) {
-    let _ = (parent, ptr, ad, index, argl, argp);
-}
+// REAL: now provided by bun_runtime (src/runtime/api/bun/SSLContextCache.rs).
+// bun_ssl_ctx_cache_on_free
 
 // PHASE-C: C++ callback — `highway_index_of_newline_or_non_ascii_or_ansi` is
 // declared in `bun_highway` but has no backing C++ impl in
@@ -182,14 +160,8 @@ pub extern "C" fn highway_index_of_newline_or_non_ascii_or_ansi(
 // REAL: src/jsc/ConsoleObject.rs
 // Bun__ConsoleObject__messageWithTypeAndLevel
 
-// REAL: src/jsc/VirtualMachine.rs (no Rust impl yet — C++ BunProcess.cpp caller)
-// Zig returns `unhandledRejectionsMode() != .bun`; the default mode is `.bun`,
-// so default = suppress the warning.
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__VM__allowRejectionHandledWarning(vm: *mut VirtualMachine) -> bool {
-    let _ = vm;
-    false
-}
+// REAL: now provided by bun_jsc (src/jsc/VirtualMachine.rs).
+// Bun__VM__allowRejectionHandledWarning
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__VM__scriptExecutionStatus(vm: *const VirtualMachine) -> i32 {
@@ -296,10 +268,8 @@ pub extern "C" fn BlockList__estimatedSize(this: *mut BlockList) -> usize {
     0
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn BlockListClass__finalize(this: *mut BlockList) {
-    unreachable!("BlockListClass__finalize: emitted by .classes.ts codegen (ZigGeneratedClasses); Rust codegen not yet emitted")
-}
+// REAL: now provided by bun_runtime (src/runtime/node/net/BlockList.rs).
+// BlockListClass__finalize
 
 #[unsafe(no_mangle)]
 pub extern "C" fn BlockList__onStructuredCloneSerialize(

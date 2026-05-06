@@ -35,7 +35,7 @@ use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult};
 use crate::node::util::validators;
 
 pub fn get_default_auto_select_family(global: &JSGlobalObject) -> JSValue {
-    #[bun_jsc::host_fn]
+    #[bun_jsc::host_fn(export = "Bun__NodeNet__getDefaultAutoSelectFamily")]
     fn getter(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         Ok(JSValue::from(AUTO_SELECT_FAMILY_DEFAULT.load(Ordering::Relaxed)))
     }
@@ -44,7 +44,7 @@ pub fn get_default_auto_select_family(global: &JSGlobalObject) -> JSValue {
 }
 
 pub fn set_default_auto_select_family(global: &JSGlobalObject) -> JSValue {
-    #[bun_jsc::host_fn]
+    #[bun_jsc::host_fn(export = "Bun__NodeNet__setDefaultAutoSelectFamily")]
     fn setter(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let arguments = frame.arguments_old::<1>();
         if arguments.len < 1 {
@@ -62,7 +62,7 @@ pub fn set_default_auto_select_family(global: &JSGlobalObject) -> JSValue {
 }
 
 pub fn get_default_auto_select_family_attempt_timeout(global: &JSGlobalObject) -> JSValue {
-    #[bun_jsc::host_fn]
+    #[bun_jsc::host_fn(export = "Bun__NodeNet__getDefaultAutoSelectFamilyAttemptTimeout")]
     fn getter(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         Ok(JSValue::js_number(
             f64::from(AUTO_SELECT_FAMILY_ATTEMPT_TIMEOUT_DEFAULT.with(|v| v.get())),
@@ -78,7 +78,7 @@ pub fn get_default_auto_select_family_attempt_timeout(global: &JSGlobalObject) -
 }
 
 pub fn set_default_auto_select_family_attempt_timeout(global: &JSGlobalObject) -> JSValue {
-    #[bun_jsc::host_fn]
+    #[bun_jsc::host_fn(export = "Bun__NodeNet__setDefaultAutoSelectFamilyAttemptTimeout")]
     fn setter(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let arguments = frame.arguments_old::<1>();
         if arguments.len < 1 {

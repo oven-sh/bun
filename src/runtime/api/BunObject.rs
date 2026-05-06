@@ -84,7 +84,9 @@ pub fn get_public_path_with_asset_prefix<W: core::fmt::Write>(
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
-#[bun_jsc::host_fn]
+// phase-d: top-level draft copy — `#[bun_jsc::host_fn]` removed to avoid
+// duplicate codegen with `_jsc_gated::sleep_sync` (the canonical impl).
+#[allow(dead_code)]
 pub fn sleep_sync(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let arguments = callframe.arguments();
 
@@ -120,7 +122,7 @@ pub fn sleep_sync(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsRe
     Ok(JSValue::UNDEFINED)
 }
 
-#[bun_jsc::host_fn]
+#[allow(dead_code)]
 pub fn nanoseconds(global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
     // PORT NOTE: Zig's `std.time.Timer.read()` → `Instant::elapsed().as_nanos()`.
     // SAFETY: bun_vm() returns a live VirtualMachine pointer for a Bun-owned global.
@@ -128,7 +130,7 @@ pub fn nanoseconds(global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSVa
     Ok(JSValue::js_number_from_uint64(ns))
 }
 
-#[bun_jsc::host_fn]
+#[allow(dead_code)]
 pub fn shrink(global_object: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
     // PORT NOTE: `bun_jsc::VM` (the lib.rs stub) lacks `shrink_footprint`; the
     // real method lives on `bun_jsc::vm::VM`. Call the C++ symbol directly to
@@ -164,7 +166,7 @@ pub extern "C" fn Bun__reportError(global_object: *mut JSGlobalObject, err: JSVa
 use bun_jsc::JSObject;
 use bun_str::strings;
 
-#[bun_jsc::host_fn]
+#[allow(dead_code)]
 pub fn index_of_line(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let arguments_ = callframe.arguments_old::<2>();
     let arguments = arguments_.slice();
@@ -219,7 +221,7 @@ unsafe extern "C" {
     ) -> JSValue;
 }
 
-#[bun_jsc::host_fn]
+#[allow(dead_code)]
 pub fn alloc_unsafe(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let arguments = callframe.arguments_old::<1>();
     let size = arguments.ptr[0];

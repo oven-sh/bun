@@ -122,23 +122,17 @@ fn expand_host_fn(args: HostFnArgs, func: ItemFn) -> syn::Result<TokenStream2> {
         .first()
         .is_some_and(|a| matches!(a, FnArg::Receiver(_)));
 
-    // Shim symbol name. Without `export = "..."` the default for a free
-    // (non-receiver) function is `<fn_name>` — matches Zig
-    // `@export(&toJSHostFn(f), .{ .name = ... })` where the name is supplied
-    // by the caller. For getter/setter/method hooks the `.classes.ts`
-    // generator owns the link name (`TypePrototype__name` etc.) and the
-    // `JsClass` macro re-emits with the proper name; the placeholder shim
-    // here therefore gets NO `#[export_name]` (Rust mangling keeps each
-    // type's `__jsc_host_*` shim unique even when method names collide
-    // across types — e.g. `BuildMessage::get_column` vs
-    // `ResolveMessage::get_column`).
-    let export: Option<String> = match args.export.as_ref() {
-        Some(l) => Some(l.value()),
-        None => match args.kind {
-            HostFnKind::Free if !has_receiver => Some(fn_name_str.clone()),
-            _ => None,
-        },
-    };
+    // Shim symbol name. Only emitted when an explicit `export = "..."` is
+    // supplied. In Zig, `@export(&toJSHostFn(f), .{ .name = ... })` always
+    // received a caller-supplied unique name; defaulting to the bare Rust
+    // ident here produces cross-module link collisions for common names
+    // (`parse`, `getter`, `crc32`, …) once codegen runs. With no explicit
+    // export, Rust mangling on `__jsc_host_<name>` keeps each module's shim
+    // unique — same rationale as the getter/setter/method case below, where
+    // the `.classes.ts` generator owns the link name (`TypePrototype__name`
+    // etc.) and the `JsClass` macro re-emits with the proper name.
+    let _ = fn_name_str;
+    let export: Option<String> = args.export.as_ref().map(|l| l.value());
     let shim_ident = format_ident!("__jsc_host_{}", fn_name);
 
     let (sig_args, ret, body): (TokenStream2, TokenStream2, TokenStream2) = match args.kind {
@@ -366,15 +360,18 @@ pub fn host_call(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let inputs = &sig.inputs;
     let output = &sig.output;
     let generics = &sig.generics;
+    // No implicit `#[no_mangle]` — multiple types share method names
+    // (`has_pending_activity`, `ptr_without_type_checks`, …) and collide at
+    // codegen otherwise. The generated `.classes.ts` wrappers own the canonical
+    // `${T}__hasPendingActivity` link names; callers needing a C symbol attach
+    // `#[unsafe(export_name = "…")]` themselves (re-emitted via `#(#attrs)*`).
     quote! {
         #[cfg(all(windows, target_arch = "x86_64"))]
         #(#attrs)*
-        #[unsafe(no_mangle)]
         #vis unsafe extern "sysv64" fn #name #generics(#inputs) #output #block
 
         #[cfg(not(all(windows, target_arch = "x86_64")))]
         #(#attrs)*
-        #[unsafe(no_mangle)]
         #vis unsafe extern "C" fn #name #generics(#inputs) #output #block
     }
     .into()

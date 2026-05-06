@@ -619,6 +619,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             data.default_name = p.create_default_name(stmt.loc).expect("unreachable");
                         }
 
+                        // Capture the original function name before any `mem::take` below resets
+                        // `func.func` to its default. The Zig spec copies `func.func` by value into
+                        // the E.Function expr, leaving `func.func.name` intact for the
+                        // react_fast_refresh temp-var emission that follows.
+                        let func_name = func.func.name;
+
                         if let Some(hook) = react_hook_data.as_mut() {
                             let signature_cb = hook.signature_cb;
                             stmts.push(p.get_react_refresh_hook_signal_decl(signature_cb));
@@ -665,7 +671,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             let ref_ = if let js_ast::StmtOrExpr::Expr(e) = data.value {
                                 'emit_temp_var: {
                                     let ref_to_use = 'brk: {
-                                        if let Some(loc_ref) = func.func.name {
+                                        if let Some(loc_ref) = func_name {
                                             // Input:
                                             //
                                             //  export default function Foo() {}

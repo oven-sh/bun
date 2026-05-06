@@ -11,6 +11,7 @@ use core::ffi::c_void;
 
 use bun_aio::KeepAlive;
 use bun_collections::{LinearFifo, OffsetByteList};
+use bun_collections::linear_fifo::DynamicBuffer;
 use bun_uws::{self as uws, AnySocket, SocketGroup};
 use bun_valkey::valkey_protocol as protocol;
 use bun_valkey::valkey_protocol::RedisError;
@@ -92,10 +93,11 @@ pub mod valkey_command {
     }
 
     pub mod entry {
-        pub type Queue = super::LinearFifo<super::Entry>;
+        pub type Queue = super::LinearFifo<super::Entry, super::DynamicBuffer<super::Entry>>;
     }
     pub mod promise_pair {
-        pub type Queue = super::LinearFifo<super::PromisePair>;
+        pub type Queue =
+            super::LinearFifo<super::PromisePair, super::DynamicBuffer<super::PromisePair>>;
     }
 }
 pub use valkey_command as ValkeyCommand;

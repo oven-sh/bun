@@ -425,13 +425,13 @@ pub fn generate_symbol_for_function(
         ))));
     }
 
-    *function = Function {
-        base_name: None,
-        arg_types: abi_types,
-        return_type,
-        threadsafe,
-        ..Default::default()
-    };
+    // `Function` has a `Drop` impl, so functional-record-update
+    // (`..Default::default()`) is rejected (E0509). Reset to default and assign
+    // the parsed fields individually instead.
+    *function = Function::default();
+    function.arg_types = abi_types;
+    function.return_type = return_type;
+    function.threadsafe = threadsafe;
 
     if let Some(ptr) = value.get(global, b"ptr")? {
         if ptr.is_number() {
@@ -460,8 +460,16 @@ pub fn generate_symbols(
     jsc::mark_binding!();
 
     // skip_empty_name = true, include_value = true, own_only = true
-    let mut symbols_iter =
-        JSPropertyIterator::<true, true, true>::init(global, object)?;
+    let mut symbols_iter = JSPropertyIterator::init(
+        global,
+        object,
+        jsc::JSPropertyIteratorOptions {
+            skip_empty_name: true,
+            include_value: true,
+            own_properties_only: true,
+            ..Default::default()
+        },
+    )?;
 
     symbols.reserve(symbols_iter.len);
 
@@ -483,7 +491,7 @@ pub fn generate_symbols(
         let key = base_name.as_bytes().to_vec().into_boxed_slice();
         function.base_name = Some(base_name);
 
-        symbols.insert(key, function);
+        symbols.insert(&key, function);
         // PERF(port): was putAssumeCapacity
     }
 

@@ -94,7 +94,7 @@ pub fn resp_value_to_js_with_options(
             Some(str),
             RedisError::InvalidResponse,
         )),
-        RESPValue::Integer(int) => Ok(JSValue::js_number(*int)),
+        RESPValue::Integer(int) => Ok(JSValue::js_number(*int as f64)),
         RESPValue::BulkString(maybe_str) => {
             if let Some(str) = maybe_str {
                 valkey_str_to_js_value(global, str, &options)

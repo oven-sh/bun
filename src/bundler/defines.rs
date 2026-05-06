@@ -426,36 +426,39 @@ impl DefineDataExt for DefineData {
                 ),
             });
         }
-        #[cfg(any())]
-        {
-            let _log = log;
-            let source = logger::Source {
-                contents: value_str.into(),
-                path: defines_path(),
-                ..Default::default()
-            };
-            // TODO(port): json_parser module path — bun.json in Zig
-            let expr = bun_interchange::json_parser::parse_env_json(&source, _log)?;
-            let cloned = expr.data.deep_clone()?;
-            return Ok(DefineData {
-                value: cloned,
-                original_name_ptr: if !value_str.is_empty() {
-                    NonNull::new(value_str.as_ptr() as *mut u8)
-                } else {
-                    None
-                },
-                original_name_len: value_str.len() as u32, // @truncate
-                flags: Flags::new(
-                    /* valueless: */ value_is_undefined,
-                    /* can_be_removed_if_unused: */ expr.is_primitive_literal(),
-                    /* call_can_be_unwrapped_if_unused: */ js_ast::E::CallUnwrap::Never,
-                    /* method_call_must_be_replaced_with_undefined: */
-                    method_call_must_be_replaced_with_undefined_,
-                ),
-            });
-        }
-        // TODO(b2-blocked): bun_interchange::json_parser::parse_env_json
-        unimplemented!("b2-blocked: json_parser::parse_env_json")
+        let _log = log;
+        let source = logger::Source {
+            // SAFETY: `Source.contents` is typed `&'static [u8]` as a Phase-A
+            // stand-in (see logger/lib.rs `Str` note). The borrow does not
+            // escape this stack frame: `parse_env_json` only reads it during
+            // parsing, and `deep_clone(bump)` below copies all string bytes
+            // into the caller-owned arena before `source` is dropped.
+            contents: unsafe { core::mem::transmute::<&[u8], &'static [u8]>(value_str) },
+            path: defines_path(),
+            ..Default::default()
+        };
+        let expr = bun_interchange::json_parser::parse_env_json(&source, _log, bump)?;
+        // T2 interchange `Expr` → T4 parser `ExprData` (`From` impl deep-walks
+        // and interns into the AST store), then `deep_clone` into the
+        // long-lived arena to detach from `source.contents`.
+        let data: ExprData = expr.data.into();
+        let can_be_removed_if_unused = js_ast::ast::expr::Tag::is_primitive_literal(data.tag());
+        let cloned = ExprData::deep_clone(data, bump)?;
+        Ok(DefineData {
+            value: cloned,
+            original_name: if !value_str.is_empty() {
+                Some(Box::<[u8]>::from(value_str))
+            } else {
+                None
+            },
+            flags: Flags::new(
+                /* valueless: */ value_is_undefined,
+                /* can_be_removed_if_unused: */ can_be_removed_if_unused,
+                /* call_can_be_unwrapped_if_unused: */ js_ast::E::CallUnwrap::Never,
+                /* method_call_must_be_replaced_with_undefined: */
+                method_call_must_be_replaced_with_undefined_,
+            ),
+        })
     }
 
     fn from_input(

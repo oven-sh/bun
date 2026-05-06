@@ -1423,6 +1423,7 @@ pub fn defines_from_transform_options(
     node_env: Option<&[u8]>,
     drop: &[&[u8]],
     omit_unused_global_calls: bool,
+    bump: &bun_alloc::Arena,
 ) -> Result<Box<defines::Define>, bun_core::Error> {
     let input_user_define = maybe_input_define.unwrap_or_default();
 
@@ -1516,7 +1517,7 @@ pub fn defines_from_transform_options(
         }
     }
 
-    let resolved_defines = defines::DefineData::from_input(user_defines, drop, log)?;
+    let resolved_defines = defines::DefineData::from_input(&user_defines, drop, log, bump)?;
 
     let drop_debugger = drop.iter().any(|item| *item == b"debugger");
 

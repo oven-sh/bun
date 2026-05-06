@@ -30,22 +30,13 @@ pub use crate::Error;
 // (matching lightningcss). Phase A avoids struct lifetime params; Phase B should
 // thread `'i` through `MediaType::Custom`, `Ident`, `DashedIdent`, etc.
 
-// ───────────────────────── value-type shims ─────────────────────────
-// Local stand-ins for `values::{length,resolution,ratio}` so the
-// `MediaFeatureValue` enum has real payloads. Replaced by
-// `crate::css_values::*` when the calc lattice un-gates.
-mod value_shims {
-    /// `values::length::Length` stand-in.
-    #[derive(Debug, Clone, PartialEq)]
-    pub struct Length;
-    /// `values::resolution::Resolution` stand-in.
-    #[derive(Debug, Clone, Copy, PartialEq)]
-    pub struct Resolution;
-    /// `values::ratio::Ratio` stand-in.
-    #[derive(Debug, Clone, Copy, PartialEq)]
-    pub struct Ratio;
-}
-use value_shims::{Length, Ratio, Resolution};
+// ───────────────────────── value-type imports ─────────────────────────
+// Real `values/` payloads — the calc lattice has un-gated, so the local
+// stand-ins are gone and `MediaFeatureValue` carries the canonical types.
+use crate::css_values::length::Length;
+use crate::css_values::number::{CSSIntegerFns, CSSNumberFns};
+use crate::css_values::ratio::Ratio;
+use crate::css_values::resolution::Resolution;
 type CSSNumber = f32;
 type CSSInteger = i32;
 
@@ -254,7 +245,10 @@ pub enum MediaFeatureComparison {
 }
 
 /// [media feature value](https://drafts.csswg.org/mediaqueries/#typedef-mf-value).
-#[derive(Debug, Clone)]
+// PORT NOTE: `Debug` hand-rolled below — `Length` (calc tree) does not derive
+// `Debug`, but the `MediaCondition`/`QueryFeature` chain wants it for
+// diagnostics.
+#[derive(Clone)]
 pub enum MediaFeatureValue {
     /// A length value.
     Length(Length),
@@ -272,6 +266,23 @@ pub enum MediaFeatureValue {
     Ident(Ident),
     /// An environment variable reference.
     Env(EnvironmentVariable),
+}
+
+impl core::fmt::Debug for MediaFeatureValue {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        // Minimal — `Length` lacks `Debug`; emit the variant tag only.
+        use MediaFeatureValue as V;
+        match self {
+            V::Length(_) => f.write_str("Length(..)"),
+            V::Number(n) => write!(f, "Number({n})"),
+            V::Integer(i) => write!(f, "Integer({i})"),
+            V::Boolean(b) => write!(f, "Boolean({b})"),
+            V::Resolution(r) => write!(f, "Resolution({r:?})"),
+            V::Ratio(r) => write!(f, "Ratio({r:?})"),
+            V::Ident(i) => write!(f, "Ident({i:?})"),
+            V::Env(_) => f.write_str("Env(..)"),
+        }
+    }
 }
 
 // PORT NOTE: derive(PartialEq) blocked on `Ident`/`EnvironmentVariable` lacking
@@ -318,6 +329,14 @@ pub enum MediaFeatureType {
     Ident,
     /// Unknown — accept any.
     Unknown,
+}
+
+impl MediaFeatureType {
+    /// Zig: `MediaFeatureType.allowsRanges`.
+    pub fn allows_ranges(self) -> bool {
+        use MediaFeatureType as T;
+        matches!(self, T::Length | T::Number | T::Integer | T::Resolution | T::Ratio | T::Unknown)
+    }
 }
 
 /// Trait modeling Zig's `MediaFeatureId`-shape comptime interface for the
@@ -829,17 +848,20 @@ impl<FeatureId: FeatureIdTrait> QueryFeature<FeatureId> {
 }
 
 impl<FeatureId: FeatureIdTrait> MediaFeatureName<FeatureId> {
+    /// Zig: `MediaFeatureName.valueType`.
+    pub fn value_type(&self) -> MediaFeatureType {
+        match self {
+            MediaFeatureName::Standard(standard) => standard.value_type(),
+            _ => MediaFeatureType::Unknown,
+        }
+    }
+
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         match self {
             MediaFeatureName::Standard(v) => v.to_css(dest),
-            // PORT NOTE: Zig routed through DashedIdentFns.toCss → dest.writeDashedIdent
-            // (handles css-module name rewriting). Printer::write_dashed_ident is
-            // currently `#[cfg(any())]`-gated; fail loud rather than silently
-            // emitting an unscoped ident that diverges from Zig output under
-            // css-modules (PORTING.md §Forbidden: silent-no-op).
-            MediaFeatureName::Custom(_d) => {
-                todo!("MediaFeatureName::Custom to_css gated on Printer::write_dashed_ident")
-            }
+            // PORT NOTE: Zig `DashedIdentFns.toCss` → `dest.writeDashedIdent`
+            // (handles css-module name rewriting).
+            MediaFeatureName::Custom(d) => d.to_css(dest),
             MediaFeatureName::Unknown(v) => v.to_css(dest),
         }
     }
@@ -851,14 +873,81 @@ impl<FeatureId: FeatureIdTrait> MediaFeatureName<FeatureId> {
     ) -> core::result::Result<(), PrintErr> {
         match self {
             MediaFeatureName::Standard(v) => v.to_css_with_prefix(prefix, dest),
-            MediaFeatureName::Custom(_d) => {
-                todo!("MediaFeatureName::Custom to_css_with_prefix gated on Printer::write_dashed_ident")
+            MediaFeatureName::Custom(d) => {
+                dest.write_str(prefix)?;
+                d.to_css(dest)
             }
             MediaFeatureName::Unknown(v) => {
                 dest.write_str(prefix)?;
                 v.to_css(dest)
             }
         }
+    }
+
+    /// Parses a media feature name. Returns `(name, legacy_comparator)` —
+    /// `legacy_comparator` is `Some` when the ident carried a `min-`/`max-`
+    /// prefix (lowered to `>=`/`<=`).
+    ///
+    /// Zig: `MediaFeatureName.parse`.
+    pub fn parse(input: &mut Parser) -> Result<(Self, Option<MediaFeatureComparison>)> {
+        use bun_string::strings;
+        // SAFETY: ident borrows parser source/arena; see `css_parser::src_str`.
+        let ident: &'static [u8] = unsafe { css::css_parser::src_str(input.expect_ident()?) };
+
+        if strings::starts_with(ident, b"--") {
+            return Ok((MediaFeatureName::Custom(DashedIdent { v: ident }), None));
+        }
+
+        let mut name: &[u8] = ident;
+
+        // Webkit places its prefixes before "min" and "max". Remove it first, and
+        // re-add after removing min/max.
+        let is_webkit = strings::starts_with_case_insensitive_ascii(name, b"-webkit-");
+        if is_webkit {
+            name = &name[8..];
+        }
+
+        let comparator: Option<MediaFeatureComparison> =
+            if strings::starts_with_case_insensitive_ascii(name, b"min-") {
+                name = &name[4..];
+                Some(MediaFeatureComparison::GreaterThanEqual)
+            } else if strings::starts_with_case_insensitive_ascii(name, b"max-") {
+                name = &name[4..];
+                Some(MediaFeatureComparison::LessThanEqual)
+            } else {
+                None
+            };
+
+        // PORT NOTE: Zig `allocPrint("-webkit-{s}", .{name})` then
+        // `parse_utility.parseString(.., FeatureId.parse)` — the re-tokenize is
+        // only to feed `DefineEnumProperty.parse` an ident token. Here
+        // `FeatureIdTrait::from_str` does the same case-insensitive table lookup
+        // directly, so a stack buffer suffices and the temp string is freed
+        // immediately (Zig asserts `FeatureId` is an enum for the same reason).
+        // PERF: stack buffer here?
+        let mut webkit_buf: [u8; 64] = [0; 64];
+        let final_name: &[u8] = if is_webkit {
+            let len = 8 + name.len();
+            if len <= webkit_buf.len() {
+                webkit_buf[..8].copy_from_slice(b"-webkit-");
+                webkit_buf[8..len].copy_from_slice(name);
+                &webkit_buf[..len]
+            } else {
+                // Overlong unknown ident — can't be a known FeatureId; fall
+                // through to `Unknown` below.
+                b""
+            }
+        } else {
+            name
+        };
+
+        if !final_name.is_empty() {
+            if let Some(standard) = FeatureId::from_str(final_name) {
+                return Ok((MediaFeatureName::Standard(standard), comparator));
+            }
+        }
+
+        Ok((MediaFeatureName::Unknown(Ident { v: ident }), None))
     }
 }
 

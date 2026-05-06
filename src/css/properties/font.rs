@@ -51,14 +51,30 @@ pub enum FontWeight {
 }
 
 impl FontWeight {
-    // TODO: implement this
-    #[cfg(any())] // blocked_on: css::DeriveParse(@This()).parse → #[derive(Parse)]
+    // PORT NOTE: Zig `css.DeriveParse(@This()).parse` for a union(enum) with one
+    // payload variant + 2 keyword variants tries the payload first, then matches
+    // the remaining keywords against `expect_ident`.
     pub fn parse(input: &mut css::Parser) -> CssResult<Self> {
-        css::DeriveParse::parse(input)
+        if let Ok(v) = input.try_parse(AbsoluteFontWeight::parse) {
+            return Ok(FontWeight::Absolute(v));
+        }
+        let location = input.current_source_location();
+        let ident = unsafe { css::src_str(input.expect_ident()?) };
+        if strings::eql_case_insensitive_ascii_check_length(ident, b"bolder") {
+            Ok(FontWeight::Bolder)
+        } else if strings::eql_case_insensitive_ascii_check_length(ident, b"lighter") {
+            Ok(FontWeight::Lighter)
+        } else {
+            Err(location.new_unexpected_token_error(crate::Token::Ident(ident)))
+        }
     }
-    #[cfg(any())] // blocked_on: css::DeriveToCss(@This()).toCss → #[derive(ToCss)]
+
     pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
-        css::DeriveToCss::to_css(self, dest)
+        match self {
+            FontWeight::Absolute(a) => a.to_css(dest),
+            FontWeight::Bolder => dest.write_str("bolder"),
+            FontWeight::Lighter => dest.write_str("lighter"),
+        }
     }
 
     #[inline]
@@ -92,9 +108,21 @@ pub enum AbsoluteFontWeight {
 }
 
 impl AbsoluteFontWeight {
-    #[cfg(any())] // blocked_on: css::DeriveParse(@This()).parse → #[derive(Parse)]
+    // PORT NOTE: Zig `css.DeriveParse(@This()).parse` — payload (`CSSNumber`) first,
+    // then keyword variants.
     pub fn parse(input: &mut css::Parser) -> CssResult<Self> {
-        css::DeriveParse::parse(input)
+        if let Ok(n) = input.try_parse(CSSNumberFns::parse) {
+            return Ok(AbsoluteFontWeight::Weight(n));
+        }
+        let location = input.current_source_location();
+        let ident = unsafe { css::src_str(input.expect_ident()?) };
+        if strings::eql_case_insensitive_ascii_check_length(ident, b"normal") {
+            Ok(AbsoluteFontWeight::Normal)
+        } else if strings::eql_case_insensitive_ascii_check_length(ident, b"bold") {
+            Ok(AbsoluteFontWeight::Bold)
+        } else {
+            Err(location.new_unexpected_token_error(crate::Token::Ident(ident)))
+        }
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
@@ -139,16 +167,26 @@ pub enum FontSize {
 }
 
 impl FontSize {
-    #[cfg(any())] // blocked_on: css::DeriveParse / css::DeriveToCss → #[derive(Parse, ToCss)]
+    // PORT NOTE: Zig `css.DeriveParse(@This()).parse` — three payload variants
+    // tried in declaration order.
     pub fn parse(input: &mut css::Parser) -> CssResult<Self> {
-        css::DeriveParse::parse(input)
-    }
-    #[cfg(any())] // blocked_on: #[derive(ToCss)]
-    pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
-        css::DeriveToCss::to_css(self, dest)
+        if let Ok(v) = input.try_parse(LengthPercentage::parse) {
+            return Ok(FontSize::Length(v));
+        }
+        if let Ok(v) = input.try_parse(AbsoluteFontSize::parse) {
+            return Ok(FontSize::Absolute(v));
+        }
+        RelativeFontSize::parse(input).map(FontSize::Relative)
     }
 
-    #[cfg(any())] // blocked_on: DimensionPercentage::is_compatible bound (D: IsCompatible)
+    pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
+        match self {
+            FontSize::Length(l) => l.to_css(dest),
+            FontSize::Absolute(a) => a.to_css(dest),
+            FontSize::Relative(r) => r.to_css(dest),
+        }
+    }
+
     pub fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
         match self {
             FontSize::Length(l) => match l {
@@ -219,13 +257,15 @@ pub enum FontStretch {
 }
 
 impl FontStretch {
-    // TODO: implement this
-    #[cfg(any())] // blocked_on: css::DeriveParse(@This()).parse → #[derive(Parse)]
+    // PORT NOTE: Zig `css.DeriveParse(@This()).parse` — two payload variants
+    // tried in declaration order.
     pub fn parse(input: &mut css::Parser) -> CssResult<Self> {
-        css::DeriveParse::parse(input)
+        if let Ok(kw) = input.try_parse(FontStretchKeyword::parse) {
+            return Ok(FontStretch::Keyword(kw));
+        }
+        Percentage::parse(input).map(FontStretch::Percentage)
     }
 
-    #[cfg(any())] // blocked_on: Percentage::to_css un-gate
     pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
         if dest.minify {
             let percentage: Percentage = self.into_percentage();
@@ -535,12 +575,9 @@ impl FontStyle {
         FontStyle::Normal
     }
 
-    #[cfg(any())]
-    // blocked_on: Angle::parse + Parser::expect_ident lifetime detachment for
-    // Token::Ident error payload (arena 'static cast).
     pub fn parse(input: &mut css::Parser) -> CssResult<FontStyle> {
         let location = input.current_source_location();
-        let ident = input.expect_ident()?;
+        let ident = unsafe { css::src_str(input.expect_ident()?) };
         // todo_stuff.match_ignore_ascii_case
         if strings::eql_case_insensitive_ascii_check_length(b"normal", ident) {
             Ok(FontStyle::Normal)
@@ -552,12 +589,10 @@ impl FontStyle {
                 .unwrap_or(FontStyle::default_oblique_angle());
             Ok(FontStyle::Oblique(angle))
         } else {
-            //
             Err(location.new_unexpected_token_error(crate::Token::Ident(ident)))
         }
     }
 
-    #[cfg(any())] // blocked_on: Angle::to_css
     pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
         match self {
             FontStyle::Normal => dest.write_str("normal"),
@@ -647,16 +682,26 @@ pub enum LineHeight {
 }
 
 impl LineHeight {
-    #[cfg(any())] // blocked_on: css::DeriveParse / css::DeriveToCss → #[derive(Parse, ToCss)]
+    // PORT NOTE: Zig `css.DeriveParse(@This()).parse` — keyword variant first
+    // (`normal`), then payload variants in declaration order.
     pub fn parse(input: &mut css::Parser) -> CssResult<Self> {
-        css::DeriveParse::parse(input)
-    }
-    #[cfg(any())] // blocked_on: #[derive(ToCss)]
-    pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
-        css::DeriveToCss::to_css(self, dest)
+        if input.try_parse(|p| p.expect_ident_matching(b"normal")).is_ok() {
+            return Ok(LineHeight::Normal);
+        }
+        if let Ok(n) = input.try_parse(CSSNumberFns::parse) {
+            return Ok(LineHeight::Number(n));
+        }
+        LengthPercentage::parse(input).map(LineHeight::Length)
     }
 
-    #[cfg(any())] // blocked_on: DimensionPercentage::is_compatible bound
+    pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
+        match self {
+            LineHeight::Normal => dest.write_str("normal"),
+            LineHeight::Number(n) => CSSNumberFns::to_css(n, dest),
+            LineHeight::Length(l) => l.to_css(dest),
+        }
+    }
+
     pub fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
         match self {
             LineHeight::Length(l) => l.is_compatible(browsers),
@@ -708,9 +753,6 @@ impl Font {
         ("variant_caps", crate::properties::PropertyIdTag::FontVariantCaps),
     ];
 
-    #[cfg(any())]
-    // blocked_on: FontStyle/FontWeight/FontVariantCaps/FontStretchKeyword/
-    // FontSize/LineHeight ::parse + BabyList::<FontFamily>::parse.
     pub fn parse(input: &mut css::Parser) -> CssResult<Font> {
         let mut style: Option<FontStyle> = None;
         let mut weight: Option<FontWeight> = None;
@@ -778,7 +820,11 @@ impl Font {
             None
         };
 
-        let family = BabyList::<FontFamily>::parse(input)?;
+        // PORT NOTE: Zig `BabyList(FontFamily).parse` parsed a comma-separated
+        // list and packed it; route through `parse_comma_separated` + move.
+        let family = input
+            .parse_comma_separated(FontFamily::parse)
+            .map(BabyList::<FontFamily>::move_from_list)?;
 
         Ok(Font {
             family,
@@ -791,9 +837,6 @@ impl Font {
         })
     }
 
-    #[cfg(any())]
-    // blocked_on: FontStyle/FontVariantCaps/FontWeight/FontStretch/FontSize/
-    // LineHeight/FontFamily ::to_css.
     pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
         if self.style != FontStyle::default() {
             self.style.to_css(dest)?;
@@ -824,7 +867,7 @@ impl Font {
 
         dest.write_char(b' ')?;
 
-        let len = self.family.len() as usize;
+        let len = self.family.len as usize;
         for (idx, val) in self.family.slice_const().iter().enumerate() {
             val.to_css(dest)?;
             if idx < len - 1 {

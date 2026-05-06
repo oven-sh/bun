@@ -1228,7 +1228,7 @@ fn clone_fields(fields: &Fields, ctor: TokenStream2) -> TokenStream2 {
             let idx = (0..fs.unnamed.len()).map(syn::Index::from);
             quote! {
                 #ctor( #(
-                    self.#idx.deep_clone(__bump)
+                    ::bun_css::generics::DeepClone::deep_clone(&self.#idx, __bump)
                 ),* )
             }
         }
@@ -1236,7 +1236,7 @@ fn clone_fields(fields: &Fields, ctor: TokenStream2) -> TokenStream2 {
             let names: Vec<_> = fs.named.iter().map(|f| f.ident.clone().unwrap()).collect();
             quote! {
                 #ctor { #(
-                    #names: self.#names.deep_clone(__bump)
+                    #names: ::bun_css::generics::DeepClone::deep_clone(&self.#names, __bump)
                 ),* }
             }
         }

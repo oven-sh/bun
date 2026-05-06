@@ -4732,7 +4732,8 @@ impl<'a> Resolver<'a> {
             if let Ok(Some(import_dir_info_ptr)) = self.dir_info_cached(dirname) {
                 // SAFETY: ARENA — DirInfo ptr is a BSSMap slot and outlives the resolver (see LIFETIMES.tsv).
                 let import_dir_info_outer = unsafe { &*import_dir_info_ptr };
-                if let Some(import_dir_info) = import_dir_info_outer.get_enclosing_browser_scope() {
+                // SAFETY: resolver mutex held; sole `&mut DirInfo` for this index.
+                if let Some(import_dir_info) = unsafe { import_dir_info_outer.get_enclosing_browser_scope() } {
                     let pkg = import_dir_info.package_json.unwrap();
                     if let Some(remap) = self.check_browser_map::<{ BrowserMapPathKind::AbsolutePath }>(import_dir_info, abs_path) {
                         // Is the path disabled?
@@ -4846,7 +4847,8 @@ impl<'a> Resolver<'a> {
         if self.care_about_browser_field {
             // Support remapping one package path to another via the "browser" field
             // SAFETY: ARENA — `source_dir_info` is a BSSMap-backed DirInfo slot that outlives the resolver (see LIFETIMES.tsv).
-            if let Some(browser_scope) = unsafe { &*source_dir_info }.get_enclosing_browser_scope() {
+            // SAFETY: resolver mutex held; sole `&mut DirInfo` for this index.
+            if let Some(browser_scope) = unsafe { (*source_dir_info).get_enclosing_browser_scope() } {
                 if let Some(package_json) = browser_scope.package_json {
                     if let Some(remapped) = self.check_browser_map::<{ BrowserMapPathKind::PackagePath }>(browser_scope, import_path) {
                         if remapped.is_empty() {
@@ -4926,7 +4928,8 @@ impl<'a> Resolver<'a> {
                         },
                     };
                     // SAFETY: ARENA — DirInfo ptr is a BSSMap slot and outlives the resolver (see LIFETIMES.tsv).
-                    if let Some(browser_scope) = unsafe { &*base_dir_info }.get_enclosing_browser_scope() {
+                    // SAFETY: resolver mutex held; sole `&mut DirInfo` for this index.
+                    if let Some(browser_scope) = unsafe { (*base_dir_info).get_enclosing_browser_scope() } {
                         if let Some(remap) = self.check_browser_map::<{ BrowserMapPathKind::AbsolutePath }>(browser_scope, result.path_pair.primary.text()) {
                             if remap.is_empty() {
                                 result.path_pair.primary.is_disabled = true;
@@ -7105,7 +7108,8 @@ impl<'a> Resolver<'a> {
 
         if self.care_about_browser_field {
             // Potentially remap using the "browser" field
-            if let Some(browser_scope) = dir_info.get_enclosing_browser_scope() {
+            // SAFETY: resolver mutex held; sole `&mut DirInfo` for this index.
+            if let Some(browser_scope) = unsafe { dir_info.get_enclosing_browser_scope() } {
                 if let Some(browser_json) = browser_scope.package_json {
                     if let Some(remap) = self.check_browser_map::<{ BrowserMapPathKind::AbsolutePath }>(browser_scope, field_rel_path) {
                         // Is the path disabled?
@@ -7262,7 +7266,8 @@ impl<'a> Resolver<'a> {
         }
 
         if self.care_about_browser_field {
-            if let Some(browser_scope) = dir_info.get_enclosing_browser_scope() {
+            // SAFETY: resolver mutex held; sole `&mut DirInfo` for this index.
+            if let Some(browser_scope) = unsafe { dir_info.get_enclosing_browser_scope() } {
                 const FIELD_REL_PATH: &[u8] = b"index";
 
                 if let Some(browser_json) = browser_scope.package_json {

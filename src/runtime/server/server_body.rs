@@ -3998,7 +3998,10 @@ impl AnyServer {
         any_server_dispatch!(self, |s| &s.config)
     }
 
-    pub fn web_socket_handler(&self) -> Option<&mut WebSocketServerContext::Handler> {
+    /// SAFETY: derives `&mut ServerConfig` through `&self` via the erased
+    /// `AnyServer` pointer; two calls alias the same handler. Caller must not
+    /// hold another live `&mut Handler` (resolver-style accessor).
+    pub unsafe fn web_socket_handler(&self) -> Option<&mut WebSocketServerContext::Handler> {
         let server_config: &mut ServerConfig = any_server_dispatch!(self, |s| &mut s.config);
         server_config.websocket.as_mut().map(|ws| &mut ws.handler)
     }

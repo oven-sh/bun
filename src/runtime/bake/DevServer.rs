@@ -2186,7 +2186,8 @@ impl DevServer {
         self.log.clear_and_free();
 
         // Notify inspector about bundle start
-        if let Some(agent) = self.inspector() {
+        // SAFETY: JS-thread only; sole `&mut` agent borrow in this scope.
+        if let Some(agent) = unsafe { self.inspector() } {
             // PERF(port): was stack-fallback
             let mut trigger_files: Vec<BunString> = Vec::with_capacity(entry_points.set.len());
             for key in entry_points.set.keys() {
@@ -3290,7 +3291,8 @@ pub fn finalize_bundle(
     if !dev.incremental_result.failures_added.is_empty() {
         dev.bundles_since_last_error = 0;
 
-        let mut inspector_agent = dev.inspector();
+        // SAFETY: JS-thread only; sole `&mut` agent borrow in this scope.
+        let mut inspector_agent = unsafe { dev.inspector() };
         if current_bundle.promise.strong.has_value() {
             let _reset = scopeguard::guard((), |_| current_bundle.promise.reset());
             current_bundle
@@ -3437,7 +3439,8 @@ pub fn finalize_bundle(
         Output::pretty_error("\n");
         Output::flush();
 
-        if let Some(agent) = dev.inspector() {
+        // SAFETY: JS-thread only; sole `&mut` agent borrow in this scope.
+        if let Some(agent) = unsafe { dev.inspector() } {
             agent.notify_bundle_complete(dev.inspector_server_id, ms_elapsed as f64);
         }
     }
@@ -4647,7 +4650,10 @@ impl DevServer {
         }
     }
 
-    pub fn inspector(&self) -> Option<&mut BunFrontendDevServerAgent> {
+    /// SAFETY: returns `&mut BunFrontendDevServerAgent` derived through `&self`
+    /// via a raw VM pointer; two calls alias the same agent. Caller must not
+    /// hold another live `&mut` to it.
+    pub unsafe fn inspector(&self) -> Option<&mut BunFrontendDevServerAgent> {
         // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime
         if let Some(debugger) = unsafe { &*self.vm }.debugger.as_ref() {
             #[cold]
@@ -4892,7 +4898,8 @@ impl DevServer {
     /// - The inspector is enabled
     /// - The user passed "console": true in serve options
     fn should_receive_console_log_from_browser(&self) -> bool {
-        self.inspector().is_some() || self.broadcast_console_log_from_browser_to_server
+        // SAFETY: read-only check; agent borrow not retained.
+        unsafe { self.inspector() }.is_some() || self.broadcast_console_log_from_browser_to_server
     }
 }
 

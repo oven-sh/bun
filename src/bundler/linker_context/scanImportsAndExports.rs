@@ -1356,8 +1356,23 @@ impl ExportStarContext {
 mod __css_validation {
     use super::*;
     use bun_collections::{ArrayHashMap, StringArrayHashMap};
-    use bun_css::{BundlerStyleSheet, ComposeFrom, PropertyIdTag};
+    use bun_css::css_properties::css_modules::Specifier;
+    use bun_css::{BundlerStyleSheet, PropertyIdTag};
     use bun_logger::{self as Logger, Log};
+
+    type CssCol = Option<&'static core::ffi::c_void>;
+
+    /// `ArrayHashAdapter` so `LocalScope` (`ArrayHashMap<Box<[u8]>, LocalEntry>`)
+    /// can be queried by borrowed `&[u8]` (CSS idents are arena `*const [u8]`).
+    struct SliceBoxAdapter;
+    impl bun_collections::array_hash_map::ArrayHashAdapter<[u8], Box<[u8]>> for SliceBoxAdapter {
+        fn hash(&self, key: &[u8]) -> u32 {
+            bun_collections::array_hash_map::DefaultArrayHashContext::default().hash(key)
+        }
+        fn eql(&self, a: &[u8], b: &Box<[u8]>, _i: usize) -> bool {
+            a == &***b
+        }
+    }
 
     pub(super) fn validate_css_import_composes(
         this: &mut LinkerContext,

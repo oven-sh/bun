@@ -619,7 +619,14 @@ impl<T> BabyList<T> {
         true
     }
 
-    pub fn deep_clone(&self) -> Result<Self, bun_core::Error>
+    /// Allocator-fallible deep clone (Zig `BabyList.deepClone`).
+    ///
+    /// **Not** named `deep_clone`: `bun_css::generics` provides a blanket
+    /// `impl DeepClone<'bump> for BabyList<T>` whose `deep_clone(&self, &Arena)`
+    /// is what `#[derive(DeepClone)]` expands to via UFCS. Keeping the inherent
+    /// under a distinct name avoids any ambiguity at non-derive call sites that
+    /// *do* use method syntax.
+    pub fn deep_clone_fallible(&self) -> Result<Self, bun_core::Error>
     where
         T: DeepClone,
     {
@@ -634,7 +641,7 @@ impl<T> BabyList<T> {
         Ok(list_)
     }
 
-    /// Like `deep_clone` but the per-element clone is supplied as a closure
+    /// Like `deep_clone_fallible` but the per-element clone is supplied as a closure
     /// (e.g. an arena-aware `|x| x.deep_clone(bump)`). This is the variant
     /// `bun_css::generic::DeepClone for BabyList<T>` needs, where the element
     /// trait carries an arena lifetime that the in-crate `DeepClone` trait
@@ -664,15 +671,15 @@ impl<T> BabyList<T> {
         Ok(list_)
     }
 
-    /// Same as `deep_clone` but calls `bun.outOfMemory` instead of returning an error.
+    /// Same as `deep_clone_fallible` but calls `bun.outOfMemory` instead of returning an error.
     /// `T::deep_clone` must not return any error except `error.OutOfMemory`.
     pub fn deep_clone_infallible(&self) -> Self
     where
         T: DeepClone,
     {
-        // PORT NOTE: bun.handleOom(expr) → expr (Rust aborts on OOM by default); but deep_clone
-        // returns Result, so unwrap.
-        self.deep_clone().expect("OutOfMemory")
+        // PORT NOTE: bun.handleOom(expr) → expr (Rust aborts on OOM by default); but
+        // deep_clone_fallible returns Result, so unwrap.
+        self.deep_clone_fallible().expect("OutOfMemory")
     }
 
     /// Avoid using this function. It creates a `BabyList` that will immediately invoke
@@ -782,7 +789,7 @@ impl<T> BabyList<T> {
     // for `meta.zig`. Not needed in Rust; dropped.
 }
 
-/// Trait for `BabyList::deep_clone`.
+/// Trait for `BabyList::deep_clone_fallible`.
 // TODO(port): unify with whatever trait the CSS/AST crates define for `deepClone`.
 pub trait DeepClone: Sized {
     fn deep_clone(&self) -> Result<Self, bun_core::Error>;

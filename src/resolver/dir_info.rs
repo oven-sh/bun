@@ -142,7 +142,10 @@ impl DirInfo {
         hash_map_instance().at_index(self.parent).map(|p| p as *mut _)
     }
 
-    pub fn get_enclosing_browser_scope(&self) -> Option<&'static mut DirInfo> {
+    /// SAFETY: returns `&'static mut DirInfo` into the BSSMap singleton; two
+    /// calls alias the same slot. Caller must hold the resolver mutex and not
+    /// retain another live `&mut DirInfo` to the same index.
+    pub unsafe fn get_enclosing_browser_scope(&self) -> Option<&'static mut DirInfo> {
         hash_map_instance().at_index(self.enclosing_browser_scope)
     }
 }

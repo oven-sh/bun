@@ -274,7 +274,8 @@ impl NodeHTTPResponse {
         if upgrade_ctx.is_null() {
             return false;
         }
-        let Some(ws_handler) = self.server.web_socket_handler() else {
+        // SAFETY: JS-thread only; sole `&mut Handler` borrow in this scope.
+        let Some(ws_handler) = (unsafe { self.server.web_socket_handler() }) else {
             return false;
         };
         let socket_value = self.get_server_socket_value();

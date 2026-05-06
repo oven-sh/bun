@@ -159,8 +159,7 @@ pub mod ast {
 
         pub fn as_pipeline_item(&self) -> Option<PipelineItem<'arena>> {
             match self {
-                Expr::Assign(a) => Some(PipelineItem::Assigns(*a as *const _ as *mut _)),
-                // TODO(port): borrowck — Zig copies the arena ptr; here we re-borrow
+                Expr::Assign(a) => Some(PipelineItem::Assigns(*a)),
                 Expr::Cmd(c) => Some(PipelineItem::Cmd(*c)),
                 Expr::Subshell(s) => Some(PipelineItem::Subshell(*s)),
                 Expr::If(i) => Some(PipelineItem::If(*i)),
@@ -3715,9 +3714,14 @@ impl<'a> SrcAscii<'a> {
 
 pub type CodepointIterator<'a> = strings::UnsignedCodepointIterator<'a>;
 
+// PORT NOTE: Zig holds a `CodepointIterator` by value (whose only state used
+// by `next(cursor)` is `bytes`). The Rust `NewCodePointIterator` lacks
+// `Clone`/`Copy`, so store the underlying `&[u8]` instead and rebuild the
+// iterator on demand — keeps `SrcUnicode` (and thus `BacktrackSnapshot`)
+// `Copy` like the Zig original.
 #[derive(Clone, Copy)]
 pub struct SrcUnicode<'a> {
-    pub iter: CodepointIterator<'a>,
+    pub bytes: &'a [u8],
     pub cursor: CodepointCursor,
     pub next_cursor: CodepointCursor,
 }
@@ -3729,35 +3733,35 @@ pub struct SrcUnicodeIndexValue {
 }
 
 impl<'a> SrcUnicode<'a> {
-    fn next_cursor(iter: &CodepointIterator<'a>, cursor: &mut CodepointCursor) {
+    fn advance(bytes: &'a [u8], cursor: &mut CodepointCursor) {
+        let iter = CodepointIterator::init(bytes);
         if !iter.next(cursor) {
             // This will make `i > sourceBytes.len` so the condition in `index` will fail
-            cursor.i = u32::try_from(iter.bytes().len() + 1).unwrap();
+            cursor.i = u32::try_from(bytes.len() + 1).unwrap();
             cursor.width = 1;
             cursor.c = CodepointIterator::ZERO_VALUE;
         }
     }
 
     fn init(bytes: &'a [u8]) -> Self {
-        let iter = CodepointIterator::init(bytes);
         let mut cursor = CodepointCursor::default();
-        Self::next_cursor(&iter, &mut cursor);
+        Self::advance(bytes, &mut cursor);
         let mut next_cursor = cursor;
-        Self::next_cursor(&iter, &mut next_cursor);
-        Self { iter, cursor, next_cursor }
+        Self::advance(bytes, &mut next_cursor);
+        Self { bytes, cursor, next_cursor }
     }
 
     #[inline]
     fn index(&self) -> Option<SrcUnicodeIndexValue> {
-        if self.cursor.width as usize + self.cursor.i as usize > self.iter.bytes().len() {
+        if self.cursor.width as usize + self.cursor.i as usize > self.bytes.len() {
             return None;
         }
-        Some(SrcUnicodeIndexValue { char: self.cursor.c, width: self.cursor.width })
+        Some(SrcUnicodeIndexValue { char: self.cursor.c as u32, width: self.cursor.width })
     }
 
     #[inline]
     fn index_next(&self) -> Option<SrcUnicodeIndexValue> {
-        if self.next_cursor.width as usize + self.next_cursor.i as usize > self.iter.bytes().len() {
+        if self.next_cursor.width as usize + self.next_cursor.i as usize > self.bytes.len() {
             return None;
         }
         Some(SrcUnicodeIndexValue {
@@ -3770,13 +3774,13 @@ impl<'a> SrcUnicode<'a> {
     fn eat(&mut self, escaped: bool) {
         if escaped {
             // eat two codepoints
-            Self::next_cursor(&self.iter, &mut self.next_cursor);
+            Self::advance(self.bytes, &mut self.next_cursor);
             self.cursor = self.next_cursor;
-            Self::next_cursor(&self.iter, &mut self.next_cursor);
+            Self::advance(self.bytes, &mut self.next_cursor);
         } else {
             // eat one codepoint
             self.cursor = self.next_cursor;
-            Self::next_cursor(&self.iter, &mut self.next_cursor);
+            Self::advance(self.bytes, &mut self.next_cursor);
         }
     }
 }
@@ -3839,7 +3843,7 @@ impl<'a, const ENCODING: StringEncoding> ShellCharIter<'a, ENCODING> {
     pub fn src_bytes(&self) -> &'a [u8] {
         match &self.src {
             Src::Ascii(a) => a.bytes,
-            Src::Unicode(u) => u.iter.bytes(),
+            Src::Unicode(u) => u.bytes,
         }
     }
 
@@ -3947,7 +3951,9 @@ pub fn is_valid_var_name(var_name: &[u8]) -> bool {
         return false;
     }
 
-    match cursor.c {
+    // PORT NOTE: `Cursor.c` is `i32` (`CodePoint`). Widen to `u32` for the
+    // ASCII-range matches below; negative sentinel never matches anyway.
+    match cursor.c as u32 {
         c if c == b'=' as u32 || (b'0' as u32..=b'9' as u32).contains(&c) => return false,
         c if (b'a' as u32..=b'z' as u32).contains(&c)
             || (b'A' as u32..=b'Z' as u32).contains(&c)
@@ -3956,7 +3962,7 @@ pub fn is_valid_var_name(var_name: &[u8]) -> bool {
     }
 
     while iter.next(&mut cursor) {
-        match cursor.c {
+        match cursor.c as u32 {
             c if (b'0' as u32..=b'9' as u32).contains(&c)
                 || (b'a' as u32..=b'z' as u32).contains(&c)
                 || (b'A' as u32..=b'Z' as u32).contains(&c)
@@ -4003,7 +4009,7 @@ pub fn has_eq_sign(str: &[u8]) -> Option<u32> {
     let iter = CodepointIterator::init(str);
     let mut cursor = CodepointCursor::default();
     while iter.next(&mut cursor) {
-        if cursor.c == b'=' as u32 {
+        if cursor.c as u32 == b'=' as u32 {
             return Some(cursor.i);
         }
     }
@@ -4114,7 +4120,7 @@ pub fn escape_utf16<const ADD_QUOTES: bool>(
                 i += 1;
                 break 'brk c as u32;
             }
-            let ret = strings::utf16_codepoint(&str[i..]);
+            let ret = strings::utf16_codepoint_with_fffd(&str[i..]);
             if ret.fail {
                 return Ok(EscapeUtf16Result { is_invalid: true });
             }
@@ -4219,7 +4225,7 @@ impl<T, const INLINED_MAX: usize> SmolListInlined<T, INLINED_MAX> {
             list.append_assume_capacity(v);
         }
         self.len = 0;
-        list.push(new);
+        bun_core::handle_oom(list.append(new));
         list
     }
 
@@ -4263,9 +4269,22 @@ impl<T, const INLINED_MAX: usize> SmolListInlined<T, INLINED_MAX> {
     }
 }
 
-// TODO(port): MemoryCost trait for the `@hasDecl(T, "memoryCost")` reflection.
+// PORT NOTE: Zig's `SmolList.memoryCost` branched on `@hasDecl(T, "memoryCost")`
+// at comptime. Expressed as a trait + per-type forwarding impls below.
 pub trait MemoryCost {
     fn memory_cost(&self) -> usize;
+}
+impl<'a> MemoryCost for ast::Atom<'a> {
+    #[inline]
+    fn memory_cost(&self) -> usize { self.memory_cost() }
+}
+impl<'a> MemoryCost for ast::Stmt<'a> {
+    #[inline]
+    fn memory_cost(&self) -> usize { self.memory_cost() }
+}
+impl<T: MemoryCost, const N: usize> MemoryCost for SmolList<T, N> {
+    #[inline]
+    fn memory_cost(&self) -> usize { self.memory_cost() }
 }
 
 impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
@@ -4320,7 +4339,9 @@ impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
             return this;
         }
         let mut heap = bun_core::handle_oom(BabyList::<T>::init_capacity(vals.len()));
-        heap.append_slice_assume_capacity(vals);
+        for v in vals {
+            heap.append_assume_capacity(v.clone());
+        }
         SmolList::Heap(heap)
     }
 
@@ -4488,7 +4509,7 @@ impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
                 // TODO(port): drop initialized elements if T: Drop
                 i.len = 0;
             }
-            SmolList::Heap(h) => h.clear(),
+            SmolList::Heap(h) => h.clear_retaining_capacity(),
         }
     }
 

@@ -47,7 +47,6 @@ impl css::generic::IsCompatible for BoxShadow {
 }
 
 impl BoxShadow {
-    #[cfg(any())] // blocked_on: Parser::expect_ident_matching(&[u8]) ergonomics + BasicParseErrorKind variant naming
     pub fn parse(input: &mut css::Parser) -> css::Result<Self> {
         let mut color: Option<CssColor> = None;
         struct Lengths {
@@ -62,7 +61,7 @@ impl BoxShadow {
         loop {
             if !inset {
                 if input
-                    .try_parse(|p| p.expect_ident_matching("inset"))
+                    .try_parse(|p| p.expect_ident_matching(b"inset"))
                     .is_ok()
                 {
                     inset = true;
@@ -108,7 +107,7 @@ impl BoxShadow {
 
         let final_lengths = match lengths {
             Some(l) => l,
-            None => return Err(input.new_error(css::BasicParseErrorKind::QualifiedRuleInvalid)),
+            None => return Err(input.new_error(css::BasicParseErrorKind::qualified_rule_invalid)),
         };
         Ok(BoxShadow {
             color: color.unwrap_or(CssColor::CurrentColor),

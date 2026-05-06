@@ -46,9 +46,12 @@ impl EventLoopTaskNoContext {
     }
 
     /// Get the VM that created this task
+    ///
+    /// SAFETY: returns `&'static mut VirtualMachine`; two calls alias the same
+    /// VM. Caller must not hold another live `&mut VirtualMachine`.
     // TODO(port): VirtualMachine is process-lifetime; revisit `'static` once bun_jsc settles on
     // a borrow convention for VM handles.
-    pub fn get_vm(&self) -> Option<&'static mut VirtualMachine> {
+    pub unsafe fn get_vm(&self) -> Option<&'static mut VirtualMachine> {
         // SAFETY: `self` is a valid C++ EventLoopTaskNoContext; the returned VM (if non-null)
         // outlives this task.
         unsafe { Bun__EventLoopTaskNoContext__createdInBunVm(self as *const _).as_mut() }

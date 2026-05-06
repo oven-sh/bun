@@ -70,7 +70,8 @@ impl HmrSocket {
 
         if send_status != bun_uws::SendStatus::Dropped {
             // Notify inspector about client connection
-            if let Some(agent) = dev.inspector() {
+            // SAFETY: JS-thread only; sole `&mut` agent borrow in this scope.
+            if let Some(agent) = unsafe { dev.inspector() } {
                 self.inspector_connection_id = agent.next_connection_id();
                 agent.notify_client_connected(dev.inspector_server_id, self.inspector_connection_id);
             }
@@ -169,7 +170,8 @@ impl HmrSocket {
                 let pattern = &msg[1..];
                 let dev = self.dev();
                 let maybe_rbi = dev.route_to_bundle_index_slow(pattern);
-                if let Some(agent) = dev.inspector() {
+                // SAFETY: JS-thread only; sole `&mut` agent borrow in this scope.
+            if let Some(agent) = unsafe { dev.inspector() } {
                     if self.inspector_connection_id > -1 {
                         let pattern_str = bun_str::String::init(pattern);
                         // `defer pattern_str.deref()` → Drop on bun_str::String
@@ -268,7 +270,8 @@ impl HmrSocket {
                 let data = &msg[2..];
                 let dev = self.dev();
 
-                if let Some(agent) = dev.inspector() {
+                // SAFETY: JS-thread only; sole `&mut` agent borrow in this scope.
+            if let Some(agent) = unsafe { dev.inspector() } {
                     let log_str = bun_str::String::init(data);
                     // `defer log_str.deref()` → Drop on bun_str::String
                     agent.notify_console_log(dev.inspector_server_id, kind, &log_str);
@@ -339,7 +342,8 @@ impl HmrSocket {
         let dev = this.dev();
         if this.inspector_connection_id > -1 {
             // Notify inspector about client disconnection
-            if let Some(agent) = dev.inspector() {
+            // SAFETY: JS-thread only; sole `&mut` agent borrow in this scope.
+            if let Some(agent) = unsafe { dev.inspector() } {
                 agent.notify_client_disconnected(
                     dev.inspector_server_id,
                     this.inspector_connection_id,
@@ -369,7 +373,8 @@ impl HmrSocket {
     ) {
         if self.inspector_connection_id > -1 {
             let dev = self.dev();
-            if let Some(agent) = dev.inspector() {
+            // SAFETY: JS-thread only; sole `&mut` agent borrow in this scope.
+            if let Some(agent) = unsafe { dev.inspector() } {
                 let pattern_str = bun_str::String::init(pattern);
                 // `defer pattern_str.deref()` → Drop on bun_str::String
                 agent.notify_client_navigated(

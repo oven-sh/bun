@@ -5,21 +5,25 @@ use std::io::Write as _;
 use bun_alloc::AllocError;
 use crate::cli::Command;
 use crate::cli::publish_command as Publish;
-use bun_collections::{PriorityQueue, StringHashMap};
+use bun_collections::StringHashMap;
 use bun_core::{self as bun, Global, Output, Progress, fmt as bun_fmt};
 use bun_glob as glob;
 use bun_install::{Dependency, Lockfile, PackageManager};
-use bun_install::package_manager::options::LogLevel;
+use bun_install::package_manager_real::options::LogLevel;
 use bun_interchange::json as JSON;
 use bun_js_parser::{E, Expr};
 use bun_js_printer as js_printer;
-use bun_libarchive::lib::Archive;
+use bun_libarchive::lib::{Archive, Entry as ArchiveEntry};
 use bun_paths::{self as path, PathBuffer, SEP_STR};
-use bun_ptr::CowString;
+// `bun.ptr.CowString = CowSlice(u8)` — the lifetime-free struct port (init_owned/
+// borrow_subslice/length live on `cow_slice::CowSliceZ`, not on the `std::borrow::Cow`
+// alias re-exported at `bun_ptr::CowString`).
+use bun_ptr::cow_slice::CowSlice;
+type CowString = CowSlice<u8>;
 use bun_semver as Semver;
-use bun_sha as sha;
+use bun_sha_hmac::sha;
 use bun_str::{ZStr, strings};
-use bun_sys::{self, DirIterator, Fd, File, Dir};
+use bun_sys::{self, dir_iterator as DirIterator, Fd, File, Dir};
 use crate::cli::run_command::RunCommand;
 
 // type aliases matching Zig `string`/`stringZ`

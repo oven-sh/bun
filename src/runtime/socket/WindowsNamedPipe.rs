@@ -818,6 +818,44 @@ impl Drop for WindowsNamedPipe {
     }
 }
 
+// `StreamingWriter<P>` resolves to `PosixStreamingWriter<P>` on non-Windows
+// targets, which carries a `P: PosixStreamingWriterParent` bound. This type is
+// Windows-only at runtime, but the struct field still needs to type-check on
+// POSIX, so provide the trait impl forwarding to the same handlers the Zig
+// `StreamingWriter(WindowsNamedPipe, .{ onClose, onWritable, onError, onWrite })`
+// binds.
+#[cfg(unix)]
+impl bun_io::pipe_writer::PosixStreamingWriterParent for WindowsNamedPipe {
+    const HAS_ON_READY: bool = true;
+    unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus) {
+        // SAFETY: `this` is the BACKREF set via `set_parent`; unique for the
+        // callback's duration (StreamingWriter never holds `&mut Parent`).
+        WindowsNamedPipe::on_write(unsafe { &mut *this }, amount, status)
+    }
+    unsafe fn on_error(this: *mut Self, err: bun_sys::Error) {
+        // SAFETY: see on_write.
+        WindowsNamedPipe::on_error(unsafe { &mut *this }, err)
+    }
+    unsafe fn on_ready(this: *mut Self) {
+        // Zig `.onWritable` slot.
+        // SAFETY: see on_write.
+        WindowsNamedPipe::on_writable(unsafe { &mut *this })
+    }
+    unsafe fn on_close(this: *mut Self) {
+        // SAFETY: see on_write.
+        WindowsNamedPipe::on_close(unsafe { &mut *this })
+    }
+    unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
+        // SAFETY: see on_write. Shared-only read of `vm`.
+        // CYCLEBREAK: opaque `*mut c_void` round-tripped through io-layer vtable.
+        bun_io::EventLoopHandle(unsafe { (*this).vm.event_loop() } as *mut c_void)
+    }
+    unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop {
+        // SAFETY: see on_write. Shared-only read of `vm`.
+        unsafe { (*this).vm.uws_loop().cast() }
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/socket/WindowsNamedPipe.zig (614 lines)

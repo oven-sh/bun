@@ -476,7 +476,7 @@ pub fn write_u8<const ENCODING: u8>(
         }
         Encoding::Utf8 => {
             // need to encode
-            Ok(strings::copy_latin1_into_utf8(to_slice, input_slice).written)
+            Ok(strings::copy_latin1_into_utf8(to_slice, input_slice).written as usize)
         }
         // encode latin1 into UTF16
         Encoding::Ucs2 | Encoding::Utf16le => {

@@ -220,6 +220,29 @@ const PREALLOCATE_LENGTH: usize = 2048 * 1024;
 /// stores it as `u32` on the Rust side (see `PathString.rs` POINTER_BITS).
 type PathInt = u32;
 
+/// `Syscall.mkdirOSPath` / `Syscall.openatOSPath` — on POSIX `OSPathSliceZ` is
+/// `&ZStr`, so these are pure forwarders to the byte-path entry points. On
+/// Windows they would route through `sys_uv` (handled by `#[cfg(windows)]`
+/// branches at the call sites).
+#[cfg(not(windows))]
+#[inline]
+fn mkdir_os_path(path: OSPathSliceZ, mode: Mode) -> Maybe<()> {
+    Syscall::mkdir(path, mode)
+}
+#[cfg(not(windows))]
+#[inline]
+fn openat_os_path(dirfd: FD, path: OSPathSliceZ, flags: i32, mode: Mode) -> Maybe<FD> {
+    Syscall::openat(dirfd, path, flags, mode)
+}
+#[cfg(windows)]
+#[inline]
+fn mkdir_os_path(path: OSPathSliceZ, mode: Mode) -> Maybe<()> { mkdir_os_path(path, mode) }
+#[cfg(windows)]
+#[inline]
+fn openat_os_path(dirfd: FD, path: OSPathSliceZ, flags: i32, mode: Mode) -> Maybe<FD> {
+    openat_os_path(dirfd, path, flags, mode)
+}
+
 type ReadPosition = i64;
 type Buffer = super::types::Buffer;
 type ArrayBuffer = bun_jsc::MarkedArrayBuffer;
@@ -1137,7 +1160,7 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
         }
 
         let open_flags = sys::O::DIRECTORY | sys::O::RDONLY;
-        let fd = match Syscall::openat_os_path(FD::cwd(), src, open_flags, 0) {
+        let fd = match openat_os_path(FD::cwd(), src, open_flags, 0) {
             Maybe::Err(err) => {
                 this.finish_concurrently(Maybe::Err(err.with_path(nodefs.os_path_into_sync_error_buf(src))));
                 return false;
@@ -3530,9 +3553,9 @@ impl NodeFS {
 
             let _close_dest = scopeguard::guard((dest_fd, stat_.mode, &wrote), |(fd, m, wrote)| {
                 // SAFETY: fd is a valid open dest_fd; ftruncate/fchmod are libc FFI
-                let _ = unsafe { sys::linux::ftruncate(fd.cast(), (wrote.get() & ((1u64 << 63) - 1)) as i64) };
+                let _ = unsafe { libc::ftruncate(fd.cast(), (wrote.get() & ((1u64 << 63) - 1)) as i64) };
                 // SAFETY: same fd as above
-                let _ = unsafe { sys::linux::fchmod(fd.cast(), m) };
+                let _ = unsafe { libc::fchmod(fd.cast(), m) };
                 fd.close();
             });
 
@@ -3831,7 +3854,7 @@ impl NodeFS {
 
         // First, attempt to create the desired directory
         // If that fails, then walk back up the path until we have a match
-        match Syscall::mkdir_os_path(path, mode) {
+        match mkdir_os_path(path, mode) {
             Maybe::Err(err) => match err.get_errno() {
                 // `mkpath_np` in macOS also checks for `EISDIR`.
                 // it is unclear if macOS lies about if the existing item is
@@ -3889,7 +3912,7 @@ impl NodeFS {
             if Self::_is_sep(path.as_slice()[i as usize]) {
                 working_mem[i as usize] = 0;
                 let parent = unsafe { OSPathSliceZ::from_raw(working_mem.as_ptr(), i as usize) };
-                match Syscall::mkdir_os_path(parent, mode) {
+                match mkdir_os_path(parent, mode) {
                     Maybe::Err(err) => {
                         working_mem[i as usize] = paths::SEP as OSPathChar;
                         match err.get_errno() {
@@ -3951,7 +3974,7 @@ impl NodeFS {
             if Self::_is_sep(path.as_slice()[i as usize]) {
                 working_mem[i as usize] = 0;
                 let parent = unsafe { OSPathSliceZ::from_raw(working_mem.as_ptr(), i as usize) };
-                match Syscall::mkdir_os_path(parent, mode) {
+                match mkdir_os_path(parent, mode) {
                     Maybe::Err(err) => {
                         working_mem[i as usize] = paths::SEP as OSPathChar;
                         match err.get_errno() {
@@ -3979,7 +4002,7 @@ impl NodeFS {
         // Our final directory will not have a trailing separator
         // so we have to create it once again
         let final_ = unsafe { OSPathSliceZ::from_raw(working_mem.as_ptr(), len as usize) };
-        match Syscall::mkdir_os_path(final_, mode) {
+        match mkdir_os_path(final_, mode) {
             Maybe::Err(err) => match err.get_errno() {
                 E::EXIST => {}
                 _ => {
@@ -5427,7 +5450,7 @@ impl NodeFS {
                 Maybe::Err(sys::Error { errno, syscall: sys::Tag::utime, path: args.path.slice().into(), ..Default::default() })
             } else { Maybe::SUCCESS };
         }
-        match Syscall::lutimes(args.path.slice_z(&mut self.sync_error_buf), args.atime, args.mtime) {
+        match Syscall::lutimens(args.path.slice_z(&mut self.sync_error_buf), args.atime, args.mtime) {
             Maybe::Err(err) => Maybe::Err(err.with_path(args.path.slice())),
             Maybe::Ok(_) => Maybe::SUCCESS,
         }
@@ -5581,7 +5604,7 @@ impl NodeFS {
             }
         }
 
-        let fd = match Syscall::openat_os_path(FD::cwd(), src, sys::O::DIRECTORY | sys::O::RDONLY, 0) {
+        let fd = match openat_os_path(FD::cwd(), src, sys::O::DIRECTORY | sys::O::RDONLY, 0) {
             Maybe::Err(err) => return Maybe::Err(err.with_path(self.os_path_into_sync_error_buf(src.as_slice()))),
             Maybe::Ok(fd_) => fd_,
         };

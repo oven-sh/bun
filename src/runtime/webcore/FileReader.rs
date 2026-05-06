@@ -180,9 +180,9 @@ impl Lazy {
         #[cfg(unix)]
         {
             if file.is_atty.unwrap_or(false)
-                || (fd.stdio_tag().is_some() && sys::posix::isatty(fd.cast()))
-                || (matches!(&file.pathlike, blob::PathLike::Fd(pl_fd)
-                        if pl_fd.stdio_tag().is_some() && sys::posix::isatty(pl_fd.cast())))
+                || (fd.stdio_tag().is_some() && sys::isatty(fd))
+                || (matches!(&file.pathlike, PathOrFileDescriptor::Fd(pl_fd)
+                        if pl_fd.stdio_tag().is_some() && sys::isatty(*pl_fd)))
             {
                 // var termios = std.mem.zeroes(std.posix.termios);
                 // _ = std.c.tcgetattr(fd.cast(), &termios);
@@ -199,19 +199,23 @@ impl Lazy {
                 }
             };
 
-            if sys::S::isdir(stat.mode) {
+            let mode = stat.st_mode as _;
+            if sys::S::ISDIR(mode) {
                 aio::Closer::close(fd, ());
                 return Err(sys::Error::from_code(sys::Errno::ISDIR, sys::Tag::fstat));
             }
 
-            if sys::S::isreg(stat.mode) {
+            if sys::S::ISREG(mode) {
                 is_nonblocking = false;
             }
 
-            this.pollable = sys::is_pollable(stat.mode) || is_nonblocking || file.is_atty.unwrap_or(false);
-            this.file_type = if sys::S::isfifo(stat.mode) {
+            // sys.zig:isPollable — `S.ISFIFO(mode) or S.ISSOCK(mode)`
+            this.pollable = (sys::S::ISFIFO(mode) || sys::S::ISSOCK(mode))
+                || is_nonblocking
+                || file.is_atty.unwrap_or(false);
+            this.file_type = if sys::S::ISFIFO(mode) {
                 FileType::Pipe
-            } else if sys::S::issock(stat.mode) {
+            } else if sys::S::ISSOCK(mode) {
                 FileType::Socket
             } else {
                 FileType::File

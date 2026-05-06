@@ -98,6 +98,11 @@ pub mod install_completions_command;
 pub mod package_manager_command;
 
 // ─── B-2 round 2: newly un-gated (thin surface, heavy bodies re-gated inside) ─
+// phase-d: surfaced for `crate::test_runner::{bun_test,jest,Execution}` which
+// need `CommandLineReporter`. `cli_body`'s private `mod test_command;` is
+// `#[cfg(any())]`-gated, so this is the sole live mount of the file.
+#[path = "test_command.rs"]
+pub mod test_command;
 #[path = "Arguments.rs"]
 pub mod arguments;
 pub use arguments as Arguments;

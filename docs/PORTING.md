@@ -380,8 +380,15 @@ Never write these. The verify gate flags them as `logic-bug`.
   the ownership.
 - **`.clone()` on a `&[u8]` / `Vec` just to escape a borrow** — restructure
   (capture-len-then-reslice) or change the field type.
-- **`todo!()` / `unimplemented!()` in a non-gated, non-`#[cfg(test)]` fn** that
-  the `.zig` has real logic for and no higher-tier dep blocks it.
+- **`todo!()` / `unimplemented!()`** in any fn the `.zig` has real logic for.
+  Port the real body. The only legitimate `todo!()` is when the body genuinely
+  cannot compile because a *lower-tier* crate symbol is missing — and then
+  write `todo!("blocked_on: bun_X::symbol")` so the next pass can find it.
+- **`#[cfg(any())]` / re-gating** to hide code that doesn't compile. Never do
+  this. Fix the code forward: port from `.zig`, adapt the API surface, or
+  `todo!("blocked_on: ...")`. Gating is only for the small set of dep-cycle
+  forward-reference archives (e.g. `bun_alloc/LinuxMemFdAllocator.rs` importing
+  `bun_runtime`) that *structurally* cannot compile in their crate.
 
 ## Concurrency
 

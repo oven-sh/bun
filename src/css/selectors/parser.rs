@@ -164,12 +164,12 @@ pub mod attrs {
 
     impl<Impl: SelectorImpl> AttrSelectorWithOptionalNamespace<Impl> {
         pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-            dest.write_char('[')?;
+            dest.write_char(b'[')?;
             if let Some(nsp) = &self.namespace {
                 match nsp {
                     NamespaceConstraint::Specific(v) => {
                         IdentFns::to_css(&v.prefix, dest)?;
-                        dest.write_char('|')?;
+                        dest.write_char(b'|')?;
                     }
                     NamespaceConstraint::Any => {
                         dest.write_str("*|")?;
@@ -195,7 +195,7 @@ pub mod attrs {
                     }
                 }
             }
-            dest.write_char(']')
+            dest.write_char(b']')
         }
 
         pub fn eql(&self, rhs: &Self) -> bool {
@@ -453,7 +453,7 @@ fn parse_selector<Impl: BunSelectorImpl>(
 ) -> CResult<GenericSelector<Impl>> {
     if nesting_requirement == NestingRequirement::Prefixed {
         let parser_state = input.state();
-        if !input.expect_delim('&').is_ok() {
+        if !input.expect_delim(b'&').is_ok() {
             return Err(input.new_custom_error(
                 SelectorParseErrorKind::MissingNestingPrefix.into_default_parser_error(),
             ));
@@ -507,8 +507,8 @@ fn parse_selector<Impl: BunSelectorImpl>(
                         if parser.deep_combinator_enabled()
                             && input
                                 .try_parse(|i: &mut CssParser| -> CResult<()> {
-                                    i.expect_delim('>')?;
-                                    i.expect_delim('>')
+                                    i.expect_delim(b'>')?;
+                                    i.expect_delim(b'>')
                                 })
                                 .is_ok()
                         {
@@ -531,7 +531,7 @@ fn parse_selector<Impl: BunSelectorImpl>(
                             if input
                                 .try_parse(|i: &mut CssParser| -> CResult<()> {
                                     i.expect_ident_matching("deep")?;
-                                    i.expect_delim('/')
+                                    i.expect_delim(b'/')
                                 })
                                 .is_ok()
                             {
@@ -606,7 +606,7 @@ fn parse_compound_selector<Impl: BunSelectorImpl>(
     input.skip_whitespace();
 
     let mut empty: bool = true;
-    if parser.is_nesting_allowed() && input.try_parse(|i| i.expect_delim('&')).is_ok() {
+    if parser.is_nesting_allowed() && input.try_parse(|i| i.expect_delim(b'&')).is_ok() {
         state.insert(SelectorParsingState::AFTER_NESTING);
         builder.push_simple_selector(GenericComponent::Nesting);
         empty = false;
@@ -2131,9 +2131,9 @@ impl NthSelectorData {
     pub fn write_affine(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         // PERF: this could be made faster
         if self.a == 0 && self.b == 0 {
-            dest.write_char('0')
+            dest.write_char(b'0')
         } else if self.a == 1 && self.b == 0 {
-            dest.write_char('n')
+            dest.write_char(b'n')
         } else if self.a == -1 && self.b == 0 {
             dest.write_str("-n")
         } else if self.b == 0 {
@@ -3583,19 +3583,19 @@ impl ViewTransitionPartName {
             Self::All => dest.write_str("*"),
             Self::Name(name) => css::CustomIdentFns::to_css(name, dest),
             Self::Class(name) => {
-                dest.write_char('.')?;
+                dest.write_char(b'.')?;
                 css::CustomIdentFns::to_css(name, dest)
             }
         }
     }
 
     pub fn parse(input: &mut CssParser) -> CResult<ViewTransitionPartName> {
-        if input.try_parse(|i| i.expect_delim('*')).is_ok() {
+        if input.try_parse(|i| i.expect_delim(b'*')).is_ok() {
             return Ok(Self::All);
         }
 
         // Try to parse a class selector (.<custom-ident>)
-        if input.try_parse(|i| i.expect_delim('.')).is_ok() {
+        if input.try_parse(|i| i.expect_delim(b'.')).is_ok() {
             return Ok(Self::Class(CustomIdent::parse(input)?));
         }
 

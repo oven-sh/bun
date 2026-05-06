@@ -129,15 +129,21 @@ pub use css_parser::{dtoa_short, f32_length_with_5_digits, serializer, to_css};
 #[path = "generics.rs"]
 pub mod generics;
 
-// ─── B-2 round 2: parser core un-gated ────────────────────────────────────
+// ─── B-2 round 2/5: parser core + rule-orchestration un-gated ─────────────
 // `css_parser.rs` now compiles for real: Parser / ParserInput / Tokenizer /
 // Token / Delimiters / VendorPrefix / SourceLocation / serializer / nth /
-// color / dtoa_short. The rule-orchestration layer (AtRulePrelude,
-// TopLevelRuleParser, NestedRuleParser, StyleSheet, StyleAttribute) stays
-// internally `#[cfg(any())]`-gated until rules/ + properties/ + selectors/
-// un-gate. `printer.rs` is real (Printer struct + write/indent/delim).
-// `values/` is real for the leaf submodules; the heavy ones (color, calc,
-// gradient, image, length, syntax) are internally gated inside values/mod.rs.
+// color / dtoa_short. Round 5 un-gates the rule-orchestration *type* layer
+// (AtRulePrelude, TopLevelRuleParser, NestedRuleParser, StyleSheetParser,
+// RuleBodyParser, StyleSheet, StyleAttribute, DeclarationParser/
+// RuleBodyItemParser/ComposesCtx traits) against the now-real `rules/`/
+// `selectors/`/`declaration`/`media_query` hubs. The heavy *behavior* bodies
+// (`AtRuleParser`/`QualifiedRuleParser` impls for Top/NestedRuleParser,
+// `StyleSheet::{parse,minify,to_css}`, `StyleAttribute::{parse,to_css}`)
+// stay internally `#[cfg(any())]`-gated on the rules/ leaf modules +
+// properties_generated. `printer.rs` is real (Printer struct +
+// write/indent/delim). `values/` is real for the leaf submodules; the heavy
+// ones (color, calc, gradient, image, length, syntax) are internally gated
+// inside values/mod.rs.
 #[path = "printer.rs"]
 pub mod printer;
 #[path = "css_parser.rs"]

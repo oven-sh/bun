@@ -724,8 +724,9 @@ impl PackageJSON {
             let mut map = MacroImportReplacementMap::default();
             map.reserve(remap_properties.len());
             for remap in remap_properties {
-                let Some(import_name) = remap.key.as_ref().unwrap().as_string() else { continue };
-                let remap_value = remap.value.as_ref().unwrap();
+                let Some(remap_key) = remap.key.as_ref() else { continue };
+                let Some(import_name) = remap_key.as_utf8_string_literal() else { continue };
+                let Some(remap_value) = remap.value.as_ref() else { continue };
                 let valid = matches!(&remap_value.data, js_ast::ExprData::EString(s) if !s.data.is_empty());
                 if !valid {
                     log.add_warning_fmt(
@@ -733,14 +734,17 @@ impl PackageJSON {
                         remap_value.loc,
                         format_args!(
                             "Invalid macro remapping for import \"{}\": expected string to remap to. e.g. \"graphql\": \"bun-macro-relay\" ",
-                            bstr::BStr::new(&import_name)
+                            bstr::BStr::new(import_name)
                         ),
                     )
                     .expect("unreachable");
                     continue;
                 }
 
-                let remap_value_str = remap_value.data.e_string().data();
+                let remap_value_str: &'static [u8] = match remap_value.data.e_string() {
+                    Some(s) => s.data,
+                    None => continue,
+                };
 
                 // PERF(port): was putAssumeCapacityNoClobber
                 // TODO(port): lifetime — keys/values borrow json_source contents

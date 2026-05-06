@@ -125,7 +125,7 @@ pub static mut INSTANCE: core::mem::MaybeUninit<FileSystem> = core::mem::MaybeUn
 
 impl FileSystem {
     pub fn top_level_dir_without_trailing_slash(&self) -> &[u8] {
-        let tld = self.top_level_dir.as_bytes();
+        let tld = self.top_level_dir;
         if tld.len() > 1 && tld[tld.len() - 1] == SEP {
             &tld[0..tld.len() - 1]
         } else {
@@ -148,22 +148,30 @@ impl FileSystem {
         Ok(self.dirname_store.append(dir)?)
     }
 
-    pub fn tmpname(extname: &[u8], buf: &mut [u8], hash: u64) -> Result<&mut ZStr, bun_core::Error> {
+    pub fn tmpname<'b>(
+        extname: &[u8],
+        buf: &'b mut [u8],
+        hash: u64,
+    ) -> Result<&'b mut ZStr, bun_core::Error> {
         // TODO(port): narrow error set (was std.fmt.BufPrintError)
         let hex_value: u64 =
-            (u128::from(hash) | u128::try_from(bun_core::time::nano_timestamp()).unwrap()) as u64;
+            (u128::from(hash) | (bun_core::time::nano_timestamp() as u128)) as u64;
 
         // TODO(port): bufPrintZ equivalent — write into buf and NUL-terminate
+        let len = buf.len();
         let mut cursor = &mut buf[..];
         write!(
             &mut cursor,
-            ".{}-{}.{}",
-            bun_fmt::hex_int_lower(hex_value),
-            bun_fmt::hex_int_upper(TMPNAME_ID_NUMBER.fetch_add(1, Ordering::Relaxed)),
+            ".{:x}-{:X}.{}",
+            hex_value,
+            TMPNAME_ID_NUMBER.fetch_add(1, Ordering::Relaxed),
             BStr::new(extname),
         )
         .map_err(|_| bun_core::err!("NoSpaceLeft"))?;
-        let written = buf.len() - cursor.len();
+        let written = len - cursor.len();
+        if written >= len {
+            return Err(bun_core::err!("NoSpaceLeft"));
+        }
         buf[written] = 0;
         // SAFETY: buf[written] == 0 written above
         Ok(unsafe { ZStr::from_raw_mut(buf.as_mut_ptr(), written) })

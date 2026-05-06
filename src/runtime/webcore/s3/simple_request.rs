@@ -5,7 +5,6 @@ use bun_event_loop::ConcurrentTask::{AutoDeinit, ConcurrentTask};
 use bun_http::async_http::Options as HttpOptions;
 use bun_http::{AsyncHTTP, FetchRedirect, HTTPClientResult, HTTPClientResultCallback, HTTPThread, Headers, Method};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::JsTerminated;
 use bun_picohttp as picohttp;
 use bun_s3_signing::acl::ACL;
 use bun_s3_signing::credentials::{S3Credentials, SignOptions, SignResult};

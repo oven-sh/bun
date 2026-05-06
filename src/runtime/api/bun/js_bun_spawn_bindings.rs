@@ -1428,20 +1428,20 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                     if has_bun_test_timeout {
                         if bun_test_timeout.order(&now) == core::cmp::Ordering::Less {
                             let mut active_file_strong =
-                                jsc::Jest::Jest::runner().unwrap().bun_test_root.active_file
+                                crate::test_runner::jest::Jest::runner().unwrap().bun_test_root.active_file
                                     // TODO: add a .cloneNonOptional()?
                                     .clone();
 
                             let mut taken_active_file = active_file_strong.take().unwrap();
 
-                            jsc::Jest::Jest::runner().unwrap().remove_active_timeout(jsc_vm);
+                            crate::test_runner::jest::Jest::runner().unwrap().remove_active_timeout(jsc_vm);
 
                             // This might internally call `std.c.kill` on this
                             // spawnSync process. Even if we do that, we still
                             // need to reap the process. So we may go through
                             // the event loop again, but it should wake up
                             // ~instantly so we can drain the events.
-                            jsc::Jest::bun_test::BunTest::bun_test_timeout_callback(
+                            crate::test_runner::bun_test::BunTest::bun_test_timeout_callback(
                                 &mut taken_active_file,
                                 &absolute_timespec,
                                 jsc_vm,
@@ -1514,7 +1514,7 @@ fn throw_command_not_found(global_this: &JSGlobalObject, command: &[u8]) -> JsEr
             bstr::BStr::new(command)
         )),
         code: BunString::static_("ENOENT"),
-        errno: -sys::UV_E::NOENT,
+        errno: -UV_E::NOENT,
         path: BunString::clone_utf8(command),
         ..Default::default()
     };

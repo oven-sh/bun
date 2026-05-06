@@ -801,6 +801,10 @@ pub fn renegotiate(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame)
     Ok(JSValue::UNDEFINED)
 }
 
+// `#[bun_jsc::host_fn(method)]` expands to a shim referencing `Self`, so these
+// must live inside an inherent impl block even though the Zig source defines
+// them as free mixin functions.
+impl This {
 #[bun_jsc::host_fn(method)]
 pub fn disable_renegotiation(this: &mut This, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let Some(ssl_ptr) = this.socket.ssl() else { return Ok(JSValue::UNDEFINED) };
@@ -813,7 +817,7 @@ pub fn disable_renegotiation(this: &mut This, _global: &JSGlobalObject, _frame: 
 pub fn is_session_reused(this: &mut This, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let Some(ssl_ptr) = this.socket.ssl() else { return Ok(JSValue::FALSE) };
     // SAFETY: ssl_ptr is a live *mut SSL returned by this.socket.ssl().
-    Ok(JSValue::from(unsafe { boringssl::SSL_session_reused(ssl_ptr) } == 1))
+    Ok(JSValue::from(unsafe { ffi::SSL_session_reused(ssl_ptr) } == 1))
 }
 
 #[bun_jsc::host_fn(method)]
@@ -850,6 +854,7 @@ pub fn set_verify_mode(this: &mut This, global: &JSGlobalObject, frame: &CallFra
     unsafe { boringssl::SSL_set_verify(ssl_ptr, verify_mode, Some(always_allow_ssl_verify_callback)) };
     Ok(JSValue::UNDEFINED)
 }
+} // impl This
 
 extern "C" fn always_allow_ssl_verify_callback(_preverify_ok: c_int, _ctx: *mut boringssl::X509_STORE_CTX) -> c_int {
     1
@@ -872,7 +877,7 @@ fn get_ssl_exception(global: &JSGlobalObject, default_message: &[u8]) -> JSValue
         }
 
         // SAFETY: ERR_reason_error_string accepts any packed error code; returns null if unknown.
-        let reason_ptr = unsafe { boringssl::ERR_reason_error_string(ssl_error) };
+        let reason_ptr = unsafe { ffi::ERR_reason_error_string(ssl_error) };
         if !reason_ptr.is_null() {
             // SAFETY: ERR_reason_error_string returns a static NUL-terminated C string.
             let reason = unsafe { CStr::from_ptr(reason_ptr) }.to_bytes();

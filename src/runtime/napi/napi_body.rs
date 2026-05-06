@@ -10,9 +10,13 @@ use bun_aio::KeepAlive;
 use bun_collections::LinearFifo;
 use bun_collections::linear_fifo::DynamicBuffer;
 use bun_jsc::{
-    self as jsc, AnyTask, CallFrame, ConcurrentTask, Debugger, EventLoop, JSGlobalObject, JSPromise,
-    JSPromiseStrong, JSValue, Strong, StrongOptional, Task, VirtualMachine,
+    self as jsc, CallFrame, Debugger, JSGlobalObject, JSPromise, JSPromiseStrong, JSValue, Strong,
+    StrongOptional, Task,
 };
+use bun_jsc::event_loop::{ConcurrentTaskItem as ConcurrentTask, EventLoop};
+use bun_jsc::virtual_machine::VirtualMachine;
+use bun_event_loop::AnyTask::AnyTask;
+use bun_event_loop::ConcurrentTask::AutoDeinit;
 use bun_threading::Mutex;
 use bun_threading::Condition as Condvar;
 use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};

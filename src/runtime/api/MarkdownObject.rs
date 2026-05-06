@@ -45,6 +45,17 @@ use bun_md::root as md;
 use bun_md::parser::ParserError;
 use crate::node::StringOrBuffer;
 
+/// Map a host-fn `JsError` back into the parser's error enum so it can
+/// bubble through `md::render_with_renderer` and be re-thrown at the top.
+#[inline]
+fn js_to_parser_err(e: bun_jsc::JsError) -> ParserError {
+    match e {
+        bun_jsc::JsError::Thrown => ParserError::JSError,
+        bun_jsc::JsError::OutOfMemory => ParserError::OutOfMemory,
+        bun_jsc::JsError::Terminated => ParserError::JSTerminated,
+    }
+}
+
 pub fn create(global_this: &JSGlobalObject) -> JSValue {
     let object = JSValue::create_empty_object(global_this, 4);
     object.put(

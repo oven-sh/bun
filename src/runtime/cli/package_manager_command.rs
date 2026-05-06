@@ -272,7 +272,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                     Global::crash();
                 }
             };
-            Output::println("{s}", format_args!("{}", bstr::BStr::new(&username)));
+            Output::println(format_args!("{}", bstr::BStr::new(&username)));
             Global::exit(0);
         } else if subcommand == b"view" {
             let property_path = if pm.options.positionals.len() > 2 {

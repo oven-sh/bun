@@ -160,12 +160,11 @@ static TITLE_MUTEX: bun_threading::Mutex = bun_threading::Mutex::default();
 pub extern "C" fn get_title(_global: *const JSGlobalObject, title: *mut BunString) {
     TITLE_MUTEX.lock();
     let _guard = scopeguard::guard((), |()| TITLE_MUTEX.unlock());
-    // TODO(port): crate::cli::process_title is a mutable global Option<Box<[u8]>> guarded by TITLE_MUTEX
-    // SAFETY: TITLE_MUTEX held; process_title reads a static guarded by it
-    let str_ = unsafe { crate::cli::process_title() };
+    // SAFETY: TITLE_MUTEX held; Bun__Node__ProcessTitle is the static guarded by it
+    let str_ = unsafe { crate::cli::Bun__Node__ProcessTitle };
     // SAFETY: title is a valid out-param provided by C++ caller
     unsafe {
-        *title = BunString::clone_utf8(str_.map(|s| s.as_ref()).unwrap_or(b"bun"));
+        *title = BunString::clone_utf8(str_.unwrap_or(b"bun"));
     }
 }
 

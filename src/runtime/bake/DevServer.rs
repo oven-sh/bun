@@ -4965,18 +4965,18 @@ impl DevServer<'_> {
         &self,
         rel_path: &[u8],
         other_id: OpaqueFileId,
-        ty: framework_router::RouteFileKind,
+        ty: framework_router::FileKind,
     ) -> Result<(), AllocError> {
         // TODO: maybe this should track the error, send over HmrSocket?
         Output::err_generic(format_args!(
             "Multiple {} matching the same route pattern is ambiguous",
             match ty {
-                framework_router::RouteFileKind::Page => "pages",
-                framework_router::RouteFileKind::Layout => "layout",
+                framework_router::FileKind::Page => "pages",
+                framework_router::FileKind::Layout => "layout",
             }
         ));
         Output::pretty_errorln(format_args!("  - <blue>{}<r>", bstr::BStr::new(rel_path)));
-        let buf = paths::path_buffer_pool::get();
+        let mut buf = paths::path_buffer_pool::get();
         Output::pretty_errorln(format_args!(
             "  - <blue>{}<r>",
             bstr::BStr::new(self.relative_path(

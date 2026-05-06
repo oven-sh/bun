@@ -5,7 +5,8 @@
 use core::mem::offset_of;
 
 use bun_collections::OffsetByteList;
-use bun_jsc::{JSGlobalObject, JSPromise, JSValue, JsResult, VirtualMachine};
+use bun_jsc::{JSGlobalObject, JSPromise, JSValue, JsResult};
+use bun_jsc::virtual_machine::VirtualMachine;
 use bun_uws::{self as uws, AnySocket, SocketGroup, SocketKind, SslCtx};
 use bun_valkey::valkey_protocol as protocol;
 use bun_valkey::valkey_protocol::{RESPValue, RedisError};

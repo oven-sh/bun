@@ -2582,6 +2582,81 @@ pub enum PendingCacheField {
     PendingNameinfoCacheCares,
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// CAresRecordType impls — Zig instantiated `ResolveInfoRequest(cares_type, type_name)`
+// per (struct, "tag") pair via comptime; Rust models the (struct, tag) tuple as a
+// trait impl. ns/ptr/cname share `struct_hostent` and a/aaaa share
+// `hostent_with_ttls`, so those get `#[repr(transparent)]` newtype wrappers to
+// keep the per-record monomorphizations (and pending caches) distinct.
+// ──────────────────────────────────────────────────────────────────────────
+
+macro_rules! impl_cares_record_type {
+    ($ty:ty, $tag:literal, $field:ident, $to_js:path, $destroy:expr) => {
+        impl CAresRecordType for $ty {
+            const TYPE_NAME: &'static str = $tag;
+            const CACHE_FIELD: PendingCacheField = PendingCacheField::$field;
+            fn to_js_response(&mut self, global: &JSGlobalObject, type_name: &'static str) -> JsResult<JSValue> {
+                $to_js(self, global, type_name.as_bytes())
+            }
+            unsafe fn destroy(this: *mut Self) {
+                // SAFETY: caller contract — `this` is the c-ares-allocated reply pointer
+                // handed to the completion callback; not aliased.
+                unsafe { ($destroy)(this) }
+            }
+        }
+    };
+}
+
+impl_cares_record_type!(c_ares::struct_ares_srv_reply, "srv", PendingSrvCacheCares,
+    super::cares_jsc::srv_reply_to_js_response, c_ares::struct_ares_srv_reply::destroy);
+impl_cares_record_type!(c_ares::struct_ares_soa_reply, "soa", PendingSoaCacheCares,
+    super::cares_jsc::soa_reply_to_js_response, c_ares::struct_ares_soa_reply::destroy);
+impl_cares_record_type!(c_ares::struct_ares_txt_reply, "txt", PendingTxtCacheCares,
+    super::cares_jsc::txt_reply_to_js_response, c_ares::struct_ares_txt_reply::destroy);
+impl_cares_record_type!(c_ares::struct_ares_naptr_reply, "naptr", PendingNaptrCacheCares,
+    super::cares_jsc::naptr_reply_to_js_response, c_ares::struct_ares_naptr_reply::destroy);
+impl_cares_record_type!(c_ares::struct_ares_mx_reply, "mx", PendingMxCacheCares,
+    super::cares_jsc::mx_reply_to_js_response, c_ares::struct_ares_mx_reply::destroy);
+impl_cares_record_type!(c_ares::struct_ares_caa_reply, "caa", PendingCaaCacheCares,
+    super::cares_jsc::caa_reply_to_js_response, c_ares::struct_ares_caa_reply::destroy);
+impl_cares_record_type!(c_ares::struct_any_reply, "any", PendingAnyCacheCares,
+    super::cares_jsc::any_reply_to_js_response,
+    // `struct_any_reply` is heap-boxed (parser returns `Box<_>`); Drop frees inner replies.
+    |p: *mut c_ares::struct_any_reply| drop(Box::from_raw(p)));
+
+/// Transparent newtype over `struct_hostent` carrying the comptime `type_name` tag.
+macro_rules! hostent_newtype {
+    ($name:ident, $inner:ty, $tag:literal, $field:ident, $to_js:path, $destroy:expr) => {
+        #[repr(transparent)]
+        pub struct $name(pub $inner);
+        impl CAresRecordType for $name {
+            const TYPE_NAME: &'static str = $tag;
+            const CACHE_FIELD: PendingCacheField = PendingCacheField::$field;
+            fn to_js_response(&mut self, global: &JSGlobalObject, type_name: &'static str) -> JsResult<JSValue> {
+                $to_js(&mut self.0, global, type_name.as_bytes())
+            }
+            unsafe fn destroy(this: *mut Self) {
+                // SAFETY: `#[repr(transparent)]` — `*mut Self` is `*mut $inner`.
+                unsafe { ($destroy)(this as *mut $inner) }
+            }
+        }
+    };
+}
+
+hostent_newtype!(NsHostent, c_ares::struct_hostent, "ns", PendingNsCacheCares,
+    super::cares_jsc::hostent_to_js_response, c_ares::struct_hostent::destroy);
+hostent_newtype!(PtrHostent, c_ares::struct_hostent, "ptr", PendingPtrCacheCares,
+    super::cares_jsc::hostent_to_js_response, c_ares::struct_hostent::destroy);
+hostent_newtype!(CnameHostent, c_ares::struct_hostent, "cname", PendingCnameCacheCares,
+    super::cares_jsc::hostent_to_js_response, c_ares::struct_hostent::destroy);
+hostent_newtype!(AHostentWithTtls, c_ares::hostent_with_ttls, "a", PendingACacheCares,
+    super::cares_jsc::hostent_with_ttls_to_js_response,
+    // `hostent_with_ttls` is heap-boxed (parser returns `Box<_>`); Drop calls `ares_free_hostent`.
+    |p: *mut c_ares::hostent_with_ttls| drop(Box::from_raw(p)));
+hostent_newtype!(AaaaHostentWithTtls, c_ares::hostent_with_ttls, "aaaa", PendingAaaaCacheCares,
+    super::cares_jsc::hostent_with_ttls_to_js_response,
+    |p: *mut c_ares::hostent_with_ttls| drop(Box::from_raw(p)));
+
 pub type PendingCache = HiveArray<get_addr_info_request::PendingCacheKey, 32>;
 type SrvPendingCache = HiveArray<resolve_info_request::PendingCacheKey<c_ares::struct_ares_srv_reply>, 32>;
 type SoaPendingCache = HiveArray<resolve_info_request::PendingCacheKey<c_ares::struct_ares_soa_reply>, 32>;
@@ -2589,18 +2664,14 @@ type TxtPendingCache = HiveArray<resolve_info_request::PendingCacheKey<c_ares::s
 type NaptrPendingCache = HiveArray<resolve_info_request::PendingCacheKey<c_ares::struct_ares_naptr_reply>, 32>;
 type MxPendingCache = HiveArray<resolve_info_request::PendingCacheKey<c_ares::struct_ares_mx_reply>, 32>;
 type CaaPendingCache = HiveArray<resolve_info_request::PendingCacheKey<c_ares::struct_ares_caa_reply>, 32>;
-type NSPendingCache = HiveArray<resolve_info_request::PendingCacheKey<c_ares::NsHostent>, 32>;
-type PtrPendingCache = HiveArray<resolve_info_request::PendingCacheKey<c_ares::PtrHostent>, 32>;
-type CnamePendingCache = HiveArray<resolve_info_request::PendingCacheKey<c_ares::CnameHostent>, 32>;
-type APendingCache = HiveArray<resolve_info_request::PendingCacheKey<c_ares::AHostentWithTtls>, 32>;
-type AAAAPendingCache = HiveArray<resolve_info_request::PendingCacheKey<c_ares::AaaaHostentWithTtls>, 32>;
+type NSPendingCache = HiveArray<resolve_info_request::PendingCacheKey<NsHostent>, 32>;
+type PtrPendingCache = HiveArray<resolve_info_request::PendingCacheKey<PtrHostent>, 32>;
+type CnamePendingCache = HiveArray<resolve_info_request::PendingCacheKey<CnameHostent>, 32>;
+type APendingCache = HiveArray<resolve_info_request::PendingCacheKey<AHostentWithTtls>, 32>;
+type AAAAPendingCache = HiveArray<resolve_info_request::PendingCacheKey<AaaaHostentWithTtls>, 32>;
 type AnyPendingCache = HiveArray<resolve_info_request::PendingCacheKey<c_ares::struct_any_reply>, 32>;
 type AddrPendingCache = HiveArray<get_host_by_addr_info_request::PendingCacheKey, 32>;
 type NameInfoPendingCache = HiveArray<get_name_info_request::PendingCacheKey, 32>;
-// TODO(port): Zig instantiated ns/ptr/cname over the same `c_ares.struct_hostent` with
-// different comptime `type_name` strings, and a/aaaa over `hostent_with_ttls`. Rust needs
-// distinct newtype wrappers (NsHostent etc.) implementing `CAresRecordType` to keep the
-// per-record cache types distinct. Define those in c_ares.rs.
 
 #[cfg(windows)]
 type PollType = UvDnsPoll;

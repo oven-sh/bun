@@ -2605,7 +2605,7 @@ impl GitHandler {
         // The two uses are sequenced — git runs before `--open` block. Matches Zig.)
         let bun_path_buf = unsafe { &mut BUN_PATH_BUF };
         if let Some(git) = which(bun_path_buf, path, destination, b"git") {
-            let git = bun_core::as_byte_slice(git);
+            let git: &[u8] = git.as_bytes();
             let git_commands: [&[&[u8]]; 3] = [
                 &[git, b"init", b"--quiet"],
                 &[git, b"add", destination, b"--ignore-errors"],
@@ -2620,15 +2620,15 @@ impl GitHandler {
             // PORT NOTE: Zig used `inline for` over std.meta.fieldNames(@TypeOf(Commands)) to
             // index into git_commands by tuple field index. We just iterate the array directly.
             for command in git_commands {
-                // TODO(port): std.process.Child — replace with bun_core::spawn_sync in Phase B
-                let mut process = bun_core::process::Child::init(command);
-                process.cwd = destination;
-                process.stdin_behavior = bun_core::process::Stdio::Inherit;
-                process.stdout_behavior = bun_core::process::Stdio::Inherit;
-                process.stderr_behavior = bun_core::process::Stdio::Inherit;
-
-                let _ = process.spawn_and_wait()?;
-                let _ = process.kill();
+                // Zig used `std.process.Child`; PORTING.md bans std::process — use bun.spawnSync.
+                let _ = spawn_sync::spawn(&spawn_sync::Options {
+                    argv: command.iter().map(|s| Box::<[u8]>::from(*s)).collect(),
+                    cwd: Box::from(destination),
+                    stdin: spawn_sync::SyncStdio::Inherit,
+                    stdout: spawn_sync::SyncStdio::Inherit,
+                    stderr: spawn_sync::SyncStdio::Inherit,
+                    ..Default::default()
+                })?;
             }
 
             Output::pretty_error("\n", format_args!(""));

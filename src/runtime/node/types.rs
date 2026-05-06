@@ -784,7 +784,7 @@ impl Encoding {
             }
             Self::Buffer => jsc::ArrayBuffer::create_buffer(global_object, input),
             // PERF(port): was comptime monomorphization (`inline else`) — profile in Phase B
-            enc => webcore_encoding::to_string(input, global_object, enc),
+            enc => crate::webcore::encoding::to_string(input, global_object, enc),
         }
     }
 
@@ -835,7 +835,7 @@ impl Encoding {
             }
             Self::Buffer => jsc::ArrayBuffer::create_buffer(global_object, input),
             // PERF(port): was comptime monomorphization (`inline else`) — profile in Phase B
-            enc => webcore_encoding::to_string(input, global_object, enc),
+            enc => crate::webcore::encoding::to_string(input, global_object, enc),
         }
     }
 
@@ -1081,7 +1081,7 @@ impl PathLike {
 
     #[inline]
     pub fn slice_w<'a>(&'a self, buf: &'a mut WPathBuffer) -> &'a WStr {
-        strings::to_wpath(buf, self.slice())
+        strings::to_w_path(buf, self.slice())
     }
 
     #[inline]
@@ -1182,7 +1182,7 @@ impl PathLike {
                 Ok(Some(Self::from_bun_string(ctx, &str, arguments.will_be_async)?))
             }
             _ => {
-                if let Some(domurl) = arg.as_::<jsc::DomUrl>() {
+                if let Some(domurl) = arg.as_::<jsc::DOMURL>() {
                     let str: bun_str::String = match domurl.file_system_path() {
                         Ok(s) => s,
                         Err(e) if e == bun_core::err!("NotFileUrl") => {
@@ -1283,7 +1283,7 @@ impl Valid {
         match zig_str.len() {
             0..=MAX_PATH_BYTES => Ok(()),
             _ => {
-                let mut system_error = bun_sys::Error::from_code(bun_sys::Errno::NAMETOOLONG, bun_sys::Syscall::Open)
+                let mut system_error = bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)
                     .with_path(zig_str.slice())
                     .to_system_error();
                 system_error.syscall = bun_str::String::DEAD;
@@ -1297,7 +1297,7 @@ impl Valid {
             0..=MAX_PATH_BYTES => Ok(()),
             _ => {
                 let mut system_error =
-                    bun_sys::Error::from_code(bun_sys::Errno::NAMETOOLONG, bun_sys::Syscall::Open).to_system_error();
+                    bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open).to_system_error();
                 system_error.syscall = bun_str::String::DEAD;
                 ctx.throw_value(system_error.to_error_instance(ctx))
             }
@@ -1315,7 +1315,7 @@ impl Valid {
             1..=MAX_PATH_BYTES => Ok(()),
             _ => {
                 let mut system_error =
-                    bun_sys::Error::from_code(bun_sys::Errno::NAMETOOLONG, bun_sys::Syscall::Open).to_system_error();
+                    bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open).to_system_error();
                 system_error.syscall = bun_str::String::DEAD;
                 ctx.throw_value(system_error.to_error_instance(ctx))
             }

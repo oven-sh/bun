@@ -3043,15 +3043,11 @@ pub mod args {
     }
 
     pub type UnwatchFile = ();
-    // TODO(b2-blocked): Watcher / StatWatcher modules are gated; arg types stubbed.
-    
+    // Watcher / StatWatcher are local stand-in modules until `node.rs` wires
+    // the real `node_fs_watcher` / `node_fs_stat_watcher` siblings; see the
+    // module docs at the top of this file.
     pub type Watch = super::Watcher::Arguments;
-    
     pub type WatchFile = super::StatWatcher::Arguments;
-    #[cfg(any())]
-    pub type Watch = ();
-    #[cfg(any())]
-    pub type WatchFile = ();
 
     pub struct Fsync { pub fd: FD }
     impl Fsync {

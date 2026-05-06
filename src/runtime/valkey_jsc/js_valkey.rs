@@ -1836,7 +1836,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         this.client.on_close()
     }
 
-    pub fn on_timeout(this: &mut JSValkeyClient, socket: Self::SocketType) {
+    pub fn on_timeout(this: &mut JSValkeyClient, socket: SocketType<SSL>) {
         debug!("Socket timed out.");
 
         this.client.socket = Self::_socket(socket);

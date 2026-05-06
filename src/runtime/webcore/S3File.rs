@@ -616,19 +616,20 @@ pub fn get_presign_url_from(this: &mut Blob, global: &JSGlobalObject, extra_opti
     }
     let path = s3.path();
 
-    let result = match credentials_with_options.credentials.sign_request(
-        s3::SignRequestOptions {
+    let result = match credentials_with_options.credentials.sign_request::<false>(
+        bun_s3_signing::SignOptions {
             path,
             method,
             acl: credentials_with_options.acl,
             storage_class: credentials_with_options.storage_class,
             request_payer: credentials_with_options.request_payer,
-            content_disposition: credentials_with_options.content_disposition,
-            content_type: credentials_with_options.content_type,
+            // SAFETY: these `*const [u8]` borrow into sibling `_*_slice` fields on
+            // `credentials_with_options`, which lives for the duration of this call.
+            content_disposition: credentials_with_options.content_disposition.map(|p| unsafe { &*p }),
+            content_type: credentials_with_options.content_type.map(|p| unsafe { &*p }),
             ..Default::default()
         },
-        false,
-        s3::SignQueryOptions { expires },
+        Some(bun_s3_signing::SignQueryOptions { expires }),
     ) {
         Ok(r) => r,
         Err(sign_err) => return s3::throw_sign_error(sign_err, global),

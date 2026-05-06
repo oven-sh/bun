@@ -1957,7 +1957,7 @@ impl RunCommand {
                         // SAFETY: which() writes into path_buf and returns a slice into it.
                         // The caller (find_shell) immediately copies this into its own static buffer.
                         // TODO(port): lifetime — Zig returns a borrow into the global path_buf.
-                        return Some(unsafe { core::mem::transmute::<&ZStr, &'static ZStr>(shell_) });
+                        return Some(unsafe { ::core::mem::transmute::<&ZStr, &'static ZStr>(shell_) });
                     }
                 }
                 None
@@ -2005,7 +2005,7 @@ impl RunCommand {
                         // SAFETY: shell_buf[found.len()] == 0 written above; SHELL_BUF is thread-local
                         // and lives for the program lifetime (process exits before thread teardown).
                         return Some(unsafe {
-                            core::mem::transmute::<&ZStr, &'static ZStr>(ZStr::from_raw(
+                            ::core::mem::transmute::<&ZStr, &'static ZStr>(ZStr::from_raw(
                                 shell_buf.as_ptr(),
                                 found.len(),
                             ))

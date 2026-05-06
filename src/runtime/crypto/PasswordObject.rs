@@ -751,10 +751,10 @@ impl JSPasswordObject {
             match value {
                 VerifyResultValue::Err(_) => {
                     let error_instance = value.to_error_instance(global_object);
-                    return global_object.throw_value(error_instance);
+                    return Err(global_object.throw_value(error_instance));
                 }
                 VerifyResultValue::Pass(pass) => {
-                    return Ok(JSValue::from(pass));
+                    return Ok(JSValue::js_boolean(pass));
                 }
             }
             #[allow(unreachable_code)]
@@ -771,19 +771,21 @@ impl JSPasswordObject {
             password,
             prev_hash,
             promise,
-            event_loop: global_object.bun_vm().event_loop(),
+            // SAFETY: bun_vm() is non-null for a Bun-owned global; VM outlives the job.
+            event_loop: unsafe { &*global_object.bun_vm() }.event_loop(),
             global: global_object as *const _,
             r#ref: KeepAlive::default(),
             task: WorkPoolTask {
                 callback: VerifyJob::run,
+                ..Default::default()
             },
         });
         // SAFETY: `job` was just returned from Box::into_raw in `VerifyJob::new`; not yet
         // shared with the work pool.
-        unsafe { (*job).r#ref.r#ref(global_object.bun_vm()) };
+        unsafe { (*job).r#ref.ref_(vm_ctx()) };
         // SAFETY: `job` is a valid Box::into_raw allocation; ownership transfers to the
         // work pool here. `task` is an intrusive field at a stable address.
-        WorkPool::schedule(unsafe { &mut (*job).task });
+        WorkPool::schedule(unsafe { core::ptr::addr_of_mut!((*job).task) });
 
         Ok(promise_value)
     }

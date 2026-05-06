@@ -5528,17 +5528,18 @@ pub mod testing_apis {
 
     // TODO(port): jsc::MarkedArgumentBuffer::wrap — generates a host_fn shim that allocates a
     // MarkedArgumentBuffer and forwards to the impl. Hand-write or proc-macro in Phase B.
-    pub const SHELL_LEX: jsc::JSHostFn = jsc::MarkedArgumentBuffer::wrap(shell_lex_impl);
+    pub const SHELL_LEX: jsc::JSHostFn = marked_arg_buffer_wrap(shell_lex_impl);
 
     fn shell_lex_impl(
         global: &JSGlobalObject,
         callframe: &CallFrame,
         marked_argument_buffer: &mut MarkedArgumentBuffer,
     ) -> JsResult<JSValue> {
-        let arguments_ = callframe.arguments_old(2);
-        let mut arguments =
-            jsc::CallFrame::ArgumentsSlice::init(global.bun_vm(), arguments_.slice());
-        let string_args = match arguments.next_eat() {
+        let arguments_ = callframe.arguments_old::<2>();
+        // SAFETY: bun_vm() is non-null for a Bun-owned global.
+        let vm = unsafe { &*global.bun_vm() };
+        let mut arguments = jsc::ArgumentsSlice::init(vm, arguments_.slice());
+        let string_args: JSValue = match arguments.next_eat() {
             Some(s) => s,
             None => {
                 return Err(global.throw(format_args!(

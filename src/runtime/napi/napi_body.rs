@@ -1629,8 +1629,7 @@ impl napi_async_work {
             .is_ok()
     }
 
-    pub fn run_from_js(&mut self, vm: &VirtualMachine, global: &JSGlobalObject) {
-        let _ = vm;
+    pub fn run_from_js(&mut self, vm: &mut VirtualMachine, global: &JSGlobalObject) {
         // Note: the "this" value here may already be freed by the user in `complete`
         let mut poll_ref = self.poll_ref;
         let _guard = scopeguard::guard((), |_| poll_ref.unref(vm_ctx()));

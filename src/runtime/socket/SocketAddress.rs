@@ -186,11 +186,15 @@ impl SocketAddress {
         };
         // `defer url_str.deref()` → drops at scope exit
 
-        let Some(url) = URL::from_string(&url_str) else {
+        let Some(url_ptr) = URL::from_string(url_str) else {
             return Ok(JSValue::UNDEFINED);
         };
-        // `defer url.deinit()` → URL impls Drop
-        let host = url.host();
+        // `defer url.deinit()`
+        // SAFETY: URL::from_string returns an owned C++ heap pointer; freed exactly once via destroy().
+        let _url_guard = scopeguard::guard(url_ptr, |p| unsafe { URL::destroy(p.as_ptr()) });
+        // SAFETY: url_ptr is a valid live pointer for the scope of _url_guard.
+        let url: &URL = unsafe { url_ptr.as_ref() };
+        let host: BunString = url.host();
         let port_: u16 = {
             let port32 = url.port();
             if port32 > u32::from(u16::MAX) { 0 } else { u16::try_from(port32).unwrap() }

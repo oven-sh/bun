@@ -220,7 +220,7 @@ impl Collection {
                 buntest.add_result(cfg_data);
             }
 
-            return Ok(StepResult::Waiting(Default::default()));
+            return Ok(StepResult::Waiting { timeout: Timespec::EPOCH });
         }
         Ok(StepResult::Complete)
     }

@@ -2293,23 +2293,23 @@ impl<const SSL: bool> NewSocket<SSL> {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args = callframe.arguments_old(1);
+        let args = callframe.arguments_old::<1>();
 
-        if args.len() < 1 {
-            return global.throw("Expected 1 argument", ());
+        if args.len < 1 {
+            return Err(global.throw("Expected 1 argument"));
         }
 
         if this.socket.is_detached() {
             return Ok(JSValue::UNDEFINED);
         }
 
-        let opts = args.ptr()[0];
+        let opts = args.ptr[0];
         if opts.is_empty_or_undefined_or_null() || opts.is_boolean() || !opts.is_object() {
-            return global.throw("Expected options object", ());
+            return Err(global.throw("Expected options object"));
         }
 
         let socket_obj = opts.get(global, "socket")?.ok_or_else(|| {
-            global.throw_err("Expected \"socket\" option", ())
+            global.throw("Expected \"socket\" option")
         })?;
 
         // In Zig `this_handlers.* = handlers` overwrites the pointee so the

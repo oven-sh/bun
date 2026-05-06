@@ -94,6 +94,42 @@ pub use jsc::MarkedArrayBuffer as Buffer;
 // `jsc.ArgumentsSlice` — cursor over CallFrame args.
 pub use jsc::ArgumentsSlice;
 
+/// Extension trait providing the `SliceWithUnderlyingString`-returning slicers
+/// on `bun_str::String` (Zig: `String.toThreadSafeSlice` / `String.toSlice`).
+/// Upstream `bun_str` does not yet expose these; this local shim builds the
+/// stub `SliceWithUnderlyingString` from an owned UTF-8 copy.
+// TODO(b2-blocked): swap to inherent methods once `bun_str::SliceWithUnderlyingString` lands.
+pub trait BunStringSliceExt {
+    fn to_thread_safe_slice(&self) -> JsResult<SliceWithUnderlyingString>;
+    fn to_slice_with_underlying(&self) -> SliceWithUnderlyingString;
+}
+impl BunStringSliceExt for bun_str::String {
+    fn to_thread_safe_slice(&self) -> JsResult<SliceWithUnderlyingString> {
+        Ok(SliceWithUnderlyingString {
+            utf8: ZigStringSlice::init_owned(self.to_owned_slice()),
+            underlying: bun_str::String::default(),
+        })
+    }
+    fn to_slice_with_underlying(&self) -> SliceWithUnderlyingString {
+        SliceWithUnderlyingString {
+            utf8: ZigStringSlice::init_owned(self.to_owned_slice()),
+            underlying: bun_str::String::default(),
+        }
+    }
+}
+
+/// Extension trait giving `bun_sys::SystemError` a JSC bridge. The canonical
+/// `to_error_instance` lives on `bun_jsc::SystemError` (different field order);
+/// adapt at the call site instead of editing upstream crates.
+trait SystemErrorJscExt {
+    fn to_error_instance(&self, ctx: &JSGlobalObject) -> JSValue;
+}
+impl SystemErrorJscExt for bun_sys::SystemError {
+    fn to_error_instance(&self, _ctx: &JSGlobalObject) -> JSValue {
+        todo!("blocked_on: bun_jsc::SystemErrorJsc for bun_sys::SystemError")
+    }
+}
+
 // `Fd::from_js_validated` lives in `bun_sys_jsc::FdJsc`, which is not a
 // dependency of this crate. Provide a thin extension trait so call sites
 // (`Fd::from_js_validated(value, ctx)`) keep their shape.

@@ -213,16 +213,20 @@ pub extern "C" fn us_dispatch_ssl_raw_tap(
     // SAFETY: ext slot for BunSocketTls always holds a non-null *mut TLSSocket
     // (stamped at construction); deref of both the slot and the pointer is sound.
     let tls: &mut TLSSocket = unsafe { &mut **(*s).ext::<*mut TLSSocket>() };
-    if let Some(raw) = tls.twin {
+    if let Some(raw) = tls.twin.as_ref() {
+        // `twin` is `IntrusiveRc<Self>` (intrusive ref-counted heap pointer);
+        // grab the raw `*mut` without consuming the ref so the +1 stays put.
+        let raw: *mut TLSSocket = raw.data.as_ptr();
         // SAFETY: `data` points to `len` readable bytes from the TLS BIO; loop.c
         // guarantees the buffer outlives this call.
         let slice = unsafe {
             core::slice::from_raw_parts(data, usize::try_from(len).expect("len >= 0"))
         };
         // Zig: `raw.onData(TLSSocket.Socket.from(s), data[..])` where
-        // `Socket = uws.NewSocketHandler(ssl)`. SAFETY: `twin` is the unique
-        // heap owner of the `[raw, _]` half; dispatch is single-threaded.
-        let _ = unsafe { &mut *raw }.on_data(NewSocketHandler::<true>::from(s), slice);
+        // `Socket = uws.NewSocketHandler(ssl)`. SAFETY: `twin` holds a live +1
+        // ref to the `[raw, _]` half; dispatch is single-threaded so no aliasing
+        // `&mut` exists.
+        unsafe { &mut *raw }.on_data(NewSocketHandler::<true>::from(s), slice);
     }
     s
 }

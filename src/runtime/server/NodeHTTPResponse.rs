@@ -1190,26 +1190,22 @@ impl NodeHTTPResponse {
         // right now the socket instead of emitting an error event it will reportUncaughtException
         // this makes the behavior aligned with current implementation, but not ideal
         let bytes: JSValue = 'brk: {
-            if !chunk.is_empty() && self.buffered_request_body_data_during_pause.len() > 0 {
-                let total_len =
-                    chunk.len() + self.buffered_request_body_data_during_pause.len() as usize;
-                let buffer = match JSValue::create_buffer_from_length(global_this, total_len) {
+            if !chunk.is_empty() && self.buffered_request_body_data_during_pause.len > 0 {
+                let paused_len = self.buffered_request_body_data_during_pause.len as usize;
+                // PORT NOTE: `JSValue::create_buffer_from_length` is gated upstream;
+                // build the contiguous buffer locally then `ArrayBuffer::create_buffer`.
+                let mut combined: Vec<u8> = Vec::with_capacity(paused_len + chunk.len());
+                combined.extend_from_slice(self.buffered_request_body_data_during_pause.slice());
+                combined.extend_from_slice(chunk);
+                self.buffered_request_body_data_during_pause.clear_and_free();
+                break 'brk match jsc::ArrayBuffer::create_buffer(global_this, &combined) {
                     Ok(b) => b,
                     Err(err) => {
-                        global_this.report_uncaught_exception_from_error(err);
+                        let exc = global_this.take_exception(err);
+                        let _ = bun_vm_mut(global_this).uncaught_exception(global_this, exc, false);
                         return JSValue::UNDEFINED;
                     }
                 };
-
-                let array_buffer = buffer.as_array_buffer(global_this).unwrap();
-
-                let paused_len = self.buffered_request_body_data_during_pause.len() as usize;
-                let input = array_buffer.slice_mut();
-                input[..paused_len]
-                    .copy_from_slice(self.buffered_request_body_data_during_pause.slice());
-                input[paused_len..].copy_from_slice(chunk);
-                self.buffered_request_body_data_during_pause.clear_and_free();
-                break 'brk buffer;
             }
 
             if let Some(buffered_data) = self.drain_buffered_request_body_from_pause(global_this) {
@@ -1220,7 +1216,8 @@ impl NodeHTTPResponse {
                 break 'brk match jsc::ArrayBuffer::create_buffer(global_this, chunk) {
                     Ok(b) => b,
                     Err(err) => {
-                        global_this.report_uncaught_exception_from_error(err);
+                        let exc = global_this.take_exception(err);
+                        let _ = bun_vm_mut(global_this).uncaught_exception(global_this, exc, false);
                         return JSValue::UNDEFINED;
                     }
                 };

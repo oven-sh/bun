@@ -758,19 +758,19 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         // from server builds, and normalize with cheapPrefixNormalizer for consistency
                         // with module_info path fixup.
                         // For non-compile builds, use the normal .jsc extension.
-                        let mut source_provider_url = if c.options.compile {
+                        let source_provider_url = if c.options.compile {
                             let normalizer = cheap_prefix_normalizer(public_path, &chunk.final_rel_path);
-                            bun_str::String::create_format(format_args!(
+                            BunString::create_format(format_args!(
                                 "{}{}",
-                                bstr::BStr::new(normalizer.0),
-                                bstr::BStr::new(normalizer.1)
-                            ))?
+                                bstr::BStr::new(normalizer[0]),
+                                bstr::BStr::new(normalizer[1])
+                            ))
                         } else {
-                            bun_str::String::create_format(format_args!(
+                            BunString::create_format(format_args!(
                                 "{}{}",
                                 bstr::BStr::new(&chunk.final_rel_path),
-                                bun_core::BYTECODE_EXTENSION
-                            ))?
+                                BYTECODE_EXTENSION
+                            ))
                         };
                         source_provider_url.ref_();
                         let _spu_guard = scopeguard::guard((), |_| source_provider_url.deref());

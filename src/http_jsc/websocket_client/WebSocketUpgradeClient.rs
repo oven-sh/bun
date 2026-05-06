@@ -469,7 +469,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
                     return Some(client);
                 }
                 Err(_) => {
-                    client_ref.deref();
+                    // SAFETY: `client` from Box::into_raw above; sole owner.
+                    unsafe { Self::deref(client) };
                 }
             }
             return None;
@@ -482,7 +483,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
                 let out = client_ref;
                 // I don't think this case gets reached.
                 if out.state == State::Failed {
-                    out.deref();
+                    // SAFETY: `client` from Box::into_raw above; sole owner.
+                    unsafe { Self::deref(client) };
                     return None;
                 }
                 bun_analytics::Features::WEB_SOCKET.increment();
@@ -503,7 +505,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
                 Some(client)
             }
             Err(_) => {
-                client_ref.deref();
+                // SAFETY: `client` from Box::into_raw above; sole owner.
+                unsafe { Self::deref(client) };
                 None
             }
         }

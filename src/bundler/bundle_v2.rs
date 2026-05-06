@@ -1352,11 +1352,11 @@ pub mod dispatch {
         pub vtable: &'static JsEventLoopVTable,
     }
     pub struct JsEventLoopVTable {
-        pub enqueue_task_concurrent: unsafe fn(*mut (), bun_event_loop::ConcurrentTask),
+        pub enqueue_task_concurrent: unsafe fn(*mut (), *mut bun_event_loop::ConcurrentTask::ConcurrentTask),
     }
     impl JsEventLoopHandle {
         #[inline]
-        pub fn enqueue_task_concurrent(&self, task: bun_event_loop::ConcurrentTask) {
+        pub fn enqueue_task_concurrent(&self, task: *mut bun_event_loop::ConcurrentTask::ConcurrentTask) {
             unsafe { (self.vtable.enqueue_task_concurrent)(self.owner, task) }
         }
     }
@@ -1370,7 +1370,7 @@ pub mod dispatch {
         pub initialize_jsc: unsafe fn(bool),
         /// Returns (bytes, source_provider_url_dupe) on success.
         pub generate: unsafe fn(
-            format: crate::options::OutputFormat,
+            format: crate::options_impl::Format,
             source: &[u8],
             source_url: &[u8],
         ) -> Option<(Box<[u8]>, Box<[u8]>)>,

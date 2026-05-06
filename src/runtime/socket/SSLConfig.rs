@@ -355,9 +355,14 @@ impl Clone for SSLConfig {
 impl SSLConfig {
     // PORT NOTE: Zig used `inline for (std.meta.fields(SSLConfig))` reflection.
     // Expanded by hand; keep field order in sync with struct definition.
-    pub fn content_hash(&mut self) -> u64 {
-        if self.cached_hash != 0 {
-            return self.cached_hash;
+    //
+    // Takes `&self` (not `&mut`) because the intern registry calls this through
+    // a pointer derived from `Arc::as_ptr`, which only grants shared provenance.
+    // The memoization write goes through `AtomicU64` (interior mutability).
+    pub fn content_hash(&self) -> u64 {
+        let cached = self.cached_hash.load(Ordering::Relaxed);
+        if cached != 0 {
+            return cached;
         }
         let mut hasher = Wyhash11::init(0);
 
@@ -384,8 +389,10 @@ impl SSLConfig {
 
         let hash = hasher.final_();
         // Avoid 0 since it's the sentinel for "not computed"
-        self.cached_hash = if hash == 0 { 1 } else { hash };
-        self.cached_hash
+        let hash = if hash == 0 { 1 } else { hash };
+        // Relaxed: idempotent pure cache; racing writers store the same value.
+        self.cached_hash.store(hash, Ordering::Relaxed);
+        hash
     }
 }
 
@@ -444,7 +451,7 @@ pub mod GlobalRegistry {
     /// fails and we skip (intern already disposed our weak ref).
     ///
     /// No-op for configs that were never interned.
-    pub(super) fn remove(_config: *mut SSLConfig) {
+    pub(super) fn remove(_config: *const SSLConfig) {
         // No-op until intern() and the static map land. Every SSLConfig is
         // currently un-interned, so the Zig path would early-return on
         // `configs.count() == 0` anyway.

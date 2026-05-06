@@ -1650,7 +1650,12 @@ impl<'a> BundleV2<'a> {
         import_record: jsc_api::JSBundler::MiniImportRecord,
         target: options::Target,
     ) {
-        let transpiler = self.transpiler_for_target(target);
+        // PORT NOTE: reshaped for borrowck — Zig held a `*Transpiler` raw pointer alongside
+        // other `this.*` accesses. `transpiler_for_target` borrows `&mut self`, so launder
+        // through a raw pointer to keep `*self` available below.
+        // SAFETY: the returned `&mut Transpiler` lives for `'a` (set in `init`), is not
+        // invalidated by anything called here, and Zig aliased it identically.
+        let transpiler: *mut Transpiler<'a> = self.transpiler_for_target(target);
         let source_dir = Fs::PathName::init(&import_record.source_file).dir_with_trailing_slash();
 
         // Check the FileMap first for in-memory files
@@ -1658,14 +1663,22 @@ impl<'a> BundleV2<'a> {
             if let Some(_file_map_result) = file_map.resolve(&import_record.source_file, &import_record.specifier) {
                 let mut file_map_result = _file_map_result;
                 let mut path_primary = file_map_result.path_pair.primary.clone();
-                let entry = self.path_to_source_index_map(target).get_or_put(&path_primary.text).expect("oom");
-                if !entry.found_existing {
+                // PORT NOTE: reshaped for borrowck — `get_or_put` borrows `*self` mutably via
+                // `self.graph`; capture the slot as `*mut u32` so subsequent `self.*` calls
+                // type-check. SAFETY: `path_to_source_index_map(target)` is not mutated again
+                // until after the last `*value_ptr` access below.
+                let (found_existing, value_ptr): (bool, *mut u32) = {
+                    let entry = self.path_to_source_index_map(target).get_or_put(&path_primary.text).expect("oom");
+                    (entry.found_existing, entry.value_ptr as *mut u32)
+                };
+                if !found_existing {
                     let loader: Loader = 'brk: {
                         let record: &mut ImportRecord = &mut self.graph.ast.items_import_records_mut()[import_record.importer_source_index as usize].slice_mut()[import_record.import_record_index as usize];
                         if let Some(out_loader) = record.loader {
                             break 'brk out_loader;
                         }
-                        break 'brk Fs::Path::init(path_primary.text.clone()).loader(&transpiler.options.loaders).unwrap_or(Loader::File);
+                        // SAFETY: see `transpiler` note above.
+                        break 'brk Fs::Path::init(path_primary.text.clone()).loader(unsafe { &(*transpiler).options.loaders }).unwrap_or(Loader::File);
                     };
                     // For virtual files, use the path text as-is (no relative path computation needed).
                     path_primary.pretty = self.allocator().alloc_slice_copy(&path_primary.text);
@@ -1680,12 +1693,14 @@ impl<'a> BundleV2<'a> {
                         loader,
                         import_record.original_target,
                     ).expect("oom");
-                    *entry.value_ptr = idx;
+                    // SAFETY: see `value_ptr` note above.
+                    unsafe { *value_ptr = idx };
                     let record: &mut ImportRecord = &mut self.graph.ast.items_import_records_mut()[import_record.importer_source_index as usize].slice_mut()[import_record.import_record_index as usize];
                     record.source_index = Index::init(idx);
                 } else {
                     let record: &mut ImportRecord = &mut self.graph.ast.items_import_records_mut()[import_record.importer_source_index as usize].slice_mut()[import_record.import_record_index as usize];
-                    record.source_index = Index::init(*entry.value_ptr);
+                    // SAFETY: see `value_ptr` note above.
+                    record.source_index = Index::init(unsafe { *value_ptr });
                 }
                 return;
             }
@@ -1693,15 +1708,17 @@ impl<'a> BundleV2<'a> {
 
         let mut had_busted_dir_cache = false;
         let resolve_result: _resolver::Result = loop {
-            match transpiler.resolver.resolve(source_dir, &import_record.specifier, import_record.kind) {
+            // SAFETY: see `transpiler` note above.
+            match unsafe { &mut *transpiler }.resolver.resolve(source_dir, &import_record.specifier, import_record.kind) {
                 Ok(r) => break r,
                 Err(err) => {
                     // Only perform directory busting when hot-reloading is enabled
                     if err == bun_core::err!("ModuleNotFound") {
-                        if let Some(dev) = self.dev_server {
+                        if let Some(dev) = &self.dev_server {
                             if !had_busted_dir_cache {
                                 // Only re-query if we previously had something cached.
-                                if transpiler.resolver.bust_dir_cache_from_specifier(&import_record.source_file, &import_record.specifier) {
+                                // SAFETY: see `transpiler` note above.
+                                if unsafe { &mut *transpiler }.resolver.bust_dir_cache_from_specifier(&import_record.source_file, &import_record.specifier) {
                                     had_busted_dir_cache = true;
                                     continue;
                                 }
@@ -1720,19 +1737,25 @@ impl<'a> BundleV2<'a> {
                         }
                     }
 
-                    let mut handles_import_errors = false;
-                    let mut source: Option<&Logger::Source> = None;
-                    let log = self.log_for_resolution_failures(&import_record.source_file, target.bake_graph());
+                    let handles_import_errors;
+                    let source: Option<&Logger::Source>;
+                    // PORT NOTE: reshaped for borrowck — `log_for_resolution_failures` borrows
+                    // `&mut self`; the returned log is backed by either a DevServer-owned slot or
+                    // `*self.transpiler.log` (both raw-pointer-derived), so launder to `*mut` so
+                    // `self.graph.*` / `self.transpiler.*` reads below type-check.
+                    let log: *mut Logger::Log = self.log_for_resolution_failures(&import_record.source_file, target.bake_graph());
 
-                    let record: &mut ImportRecord = &mut self.graph.ast.items_import_records_mut()[import_record.importer_source_index as usize].slice_mut()[import_record.import_record_index as usize];
+                    {
+                        let record: &mut ImportRecord = &mut self.graph.ast.items_import_records_mut()[import_record.importer_source_index as usize].slice_mut()[import_record.import_record_index as usize];
+                        handles_import_errors = record.flags.contains(bun_options_types::import_record::Flags::HANDLES_IMPORT_ERRORS);
+
+                        // Disable failing packages from being printed.
+                        // This may cause broken code to write.
+                        // However, doing this means we tell them all the resolve errors
+                        // Rather than just the first one.
+                        record.path.is_disabled = true;
+                    }
                     source = Some(&self.graph.input_files.items_source()[import_record.importer_source_index as usize]);
-                    handles_import_errors = record.flags.contains(bun_options_types::import_record::Flags::HANDLES_IMPORT_ERRORS);
-
-                    // Disable failing packages from being printed.
-                    // This may cause broken code to write.
-                    // However, doing this means we tell them all the resolve errors
-                    // Rather than just the first one.
-                    record.path.is_disabled = true;
 
                     if err == bun_core::err!("ModuleNotFound") {
                         let add_error = Logger::Log::add_resolve_error_with_text_dupe;
@@ -1742,7 +1765,8 @@ impl<'a> BundleV2<'a> {
                             if is_package_path(&import_record.specifier) {
                                 if target == Target::Browser && options::ExternalModules::is_node_builtin(path_to_use) {
                                     add_error(
-                                        log, source, import_record.range,
+                                        // SAFETY: see `log` note above.
+                                        unsafe { &mut *log }, source, import_record.range,
                                         format_args!("Browser build cannot {} Node.js module: \"{}\". To use Node.js builtins, set target to 'node' or 'bun'",
                                             bstr::BStr::new(import_record.kind.error_label()), bstr::BStr::new(path_to_use)),
                                         path_to_use,
@@ -1750,7 +1774,8 @@ impl<'a> BundleV2<'a> {
                                     ).expect("unreachable");
                                 } else {
                                     add_error(
-                                        log, source, import_record.range,
+                                        // SAFETY: see `log` note above.
+                                        unsafe { &mut *log }, source, import_record.range,
                                         format_args!("Could not resolve: \"{}\". Maybe you need to \"bun install\"?", bstr::BStr::new(path_to_use)),
                                         path_to_use,
                                         import_record.kind.into(),
@@ -1758,7 +1783,8 @@ impl<'a> BundleV2<'a> {
                                 }
                             } else {
                                 add_error(
-                                    log, source, import_record.range,
+                                    // SAFETY: see `log` note above.
+                                    unsafe { &mut *log }, source, import_record.range,
                                     format_args!("Could not resolve: \"{}\"", bstr::BStr::new(path_to_use)),
                                     path_to_use,
                                     import_record.kind.into(),
@@ -1799,7 +1825,7 @@ impl<'a> BundleV2<'a> {
             // TODO: outbase
             let rel = bun_paths::resolve_path::relative_platform::<bun_paths::resolve_path::platform::Loose, false>(
                 // SAFETY: `transpiler.fs` is a live `*mut FileSystem` for the bundle pass.
-                unsafe { (*transpiler.fs).top_level_dir }, &path.text);
+                unsafe { (*(*transpiler).fs).top_level_dir }, &path.text);
             // SAFETY: arena outlives the bundle pass; raw-pointer detour erases the
             // `&self` lifetime so the resulting `&'static [u8]` doesn't pin `self`.
             path.pretty = unsafe { &*(self.allocator().alloc_slice_copy(rel) as *const [u8]) };
@@ -1818,7 +1844,8 @@ impl<'a> BundleV2<'a> {
                 if let Some(out_loader) = record.loader {
                     break 'brk out_loader;
                 }
-                break 'brk path.loader(&transpiler.options.loaders).unwrap_or(Loader::File);
+                // SAFETY: see `transpiler` note above.
+                break 'brk path.loader(unsafe { &(*transpiler).options.loaders }).unwrap_or(Loader::File);
                 // HTML is only allowed at the entry point.
             };
             let mut tmp_source = Logger::Source {

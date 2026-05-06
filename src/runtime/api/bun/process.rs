@@ -3151,8 +3151,11 @@ pub mod sync {
         pub stdout: Vec<Box<[u8]>>,
         pub err: bun_sys::E,
         pub waiting_count: u8,
-        // TODO(port): IntrusiveArc vs Arc<Process>
-        pub process: Arc<Process>,
+        /// Intrusive-refcounted (Zig: `*Process`). Allocated via
+        /// `Box::into_raw` in `to_process`; freed when the embedded
+        /// `ThreadSafeRefCount` hits zero. Stored raw — `Arc<Process>` would
+        /// give only `*const` provenance and make `&mut *` writes UB.
+        pub process: *mut Process,
         pub status: Option<Status>,
     }
 
@@ -3165,14 +3168,13 @@ pub mod sync {
         pub fn on_process_exit(&mut self, status: Status, _: &Rusage) {
             self.status = Some(status);
             self.waiting_count -= 1;
-            // SAFETY: unique access during sync spawn
+            // SAFETY: `self.process` is the sole live handle during sync spawn
+            // (single-threaded uv loop); no other `&mut Process` overlaps this
+            // borrow. Mirrors Zig: `this.process.detach(); this.process.deref();`
             unsafe {
-                let p = &mut *(Arc::as_ptr(&self.process) as *mut Process);
-                p.detach();
+                (*self.process).detach();
+                (*self.process).deref();
             }
-            // process.deref() — Arc drop happens in caller
-            // TODO(port): Zig calls deref() here; with Arc<Process> we'd drop one
-            // strong count. Phase B: use IntrusiveArc and call deref() explicitly.
         }
 
         pub fn on_reader_done(

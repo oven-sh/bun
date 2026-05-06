@@ -361,14 +361,13 @@ impl Drop for IOReader {
         // BufferedReader is still on the stack — would need the
         // EventLoopTask hop once the shell EventLoopHandle shim is real.
         let s = self.state.get_mut();
+        let r = self.reader.get_mut();
         if s.fd != Fd::INVALID {
             #[cfg(windows)]
             {
                 // windows reader closes the file descriptor
-                if s.reader.source.is_some()
-                    && !s.reader.source.as_ref().is_some_and(|src| src.is_closed())
-                {
-                    s.reader.close_impl::<false>();
+                if r.source.is_some() && !r.source.as_ref().is_some_and(|src| src.is_closed()) {
+                    r.close_impl::<false>();
                 }
             }
             #[cfg(not(windows))]
@@ -376,16 +375,14 @@ impl Drop for IOReader {
                 // We cleared CLOSE_HANDLE in init(), so reader Drop will not
                 // return the FilePoll to its pool. Do it explicitly (without
                 // closing the fd — we own that and close it ourselves below).
-                if matches!(s.reader.handle, bun_io::pipes::PollOrFd::Poll(_)) {
-                    s.reader
-                        .handle
-                        .close_impl(None, None::<fn(*mut c_void)>, false);
+                if matches!(r.handle, bun_io::pipes::PollOrFd::Poll(_)) {
+                    r.handle.close_impl(None, None::<fn(*mut c_void)>, false);
                 }
                 let _ = sys::close(s.fd);
             }
         }
-        s.reader.disable_keeping_process_alive(());
-        // `s.reader` Drop handles its own deinit.
+        r.disable_keeping_process_alive(());
+        // `reader` Drop handles its own deinit.
     }
 }
 

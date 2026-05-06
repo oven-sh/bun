@@ -21,10 +21,24 @@ pub struct PageSelector {
     pub pseudo_classes: ArrayList<PagePseudoClass>,
 }
 
-// ─── PageSelector behavior ────────────────────────────────────────────────
+impl PageSelector {
+    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+        if let Some(name) = self.name {
+            dest.write_str(name)?;
+        }
+
+        for pseudo in &self.pseudo_classes {
+            dest.write_char(b':')?;
+            pseudo.to_css(dest)?;
+        }
+        Ok(())
+    }
+}
+
+// ─── PageSelector parse/clone ─────────────────────────────────────────────
 // blocked_on: Parser::{try_parse,expect_ident,next_including_whitespace,
 // state,reset,new_custom_error,allocator} surface, ParserError::
-// InvalidPageSelector, PagePseudoClass::{parse,to_css}, DeepClone.
+// InvalidPageSelector, PagePseudoClass::parse, DeepClone.
 #[cfg(any())]
 impl PageSelector {
     pub fn parse(input: &mut css::Parser) -> css::Result<PageSelector> {
@@ -61,18 +75,6 @@ impl PageSelector {
         Ok(PageSelector { name, pseudo_classes })
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        if let Some(name) = self.name {
-            dest.write_str(name)?;
-        }
-
-        for pseudo in &self.pseudo_classes {
-            dest.write_char(b':')?;
-            pseudo.to_css(dest)?;
-        }
-        Ok(())
-    }
-
     pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         css::implement_deep_clone(self, bump)
     }
@@ -88,8 +90,6 @@ pub struct PageMarginRule {
     pub loc: Location,
 }
 
-// blocked_on: DeclarationBlock::to_css_block, PageMarginBox::to_css, DeepClone.
-#[cfg(any())]
 impl PageMarginRule {
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         // #[cfg(feature = "sourcemap")]
@@ -97,9 +97,13 @@ impl PageMarginRule {
 
         dest.write_char(b'@')?;
         self.margin_box.to_css(dest)?;
-        self.declarations.to_css_block(dest)
+        super::decl_block_to_css(&self.declarations, dest)
     }
+}
 
+// blocked_on: DeepClone.
+#[cfg(any())]
+impl PageMarginRule {
     pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         css::implement_deep_clone(self, bump)
     }
@@ -118,41 +122,7 @@ pub struct PageRule {
     pub loc: Location,
 }
 
-// ─── PageRule behavior ────────────────────────────────────────────────────
-// blocked_on: RuleBodyParser, DeclarationBlock::{len,declarations,
-// important_declarations}, Property::to_css, PageSelector::to_css,
-// PageMarginRule::to_css, DeepClone.
-#[cfg(any())]
 impl PageRule {
-    pub fn parse(
-        selectors: ArrayList<PageSelector>,
-        input: &mut css::Parser,
-        loc: Location,
-        options: &css::ParserOptions,
-    ) -> css::Result<PageRule> {
-        let mut declarations = DeclarationBlock::default();
-        let mut rules: ArrayList<PageMarginRule> = ArrayList::new();
-        let mut rule_parser = PageRuleParser {
-            declarations: &mut declarations,
-            rules: &mut rules,
-            options,
-        };
-        let mut parser = css::RuleBodyParser::<PageRuleParser<'_>>::new(input, &mut rule_parser);
-
-        while let Some(decl) = parser.next() {
-            if let Some(e) = decl.as_err() {
-                if parser.parser.options.error_recovery {
-                    parser.parser.options.warn(e);
-                    continue;
-                }
-
-                return Err(e);
-            }
-        }
-
-        Ok(PageRule { selectors, declarations, rules, loc })
-    }
-
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
@@ -183,9 +153,9 @@ impl PageRule {
 
         // PORT NOTE: Zig used `inline for` over field-name tuple + @field reflection.
         // Unrolled to a 2-tuple of (slice, important) since both fields are property lists.
-        let decls_groups: [(&[css::Property], bool); 2] = [
-            (&self.declarations.declarations, false),
-            (&self.declarations.important_declarations, true),
+        let decls_groups: [(&[crate::css_parser::Property], bool); 2] = [
+            (self.declarations.declarations.as_slice(), false),
+            (self.declarations.important_declarations.as_slice(), true),
         ];
         for (decls, important) in decls_groups {
             for decl in decls {
@@ -222,6 +192,40 @@ impl PageRule {
         dest.newline()?;
         dest.write_char(b'}')
     }
+}
+
+// ─── PageRule parse/clone ─────────────────────────────────────────────────
+// blocked_on: RuleBodyParser, DeepClone.
+#[cfg(any())]
+impl PageRule {
+    pub fn parse(
+        selectors: ArrayList<PageSelector>,
+        input: &mut css::Parser,
+        loc: Location,
+        options: &css::ParserOptions,
+    ) -> css::Result<PageRule> {
+        let mut declarations = DeclarationBlock::default();
+        let mut rules: ArrayList<PageMarginRule> = ArrayList::new();
+        let mut rule_parser = PageRuleParser {
+            declarations: &mut declarations,
+            rules: &mut rules,
+            options,
+        };
+        let mut parser = css::RuleBodyParser::<PageRuleParser<'_>>::new(input, &mut rule_parser);
+
+        while let Some(decl) = parser.next() {
+            if let Some(e) = decl.as_err() {
+                if parser.parser.options.error_recovery {
+                    parser.parser.options.warn(e);
+                    continue;
+                }
+
+                return Err(e);
+            }
+        }
+
+        Ok(PageRule { selectors, declarations, rules, loc })
+    }
 
     pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         css::implement_deep_clone(self, bump)
@@ -245,21 +249,36 @@ pub enum PagePseudoClass {
     Blank,
 }
 
-// blocked_on: css::enum_property_util trait bounds (EnumProperty derive),
-// DeepClone.
-#[cfg(any())]
-impl PagePseudoClass {
-    pub fn as_str(&self) -> &'static [u8] {
-        // TODO(port): css::enum_property_util relied on @typeInfo; Phase B should provide a derive/trait.
-        css::enum_property_util::as_str(self)
+// PORT NOTE: Zig `css.enum_property_util.{asStr,toCss}` used `@tagName` to get
+// the lowercase variant name. Phase B should provide `#[derive(EnumProperty)]`;
+// until then the `Into<&'static str>` table is hand-rolled.
+impl From<PagePseudoClass> for &'static str {
+    fn from(v: PagePseudoClass) -> &'static str {
+        match v {
+            PagePseudoClass::Left => "left",
+            PagePseudoClass::Right => "right",
+            PagePseudoClass::First => "first",
+            PagePseudoClass::Last => "last",
+            PagePseudoClass::Blank => "blank",
+        }
     }
+}
 
-    pub fn parse(input: &mut css::Parser) -> css::Result<Self> {
-        css::enum_property_util::parse(input)
+impl PagePseudoClass {
+    pub fn as_str(&self) -> &'static str {
+        css::enum_property_util::as_str(self)
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         css::enum_property_util::to_css(self, dest)
+    }
+}
+
+// blocked_on: css::enum_property_util EnumProperty parse bound, DeepClone.
+#[cfg(any())]
+impl PagePseudoClass {
+    pub fn parse(input: &mut css::Parser) -> css::Result<Self> {
+        css::enum_property_util::parse(input)
     }
 
     pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
@@ -308,20 +327,46 @@ pub enum PageMarginBox {
     BottomRightCorner,
 }
 
-// blocked_on: css::enum_property_util trait bounds (EnumProperty derive).
-#[cfg(any())]
-impl PageMarginBox {
-    pub fn as_str(&self) -> &'static [u8] {
-        // TODO(port): css::enum_property_util relied on @typeInfo; Phase B should provide a derive/trait.
-        css::enum_property_util::as_str(self)
+// PORT NOTE: Zig `css.enum_property_util.{asStr,toCss}` used `@tagName`; Phase B
+// should provide `#[derive(EnumProperty)]`. Hand-rolled kebab-case table.
+impl From<PageMarginBox> for &'static str {
+    fn from(v: PageMarginBox) -> &'static str {
+        match v {
+            PageMarginBox::TopLeftCorner => "top-left-corner",
+            PageMarginBox::TopLeft => "top-left",
+            PageMarginBox::TopCenter => "top-center",
+            PageMarginBox::TopRight => "top-right",
+            PageMarginBox::TopRightCorner => "top-right-corner",
+            PageMarginBox::LeftTop => "left-top",
+            PageMarginBox::LeftMiddle => "left-middle",
+            PageMarginBox::LeftBottom => "left-bottom",
+            PageMarginBox::RightTop => "right-top",
+            PageMarginBox::RightMiddle => "right-middle",
+            PageMarginBox::RightBottom => "right-bottom",
+            PageMarginBox::BottomLeftCorner => "bottom-left-corner",
+            PageMarginBox::BottomLeft => "bottom-left",
+            PageMarginBox::BottomCenter => "bottom-center",
+            PageMarginBox::BottomRight => "bottom-right",
+            PageMarginBox::BottomRightCorner => "bottom-right-corner",
+        }
     }
+}
 
-    pub fn parse(input: &mut css::Parser) -> css::Result<Self> {
-        css::enum_property_util::parse(input)
+impl PageMarginBox {
+    pub fn as_str(&self) -> &'static str {
+        css::enum_property_util::as_str(self)
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         css::enum_property_util::to_css(self, dest)
+    }
+}
+
+// blocked_on: css::enum_property_util EnumProperty parse bound.
+#[cfg(any())]
+impl PageMarginBox {
+    pub fn parse(input: &mut css::Parser) -> css::Result<Self> {
+        css::enum_property_util::parse(input)
     }
 }
 

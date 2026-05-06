@@ -1058,14 +1058,20 @@ pub mod waiter_thread_posix {
         // PORT NOTE: Zig active list holds raw `*T` whose strong ref was taken
         // by the caller before `append()` (Process::watch does `self.ref_()`).
         // The matching `deref()` happens in `on_wait_pid_from_waiter_thread`.
-        pub active: Vec<*mut T>,
+        //
+        // `UnsafeCell` so `loop_` can take `&self`: the waiter thread is the
+        // *sole* mutator of `active`, but producers concurrently hold `&self`
+        // to push onto `queue` — a `&mut self` on the waiter side would alias
+        // those producer borrows (forbidden aliased-&mut). With `&self` on
+        // both sides the only interior mutation goes through this cell.
+        pub active: core::cell::UnsafeCell<Vec<*mut T>>,
     }
 
     impl<T: 'static> NewQueue<T> {
         pub const fn new() -> Self {
             Self {
                 queue: ConcurrentQueue::new(),
-                active: Vec::new(),
+                active: core::cell::UnsafeCell::new(Vec::new()),
             }
         }
     }
@@ -1225,10 +1231,15 @@ pub mod waiter_thread_posix {
             })));
         }
 
-        pub fn loop_(&mut self) {
+        pub fn loop_(&self) {
+            // SAFETY: the dedicated waiter thread is the only caller of
+            // `loop_` and the only code path that touches `active`; producers
+            // (`append`) only touch `self.queue`. No other `&mut` to this Vec
+            // can exist concurrently.
+            let active = unsafe { &mut *self.active.get() };
             {
                 let batch = self.queue.pop_batch();
-                self.active.reserve(batch.count);
+                active.reserve(batch.count);
                 let mut iter = batch.iterator();
                 loop {
                     let task = iter.next();
@@ -1238,16 +1249,16 @@ pub mod waiter_thread_posix {
                     // SAFETY: task was Box::into_raw'd in append().
                     let task = unsafe { Box::from_raw(task) };
                     // PERF(port): was assume_capacity
-                    self.active.push(task.process);
+                    active.push(task.process);
                     // task drops here (TrivialDeinit)
                 }
             }
 
             let mut i: usize = 0;
-            while i < self.active.len() {
+            while i < active.len() {
                 let mut remove = false;
 
-                let process = self.active[i];
+                let process = active[i];
                 let pid = T::pid(process);
                 // this case shouldn't really happen
                 if pid == 0 {
@@ -1301,7 +1312,7 @@ pub mod waiter_thread_posix {
                 }
 
                 if remove {
-                    let _ = self.active.remove(i);
+                    let _ = active.remove(i);
                 } else {
                     i += 1;
                 }
@@ -1429,24 +1440,34 @@ pub mod waiter_thread_posix {
             bun_core::ZStr::from_raw(b"Waitpid\0".as_ptr(), 7)
         });
         WaiterThreadPosix::reload_handlers();
-        // SAFETY: dedicated waiter thread is the sole mutator of `active`.
-        let this = unsafe { &mut *instance() };
+        // Keep the singleton as a raw pointer and dereference per-use. We must
+        // NOT materialize a long-lived `&mut WaiterThreadPosix` here: the JS
+        // thread's `append()` and the SIGCHLD handler `wakeup()` concurrently
+        // form shared borrows of `js_process` / `eventfd` via the same
+        // singleton, and a live `&mut` covering those fields would be UB
+        // (aliased-&mut). The Zig spec uses a raw pointer with no noalias.
+        let this: *mut WaiterThreadPosix = instance();
 
         #[allow(unused_labels)]
         'outer: loop {
-            this.js_process.loop_();
+            // SAFETY: raw-place field projection then auto-ref to `&NewQueue`;
+            // coexists soundly with producer `&NewQueue` in `append()`.
+            unsafe { (*this).js_process.loop_() };
 
             #[cfg(target_os = "linux")]
             {
+                // SAFETY: `eventfd` is written once in `init()` before this
+                // thread is spawned; read-only thereafter.
+                let efd = unsafe { (*this).eventfd };
                 let mut polls = [libc::pollfd {
-                    fd: this.eventfd.native(),
+                    fd: efd.native(),
                     events: (libc::POLLIN | libc::POLLERR) as _,
                     revents: 0,
                 }];
 
                 // Consume the pending eventfd
                 let mut buf = [0u8; 8];
-                if bun_sys::read(this.eventfd, &mut buf).unwrap_or(0) > 0 {
+                if bun_sys::read(efd, &mut buf).unwrap_or(0) > 0 {
                     continue 'outer;
                 }
 

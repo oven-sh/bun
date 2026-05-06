@@ -64,7 +64,7 @@ pub mod runtime_full;
 /// crates expect (`bun_js_parser::runtime::Runtime::Imports` / `::Features`).
 pub mod runtime {
     pub use crate::Runtime;
-    pub use crate::Runtime::{Features, Imports, Names, ReplaceableExport};
+    pub use crate::Runtime::{Features, Imports, Names, ReplaceableExport, ServerComponentsMode};
 }
 
 

@@ -753,7 +753,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 )
                 .expect("oom");
         } else {
-            let name_str: &'a [u8] = if default_name_ref.is_null() {
+            let name_str: &'a [u8] = if default_name_ref.is_empty() {
                 b"_this"
             } else {
                 b"_default"

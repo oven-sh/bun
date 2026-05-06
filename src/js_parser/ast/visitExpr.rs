@@ -2302,11 +2302,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // PERF(port): was fromOwnedSlice (no copy) — profile in Phase B
         let mut stmts_list =
             bumpalo::collections::Vec::from_iter_in(dupe.iter().copied(), p.allocator);
-        let temp_opts = PrependTempRefsOpts {
+        let mut temp_opts = PrependTempRefsOpts {
             kind: crate::parser::StmtsKind::FnBody,
             ..Default::default()
         };
-        p.visit_stmts_and_prepend_temp_refs(&mut stmts_list, temp_opts)
+        p.visit_stmts_and_prepend_temp_refs(&mut stmts_list, &mut temp_opts)
             .expect("unreachable");
         // Zig: `p.allocator.free(e_.body.stmts)` — arena-backed, no individual free in Rust.
         p.pop_scope();
@@ -2350,9 +2350,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         //   Hook tracking deferred — save/restore preserved in `_draft::e_function`.
         let mut react_hook_data: Option<crate::parser::HookContext> = None;
 
-        // visit.rs stub takes `&mut G::Fn` (in-place); Zig returns by value.
         let open_parens_loc = e_.func.open_parens_loc;
-        p.visit_func(&mut e_.func, open_parens_loc);
+        e_.func = p.visit_func(core::mem::take(&mut e_.func), open_parens_loc);
 
         // Remove unused function names when minifying (only when bundling is enabled)
         // unless --keep-names is specified
@@ -2407,9 +2406,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let decorator_name_from_context = p.decorator_class_name;
         p.decorator_class_name = None;
 
-        // PORT NOTE: Zig `p.visitClass(expr.loc, e_, Ref.None)` — un-gated visit.rs stub
-        // takes `&mut G::Class` only (loc/name_ref ignored until full body lands).
-        p.visit_class(&mut e_);
+        // Zig: `p.visitClass(expr.loc, e_, Ref.None)`
+        let _ = p.visit_class(expr.loc, &mut e_, Ref::NONE);
 
         // Lower standard decorators for class expressions
         if e_.should_lower_standard_decorators {

@@ -650,14 +650,14 @@ pub mod symbol {
             }
         }
 
-        /// SAFETY: matches Zig's `.mut(ref.innerIndex())` on a `*const Map` —
-        /// the symbol table is single-owner per parse and never aliased across
-        /// threads. Caller must not hold two live `&mut Symbol` from the same
-        /// `Map` at once; use `get_ptr` directly when that's needed.
-        /// TODO(port): tighten to `&mut self` once callers are ported.
-        #[allow(clippy::mut_from_ref)]
-        pub fn get(&self, r: Ref) -> Option<&mut Symbol> {
-            self.get_ptr(r).map(|p| unsafe { &mut *p })
+        /// Public raw-pointer lookup. Matches Zig's `.mut(ref.innerIndex())` on
+        /// a `*const Map`. Returns `*mut Symbol` (not `&mut Symbol`) so the
+        /// caller owns the unsafe deref — handing out `&mut T` from `&self`
+        /// would let two live `&mut Symbol` alias the same slot (UB under
+        /// Stacked Borrows; PORTING.md §Forbidden). Callers that only need
+        /// read access should use `get_const`.
+        pub fn get(&self, r: Ref) -> Option<*mut Symbol> {
+            self.get_ptr(r)
         }
 
         pub fn get_const(&self, r: Ref) -> Option<&Symbol> {
@@ -673,17 +673,18 @@ pub mod symbol {
             )
         }
 
-        #[allow(clippy::mut_from_ref)]
-        pub fn get_with_link(&self, r: Ref) -> Option<&mut Symbol> {
+        /// Like `get`, but follows one `link` hop. Returns `*mut Symbol` for the
+        /// same soundness reason as `get` — caller owns the unsafe deref.
+        pub fn get_with_link(&self, r: Ref) -> Option<*mut Symbol> {
             let p = self.get_ptr(r)?;
             // SAFETY: `p` is a valid slot pointer; we only read `link` here.
             let (has_link, link) = unsafe { ((*p).has_link(), (*p).link) };
             if has_link {
                 if let Some(linked) = self.get_ptr(link) {
-                    return Some(unsafe { &mut *linked });
+                    return Some(linked);
                 }
             }
-            Some(unsafe { &mut *p })
+            Some(p)
         }
 
         pub fn get_with_link_const(&self, r: Ref) -> Option<&Symbol> {
@@ -2655,22 +2656,17 @@ macro_rules! alloc_print {
 #[inline]
 pub fn alloc_print(args: fmt::Arguments<'_>) -> Result<Cow<'static, [u8]>, AllocError> {
     // Zig `allocPrint` runs `Output.prettyFmt(fmt, enable_ansi_colors)` at
-    // comptime over the format string before formatting. With `fmt::Arguments`
-    // the format string is opaque, so callers that need markup conversion must
-    // go through `pretty_format_args!` / `alloc_print!` above (which do the
-    // rewrite at the macro call site). For `fmt::Arguments` that arrive here
-    // without that rewrite, fall back to a runtime pass over the rendered
-    // bytes so `<r>/<red>/…` never leak into user-visible output.
+    // comptime over the *format-string literal only*, then interpolates args
+    // afterward — interpolated values are never inspected for `<..>` markup.
+    // With `fmt::Arguments` the literal is opaque, so callers that need markup
+    // conversion must go through `pretty_format_args!` / `alloc_print!` above
+    // (which do the rewrite at the macro call site). The function form here
+    // renders `args` verbatim: do NOT run a runtime markup pass over the
+    // rendered bytes, or user-supplied argument values containing `<`
+    // (`<stdin>`, `Array<string>`, JSX/HTML snippets) get mangled.
     use std::io::Write;
     let mut v = Vec::new();
     let _ = write!(&mut v, "{}", args);
-    // Runtime markup pass — only if any `<` is present (cheap fast-path; the
-    // overwhelming majority of `add_*_fmt` messages are plain text).
-    if v.contains(&b'<') {
-        let enable = Output::ENABLE_ANSI_COLORS_STDERR
-            .load(core::sync::atomic::Ordering::Relaxed);
-        v = Output::pretty_fmt_runtime(&v, enable);
-    }
     // Zig returns an allocator-owned slice that the Log takes ownership of via
     // `Data.text` and frees in `Data.deinit`. `Cow::Owned` gives the same
     // ownership: `Data` (via `Drop`) frees it.

@@ -56,9 +56,55 @@ impl PartialEq for KeyframesName {
 }
 impl Eq for KeyframesName {}
 
-// ─── KeyframesName behavior ───────────────────────────────────────────────
-// blocked_on: Parser::next/Token shape (css_parser.rs), Printer::write_ident,
-// Printer.css_module field, css::serializer::serialize_string, DeepClone.
+impl KeyframesName {
+    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+        use bun_string::strings;
+        // blocked_on: Printer::write_ident — css-module animation scoping path is
+        // gated on the css_modules Pattern::write borrowck reshape. Until then
+        // route through the unscoped `serialize_identifier` tail it shares.
+        #[inline]
+        fn write_ident(dest: &mut Printer, v: &[u8], _handle_css_module: bool) -> core::result::Result<(), PrintErr> {
+            #[cfg(any())]
+            return dest.write_ident(v, _handle_css_module);
+            css::serializer::serialize_identifier(v, dest).map_err(|_| dest.add_fmt_error())
+        }
+
+        let css_module_animation_enabled = if let Some(css_module) = &dest.css_module {
+            css_module.config.animation
+        } else {
+            false
+        };
+
+        match self {
+            KeyframesName::Ident(ident) => {
+                // SAFETY: CustomIdent.v points into the parser arena which outlives the AST.
+                write_ident(dest, unsafe { &*ident.v }, css_module_animation_enabled)?;
+            }
+            KeyframesName::Custom(s) => {
+                // todo_stuff.match_ignore_ascii_case
+                // CSS-wide keywords and `none` cannot remove quotes.
+                if strings::eql_case_insensitive_ascii_check_length(s, b"none")
+                    || strings::eql_case_insensitive_ascii_check_length(s, b"initial")
+                    || strings::eql_case_insensitive_ascii_check_length(s, b"inherit")
+                    || strings::eql_case_insensitive_ascii_check_length(s, b"unset")
+                    || strings::eql_case_insensitive_ascii_check_length(s, b"default")
+                    || strings::eql_case_insensitive_ascii_check_length(s, b"revert")
+                    || strings::eql_case_insensitive_ascii_check_length(s, b"revert-layer")
+                {
+                    if css::serializer::serialize_string(s, dest).is_err() {
+                        return Err(dest.add_fmt_error());
+                    }
+                } else {
+                    write_ident(dest, s, css_module_animation_enabled)?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+// ─── KeyframesName parse/clone ────────────────────────────────────────────
+// blocked_on: Parser::next/Token shape (css_parser.rs), DeepClone.
 #[cfg(any())]
 impl KeyframesName {
     pub fn parse(input: &mut css::Parser) -> css::Result<KeyframesName> {
@@ -89,40 +135,6 @@ impl KeyframesName {
         }
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        use bun_str::strings;
-        let css_module_aimation_enabled = if let Some(css_module) = &dest.css_module {
-            css_module.config.animation
-        } else {
-            false
-        };
-
-        match self {
-            KeyframesName::Ident(ident) => {
-                dest.write_ident(ident.v, css_module_aimation_enabled)?;
-            }
-            KeyframesName::Custom(s) => {
-                // todo_stuff.match_ignore_ascii_case
-                // CSS-wide keywords and `none` cannot remove quotes.
-                if strings::eql_case_insensitive_ascii_check_length(s, b"none")
-                    || strings::eql_case_insensitive_ascii_check_length(s, b"initial")
-                    || strings::eql_case_insensitive_ascii_check_length(s, b"inherit")
-                    || strings::eql_case_insensitive_ascii_check_length(s, b"unset")
-                    || strings::eql_case_insensitive_ascii_check_length(s, b"default")
-                    || strings::eql_case_insensitive_ascii_check_length(s, b"revert")
-                    || strings::eql_case_insensitive_ascii_check_length(s, b"revert-layer")
-                {
-                    if css::serializer::serialize_string(s, dest).is_err() {
-                        return dest.add_fmt_error();
-                    }
-                } else {
-                    dest.write_ident(s, css_module_aimation_enabled)?;
-                }
-            }
-        }
-        Ok(())
-    }
-
     pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         // TODO(port): css.implementDeepClone is comptime field-reflection; replace with
         // a `#[derive(DeepClone)]` or hand-rolled clone in Phase B.
@@ -143,24 +155,7 @@ pub enum KeyframeSelector {
     To,
 }
 
-// ─── KeyframeSelector behavior ────────────────────────────────────────────
-// blocked_on: css::derive_parse (DeriveParse comptime macro replacement),
-// Percentage::to_css, DeepClone.
-#[cfg(any())]
 impl KeyframeSelector {
-    // TODO: implement this
-    // Zig: `pub const parse = css.DeriveParse(@This()).parse;`
-    // TODO(port): `DeriveParse` is a comptime type-generator producing `parse` from
-    // variant introspection. Replace with `#[derive(css::Parse)]` proc-macro in Phase B.
-    pub fn parse(input: &mut css::Parser) -> css::Result<KeyframeSelector> {
-        css::derive_parse::<KeyframeSelector>(input)
-    }
-
-    // pub fn parse(input: *css.Parser) Result(KeyframeSelector) {
-    //     _ = input; // autofix
-    //     @panic(css.todo_stuff.depth);
-    // }
-
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         match self {
             KeyframeSelector::Percentage(p) => {
@@ -183,6 +178,24 @@ impl KeyframeSelector {
         }
         Ok(())
     }
+}
+
+// ─── KeyframeSelector parse/clone ─────────────────────────────────────────
+// blocked_on: css::derive_parse (DeriveParse comptime macro replacement), DeepClone.
+#[cfg(any())]
+impl KeyframeSelector {
+    // TODO: implement this
+    // Zig: `pub const parse = css.DeriveParse(@This()).parse;`
+    // TODO(port): `DeriveParse` is a comptime type-generator producing `parse` from
+    // variant introspection. Replace with `#[derive(css::Parse)]` proc-macro in Phase B.
+    pub fn parse(input: &mut css::Parser) -> css::Result<KeyframeSelector> {
+        css::derive_parse::<KeyframeSelector>(input)
+    }
+
+    // pub fn parse(input: *css.Parser) Result(KeyframeSelector) {
+    //     _ = input; // autofix
+    //     @panic(css.todo_stuff.depth);
+    // }
 
     pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         // TODO(port): css.implementDeepClone — see note on KeyframesName::deep_clone.
@@ -205,10 +218,6 @@ pub struct Keyframe {
     pub declarations: DeclarationBlock<'static>,
 }
 
-// ─── Keyframe behavior ────────────────────────────────────────────────────
-// blocked_on: KeyframeSelector::to_css, DeclarationBlock::to_css_block,
-// DeepClone.
-#[cfg(any())]
 impl Keyframe {
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         let mut first = true;
@@ -220,9 +229,13 @@ impl Keyframe {
             sel.to_css(dest)?;
         }
 
-        self.declarations.to_css_block(dest)
+        super::decl_block_to_css(&self.declarations, dest)
     }
+}
 
+// blocked_on: DeepClone.
+#[cfg(any())]
+impl Keyframe {
     pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         // TODO(port): css.implementDeepClone — see note on KeyframesName::deep_clone.
         css::implement_deep_clone(self, bump)
@@ -245,9 +258,6 @@ pub struct KeyframesRule {
     pub loc: Location,
 }
 
-// ─── KeyframesRule behavior ───────────────────────────────────────────────
-// blocked_on: KeyframesName::to_css, Keyframe::to_css, DeepClone.
-#[cfg(any())]
 impl KeyframesRule {
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         // #[cfg(feature = "sourcemap")]
@@ -278,7 +288,7 @@ impl KeyframesRule {
                 }
 
                 dest.write_char(b'@')?;
-                prefix.to_css(dest)?;
+                super::vendor_prefix_to_css(prefix, dest)?;
                 dest.write_str("keyframes ")?;
                 self.name.to_css(dest)?;
                 dest.whitespace()?;
@@ -302,7 +312,12 @@ impl KeyframesRule {
         }
         Ok(())
     }
+}
 
+// ─── KeyframesRule fallbacks/clone ────────────────────────────────────────
+// blocked_on: DeepClone.
+#[cfg(any())]
+impl KeyframesRule {
     pub fn get_fallbacks<T>(&mut self, _targets: &css::targets::Targets) -> &[css::css_rules::CssRule<T>] {
         let _ = self;
         // Zig: `@compileError(css.todo_stuff.depth)` — intentionally unimplemented.

@@ -450,9 +450,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         //   Hook tracking deferred — see _draft::s_function for save/restore + emission.
         let mut react_hook_data: Option<crate::parser::HookContext> = None;
 
-        // visit.rs stub takes `&mut G::Fn` (in-place); Zig returns by value.
         let open_parens_loc = data.func.open_parens_loc;
-        p.visit_func(&mut data.func, open_parens_loc);
+        data.func = p.visit_func(core::mem::take(&mut data.func), open_parens_loc);
 
         let name_ref = data.func.name.unwrap().ref_.unwrap();
         debug_assert!(name_ref.is_symbol());
@@ -532,9 +531,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             p.is_control_flow_dead = true;
         }
 
-        // visit.rs stub is 1-arg; Zig form is `(loc, &mut Class, default_name_ref)`.
-        // TODO(port): pass stmt.loc + Ref::NONE once visit_class grows the full sig.
-        p.visit_class(&mut data.class);
+        let _ = p.visit_class(stmt.loc, &mut data.class, Ref::NONE);
 
         // Remove the export flag inside a namespace
         let was_export_inside_namespace = data.is_export && p.enclosing_namespace_arg_ref.is_some();
@@ -596,16 +593,15 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // Local statements do not end the const local prefix
         p.cur_scope().is_after_const_local_prefix = was_after_after_const_local_prefix;
 
-        // blocked_on: visit_decls<const _>() returns () in visit.rs stub; Zig returns the
-        //   surviving decl count. The `is_export && replace_exports` branch is also gated on
-        //   the bool placeholder. Until visit_decls returns usize, decls.len is unchanged.
+        // visit_decls returns the surviving decl count; truncate `data.decls.len` to it.
+        // The `is_export && replace_exports` branch is gated on the bool placeholder.
         let was_const = data.kind == S::Kind::KConst;
-        if !(data.is_export && REPLACE_EXPORTS_REAL) {
-            p.visit_decls::<false>(&mut data.decls, was_const);
+        let new_len = if !(data.is_export && REPLACE_EXPORTS_REAL) {
+            p.visit_decls::<false>(data.decls.slice_mut(), was_const)
         } else {
-            p.visit_decls::<true>(&mut data.decls, was_const);
-        }
-        // TODO(port): once visit_decls returns usize, restore `is_now_dead`/`set_len` truncation.
+            p.visit_decls::<true>(data.decls.slice_mut(), was_const)
+        };
+        data.decls.len = new_len as u32;
 
         // Handle being exported inside a namespace
         if data.is_export && p.enclosing_namespace_arg_ref.is_some() {

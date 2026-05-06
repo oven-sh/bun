@@ -22,31 +22,13 @@ pub struct FontPaletteValuesRule {
     pub loc: Location,
 }
 
-// blocked_on: RuleBodyParser, FontPaletteValuesDeclarationParser trait impls,
-// FontPaletteValuesProperty::to_css, DashedIdentFns::to_css, DeepClone.
-#[cfg(any())]
 impl FontPaletteValuesRule {
-    pub fn parse(name: DashedIdent, input: &mut css::Parser, loc: Location) -> css::Result<FontPaletteValuesRule> {
-        let mut decl_parser = FontPaletteValuesDeclarationParser {};
-        let mut parser = css::RuleBodyParser::<FontPaletteValuesDeclarationParser>::new(input, &mut decl_parser);
-        let mut properties: ArrayList<FontPaletteValuesProperty> = ArrayList::new();
-        while let Some(result) = parser.next() {
-            if let Some(decl) = result.as_value() {
-                properties.push(decl);
-                // PERF(port): was `append(input.allocator(), decl) catch unreachable`
-            }
-        }
-
-        Ok(FontPaletteValuesRule { name, properties, loc })
-    }
-
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        use crate::css_values::ident::DashedIdentFns;
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
 
         dest.write_str("@font-palette-values ")?;
-        DashedIdentFns::to_css(&self.name, dest)?;
+        super::dashed_ident_to_css(&self.name, dest)?;
         dest.whitespace()?;
         dest.write_char(b'{')?;
         dest.indent();
@@ -61,6 +43,25 @@ impl FontPaletteValuesRule {
         dest.dedent();
         dest.newline()?;
         dest.write_char(b'}')
+    }
+}
+
+// blocked_on: RuleBodyParser, FontPaletteValuesDeclarationParser trait impls,
+// DeepClone.
+#[cfg(any())]
+impl FontPaletteValuesRule {
+    pub fn parse(name: DashedIdent, input: &mut css::Parser, loc: Location) -> css::Result<FontPaletteValuesRule> {
+        let mut decl_parser = FontPaletteValuesDeclarationParser {};
+        let mut parser = css::RuleBodyParser::<FontPaletteValuesDeclarationParser>::new(input, &mut decl_parser);
+        let mut properties: ArrayList<FontPaletteValuesProperty> = ArrayList::new();
+        while let Some(result) = parser.next() {
+            if let Some(decl) = result.as_value() {
+                properties.push(decl);
+                // PERF(port): was `append(input.allocator(), decl) catch unreachable`
+            }
+        }
+
+        Ok(FontPaletteValuesRule { name, properties, loc })
     }
 
     pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
@@ -90,6 +91,17 @@ pub enum FontPaletteValuesProperty {
 /// Data-only stub: real variant payloads land when `properties::{font,custom}`
 /// un-gate.
 pub struct FontPaletteValuesProperty;
+
+#[cfg(not(any()))]
+impl FontPaletteValuesProperty {
+    /// Unreachable in practice: while the enum body is gated, no parser path
+    /// constructs a `FontPaletteValuesProperty`, so the rule's `properties`
+    /// list is always empty. Panic loudly if that invariant is violated
+    /// (PORTING.md §Forbidden: silent no-op).
+    pub fn to_css(&self, _dest: &mut Printer) -> Result<(), PrintErr> {
+        todo!("blocked_on: properties::{{font,custom}} un-gate — FontPaletteValuesProperty enum body")
+    }
+}
 
 #[cfg(any())]
 impl FontPaletteValuesProperty {

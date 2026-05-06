@@ -131,9 +131,108 @@ pub(crate) const SYSTEM_ERRNO_NAMES: &[&str] = &[
     "EREMOTEIO", "EDQUOT", "ENOMEDIUM", "EMEDIUMTYPE", "ECANCELED", "ENOKEY", "EKEYEXPIRED",
     "EKEYREVOKED", "EKEYREJECTED", "EOWNERDEAD", "ENOTRECOVERABLE", "ERFKILL", "EHWPOISON",
     "EUNKNOWN", "ECHARSET", "EOF", "EFTYPE",
-    // TODO(port): the sparse UV_* range (negated libuv codes) is covered by
-    // bun_errno::SystemErrno::init_c_int on Windows; not duplicated here.
+    // The sparse UV_* range (negated libuv codes) is handled out-of-line by
+    // `uv_errno_name` below — the dense table stops at EFTYPE=137.
 ];
+
+/// Sparse half of the Windows `SystemErrno` enum: discriminant `-uv.UV_*` →
+/// `@tagName`. Mirrors windows_errno.zig:445-530; values are the Windows-side
+/// `UV__*` constants from vendor/libuv/include/uv/errno.h (the `!defined(_WIN32)`
+/// fallback arm). Consulted by `from_errno`/`system_errno_name` when `n` falls
+/// outside the dense 0..=137 table, so the Zig `errno_map[@abs(uv_code)]`
+/// lookup (bun.zig:2841-2851) round-trips on Windows too.
+#[cfg(windows)]
+fn uv_errno_name(n: u32) -> Option<&'static str> {
+    Some(match n {
+        4093 => "UV_E2BIG",
+        4092 => "UV_EACCES",
+        4091 => "UV_EADDRINUSE",
+        4090 => "UV_EADDRNOTAVAIL",
+        4089 => "UV_EAFNOSUPPORT",
+        4088 => "UV_EAGAIN",
+        3000 => "UV_EAI_ADDRFAMILY",
+        3001 => "UV_EAI_AGAIN",
+        3002 => "UV_EAI_BADFLAGS",
+        3013 => "UV_EAI_BADHINTS",
+        3003 => "UV_EAI_CANCELED",
+        3004 => "UV_EAI_FAIL",
+        3005 => "UV_EAI_FAMILY",
+        3006 => "UV_EAI_MEMORY",
+        3007 => "UV_EAI_NODATA",
+        3008 => "UV_EAI_NONAME",
+        3009 => "UV_EAI_OVERFLOW",
+        3014 => "UV_EAI_PROTOCOL",
+        3010 => "UV_EAI_SERVICE",
+        3011 => "UV_EAI_SOCKTYPE",
+        4084 => "UV_EALREADY",
+        4083 => "UV_EBADF",
+        4082 => "UV_EBUSY",
+        4081 => "UV_ECANCELED",
+        4080 => "UV_ECHARSET",
+        4079 => "UV_ECONNABORTED",
+        4078 => "UV_ECONNREFUSED",
+        4077 => "UV_ECONNRESET",
+        4076 => "UV_EDESTADDRREQ",
+        4075 => "UV_EEXIST",
+        4074 => "UV_EFAULT",
+        4036 => "UV_EFBIG",
+        4073 => "UV_EHOSTUNREACH",
+        4071 => "UV_EINVAL",
+        4072 => "UV_EINTR",
+        4069 => "UV_EISCONN",
+        4070 => "UV_EIO",
+        4067 => "UV_ELOOP",
+        4068 => "UV_EISDIR",
+        4065 => "UV_EMSGSIZE",
+        4066 => "UV_EMFILE",
+        4063 => "UV_ENETDOWN",
+        4064 => "UV_ENAMETOOLONG",
+        4061 => "UV_ENFILE",
+        4062 => "UV_ENETUNREACH",
+        4059 => "UV_ENODEV",
+        4060 => "UV_ENOBUFS",
+        4057 => "UV_ENOMEM",
+        4058 => "UV_ENOENT",
+        4035 => "UV_ENOPROTOOPT",
+        4056 => "UV_ENONET",
+        4054 => "UV_ENOSYS",
+        4055 => "UV_ENOSPC",
+        4052 => "UV_ENOTDIR",
+        4053 => "UV_ENOTCONN",
+        4050 => "UV_ENOTSOCK",
+        4051 => "UV_ENOTEMPTY",
+        4026 => "UV_EOVERFLOW",
+        4049 => "UV_ENOTSUP",
+        4047 => "UV_EPIPE",
+        4048 => "UV_EPERM",
+        4045 => "UV_EPROTONOSUPPORT",
+        4046 => "UV_EPROTO",
+        4034 => "UV_ERANGE",
+        4044 => "UV_EPROTOTYPE",
+        4042 => "UV_ESHUTDOWN",
+        4043 => "UV_EROFS",
+        4040 => "UV_ESRCH",
+        4041 => "UV_ESPIPE",
+        4038 => "UV_ETXTBSY",
+        4039 => "UV_ETIMEDOUT",
+        4094 => "UV_UNKNOWN",
+        4037 => "UV_EXDEV",
+        4033 => "UV_ENXIO",
+        4095 => "UV_EOF",
+        4031 => "UV_EHOSTDOWN",
+        4032 => "UV_EMLINK",
+        4029 => "UV_ENOTTY",
+        4030 => "UV_EREMOTEIO",
+        4027 => "UV_EILSEQ",
+        4028 => "UV_EFTYPE",
+        4024 => "UV_ENODATA",
+        4025 => "UV_ESOCKTNOSUPPORT",
+        4096 => "UV_ERRNO_MAX",
+        4023 => "UV_EUNATCH",
+        4022 => "UV_ENOEXEC",
+        _ => return None,
+    })
+}
 
 #[cfg(target_os = "macos")]
 pub(crate) const SYSTEM_ERRNO_NAMES: &[&str] = &[
@@ -191,6 +290,9 @@ pub(crate) fn system_errno_name(errno: i32) -> Option<&'static str> {
     };
     match SYSTEM_ERRNO_NAMES.get(n as usize) {
         Some(&name) if n != 0 => Some(name),
+        #[cfg(windows)]
+        _ => uv_errno_name(n),
+        #[cfg(not(windows))]
         _ => None,
     }
 }

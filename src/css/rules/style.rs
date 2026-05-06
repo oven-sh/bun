@@ -33,45 +33,33 @@ impl<R> StyleRule<R> {
 }
 
 // ─── behavior bodies ──────────────────────────────────────────────────────
-// blocked_on:
-//   - selectors::selector::{get_prefix,downlevel_selectors,is_compatible,
-//     is_unused, serialize::serialize_selector_list} — selector.rs body gated
-//     on values/ident Fns + parser grammar.
-//   - SelectorList::{hash,deep_clone,eql} — parser.rs gated.
-//   - DeclarationBlock::{minify,hash_property_ids,deep_clone} — declaration.rs
-//     behavior block gated on properties_generated + rule_parsers.
-//   - CssRuleList::{minify,to_css,deep_clone} — rules/mod.rs heavy impl block.
-//   - Property::{Composes,to_css,property_id} — properties_generated gated.
-//   - MinifyContext::{handler,important_handler,handler_context,allocator,
-//     unused_symbols,extra} fields — stub carries `targets`/`css_modules` only.
-//   - Printer::{minify,css_module,with_context,vendor_prefix,context,targets}
-//     field/method surface.
-#[cfg(any())]
 impl<R> StyleRule<R> {
     /// Returns a hash of this rule for use when deduplicating.
     /// Includes the selectors and properties.
     pub fn hash_key(&self) -> u64 {
         // std.hash.Wyhash.init(0) — same algorithm as bun.hash
-        let mut hasher = bun_wyhash::Wyhash::new(0);
+        let mut hasher = bun_wyhash::Wyhash11::init(0);
         self.selectors.hash(&mut hasher);
-        self.declarations.hash_property_ids(&mut hasher);
+        // PORT NOTE: `DeclarationBlock::hash_property_ids` is still
+        // `#[cfg(any())]`-gated in declaration.rs; inline its body here. The
+        // Zig `PropertyId.hash` is `hasher.update(asBytes(&@intFromEnum(self)))`
+        // — i.e. just the u16 tag bytes.
+        for decl in self.declarations.declarations.iter() {
+            let tag = decl.property_id().tag() as u16;
+            hasher.update(&tag.to_ne_bytes());
+        }
+        for decl in self.declarations.important_declarations.iter() {
+            let tag = decl.property_id().tag() as u16;
+            hasher.update(&tag.to_ne_bytes());
+        }
         hasher.final_()
     }
 
-    pub fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> Self {
-        // css is an AST crate (PORTING.md §Allocators): std.mem.Allocator → &'bump Bump, threaded.
-        Self {
-            selectors: self.selectors.deep_clone(bump),
-            vendor_prefix: self.vendor_prefix,
-            declarations: self.declarations.deep_clone(bump),
-            rules: self.rules.deep_clone(bump),
-            loc: self.loc,
-        }
-    }
-
-    pub fn update_prefix(&mut self, context: &mut MinifyContext) {
+    pub fn update_prefix(&mut self, context: &mut MinifyContext<'_>) {
         self.vendor_prefix = selector::get_prefix(&self.selectors);
-        if self.vendor_prefix.contains(VendorPrefix::NONE) && context.targets.should_compile_selectors() {
+        if self.vendor_prefix.contains(VendorPrefix::NONE)
+            && context.targets.should_compile_selectors()
+        {
             self.vendor_prefix = selector::downlevel_selectors(
                 context.allocator,
                 self.selectors.v.slice_mut(),
@@ -90,20 +78,21 @@ impl<R> StyleRule<R> {
         } else {
             let mut first_rule = true;
             // `inline for (css.VendorPrefix.FIELDS) |field|` — iterate the bool fields of the
-            // packed struct. In Rust, VendorPrefix is `bitflags!`; iterate the named flags.
-            // TODO(port): confirm `VendorPrefix::FIELDS` exposes the same ordering as Zig's FIELDS.
-            for prefix in VendorPrefix::FIELDS {
+            // packed struct in declared order, then `VendorPrefix.fromName(field)` to get the
+            // single-bit prefix. In Rust the bitflags type exposes the same ordered string
+            // table; map back via `from_name_str`.
+            for &field in VendorPrefix::FIELDS {
+                let prefix = VendorPrefix::from_name_str(field);
                 if self.vendor_prefix.contains(prefix) {
                     if first_rule {
                         first_rule = false;
                     } else {
                         if !dest.minify {
-                            dest.write_char('\n')?; // no indent
+                            dest.write_char(b'\n')?; // no indent
                         }
                         dest.newline()?;
                     }
 
-                    // Zig: VendorPrefix.fromName(field) — yields the single-bit prefix for `field`.
                     dest.vendor_prefix = prefix;
                     self.to_css_base(dest)?;
                 }
@@ -115,7 +104,6 @@ impl<R> StyleRule<R> {
     }
 
     fn to_css_base(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        use css::context::DeclarationContext;
         use css::error::PrinterErrorKind;
         use css::properties::Property;
 
@@ -131,14 +119,17 @@ impl<R> StyleRule<R> {
             //   #[cfg(feature = "sourcemap")]
             //   dest.add_mapping(self.loc);
 
+            // PORT NOTE: `dest.context()` borrows `dest`; copy the (Copy) raw
+            // ctx field out so it doesn't conflict with the `&mut *dest` below.
+            let ctx = dest.ctx;
             selector::serialize::serialize_selector_list(
                 self.selectors.v.slice(),
                 dest,
-                dest.context(),
+                ctx,
                 false,
             )?;
             dest.whitespace()?;
-            dest.write_char('{')?;
+            dest.write_char(b'{')?;
             dest.indent();
 
             let mut i: usize = 0;
@@ -152,25 +143,36 @@ impl<R> StyleRule<R> {
                 for decl in decls {
                     // The CSS modules `composes` property is handled specially, and omitted during printing.
                     // We need to add the classes it references to the list for the selectors in this rule.
-                    if let Property::Composes(composes) = decl {
+                    if let Property::Composes(_composes) = decl {
                         if dest.is_nested() && dest.css_module.is_some() {
+                            // TODO(port): blocked_on properties::css_modules — the
+                            // stub `Composes` carries no `cssparser_loc`; pass
+                            // `None` for the error location until the real type
+                            // un-gates (gated_prop! in properties/mod.rs).
                             return dest.new_error(
-                                PrinterErrorKind::InvalidComposesNesting,
-                                composes.cssparser_loc,
+                                PrinterErrorKind::invalid_composes_nesting,
+                                None,
                             );
                         }
 
-                        if let Some(css_module) = &mut dest.css_module {
-                            if let Some(error_kind) = css_module
-                                .handle_composes(
-                                    dest,
-                                    &self.selectors,
-                                    composes,
-                                    self.loc.source_index,
-                                )
-                                .as_err()
-                            {
-                                return dest.new_error(error_kind, composes.cssparser_loc);
+                        if dest.css_module.is_some() {
+                            // TODO(port): blocked_on CssModule::handle_composes
+                            // (#[cfg(any())] in css_modules.rs) — until that
+                            // un-gates, just honor the "omitted during printing"
+                            // contract and skip the declaration.
+                            #[cfg(any())]
+                            if let Some(css_module) = &mut dest.css_module {
+                                if let Some(error_kind) = css_module
+                                    .handle_composes(
+                                        dest,
+                                        &self.selectors,
+                                        _composes,
+                                        self.loc.source_index,
+                                    )
+                                    .as_err()
+                                {
+                                    return dest.new_error(error_kind, Some(_composes.cssparser_loc));
+                                }
                             }
                             continue;
                         }
@@ -182,7 +184,7 @@ impl<R> StyleRule<R> {
                         || !dest.minify
                         || (supports_nesting && self.rules.v.len() > 0)
                     {
-                        dest.write_char(';')?;
+                        dest.write_char(b';')?;
                     }
 
                     i += 1;
@@ -199,7 +201,7 @@ impl<R> StyleRule<R> {
         ) -> Result<(), PrintErr> {
             if !d.minify && (supports_nesting2 || len1 > 0) && self_.rules.v.len() > 0 {
                 if len1 > 0 {
-                    d.write_char('\n')?;
+                    d.write_char(b'\n')?;
                 }
                 d.newline()?;
             }
@@ -210,7 +212,7 @@ impl<R> StyleRule<R> {
             if has_decls {
                 d.dedent();
                 d.newline()?;
-                d.write_char('}')?;
+                d.write_char(b'}')?;
             }
             Ok(())
         }
@@ -224,19 +226,29 @@ impl<R> StyleRule<R> {
             helpers_end(dest, has_declarations)?;
             helpers_newline(self, dest, supports_nesting, len)?;
             // Zig: dest.withContext(&this.selectors, this, struct { fn toCss(...) }.toCss)
-            dest.with_context(&self.selectors, |d| self.rules.to_css(d))?;
+            // Rust `with_context` keeps the (closure-data, fn) split so the
+            // `Printer` reborrow lives only inside `func`.
+            dest.with_context(&self.selectors, &self.rules, |rules, d| rules.to_css(d))?;
         }
         Ok(())
     }
 
     pub fn minify(
         &mut self,
-        context: &mut MinifyContext,
+        context: &mut MinifyContext<'_>,
         parent_is_unused: bool,
     ) -> Result<bool, MinifyErr> {
         use css::context::{DeclarationContext, PropertyHandlerContext};
 
+        #[allow(unused_mut)]
         let mut unused = false;
+        // TODO(port): blocked_on key-type mismatch — `selector::is_unused` takes
+        // `&ArrayHashMap<&[u8], ()>` but `MinifyContext.unused_symbols` is
+        // `&ArrayHashMap<Box<[u8]>, ()>` (rules/mod.rs PORT NOTE: "reconcile when
+        // style.rs::minify un-gates — single key type, Borrow<[u8]> lookup").
+        // The reconciliation lives in rules/mod.rs + selectors/selector.rs, not
+        // here; gate the body until those agree.
+        #[cfg(any())]
         if context.unused_symbols.count() > 0 {
             if selector::is_unused(
                 self.selectors.v.slice(),
@@ -253,6 +265,8 @@ impl<R> StyleRule<R> {
                 unused = true;
             }
         }
+        #[cfg(not(any()))]
+        let _ = parent_is_unused;
 
         // TODO: this
         // let pure_css_modules = context.pure_css_modules;
@@ -269,9 +283,27 @@ impl<R> StyleRule<R> {
         // }
 
         context.handler_context.context = DeclarationContext::StyleRule;
+        // SAFETY: `DeclarationBlock<'static>` is the crate-wide `'bump`-erasure
+        // placeholder (see struct PORT NOTE). `DeclarationHandler<'a>` is
+        // invariant in `'a` (bumpalo Vec), so reborrowing the context handlers
+        // requires the same erasure here. Both point into the same arena that
+        // owns `self.declarations`; lifetimes re-thread together when
+        // `CssRule<'bump, R>` lands.
+        let (handler, important_handler) = unsafe {
+            (
+                core::mem::transmute::<
+                    &mut css::DeclarationHandler<'_>,
+                    &mut css::DeclarationHandler<'static>,
+                >(&mut *context.handler),
+                core::mem::transmute::<
+                    &mut css::DeclarationHandler<'_>,
+                    &mut css::DeclarationHandler<'static>,
+                >(&mut *context.important_handler),
+            )
+        };
         self.declarations.minify(
-            context.handler,
-            context.important_handler,
+            handler,
+            important_handler,
             &mut context.handler_context,
         );
         context.handler_context.context = DeclarationContext::None;
@@ -280,12 +312,12 @@ impl<R> StyleRule<R> {
             let mut handler_context = context
                 .handler_context
                 .child(DeclarationContext::StyleRule);
-            core::mem::swap::<PropertyHandlerContext>(
+            core::mem::swap::<PropertyHandlerContext<'_>>(
                 &mut context.handler_context,
                 &mut handler_context,
             );
             self.rules.minify(context, unused)?;
-            core::mem::swap::<PropertyHandlerContext>(
+            core::mem::swap::<PropertyHandlerContext<'_>>(
                 &mut context.handler_context,
                 &mut handler_context,
             );
@@ -314,7 +346,9 @@ impl<R> StyleRule<R> {
                     .iter()
                     .zip(&other.declarations.declarations[..len])
                 {
-                    if !a.property_id().eql(&b.property_id()) {
+                    // PORT NOTE: Zig `PropertyId.eql` == tag+prefix compare;
+                    // that's exactly the `PartialEq` impl on `PropertyId`.
+                    if a.property_id() != b.property_id() {
                         break 'brk false;
                     }
                 }
@@ -327,7 +361,7 @@ impl<R> StyleRule<R> {
                     .iter()
                     .zip(&other.declarations.important_declarations[..len])
                 {
-                    if !a.property_id().eql(&b.property_id()) {
+                    if a.property_id() != b.property_id() {
                         break 'brk false;
                     }
                 }
@@ -336,10 +370,27 @@ impl<R> StyleRule<R> {
     }
 }
 
+// ─── deep_clone ───────────────────────────────────────────────────────────
+// blocked_on: DeclarationBlock::deep_clone (declaration.rs `#[cfg(any())]`
+// behavior block — bottoms out on css::implement_deep_clone for Property).
+#[cfg(any())]
+impl<R> StyleRule<R> {
+    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+        // css is an AST crate (PORTING.md §Allocators): std.mem.Allocator → &'bump Bump, threaded.
+        Self {
+            selectors: self.selectors.deep_clone(),
+            vendor_prefix: self.vendor_prefix,
+            declarations: self.declarations.deep_clone(bump),
+            rules: self.rules.deep_clone(bump),
+            loc: self.loc,
+        }
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/css/rules/style.zig (249 lines)
 //   confidence: medium
-//   todos:      1
-//   notes:      struct + is_empty un-gated; declarations field uses DeclarationBlock<'static> until 'bump threads through CssRule; hash_key/deep_clone/update_prefix/is_compatible/to_css/minify/is_duplicate gated on selector helpers + DeclarationBlock behavior + MinifyContext full layout + Property enum
+//   todos:      3
+//   notes:      struct + is_empty/hash_key/update_prefix/is_compatible/to_css/minify/is_duplicate un-gated; declarations field uses DeclarationBlock<'static> until 'bump threads through CssRule (DeclarationHandler transmute in minify() collapses with it); hash_key inlines hash_property_ids (gated in declaration.rs); to_css_base composes-handling stubbed (Composes payload + handle_composes gated); minify is_unused arm gated on ArrayHashMap key-type reconcile (rules/mod.rs ↔ selector.rs); deep_clone gated on DeclarationBlock::deep_clone
 // ──────────────────────────────────────────────────────────────────────────

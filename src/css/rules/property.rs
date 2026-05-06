@@ -22,10 +22,66 @@ pub struct PropertyRule {
     pub loc: Location,
 }
 
-// ─── PropertyRule behavior ────────────────────────────────────────────────
+impl PropertyRule {
+    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+        // #[cfg(feature = "sourcemap")]
+        // dest.add_mapping(self.loc);
+
+        dest.write_str("@property ")?;
+        super::dashed_ident_to_css(&self.name, dest)?;
+        dest.whitespace()?;
+        dest.write_char(b'{')?;
+        dest.indent();
+        dest.newline()?;
+
+        dest.write_str("syntax:")?;
+        dest.whitespace()?;
+        self.syntax.to_css(dest)?;
+        dest.write_char(b';')?;
+        dest.newline()?;
+
+        dest.write_str("inherits:")?;
+        dest.whitespace()?;
+        if self.inherits {
+            dest.write_str("true")?;
+        } else {
+            dest.write_str("false")?;
+        }
+
+        if let Some(initial_value) = &self.initial_value {
+            dest.write_char(b';')?;
+            dest.newline()?;
+
+            dest.write_str("initial-value:")?;
+            dest.whitespace()?;
+            // blocked_on: values/syntax.rs ParsedComponent un-gate (its variant
+            // payloads need properties::{transform,custom} + values::{image,
+            // color}). While gated, `ParsedComponent = ()` and `initial_value`
+            // is never `Some` — panic loudly if that invariant is violated.
+            #[cfg(any())]
+            initial_value.to_css(dest)?;
+            #[cfg(not(any()))]
+            {
+                let _ = initial_value;
+                todo!("blocked_on: ParsedComponent::to_css — values/syntax.rs un-gate")
+            }
+
+            #[allow(unreachable_code)]
+            if !dest.minify {
+                dest.write_char(b';')?;
+            }
+        }
+
+        dest.dedent();
+        dest.newline()?;
+        dest.write_char(b'}')
+    }
+}
+
+// ─── PropertyRule parse/clone ─────────────────────────────────────────────
 // blocked_on: RuleBodyParser, ParserInput, Parser::new signature,
-// SyntaxString::{parse,parse_value,to_css}, ParsedComponent::{to_css,TokenList},
-// DashedIdentFns::to_css, ParserError variants, DeepClone.
+// SyntaxString::{parse,parse_value}, ParsedComponent::TokenList,
+// ParserError variants, DeepClone.
 #[cfg(any())]
 impl PropertyRule {
     pub fn parse(
@@ -94,50 +150,6 @@ impl PropertyRule {
         };
 
         Ok(PropertyRule { name, syntax, inherits, initial_value, loc })
-    }
-
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        use crate::css_values::ident::DashedIdentFns;
-        // #[cfg(feature = "sourcemap")]
-        // dest.add_mapping(self.loc);
-
-        dest.write_str("@property ")?;
-        DashedIdentFns::to_css(&self.name, dest)?;
-        dest.whitespace()?;
-        dest.write_char(b'{')?;
-        dest.indent();
-        dest.newline()?;
-
-        dest.write_str("syntax:")?;
-        dest.whitespace()?;
-        self.syntax.to_css(dest)?;
-        dest.write_char(b';')?;
-        dest.newline()?;
-
-        dest.write_str("inherits:")?;
-        dest.whitespace()?;
-        if self.inherits {
-            dest.write_str("true")?;
-        } else {
-            dest.write_str("false")?;
-        }
-
-        if let Some(initial_value) = &self.initial_value {
-            dest.write_char(b';')?;
-            dest.newline()?;
-
-            dest.write_str("initial-value:")?;
-            dest.whitespace()?;
-            initial_value.to_css(dest)?;
-
-            if !dest.minify {
-                dest.write_char(b';')?;
-            }
-        }
-
-        dest.dedent();
-        dest.newline()?;
-        dest.write_char(b'}')
     }
 
     pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {

@@ -248,6 +248,59 @@ to_css_shim!(generic:
     StyleRule,
 );
 
+// ─── leaf-rule deep_clone shims ────────────────────────────────────────────
+// Same protocol as `to_css_shim!` above: each leaf module owns its real
+// `deep_clone` body but the `gated_rule!` data-only stubs in this file don't.
+// `CssRule::deep_clone` needs *some* inherent method to dispatch to until each
+// stub un-gates and the real `rules/<leaf>.rs` impl takes over (compiler then
+// flags a duplicate `deep_clone` here — delete that line). The shim panics
+// rather than returning `Default::default()` because silently dropping nested
+// AST is data loss (PORTING.md §Forbidden: silent no-op); every current
+// caller of `CssRuleList::deep_clone` is itself `#[cfg(any())]`-gated, so this
+// only fires once a leaf un-gates without bringing its real `deep_clone`.
+macro_rules! deep_clone_shim {
+    ($( $(#[$m:meta])* $ty:ty ),* $(,)?) => {$(
+        $(#[$m])*
+        impl $ty {
+            #[allow(clippy::unused_self)]
+            pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+                todo!(concat!(
+                    "blocked_on: ", stringify!($ty),
+                    " — gated_rule! stub; un-gate the leaf module for the real deep_clone"
+                ))
+            }
+        }
+    )*};
+    (generic: $( $(#[$m:meta])* $ty:ident ),* $(,)?) => {$(
+        $(#[$m])*
+        impl<R> $ty<R> {
+            #[allow(clippy::unused_self)]
+            pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+                todo!(concat!(
+                    "blocked_on: ", stringify!($ty),
+                    "<R> — gated_rule! stub; un-gate the leaf module for the real deep_clone"
+                ))
+            }
+        }
+    )*};
+}
+
+// Data-only stubs from `gated_rule!` above that lack an inherent `deep_clone`.
+deep_clone_shim!(
+    import::ImportRule,
+    layer::LayerStatementRule,
+    custom_media::CustomMediaRule,
+    namespace::NamespaceRule,
+    unknown::UnknownAtRule,
+);
+use layer::LayerBlockRule;
+deep_clone_shim!(generic: LayerBlockRule);
+
+impl<'bump> css::generics::DeepClone<'bump> for Location {
+    #[inline]
+    fn deep_clone(&self, _bump: &'bump bun_alloc::Arena) -> Self { *self }
+}
+
 // ─── shared serialization helpers for leaf rules ──────────────────────────
 // Several leaf-rule `to_css` bodies bottom out on helpers whose canonical
 // homes are still `#[cfg(any())]`-gated outside `rules/` (DeclarationBlock::
@@ -374,8 +427,8 @@ impl<R> CssRule<R> {
             CssRule::Import(x) => x.to_css(dest),
             CssRule::Style(x) => x.to_css(dest),
             CssRule::Keyframes(x) => x.to_css(dest),
-            CssRule::FontFace(x) => x.to_css(dest),
-            CssRule::FontPaletteValues(x) => x.to_css(dest),
+            CssRule::FontFace(_x) => todo!("phase-b2: FontFaceRule::to_css"),
+            CssRule::FontPaletteValues(_x) => todo!("phase-b2: FontPaletteValuesRule::to_css"),
             CssRule::Page(x) => x.to_css(dest),
             CssRule::Supports(x) => x.to_css(dest),
             CssRule::CounterStyle(x) => x.to_css(dest),
@@ -386,10 +439,10 @@ impl<R> CssRule<R> {
             CssRule::CustomMedia(x) => x.to_css(dest),
             CssRule::LayerStatement(x) => x.to_css(dest),
             CssRule::LayerBlock(x) => x.to_css(dest),
-            CssRule::Property(x) => x.to_css(dest),
+            CssRule::Property(_x) => todo!("phase-b2: PropertyRule::to_css"),
             CssRule::StartingStyle(x) => x.to_css(dest),
-            CssRule::Container(x) => x.to_css(dest),
-            CssRule::Scope(x) => x.to_css(dest),
+            CssRule::Container(_x) => todo!("phase-b2: ContainerRule::to_css"),
+            CssRule::Scope(_x) => todo!("phase-b2: ScopeRule::to_css"),
             CssRule::Unknown(x) => x.to_css(dest),
             // Zig: `.custom => |x| x.toCss(dest) catch return dest.addFmtError()`.
             // The custom-at-rule type is opaque here; the only in-tree `R`

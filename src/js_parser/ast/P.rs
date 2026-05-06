@@ -4324,11 +4324,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         self.had_commonjs_named_exports_this_visit = false;
 
         let allocator = self.allocator;
-        let opts = PrependTempRefsOpts::default();
+        let mut opts = PrependTempRefsOpts::default();
         let mut part_stmts = BumpVec::from_iter_in(stmts.iter().copied(), allocator);
         // PORT NOTE: Zig used ListManaged.fromOwnedSlice; we copy into a bump vec.
 
-        self.visit_stmts_and_prepend_temp_refs(&mut part_stmts, opts)?;
+        self.visit_stmts_and_prepend_temp_refs(&mut part_stmts, &mut opts)?;
 
         // Insert any relocated variable statements now
         if !self.relocated_top_level_vars.is_empty() {
@@ -6222,20 +6222,16 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         })
     }
 
-    #[cfg(any())] // reconciler-6 re-gate: original_name *const [u8] vs &[u8]
     pub fn wrap_identifier_namespace(&mut self, loc: logger::Loc, r#ref: Ref) -> Expr {
         let enclosing_ref = self.enclosing_namespace_arg_ref.unwrap();
         self.record_usage(enclosing_ref);
 
         // TODO(port): E::Dot.name is `&'static [u8]` pending crate-wide 'bump
-        // threading. The slice is arena-owned (lives for parser 'a, which outlives
-        // every Expr). Erase the lifetime to fit the placeholder field type.
+        // threading. Symbol.original_name is arena-owned (`*const [u8]`, lives for
+        // parser 'a, which outlives every Expr). Erase the lifetime to fit the
+        // placeholder field type.
         // SAFETY: arena-owned slice valid for the AST lifetime.
-        let name: &'static [u8] = unsafe {
-            core::mem::transmute::<&'a [u8], &'static [u8]>(
-                self.symbols[r#ref.inner_index() as usize].original_name,
-            )
-        };
+        let name: &'static [u8] = unsafe { &*self.symbols[r#ref.inner_index() as usize].original_name };
 
         self.new_expr(
             E::Dot {
@@ -6263,7 +6259,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     // value_for_define / is_dot_define_match: moved to ungated impl (round-G).
 
     // One statement could potentially expand to several statements
-    #[cfg(any())] // reconciler-6 re-gate: Prefill::data::S_EMPTY; S::Block Default
     pub fn stmts_to_single_stmt(&mut self, loc: logger::Loc, stmts: &'a mut [Stmt]) -> Stmt {
         if stmts.is_empty() {
             return Stmt { data: js_ast::StmtData::SEmpty(S::Empty {}), loc };
@@ -6274,10 +6269,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             return stmts[0];
         }
 
-        self.s(S::Block { stmts: stmts as *mut [Stmt], ..Default::default() }, loc)
+        self.s(S::Block { stmts: stmts as *mut [Stmt], close_brace_loc: logger::Loc::EMPTY }, loc)
     }
 
-    #[cfg(any())] // reconciler-6 re-gate: original_name *const [u8]; add_range_error_fmt arity
     pub fn find_label_symbol(&mut self, loc: logger::Loc, name: &[u8]) -> FindLabelSymbolResult {
         let mut res = FindLabelSymbolResult { r#ref: Ref::NONE, is_loop: false, found: false };
 
@@ -6291,7 +6285,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             }
             if let Some(label_ref) = scope.label_ref {
                 if scope.kind == js_ast::scope::Kind::Label
-                    && strings::eql(name, self.symbols[label_ref.inner_index() as usize].original_name)
+                    // SAFETY: Symbol.original_name is arena-owned `*const [u8]` valid for 'a.
+                    && strings::eql(name, unsafe { &*self.symbols[label_ref.inner_index() as usize].original_name })
                 {
                     // Track how many times we've referenced this symbol
                     self.record_usage(label_ref);
@@ -6301,12 +6296,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     return res;
                 }
             }
-            _scope = scope.parent;
+            _scope = scope.parent.map(|p| p.as_ptr());
         }
 
         let r = js_lexer::range_of_identifier(self.source, loc);
         self.log
-            .add_range_error_fmt(self.source, r, self.allocator, format_args!("There is no containing label named \"{}\"", bstr::BStr::new(name)))
+            .add_range_error_fmt(Some(self.source), r, format_args!("There is no containing label named \"{}\"", bstr::BStr::new(name)))
             .expect("unreachable");
 
         // Allocate an "unbound" symbol
@@ -6326,20 +6321,21 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
     // runtime_identifier_ref / runtime_identifier / call_runtime: moved to ungated impl (round-G).
 
-    #[cfg(any())] // reconciler-6 re-gate: Binding::Data variant paths
     pub fn extract_decls_for_binding(binding: Binding, decls: &mut ListManaged<'a, G::Decl>) -> Result<(), bun_core::Error> {
         match binding.data {
-            Binding::Data::BMissing(_) => {}
-            Binding::Data::BIdentifier(_) => {
+            js_ast::b::B::BMissing(_) => {}
+            js_ast::b::B::BIdentifier(_) => {
                 decls.push(G::Decl { binding, value: None });
             }
-            Binding::Data::BArray(arr) => {
-                for item in arr.items.iter() {
+            js_ast::b::B::BArray(arr) => {
+                // SAFETY: arena-owned `*mut B::Array` valid for parser 'a.
+                for item in unsafe { &*arr }.items().iter() {
                     Self::extract_decls_for_binding(item.binding, decls).expect("unreachable");
                 }
             }
-            Binding::Data::BObject(obj) => {
-                for prop in obj.properties.iter() {
+            js_ast::b::B::BObject(obj) => {
+                // SAFETY: arena-owned `*mut B::Object` valid for parser 'a.
+                for prop in unsafe { &*obj }.properties().iter() {
                     Self::extract_decls_for_binding(prop.value, decls).expect("unreachable");
                 }
             }
@@ -6347,7 +6343,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         Ok(())
     }
 
-    #[cfg(any())] // reconciler-6 re-gate: exports_string_name fn vs slice; E::Dot.name type
     #[inline]
     pub fn module_exports(&mut self, loc: logger::Loc) -> Expr {
         let target = self.new_expr(E::Identifier { ref_: self.module_ref, ..Default::default() }, loc);
@@ -6369,15 +6364,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     // If we do an orderedRemove, it gets very slow.
     // swapRemove is fast. But a little more dangerous.
     // Instead, we just tombstone it.
-    #[cfg(any())] // reconciler-6 re-gate: Scope NonNull deref; BabyList::push
     pub fn pop_and_flatten_scope(&mut self, scope_index: usize) {
         // Move up to the parent scope
         let to_flatten = self.current_scope;
         // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
         let parent_ptr = unsafe { &*to_flatten }.parent.unwrap();
         // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-        let parent = unsafe { &mut *parent_ptr };
-        self.current_scope = parent_ptr;
+        let parent = unsafe { &mut *parent_ptr.as_ptr() };
+        self.current_scope = parent_ptr.as_ptr();
 
         // Erase this scope from the order. This will shift over the indices of all
         // the scopes that were created after us. However, we shouldn't have to
@@ -6394,38 +6388,38 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
         // Remove the last child from the parent scope
         let last = parent.children.len - 1;
-        debug_assert!(parent.children.ptr()[last as usize] == to_flatten);
+        debug_assert!(parent.children.slice()[last as usize].as_ptr().cast_const() == to_flatten);
         parent.children.len = parent.children.len.saturating_sub(1);
 
         // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
         for item in unsafe { &*to_flatten }.children.slice() {
             // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-            unsafe { &mut **item }.parent = Some(parent_ptr);
-            parent.children.push(self.allocator, *item).expect("oom");
+            unsafe { &mut *item.as_ptr() }.parent = Some(parent_ptr);
+            parent.children.append(*item).expect("oom");
         }
     }
 
     /// When not transpiling we dont use the renamer, so our solution is to generate really
     /// hard to collide with variables, instead of actually making things collision free
-    #[cfg(any())] // reconciler-6 re-gate: calls generate_temp_ref_with_scope
     pub fn generate_temp_ref(&mut self, default_name: Option<&'a [u8]>) -> Ref {
         self.generate_temp_ref_with_scope(default_name, self.current_scope)
     }
 
-    #[cfg(any())] // reconciler-6 re-gate: BumpVec write_fmt; DeclaredSymbolList::push
     pub fn generate_temp_ref_with_scope(&mut self, default_name: Option<&'a [u8]>, scope: *mut Scope) -> Ref {
-        let name = (if self.will_use_renamer() { default_name } else { None }).unwrap_or_else(|| {
+        let name: &'a [u8] = if self.will_use_renamer() && default_name.is_some() {
+            default_name.unwrap()
+        } else {
             self.temp_ref_count += 1;
-            let mut v = BumpVec::new_in(self.allocator);
-            let _ = write!(&mut v, "__bun_temp_ref_{:x}$", self.temp_ref_count);
-            v.into_bump_slice()
-        });
+            bumpalo::format!(in self.allocator, "__bun_temp_ref_{:x}$", self.temp_ref_count)
+                .into_bump_str()
+                .as_bytes()
+        };
         let r#ref = self.new_symbol(js_ast::symbol::Kind::Other, name).expect("oom");
 
         self.temp_refs_to_declare.push(TempRef { r#ref, ..Default::default() });
 
         // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-        unsafe { &mut *scope }.generated.push(self.allocator, r#ref).expect("oom");
+        unsafe { &mut *scope }.generated.append(r#ref).expect("oom");
 
         r#ref
     }
@@ -6553,7 +6547,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         )))
     }
 
-    #[cfg(any())] // reconciler-6 re-gate: calls emit_react_refresh_register
     pub fn handle_react_refresh_register(
         &mut self,
         stmts: &mut ListManaged<'a, Stmt>,
@@ -6570,7 +6563,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         Ok(())
     }
 
-    #[cfg(any())] // reconciler-6 re-gate: E::String fields; E::Identifier.r#ref
     pub fn emit_react_refresh_register(
         &mut self,
         stmts: &mut ListManaged<'a, Stmt>,
@@ -6583,41 +6575,33 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
         // $RefreshReg$(component, "file.ts:Original Name")
         let loc = logger::Loc::EMPTY;
-        let label = strings::concat(
-            self.allocator,
-            &[
-                self.source.path.pretty,
-                b":",
-                match export_kind {
-                    ReactRefreshExportKind::Named => original_name,
-                    ReactRefreshExportKind::Default => b"default",
-                },
-            ],
-        )?;
-        stmts.push(self.s(
-            S::SExpr {
-                value: self.new_expr(
-                    E::Call {
-                        target: Expr::init_identifier(self.react_refresh.register_ref, loc),
-                        args: ExprNodeList::from_slice(
-                            self.allocator,
-                            &[Expr::init_identifier(r#ref, loc), self.new_expr(E::String { data: label }, loc)],
-                        )?,
-                        ..Default::default()
-                    },
-                    loc,
-                ),
+        // TODO(port): Zig used `p.source.path.pretty`; logger::fs::Path currently
+        // has only `text` (Phase-A stub). Swap to `.pretty` once bun_paths' full
+        // Path lands.
+        let label = strings::concat(&[
+            self.source.path.text,
+            b":",
+            match export_kind {
+                ReactRefreshExportKind::Named => original_name,
+                ReactRefreshExportKind::Default => b"default",
+            },
+        ])?;
+        let label_expr = self.new_expr(E::String::init(&label), loc);
+        let call = self.new_expr(
+            E::Call {
+                target: Expr::init_identifier(self.react_refresh.register_ref, loc),
+                args: ExprNodeList::from_slice(&[Expr::init_identifier(r#ref, loc), label_expr])?,
                 ..Default::default()
             },
             loc,
-        ));
+        );
+        stmts.push(self.s(S::SExpr { value: call, ..Default::default() }, loc));
 
         self.record_usage(r#ref);
         self.react_refresh.register_used = true;
         Ok(())
     }
 
-    #[cfg(any())] // reconciler-6 re-gate: ServerComponents.wraps_exports; Path.pretty
     pub fn wrap_value_for_server_component_reference(&mut self, val: Expr, original_name: &'a [u8]) -> Expr {
         debug_assert!(self.options.features.server_components.wraps_exports());
         debug_assert!(self.current_scope == self.module_scope);
@@ -6627,13 +6611,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         }
 
         let module_path = self.new_expr(
-            E::String {
-                data: if self.options.jsx.development {
-                    self.source.path.pretty
-                } else {
-                    todo!("TODO: unique_key here")
-                },
-            },
+            E::String::init(if self.options.jsx.development {
+                // TODO(port): Zig used `p.source.path.pretty`; logger::fs::Path
+                // currently has only `text` (Phase-A stub).
+                self.source.path.text
+            } else {
+                todo!("TODO: unique_key here")
+            }),
             logger::Loc::EMPTY,
         );
 
@@ -6642,14 +6626,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         //   "src/filepath.tsx",
         //   "Comp"
         // );
+        let name_expr = self.new_expr(E::String::init(original_name), logger::Loc::EMPTY);
         self.new_expr(
             E::Call {
                 target: Expr::init_identifier(self.server_components_wrap_ref, logger::Loc::EMPTY),
-                args: js_ast::ExprNodeList::from_slice(
-                    self.allocator,
-                    &[val, module_path, self.new_expr(E::String { data: original_name }, logger::Loc::EMPTY)],
-                )
-                .expect("oom"),
+                args: ExprNodeList::from_slice(&[val, module_path, name_expr]).expect("oom"),
                 ..Default::default()
             },
             logger::Loc::EMPTY,
@@ -6746,11 +6727,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         ctx.hasher.update(b"\x00");
     }
 
-    #[cfg(any())] // reconciler-6 re-gate: ReactRefresh::HookContext path
     pub fn handle_react_refresh_post_visit_function_body(
         &mut self,
         stmts: &mut ListManaged<'a, Stmt>,
-        hook: &ReactRefresh::HookContext,
+        hook: &crate::HookContext,
     ) {
         debug_assert!(self.options.features.react_fast_refresh);
 
@@ -6761,47 +6741,36 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             // is used since we know this statement list is not going to be
             // appended to afterwards; This function is a post-visit handler.
             let mut new_stmts = BumpVec::with_capacity_in(stmts.len() + 1, self.allocator);
-            new_stmts.push(Stmt::default()); // placeholder, overwritten below
+            new_stmts.push(Stmt::empty()); // placeholder, overwritten below
             new_stmts.extend_from_slice(stmts.as_slice());
             *stmts = new_stmts;
         } else {
             // The array has enough capacity, so there is no possibility of
             // allocation failure. We just move all of the statements over
             // by one, and increase the length using `addOneAssumeCapacity`
-            stmts.push(Stmt::default()); // PERF(port): was assume_capacity
+            stmts.push(Stmt::empty()); // PERF(port): was assume_capacity
             let len = stmts.len();
             stmts.copy_within(0..len - 1, 1);
         }
 
         let loc = logger::Loc::EMPTY;
-        let prepended_stmt = self.s(
-            S::SExpr {
-                value: self.new_expr(E::Call { target: Expr::init_identifier(hook.signature_cb, loc), ..Default::default() }, loc),
-                ..Default::default()
-            },
-            loc,
-        );
+        let value = self.new_expr(E::Call { target: Expr::init_identifier(hook.signature_cb, loc), ..Default::default() }, loc);
+        let prepended_stmt = self.s(S::SExpr { value, ..Default::default() }, loc);
         stmts[0] = prepended_stmt;
     }
 
-    #[cfg(any())] // reconciler-6 re-gate: G::Decl::List API
     pub fn get_react_refresh_hook_signal_decl(&mut self, signal_cb_ref: Ref) -> Stmt {
         let loc = logger::Loc::EMPTY;
         self.react_refresh.latest_signature_ref = signal_cb_ref;
         // var s_ = $RefreshSig$();
+        let binding = self.b(B::Identifier { r#ref: signal_cb_ref }, loc);
+        let value = Some(self.new_expr(
+            E::Call { target: Expr::init_identifier(self.react_refresh.create_signature_ref, loc), ..Default::default() },
+            loc,
+        ));
         self.s(
             S::Local {
-                decls: G::Decl::List::from_slice(
-                    self.allocator,
-                    &[G::Decl {
-                        binding: self.b(B::Identifier { r#ref: signal_cb_ref }, loc),
-                        value: Some(self.new_expr(
-                            E::Call { target: Expr::init_identifier(self.react_refresh.create_signature_ref, loc), ..Default::default() },
-                            loc,
-                        )),
-                    }],
-                )
-                .expect("oom"),
+                decls: G::DeclList::from_slice(&[G::Decl { binding, value }]).expect("oom"),
                 ..Default::default()
             },
             loc,

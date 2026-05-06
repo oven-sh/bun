@@ -18,12 +18,6 @@ pub struct ScopeRule<R> {
     pub loc: Location,
 }
 
-// ─── behavior bodies ──────────────────────────────────────────────────────
-// blocked_on: CssRuleList::to_css (gated in rules/mod.rs),
-// selector::serialize::serialize_selector_list (selector.rs body gated on
-// values/ident Fns), Printer::{with_context,with_cleared_context} (printer.rs
-// gated context helpers), DeepClone derive.
-#[cfg(any())]
 impl<R> ScopeRule<R> {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         use crate::selectors::selector::serialize::serialize_selector_list;
@@ -35,7 +29,8 @@ impl<R> ScopeRule<R> {
         if let Some(scope_start) = &self.scope_start {
             dest.write_char(b'(')?;
             // scope_start.to_css(dest)?;
-            serialize_selector_list(scope_start.v.as_slice(), dest, dest.context(), false)?;
+            let ctx = dest.context();
+            serialize_selector_list(scope_start.v.slice(), dest, ctx, false)?;
             dest.write_char(b')')?;
             dest.whitespace()?;
         }
@@ -47,12 +42,20 @@ impl<R> ScopeRule<R> {
             // <scope-start> is treated as an ancestor of scope end.
             // https://drafts.csswg.org/css-nesting/#nesting-at-scope
             if let Some(scope_start) = &self.scope_start {
-                // PORT NOTE: Zig passed an anon-struct fn pointer; Rust uses a closure capturing scope_end.
-                dest.with_context(scope_start, |d: &mut Printer| -> Result<(), PrintErr> {
-                    serialize_selector_list(scope_end.v.as_slice(), d, d.context(), false)
-                })?;
+                // PORT NOTE: Zig passed an anon-struct fn pointer; the Rust
+                // `Printer::with_context` carries the captured state as the
+                // first closure arg (no `&self` capture across `&mut dest`).
+                dest.with_context(
+                    scope_start,
+                    scope_end,
+                    |scope_end: &SelectorList, d: &mut Printer| -> Result<(), PrintErr> {
+                        let ctx = d.context();
+                        serialize_selector_list(scope_end.v.slice(), d, ctx, false)
+                    },
+                )?;
             } else {
-                return serialize_selector_list(scope_end.v.as_slice(), dest, dest.context(), false);
+                let ctx = dest.context();
+                return serialize_selector_list(scope_end.v.slice(), dest, ctx, false);
             }
             dest.write_char(b')')?;
             dest.whitespace()?;
@@ -63,13 +66,17 @@ impl<R> ScopeRule<R> {
         // Nested style rules within @scope are implicitly relative to the <scope-start>
         // so clear our style context while printing them to avoid replacing & ourselves.
         // https://drafts.csswg.org/css-cascade-6/#scoped-rules
-        dest.with_cleared_context(|d: &mut Printer| self.rules.to_css(d))?;
+        dest.with_cleared_context(&self.rules, |rules, d: &mut Printer| rules.to_css(d))?;
         dest.dedent();
         dest.newline()?;
         dest.write_char(b'}')?;
         Ok(())
     }
+}
 
+// blocked_on: DeepClone derive.
+#[cfg(any())]
+impl<R> ScopeRule<R> {
     pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         // TODO(port): css.implementDeepClone uses @typeInfo field reflection — replace with a
         // DeepClone trait/derive in Phase B.

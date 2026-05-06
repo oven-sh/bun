@@ -1,0 +1,13 @@
+[package]
+name = "bun_css_derive"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["full", "extra-traits"] }

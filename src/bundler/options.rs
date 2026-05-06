@@ -6,34 +6,31 @@ use bun_logger as logger;
 use bun_string::strings;
 use bun_core::{Output, Global};
 use bun_collections::{StringHashMap, StringArrayHashMap, ArrayHashMap, MultiArrayList};
-// TODO(b2-blocked): bun_resolver — crate has compile errors in working tree
-// (Wyhash / PathBuffer::as_mut_slice). Using `bun_logger::fs` (which mirrors the
-// minimal `Path`/`PathName` surface) and local opaque stubs for PackageJSON /
-// MacroMap until resolver is green.
-use bun_logger::fs as Fs;
-mod resolver {
-    /// Stub: real `bun_resolver::package_json::MacroMap`.
-    #[derive(Default)]
-    pub struct MacroRemap(());
-    /// Stub: real `bun_resolver::package_json::PackageJSON`.
-    pub struct PackageJSON(());
-    /// Stub: real `bun_resolver::is_package_path`.
-    pub fn is_package_path(_path: &[u8]) -> bool {
-        // TODO(b2-blocked): bun_resolver::is_package_path
-        unimplemented!("b2-blocked: bun_resolver")
+use bun_resolver::fs as Fs;
+use bun_resolver as resolver;
+use bun_resolver::package_json::{MacroMap as MacroRemap, PackageJSON};
+use bun_dotenv as DotEnv;
+#[allow(unused_imports)]
+use bun_url::URL;
+use bun_js_parser::runtime as Runtime;
+use bun_options_types::schema::api;
+// TODO(b2-blocked): bun_analytics — Cargo.toml does not yet list the dep
+// (adding it triggers upstream rebuilds with in-progress breakage). The
+// `analytics::features::*` counters are pure telemetry side effects; the
+// increments below are no-ops until the dep is wired. Shim keeps the call
+// sites compiling so the surrounding logic stays un-gated.
+mod analytics {
+    #[allow(non_upper_case_globals)]
+    pub mod features {
+        use core::sync::atomic::AtomicUsize;
+        // Zig: `analytics.Features.{define,loaders,macros,external} += n`.
+        // Real statics live in `bun_analytics::features::*` (AtomicUsize).
+        pub static define: AtomicUsize = AtomicUsize::new(0);
+        pub static loaders: AtomicUsize = AtomicUsize::new(0);
+        pub static macros: AtomicUsize = AtomicUsize::new(0);
+        pub static external: AtomicUsize = AtomicUsize::new(0);
     }
 }
-use resolver::{MacroRemap, PackageJSON};
-use bun_dotenv as DotEnv;
-use bun_url::URL;
-#[cfg(any())]
-use bun_js_parser::runtime::Runtime;
-use bun_options_types::schema::api;
-// TODO(b2-blocked): bun_analytics — adding the dep triggers upstream rebuilds
-// that expose in-progress breakage in css/logger. The two `analytics::Features`
-// call sites (`from_api`) are already gated.
-#[cfg(any())]
-use bun_analytics as analytics;
 use enum_map::{EnumMap, Enum};
 
 pub use crate::defines;
@@ -81,37 +78,36 @@ pub enum WriteDestination {
     // eventually: wasm
 }
 
-#[cfg(any())]
-// TODO(b2-blocked): bun_resolver::fs::FileSystem::Implementation + bun_paths::resolve
 pub fn validate_path(
     log: &mut logger::Log,
-    _fs: &mut Fs::FileSystem::Implementation,
+    _fs: &mut Fs::Implementation,
     cwd: &[u8],
     rel_path: &[u8],
-    _path_kind: &[u8],
+    path_kind: &[u8],
 ) -> Box<[u8]> {
     if rel_path.is_empty() {
         return Box::default();
     }
-    let paths: [&[u8]; 2] = [cwd, rel_path];
     // TODO: switch to getFdPath()-based implementation
-    // TODO(port): std.fs.path.resolve → bun_paths::resolve (allocating)
-    match bun_paths::resolve(&paths) {
-        Ok(out) => out,
-        Err(err) => {
-            log.add_error_fmt(
-                None,
-                logger::Loc::EMPTY,
-                format_args!(
-                    "<r><red>{}<r> resolving external: <b>\"{}\"<r>",
-                    err.name(),
-                    bstr::BStr::new(rel_path),
-                ),
-            )
-            .expect("unreachable");
-            Box::default()
-        }
+    // PORT NOTE: Zig used `std.fs.path.resolve(allocator, &.{cwd, rel_path})`;
+    // `join_abs_string` resolves `.`/`..` against `cwd` into a threadlocal
+    // buffer which is then boxed (matches the allocator.dupe in the Zig path).
+    let _ = path_kind;
+    let out = bun_paths::resolve_path::join_abs_string::<bun_paths::platform::Auto>(cwd, &[rel_path]);
+    if out.is_empty() {
+        log.add_error_fmt(
+            None,
+            logger::Loc::EMPTY,
+            format_args!(
+                "Invalid {}: {}",
+                bstr::BStr::new(path_kind),
+                bstr::BStr::new(rel_path),
+            ),
+        )
+        .expect("unreachable");
+        return Box::default();
     }
+    Box::from(out)
 }
 
 #[cfg(any())]
@@ -231,25 +227,26 @@ impl ExternalModules {
             .collect()
     }
 
-    #[cfg(any())]
-    // TODO(b2-blocked): bun_resolver::fs::FileSystem::Implementation + validate_path
     pub fn init(
-        fs: &mut Fs::FileSystem::Implementation,
+        fs: &mut Fs::Implementation,
         cwd: &[u8],
         externals: &[&[u8]],
         log: &mut logger::Log,
         target: Target,
     ) -> ExternalModules {
         let mut result = ExternalModules {
-            node_modules: bun_collections::BufSet::default(),
-            abs_paths: bun_collections::BufSet::default(),
+            node_modules: BufSet::default(),
+            abs_paths: BufSet::default(),
             patterns: Self::default_wildcard_patterns(),
         };
 
         match target {
             Target::Node => {
                 // TODO: fix this stupid copy
-                result.node_modules.reserve(NODE_BUILTIN_PATTERNS.len());
+                let _ = result
+                    .node_modules
+                    .map
+                    .ensure_total_capacity(NODE_BUILTIN_PATTERNS.len());
                 for pattern in NODE_BUILTIN_PATTERNS {
                     result.node_modules.insert(pattern).expect("unreachable");
                 }
@@ -294,7 +291,7 @@ impl ExternalModules {
                     prefix: Box::from(&external[0..i]),
                     suffix: Box::from(&external[i + 1..]),
                 });
-            } else if resolver::is_package_path(external) {
+            } else if bun_paths::is_package_path(external) {
                 result.node_modules.insert(external).expect("unreachable");
             } else {
                 let normalized = validate_path(log, fs, cwd, external, b"external path");
@@ -2024,7 +2021,11 @@ pub struct BundleOptions<'a> {
     pub drop: Box<[Box<[u8]>]>,
     /// Set of enabled feature flags for dead-code elimination via `import { feature } from "bun:bundle"`.
     /// Initialized once from the CLI --feature flags.
-    pub bundler_feature_flags: Box<StringSet>,
+    ///
+    /// Zig: `*const bun.StringSet = &Runtime.Features.empty_bundler_feature_flags`.
+    /// `None` ≡ the static empty set; `Some` is a leaked `&'static` from
+    /// `Runtime::Features::init_bundler_feature_flags`.
+    pub bundler_feature_flags: Option<&'static StringSet>,
     pub loaders: LoaderHashTable,
     pub resolve_dir: Cow<'static, [u8]>,
     pub jsx: jsx::Pragma,

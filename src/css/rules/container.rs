@@ -1,7 +1,9 @@
 use crate as css;
 use crate::css_rules::{CssRuleList, Location};
 use crate::css_values::ident::CustomIdent;
-use crate::media_query::{MediaFeatureType, Operator, QueryFeature};
+use crate::media_query::{
+    self, MediaFeatureType, Operator, QueryCondition, QueryFeature, ToCss,
+};
 use crate::properties::Property;
 use crate::{PrintErr, Printer};
 
@@ -10,9 +12,14 @@ pub struct ContainerName {
     pub v: CustomIdent,
 }
 
-// ─── ContainerName behavior ───────────────────────────────────────────────
-// blocked_on: CustomIdentFns::{parse,to_css}, Parser::new_unexpected_token_error,
-// bun_str::strings exact ASCII-eq fn name, DeepClone.
+impl ContainerName {
+    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+        super::custom_ident_to_css(&self.v, dest)
+    }
+}
+
+// ─── ContainerName parse/clone ────────────────────────────────────────────
+// blocked_on: Parser::new_unexpected_token_error, DeepClone.
 #[cfg(any())]
 impl ContainerName {
     pub fn parse(input: &mut css::Parser) -> css::Result<ContainerName> {
@@ -33,11 +40,6 @@ impl ContainerName {
         }
 
         Ok(ContainerName { v: ident })
-    }
-
-    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        use crate::css_values::ident::CustomIdentFns;
-        CustomIdentFns::to_css(&self.v, dest)
     }
 
     pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
@@ -85,14 +87,28 @@ impl crate::media_query::FeatureIdTrait for ContainerSizeFeatureId {
         }
     }
 
-    fn to_css(&self, _dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        // TODO(port): css::enum_property_util::to_css — needs EnumProperty derive (Phase B)
-        unimplemented!("ContainerSizeFeatureId::to_css — enum_property_util EnumProperty derive")
+    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+        css::enum_property_util::to_css(self, dest)
     }
 
     fn from_str(_s: &[u8]) -> Option<Self> {
         // TODO(port): css::enum_property_util::from_str — needs EnumProperty derive (Phase B)
         unimplemented!("ContainerSizeFeatureId::from_str — enum_property_util EnumProperty derive")
+    }
+}
+
+// PORT NOTE: Zig `css.enum_property_util.{asStr,toCss}` used `@tagName` to get
+// the kebab-case variant name. Phase B should provide `#[derive(EnumProperty)]`.
+impl From<ContainerSizeFeatureId> for &'static str {
+    fn from(v: ContainerSizeFeatureId) -> &'static str {
+        match v {
+            ContainerSizeFeatureId::Width => "width",
+            ContainerSizeFeatureId::Height => "height",
+            ContainerSizeFeatureId::InlineSize => "inline-size",
+            ContainerSizeFeatureId::BlockSize => "block-size",
+            ContainerSizeFeatureId::AspectRatio => "aspect-ratio",
+            ContainerSizeFeatureId::Orientation => "orientation",
+        }
     }
 }
 

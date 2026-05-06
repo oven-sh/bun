@@ -121,6 +121,9 @@ pub use error::ParserErrorKind as ErrorKind;
 // value/property modules can use `crate::generic::partial_cmp_f32` etc.
 pub use generics as generic;
 pub use generics::{implement_deep_clone, implement_eql, implement_hash};
+// Same-name trait + derive macro re-export so `#[derive(bun_css::DeepClone)]`
+// (and `use bun_css::DeepClone;` at leaf sites) brings both into scope.
+pub use generics::DeepClone;
 // Serializer + dtoa helpers live in the parser hub but are referenced as
 // `css::serializer` / `css::f32_length_with_5_digits` from value modules.
 pub use css_parser::{dtoa_short, f32_length_with_5_digits, serializer, to_css};

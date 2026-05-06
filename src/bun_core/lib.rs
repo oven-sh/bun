@@ -57,6 +57,21 @@ pub use tty::Winsize;
 /// `bun_core::OOM` per PORTING.md type map (`OOM!T` → `Result<T, OOM>`).
 pub type OOM = AllocError;
 
+/// Zig: `bun.handleOom(expr)` — unwrap a `Result`, calling `outOfMemory()` on
+/// `Err`. The full multi-arm version (which narrows mixed error sets) lives in
+/// `bun_crash_handler::handle_oom`; that crate sits *above* `bun_core` in the
+/// dep graph, so this tier-0 alias is the OOM-only arm — sufficient for the
+/// `Result<T, AllocError>` / `Result<T, Error>` callers in `js_parser`,
+/// `bake/DevServer`, etc. that spell it `bun_core::handle_oom`.
+#[inline]
+#[track_caller]
+pub fn handle_oom<T, E>(r: core::result::Result<T, E>) -> T {
+    match r {
+        Ok(v) => v,
+        Err(_) => out_of_memory(),
+    }
+}
+
 // Real `declare_scope!`/`scoped_log!`/`pretty*!`/`warn!`/`note!` are
 // `#[macro_export]`ed from output.rs.
 // `err!(Name)` / `err!("Name")` — Zig `error.Name` literal.

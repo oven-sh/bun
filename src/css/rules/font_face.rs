@@ -43,6 +43,17 @@ pub enum FontFaceProperty {
 /// un-gate.
 pub struct FontFaceProperty;
 
+#[cfg(not(any()))]
+impl FontFaceProperty {
+    /// Unreachable in practice: while the enum body is gated, no parser path
+    /// constructs a `FontFaceProperty`, so `FontFaceRule.properties` is always
+    /// empty. Panic loudly if that invariant is violated (PORTING.md
+    /// §Forbidden: silent no-op).
+    pub fn to_css(&self, _dest: &mut Printer) -> Result<(), PrintErr> {
+        todo!("blocked_on: properties::{{font,custom}} un-gate — FontFaceProperty enum body")
+    }
+}
+
 #[cfg(any())]
 impl FontFaceProperty {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
@@ -674,8 +685,6 @@ pub struct FontFaceRule {
     pub loc: Location,
 }
 
-// blocked_on: FontFaceProperty::to_css, DeepClone.
-#[cfg(any())]
 impl FontFaceRule {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         // #[cfg(feature = "sourcemap")]
@@ -697,7 +706,11 @@ impl FontFaceRule {
         dest.newline()?;
         dest.write_char(b'}')
     }
+}
 
+// blocked_on: DeepClone.
+#[cfg(any())]
+impl FontFaceRule {
     pub fn deep_clone(&self, allocator: &bun_alloc::Arena) -> Self {
         // TODO(port): comptime-reflection deep clone — replace with derive in Phase B.
         css::implement_deep_clone(self, allocator)

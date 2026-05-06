@@ -453,16 +453,16 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                 .remove(import_record::Flags::IS_UNUSED);
 
             // SAFETY: arena-owned ClauseItem slices valid for the parse.
-            let items_len = unsafe { (*items).len() };
+            let items_len = unsafe { (&*items).len() };
             if items_len > 0 {
                 // SAFETY: arena-owned ClauseItem slice valid for the parse.
-                if unsafe { (*stmt.items).is_empty() } {
+                if unsafe { (&*stmt.items).is_empty() } {
                     stmt.items = items;
                 } else {
                     // PORT NOTE: Zig `std.mem.concat` — allocate concatenated slice in arena.
                     // ClauseItem fields are all bitwise-copyable; copy raw to avoid Clone bound.
                     // SAFETY: arena-owned slices valid for the parse; ClauseItem is POD-shaped.
-                    let prev_len = unsafe { (*stmt.items).len() };
+                    let prev_len = unsafe { (&*stmt.items).len() };
                     let concat = p
                         .allocator
                         .alloc_slice_fill_with(prev_len + items_len, |_| {

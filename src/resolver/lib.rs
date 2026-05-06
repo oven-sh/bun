@@ -181,31 +181,36 @@ pub mod fs {
 
         /// Port of `FileSystem.absBuf` in `fs.zig`.
         pub fn abs_buf<'b>(&self, parts: &[&[u8]], buf: &'b mut [u8]) -> &'b [u8] {
-            // TODO(b2-blocked): bun_paths::join_abs_string_buf — wire once
-            // bun_paths exposes the cwd-relative joiner with a caller buffer.
-            let _ = (parts, &self.top_level_dir);
-            unimplemented!("FileSystem::abs_buf (Phase B — bun_paths::join_abs_string_buf)")
+            use bun_paths::resolve_path::{join_abs_string_buf, platform};
+            join_abs_string_buf::<platform::Loose>(self.top_level_dir, buf, parts)
         }
 
         /// Port of `FileSystem.absBufChecked` in `fs.zig` — returns `None` on overflow.
         pub fn abs_buf_checked<'b>(&self, parts: &[&[u8]], buf: &'b mut [u8]) -> Option<&'b [u8]> {
-            let _ = parts;
-            // TODO(b2-blocked): bun_paths::join_abs_string_buf_checked
-            unimplemented!("FileSystem::abs_buf_checked (Phase B)")
+            use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
+            join_abs_string_buf_checked::<platform::Loose>(self.top_level_dir, buf, parts)
         }
 
         /// Port of `FileSystem.normalizeBuf` in `fs.zig`.
         pub fn normalize_buf<'b>(&self, buf: &'b mut [u8], str: &[u8]) -> &'b [u8] {
-            let _ = str;
-            // TODO(b2-blocked): bun_paths::normalize_string_buf
-            unimplemented!("FileSystem::normalize_buf (Phase B)")
+            use bun_paths::resolve_path::{normalize_string_buf, platform};
+            normalize_string_buf::<false, platform::Auto, false>(str, buf)
+        }
+
+        /// Port of `FileSystem.abs` in `fs.zig` — joins against `top_level_dir`
+        /// into the resolver-shared threadlocal join buffer.
+        pub fn abs(&self, parts: &[&[u8]]) -> &[u8] {
+            use bun_paths::resolve_path::{join_abs_string, platform};
+            join_abs_string::<platform::Loose>(self.top_level_dir, parts)
         }
 
         /// Port of `FileSystem.absAlloc` in `fs.zig`.
         pub fn abs_alloc(&self, parts: &[&[u8]]) -> core::result::Result<&'static [u8], bun_alloc::AllocError> {
-            let _ = parts;
-            // TODO(b2-blocked): heap-allocating join_abs
-            unimplemented!("FileSystem::abs_alloc (Phase B)")
+            use bun_paths::resolve_path::{join_abs_string, platform};
+            let joined = join_abs_string::<platform::Loose>(self.top_level_dir, parts);
+            // PORT NOTE: Zig duped via `allocator.dupe`; route through DirnameStore so
+            // the resolver's `&'static [u8]` storage contract holds.
+            DirnameStore::instance().append_slice(joined).map_err(|_| bun_alloc::AllocError)
         }
     }
 

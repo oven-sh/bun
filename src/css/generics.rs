@@ -49,6 +49,13 @@ pub trait DeepClone<'bump>: Sized {
     fn deep_clone(&self, bump: &'bump Arena) -> Self;
 }
 
+/// `#[derive(DeepClone)]` — field-wise / variant-wise port of Zig's
+/// `css.implementDeepClone`. See `src/css_derive/lib.rs` for the expansion
+/// rules. Re-exported here so `use crate::generics::DeepClone;` brings both
+/// the trait and the derive into scope (same-name trait+derive is the std
+/// idiom, cf. `Clone`).
+pub use bun_css_derive::DeepClone;
+
 #[inline]
 pub fn implement_deep_clone<'bump, T: DeepClone<'bump>>(this: &T, bump: &'bump Arena) -> T {
     // TODO(port): Zig `implementDeepClone` is comptime field/variant reflection.
@@ -152,6 +159,33 @@ impl<'bump> DeepClone<'bump> for &'bump [u8] {
         // Strings in the CSS parser are always arena allocated
         // So it is safe to skip const strings as they will never be mutated
         *self
+    }
+}
+
+impl<'bump> DeepClone<'bump> for &'bump str {
+    #[inline]
+    fn deep_clone(&self, _bump: &'bump Arena) -> Self {
+        // Same arena-borrowed-string rule as `&[u8]` above.
+        *self
+    }
+}
+
+impl<'bump, T: DeepClone<'bump>> DeepClone<'bump> for Vec<T> {
+    #[inline]
+    fn deep_clone(&self, bump: &'bump Arena) -> Self {
+        // PERF(port): Zig fast-paths simple-copy types with @memcpy — profile in Phase B.
+        let mut out = Vec::with_capacity(self.len());
+        for item in self.iter() {
+            out.push(item.deep_clone(bump));
+        }
+        out
+    }
+}
+
+impl<'bump, T: DeepClone<'bump>> DeepClone<'bump> for Box<T> {
+    #[inline]
+    fn deep_clone(&self, bump: &'bump Arena) -> Self {
+        Box::new((**self).deep_clone(bump))
     }
 }
 

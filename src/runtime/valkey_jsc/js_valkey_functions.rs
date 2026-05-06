@@ -1674,7 +1674,7 @@ impl JSValkeyClient {
             let mut array_iter = channel_or_many.array_iterator(global)?;
             while let Some(channel_arg) = array_iter.next()? {
                 let Some(channel) = from_js(global, channel_arg)? else {
-                    return global.throw_invalid_argument_type("subscribe", "channel", "string");
+                    return Err(global.throw_invalid_argument_type("subscribe", "channel", "string"));
                 };
                 // PERF(port): was assume_capacity
                 redis_channels.push(channel);

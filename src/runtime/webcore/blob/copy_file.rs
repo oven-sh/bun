@@ -49,10 +49,16 @@ pub type ResultType = Result<SizeType, bun_core::Error>;
 
 pub type Callback = fn(ctx: *mut c_void, len: ResultType);
 
+impl MkdirpTarget for CopyFile<'_> {
+    fn mkdirp_if_not_exists(&self) -> bool { self.mkdirp_if_not_exists }
+    fn set_mkdirp_if_not_exists(&mut self, v: bool) { self.mkdirp_if_not_exists = v; }
+    fn set_system_error(&mut self, e: SystemError) { self.system_error = Some(e); }
+}
+
 impl<'a> CopyFile<'a> {
     pub fn create(
-        store: Arc<Store>,
-        source_store: Arc<Store>,
+        store: StoreRef,
+        source_store: StoreRef,
         off: SizeType,
         max_len: SizeType,
         global_this: &'a JSGlobalObject,
@@ -60,13 +66,13 @@ impl<'a> CopyFile<'a> {
         destination_mode: Option<Mode>,
     ) -> Box<CopyFilePromiseTask> {
         let read_file = Box::new(CopyFile {
-            store: Some(Arc::clone(&store)),
-            source_store: Some(Arc::clone(&source_store)),
+            destination_file_store: store.data.as_file().clone(),
+            source_file_store: source_store.data.as_file().clone(),
+            store: Some(store.clone()),
+            source_store: Some(source_store.clone()),
             offset: off,
             max_length: max_len,
             global_this,
-            destination_file_store: store.data.file.clone(),
-            source_file_store: source_store.data.file.clone(),
             mkdirp_if_not_exists,
             destination_mode,
             // defaults:
@@ -77,7 +83,7 @@ impl<'a> CopyFile<'a> {
             read_len: 0,
             read_off: 0,
         });
-        // store.ref() / source_store.ref() — handled by Arc::clone above
+        // store.ref() / source_store.ref() — handled by StoreRef::clone above
         let _ = (global_this, read_file);
         todo!("blocked_on: jsc::ConcurrentPromiseTask<T>::create_on_js_thread (gated)")
     }
@@ -86,12 +92,9 @@ impl<'a> CopyFile<'a> {
         let global_this = self.global_this;
         let mut system_error: SystemError = self
             .system_error
-            .clone()
-            .unwrap_or_else(|| SystemError {
-                message: bun_str::String::empty(),
-                ..Default::default()
-            });
-        if matches!(self.source_file_store.pathlike, jsc::node::PathOrFileDescriptor::Path(_))
+            .take()
+            .unwrap_or_default();
+        if matches!(self.source_file_store.pathlike, PathOrFileDescriptor::Path(_))
             && system_error.path.is_empty()
         {
             system_error.path =
@@ -102,7 +105,10 @@ impl<'a> CopyFile<'a> {
             system_error.message = bun_str::String::static_("Failed to copy file");
         }
 
-        let instance = system_error.to_error_instance_with_async_stack(self.global_this, promise);
+        let instance = {
+            let _ = (&system_error, self.global_this, &promise);
+            todo!("blocked_on: bun_sys::SystemError::to_error_instance_with_async_stack")
+        };
         if let Some(store) = self.store.take() {
             drop(store); // deref()
         }

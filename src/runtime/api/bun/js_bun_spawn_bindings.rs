@@ -1308,7 +1308,8 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             Subprocess::js::terminal_set_cached(out, global_this, terminal_js_value);
         }
 
-        match subprocess.process.watch() {
+        // SAFETY: see `process_mut` doc.
+        match unsafe { process_mut(&subprocess.process) }.watch() {
             sys::Result::Ok(()) => {}
             sys::Result::Err(_) => {
                 send_exit_notification = true;
@@ -1319,16 +1320,17 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
 
     let _exit_notify_guard = scopeguard::guard((), |_| {
         if send_exit_notification {
-            if subprocess.process.has_exited() {
+            // SAFETY: subprocess_ptr is live for the lifetime of this scopeguard.
+            let proc = unsafe { process_mut(&(*subprocess_ptr).process) };
+            if proc.has_exited() {
                 // process has already exited, we called wait4(), but we did not call onProcessExit()
                 // SAFETY: all-zero is a valid Rusage (POD).
-                subprocess
-                    .process
-                    .on_exit(subprocess.process.status, &unsafe { core::mem::zeroed::<Rusage>() });
+                let status = proc.status;
+                proc.on_exit(status, &unsafe { core::mem::zeroed::<Rusage>() });
             } else {
                 // process has already exited, but we haven't called wait4() yet
                 // https://cs.github.com/libuv/libuv/blob/b00d1bd225b602570baee82a6152eaa823a84fa6/src/unix/process.c#L1007
-                subprocess.process.wait(IS_SYNC);
+                proc.wait(IS_SYNC);
             }
         }
     });
@@ -1345,7 +1347,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         // PORT NOTE: pass `subprocess_nn` (the `NonNull<Subprocess<'static>>`
         // captured above) instead of the live `&mut subprocess`, which would
         // alias with the `&mut subprocess.stdout` borrow held by `pipe`.
-        if let Err(err) = pipe.start(subprocess_nn, event_loop) {
+        if let Err(err) = pipe.start(subprocess_nn, event_loop_nn) {
             let _ = subprocess.try_kill(subprocess.kill_signal);
             let _ = global_this.throw_value(err.to_js(global_this));
             return Err(JsError::Thrown);
@@ -1359,7 +1361,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
 
     if let Readable::Pipe(pipe) = &mut subprocess.stderr {
         // PORT NOTE: see stdout arm above — avoid aliased &mut.
-        if let Err(err) = pipe.start(subprocess_nn, event_loop) {
+        if let Err(err) = pipe.start(subprocess_nn, event_loop_nn) {
             let _ = subprocess.try_kill(subprocess.kill_signal);
             let _ = global_this.throw_value(err.to_js(global_this));
             return Err(JsError::Thrown);

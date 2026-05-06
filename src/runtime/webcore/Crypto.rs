@@ -351,10 +351,11 @@ pub fn bun_random_uuid_v5(global: &JSGlobalObject, callframe: &CallFrame) -> JsR
 
             break 'brk result;
         } else if let Some(array_buffer) = name_value.as_array_buffer(global) {
-            break 'brk bun_str::ZigStringSlice::from_utf8_never_free(array_buffer.byte_slice());
+            let bytes: &[u8] = array_buffer.byte_slice();
+            break 'brk bun_str::ZigStringSlice::from_utf8_never_free(bytes);
         } else {
             return Err(global
-                .ERR(
+                .err(
                     bun_jsc::ErrorCode::INVALID_ARG_TYPE,
                     format_args!("The \"name\" argument must be of type string or BufferSource"),
                 )

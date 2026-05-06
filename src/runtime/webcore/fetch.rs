@@ -1596,12 +1596,21 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             });
 
             let promise_value = promise.value();
-            let proxy_url: &[u8] = match &proxy {
-                Some(p) => p.href,
-                None => b"",
-            };
+            let proxy_url: Option<&[u8]> = proxy.as_ref().map(|p| p.href);
+            // Shim: Zig used `@ptrCast(&Wrapper.resolve)` to erase both the
+            // `*@This()` payload type and the `JSTerminated!void` error union when
+            // coercing to `?*const fn (S3UploadResult, *anyopaque) void`. In Rust we
+            // can't safely transmute away the `Result` return, so erase it explicitly.
+            fn s3_stream_wrapper_resolve(
+                result: s3::S3UploadResult<'_>,
+                ctx: *mut libc::c_void,
+            ) {
+                // SAFETY: ctx was produced by `Box::into_raw(s3_stream)` below; the
+                // 'static lifetime is a raw-pointer fiction matching the Zig @ptrCast.
+                let _ = S3StreamWrapper::resolve(result, ctx as *mut S3StreamWrapper<'static>);
+            }
             let _ = s3::upload_stream(
-                credentials_with_options.credentials.dupe(),
+                &mut credentials_with_options.credentials,
                 url.s3_path(),
                 readable_stream.get(global_this).unwrap(),
                 global_this,
@@ -1613,9 +1622,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 headers.as_ref().and_then(|h| h.get_content_encoding()),
                 proxy_url,
                 credentials_with_options.request_payer,
-                // SAFETY: @ptrCast(&Wrapper.resolve) — fn pointer cast to opaque callback.
-                S3StreamWrapper::resolve as *const _,
-                Box::into_raw(s3_stream),
+                Some(s3_stream_wrapper_resolve),
+                Box::into_raw(s3_stream) as *mut libc::c_void,
             )?;
             // PORT NOTE: url/url_proxy_buffer ownership moved into s3_stream above.
             url = ZigURL::default();

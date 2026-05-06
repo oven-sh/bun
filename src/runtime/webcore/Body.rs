@@ -312,6 +312,7 @@ impl PendingValue {
                 | Action::GetBlob
                 | Action::GetArrayBuffer
                 | Action::GetBytes => {
+                    use ReadableStreamConvert as _;
                     let promise = match &mut self.action {
                         Action::GetJSON => global_this.readable_stream_to_json(readable.value),
                         Action::GetArrayBuffer => {
@@ -325,7 +326,7 @@ impl PendingValue {
                             // defer: form_data already taken; action.getFormData = None handled by take()
                             let encoding_js = match &fd.encoding {
                                 bun_core::form_data::Encoding::Multipart(multipart) => {
-                                    BunString::init(multipart).to_js(global_this)?
+                                    BunString::init(&multipart[..]).to_js(global_this)?
                                 }
                                 bun_core::form_data::Encoding::URLEncoded => JSValue::UNDEFINED,
                             };

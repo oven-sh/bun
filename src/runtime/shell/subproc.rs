@@ -1005,20 +1005,12 @@ impl Readable {
     pub fn to_slice(&mut self) -> Option<&[u8]> {
         match self {
             Readable::Fd(_) => None,
-            Readable::Pipe(pipe) => {
-                // TODO(port): Arc<PipeReader> interior mutability for buffer/fifo/read_all.
-                let buf = pipe.reader.buffer();
-                pipe.buffer.fifo.close_on_empty_read = true;
-                pipe.read_all();
-
-                let bytes = &buf[..];
-                // self.pipe.buffer.internal_buffer = .{};
-
-                if !bytes.is_empty() {
-                    return Some(bytes);
-                }
-
-                Some(b"")
+            Readable::Pipe(_pipe) => {
+                // TODO(port): Zig path mutates `pipe.buffer.fifo.close_on_empty_read`
+                // (a pre-IOReader-rewrite field) and reads all — that field no
+                // longer exists on `PosixBufferedReader`. The shell never calls
+                // `to_slice` on a live pipe; covered by `buffered_output`.
+                todo!("blocked_on: bun_io::PosixBufferedReader fifo field (legacy)")
             }
             Readable::Buffer(buf) => Some(buf),
             Readable::Memfd(_) => panic!("TODO"),

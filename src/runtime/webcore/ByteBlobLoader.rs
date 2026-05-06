@@ -89,7 +89,7 @@ impl ByteBlobLoader {
 
     pub fn setup(&mut self, blob: &Blob, user_chunk_size: blob::SizeType) {
         // TODO(port): in-place init — `self` is a pre-allocated slot inside `Source`
-        let store = Arc::clone(blob.store.as_ref().unwrap());
+        let store = blob.store.as_ref().unwrap().clone();
         let mut blobe = blob.clone();
         blobe.resolve_size();
         let (content_type, content_type_allocated) = 'brk: {
@@ -120,7 +120,9 @@ impl ByteBlobLoader {
     }
 
     pub fn on_start(&mut self) -> streams::Start {
-        streams::Start::ChunkSize(self.chunk_size)
+        // PORT NOTE: `streams::BlobSizeType` is u32 but `blob::SizeType` is u64; clamp to u32::MAX
+        // (chunk_size is already capped at 2 MiB in `setup` so this never truncates).
+        streams::Start::ChunkSize(self.chunk_size.min(u32::MAX as u64) as u32)
     }
 
     pub fn on_pull(&mut self, buffer: &mut [u8], array: JSValue) -> streams::Result {

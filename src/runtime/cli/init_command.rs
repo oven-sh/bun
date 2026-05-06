@@ -510,28 +510,35 @@ impl InitCommand {
             b"project".to_vec()
         };
         let mut did_load_package_json = false;
-        if !package_json_contents.list().is_empty() {
+        if !package_json_contents.list.is_empty() {
             'process_package_json: {
-                let source =
-                    logger::Source::init_path_string(b"package.json", package_json_contents.list());
+                let source = logger::Source::init_path_string(
+                    b"package.json",
+                    &package_json_contents.list,
+                );
                 let mut log = logger::Log::init();
-                let package_json_expr = match json::parse_package_json_utf8(&source, &mut log) {
-                    Ok(e) => e,
-                    Err(_) => {
-                        package_json_file = None;
-                        break 'process_package_json;
-                    }
-                };
+                let mut package_json_expr =
+                    match json::parse_package_json_utf8(&source, &mut log, &bump) {
+                        Ok(e) => e,
+                        Err(_) => {
+                            package_json_file = None;
+                            break 'process_package_json;
+                        }
+                    };
 
                 if !package_json_expr.data.is_e_object() {
                     package_json_file = None;
                     break 'process_package_json;
                 }
 
-                fields.object = package_json_expr.data.e_object_mut();
+                fields.object = package_json_expr
+                    .data
+                    .e_object_mut()
+                    .map(|r| r as *mut _)
+                    .unwrap_or(core::ptr::null_mut());
 
                 if let Some(name) = package_json_expr.get(b"name") {
-                    if let Some(str) = name.as_string() {
+                    if let Some(str) = name.as_string(&bump) {
                         fields.name = str.to_vec();
                     }
                 }
@@ -540,7 +547,7 @@ impl InitCommand {
                     .get(b"module")
                     .or_else(|| package_json_expr.get(b"main"))
                 {
-                    if let Some(str) = name.as_string_z()? {
+                    if let Some(str) = name.as_string_z(&bump)? {
                         // TODO(port): asStringZ returns NUL-terminated; we store bytes only
                         fields.entry_point = str.as_bytes().to_vec();
                     }

@@ -299,7 +299,8 @@ pub mod js_bundler {
                 }
                 let joined = &buf[0..joined_len];
                 // Must use getKey to return the map's owned key, not the temporary buffer
-                if let Some(key) = self.map.get_key(joined) {
+                if let Some((key, _)) = self.map.get_key_value(joined) {
+                    let key: &[u8] = key.as_ref();
                     return Some(resolver::Result {
                         path_pair: resolver::PathPair {
                             primary: Fs::Path::init_with_namespace(key, b"file"),

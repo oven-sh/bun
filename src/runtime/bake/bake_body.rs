@@ -1221,7 +1221,7 @@ impl Framework {
 
         // force disable filesystem output, even though bundle_v2
         // is special cased to return before that code is reached.
-        out.options.output_dir = b"";
+        out.options.output_dir = Box::default();
 
         // framework configuration
         out.options.react_fast_refresh =

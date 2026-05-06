@@ -47,8 +47,8 @@ impl EventLoopDelayMonitor {
         self.enabled = true;
 
         // Schedule timer
-        let now = Timespec::now(TimespecClock::ForceRealTime);
-        self.event_loop_timer.next = now.add_ms(u64::try_from(resolution_ms).unwrap());
+        let now = Timespec::now(TimespecMockMode::ForceRealTime);
+        self.event_loop_timer.next = now.add_ms(i64::from(resolution_ms));
         vm.timer.insert(&mut self.event_loop_timer);
     }
 

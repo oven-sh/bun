@@ -161,12 +161,12 @@ impl<'a> Borrowed<'a> {
     }
 
     fn aligned_alloc(self, len: usize, alignment: Alignment) -> Option<NonNull<u8>> {
-        crate::scoped_log!(mimalloc, "Malloc: {}\n", len);
+        bun_output::scoped_log!(mimalloc, "Malloc: {}\n", len);
 
         let heap = self.get_mimalloc_heap();
         // SAFETY: FFI — heap is a live mi_heap_t* (from mi_heap_new/mi_heap_main); len/alignment
         // are passed by value and mimalloc returns null on failure.
-        let ptr: *mut c_void = if mimalloc::must_use_aligned_alloc(alignment) {
+        let ptr: *mut c_void = if mimalloc::must_use_aligned_alloc(alignment.to_byte_units()) {
             unsafe { mimalloc::mi_heap_malloc_aligned(heap, len, alignment.to_byte_units()) }
         } else {
             unsafe { mimalloc::mi_heap_malloc(heap, len) }

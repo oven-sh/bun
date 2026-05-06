@@ -13,7 +13,7 @@ use bun_simdutf_sys::simdutf as bun_simdutf;
 // "external globally allocated" constructors (the C++ FFI symbols exist but
 // are private to that crate). Re-declare them here so encoding helpers can
 // hand off owned `Vec<u8>`/`Vec<u16>` storage to WTF without an extra copy.
-extern "C" {
+unsafe extern "C" {
     fn BunString__createExternalGloballyAllocatedLatin1(bytes: *mut u8, len: usize) -> BunString;
     fn BunString__createExternalGloballyAllocatedUTF16(bytes: *mut u16, len: usize) -> BunString;
 }

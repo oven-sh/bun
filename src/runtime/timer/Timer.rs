@@ -34,11 +34,10 @@ use super::FakeTimers;
 /// In that case, it shouldn't run. It should be skipped.
 pub type TimeoutMap = ArrayHashMap<i32, *mut EventLoopTimer>;
 
-// TODO(port): `heap.Intrusive(EventLoopTimer, void, EventLoopTimer.less)` — the
-// Zig type-returning fn takes a comptime comparator. In Rust, encode the
-// comparator via a trait impl on `EventLoopTimer` (or a const fn ptr param) in
-// `bun_io::heap`.
-pub type TimerHeap = bun_io::heap::Intrusive<EventLoopTimer>;
+// `heap.Intrusive(EventLoopTimer, void, EventLoopTimer.less)` — comparator is
+// encoded via `HeapContext` impl on `super::TimerHeapCtx`; the newtype wrapper
+// in mod.rs adapts `*mut T` ↔ `Option<*mut T>` for call-sites here.
+pub use super::TimerHeap;
 
 // We split up the map here to avoid storing an extra "repeat" boolean
 #[derive(Default)]

@@ -6,7 +6,7 @@ use bun_io::Write as _;
 use bun_collections::HashMap;
 use bun_core::{fmt as bun_fmt, Output};
 use bun_jsc::{
-    self as jsc, c_api as CAPI, CallFrame, JSGlobalObject, JSObject, JSPropertyIterator, JSType,
+    self as jsc, CallFrame, JSGlobalObject, JSObject, JSPropertyIterator, JSType,
     JSValue, JsError, JsResult, VM,
 };
 use bun_js_parser::js_lexer as JSLexer;
@@ -46,6 +46,10 @@ impl core::fmt::Display for PrettyStr {
 // The full `javascript_core_c_api.rs` module is ``-gated in bun_jsc;
 // declare just the two we need here. Types match `bun_jsc::C::JSObjectRef` etc.
 // TODO(port): drop once `bun_jsc::c_api` re-exports the full C-API surface.
+#[allow(deprecated)] // `bun_jsc::C` (the JSC C-API opaque-ref typedefs) is
+                     // deprecated upstream but still the only home for
+                     // `JSObjectRef`/`JSValueRef`/`ExceptionRef`; this shim
+                     // is exactly the legacy C-API boundary it describes.
 mod capi_ext {
     use bun_jsc::{C, JSGlobalObject};
     unsafe extern "C" {

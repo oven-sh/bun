@@ -387,6 +387,7 @@ impl WindowsNamedPipe {
         (self.handlers.deref_ctx)(self.handlers.ctx);
     }
 
+    #[cfg(windows)]
     fn on_connect(&mut self, status: uv::ReturnCode) {
         // PORT NOTE: reshaped — Zig `defer this.deref()` cannot be a scopeguard here (would need
         // to capture &mut self alongside body uses). Call deref() explicitly at each return.
@@ -418,6 +419,7 @@ impl WindowsNamedPipe {
         self.deref();
     }
 
+    #[cfg(windows)]
     pub fn get_accepted_by(
         &mut self,
         server: &mut uv::Pipe,

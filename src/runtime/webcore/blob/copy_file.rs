@@ -399,7 +399,7 @@ impl<'a> CopyFile<'a> {
                     self.system_error = Some(
                         bun_sys::Error {
                             // PORT NOTE: @intCast is identity here (E repr == Error.Int); bare `as` matches Zig @intFromEnum.
-                            errno: bun_sys::E::INVAL as bun_sys::error::Int,
+                            errno: bun_sys::E::INVAL as bun_sys::ErrorInt,
                             syscall: USE.tag(),
                             ..Default::default()
                         }
@@ -411,7 +411,7 @@ impl<'a> CopyFile<'a> {
                     self.system_error = Some(
                         bun_sys::Error {
                             // PORT NOTE: @intCast is identity here (E repr == Error.Int); bare `as` matches Zig @intFromEnum.
-                            errno: errno as bun_sys::error::Int,
+                            errno: errno as bun_sys::ErrorInt,
                             syscall: USE.tag(),
                             ..Default::default()
                         }

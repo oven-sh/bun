@@ -1461,7 +1461,7 @@ pub fn extract(global_this: &JSGlobalObject, value: JSValue) -> JsResult<Body> {
 /// Implementers supply `get_body_value`, `get_fetch_headers`, `get_form_data_encoding`,
 /// and optionally override `get_body_readable_stream` (Zig `@hasDecl` check).
 pub trait BodyMixin: BodyOwnerJs + Sized {
-    fn get_body_value(&mut self) -> &mut Value<'_>;
+    fn get_body_value(&mut self) -> &mut Value;
     fn get_fetch_headers(&self) -> Option<&FetchHeaders>;
     fn get_form_data_encoding(&mut self) -> JsResult<Option<Box<bun_core::form_data::AsyncFormData>>>;
 
@@ -1934,7 +1934,7 @@ impl<'a> ValueBufferer<'a> {
 
     pub fn run(
         &mut self,
-        value: &mut Value<'_>,
+        value: &mut Value,
         owned_readable_stream: Option<ReadableStream>,
     ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set — Zig used inferred `!void` with StreamAlreadyUsed/InvalidStream/etc.
@@ -2156,7 +2156,7 @@ impl<'a> ValueBufferer<'a> {
 
     fn buffer_locked_body_value(
         &mut self,
-        value: &mut Value<'_>,
+        value: &mut Value,
         owned_readable_stream: Option<ReadableStream>,
     ) -> Result<(), bun_core::Error> {
         debug_assert!(matches!(value, Value::Locked(_)));
@@ -2249,7 +2249,7 @@ impl<'a> ValueBufferer<'a> {
         Ok(())
     }
 
-    fn on_receive_value(ctx: *mut c_void, value: &mut Value<'_>) {
+    fn on_receive_value(ctx: *mut c_void, value: &mut Value) {
         // SAFETY: ctx was set from `self as *mut Self` in buffer_locked_body_value.
         let sink = unsafe { &mut *(ctx as *mut Self) };
         match value {

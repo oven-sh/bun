@@ -341,11 +341,13 @@ impl WhyCommand {
         package_pattern: &[u8],
         top_only: bool,
     ) -> Result<(), bun_core::Error> {
-        // PORT NOTE: `pm.lockfile` / `pm.options.depth` live on the gated
-        // `bun_install::package_manager_real` module; the active `PackageManager`
-        // stub lacks them. Body restored when reconciler-6 un-gates.
-        let _ = (ctx, pm, package_pattern, top_only);
-        todo!("blocked_on: bun_install::PackageManager::lockfile");
+        // PORT NOTE: `pm.lockfile` is now reachable on the stub, but the body
+        // below also needs `Lockfile::load_from_cwd` / `LoadResult::ok` /
+        // `pm.options.depth` / `Resolution::fmt` / `packages.get(idx)` —
+        // all still on the gated `package_manager_real` / `lockfile_real`
+        // modules. Body restored when those un-gate.
+        let _ = (ctx, &pm.lockfile, package_pattern, top_only);
+        todo!("blocked_on: bun_install::lockfile::Lockfile::load_from_cwd / PackageManagerOptionsStub::depth (package_manager_real un-gate, reconciler-6)");
 
         #[cfg(any())]
         {

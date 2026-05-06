@@ -1,6 +1,8 @@
 use core::ffi::c_void;
+use core::ptr::NonNull;
 
-use crate::event_loop::ConcurrentTask;
+use crate::event_loop::{ConcurrentTask, EventLoop};
+use crate::rare_data::RareData;
 use crate::{
     CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult, Strong, Task,
     VirtualMachineRef as VirtualMachine,

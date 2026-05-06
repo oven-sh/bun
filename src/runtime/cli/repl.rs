@@ -293,7 +293,7 @@ impl History {
             sys::Result::Ok(fd) => sys::File { handle: fd },
             sys::Result::Err(_) => return,
         };
-        let _close = scopeguard::guard((), |_| { let _ = file.close(); });
+        let file = scopeguard::guard(file, |file| { let _ = file.close(); });
         match file.write_all(&content) {
             sys::Result::Ok(()) => {}
             sys::Result::Err(_) => return,

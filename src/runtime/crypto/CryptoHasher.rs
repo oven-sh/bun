@@ -210,15 +210,16 @@ impl CryptoHasher {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_algorithm(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        let tag: &'static str = match this {
-            CryptoHasher::Evp(inner) => <&'static str>::from(inner.algorithm),
-            CryptoHasher::Zig(inner) => <&'static str>::from(inner.algorithm),
+        // Zig: `@tagName(inner.algorithm)` → `AlgorithmExt::tag_cstr` (ASCII).
+        let tag: &'static [u8] = match this {
+            CryptoHasher::Evp(inner) => inner.algorithm.tag_cstr().to_bytes(),
+            CryptoHasher::Zig(inner) => inner.algorithm.tag_cstr().to_bytes(),
             CryptoHasher::Hmac(inner) => match inner {
-                Some(hmac) => <&'static str>::from(hmac.algorithm),
+                Some(hmac) => hmac.algorithm.tag_cstr().to_bytes(),
                 None => return Err(Self::throw_hmac_consumed(global)),
             },
         };
-        bun_jsc::bun_string_jsc::create_utf8_for_js(global, tag.as_bytes())
+        bun_jsc::bun_string_jsc::create_utf8_for_js(global, tag)
     }
 
     // PORT NOTE: `#[bun_jsc::host_fn]` (Free) emits a bare `fn_name(g, f)` call,
@@ -428,7 +429,7 @@ impl CryptoHasher {
                     } else {
                         s
                     };
-                    match evp::Algorithm::MAP.get(key_bytes).copied() {
+                    match evp::MAP.get(key_bytes).copied() {
                         Some(a) => a,
                         None => {
                             return Err(global.throw_invalid_arguments(format_args!(

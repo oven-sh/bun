@@ -555,7 +555,9 @@ impl Subprocess<'_> {
                     };
                     if let PipeReader::State::Done(done) = &mut pipe.state {
                         let taken = core::mem::take(done);
-                        *out = Readable::Buffer(CowString::Owned(taken));
+                        *out = Readable::Buffer(readable::CowString::init_owned(
+                            taken.into_boxed_slice(),
+                        ));
                         // pipe.state was emptied via take()
                     }
                     // else: *out stays Readable::Ignore (set by mem::replace above).

@@ -714,7 +714,7 @@ pub mod random {
         let size = assert_size(global, size_value, 1, 0, MAX_POSSIBLE_LENGTH + 1)?;
 
         if !callback.is_undefined() {
-            let _ = validators::validate_function(global, b"callback", callback)?;
+            let _ = validators::validate_function(global, "callback", callback)?;
         }
 
         let (result, bytes) = ArrayBuffer::alloc::<{ JSType::ArrayBuffer }>(global, size)?;

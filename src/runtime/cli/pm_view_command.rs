@@ -14,7 +14,39 @@ use bun_url::URL;
 use bun_js_parser as ast;
 use bun_js_printer as JSPrinter;
 use bstr::BStr;
-use bun_alloc::Arena as Bump; // bumpalo::Bump re-export
+use bun_alloc::{Arena as Bump, AllocError}; // bumpalo::Bump re-export
+
+// ──────────────────────────────────────────────────────────────────────────
+// Local method-shim: upstream `bun_js_parser::Expr` exposes `set` /
+// `get_string_cloned` / `get_array` / `get_number` as *associated functions*
+// (`fn set(expr: &mut Expr, ...)`) rather than `&self` methods, so dot-call
+// syntax doesn't resolve. Wrap them in a local extension trait so the call
+// sites below can keep the natural `manifest.set(...)` shape.
+// ──────────────────────────────────────────────────────────────────────────
+trait ExprViewExt {
+    fn set(&mut self, bump: &Bump, name: &[u8], value: ast::Expr) -> Result<(), AllocError>;
+    fn get_string_cloned<'b>(&self, bump: &'b Bump, name: &[u8]) -> Result<Option<&'b [u8]>, AllocError>;
+    fn get_array(&self, name: &[u8]) -> Option<ast::ast::expr::ArrayIterator<'static>>;
+    fn get_number(&self, name: &[u8]) -> Option<(f64, logger::Loc)>;
+}
+impl ExprViewExt for ast::Expr {
+    #[inline]
+    fn set(&mut self, bump: &Bump, name: &[u8], value: ast::Expr) -> Result<(), AllocError> {
+        ast::Expr::set(self, bump, name, value)
+    }
+    #[inline]
+    fn get_string_cloned<'b>(&self, bump: &'b Bump, name: &[u8]) -> Result<Option<&'b [u8]>, AllocError> {
+        ast::Expr::get_string_cloned(self, bump, name)
+    }
+    #[inline]
+    fn get_array(&self, name: &[u8]) -> Option<ast::ast::expr::ArrayIterator<'static>> {
+        ast::Expr::get_array(self, name)
+    }
+    #[inline]
+    fn get_number(&self, name: &[u8]) -> Option<(f64, logger::Loc)> {
+        ast::Expr::get_number(self, name)
+    }
+}
 
 /// Helper: write `args` into `buf` and return the written subslice.
 /// Mirrors `std.fmt.bufPrint(buf, fmt, args) catch unreachable`.

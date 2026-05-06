@@ -110,8 +110,11 @@ impl<'a> Coordinator<'a> {
                 // Bound the wait so we wake to scale up even if no I/O arrives.
                 const MS_PER_S: i64 = 1000;
                 const NS_PER_MS: i64 = 1_000_000;
-                // TODO(port): verify bun_sys::Timespec field names/types
-                let ts = bun_sys::Timespec {
+                // PORT NOTE: `bun_core::Timespec` and `bun_uws::Timespec` are
+                // distinct nominal types but layout-identical (`#[repr(C)]
+                // {sec: i64, nsec: i64}`, both mirroring `bun.timespec`).
+                // `Loop::tick_with_timeout` takes the uws variant.
+                let ts = bun_uws::Timespec {
                     sec: self.scale_up_after_ms / MS_PER_S,
                     nsec: (self.scale_up_after_ms % MS_PER_S) * NS_PER_MS,
                 };

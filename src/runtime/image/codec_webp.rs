@@ -163,7 +163,7 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::
         if unsafe { WebPDemuxGetChunk(dmux, b"ICCP".as_ptr(), 1, &mut iter) } == 0 {
             break 'blk None;
         }
-        let mut iter = scopeguard::guard(iter, |mut it| {
+        let iter = scopeguard::guard(iter, |mut it| {
             // SAFETY: it was populated by WebPDemuxGetChunk above; matching release call.
             unsafe { WebPDemuxReleaseChunkIterator(&mut it) }
         });

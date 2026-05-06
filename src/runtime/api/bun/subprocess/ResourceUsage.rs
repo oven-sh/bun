@@ -15,6 +15,7 @@ unsafe extern "C" {
 }
 
 #[inline]
+#[track_caller]
 fn from_timeval_no_truncate(global: &JSGlobalObject, nsec: i64, sec: i64) -> JsResult<JSValue> {
     bun_jsc::from_js_host_call(global, || {
         // SAFETY: `global` is live for the duration of the call.

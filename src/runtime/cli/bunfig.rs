@@ -340,7 +340,8 @@ impl<'a> Parser<'a> {
             // TODO(b2-blocked): api::TransformOptions.define / api::StringMap (peechy codegen)
             
             {
-                let properties = expr.data.e_object().unwrap().properties.slice();
+                let obj = expr.data.e_object().unwrap();
+                let properties = obj.properties.slice();
                 let mut valid_count: usize = 0;
                 for prop in properties {
                     if !matches!(prop.value.as_ref().unwrap().data, ExprData::EString(_)) {
@@ -1017,7 +1018,6 @@ impl<'a> Parser<'a> {
                 jsx.development = jsx_dev;
             }
         }
-        let _ = (jsx_factory, jsx_fragment, jsx_import_source, jsx_runtime, jsx_dev);
 
         if let Some(expr) = expr_get(&json, b"debug") {
             if let Some(editor) = expr_get(&expr, b"editor") {

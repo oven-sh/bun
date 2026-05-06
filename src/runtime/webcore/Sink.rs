@@ -444,14 +444,11 @@ impl<T: JsSinkAbi> JSSink<T> {
 /// a `streams::Signal`. The pointer stored in `Signal.ptr` is the encoded
 /// JSValue bits, never dereferenced; vtable thunks bitcast back and call the
 /// generated `${abi_name}__onClose` / `__onReady` externs.
+// PORT NOTE: Zig nested-type `JSSink(SinkType, abi).SinkSignal` would be an
+// inherent associated type in Rust (unstable). Expose as a free generic and
+// let each caller alias via `type SinkSignal = sink::SinkSignal<Self>;`.
 #[repr(C)]
 pub struct SinkSignal<T>(core::marker::PhantomData<T>);
-
-impl<T> JSSink<T> {
-    // Zig: `JSSink.SinkSignal` — exposed as an associated path for callers that
-    // spell `webcore::FileSink::JSSink::SinkSignal::init(...)`.
-    pub type SinkSignal = SinkSignal<T>;
-}
 
 impl<T: JsSinkAbi> SinkSignal<T> {
     pub fn init(cpp: crate::webcore::jsc::JSValue) -> Signal {
@@ -461,7 +458,7 @@ impl<T: JsSinkAbi> SinkSignal<T> {
         // a raw bit-pattern (`@setRuntimeSafety(false)` in Zig).
         fn close<T: JsSinkAbi>(this: *mut c_void, _err: Option<SysError>) {
             // SAFETY: `this` is the JSValue bits stashed by `init`; bitcast back.
-            let cpp = JSValue::from_encoded(this as usize as i64);
+            let cpp = JSValue::from_encoded(this as usize);
             unsafe { T::on_close_extern(cpp, JSValue::UNDEFINED) };
         }
         fn ready<T: JsSinkAbi>(
@@ -469,7 +466,7 @@ impl<T: JsSinkAbi> SinkSignal<T> {
             _a: Option<crate::webcore::BlobSizeType>,
             _o: Option<crate::webcore::BlobSizeType>,
         ) {
-            let cpp = JSValue::from_encoded(this as usize as i64);
+            let cpp = JSValue::from_encoded(this as usize);
             unsafe { T::on_ready_extern(cpp, JSValue::UNDEFINED, JSValue::UNDEFINED) };
         }
         fn start(_this: *mut c_void) {}

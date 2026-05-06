@@ -7161,9 +7161,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 // Split out of the round-D/E gated block above so the parser entry point
 // (`Parser::parse` → `to_ast`) typechecks. Heavy sub-calls that are still
 // round-E (`ImportScanner::scan`, `ConvertESMExportsForHmr`,
-// `apply_repl_transforms`) are wired to their real signatures; their bodies
-// `todo!()` until their own un-gate rounds. `compute_character_frequency` is
-// fully un-gated (lexer.all_comments + CharFreq.scan live).
+// `apply_repl_transforms`) are wired to their real signatures and un-gated in
+// their own rounds. `compute_character_frequency` is fully un-gated
+// (lexer.all_comments + CharFreq.scan live).
 impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     P<'a, TYPESCRIPT, J, SCAN_ONLY>
 {

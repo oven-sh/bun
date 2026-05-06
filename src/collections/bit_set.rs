@@ -332,6 +332,13 @@ impl<const SIZE: usize> IntegerBitSet<SIZE> {
         }
     }
 
+    /// Iterate indices of set bits in ascending order.
+    /// Convenience wrapper for `iterator::<true, true>()` (Zig's `.iterator(.{ .kind = .set })`).
+    #[inline]
+    pub fn iter_set(&self) -> SingleWordIterator<SIZE, true> {
+        self.iterator::<true, true>()
+    }
+
     #[inline(always)]
     fn mask_bit(index: usize) -> usize {
         if SIZE == 0 {

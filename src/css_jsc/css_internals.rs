@@ -304,15 +304,6 @@ fn targets_from_js(global: &JSGlobalObject, jsobj: JSValue) -> JsResult<Browsers
     Ok(targets)
 }
 
-// blocked_on: bun_css::stylesheet_impl (StyleAttribute::parse is
-// ``-gated). Un-gate together with `src/css/css_parser.rs`
-// `mod stylesheet_impl`.
-#[cfg(any())]
-pub fn attr_test(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-    todo!("b2-blocked: css_internals::attr_test — gated on bun_css::stylesheet_impl")
-}
-
-
 pub fn attr_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     use bun_css::{
         ImportRecordHandler, MinifyOptions, ParserOptions, PrinterOptions, SrcIndex, StyleAttribute,

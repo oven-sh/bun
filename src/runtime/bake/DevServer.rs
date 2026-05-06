@@ -3972,16 +3972,16 @@ where
         let rbi = ctx.route_bundle_index;
         match ensure_route_is_bundled(dev, rbi, &mut ctx) {
             Ok(()) => {}
-            Err(jsc::JsError::Thrown) | Err(jsc::JsError::Terminated) =>
+            Err(e @ (jsc::JsError::Thrown | jsc::JsError::Terminated)) =>
                 // SAFETY: vm is JSC_BORROW; vm.global is valid for VM lifetime
-                unsafe { &*(*dev.vm).global }.report_active_exception_as_unhandled(),
+                unsafe { &*(*dev.vm).global }.report_active_exception_as_unhandled(e),
             Err(jsc::JsError::OutOfMemory) => bun_core::out_of_memory(),
         }
         return;
     }
 
-    if !dev.server.as_ref().unwrap().config().on_request.is_empty() {
-        dev.server.as_ref().unwrap().on_request(req, resp.as_any_response());
+    if dev.server.as_ref().unwrap().config().on_request.is_some() {
+        dev.server.as_mut().unwrap().on_request(req, resp.as_any_response());
         return;
     }
 
@@ -4010,12 +4010,19 @@ impl DevServer<'_> {
             };
             let rbi = ctx.route_bundle_index;
             // Found a matching route, bundle it and handle the request
-            ensure_route_is_bundled(self, rbi, &mut ctx)?;
+            match ensure_route_is_bundled(self, rbi, &mut ctx) {
+                Ok(()) => {}
+                Err(jsc::JsError::OutOfMemory) => return Err(bun_core::err!(OutOfMemory).into()),
+                Err(e @ (jsc::JsError::Thrown | jsc::JsError::Terminated)) => {
+                    // SAFETY: vm is JSC_BORROW; vm.global is valid for VM lifetime
+                    unsafe { &*(*self.vm).global }.report_active_exception_as_unhandled(e);
+                }
+            }
             return Ok(());
         }
 
         // No matching route found - render 404
-        send_built_in_not_found(resp);
+        send_built_in_not_found(&mut resp);
         Ok(())
     }
 
@@ -4030,14 +4037,16 @@ impl DevServer<'_> {
             req: ReqOrSaved::Req(req),
             resp,
             kind: deferred_request::HandlerKind::BundledHtmlPage,
-            route_bundle_index: self.get_or_put_route_bundle(route_bundle::UnresolvedIndex::Html(html))?,
+            route_bundle_index: self
+                .get_or_put_route_bundle(route_bundle::UnresolvedIndex::Html(html))
+                .map_err(|_| AllocError)?,
         };
         let rbi = ctx.route_bundle_index;
         match ensure_route_is_bundled(self, rbi, &mut ctx) {
             Ok(()) => {}
-            Err(jsc::JsError::Thrown) | Err(jsc::JsError::Terminated) =>
+            Err(e @ (jsc::JsError::Thrown | jsc::JsError::Terminated)) =>
                 // SAFETY: vm is JSC_BORROW; vm.global is valid for VM lifetime
-                unsafe { &*(*self.vm).global }.report_active_exception_as_unhandled(),
+                unsafe { &*(*self.vm).global }.report_active_exception_as_unhandled(e),
             Err(jsc::JsError::OutOfMemory) => return Err(AllocError),
         }
         Ok(())

@@ -1640,11 +1640,10 @@ impl FileSystemFlags {
         let js_type = val.js_type();
         if js_type.is_string_like() {
             let str = val.get_zig_string(ctx)?;
-            if str.is_empty() {
-                return ctx.throw_invalid_arguments(
+            if str.len == 0 {
+                return Err(ctx.throw_invalid_arguments(
                     "Expected flags to be a non-empty string. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags",
-                    format_args!(""),
-                );
+                ));
             }
             // it's definitely wrong when the string is super long
             else if str.len > 12 {

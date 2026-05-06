@@ -31,8 +31,8 @@ bun_output::declare_scope!(WindowsNamedPipeContext, visible);
 pub struct WindowsNamedPipeContext {
     // TODO(port): lifetime — intrusive refcount with custom drop = schedule_deinit
     ref_count: Cell<u32>,
-    // PORT NOTE: `socket` declared before `named_pipe` so Drop releases the Arc before
-    // tearing down the pipe — matches Zig `deinit` order (socket.deref() then named_pipe.deinit()).
+    // PORT NOTE: `socket` deref'd manually in `Drop` before `named_pipe` field-drop
+    // — matches Zig `deinit` order (socket.deref() then named_pipe.deinit()).
     socket: SocketType,
     named_pipe: WindowsNamedPipe,
 

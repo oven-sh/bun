@@ -682,17 +682,24 @@ impl FileReader {
                     } else {
                         // SAFETY: see `reader_buffer` decl.
                         unsafe { (*reader_buffer).clear() };
-                        self.pending.result =
-                            streams::Result::Temporary(ByteList::from_borrowed_slice_dangerous(buf));
+                        self.pending.result = streams::Result::Temporary(
+                            mem::ManuallyDrop::into_inner(unsafe {
+                                ByteList::from_borrowed_slice_dangerous(buf)
+                            }),
+                        );
                     }
                     break 'pending !was_done;
                 }
 
                 if !bun_core::is_slice_in_buffer(buf, self.buffered.allocated_slice()) {
                     self.pending.result = if self.reader().is_done() {
-                        streams::Result::TemporaryAndDone(ByteList::from_borrowed_slice_dangerous(buf))
+                        streams::Result::TemporaryAndDone(mem::ManuallyDrop::into_inner(unsafe {
+                            ByteList::from_borrowed_slice_dangerous(buf)
+                        }))
                     } else {
-                        streams::Result::Temporary(ByteList::from_borrowed_slice_dangerous(buf))
+                        streams::Result::Temporary(mem::ManuallyDrop::into_inner(unsafe {
+                            ByteList::from_borrowed_slice_dangerous(buf)
+                        }))
                     };
                     break 'pending !was_done;
                 }

@@ -324,6 +324,17 @@ pub trait FeatureIdTrait: Copy + PartialEq + Eq {
     fn value_type(&self) -> MediaFeatureType;
     fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr>;
     fn from_str(s: &[u8]) -> Option<Self>;
+    /// Serialize with a `min-`/`max-` prefix. Default writes the prefix then
+    /// delegates to `to_css`; specializations (e.g. `-webkit-device-pixel-ratio`)
+    /// override to interleave the prefix mid-name.
+    fn to_css_with_prefix(
+        &self,
+        prefix: &str,
+        dest: &mut Printer,
+    ) -> core::result::Result<(), PrintErr> {
+        dest.write_str(prefix)?;
+        self.to_css(dest)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, strum::IntoStaticStr)]

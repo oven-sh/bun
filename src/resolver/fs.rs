@@ -602,101 +602,79 @@ impl Entry {
 // }
 
 impl FileSystem {
-    pub fn normalize(&self, str: &[u8]) -> &[u8] {
+    pub fn normalize(&self, str: &[u8]) -> &'static [u8] {
         // PERF(port): was @call(bun.callmod_inline, ...)
-        path_handler::normalize_string(str, true, path_handler::Platform::Auto)
+        path_handler::normalize_string::<true, platform::Auto>(str)
     }
 
     pub fn normalize_buf<'a>(&self, buf: &'a mut [u8], str: &[u8]) -> &'a [u8] {
-        path_handler::normalize_string_buf(str, buf, false, path_handler::Platform::Auto, false)
+        path_handler::normalize_string_buf::<false, platform::Auto, false>(str, buf)
     }
 
     pub fn join(&self, parts: &[&[u8]]) -> &'static [u8] {
-        // TODO(port): join_buf is threadlocal static; returning &'static is unsound — Phase B should return into caller buf
+        // TODO(port): join_buf is threadlocal static; returning &'static matches Zig (caller copies before reuse)
         JOIN_BUF.with_borrow_mut(|buf| {
-            path_handler::join_string_buf(buf, parts, path_handler::Platform::Loose)
+            let s = path_handler::join_string_buf::<platform::Loose>(&mut buf[..], parts);
+            // SAFETY: borrows the threadlocal buffer; matches Zig pattern
+            unsafe { core::slice::from_raw_parts(s.as_ptr(), s.len()) }
         })
     }
 
     pub fn join_buf<'a>(&self, parts: &[&[u8]], buf: &'a mut [u8]) -> &'a [u8] {
-        path_handler::join_string_buf(buf, parts, path_handler::Platform::Loose)
+        path_handler::join_string_buf::<platform::Loose>(buf, parts)
     }
 
-    pub fn relative<'a>(&self, from: &'a [u8], to: &'a [u8]) -> &'a [u8] {
+    pub fn relative(&self, from: &[u8], to: &[u8]) -> &'static [u8] {
         path_handler::relative(from, to)
     }
 
-    pub fn relative_platform<'a, const PLATFORM: path_handler::Platform>(
+    pub fn relative_platform<P: path_handler::PlatformT>(
         &self,
-        from: &'a [u8],
-        to: &'a [u8],
-    ) -> &'a [u8] {
-        path_handler::relative_platform(from, to, PLATFORM, false)
+        from: &[u8],
+        to: &[u8],
+    ) -> &'static [u8] {
+        path_handler::relative_platform::<P, false>(from, to)
     }
 
-    pub fn relative_to<'a>(&'a self, to: &'a [u8]) -> &'a [u8] {
-        path_handler::relative(self.top_level_dir.as_bytes(), to)
+    pub fn relative_to(&self, to: &[u8]) -> &'static [u8] {
+        path_handler::relative(self.top_level_dir, to)
     }
 
-    pub fn relative_from<'a>(&'a self, from: &'a [u8]) -> &'a [u8] {
-        path_handler::relative(from, self.top_level_dir.as_bytes())
+    pub fn relative_from(&self, from: &[u8]) -> &'static [u8] {
+        path_handler::relative(from, self.top_level_dir)
     }
 
     pub fn abs_alloc(&self, parts: &[&[u8]]) -> Result<Box<[u8]>, AllocError> {
-        let joined = path_handler::join_abs_string(
-            self.top_level_dir.as_bytes(),
-            parts,
-            path_handler::Platform::Loose,
-        );
+        let joined = path_handler::join_abs_string::<platform::Loose>(self.top_level_dir, parts);
         Ok(Box::<[u8]>::from(joined))
     }
 
-    pub fn abs_alloc_z(&self, parts: &[&[u8]]) -> Result<bun_str::ZString, AllocError> {
-        let joined = path_handler::join_abs_string(
-            self.top_level_dir.as_bytes(),
-            parts,
-            path_handler::Platform::Loose,
-        );
+    pub fn abs_alloc_z(&self, parts: &[&[u8]]) -> Result<Box<[u8]>, AllocError> {
+        let joined = path_handler::join_abs_string::<platform::Loose>(self.top_level_dir, parts);
         // allocator.dupeZ → owned NUL-terminated buffer
-        Ok(bun_str::ZString::from_bytes(joined))
+        let mut v = Vec::with_capacity(joined.len() + 1);
+        v.extend_from_slice(joined);
+        v.push(0);
+        Ok(v.into_boxed_slice())
     }
 
     pub fn abs(&self, parts: &[&[u8]]) -> &[u8] {
-        path_handler::join_abs_string(
-            self.top_level_dir.as_bytes(),
-            parts,
-            path_handler::Platform::Loose,
-        )
+        path_handler::join_abs_string::<platform::Loose>(self.top_level_dir, parts)
     }
 
     pub fn abs_buf<'a>(&self, parts: &[&[u8]], buf: &'a mut [u8]) -> &'a [u8] {
-        path_handler::join_abs_string_buf(
-            self.top_level_dir.as_bytes(),
-            buf,
-            parts,
-            path_handler::Platform::Loose,
-        )
+        path_handler::join_abs_string_buf::<platform::Loose>(self.top_level_dir, buf, parts)
     }
 
     /// Like `abs_buf`, but returns null when the joined path (after `..`/`.`
     /// normalization) would overflow `buf`. Use when `parts` may contain
     /// user-controlled input of arbitrary length.
     pub fn abs_buf_checked<'a>(&self, parts: &[&[u8]], buf: &'a mut [u8]) -> Option<&'a [u8]> {
-        path_handler::join_abs_string_buf_checked(
-            self.top_level_dir.as_bytes(),
-            buf,
-            parts,
-            path_handler::Platform::Loose,
-        )
+        path_handler::join_abs_string_buf_checked::<platform::Loose>(self.top_level_dir, buf, parts)
     }
 
     pub fn abs_buf_z<'a>(&self, parts: &[&[u8]], buf: &'a mut [u8]) -> &'a ZStr {
-        path_handler::join_abs_string_buf_z(
-            self.top_level_dir.as_bytes(),
-            buf,
-            parts,
-            path_handler::Platform::Loose,
-        )
+        path_handler::join_abs_string_buf_z::<platform::Loose>(self.top_level_dir, buf, parts)
     }
 
     pub fn join_alloc(&self, parts: &[&[u8]]) -> Result<Box<[u8]>, AllocError> {
@@ -708,16 +686,16 @@ impl FileSystem {
         // TODO(port): std.posix.rlimit_resource / getrlimit — bun_sys equivalent
         #[cfg(unix)]
         {
-            Output::print("{{\n", ());
+            Output::print(format_args!("{{\n"));
 
             if let Ok(stack) = bun_sys::posix::getrlimit(bun_sys::posix::RlimitResource::STACK) {
-                Output::print("  \"stack\": [{}, {}],\n", (stack.cur, stack.max));
+                Output::print(format_args!("  \"stack\": [{}, {}],\n", stack.cur, stack.max));
             }
             if let Ok(files) = bun_sys::posix::getrlimit(bun_sys::posix::RlimitResource::NOFILE) {
-                Output::print("  \"files\": [{}, {}]\n", (files.cur, files.max));
+                Output::print(format_args!("  \"files\": [{}, {}]\n", files.cur, files.max));
             }
 
-            Output::print("}}\n", ());
+            Output::print(format_args!("}}\n"));
             Output::flush();
         }
     }
@@ -727,12 +705,59 @@ impl FileSystem {
 // RealFS
 // ──────────────────────────────────────────────────────────────────────────
 
+// Zig: `allocators.BSSMap(EntriesOption, dir_entry, false, 256, true)`.
+// `store_keys=false` → Rust `BSSMapInner<V, COUNT, RM_SLASH>` (est_key_len unused on inner shape).
 pub type EntriesOptionMap =
-    allocators::BSSMap<EntriesOption, { preallocate::counts::DIR_ENTRY }, false, 256, true>;
+    allocators::BSSMapInner<EntriesOption, { preallocate::counts::DIR_ENTRY }, true>;
+
+// Per-monomorphization singleton storage for `EntriesOption.Map`.
+bun_alloc::bss_map_inner! { pub entries_option_map : EntriesOption, { preallocate::counts::DIR_ENTRY }, true }
+
+/// ZST handle over the `entries_option_map()` singleton; keeps `RealFS.entries`
+/// field-shaped without inlining the (large) backing array.
+pub struct EntriesMap(());
+impl EntriesMap {
+    #[inline]
+    pub const fn new() -> Self { Self(()) }
+    #[inline]
+    fn inner(&self) -> &'static mut EntriesOptionMap {
+        // SAFETY: `entries_option_map()` returns the raw `*mut` singleton (Zig `*Self`);
+        // all access goes through `RealFS.entries_mutex`.
+        unsafe { &mut *entries_option_map() }
+    }
+    pub fn get(&self, key: &[u8]) -> Option<&'static mut EntriesOption> {
+        let r = self.inner().get(key)?;
+        // SAFETY: re-erase to 'static; storage is the BSSMap singleton.
+        Some(unsafe { &mut *(r as *mut EntriesOption) })
+    }
+    pub fn get_or_put(&self, key: &[u8]) -> core::result::Result<allocators::Result, AllocError> {
+        self.inner().get_or_put(key)
+    }
+    pub fn at_index(&self, index: allocators::IndexType) -> Option<&'static mut EntriesOption> {
+        let r = self.inner().at_index(index)?;
+        // SAFETY: re-erase to 'static; storage is the BSSMap singleton.
+        Some(unsafe { &mut *(r as *mut EntriesOption) })
+    }
+    pub fn put(
+        &self,
+        result: &mut allocators::Result,
+        value: EntriesOption,
+    ) -> core::result::Result<&'static mut EntriesOption, AllocError> {
+        let r = self.inner().put(result, value)?;
+        // SAFETY: re-erase to 'static; storage is the BSSMap singleton.
+        Ok(unsafe { &mut *(r as *mut EntriesOption) })
+    }
+    pub fn mark_not_found(&self, result: allocators::Result) {
+        self.inner().mark_not_found(result)
+    }
+    pub fn remove(&self, key: &[u8]) -> bool {
+        self.inner().remove(key)
+    }
+}
 
 pub struct RealFS {
     pub entries_mutex: Mutex,
-    pub entries: &'static EntriesOptionMap,
+    pub entries: EntriesMap,
     pub cwd: &'static [u8], // TODO(port): lifetime — interned
     pub file_limit: usize,
     pub file_quota: usize,
@@ -752,9 +777,6 @@ pub mod limit {
     #[cfg(not(unix))]
     pub static mut HANDLES_BEFORE: () = ();
 }
-
-static mut ENTRIES_OPTION_MAP: Option<&'static EntriesOptionMap> = None;
-static mut ENTRIES_OPTION_MAP_LOADED: bool = false;
 
 thread_local! {
     static TEMP_ENTRIES_OPTION: RefCell<core::mem::MaybeUninit<EntriesOption>> =

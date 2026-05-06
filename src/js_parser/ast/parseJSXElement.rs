@@ -1,8 +1,12 @@
-use crate::ast::{self as js_ast, e, E, Expr, ExprNodeIndex, ExprNodeList, Flags, G, Op};
+#![allow(unused_imports, unused_variables, dead_code, unused_mut)]
+use crate::ast::{self as js_ast, E, Expr, ExprNodeIndex, ExprNodeList, G};
 use crate::ast::expr::Data as ExprData;
 use crate::ast::p::P;
+use crate::flags;
 use crate::lexer::{self as js_lexer, T};
-use crate::parser::{JSXTag, JSXTransformType, JsxT};
+use crate::parser::{options, JSXTag, JSXTagData, JsxT};
+use crate::ast::op::Level;
+use bun_collections::BabyList;
 use bun_core::err;
 use bun_logger as logger;
 use bun_string::strings;
@@ -13,12 +17,6 @@ use bun_string::strings;
 
 impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
     pub fn parse_jsx_element(&mut self, loc: logger::Loc) -> Result<Expr, bun_core::Error> {
-        #[cfg(any())]
-        // blocked_on: JSXTag::parse (parsePrefix.rs _draft); P::store_name_in_ref gated (P.rs:640);
-        //   G::PropertyList = BabyList<G::Property> (BumpVec→BabyList conversion);
-        //   G::Property full struct-init (kind/flags/key/value/initializer/ts_decorators — no Default);
-        //   E::JSXElement.{tag, properties, children} field types; Flags::JSXElementBitset insert.
-        {
         let p = self;
         if SCAN_ONLY {
             p.needs_jsx_import = true;
@@ -29,22 +27,24 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // The tag may have TypeScript type arguments: "<Foo<T>/>"
         if TYPESCRIPT {
             // Pass a flag to the type argument skipper because we need to call
-            let _ = p.skip_type_script_type_arguments(true)?;
+            let _ = p.skip_type_script_type_arguments::<true>()?;
         }
 
         let mut previous_string_with_backslash_loc = logger::Loc::default();
-        let mut properties = G::Property::List::default();
+        let mut properties = G::PropertyList::default();
         let mut key_prop_i: i32 = -1;
-        let mut flags = Flags::JSXElement::Bitset::empty();
+        let mut flags = flags::JSXElementBitset::empty();
         let mut start_tag: Option<ExprNodeIndex> = None;
+        let mut can_be_inlined = false;
 
         // Fragments don't have props
         // Fragments of the form "React.Fragment" are not parsed as fragments.
-        if let JSXTag::Data::Tag(t) = &tag.data {
+        if let JSXTagData::Tag(t) = &tag.data {
             start_tag = Some(*t);
+            can_be_inlined = p.options.features.jsx_optimization_inline;
 
             let mut spread_loc: logger::Loc = logger::Loc::EMPTY;
-            let mut props = bumpalo::collections::Vec::<G::Property>::new_in(p.bump);
+            let mut props: Vec<G::Property> = Vec::new();
             let mut first_spread_prop_i: i32 = -1;
             let mut i: i32 = 0;
             'parse_attributes: loop {
@@ -54,20 +54,18 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         // Parse the prop name
                         let key_range = p.lexer.range();
                         let prop_name_literal = p.lexer.identifier;
-                        let special_prop = E::JSXElement::SpecialProp::MAP
-                            .get(prop_name_literal)
-                            .copied()
-                            .unwrap_or(E::JSXElement::SpecialProp::Any);
+                        let special_prop = E::JSXSpecialProp::from_bytes(prop_name_literal)
+                            .unwrap_or(E::JSXSpecialProp::Any);
                         p.lexer.next_inside_jsx_element()?;
 
-                        if special_prop == E::JSXElement::SpecialProp::Key {
+                        if special_prop == E::JSXSpecialProp::Key {
                             // <ListItem key>
                             if p.lexer.token != T::TEquals {
                                 // Unlike Babel, we're going to just warn here and move on.
                                 p.log.add_warning(
-                                    p.source,
+                                    Some(p.source),
                                     key_range.loc,
-                                    "\"key\" prop ignored. Must be a string, number or symbol.",
+                                    b"\"key\" prop ignored. Must be a string, number or symbol.",
                                 )?;
                                 i += 1; // defer i += 1
                                 continue;
@@ -77,7 +75,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         }
 
                         let prop_name =
-                            p.new_expr(E::String { data: prop_name_literal }, key_range.loc);
+                            p.new_expr(E::EString::init(prop_name_literal), key_range.loc);
 
                         // Parse the value
                         let value: Expr = if p.lexer.token != T::TEquals {
@@ -88,12 +86,17 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 logger::Loc { start: key_range.loc.start + key_range.len },
                             )
                         } else {
+                            can_be_inlined = false;
                             p.parse_jsx_prop_value_identifier(
                                 &mut previous_string_with_backslash_loc,
                             )?
                         };
 
-                        props.push(G::Property { key: Some(prop_name), value: Some(value), ..Default::default() });
+                        props.push(G::Property {
+                            key: Some(prop_name),
+                            value: Some(value),
+                            ..Default::default()
+                        });
                         i += 1; // defer i += 1
                     }
                     T::TOpenBrace => {
@@ -104,14 +107,16 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         match p.lexer.token {
                             T::TDotDotDot => {
                                 p.lexer.next()?;
+                                can_be_inlined = false;
 
                                 if first_spread_prop_i == -1 {
                                     first_spread_prop_i = i;
                                 }
                                 spread_loc = p.lexer.loc();
+                                let value = p.parse_expr(Level::Comma)?;
                                 props.push(G::Property {
-                                    value: Some(p.parse_expr(Level::Comma)?),
-                                    kind: G::Property::Kind::Spread,
+                                    value: Some(value),
+                                    kind: G::PropertyKind::Spread,
                                     ..Default::default()
                                 });
                             }
@@ -120,6 +125,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             //  ->
                             //  <div foo={foo} />
                             T::TIdentifier => {
+                                can_be_inlined = false;
+
                                 // we need to figure out what the key they mean is
                                 // to do that, we must determine the key name
                                 let expr = p.parse_expr(Level::Lowest)?;
@@ -128,25 +135,25 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                     match &expr.data {
                                         ExprData::EImportIdentifier(ident) => {
                                             break 'brk p.new_expr(
-                                                E::String { data: p.load_name_from_ref(ident.ref_) },
+                                                E::EString::init(p.load_name_from_ref(ident.ref_)),
                                                 expr.loc,
                                             );
                                         }
                                         ExprData::ECommonjsExportIdentifier(ident) => {
                                             break 'brk p.new_expr(
-                                                E::String { data: p.load_name_from_ref(ident.ref_) },
+                                                E::EString::init(p.load_name_from_ref(ident.ref_)),
                                                 expr.loc,
                                             );
                                         }
                                         ExprData::EIdentifier(ident) => {
                                             break 'brk p.new_expr(
-                                                E::String { data: p.load_name_from_ref(ident.ref_) },
+                                                E::EString::init(p.load_name_from_ref(ident.ref_)),
                                                 expr.loc,
                                             );
                                         }
                                         ExprData::EDot(dot) => {
                                             break 'brk p.new_expr(
-                                                E::String { data: dot.name },
+                                                E::EString::init(dot.name),
                                                 dot.name_loc,
                                             );
                                         }
@@ -160,9 +167,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                                     // If we get here, it's invalid
                                     p.log.add_error(
-                                        p.source,
+                                        Some(p.source),
                                         expr.loc,
-                                        "Invalid JSX prop shorthand, must be identifier, dot or string",
+                                        b"Invalid JSX prop shorthand, must be identifier, dot or string",
                                     )?;
                                     return Err(err!("SyntaxError"));
                                 };
@@ -170,7 +177,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 props.push(G::Property {
                                     value: Some(expr),
                                     key: Some(key),
-                                    kind: G::Property::Kind::Normal,
+                                    kind: G::PropertyKind::Normal,
                                     ..Default::default()
                                 });
                             }
@@ -186,7 +193,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 props.push(G::Property {
                                     value: Some(key),
                                     key: Some(key),
-                                    kind: G::Property::Kind::Normal,
+                                    kind: G::PropertyKind::Normal,
                                     ..Default::default()
                                 });
                             }
@@ -205,16 +212,18 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
             let is_key_after_spread =
                 key_prop_i > -1 && first_spread_prop_i > -1 && key_prop_i > first_spread_prop_i;
-            flags.set_present(Flags::JSXElement::IsKeyAfterSpread, is_key_after_spread);
-            properties = G::Property::List::move_from_list(&mut props);
+            if is_key_after_spread {
+                flags.insert(flags::JSXElement::IsKeyAfterSpread);
+            }
+            properties = G::PropertyList::move_from_list(props);
             if is_key_after_spread
-                && p.options.jsx.runtime == js_parser::options::JSXRuntime::Automatic
+                && p.options.jsx.runtime == options::JSXRuntime::Automatic
                 && !p.has_classic_runtime_warned
             {
                 p.log.add_warning(
-                    p.source,
+                    Some(p.source),
                     spread_loc,
-                    "\"key\" prop after a {...spread} is deprecated in JSX. Falling back to classic runtime.",
+                    b"\"key\" prop after a {...spread} is deprecated in JSX. Falling back to classic runtime.",
                 )?;
                 p.has_classic_runtime_warned = true;
             }
@@ -240,9 +249,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             let r = p.lexer.range();
             // Not dealing with this right now.
             p.log.add_range_error(
-                p.source,
+                Some(p.source),
                 r,
-                "Invalid JSX escape - use XML entity codes quotes or pass a JavaScript string instead",
+                b"Invalid JSX escape - use XML entity codes quotes or pass a JavaScript string instead",
             )?;
             return Err(err!("SyntaxError"));
         }
@@ -273,13 +282,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         // Use ExpectJSXElementChild() so we parse child strings
         p.lexer.expect_jsx_element_child(T::TGreaterThan)?;
-        let mut children = bumpalo::collections::Vec::<Expr>::new_in(p.bump);
+        let mut children: Vec<Expr> = Vec::new();
         // var last_element_i: usize = 0;
 
         loop {
             match p.lexer.token {
                 T::TStringLiteral => {
-                    children.push(p.new_expr(p.lexer.to_e_string()?, loc));
+                    let e_string = p.lexer.to_e_string()?;
+                    children.push(p.new_expr(e_string, loc));
                     p.lexer.next_jsx_element_child()?;
                 }
                 T::TOpenBrace => {
@@ -293,6 +303,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                     // The expression is optional, and may be absent
                     if p.lexer.token != T::TCloseBrace {
+                        if can_be_inlined {
+                            can_be_inlined = false;
+                        }
+
                         let mut item = p.parse_expr(Level::Lowest)?;
                         if is_spread {
                             item = p.new_expr(E::Spread { value: item }, loc);
@@ -327,10 +341,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     let end_tag = JSXTag::parse(p)?;
 
                     if end_tag.name != tag.name {
+                        // TODO(port): allocator param dropped from Zig signature.
                         p.log.add_range_error_fmt_with_note(
-                            p.source,
+                            Some(p.source),
                             end_tag.range,
-                            // TODO(port): allocator param dropped; confirm signature in Phase B
                             format_args!(
                                 "Expected closing JSX tag to match opening tag \"\\<{}\\>\"",
                                 bstr::BStr::new(tag.name)
@@ -348,7 +362,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     return Ok(p.new_expr(
                         E::JSXElement {
                             tag: end_tag.data.as_expr(),
-                            children: ExprNodeList::move_from_list(&mut children),
+                            children: ExprNodeList::move_from_list(children),
                             properties,
                             key_prop_index: key_prop_i,
                             flags,
@@ -364,9 +378,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 }
             }
         }
-        } // end #[cfg(any())]
-        let _ = loc;
-        todo!("b2-ast-D: parse_jsx_element body")
     }
 }
 
@@ -374,6 +385,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 // PORT STATUS
 //   source:     src/js_parser/ast/parseJSXElement.zig (319 lines)
 //   confidence: medium
-//   todos:      2
-//   notes:      const-generic mixin over NewParser_; `defer i += 1` inlined at arm exits; arena-backed lists → bumpalo::Vec via p.bump; Expr::Data variant paths and G::Property struct-init shape need Phase-B fixup.
+//   todos:      1
+//   notes:      const-generic mixin over NewParser_; `defer i += 1` inlined at arm exits; arena-backed lists → std Vec → BabyList::move_from_list (Phase B: route through bump arena); JSXTag::parse currently gated in parser.rs (blocked).
 // ──────────────────────────────────────────────────────────────────────────

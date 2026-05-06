@@ -617,12 +617,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             )?;
         }
 
-        // PORT NOTE: ParseClassOptions::ts_decorators is `&'a [Expr]` in the Rust port but Zig
-        // passes `ExprNodeList`. Leak the BabyList slice into a `'a` borrow (arena-owned).
-        let ts_decorators_slice: &'a [Expr] = unsafe {
-            core::slice::from_raw_parts(ts_decorators.ptr.as_ptr(), ts_decorators.len as usize)
-        };
-        core::mem::forget(ts_decorators);
+        // PORT NOTE: spec passes the arena-backed `[]ExprNodeIndex` slice directly into
+        // `ParseClassOptions{.ts_decorators = ts_decorators}`. `ParseClassOptions::ts_decorators`
+        // is currently typed `&'a [Expr]` (parser.rs), so until that field is widened to
+        // `ExprNodeList` we copy into the arena (Expr is `Copy`) and let `ts_decorators` drop
+        // normally — no `mem::forget` / `from_raw_parts` lifetime laundering (forbidden per
+        // PORTING.md §Forbidden patterns; would leak heap when origin is `Owned`).
+        let ts_decorators_slice: &'a [Expr] = p.allocator.alloc_slice_copy(ts_decorators.slice());
 
         let class = p.parse_class(
             class_keyword,

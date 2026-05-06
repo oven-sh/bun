@@ -1015,127 +1015,125 @@ impl PackageJSON {
                 if !boolean {
                     package_json.side_effects = SideEffects::False;
                 }
-            } else if matches!(side_effects_field.data, js_ast::ExprData::EArray(_)) {
+            } else if let js_ast::ExprData::EArray(e_array) = &side_effects_field.data {
                 // Handle arrays, including empty arrays
-                if let Some(array_) = side_effects_field.as_array() {
-                    let mut array = array_.clone();
-                    let mut map = SideEffectsMap::default();
-                    let mut glob_list = GlobList::default();
-                    let mut has_globs = false;
-                    let mut has_exact = false;
+                // PORT NOTE: reshaped — `ArrayIterator` is not `Clone`; iterate the
+                // underlying `BabyList<Expr>` slice directly for both passes.
+                let items = e_array.items.slice();
+                let mut map = SideEffectsMap::default();
+                let mut glob_list = GlobList::default();
+                let mut has_globs = false;
+                let mut has_exact = false;
 
-                    // First pass: check if we have glob patterns and exact patterns
-                    while let Some(item) = array.next() {
-                        if let Some(name) = item.as_string() {
-                            if strings::contains_char(&name, b'*')
-                                || strings::contains_char(&name, b'?')
-                                || strings::contains_char(&name, b'[')
-                                || strings::contains_char(&name, b'{')
-                            {
-                                has_globs = true;
-                            } else {
-                                has_exact = true;
-                            }
+                // First pass: check if we have glob patterns and exact patterns
+                for item in items {
+                    if let Some(name) = item.as_utf8_string_literal() {
+                        if strings::contains_char(name, b'*')
+                            || strings::contains_char(name, b'?')
+                            || strings::contains_char(name, b'[')
+                            || strings::contains_char(name, b'{')
+                        {
+                            has_globs = true;
+                        } else {
+                            has_exact = true;
                         }
                     }
+                }
 
-                    // Reset array for second pass
-                    array = array_.clone();
+                // If the array is empty, treat it as false (no side effects)
+                if !has_globs && !has_exact {
+                    package_json.side_effects = SideEffects::False;
+                } else if has_globs && has_exact {
+                    // Mixed patterns - use both exact and glob matching
+                    map.reserve(items.len());
+                    glob_list.reserve(items.len());
 
-                    // If the array is empty, treat it as false (no side effects)
-                    if !has_globs && !has_exact {
-                        package_json.side_effects = SideEffects::False;
-                    } else if has_globs && has_exact {
-                        // Mixed patterns - use both exact and glob matching
-                        map.reserve(array.array.items.len());
-                        glob_list.reserve(array.array.items.len());
-
-                        while let Some(item) = array.next() {
-                            if let Some(name) = item.as_string() {
-                                // Skip CSS files as they're not relevant for tree-shaking
-                                if bun_paths::extension(&name) == b".css" {
-                                    continue;
-                                }
-
-                                // Store the pattern relative to the package directory
-                                let joined = [
-                                    json_source.path.name.dir_with_trailing_slash(),
-                                    &name,
-                                ];
-
-                                let pattern = r.fs.join(&joined);
-
-                                if strings::contains_char(&name, b'*')
-                                    || strings::contains_char(&name, b'?')
-                                    || strings::contains_char(&name, b'[')
-                                    || strings::contains_char(&name, b'{')
-                                {
-                                    // Normalize pattern to use forward slashes for cross-platform compatibility
-                                    let normalized_pattern =
-                                        Self::normalize_path_for_glob(pattern).unwrap_or_else(|_| pattern.to_vec());
-                                    // PERF(port): was appendAssumeCapacity
-                                    glob_list.push(normalized_pattern.into_boxed_slice());
-                                } else {
-                                    // PERF(port): was getOrPutAssumeCapacity
-                                    let _ = map.insert(
-                                        bun_collections::StringHashMapUnownedKey::init(pattern),
-                                        (),
-                                    );
-                                }
+                    for item in items {
+                        if let Some(name) = item.as_utf8_string_literal() {
+                            // Skip CSS files as they're not relevant for tree-shaking
+                            if bun_paths::extension(name) == b".css" {
+                                continue;
                             }
-                        }
-                        package_json.side_effects = SideEffects::Mixed(MixedPatterns { exact: map, globs: glob_list });
-                    } else if has_globs {
-                        // Only glob patterns
-                        glob_list.reserve(array.array.items.len());
-                        while let Some(item) = array.next() {
-                            if let Some(name) = item.as_string() {
-                                // Skip CSS files as they're not relevant for tree-shaking
-                                if bun_paths::extension(&name) == b".css" {
-                                    continue;
-                                }
 
-                                // Store the pattern relative to the package directory
-                                let joined = [
-                                    json_source.path.name.dir_with_trailing_slash(),
-                                    &name,
-                                ];
+                            // Store the pattern relative to the package directory
+                            let joined: [&[u8]; 2] = [
+                                json_source.path.name.dir_with_trailing_slash(),
+                                name,
+                            ];
 
-                                let pattern = r.fs.join(&joined);
+                            let pattern = r.fs.join(&joined);
+
+                            if strings::contains_char(name, b'*')
+                                || strings::contains_char(name, b'?')
+                                || strings::contains_char(name, b'[')
+                                || strings::contains_char(name, b'{')
+                            {
                                 // Normalize pattern to use forward slashes for cross-platform compatibility
                                 let normalized_pattern =
                                     Self::normalize_path_for_glob(pattern).unwrap_or_else(|_| pattern.to_vec());
                                 // PERF(port): was appendAssumeCapacity
                                 glob_list.push(normalized_pattern.into_boxed_slice());
-                            }
-                        }
-                        package_json.side_effects = SideEffects::Glob(glob_list);
-                    } else {
-                        // Only exact matches
-                        map.reserve(array.array.items.len());
-                        while let Some(item) = array.next() {
-                            if let Some(name) = item.as_string() {
-                                let joined = [
-                                    json_source.path.name.dir_with_trailing_slash(),
-                                    &name,
-                                ];
-
+                            } else {
                                 // PERF(port): was getOrPutAssumeCapacity
                                 let _ = map.insert(
-                                    bun_collections::StringHashMapUnownedKey::init(r.fs.join(&joined)),
+                                    StringHashMapUnownedKey::init(pattern),
                                     (),
                                 );
                             }
                         }
-                        package_json.side_effects = SideEffects::Map(map);
                     }
+                    package_json.side_effects = SideEffects::Mixed(MixedPatterns { exact: map, globs: glob_list });
+                } else if has_globs {
+                    // Only glob patterns
+                    glob_list.reserve(items.len());
+                    for item in items {
+                        if let Some(name) = item.as_utf8_string_literal() {
+                            // Skip CSS files as they're not relevant for tree-shaking
+                            if bun_paths::extension(name) == b".css" {
+                                continue;
+                            }
+
+                            // Store the pattern relative to the package directory
+                            let joined: [&[u8]; 2] = [
+                                json_source.path.name.dir_with_trailing_slash(),
+                                name,
+                            ];
+
+                            let pattern = r.fs.join(&joined);
+                            // Normalize pattern to use forward slashes for cross-platform compatibility
+                            let normalized_pattern =
+                                Self::normalize_path_for_glob(pattern).unwrap_or_else(|_| pattern.to_vec());
+                            // PERF(port): was appendAssumeCapacity
+                            glob_list.push(normalized_pattern.into_boxed_slice());
+                        }
+                    }
+                    package_json.side_effects = SideEffects::Glob(glob_list);
                 } else {
-                    // Empty array - treat as false (no side effects)
-                    package_json.side_effects = SideEffects::False;
+                    // Only exact matches
+                    map.reserve(items.len());
+                    for item in items {
+                        if let Some(name) = item.as_utf8_string_literal() {
+                            let joined: [&[u8]; 2] = [
+                                json_source.path.name.dir_with_trailing_slash(),
+                                name,
+                            ];
+
+                            // PERF(port): was getOrPutAssumeCapacity
+                            let _ = map.insert(
+                                StringHashMapUnownedKey::init(r.fs.join(&joined)),
+                                (),
+                            );
+                        }
+                    }
+                    package_json.side_effects = SideEffects::Map(map);
                 }
             }
         }
 
+        // TODO(b2-blocked): bun_install::{Dependency, Architecture, OperatingSystem,
+        // lockfile::Package::DependencyGroup, PackageManager}. The whole
+        // dependencies/os/cpu block is install-tier.
+        #[cfg(any())]
         if INCLUDE_DEPENDENCIES == IncludeDependencies::Main || INCLUDE_DEPENDENCIES == IncludeDependencies::Local {
             'update_dependencies: {
                 if let Some(pkg) = package_id {
@@ -1284,6 +1282,8 @@ impl PackageJSON {
         }
 
         // used by `bun run`
+        // TODO(b2-blocked): bun_js_parser `Expr::as_property_string_map` (gated round-C).
+        #[cfg(any())]
         if include_scripts {
             if let Some(scripts) = json.as_property_string_map(b"scripts") {
                 package_json.scripts = Some(scripts);
@@ -1292,10 +1292,18 @@ impl PackageJSON {
                 package_json.config = Some(config);
             }
         }
+        let _ = (include_scripts, package_id);
 
+        // PORT NOTE: reshaped for borrowck — assign source last (see struct init above).
+        package_json.source = (*json_source).clone();
         Some(package_json)
     }
+}
 
+// TODO(b2-blocked): `self.hash` field referenced in Zig but not declared on
+// PackageJSON; gate until the field lands.
+#[cfg(any())]
+impl PackageJSON {
     pub fn hash_module(&self, module: &[u8]) -> u32 {
         let mut hasher = Wyhash::init(0);
         // TODO(port): `this.hash` field referenced in Zig but not declared on PackageJSON; preserving call shape

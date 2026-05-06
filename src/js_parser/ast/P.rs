@@ -3340,17 +3340,18 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     pub fn create_default_name(&mut self, loc: logger::Loc) -> Result<js_ast::LocRef, bun_core::Error> {
         // PORT NOTE: Zig `try p.source.path.name.nonUniqueNameString(allocator)` allocates the
         // sanitized identifier, then `allocPrint` formats `{s}_default`. logger::fs::PathName
-        // exposes the same sanitizer as a Display formatter (`fmt_identifier()`), so write both
-        // pieces into the bump arena in one shot.
-        let mut buf = BumpVec::new_in(self.allocator);
-        let _ = write!(&mut buf, "{}_default", self.source.path.name.fmt_identifier());
-        let identifier: &'a [u8] = buf.into_bump_slice();
+        // exposes the same sanitizer as a Display formatter (`fmt_identifier()`), so format once
+        // and copy into the bump arena.
+        let identifier: &'a [u8] = {
+            let s = format!("{}_default", self.source.path.name.fmt_identifier());
+            self.allocator.alloc_slice_copy(s.as_bytes())
+        };
 
         let name = js_ast::LocRef { loc, ref_: Some(self.new_symbol(js_ast::symbol::Kind::Other, identifier)?) };
 
         // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
         let scope = unsafe { &mut *self.current_scope };
-        scope.generated.push(name.ref_.unwrap());
+        scope.generated.append(name.ref_.unwrap())?;
 
         Ok(name)
     }

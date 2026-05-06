@@ -629,13 +629,14 @@ impl JSValue {
         T::from_js_direct(self)
     }
     /// `JSValue.asPromise()` — downcast to `JSPromise` (matches `JSInternalPromise` too).
-    pub fn as_promise(self) -> Option<&'static mut JSPromise> {
+    /// Returns a raw pointer (mirrors Zig `?*JSPromise`); conjuring a
+    /// `&'static mut` here would permit aliased `&mut` UB across two calls on
+    /// the same value (PORTING.md §Forbidden).
+    pub fn as_promise(self) -> Option<*mut JSPromise> {
         if !self.is_cell() { return None; }
         // SAFETY: `self` is a cell; FFI returns null when not a promise type.
         let p = unsafe { JSC__JSValue__asPromise(self) };
-        // SAFETY: GC-managed cell; lifetime is `'static` from Rust's POV (caller
-        // must `ensure_still_alive` across GC safepoints).
-        if p.is_null() { None } else { Some(unsafe { &mut *p }) }
+        if p.is_null() { None } else { Some(p) }
     }
     /// `JSValue.isAnyError()` — Error, Exception, or has `[Symbol.error]`.
     #[inline]
@@ -648,8 +649,9 @@ impl JSValue {
     /// promise's await-chain frames to this error's stack.
     pub fn attach_async_stack_from_promise(self, global: &JSGlobalObject, promise: &JSPromise) {
         let _ = (global, promise);
-        // TODO(b2): JSC__JSValue__attachAsyncStackFromPromise — gated until
-        // the C++ shim is declared in jsc_sys.
+        // Silently dropping async stack frames is a wrong implementation in
+        // live code — fail loudly until the C++ shim is wired.
+        todo!("JSValue::attach_async_stack_from_promise — JSC__JSValue__attachAsyncStackFromPromise FFI not yet declared")
     }
     pub fn as_any_promise(self) -> Option<AnyPromise> {
         if !self.is_cell() { return None; }
@@ -733,10 +735,13 @@ impl JSValue {
     }
 
     pub fn get(self, global: &JSGlobalObject, property: &[u8]) -> JsResult<Option<JSValue>> {
-        // Fast-path: known builtin keys avoid allocating a `JSC::Identifier`.
-        if let Some(builtin) = BuiltinName::get(property) {
-            return self.fast_get(global, builtin);
-        }
+        // Spec (JSValue.zig:1536-1540) only routes to `fastGet` when the key is
+        // *comptime-known*. A runtime byte-slice match here is wrong because
+        // C++ `builtinNameMap` maps e.g. `asyncIterator` → `Symbol.asyncIterator`
+        // (and `inspectCustom` → `Symbol.for("nodejs.util.inspect.custom")`), so
+        // a dynamic `b"asyncIterator"` would fetch the *symbol* property instead
+        // of the *string* property. Always go through the by-name FFI; callers
+        // that statically know they want a builtin should call `fast_get` directly.
         // SAFETY: `global` is live; bytes valid for the call.
         let v = unsafe {
             JSC__JSValue__getIfPropertyExistsImpl(self, global, property.as_ptr(), property.len())
@@ -1718,10 +1723,13 @@ impl JSGlobalObject {
         // SAFETY: `vm()` never returns null for a live global; lifetime tied to &self.
         unsafe { &*JSC__JSGlobalObject__vm(self) }
     }
-    pub fn bun_vm(&self) -> &mut virtual_machine::VirtualMachine {
-        // SAFETY: `bunVM()` never returns null for a Bun-owned global; lifetime tied
-        // to &self (caller must not outlive the global).
-        unsafe { &mut *JSC__JSGlobalObject__bunVM(self) }
+    pub fn bun_vm(&self) -> *mut virtual_machine::VirtualMachine {
+        // Spec (JSGlobalObject.zig:620) returns `*jsc.VirtualMachine` (raw
+        // pointer). Returning `&mut` from `&self` would permit two callers to
+        // hold aliased `&mut VirtualMachine` simultaneously — UB per
+        // PORTING.md §Forbidden.
+        // SAFETY: `bunVM()` never returns null for a Bun-owned global.
+        unsafe { JSC__JSGlobalObject__bunVM(self) }
     }
     #[inline]
     pub fn has_exception(&self) -> bool {
@@ -2024,6 +2032,7 @@ unsafe extern "C" {
     fn JSC__VM__releaseWeakRefs(vm: *mut VM);
     fn JSC__VM__collectAsync(vm: *mut VM);
     fn JSC__VM__heapSize(vm: *mut VM) -> usize;
+    fn JSC__VM__runGC(vm: *mut VM, sync: bool) -> usize;
     fn JSC__JSGlobalObject__handleRejectedPromises(global: *mut JSGlobalObject);
 }
 impl VM {
@@ -2050,10 +2059,10 @@ impl VM {
         // SAFETY: `self` is a live JSC::VM.
         unsafe { JSC__VM__heapSize(self as *const _ as *mut _) }
     }
-    /// `VM.runGC(sync)` (VM.zig:84).
-    pub fn run_gc(&self, _sync: bool) -> usize {
-        // TODO(b2): JSC__VM__runGC FFI — gated until VM.rs un-gates.
-        self.heap_size()
+    /// `VM.runGC(sync)` (VM.zig:80-82).
+    pub fn run_gc(&self, sync: bool) -> usize {
+        // SAFETY: `self` is a live JSC::VM.
+        unsafe { JSC__VM__runGC(self as *const _ as *mut _, sync) }
     }
 }
 
@@ -2072,7 +2081,9 @@ impl JSGlobalObject {
     pub fn report_active_exception_as_unhandled(&self, err: JsError) {
         let exception = self.take_exception(err);
         if !exception.is_termination_exception() {
-            let _ = self.bun_vm().uncaught_exception(self, exception, false);
+            // SAFETY: `bun_vm()` never returns null for a Bun-owned global; we
+            // hold the only `&mut` to it for the duration of this call.
+            let _ = unsafe { (*self.bun_vm()).uncaught_exception(self, exception, false) };
         }
     }
 }

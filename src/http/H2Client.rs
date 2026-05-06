@@ -48,11 +48,18 @@ pub static live_streams: AtomicI32 = AtomicI32::new(0);
 pub use live_sessions as LIVE_SESSIONS;
 pub use live_streams as LIVE_STREAMS;
 
-#[path = "h2_client/Stream.rs"]         pub mod stream;
-#[path = "h2_client/ClientSession.rs"]  pub mod client_session;
-#[path = "h2_client/PendingConnect.rs"] pub mod pending_connect;
-#[path = "h2_client/dispatch.rs"]       pub mod dispatch;
-#[path = "h2_client/encode.rs"]         pub mod encode;
+// reconciler-3: Stream/ClientSession/dispatch/encode reference `bun_str`/
+// `bun_output`/`crate::state`/`crate::Signal`/`http_thread::InitOpts` that are
+// still gated; re-gate until those crate roots land. PendingConnect is real.
+// Type-only stubs keep `HTTPContext`'s `h2::ClientSession`/`h2::Stream`
+// pointer fields resolving.
+#[cfg(any())] #[path = "h2_client/Stream.rs"]         pub mod stream;
+#[cfg(not(any()))] pub mod stream { pub struct Stream; }
+#[cfg(any())] #[path = "h2_client/ClientSession.rs"]  pub mod client_session;
+#[cfg(not(any()))] pub mod client_session { pub struct ClientSession; }
+#[path = "h2_client/PendingConnect.rs"]               pub mod pending_connect;
+#[cfg(any())] #[path = "h2_client/dispatch.rs"]       pub mod dispatch;
+#[cfg(any())] #[path = "h2_client/encode.rs"]         pub mod encode;
 
 pub use stream::Stream;
 pub use client_session::ClientSession;

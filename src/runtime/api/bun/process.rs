@@ -46,13 +46,12 @@ mod _exit_handler_variants {
     use crate::api::bun::subprocess::Subprocess;
 }
 
-// posix_spawn(2) wrappers live in the sibling `spawn` module
-// (src/runtime/api/bun/spawn.rs → `super::spawn::bun_spawn`), not the
-// low-tier `bun_spawn` crate. Gated until that sibling compiles.
-// TODO(b2-blocked): super::spawn — wire `use super::spawn::bun_spawn as posix_spawn;`.
-#[cfg(any())]
-use super::spawn::bun_spawn as posix_spawn;
-#[cfg(any())]
+// posix_spawn(2) wrappers live in the sibling `bun_spawn` module
+// (src/runtime/api/bun/spawn.rs → `crate::api::bun_spawn::posix_spawn`).
+#[allow(unused_imports)]
+use super::bun_spawn::posix_spawn;
+#[cfg(unix)]
+#[allow(unused_imports)]
 use posix_spawn::{Actions as PosixSpawnActions, Attr as PosixSpawnAttr};
 /// `posix_spawn::WaitPidResult` — local mirror so `Status::from` and the
 /// waiter-thread queue compile while `super::spawn` is gated.

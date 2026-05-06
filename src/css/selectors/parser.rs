@@ -2468,7 +2468,8 @@ pub enum SimpleSelectorParseResult<Impl: SelectorImpl> {
 }
 
 /// A pseudo element.
-#[derive(Clone, PartialEq)]
+// PORT NOTE: see PseudoClass — `PartialEq` derive dropped (Box<Selector>/TokenList).
+#[derive(Clone)]
 pub enum PseudoElement {
     /// The [::after](https://drafts.csswg.org/css-pseudo-4/#selectordef-after) pseudo element.
     After,

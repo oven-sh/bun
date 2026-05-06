@@ -62,9 +62,11 @@ pub fn to_match_object(
 
     // handle failure
     let diff_formatter = DiffFormatter {
-        received: received_object,
-        expected: property_matchers,
-        global_this: global,
+        received_string: None,
+        expected_string: None,
+        received: Some(received_object),
+        expected: Some(property_matchers),
+        global_this: Some(global),
         not,
     };
 

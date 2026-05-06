@@ -1900,9 +1900,10 @@ where
         // we have to clone the request headers here since they will soon belong to a different request
         if !request_object.has_fetch_headers() {
             if !HTTP3 {
-                request_object.set_fetch_headers(Some(response::HeadersRef::from(
-                    FetchHeaders::create_from_uws(req),
-                )));
+                // SAFETY: create_from_uws returns a freshly-allocated +1 ref.
+                request_object.set_fetch_headers(Some(unsafe {
+                    response::HeadersRef::adopt(FetchHeaders::create_from_uws(req))
+                }));
             }
         }
 

@@ -500,7 +500,7 @@ impl<'a> State<'a> {
             }
             self.draw_buf.extend_from_slice(fmt!("<cyan>└─<r> ").as_bytes());
             if let Some(proc) = &handle.process {
-                match proc.status {
+                match &proc.status {
                     Status::Running => {
                         self.draw_buf.extend_from_slice(fmt!("<cyan>Running...<r>\n").as_bytes());
                     }

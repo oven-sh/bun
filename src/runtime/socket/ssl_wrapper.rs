@@ -200,7 +200,7 @@ impl<T: Copy> SSLWrapper<T> {
     }
 
     pub fn init(
-        ssl_options: crate::server::server_config::SSLConfig,
+        ssl_options: &crate::server::server_config::SSLConfig,
         is_client: bool,
         handlers: Handlers<T>,
     ) -> Result<Self, bun_core::Error> {

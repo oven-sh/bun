@@ -192,14 +192,99 @@ impl Default for EventLoopDelayMonitor {
     }
 }
 impl EventLoopDelayMonitor {
+    /// PORT NOTE (b2-cycle): `vm.timer` is `()` on the low-tier
+    /// `VirtualMachine`; the real `timer::All` lives in `RuntimeState`.
+    /// Recover it as a raw ptr — `self` is a field of that same `All`, so
+    /// callers dereference per-field under `// SAFETY:` (raw-ptr-per-field
+    /// re-entry pattern, jsc_hooks.rs).
+    #[inline]
+    fn timer_all() -> *mut All {
+        let state = crate::jsc_hooks::runtime_state();
+        // SAFETY: `runtime_state()` is non-null after `bun_runtime::init()`.
+        unsafe { core::ptr::addr_of_mut!((*state).timer) }
+    }
+
+    pub fn enable(
+        &mut self,
+        _vm: &mut bun_jsc::VirtualMachine,
+        histogram: JSValue,
+        resolution_ms: i32,
+    ) {
+        if self.enabled {
+            return;
+        }
+        self.js_histogram = histogram;
+        self.resolution_ms = resolution_ms;
+        self.enabled = true;
+
+        // Schedule timer
+        let now = Timespec::now(TimespecMockMode::ForceRealTime);
+        let next = now.add_ms(i64::from(resolution_ms));
+        self.event_loop_timer.next = ElTimespec { sec: next.sec, nsec: next.nsec };
+        let elt: *mut EventLoopTimer = &mut self.event_loop_timer;
+        // SAFETY: single JS thread; `All::insert` only touches `lock`/`timers`/
+        // `fake_timers`, disjoint from `event_loop_delay` which `self` aliases.
+        unsafe { (*Self::timer_all()).insert(elt) };
+    }
+
+    pub fn disable(&mut self, _vm: &mut bun_jsc::VirtualMachine) {
+        if !self.enabled {
+            return;
+        }
+        self.enabled = false;
+        self.js_histogram = JSValue::default();
+        self.last_fire_ns = 0;
+        let elt: *mut EventLoopTimer = &mut self.event_loop_timer;
+        // SAFETY: see `enable` — disjoint-field access on `All`.
+        unsafe { (*Self::timer_all()).remove(elt) };
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        self.enabled && !self.js_histogram.is_empty()
+    }
+
     /// Spec EventLoopDelayMonitor.zig `onFire` — record `now - last_fire_ns`
-    /// into the JS histogram and reschedule. Body needs `vm.timer: All`.
+    /// into the JS histogram and reschedule.
     pub fn on_fire(
         &mut self,
         _vm: &mut bun_jsc::VirtualMachine,
-        _now: &bun_event_loop::EventLoopTimer::Timespec,
+        now: &bun_event_loop::EventLoopTimer::Timespec,
     ) {
-        todo!("blocked_on: bun_jsc::VirtualMachine::timer (EventLoopDelayMonitor::on_fire)")
+        if !self.enabled || self.js_histogram.is_empty() {
+            return;
+        }
+
+        let now_ns = now.ns();
+        if self.last_fire_ns > 0 {
+            let expected_ns =
+                u64::try_from(self.resolution_ms).unwrap().saturating_mul(1_000_000);
+            let actual_ns = now_ns - self.last_fire_ns;
+
+            if actual_ns > expected_ns {
+                let delay_ns = i64::try_from(actual_ns.saturating_sub(expected_ns)).unwrap();
+                unsafe extern "C" {
+                    fn JSNodePerformanceHooksHistogram_recordDelay(
+                        histogram: JSValue,
+                        delay_ns: i64,
+                    );
+                }
+                // SAFETY: js_histogram is a live JSValue rooted by the JS
+                // closure scope (see field doc in EventLoopDelayMonitor.rs).
+                unsafe {
+                    JSNodePerformanceHooksHistogram_recordDelay(self.js_histogram, delay_ns);
+                }
+            }
+        }
+
+        self.last_fire_ns = now_ns;
+
+        // Reschedule
+        let next =
+            Timespec { sec: now.sec, nsec: now.nsec }.add_ms(i64::from(self.resolution_ms));
+        self.event_loop_timer.next = ElTimespec { sec: next.sec, nsec: next.nsec };
+        let elt: *mut EventLoopTimer = &mut self.event_loop_timer;
+        // SAFETY: see `enable` — disjoint-field access on `All`.
+        unsafe { (*Self::timer_all()).insert(elt) };
     }
 }
 

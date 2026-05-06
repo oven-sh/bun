@@ -23,22 +23,22 @@ use bun_sys::{self, Fd};
 // ─── Local shims for upstream surfaces not yet wired (Phase D) ───────────────
 
 /// Compile-time `&'static ZStr` from a byte literal. The literal need not be
-/// NUL-terminated; we tack one on via `concat_bytes!`-equivalent.
+/// NUL-terminated; we tack one on by emitting a fresh `[u8; N+1]` static.
 macro_rules! zstr {
     ($lit:literal) => {{
-        const __B: &[u8] = $lit;
-        // SAFETY: the trailing NUL is appended below; len excludes it.
-        unsafe {
-            ::bun_str::ZStr::from_raw(
-                ::core::concat!(
-                    // SAFETY: $lit is ASCII in every call site below.
-                    unsafe { ::core::str::from_utf8_unchecked(__B) },
-                    "\0"
-                )
-                .as_ptr(),
-                __B.len(),
-            )
-        }
+        const __SRC: &[u8] = $lit;
+        const __N: usize = __SRC.len();
+        const __BUF: [u8; __N + 1] = {
+            let mut out = [0u8; __N + 1];
+            let mut i = 0;
+            while i < __N {
+                out[i] = __SRC[i];
+                i += 1;
+            }
+            out
+        };
+        // SAFETY: `__BUF[__N] == 0` and `__BUF` is `'static`.
+        unsafe { ::bun_str::ZStr::from_raw(__BUF.as_ptr(), __N) }
     }};
 }
 

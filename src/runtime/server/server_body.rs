@@ -2034,43 +2034,46 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         if let Some(listener) = self.listener {
             // SAFETY: listener is a live uws ListenSocket FFI handle until stop_listening() nulls it
-            return JSValue::js_number(unsafe { &*listener }.get_local_port());
+            return JSValue::js_number(unsafe { &*listener }.get_local_port() as f64);
         }
         if Self::HAS_H3 {
             if let Some(h3l) = self.h3_listener {
                 // SAFETY: h3_listener is a live H3 ListenSocket FFI handle until stop_listening() nulls it
-                return JSValue::js_number(unsafe { &*h3l }.get_local_port());
+                return JSValue::js_number(unsafe { &*h3l }.get_local_port() as f64);
             }
         }
-        JSValue::js_number(self.config.address.tcp().port)
+        match &self.config.address {
+            server_config::Address::Tcp { port, .. } => JSValue::js_number(*port as f64),
+            server_config::Address::Unix(_) => unreachable!(),
+        }
     }
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_id(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        BunString::create_utf8_for_js(global, &self.config.id)
+        jsc::bun_string_jsc::create_utf8_for_js(global, &self.config.id)
     }
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_pending_requests(&self, _: &JSGlobalObject) -> JSValue {
-        JSValue::js_number((self.pending_requests as u32 & 0x7FFF_FFFF) as i32)
+        JSValue::js_number((self.pending_requests as u32 & 0x7FFF_FFFF) as i32 as f64)
     }
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_pending_web_sockets(&self, _: &JSGlobalObject) -> JSValue {
-        JSValue::js_number((self.active_sockets_count() as u32 & 0x7FFF_FFFF) as i32)
+        JSValue::js_number((self.active_sockets_count() as u32 & 0x7FFF_FFFF) as i32 as f64)
     }
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_address(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         match &self.config.address {
             server_config::Address::Unix(unix) => {
-                let mut value = BunString::clone_utf8(unix);
-                let r = value.to_js(global);
+                let mut value = BunString::clone_utf8(unix.as_bytes());
+                let r = value.to_js(global)?;
                 value.deref();
                 Ok(r)
             }
-            server_config::Address::Tcp(tcp) => {
-                let mut port: u16 = tcp.port;
+            server_config::Address::Tcp { port: tcp_port, .. } => {
+                let mut port: u16 = *tcp_port;
 
                 if let Some(listener) = self.listener {
                     // SAFETY: listener is a live uws ListenSocket FFI handle until stop_listening() nulls it
@@ -2081,7 +2084,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     let Some(address_bytes) = listener.socket().local_address(&mut buf) else {
                         return Ok(JSValue::NULL);
                     };
-                    let addr = match SocketAddress::init(address_bytes, port) {
+                    let mut addr = match SocketAddress::init(address_bytes, port) {
                         Ok(a) => a,
                         Err(_) => {
                             #[cold] fn cold() {}
@@ -2090,7 +2093,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         }
                     };
                     // SAFETY: global_this set in init() and outlives ThisServer (JSC_BORROW)
-                    return Ok(addr.into_dto(unsafe { &*self.global_this }));
+                    return addr.into_dto(unsafe { &*self.global_this });
                 }
                 if Self::HAS_H3 {
                     if let Some(h3l) = self.h3_listener {
@@ -2101,7 +2104,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         let Some(address_bytes) = h3l.get_local_address(&mut buf) else {
                             return Ok(JSValue::NULL);
                         };
-                        let addr = match SocketAddress::init(address_bytes, port) {
+                        let mut addr = match SocketAddress::init(address_bytes, port) {
                             Ok(a) => a,
                             Err(_) => {
                                 #[cold] fn cold() {}
@@ -2110,9 +2113,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             }
                         };
                         // SAFETY: global_this set in init() and outlives ThisServer (JSC_BORROW)
-                        return Ok(addr.into_dto(unsafe { &*self.global_this }));
+                        return addr.into_dto(unsafe { &*self.global_this });
                     }
                 }
+                let _ = port;
                 Ok(JSValue::NULL)
             }
         }

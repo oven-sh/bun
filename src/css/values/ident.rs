@@ -135,7 +135,6 @@ impl DashedIdent {
         Ok(DashedIdent { v: ident as *const [u8] })
     }
 
-    #[cfg(any())] // blocked_on: Printer::write_dashed_ident
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         dest.write_dashed_ident(self, true)
     }

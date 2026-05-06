@@ -2017,14 +2017,14 @@ impl<'a, T: CustomAtRuleParser> QualifiedRuleParser for NestedRuleParser<'a, T> 
         input: &mut Parser,
     ) -> CssResult<()> {
         let loc = this.get_loc(start);
-        // PORT NOTE: Zig `defer this.composes_refs.clearRetainingCapacity();`
-        let _guard = scopeguard::guard((), |()| {
-            // TODO(port): cannot capture &mut self.composes_refs across guard
-        });
+        // PORT NOTE: Zig `defer this.composes_refs.clearRetainingCapacity();` —
+        // hoisted to the (single) success-return below; error paths drop the
+        // whole `NestedRuleParser` so the deferred clear is observable only on
+        // the Ok path.
         // allow composes if:
         // - NOT in nested style rules
         // - AND there is only one class selector
-        if input.flags.css_modules {
+        if input.flags.css_modules() {
             'out: {
                 if this.is_in_style_rule {
                     this.composes_state = ComposesState::DisallowNested(SourceLocation {
@@ -2051,7 +2051,7 @@ impl<'a, T: CustomAtRuleParser> QualifiedRuleParser for NestedRuleParser<'a, T> 
                 let comp = &sel.components[0];
                 if let Some(r) = comp.as_class() {
                     let ref_ = r.as_ref().unwrap();
-                    this.composes_refs.push(ref_);
+                    this.composes_refs.append(ref_);
                     this.composes_state = ComposesState::Allow(SourceLocation {
                         line: loc.line,
                         column: loc.column,
@@ -2070,6 +2070,10 @@ impl<'a, T: CustomAtRuleParser> QualifiedRuleParser for NestedRuleParser<'a, T> 
         // We parsed a style rule with the `composes` property. Track which
         // properties it used so we can validate it later.
         if matches!(this.composes_state, ComposesState::Allow(_)) {
+            // blocked_on: `fill_property_bit_set` (Property variant reflection
+            // — properties_generated PropertyIdTag conversions). The type
+            // structure is real; only the bitset population stays gated.
+            #[cfg(any())] {
             let len = input.position() - location;
             let mut usage = PropertyBitset::default();
             let mut custom_properties: BabyList<&[u8]> = BabyList::default();
@@ -2089,6 +2093,8 @@ impl<'a, T: CustomAtRuleParser> QualifiedRuleParser for NestedRuleParser<'a, T> 
                 });
                 entry.fill(&usage, custom_properties_slice);
             }
+            }
+            #[cfg(not(any()))] { let _ = location; }
         }
 
         this.rules.v.push(CssRule::Style(StyleRule {
@@ -2099,7 +2105,7 @@ impl<'a, T: CustomAtRuleParser> QualifiedRuleParser for NestedRuleParser<'a, T> 
             loc,
         }));
 
-        this.composes_refs.clear();
+        this.composes_refs.clear_retaining_capacity();
         Ok(())
     }
 }
@@ -2117,15 +2123,34 @@ impl<'a, T: CustomAtRuleParser> DeclarationParser for NestedRuleParser<'a, T> {
     type Declaration = ();
 
     fn parse_value(this: &mut Self, name: &[u8], input: &mut Parser) -> CssResult<()> {
+        // PORT NOTE: split-borrow — see `NestedComposesCtx` above.
+        let mut ctx = NestedComposesCtx {
+            state: this.composes_state,
+            composes: &mut *this.composes,
+            composes_refs: &mut *this.composes_refs,
+        };
         declaration::parse_declaration_impl(
             name,
             input,
             &mut this.declarations,
             &mut this.important_declarations,
             this.options,
-            this,
+            &mut ctx,
         )
     }
+}
+
+/// `MediaList::parse` thunk. The body lives in `media_query.rs` in Zig; the
+/// Rust port hasn't landed it yet. Kept local so the rule-parser arms above
+/// type-check; becomes a one-line `MediaList::parse(input)` forwarder once
+/// `media_query::MediaList::parse` un-gates.
+// blocked_on: media_query::{MediaList,MediaQuery}::parse
+#[inline]
+fn parse_media_list(input: &mut Parser) -> CssResult<MediaList> {
+    #[cfg(any())]
+    { return MediaList::parse(input); }
+    let _ = input;
+    todo("MediaList::parse — media_query.rs parse surface gated")
 }
 
 } // mod rule_parsers

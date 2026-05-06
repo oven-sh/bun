@@ -30,7 +30,7 @@ use crate::values as css_values;
 use css_values::angle::Angle;
 use css_values::color::{ColorFallbackKind, CssColor, RGBA};
 use css_values::ident::{
-    CustomIdent, CustomIdentFns, DashedIdent, DashedIdentFns, DashedIdentReference, Ident, IdentFns,
+    CustomIdent, CustomIdentFns, DashedIdent, DashedIdentReference, Ident, IdentFns,
 };
 use css_values::length::LengthValue;
 use css_values::number::{CSSInteger, CSSIntegerFns, CSSNumberFns};

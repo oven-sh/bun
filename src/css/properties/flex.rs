@@ -301,7 +301,7 @@ pub enum BoxAlign {
     Stretch,
 }
 
-#[cfg(any())] // blocked_on: align::{AlignItems,SelfPosition} payload shapes
+// un-gated B-2 round 9: align payload shapes are real now —{AlignItems,SelfPosition} payload shapes
 impl BoxAlign {
     pub fn from_standard(align: &AlignItems) -> Option<BoxAlign> {
         use css::css_properties::align::SelfPosition;
@@ -340,7 +340,7 @@ pub enum BoxPack {
     Justify,
 }
 
-#[cfg(any())] // blocked_on: align::{JustifyContent,ContentPosition} payload shapes
+// un-gated B-2 round 9: align payload shapes are real now —{JustifyContent,ContentPosition} payload shapes
 impl BoxPack {
     pub fn from_standard(justify: &JustifyContent) -> Option<BoxPack> {
         use css::css_properties::align::{ContentDistribution, ContentPosition};
@@ -406,7 +406,7 @@ pub enum FlexPack {
     Distribute,
 }
 
-#[cfg(any())] // blocked_on: align::{JustifyContent,ContentDistribution} payload shapes
+// un-gated B-2 round 9: align payload shapes are real now —{JustifyContent,ContentDistribution} payload shapes
 impl FlexPack {
     pub fn from_standard(justify: &JustifyContent) -> Option<FlexPack> {
         use css::css_properties::align::{ContentDistribution, ContentPosition};
@@ -452,7 +452,7 @@ pub enum FlexItemAlign {
     Stretch,
 }
 
-#[cfg(any())] // blocked_on: align::{AlignSelf,SelfPosition} payload shapes
+// un-gated B-2 round 9: align payload shapes are real now —{AlignSelf,SelfPosition} payload shapes
 impl FlexItemAlign {
     pub fn from_standard(justify: &AlignSelf) -> Option<FlexItemAlign> {
         use css::css_properties::align::SelfPosition;
@@ -496,7 +496,7 @@ pub enum FlexLinePack {
     Stretch,
 }
 
-#[cfg(any())] // blocked_on: align::{AlignContent,ContentDistribution} payload shapes
+// un-gated B-2 round 9: align payload shapes are real now —{AlignContent,ContentDistribution} payload shapes
 impl FlexLinePack {
     pub fn from_standard(justify: &AlignContent) -> Option<FlexLinePack> {
         use css::css_properties::align::{ContentDistribution, ContentPosition};

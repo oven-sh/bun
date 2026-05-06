@@ -7660,8 +7660,8 @@ impl<'a> Resolver<'a> {
                     // SAFETY: ARENA — slot in the BSSMap-backed EntriesOptionMap singleton; outlives the resolver.
                     let parent_entries = unsafe { &mut *parent_entries };
                     if let Some(lookup) = parent_entries.get(base) {
-                        if entries.fd.is_valid() && !lookup.entry.cache.fd.is_valid() && self.store_fd {
-                            lookup.entry.cache.fd = entries.fd;
+                        if entries.fd.is_valid() && !lookup.entry.cache().fd.is_valid() && self.store_fd {
+                            lookup.entry.cache_mut().fd = entries.fd;
                         }
                         let entry = &lookup.entry;
 
@@ -7686,7 +7686,7 @@ impl<'a> Resolver<'a> {
                                 write!(&mut buf, "Resolved symlink \"{}\" to \"{}\"", bstr::BStr::new(path), bstr::BStr::new(symlink)).ok();
                                 logs.add_note(buf);
                             }
-                            lookup.entry.cache.symlink = PathString::init(symlink);
+                            lookup.entry.cache_mut().symlink = PathString::init(symlink);
                             info.abs_real_path = symlink;
                         }
                     }
@@ -7775,8 +7775,12 @@ impl<'a> Resolver<'a> {
                         None
                     }
                 };
-                // SAFETY: parse_tsconfig leaks a Box<TSConfigJSON>; interned into DirInfo for 'static.
-                info.tsconfig_json = parsed_tsconfig.map(|p| unsafe { &*p });
+                // PORT NOTE: spec resolver.zig:4207 assigns info.tsconfig_json here (a raw
+                // ?*TSConfigJSON), then frees that allocation in the merge loop below before
+                // reassigning. With Rust references (Option<&'static TSConfigJSON>, dir_info.rs)
+                // that briefly-dangling state is UB. Defer the assignment to after the merge —
+                // it is always overwritten when parsed_tsconfig.is_some(), and DirInfo defaults
+                // tsconfig_json to None otherwise.
                 if let Some(tsconfig_json) = parsed_tsconfig {
                     let mut parent_configs: BoundedArray<*mut TSConfigJSON, 64> = BoundedArray::default();
                     parent_configs.append(tsconfig_json)?;

@@ -1366,10 +1366,8 @@ fn transpile_source_code_inner(
                     // next `reset()`. TODO(port): expose `BufferWriter::deinit`.
                 }
 
-                // fd close — see PORT NOTE at the top of this block.
-                if should_close_input_file_fd && input_file_fd.is_valid() {
-                    input_file_fd.close();
-                }
+                // (fd close handled by `_fd_guard` registered above; spec
+                // :251-256 `defer` fires on every exit path.)
 
                 return Ok(ResolvedSource {
                     source_code,
@@ -1446,21 +1444,16 @@ fn transpile_source_code_inner(
             } else {
                 SQLITE_MODULE_SOURCE
             };
-            #[cfg(any())]
-            {
-                use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
-                return Ok(ResolvedSource {
-                    source_code: bun_string::String::clone_utf8(
-                        sqlite_module_source_code_string,
-                    ),
-                    specifier: input_specifier.dupe_ref(),
-                    source_url: create_if_different(input_specifier, path.text),
-                    tag: ResolvedSourceTag::Esm,
-                    ..Default::default()
-                });
-            }
-            let _ = sqlite_module_source_code_string;
-            Ok(ResolvedSource::default())
+            use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
+            Ok(ResolvedSource {
+                source_code: bun_string::String::clone_utf8(
+                    sqlite_module_source_code_string,
+                ),
+                specifier: input_specifier.dupe_ref(),
+                source_url: create_if_different(input_specifier, path.text),
+                tag: ResolvedSourceTag::Esm,
+                ..Default::default()
+            })
         }
 
         // ────────────────────────────────────────────────────────────────────
@@ -1468,18 +1461,14 @@ fn transpile_source_code_inner(
         // ────────────────────────────────────────────────────────────────────
         L::Html => {
             if disable_transpilying {
-                #[cfg(any())]
-                {
-                    use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
-                    return Ok(ResolvedSource {
-                        source_code: bun_string::String::empty(),
-                        specifier: input_specifier.dupe_ref(),
-                        source_url: create_if_different(input_specifier, path.text),
-                        tag: ResolvedSourceTag::Esm,
-                        ..Default::default()
-                    });
-                }
-                return Ok(ResolvedSource::default());
+                use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
+                return Ok(ResolvedSource {
+                    source_code: bun_string::String::empty(),
+                    specifier: input_specifier.dupe_ref(),
+                    source_url: create_if_different(input_specifier, path.text),
+                    tag: ResolvedSourceTag::Esm,
+                    ..Default::default()
+                });
             }
             if global_object.is_null() {
                 return Err(bun_core::err!("NotSupported"));
@@ -1494,18 +1483,14 @@ fn transpile_source_code_inner(
         // ────────────────────────────────────────────────────────────────────
         _ => {
             if disable_transpilying {
-                #[cfg(any())]
-                {
-                    use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
-                    return Ok(ResolvedSource {
-                        source_code: bun_string::String::empty(),
-                        specifier: input_specifier.dupe_ref(),
-                        source_url: create_if_different(input_specifier, path.text),
-                        tag: ResolvedSourceTag::Esm,
-                        ..Default::default()
-                    });
-                }
-                return Ok(ResolvedSource::default());
+                use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
+                return Ok(ResolvedSource {
+                    source_code: bun_string::String::empty(),
+                    specifier: input_specifier.dupe_ref(),
+                    source_url: create_if_different(input_specifier, path.text),
+                    tag: ResolvedSourceTag::Esm,
+                    ..Default::default()
+                });
             }
 
             // Spec :756-803 — auto-watch for non-virtual absolute paths.
@@ -1537,7 +1522,14 @@ fn transpile_source_code_inner(
                     ..Default::default()
                 });
             }
-            Ok(ResolvedSource::default())
+            // Spec ModuleLoader.zig:817-823 returns
+            // `tag = .export_default_object` with `jsvalue_for_export = <path
+            // JSString>`. Until `create_utf8_for_js` un-gates, fail closed —
+            // PORTING.md §Forbidden: an empty `ResolvedSource::default()` here
+            // is a silent-no-op (importing a file-loader asset would yield an
+            // empty JS module instead of the path string).
+            #[allow(unreachable_code)]
+            Err(bun_core::err!("NotSupported"))
         }
     }
 }
@@ -2140,12 +2132,17 @@ unsafe fn resolve_hook(
 
     // SAFETY: per fn contract.
     let global_ref = unsafe { &*global };
-    let vm: *mut VirtualMachine = global_ref.bun_vm() as *mut VirtualMachine;
+    // PORT NOTE: `bun_vm()` hands back `&VirtualMachine`; we go through a raw
+    // ptr (not `&mut`) for the resolver/log writes below to avoid aliasing the
+    // shared ref (PORTING.md §Forbidden — same raw-ptr-per-field style as
+    // `load_preloads`/`transpile_source_code`).
+    let vm: *mut VirtualMachine =
+        global_ref.bun_vm() as *const VirtualMachine as *mut VirtualMachine;
 
     // Spec :1883-1904 — overlong specifier guard. `MAX_PATH_BYTES * 1.5`,
     // truncated. PORT NOTE: Zig used `@intFromFloat(@trunc(f64(..) * 1.5))`;
     // integer `* 3 / 2` is exact for the powers-of-two MAX_PATH_BYTES values.
-    const MAX_SPECIFIER_LEN: u32 = (bun_paths::MAX_PATH_BYTES as u32) * 3 / 2;
+    const MAX_SPECIFIER_LEN: usize = bun_paths::MAX_PATH_BYTES * 3 / 2;
     if is_a_file_path && specifier.length() > MAX_SPECIFIER_LEN {
         let specifier_utf8 = specifier.to_utf8();
         let source_utf8 = source.to_utf8();

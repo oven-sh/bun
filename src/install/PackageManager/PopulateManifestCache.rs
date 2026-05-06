@@ -199,14 +199,15 @@ pub fn populate_manifest_cache(
             }
         }
 
-        let mut run_closure = RunClosure { manager, err: None };
-        // PORT NOTE: reshaped for borrowck — `manager` is moved into `run_closure`; access it via
-        // `run_closure.manager` for the remainder of this scope.
-        run_closure
-            .manager
-            .sleep_until(&mut run_closure, RunClosure::is_done);
-        // TODO(port): `sleep_until` takes `&mut self` and `&mut run_closure` which both borrow
-        // `manager`; Phase B may need to make `sleep_until` a free fn or pass a raw ptr.
+        // Derive the raw provenance root first so both `sleep_until` and the
+        // closure body's `&mut *run_closure.manager` share the same SRW tag.
+        let mgr: *mut PackageManager = manager;
+        let mut run_closure = RunClosure { manager: mgr, err: None };
+        // SAFETY: `mgr` is derived from the live exclusive `manager` borrow;
+        // `sleep_until` is an associated fn taking `*mut PackageManager` and
+        // `tick_raw` holds no `&mut event_loop` across `is_done`, so the
+        // callback's `&mut *run_closure.manager` is the unique live borrow.
+        unsafe { PackageManager::sleep_until(mgr, &mut run_closure, RunClosure::is_done) };
 
         if log_level.show_progress() {
             run_closure.manager.end_progress_bar();

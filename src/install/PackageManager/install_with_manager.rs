@@ -1059,14 +1059,12 @@ impl<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool>
     RunAndWaitClosure<CHECK_PEERS, ONLY_PRE_PATCH>
 {
     fn is_done(closure: &mut Self) -> bool {
-        // SAFETY: `closure.manager` is the raw provenance root set in `run_and_wait`;
-        // `sleep_until`'s `&mut self` was itself reborrowed from this same raw pointer
-        // (not the other way round), so deriving a fresh `&mut PackageManager` here does
-        // not use an already-invalidated tag. The original `this: &mut` in `run_and_wait`
-        // is dead past the `let mgr = ...` line. NOTE: `AnyEventLoop::tick` still holds
-        // `&mut event_loop` across this callback — that overlap is the cross-file
-        // `sleep_until` aliasing issue tracked alongside the other callers
-        // (PackageManagerEnqueue, PopulateManifestCache, hoisted_install).
+        // SAFETY: `closure.manager` is the raw provenance root set in `run_and_wait`.
+        // `sleep_until` is now an associated fn taking `*mut PackageManager` and
+        // `AnyEventLoop::tick_raw` reborrows the event loop only *between* `is_done`
+        // calls, so this `&mut PackageManager` is the unique live borrow for the
+        // duration of the callback (no `&mut event_loop` straddles it). The original
+        // `this: &mut` in `run_and_wait` is dead past the `let mgr = ...` line.
         let this = unsafe { &mut *closure.manager };
         if CHECK_PEERS {
             if let Err(err) = this.process_peer_dependency_list() {
@@ -1136,10 +1134,11 @@ impl<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool>
         };
 
         // SAFETY: `mgr` was just derived from the live exclusive `this` borrow above and
-        // is the sole access path for the manager from here on. Reborrow `&mut *mgr` for
-        // the method receiver so `sleep_until`'s `&mut self` is a child of `mgr`, not a
-        // sibling that would invalidate `closure.manager`.
-        unsafe { (*mgr).sleep_until(&mut closure, Self::is_done) };
+        // is the sole access path for the manager from here on. `sleep_until` takes the
+        // raw pointer directly (no `&mut self` receiver) and `tick_raw` holds no
+        // `&mut event_loop` across `is_done`, so `closure.manager`'s reborrow inside the
+        // callback never invalidates a live tag.
+        unsafe { PackageManager::sleep_until(mgr, &mut closure, Self::is_done) };
 
         if let Some(err) = closure.err {
             return Err(err);

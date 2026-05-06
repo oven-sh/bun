@@ -2198,8 +2198,12 @@ pub fn install_isolated_packages(
         }
 
         if manager.pending_task_count() > 0 {
+            let mgr: *mut PackageManager = manager;
             let mut wait = Wait { installer: &mut installer, err: None };
-            manager.sleep_until(&mut wait, Wait::is_done);
+            // SAFETY: `mgr` derived from the live exclusive `manager` borrow;
+            // `sleep_until` + `tick_raw` hold no `&mut PackageManager` across
+            // `Wait::is_done`.
+            unsafe { PackageManager::sleep_until(mgr, &mut wait, Wait::is_done) };
 
             if let Some(err) = wait.err {
                 Output::err(err, "failed to install packages", format_args!(""));

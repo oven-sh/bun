@@ -1620,12 +1620,10 @@ pub fn generate_network_task_for_tarball(
         ),
     };
 
-    let network_task = this.get_network_task();
-
     network_task.task_id = task_id;
     // `callback` left to be set by `for_tarball` below (Zig: `undefined`).
     // TODO(port): allocator field dropped (global allocator).
-    network_task.package_manager = this_ptr;
+    network_task.package_manager = this_backref;
     network_task.apply_patch_task = apply_patch_task;
 
     network_task.for_tarball(&extract_tarball, scope, authorization)?;
@@ -1636,31 +1634,31 @@ pub fn generate_network_task_for_tarball(
         // and the streaming extractor needs a stable `Task` pointer so
         // it can push the result onto `resolve_tasks` when it finishes.
         //
-        // Borrowck: `create_extract_task_for_streaming` / `TarballStream::init`
-        // need `&mut PackageManager` while `network_task` (a borrow into
-        // `this.preallocated_network_tasks`) is still live. The pool slot is
-        // disjoint from every other `this` field these calls touch, so we go
-        // through a raw pointer for `network_task` and reborrow per-statement.
-        let net_ptr: *mut NetworkTask = network_task;
-        // SAFETY: `net_ptr` points into `this.preallocated_network_tasks`; the
-        // calls below access disjoint fields of `this` (resolve-task pool,
-        // allocator, options) and never reallocate/put the network-task pool,
-        // so the slot stays valid and unaliased for the duration.
-        let this = unsafe { &mut *this_ptr };
+        // Borrowck/SB: `create_extract_task_for_streaming` / `TarballStream::init`
+        // need `&mut PackageManager` while `net_ptr` points into
+        // `this.preallocated_network_tasks`. The pool slot is disjoint from
+        // every other `this` field these calls touch (resolve-task pool,
+        // allocator, options) and the network-task pool is never reallocated
+        // or `put()` here, so we reborrow `*net_ptr` per-statement alongside
+        // `this`. Phase B: have `get_network_task` return a pool index so this
+        // intrusive-pointer pattern goes away.
+        // SAFETY: see disjointness note above.
         let extract_task = unsafe {
-            this.create_extract_task_for_streaming(&mut (*net_ptr).callback.extract_mut(), &mut *net_ptr)
+            this.create_extract_task_for_streaming(
+                &mut (*net_ptr).callback.extract_mut(),
+                &mut *net_ptr,
+            )
         };
         unsafe {
             (*net_ptr).streaming_extract_task = Some(extract_task);
-            (*net_ptr).tarball_stream = Some(TarballStream::init(extract_task, &mut *net_ptr, this));
+            (*net_ptr).tarball_stream =
+                Some(TarballStream::init(extract_task, &mut *net_ptr, this));
         }
-        // SAFETY: re-derive the returned `&mut` from `net_ptr` so its tag is on
-        // top of the borrow stack (the `this` reborrow above popped the earlier
-        // `network_task` Unique).
-        return Ok(Some(unsafe { &mut *net_ptr }));
     }
 
-    Ok(Some(network_task))
+    // SAFETY: final reborrow of the pool slot for the caller; `net_ptr` is the
+    // sole live handle (see above) and outlives nothing past this return.
+    Ok(Some(unsafe { &mut *net_ptr }))
 }
 
 // ──────────────────────────────────────────────────────────────────────────

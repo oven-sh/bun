@@ -456,9 +456,13 @@ pub fn enqueue_dependency_to_root(
                 this.start_progress_bar_if_none();
             }
 
-            let mut closure = Closure { err: None, manager: this };
-            // TODO(port): sleepUntil takes (&mut closure, fn ptr); reshape for borrowck if needed
-            this.sleep_until(&mut closure, Closure::is_done);
+            let mgr: *mut PackageManager = this;
+            let mut closure = Closure { err: None, manager: mgr };
+            // SAFETY: `mgr` derived from the live exclusive `this` borrow;
+            // `sleep_until` + `tick_raw` hold no `&mut PackageManager` across
+            // `Closure::is_done`, so the callback's `&mut *closure.manager`
+            // is the unique live borrow.
+            unsafe { PackageManager::sleep_until(mgr, &mut closure, Closure::is_done) };
 
             if this.options.log_level.show_progress() {
                 this.end_progress_bar();

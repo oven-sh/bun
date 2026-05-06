@@ -876,10 +876,17 @@ fn attempt_security_scan_with_retry(
 
     scanner.spawn()?;
 
-    // PORT NOTE: Zig used a local `struct { scanner, isDone }` closure for sleepUntil; use a Rust closure.
-    // TODO(port): sleep_until on &mut PackageManager while scanner holds &mut manager — Phase B must
-    // restructure (e.g. take event_loop borrow before constructing scanner, or use raw ptr).
-    scanner.manager.sleep_until(|| scanner.is_done());
+    // PORT NOTE: Zig used a local `struct { scanner, isDone }` closure for sleepUntil.
+    // `sleep_until` now takes `*mut PackageManager` + `fn(&mut C) -> bool`; pass the
+    // boxed scanner as the closure context and a fn pointer that probes `is_done`.
+    fn scanner_is_done(scanner: &mut Box<SecurityScanSubprocess>) -> bool {
+        scanner.is_done()
+    }
+    // SAFETY: `scanner.manager` is the live exclusive `&mut PackageManager`
+    // borrow held by the subprocess; `sleep_until` + `tick_raw` hold no
+    // `&mut PackageManager` across `scanner_is_done`.
+    let mgr: *mut PackageManager = scanner.manager;
+    unsafe { PackageManager::sleep_until(mgr, &mut scanner, scanner_is_done) };
 
     let packages_scanned = collector.dedupe.count();
     scanner.handle_results(

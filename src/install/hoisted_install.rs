@@ -334,17 +334,24 @@ pub fn install_hoisted_packages(
                 }
             }
 
+            // Derive the raw provenance root *before* building the closure so
+            // both `sleep_until`'s `this` arg and `closure.manager` share the
+            // same SRW tag (Zig spec stores `*PackageManager` non-exclusively).
+            let mgr: *mut PackageManager = this;
             let mut closure = Closure {
                 installer: &mut installer,
                 err: None,
-                manager: this,
+                manager: mgr,
             };
 
             // Whenever the event loop wakes up, we need to call `runTasks`
             // If we call sleep() instead of sleepUntil(), it will wait forever until there are no more lifecycle scripts
             // which means it will not call runTasks until _all_ current lifecycle scripts have finished running
-            this.sleep_until(&mut closure, Closure::is_done);
-            // TODO(port): `this` is mutably borrowed by `closure.manager` here — Phase B may need to call via `closure.manager.sleep_until(...)` or reshape.
+            // SAFETY: `mgr` is derived from the live exclusive `this` borrow;
+            // `sleep_until` + `tick_raw` hold no `&mut PackageManager` across
+            // `Closure::is_done`, so the callback's `&mut *closure.manager`
+            // is the unique live borrow.
+            unsafe { PackageManager::sleep_until(mgr, &mut closure, Closure::is_done) };
 
             if let Some(err) = closure.err {
                 return Err(err);

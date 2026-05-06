@@ -1291,46 +1291,83 @@ impl RunCommand {
     }
 }
 
-// TODO(b2-blocked): bun_transpiler::Transpiler
 // TODO(b2-blocked): bun_resolver::DirInfo
-// TODO(b2-blocked): bun_bunfig::Command::Context
 // TODO(b2-blocked): bun_schema::api::DotEnvBehavior
 
+/// Process-lifetime arena for the install-tier `Transpiler` constructed in
+/// `RunCommand::configure_env_for_run`. Mirrors `runner_arena()` in
+/// `runtime/cli/run_command.rs` — `bun_alloc::Arena` is `!Sync`, so guard a
+/// `static mut MaybeUninit` with `Once` (PORTING.md §Forbidden bars
+/// `Box::leak`).
+fn install_runner_arena() -> &'static bun_alloc::Arena {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    static mut ARENA: ::core::mem::MaybeUninit<bun_alloc::Arena> =
+        ::core::mem::MaybeUninit::uninit();
+    ONCE.call_once(|| {
+        // SAFETY: one-time init under `Once`; no concurrent writer.
+        unsafe { (*(&raw mut ARENA)).write(bun_alloc::Arena::new()) };
+    });
+    // SAFETY: initialized exactly once above. `configure_env_for_run` is only
+    // ever called from the single CLI dispatch thread, so the `!Sync` Bump is
+    // never observed concurrently.
+    unsafe { (*(&raw const ARENA)).assume_init_ref() }
+}
+
 impl RunCommand {
-    /// Port of `RunCommand.configureEnvForRun` (src/cli/run_command.zig).
+    /// Port of `RunCommand.configureEnvForRun` (src/cli/run_command.zig:780).
     ///
-    /// DEP-CYCLE NOTE: the Zig body initialises a `bun.Transpiler`, walks
-    /// `bun_resolver::DirInfo`, and reads `bun_bunfig::Command.Context` — all
-    /// T6 (`bun_runtime`/`bun_cli`) types that are not (and must not be)
-    /// dependencies of `bun_install`. The full body therefore lives in
-    /// `bun_runtime::cli::RunCommand::configure_env_for_run`; this thin
-    /// install-tier shim seeds only the env vars that have no T6 dependency
-    /// so lifecycle-script callers in `PackageManager.rs` (gated) keep their
-    /// shape. The `*mut ()` return stands in for `*mut DirInfo` (opaque to
-    /// install — every caller discards it).
+    /// DEP-CYCLE NOTE: the full Zig body walks `bun_resolver::DirInfo` and
+    /// reads `package.json` via the resolver — T6 work that lives in
+    /// `bun_runtime::cli::RunCommand::configure_env_for_run`. The install
+    /// tier needs the *Transpiler-initialisation* half of that contract
+    /// (run_command.zig:780 `this_transpiler.* = try Transpiler.init(...)`)
+    /// because callers (`configure_env_for_scripts_run`) `assume_init()` the
+    /// out-param. This shim performs the init + the env-var seeding that has
+    /// no T6 dependency; the `*mut ()` return stands in for `*mut DirInfo`
+    /// (opaque to install — every caller discards it).
     pub fn configure_env_for_run(
-        // Zig: `bun.CLI.Command.Context` — opaque at this tier.
-        _ctx: *const (),
-        // Zig: out-param `*Transpiler` — opaque at this tier.
-        _this_transpiler: *mut (),
-        env: &mut bun_dotenv::Loader<'_>,
+        ctx: &mut bun_options_types::Context::ContextData,
+        this_transpiler: &mut ::core::mem::MaybeUninit<bun_transpiler::Transpiler<'static>>,
+        env: Option<*mut bun_dotenv::Loader<'static>>,
         _log_errors: bool,
-        _store_root_fd: bool,
+        store_root_fd: bool,
     ) -> Result<*mut (), bun_core::Error> {
         use bun_core::Global;
+
+        let args = ctx.args.clone();
+        // Spec run_command.zig:780: `this_transpiler.* = try Transpiler.init(ctx.allocator, ctx.log, args, env)`.
+        this_transpiler.write(bun_transpiler::Transpiler::init(
+            install_runner_arena(),
+            ctx.log,
+            args,
+            env,
+        )?);
+        // SAFETY: fully written on the line above.
+        let this_transpiler = unsafe { this_transpiler.assume_init_mut() };
+        this_transpiler.options.env.behavior =
+            bun_options_types::schema::api::DotEnvBehavior::load_all;
+        this_transpiler.resolver.care_about_bin_folder = true;
+        this_transpiler.resolver.care_about_scripts = true;
+        this_transpiler.resolver.store_fd = store_root_fd;
+
+        // SAFETY: `Transpiler::init` always sets `env` (caller-provided or
+        // singleton); never null. Re-derive per-use rather than holding a
+        // long-lived `&mut` (matches Zig's per-statement `this_transpiler.env`
+        // deref and avoids Stacked-Borrows overlap with `run_env_loader`).
+        let env_loader = unsafe { &mut *this_transpiler.env };
 
         // Propagate --no-orphans / [run] noOrphans to the script's env so any
         // Bun process the script spawns enables its own watchdog. The env
         // loader snapshots `environ` before flag parsing runs, so the
         // `setenv()` in `enable()` isn't reflected here.
         if bun_aio::parent_death_watchdog::is_enabled() {
-            let _ = env.map.put(b"BUN_FEATURE_FLAG_NO_ORPHANS", b"1");
+            let _ = env_loader.map.put(b"BUN_FEATURE_FLAG_NO_ORPHANS", b"1");
         }
 
         // we have no way of knowing what version they're expecting without
         // running the node executable; running the node executable is too
         // slow, so we will just hardcode it to LTS
-        let _ = env.map.put_default(
+        let _ = env_loader.map.put_default(
             b"npm_config_user_agent",
             // the use of npm/? is copying yarn
             // e.g.
@@ -1348,15 +1385,16 @@ impl RunCommand {
             .as_bytes(),
         );
 
-        if env.get(b"npm_execpath").is_none() {
+        if env_loader.get(b"npm_execpath").is_none() {
             // we don't care if this fails
             if let Ok(self_exe) = bun_core::self_exe_path() {
-                let _ = env.map.put_default(b"npm_execpath", self_exe.as_bytes());
+                let _ = env_loader.map.put_default(b"npm_execpath", self_exe.as_bytes());
             }
         }
 
-        // Transpiler/DirInfo bootstrap is performed by the T6 caller
-        // (`bun_runtime::cli::RunCommand`); install only consumes the env.
+        // DirInfo walk / npm_package_* seeding is performed by the T6 impl
+        // (`bun_runtime::cli::RunCommand::configure_env_for_run`); install
+        // callers discard the return value.
         Ok(core::ptr::null_mut())
     }
 }

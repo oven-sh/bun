@@ -4352,6 +4352,10 @@ pub mod formatter {
             value: JSValue,
         ) -> JsResult<()> {
             macro_rules! pf { ($s:literal) => { pfmt!($s, C) }; }
+            // Cache once: `disable_inspect_custom` does not change inside this
+            // function, and `WrappedWriter` holds `&mut self.estimated_line_length`
+            // which prevents calling `&self` methods while it is live.
+            let tag_opts = self.tag_opts();
             let mut writer = WrappedWriter {
                 ctx: writer_, failed: false,
                 estimated_line_length: &mut self.estimated_line_length,
@@ -4371,7 +4375,7 @@ pub mod formatter {
             let mut is_tag_kind_primitive = false;
 
             if let Some(type_value) = value.get(self.global_this, "type")? {
-                let _tag = Tag::get_advanced(type_value, self.global_this, self.tag_opts())?;
+                let _tag = Tag::get_advanced(type_value, self.global_this, tag_opts)?;
 
                 if _tag.cell == jsc::JSType::Symbol {
                     // nothing
@@ -4463,7 +4467,7 @@ pub mod formatter {
                             }
 
                             let property_value = props_iter.value;
-                            let tag = Tag::get_advanced(property_value, self.global_this, self.tag_opts())?;
+                            let tag = Tag::get_advanced(property_value, self.global_this, tag_opts)?;
 
                             if tag.cell.is_hidden() { continue; }
 
@@ -4511,7 +4515,14 @@ pub mod formatter {
                                 )
                             {
                                 writer.write_all(b"\n");
-                                self.write_indent(writer.ctx).expect("unreachable");
+                                // Reseat `writer` so `write_indent(&self)` can borrow
+                                // disjointly from `estimated_line_length`.
+                                drop(writer);
+                                self.write_indent(writer_).expect("unreachable");
+                                writer = WrappedWriter {
+                                    ctx: writer_, failed: false,
+                                    estimated_line_length: &mut self.estimated_line_length,
+                                };
                             } else if props_i + 1 < count_without_children {
                                 writer.space();
                             }

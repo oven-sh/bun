@@ -178,33 +178,37 @@ impl SavedSourceMap {
         opaque_source_provider: *mut c_void,
         path: &[u8],
     ) {
-         // TODO(b2-blocked): bun_collections::HashMap::{get_entry, remove_by_ptr}, bun_sourcemap::ParsedSourceMap::{underlying_provider, deref_}
-        {
         self.lock();
         // PORT NOTE: reshaped for borrowck — explicit unlock paired manually.
+        // Zig `getEntry`/`removeByPtr` collapsed to `get`+`remove(&key)`; the std
+        // backing has no key-slot pointer to hand out, and the key is a u64 hash
+        // we already have in hand.
         // SAFETY: `map` points at the live sibling HashTable on VirtualMachine.
         let map = unsafe { &mut *self.map };
-        let Some(entry) = map.get_entry(hash(path)) else {
+        let key = hash(path);
+        let Some(&ptr) = map.get(&key) else {
             self.unlock();
             return;
         };
-        let old_value = Value::from(*entry.value_ptr());
+        let old_value = Value::from(Some(ptr));
         if let Some(prov) = old_value.get::<DevServerSourceProvider>() {
-            if (prov as *mut _ as usize) == (opaque_source_provider as usize) {
+            if (prov as usize) == (opaque_source_provider as usize) {
                 // there is nothing to unref or deinit
-                map.remove_by_ptr(entry.key_ptr());
+                map.remove(&key);
             }
         } else if let Some(parsed) = old_value.get::<ParsedSourceMap>() {
-            if let Some(prov) = parsed.underlying_provider.provider() {
+            // SAFETY: `parsed` was stored by us and is live while in the table.
+            if let Some(prov) = unsafe { (*parsed).underlying_provider }.provider() {
                 if (prov.ptr() as usize) == (opaque_source_provider as usize) {
-                    map.remove_by_ptr(entry.key_ptr());
-                    parsed.deref_();
+                    map.remove(&key);
+                    // SAFETY: we held a strong ref while in the table; release it.
+                    unsafe {
+                        bun_ptr::ThreadSafeRefCount::<ParsedSourceMap>::deref(parsed)
+                    };
                 }
             }
         }
         self.unlock();
-        } // end 
-        let _ = (opaque_source_provider, path);
     }
 
     pub fn put_zig_source_provider(
@@ -221,33 +225,37 @@ impl SavedSourceMap {
         opaque_source_provider: *mut c_void,
         path: &[u8],
     ) {
-         // TODO(b2-blocked): bun_collections::HashMap::{get_entry, remove_by_ptr}, bun_sourcemap::ParsedSourceMap::{underlying_provider, deref_}
-        {
         self.lock();
         // PORT NOTE: reshaped for borrowck — explicit unlock paired manually.
+        // Zig `getEntry`/`removeByPtr` collapsed to `get`+`remove(&key)`; the std
+        // backing has no key-slot pointer to hand out, and the key is a u64 hash
+        // we already have in hand.
         // SAFETY: `map` points at the live sibling HashTable on VirtualMachine.
         let map = unsafe { &mut *self.map };
-        let Some(entry) = map.get_entry(hash(path)) else {
+        let key = hash(path);
+        let Some(&ptr) = map.get(&key) else {
             self.unlock();
             return;
         };
-        let old_value = Value::from(*entry.value_ptr());
+        let old_value = Value::from(Some(ptr));
         if let Some(prov) = old_value.get::<SourceProviderMap>() {
-            if (prov as *mut _ as usize) == (opaque_source_provider as usize) {
+            if (prov as usize) == (opaque_source_provider as usize) {
                 // there is nothing to unref or deinit
-                map.remove_by_ptr(entry.key_ptr());
+                map.remove(&key);
             }
         } else if let Some(parsed) = old_value.get::<ParsedSourceMap>() {
-            if let Some(prov) = parsed.underlying_provider.provider() {
+            // SAFETY: `parsed` was stored by us and is live while in the table.
+            if let Some(prov) = unsafe { (*parsed).underlying_provider }.provider() {
                 if (prov.ptr() as usize) == (opaque_source_provider as usize) {
-                    map.remove_by_ptr(entry.key_ptr());
-                    parsed.deref_();
+                    map.remove(&key);
+                    // SAFETY: we held a strong ref while in the table; release it.
+                    unsafe {
+                        bun_ptr::ThreadSafeRefCount::<ParsedSourceMap>::deref(parsed)
+                    };
                 }
             }
         }
         self.unlock();
-        } // end 
-        let _ = (opaque_source_provider, path);
     }
 }
 

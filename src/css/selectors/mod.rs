@@ -50,8 +50,8 @@ pub mod impl_ {
         type LocalName = Ident;
         type NamespacePrefix = Ident;
         // TODO(port): lifetime — Zig `[]const u8` type alias borrowing input.
-        type NamespaceUrl = *const [u8];
-        type BorrowedNamespaceUrl = *const [u8];
+        type NamespaceUrl = &'static [u8];
+        type BorrowedNamespaceUrl = &'static [u8];
         type BorrowedLocalName = Ident;
         type NonTSPseudoClass = super::parser::PseudoClass;
         type PseudoElement = super::parser::PseudoElement;

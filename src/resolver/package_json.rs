@@ -27,6 +27,13 @@ use crate as resolver;
 #[derive(Default, Clone, Copy)] pub struct OperatingSystem(());
 // TODO(b2-blocked): bun_install::PackageID
 pub type PackageID = u32;
+pub const INVALID_PACKAGE_ID: PackageID = u32::MAX;
+impl Architecture {
+    pub fn all() -> Self { Self(()) }
+}
+impl OperatingSystem {
+    pub fn all() -> Self { Self(()) }
+}
 // TODO(b2-blocked): bun_bundler::options::{Framework, RouteConfig} — local opaque
 // stand-ins so `FrameworkRouterPair` type-checks; the heavy gated impl block below
 // references many more `options::*` items and stays gated until bun_bundler lands.
@@ -134,7 +141,7 @@ pub enum IncludeScripts {
     IncludeScripts,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, core::marker::ConstParamTy)]
 pub enum IncludeDependencies {
     Main,
     Local,

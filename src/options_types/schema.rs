@@ -17,16 +17,302 @@ pub mod api {
         load_all_without_inlining,
     }
 
-    /// schema.zig:1639 — opaque until peechy codegen lands.
-    #[derive(Default, Debug)]
-    pub struct TransformOptions {
-        _opaque: (), // TODO(b2): peechy-generated fields
+    impl DotEnvBehavior {
+        // PascalCase aliases — downstream callers (bundler/options.rs,
+        // dotenv/env_loader.rs, runtime/api/JSBundler.rs) name the variants
+        // both ways while the snake_case enum body above stays the schema
+        // ground truth.
+        pub const None: Self = Self::_none;
+        pub const Disable: Self = Self::disable;
+        pub const Prefix: Self = Self::prefix;
+        pub const LoadAll: Self = Self::load_all;
+        pub const LoadAllWithoutInlining: Self = Self::load_all_without_inlining;
     }
 
-    /// schema.zig:2973 — opaque until peechy codegen lands.
+    /// schema.zig:711 — `enum(u8)` (open). Kept closed.
+    /// Variants PascalCased to match the only downstream writers
+    /// (`jsc/config.rs`, `runtime/cli/Arguments.rs` → `api::ResolveMode::Lazy`).
+    #[repr(u8)]
+    #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
+    pub enum ResolveMode {
+        #[default]
+        _none = 0,
+        Disable = 1,
+        Lazy = 2,
+        Dev = 3,
+        Bundle = 4,
+    }
+
+    /// schema.zig:2295 — `enum(u32)` (open). Kept closed.
+    /// PascalCased: `logger::Kind::to_api` matches on `Err`/`Warn`/`Note`/`Debug`.
+    #[repr(u32)]
+    #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
+    pub enum MessageLevel {
+        #[default]
+        _none = 0,
+        Err = 1,
+        Warn = 2,
+        Note = 3,
+        Info = 4,
+        Debug = 5,
+    }
+
+    /// schema.zig:1622 — `enum(u8)` (closed; not a peechy `smol`).
+    #[repr(u8)]
+    #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
+    pub enum UnhandledRejections {
+        Strict = 0,
+        Throw = 1,
+        Warn = 2,
+        None = 3,
+        WarnWithErrorCode = 4,
+        #[default]
+        Bun = 5,
+    }
+
+    impl UnhandledRejections {
+        /// `UnhandledRejections.map` — `bun.ComptimeStringMap` → `phf::Map`.
+        /// Note: Zig deliberately omits `"bun"` (it's the implicit default).
+        pub const MAP: phf::Map<&'static [u8], UnhandledRejections> = phf::phf_map! {
+            b"strict" => UnhandledRejections::Strict,
+            b"throw" => UnhandledRejections::Throw,
+            b"warn" => UnhandledRejections::Warn,
+            b"none" => UnhandledRejections::None,
+            b"warn-with-error-code" => UnhandledRejections::WarnWithErrorCode,
+        };
+    }
+
+    /// schema.zig:1639 — peechy `message TransformOptions`. Full field set,
+    /// hand-expanded so `bundler::options::BundleOptions::from_api` and the
+    /// bunfig/CLI parsers can un-gate. Field order mirrors the Zig struct
+    /// exactly so side-by-side diff stays readable.
+    ///
+    /// Type map (matches the convention block below):
+    ///   `?T`                  → `Option<T>`
+    ///   `[]const u8`          → `Box<[u8]>`
+    ///   `?[]const u8`         → `Option<Box<[u8]>>`
+    ///   `[]const []const u8`  → `Vec<Box<[u8]>>`
+    ///   `?[:0]const u8`       → `Option<Box<[u8]>>`   (sentinel re-derived
+    ///                            at use-site; see Context.rs `// TODO(port):
+    ///                            owned ZStr repr` precedent)
+    ///
+    /// `Default` ⇔ `std.mem.zeroes(TransformOptions)` — every Option `None`,
+    /// every slice empty, every scalar `0`/`false`.
+    #[derive(Clone, Debug, Default)]
+    pub struct TransformOptions {
+        /// jsx
+        pub jsx: Option<Jsx>,
+        /// tsconfig_override
+        pub tsconfig_override: Option<Box<[u8]>>,
+        /// resolve
+        pub resolve: Option<ResolveMode>,
+        /// origin
+        pub origin: Option<Box<[u8]>>,
+        /// absolute_working_dir — Zig `?[:0]const u8`; sentinel dropped (see
+        /// type-map note above).
+        pub absolute_working_dir: Option<Box<[u8]>>,
+        /// define
+        pub define: Option<StringMap>,
+        /// drop
+        pub drop: Vec<Box<[u8]>>,
+        /// feature_flags — DCE via `import { feature } from "bun:bundle"`
+        pub feature_flags: Vec<Box<[u8]>>,
+        /// preserve_symlinks
+        pub preserve_symlinks: Option<bool>,
+        /// entry_points
+        pub entry_points: Vec<Box<[u8]>>,
+        /// write
+        pub write: Option<bool>,
+        /// inject
+        pub inject: Vec<Box<[u8]>>,
+        /// output_dir
+        pub output_dir: Option<Box<[u8]>>,
+        /// external
+        pub external: Vec<Box<[u8]>>,
+        /// loaders
+        pub loaders: Option<LoaderMap>,
+        /// main_fields
+        pub main_fields: Vec<Box<[u8]>>,
+        /// target
+        pub target: Option<Target>,
+        /// serve
+        pub serve: Option<bool>,
+        /// env_files
+        pub env_files: Vec<Box<[u8]>>,
+        /// disable_default_env_files
+        pub disable_default_env_files: bool,
+        /// extension_order
+        pub extension_order: Vec<Box<[u8]>>,
+        /// no_summary
+        pub no_summary: Option<bool>,
+        /// disable_hmr
+        pub disable_hmr: bool,
+        /// port
+        pub port: Option<u16>,
+        /// logLevel
+        pub log_level: Option<MessageLevel>,
+        /// source_map
+        pub source_map: Option<SourceMapMode>,
+        /// conditions
+        pub conditions: Vec<Box<[u8]>>,
+        /// packages
+        pub packages: Option<PackagesMode>,
+        /// ignore_dce_annotations
+        pub ignore_dce_annotations: bool,
+
+        /// e.g. `[serve.static] plugins = ["tailwindcss"]`
+        pub serve_plugins: Option<Vec<Box<[u8]>>>,
+        pub serve_minify_syntax: Option<bool>,
+        pub serve_minify_whitespace: Option<bool>,
+        pub serve_minify_identifiers: Option<bool>,
+        pub serve_env_behavior: DotEnvBehavior,
+        pub serve_env_prefix: Option<Box<[u8]>>,
+        pub serve_splitting: bool,
+        pub serve_public_path: Option<Box<[u8]>>,
+        pub serve_hmr: Option<bool>,
+        pub serve_define: Option<StringMap>,
+
+        /// from `--no-addons`. `None` == `true`.
+        pub allow_addons: Option<bool>,
+        /// from `--unhandled-rejections`; default is `Bun`.
+        pub unhandled_rejections: Option<UnhandledRejections>,
+
+        pub bunfig_path: Box<[u8]>,
+    }
+
+    // ─── BunInstall + supporting types ───────────────────────────────────────
+    //
+    // CYCLEBREAK: `schema.zig` reaches into `bun.install.PackageManager.Options
+    // .NodeLinker` and `install.PnpmMatcher`. The Rust crate graph parks the
+    // canonical defs in `bun_install_types`, which this crate may NOT depend
+    // on (would invert the T2→T3 edge). The two fields are re-declared locally
+    // with schema-faithful shapes; `bun_api::BunInstall` (which *does* depend
+    // on `bun_install_types`) is the type that crosses the install/ini
+    // boundary, so no value ever round-trips between the two `NodeLinker`s.
+
+    /// schema.zig:2807 — `api.NpmRegistry`.
+    /// `Default` ⇔ `std.mem.zeroes(NpmRegistry)` (empty slices).
+    #[derive(Clone, Debug, Default)]
+    pub struct NpmRegistry {
+        /// url
+        pub url: Box<[u8]>,
+        /// username
+        pub username: Box<[u8]>,
+        /// password
+        pub password: Box<[u8]>,
+        /// token
+        pub token: Box<[u8]>,
+        /// email
+        pub email: Box<[u8]>,
+    }
+
+    impl NpmRegistry {
+        /// `NpmRegistry.dupe(allocator)` — Zig packs all five strings into one
+        /// contiguous allocation and reslices. Rust can't hand back five
+        /// `Box<[u8]>` views into one buffer without leaking, so this is a
+        /// plain field-wise clone. PERF(port): single-buffer pack — Phase B.
+        #[inline]
+        pub fn dupe(&self) -> NpmRegistry {
+            self.clone()
+        }
+    }
+
+    /// schema.zig:2956 — `scopes: bun.StringArrayHashMapUnmanaged(NpmRegistry)`.
+    #[derive(Default)]
+    pub struct NpmRegistryMap {
+        pub scopes: bun_collections::StringArrayHashMap<NpmRegistry>,
+    }
+
+    /// schema.zig:3041 — anonymous `?union(enum) { str, list }` field on
+    /// `BunInstall.ca`; hoisted to a named type so callers can construct it.
+    #[derive(Clone, Debug)]
+    pub enum Ca {
+        Str(Box<[u8]>),
+        List(Box<[Box<[u8]>]>),
+    }
+
+    /// CYCLEBREAK local mirror of `bun_install_types::NodeLinker::NodeLinker`
+    /// (3 variants, `#[repr(u8)]`). See note above.
+    #[repr(u8)]
+    #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
+    pub enum NodeLinker {
+        #[default]
+        Auto,
+        Hoisted,
+        Isolated,
+    }
+
+    /// CYCLEBREAK local mirror of `install.PnpmMatcher`. The real body
+    /// (matchers/behavior + regex) lives in `bun_install_types`; nothing
+    /// reachable through `bun_options_types::schema::api::BunInstall` ever
+    /// reads inside it, so an opaque unit body is sufficient here.
     #[derive(Default, Debug)]
+    pub struct PnpmMatcher {
+        _opaque: (),
+    }
+
+    /// schema.zig:2973 — `api.BunInstall`. Full field set, order-faithful.
+    /// `Default` ⇔ `std.mem.zeroes(Api.BunInstall)` (every field `None`/empty).
+    ///
+    /// No `Debug`/`Clone` derive: `NpmRegistryMap` wraps `StringArrayHashMap`
+    /// which currently provides neither.
+    #[derive(Default)]
     pub struct BunInstall {
-        _opaque: (), // TODO(b2): peechy-generated fields
+        /// default_registry
+        pub default_registry: Option<NpmRegistry>,
+        /// scoped
+        pub scoped: Option<NpmRegistryMap>,
+        /// lockfile_path
+        pub lockfile_path: Option<Box<[u8]>>,
+        /// save_lockfile_path
+        pub save_lockfile_path: Option<Box<[u8]>>,
+        /// cache_directory
+        pub cache_directory: Option<Box<[u8]>>,
+        /// dry_run
+        pub dry_run: Option<bool>,
+        /// force
+        pub force: Option<bool>,
+        /// save_dev
+        pub save_dev: Option<bool>,
+        /// save_optional
+        pub save_optional: Option<bool>,
+        /// save_peer
+        pub save_peer: Option<bool>,
+        /// save_lockfile
+        pub save_lockfile: Option<bool>,
+        /// production
+        pub production: Option<bool>,
+        /// save_yarn_lockfile
+        pub save_yarn_lockfile: Option<bool>,
+        /// native_bin_links
+        pub native_bin_links: Vec<Box<[u8]>>,
+        /// disable_cache
+        pub disable_cache: Option<bool>,
+        /// disable_manifest_cache
+        pub disable_manifest_cache: Option<bool>,
+        /// global_dir
+        pub global_dir: Option<Box<[u8]>>,
+        /// global_bin_dir
+        pub global_bin_dir: Option<Box<[u8]>>,
+        /// frozen_lockfile
+        pub frozen_lockfile: Option<bool>,
+        /// exact
+        pub exact: Option<bool>,
+        /// concurrent_scripts
+        pub concurrent_scripts: Option<u32>,
+
+        pub cafile: Option<Box<[u8]>>,
+        pub save_text_lockfile: Option<bool>,
+        pub ca: Option<Ca>,
+        pub ignore_scripts: Option<bool>,
+        pub link_workspace_packages: Option<bool>,
+        pub node_linker: Option<NodeLinker>,
+        pub global_store: Option<bool>,
+        pub security_scanner: Option<Box<[u8]>>,
+        pub minimum_release_age_ms: Option<f64>,
+        pub minimum_release_age_excludes: Option<Vec<Box<[u8]>>>,
+        pub public_hoist_pattern: Option<PnpmMatcher>,
+        pub hoist_pattern: Option<PnpmMatcher>,
     }
 
     /// schema.zig:1967 — `enum(u8)` (open). Generated body emits `_` open
@@ -54,6 +340,21 @@ pub mod api {
         bun = 3,
         bun_macro = 4,
     }
+
+    impl Target {
+        // PascalCase aliases — `runtime/cli/Arguments.rs` writes
+        // `api::Target::Bun` while the schema enum body keeps the peechy
+        // snake_case tags above.
+        pub const Browser: Self = Self::browser;
+        pub const Node: Self = Self::node;
+        pub const Bun: Self = Self::bun;
+        pub const BunMacro: Self = Self::bun_macro;
+    }
+
+    /// Alias: `runtime/cli/Arguments.rs` spells the schema type both ways.
+    pub type SourceMap = SourceMapMode;
+    /// Alias: `runtime/cli/Arguments.rs` spells the schema type both ways.
+    pub type Packages = PackagesMode;
 
     /// schema.zig:325 — `enum(u8)` (open), `_none = 254`. Kept closed;
     /// `BundleEnums::Loader::from_api` guards the open tail with `_ => File`.

@@ -2781,45 +2781,44 @@ impl StyleAttribute {
         })
     }
 
+}
+
+} // mod stylesheet_impl
+
+// ───────────────────────────── StyleAttribute ─────────────────────────────
+
+pub struct StyleAttribute {
+    // PORT NOTE: `DeclarationBlock<'bump>` borrows the parser arena; lifetime
+    // erased to `'static` until 'bump threads through the rule tree (matches
+    // `StyleRule.declarations` in rules/style.rs).
+    pub declarations: DeclarationBlock<'static>,
+    pub sources: Vec<Box<[u8]>>,
+}
+
+impl StyleAttribute {
     pub fn minify(&mut self, _options: MinifyOptions) {
         // TODO: IMPLEMENT THIS!
     }
 }
 
-} // mod stylesheet_impl
-#[cfg(any())]
-pub use stylesheet_impl::{StyleSheet, StyleAttribute};
-
-/// B-2 surface stub: real layout in `stylesheet_impl` (gated). Generic over
-/// the custom-at-rule type so `StyleSheet<DefaultAtRule>` / `BundlerStyleSheet`
-/// type-paths resolve for cross-crate dependents.
-#[cfg(not(any()))]
-#[non_exhaustive]
-pub struct StyleSheet<AtRule> { _at: core::marker::PhantomData<AtRule> }
-#[cfg(not(any()))]
-#[non_exhaustive]
-pub struct StyleAttribute { _p: () }
-
 // ───────────────────────────── RuleBodyParser ─────────────────────────────
 //
-// blocked_on: rule_parsers (RuleBodyItemParser/DeclarationParser traits live
-// inside the gated NestedRuleParser block above).
-#[cfg(any())]
-mod rule_body_parser { use super::*;
+// B-2 round 5: un-gated. `RuleBodyItemParser`/`DeclarationParser` traits are
+// hoisted above; this is pure trait-generic over `P`.
 
-pub struct RuleBodyParser<'a, P: RuleBodyItemParser> {
-    pub input: &'a mut Parser<'a>,
-    pub parser: &'a mut P,
+pub struct RuleBodyParser<'i, 't, P: RuleBodyItemParser> {
+    pub input: &'i mut Parser<'t>,
+    pub parser: &'i mut P,
 }
 
-impl<'a, P> RuleBodyParser<'a, P>
+impl<'i, 't, P> RuleBodyParser<'i, 't, P>
 where
     P: RuleBodyItemParser<
         Declaration = <P as QualifiedRuleParser>::QualifiedRule,
         AtRule = <P as QualifiedRuleParser>::QualifiedRule,
     >,
 {
-    pub fn new(input: &'a mut Parser<'a>, parser: &'a mut P) -> Self {
+    pub fn new(input: &'i mut Parser<'t>, parser: &'i mut P) -> Self {
         Self { input, parser }
     }
 
@@ -2904,10 +2903,6 @@ where
         }
     }
 }
-
-} // mod rule_body_parser
-#[cfg(any())]
-pub use rule_body_parser::RuleBodyParser;
 
 // ───────────────────────────── ParserOptions ─────────────────────────────
 

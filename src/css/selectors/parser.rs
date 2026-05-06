@@ -105,6 +105,30 @@ pub trait SelectorImpl: Sized {
     type PseudoElement: Clone;
 }
 
+/// Constrained `SelectorImpl` with the concrete assoc-type bundle Bun uses.
+///
+/// PORT NOTE: in Zig the `parse_*` functions were `comptime Impl: type` generics
+/// but every body assumed the concrete `selector.impl.Selectors` shapes (it was
+/// the only instantiation). Rust can't see through the open `Impl::LocalName`
+/// to `Ident`, so the parse functions bound on this sub-trait instead — the
+/// associated-type equality clauses make `Impl::LocalName == Ident` etc.
+/// visible to the body without monomorphizing the signature.
+pub trait BunSelectorImpl:
+    SelectorImpl<
+    AttrValue = css::CSSString,
+    Identifier = Ident,
+    LocalIdentifier = css::css_values::ident::IdentOrRef,
+    LocalName = Ident,
+    NamespaceUrl = Str,
+    NamespacePrefix = Ident,
+    NonTSPseudoClass = PseudoClass,
+    PseudoElement = PseudoElement,
+    VendorPrefix = css::VendorPrefix,
+>
+{
+}
+impl BunSelectorImpl for impl_::Selectors {}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // attrs
 // ─────────────────────────────────────────────────────────────────────────────
@@ -421,7 +445,7 @@ fn compute_simple_selector_specificity<Impl: SelectorImpl>(
 /// selector : simple_selector_sequence [ combinator simple_selector_sequence ]* ;
 ///
 /// `Err` means invalid selector.
-fn parse_selector<Impl: SelectorImpl>(
+fn parse_selector<Impl: BunSelectorImpl>(
     parser: &mut SelectorParser,
     input: &mut CssParser,
     state: &mut SelectorParsingState,
@@ -573,7 +597,7 @@ fn parse_selector<Impl: SelectorImpl>(
 ///
 /// `Err(())` means invalid selector.
 /// `Ok(true)` is an empty selector
-fn parse_compound_selector<Impl: SelectorImpl>(
+fn parse_compound_selector<Impl: BunSelectorImpl>(
     parser: &mut SelectorParser,
     state: &mut SelectorParsingState,
     input: &mut CssParser,
@@ -685,7 +709,7 @@ fn parse_compound_selector<Impl: SelectorImpl>(
     Ok(empty)
 }
 
-fn parse_relative_selector<Impl: SelectorImpl>(
+fn parse_relative_selector<Impl: BunSelectorImpl>(
     parser: &mut SelectorParser,
     input: &mut CssParser,
     state: &mut SelectorParsingState,
@@ -2640,7 +2664,7 @@ impl NthType {
 /// * `Err(())`: Invalid selector, abort
 /// * `Ok(false)`: Not a type selector, could be something else. `input` was not consumed.
 /// * `Ok(true)`: Length 0 (`*|*`), 1 (`*|E` or `ns|*`) or 2 (`|E` or `ns|E`)
-pub fn parse_type_selector<Impl: SelectorImpl>(
+pub fn parse_type_selector<Impl: BunSelectorImpl>(
     parser: &mut SelectorParser,
     input: &mut CssParser,
     state: SelectorParsingState,
@@ -2730,7 +2754,7 @@ pub fn parse_type_selector<Impl: SelectorImpl>(
 /// * `Err(())`: Invalid selector, abort
 /// * `Ok(None)`: Not a simple selector, could be something else. `input` was not consumed.
 /// * `Ok(Some(_))`: Parsed a simple selector or pseudo-element
-pub fn parse_one_simple_selector<Impl: SelectorImpl>(
+pub fn parse_one_simple_selector<Impl: BunSelectorImpl>(
     parser: &mut SelectorParser,
     input: &mut CssParser,
     state: &mut SelectorParsingState,
@@ -2889,7 +2913,7 @@ pub fn parse_one_simple_selector<Impl: SelectorImpl>(
     Ok(None)
 }
 
-pub fn parse_attribute_selector<Impl: SelectorImpl>(
+pub fn parse_attribute_selector<Impl: BunSelectorImpl>(
     parser: &mut SelectorParser,
     input: &mut CssParser,
 ) -> CResult<GenericComponent<Impl>> {
@@ -3062,7 +3086,7 @@ pub fn is_css2_pseudo_element(name: &[u8]) -> bool {
 }
 
 /// Parses one compound selector suitable for nested stuff like :-moz-any, etc.
-pub fn parse_inner_compound_selector<Impl: SelectorImpl>(
+pub fn parse_inner_compound_selector<Impl: BunSelectorImpl>(
     parser: &mut SelectorParser,
     input: &mut CssParser,
     state: &mut SelectorParsingState,
@@ -3080,7 +3104,7 @@ pub fn parse_inner_compound_selector<Impl: SelectorImpl>(
     Ok(result)
 }
 
-pub fn parse_functional_pseudo_class<Impl: SelectorImpl>(
+pub fn parse_functional_pseudo_class<Impl: BunSelectorImpl>(
     parser: &mut SelectorParser,
     input: &mut CssParser,
     name: Str,
@@ -3146,7 +3170,7 @@ pub fn parse_functional_pseudo_class<Impl: SelectorImpl>(
     // generic path needs a `From` bound in Phase B.
 }
 
-pub fn parse_simple_pseudo_class<Impl: SelectorImpl>(
+pub fn parse_simple_pseudo_class<Impl: BunSelectorImpl>(
     parser: &mut SelectorParser,
     location: css::SourceLocation,
     name: Str,
@@ -3211,7 +3235,7 @@ pub fn parse_simple_pseudo_class<Impl: SelectorImpl>(
     Ok(GenericComponent::NonTsPseudoClass(pseudo_class.into()))
 }
 
-pub fn parse_nth_pseudo_class<Impl: SelectorImpl>(
+pub fn parse_nth_pseudo_class<Impl: BunSelectorImpl>(
     parser: &mut SelectorParser,
     input: &mut CssParser,
     state: SelectorParsingState,
@@ -3260,7 +3284,7 @@ pub fn parse_nth_pseudo_class<Impl: SelectorImpl>(
 
 /// `func` must take `Box<[GenericSelector<Impl>]>` (plus any captured extras) and
 /// return a `GenericComponent<Impl>`.
-pub fn parse_is_or_where<Impl: SelectorImpl, F>(
+pub fn parse_is_or_where<Impl: BunSelectorImpl, F>(
     parser: &mut SelectorParser,
     input: &mut CssParser,
     state: &mut SelectorParsingState,
@@ -3302,7 +3326,7 @@ where
     Ok(result)
 }
 
-pub fn parse_has<Impl: SelectorImpl>(
+pub fn parse_has<Impl: BunSelectorImpl>(
     parser: &mut SelectorParser,
     input: &mut CssParser,
     state: &mut SelectorParsingState,
@@ -3324,7 +3348,7 @@ pub fn parse_has<Impl: SelectorImpl>(
 
 /// Level 3: Parse **one** simple_selector.  (Though we might insert a second
 /// implied "<defaultns>|*" type selector.)
-pub fn parse_negation<Impl: SelectorImpl>(
+pub fn parse_negation<Impl: BunSelectorImpl>(
     parser: &mut SelectorParser,
     input: &mut CssParser,
     state: &mut SelectorParsingState,
@@ -3366,7 +3390,7 @@ pub enum QNamePrefix<Impl: SelectorImpl> {
 /// * `Ok(None(token))`: Not a simple selector, could be something else. `input` was not consumed,
 ///                      but the token is still returned.
 /// * `Ok(Some(namespace, local_name))`: `None` for the local name means a `*` universal selector
-pub fn parse_qualified_name<Impl: SelectorImpl>(
+pub fn parse_qualified_name<Impl: BunSelectorImpl>(
     parser: &mut SelectorParser,
     input: &mut CssParser,
     in_attr_selector: bool,
@@ -3458,7 +3482,7 @@ pub fn parse_qualified_name<Impl: SelectorImpl>(
     Ok(OptionalQName::None(tok))
 }
 
-fn parse_qualified_name_default_namespace_helper<Impl: SelectorImpl>(
+fn parse_qualified_name_default_namespace_helper<Impl: BunSelectorImpl>(
     parser: &mut SelectorParser,
     local_name: Option<Str>,
 ) -> OptionalQName<Impl> {
@@ -3470,7 +3494,7 @@ fn parse_qualified_name_default_namespace_helper<Impl: SelectorImpl>(
     OptionalQName::Some(namespace, local_name)
 }
 
-fn parse_qualified_name_eplicit_namespace_helper<Impl: SelectorImpl>(
+fn parse_qualified_name_eplicit_namespace_helper<Impl: BunSelectorImpl>(
     input: &mut CssParser,
     namespace: QNamePrefix<Impl>,
     in_attr_selector: bool,

@@ -19,7 +19,10 @@
 // plus the bundler-cycle-broken `Path::loader`/`package_name`.
 pub mod data_url;
 pub mod dir_info;
-#[path = "fs.rs"] pub mod fs_full;
+// reconciler-3: fs.rs references `bun_str`/`bun_output`/`MutableString`/
+// `PathString` (not yet ported); the inline `pub mod fs` below remains the
+// real type surface. Un-gate alongside those crate roots.
+#[cfg(any())] #[path = "fs.rs"] pub mod fs_full;
 pub mod node_fallbacks;
 pub mod package_json;
 pub mod tsconfig_json;
@@ -4972,7 +4975,7 @@ impl<'a> Resolver<'a> {
                 fd: FD::INVALID,
             };
 
-            if let Some(top_entry) = rfs.entries.get(top) {
+            if let Some(top_entry) = rfs!().entries.get(top) {
                 match top_entry {
                     Fs::file_system::real_fs::EntriesOption::Entries(entries) => {
                         bufs!(dir_entry_paths_to_resolve)[usize::try_from(i).unwrap()].safe_path = entries.dir;
@@ -5005,7 +5008,7 @@ impl<'a> Resolver<'a> {
                     safe_path: b"",
                     fd: FD::INVALID,
                 };
-                if let Some(top_entry) = rfs.entries.get(top) {
+                if let Some(top_entry) = rfs!().entries.get(top) {
                     match top_entry {
                         Fs::file_system::real_fs::EntriesOption::Entries(entries) => {
                             bufs!(dir_entry_paths_to_resolve)[usize::try_from(i).unwrap()].safe_path = entries.dir;
@@ -5124,14 +5127,14 @@ impl<'a> Resolver<'a> {
                             {
                                 return Ok(None);
                             }
-                            let cached_dir_entry_result = rfs.entries.get_or_put(queue_top.unsafe_path).expect("unreachable");
+                            let cached_dir_entry_result = rfs!().entries.get_or_put(queue_top.unsafe_path).expect("unreachable");
                             // If we don't properly cache not found, then we repeatedly attempt to open the same directories,
                             // which causes a perf trace that looks like this stupidity;
                             //
                             //   openat(dfd: CWD, filename: "node_modules/react", flags: RDONLY|DIRECTORY) = -1 ENOENT (No such file or directory)
                             //   ...
                             self.dir_cache.mark_not_found(queue_top.result);
-                            rfs.entries.mark_not_found(cached_dir_entry_result);
+                            rfs!().entries.mark_not_found(cached_dir_entry_result);
                             if !(err == bun_core::err!("ENOENT") || err == bun_core::err!("FileNotFound")) {
                                 if ENABLE_LOGGING {
                                     let pretty = queue_top.unsafe_path;
@@ -5187,13 +5190,13 @@ impl<'a> Resolver<'a> {
                 &safe_path[dir_path_i..end]
             };
 
-            let mut cached_dir_entry_result = rfs.entries.get_or_put(dir_path).expect("unreachable");
+            let mut cached_dir_entry_result = rfs!().entries.get_or_put(dir_path).expect("unreachable");
 
             let mut dir_entries_option: *mut Fs::file_system::real_fs::EntriesOption = core::ptr::null_mut();
             let mut needs_iter = true;
             let mut in_place: Option<*mut Fs::file_system::DirEntry> = None;
 
-            if let Some(cached_entry) = rfs.entries.at_index(cached_dir_entry_result.index) {
+            if let Some(cached_entry) = rfs!().entries.at_index(cached_dir_entry_result.index) {
                 if let Fs::file_system::real_fs::EntriesOption::Entries(entries) = cached_entry {
                     if entries.generation >= self.generation {
                         dir_entries_option = cached_entry;
@@ -5244,7 +5247,7 @@ impl<'a> Resolver<'a> {
                 };
                 // SAFETY: dir_entries_ptr is either a live BSSMap slot (`in_place`) or a fresh Box.
                 unsafe { *dir_entries_ptr = new_entry };
-                dir_entries_option = rfs
+                dir_entries_option = rfs!()
                     .entries
                     // SAFETY: see block-wide note above.
                     .put(&cached_dir_entry_result, Fs::file_system::real_fs::EntriesOption::Entries(unsafe { &mut *dir_entries_ptr }))?;
@@ -5253,7 +5256,11 @@ impl<'a> Resolver<'a> {
 
             // We must initialize it as empty so that the result index is correct.
             // This is important so that browser_scope has a valid index.
-            let dir_info_ptr = self.dir_cache.put(&mut queue_top.result, DirInfo::DirInfo::default())?;
+            // PORT NOTE: erase the `&mut DirInfo` borrow to `*mut` immediately so
+            // `self.dir_cache` (and `*self`) are reborrowable for the call below.
+            let dir_info_ptr: *mut DirInfo::DirInfo =
+                self.dir_cache.put(&mut queue_top.result, DirInfo::DirInfo::default())?;
+            let parent_dir_ptr = self.dir_cache.at_index(top_parent.index).map(|d| d as *mut _);
 
             self.dir_info_uncached(
                 dir_info_ptr,
@@ -5262,7 +5269,7 @@ impl<'a> Resolver<'a> {
                 dir_entries_option,
                 queue_top.result,
                 cached_dir_entry_result.index,
-                self.dir_cache.at_index(top_parent.index).map(|d| d as *mut _),
+                parent_dir_ptr,
                 top_parent.index,
                 open_dir,
                 None,

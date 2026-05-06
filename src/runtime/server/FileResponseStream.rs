@@ -268,7 +268,7 @@ impl FileResponseStream {
                 self.reader.pause();
                 false
             }
-            bun_uws::WriteResult::WantMore => true,
+            bun_uws::WriteResult::WantMore(_) => true,
         }
     }
 
@@ -350,7 +350,7 @@ impl FileResponseStream {
                     _ => {
                         self.fail_with(sys::Error {
                             errno: errno as _,
-                            syscall: sys::Syscall::Sendfile,
+                            syscall: sys::Tag::sendfile,
                             fd: self.fd,
                             ..Default::default()
                         });
@@ -396,7 +396,7 @@ impl FileResponseStream {
                     _ => {
                         self.fail_with(sys::Error {
                             errno: errno as _,
-                            syscall: sys::Syscall::Sendfile,
+                            syscall: sys::Tag::sendfile,
                             fd: self.fd,
                             ..Default::default()
                         });

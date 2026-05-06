@@ -246,16 +246,15 @@ impl BunFrontendDevServerAgent {
 pub extern "C" fn Bun__InspectorBunFrontendDevServerAgent__setEnabled(
     agent: *mut InspectorBunFrontendDevServerAgentHandle,
 ) {
-    
-    {
-        // TODO(port): VirtualMachine::get() / debugger field shape — verify in Phase B.
-        if let Some(debugger) = jsc::VirtualMachine::get().debugger.as_mut() {
-            debugger.frontend_dev_server_agent.get_mut().handle =
-                if agent.is_null() { None } else { Some(agent) };
-        }
+    // SAFETY: called on the JS thread with a live VM (C++ inspector agent
+    // invokes this only after the VM is initialized).
+    let vm = unsafe { &mut *jsc::virtual_machine::VirtualMachine::get() };
+    if let Some(debugger) = vm.debugger.as_deref_mut() {
+        // `Debugger.frontend_dev_server_agent` stores the low-tier stub
+        // (`handle: *mut c_void`); cast the opaque C++ handle through it.
+        debugger.frontend_dev_server_agent.get_mut().handle =
+            agent.cast::<core::ffi::c_void>();
     }
-    // TODO(b2-blocked): bun_jsc::VirtualMachine::get
-    let _ = agent;
 }
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -3,14 +3,16 @@ use bun_collections::array_hash_map::{self, ArrayHashContext, ArrayHashMap, Iter
 use crate::shell::EnvStr;
 
 pub struct EnvMap {
-    map: MapType,
+    map: EnvMapInner,
 }
 
 // PORT NOTE: Zig used `std.ArrayHashMap(K, V, Context, store_hash=true)`.
 // `bun_collections::ArrayHashMap` already takes a `C: ArrayHashContext<K>` param.
 pub type Iterator<'a> = Iter<'a, EnvStr, EnvStr>;
 
-type MapType = ArrayHashMap<EnvStr, EnvStr, EnvMapContext>;
+// PORT NOTE: Zig calls this `MapType`. Renamed to avoid rustc confusing it with the
+// unrelated mmap `sys::c::MapType` / `sys::posix::MapType` in diagnostic suggestions.
+type EnvMapInner = ArrayHashMap<EnvStr, EnvStr, EnvMapContext>;
 
 #[derive(Default)]
 struct EnvMapContext;

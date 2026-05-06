@@ -1681,18 +1681,19 @@ impl<'a> Repl<'a> {
         let Some(global) = self.global else { return; };
         let writer = Output::writer();
         if let Err(err) = jsc::ConsoleObject::format2(
-            jsc::ConsoleLevel::Log,
+            jsc::ConsoleObject::MessageLevel::Log,
             global,
-            &[value],
+            &value,
             1,
             writer,
-            jsc::ConsoleFormatOptions {
+            jsc::ConsoleObject::FormatOptions {
                 enable_colors: self.use_colors,
                 add_newline: true,
                 flush: false,
                 quote_strings: true,
                 ordered_properties: false,
                 max_depth: 4,
+                ..Default::default()
             },
         ) {
             // A getter on the value threw during inspection — show that error.

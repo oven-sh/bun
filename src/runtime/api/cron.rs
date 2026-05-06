@@ -1055,9 +1055,11 @@ impl CronRemoveJob {
         self.spawn_cmd(&mut argv, spawn::Stdio::Ignore, spawn::Stdio::Ignore);
         drop(uid_str);
     }
+}
 
-    #[bun_jsc::host_fn]
-    pub fn cron_remove(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+// free fn: `#[host_fn]` Free shim calls bare `cron_remove(..)`
+#[bun_jsc::host_fn]
+pub fn cron_remove(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let args = frame.arguments_as_array::<1>();
         if !args[0].is_string() {
             return global.throw_invalid_arguments(format_args!(

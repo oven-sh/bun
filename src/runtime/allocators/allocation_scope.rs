@@ -529,20 +529,20 @@ impl<'a, A: GenericAllocator> Borrowed<'a, A> {
     ///      for `bun_alloc::DefaultAllocator`.
     pub fn downcast(std_alloc: StdAllocator) -> Self
     where
-        crate::Borrowed<A>: Default,
+        BorrowedAlloc<A>: Default,
     {
         // TODO(port): Zig branched on `Allocator == std.mem.Allocator` to pass `null` here.
         // Collapsed to the `initDefault` path; Phase B specializes for `A = StdAllocator`.
-        Self::downcast_impl(std_alloc, Some(crate::memory::init_default::init_default::<crate::Borrowed<A>>()))
+        Self::downcast_impl(std_alloc, Some(bun_alloc::memory::init_default::<BorrowedAlloc<A>>()))
     }
 }
 
-impl<A> AllocationScopeIn<A> {
+impl<A: GenericAllocator> AllocationScopeIn<A> {
     pub const ENABLED: bool = ENABLED;
 
     pub fn init(parent_alloc: A) -> Self {
         #[cfg(feature = "alloc_scopes")]
-        let state = Box::new(State::init(crate::as_std(&parent_alloc)));
+        let state = Box::new(State::init(as_std(&parent_alloc)));
         Self {
             parent: parent_alloc,
             #[cfg(feature = "alloc_scopes")]

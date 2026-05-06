@@ -3900,13 +3900,14 @@ pub fn finalize_bundle(
                 resp,
                 dev.bundling_failures.keys(),
                 ErrorPageKind::Bundler,
-                inspector_agent,
+                // SAFETY: agent ptr is from `dev.inspector()` above; live for this scope.
+                inspector_agent_ptr.take().map(|p| unsafe { &mut *p }),
             )?;
-            inspector_agent = None;
         }
-        if let Some(agent) = inspector_agent {
+        if let Some(agent_ptr) = inspector_agent_ptr {
             let mut buf: Vec<u8> = Vec::new();
-            dev.encode_serialized_failures(dev.bundling_failures.keys(), &mut buf, Some(agent))?;
+            // SAFETY: agent ptr is from `dev.inspector()` above; live for this scope.
+            dev.encode_serialized_failures(dev.bundling_failures.keys(), &mut buf, Some(unsafe { &mut *agent_ptr }))?;
         }
 
         return Ok(());

@@ -2426,13 +2426,11 @@ fn bun_join<const SENTINEL: bool>(parts: &[&[u8]]) -> Box<[u8]> {
 // MOVE_DOWN(b0): DirIterator::IteratorResult now lives in bun_sys::dir_iterator.
 impl AccessorDirEntry for DirIterator::IteratorResult {
     fn name_slice(&self) -> &[u8] {
-        // TODO(b2-blocked): bun_sys::dir_iterator::Name::slice — stub exposes
-        // `as_slice() -> &[OSPathChar]`. On posix OSPathChar==u8; on windows
-        // the Zig DirIterator transcodes to UTF-8, so the real impl returns &[u8].
-        #[cfg(not(windows))]
-        { self.name.as_slice() }
-        #[cfg(windows)]
-        { todo!("b2-blocked: bun_sys::dir_iterator::Name::slice (windows utf16→utf8)") }
+        // Zig `entry.name.slice()` is always `[]const u8`: on Windows the `.u8`
+        // NewWrappedIterator transcodes via `strings.fromWPath` at iteration
+        // time. `Name::slice_u8()` exposes that cached transcode (or the native
+        // slice on POSIX) so this is uniformly `&[u8]`.
+        self.name.slice_u8()
     }
     fn kind(&self) -> bun_sys::FileKind {
         self.kind

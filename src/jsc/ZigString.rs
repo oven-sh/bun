@@ -120,27 +120,23 @@ pub fn to_external_u16(ptr: *const u16, len: usize, global: &JSGlobalObject) -> 
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// phase-b2+: `JSValue` / `JSGlobalObject` surface has landed (~83 methods).
-// NOTE: this body was *never* blocked on JSValue surface — its blockers are
-// orthogonal lower-tier API gaps. Per PORTING.md the JSC-side methods (`to_js`/
-// `to_error_instance`/…) belong on a `ZigStringJsc` extension trait impl'd for
-// `bun_string::ZigString`, not on a duplicate local struct.
+// UN-GATED: `JSValue` / `JSGlobalObject` surface has landed; bytemuck +
+// `bun_string::encoding::Encoding` + simdutf now in the dep graph. The
+// `Slice` ownership model uses the enum-based `bun_string::ZigStringSlice`
+// (re-exported above) instead of the original `NullableAllocator`-backed
+// struct — that struct is preserved below behind `#[cfg(any())]` for
+// reference until `bun_alloc::NullableAllocator` grows real methods.
 //
-// STILL GATED — remaining hard blockers (all OUTSIDE this file):
-//   - `bytemuck` not in `bun_jsc` dep graph (cast_slice, 3×)
-//   - `bun_alloc::NullableAllocator::{default_alloc, null, NULL, get, is_null,
-//      free, is_default}` — real impl is `#[cfg(any())]`-gated; only a unit
-//      stub struct is exported (Slice ownership model needs it)
-//   - `bun_alloc::free_slice` — not exported
-//   - `crate::node::Encoding` / `crate::webcore::encoding` — modules absent
-//   - `c_api::{JSStringRef, JSStringCreateWithCharactersNoCopy,
-//      JSStringCreateStatic}` — not in javascript_core_c_api.rs
-//   - `crate::ErrorCode::STRING_TOO_LONG` — codegen'd ErrorCode not yet emitted
-//   - `bun_core::fmt::{format_utf16_type, format_latin1, github_action_writer}`
-//   - `bun_string::ZStr::{from_bytes, from_vec_with_nul, from_raw}`
-// `static_`/`Slice` re-export above satisfy current downstream callers.
+// STILL GATED inside (per-item `#[cfg(any())]`):
+//   - `encode`/`encode_with_allocator` — need `webcore::encoding::construct_from_*`
+//      (forward-dep cycle: bun_runtime → bun_jsc)
+//   - `to_js_string_ref` — `c_api::{JSStringRef, JSStringCreateWithCharactersNoCopy,
+//      JSStringCreateStatic}` not in javascript_core_c_api.rs
+//   - `to_ref` — `JSValue::as_ref_` missing
+//   - `to_base64_data_url` — `bun_core::base64` module missing
+//   - `index_of_any` — needs `&'static [u16]` adapter for `index_of_any16`
+//   - struct-based `Slice` + `NullableAllocator` plumbing
 // ──────────────────────────────────────────────────────────────────────────
-#[cfg(any())]
 mod _body {
 use super::*;
 
@@ -161,6 +157,11 @@ impl ZigString {
         }
     }
 
+    // TODO(port): `webcore::encoding::{construct_from_u8,u16}` live in
+    // `src/runtime/webcore/encoding.rs` (bun_runtime crate, forward-dep on
+    // bun_jsc). Gated until the dep cycle is broken or the encoder is
+    // hoisted into a leaf crate.
+    #[cfg(any())]
     pub fn encode(&self, encoding: Encoding) -> Vec<u8> {
         // PERF(port): was inline-else monomorphization over ByteString × Encoding — profile in Phase B
         match self.as_() {
@@ -170,12 +171,12 @@ impl ZigString {
     }
 
     // Zig: encodeWithAllocator — allocator param dropped (global mimalloc)
+    #[cfg(any())]
     pub fn encode_with_allocator(&self, encoding: Encoding) -> Vec<u8> {
         self.encode(encoding)
     }
 
-    pub fn dupe_for_js(utf8: &[u8]) -> Result<ZigString, bun_core::Error> {
-        // TODO(port): narrow error set
+    pub fn dupe_for_js(utf8: &[u8]) -> Result<ZigString, strings::ToUTF16Error> {
         if let Some(utf16) = strings::to_utf16_alloc(utf8, false, false)? {
             // PERF(port): leaks Box<[u16]> into raw for global ownership — matches Zig semantics
             let leaked: &'static [u16] = Box::leak(utf16.into_boxed_slice());

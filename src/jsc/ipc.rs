@@ -1812,7 +1812,7 @@ fn handle_ipc_message(
                     if !cmd.is_cell() {
                         break 'handle_message;
                     }
-                    let cmd_str = match BunString::from_js(cmd, global_this) {
+                    let cmd_str = match crate::bun_string_jsc::from_js(cmd, global_this) {
                         Ok(s) => s,
                         Err(e) => {
                             let _ = global_this.take_exception(e);
@@ -1847,7 +1847,7 @@ fn handle_ipc_message(
                     handle: None,
                     callbacks: CallbackList::AckNack,
                 };
-                handle.data.write(packet);
+                let _ = handle.data.write(packet);
 
                 // Insert at appropriate position in send queue
                 send_queue.insert_message(handle);
@@ -1863,18 +1863,21 @@ fn handle_ipc_message(
                 // Get file descriptor and clear it
                 let fd: Fd = send_queue.incoming_fd.take().unwrap();
 
-                let target: JSValue = match send_queue.owner {
-                    SendQueueOwner::Subprocess(subprocess) => {
-                        // SAFETY: BACKREF — see SendQueueOwner.
-                        unsafe { (*subprocess).this_value.try_get() }.unwrap_or(JSValue::ZERO)
-                    }
-                    SendQueueOwner::VirtualMachine(_) => JSValue::NULL,
+                let target: JSValue = match send_queue.owner.kind {
+                    SendQueueOwnerKind::Subprocess => send_queue.owner.this_jsvalue(),
+                    SendQueueOwnerKind::VirtualMachine => JSValue::NULL,
                 };
 
-                let vm = global_this.bun_vm();
+                // SAFETY: bun_vm() borrows the singleton VM; event_loop()
+                // requires &mut for the enter/exit counter only.
+                let vm = unsafe {
+                    &mut *(global_this.bun_vm() as *const _ as *mut VirtualMachine)
+                };
                 vm.event_loop().enter();
                 // TODO(port): errdefer — scopeguard for event_loop().exit()
-                let res = ipc_parse(global_this, target, msg_data, fd.to_js(global_this));
+                // FD.toJS — encode_windows() exposes the user-visible numeric fd.
+                let fd_js = JSValue::js_number_from_int32(fd.encode_windows() as i32);
+                let res = ipc_parse(global_this, target, msg_data, fd_js);
                 if let Err(e) = res {
                     // ack written already, that's okay.
                     global_this.report_active_exception_as_unhandled(e);

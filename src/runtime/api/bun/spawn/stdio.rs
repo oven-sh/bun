@@ -3,7 +3,7 @@
 use bun_collections::ByteList;
 use bun_core::Output;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult};
-use bun_sys::{self as sys, Fd};
+use bun_sys::{self as sys, Fd, FdExt as _};
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
 

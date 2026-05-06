@@ -1696,7 +1696,8 @@ impl PosixSpawnResult {
                     // https://github.com/moby/moby/issues/42680
                     // so let's treat a bunch of these as actually meaning we should use the waiter thread fallback instead.
                     bun_sys::E::ENOSYS
-                    | bun_sys::E::EOPNOTSUPP
+                    // EOPNOTSUPP == ENOTSUP on Linux (both 95).
+                    | bun_sys::E::ENOTSUP
                     | bun_sys::E::EPERM
                     | bun_sys::E::EACCES
                     | bun_sys::E::EINVAL => {

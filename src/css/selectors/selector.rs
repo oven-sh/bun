@@ -299,17 +299,17 @@ pub fn is_compatible(selectors: &[parser::Selector], targets: Targets) -> bool {
                 Component::ExplicitAnyNamespace
                 | Component::ExplicitNoNamespace
                 | Component::DefaultNamespace(_)
-                | Component::Namespace(_) => F::Namespaces,
+                | Component::Namespace { .. } => F::Namespaces,
 
                 Component::ExplicitUniversalType => F::Selectors2,
 
                 Component::AttributeInNoNamespaceExists { .. } => F::Selectors2,
 
-                Component::AttributeInNoNamespace(x) => 'brk: {
-                    if x.case_sensitivity != parser::attrs::ParsedCaseSensitivity::CaseSensitive {
+                Component::AttributeInNoNamespace { case_sensitivity, operator, .. } => 'brk: {
+                    if *case_sensitivity != parser::attrs::ParsedCaseSensitivity::CaseSensitive {
                         break 'brk F::CaseInsensitive;
                     }
-                    match x.operator {
+                    match operator {
                         parser::attrs::AttrSelectorOperator::Equal
                         | parser::attrs::AttrSelectorOperator::Includes
                         | parser::attrs::AttrSelectorOperator::DashMatch => F::Selectors2,
@@ -321,11 +321,15 @@ pub fn is_compatible(selectors: &[parser::Selector], targets: Targets) -> bool {
 
                 Component::AttributeOther(attr) => match &attr.operation {
                     parser::attrs::ParsedAttrSelectorOperation::Exists => F::Selectors2,
-                    parser::attrs::ParsedAttrSelectorOperation::WithValue(x) => 'brk: {
-                        if x.case_sensitivity != parser::attrs::ParsedCaseSensitivity::CaseSensitive {
+                    parser::attrs::ParsedAttrSelectorOperation::WithValue {
+                        case_sensitivity,
+                        operator,
+                        ..
+                    } => 'brk: {
+                        if *case_sensitivity != parser::attrs::ParsedCaseSensitivity::CaseSensitive {
                             break 'brk F::CaseInsensitive;
                         }
-                        match x.operator {
+                        match operator {
                             parser::attrs::AttrSelectorOperator::Equal
                             | parser::attrs::AttrSelectorOperator::Includes
                             | parser::attrs::AttrSelectorOperator::DashMatch => F::Selectors2,
@@ -362,12 +366,12 @@ pub fn is_compatible(selectors: &[parser::Selector], targets: Targets) -> bool {
                 }
 
                 // These support forgiving selector lists, so no need to check nested selectors.
-                Component::Is(sels) => 'brk: {
+                Component::Is(sels) => {
                     // ... except if we are going to unwrap them.
                     if should_unwrap_is(sels) && is_compatible(sels, targets) {
                         continue;
                     }
-                    break 'brk F::IsSelector;
+                    F::IsSelector
                 }
                 Component::Where(_) | Component::Nesting => F::IsSelector,
                 Component::Any { .. } => return false,
@@ -537,7 +541,7 @@ fn is_selector_unused(
     for component in selector.components.iter() {
         match component {
             Component::Class(ident) | Component::Id(ident) => {
-                let actual_ident = ident.as_original_string(symbols);
+                let actual_ident = (*ident).as_original_string(symbols);
                 if unused_symbols.contains_key(actual_ident) {
                     return true;
                 }

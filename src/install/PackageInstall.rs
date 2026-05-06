@@ -576,7 +576,7 @@ impl UninstallTask {
                     "Failed to delete {} in {}: {}",
                     bstr::BStr::new(basename),
                     bstr::BStr::new(dirname),
-                    err.name()
+                    bstr::BStr::new(err.name())
                 ));
             }
         }
@@ -604,9 +604,8 @@ impl<'a> PackageInstall<'a> {
         let mut buf: BuntagHashBuf = BuntagHashBuf::default();
         let bunhashtag = buntaghashbuf_make(&mut buf, patchfile_contents_hash);
 
-        let patch_tag_path = path::join_z(
+        let patch_tag_path = path::resolve_path::join_z::<path::platform::Posix>(
             &[self.destination_dir_subpath.as_bytes(), bunhashtag],
-            path::Style::Posix,
         );
 
         let Ok(destination_dir) = self.node_modules.open_dir(root_node_modules_dir) else {
@@ -620,18 +619,15 @@ impl<'a> PackageInstall<'a> {
 
         #[cfg(unix)]
         {
-            if sys::fstatat(Fd::from_std_dir(destination_dir), patch_tag_path)
-                .unwrap()
-                .is_err()
-            {
+            if sys::fstatat(destination_dir.fd(), patch_tag_path).is_err() {
                 return false;
             }
         }
         #[cfg(not(unix))]
         {
-            match sys::openat(Fd::from_std_dir(destination_dir), patch_tag_path, sys::O::RDONLY, 0) {
-                sys::Result::Err(_) => return false,
-                sys::Result::Ok(fd) => fd.close(),
+            match sys::openat(destination_dir.fd(), patch_tag_path, sys::O::RDONLY, 0) {
+                Err(_) => return false,
+                Ok(fd) => fd.close(),
             }
         }
 
@@ -669,10 +665,9 @@ impl<'a> PackageInstall<'a> {
         };
         // bun_tag_file.bytes dropped at scope exit
 
-        strings::eql_long(
+        strings::eql_long::<true>(
             repo.resolved.slice(&self.lockfile.buffers.string_bytes),
             &bun_tag_file.bytes,
-            true,
         )
     }
 
@@ -1803,15 +1798,15 @@ impl<'a> PackageInstall<'a> {
         };
 
         match sys::renameat(
-            Fd::from_std_dir(destination_dir),
+            destination_dir.fd(),
             self.destination_dir_subpath,
-            Fd::from_std_dir(destination_dir),
+            destination_dir.fd(),
             temp_path,
         ) {
-            sys::Result::Err(_) => {
+            Err(_) => {
                 // if it fails, that means the directory doesn't exist or was inaccessible
             }
-            sys::Result::Ok(_) => {
+            Ok(_) => {
                 // Uninstall can sometimes take awhile in a large directory
                 // tree. Since we're renaming the directory to a randomly
                 // generated name, we can delete it in another thread without

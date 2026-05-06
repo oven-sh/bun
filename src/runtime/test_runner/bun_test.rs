@@ -1145,15 +1145,19 @@ impl<'a> BunTest<'a> {
             // Prevent the user's Promise rejection from going into the uncaught promise rejection queue.
             if !result.is_empty() {
                 if let Some(promise) = result.as_promise() {
-                    if promise.status() == PromiseStatus::Rejected {
-                        promise.set_handled();
+                    // SAFETY: `as_promise` returned a non-null GC-managed JSPromise.
+                    unsafe {
+                        if (*promise).status() == PromiseStatus::Rejected {
+                            (*promise).set_handled();
+                        }
                     }
                 }
             }
 
-            let prev_unhandled_count = vm.unhandled_error_counter;
+            // SAFETY: `vm` is the live per-thread VM.
+            let prev_unhandled_count = unsafe { (*vm).unhandled_error_counter };
             global_this.handle_rejected_promises();
-            if vm.unhandled_error_counter == prev_unhandled_count {
+            if unsafe { (*vm).unhandled_error_counter } == prev_unhandled_count {
                 break;
             }
         }
@@ -1165,7 +1169,7 @@ impl<'a> BunTest<'a> {
                     // done callback already called or the callback errored; add result immediately
                 } else {
                     let r = Self::ref_(&this_strong, cfg_data.clone());
-                    dcb_data.r#ref = Some(r.clone());
+                    dcb_data.r#ref = Some(r.dupe_ref());
                     dcb_ref = Some(r);
                     // TODO(port): Zig stored the same pointer twice without bumping; verify DoneCallback owns a counted ref vs. raw alias
                 }

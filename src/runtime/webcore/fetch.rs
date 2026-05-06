@@ -374,7 +374,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // which is important for FormData.
     // https://github.com/oven-sh/bun/issues/2264
     //
-    let mut body: HTTPRequestBody = HTTPRequestBody::Empty;
+    let mut body: HTTPRequestBody = HTTPRequestBody::default();
 
     let mut disable_timeout = false;
     let mut disable_keepalive = false;

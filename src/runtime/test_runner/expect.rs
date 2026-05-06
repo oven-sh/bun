@@ -588,6 +588,8 @@ impl Expect {
         // copy describe scopes in reverse order
         curr_scope = execution_entry.base.parent;
         while let Some(scope) = curr_scope {
+            // SAFETY: `parent` is a live `*mut DescribeScope` owned by the BunTest arena.
+            let scope = unsafe { &*scope };
             if let Some(name) = scope.base.name.as_deref() {
                 if !name.is_empty() {
                     index -= name.len() + 1;

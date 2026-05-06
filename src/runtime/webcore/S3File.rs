@@ -520,7 +520,7 @@ impl<'a> S3BlobStatTask<'a> {
             path,
             // TODO(port): @ptrCast fn pointer — verify s3::stat callback signature matches
             S3BlobStatTask::on_s3_exists_resolved as _,
-            this as *mut c_void,
+            this as *mut core::ffi::c_void,
             env.get_http_proxy(true, None, None).map(|proxy| proxy.href),
             s3_store.request_payer,
         )?;
@@ -545,7 +545,7 @@ impl<'a> S3BlobStatTask<'a> {
             credentials,
             path,
             S3BlobStatTask::on_s3_stat_resolved as _,
-            this as *mut c_void,
+            this as *mut core::ffi::c_void,
             env.get_http_proxy(true, None, None).map(|proxy| proxy.href),
             s3_store.request_payer,
         )?;
@@ -570,7 +570,7 @@ impl<'a> S3BlobStatTask<'a> {
             credentials,
             path,
             S3BlobStatTask::on_s3_size_resolved as _,
-            this as *mut c_void,
+            this as *mut core::ffi::c_void,
             env.get_http_proxy(true, None, None).map(|proxy| proxy.href),
             s3_store.request_payer,
         )?;

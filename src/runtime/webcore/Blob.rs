@@ -1621,7 +1621,7 @@ fn write_file_with_empty_source_to_destination(
             let promise = jsc::JSPromiseStrong::init(ctx);
             let promise_value = promise.value();
             // TODO(port): `vm.transpiler.env.get_http_proxy(true, None, None)` once env API lands.
-            let proxy_url: Option<&str> = {
+            let proxy_url: Option<&[u8]> = {
                 let _ = ctx;
                 todo!("blocked_on: bun_jsc::VirtualMachine.transpiler.env.get_http_proxy")
             };
@@ -1796,7 +1796,7 @@ pub fn write_file_with_source_destination(
             }
         };
         // TODO(port): `vm.transpiler.env.get_http_proxy(true, None, None)` once env API lands.
-        let proxy_url: Option<&str> = {
+        let proxy_url: Option<&[u8]> = {
             let _ = ctx;
             todo!("blocked_on: bun_jsc::VirtualMachine.transpiler.env.get_http_proxy")
         };

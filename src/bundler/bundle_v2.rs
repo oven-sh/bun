@@ -42,29 +42,14 @@ pub use crate::ParseTask;
 /// pool + completion queue for `BundleV2`).
 pub struct BundleThread(());
 
-/// CYCLEBREAK FORWARD_DECL: `jsc::api::JSBundler::Plugin` (`opaque {}` backed by
-/// C++ `BunPlugin`). The bundler only stores a pointer; FFI bodies live in T6
-/// (`bun_runtime::api`) and are reached via `crate::dispatch` hooks.
-#[repr(C)]
-pub struct JSBundlerPlugin {
-    _opaque: [u8; 0],
-}
+/// `jsc::api::JSBundler::Plugin` — re-exported from the canonical def below.
+pub use api::JSBundler::Plugin as JSBundlerPlugin;
 
-/// CYCLEBREAK FORWARD_DECL: `BundleV2.JSBundleCompletionTask` — JSC-thread
-/// completion record. The bundler stores a raw pointer; T6 (`bun_bundler_jsc`)
-/// owns the concrete layout and re-exports this name.
-#[repr(C)]
-pub struct JSBundleCompletionTask {
-    _opaque: [u8; 0],
-}
+/// `BundleV2.JSBundleCompletionTask` — re-exported from the canonical def below.
+pub use __phase_a_draft::JSBundleCompletionTask;
 
-/// CYCLEBREAK FORWARD_DECL: `jsc::api::JSBundler::FileMap` — virtual in-memory
-/// files for the build. TYPE_ONLY moved-down map (real def in the gated
-/// `api::JSBundler` draft below) once `bun_resolver::Result` is real.
-#[repr(C)]
-pub struct FileMap {
-    _opaque: [u8; 0],
-}
+/// `jsc::api::JSBundler::FileMap` — re-exported from the canonical def below.
+pub use api::JSBundler::FileMap;
 
 #[derive(Clone, Copy)]
 pub struct PendingImport {

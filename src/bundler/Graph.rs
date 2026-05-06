@@ -159,17 +159,11 @@ impl Graph {
     }
 }
 
-// TODO(b2-blocked): bun_resolver::SideEffects — `bun_resolver` is not in this
-// crate's dependency set (tier-ordering cycle with bundler per resolver
-// Cargo.toml). Local mirror of the public enum so `InputFile` compiles.
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
-pub enum SideEffects {
-    #[default]
-    HasSideEffects,
-    NoSideEffectsPackageJson,
-    NoSideEffectsEmptyAst,
-    NoSideEffectsPureData,
-}
+// Spec: `side_effects: _resolver.SideEffects` (Graph.zig:74). The resolver
+// crate re-exports the canonical enum from `bun_options_types`; re-export it
+// here so `InputFile` and the derived `items_side_effects()` SoA accessor share
+// the same type that `LinkerContext::mark_file_live_for_tree_shaking` expects.
+pub use bun_resolver::SideEffects;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

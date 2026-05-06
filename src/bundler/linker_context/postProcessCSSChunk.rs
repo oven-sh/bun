@@ -6,6 +6,7 @@ use bun_string::string_joiner::{StringJoiner, Watcher};
 use crate::chunk::IntermediateOutput;
 use crate::linker_context_mod::{GenerateChunkCtx, LinkerOptionsMode};
 use crate::thread_pool;
+use crate::Graph::InputFileListExt as _;
 use crate::{options, Chunk, CompileResultForSourceMap, Index};
 
 /// This runs after we've already populated the compile results

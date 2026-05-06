@@ -677,7 +677,11 @@ macro_rules! impl_to_ast_int {
         }
     )*};
 }
-impl_to_ast_int!(i8, i16, i32, i64, isize, u8, u16, u32, u64, usize);
+// PORT NOTE: `u8` is intentionally omitted so the generic `impl<T: ToAst> for [T]`
+// / `[T; N]` does NOT match byte arrays — Zig special-cases `Array.child == u8`
+// (json.zig:557-565) to emit `E::String`, not `E::Array`. See dedicated
+// `[u8]` / `[u8; N]` impls below.
+impl_to_ast_int!(i8, i16, i32, i64, isize, u16, u32, u64, usize);
 
 macro_rules! impl_to_ast_float {
     ($($t:ty),*) => {$(
@@ -724,6 +728,13 @@ impl<T: ToAst> ToAst for [T] {
 impl<T: ToAst, const N: usize> ToAst for [T; N] {
     fn to_ast(&self, bump: &Bump) -> Result<Expr, bun_core::Error> {
         self.as_slice().to_ast(bump)
+    }
+}
+
+// Spec json.zig:557-565 — `Array.child == u8` → `E::String` (not `E::Array`).
+impl<const N: usize> ToAst for [u8; N] {
+    fn to_ast(&self, _bump: &Bump) -> Result<Expr, bun_core::Error> {
+        Ok(Expr::init(E::String::init(self.as_slice()), logger::Loc::EMPTY))
     }
 }
 
@@ -797,20 +808,22 @@ pub fn to_ast<Ty: ToAst + ?Sized>(bump: &Bump, value: &Ty) -> Result<Expr, bun_c
 //   IGNORE_LEADING_ESC, IGNORE_TRAILING_ESC, JSON_WARN_DUP_KEYS,
 //   WAS_ORIGINALLY_MACRO, GUESS_INDENTATION>
 
+// Spec lexer.zig:50 — `json_warn_duplicate_keys: bool = true` is the DEFAULT;
+// json.zig:647-655/734 do not override it for these four parsers.
 type JSONParser<'a, 'bump> =
-    JSONLikeParser<'a, 'bump, true, false, false, false, false, false, false, false>;
+    JSONLikeParser<'a, 'bump, true, false, false, false, false, true, false, false>;
 
 type DotEnvJSONParser<'a, 'bump> =
-    JSONLikeParser<'a, 'bump, true, false, true, true, true, false, false, false>;
+    JSONLikeParser<'a, 'bump, true, false, true, true, true, true, false, false>;
 
 type TSConfigParser<'a, 'bump> =
-    JSONLikeParser<'a, 'bump, true, true, true, false, false, false, false, false>;
+    JSONLikeParser<'a, 'bump, true, true, true, false, false, true, false, false>;
 
 type JSONParserForMacro<'a, 'bump> =
     JSONLikeParser<'a, 'bump, true, true, true, false, false, false, true, false>;
 
 type PackageJSONParser<'a, 'bump> =
-    JSONLikeParser<'a, 'bump, true, true, true, false, false, false, false, false>;
+    JSONLikeParser<'a, 'bump, true, true, true, false, false, true, false, false>;
 
 // ──────────────────────────────────────────────────────────────────────────
 

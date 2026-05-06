@@ -158,12 +158,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             // disjoint-borrow-incompatible under stacked borrows. The Zig original holds a
             // `*?Hook` raw pointer; we mirror that here to break the exclusive-borrow chain.
             let hook_ptr: *mut crate::HookContext = {
-                let hook_storage = self
+                let storage_ptr = self
                     .react_refresh
                     .hook_ctx_storage
-                    .as_deref_mut()
                     .expect("caller did not init hook storage. any function can have react hooks!");
-                match hook_storage.as_mut() {
+                // SAFETY: storage_ptr points at stack storage on the caller's frame; valid here.
+                match unsafe { &mut *storage_ptr.as_ptr() }.as_mut() {
                     Some(h) => h as *mut _,
                     None => core::ptr::null_mut(),
                 }
@@ -333,14 +333,18 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             if core::ptr::eq(last_hook, &*call) {
                                 // PORT NOTE: disjoint field borrows — `react_refresh.hook_ctx_storage`
                                 // and `symbols` are independent fields of `P`.
-                                let hasher = &mut self
-                                    .react_refresh
-                                    .hook_ctx_storage
-                                    .as_deref_mut()
-                                    .unwrap()
-                                    .as_mut()
-                                    .unwrap()
-                                    .hasher;
+                                // SAFETY: hook_ctx_storage points at stack storage on the
+                                // visiting frame; valid for the duration of this borrow.
+                                let hasher = &mut unsafe {
+                                    &mut *self
+                                        .react_refresh
+                                        .hook_ctx_storage
+                                        .unwrap()
+                                        .as_ptr()
+                                }
+                                .as_mut()
+                                .unwrap()
+                                .hasher;
                                 decl.binding.data.write_to_hasher(
                                     hasher,
                                     self.symbols.as_mut_slice(),

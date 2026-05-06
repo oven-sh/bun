@@ -2950,22 +2950,66 @@ impl Resolver {
     }
 
     /// Dispatch to a typed ResolveInfoRequest cache by record type.
-    // TODO(port): Zig used `@field(this, cache_name)` with a comptime string.
+    // PORT NOTE: Zig used `@field(this, "pending_{TYPE_NAME}_cache_cares")` with a comptime
+    // string. Each per-record cache is a distinct monomorphization of
+    // `HiveArray<resolve_info_request::PendingCacheKey<_>, 32>`; `PendingCacheKey<T>` is
+    // layout-identical for all `T` (only the `*mut ResolveInfoRequest<T>` payload's pointee
+    // type differs), so reinterpreting the field reference at the caller's `T` is sound when
+    // `T::CACHE_FIELD` selects the matching field.
     fn pending_cache_for<T: CAresRecordType>(
         &mut self,
         _field: PendingCacheField,
     ) -> &mut HiveArray<resolve_info_request::PendingCacheKey<T>, 32> {
-        // TODO(port): proc-macro / specialization — return the matching `pending_{TYPE_NAME}_cache_cares`.
-        unimplemented!("dispatch on T::CACHE_FIELD in Phase B")
+        macro_rules! field {
+            ($f:ident) => {
+                // SAFETY: the matched arm guarantees `self.$f` *is*
+                // `HiveArray<PendingCacheKey<T>, 32>` for this `T::CACHE_FIELD`; the cast is
+                // an identity transmute (same layout, same lifetime).
+                unsafe {
+                    &mut *((&mut self.$f) as *mut _
+                        as *mut HiveArray<resolve_info_request::PendingCacheKey<T>, 32>)
+                }
+            };
+        }
+        match T::CACHE_FIELD {
+            PendingCacheField::PendingSrvCacheCares => field!(pending_srv_cache_cares),
+            PendingCacheField::PendingSoaCacheCares => field!(pending_soa_cache_cares),
+            PendingCacheField::PendingTxtCacheCares => field!(pending_txt_cache_cares),
+            PendingCacheField::PendingNaptrCacheCares => field!(pending_naptr_cache_cares),
+            PendingCacheField::PendingMxCacheCares => field!(pending_mx_cache_cares),
+            PendingCacheField::PendingCaaCacheCares => field!(pending_caa_cache_cares),
+            PendingCacheField::PendingNsCacheCares => field!(pending_ns_cache_cares),
+            PendingCacheField::PendingPtrCacheCares => field!(pending_ptr_cache_cares),
+            PendingCacheField::PendingCnameCacheCares => field!(pending_cname_cache_cares),
+            PendingCacheField::PendingACacheCares => field!(pending_a_cache_cares),
+            PendingCacheField::PendingAaaaCacheCares => field!(pending_aaaa_cache_cares),
+            PendingCacheField::PendingAnyCacheCares => field!(pending_any_cache_cares),
+            // host/addr/nameinfo caches use distinct key types and have their own helpers.
+            PendingCacheField::PendingHostCacheCares
+            | PendingCacheField::PendingHostCacheNative
+            | PendingCacheField::PendingAddrCacheCares
+            | PendingCacheField::PendingNameinfoCacheCares => {
+                unreachable!()
+            }
+        }
     }
 
-    fn get_key<R>(&mut self, index: u8, cache_field: PendingCacheField) -> R
-    where
-        R: Copy, // PendingCacheKey is POD
-    {
-        // TODO(port): generic over cache type — Zig used `@field(this, cache_name)`
-        // and returned `request_type.PendingCacheKey` by value, then poisoned the slot.
-        unimplemented!("dispatch on cache_field in Phase B; see get_key_{{host,addr,nameinfo}} helpers")
+    /// Generic `getKey` — copy the `PendingCacheKey` at `index` out by value and free the slot.
+    // PORT NOTE: Zig used `@field(this, cache_name)` and returned `request_type.PendingCacheKey`
+    // by value, then wrote `undefined` to the slot. We dispatch via `HasPendingCacheKey`.
+    fn get_key<R: HasPendingCacheKey>(
+        &mut self,
+        index: u8,
+        cache_field: PendingCacheField,
+    ) -> R::PendingCacheKey {
+        let cache = R::pending_cache(self, cache_field);
+        debug_assert!(cache.used.is_set(index as usize));
+        // SAFETY: `used` bit is set ⇒ slot was initialized by `get_or_put_into_resolve_pending_cache`
+        // + `*Request::init`. `PendingCacheKey` is POD; reading by value then unsetting the bit
+        // hands ownership of the slot back to the HiveArray (Zig's `= undefined`).
+        let entry = unsafe { core::ptr::read(cache.buffer[index as usize].as_ptr()) };
+        cache.used.unset(index as usize);
+        entry
     }
 
     // Monomorphic helpers used by the drain* fns below.

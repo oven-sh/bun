@@ -13,10 +13,12 @@
 //!       → `src/jsc/resolver_jsc.rs`
 //!   - `Zig__GlobalObject__getBodyStreamOrBytesForWasmStreaming`
 //!       → `src/jsc/JSGlobalObject.rs`
-//!
-//! Symbols whose Zig source lives outside `src/runtime/**` and whose body
-//! depends on un-ported state are emitted here with a `todo!("blocked_on: …")`
-//! body so the link name is satisfied; see each note.
+//!   - `Bun__Chrome__autoDetect` / `Bun__Chrome__ensure`
+//!       → `src/runtime/webview/ChromeProcess.rs`
+//!   - `Bun__JSSourceMap__find`
+//!       → `src/sourcemap_jsc/JSSourceMap.rs`
+//!   - `Bun__Process__send`
+//!       → `bun_jsc::virtual_machine_exports`
 
 use core::ffi::c_void;
 
@@ -511,62 +513,8 @@ pub extern "C" fn js2native_bindgen_dev_server_get_deinit_count(global: *mut JSG
     )
 }
 
-// ─── webview/ChromeProcess.zig — link names re-emitted here while ────────────
-// `mod webview` remains un-declared in lib.rs (the full ChromeProcess.rs draft
-// names un-ported `bun_jsc` method surface). Real bodies copied verbatim.
-
-/// `Bun__Chrome__autoDetect(out_buf, out_cap) -> usize` — write the
-/// auto-detected Chrome/Chromium binary path into `out_buf`, returning its
-/// length (0 if none found / doesn't fit).
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__Chrome__autoDetect(out_buf: *mut u8, out_cap: usize) -> usize {
-    // TODO(b2-blocked): full body in `runtime/webview/ChromeProcess.rs` —
-    // gated on `mod webview` un-declaration. Auto-detect is a best-effort
-    // search; returning 0 ("not found") is the spec'd no-match behaviour.
-    let _ = (out_buf, out_cap);
-    0
-}
-
-/// `Bun__Chrome__ensure(...)` — spawn (or attach to) a Chrome instance for
-/// `Bun.webview`. Returns process handle or null on failure.
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__Chrome__ensure(
-    global: *mut JSGlobalObject,
-    chrome_path_ptr: *const u8,
-    chrome_path_len: usize,
-    user_data_dir_ptr: *const u8,
-    user_data_dir_len: usize,
-    headless: bool,
-    devtools_port: u16,
-) -> *mut c_void {
-    // TODO(b2-blocked): full body in `runtime/webview/ChromeProcess.rs` —
-    // gated on `mod webview` (depends on `bun_jsc` Subprocess/Spawn surface).
-    let _ = (
-        global,
-        chrome_path_ptr,
-        chrome_path_len,
-        user_data_dir_ptr,
-        user_data_dir_len,
-        headless,
-        devtools_port,
-    );
-    todo!("blocked_on: bun_runtime::webview::ChromeProcess (mod webview un-declared)")
-}
-
-// ─── outside-of-runtime sources (link name parked here, body delegated) ──────
-
-// REAL: `Bun__Process__send` now exported directly from
-// `bun_jsc::virtual_machine_exports` via `#[host_fn(export = ...)]`.
-
-/// `@export(&jsFunctionFindSourceMap, .{ .name = "Bun__JSSourceMap__find" })`
-/// (src/sourcemap_jsc/JSSourceMap.zig). Body is fully ported in
-/// `bun_sourcemap_jsc` but the `#[host_fn(export = ...)]` wiring there is
-/// gated; until that crate exposes `find_source_map` publicly, satisfy the
-/// link name here.
-#[unsafe(no_mangle)]
-#[bun_jsc::host_call]
-pub fn Bun__JSSourceMap__find(_global: *mut JSGlobalObject, _callframe: *mut CallFrame) -> JSValue {
-    // Node.js doesn't enable source maps by default; the flag-gated full body
-    // lives in `bun_sourcemap_jsc::find_source_map` (private).
-    todo!("blocked_on: bun_sourcemap_jsc::find_source_map (private fn; add `pub` + re-export, then forward here)")
-}
+// `Bun__Chrome__autoDetect` / `Bun__Chrome__ensure` — exported from
+// `crate::webview::chrome_process` (mod webview is declared in lib.rs).
+//
+// `Bun__JSSourceMap__find` — exported from `bun_sourcemap_jsc::js_source_map`
+// via `#[bun_jsc::host_fn(export = ...)]`.

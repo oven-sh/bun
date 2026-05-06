@@ -411,13 +411,13 @@ pub fn generate_code_for_lazy_export(
             part.stmts.len = 0;
             // TODO(port): `part.stmts.len = 0` — BabyList field write; use `.clear()`/`.set_len(0)`.
 
-            if let js_ast::Expr::Data::EObject(e_object) = &expr.data {
+            if let ExprData::EObject(e_object) = &expr.data {
                 for property_ in e_object.properties.slice() {
                     let property: &G::Property = property_;
                     if property.key.is_none()
                         || !matches!(
                             property.key.as_ref().unwrap().data,
-                            js_ast::Expr::Data::EString(_)
+                            ExprData::EString(_)
                         )
                         || property.value.is_none()
                         || property
@@ -426,6 +426,7 @@ pub fn generate_code_for_lazy_export(
                             .unwrap()
                             .data
                             .as_e_string()
+                            .unwrap()
                             .eql_comptime(b"default")
                         || property
                             .key
@@ -433,6 +434,7 @@ pub fn generate_code_for_lazy_export(
                             .unwrap()
                             .data
                             .as_e_string()
+                            .unwrap()
                             .eql_comptime(b"__esModule")
                     {
                         continue;
@@ -444,6 +446,7 @@ pub fn generate_code_for_lazy_export(
                         .unwrap()
                         .data
                         .as_e_string()
+                        .unwrap()
                         .slice(this.allocator());
 
                     // TODO: support non-identifier names

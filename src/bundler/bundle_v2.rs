@@ -5685,8 +5685,11 @@ impl ContentHasher {
 
     pub fn write_ints(&mut self, i: &[u32]) {
         bun_core::scoped_log!(ContentHasher, "HASH_UPDATE: {:?}\n", i);
-        // SAFETY: [u32] is POD; reinterpret as bytes
-        self.hasher.update(bytemuck::cast_slice(i));
+        // SAFETY: [u32] is POD; reinterpret as bytes (std.mem.sliceAsBytes).
+        let bytes = unsafe {
+            core::slice::from_raw_parts(i.as_ptr().cast::<u8>(), core::mem::size_of_val(i))
+        };
+        self.hasher.update(bytes);
     }
 
     pub fn digest(&self) -> u64 {

@@ -22,9 +22,23 @@ use core::ptr::NonNull;
 
 use bun_jsc::{JSGlobalObject, JSValue, Task, VirtualMachine};
 
-use crate::api::html_rewriter::HTMLRewriter;
+use crate::api::html_rewriter;
 use crate::api::server;
 use crate::webcore::body;
+
+// Zig's `server.HTTPServer.RequestContext` etc. are nested types on each
+// `NewServer(..)` instantiation. The Rust port flattens that to a single
+// generic `NewRequestContext<ThisServer, SSL, DEBUG, HTTP3>`; alias the six
+// concrete monomorphizations here so the tag↔type mapping stays readable.
+type HTTPServerRequestContext = server::NewRequestContext<server::HTTPServer, false, false, false>;
+type HTTPSServerRequestContext = server::NewRequestContext<server::HTTPSServer, true, false, false>;
+type DebugHTTPServerRequestContext =
+    server::NewRequestContext<server::DebugHTTPServer, false, true, false>;
+type DebugHTTPSServerRequestContext =
+    server::NewRequestContext<server::DebugHTTPSServer, true, true, false>;
+type HTTPSServerH3RequestContext = server::NewRequestContext<server::HTTPSServer, true, false, true>;
+type DebugHTTPSServerH3RequestContext =
+    server::NewRequestContext<server::DebugHTTPSServer, true, true, true>;
 
 /// Must match Bun::NativePromiseContext::Tag in NativePromiseContext.h.
 /// One entry per concrete native type — the tag is packed into the pointer's

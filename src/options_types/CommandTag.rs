@@ -9,7 +9,7 @@
 use enum_map::{enum_map, Enum, EnumMap};
 use std::sync::LazyLock;
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Enum)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Enum, core::marker::ConstParamTy)]
 pub enum Tag {
     AddCommand,
     AutoCommand,

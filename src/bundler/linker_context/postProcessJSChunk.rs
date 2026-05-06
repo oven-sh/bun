@@ -100,9 +100,11 @@ pub fn post_process_js_chunk(
 
     {
         // PORT NOTE: Zig builds one `print_options` and passes it by-value twice.
-        // Rust `Options` is not `Copy` (holds `&mut ModuleInfo`), so we use a
-        // closure to construct fresh options per call.
-        let make_print_options = |mi: Option<&mut ModuleInfo>| js_printer::Options {
+        // Rust `Options` is not `Copy` (holds `&mut ModuleInfo`), and a closure
+        // taking `&mut ModuleInfo` can't express "output lifetime = input
+        // lifetime" — so build a base with `module_info: None` and override it
+        // via FRU at each call site.
+        let make_print_options = || js_printer::Options {
             bundling: true,
             indent: Default::default(),
             has_run_symbol_renamer: true,
@@ -114,7 +116,7 @@ pub fn post_process_js_chunk(
             target: c.options.target,
             print_dce_annotations: c.options.emit_dce_annotations,
             mangled_props: Some(&c.mangled_props),
-            module_info: mi,
+            module_info: None,
             // .const_values = c.graph.const_values,
             ..Default::default()
         };
@@ -148,7 +150,10 @@ pub fn post_process_js_chunk(
             target,
             &ast_view,
             source,
-            make_print_options(module_info.as_deref_mut()),
+            js_printer::Options {
+                module_info: module_info.as_deref_mut(),
+                ..make_print_options()
+            },
             cross_chunk_import_records.as_slice(),
             &[Part {
                 stmts: prefix_stmts,
@@ -161,7 +166,10 @@ pub fn post_process_js_chunk(
             target,
             &ast_view,
             source,
-            make_print_options(module_info.as_deref_mut()),
+            js_printer::Options {
+                module_info: module_info.as_deref_mut(),
+                ..make_print_options()
+            },
             &[],
             &[Part {
                 stmts: suffix_stmts,
@@ -373,11 +381,9 @@ pub fn post_process_js_chunk(
         chunk.content.javascript_mut().module_info = Some(mi);
     }
 
-    let mut j = StringJoiner {
-        watcher: Watcher {
-            input: chunk.unique_key,
-            ..Default::default()
-        },
+    let mut j = StringJoiner::default();
+    j.watcher = Watcher {
+        input: chunk.unique_key,
         ..Default::default()
     };
     // errdefer j.deinit() — deleted; StringJoiner has Drop

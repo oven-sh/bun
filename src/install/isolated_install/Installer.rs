@@ -144,7 +144,7 @@ impl<'a> Installer<'a> {
             for install_ctx in removed.as_slice() {
                 // Zig: `install_ctx.isolated_package_install_context` (union field
                 // access). Rust models `TaskCallbackContext` as an enum, so destructure.
-                let TaskCallbackContext::IsolatedPackageInstallContext(entry_id) = *install_ctx
+                let &TaskCallbackContext::IsolatedPackageInstallContext(entry_id) = install_ctx
                 else {
                     continue;
                 };
@@ -195,7 +195,7 @@ impl<'a> Installer<'a> {
             for install_ctx in callbacks.as_slice() {
                 // Zig: `install_ctx.isolated_package_install_context` (union field
                 // access). Rust models `TaskCallbackContext` as an enum, so destructure.
-                let TaskCallbackContext::IsolatedPackageInstallContext(entry_id) = *install_ctx
+                let &TaskCallbackContext::IsolatedPackageInstallContext(entry_id) = install_ctx
                 else {
                     continue;
                 };

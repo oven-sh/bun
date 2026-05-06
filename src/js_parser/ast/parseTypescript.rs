@@ -736,10 +736,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 // PORT STATUS
 //   source:     src/js_parser/ast/parseTypescript.zig (549 lines)
 //   confidence: medium
-//   todos:      7
-//   notes:      mixin→impl-P converted; parse_type_script_namespace_stmt body un-gated
-//               (raw *mut TSNamespaceScope/MemberMap derefs match Zig pointer semantics);
-//               decorators/import_equals/enum bodies still gated on E struct shapes.
-//   blocked_on: P::get_or_create_exported_namespace_members + P::define_exported_namespace_binding
-//               are -gated in P.rs — un-gate there to clear the last error here.
+//   todos:      4
+//   notes:      mixin→impl-P converted; all four bodies un-gated. Raw *mut TSNamespaceScope /
+//               MemberMap derefs match Zig pointer semantics. EString.slice8() avoided in
+//               enum-value parsing (duplicate inherent impl in E.rs) — reads `.data` directly.
+//   blocked_on: skip_type_script_type_arguments has duplicate inherent impl in skipTypescript.rs
+//               (E0034 at the two call sites here clears once that file dedupes).
 // ──────────────────────────────────────────────────────────────────────────

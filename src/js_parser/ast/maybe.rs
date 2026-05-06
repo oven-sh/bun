@@ -39,18 +39,24 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             return RelocateVars { ok: false, ..Default::default() };
         }
 
-        // blocked_on: Binding2ExprWrapperHoisted is a `()` stub (P.rs round-C);
-        // Binding::to_expr requires `&mut impl ToExprWrapper`. The decl loop
-        // un-gates once the wrapper carries `&mut P` + wrap_identifier_hoisted.
-        
-        {
+        // PORT NOTE: Binding2ExprWrapperHoisted is a `()` stub on P (P.rs round-C);
+        // construct the ToExpr wrapper inline around `&mut P` + `wrap_identifier_hoisting`
+        // (Zig: `p.to_expr_wrapper_hoisted` was `Binding.ToExpr(P, P.wrapIdentifierHoisting)`).
+        let allocator = p.allocator;
         let mut value: Expr = Expr::EMPTY;
-        for decl in decls {
-            let binding = Binding::to_expr(&decl.binding, &mut p.to_expr_wrapper_hoisted);
-            if let Some(decl_value) = decl.value {
-                value = Expr::join_with_comma(value, Expr::assign(binding, decl_value));
-            } else if mode == RelocateVarsMode::ForInOrForOf {
-                value = Expr::join_with_comma(value, binding);
+        {
+            let mut wrapper = crate::ast::binding::_draft::ToExpr::init(
+                p,
+                allocator,
+                |ctx: &mut Self, loc, ref_| ctx.wrap_identifier_hoisting(loc, ref_),
+            );
+            for decl in decls {
+                let binding = Binding::to_expr(&decl.binding, &mut wrapper);
+                if let Some(decl_value) = decl.value {
+                    value = Expr::join_with_comma(value, Expr::assign(binding, decl_value));
+                } else if mode == RelocateVarsMode::ForInOrForOf {
+                    value = Expr::join_with_comma(value, binding);
+                }
             }
         }
 
@@ -58,17 +64,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             return RelocateVars { ok: true, ..Default::default() };
         }
 
-        return RelocateVars {
+        RelocateVars {
             stmt: Some(p.s(S::SExpr { value, does_not_affect_tree_shaking: false }, value.loc)),
             ok: true,
-        };
-        } // end 
-        let _ = (decls, mode);
-        // Spec maybe.zig:25-43: once the hoisted scope IS module_scope, the return is ALWAYS
-        // `ok: true` (with or without a comma-joined assignment stmt). Returning `ok: false`
-        // here silently breaks bundler scope-hoisting for `var` decls. Fail loudly until the
-        // Binding2ExprWrapperHoisted dep un-gates the real loop above.
-        todo!("maybe_relocate_vars_to_top_level: blocked_on Binding2ExprWrapperHoisted; spec returns ok=true here")
+        }
     }
 
     // EDot nodes represent a property access. This function may return an

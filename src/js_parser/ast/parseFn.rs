@@ -314,8 +314,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 }
             }
 
-            let mut parse_stmt_opts = ParseStatementOptions::default();
-            p.declare_binding(js_ast::symbol::Kind::Hoisted, &mut arg, &mut parse_stmt_opts)
+            let parse_stmt_opts = ParseStatementOptions::default();
+            p.declare_binding(js_ast::symbol::Kind::Hoisted, &mut arg, &parse_stmt_opts)
                 .expect("unreachable");
 
             let mut default_value: Option<Expr> = None;
@@ -547,8 +547,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         p.lexer.expect(T::TEqualsGreaterThan)?;
 
         for arg in args.iter_mut() {
-            let mut opts = ParseStatementOptions::default();
-            p.declare_binding(js_ast::symbol::Kind::Hoisted, &mut arg.binding, &mut opts)?;
+            let opts = ParseStatementOptions::default();
+            p.declare_binding(js_ast::symbol::Kind::Hoisted, &mut arg.binding, &opts)?;
         }
 
         // The ability to use "this" and "super()" is inherited by arrow functions

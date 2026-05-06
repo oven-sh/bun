@@ -1561,7 +1561,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     && !property.flags.contains(Flags::Property::IsMethod)
                     && in_.assign_target == js_ast::AssignTarget::None
                     && key.data.is_string_value()
-                    && key.data.e_string().unwrap().slice(p.allocator) == b"__proto__"
+                    && key.data.e_string().unwrap().data == b"__proto__"
                 // __proto__ is utf8, assume it lives in refs
                 {
                     if has_proto {
@@ -1609,8 +1609,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     && property.key.is_some()
                     && matches!(property.key.unwrap().data, Data::EString(..))
                 {
-                    p.decorator_class_name =
-                        property.key.unwrap().data.e_string().unwrap().string(p.allocator).ok();
+                    let key_str = property.key.unwrap().data.e_string().unwrap();
+                    // PORT NOTE: Zig `string(allocator)` transcodes UTF-16; while
+                    // E.rs has duplicate impls (E0034), reach the bytes directly
+                    // — class-name keys are parser-produced (UTF-8, no rope).
+                    p.decorator_class_name = if !key_str.is_utf16 { Some(key_str.data) } else { None };
                 }
                 property.value = Some(p.visit_expr_in_out(
                     property.value.unwrap(),
@@ -2113,7 +2116,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         if e_.args.len == 1 {
             if let Some(dot) = e_.target.data.e_dot() {
                 if let Some(target_str) = dot.target.data.e_string() {
-                    if target_str.is_utf8() && dot.name == b"charCodeAt" {
+                    if !target_str.is_utf16 && dot.name == b"charCodeAt" {
                         let str_ = target_str.data;
                         let arg1 = e_.args.at(0).unwrap_inlined();
                         if let Data::ENumber(n) = &arg1.data {

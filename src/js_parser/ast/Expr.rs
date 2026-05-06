@@ -378,9 +378,9 @@ impl Expr {
 // the parser round once those land.
 
 impl Expr {
-    pub fn has_any_property_named(expr: &Expr, names: &'static [&'static [u8]]) -> bool {
-        let Data::EObject(obj) = &expr.data else { return false };
-        if obj.properties.len() == 0 {
+    pub fn has_any_property_named(&self, names: &'static [&'static [u8]]) -> bool {
+        let Data::EObject(obj) = &self.data else { return false };
+        if obj.properties.len == 0 {
             return false;
         }
 
@@ -390,7 +390,7 @@ impl Expr {
             }
             let Some(key) = &prop.key else { continue };
             let Data::EString(key_str) = &key.data else { continue };
-            if strings::strings::eql_any(&key_str.data, names) {
+            if strings::strings::eql_any_comptime(key_str.data, names) {
                 return true;
             }
         }
@@ -401,32 +401,18 @@ impl Expr {
     // toJS alias deleted — `to_js` lives in `bun_js_parser_jsc::expr_jsc` extension trait.
     // TODO(port): move to *_jsc
 
-    #[inline]
-    pub fn is_array(this: &Expr) -> bool {
-        matches!(this.data, Data::EArray(_))
-    }
-
-    #[inline]
-    pub fn is_object(this: &Expr) -> bool {
-        matches!(this.data, Data::EObject(_))
-    }
-
-    pub fn get(expr: &Expr, name: &[u8]) -> Option<Expr> {
-        expr.as_property(name).map(|query| query.expr)
-    }
-
     /// Only use this for pretty-printing JSON. Do not use in transpiler.
     ///
     /// This does not handle edgecases like `-1` or stringifying arbitrary property lookups.
     pub fn get_by_index(
-        expr: &Expr,
+        &self,
         index: u32,
         index_str: &[u8],
         bump: &Bump,
     ) -> Option<Expr> {
-        match &expr.data {
+        match &self.data {
             Data::EArray(array) => {
-                if index >= array.items.len() {
+                if index >= array.items.len {
                     return None;
                 }
                 Some(array.items.slice()[index as usize])
@@ -436,7 +422,7 @@ impl Expr {
                     let Some(key) = &prop.key else { continue };
                     match &key.data {
                         Data::EString(str) => {
-                            if str.eql_slice(index_str) {
+                            if str.eql_bytes(index_str) {
                                 return prop.value;
                             }
                         }
@@ -451,7 +437,8 @@ impl Expr {
                 None
             }
             Data::EString(str) => {
-                if str.len() > index {
+                let mut str = *str;
+                if E::EString::len(&str) > index as usize {
                     let slice = str.slice(bump);
                     // TODO: this is not correct since .length refers to UTF-16 code units and not UTF-8 bytes
                     // However, since this is only used in the JSON prettifier for `bun pm view`, it's not a blocker for shipping.
@@ -461,7 +448,7 @@ impl Expr {
                                 data: &slice[index as usize..][..1],
                                 ..Default::default()
                             },
-                            expr.loc,
+                            self.loc,
                         ));
                     }
                 }
@@ -483,22 +470,23 @@ impl Expr {
     /// This is not intended for use by the transpiler, instead by pretty printing JSON.
     // PORT NOTE: Zig passed `bun.default_allocator` to getByIndex; Rust threads the arena
     // explicitly because get_by_index allocates an E.String slice into &Bump.
-    pub fn get_path_may_be_index(expr: &Expr, bump: &Bump, name: &[u8]) -> Option<Expr> {
+    pub fn get_path_may_be_index(&self, bump: &Bump, name: &[u8]) -> Option<Expr> {
         if name.is_empty() {
             return None;
         }
 
         if let Some(idx) = strings::strings::index_of_any(name, b"[.") {
+            let idx = idx as usize;
             match name[idx] {
                 b'[' => {
-                    let end_idx = strings::strings::index_of_char(name, b']')?;
-                    let mut base_expr = *expr;
+                    let end_idx = strings::strings::index_of_char(name, b']')? as usize;
+                    let mut base_expr = *self;
                     if idx > 0 {
                         let key = &name[..idx];
                         base_expr = base_expr.get(key)?;
                     }
 
-                    let index_str = &name[idx + 1..end_idx];
+                    let index_str: &[u8] = &name[idx + 1..end_idx];
                     // std.fmt.parseInt(u32, index_str, 10) — parse ASCII digits directly from &[u8];
                     // do NOT route through core::str::from_utf8 (path segments are bytes, not UTF-8).
                     let index: u32 = 'parse: {
@@ -507,7 +495,7 @@ impl Expr {
                         }
                         let mut acc: u32 = 0;
                         for &b in index_str {
-                            let d = b.wrapping_sub(b'0');
+                            let d: u8 = b.wrapping_sub(b'0');
                             if d > 9 {
                                 return None;
                             }
@@ -527,7 +515,7 @@ impl Expr {
                 }
                 b'.' => {
                     let key = &name[..idx];
-                    let sub_expr = expr.get(key)?;
+                    let sub_expr = self.get(key)?;
                     let subpath: &[u8] = if name.len() > idx { &name[idx + 1..] } else { b"" };
                     if !subpath.is_empty() {
                         return sub_expr.get_path_may_be_index(bump, subpath);
@@ -538,7 +526,7 @@ impl Expr {
             }
         }
 
-        expr.get(name)
+        self.get(name)
     }
 
     /// Don't use this if you care about performance.

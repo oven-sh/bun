@@ -88,7 +88,7 @@ impl Metadata {
     /// If the current type is MNever, MNull, or MUndefined assign the current type
     /// to MNone and return None to ensure it's always replaced by the next type.
     /// `load_name`: closure form of `p.load_name_from_ref` to avoid coupling Metadata to P.
-    pub fn finish_union(current: &mut Self, load_name: impl Fn(Ref) -> &'static [u8]) -> Option<Self> {
+    pub fn finish_union<'b, F: Fn(Ref) -> &'b [u8]>(current: &mut Self, load_name: F) -> Option<Self> {
         match current {
             Metadata::MIdentifier(r) => {
                 if load_name(*r) == b"Object" {
@@ -136,7 +136,7 @@ impl Metadata {
     ///
     /// If the current type is MUnknown, MNull, or MUndefined assign the current type
     /// to MNone and return None to ensure it's always replaced by the next type.
-    pub fn finish_intersection(current: &mut Self, load_name: impl Fn(Ref) -> &'static [u8]) -> Option<Self> {
+    pub fn finish_intersection<'b, F: Fn(Ref) -> &'b [u8]>(current: &mut Self, load_name: F) -> Option<Self> {
         match current {
             Metadata::MIdentifier(r) => {
                 if load_name(*r) == b"Object" {

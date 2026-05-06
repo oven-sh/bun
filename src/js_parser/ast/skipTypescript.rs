@@ -2,172 +2,28 @@
 use bun_core::{self, err, Error};
 use bun_logger as logger;
 use crate::parser::{JsxT, ParseStatementOptions, Ref, SkipTypeParameterResult, TypeParameterFlag};
-use crate::ast::{self as js_ast, Op};
-use crate::ast::op::Level;
-use crate::ast::p::P;
-use crate::lexer::T;
-use crate::ast::TypeScript::Metadata;
-
-// Zig: `fn SkipTypescript(comptime ts, comptime jsx, comptime scan_only) type { return struct {...} }`
-// — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
-// a direct `impl P` block. Full draft body preserved under  mod _draft below.
-
-// TODO(b2-ast-E): SkipTypeOptions::Bitset path — verify against TypeScript.rs
-pub type SkipTypeOptionsBitset = u8;
-
-impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
-    #[inline]
-    pub fn skip_typescript_return_type(&mut self) -> Result<(), Error> {
-        todo!("b2-ast-E: skip_typescript_return_type")
-    }
-    #[inline]
-    pub fn skip_typescript_return_type_with_metadata(&mut self) -> Result<Metadata, Error> {
-        todo!("b2-ast-E: skip_typescript_return_type_with_metadata")
-    }
-    #[inline]
-    pub fn skip_type_script_type(&mut self, level: Level) -> Result<(), Error> {
-        let _ = level;
-        todo!("b2-ast-E: skip_type_script_type")
-    }
-    #[inline]
-    pub fn skip_type_script_type_with_metadata(&mut self, level: Level) -> Result<Metadata, Error> {
-        let _ = level;
-        todo!("b2-ast-E: skip_type_script_type_with_metadata")
-    }
-    pub fn skip_type_script_binding(&mut self) -> Result<(), Error> {
-        todo!("b2-ast-E: skip_type_script_binding")
-    }
-    pub fn skip_typescript_fn_args(&mut self) -> Result<(), Error> {
-        todo!("b2-ast-E: skip_typescript_fn_args")
-    }
-    pub fn skip_type_script_paren_or_fn_type<const GET_METADATA: bool>(
-        &mut self,
-        result_out: Option<&mut Metadata>,
-    ) -> Result<(), Error> {
-        let _ = result_out;
-        todo!("b2-ast-E: skip_type_script_paren_or_fn_type")
-    }
-    pub fn skip_type_script_type_with_opts<const GET_METADATA: bool>(
-        &mut self,
-        level: Level,
-        opts: SkipTypeOptionsBitset,
-        result_out: Option<&mut Metadata>,
-    ) -> Result<(), Error> {
-        let _ = (level, opts, result_out);
-        todo!("b2-ast-E: skip_type_script_type_with_opts")
-    }
-    pub fn skip_type_script_object_type(&mut self) -> Result<(), Error> {
-        todo!("b2-ast-E: skip_type_script_object_type")
-    }
-    pub fn skip_type_script_type_parameters(
-        &mut self,
-        flags: TypeParameterFlag,
-    ) -> Result<SkipTypeParameterResult, Error> {
-        let _ = flags;
-        todo!("b2-ast-E: skip_type_script_type_parameters")
-    }
-    pub fn skip_type_script_type_stmt(&mut self, opts: &mut ParseStatementOptions) -> Result<(), Error> {
-        let _ = opts;
-        todo!("b2-ast-E: skip_type_script_type_stmt")
-    }
-    pub fn skip_type_script_interface_stmt(&mut self, opts: &mut ParseStatementOptions) -> Result<(), Error> {
-        let _ = opts;
-        todo!("b2-ast-E: skip_type_script_interface_stmt")
-    }
-    pub fn skip_type_script_type_arguments<const IS_INSIDE_JSX_ELEMENT: bool>(
-        &mut self,
-    ) -> Result<bool, Error> {
-        todo!("b2-ast-E: skip_type_script_type_arguments")
-    }
-    pub fn skip_type_script_type_parameters_then_open_paren_with_backtracking(
-        &mut self,
-    ) -> Result<SkipTypeParameterResult, Error> {
-        todo!("b2-ast-E: skip_type_script_type_parameters_then_open_paren_with_backtracking")
-    }
-    pub fn skip_type_script_constraint_of_infer_type_with_backtracking(
-        &mut self,
-        flags: SkipTypeOptionsBitset,
-    ) -> Result<bool, Error> {
-        let _ = flags;
-        todo!("b2-ast-E: skip_type_script_constraint_of_infer_type_with_backtracking")
-    }
-    pub fn skip_type_script_arrow_args_with_backtracking(&mut self) -> Result<bool, Error> {
-        todo!("b2-ast-E: skip_type_script_arrow_args_with_backtracking")
-    }
-    pub fn skip_type_script_type_arguments_with_backtracking(&mut self) -> Result<bool, Error> {
-        todo!("b2-ast-E: skip_type_script_type_arguments_with_backtracking")
-    }
-    pub fn skip_type_script_arrow_return_type_with_backtracking(&mut self) -> Result<(), Error> {
-        todo!("b2-ast-E: skip_type_script_arrow_return_type_with_backtracking")
-    }
-    pub fn try_skip_type_script_type_parameters_then_open_paren_with_backtracking(
-        &mut self,
-    ) -> SkipTypeParameterResult {
-        todo!("b2-ast-E: try_skip_type_script_type_parameters_then_open_paren_with_backtracking")
-    }
-    pub fn try_skip_type_script_type_arguments_with_backtracking(&mut self) -> bool {
-        todo!("b2-ast-E: try_skip_type_script_type_arguments_with_backtracking")
-    }
-    pub fn try_skip_type_script_arrow_return_type_with_backtracking(&mut self) -> bool {
-        todo!("b2-ast-E: try_skip_type_script_arrow_return_type_with_backtracking")
-    }
-    pub fn try_skip_type_script_arrow_args_with_backtracking(&mut self) -> bool {
-        todo!("b2-ast-E: try_skip_type_script_arrow_args_with_backtracking")
-    }
-    pub fn try_skip_type_script_constraint_of_infer_type_with_backtracking(
-        &mut self,
-        flags: SkipTypeOptionsBitset,
-    ) -> bool {
-        let _ = flags;
-        todo!("b2-ast-E: try_skip_type_script_constraint_of_infer_type_with_backtracking")
-    }
-}
-
-
-// blocked_on: Lexer snapshot — Zig `const old = p.lexer` (value copy) for the four
-//   *_with_backtracking entry points; Rust Lexer holds `&mut Log` so cannot Clone — needs a
-//   POD `LexerSnapshot` that `restore()` accepts (same as TypeScript.rs:197 blocker);
-//   TypeScript::SkipTypeOptions::Bitset path (EnumSet<SkipTypeOptions>);
-//   TypeScript::Identifier::from_bytes lookup; Metadata::{MDot, MNever, ...} variant payloads;
-//   ~1540-line bodies, >30 path/shape errors per method.
-#[allow(warnings)]
-mod _draft {
-use bun_core::{self, err, Error};
-use bun_logger as logger;
-use crate::parser::{
-    JsxT, ParseStatementOptions, Ref, SkipTypeParameterResult, TypeParameterFlag,
-};
 use crate::ast::{self as js_ast, Op, TypeScript};
 use crate::ast::op::Level;
 use crate::ast::p::P;
 use crate::lexer::T;
 use crate::ast::TypeScript::{Metadata, SkipTypeOptions};
-// TODO(port): verify exact module paths for TypeScript::{Metadata, SkipTypeOptions, Identifier}
-// TODO(port): narrow error set
+use crate::ast::TypeScript::identifier::{Kind as TsIdentKind, IMAP};
 
-// In Zig this file defines `fn SkipTypescript(comptime ts, comptime jsx, comptime scan_only) type`
-// which returns an anonymous struct of associated fns taking `p: *P`. The parser type mixes these
-// in via `usingnamespace`. In Rust we collapse this into an inherent `impl` block on the parser
-// type `P` so call sites (`p.skip_type_script_type(...)`) match 1:1.
-// PORT NOTE: reshaped — the `SkipTypescript` type-returning wrapper is dropped; methods live
-// directly on `P<'a, TS, J, SCAN_ONLY>`.
+// Zig: `fn SkipTypescript(comptime ts, comptime jsx, comptime scan_only) type { return struct {...} }`
+// — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
+// a direct `impl P` block.
 
-// Local alias matching Zig `const List = std.ArrayListUnmanaged;`
-// js_parser is an AST crate (§Allocators) and the Zig feeds `p.allocator` (arena) into
-// `List(Ref).initCapacity` / `.append`, so this is bumpalo-backed, not std `Vec`.
-// TODO(port): `Metadata::MDot` payload type must agree with this (`bumpalo::collections::Vec<'bump, Ref>`); verify parser arena field name (`self.bump`).
-type List<'bump, T> = bumpalo::collections::Vec<'bump, T>;
-
-type SkipTypeOptionsBitset = SkipTypeOptions::Bitset;
-// TODO(port): `SkipTypeOptions::Bitset` path — in Rust `SkipTypeOptions` is likely an enum and
-// `Bitset` is `enumset::EnumSet<SkipTypeOptions>` or a sibling type. Adjust path in Phase B.
+// PORT NOTE: Zig nested `Bitset` inside `SkipTypeOptions`; Rust hoists it to a module-level
+// alias. Re-export here so the parser-side type alias used in this file matches the
+// canonical definition in `TypeScript.rs`.
+pub type SkipTypeOptionsBitset = TypeScript::SkipTypeOptionsBitset;
 
 impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
     #[inline]
     pub fn skip_typescript_return_type(&mut self) -> Result<(), Error> {
         self.skip_type_script_type_with_opts::<false>(
             Level::Lowest,
-            SkipTypeOptionsBitset::init_one(SkipTypeOptions::IsReturnType),
+            SkipTypeOptionsBitset::only(SkipTypeOptions::IsReturnType),
             None,
         )
     }
@@ -177,7 +33,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let mut result = Metadata::DEFAULT;
         self.skip_type_script_type_with_opts::<true>(
             Level::Lowest,
-            SkipTypeOptionsBitset::init_one(SkipTypeOptions::IsReturnType),
+            SkipTypeOptionsBitset::only(SkipTypeOptions::IsReturnType),
             Some(&mut result),
         )?;
         Ok(result)
@@ -186,7 +42,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     #[inline]
     pub fn skip_type_script_type(&mut self, level: Level) -> Result<(), Error> {
         self.mark_type_script_only();
-        self.skip_type_script_type_with_opts::<false>(level, SkipTypeOptionsBitset::EMPTY, None)
+        self.skip_type_script_type_with_opts::<false>(level, SkipTypeOptionsBitset::empty(), None)
     }
 
     #[inline]
@@ -195,7 +51,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let mut result = Metadata::DEFAULT;
         self.skip_type_script_type_with_opts::<true>(
             level,
-            SkipTypeOptionsBitset::EMPTY,
+            SkipTypeOptionsBitset::empty(),
             Some(&mut result),
         )?;
         Ok(result)
@@ -211,7 +67,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 self.lexer.next()?;
 
                 // "[, , a]"
-
                 while self.lexer.token == T::TComma {
                     self.lexer.next()?;
                 }
@@ -372,7 +227,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     // Rust cannot express a const-generic-dependent param type on stable; we use
     // `Option<&mut Metadata>` and require callers to pass `Some` iff `GET_METADATA == true`.
     // The const generic is kept so `if GET_METADATA { ... }` branches monomorphize away.
-    // PERF(port): was comptime monomorphization — profile in Phase B.
     pub fn skip_type_script_type_with_opts<const GET_METADATA: bool>(
         &mut self,
         level: Level,
@@ -428,7 +282,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         && self.lexer.token == T::TColon
                     {
                         self.log
-                            .add_range_error(self.source, r, "Unexpected \"const\"")?;
+                            .add_range_error(Some(self.source), r, b"Unexpected \"const\"")?;
                     }
                 }
 
@@ -509,20 +363,18 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         return Ok(());
                     }
 
-                    let _ = self.skip_type_script_type_parameters(TypeParameterFlag {
-                        allow_const_modifier: true,
-                        ..TypeParameterFlag::default()
-                    })?;
+                    let _ = self.skip_type_script_type_parameters(
+                        TypeParameterFlag::ALLOW_CONST_MODIFIER,
+                    )?;
                     self.skip_type_script_paren_or_fn_type::<GET_METADATA>(
                         result.as_deref_mut(),
                     )?;
                 }
                 T::TLessThan => {
                     // "<T>() => Foo<T>"
-                    let _ = self.skip_type_script_type_parameters(TypeParameterFlag {
-                        allow_const_modifier: true,
-                        ..TypeParameterFlag::default()
-                    })?;
+                    let _ = self.skip_type_script_type_parameters(
+                        TypeParameterFlag::ALLOW_CONST_MODIFIER,
+                    )?;
                     self.skip_type_script_paren_or_fn_type::<GET_METADATA>(
                         result.as_deref_mut(),
                     )?;
@@ -534,16 +386,15 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     )?;
                 }
                 T::TIdentifier => {
-                    let kind = TypeScript::Identifier::IMAP
+                    let kind = IMAP
                         .get(self.lexer.identifier)
                         .copied()
-                        .unwrap_or(TypeScript::Identifier::Normal);
-                    // TODO(port): `IMap` is a `ComptimeStringMap` → `phf::Map<&'static [u8], _>`
+                        .unwrap_or(TsIdentKind::Normal);
 
                     let mut check_type_parameters = true;
 
                     match kind {
-                        TypeScript::Identifier::PrefixKeyof => {
+                        TsIdentKind::PrefixKeyof => {
                             self.lexer.next()?;
 
                             // Valid:
@@ -567,7 +418,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                             break;
                         }
-                        TypeScript::Identifier::PrefixReadonly => {
+                        TsIdentKind::PrefixReadonly => {
                             self.lexer.next()?;
 
                             if (self.lexer.token != T::TColon && self.lexer.token != T::TIn)
@@ -584,7 +435,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                             break;
                         }
-                        TypeScript::Identifier::Infer => {
+                        TsIdentKind::Infer => {
                             self.lexer.next()?;
 
                             // "type Foo = Bar extends [infer T] ? T : null"
@@ -606,7 +457,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                             break;
                         }
-                        TypeScript::Identifier::Unique => {
+                        TsIdentKind::Unique => {
                             self.lexer.next()?;
 
                             // "let foo: unique symbol"
@@ -615,7 +466,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 break;
                             }
                         }
-                        TypeScript::Identifier::Abstract => {
+                        TsIdentKind::Abstract => {
                             self.lexer.next()?;
 
                             // "let foo: abstract new () => {}" added in TypeScript 4.2
@@ -623,7 +474,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 continue;
                             }
                         }
-                        TypeScript::Identifier::Asserts => {
+                        TsIdentKind::Asserts => {
                             self.lexer.next()?;
 
                             // "function assert(x: boolean): asserts x"
@@ -636,81 +487,81 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 self.lexer.next()?;
                             }
                         }
-                        TypeScript::Identifier::PrimitiveAny => {
+                        TsIdentKind::PrimitiveAny => {
                             self.lexer.next()?;
                             check_type_parameters = false;
                             if GET_METADATA {
                                 **result.as_mut().unwrap() = Metadata::MAny;
                             }
                         }
-                        TypeScript::Identifier::PrimitiveNever => {
+                        TsIdentKind::PrimitiveNever => {
                             self.lexer.next()?;
                             check_type_parameters = false;
                             if GET_METADATA {
                                 **result.as_mut().unwrap() = Metadata::MNever;
                             }
                         }
-                        TypeScript::Identifier::PrimitiveUnknown => {
+                        TsIdentKind::PrimitiveUnknown => {
                             self.lexer.next()?;
                             check_type_parameters = false;
                             if GET_METADATA {
                                 **result.as_mut().unwrap() = Metadata::MUnknown;
                             }
                         }
-                        TypeScript::Identifier::PrimitiveUndefined => {
+                        TsIdentKind::PrimitiveUndefined => {
                             self.lexer.next()?;
                             check_type_parameters = false;
                             if GET_METADATA {
                                 **result.as_mut().unwrap() = Metadata::MUndefined;
                             }
                         }
-                        TypeScript::Identifier::PrimitiveObject => {
+                        TsIdentKind::PrimitiveObject => {
                             self.lexer.next()?;
                             check_type_parameters = false;
                             if GET_METADATA {
                                 **result.as_mut().unwrap() = Metadata::MObject;
                             }
                         }
-                        TypeScript::Identifier::PrimitiveNumber => {
+                        TsIdentKind::PrimitiveNumber => {
                             self.lexer.next()?;
                             check_type_parameters = false;
                             if GET_METADATA {
                                 **result.as_mut().unwrap() = Metadata::MNumber;
                             }
                         }
-                        TypeScript::Identifier::PrimitiveString => {
+                        TsIdentKind::PrimitiveString => {
                             self.lexer.next()?;
                             check_type_parameters = false;
                             if GET_METADATA {
                                 **result.as_mut().unwrap() = Metadata::MString;
                             }
                         }
-                        TypeScript::Identifier::PrimitiveBoolean => {
+                        TsIdentKind::PrimitiveBoolean => {
                             self.lexer.next()?;
                             check_type_parameters = false;
                             if GET_METADATA {
                                 **result.as_mut().unwrap() = Metadata::MBoolean;
                             }
                         }
-                        TypeScript::Identifier::PrimitiveBigint => {
+                        TsIdentKind::PrimitiveBigint => {
                             self.lexer.next()?;
                             check_type_parameters = false;
                             if GET_METADATA {
                                 **result.as_mut().unwrap() = Metadata::MBigint;
                             }
                         }
-                        TypeScript::Identifier::PrimitiveSymbol => {
+                        TsIdentKind::PrimitiveSymbol => {
                             self.lexer.next()?;
                             check_type_parameters = false;
                             if GET_METADATA {
                                 **result.as_mut().unwrap() = Metadata::MSymbol;
                             }
                         }
-                        _ => {
+                        TsIdentKind::Normal => {
                             if GET_METADATA {
-                                let find_result = self
-                                    .find_symbol(logger::Loc::EMPTY, self.lexer.identifier)
-                                    .expect("unreachable");
+                                let ident = self.lexer.identifier;
+                                let find_result =
+                                    self.find_symbol(logger::Loc::EMPTY, ident)?;
                                 **result.as_mut().unwrap() =
                                     Metadata::MIdentifier(find_result.r#ref);
                             }
@@ -789,7 +640,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         }
                         self.skip_type_script_type_with_opts::<false>(
                             Level::Lowest,
-                            SkipTypeOptionsBitset::init_one(SkipTypeOptions::AllowTupleLabels),
+                            SkipTypeOptionsBitset::only(SkipTypeOptions::AllowTupleLabels),
                             None,
                         )?;
                         if self.lexer.token == T::TQuestion {
@@ -863,8 +714,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                     if GET_METADATA {
                         let mut left = (**result.as_mut().unwrap()).clone();
-                        // TODO(port): Metadata may be Copy; clone() used defensively
-                        if let Some(final_) = left.finish_union(self) {
+                        if let Some(final_) =
+                            Metadata::finish_union(&mut left, |r| self.load_name_from_ref(r))
+                        {
                             // finish skipping the rest of the type without collecting type metadata.
                             **result.as_mut().unwrap() = final_;
                             self.skip_type_script_type_with_opts::<false>(
@@ -878,7 +730,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 opts,
                                 result.as_deref_mut(),
                             )?;
-                            result.as_mut().unwrap().merge_union(left);
+                            Metadata::merge_union(result.as_deref_mut().unwrap(), left);
                         }
                     } else {
                         self.skip_type_script_type_with_opts::<false>(
@@ -897,7 +749,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                     if GET_METADATA {
                         let mut left = (**result.as_mut().unwrap()).clone();
-                        if let Some(final_) = left.finish_intersection(self) {
+                        if let Some(final_) =
+                            Metadata::finish_intersection(&mut left, |r| self.load_name_from_ref(r))
+                        {
                             // finish skipping the rest of the type without collecting type metadata.
                             **result.as_mut().unwrap() = final_;
                             self.skip_type_script_type_with_opts::<false>(
@@ -911,7 +765,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 opts,
                                 result.as_deref_mut(),
                             )?;
-                            result.as_mut().unwrap().merge_intersection(left);
+                            Metadata::merge_intersection(result.as_deref_mut().unwrap(), left);
                         }
                     } else {
                         self.skip_type_script_type_with_opts::<false>(
@@ -940,29 +794,29 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     }
 
                     if GET_METADATA {
-                        let r = result.as_mut().unwrap();
-                        if let Metadata::MIdentifier(id_ref) = **r {
-                            let mut dot: List<'_, Ref> =
-                                bumpalo::collections::Vec::with_capacity_in(2, self.bump);
-                            // PERF(port): was assume_capacity
-                            dot.push(id_ref);
-                            let find_result = self
-                                .find_symbol(logger::Loc::EMPTY, self.lexer.identifier)
-                                .expect("unreachable");
-                            // PERF(port): was assume_capacity
-                            dot.push(find_result.r#ref);
-                            **r = Metadata::MDot(dot);
-                        } else if let Metadata::MDot(ref mut dot) = **r {
-                            if self.lexer.is_identifier_or_keyword() {
-                                let find_result = self
-                                    .find_symbol(logger::Loc::EMPTY, self.lexer.identifier)
-                                    .expect("unreachable");
+                        // PORT NOTE: reshaped for borrowck — `find_symbol` borrows `&mut self`;
+                        // `result` is a disjoint fn parameter so the borrows do not conflict.
+                        let ident = self.lexer.identifier;
+                        let r = result.as_deref_mut().unwrap();
+                        match r {
+                            Metadata::MIdentifier(id_ref) => {
+                                let id_ref = *id_ref;
+                                let mut dot: Vec<Ref> = Vec::with_capacity(2);
+                                dot.push(id_ref);
+                                let find_result =
+                                    self.find_symbol(logger::Loc::EMPTY, ident)?;
                                 dot.push(find_result.r#ref);
+                                *r = Metadata::MDot(dot);
                             }
+                            Metadata::MDot(dot) => {
+                                if self.lexer.is_identifier_or_keyword() {
+                                    let find_result =
+                                        self.find_symbol(logger::Loc::EMPTY, ident)?;
+                                    dot.push(find_result.r#ref);
+                                }
+                            }
+                            _ => {}
                         }
-                        // PORT NOTE: reshaped for borrowck — `find_symbol` borrows `self` while
-                        // `r`/`dot` borrow through `result` (disjoint from `self.lexer`); Phase B
-                        // may need to capture `self.lexer.identifier` into a local first.
                     }
 
                     self.lexer.next()?;
@@ -986,15 +840,15 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     self.lexer.expect(T::TCloseBracket)?;
 
                     if GET_METADATA {
-                        let r = result.as_mut().unwrap();
-                        if matches!(**r, Metadata::MNone) {
-                            **r = Metadata::MArray;
+                        let r = result.as_deref_mut().unwrap();
+                        if matches!(*r, Metadata::MNone) {
+                            *r = Metadata::MArray;
                         } else {
                             // if something was skipped, it is object type
                             if skipped {
-                                **r = Metadata::MObject;
+                                *r = Metadata::MObject;
                             } else {
-                                **r = Metadata::MArray;
+                                *r = Metadata::MArray;
                             }
                         }
                     }
@@ -1017,7 +871,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     };
                     self.skip_type_script_type_with_opts::<GET_METADATA>(
                         Level::Lowest,
-                        SkipTypeOptionsBitset::init_one(SkipTypeOptions::DisallowConditionalTypes),
+                        SkipTypeOptionsBitset::only(SkipTypeOptions::DisallowConditionalTypes),
                         extends_type.as_mut(),
                     )?;
 
@@ -1026,16 +880,18 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         self.lexer.expect(T::TQuestion)?;
                         let mut left = self.skip_type_script_type_with_metadata(Level::Lowest)?;
                         self.lexer.expect(T::TColon)?;
-                        if let Some(final_) = left.finish_intersection(self) {
+                        if let Some(final_) =
+                            Metadata::finish_intersection(&mut left, |r| self.load_name_from_ref(r))
+                        {
                             **result.as_mut().unwrap() = final_;
                             self.skip_type_script_type(Level::Lowest)?;
                         } else {
                             self.skip_type_script_type_with_opts::<GET_METADATA>(
                                 Level::BitwiseAnd,
-                                SkipTypeOptionsBitset::EMPTY,
+                                SkipTypeOptionsBitset::empty(),
                                 result.as_deref_mut(),
                             )?;
-                            result.as_mut().unwrap().merge_intersection(left);
+                            Metadata::merge_intersection(result.as_deref_mut().unwrap(), left);
                         }
                     } else {
                         self.lexer.expect(T::TQuestion)?;
@@ -1078,7 +934,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 self.lexer.next()?;
                 self.skip_type_script_type_with_opts::<false>(
                     Level::Lowest,
-                    SkipTypeOptionsBitset::init_one(SkipTypeOptions::IsIndexSignature),
+                    SkipTypeOptionsBitset::only(SkipTypeOptions::IsIndexSignature),
                     None,
                 )?;
 
@@ -1124,10 +980,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             }
 
             // Type parameters come right after the optional mark
-            let _ = self.skip_type_script_type_parameters(TypeParameterFlag {
-                allow_const_modifier: true,
-                ..TypeParameterFlag::default()
-            })?;
+            let _ = self.skip_type_script_type_parameters(
+                TypeParameterFlag::ALLOW_CONST_MODIFIER,
+            )?;
 
             match self.lexer.token {
                 T::TColon => {
@@ -1187,7 +1042,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let mut result = SkipTypeParameterResult::CouldBeTypeCast;
         self.lexer.next()?;
 
-        if self.lexer.token == T::TGreaterThan && flags.allow_empty_type_parameters {
+        if self.lexer.token == T::TGreaterThan
+            && flags.contains(TypeParameterFlag::ALLOW_EMPTY_TYPE_PARAMETERS)
+        {
             self.lexer.next()?;
             return Ok(SkipTypeParameterResult::DefinitelyTypeParameters);
         }
@@ -1203,7 +1060,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             // variance annotations) as well as "const" modifiers
             loop {
                 if self.lexer.token == T::TConst {
-                    if invalid_modifier_range.len == 0 && !flags.allow_const_modifier {
+                    if invalid_modifier_range.len == 0
+                        && !flags.contains(TypeParameterFlag::ALLOW_CONST_MODIFIER)
+                    {
                         // Valid:
                         //   "class Foo<const T> {}"
                         // Invalid:
@@ -1219,7 +1078,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                 if self.lexer.token == T::TIn {
                     if invalid_modifier_range.len == 0
-                        && (!flags.allow_in_out_variance_annotations || has_in || has_out)
+                        && (!flags.contains(TypeParameterFlag::ALLOW_IN_OUT_VARIANCE_ANNOTATIONS)
+                            || has_in
+                            || has_out)
                     {
                         // Valid:
                         //   "type Foo<in T> = T"
@@ -1237,7 +1098,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                 if self.lexer.is_contextual_keyword(b"out") {
                     let r = self.lexer.range();
-                    if invalid_modifier_range.len == 0 && !flags.allow_in_out_variance_annotations {
+                    if invalid_modifier_range.len == 0
+                        && !flags.contains(TypeParameterFlag::ALLOW_IN_OUT_VARIANCE_ANNOTATIONS)
+                    {
                         // Valid:
                         //   "type Foo<out T> = T"
                         // Invalid:
@@ -1273,7 +1136,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             // Only report an error for the first invalid modifier
             if invalid_modifier_range.len > 0 {
                 self.log.add_range_error_fmt(
-                    self.source,
+                    Some(self.source),
                     invalid_modifier_range,
                     format_args!(
                         "The modifier \"{}\" is not valid here",
@@ -1314,7 +1177,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             }
         }
 
-        self.lexer.expect_greater_than(false)?;
+        self.lexer.expect_greater_than::<false>()?;
         Ok(result)
     }
 
@@ -1343,7 +1206,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     if self.lexer.is_contextual_keyword(b"as") {
                         // "export type * as ns from 'path'"
                         self.lexer.next()?;
-                        let _ = self.parse_clause_alias(b"export")?;
+                        let _ = self.parse_clause_alias("export")?;
                         self.lexer.next()?;
                     }
                     self.lexer.expect_contextual_keyword(b"from")?;
@@ -1359,17 +1222,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         self.lexer.expect(T::TIdentifier)?;
 
         if opts.is_module_scope {
-            self.local_type_names
-                .put(name, true)
-                .expect("unreachable");
-            // TODO(port): `local_type_names` is a StringHashMap — `put` drops allocator arg
+            self.local_type_names.put(name, true)?;
         }
 
-        let _ = self.skip_type_script_type_parameters(TypeParameterFlag {
-            allow_in_out_variance_annotations: true,
-            allow_empty_type_parameters: true,
-            ..TypeParameterFlag::default()
-        })?;
+        let _ = self.skip_type_script_type_parameters(
+            TypeParameterFlag::ALLOW_IN_OUT_VARIANCE_ANNOTATIONS
+                | TypeParameterFlag::ALLOW_EMPTY_TYPE_PARAMETERS,
+        )?;
 
         self.lexer.expect(T::TEquals)?;
         self.skip_type_script_type(Level::Lowest)?;
@@ -1385,16 +1244,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         self.lexer.expect(T::TIdentifier)?;
 
         if opts.is_module_scope {
-            self.local_type_names
-                .put(name, true)
-                .expect("unreachable");
+            self.local_type_names.put(name, true)?;
         }
 
-        let _ = self.skip_type_script_type_parameters(TypeParameterFlag {
-            allow_in_out_variance_annotations: true,
-            allow_empty_type_parameters: true,
-            ..TypeParameterFlag::default()
-        })?;
+        let _ = self.skip_type_script_type_parameters(
+            TypeParameterFlag::ALLOW_IN_OUT_VARIANCE_ANNOTATIONS
+                | TypeParameterFlag::ALLOW_EMPTY_TYPE_PARAMETERS,
+        )?;
 
         if self.lexer.token == T::TExtends {
             self.lexer.next()?;
@@ -1437,7 +1293,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             }
         }
 
-        self.lexer.expect_less_than(false)?;
+        self.lexer.expect_less_than::<false>()?;
 
         loop {
             self.skip_type_script_type(Level::Lowest)?;
@@ -1448,7 +1304,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         }
 
         // This type argument list must end with a ">"
-        self.lexer.expect_greater_than(IS_INSIDE_JSX_ELEMENT)?;
+        self.lexer.expect_greater_than::<IS_INSIDE_JSX_ELEMENT>()?;
         Ok(true)
     }
 
@@ -1459,7 +1315,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     // concrete helpers covering the actual call patterns:
     //   - `lexer_backtracker_bool`   — fn returns Result<()>/Result<bool>, helper returns bool
     //   - `lexer_backtracker_result` — fn returns Result<SkipTypeParameterResult>
-    // TODO(port): comptime reflection split into concrete helpers — verify behavior parity.
 
     #[inline]
     fn lexer_backtracker_bool<F, R>(&mut self, func: F) -> bool
@@ -1467,8 +1322,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         F: FnOnce(&mut Self) -> Result<R, Error>,
     {
         self.mark_type_script_only();
-        // PORT NOTE: Zig copies the lexer by value; Rust Lexer must be Clone.
-        let old_lexer = self.lexer.clone();
+        // PORT NOTE: Zig copies the lexer by value; Rust Lexer holds `&mut Log` so we use a
+        // POD `LexerSnapshot` and `restore()`.
+        let old_lexer = self.lexer.snapshot();
         let old_log_disabled = self.lexer.is_log_disabled;
         self.lexer.is_log_disabled = true;
         let mut backtrack = false;
@@ -1500,7 +1356,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         F: FnOnce(&mut Self) -> Result<SkipTypeParameterResult, Error>,
     {
         self.mark_type_script_only();
-        let old_lexer = self.lexer.clone();
+        let old_lexer = self.lexer.snapshot();
         let old_log_disabled = self.lexer.is_log_disabled;
         self.lexer.is_log_disabled = true;
         let mut backtrack = false;
@@ -1532,7 +1388,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // PORT NOTE: matches Zig `lexerBacktrackerWithArgs` — does NOT check `did_panic` on
         // non-Backtrack errors (unlike `lexerBacktracker`).
         self.mark_type_script_only();
-        let old_lexer = self.lexer.clone();
+        let old_lexer = self.lexer.snapshot();
         let old_log_disabled = self.lexer.is_log_disabled;
         self.lexer.is_log_disabled = true;
 
@@ -1558,10 +1414,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     pub fn skip_type_script_type_parameters_then_open_paren_with_backtracking(
         &mut self,
     ) -> Result<SkipTypeParameterResult, Error> {
-        let result = self.skip_type_script_type_parameters(TypeParameterFlag {
-            allow_const_modifier: true,
-            ..TypeParameterFlag::default()
-        })?;
+        let result = self.skip_type_script_type_parameters(
+            TypeParameterFlag::ALLOW_CONST_MODIFIER,
+        )?;
         if self.lexer.token != T::TOpenParen {
             return Err(err!("Backtrack"));
         }
@@ -1576,7 +1431,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         self.lexer.expect(T::TExtends)?;
         self.skip_type_script_type_with_opts::<false>(
             Level::Prefix,
-            SkipTypeOptionsBitset::init_one(SkipTypeOptions::DisallowConditionalTypes),
+            SkipTypeOptionsBitset::only(SkipTypeOptions::DisallowConditionalTypes),
             None,
         )?;
 
@@ -1591,7 +1446,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
     pub fn skip_type_script_arrow_args_with_backtracking(&mut self) -> Result<bool, Error> {
         self.skip_typescript_fn_args()?;
-        if let Err(_) = self.lexer.expect(T::TEqualsGreaterThan) {
+        if self.lexer.expect(T::TEqualsGreaterThan).is_err() {
             return Err(err!("Backtrack"));
         }
 
@@ -1601,7 +1456,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     pub fn skip_type_script_type_arguments_with_backtracking(&mut self) -> Result<bool, Error> {
         if self.skip_type_script_type_arguments::<false>()? {
             // Check the token after this and backtrack if it's the wrong one
-            if !TypeScript::can_follow_type_arguments_in_expression(self) {
+            if !self.can_follow_type_arguments_in_expression() {
                 return Err(err!("Backtrack"));
             }
         }
@@ -1656,7 +1511,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 // PORT STATUS
 //   source:     src/js_parser/ast/skipTypescript.zig (1317 lines)
 //   confidence: medium
-//   todos:      8
-//   notes:      Zig type-returning fn collapsed into inherent impl on P<TS,JSX,SCAN_ONLY>; `comptime get_metadata` → const generic + Option<&mut Metadata>; Backtracking comptime reflection split into 3 concrete closure helpers; borrowck reshaping needed in TDot arm (find_symbol vs result borrow).
+//   notes:      Zig type-returning fn collapsed into inherent impl on P<TS,JSX,SCAN_ONLY>;
+//               `comptime get_metadata` → const generic + Option<&mut Metadata>; Backtracking
+//               comptime reflection split into 3 concrete closure helpers (snapshot/restore
+//               replace by-value lexer copy); TDot arm reshaped for borrowck (find_symbol vs
+//               result borrow are disjoint).
 // ──────────────────────────────────────────────────────────────────────────
-} // end mod _draft

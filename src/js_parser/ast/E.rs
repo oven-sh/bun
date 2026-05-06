@@ -1644,6 +1644,51 @@ fn array_sorter_is_less_than(lhs: &Expr, rhs: &Expr) -> Ordering {
         .order(rhs.data.e_string().unwrap().get())
 }
 
+impl EString {
+    pub fn string_z<'b>(&self, bump: &'b Bump) -> Result<&'b bun_string::ZStr, AllocError> {
+        // Zig: `if (self.isUTF8()) self.data else strings.toUTF8AllocZ(...)`, NUL-terminated.
+        // Port: copy into the bump arena with a trailing NUL and wrap as `ZStr`.
+        let bytes: &[u8] = if self.is_utf8() {
+            self.data
+        } else {
+            let v = strings::to_utf8_alloc(self.slice16());
+            bump.alloc_slice_copy(&v)
+        };
+        let mut buf = bumpalo::collections::Vec::<u8>::with_capacity_in(bytes.len() + 1, bump);
+        buf.extend_from_slice(bytes);
+        buf.push(0);
+        let s = buf.into_bump_slice();
+        // SAFETY: `s[len-1] == 0` (just pushed) and `s[..len-1]` is readable for `'b`.
+        Ok(unsafe { bun_string::ZStr::from_raw(s.as_ptr(), s.len() - 1) })
+    }
+
+    // `toJS` alias deleted — lives in `js_parser_jsc` extension trait.
+
+    pub fn to_zig_string(&mut self, bump: &Bump) -> ZigString {
+        if self.is_utf8() {
+            ZigString::from_utf8(self.slice(bump))
+        } else {
+            ZigString::init_utf16(self.slice16())
+        }
+    }
+
+    // TODO(port): jsonStringify — Zig std.json protocol; Phase B picks a serde strategy.
+    pub fn json_stringify<W>(&self, writer: &mut W) -> Result<(), bun_core::Error> {
+        let _ = writer;
+        let mut buf = [0u8; 4096];
+        let mut i: usize = 0;
+        for &char in self.slice16() {
+            buf[i] = u8::try_from(char).unwrap();
+            i += 1;
+            if i >= 4096 {
+                break;
+            }
+        }
+        let _ = &buf[..i];
+        // writer.write(&buf[..i])
+        Err(bun_core::err!(Unimplemented))
+    }
+}
 
 impl fmt::Display for EString {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

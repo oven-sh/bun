@@ -3467,22 +3467,23 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 // - alias is the name from the source module ("feature")
                 // - original_name is the local binding name
                 // - name.ref is the ref for the local binding
-                if item.alias == b"feature" {
+                // SAFETY: ClauseItem.alias is `*const [u8]` arena-owned for 'a.
+                let alias: &'a [u8] = unsafe { &*item.alias };
+                if alias == b"feature" {
                     // Check for duplicate imports of feature
                     if self.bundler_feature_flag_ref.is_valid() {
-                        self.log.add_error(self.source, item.alias_loc, "`feature` from \"bun:bundle\" may only be imported once")?;
+                        self.log.add_error(Some(self.source), item.alias_loc, b"`feature` from \"bun:bundle\" may only be imported once")?;
                         continue;
                     }
                     // Declare the symbol and store the ref
-                    let name = self.load_name_from_ref(item.name.r#ref.unwrap());
+                    let name = self.load_name_from_ref(item.name.ref_.unwrap());
                     let r#ref = self.declare_symbol(js_ast::symbol::Kind::Other, item.name.loc, name)?;
                     self.bundler_feature_flag_ref = r#ref;
                 } else {
                     self.log.add_error_fmt(
                         self.source,
                         item.alias_loc,
-                        self.allocator,
-                        format_args!("\"bun:bundle\" has no export named \"{}\"", bstr::BStr::new(item.alias)),
+                        format_args!("\"bun:bundle\" has no export named \"{}\"", bstr::BStr::new(alias)),
                     )?;
                 }
             }
@@ -3491,7 +3492,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         }
 
         let macro_remap = if Self::ALLOW_MACROS {
-            self.options.macro_context.get_remap(path.text)
+            self.options.macro_context.as_deref().and_then(|ctx| ctx.get_remap(path.text))
         } else {
             None
         };
@@ -3499,7 +3500,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         stmt.import_record_index = self.add_import_record(ImportKind::Stmt, path.loc, path.text);
         self.import_records.items_mut()[stmt.import_record_index as usize]
             .flags
-            .was_originally_bare_import = was_originally_bare_import;
+            .set(bun_options_types::ImportRecordFlags::WAS_ORIGINALLY_BARE_IMPORT, was_originally_bare_import);
 
         if let Some(star) = stmt.star_name_loc {
             let name = self.load_name_from_ref(stmt.namespace_ref);
@@ -3518,31 +3519,41 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
             // TODO: not sure how to handle macro remappings for namespace imports
         } else {
-            let mut path_name = fs::PathName::init(path.text);
-            let name = strings::append(self.allocator, b"import_", path_name.non_unique_name_string(self.allocator)?)?;
+            let path_name = fs::PathName::init(path.text);
+            // PORT NOTE: Zig `nonUniqueNameString` allocates the sanitized identifier; the Rust
+            // `PathName` exposes the same sanitizer as `non_unique_name_string_base()` (no alloc),
+            // then we format-prefix into the bump arena.
+            let name: &'a [u8] = bumpalo::format!(
+                in self.allocator,
+                "import_{}",
+                bstr::BStr::new(path_name.non_unique_name_string_base())
+            )
+            .into_bump_str()
+            .as_bytes();
             stmt.namespace_ref = self.new_symbol(js_ast::symbol::Kind::Other, name)?;
             // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
             let scope = unsafe { &mut *self.current_scope };
-            scope.generated.push(self.allocator, stmt.namespace_ref)?;
+            scope.generated.append(stmt.namespace_ref)?;
         }
 
-        let mut item_refs = ImportItemForNamespaceMap::new_in(self.allocator);
+        let mut item_refs = ImportItemForNamespaceMap::new();
+        // SAFETY: arena-owned `*mut [ClauseItem]` valid for parser 'a lifetime.
         let count_excluding_namespace =
-            u16::try_from(stmt.items.len()).unwrap() + u16::from(stmt.default_name.is_some());
+            u16::try_from(unsafe { &*stmt.items }.len()).unwrap() + u16::from(stmt.default_name.is_some());
 
         item_refs.ensure_unused_capacity(count_excluding_namespace as usize)?;
         // Even though we allocate ahead of time here
         // we cannot use putAssumeCapacity because a symbol can have existing links
         // those may write to this hash table, so this estimate may be innaccurate
-        self.is_import_item.ensure_unused_capacity(self.allocator, count_excluding_namespace as usize)?;
+        self.is_import_item.reserve(count_excluding_namespace as usize);
         let mut remap_count: u32 = 0;
         // Link the default item to the namespace
         if let Some(name_loc) = &mut stmt.default_name {
             'outer: {
-                let name = self.load_name_from_ref(name_loc.r#ref.unwrap());
+                let name = self.load_name_from_ref(name_loc.ref_.unwrap());
                 let r#ref = self.declare_symbol(js_ast::symbol::Kind::Import, name_loc.loc, name)?;
-                name_loc.r#ref = Some(r#ref);
-                self.is_import_item.insert(r#ref, ())?;
+                name_loc.ref_ = Some(r#ref);
+                self.is_import_item.insert(r#ref, ());
 
                 // ensure every e_import_identifier holds the namespace
                 if self.options.features.hot_module_reloading {
@@ -3552,14 +3563,15 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                             namespace_ref: stmt.namespace_ref,
                             alias: b"default",
                             import_record_index: stmt.import_record_index,
+                            was_originally_property_access: false,
                         });
                     }
                 }
 
-                if let Some(remap) = &macro_remap {
+                if let Some(remap) = macro_remap {
                     if let Some(remapped_path) = remap.get(b"default" as &[u8]) {
                         let new_import_id = self.add_import_record(ImportKind::Stmt, path.loc, remapped_path);
-                        self.macro_.refs.put(r#ref, crate::parser::MacroRefData { import_record_id: new_import_id, name: b"default" })?;
+                        self.macro_.refs.put(r#ref, crate::parser::MacroRefData { import_record_id: new_import_id, name: Some(b"default") })?;
 
                         self.import_records.items_mut()[new_import_id as usize].path.namespace = js_ast::Macro::NAMESPACE;
                         self.import_records.items_mut()[new_import_id as usize].flags.insert(bun_options_types::ImportRecordFlags::IS_UNUSED);

@@ -789,37 +789,956 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     }
 
     // ─── heavy bodies still blocked ──────────────────────────────────────────
-    // t_export / t_import / parse_stmt_fallthrough touch helpers that are not
-    // yet real on P (create_default_name, default_name_for_expr, parse_clause_alias,
-    // add_import_record, fs::PathName, ImportTag, p.panic, p.import_records mut
-    // accessors, current_scope field write, S::Import Default). Full draft bodies
-    // preserved verbatim under  mod _draft_heavy below.
-
     fn t_export(
         p: &mut Self,
-        opts: &mut ParseStatementOptions,
+        opts: &mut ParseStatementOptions<'a>,
         loc: logger::Loc,
     ) -> Result<Stmt> {
-        let _ = (opts, loc);
-        todo!("G-round-4: t_export body — see _draft_heavy")
+        let previous_export_keyword = p.esm_export_keyword;
+        if opts.is_module_scope {
+            p.esm_export_keyword = p.lexer.range();
+        } else if !opts.is_namespace_scope {
+            p.lexer.unexpected()?;
+            return Err(err!("SyntaxError"));
+        }
+        p.lexer.next()?;
+
+        // TypeScript decorators only work on class declarations
+        // "@decorator export class Foo {}"
+        // "@decorator export abstract class Foo {}"
+        // "@decorator export default class Foo {}"
+        // "@decorator export default abstract class Foo {}"
+        // "@decorator export declare class Foo {}"
+        // "@decorator export declare abstract class Foo {}"
+        if opts.ts_decorators.is_some()
+            && p.lexer.token != T::TClass
+            && p.lexer.token != T::TDefault
+            && !p.lexer.is_contextual_keyword(b"abstract")
+            && !p.lexer.is_contextual_keyword(b"declare")
+        {
+            p.lexer.expected(T::TClass)?;
+        }
+
+        match p.lexer.token {
+            T::TClass | T::TConst | T::TFunction | T::TVar => {
+                opts.is_export = true;
+                p.parse_stmt(opts)
+            }
+
+            T::TImport => {
+                // "export import foo = bar"
+                if Self::IS_TYPESCRIPT_ENABLED && (opts.is_module_scope || opts.is_namespace_scope) {
+                    opts.is_export = true;
+                    return p.parse_stmt(opts);
+                }
+
+                p.lexer.unexpected()?;
+                Err(err!("SyntaxError"))
+            }
+
+            T::TEnum => {
+                if !Self::IS_TYPESCRIPT_ENABLED {
+                    p.lexer.unexpected()?;
+                    return Err(err!("SyntaxError"));
+                }
+
+                opts.is_export = true;
+                p.parse_stmt(opts)
+            }
+
+            T::TIdentifier => {
+                if p.lexer.is_contextual_keyword(b"let") {
+                    opts.is_export = true;
+                    return p.parse_stmt(opts);
+                }
+
+                if Self::IS_TYPESCRIPT_ENABLED {
+                    if opts.is_typescript_declare && p.lexer.is_contextual_keyword(b"as") {
+                        // "export as namespace ns;"
+                        p.lexer.next()?;
+                        p.lexer.expect_contextual_keyword(b"namespace")?;
+                        p.lexer.expect(T::TIdentifier)?;
+                        p.lexer.expect_or_insert_semicolon()?;
+
+                        return Ok(p.s(S::TypeScript {}, loc));
+                    }
+                }
+
+                if p.lexer.is_contextual_keyword(b"async") {
+                    let async_range = p.lexer.range();
+                    p.lexer.next()?;
+                    if p.lexer.has_newline_before {
+                        p.log.add_range_error(
+                            Some(p.source),
+                            async_range,
+                            b"Unexpected newline after \"async\"",
+                        )?;
+                    }
+
+                    p.lexer.expect(T::TFunction)?;
+                    opts.is_export = true;
+                    return p.parse_fn_stmt(loc, opts, Some(async_range));
+                }
+
+                if Self::IS_TYPESCRIPT_ENABLED {
+                    use TypeScript::identifier::StmtIdentifier;
+                    if let Some(ident) = TypeScript::identifier::for_str(p.lexer.identifier) {
+                        match ident {
+                            StmtIdentifier::SType => {
+                                // "export type foo = ..."
+                                let type_range = p.lexer.range();
+                                p.lexer.next()?;
+                                if p.lexer.has_newline_before {
+                                    p.log.add_error_fmt(
+                                        Some(p.source),
+                                        type_range.end(),
+                                        format_args!("Unexpected newline after \"type\""),
+                                    )?;
+                                    return Err(err!("SyntaxError"));
+                                }
+                                let mut skipper = ParseStatementOptions {
+                                    is_module_scope: opts.is_module_scope,
+                                    is_export: true,
+                                    ..Default::default()
+                                };
+                                p.skip_type_script_type_stmt(&mut skipper)?;
+                                return Ok(p.s(S::TypeScript {}, loc));
+                            }
+                            StmtIdentifier::SNamespace
+                            | StmtIdentifier::SAbstract
+                            | StmtIdentifier::SModule
+                            | StmtIdentifier::SInterface => {
+                                // "export namespace Foo {}"
+                                // "export abstract class Foo {}"
+                                // "export module Foo {}"
+                                // "export interface Foo {}"
+                                opts.is_export = true;
+                                return p.parse_stmt(opts);
+                            }
+                            StmtIdentifier::SDeclare => {
+                                // "export declare class Foo {}"
+                                opts.is_export = true;
+                                opts.lexical_decl = LexicalDecl::AllowAll;
+                                opts.is_typescript_declare = true;
+                                return p.parse_stmt(opts);
+                            }
+                        }
+                    }
+                }
+
+                p.lexer.unexpected()?;
+                Err(err!("SyntaxError"))
+            }
+
+            T::TDefault => {
+                if !opts.is_module_scope && (!opts.is_namespace_scope || !opts.is_typescript_declare)
+                {
+                    p.lexer.unexpected()?;
+                    return Err(err!("SyntaxError"));
+                }
+
+                let default_loc = p.lexer.loc();
+                p.lexer.next()?;
+
+                // TypeScript decorators only work on class declarations
+                // "@decorator export default class Foo {}"
+                // "@decorator export default abstract class Foo {}"
+                if opts.ts_decorators.is_some()
+                    && p.lexer.token != T::TClass
+                    && !p.lexer.is_contextual_keyword(b"abstract")
+                {
+                    p.lexer.expected(T::TClass)?;
+                }
+
+                if p.lexer.is_contextual_keyword(b"async") {
+                    let async_range = p.lexer.range();
+                    p.lexer.next()?;
+                    if p.lexer.token == T::TFunction && !p.lexer.has_newline_before {
+                        p.lexer.next()?;
+                        let mut stmt_opts = ParseStatementOptions {
+                            is_name_optional: true,
+                            lexical_decl: LexicalDecl::AllowAll,
+                            ..Default::default()
+                        };
+                        let stmt = p.parse_fn_stmt(loc, &mut stmt_opts, Some(async_range))?;
+                        if matches!(stmt.data, js_ast::StmtData::STypeScript(_)) {
+                            // This was just a type annotation
+                            return Ok(stmt);
+                        }
+
+                        let default_name = if let Some(func) = stmt.data.s_function() {
+                            if let Some(name) = func.func.name {
+                                LocRef { loc: name.loc, ref_: name.ref_ }
+                            } else {
+                                p.create_default_name(default_loc)?
+                            }
+                        } else {
+                            p.create_default_name(default_loc)?
+                        };
+
+                        let value = js_ast::StmtOrExpr::Stmt(stmt);
+                        return Ok(p.s(
+                            S::ExportDefault { default_name, value },
+                            loc,
+                        ));
+                    }
+
+                    let default_name = p.create_default_name(loc)?;
+
+                    let mut expr = p.parse_async_prefix_expr(async_range, Level::Comma)?;
+                    p.parse_suffix(&mut expr, Level::Comma, None, EFlags::None)?;
+                    p.lexer.expect_or_insert_semicolon()?;
+                    let value = js_ast::StmtOrExpr::Expr(expr);
+                    p.has_export_default = true;
+                    return Ok(p.s(
+                        S::ExportDefault { default_name, value },
+                        loc,
+                    ));
+                }
+
+                if p.lexer.token == T::TFunction
+                    || p.lexer.token == T::TClass
+                    || p.lexer.is_contextual_keyword(b"interface")
+                {
+                    let mut _opts = ParseStatementOptions {
+                        ts_decorators: opts.ts_decorators,
+                        is_name_optional: true,
+                        lexical_decl: LexicalDecl::AllowAll,
+                        ..Default::default()
+                    };
+                    let stmt = p.parse_stmt(&mut _opts)?;
+
+                    let default_name: LocRef = 'default_name_getter: {
+                        match &stmt.data {
+                            // This was just a type annotation
+                            js_ast::StmtData::STypeScript(_) => {
+                                return Ok(stmt);
+                            }
+
+                            js_ast::StmtData::SFunction(func_container) => {
+                                if let Some(name) = func_container.func.name {
+                                    break 'default_name_getter LocRef {
+                                        loc: name.loc,
+                                        ref_: name.ref_,
+                                    };
+                                }
+                            }
+                            js_ast::StmtData::SClass(class) => {
+                                if let Some(name) = class.class.class_name {
+                                    break 'default_name_getter LocRef {
+                                        loc: name.loc,
+                                        ref_: name.ref_,
+                                    };
+                                }
+                            }
+                            _ => {}
+                        }
+
+                        p.create_default_name(default_loc).expect("unreachable")
+                    };
+                    p.has_export_default = true;
+                    p.has_es_module_syntax = true;
+                    return Ok(p.s(
+                        S::ExportDefault {
+                            default_name,
+                            value: js_ast::StmtOrExpr::Stmt(stmt),
+                        },
+                        loc,
+                    ));
+                }
+
+                let is_identifier = p.lexer.token == T::TIdentifier;
+                let name = p.lexer.identifier;
+                let expr = p.parse_expr(Level::Comma)?;
+
+                // Handle the default export of an abstract class in TypeScript
+                if Self::IS_TYPESCRIPT_ENABLED
+                    && is_identifier
+                    && (p.lexer.token == T::TClass || opts.ts_decorators.is_some())
+                    && name == b"abstract"
+                {
+                    match &expr.data {
+                        js_ast::ExprData::EIdentifier(_) => {
+                            let mut stmt_opts = ParseStatementOptions {
+                                ts_decorators: opts.ts_decorators,
+                                is_name_optional: true,
+                                ..Default::default()
+                            };
+                            let stmt: Stmt = p.parse_class_stmt(loc, &mut stmt_opts)?;
+
+                            // Use the statement name if present, since it's a better name
+                            let default_name: LocRef = 'default_name_getter: {
+                                match &stmt.data {
+                                    // This was just a type annotation
+                                    js_ast::StmtData::STypeScript(_) => {
+                                        return Ok(stmt);
+                                    }
+
+                                    js_ast::StmtData::SFunction(func_container) => {
+                                        if let Some(_name) = func_container.func.name {
+                                            break 'default_name_getter LocRef {
+                                                loc: default_loc,
+                                                ref_: _name.ref_,
+                                            };
+                                        }
+                                    }
+                                    js_ast::StmtData::SClass(class) => {
+                                        if let Some(_name) = class.class.class_name {
+                                            break 'default_name_getter LocRef {
+                                                loc: default_loc,
+                                                ref_: _name.ref_,
+                                            };
+                                        }
+                                    }
+                                    _ => {}
+                                }
+
+                                p.create_default_name(default_loc).expect("unreachable")
+                            };
+                            p.has_export_default = true;
+                            return Ok(p.s(
+                                S::ExportDefault {
+                                    default_name,
+                                    value: js_ast::StmtOrExpr::Stmt(stmt),
+                                },
+                                loc,
+                            ));
+                        }
+                        _ => {
+                            p.panic("internal error: unexpected", format_args!(""));
+                        }
+                    }
+                }
+
+                p.lexer.expect_or_insert_semicolon()?;
+
+                // Use the expression name if present, since it's a better name
+                p.has_export_default = true;
+                Ok(p.s(
+                    S::ExportDefault {
+                        default_name: p.default_name_for_expr(expr, default_loc),
+                        value: js_ast::StmtOrExpr::Expr(expr),
+                    },
+                    loc,
+                ))
+            }
+            T::TAsterisk => {
+                if !opts.is_module_scope && !(opts.is_namespace_scope || !opts.is_typescript_declare)
+                {
+                    p.lexer.unexpected()?;
+                    return Err(err!("SyntaxError"));
+                }
+
+                p.lexer.next()?;
+                let mut namespace_ref: Ref = Ref::NONE;
+                let mut alias: Option<G::ExportStarAlias> = None;
+                let path: ParsedPath;
+
+                if p.lexer.is_contextual_keyword(b"as") {
+                    // "export * as ns from 'path'"
+                    p.lexer.next()?;
+                    let name = p.parse_clause_alias("export")?;
+                    namespace_ref = p.store_name_in_ref(name)?;
+                    alias = Some(G::ExportStarAlias {
+                        loc: p.lexer.loc(),
+                        original_name: name,
+                    });
+                    p.lexer.next()?;
+                    p.lexer.expect_contextual_keyword(b"from")?;
+                    path = p.parse_path()?;
+                } else {
+                    // "export * from 'path'"
+                    p.lexer.expect_contextual_keyword(b"from")?;
+                    path = p.parse_path()?;
+                    // Zig: `fs.PathName.init(path.text).nonUniqueNameString(allocator)` —
+                    // sanitize the basename into an identifier and copy into the arena.
+                    let name: &'a [u8] = {
+                        use std::io::Write as _;
+                        let base = fs::PathName::init(path.text).non_unique_name_string_base();
+                        let mut buf: Vec<u8> = Vec::new();
+                        write!(&mut buf, "{}", bun_core::fmt::fmt_identifier(base)).expect("unreachable");
+                        p.allocator.alloc_slice_copy(&buf)
+                    };
+                    namespace_ref = p.store_name_in_ref(name)?;
+                }
+
+                let import_record_index = p.add_import_record(
+                    ImportKind::Stmt,
+                    path.loc,
+                    path.text,
+                    // TODO: import assertions
+                    // path.assertions
+                );
+
+                if path.is_macro {
+                    p.log
+                        .add_error(Some(p.source), path.loc, b"cannot use macro in export statement")?;
+                } else if path.import_tag != ImportRecordTag::None {
+                    p.log.add_error(
+                        Some(p.source),
+                        loc,
+                        b"cannot use export statement with \"type\" attribute",
+                    )?;
+                }
+
+                if Self::TRACK_SYMBOL_USAGE_DURING_PARSE_PASS {
+                    // In the scan pass, we need _some_ way of knowing *not* to mark as unused
+                    p.import_records.items_mut()[import_record_index as usize]
+                        .flags
+                        .insert(ImportRecordFlags::CALLS_RUNTIME_RE_EXPORT_FN);
+                }
+
+                p.lexer.expect_or_insert_semicolon()?;
+                p.has_es_module_syntax = true;
+                Ok(p.s(
+                    S::ExportStar {
+                        namespace_ref,
+                        alias,
+                        import_record_index,
+                    },
+                    loc,
+                ))
+            }
+            T::TOpenBrace => {
+                if !opts.is_module_scope && !(opts.is_namespace_scope || !opts.is_typescript_declare)
+                {
+                    p.lexer.unexpected()?;
+                    return Err(err!("SyntaxError"));
+                }
+
+                let export_clause = p.parse_export_clause()?;
+                if p.lexer.is_contextual_keyword(b"from") {
+                    p.lexer.expect_contextual_keyword(b"from")?;
+                    let parsed_path = p.parse_path()?;
+
+                    p.lexer.expect_or_insert_semicolon()?;
+
+                    if Self::IS_TYPESCRIPT_ENABLED {
+                        // export {type Foo} from 'bar';
+                        // ->
+                        // nothing
+                        // https://www.typescriptlang.org/play?useDefineForClassFields=true&esModuleInterop=false&declaration=false&target=99&isolatedModules=false&ts=4.5.4#code/KYDwDg9gTgLgBDAnmYcDeAxCEC+cBmUEAtnAOQBGAhlGQNwBQQA
+                        if export_clause.clauses.is_empty() && export_clause.had_type_only_exports {
+                            return Ok(p.s(S::TypeScript {}, loc));
+                        }
+                    }
+
+                    if parsed_path.is_macro {
+                        p.log.add_error(
+                            Some(p.source),
+                            loc,
+                            b"export from cannot be used with \"type\": \"macro\"",
+                        )?;
+                    } else if parsed_path.import_tag != ImportRecordTag::None {
+                        p.log.add_error(
+                            Some(p.source),
+                            loc,
+                            b"export from cannot be used with \"type\" attribute",
+                        )?;
+                    }
+
+                    let import_record_index =
+                        p.add_import_record(ImportKind::Stmt, parsed_path.loc, parsed_path.text);
+                    let path_name = fs::PathName::init(parsed_path.text);
+                    // PERF(port): was arena allocPrint — profile in Phase B
+                    let namespace_ref = {
+                        use std::io::Write as _;
+                        let mut buf: Vec<u8> = Vec::new();
+                        write!(
+                            &mut buf,
+                            "import_{}",
+                            bun_core::fmt::fmt_identifier(path_name.non_unique_name_string_base())
+                        )
+                        .expect("unreachable");
+                        // TODO(port): store_name_in_ref expects arena-owned slice; verify lifetime
+                        p.store_name_in_ref(p.allocator.alloc_slice_copy(&buf))?
+                    };
+
+                    if Self::TRACK_SYMBOL_USAGE_DURING_PARSE_PASS {
+                        // In the scan pass, we need _some_ way of knowing *not* to mark as unused
+                        p.import_records.items_mut()[import_record_index as usize]
+                            .flags
+                            .insert(ImportRecordFlags::CALLS_RUNTIME_RE_EXPORT_FN);
+                    }
+                    // SAFETY: current_scope is always a live arena pointer during parsing.
+                    unsafe { (*p.current_scope).is_after_const_local_prefix = true; }
+                    p.has_es_module_syntax = true;
+                    return Ok(p.s(
+                        S::ExportFrom {
+                            items: export_clause.clauses as *const _ as *mut _,
+                            is_single_line: export_clause.is_single_line,
+                            namespace_ref,
+                            import_record_index,
+                        },
+                        loc,
+                    ));
+                }
+                p.lexer.expect_or_insert_semicolon()?;
+
+                if Self::IS_TYPESCRIPT_ENABLED {
+                    // export {type Foo};
+                    // ->
+                    // nothing
+                    // https://www.typescriptlang.org/play?useDefineForClassFields=true&esModuleInterop=false&declaration=false&target=99&isolatedModules=false&ts=4.5.4#code/KYDwDg9gTgLgBDAnmYcDeAxCEC+cBmUEAtnAOQBGAhlGQNwBQQA
+                    if export_clause.clauses.is_empty() && export_clause.had_type_only_exports {
+                        return Ok(p.s(S::TypeScript {}, loc));
+                    }
+                }
+                p.has_es_module_syntax = true;
+                Ok(p.s(
+                    S::ExportClause {
+                        items: export_clause.clauses as *const _ as *mut _,
+                        is_single_line: export_clause.is_single_line,
+                    },
+                    loc,
+                ))
+            }
+            T::TEquals => {
+                // "export = value;"
+
+                p.esm_export_keyword = previous_export_keyword; // This wasn't an ESM export statement after all
+                if Self::IS_TYPESCRIPT_ENABLED {
+                    p.lexer.next()?;
+                    let value = p.parse_expr(Level::Lowest)?;
+                    p.lexer.expect_or_insert_semicolon()?;
+                    return Ok(p.s(S::ExportEquals { value }, loc));
+                }
+                p.lexer.unexpected()?;
+                Err(err!("SyntaxError"))
+            }
+            _ => {
+                p.lexer.unexpected()?;
+                Err(err!("SyntaxError"))
+            }
+        }
     }
 
     fn t_import(
         p: &mut Self,
-        opts: &mut ParseStatementOptions,
+        opts: &mut ParseStatementOptions<'a>,
         loc: logger::Loc,
     ) -> Result<Stmt> {
-        let _ = (opts, loc);
-        todo!("G-round-4: t_import body — see _draft_heavy")
+        let previous_import_keyword = p.esm_import_keyword;
+        p.esm_import_keyword = p.lexer.range();
+        p.lexer.next()?;
+        let mut stmt: S::Import = S::Import {
+            namespace_ref: Ref::NONE,
+            import_record_index: u32::MAX,
+            ..Default::default()
+        };
+        let mut was_originally_bare_import = false;
+
+        // "export import foo = bar"
+        if (opts.is_export || (opts.is_namespace_scope && !opts.is_typescript_declare))
+            && p.lexer.token != T::TIdentifier
+        {
+            p.lexer.expected(T::TIdentifier)?;
+        }
+
+        match p.lexer.token {
+            // "import('path')"
+            // "import.meta"
+            T::TOpenParen | T::TDot => {
+                p.esm_import_keyword = previous_import_keyword; // this wasn't an esm import statement after all
+                let mut expr = p.parse_import_expr(loc, Level::Lowest)?;
+                p.parse_suffix(&mut expr, Level::Lowest, None, EFlags::None)?;
+                p.lexer.expect_or_insert_semicolon()?;
+                return Ok(p.s(S::SExpr { value: expr, ..Default::default() }, loc));
+            }
+            T::TStringLiteral | T::TNoSubstitutionTemplateLiteral => {
+                // "import 'path'"
+                if !opts.is_module_scope && (!opts.is_namespace_scope || !opts.is_typescript_declare)
+                {
+                    p.lexer.unexpected()?;
+                    return Err(err!("SyntaxError"));
+                }
+                was_originally_bare_import = true;
+            }
+            T::TAsterisk => {
+                // "import * as ns from 'path'"
+                if !opts.is_module_scope && (!opts.is_namespace_scope || !opts.is_typescript_declare)
+                {
+                    p.lexer.unexpected()?;
+                    return Err(err!("SyntaxError"));
+                }
+
+                p.lexer.next()?;
+                p.lexer.expect_contextual_keyword(b"as")?;
+                stmt = S::Import {
+                    namespace_ref: p.store_name_in_ref(p.lexer.identifier)?,
+                    star_name_loc: Some(p.lexer.loc()),
+                    import_record_index: u32::MAX,
+                    ..Default::default()
+                };
+                p.lexer.expect(T::TIdentifier)?;
+                p.lexer.expect_contextual_keyword(b"from")?;
+            }
+            T::TOpenBrace => {
+                // "import {item1, item2} from 'path'"
+                if !opts.is_module_scope && (!opts.is_namespace_scope || !opts.is_typescript_declare)
+                {
+                    p.lexer.unexpected()?;
+                    return Err(err!("SyntaxError"));
+                }
+                let import_clause = p.parse_import_clause()?;
+                if Self::IS_TYPESCRIPT_ENABLED {
+                    if import_clause.had_type_only_imports && import_clause.items.is_empty() {
+                        p.lexer.expect_contextual_keyword(b"from")?;
+                        let _ = p.parse_path()?;
+                        p.lexer.expect_or_insert_semicolon()?;
+                        return Ok(p.s(S::TypeScript {}, loc));
+                    }
+                }
+
+                stmt = S::Import {
+                    namespace_ref: Ref::NONE,
+                    import_record_index: u32::MAX,
+                    items: import_clause.items as *const _ as *mut _,
+                    is_single_line: import_clause.is_single_line,
+                    ..Default::default()
+                };
+                p.lexer.expect_contextual_keyword(b"from")?;
+            }
+            T::TIdentifier => {
+                // "import defaultItem from 'path'"
+                // "import foo = bar"
+                if !opts.is_module_scope && !opts.is_namespace_scope {
+                    p.lexer.unexpected()?;
+                    return Err(err!("SyntaxError"));
+                }
+
+                let mut default_name = p.lexer.identifier;
+                stmt = S::Import {
+                    namespace_ref: Ref::NONE,
+                    import_record_index: u32::MAX,
+                    default_name: Some(LocRef {
+                        loc: p.lexer.loc(),
+                        ref_: p.store_name_in_ref(default_name)?,
+                    }),
+                    ..Default::default()
+                };
+                p.lexer.next()?;
+
+                if Self::IS_TYPESCRIPT_ENABLED {
+                    // Skip over type-only imports
+                    if default_name == b"type" {
+                        match p.lexer.token {
+                            T::TIdentifier => {
+                                if p.lexer.identifier != b"from" {
+                                    default_name = p.lexer.identifier;
+                                    stmt.default_name.as_mut().unwrap().loc = p.lexer.loc();
+                                    p.lexer.next()?;
+
+                                    if p.lexer.token == T::TEquals {
+                                        // "import type foo = require('bar');"
+                                        // "import type foo = bar.baz;"
+                                        opts.is_typescript_declare = true;
+                                        return p.parse_type_script_import_equals_stmt(
+                                            loc,
+                                            opts,
+                                            stmt.default_name.unwrap().loc,
+                                            default_name,
+                                        );
+                                    } else {
+                                        // "import type foo from 'bar';"
+                                        p.lexer.expect_contextual_keyword(b"from")?;
+                                        let _ = p.parse_path()?;
+                                        p.lexer.expect_or_insert_semicolon()?;
+                                        return Ok(p.s(S::TypeScript {}, loc));
+                                    }
+                                }
+                            }
+                            T::TAsterisk => {
+                                // "import type * as foo from 'bar';"
+                                p.lexer.next()?;
+                                p.lexer.expect_contextual_keyword(b"as")?;
+                                p.lexer.expect(T::TIdentifier)?;
+                                p.lexer.expect_contextual_keyword(b"from")?;
+                                let _ = p.parse_path()?;
+                                p.lexer.expect_or_insert_semicolon()?;
+                                return Ok(p.s(S::TypeScript {}, loc));
+                            }
+
+                            T::TOpenBrace => {
+                                // "import type {foo} from 'bar';"
+                                let _ = p.parse_import_clause()?;
+                                p.lexer.expect_contextual_keyword(b"from")?;
+                                let _ = p.parse_path()?;
+                                p.lexer.expect_or_insert_semicolon()?;
+                                return Ok(p.s(S::TypeScript {}, loc));
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    // Parse TypeScript import assignment statements
+                    if p.lexer.token == T::TEquals
+                        || opts.is_export
+                        || (opts.is_namespace_scope && !opts.is_typescript_declare)
+                    {
+                        p.esm_import_keyword = previous_import_keyword; // This wasn't an ESM import statement after all;
+                        return p.parse_type_script_import_equals_stmt(
+                            loc,
+                            opts,
+                            logger::Loc::EMPTY,
+                            default_name,
+                        );
+                    }
+                }
+
+                if p.lexer.token == T::TComma {
+                    p.lexer.next()?;
+
+                    match p.lexer.token {
+                        // "import defaultItem, * as ns from 'path'"
+                        T::TAsterisk => {
+                            p.lexer.next()?;
+                            p.lexer.expect_contextual_keyword(b"as")?;
+                            stmt.namespace_ref = p.store_name_in_ref(p.lexer.identifier)?;
+                            stmt.star_name_loc = Some(p.lexer.loc());
+                            p.lexer.expect(T::TIdentifier)?;
+                        }
+                        // "import defaultItem, {item1, item2} from 'path'"
+                        T::TOpenBrace => {
+                            let import_clause = p.parse_import_clause()?;
+
+                            stmt.items = import_clause.items as *const _ as *mut _;
+                            stmt.is_single_line = import_clause.is_single_line;
+                        }
+                        _ => {
+                            p.lexer.unexpected()?;
+                            return Err(err!("SyntaxError"));
+                        }
+                    }
+                }
+
+                p.lexer.expect_contextual_keyword(b"from")?;
+            }
+            _ => {
+                p.lexer.unexpected()?;
+                return Err(err!("SyntaxError"));
+            }
+        }
+
+        let path = p.parse_path()?;
+        p.lexer.expect_or_insert_semicolon()?;
+
+        p.process_import_statement(stmt, path, loc, was_originally_bare_import)
     }
 
     fn parse_stmt_fallthrough(
         p: &mut Self,
-        opts: &mut ParseStatementOptions,
+        opts: &mut ParseStatementOptions<'a>,
         loc: logger::Loc,
     ) -> Result<Stmt> {
-        let _ = (opts, loc);
-        todo!("G-round-4: parse_stmt_fallthrough body — see _draft_heavy")
+        let is_identifier = p.lexer.token == T::TIdentifier;
+        let name = p.lexer.identifier;
+        // Parse either an async function, an async expression, or a normal expression
+        let mut expr: Expr = Expr {
+            loc,
+            data: js_ast::ExprData::EMissing(Default::default()),
+        };
+        if is_identifier && p.lexer.raw() == b"async" {
+            let async_range = p.lexer.range();
+            p.lexer.next()?;
+            if p.lexer.token == T::TFunction && !p.lexer.has_newline_before {
+                p.lexer.next()?;
+
+                return p.parse_fn_stmt(async_range.loc, opts, Some(async_range));
+            }
+
+            expr = p.parse_async_prefix_expr(async_range, Level::Lowest)?;
+            p.parse_suffix(&mut expr, Level::Lowest, None, EFlags::None)?;
+        } else {
+            let expr_or_let = p.parse_expr_or_let_stmt(opts)?;
+            match expr_or_let.stmt_or_expr {
+                js_ast::StmtOrExpr::Stmt(stmt) => {
+                    p.lexer.expect_or_insert_semicolon()?;
+                    return Ok(stmt);
+                }
+                js_ast::StmtOrExpr::Expr(_expr) => {
+                    expr = _expr;
+                }
+            }
+        }
+        if is_identifier {
+            match &expr.data {
+                js_ast::ExprData::EIdentifier(ident) => {
+                    if p.lexer.token == T::TColon && !opts.has_decorators() {
+                        let _ = p.push_scope_for_parse_pass(js_ast::scope::Kind::Label, loc)?;
+                        // Zig: `defer p.popScope();` — pop after parsing the labeled body.
+                        // Hand-roll the defer so we can keep `p` exclusively borrowed.
+
+                        // Parse a labeled statement
+                        p.lexer.next()?;
+
+                        let _name = LocRef { loc: expr.loc, ref_: ident.ref_ };
+                        let mut nested_opts = ParseStatementOptions::default();
+
+                        match opts.lexical_decl {
+                            LexicalDecl::AllowAll | LexicalDecl::AllowFnInsideLabel => {
+                                nested_opts.lexical_decl = LexicalDecl::AllowFnInsideLabel;
+                            }
+                            _ => {}
+                        }
+                        let stmt_result = p.parse_stmt(&mut nested_opts);
+                        p.pop_scope();
+                        let stmt = stmt_result?;
+                        return Ok(p.s(S::Label { name: _name, stmt }, loc));
+                    }
+                }
+                _ => {}
+            }
+
+            if Self::IS_TYPESCRIPT_ENABLED {
+                if let Some(ts_stmt) = js_lexer::TypescriptStmtKeyword::LIST.get(name) {
+                    match ts_stmt {
+                        js_lexer::TypescriptStmtKeyword::TsStmtType => {
+                            if p.lexer.token == T::TIdentifier && !p.lexer.has_newline_before {
+                                // "type Foo = any"
+                                let mut stmt_opts = ParseStatementOptions {
+                                    is_module_scope: opts.is_module_scope,
+                                    ..Default::default()
+                                };
+                                p.skip_type_script_type_stmt(&mut stmt_opts)?;
+                                return Ok(p.s(S::TypeScript {}, loc));
+                            }
+                        }
+                        js_lexer::TypescriptStmtKeyword::TsStmtNamespace
+                        | js_lexer::TypescriptStmtKeyword::TsStmtModule => {
+                            // "namespace Foo {}"
+                            // "module Foo {}"
+                            // "declare module 'fs' {}"
+                            // "declare module 'fs';"
+                            if !p.lexer.has_newline_before
+                                && (opts.is_module_scope || opts.is_namespace_scope)
+                                && (p.lexer.token == T::TIdentifier
+                                    || (p.lexer.token == T::TStringLiteral
+                                        && opts.is_typescript_declare))
+                            {
+                                return p.parse_type_script_namespace_stmt(loc, opts);
+                            }
+                        }
+                        js_lexer::TypescriptStmtKeyword::TsStmtInterface => {
+                            // "interface Foo {}"
+                            let mut stmt_opts = ParseStatementOptions {
+                                is_module_scope: opts.is_module_scope,
+                                ..Default::default()
+                            };
+
+                            p.skip_type_script_interface_stmt(&mut stmt_opts)?;
+                            return Ok(p.s(S::TypeScript {}, loc));
+                        }
+                        js_lexer::TypescriptStmtKeyword::TsStmtAbstract => {
+                            if p.lexer.token == T::TClass || opts.ts_decorators.is_some() {
+                                return p.parse_class_stmt(loc, opts);
+                            }
+                        }
+                        js_lexer::TypescriptStmtKeyword::TsStmtGlobal => {
+                            // "declare module 'fs' { global { namespace NodeJS {} } }"
+                            if opts.is_namespace_scope
+                                && opts.is_typescript_declare
+                                && p.lexer.token == T::TOpenBrace
+                            {
+                                p.lexer.next()?;
+                                let _ = p.parse_stmts_up_to(T::TCloseBrace, opts)?;
+                                p.lexer.next()?;
+                                return Ok(p.s(S::TypeScript {}, loc));
+                            }
+                        }
+                        js_lexer::TypescriptStmtKeyword::TsStmtDeclare => {
+                            opts.lexical_decl = LexicalDecl::AllowAll;
+                            opts.is_typescript_declare = true;
+
+                            // "@decorator declare class Foo {}"
+                            // "@decorator declare abstract class Foo {}"
+                            if opts.ts_decorators.is_some()
+                                && p.lexer.token != T::TClass
+                                && !p.lexer.is_contextual_keyword(b"abstract")
+                            {
+                                p.lexer.expected(T::TClass)?;
+                            }
+
+                            // "declare global { ... }"
+                            if p.lexer.is_contextual_keyword(b"global") {
+                                p.lexer.next()?;
+                                p.lexer.expect(T::TOpenBrace)?;
+                                let _ = p.parse_stmts_up_to(T::TCloseBrace, opts)?;
+                                p.lexer.next()?;
+                                return Ok(p.s(S::TypeScript {}, loc));
+                            }
+
+                            // "declare const x: any"
+                            let stmt = p.parse_stmt(opts)?;
+                            if let Some(decs) = &opts.ts_decorators {
+                                p.discard_scopes_up_to(decs.scope_index);
+                            }
+
+                            // Unlike almost all uses of "declare", statements that use
+                            // "export declare" with "var/let/const" inside a namespace affect
+                            // code generation. They cause any declared bindings to be
+                            // considered exports of the namespace. Identifier references to
+                            // those names must be converted into property accesses off the
+                            // namespace object:
+                            //
+                            //   namespace ns {
+                            //     export declare const x
+                            //     export function y() { return x }
+                            //   }
+                            //
+                            //   (ns as any).x = 1
+                            //   console.log(ns.y())
+                            //
+                            // In this example, "return x" must be replaced with "return ns.x".
+                            // This is handled by replacing each "export declare" statement
+                            // inside a namespace with an "export var" statement containing all
+                            // of the declared bindings. That "export var" statement will later
+                            // cause identifiers to be transformed into property accesses.
+                            if opts.is_namespace_scope && opts.is_export {
+                                let mut decls: G::DeclList = Default::default();
+                                match &stmt.data {
+                                    js_ast::StmtData::SLocal(local) => {
+                                        let mut _decls =
+                                            bumpalo::collections::Vec::<G::Decl>::with_capacity_in(
+                                                local.decls.len() as usize,
+                                                p.allocator,
+                                            );
+                                        for decl in local.decls.slice() {
+                                            Self::extract_decls_for_binding(
+                                                decl.binding,
+                                                &mut _decls,
+                                            )?;
+                                        }
+                                        // Leak into the bump arena and wrap as a borrowed BabyList.
+                                        let leaked: &'a mut [G::Decl] = _decls.into_bump_slice_mut();
+                                        // SAFETY: arena-backed storage outlives the AST.
+                                        decls = unsafe { G::DeclList::from_bump_slice(leaked) };
+                                    }
+                                    _ => {}
+                                }
+
+                                if decls.len() > 0 {
+                                    return Ok(p.s(
+                                        S::Local {
+                                            kind: js_ast::LocalKind::KVar,
+                                            is_export: true,
+                                            decls,
+                                            ..Default::default()
+                                        },
+                                        loc,
+                                    ));
+                                }
+                            }
+
+                            return Ok(p.s(S::TypeScript {}, loc));
+                        }
+                    }
+                }
+            }
+        }
+        // Output.print("\n\nmVALUE {s}:{s}\n", .{ expr, name });
+        p.lexer.expect_or_insert_semicolon()?;
+        Ok(p.s(S::SExpr { value: expr, ..Default::default() }, loc))
     }
 
     pub fn parse_stmt(&mut self, opts: &mut ParseStatementOptions<'a>) -> Result<Stmt> {

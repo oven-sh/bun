@@ -170,20 +170,20 @@ pub fn get_servername(this: &mut This, global: &JSGlobalObject, _frame: &CallFra
 
 pub fn set_servername(this: &mut This, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     if this.is_server() {
-        return global.throw("Cannot issue SNI from a TLS server-side socket");
+        return Err(global.throw("Cannot issue SNI from a TLS server-side socket"));
     }
 
-    let args = frame.arguments_old(1);
-    if args.len() < 1 {
-        return global.throw("Expected 1 argument");
+    let args = frame.arguments_old::<1>();
+    if args.len < 1 {
+        return Err(global.throw("Expected 1 argument"));
     }
 
     let server_name = args.ptr[0];
     if !server_name.is_string() {
-        return global.throw("Expected \"serverName\" to be a string");
+        return Err(global.throw("Expected \"serverName\" to be a string"));
     }
 
-    let slice: Box<[u8]> = server_name.get_zig_string(global)?.to_owned_slice()?;
+    let slice: Box<[u8]> = server_name.get_zig_string(global)?.to_owned_slice().into_boxed_slice();
     // Drop replaces the old value (Zig manually freed `old`).
     this.server_name = Some(slice);
 
@@ -191,12 +191,14 @@ pub fn set_servername(this: &mut This, global: &JSGlobalObject, frame: &CallFram
     if !host.is_empty() {
         let Some(ssl_ptr) = this.socket.ssl() else { return Ok(JSValue::UNDEFINED) };
 
-        if ssl_ptr.is_init_finished() {
+        // SAFETY: ssl_ptr is a live *mut SSL returned by this.socket.ssl().
+        if unsafe { boringssl::SSL_is_init_finished(ssl_ptr) } != 0 {
             // match node.js exceptions
-            return global.throw("Already started.");
+            return Err(global.throw("Already started."));
         }
-        let host_z = bun_str::ZStr::from_bytes(host);
-        ssl_ptr.set_hostname(&host_z);
+        let host_z = bun_core::ZBox::from_bytes(host);
+        // SAFETY: `host_z` is NUL-terminated; FFI reads until NUL.
+        unsafe { ffi::SSL_set_tlsext_host_name(ssl_ptr, host_z.as_ptr()) };
     }
 
     Ok(JSValue::UNDEFINED)

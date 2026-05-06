@@ -1302,7 +1302,7 @@ impl MatchedParams {
     /// Returns null if there are no params
     // TODO(port): move to *_jsc
     pub fn to_js(&self, global: &JSGlobalObject) -> JSValue {
-        let params_array = self.params.slice();
+        let params_array = self.params.const_slice();
 
         if params_array.is_empty() {
             return JSValue::NULL;

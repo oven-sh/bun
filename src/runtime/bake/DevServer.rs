@@ -3170,10 +3170,23 @@ pub fn finalize_bundle(
         }
     });
 
-    let current_bundle = dev.current_bundle.as_mut().unwrap();
-    let current_bundle_ptr = current_bundle as *mut CurrentBundle;
-    let _requests_defer = scopeguard::guard((), |_| {
-        // SAFETY: current_bundle outlives this scope
+    // PORT NOTE: holding `&mut CurrentBundle` for the rest of the fn locks `*dev`
+    // mutably. Erase to a raw pointer and reborrow at each use site via the
+    // `current_bundle!()` macro (Zig freely re-aliased `dev.current_bundle.?`).
+    let current_bundle_ptr: *mut CurrentBundle = dev.current_bundle.as_mut().unwrap();
+    macro_rules! current_bundle {
+        () => {
+            // SAFETY: `dev.current_bundle` is `Some` for the entire fn body —
+            // it is only set to `None` inside `_outer_defer`, which runs after
+            // every use of this macro. `dev.current_bundle` is never reassigned
+            // (so the inner `CurrentBundle` is not moved) between here and the
+            // outer-defer.
+            unsafe { &mut *current_bundle_ptr }
+        };
+    }
+    let _requests_defer = scopeguard::guard((), move |_| {
+        // SAFETY: see `current_bundle!` SAFETY above; `_requests_defer` runs
+        // before `_outer_defer` (LIFO), so `current_bundle_ptr` is still live.
         let current_bundle = unsafe { &mut *current_bundle_ptr };
         if !current_bundle.requests.first.is_null() {
             // cannot be an assertion because in the case of OOM, the request list was not drained.
@@ -3191,9 +3204,19 @@ pub fn finalize_bundle(
     });
 
     dev.graph_safety_lock.lock();
-    let _lock = scopeguard::guard((), |_| dev.graph_safety_lock.unlock());
+    // SAFETY: `dev_ptr` is live for the entire fn body; the guard runs at scope exit.
+    let _lock = scopeguard::guard((), move |_| unsafe { (*dev_ptr).graph_safety_lock.unlock() });
 
-    let js_chunk = result.js_pseudo_chunk();
+    // PORT NOTE: `js_pseudo_chunk()`/`css_chunks()`/`html_chunks()` each take
+    // `&mut DevServerOutput`, so calling more than one wedges borrowck. Split
+    // `result.chunks` once up front (the three regions are disjoint:
+    // `[0] | [1..1+n_css] | [1+n_css..1+n_css+n_html]`).
+    let n_css = result.css_file_list.count();
+    let n_html = result.html_files.count();
+    let (js_chunk_slice, rest_chunks) = result.chunks.split_at_mut(1);
+    let js_chunk = &mut js_chunk_slice[0];
+    let (css_chunks_mut, html_rest) = rest_chunks.split_at_mut(n_css);
+    let html_chunks_mut = &mut html_rest[..n_html];
     let input_file_sources = bv2.graph.input_files.items_source();
     let input_file_loaders = bv2.graph.input_files.items_loader();
     let import_records = bv2.graph.ast.items_import_records();

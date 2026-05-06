@@ -259,6 +259,20 @@ impl Store {
         }))
     }
 
+
+    /// Adopt an mmap'd region — no copy. The store's `Bytes` payload owns the
+    /// mapping; when the refcount drops to zero, `Bytes::drop` calls `munmap`.
+    /// Mirrors Zig `Store.init(ptr[0..len], .{ .vtable = MmapFreeInterface.vtable })`.
+    #[cfg(unix)]
+    pub fn init_mmap(slice: &'static mut [u8]) -> StoreRef {
+        StoreRef::from(Store::new(Store {
+            data: Data::Bytes(Bytes::init_mmap(slice)),
+            mime_type: bun_http_types::MimeType::NONE,
+            ref_count: AtomicU32::new(1),
+            is_all_ascii: None,
+        }))
+    }
+
     pub fn shared_view(&self) -> &[u8] {
         if let Data::Bytes(bytes) = &self.data {
             return bytes.slice();

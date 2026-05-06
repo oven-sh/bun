@@ -894,7 +894,7 @@ impl<'a> Parser<'a> {
                         // unique borrow was just stashed in
                         // `old_scopes_in_order` above.
                         p.scope_order_to_visit = unsafe {
-                            p.scopes_in_order_for_enum.values()[idx].as_mut()
+                            &mut *p.scopes_in_order_for_enum.values()[idx].as_ptr()
                         };
 
                         let mut enum_parts = BumpVec::<js_ast::Part>::new_in(allocator);

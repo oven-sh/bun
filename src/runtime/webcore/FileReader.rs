@@ -953,19 +953,19 @@ impl FileReader {
         self.flowing = flag;
 
         if flag {
-            self.reader.unpause();
-            if !self.reader.is_done() && !self.reader.has_pending_read() {
+            self.reader().unpause();
+            if !self.reader().is_done() && !self.reader().has_pending_read() {
                 // Kick off a new read if needed
-                self.reader.read();
+                self.reader().read();
             }
         } else {
-            self.reader.pause();
+            self.reader().pause();
         }
     }
 
     pub fn memory_cost(&self) -> usize {
         // ReadableStreamSource covers @sizeOf(FileReader)
-        self.reader.memory_cost() + self.buffered.capacity()
+        self.reader().memory_cost() + self.buffered.capacity()
     }
 }
 

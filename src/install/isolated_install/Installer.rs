@@ -1727,7 +1727,7 @@ impl Task {
                     .store(Step::Done, Ordering::Release);
                 this.result = Result::Err(err);
                 installer.task_queue.push(this);
-                unsafe { &mut *manager_ptr }.wake();
+                unsafe { PackageManager::wake_raw(manager_ptr) };
             }
         }
     }

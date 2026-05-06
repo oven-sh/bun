@@ -312,7 +312,7 @@ pub fn apply_static_route<const SSL: bool, T>(
     app: &mut uws::NewApp<SSL>,
     entry: T,
     path: &[u8],
-    method: http::method::Optional,
+    method: http_method::Optional,
 ) where
     T: StaticRouteLike<SSL>,
 {
@@ -350,10 +350,10 @@ pub fn apply_static_route<const SSL: bool, T>(
 
     app.head(path, entry, head::<SSL, T>);
     match method {
-        http::method::Optional::Any => {
+        http_method::Optional::Any => {
             app.any(path, entry, handler::<SSL, T>);
         }
-        http::method::Optional::Method(m) => {
+        http_method::Optional::Method(m) => {
             let mut iter = m.iter();
             while let Some(method_) = iter.next() {
                 app.method(method_, path, entry, handler::<SSL, T>);
@@ -368,7 +368,7 @@ pub fn apply_static_route_h3<T>(
     app: &mut uws::h3::App,
     entry: T,
     path: &[u8],
-    method: http::method::Optional,
+    method: http_method::Optional,
 ) where
     T: StaticRouteLike<false>,
 {
@@ -391,8 +391,8 @@ pub fn apply_static_route_h3<T>(
 
     app.head(path, entry, head::<T>);
     match method {
-        http::method::Optional::Any => app.any(path, entry, handler::<T>),
-        http::method::Optional::Method(m) => {
+        http_method::Optional::Any => app.any(path, entry, handler::<T>),
+        http_method::Optional::Method(m) => {
             let mut iter = m.iter();
             while let Some(method_) = iter.next() {
                 app.method(method_, path, entry, handler::<T>);
@@ -795,13 +795,13 @@ impl ServerConfig {
                             } else if let Some(html_route) =
                                 AnyRoute::from_js(global, &path, function, &mut *init_ctx)?
                             {
-                                let mut method_set = http::method::Set::empty();
+                                let mut method_set = http_method::Set::empty();
                                 method_set.insert(method);
 
                                 args.static_routes.push(StaticRouteEntry {
                                     path: Box::<[u8]>::from(&*path),
                                     route: html_route,
-                                    method: http::method::Optional::Method(method_set),
+                                    method: http_method::Optional::Method(method_set),
                                 });
                             }
                         }
@@ -849,7 +849,7 @@ impl ServerConfig {
                 args.static_routes.push(StaticRouteEntry {
                     path,
                     route,
-                    method: http::method::Optional::Any,
+                    method: http_method::Optional::Any,
                 });
             }
 

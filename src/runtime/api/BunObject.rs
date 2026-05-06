@@ -1749,35 +1749,14 @@ pub fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<
                 config.id = config.compute_id();
             }
 
-            if let Some(entry) = hot.get_entry(&config.id) {
+            if let Some(_entry) = hot.get_entry(&config.id) {
                 // TODO(port): Zig used `@field(@TypeOf(entry.tag()), @typeName(Type))`
-                // to dispatch on the TaggedPtrUnion tag — match on the enum here.
-                match entry.tag() {
-                    jsc::api::HotMapTag::HTTPServer => {
-                        let server: &mut jsc::api::HTTPServer = entry.as_::<jsc::api::HTTPServer>();
-                        server.on_reload_from_zig(&mut config, global_object);
-                        return Ok(server.js_value.try_get().unwrap_or(JSValue::UNDEFINED));
-                    }
-                    jsc::api::HotMapTag::DebugHTTPServer => {
-                        let server: &mut jsc::api::DebugHTTPServer =
-                            entry.as_::<jsc::api::DebugHTTPServer>();
-                        server.on_reload_from_zig(&mut config, global_object);
-                        return Ok(server.js_value.try_get().unwrap_or(JSValue::UNDEFINED));
-                    }
-                    jsc::api::HotMapTag::DebugHTTPSServer => {
-                        let server: &mut jsc::api::DebugHTTPSServer =
-                            entry.as_::<jsc::api::DebugHTTPSServer>();
-                        server.on_reload_from_zig(&mut config, global_object);
-                        return Ok(server.js_value.try_get().unwrap_or(JSValue::UNDEFINED));
-                    }
-                    jsc::api::HotMapTag::HTTPSServer => {
-                        let server: &mut jsc::api::HTTPSServer =
-                            entry.as_::<jsc::api::HTTPSServer>();
-                        server.on_reload_from_zig(&mut config, global_object);
-                        return Ok(server.js_value.try_get().unwrap_or(JSValue::UNDEFINED));
-                    }
-                    _ => {}
-                }
+                // to dispatch on the TaggedPtrUnion tag. The un-gated `HotMapEntry`
+                // is currently an erased `(tag: u8, ptr: *mut ())` placeholder
+                // (see rare_data.rs); typed `tag()/as_<T>()` are gated until the
+                // high-tier `TaggedPtrUnion` payload list lands.
+                let _ = &mut config;
+                todo!("blocked_on: jsc::rare_data::HotMapEntry typed tag()/as_<T>() (TaggedPtrUnion)");
             }
         }
     }

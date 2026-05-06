@@ -214,7 +214,7 @@ impl ProgressBuf {
 
 #[derive(Default)]
 struct CreateOptions {
-    npm_client: Option<crate::which_npm_client::NPMClientTag>,
+    npm_client: Option<crate::cli::which_npm_client::Tag>,
     skip_install: bool,
     overwrite: bool,
     skip_git: bool,

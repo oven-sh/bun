@@ -1,5 +1,6 @@
 use bun_core::Timespec;
-use bun_jsc::{JSValue, VirtualMachine};
+use bun_jsc::JSValue;
+use bun_jsc::virtual_machine::VirtualMachine;
 
 use crate::timer::EventLoopTimer;
 

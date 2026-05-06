@@ -548,7 +548,8 @@ impl FSEventsLoop {
         }));
         // SAFETY: concurrent is a valid freshly-boxed pointer
         unsafe {
-            self.tasks.push(ConcurrentTask::from(&mut *concurrent, task, true));
+            ConcurrentTask::from(&mut *concurrent, task, true);
+            self.tasks.push(concurrent);
             (cf.run_loop_source_signal)(self.signal_source);
             (cf.run_loop_wake_up)(self.loop_);
         }

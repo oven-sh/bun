@@ -3743,6 +3743,10 @@ pub mod formatter {
             value: JSValue,
             js_type: jsc::JSType,
         ) -> JsResult<()> {
+            // Cache once: `disable_inspect_custom` does not change inside this
+            // function, and `WrappedWriter` holds `&mut self.estimated_line_length`
+            // which prevents calling `&self` methods while it is live.
+            let tag_opts = self.tag_opts();
             let mut writer = WrappedWriter {
                 ctx: writer_,
                 failed: false,
@@ -3873,18 +3877,18 @@ pub mod formatter {
                         empty_start = None;
                     }
 
-                    self.print_comma::<C>(writer.ctx).expect("unreachable");
+                    writer.print_comma::<C>();
                     if !self.single_line
-                        && (self.ordered_properties || self.good_time_for_a_new_line())
+                        && (self.ordered_properties || writer.good_time_for_a_new_line(self.indent))
                     {
                         writer.write_all(b"\n");
                         was_good_time = true;
-                        self.write_indent(writer.ctx).expect("unreachable");
+                        writer.write_indent(self.indent);
                     } else {
                         writer.space();
                     }
 
-                    let tag = Tag::get_advanced(element, self.global_this, self.tag_opts())?;
+                    let tag = Tag::get_advanced(element, self.global_this, tag_opts)?;
 
                     drop(writer);
                     self.format::<C>(tag, writer_, element, self.global_this)?;

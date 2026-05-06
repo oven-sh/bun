@@ -742,7 +742,7 @@ impl VM {
         ctx: *mut core::ffi::c_void,
         callback: extern "C" fn(ctx: *mut core::ffi::c_void),
     ) {
-        extern "C" {
+        unsafe extern "C" {
             fn JSC__VM__holdAPILock(
                 vm: *mut VM,
                 ctx: *mut core::ffi::c_void,

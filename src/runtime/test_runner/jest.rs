@@ -465,8 +465,11 @@ pub mod Jest {
             }
         }
 
-        // SAFETY: FFI call into C++; global_object is valid for the duration.
-        Ok(unsafe { Bun__Jest__testModuleObject(global_object as *const _ as *mut _) })
+        // SAFETY: FFI call into C++; `global_object` is live for the call. C++
+        // may mutate it (lazy init of the test module object), so derive the
+        // `*mut` via `as_ptr()` (UnsafeCell interior) instead of casting away
+        // const from `&JSGlobalObject`.
+        Ok(unsafe { Bun__Jest__testModuleObject(global_object.as_ptr()) })
     }
 
     #[bun_jsc::host_fn]

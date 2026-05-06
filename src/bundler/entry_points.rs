@@ -419,8 +419,8 @@ impl MacroEntryPoint {
     }
 
     pub fn generate_id_from_specifier(specifier: &[u8]) -> i32 {
-        // SAFETY: same-size POD bitcast u32 → i32 (matches Zig `@bitCast`).
-        unsafe { core::mem::transmute::<u32, i32>(bun_wyhash::hash(specifier) as u32) }
+        // Same-size bitcast u32 → i32 (matches Zig `@bitCast`).
+        (bun_wyhash::hash(specifier) as u32) as i32
     }
 
     

@@ -179,7 +179,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
             // TODO: there is a weird edge case where the pretty path is not computed
             // it does not reproduce when debugging.
-            let mut source = c.get_source(source_index as u32).clone();
+            let source = c.get_source(source_index as u32);
             if core::ptr::eq(source.path.text.as_ptr(), source.path.pretty.as_ptr()) {
                 // PORT NOTE: `generic_path_with_pretty_initialized` operates on
                 // `bun_resolver::fs::Path<'_>`, but `Source.path` is the distinct
@@ -203,7 +203,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 Ref::NONE,
                 None,
                 part_range.source_index,
-                &source,
+                source,
             );
         }
     }
@@ -294,7 +294,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
     // Add all other parts in this chunk
     // SAFETY: see `parts` raw-pointer note above.
-    let parts_len = unsafe { (*parts).len() };
+    let parts_len = unsafe { (&*parts).len() };
     for index_ in 0..parts_len {
         // SAFETY: index in bounds.
         let part: &Part = unsafe { &(*parts)[index_] };
@@ -726,7 +726,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                         end += 1;
                     }
                     // SAFETY: inner_stmts aliases stmts.all_stmts.items which was not resized.
-                    inner_stmts = unsafe { &mut (*inner_stmts)[..end] } as *mut [Stmt];
+                    inner_stmts = unsafe { &mut (&mut *inner_stmts)[..end] } as *mut [Stmt];
                 }
 
                 if !hoist.decls.is_empty() {
@@ -748,7 +748,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 }
 
                 // SAFETY: `inner_stmts` is a sub-slice of `stmts.all_stmts.items` (still live).
-                let inner_len = unsafe { (*inner_stmts).len() };
+                let inner_len = unsafe { (&*inner_stmts).len() };
                 if inner_len > 0 {
                     // See the comment in needsWrapperRef for why the symbol
                     // is sometimes not generated.

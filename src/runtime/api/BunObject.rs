@@ -2177,7 +2177,10 @@ pub fn get_s3_client_constructor(global_this: &JSGlobalObject, _: &JSObject) -> 
 
 pub fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
-    unsafe { (*global_this.bun_vm()).rare_data().s3_default_client(global_this) }
+    let _ = unsafe { (*global_this.bun_vm()).rare_data() };
+    // RareData::s3_default_client(&mut self, &JSGlobalObject) lives in the
+    // `#[cfg(any())] _accessor_body` block of `bun_jsc::rare_data`.
+    todo!("blocked_on: bun_jsc::rare_data::RareData::s3_default_client (gated _accessor_body)")
 }
 
 pub fn get_tls_default_ciphers(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
@@ -2351,7 +2354,8 @@ pub mod environment_variables {
         // SAFETY: bun_vm() returns the live thread-local VM.
         let vm = unsafe { &*global_object.bun_vm() };
         let name_slice = unsafe { (*name).to_utf8() };
-        let Some(val) = vm.transpiler.env.get(name_slice.slice()) else {
+        // SAFETY: `transpiler.env` is the process-lifetime dotenv loader.
+        let Some(val) = (unsafe { &*vm.transpiler.env }).get(name_slice.slice()) else {
             return false;
         };
         unsafe { *value = BunString::borrow_utf8(val) };
@@ -2398,7 +2402,8 @@ pub mod environment_variables {
         // SAFETY: bun_vm() returns the live thread-local VM.
         let vm = unsafe { &*global_object.bun_vm() };
         let sliced = name.to_slice();
-        let value = vm.transpiler.env.get(sliced.slice())?;
+        // SAFETY: `transpiler.env` is the process-lifetime dotenv loader.
+        let value = unsafe { &*vm.transpiler.env }.get(sliced.slice())?;
         Some(ZigString::init_utf8(value))
     }
 }
@@ -3155,9 +3160,9 @@ pub mod JSZstd {
             if let Some(err_msg) = this.error_message {
                 promise.reject_with_async_stack(
                     global_this,
-                    global_this
+                    Ok(global_this
                         .err(jsc::ErrCode::ZSTD, format_args!("{}", bstr::BStr::new(err_msg)))
-                        .to_js(),
+                        .to_js()),
                 )?;
                 return Ok(());
             }

@@ -3460,7 +3460,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.pending_requests += 1;
         req.set_yield(false);
         // SAFETY: handle_oom aborts on failure; pointer is non-null and owns a fresh pool slot.
-        let ctx = unsafe { &mut *bun_core::handle_oom(self.request_pool_allocator.try_get()) };
+        let ctx = unsafe { &mut *bun_core::handle_oom((*self.request_pool_allocator).try_get()) };
         let mut should_deinit_context = false;
         // TODO(port): Body::Value / AbortSignal::new / Request::new_ — same
         // surface gap as prepare_js_request_context_for; un-gates with the
@@ -3505,7 +3505,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         resp: &mut uws_sys::NewAppResponse<SSL>,
     ) {
         if cfg!(debug_assertions) {
-            httplog!("{} - {}", BStr::new(req.method()), BStr::new(req.url()));
+            // PORT NOTE: scoped_log! expands each arg twice (ANSI/no-ANSI branches);
+            // copy to owned buffers so the two `&req` borrows in the expansion
+            // don't overlap with the returned slice lifetimes.
+            let m = req.method().to_vec();
+            let u = req.url().to_vec();
+            httplog!("{} - {}", BStr::new(&m), BStr::new(&u));
         }
 
         let authorized = 'brk: {
@@ -3892,7 +3897,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
     pub fn on404(_this: &mut Self, req: &mut uws::Request, resp: &mut uws_sys::NewAppResponse<SSL>) {
         if cfg!(debug_assertions) {
-            httplog!("{} - {} 404", BStr::new(req.method()), BStr::new(req.url()));
+            // PORT NOTE: see on_chrome_dev_tools_json_request — scoped_log! double-evaluates args.
+            let m = req.method().to_vec();
+            let u = req.url().to_vec();
+            httplog!("{} - {} 404", BStr::new(&m), BStr::new(&u));
         }
 
         resp.write_status(b"404 Not Found");

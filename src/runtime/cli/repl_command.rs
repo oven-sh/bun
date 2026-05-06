@@ -201,8 +201,12 @@ impl ReplCommand {
 }
 
 /// Runs the REPL within the VM's API lock
-struct ReplRunner<'a> {
-    repl: &'a mut Repl<'a>,
+// PORT NOTE: split lifetimes — `'a` is the stack borrow of the runner/repl,
+// `'r` is the (effectively process-lifetime) VM/global references stored in
+// `Repl<'r>`. Tying them as `&'a mut Repl<'a>` makes the borrow invariant and
+// outlive the local, tripping the borrow checker against `Drop for Repl`.
+struct ReplRunner<'a, 'r> {
+    repl: &'a mut Repl<'r>,
     vm: *mut VirtualMachine,
     arena: Arena,
     entry_path: &'static [u8],
@@ -210,8 +214,8 @@ struct ReplRunner<'a> {
     eval_and_print: bool,
 }
 
-impl<'a> ReplRunner<'a> {
-    pub fn start(this: &mut ReplRunner<'a>) {
+impl<'a, 'r> ReplRunner<'a, 'r> {
+    pub fn start(this: &mut ReplRunner<'a, 'r>) {
         let vm_ptr = this.vm;
         // SAFETY: vm_ptr is a valid heap-allocated VirtualMachine for the API-lock scope.
         let vm = unsafe { &mut *vm_ptr };

@@ -120,6 +120,6 @@ pub mod bun_install_js_bindings {
 // PORT STATUS
 //   source:     src/install_jsc/install_binding.zig (72 lines)
 //   confidence: medium
-//   todos:      1
-//   notes:      std.json.fmt(Lockfile) needs a Rust serializer; bun_vm() field-chain access will need borrowck reshaping in Phase B
+//   todos:      0
+//   notes:      std.json.fmt(Lockfile) ported via Lockfile::to_json_fmt; bun_vm() field-chain access reshaped for borrowck
 // ──────────────────────────────────────────────────────────────────────────

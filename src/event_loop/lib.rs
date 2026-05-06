@@ -33,7 +33,7 @@ pub mod SpawnSyncEventLoop;
 // ─── public surface ─────────────────────────────────────────────────────────
 
 pub use AnyTask::JsResult;
-pub use ConcurrentTask::{Task, TaskTag, task_tag};
+pub use ConcurrentTask::{Task, TaskTag, Taskable, task_tag};
 
 // snake_case alias for the file-level-struct module so higher tiers can
 // `use bun_event_loop::auto_flusher::{AutoFlusher, HasAutoFlusher}` without

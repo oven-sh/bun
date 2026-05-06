@@ -609,7 +609,11 @@ mod _gated_to_js {
 
     impl MaybeToJs for Vec<u8> {
         fn maybe_to_js(self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
-            ArrayBuffer::from_bytes(self, bun_jsc::TypedArrayType::ArrayBuffer).to_js(global_object)
+            // PORT NOTE: ownership transfers to JSC (freed via
+            // `MarkedArrayBuffer_deallocator` → `mi_free`); see
+            // `Maybe::to_array_buffer` above for the full rationale.
+            let bytes: &mut [u8] = Vec::leak(self);
+            ArrayBuffer::from_bytes(bytes, bun_jsc::JSType::ArrayBuffer).to_js(global_object)
         }
     }
 

@@ -44,6 +44,19 @@ pub trait Write {
         Ok(())
     }
 
+    /// Total bytes written to this sink so far.
+    ///
+    /// Port of the Zig pattern of recovering `std.Io.Writer.Allocating` via
+    /// `@fieldParentPtr` and calling `.written().len`. Only implemented for
+    /// in-memory / counting sinks (`Vec<u8>`, `MutableString`,
+    /// `DiscardingWriter`, `FixedBufferStream`); the default panics, matching
+    /// the Zig `@panic("css: got bad writer type")` fallthrough for writers
+    /// that do not track a byte count.
+    #[inline]
+    fn written_len(&self) -> usize {
+        panic!("bun_io::Write::written_len: writer does not track bytes written");
+    }
+
     // ── provided helpers ────────────────────────────────────────────────────
 
     /// Zig: `writeByte`.

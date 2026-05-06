@@ -402,7 +402,7 @@ impl ConcurrentTask {
         Self::create(ManagedTask::ManagedTask::new(ptr, callback))
     }
 
-    pub fn from<T>(&mut self, of: T, auto_deinit: AutoDeinit) -> &mut ConcurrentTask {
+    pub fn from<T: Taskable>(&mut self, of: *mut T, auto_deinit: AutoDeinit) -> &mut ConcurrentTask {
         // TODO(port): re-enable once `mark_binding!` macro arity matches
         // `ScopedLogger::log` (concurrent bun_core edit changed it to 1-arg).
         // bun_core::mark_binding!();

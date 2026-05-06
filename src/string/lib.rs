@@ -744,6 +744,19 @@ impl core::fmt::Display for String {
     }
 }
 
+impl core::fmt::Display for ZigString {
+    // ZigString.zig `format()` — encoding-aware `{f}` formatter.
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        if self.is_utf8() {
+            return write!(f, "{}", bstr::BStr::new(self.slice()));
+        }
+        if self.is_16bit() {
+            return bun_core::fmt::format_utf16_type(self.utf16_slice_aligned(), f);
+        }
+        bun_core::fmt::format_latin1(self.slice(), f)
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // `ZigString` — `{ ptr: *const u8, len: usize }` with flag bits in the
 // POINTER's high bits (NOT len): bit 63 = is16Bit, 62 = isGloballyAllocated,

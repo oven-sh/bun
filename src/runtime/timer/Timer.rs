@@ -116,7 +116,7 @@ impl All {
     ) {
         if loop_.should_enable_date_header_timer() {
             // PORT NOTE: `is_date_timer_active()` is private to mod.rs; inline.
-            if self.date_header_timer.event_loop_timer.state != super::EventLoopTimerState::ACTIVE {
+            if self.date_header_timer.event_loop_timer.state != EventLoopTimerState::ACTIVE {
                 self.date_header_timer.enable(
                     vm,
                     // Be careful to avoid adding extra calls to bun.timespec.now()

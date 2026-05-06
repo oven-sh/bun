@@ -2082,22 +2082,17 @@ impl<'a> BundleV2<'a> {
             client_transpiler: None,
             ssr_transpiler: ssr_alias,
             framework: None,
-            #[allow(unreachable_code)]
             graph: Graph {
                 pool: NonNull::dangling(), // set below
                 heap,
                 kit_referenced_server_data: false,
                 kit_referenced_client_data: false,
-                ..todo!("blocked_on: Graph::default")
+                ..Default::default()
             },
-            #[allow(unreachable_code)]
             linker: LinkerContext {
                 r#loop: event_loop,
-                #[allow(unreachable_code)]
-                graph: LinkerGraph {
-                    ..todo!("blocked_on: LinkerGraph::default")
-                },
-                ..todo!("blocked_on: LinkerContext::default")
+                graph: LinkerGraph::default(),
+                ..Default::default()
             },
             bun_watcher: None,
             plugins: None,

@@ -1019,54 +1019,72 @@ impl UpgradeCommand {
                     if use_canary { b"--revision" } else { b"--version" },
                 ];
 
-                // TODO(port): Zig used std.process.Child.run with max_output_bytes=512;
-                // PORTING.md bans std::process. The buffered/cwd-aware spawn_sync helper
-                // (with stdout capture + max_output_bytes) is not yet available at this layer.
-                #[allow(unreachable_code)]
-                let result: crate::api::bun::process::sync::Result = {
-                    let _ = (&verify_argv, &tmpdir_path_buf[..tmpdir_path_len]);
-                    todo!("blocked_on: bun_core::spawn_sync (std.process.Child.run port)")
-                };
-                #[allow(unreachable_code)]
-                match Ok::<(), bun_core::Error>(()) {
-                    Ok(()) => {}
-                    Err(err) => {
-                        let _delete_guard = scopeguard::guard((), |_| {
-                            let _ = save_dir_.delete_tree(&version_name);
-                        });
+                // PORT NOTE: Zig used `std.process.Child.run` with `.max_output_bytes = 512`.
+                // PORTING.md bans `std::process`; mapped to `bun.spawnSync` with
+                // `.stdout = .buffer`. The 512-byte cap is handled below by slicing the
+                // captured stdout (`..min(len, 512)`), matching the Zig diagnostic path.
+                let result: spawn_sync::Result = 'spawn: {
+                    let spawned = spawn_sync::spawn(&spawn_sync::Options {
+                        argv: build_argv(&verify_argv),
+                        envp: None,
+                        cwd: Box::<[u8]>::from(&tmpdir_path_buf[..tmpdir_path_len]),
+                        stdout: spawn_sync::SyncStdio::Buffer,
+                        stderr: spawn_sync::SyncStdio::Ignore,
+                        stdin: spawn_sync::SyncStdio::Ignore,
+                        #[cfg(windows)]
+                        windows: spawn_windows_options(),
+                        ..Default::default()
+                    });
+                    // Zig's `catch |err|` arm: any spawn-time failure (allocator/OOM
+                    // surfaces as `bun_core::Error`, posix_spawn surfaces as
+                    // `bun_sys::Error`) → same diagnostic + cleanup.
+                    let err_name: &'static str = match spawned {
+                        Ok(Ok(r)) => break 'spawn r,
+                        Ok(Err(sys_err)) => sys_err.name(),
+                        Err(core_err) => core_err.name(),
+                    };
 
-                        if err == bun_core::err!("FileNotFound") {
-                            // Zig: std.fs.cwd().access(exe, .{}) — we already chdir'd to tmpdir
-                            if sys::exists(exe) {
-                                // On systems like NixOS, the FileNotFound is actually the system-wide linker,
-                                // as they do not have one (most systems have it at a known path). This is how
-                                // ChildProcess returns FileNotFound despite the actual
-                                //
-                                // In these cases, prebuilt binaries from GitHub will never work without
-                                // extra patching, so we will print a message deferring them to their system
-                                // package manager.
-                                Output::pretty_errorln(format_args!(
-                                    "<r><red>error<r><d>:<r> 'bun upgrade' is unsupported on systems without ld\n\nYou are likely on an immutable system such as NixOS, where dynamic\nlibraries are stored in a global cache.\n\nPlease use your system's package manager to properly upgrade bun.\n"
-                                ));
-                                Global::exit(1);
-                            }
+                    let _delete_guard = scopeguard::guard((), |_| {
+                        let _ = save_dir_.delete_tree(&version_name);
+                    });
+
+                    // Zig matched `error.FileNotFound`; the bun.sys spawn path tags
+                    // it as ENOENT. Accept both to keep snapshot parity across
+                    // the std→bun.sys mapping.
+                    if err_name == "FileNotFound" || err_name == "ENOENT" {
+                        // Zig: std.fs.cwd().access(exe, .{}) — we already chdir'd to tmpdir
+                        if sys::exists(exe) {
+                            // On systems like NixOS, the FileNotFound is actually the system-wide linker,
+                            // as they do not have one (most systems have it at a known path). This is how
+                            // ChildProcess returns FileNotFound despite the actual
+                            //
+                            // In these cases, prebuilt binaries from GitHub will never work without
+                            // extra patching, so we will print a message deferring them to their system
+                            // package manager.
+                            Output::pretty_errorln(format_args!(
+                                "<r><red>error<r><d>:<r> 'bun upgrade' is unsupported on systems without ld\n\nYou are likely on an immutable system such as NixOS, where dynamic\nlibraries are stored in a global cache.\n\nPlease use your system's package manager to properly upgrade bun.\n"
+                            ));
+                            Global::exit(1);
                         }
-
-                        Output::pretty_errorln(format_args!(
-                            "<r><red>error<r><d>:<r> Failed to verify Bun (code: {})<r>",
-                            err.name()
-                        ));
-                        Global::exit(1);
                     }
+
+                    Output::pretty_errorln(format_args!(
+                        "<r><red>error<r><d>:<r> Failed to verify Bun (code: {})<r>",
+                        err_name
+                    ));
+                    Global::exit(1);
                 };
 
                 if !result.status.is_ok() {
                     let _ = save_dir_.delete_tree(&version_name);
-                    // TODO(port): Zig printed result.term.Exited; Status carries it as
-                    // `Status::Exited(e).code` — extract once spawn_sync port lands.
+                    let exit_code: u32 = match &result.status {
+                        Status::Exited(e) => u32::from(e.code),
+                        Status::Signaled(sig) => 128 + u32::from(*sig),
+                        _ => 1,
+                    };
                     Output::pretty_errorln(format_args!(
                         "<r><red>error<r><d>:<r> failed to verify Bun<r> (exit code: {})",
-                        0u8
+                        exit_code
                     ));
                     Global::exit(1);
                 }

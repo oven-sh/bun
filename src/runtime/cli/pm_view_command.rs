@@ -62,26 +62,6 @@ fn buf_print<'a>(buf: &'a mut [u8], args: core::fmt::Arguments<'_>) -> &'a mut [
     unsafe { core::slice::from_raw_parts_mut(buf.as_mut_ptr(), written) }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// Local shims for upstream methods/fields not yet present on the stub
-// `bun_install::PackageManager`. The full struct in
-// `bun_install::package_manager_real::PackageManager` carries these but the
-// active stub does not; thread `todo!` until the stub catches up.
-// ──────────────────────────────────────────────────────────────────────────
-#[allow(dead_code)]
-trait PackageManagerViewExt {
-    fn http_proxy(&self, url: &URL) -> Option<URL<'static>>;
-    fn tls_reject_unauthorized(&self) -> bool;
-}
-impl PackageManagerViewExt for PackageManager {
-    fn http_proxy(&self, _url: &URL) -> Option<URL<'static>> {
-        todo!("blocked_on: bun_install::PackageManager::http_proxy")
-    }
-    fn tls_reject_unauthorized(&self) -> bool {
-        todo!("blocked_on: bun_install::PackageManager::tls_reject_unauthorized")
-    }
-}
-
 pub fn view(
     manager: &mut PackageManager,
     spec_: &[u8],

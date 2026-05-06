@@ -1882,9 +1882,18 @@ pub fn install_isolated_packages(
         let entry_dependencies = entries.dependencies();
         let entry_hoisted = entries.hoisted();
 
-        let string_buf = &lockfile.buffers.string_bytes[..];
+        // PORT NOTE: reshaped for borrowck — Zig holds `*Lockfile` (mut) while
+        // also keeping immutable column slices into it. Reborrow through a raw
+        // pointer so `string_buf` / `pkgs` don't tie up `&mut lockfile` for the
+        // `Installer { lockfile, .. }` move below.
+        let lockfile_ptr: *mut Lockfile = lockfile;
+        // SAFETY: lockfile lives for the full scope; the column buffers sliced
+        // here are read-only across the install loop and are never mutated
+        // through `installer.lockfile`.
+        let lockfile_ro: &Lockfile = unsafe { &*lockfile_ptr };
+        let string_buf = &lockfile_ro.buffers.string_bytes[..];
 
-        let pkgs = lockfile.packages.slice();
+        let pkgs = lockfile_ro.packages.slice();
         let pkg_names = pkgs.items_name();
         let pkg_name_hashes = pkgs.items_name_hash();
         let pkg_resolutions = pkgs.items_resolution();

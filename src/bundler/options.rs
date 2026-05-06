@@ -1393,6 +1393,11 @@ pub mod jsx {
         pub const JSX_STATIC_FUNCTION: &[u8] = b"jsxs";
         pub const JSX_FUNCTION_DEV: &[u8] = b"jsxDEV";
     }
+    /// Alias for downstream `options::jsx::pragma::Defaults::FACTORY`-style
+    /// paths (Zig namespaced consts under `Pragma.Defaults`).
+    pub mod pragma {
+        pub use super::defaults as Defaults;
+    }
 }
 
 pub use jsx as JSX;

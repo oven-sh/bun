@@ -139,13 +139,11 @@ where
                 // if flag else arg
                 if arg_info.kind == ArgKind::Long || arg_info.kind == ArgKind::Short {
                     if WARN_ON_UNRECOGNIZED_FLAG.load(Ordering::Relaxed) {
-                        Output::warn(
+                        Output::warn(&format_args!(
                             "unrecognized flag: {}{}\n",
-                            (
-                                if arg_info.kind == ArgKind::Long { "--" } else { "-" },
-                                bstr::BStr::new(name),
-                            ),
-                        );
+                            if arg_info.kind == ArgKind::Long { "--" } else { "-" },
+                            bstr::BStr::new(name),
+                        ));
                         Output::flush();
                     }
 
@@ -154,7 +152,7 @@ where
                 }
 
                 if WARN_ON_UNRECOGNIZED_FLAG.load(Ordering::Relaxed) {
-                    Output::warn("unrecognized argument: {}\n", (bstr::BStr::new(name),));
+                    Output::warn(&format_args!("unrecognized argument: {}\n", bstr::BStr::new(name)));
                     Output::flush();
                 }
                 Ok(None)

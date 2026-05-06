@@ -638,7 +638,7 @@ impl<'a> Response<'a> {
                 // NOTE: `bun_core::debug!` macro is currently broken (it forwards
                 // `concat!(...)` into `pretty_errorln!` whose matcher is `$fmt:literal`).
                 // Use the function-form `output::debug` until the macro is fixed.
-                Output::debug("Malformed HTTP response:\n{}", (BStr::new(buf),));
+                Output::debug(&format_args!("Malformed HTTP response:\n{}", BStr::new(buf)));
                 Err(ParseResponseError::Malformed_HTTP_Response)
             }
             -2 => {

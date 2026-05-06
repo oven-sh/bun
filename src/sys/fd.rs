@@ -180,10 +180,10 @@ impl FdExt for Fd {
         {
             if let Some(ref err) = result {
                 if err.errno == sys::E::EBADF as _ {
-                    Output::debug_warn(
+                    Output::debug_warn(&format_args!(
                         "close({}) = EBADF. This is an indication of a file descriptor UAF",
-                        (bstr::BStr::new(&fd_fmt),),
-                    );
+                        bstr::BStr::new(&fd_fmt),
+                    ));
                     bun_core::dump_current_stack_trace(
                         return_address,
                         bun_core::DumpStackTraceOptions { frame_count: 4, stop_at_jsc_llint: true, ..Default::default() },

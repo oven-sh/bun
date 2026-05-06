@@ -1,6 +1,6 @@
 use crate as css;
 use crate::{Parser, Printer, PrintErr, SmallList};
-use crate::css_values::number::{CSSNumber, CSSNumberFns, CSSInteger};
+use crate::css_values::number::{CSSNumber, CSSNumberFns, CSSInteger, CSSIntegerFns};
 use crate::css_values::length::LengthPercentage;
 use crate::css_values::ident::{CustomIdent, CustomIdentList};
 
@@ -439,6 +439,35 @@ impl RepeatCount {
     pub fn eql(&self, other: &Self) -> bool {
         // TODO(port): css.implementEql(@This()) → #[derive(PartialEq)]
         self == other
+    }
+
+    // PORT NOTE: `css.DeriveParse(@This()).parse` — hand-expanded in declaration
+    // order (Number → keyword `auto-fill` → keyword `auto-fit`).
+    pub fn parse(input: &mut Parser) -> css::Result<Self> {
+        if let Ok(n) = input.try_parse(css::CSSIntegerFns::parse) {
+            return Ok(RepeatCount::Number(n));
+        }
+        let location = input.current_source_location();
+        let ident = input.expect_ident()?;
+        if strings::eql_case_insensitive_ascii(ident, b"auto-fill", true) {
+            return Ok(RepeatCount::AutoFill);
+        }
+        if strings::eql_case_insensitive_ascii(ident, b"auto-fit", true) {
+            return Ok(RepeatCount::AutoFit);
+        }
+        // SAFETY: see TrackBreadth::parse_internal — erase ident lifetime for Token::Ident.
+        Err(location.new_unexpected_token_error(css::Token::Ident(unsafe {
+            crate::css_parser::src_str(ident)
+        })))
+    }
+
+    // PORT NOTE: `css.DeriveToCss(@This()).toCss` — hand-expanded.
+    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+        match self {
+            RepeatCount::Number(n) => css::CSSIntegerFns::to_css(n, dest),
+            RepeatCount::AutoFill => dest.write_str("auto-fill"),
+            RepeatCount::AutoFit => dest.write_str("auto-fit"),
+        }
     }
 }
 

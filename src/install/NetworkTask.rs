@@ -458,13 +458,13 @@ impl NetworkTask {
         };
 
         if PackageManager::verbose_install() {
-            self.unsafe_http_client.verbose = http::Verbose::Headers;
-            self.unsafe_http_client.client.verbose = http::Verbose::Headers;
+            self.unsafe_http_client.verbose = HTTPVerboseLevel::Headers;
+            self.unsafe_http_client.client.verbose = HTTPVerboseLevel::Headers;
         }
 
         // Incase the ETag causes invalidation, we fallback to the last modified date.
         if !last_modified.is_empty()
-            && bun_core::feature_flag::BUN_FEATURE_FLAG_LAST_MODIFIED_PRETEND_304.get()
+            && bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_LAST_MODIFIED_PRETEND_304.get()
         {
             self.unsafe_http_client.client.flags.force_last_modified = true;
             self.unsafe_http_client.client.if_modified_since = last_modified;
@@ -540,8 +540,8 @@ impl NetworkTask {
                 logger::Loc::EMPTY,
                 format_args!(
                     "Expected tarball URL to start with https:// or http://, got {} while fetching package {}",
-                    QuotedFormatter(&self.url_buf),
-                    QuotedFormatter(tarball.name.slice()),
+                    quote(&self.url_buf),
+                    quote(tarball.name.slice()),
                 ),
             )?;
             return Err(ForTarballError::InvalidURL);

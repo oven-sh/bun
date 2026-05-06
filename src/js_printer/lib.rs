@@ -6799,6 +6799,9 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     // `MinifyRenamer` variant inline (rather than via `to_renamer() ->
     // Renamer<'static,'static>`) lets inference unify it with the no-op arm.
     let mut no_op_renamer;
+    // PORT NOTE: hoisted out of the `minify_identifiers` arm so the
+    // `&'r mut MinifyRenamer` borrow stored in `renamer` outlives the branch.
+    let mut minify_renamer;
     let renamer: rename::Renamer<'_, '_>;
     // PORT NOTE: Zig copied `tree.module_scope` to a stack local and re-pointed
     // children's `parent` at the local. `Scope` isn't `Copy` here and the only

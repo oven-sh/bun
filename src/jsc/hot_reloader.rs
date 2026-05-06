@@ -665,6 +665,7 @@ impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool>
     NewHotReloader<Ctx, EventLoopType, RELOAD_IMMEDIATELY>
 where
     Ctx: HotReloaderCtx<EventLoop = EventLoopType>,
+    EventLoopType: HotReloaderEventLoop,
 {
     pub fn init(
         ctx: *mut Ctx,

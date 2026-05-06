@@ -347,7 +347,7 @@ impl UploadPart {
         let search_params = &params_buffer[..written];
         let callback_context: *mut c_void = self as *mut Self as *mut c_void;
         execute_simple_s3_request(
-            &ctx.credentials,
+            &*ctx.credentials,
             s3_simple_request::S3RequestOptions {
                 path: &ctx.path,
                 method: bun_http::Method::PUT,
@@ -427,7 +427,7 @@ impl MultiPartUpload {
                     this.options.retry -= 1;
                     let callback_context: *mut c_void = this as *mut Self as *mut c_void;
                     execute_simple_s3_request(
-                        &this.credentials,
+                        &*this.credentials,
                         s3_simple_request::S3RequestOptions {
                             path: &this.path,
                             method: bun_http::Method::PUT,
@@ -783,7 +783,7 @@ impl MultiPartUpload {
 
         let callback_context: *mut c_void = self as *mut Self as *mut c_void;
         execute_simple_s3_request(
-            &self.credentials,
+            &*self.credentials,
             s3_simple_request::S3RequestOptions {
                 path: &self.path,
                 method: bun_http::Method::POST,
@@ -814,7 +814,7 @@ impl MultiPartUpload {
 
         let callback_context: *mut c_void = self as *mut Self as *mut c_void;
         execute_simple_s3_request(
-            &self.credentials,
+            &*self.credentials,
             s3_simple_request::S3RequestOptions {
                 path: &self.path,
                 method: bun_http::Method::DELETE,
@@ -845,7 +845,7 @@ impl MultiPartUpload {
             self.ref_();
             let callback_context: *mut c_void = self as *mut Self as *mut c_void;
             execute_simple_s3_request(
-                &self.credentials,
+                &*self.credentials,
                 s3_simple_request::S3RequestOptions {
                     path: &self.path,
                     method: bun_http::Method::POST,
@@ -989,7 +989,7 @@ impl MultiPartUpload {
             // we can do only 1 request
             let callback_context: *mut c_void = self as *mut Self as *mut c_void;
             let _ = execute_simple_s3_request(
-                &self.credentials,
+                &*self.credentials,
                 s3_simple_request::S3RequestOptions {
                     path: &self.path,
                     method: bun_http::Method::PUT,

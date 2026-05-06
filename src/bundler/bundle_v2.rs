@@ -394,6 +394,26 @@ pub mod bake_types {
         // file_system_router_types, ...) — bundler does not read them; bake constructs.
         _opaque_tail: (),
     }
+    impl Framework {
+        /// Construct the bundler-side TYPE_ONLY view. Called from
+        /// `bun_runtime::bake::Framework::init_transpiler_with_options`
+        /// (spec bake.zig:778 `out.options.framework = framework`); the
+        /// runtime owns the canonical `bake.Framework` and projects the
+        /// fields the bundler reads.
+        pub fn new(
+            built_in_modules: bun_collections::StringArrayHashMap<BuiltInModule>,
+            server_components: Option<ServerComponents>,
+            is_built_in_react: bool,
+        ) -> Self {
+            Self {
+                built_in_modules,
+                server_components,
+                is_built_in_react,
+                client_css_in_js: crate::options::ClientCssInJs::default(),
+                _opaque_tail: (),
+            }
+        }
+    }
     /// Mirrors src/bake/bake.zig `Framework.ServerComponents` — TYPE_ONLY subset.
     #[derive(Default, Clone)]
     pub struct ServerComponents {

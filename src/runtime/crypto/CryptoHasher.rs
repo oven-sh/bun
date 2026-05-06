@@ -1080,6 +1080,18 @@ macro_rules! impl_static_hasher {
                 // is unified on `bun_boringssl_sys::ENGINE`.
                 <$ty>::hash(input, out, None)
             }
+            #[inline]
+            fn get_constructor(global: &JSGlobalObject) -> JSValue {
+                // `${name}__getConstructor` — emitted by generate-classes.ts for
+                // every `crypto.classes.ts` entry (MD4/MD5/SHA1/…).
+                unsafe extern "C" {
+                    #[link_name = concat!($name, "__getConstructor")]
+                    fn __get_constructor(global: *mut JSGlobalObject) -> JSValue;
+                }
+                // SAFETY: `global` is a live opaque FFI handle; the C++ side
+                // reads the cached constructor from `Zig::GlobalObject`.
+                unsafe { __get_constructor(global.as_ptr()) }
+            }
         }
     };
 }

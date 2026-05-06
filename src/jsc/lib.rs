@@ -1309,6 +1309,12 @@ impl JSGlobalObject {
         unsafe { JSGlobalObject__throwOutOfMemoryError(self) };
         JsError::Thrown
     }
+    pub fn throw_stack_overflow(&self) -> JsError {
+        // JSGlobalObject.zig:36 — dedicated FFI, returns `error.JSError`.
+        // SAFETY: `self` is a live JSGlobalObject.
+        unsafe { JSGlobalObject__throwStackOverflow(self) };
+        JsError::Thrown
+    }
     /// `createErrorInstance(fmt, args)` — formats `args` into a UTF-8 buffer, wraps
     /// it as a ZigString, and calls `ZigString__toErrorInstance`.
     ///

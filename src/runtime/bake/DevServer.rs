@@ -3698,34 +3698,25 @@ pub fn finalize_bundle(
         }
 
         // Free old bundles
-        // PORT NOTE: reshaped for borrowck — capture `dev` raw before borrowing
-        // `route_bundles[i]` so the `&mut DevServer` and `&mut RouteBundle`
-        // borrows don't overlap (Zig had no aliasing check here).
-        let dev_ptr: *mut DevServer = dev;
         let mut it = route_bits_client.iterator::<true, true>();
         while let Some(bundled_route_index) = it.next() {
-            let bundle: &mut RouteBundle = &mut dev.route_bundles[bundled_route_index];
-            bundle.invalidate_client_bundle(dev_ptr.cast());
+            dev.route_bundles[bundled_route_index]
+                .invalidate_client_bundle(&mut dev.source_maps);
         }
     } else if !dev.incremental_result.html_routes_hard_affected.is_empty() {
         // Free old bundles
-        let dev_ptr: *mut DevServer = dev;
         let mut it = route_bits_client.iterator::<true, true>();
         while let Some(bundled_route_index) = it.next() {
-            let bundle: &mut RouteBundle = &mut dev.route_bundles[bundled_route_index];
-            bundle.invalidate_client_bundle(dev_ptr.cast());
+            dev.route_bundles[bundled_route_index]
+                .invalidate_client_bundle(&mut dev.source_maps);
         }
     }
 
     // Softly affected HTML routes only need the bundle invalidated.
     if !dev.incremental_result.html_routes_soft_affected.is_empty() {
-        let dev_ptr: *mut DevServer = dev;
         for index in &dev.incremental_result.html_routes_soft_affected {
-            // SAFETY: dev_ptr is live for the duration of this fn; reborrow to
-            // avoid overlapping `&mut dev` with `&mut RouteBundle`.
-            unsafe { &mut *dev_ptr }
-                .route_bundle_ptr(*index)
-                .invalidate_client_bundle(dev_ptr.cast());
+            dev.route_bundles[index.get() as usize]
+                .invalidate_client_bundle(&mut dev.source_maps);
             route_bits.set(index.get() as usize);
         }
         has_route_bits_set = true;

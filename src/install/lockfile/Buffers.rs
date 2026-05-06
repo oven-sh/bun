@@ -60,8 +60,10 @@ impl Buffers {
 // by descending `@alignOf(field.type)`. Every field is an `ArrayListUnmanaged`,
 // whose alignment is `@alignOf(usize)`, so the stable sort is a no-op and the
 // result is declaration order. We hard-code that order here. `types[0]` (used
-// only for `Aligner.write`) was `Tree.List.Slice` i.e. `[]Tree`; we keep its
-// element alignment as `ALIGN_TYPE_0`.
+// only for `Aligner.write`) was `Tree.List.Slice` i.e. `[]Tree`; Zig's
+// `@alignOf([]Tree)` is the alignment of the SLICE fat-pointer (ptr+len), i.e.
+// `@alignOf(usize)`, NOT the element alignment — so we keep that as
+// `ALIGN_TYPE_0`.
 // ──────────────────────────────────────────────────────────────────────────
 mod sizes {
     use super::*;
@@ -76,7 +78,13 @@ mod sizes {
     ];
 
     /// Alignment used by `Aligner::write` for every array payload (Zig: `sizes.types[0]`).
-    pub const ALIGN_TYPE_0: usize = align_of::<Tree>();
+    ///
+    /// `sizes.types[0]` in Zig is `[]Tree` (a slice type), and `@alignOf([]Tree)` is the
+    /// alignment of the slice descriptor (a `(*T, usize)` fat pointer) — i.e. `@alignOf(usize)`,
+    /// not `@alignOf(Tree)`. This 8-byte boundary is load-bearing for on-disk parity AND for
+    /// `read_array::<ExternalString>` (which has a `u64` field) to produce an aligned `&[T]`.
+    pub const ALIGN_TYPE_0: usize = align_of::<usize>();
+    const _: () = assert!(ALIGN_TYPE_0 == align_of::<&[Tree]>());
 
     // `sizes.bytes` was never read in the Zig; omitted.
     // TODO(port): if another file reads `Buffers.sizes.bytes`, add it back.

@@ -1238,8 +1238,8 @@ pub fn migrate_yarn_lockfile<'a>(
 
             if let Some(idx) = found_idx {
                 let name_hash = string_hash(&dep.name);
-                let dep_name_string = string_buf.append_with_hash(&dep.name, name_hash)?;
-                let version_string = string_buf.append(&dep.version)?;
+                let dep_name_string = sbuf!().append_with_hash(&dep.name, name_hash)?;
+                let version_string = sbuf!().append(&dep.version)?;
 
                 dependencies_buf[actual_root_dep_count as usize] = Dependency {
                     name: dep_name_string,
@@ -1249,8 +1249,8 @@ pub fn migrate_yarn_lockfile<'a>(
                         Some(name_hash),
                         version_string.slice(this.buffers.string_bytes.as_slice()),
                         &version_string.sliced(this.buffers.string_bytes.as_slice()),
-                        Some(log),
-                        Some(manager),
+                        Some(&mut *log),
+                        Some(&mut *manager),
                     )
                     .unwrap_or_default(),
                     behavior: behavior_for(dep.dep_type, false),

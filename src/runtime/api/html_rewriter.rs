@@ -125,6 +125,33 @@ fn system_error(code: &'static str, message: &'static str) -> SystemError {
     }
 }
 
+/// Wrap an already-heap-allocated native (intrusive-rc) payload in a fresh JS
+/// wrapper instance. Calls the C++-side `${T}__create` (codegen) which stores
+/// `ptr` in `m_ctx`; ownership is *shared* with the wrapper via the intrusive
+/// refcount (the codegen `${T}Class__finalize` thunk dispatches to
+/// `${T}::finalize` → `deref`). This is the `*mut Self` flavour of
+/// `JsClass::to_js` (which moves `self` and boxes it) — used by every
+/// `WrapperLike` impl below since `init()` already does `Box::into_raw`.
+macro_rules! wrap_ptr_as_js {
+    ($Ty:literal, $ptr:expr, $global:expr) => {{
+        // PORT NOTE: `JSC_CALLCONV` (sysv64 on win-x64) — match the codegen
+        // extern shape from `src/jsc/generated.rs::js_class_module!`.
+        #[cfg(all(windows, target_arch = "x86_64"))]
+        unsafe extern "sysv64" {
+            #[link_name = concat!($Ty, "__create")]
+            fn __create(global: *mut JSGlobalObject, ptr: *mut core::ffi::c_void) -> JSValue;
+        }
+        #[cfg(not(all(windows, target_arch = "x86_64")))]
+        unsafe extern "C" {
+            #[link_name = concat!($Ty, "__create")]
+            fn __create(global: *mut JSGlobalObject, ptr: *mut core::ffi::c_void) -> JSValue;
+        }
+        // SAFETY: `ptr` is a live `Box::into_raw` allocation with refcount >= 1;
+        // C++ side stores it in `m_ctx` and the GC `finalize` calls `deref`.
+        unsafe { __create($global.as_mut_ptr(), ($ptr as *mut core::ffi::c_void)) }
+    }};
+}
+
 type SelectorMap = Vec<*mut lolhtml::HTMLSelector>;
 
 // ───────────────────────────── LOLHTMLContext ─────────────────────────────

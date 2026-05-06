@@ -1129,15 +1129,22 @@ pub fn on_io_writer_chunk(
             "IOWriter.onIOWriterChunk",
             "If",
         ),
-        // Spec dispatches to `subproc.PipeReader.CapturedWriter`; in the
-        // NodeId-arena port that lives outside the arena (raw pointer +
-        // @fieldParentPtr) and the `subproc` module is still gated, so no
-        // `ChildPtr` is ever constructed with this tag yet. Once wired,
-        // forward to `CapturedWriter::on_iowriter_chunk(written, err)`.
-        WriterTag::Subproc => crate::shell::interpreter::unreachable_state(
-            "IOWriter.onIOWriterChunk",
-            "Subproc (CapturedWriter not yet routed via NodeId arena)",
-        ),
+        // Spec dispatches to `subproc.PipeReader.CapturedWriter`; that lives
+        // outside the NodeId arena (heap-allocated PipeReader), so the target
+        // is carried in `child.raw` instead of `child.node`.
+        WriterTag::Subproc => {
+            let _ = interp;
+            debug_assert!(!child.raw.is_null());
+            // SAFETY: `raw` was set from `&mut CapturedWriter` in
+            // `CapturedWriter::do_write`; the PipeReader (and the embedded
+            // CapturedWriter) is kept alive by the `Readable::Pipe` Arc on
+            // the owning ShellSubprocess until `on_close_io` runs, which only
+            // happens after the writer has finished draining. Single-threaded.
+            let cw = unsafe {
+                &mut *(child.raw as *mut crate::shell::subproc::CapturedWriter)
+            };
+            cw.on_iowriter_chunk(written, err)
+        }
     }
 }
 

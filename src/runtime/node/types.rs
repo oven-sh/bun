@@ -634,10 +634,15 @@ impl StringOrBuffer {
                 return Self::from_js_maybe_async(global, value, is_async, allow_string_object);
             }
 
-            // TODO(b2-blocked): `bun_str::String::encode(Encoding)` not yet
-            // implemented upstream (jsc ZigString::encode is itself a todo!).
-            let _ = (&str, encoding);
-            todo!("blocked_on: bun_str::String::encode");
+            // `bun.String.encode` → `self.toZigString().encodeWithAllocator(...)`
+            // which dispatches to `webcore::encoding::construct_from_{u8,u16}`.
+            // The upstream `bun_str::String::encode` is gated on a forward-dep
+            // cycle (bun_str → bun_runtime), so dispatch here directly — this
+            // crate already owns `webcore::encoding`.
+            let out = encode_bun_string(&str, encoding);
+            global.vm().deprecated_report_extra_memory(out.len());
+
+            return Ok(Some(Self::EncodedSlice(ZigStringSlice::init_owned(out))));
         }
 
         Ok(None)

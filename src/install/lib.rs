@@ -113,269 +113,9 @@ macro_rules! gated_mod {
 pub mod npm;
  #[path = "PackageManifestMap.rs"]
 pub mod package_manifest_map;
- #[path = "resolution.rs"]
-pub mod resolution_real;
-/// Stub: `resolution.rs` — `Resolution` struct only (used as opaque field in
-/// `bun_jsc::AsyncModule::PendingResolution`). Full impl re-gated above
-/// (26 errors against `Repository` stub method shapes).
-pub mod resolution {
-    #[derive(Default, Clone, Copy)]
-    pub struct Resolution {
-        pub tag: Tag,
-        pub _padding: [u8; 7],
-        pub value: Value,
-    }
-    #[derive(Default, Clone, Copy)]
-    pub struct Value {
-        pub npm: NpmVersionInfo,
-        pub git: crate::repository::Repository,
-        pub github: crate::repository::Repository,
-        pub local_tarball: bun_semver::String,
-        pub remote_tarball: bun_semver::String,
-        pub folder: bun_semver::String,
-        pub workspace: bun_semver::String,
-        pub symlink: bun_semver::String,
-        pub single_file_module: bun_semver::String,
-    }
-    #[derive(Default, Clone, Copy)]
-    pub struct NpmVersionInfo {
-        pub version: bun_semver::Version,
-        pub url: bun_semver::String,
-    }
-    /// Port of `bun.meta.Tagged(Value, Tag)` (src/install/resolution.zig) — a
-    /// tagged view of `Value` used by `Resolution::init` to construct a
-    /// zero-padded flat struct from a single variant payload. Mirrors
-    /// `resolution_real::TaggedValue<u64>` for the stub layout.
-    pub enum TaggedValue {
-        Uninitialized,
-        Root,
-        Npm(crate::versioned_url::VersionedURL),
-        Folder(bun_semver::String),
-        LocalTarball(bun_semver::String),
-        Github(crate::repository::Repository),
-        Git(crate::repository::Repository),
-        Symlink(bun_semver::String),
-        Workspace(bun_semver::String),
-        RemoteTarball(bun_semver::String),
-        SingleFileModule(bun_semver::String),
-    }
-    #[derive(Default, Clone, Copy, PartialEq, Eq, Debug, core::marker::ConstParamTy)]
-    #[repr(u8)]
-    pub enum Tag {
-        #[default] Uninitialized, Root, Npm, Folder, LocalTarball, Github, Git,
-        Symlink, Workspace, RemoteTarball, SingleFileModule,
-    }
-
-    impl Tag {
-        /// Port of `Resolution.Tag.isGit` (src/install/resolution.zig:529).
-        #[inline]
-        pub fn is_git(self) -> bool {
-            matches!(self, Tag::Git | Tag::Github)
-        }
-    }
-
-    impl Resolution {
-        /// Port of `Resolution.fmt` (src/install/resolution.zig:275).
-        pub fn fmt<'a>(
-            &'a self,
-            buf: &'a [u8],
-            path_sep: bun_core::fmt::PathSep,
-        ) -> Formatter<'a> {
-            Formatter { resolution: self, buf, path_sep }
-        }
-
-        /// Port of `Resolution.fmtStorePath` (src/install/resolution.zig:307).
-        pub fn fmt_store_path<'a>(&'a self, string_buf: &'a [u8]) -> StorePathFormatter<'a> {
-            StorePathFormatter { res: self, string_buf }
-        }
-    }
-
-    /// Port of `Resolution.StorePathFormatter` (src/install/resolution.zig:283).
-    pub struct StorePathFormatter<'a> {
-        pub res: &'a Resolution,
-        pub string_buf: &'a [u8],
-    }
-
-    impl<'a> core::fmt::Display for StorePathFormatter<'a> {
-        fn fmt(&self, writer: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-            let string_buf = self.string_buf;
-            let res = &self.res.value;
-            match self.res.tag {
-                Tag::Root => writer.write_str("root"),
-                Tag::Npm => write!(writer, "{}", res.npm.version.fmt(string_buf)),
-                Tag::LocalTarball => {
-                    write!(writer, "{}", res.local_tarball.fmt_store_path(string_buf))
-                }
-                Tag::RemoteTarball => {
-                    write!(writer, "{}", res.remote_tarball.fmt_store_path(string_buf))
-                }
-                Tag::Folder => write!(writer, "{}", res.folder.fmt_store_path(string_buf)),
-                Tag::Git => write!(writer, "{}", res.git.fmt_store_path("git+", string_buf)),
-                Tag::Github => {
-                    write!(writer, "{}", res.github.fmt_store_path("github+", string_buf))
-                }
-                Tag::Workspace => write!(writer, "{}", res.workspace.fmt_store_path(string_buf)),
-                Tag::Symlink => write!(writer, "{}", res.symlink.fmt_store_path(string_buf)),
-                Tag::SingleFileModule => {
-                    write!(writer, "{}", res.single_file_module.fmt_store_path(string_buf))
-                }
-                _ => Ok(()),
-            }
-        }
-    }
-
-    /// Port of `Resolution.Formatter` (src/install/resolution.zig:400).
-    pub struct Formatter<'a> {
-        pub resolution: &'a Resolution,
-        pub buf: &'a [u8],
-        pub path_sep: bun_core::fmt::PathSep,
-    }
-
-    impl<'a> core::fmt::Display for Formatter<'a> {
-        fn fmt(&self, writer: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-            use bun_core::fmt::{fmt_path_u8, PathFormatOptions};
-            let buf = self.buf;
-            let value = &self.resolution.value;
-            let opts = PathFormatOptions { path_sep: self.path_sep, ..Default::default() };
-            match self.resolution.tag {
-                Tag::Npm => write!(writer, "{}", value.npm.version.fmt(buf)),
-                Tag::LocalTarball => {
-                    write!(writer, "{}", fmt_path_u8(value.local_tarball.slice(buf), opts))
-                }
-                Tag::Folder => write!(writer, "{}", fmt_path_u8(value.folder.slice(buf), opts)),
-                Tag::RemoteTarball => {
-                    writer.write_str(&String::from_utf8_lossy(value.remote_tarball.slice(buf)))
-                }
-                Tag::Git => value.git.format_as("git+", buf, writer),
-                Tag::Github => value.github.format_as("github:", buf, writer),
-                Tag::Workspace => {
-                    write!(writer, "workspace:{}", fmt_path_u8(value.workspace.slice(buf), opts))
-                }
-                Tag::Symlink => {
-                    write!(writer, "link:{}", fmt_path_u8(value.symlink.slice(buf), opts))
-                }
-                Tag::SingleFileModule => write!(
-                    writer,
-                    "module:{}",
-                    bstr::BStr::new(value.single_file_module.slice(buf))
-                ),
-                _ => Ok(()),
-            }
-        }
-    }
-
-    impl Resolution {
-        /// Port of `Resolution.init(.{ .root = {} })` (src/install/resolution.zig).
-        #[inline]
-        pub fn init_root() -> Self {
-            Self { tag: Tag::Root, _padding: [0; 7], value: Value::default() }
-        }
-
-        /// Port of `Resolution.init(.{ .symlink = s })`.
-        #[inline]
-        pub fn init_symlink(s: bun_semver::String) -> Self {
-            Self {
-                tag: Tag::Symlink,
-                _padding: [0; 7],
-                value: Value { symlink: s, ..Default::default() },
-            }
-        }
-
-        /// Port of `Resolution.fromPnpmLockfile` (src/install/resolution.zig).
-        /// Real body lives in `resolution_real::ResolutionType::from_pnpm_lockfile`;
-        /// this stub bridges until the stub/real `Resolution` types unify.
-        pub fn from_pnpm_lockfile(
-            _res_str: &[u8],
-            _string_buf: &mut bun_semver::semver_string::Buf,
-        ) -> Result<Self, bun_core::Error> {
-            todo!("blocked_on: resolution stub/real unify (reconciler-6) — from_pnpm_lockfile")
-        }
-
-        /// Zig Resolution is a packed by-value struct; copy() is a no-op clone.
-        #[inline]
-        pub fn copy(&self) -> Self { *self }
-
-        /// Port of `Resolution.init` (src/install/resolution.zig). Constructs a
-        /// `Resolution` with the given tagged value (Zig used a tagged-union
-        /// init; here `Value` is a flat struct so the tag selects which field
-        /// is meaningful).
-        pub fn init(value: TaggedValue) -> Self {
-            let (tag, value) = match value {
-                TaggedValue::Uninitialized => (Tag::Uninitialized, Value::default()),
-                TaggedValue::Root => (Tag::Root, Value::default()),
-                TaggedValue::Npm(v) => (
-                    Tag::Npm,
-                    Value {
-                        npm: NpmVersionInfo { version: v.version, url: v.url },
-                        ..Default::default()
-                    },
-                ),
-                TaggedValue::Folder(s) => {
-                    (Tag::Folder, Value { folder: s, ..Default::default() })
-                }
-                TaggedValue::LocalTarball(s) => {
-                    (Tag::LocalTarball, Value { local_tarball: s, ..Default::default() })
-                }
-                TaggedValue::Github(r) => {
-                    (Tag::Github, Value { github: r, ..Default::default() })
-                }
-                TaggedValue::Git(r) => (Tag::Git, Value { git: r, ..Default::default() }),
-                TaggedValue::Symlink(s) => {
-                    (Tag::Symlink, Value { symlink: s, ..Default::default() })
-                }
-                TaggedValue::Workspace(s) => {
-                    (Tag::Workspace, Value { workspace: s, ..Default::default() })
-                }
-                TaggedValue::RemoteTarball(s) => {
-                    (Tag::RemoteTarball, Value { remote_tarball: s, ..Default::default() })
-                }
-                TaggedValue::SingleFileModule(s) => (
-                    Tag::SingleFileModule,
-                    Value { single_file_module: s, ..Default::default() },
-                ),
-            };
-            Resolution { tag, _padding: [0; 7], value }
-        }
-
-        /// Port of `Resolution.eql` (src/install/resolution.zig:122).
-        pub fn eql(&self, rhs: &Self, lhs_buf: &[u8], rhs_buf: &[u8]) -> bool {
-            if self.tag != rhs.tag {
-                return false;
-            }
-            match self.tag {
-                Tag::Npm => {
-                    self.value.npm.version.eql(rhs.value.npm.version)
-                        && self.value.npm.url.eql(rhs.value.npm.url, lhs_buf, rhs_buf)
-                }
-                Tag::Folder => self.value.folder.eql(rhs.value.folder, lhs_buf, rhs_buf),
-                Tag::LocalTarball => {
-                    self.value.local_tarball.eql(rhs.value.local_tarball, lhs_buf, rhs_buf)
-                }
-                Tag::RemoteTarball => {
-                    self.value.remote_tarball.eql(rhs.value.remote_tarball, lhs_buf, rhs_buf)
-                }
-                Tag::Workspace => {
-                    self.value.workspace.eql(rhs.value.workspace, lhs_buf, rhs_buf)
-                }
-                Tag::Symlink => self.value.symlink.eql(rhs.value.symlink, lhs_buf, rhs_buf),
-                Tag::Git => self.value.git.eql(&rhs.value.git, lhs_buf, rhs_buf),
-                Tag::Github => self.value.github.eql(&rhs.value.github, lhs_buf, rhs_buf),
-                Tag::Root | Tag::Uninitialized | Tag::SingleFileModule => true,
-            }
-        }
-
-        /// Port of `Resolution.fromTextLockfile` (src/install/resolution.zig).
-        /// Real body lives in `resolution_real::ResolutionType::from_text_lockfile`;
-        /// this stub bridges until the stub/real `Resolution` types unify
-        /// (reconciler-6).
-        pub fn from_text_lockfile(
-            _res_str: &[u8],
-            _string_buf: &mut bun_semver::semver_string::Buf,
-        ) -> Result<Self, bun_core::Error> {
-            todo!("blocked_on: resolution stub/real unify (reconciler-6)")
-        }
-    }
-}
+pub mod resolution;
+// Legacy alias kept while callers migrate from the stub/real split.
+pub use resolution as resolution_real;
 #[path = "PnpmMatcher.rs"]
 pub mod pnpm_matcher;
  pub mod postinstall_optimizer;
@@ -2039,6 +1779,39 @@ impl PackageManifestMap {
         _pm: *mut PM,
         _scope: &npm::registry::Scope,
         _name: &[u8],
+        _cache_behavior: package_manager::ManifestLoad,
+        _needs_extended_manifest: bool,
+    ) -> Option<&mut npm::PackageManifest> {
+        None
+    }
+
+    /// Stub: `PackageManifestMap.byNameHash` (src/install/PackageManifestMap.zig).
+    /// Real body lives in `package_manifest_map::PackageManifestMap::by_name_hash`;
+    /// the stub always cache-misses. `PM` is generic to accept the aliased
+    /// `*mut PackageManager` / `&mut PackageManager` callers without forcing a
+    /// type-level cycle through `package_manager_real`.
+    // TODO(port): blocked_on package_manifest_map / PackageManager type unification (reconciler-6)
+    pub fn by_name_hash<PM>(
+        &mut self,
+        _pm: PM,
+        _scope: &npm::registry::Scope,
+        _name_hash: PackageNameHash,
+        _cache_behavior: package_manager::ManifestLoad,
+        _needs_extended_manifest: bool,
+    ) -> Option<&mut npm::PackageManifest> {
+        None
+    }
+
+    /// Stub: `PackageManifestMap.byNameHashAllowExpired`
+    /// (src/install/PackageManifestMap.zig). Real body lives in
+    /// `package_manifest_map::PackageManifestMap::by_name_hash_allow_expired`.
+    // TODO(port): blocked_on package_manifest_map / PackageManager type unification (reconciler-6)
+    pub fn by_name_hash_allow_expired<PM>(
+        &mut self,
+        _pm: PM,
+        _scope: &npm::registry::Scope,
+        _name_hash: PackageNameHash,
+        _is_expired: &mut bool,
         _cache_behavior: package_manager::ManifestLoad,
         _needs_extended_manifest: bool,
     ) -> Option<&mut npm::PackageManifest> {

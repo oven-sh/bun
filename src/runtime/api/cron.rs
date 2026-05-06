@@ -2091,22 +2091,6 @@ fn make_temp_path(prefix: &'static str) -> Result<ZString, bun_alloc::AllocError
     );
     Ok(ZString::from_bytes(joined))
 }
-} // mod _jsc_gated
-
-// Re-export the OS-level register/remove job types so `api::bun::process` can
-// name them in its `ProcessExitHandler` dispatch table.
-pub use _jsc_gated::{CronRegisterJob, CronRemoveJob, get_cron_object};
-
-// Opaque surface for `CronJob` (the in-process `.classes.ts` payload). Full
-// struct lives in `_jsc_gated` (uses `JsRef`, `EventLoopTimer`, `KeepAlive`).
-// TODO(b2-blocked): bun_jsc::JsRef — replace with _jsc_gated::CronJob once un-gated.
-pub struct CronJob(());
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum ClearMode {
-    Cancel,
-    Drain,
-}
 
 // ============================================================================
 // Pure OS-level cron translators (crontab filter, launchd plist, schtasks XML).

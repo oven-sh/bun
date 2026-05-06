@@ -189,7 +189,7 @@ impl TextDecoder {
         if !remain.is_empty() && i == remain.len() - 1 {
             self.lead_byte = Some(remain[i]);
         } else {
-            bun_core::assert_with_location!(i == remain.len());
+            bun_core::assert_with_location(i == remain.len(), core::panic::Location::caller());
         }
 
         if FLUSH {

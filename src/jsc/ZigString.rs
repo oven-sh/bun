@@ -193,15 +193,21 @@ impl ZigString {
 
     pub fn dupe_for_js(utf8: &[u8]) -> Result<ZigString, strings::ToUTF16Error> {
         if let Some(utf16) = strings::to_utf16_alloc(utf8, false, false)? {
-            // PERF(port): leaks Box<[u16]> into raw for global ownership — matches Zig semantics
-            let leaked: &'static [u16] = Box::leak(utf16.into_boxed_slice());
-            let mut out = ZigString::init_utf16(leaked);
+            // Ownership transfers to JSC (freed via `deinit_global` /
+            // external-string finalizer). Convert to a raw mimalloc block.
+            let len = utf16.len();
+            let ptr = Box::into_raw(utf16.into_boxed_slice()).cast::<u16>();
+            // SAFETY: ptr/len describe a valid globally-allocated UTF-16 buffer.
+            let mut out =
+                ZigString::init_utf16(unsafe { slice::from_raw_parts(ptr, len) });
             out.mark_global();
             out.mark_utf16();
             Ok(out)
         } else {
-            let duped: &'static [u8] = Box::leak(Box::<[u8]>::from(utf8));
-            let mut out = ZigString::init(duped);
+            let len = utf8.len();
+            let ptr = Box::into_raw(Box::<[u8]>::from(utf8)).cast::<u8>();
+            // SAFETY: ptr/len describe a valid globally-allocated byte buffer.
+            let mut out = ZigString::init(unsafe { slice::from_raw_parts(ptr, len) });
             out.mark_global();
             Ok(out)
         }
@@ -915,11 +921,10 @@ impl fmt::Display for GithubActionFormatter {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Original `NullableAllocator`-backed `Slice` struct port. Replaced above by
-// the enum-based `bun_string::ZigStringSlice` (re-exported as `super::Slice`)
-// which encodes the same WTF/mimalloc/borrowed distinction as enum variants.
-// Kept gated for reference until `bun_alloc::NullableAllocator` grows real
-// `{default_alloc, null, NULL, get, is_null, free, is_default}` methods.
+// `NullableAllocator`-backed `Slice` struct port — the `#[repr(C)]`-shaped
+// counterpart to the enum-based `bun_string::ZigStringSlice` (re-exported as
+// `super::Slice`). Kept for FFI surfaces that need the raw `{allocator, ptr,
+// len}` layout; the enum form is preferred for pure-Rust callers.
 // ──────────────────────────────────────────────────────────────────────────
 
 mod _slice_struct {

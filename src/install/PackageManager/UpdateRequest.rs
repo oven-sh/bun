@@ -144,9 +144,11 @@ impl UpdateRequest {
                 _ => {}
             }
 
-            // PORT NOTE: reshaped for borrowck — leak `input` now so sub-slices are &'static
-            // (Zig never frees these; they live for the CLI invocation).
-            let input: &'static [u8] = Box::leak(input.into_boxed_slice());
+            // PORT NOTE: reshaped for borrowck — leak `input` now so sub-slices are &'static.
+            // Zig: `bun.default_allocator.dupe(u8, ..)` with no matching free; these live for
+            // the CLI invocation. `version_buf` is later reassigned to borrow lockfile buffers
+            // (lockfile.rs), so the field cannot be `Box<[u8]>` — `&'static [u8]` is load-bearing.
+            let input: &'static [u8] = input.leak();
 
             let mut value: &'static [u8] = input;
             let mut alias: Option<&'static [u8]> = None;
@@ -246,7 +248,8 @@ impl UpdateRequest {
             };
             if let Some(name) = alias {
                 request.is_aliased = true;
-                request.name = Box::leak(Box::<[u8]>::from(name));
+                // Zig: `allocator.dupe(u8, name) catch unreachable` — never freed (CLI lifetime).
+                request.name = name.to_vec().leak();
                 request.name_hash = StringBuilder::string_hash(name);
             } else if request.version.tag == dependency::version::Tag::Github
                 // SAFETY: union field access guarded by `tag == Github`.

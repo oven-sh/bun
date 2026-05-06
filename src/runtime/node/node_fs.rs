@@ -4130,7 +4130,7 @@ impl NodeFS {
                 // SAFETY: fd is a valid open dest_fd; ftruncate/fchmod are libc FFI
                 let _ = unsafe { libc::ftruncate(fd.native(), (wrote.get() & ((1u64 << 63) - 1)) as i64) };
                 // SAFETY: same fd as above
-                let _ = unsafe { libc::fchmod(fd.cast(), m) };
+                let _ = unsafe { libc::fchmod(fd.native(), m) };
                 fd.close();
             });
 

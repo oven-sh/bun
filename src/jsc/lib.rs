@@ -1384,6 +1384,12 @@ impl VM {
 }
 
 impl JSGlobalObject {
+    /// `JSGlobalObject.ERR(code, fmt, args)` (JSGlobalObject.zig:48) — returns an
+    /// `ErrorBuilder` that defers `.throw()`/`.to_js()`/`.reject()` to the call site.
+    #[inline]
+    pub fn err<'a>(&'a self, code: ErrorCode, args: core::fmt::Arguments<'a>) -> ErrorBuilder<'a> {
+        ErrorBuilder::new(self, code, args)
+    }
     /// `JSGlobalObject.handleRejectedPromises()` (JSGlobalObject.zig:659) —
     /// catches and reports its own exceptions; only TerminationException escapes.
     #[inline]

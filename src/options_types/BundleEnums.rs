@@ -129,9 +129,13 @@ impl ModuleType {
 }
 
 /// `bundler/options.zig` `Target` — bundle target platform.
+///
+/// Zig field default is `.browser` (`Target = .browser` in BundleOptions);
+/// keep `Default` so resolver can field-default it.
 #[repr(u8)]
-#[derive(Copy, Clone, Eq, PartialEq, Debug, Hash, Enum, strum::IntoStaticStr)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug, Hash, Enum, strum::IntoStaticStr, Default)]
 pub enum Target {
+    #[default]
     Browser,
     Bun,
     BunMacro,

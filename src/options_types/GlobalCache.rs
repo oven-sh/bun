@@ -1,8 +1,9 @@
 #[allow(non_camel_case_types)]
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
 pub enum GlobalCache {
     allow_install,
     read_only,
+    #[default]
     auto,
     force,
     fallback,

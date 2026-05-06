@@ -372,7 +372,7 @@ impl FontStyle {
             FontStyleProperty::Normal => FontStyle::Normal,
             FontStyleProperty::Italic => FontStyle::Italic,
             FontStyleProperty::Oblique(angle) => {
-                let second_angle = if let Some(a) = input.try_parse(Angle::parse).as_value() {
+                let second_angle = if let Ok(a) = input.try_parse(Angle::parse) {
                     a
                 } else {
                     angle
@@ -388,7 +388,7 @@ impl FontStyle {
             FontStyle::Italic => dest.write_str("italic"),
             FontStyle::Oblique(angle) => {
                 dest.write_str("oblique")?;
-                if !angle.eql(&FontStyle::default_oblique_angle()) {
+                if !Size2D::<Angle>::eql(angle, &FontStyle::default_oblique_angle()) {
                     dest.write_char(b' ')?;
                     angle.to_css(dest)?;
                 }
@@ -459,7 +459,9 @@ impl FontFormat {
         } else if strings::eql_case_insensitive_ascii_check_length(b"svg", s) {
             Ok(FontFormat::Svg)
         } else {
-            Ok(FontFormat::String(s))
+            // SAFETY: `s` is a sub-slice of the parser input arena which
+            // outlives the AST; see `src_str` in css_parser.rs.
+            Ok(FontFormat::String(unsafe { css::css_parser::src_str(s) }))
         }
     }
 
@@ -478,9 +480,19 @@ impl FontFormat {
         }
     }
 
-    pub fn deep_clone(&self, allocator: &bun_alloc::Arena) -> Self {
-        // TODO(port): comptime-reflection deep clone — replace with derive in Phase B.
-        css::implement_deep_clone(self, allocator)
+    pub fn deep_clone(&self, _allocator: &bun_alloc::Arena) -> Self {
+        // PORT NOTE: `css.implementDeepClone` variant-walk. All payloads are
+        // `Copy` / arena-slice idents → identity copy.
+        match self {
+            FontFormat::Woff => FontFormat::Woff,
+            FontFormat::Woff2 => FontFormat::Woff2,
+            FontFormat::Truetype => FontFormat::Truetype,
+            FontFormat::Opentype => FontFormat::Opentype,
+            FontFormat::EmbeddedOpentype => FontFormat::EmbeddedOpentype,
+            FontFormat::Collection => FontFormat::Collection,
+            FontFormat::Svg => FontFormat::Svg,
+            FontFormat::String(s) => FontFormat::String(s),
+        }
     }
 }
 
@@ -506,21 +518,21 @@ impl Source {
         match input.try_parse(UrlSource::parse) {
             Ok(url) => return Ok(Source::Url(url)),
             Err(e) => {
-                // TODO(port): exact ParseError shape (`e.kind == .basic && .basic == .at_rule_body_invalid`).
-                if e.is_basic(&css::BasicParseErrorKind::AtRuleBodyInvalid) {
+                // Zig: `e.kind == .basic and e.kind.basic == .at_rule_body_invalid`
+                if matches!(
+                    e.kind,
+                    css::ParseErrorKind::basic(css::BasicParseErrorKind::at_rule_body_invalid)
+                ) {
                     return Err(e);
                 }
             }
         }
 
-        if let Some(e) = input.expect_function_matching("local").as_err() {
+        if let Err(e) = input.expect_function_matching(b"local") {
             return Err(e);
         }
 
-        fn parse_nested_block(_: (), i: &mut css::Parser) -> css::Result<fontprops::FontFamily> {
-            fontprops::FontFamily::parse(i)
-        }
-        let local = match input.parse_nested_block((), parse_nested_block) {
+        let local = match input.parse_nested_block(|i| fontprops::FontFamily::parse(i)) {
             Ok(vv) => vv,
             Err(e) => return Err(e),
         };
@@ -539,8 +551,11 @@ impl Source {
     }
 
     pub fn deep_clone(&self, allocator: &bun_alloc::Arena) -> Self {
-        // TODO(port): comptime-reflection deep clone — replace with derive in Phase B.
-        css::implement_deep_clone(self, allocator)
+        // PORT NOTE: `css.implementDeepClone` variant-walk, hand-expanded.
+        match self {
+            Source::Url(u) => Source::Url(u.deep_clone(allocator)),
+            Source::Local(l) => Source::Local(l.deep_clone(allocator)),
+        }
     }
 }
 
@@ -585,10 +600,46 @@ pub enum FontTechnology {
     Incremental,
 }
 
-// blocked_on: css::enum_property_util EnumProperty derive bounds.
+impl From<FontTechnology> for &'static str {
+    fn from(v: FontTechnology) -> &'static str {
+        match v {
+            FontTechnology::FeaturesOpentype => "features-opentype",
+            FontTechnology::FeaturesAat => "features-aat",
+            FontTechnology::FeaturesGraphite => "features-graphite",
+            FontTechnology::ColorColrv0 => "color-colrv0",
+            FontTechnology::ColorColrv1 => "color-colrv1",
+            FontTechnology::ColorSvg => "color-svg",
+            FontTechnology::ColorSbix => "color-sbix",
+            FontTechnology::ColorCbdt => "color-cbdt",
+            FontTechnology::Variations => "variations",
+            FontTechnology::Palettes => "palettes",
+            FontTechnology::Incremental => "incremental",
+        }
+    }
+}
+
+// PORT NOTE: Zig `css.DefineEnumProperty(@This())` — hand-rolled until
+// `#[derive(DefineEnumProperty)]` covers `&[u8]` lookup.
+impl css::EnumProperty for FontTechnology {
+    fn from_ascii_case_insensitive(ident: &[u8]) -> Option<Self> {
+        use bun_string::strings::eql_case_insensitive_ascii_check_length as eq;
+        if eq(ident, b"features-opentype") { return Some(Self::FeaturesOpentype); }
+        if eq(ident, b"features-aat") { return Some(Self::FeaturesAat); }
+        if eq(ident, b"features-graphite") { return Some(Self::FeaturesGraphite); }
+        if eq(ident, b"color-colrv0") { return Some(Self::ColorColrv0); }
+        if eq(ident, b"color-colrv1") { return Some(Self::ColorColrv1); }
+        if eq(ident, b"color-svg") { return Some(Self::ColorSvg); }
+        if eq(ident, b"color-sbix") { return Some(Self::ColorSbix); }
+        if eq(ident, b"color-cbdt") { return Some(Self::ColorCbdt); }
+        if eq(ident, b"variations") { return Some(Self::Variations); }
+        if eq(ident, b"palettes") { return Some(Self::Palettes); }
+        if eq(ident, b"incremental") { return Some(Self::Incremental); }
+        None
+    }
+}
 
 impl FontTechnology {
-    pub fn as_str(&self) -> &'static [u8] {
+    pub fn as_str(&self) -> &'static str {
         css::enum_property_util::as_str(self)
     }
 
@@ -598,6 +649,13 @@ impl FontTechnology {
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         css::enum_property_util::to_css(self, dest)
+    }
+}
+
+impl crate::generics::ToCss for FontTechnology {
+    #[inline]
+    fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+        FontTechnology::to_css(self, dest)
     }
 }
 
@@ -624,8 +682,8 @@ impl UrlSource {
             Err(e) => return Err(e),
         };
 
-        let format = if input.try_parse_with(css::Parser::expect_function_matching, "format").is_ok() {
-            match input.parse_nested_block((), css::void_wrap(FontFormat::parse)) {
+        let format = if input.try_parse(|i| i.expect_function_matching(b"format")).is_ok() {
+            match input.parse_nested_block(FontFormat::parse) {
                 Ok(vv) => Some(vv),
                 Err(e) => return Err(e),
             }
@@ -633,11 +691,8 @@ impl UrlSource {
             None
         };
 
-        let tech = if input.try_parse_with(css::Parser::expect_function_matching, "tech").is_ok() {
-            fn parse_nested_block_fn(_: (), i: &mut css::Parser) -> css::Result<ArrayList<FontTechnology>> {
-                i.parse_list(FontTechnology::parse)
-            }
-            match input.parse_nested_block((), parse_nested_block_fn) {
+        let tech = if input.try_parse(|i| i.expect_function_matching(b"tech")).is_ok() {
+            match input.parse_nested_block(|i| i.parse_list(FontTechnology::parse)) {
                 Ok(vv) => vv,
                 Err(e) => return Err(e),
             }
@@ -667,8 +722,12 @@ impl UrlSource {
     }
 
     pub fn deep_clone(&self, allocator: &bun_alloc::Arena) -> Self {
-        // TODO(port): comptime-reflection deep clone — replace with derive in Phase B.
-        css::implement_deep_clone(self, allocator)
+        // PORT NOTE: `css.implementDeepClone` field-walk, hand-expanded.
+        Self {
+            url: self.url.deep_clone(allocator),
+            format: self.format.as_ref().map(|f| f.deep_clone(allocator)),
+            tech: self.tech.clone(),
+        }
     }
 }
 
@@ -746,15 +805,15 @@ const _: () = {
         type Prelude = ();
         type AtRule = FontFaceProperty;
 
-        fn parse_prelude(&mut self, name: &[u8], input: &mut Parser) -> Result<Self::Prelude> {
-            Err(input.new_error(BasicParseErrorKind::AtRuleInvalid(name)))
+        fn parse_prelude(_this: &mut Self, name: &[u8], input: &mut Parser) -> Result<Self::Prelude> {
+            Err(input.new_error(BasicParseErrorKind::at_rule_invalid(name as *const [u8])))
         }
 
-        fn parse_block(&mut self, _: Self::Prelude, _: &ParserState, input: &mut Parser) -> Result<Self::AtRule> {
-            Err(input.new_error(BasicParseErrorKind::AtRuleBodyInvalid))
+        fn parse_block(_this: &mut Self, _: Self::Prelude, _: &ParserState, input: &mut Parser) -> Result<Self::AtRule> {
+            Err(input.new_error(BasicParseErrorKind::at_rule_body_invalid))
         }
 
-        fn rule_without_block(&mut self, _: Self::Prelude, _: &ParserState) -> Maybe<Self::AtRule, ()> {
+        fn rule_without_block(_this: &mut Self, _: Self::Prelude, _: &ParserState) -> Maybe<Self::AtRule, ()> {
             Err(())
         }
     }
@@ -763,51 +822,51 @@ const _: () = {
         type Prelude = ();
         type QualifiedRule = FontFaceProperty;
 
-        fn parse_prelude(&mut self, input: &mut Parser) -> Result<Self::Prelude> {
-            Err(input.new_error(BasicParseErrorKind::QualifiedRuleInvalid))
+        fn parse_prelude(_this: &mut Self, input: &mut Parser) -> Result<Self::Prelude> {
+            Err(input.new_error(BasicParseErrorKind::qualified_rule_invalid))
         }
 
-        fn parse_block(&mut self, _: Self::Prelude, _: &ParserState, input: &mut Parser) -> Result<Self::QualifiedRule> {
-            Err(input.new_error(BasicParseErrorKind::QualifiedRuleInvalid))
+        fn parse_block(_this: &mut Self, _: Self::Prelude, _: &ParserState, input: &mut Parser) -> Result<Self::QualifiedRule> {
+            Err(input.new_error(BasicParseErrorKind::qualified_rule_invalid))
         }
     }
 
     impl DeclarationParser for FontFaceDeclarationParser {
         type Declaration = FontFaceProperty;
 
-        fn parse_value(&mut self, name: &[u8], input: &mut Parser) -> Result<Self::Declaration> {
+        fn parse_value(_this: &mut Self, name: &[u8], input: &mut Parser) -> Result<Self::Declaration> {
             let state = input.state();
             // todo_stuff.match_ignore_ascii_case
             if strings::eql_case_insensitive_ascii_check_length(name, b"src") {
-                if let Some(sources) = input.parse_comma_separated(Source::parse).as_value() {
+                if let Ok(sources) = input.parse_comma_separated(Source::parse) {
                     return Ok(FontFaceProperty::Source(sources));
                 }
             } else if strings::eql_case_insensitive_ascii_check_length(name, b"font-family") {
-                if let Some(c) = FontFamily::parse(input).as_value() {
+                if let Ok(c) = FontFamily::parse(input) {
                     if input.expect_exhausted().is_ok() {
                         return Ok(FontFaceProperty::FontFamily(c));
                     }
                 }
             } else if strings::eql_case_insensitive_ascii_check_length(name, b"font-weight") {
-                if let Some(c) = Size2D::<FontWeight>::parse(input).as_value() {
+                if let Ok(c) = Size2D::<FontWeight>::parse(input) {
                     if input.expect_exhausted().is_ok() {
                         return Ok(FontFaceProperty::FontWeight(c));
                     }
                 }
             } else if strings::eql_case_insensitive_ascii_check_length(name, b"font-style") {
-                if let Some(c) = FontStyle::parse(input).as_value() {
+                if let Ok(c) = FontStyle::parse(input) {
                     if input.expect_exhausted().is_ok() {
                         return Ok(FontFaceProperty::FontStyle(c));
                     }
                 }
             } else if strings::eql_case_insensitive_ascii_check_length(name, b"font-stretch") {
-                if let Some(c) = Size2D::<FontStretch>::parse(input).as_value() {
+                if let Ok(c) = Size2D::<FontStretch>::parse(input) {
                     if input.expect_exhausted().is_ok() {
                         return Ok(FontFaceProperty::FontStretch(c));
                     }
                 }
             } else if strings::eql_case_insensitive_ascii_check_length(name, b"unicode-range") {
-                if let Some(c) = input.parse_list(UnicodeRange::parse).as_value() {
+                if let Ok(c) = input.parse_list(UnicodeRange::parse) {
                     if input.expect_exhausted().is_ok() {
                         return Ok(FontFaceProperty::UnicodeRange(c));
                     }
@@ -817,8 +876,7 @@ const _: () = {
             }
 
             input.reset(&state);
-            // TODO(port): `ParserOptions.default(allocator, null)` — arena allocator threading in Phase B.
-            let opts = ParserOptions::default();
+            let opts = ParserOptions::default(None);
             Ok(FontFaceProperty::Custom(
                 match CustomProperty::parse(CustomPropertyName::from_str(name), input, &opts) {
                     Ok(v) => v,

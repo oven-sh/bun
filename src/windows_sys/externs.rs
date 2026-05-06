@@ -221,7 +221,15 @@ impl FILE_INFORMATION_CLASS {
     pub const FileBasicInformation: Self = Self(4);
     pub const FileRenameInformation: Self = Self(10);
     pub const FileDispositionInformation: Self = Self(13);
+    pub const FileEndOfFileInformation: Self = Self(20);
     pub const FileDispositionInformationEx: Self = Self(64);
+}
+
+/// `FILE_END_OF_FILE_INFORMATION` (`ntifs.h`) — payload for
+/// `NtSetInformationFile(.., FileEndOfFileInformation)`.
+#[repr(C)]
+pub struct FILE_END_OF_FILE_INFORMATION {
+    pub EndOfFile: LARGE_INTEGER,
 }
 
 // ──────────────────────────────────────────────────────────────────────────

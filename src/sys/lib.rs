@@ -1334,8 +1334,16 @@ mod posix_impl {
     /// sys.zig:3897 — `fcntl(F_DUPFD_CLOEXEC, 0)` so the dup'd fd doesn't leak
     /// to children. NOT `dup(2)` (which lacks CLOEXEC).
     pub fn dup(fd: Fd) -> Maybe<Fd> {
-        let rc = check!(unsafe { libc::fcntl(fd.native(), libc::F_DUPFD_CLOEXEC, 0) }, Tag::fcntl);
-        Ok(Fd::from_native(rc))
+        // sys.zig:959 `errnoSysFd(.., .fcntl, fd)` — attach the fd on error.
+        loop {
+            let rc = unsafe { libc::fcntl(fd.native(), libc::F_DUPFD_CLOEXEC, 0) };
+            if rc < 0 {
+                let e = last_errno();
+                if e == libc::EINTR { continue; }
+                return Err(Error::from_code_int(e, Tag::fcntl).with_fd(fd));
+            }
+            return Ok(Fd::from_native(rc));
+        }
     }
     pub fn fchmod(fd: Fd, mode: Mode) -> Maybe<()> {
         check!(unsafe { libc::fchmod(fd.native(), mode) }, Tag::fchmod); Ok(())
@@ -1534,8 +1542,16 @@ mod posix_impl {
     // ── B-2 round 9: fcntl/dup/pipe/io group ──
     pub type FcntlInt = isize;
     pub fn fcntl(fd: Fd, cmd: i32, arg: isize) -> Maybe<FcntlInt> {
-        let rc = check!(unsafe { libc::fcntl(fd.native(), cmd, arg) }, Tag::fcntl);
-        Ok(rc as isize)
+        // sys.zig:959-971 — `errnoSysFd(result, .fcntl, fd)`: attach the fd to the error.
+        loop {
+            let rc = unsafe { libc::fcntl(fd.native(), cmd, arg) };
+            if rc < 0 {
+                let e = last_errno();
+                if e == libc::EINTR { continue; }
+                return Err(Error::from_code_int(e, Tag::fcntl).with_fd(fd));
+            }
+            return Ok(rc as isize);
+        }
     }
     pub fn dup2(old: Fd, new: Fd) -> Maybe<Fd> {
         let rc = check!(unsafe { libc::dup2(old.native(), new.native()) }, Tag::dup2);
@@ -1591,12 +1607,13 @@ mod posix_impl {
         Ok(n as usize)
     }
     pub fn send(fd: Fd, buf: &[u8], flags: i32) -> Maybe<usize> {
-        let len = buf.len().min(MAX_COUNT);
-        // sys.zig:2294-2306 — isMac arm: single `sendto$NOCANCEL`, no EINTR retry.
+        // sys.zig:2294-2322 — passes `buf.len` un-clamped (only `recv` clamps via
+        // `adjusted_len`); forward the full length and let the kernel decide.
+        // isMac arm: single `sendto$NOCANCEL`, no EINTR retry.
         #[cfg(target_os = "macos")]
-        let n = check_once!(unsafe { sys_send(fd.native(), buf.as_ptr().cast(), len, flags) }, Tag::send);
+        let n = check_once!(unsafe { sys_send(fd.native(), buf.as_ptr().cast(), buf.len(), flags) }, Tag::send);
         #[cfg(not(target_os = "macos"))]
-        let n = check!(unsafe { sys_send(fd.native(), buf.as_ptr().cast(), len, flags) }, Tag::send);
+        let n = check!(unsafe { sys_send(fd.native(), buf.as_ptr().cast(), buf.len(), flags) }, Tag::send);
         Ok(n as usize)
     }
     pub fn recv_non_block(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
@@ -1788,7 +1805,32 @@ mod windows_impl {
     }
     pub fn fchmod(fd: Fd, mode: Mode) -> Maybe<()> { sys_uv::fchmod(fd, mode) }
     pub fn fchown(fd: Fd, uid: u32, gid: u32) -> Maybe<()> { sys_uv::fchown(fd, uid as _, gid as _) }
-    pub fn ftruncate(fd: Fd, len: i64) -> Maybe<()> { sys_uv::ftruncate(fd, len as isize) }
+    pub fn ftruncate(fd: Fd, len: i64) -> Maybe<()> {
+        // sys.zig:2403-2419 — windows arm calls `NtSetInformationFile(..,
+        // FileEndOfFileInformation)` directly on the HANDLE (NOT via libuv —
+        // sys_uv::ftruncate requires a CRT fd via `fd.uv()`, which fails for
+        // HANDLE-backed `Fd`s that have no uv mapping).
+        // SAFETY: all-zero is a valid IO_STATUS_BLOCK.
+        let mut io: w::IO_STATUS_BLOCK = unsafe { core::mem::zeroed() };
+        let mut eof = bun_windows_sys::FILE_END_OF_FILE_INFORMATION { EndOfFile: len };
+        // SAFETY: FFI; fd is a valid HANDLE, eof/io valid for the call.
+        let rc = unsafe {
+            w::ntdll::NtSetInformationFile(
+                fd.cast(),
+                &mut io,
+                (&mut eof) as *mut _ as *mut core::ffi::c_void,
+                core::mem::size_of::<bun_windows_sys::FILE_END_OF_FILE_INFORMATION>() as u32,
+                w::FILE_INFORMATION_CLASS::FileEndOfFileInformation,
+            )
+        };
+        if rc != bun_windows_sys::NTSTATUS::SUCCESS {
+            let errno = w::Win32Error::from_nt_status(rc)
+                .to_system_errno()
+                .unwrap_or(E::EUNKNOWN);
+            return Err(Error::new(errno, Tag::ftruncate).with_fd(fd));
+        }
+        Ok(())
+    }
     pub fn chmod(path: &ZStr, mode: Mode) -> Maybe<()> { sys_uv::chmod(path, mode) }
     pub fn chown(path: &ZStr, uid: u32, gid: u32) -> Maybe<()> { sys_uv::chown(path, uid as _, gid as _) }
     pub fn link(src: &ZStr, dest: &ZStr) -> Maybe<()> { sys_uv::link(src, dest) }
@@ -1873,11 +1915,18 @@ mod windows_impl {
         let _ = flags;
         renameat(from_dir, from, to_dir, to)
     }
-    pub fn unlinkat(dir: Fd, path: &ZStr, _flags: i32) -> Maybe<()> {
-        // sys.zig:2912 — windows arm calls DeleteFileBun against the dir handle.
+    pub fn unlinkat(dir: Fd, path: &ZStr, flags: i32) -> Maybe<()> {
+        // sys.zig:2884-2896 `unlinkatWithFlags` windows arm: convert to NT path
+        // and call `DeleteFileBun` with `.dir = if (dirfd != bun.invalid_fd)
+        // dirfd.cast() else null` and `.remove_dir = flags & AT.REMOVEDIR != 0`.
+        // `std.posix.AT.REMOVEDIR` on Windows = 0x200 (std/c.zig).
+        const AT_REMOVEDIR: i32 = 0x200;
         let mut wbuf = WPathBuffer::default();
         let wpath = bun_str::strings::to_nt_path(&mut wbuf, path.as_bytes());
-        super::windows::DeleteFileBun(wpath, super::windows::DeleteFileOptions { dir: Some(dir), remove_dir: false })
+        super::windows::DeleteFileBun(wpath, super::windows::DeleteFileOptions {
+            dir: if dir.is_valid() { Some(dir) } else { None },
+            remove_dir: (flags & AT_REMOVEDIR) != 0,
+        })
     }
     pub fn mkdir_recursive_at(dir: Fd, sub: &[u8]) -> Maybe<()> {
         // Port of `bun.makePath` — split on sep and create each component.
@@ -1951,12 +2000,13 @@ mod windows_impl {
         Ok(())
     }
     pub fn fstatat(fd: Fd, path: &ZStr) -> Maybe<Stat> {
-        // sys.zig:838 — windows arm: resolve handle path + lstat.
-        let mut db = bun_core::PathBuffer::default();
-        let d = super::get_fd_path(fd, &mut db)?;
-        let mut dj = bun_core::PathBuffer::default();
-        let abs = bun_paths::join_string_buf_z(&mut dj.0, &[d, path.as_bytes()], bun_paths::Platform::Windows);
-        lstat(abs)
+        // sys.zig:838-846 — windows arm: `openatWindowsA(fd, path, 0, 0)` (flags=0
+        // → FOLLOWS reparse points) then `fstat(file)`. Do NOT use `lstat` here —
+        // that's the `lstatat` (sys.zig:863) no-follow variant.
+        let file = openat(fd, path, 0, 0)?;
+        let r = fstat(file);
+        let _ = close(file);
+        r
     }
     pub fn access(path: &ZStr, _mode: i32) -> Maybe<()> {
         // sys.zig:1748 — windows arm: GetFileAttributesW.

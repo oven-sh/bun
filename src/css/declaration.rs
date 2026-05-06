@@ -47,15 +47,19 @@ pub struct DebugFmt<'a, 'bump>(&'a DeclarationBlock<'bump>);
 
 impl<'a, 'bump> core::fmt::Display for DebugFmt<'a, 'bump> {
     fn fmt(&self, writer: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        // PORT NOTE: debug formatter — uses a throwaway local arena for the
+        // printer's scratch buffers (Zig threaded the parser allocator).
+        let bump = Bump::new();
         let mut arraylist: Vec<u8> = Vec::new();
-        let mut symbols = bun_logger::symbol::Map::default();
+        let symbols = bun_logger::symbol::Map::init_list(Default::default());
         let mut printer = css::Printer::new(
-            Vec::<u8>::new(),
+            &bump,
+            bun_alloc::ArenaVec::<u8>::new_in(&bump),
             &mut arraylist,
             css::PrinterOptions::default(),
             None,
             None,
-            &mut symbols,
+            &symbols,
         );
         match self.0.to_css(&mut printer) {
             Ok(()) => {}
@@ -63,7 +67,7 @@ impl<'a, 'bump> core::fmt::Display for DebugFmt<'a, 'bump> {
                 return write!(
                     writer,
                     "<error writing declaration block: {}>\n",
-                    <&'static str>::from(e)
+                    e.name()
                 );
             }
         }
@@ -265,6 +269,7 @@ impl DeclarationBlock<'static> {
 
 impl<'bump> DeclarationBlock<'bump> {
     pub fn hash_property_ids(&self, hasher: &mut bun_wyhash::Wyhash) {
+        use std::hash::Hash;
         for decl in self.declarations.iter() {
             decl.property_id().hash(hasher);
         }
@@ -289,14 +294,18 @@ impl<'bump> DeclarationBlock<'bump> {
     }
 
     pub fn deep_clone(&self, bump: &'bump Bump) -> Self {
-        use crate::generics::DeepClone;
         // PORT NOTE: `css.implementDeepClone` is comptime field reflection;
-        // for a struct it deep-clones each field. `DeclarationList<'bump>` is
-        // `ArrayList<'bump, Property>`, which already has the blanket
-        // `DeepClone` impl in `generics.rs` once `Property: DeepClone`.
+        // for a struct it deep-clones each field. `Property::deep_clone` is
+        // the inherent per-variant impl in properties_generated.rs.
         Self {
-            important_declarations: self.important_declarations.deep_clone(bump),
-            declarations: self.declarations.deep_clone(bump),
+            important_declarations: bun_alloc::ArenaVec::from_iter_in(
+                self.important_declarations.iter().map(|p| p.deep_clone(bump)),
+                bump,
+            ),
+            declarations: bun_alloc::ArenaVec::from_iter_in(
+                self.declarations.iter().map(|p| p.deep_clone(bump)),
+                bump,
+            ),
         }
     }
 }

@@ -30,10 +30,9 @@ pub enum DeclarationContext {
 }
 
 pub struct PropertyHandlerContext<'a> {
-    // PORT NOTE: `allocator: Allocator` field dropped — Vec/Box use the global mimalloc
-    // allocator. The CSS crate is arena-eligible per PORTING.md, but this struct's lists
-    // are reset/reused across rules rather than bulk-freed with an arena.
-    // PERF(port): was arena-backed ArrayListUnmanaged — profile in Phase B.
+    // PORT NOTE: `allocator` is the parser arena (`&'static` per the crate-wide
+    // `'bump`-erasure convention until `CssRule<'bump, R>` re-threads).
+    pub allocator: &'static Bump,
     pub targets: css::targets::Targets,
     pub is_important: bool,
     pub supports: Vec<SupportsEntry>,
@@ -41,15 +40,17 @@ pub struct PropertyHandlerContext<'a> {
     pub rtl: Vec<css::Property>,
     pub dark: Vec<css::Property>,
     pub context: DeclarationContext,
-    pub unused_symbols: &'a HashSet<String>,
+    pub unused_symbols: &'a ArrayHashMap<Box<[u8]>, ()>,
 }
 
 impl<'a> PropertyHandlerContext<'a> {
     pub fn new(
+        allocator: &'static Bump,
         targets: css::targets::Targets,
-        unused_symbols: &'a HashSet<String>,
+        unused_symbols: &'a ArrayHashMap<Box<[u8]>, ()>,
     ) -> PropertyHandlerContext<'a> {
         PropertyHandlerContext {
+            allocator,
             targets,
             is_important: false,
             supports: Vec::new(),
@@ -63,6 +64,7 @@ impl<'a> PropertyHandlerContext<'a> {
 
     pub fn child(&self, context: DeclarationContext) -> PropertyHandlerContext<'a> {
         PropertyHandlerContext {
+            allocator: self.allocator,
             targets: self.targets,
             is_important: false,
             supports: Vec::new(),
@@ -102,6 +104,17 @@ impl<'a> PropertyHandlerContext<'a> {
 // minify path; un-gate alongside `rules/style.rs`.
 
 impl<'a> PropertyHandlerContext<'a> {
+    /// Clone a std-Vec property list into a bump-allocated `DeclarationList`.
+    /// (`'static` per crate-wide `'bump`-erasure; see rules/mod.rs decl_block_static.)
+    #[inline]
+    fn clone_decls(&self, list: &Vec<css::Property>) -> css::DeclarationList<'static> {
+        let bump: &'static Bump = self.allocator;
+        bun_alloc::ArenaVec::from_iter_in(
+            list.iter().map(|p| p.deep_clone(bump)),
+            bump,
+        )
+    }
+
     pub fn get_supports_rules<T>(&self, style_rule: &css::StyleRule<T>) -> Vec<css::CssRule<T>> {
         if self.supports.is_empty() {
             return Vec::new();
@@ -112,7 +125,7 @@ impl<'a> PropertyHandlerContext<'a> {
         for entry in &self.supports {
             // PERF(port): was appendAssumeCapacity
             dest.push(css::CssRule::Supports(css::SupportsRule {
-                condition: entry.condition.deep_clone(),
+                condition: entry.condition.deep_clone(self.allocator),
                 rules: css::CssRuleList {
                     v: {
                         let mut v: Vec<css::CssRule<T>> = Vec::with_capacity(1);
@@ -122,10 +135,8 @@ impl<'a> PropertyHandlerContext<'a> {
                             selectors: style_rule.selectors.deep_clone(),
                             vendor_prefix: css::VendorPrefix::NONE,
                             declarations: css::DeclarationBlock {
-                                declarations: css::deep_clone(&entry.declarations),
-                                important_declarations: css::deep_clone(
-                                    &entry.important_declarations,
-                                ),
+                                declarations: self.clone_decls(&entry.declarations),
+                                important_declarations: self.clone_decls(&entry.important_declarations),
                             },
                             rules: css::CssRuleList::default(),
                             loc: style_rule.loc,
@@ -195,8 +206,8 @@ impl<'a> PropertyHandlerContext<'a> {
                         selectors: style_rule.selectors.deep_clone(),
                         vendor_prefix: css::VendorPrefix::NONE,
                         declarations: css::DeclarationBlock {
-                            declarations: css::deep_clone(&self.dark),
-                            important_declarations: Vec::new(),
+                            declarations: self.clone_decls(&self.dark),
+                            important_declarations: css::DeclarationList::new_in(self.allocator),
                         },
                         rules: css::CssRuleList::default(),
                         loc: style_rule.loc,
@@ -232,8 +243,8 @@ impl<'a> PropertyHandlerContext<'a> {
             selectors,
             vendor_prefix: css::VendorPrefix::NONE,
             declarations: css::DeclarationBlock {
-                declarations: css::deep_clone(decls),
-                important_declarations: Vec::new(),
+                declarations: self.clone_decls(decls),
+                important_declarations: css::DeclarationList::new_in(self.allocator),
             },
             rules: css::CssRuleList::default(),
             loc: sty.loc,

@@ -758,6 +758,474 @@ impl BorderHandler {
  // blocked_on: Property variant payloads + BorderShorthand methods + flush_category!/fc_prop! macro web
 mod border_handler_body {
 use super::*;
+// ──────────────────────────────────────────────────────────────────────────
+// FlushContext + flush_category! (Zig: nested struct with inline fns and
+// extensive comptime string-dispatch)
+// ──────────────────────────────────────────────────────────────────────────
+// TODO(port): macro ordering — hoist FlushContext + fc_* + flush_category! above
+// `impl BorderHandler` in Phase B; macro_rules! is order-sensitive and the
+// flush_category!() callsites in `flush()` currently precede these definitions.
+
+struct FlushContext<'a, 'bump, 'ctx> {
+    // PORT NOTE: Zig stored `self: *BorderHandler`; we only need flushed_properties
+    // here because the per-side BorderShorthand pointers are passed separately.
+    flushed_properties: &'a mut BorderProperty,
+    dest: &'a mut DeclarationList<'bump>,
+    ctx: &'a mut PropertyHandlerContext<'ctx>,
+    // PORT NOTE: `allocator` field dropped from PropertyHandlerContext; the
+    // arena is recovered once via `dest.bump()` and threaded here.
+    allocator: &'bump Bump,
+    logical_supported: bool,
+    logical_shorthand_supported: bool,
+}
+
+// `f.logicalProp(ltr, ltr_key, rtl, rtl_key, val)` — ltr_key/rtl_key were unused.
+macro_rules! fc_logical_prop {
+    ($f:expr, $ltr:ident, $rtl:ident, $val:expr) => {{
+        let f = &mut *$f;
+        f.ctx.add_logical_rule(
+            Property::$ltr($val.deep_clone(f.allocator)),
+            Property::$rtl($val.deep_clone(f.allocator)),
+        );
+    }};
+}
+
+// `f.push(p, val)`
+// PORT NOTE: Zig's `@field(BorderProperty, p)` keyed both Property and BorderProperty
+// off one kebab string. Here `$p` is the PascalCase Property/PropertyIdTag variant;
+// the bitflags const is derived via try_from_property_id so a single ident suffices.
+macro_rules! fc_push {
+    ($f:expr, $p:ident, $val:expr) => {{
+        let f = &mut *$f;
+        f.flushed_properties
+            .insert(BorderProperty::try_from_property_id(PropertyIdTag::$p).unwrap());
+        f.dest.push(Property::$p($val.deep_clone(f.allocator)));
+    }};
+}
+
+// `f.fallbacks(p, _val)`
+macro_rules! fc_fallbacks {
+    ($f:expr, $p:ident, $val:expr) => {{
+        let f = &mut *$f;
+        let mut val = $val;
+        if !f
+            .flushed_properties
+            .contains(BorderProperty::try_from_property_id(PropertyIdTag::$p).unwrap())
+        {
+            let fbs = val.get_fallbacks(f.allocator, f.ctx.targets);
+            for fallback in css::generic::slice(&fbs) {
+                f.dest.push(Property::$p(fallback.clone()));
+            }
+        }
+        fc_push!(f, $p, val);
+    }};
+}
+
+// `f.prop(prop_name, val)` — comptime string dispatch over prop_name.
+// In Rust we dispatch on the Property variant ident.
+macro_rules! fc_prop {
+    // border-inline-start*
+    ($f:expr, BorderInlineStart, $val:expr) => {{
+        if $f.logical_supported { fc_fallbacks!($f, BorderInlineStart, $val); }
+        else { fc_logical_prop!($f, BorderLeft, BorderRight, $val); }
+    }};
+    ($f:expr, BorderInlineStartWidth, $val:expr) => {{
+        if $f.logical_supported { fc_push!($f, BorderInlineStartWidth, $val); }
+        else { fc_logical_prop!($f, BorderLeftWidth, BorderRightWidth, $val); }
+    }};
+    ($f:expr, BorderInlineStartColor, $val:expr) => {{
+        if $f.logical_supported { fc_fallbacks!($f, BorderInlineStartColor, $val); }
+        else { fc_logical_prop!($f, BorderLeftColor, BorderRightColor, $val); }
+    }};
+    ($f:expr, BorderInlineStartStyle, $val:expr) => {{
+        if $f.logical_supported { fc_push!($f, BorderInlineStartStyle, $val); }
+        else { fc_logical_prop!($f, BorderLeftStyle, BorderRightStyle, $val); }
+    }};
+    // border-inline-end*
+    ($f:expr, BorderInlineEnd, $val:expr) => {{
+        if $f.logical_supported { fc_fallbacks!($f, BorderInlineEnd, $val); }
+        else { fc_logical_prop!($f, BorderRight, BorderLeft, $val); }
+    }};
+    ($f:expr, BorderInlineEndWidth, $val:expr) => {{
+        if $f.logical_supported { fc_push!($f, BorderInlineEndWidth, $val); }
+        else { fc_logical_prop!($f, BorderRightWidth, BorderLeftWidth, $val); }
+    }};
+    ($f:expr, BorderInlineEndColor, $val:expr) => {{
+        if $f.logical_supported { fc_fallbacks!($f, BorderInlineEndColor, $val); }
+        else { fc_logical_prop!($f, BorderRightColor, BorderLeftColor, $val); }
+    }};
+    ($f:expr, BorderInlineEndStyle, $val:expr) => {{
+        if $f.logical_supported { fc_push!($f, BorderInlineEndStyle, $val); }
+        else { fc_logical_prop!($f, BorderRightStyle, BorderLeftStyle, $val); }
+    }};
+    // border-block-start*
+    ($f:expr, BorderBlockStart, $val:expr) => {{
+        if $f.logical_supported { fc_fallbacks!($f, BorderBlockStart, $val); }
+        else { fc_fallbacks!($f, BorderTop, $val); }
+    }};
+    ($f:expr, BorderBlockStartWidth, $val:expr) => {{
+        if $f.logical_supported { fc_push!($f, BorderBlockStartWidth, $val); }
+        else { fc_push!($f, BorderTopWidth, $val); }
+    }};
+    ($f:expr, BorderBlockStartColor, $val:expr) => {{
+        if $f.logical_supported { fc_fallbacks!($f, BorderBlockStartColor, $val); }
+        else { fc_fallbacks!($f, BorderTopColor, $val); }
+    }};
+    ($f:expr, BorderBlockStartStyle, $val:expr) => {{
+        if $f.logical_supported { fc_push!($f, BorderBlockStartStyle, $val); }
+        else { fc_push!($f, BorderTopStyle, $val); }
+    }};
+    // border-block-end*
+    ($f:expr, BorderBlockEnd, $val:expr) => {{
+        if $f.logical_supported { fc_fallbacks!($f, BorderBlockEnd, $val); }
+        else { fc_fallbacks!($f, BorderBottom, $val); }
+    }};
+    ($f:expr, BorderBlockEndWidth, $val:expr) => {{
+        if $f.logical_supported { fc_push!($f, BorderBlockEndWidth, $val); }
+        else { fc_push!($f, BorderBottomWidth, $val); }
+    }};
+    ($f:expr, BorderBlockEndColor, $val:expr) => {{
+        if $f.logical_supported { fc_fallbacks!($f, BorderBlockEndColor, $val); }
+        else { fc_fallbacks!($f, BorderBottomColor, $val); }
+    }};
+    ($f:expr, BorderBlockEndStyle, $val:expr) => {{
+        if $f.logical_supported { fc_push!($f, BorderBlockEndStyle, $val); }
+        else { fc_push!($f, BorderBottomStyle, $val); }
+    }};
+    // Color/shorthand props that always use fallbacks
+    ($f:expr, BorderLeftColor, $val:expr) => { fc_fallbacks!($f, BorderLeftColor, $val) };
+    ($f:expr, BorderRightColor, $val:expr) => { fc_fallbacks!($f, BorderRightColor, $val) };
+    ($f:expr, BorderTopColor, $val:expr) => { fc_fallbacks!($f, BorderTopColor, $val) };
+    ($f:expr, BorderBottomColor, $val:expr) => { fc_fallbacks!($f, BorderBottomColor, $val) };
+    ($f:expr, BorderColor, $val:expr) => { fc_fallbacks!($f, BorderColor, $val) };
+    ($f:expr, BorderBlockColor, $val:expr) => { fc_fallbacks!($f, BorderBlockColor, $val) };
+    ($f:expr, BorderInlineColor, $val:expr) => { fc_fallbacks!($f, BorderInlineColor, $val) };
+    ($f:expr, BorderLeft, $val:expr) => { fc_fallbacks!($f, BorderLeft, $val) };
+    ($f:expr, BorderRight, $val:expr) => { fc_fallbacks!($f, BorderRight, $val) };
+    ($f:expr, BorderTop, $val:expr) => { fc_fallbacks!($f, BorderTop, $val) };
+    ($f:expr, BorderBottom, $val:expr) => { fc_fallbacks!($f, BorderBottom, $val) };
+    ($f:expr, BorderInline, $val:expr) => { fc_fallbacks!($f, BorderInline, $val) };
+    ($f:expr, BorderBlock, $val:expr) => { fc_fallbacks!($f, BorderBlock, $val) };
+    ($f:expr, Border, $val:expr) => { fc_fallbacks!($f, Border, $val) };
+    // Everything else: plain push
+    ($f:expr, $p:ident, $val:expr) => { fc_push!($f, $p, $val) };
+}
+
+// `flushCategory(...)` — was a fn with comptime string params + nested `State`
+// struct of inline fns. In Rust we expand it as a macro so the `comptime` prop
+// names remain compile-time idents and the nested closures become local macros.
+macro_rules! flush_category {
+    (
+        $f:expr,
+        $block_start_prop:ident, $block_start_width:ident, $block_start_style:ident, $block_start_color:ident, $block_start:expr,
+        $block_end_prop:ident, $block_end_width:ident, $block_end_style:ident, $block_end_color:ident, $block_end:expr,
+        $inline_start_prop:ident, $inline_start_width:ident, $inline_start_style:ident, $inline_start_color:ident, $inline_start:expr,
+        $inline_end_prop:ident, $inline_end_width:ident, $inline_end_style:ident, $inline_end_color:ident, $inline_end:expr,
+        is_logical = $is_logical:literal
+    ) => {{
+        let f: &mut FlushContext = $f;
+        let block_start: &mut BorderShorthand = $block_start;
+        let block_end: &mut BorderShorthand = $block_end;
+        let inline_start: &mut BorderShorthand = $inline_start;
+        let inline_end: &mut BorderShorthand = $inline_end;
+
+        // State.shorthand
+        macro_rules! shorthand {
+            ($P:ident, $prop_name:ident, $key:ident) => {{
+                let has_prop = block_start.$key.is_some()
+                    && block_end.$key.is_some()
+                    && inline_start.$key.is_some()
+                    && inline_end.$key.is_some();
+                if has_prop {
+                    if !$is_logical
+                        || (css::generic::eql(&block_start.$key, &block_end.$key)
+                            && css::generic::eql(&block_end.$key, &inline_start.$key)
+                            && css::generic::eql(&inline_start.$key, &inline_end.$key))
+                    {
+                        let rect = $P {
+                            top: block_start.$key.take().unwrap(),
+                            right: inline_end.$key.take().unwrap(),
+                            bottom: block_end.$key.take().unwrap(),
+                            left: inline_start.$key.take().unwrap(),
+                        };
+                        fc_prop!(f, $prop_name, rect);
+                    }
+                }
+            }};
+        }
+
+        // State.logicalShorthand
+        macro_rules! logical_shorthand {
+            ($P:ident, $prop_name:ident, $key:ident, $start:expr, $end:expr) => {{
+                let has_prop = $start.$key.is_some() && $end.$key.is_some();
+                if has_prop {
+                    fc_prop!(
+                        f,
+                        $prop_name,
+                        $P {
+                            start: $start.$key.take().unwrap(),
+                            end: $end.$key.take().unwrap(),
+                        }
+                    );
+                    $end.$key = None;
+                }
+            }};
+        }
+
+        // State.is_eq
+        macro_rules! is_eq {
+            ($key:ident) => {
+                css::generic::eql(&block_start.$key, &block_end.$key)
+                    && css::generic::eql(&inline_start.$key, &inline_end.$key)
+                    && css::generic::eql(&inline_start.$key, &block_start.$key)
+            };
+        }
+
+        // State.side_diff
+        macro_rules! side_diff {
+            ($border:expr, $other:expr, $prop_name:ident, $width:ident, $style:ident, $color:ident) => {{
+                let eq_width = css::generic::eql(&$border.width, &$other.width);
+                let eq_style = css::generic::eql(&$border.style, &$other.style);
+                let eq_color = css::generic::eql(&$border.color, &$other.color);
+
+                // If only one of the sub-properties is different, only emit that.
+                // Otherwise, emit the full border value.
+                if eq_width && eq_style {
+                    fc_prop!(f, $color, css::generic::deep_clone(&$other.color, f.allocator).unwrap());
+                } else if eq_width && eq_color {
+                    fc_prop!(f, $style, css::generic::deep_clone(&$other.style, f.allocator).unwrap());
+                } else if eq_style && eq_color {
+                    fc_prop!(f, $width, css::generic::deep_clone(&$other.width, f.allocator).unwrap());
+                } else {
+                    fc_prop!(f, $prop_name, $other.to_border(f.allocator));
+                }
+            }};
+        }
+
+        // State.prop_diff
+        macro_rules! prop_diff {
+            ($border:expr, $fallback:block, $border_fallback:literal) => {{
+                if !$is_logical && is_eq!(color) && is_eq!(style) {
+                    fc_prop!(f, Border, $border.to_border(f.allocator));
+                    shorthand!(BorderWidth, BorderWidth, width);
+                } else if !$is_logical && is_eq!(width) && is_eq!(style) {
+                    fc_prop!(f, Border, $border.to_border(f.allocator));
+                    shorthand!(BorderColor, BorderColor, color);
+                } else if !$is_logical && is_eq!(width) && is_eq!(color) {
+                    fc_prop!(f, Border, $border.to_border(f.allocator));
+                    shorthand!(BorderStyle, BorderStyle, style);
+                } else {
+                    if $border_fallback {
+                        fc_prop!(f, Border, $border.to_border(f.allocator));
+                    }
+                    $fallback
+                }
+            }};
+        }
+
+        // State.side
+        macro_rules! side {
+            ($val:expr, $short:ident, $width:ident, $style:ident, $color:ident) => {{
+                if $val.is_valid() {
+                    fc_prop!(f, $short, $val.to_border(f.allocator));
+                } else {
+                    if let Some(sty) = &$val.style {
+                        fc_prop!(f, $style, sty.deep_clone(f.allocator));
+                    }
+
+                    if let Some(w) = &$val.width {
+                        fc_prop!(f, $width, w.deep_clone(f.allocator));
+                    }
+
+                    if let Some(c) = &$val.color {
+                        fc_prop!(f, $color, c.deep_clone(f.allocator));
+                    }
+                }
+            }};
+        }
+
+        // State.inlineProp
+        // If both values of an inline logical property are equal, then we can just convert them to physical properties.
+        macro_rules! inline_prop {
+            ($key:ident, $left:ident, $right:ident) => {{
+                if inline_start.$key.is_some()
+                    && css::generic::eql(&inline_start.$key, &inline_end.$key)
+                {
+                    fc_prop!(f, $left, inline_start.$key.take().unwrap());
+                    fc_prop!(f, $right, inline_end.$key.take().unwrap());
+                }
+            }};
+        }
+
+        if block_start.is_valid()
+            && block_end.is_valid()
+            && inline_start.is_valid()
+            && inline_end.is_valid()
+        {
+            let top_eq_bottom = block_start.eql(block_end);
+            let left_eq_right = inline_start.eql(inline_end);
+            let top_eq_left = block_start.eql(inline_start);
+            let top_eq_right = block_start.eql(inline_end);
+            let bottom_eq_left = block_end.eql(inline_start);
+            let bottom_eq_right = block_end.eql(inline_end);
+
+            if top_eq_bottom && top_eq_left && top_eq_right {
+                fc_prop!(f, Border, block_start.to_border(f.allocator));
+            } else if top_eq_bottom && top_eq_left {
+                fc_prop!(f, Border, block_start.to_border(f.allocator));
+                side_diff!(block_start, inline_end, $inline_end_prop, $inline_end_width, $inline_end_style, $inline_end_color);
+            } else if top_eq_bottom && top_eq_right {
+                fc_prop!(f, Border, block_start.to_border(f.allocator));
+                side_diff!(block_start, inline_start, $inline_start_prop, $inline_start_width, $inline_start_style, $inline_start_color);
+            } else if left_eq_right && bottom_eq_left {
+                fc_prop!(f, Border, inline_start.to_border(f.allocator));
+                side_diff!(inline_start, block_start, $block_start_prop, $block_start_width, $block_start_style, $block_start_color);
+            } else if left_eq_right && top_eq_left {
+                fc_prop!(f, Border, inline_start.to_border(f.allocator));
+                side_diff!(inline_start, block_end, $block_end_prop, $block_end_width, $block_end_style, $block_end_color);
+            } else if top_eq_bottom {
+                prop_diff!(block_start, {
+                    // Try to use border-inline shorthands for the opposite direction if possible
+                    let mut handled = false;
+                    if $is_logical {
+                        let mut diff: u32 = 0;
+                        if !css::generic::eql(&inline_start.width, &block_start.width)
+                            || !css::generic::eql(&inline_end.width, &block_start.width)
+                        {
+                            diff += 1;
+                        }
+                        if !css::generic::eql(&inline_start.style, &block_start.style)
+                            || !css::generic::eql(&inline_end.style, &block_start.style)
+                        {
+                            diff += 1;
+                        }
+                        if !css::generic::eql(&inline_start.color, &block_start.color)
+                            || !css::generic::eql(&inline_end.color, &block_start.color)
+                        {
+                            diff += 1;
+                        }
+
+                        if diff == 1 {
+                            if !css::generic::eql(&inline_start.width, &block_start.width) {
+                                fc_prop!(f, BorderInlineWidth, BorderInlineWidth {
+                                    start: inline_start.width.as_ref().unwrap().deep_clone(f.allocator),
+                                    end: inline_end.width.as_ref().unwrap().deep_clone(f.allocator),
+                                });
+                                handled = true;
+                            } else if !css::generic::eql(&inline_start.style, &block_start.style) {
+                                fc_prop!(f, BorderInlineStyle, BorderInlineStyle {
+                                    start: inline_start.style.as_ref().unwrap().deep_clone(f.allocator),
+                                    end: inline_end.style.as_ref().unwrap().deep_clone(f.allocator),
+                                });
+                                handled = true;
+                            } else if !css::generic::eql(&inline_start.color, &block_start.color) {
+                                fc_prop!(f, BorderInlineColor, BorderInlineColor {
+                                    start: inline_start.color.as_ref().unwrap().deep_clone(f.allocator),
+                                    end: inline_end.color.as_ref().unwrap().deep_clone(f.allocator),
+                                });
+                                handled = true;
+                            }
+                        } else if diff > 1
+                            && css::generic::eql(&inline_start.width, &inline_end.width)
+                            && css::generic::eql(&inline_start.style, &inline_end.style)
+                            && css::generic::eql(&inline_start.color, &inline_end.color)
+                        {
+                            fc_prop!(f, BorderInline, inline_start.to_border(f.allocator));
+                            handled = true;
+                        }
+                    }
+
+                    if !handled {
+                        side_diff!(block_start, inline_start, $inline_start_prop, $inline_start_width, $inline_start_style, $inline_start_color);
+                        side_diff!(block_start, inline_end, $inline_end_prop, $inline_end_width, $inline_end_style, $inline_end_color);
+                    }
+                }, true);
+            } else if left_eq_right {
+                prop_diff!(inline_start, {
+                    // We know already that top != bottom, so no need to try to use border-block.
+                    side_diff!(inline_start, block_start, $block_start_prop, $block_start_width, $block_start_style, $block_start_color);
+                    side_diff!(inline_start, block_end, $block_end_prop, $block_end_width, $block_end_style, $block_end_color);
+                }, true);
+            } else if bottom_eq_right {
+                prop_diff!(block_end, {
+                    side_diff!(block_end, block_start, $block_start_prop, $block_start_width, $block_start_style, $block_start_color);
+                    side_diff!(block_end, inline_start, $inline_start_prop, $inline_start_width, $inline_start_style, $inline_start_color);
+                }, true);
+            } else {
+                prop_diff!(block_start, {
+                    fc_prop!(f, $block_start_prop, block_start.to_border(f.allocator));
+                    fc_prop!(f, $block_end_prop, block_end.to_border(f.allocator));
+                    fc_prop!(f, $inline_start_prop, inline_start.to_border(f.allocator));
+                    fc_prop!(f, $inline_end_prop, inline_end.to_border(f.allocator));
+                }, false);
+            }
+        } else {
+            shorthand!(BorderStyle, BorderStyle, style);
+            shorthand!(BorderWidth, BorderWidth, width);
+            shorthand!(BorderColor, BorderColor, color);
+
+            if $is_logical && block_start.eql(block_end) && block_start.is_valid() {
+                if f.logical_supported {
+                    if f.logical_shorthand_supported {
+                        fc_prop!(f, BorderBlock, block_start.to_border(f.allocator));
+                    } else {
+                        fc_prop!(f, BorderBlockStart, block_start.to_border(f.allocator));
+                        fc_prop!(f, BorderBlockEnd, block_start.to_border(f.allocator));
+                    }
+                } else {
+                    fc_prop!(f, BorderTop, block_start.to_border(f.allocator));
+                    fc_prop!(f, BorderBottom, block_start.to_border(f.allocator));
+                }
+            } else {
+                if $is_logical
+                    && f.logical_shorthand_supported
+                    && !block_start.is_valid()
+                    && !block_end.is_valid()
+                {
+                    logical_shorthand!(BorderBlockStyle, BorderBlockStyle, style, block_start, block_end);
+                    logical_shorthand!(BorderBlockWidth, BorderBlockWidth, width, block_start, block_end);
+                    logical_shorthand!(BorderBlockColor, BorderBlockColor, color, block_start, block_end);
+                }
+
+                side!(block_start, $block_start_prop, $block_start_width, $block_start_style, $block_start_color);
+                side!(block_end, $block_end_prop, $block_end_width, $block_end_style, $block_end_color);
+            }
+
+            if $is_logical && inline_start.eql(inline_end) && inline_start.is_valid() {
+                if f.logical_supported {
+                    if f.logical_shorthand_supported {
+                        fc_prop!(f, BorderInline, inline_start.to_border(f.allocator));
+                    } else {
+                        fc_prop!(f, BorderInlineStart, inline_start.to_border(f.allocator));
+                        fc_prop!(f, BorderInlineEnd, inline_start.to_border(f.allocator));
+                    }
+                } else {
+                    fc_prop!(f, BorderLeft, inline_start.to_border(f.allocator));
+                    fc_prop!(f, BorderRight, inline_start.to_border(f.allocator));
+                }
+            } else {
+                if $is_logical && !inline_start.is_valid() && !inline_end.is_valid() {
+                    if f.logical_shorthand_supported {
+                        logical_shorthand!(BorderInlineStyle, BorderInlineStyle, style, inline_start, inline_end);
+                        logical_shorthand!(BorderInlineWidth, BorderInlineWidth, width, inline_start, inline_end);
+                        logical_shorthand!(BorderInlineColor, BorderInlineColor, color, inline_start, inline_end);
+                    } else {
+                        // If both values of an inline logical property are equal, then we can just convert them to physical properties.
+                        inline_prop!(style, BorderLeftStyle, BorderRightStyle);
+                        inline_prop!(width, BorderLeftWidth, BorderRightWidth);
+                        inline_prop!(color, BorderLeftColor, BorderRightColor);
+                    }
+                }
+
+                side!(inline_start, $inline_start_prop, $inline_start_width, $inline_start_style, $inline_start_color);
+                side!(inline_end, $inline_end_prop, $inline_end_width, $inline_end_style, $inline_end_color);
+            }
+        }
+    }};
+}
+use flush_category;
+
+
 impl BorderHandler {
     pub fn handle_property(
         &mut self,
@@ -765,7 +1233,9 @@ impl BorderHandler {
         dest: &mut DeclarationList,
         context: &mut PropertyHandlerContext,
     ) -> bool {
-        let allocator = context.allocator;
+        // PORT NOTE: `allocator` field dropped from PropertyHandlerContext; the
+        // arena is recovered via `dest.bump()` (DeclarationList = bumpalo::Vec).
+        let allocator = dest.bump();
 
         // Helper macros — Zig used local comptime closures with @field string access.
 
@@ -789,7 +1259,7 @@ impl BorderHandler {
         macro_rules! property_helper {
             ($key:ident, $prop:ident, $val:expr, $category:expr) => {{
                 flush_helper!($key, $prop, $val, $category);
-                self.$key.$prop = Some($val.deep_clone(context.allocator));
+                self.$key.$prop = Some($val.deep_clone(allocator));
                 self.category = $category;
                 self.has_any = true;
             }};
@@ -801,7 +1271,7 @@ impl BorderHandler {
                     self.flush(dest, context);
                 }
 
-                self.$key.set_border(context.allocator, $val);
+                self.$key.set_border(allocator, $val);
                 self.category = $category;
                 self.has_any = true;
             }};
@@ -1075,473 +1545,6 @@ impl BorderHandler {
         }
     }
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// FlushContext + flush_category! (Zig: nested struct with inline fns and
-// extensive comptime string-dispatch)
-// ──────────────────────────────────────────────────────────────────────────
-// TODO(port): macro ordering — hoist FlushContext + fc_* + flush_category! above
-// `impl BorderHandler` in Phase B; macro_rules! is order-sensitive and the
-// flush_category!() callsites in `flush()` currently precede these definitions.
-
-struct FlushContext<'a> {
-    // PORT NOTE: Zig stored `self: *BorderHandler`; we only need flushed_properties
-    // here because the per-side BorderShorthand pointers are passed separately.
-    flushed_properties: &'a mut BorderProperty,
-    dest: &'a mut DeclarationList<'a>,
-    ctx: &'a mut PropertyHandlerContext<'a>,
-    logical_supported: bool,
-    logical_shorthand_supported: bool,
-}
-
-// `f.logicalProp(ltr, ltr_key, rtl, rtl_key, val)` — ltr_key/rtl_key were unused.
-macro_rules! fc_logical_prop {
-    ($f:expr, $ltr:ident, $rtl:ident, $val:expr) => {{
-        let f = &mut *$f;
-        f.ctx.add_logical_rule(
-            f.ctx.allocator,
-            Property::$ltr($val.deep_clone(f.ctx.allocator)),
-            Property::$rtl($val.deep_clone(f.ctx.allocator)),
-        );
-    }};
-}
-
-// `f.push(p, val)`
-// PORT NOTE: Zig's `@field(BorderProperty, p)` keyed both Property and BorderProperty
-// off one kebab string. Here `$p` is the PascalCase Property/PropertyIdTag variant;
-// the bitflags const is derived via try_from_property_id so a single ident suffices.
-macro_rules! fc_push {
-    ($f:expr, $p:ident, $val:expr) => {{
-        let f = &mut *$f;
-        f.flushed_properties
-            .insert(BorderProperty::try_from_property_id(PropertyIdTag::$p).unwrap());
-        f.dest
-            .append(f.ctx.allocator, Property::$p($val.deep_clone(f.ctx.allocator)));
-    }};
-}
-
-// `f.fallbacks(p, _val)`
-macro_rules! fc_fallbacks {
-    ($f:expr, $p:ident, $val:expr) => {{
-        let f = &mut *$f;
-        let mut val = $val;
-        if !f
-            .flushed_properties
-            .contains(BorderProperty::try_from_property_id(PropertyIdTag::$p).unwrap())
-        {
-            let fbs = val.get_fallbacks(f.ctx.allocator, f.ctx.targets);
-            for fallback in css::generic::slice(&fbs) {
-                f.dest
-                    .append(f.ctx.allocator, Property::$p(fallback.clone()));
-            }
-        }
-        fc_push!(f, $p, val);
-    }};
-}
-
-// `f.prop(prop_name, val)` — comptime string dispatch over prop_name.
-// In Rust we dispatch on the Property variant ident.
-macro_rules! fc_prop {
-    // border-inline-start*
-    ($f:expr, BorderInlineStart, $val:expr) => {{
-        if $f.logical_supported { fc_fallbacks!($f, BorderInlineStart, $val); }
-        else { fc_logical_prop!($f, BorderLeft, BorderRight, $val); }
-    }};
-    ($f:expr, BorderInlineStartWidth, $val:expr) => {{
-        if $f.logical_supported { fc_push!($f, BorderInlineStartWidth, $val); }
-        else { fc_logical_prop!($f, BorderLeftWidth, BorderRightWidth, $val); }
-    }};
-    ($f:expr, BorderInlineStartColor, $val:expr) => {{
-        if $f.logical_supported { fc_fallbacks!($f, BorderInlineStartColor, $val); }
-        else { fc_logical_prop!($f, BorderLeftColor, BorderRightColor, $val); }
-    }};
-    ($f:expr, BorderInlineStartStyle, $val:expr) => {{
-        if $f.logical_supported { fc_push!($f, BorderInlineStartStyle, $val); }
-        else { fc_logical_prop!($f, BorderLeftStyle, BorderRightStyle, $val); }
-    }};
-    // border-inline-end*
-    ($f:expr, BorderInlineEnd, $val:expr) => {{
-        if $f.logical_supported { fc_fallbacks!($f, BorderInlineEnd, $val); }
-        else { fc_logical_prop!($f, BorderRight, BorderLeft, $val); }
-    }};
-    ($f:expr, BorderInlineEndWidth, $val:expr) => {{
-        if $f.logical_supported { fc_push!($f, BorderInlineEndWidth, $val); }
-        else { fc_logical_prop!($f, BorderRightWidth, BorderLeftWidth, $val); }
-    }};
-    ($f:expr, BorderInlineEndColor, $val:expr) => {{
-        if $f.logical_supported { fc_fallbacks!($f, BorderInlineEndColor, $val); }
-        else { fc_logical_prop!($f, BorderRightColor, BorderLeftColor, $val); }
-    }};
-    ($f:expr, BorderInlineEndStyle, $val:expr) => {{
-        if $f.logical_supported { fc_push!($f, BorderInlineEndStyle, $val); }
-        else { fc_logical_prop!($f, BorderRightStyle, BorderLeftStyle, $val); }
-    }};
-    // border-block-start*
-    ($f:expr, BorderBlockStart, $val:expr) => {{
-        if $f.logical_supported { fc_fallbacks!($f, BorderBlockStart, $val); }
-        else { fc_fallbacks!($f, BorderTop, $val); }
-    }};
-    ($f:expr, BorderBlockStartWidth, $val:expr) => {{
-        if $f.logical_supported { fc_push!($f, BorderBlockStartWidth, $val); }
-        else { fc_push!($f, BorderTopWidth, $val); }
-    }};
-    ($f:expr, BorderBlockStartColor, $val:expr) => {{
-        if $f.logical_supported { fc_fallbacks!($f, BorderBlockStartColor, $val); }
-        else { fc_fallbacks!($f, BorderTopColor, $val); }
-    }};
-    ($f:expr, BorderBlockStartStyle, $val:expr) => {{
-        if $f.logical_supported { fc_push!($f, BorderBlockStartStyle, $val); }
-        else { fc_push!($f, BorderTopStyle, $val); }
-    }};
-    // border-block-end*
-    ($f:expr, BorderBlockEnd, $val:expr) => {{
-        if $f.logical_supported { fc_fallbacks!($f, BorderBlockEnd, $val); }
-        else { fc_fallbacks!($f, BorderBottom, $val); }
-    }};
-    ($f:expr, BorderBlockEndWidth, $val:expr) => {{
-        if $f.logical_supported { fc_push!($f, BorderBlockEndWidth, $val); }
-        else { fc_push!($f, BorderBottomWidth, $val); }
-    }};
-    ($f:expr, BorderBlockEndColor, $val:expr) => {{
-        if $f.logical_supported { fc_fallbacks!($f, BorderBlockEndColor, $val); }
-        else { fc_fallbacks!($f, BorderBottomColor, $val); }
-    }};
-    ($f:expr, BorderBlockEndStyle, $val:expr) => {{
-        if $f.logical_supported { fc_push!($f, BorderBlockEndStyle, $val); }
-        else { fc_push!($f, BorderBottomStyle, $val); }
-    }};
-    // Color/shorthand props that always use fallbacks
-    ($f:expr, BorderLeftColor, $val:expr) => { fc_fallbacks!($f, BorderLeftColor, $val) };
-    ($f:expr, BorderRightColor, $val:expr) => { fc_fallbacks!($f, BorderRightColor, $val) };
-    ($f:expr, BorderTopColor, $val:expr) => { fc_fallbacks!($f, BorderTopColor, $val) };
-    ($f:expr, BorderBottomColor, $val:expr) => { fc_fallbacks!($f, BorderBottomColor, $val) };
-    ($f:expr, BorderColor, $val:expr) => { fc_fallbacks!($f, BorderColor, $val) };
-    ($f:expr, BorderBlockColor, $val:expr) => { fc_fallbacks!($f, BorderBlockColor, $val) };
-    ($f:expr, BorderInlineColor, $val:expr) => { fc_fallbacks!($f, BorderInlineColor, $val) };
-    ($f:expr, BorderLeft, $val:expr) => { fc_fallbacks!($f, BorderLeft, $val) };
-    ($f:expr, BorderRight, $val:expr) => { fc_fallbacks!($f, BorderRight, $val) };
-    ($f:expr, BorderTop, $val:expr) => { fc_fallbacks!($f, BorderTop, $val) };
-    ($f:expr, BorderBottom, $val:expr) => { fc_fallbacks!($f, BorderBottom, $val) };
-    ($f:expr, BorderInline, $val:expr) => { fc_fallbacks!($f, BorderInline, $val) };
-    ($f:expr, BorderBlock, $val:expr) => { fc_fallbacks!($f, BorderBlock, $val) };
-    ($f:expr, Border, $val:expr) => { fc_fallbacks!($f, Border, $val) };
-    // Everything else: plain push
-    ($f:expr, $p:ident, $val:expr) => { fc_push!($f, $p, $val) };
-}
-
-// `flushCategory(...)` — was a fn with comptime string params + nested `State`
-// struct of inline fns. In Rust we expand it as a macro so the `comptime` prop
-// names remain compile-time idents and the nested closures become local macros.
-macro_rules! flush_category {
-    (
-        $f:expr,
-        $block_start_prop:ident, $block_start_width:ident, $block_start_style:ident, $block_start_color:ident, $block_start:expr,
-        $block_end_prop:ident, $block_end_width:ident, $block_end_style:ident, $block_end_color:ident, $block_end:expr,
-        $inline_start_prop:ident, $inline_start_width:ident, $inline_start_style:ident, $inline_start_color:ident, $inline_start:expr,
-        $inline_end_prop:ident, $inline_end_width:ident, $inline_end_style:ident, $inline_end_color:ident, $inline_end:expr,
-        is_logical = $is_logical:literal
-    ) => {{
-        let f: &mut FlushContext = $f;
-        let block_start: &mut BorderShorthand = $block_start;
-        let block_end: &mut BorderShorthand = $block_end;
-        let inline_start: &mut BorderShorthand = $inline_start;
-        let inline_end: &mut BorderShorthand = $inline_end;
-
-        // State.shorthand
-        macro_rules! shorthand {
-            ($P:ident, $prop_name:ident, $key:ident) => {{
-                let has_prop = block_start.$key.is_some()
-                    && block_end.$key.is_some()
-                    && inline_start.$key.is_some()
-                    && inline_end.$key.is_some();
-                if has_prop {
-                    if !$is_logical
-                        || (css::generic::eql(&block_start.$key, &block_end.$key)
-                            && css::generic::eql(&block_end.$key, &inline_start.$key)
-                            && css::generic::eql(&inline_start.$key, &inline_end.$key))
-                    {
-                        let rect = $P {
-                            top: block_start.$key.take().unwrap(),
-                            right: inline_end.$key.take().unwrap(),
-                            bottom: block_end.$key.take().unwrap(),
-                            left: inline_start.$key.take().unwrap(),
-                        };
-                        fc_prop!(f, $prop_name, rect);
-                    }
-                }
-            }};
-        }
-
-        // State.logicalShorthand
-        macro_rules! logical_shorthand {
-            ($P:ident, $prop_name:ident, $key:ident, $start:expr, $end:expr) => {{
-                let has_prop = $start.$key.is_some() && $end.$key.is_some();
-                if has_prop {
-                    fc_prop!(
-                        f,
-                        $prop_name,
-                        $P {
-                            start: $start.$key.take().unwrap(),
-                            end: $end.$key.take().unwrap(),
-                        }
-                    );
-                    $end.$key = None;
-                }
-            }};
-        }
-
-        // State.is_eq
-        macro_rules! is_eq {
-            ($key:ident) => {
-                css::generic::eql(&block_start.$key, &block_end.$key)
-                    && css::generic::eql(&inline_start.$key, &inline_end.$key)
-                    && css::generic::eql(&inline_start.$key, &block_start.$key)
-            };
-        }
-
-        // State.side_diff
-        macro_rules! side_diff {
-            ($border:expr, $other:expr, $prop_name:ident, $width:ident, $style:ident, $color:ident) => {{
-                let eq_width = css::generic::eql(&$border.width, &$other.width);
-                let eq_style = css::generic::eql(&$border.style, &$other.style);
-                let eq_color = css::generic::eql(&$border.color, &$other.color);
-
-                // If only one of the sub-properties is different, only emit that.
-                // Otherwise, emit the full border value.
-                if eq_width && eq_style {
-                    fc_prop!(f, $color, css::generic::deep_clone(&$other.color, f.ctx.allocator).unwrap());
-                } else if eq_width && eq_color {
-                    fc_prop!(f, $style, css::generic::deep_clone(&$other.style, f.ctx.allocator).unwrap());
-                } else if eq_style && eq_color {
-                    fc_prop!(f, $width, css::generic::deep_clone(&$other.width, f.ctx.allocator).unwrap());
-                } else {
-                    fc_prop!(f, $prop_name, $other.to_border(f.ctx.allocator));
-                }
-            }};
-        }
-
-        // State.prop_diff
-        macro_rules! prop_diff {
-            ($border:expr, $fallback:block, $border_fallback:literal) => {{
-                if !$is_logical && is_eq!(color) && is_eq!(style) {
-                    fc_prop!(f, Border, $border.to_border(f.ctx.allocator));
-                    shorthand!(BorderWidth, BorderWidth, width);
-                } else if !$is_logical && is_eq!(width) && is_eq!(style) {
-                    fc_prop!(f, Border, $border.to_border(f.ctx.allocator));
-                    shorthand!(BorderColor, BorderColor, color);
-                } else if !$is_logical && is_eq!(width) && is_eq!(color) {
-                    fc_prop!(f, Border, $border.to_border(f.ctx.allocator));
-                    shorthand!(BorderStyle, BorderStyle, style);
-                } else {
-                    if $border_fallback {
-                        fc_prop!(f, Border, $border.to_border(f.ctx.allocator));
-                    }
-                    $fallback
-                }
-            }};
-        }
-
-        // State.side
-        macro_rules! side {
-            ($val:expr, $short:ident, $width:ident, $style:ident, $color:ident) => {{
-                if $val.is_valid() {
-                    fc_prop!(f, $short, $val.to_border(f.ctx.allocator));
-                } else {
-                    if let Some(sty) = &$val.style {
-                        fc_prop!(f, $style, sty.deep_clone(f.ctx.allocator));
-                    }
-
-                    if let Some(w) = &$val.width {
-                        fc_prop!(f, $width, w.deep_clone(f.ctx.allocator));
-                    }
-
-                    if let Some(c) = &$val.color {
-                        fc_prop!(f, $color, c.deep_clone(f.ctx.allocator));
-                    }
-                }
-            }};
-        }
-
-        // State.inlineProp
-        // If both values of an inline logical property are equal, then we can just convert them to physical properties.
-        macro_rules! inline_prop {
-            ($key:ident, $left:ident, $right:ident) => {{
-                if inline_start.$key.is_some()
-                    && css::generic::eql(&inline_start.$key, &inline_end.$key)
-                {
-                    fc_prop!(f, $left, inline_start.$key.take().unwrap());
-                    fc_prop!(f, $right, inline_end.$key.take().unwrap());
-                }
-            }};
-        }
-
-        if block_start.is_valid()
-            && block_end.is_valid()
-            && inline_start.is_valid()
-            && inline_end.is_valid()
-        {
-            let top_eq_bottom = block_start.eql(block_end);
-            let left_eq_right = inline_start.eql(inline_end);
-            let top_eq_left = block_start.eql(inline_start);
-            let top_eq_right = block_start.eql(inline_end);
-            let bottom_eq_left = block_end.eql(inline_start);
-            let bottom_eq_right = block_end.eql(inline_end);
-
-            if top_eq_bottom && top_eq_left && top_eq_right {
-                fc_prop!(f, Border, block_start.to_border(f.ctx.allocator));
-            } else if top_eq_bottom && top_eq_left {
-                fc_prop!(f, Border, block_start.to_border(f.ctx.allocator));
-                side_diff!(block_start, inline_end, $inline_end_prop, $inline_end_width, $inline_end_style, $inline_end_color);
-            } else if top_eq_bottom && top_eq_right {
-                fc_prop!(f, Border, block_start.to_border(f.ctx.allocator));
-                side_diff!(block_start, inline_start, $inline_start_prop, $inline_start_width, $inline_start_style, $inline_start_color);
-            } else if left_eq_right && bottom_eq_left {
-                fc_prop!(f, Border, inline_start.to_border(f.ctx.allocator));
-                side_diff!(inline_start, block_start, $block_start_prop, $block_start_width, $block_start_style, $block_start_color);
-            } else if left_eq_right && top_eq_left {
-                fc_prop!(f, Border, inline_start.to_border(f.ctx.allocator));
-                side_diff!(inline_start, block_end, $block_end_prop, $block_end_width, $block_end_style, $block_end_color);
-            } else if top_eq_bottom {
-                prop_diff!(block_start, {
-                    // Try to use border-inline shorthands for the opposite direction if possible
-                    let mut handled = false;
-                    if $is_logical {
-                        let mut diff: u32 = 0;
-                        if !css::generic::eql(&inline_start.width, &block_start.width)
-                            || !css::generic::eql(&inline_end.width, &block_start.width)
-                        {
-                            diff += 1;
-                        }
-                        if !css::generic::eql(&inline_start.style, &block_start.style)
-                            || !css::generic::eql(&inline_end.style, &block_start.style)
-                        {
-                            diff += 1;
-                        }
-                        if !css::generic::eql(&inline_start.color, &block_start.color)
-                            || !css::generic::eql(&inline_end.color, &block_start.color)
-                        {
-                            diff += 1;
-                        }
-
-                        if diff == 1 {
-                            if !css::generic::eql(&inline_start.width, &block_start.width) {
-                                fc_prop!(f, BorderInlineWidth, BorderInlineWidth {
-                                    start: inline_start.width.as_ref().unwrap().deep_clone(f.ctx.allocator),
-                                    end: inline_end.width.as_ref().unwrap().deep_clone(f.ctx.allocator),
-                                });
-                                handled = true;
-                            } else if !css::generic::eql(&inline_start.style, &block_start.style) {
-                                fc_prop!(f, BorderInlineStyle, BorderInlineStyle {
-                                    start: inline_start.style.as_ref().unwrap().deep_clone(f.ctx.allocator),
-                                    end: inline_end.style.as_ref().unwrap().deep_clone(f.ctx.allocator),
-                                });
-                                handled = true;
-                            } else if !css::generic::eql(&inline_start.color, &block_start.color) {
-                                fc_prop!(f, BorderInlineColor, BorderInlineColor {
-                                    start: inline_start.color.as_ref().unwrap().deep_clone(f.ctx.allocator),
-                                    end: inline_end.color.as_ref().unwrap().deep_clone(f.ctx.allocator),
-                                });
-                                handled = true;
-                            }
-                        } else if diff > 1
-                            && css::generic::eql(&inline_start.width, &inline_end.width)
-                            && css::generic::eql(&inline_start.style, &inline_end.style)
-                            && css::generic::eql(&inline_start.color, &inline_end.color)
-                        {
-                            fc_prop!(f, BorderInline, inline_start.to_border(f.ctx.allocator));
-                            handled = true;
-                        }
-                    }
-
-                    if !handled {
-                        side_diff!(block_start, inline_start, $inline_start_prop, $inline_start_width, $inline_start_style, $inline_start_color);
-                        side_diff!(block_start, inline_end, $inline_end_prop, $inline_end_width, $inline_end_style, $inline_end_color);
-                    }
-                }, true);
-            } else if left_eq_right {
-                prop_diff!(inline_start, {
-                    // We know already that top != bottom, so no need to try to use border-block.
-                    side_diff!(inline_start, block_start, $block_start_prop, $block_start_width, $block_start_style, $block_start_color);
-                    side_diff!(inline_start, block_end, $block_end_prop, $block_end_width, $block_end_style, $block_end_color);
-                }, true);
-            } else if bottom_eq_right {
-                prop_diff!(block_end, {
-                    side_diff!(block_end, block_start, $block_start_prop, $block_start_width, $block_start_style, $block_start_color);
-                    side_diff!(block_end, inline_start, $inline_start_prop, $inline_start_width, $inline_start_style, $inline_start_color);
-                }, true);
-            } else {
-                prop_diff!(block_start, {
-                    fc_prop!(f, $block_start_prop, block_start.to_border(f.ctx.allocator));
-                    fc_prop!(f, $block_end_prop, block_end.to_border(f.ctx.allocator));
-                    fc_prop!(f, $inline_start_prop, inline_start.to_border(f.ctx.allocator));
-                    fc_prop!(f, $inline_end_prop, inline_end.to_border(f.ctx.allocator));
-                }, false);
-            }
-        } else {
-            shorthand!(BorderStyle, BorderStyle, style);
-            shorthand!(BorderWidth, BorderWidth, width);
-            shorthand!(BorderColor, BorderColor, color);
-
-            if $is_logical && block_start.eql(block_end) && block_start.is_valid() {
-                if f.logical_supported {
-                    if f.logical_shorthand_supported {
-                        fc_prop!(f, BorderBlock, block_start.to_border(f.ctx.allocator));
-                    } else {
-                        fc_prop!(f, BorderBlockStart, block_start.to_border(f.ctx.allocator));
-                        fc_prop!(f, BorderBlockEnd, block_start.to_border(f.ctx.allocator));
-                    }
-                } else {
-                    fc_prop!(f, BorderTop, block_start.to_border(f.ctx.allocator));
-                    fc_prop!(f, BorderBottom, block_start.to_border(f.ctx.allocator));
-                }
-            } else {
-                if $is_logical
-                    && f.logical_shorthand_supported
-                    && !block_start.is_valid()
-                    && !block_end.is_valid()
-                {
-                    logical_shorthand!(BorderBlockStyle, BorderBlockStyle, style, block_start, block_end);
-                    logical_shorthand!(BorderBlockWidth, BorderBlockWidth, width, block_start, block_end);
-                    logical_shorthand!(BorderBlockColor, BorderBlockColor, color, block_start, block_end);
-                }
-
-                side!(block_start, $block_start_prop, $block_start_width, $block_start_style, $block_start_color);
-                side!(block_end, $block_end_prop, $block_end_width, $block_end_style, $block_end_color);
-            }
-
-            if $is_logical && inline_start.eql(inline_end) && inline_start.is_valid() {
-                if f.logical_supported {
-                    if f.logical_shorthand_supported {
-                        fc_prop!(f, BorderInline, inline_start.to_border(f.ctx.allocator));
-                    } else {
-                        fc_prop!(f, BorderInlineStart, inline_start.to_border(f.ctx.allocator));
-                        fc_prop!(f, BorderInlineEnd, inline_start.to_border(f.ctx.allocator));
-                    }
-                } else {
-                    fc_prop!(f, BorderLeft, inline_start.to_border(f.ctx.allocator));
-                    fc_prop!(f, BorderRight, inline_start.to_border(f.ctx.allocator));
-                }
-            } else {
-                if $is_logical && !inline_start.is_valid() && !inline_end.is_valid() {
-                    if f.logical_shorthand_supported {
-                        logical_shorthand!(BorderInlineStyle, BorderInlineStyle, style, inline_start, inline_end);
-                        logical_shorthand!(BorderInlineWidth, BorderInlineWidth, width, inline_start, inline_end);
-                        logical_shorthand!(BorderInlineColor, BorderInlineColor, color, inline_start, inline_end);
-                    } else {
-                        // If both values of an inline logical property are equal, then we can just convert them to physical properties.
-                        inline_prop!(style, BorderLeftStyle, BorderRightStyle);
-                        inline_prop!(width, BorderLeftWidth, BorderRightWidth);
-                        inline_prop!(color, BorderLeftColor, BorderRightColor);
-                    }
-                }
-
-                side!(inline_start, $inline_start_prop, $inline_start_width, $inline_start_style, $inline_start_color);
-                side!(inline_end, $inline_end_prop, $inline_end_width, $inline_end_style, $inline_end_color);
-            }
-        }
-    }};
-}
-use flush_category;
 
 // ──────────────────────────────────────────────────────────────────────────
 // is_border_property

@@ -3551,13 +3551,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             // TODO: not sure how to handle macro remappings for namespace imports
         } else {
             let path_name = fs::PathName::init(path.text);
-            // PORT NOTE: Zig `nonUniqueNameString` allocates the sanitized identifier; the Rust
-            // `PathName` exposes the same sanitizer as `non_unique_name_string_base()` (no alloc),
-            // then we format-prefix into the bump arena.
             let name: &'a [u8] = bumpalo::format!(
                 in self.allocator,
                 "import_{}",
-                bstr::BStr::new(path_name.non_unique_name_string_base())
+                bun_core::fmt::fmt_identifier(path_name.non_unique_name_string_base())
             )
             .into_bump_str()
             .as_bytes();

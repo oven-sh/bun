@@ -198,7 +198,7 @@ impl ErrorLocation {
             namespace: source.path.namespace,
             line: i32::try_from(self.line + 1).unwrap(),
             column: i32::try_from(self.column).unwrap(),
-            line_text: bun_string::strings::get_lines_in_text::<1>(source.contents, self.line)
+            line_text: bun_string::strings::get_lines_in_text::<1>(&source.contents, self.line)
                 .map(|lines| lines.as_slice()[0]),
             ..Default::default()
         })

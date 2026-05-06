@@ -582,7 +582,12 @@ pub struct P<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> {
     pub ts_namespace: RecentlyVisitedTSNamespace,
     pub top_level_enums: List<'a, Ref>,
 
-    pub scopes_in_order_for_enum: ArrayHashMap<logger::Loc, &'a mut [ScopeOrder<'a>]>,
+    // Value is a raw `NonNull<[ScopeOrder<'a>]>` (Zig: `[]ScopeOrder` slice
+    // value) rather than `&'a mut [_]` so that `scope_order_to_visit` can hold
+    // the unique `&'a mut` to the same arena slice without two live `&mut`
+    // aliasing under Stacked Borrows (see Parser.rs `_parse`).
+    pub scopes_in_order_for_enum:
+        ArrayHashMap<logger::Loc, core::ptr::NonNull<[ScopeOrder<'a>]>>,
 
     // If this is true, then all top-level statements are wrapped in a try/catch
     pub will_wrap_module_in_try_catch_for_using: bool,

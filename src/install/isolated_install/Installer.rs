@@ -1526,7 +1526,8 @@ impl Task {
 
                     let mut bin_linker = Bin::Linker {
                         bin,
-                        global_bin_path: manager.options.bin_path,
+                        // SAFETY: read-only `PackageManager` access; see top-of-fn note.
+                        global_bin_path: unsafe { &*manager_ptr }.options.bin_path,
                         package_name: strings::StringOrTinyString::init(dep_name),
                         target_package_name,
                         string_buf,
@@ -1553,7 +1554,8 @@ impl Task {
                         bin_linker.target_node_modules_path = &mut node_modules_path;
                         bin_linker.target_package_name = strings::StringOrTinyString::init(dep_name);
 
-                        if manager.options.log_level.is_verbose() {
+                        // SAFETY: read-only `PackageManager` access; see top-of-fn note.
+                        if unsafe { &*manager_ptr }.options.log_level.is_verbose() {
                             Output::pretty_errorln(format_args!(
                                 "<d>[Bin Linker]<r> {} -> {} retrying without native bin link",
                                 bstr::BStr::new(dep_name),

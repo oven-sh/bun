@@ -2898,19 +2898,31 @@ impl Resolver {
     // ───────────── timer / pending bookkeeping ─────────────
 
     pub fn check_timeouts(&mut self, now: &bun::timespec, vm: &VirtualMachine) {
+        // Drop to a raw pointer immediately: `ares_process_fd` below synchronously
+        // fires c-ares completion callbacks which re-enter this Resolver via fresh
+        // `&mut` (e.g. `request_completed`, `drain_pending_*`). Holding `&mut self`
+        // across that call would create aliased `&mut Resolver` (UB).
         let this: *mut Self = self;
         let _g = scopeguard::guard((), move |_| {
             vm.timer.increment_timer_ref(-1);
-            // SAFETY: `this` derived from `&mut self`; Resolver is heap-allocated via `init`.
+            // SAFETY: `this` is the heap allocation from `init`. This releases the
+            // ref taken by `add_timer` (no local `ref_()` pairing). The timer is
+            // only ACTIVE while at least one pending request also holds an
+            // `IntrusiveRc<Resolver>`, so this `deref` cannot drop the last ref
+            // and `*this` stays live for the rest of the function body.
             unsafe { Self::deref(this) };
         });
 
-        self.event_loop_timer.state = EventLoopTimer::State::PENDING;
+        // SAFETY: `this` is live (see guard comment); short-lived `&mut` borrows
+        // below are released before the re-entrant `ares_process_fd` call.
+        unsafe {
+            (*this).event_loop_timer.state = EventLoopTimer::State::PENDING;
 
-        if let Ok(channel) = self.get_channel_or_error(vm.global) {
-            if self.any_requests_pending() {
-                unsafe { c_ares::ares_process_fd(channel, c_ares::ARES_SOCKET_BAD, c_ares::ARES_SOCKET_BAD) };
-                let _ = self.add_timer(Some(now));
+            if let Ok(channel) = (*this).get_channel_or_error(vm.global) {
+                if (*this).any_requests_pending() {
+                    c_ares::ares_process_fd(channel, c_ares::ARES_SOCKET_BAD, c_ares::ARES_SOCKET_BAD);
+                    let _ = (*this).add_timer(Some(now));
+                }
             }
         }
     }
@@ -2962,7 +2974,10 @@ impl Resolver {
         // Normally checkTimeouts does this, so we have to be sure to do it ourself if we cancel the timer
         let this: *mut Self = self;
         let _g = scopeguard::guard((), move |_| {
-            // SAFETY: `this` derived from `&mut self`; Resolver is heap-allocated via `init`.
+            // SAFETY: `this` is the heap allocation from `init`. This releases the
+            // ref taken by `add_timer`; all callers of `request_completed` (the only
+            // path here) hold an `IntrusiveRc<Resolver>`, so the timer ref is never
+            // the last and this `deref` cannot reach 0 while `&mut self` is live.
             unsafe {
                 (*this).vm().timer.increment_timer_ref(-1);
                 Self::deref(this);

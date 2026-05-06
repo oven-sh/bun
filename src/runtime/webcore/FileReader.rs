@@ -747,7 +747,7 @@ impl FileReader {
                 // `drained` here — freeing `self.buffered` would be a no-op.
                 drop(drained);
 
-                if self.reader.is_done() {
+                if self.reader().is_done() {
                     return streams::Result::IntoArrayAndDone(streams::IntoArray {
                         value: array,
                         len: drained_len,
@@ -760,18 +760,18 @@ impl FileReader {
                 }
             }
 
-            if self.reader.is_done() {
+            if self.reader().is_done() {
                 return streams::Result::OwnedAndDone(drained);
             } else {
                 return streams::Result::Owned(drained);
             }
         }
 
-        if self.reader.is_done() {
+        if self.reader().is_done() {
             return streams::Result::Done;
         }
 
-        if !self.reader.has_pending_read() {
+        if !self.reader().has_pending_read() {
             // If not flowing (paused), don't initiate new reads
             if !self.flowing {
                 bun_core::scoped_log!(FileReader, "onPull({}) = pending (not flowing)", buffer.len());
@@ -784,7 +784,7 @@ impl FileReader {
 
             let buffer_len = buffer.len();
             self.read_inside_on_pull = ReadDuringJSOnPullResult::Js(buffer);
-            self.reader.read();
+            self.reader().read();
 
             // PORT NOTE: Zig `defer this.read_inside_on_pull = .none` — replaced via
             // mem::replace so the field is reset before matching, covering all return paths.

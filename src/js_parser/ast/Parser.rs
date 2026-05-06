@@ -654,9 +654,10 @@ impl<'a> Parser<'a> {
         // double-free hazard.
         let Parser { options, lexer, log, source, define, bump } = self;
 
-        // SAFETY: see `log_mut` — `log` aliases the `&'a mut Log` handed to the
-        // lexer at `Parser::init`; reading the error count is sound.
-        let orig_error_count = unsafe { log.as_ref() }.errors;
+        // The unique `&'a mut Log` currently lives in `lexer.log` (a child of
+        // the `log` raw pointer per `Parser::init`); read through it so we
+        // don't pop its tag before it's moved into `P::init` below.
+        let orig_error_count = lexer.log.errors;
         let mut p = P::<TS, JX, false>::init(
             bump,
             // SAFETY: handing the unique `&'a mut Log` to the inner parser;

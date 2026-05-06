@@ -79,24 +79,30 @@ impl core::fmt::Display for ConsoleObject {
 }
 
 impl ConsoleObject {
-    // PORT NOTE: out-param constructor reshaped to return `Self` (see PORTING.md
-    // "Exception — out-param constructors"). The Zig version writes into
-    // `out: *ConsoleObject` so it can take internal pointers to its own
-    // buffers; in Rust those become getters, so plain return works.
+    // PORT NOTE: keeps the Zig out-param shape (`out: *ConsoleObject`) instead
+    // of returning `Self`. `adapt_to_new_api(&mut out.stderr_buffer)` captures
+    // a raw pointer into the buffer field; returning `Self` by value would
+    // move the 8 KiB of buffers and leave `*_backing` pointing at the old
+    // stack frame (PORTING.md §Forbidden: lifetime-extension via raw pointer).
+    // Caller provides stable storage via `&mut MaybeUninit<Self>`.
+    // TODO(port): Phase B — make `QuietWriterAdapter` own its 4 KiB buffer so
+    // the self-reference disappears and this can become `-> Self`.
     pub fn init(
+        out: &mut core::mem::MaybeUninit<ConsoleObject>,
         error_writer: Output::StreamType,
         writer: Output::StreamType,
-    ) -> Self {
-        let mut out = ConsoleObject {
+    ) -> &mut ConsoleObject {
+        let out = out.write(ConsoleObject {
             stderr_buffer: [0; 4096],
             stdout_buffer: [0; 4096],
             error_writer_backing: Output::QuietWriterAdapter::uninit(),
             writer_backing: Output::QuietWriterAdapter::uninit(),
             default_indent: 0,
             counts: Counter::default(),
-        };
-        // TODO(port): self-referential buffer wiring — Phase B should make
-        // `QuietWriterAdapter` own its 4 KiB buffer instead of borrowing.
+        });
+        // SAFETY: `out` is now fully initialized at its final address; the
+        // adapters store raw pointers into `out.stderr_buffer` /
+        // `out.stdout_buffer`, which remain valid for `out`'s lifetime.
         out.error_writer_backing = error_writer.quiet_writer().adapt_to_new_api(&mut out.stderr_buffer);
         out.writer_backing = writer.quiet_writer().adapt_to_new_api(&mut out.stdout_buffer);
         out
@@ -154,8 +160,29 @@ pub enum MessageType {
 
 pub use formatter::Formatter;
 
+/// Controls how `Error` values are formatted (full stack vs. warn-style vs.
+/// name+message). Mirrors `FormatOptions.ErrorDisplayLevel` (zig:1011).
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub enum ErrorDisplayLevel {
+    Normal,
+    Warn,
+    Full,
+}
+
 pub mod formatter {
     use super::*;
+
+    /// Payload for `Tag::CustomFormattedObject` — the `[util.inspect.custom]`
+    /// callback function and its receiver. Mirrors `Formatter.CustomFormattedObject`
+    /// (zig:985); the spec carries this as the `union(Tag)` payload.
+    #[derive(Clone, Copy)]
+    pub struct CustomFormattedObject {
+        pub function: JSValue,
+        pub this: JSValue,
+    }
+    impl Default for CustomFormattedObject {
+        fn default() -> Self { Self { function: JSValue::ZERO, this: JSValue::ZERO } }
+    }
 
     /// `ConsoleObject.Formatter` — the recursive value pretty-printer. Field
     /// list kept; method bodies gated in `_body` below.
@@ -174,8 +201,11 @@ pub mod formatter {
         pub always_newline_scope: bool,
         pub single_line: bool,
         pub ordered_properties: bool,
+        pub custom_formatted_object: CustomFormattedObject,
         pub disable_inspect_custom: bool,
+        pub stack_check: StackCheck,
         pub can_throw_stack_overflow: bool,
+        pub error_display_level: ErrorDisplayLevel,
         pub format_buffer_as_text: bool,
     }
 
@@ -220,9 +250,15 @@ pub mod formatter {
     }
 
     /// `Tag.Result` — classification + resolved cell type.
-    #[derive(Debug, Clone, Copy)]
+    /// Spec `Tag.Result.tag` is a `union(Tag)` whose `CustomFormattedObject`
+    /// arm carries `{ function, this }` (zig:1144-1179). `Tag` here is a flat
+    /// C-like enum (runtime-dispatched, since `ConstParamTy` is unstable), so
+    /// the payload lives in a side field that `Tag::get` populates and
+    /// `print_as` reads back into `Formatter.custom_formatted_object`.
+    #[derive(Clone, Copy)]
     pub struct Result {
         pub tag: Tag,
+        pub custom_formatted_object: CustomFormattedObject,
         pub cell: crate::JSType,
     }
 
@@ -246,7 +282,43 @@ pub mod formatter {
 //   - `bun_js_parser::js_printer` (source highlighting)
 //   - `bun_runtime::cli::Command`, `bun_runtime::test_runner::JestPrettyFormat`
 //   - `#[crate::host_call]` proc-macro
-// Gated wholesale; Phase B reopens incrementally as JSValue.rs un-gates.
+//
+// STILL GATED (phase-b2): `#[crate::host_call]` exists, but un-gating produces
+// ~260 errors. Remaining hard blockers (all outside this file):
+//   - `JSValue` surface (~30 missing methods): is_callable, fast_get,
+//     get_prototype, get_name, get_class_name, get_boolean_loose, to_number,
+//     coerce_{i32,i64,f64}, to_u16, json_stringify{,_fast}, symbol_for,
+//     for_each_{property,property_ordered,property_non_indexed,with_context},
+//     get_{own,direct_index,description,name_property,zig_string,
+//     proxy_internal_field}, is_{symbol,class,buffer,big_int,iterable},
+//     as_{cell,object_ref}, to_{cell,object,fmt}, fmt_string, push, c
+//   - `JSValue` is not an iterator (6×)
+//   - `JSGlobalObject::{clear_exception, throw_stack_overflow,
+//     generate_heap_snapshot}`
+//   - `crate::{PromiseStatus, ProxyField}` enums
+//   - `jsc::PropertyIteratorOptions` struct, `JSPropertyIterator.i` visibility
+//   - `BuiltinName::{Error, InspectCustom}`, `EventType::Unknown` + iterator
+//   - `TypedArrayType::{Uint8Array, ArrayBuffer}` variants
+//   - `VirtualMachine::{print_stack_trace, remap_zig_exception,
+//     print_errorlike_object}`, `.console` is `*mut c_void` not `&ConsoleObject`
+//   - `bun_core::Output::{print_errorln, enable_ansi_colors_{stdout,stderr}}`
+//   - `bun_core::time::{NS_PER_US, US_PER_MS}`, `bun_core::f16`
+//   - `bun_core::fmt::{DoubleFormatter, count_int, count_float}`
+//   - `bun_io::{Error, FmtWriteAdapter}`, `bun_io::Write` trait shape
+//   - `bun_string::ZigString` Display + `{is_16_bit, eql_comptime, char_at,
+//     to_error_instance}`, `ZigStringSlice::{len, as_bytes}`
+//   - `bun_string::String::{visible_width_exclude_ansi_colors, deref_, trunc}`
+//   - `bun_string::strings::{visible, first_non_ascii, is_valid_utf8,
+//     index_of_any16, latin1_to_codepoint_bytes_assume_not_ascii,
+//     allocate_latin1_into_utf8}`
+//   - `bun_collections::HashMap::{get_or_put, fetch_put, get_entry}`
+//   - `bun_threading::Mutex` (used unimported), `crate::Jest::runner`
+//   - `jsc::C::{CellType, JSObjectGetProxyTarget}`
+//   - `DOMFormData: JsClass`, `JSType: Into<&'static str>`
+//   - high-tier cycle: `bun_runtime` (16×), `JSPrinter`/`JSLexer`/`CLI`/
+//     `JestPrettyFormat` use-sites (imports gated above but bodies reference)
+//   - `adt_const_params` unstable (Tag as const generic) — needs runtime arg
+// Re-attempt once `src/jsc/JSValue.rs` un-gates its method surface.
 // ───────────────────────────────────────────────────────────────────────────
 #[cfg(any())]
 mod _body {

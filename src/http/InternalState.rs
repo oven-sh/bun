@@ -50,24 +50,30 @@ pub struct InternalState {
     pub certificate_info: Option<CertificateInfo>,
 }
 
-bitflags::bitflags! {
-    #[derive(Clone, Copy)]
-    #[repr(transparent)]
-    pub struct InternalStateFlags: u8 {
-        const ALLOW_KEEPALIVE                   = 1 << 0;
-        const RECEIVED_LAST_CHUNK               = 1 << 1;
-        const DID_SET_CONTENT_ENCODING          = 1 << 2;
-        const IS_REDIRECT_PENDING               = 1 << 3;
-        const IS_LIBDEFLATE_FAST_PATH_DISABLED  = 1 << 4;
-        const RESEND_REQUEST_BODY_ON_REDIRECT   = 1 << 5;
-        // _padding: u2 in Zig fills bits 6..7
-    }
+// PORT NOTE: was a `packed struct(u8)` in Zig. Kept as a struct-of-bools so the
+// HTTPClient state machine in lib.rs can use field syntax (`flags.allow_keepalive
+// = true`) directly; restore packing in Phase B if size matters.
+#[derive(Clone, Copy)]
+pub struct InternalStateFlags {
+    pub allow_keepalive: bool,
+    pub received_last_chunk: bool,
+    pub did_set_content_encoding: bool,
+    pub is_redirect_pending: bool,
+    pub is_libdeflate_fast_path_disabled: bool,
+    pub resend_request_body_on_redirect: bool,
 }
 
 impl InternalStateFlags {
     /// Zig's field defaults: `allow_keepalive = true`, rest false.
     pub const fn new() -> Self {
-        Self::ALLOW_KEEPALIVE
+        Self {
+            allow_keepalive: true,
+            received_last_chunk: false,
+            did_set_content_encoding: false,
+            is_redirect_pending: false,
+            is_libdeflate_fast_path_disabled: false,
+            resend_request_body_on_redirect: false,
+        }
     }
 }
 
@@ -175,7 +181,7 @@ impl InternalState {
 
     pub fn is_done(&self) -> bool {
         if self.is_chunked_encoding() {
-            return self.flags.contains(InternalStateFlags::RECEIVED_LAST_CHUNK);
+            return self.flags.received_last_chunk;
         }
 
         if let Some(content_length) = self.content_length {
@@ -183,7 +189,7 @@ impl InternalState {
         }
 
         // Content-Type: text/event-stream we should be done only when Close/End/Timeout connection
-        self.flags.contains(InternalStateFlags::RECEIVED_LAST_CHUNK)
+        self.flags.received_last_chunk
     }
 
     // TODO(port): narrow error set
@@ -216,14 +222,14 @@ impl InternalState {
                 if !(is_final_chunk
                     && !self
                         .flags
-                        .contains(InternalStateFlags::IS_LIBDEFLATE_FAST_PATH_DISABLED)
+                        .is_libdeflate_fast_path_disabled
                     && self.encoding.can_use_lib_deflate()
                     && self.is_done())
                 {
                     break 'libdeflate;
                 }
                 self.flags
-                    .insert(InternalStateFlags::IS_LIBDEFLATE_FAST_PATH_DISABLED);
+                    .is_libdeflate_fast_path_disabled = true;
 
                 log!("Decompressing {} bytes with libdeflate\n", buffer.len());
                 let deflater = crate::http_thread().deflater();
@@ -308,6 +314,13 @@ impl InternalState {
                 self.compressed_body.reset();
                 return Err(err.into());
             }
+            // While `update_buffers` is gated, `read_all` on Decompressor::None is a silent
+            // no-op (Decompressor.rs:148). Surface an error instead of pretending the body
+            // was decompressed and discarding the bytes — §Forbidden silent-no-op.
+            if matches!(self.decompressor, Decompressor::None) && self.encoding.is_compressed() {
+                self.compressed_body.reset();
+                return Err(bun_core::err!("DecompressionNotImplemented"));
+            }
 
             if let Err(err) = self.decompressor.read_all(self.is_done()) {
                 if self.is_done() || err != bun_core::err!("ShortRead") {
@@ -350,7 +363,7 @@ impl InternalState {
         buffer: &MutableString,
         is_final_chunk: bool,
     ) -> Result<bool, Error> {
-        if self.flags.contains(InternalStateFlags::IS_REDIRECT_PENDING) {
+        if self.flags.is_redirect_pending {
             return Ok(false);
         }
 
@@ -406,6 +419,11 @@ pub enum Stage {
     Done,
     Fail,
 }
+
+// Aliases used by the HTTPClient state machine: the Zig side has separate
+// `request_stage` / `response_stage` fields but they share one HTTPStage enum.
+pub type RequestStage = HTTPStage;
+pub type ResponseStage = HTTPStage;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

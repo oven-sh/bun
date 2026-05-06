@@ -418,9 +418,11 @@ impl<V: CalcValue> Calc<V> {
                     i,
                     (),
                     |_, a, b| {
-                        // TODO(port): Zig `@mod(a, b)` (floored, sign of divisor) vs CSS `rem()`
-                        // (truncated, sign of dividend). Ported as Rust `%` (truncated) — verify.
-                        a % b
+                        // Zig `@mod(a, b)`: floored modulo, result takes sign of divisor.
+                        // Equivalent to `a - b * floor(a / b)`. Rust `%` is truncated (sign of
+                        // dividend) and `rem_euclid` is non-negative, so neither matches for
+                        // negative `b` — use the explicit floor formula.
+                        a - b * (a / b).floor()
                     },
                     |_, a, b| MathFunction::Rem {
                         dividend: a,

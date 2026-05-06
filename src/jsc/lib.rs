@@ -110,6 +110,47 @@ pub use self::array_buffer::{ArrayBuffer, JSCArrayBuffer, MarkedArrayBuffer, Typ
 pub use self::rare_data as RareData;
 pub use self::console_object as ConsoleObject;
 pub use self::console_object::Formatter;
+/// `ConsoleObject.Formatter.Tag` re-exported under both names downstream
+/// drafts use (`FormatAs::Double` in Response.rs, `FormatTag::Private` in
+/// Request.rs / S3Client.rs). Same enum; the split is naming drift only.
+pub use self::console_object::formatter::Tag as FormatTag;
+pub use self::console_object::formatter::Tag as FormatAs;
+
+/// Trait surface for `write_format`-style hooks on runtime types
+/// (`Response::write_format`, `Request::write_format`, `S3File::write_format`,
+/// …). Mirrors the duck-typed `*ConsoleObject.Formatter` parameter in Zig —
+/// callers only ever touch `globalThis` and `printAs`, so the trait exposes
+/// just those two and the `bun_jsc::Formatter` struct provides the canonical
+/// impl.
+pub trait ConsoleFormatter {
+    fn global_this(&self) -> &JSGlobalObject;
+    /// `Formatter.printAs(comptime Format, Writer, writer, value, jsType)` —
+    /// the const-generic `ENABLE_ANSI_COLORS` mirrors Zig's comptime bool.
+    fn print_as<W: core::fmt::Write, const ENABLE_ANSI_COLORS: bool>(
+        &mut self,
+        tag: FormatTag,
+        writer: &mut W,
+        value: JSValue,
+        cell: JSType,
+    ) -> JsResult<()>;
+}
+
+impl<'a> ConsoleFormatter for self::console_object::Formatter<'a> {
+    #[inline]
+    fn global_this(&self) -> &JSGlobalObject { self.global_this }
+    fn print_as<W: core::fmt::Write, const ENABLE_ANSI_COLORS: bool>(
+        &mut self,
+        tag: FormatTag,
+        writer: &mut W,
+        value: JSValue,
+        cell: JSType,
+    ) -> JsResult<()> {
+        let _ = (tag, writer, value, cell);
+        // TODO(b2): full body — `Formatter::print_as` is gated behind the
+        // ConsoleObject body until JSValue.rs un-gates (see ConsoleObject.rs:2715).
+        Ok(())
+    }
+}
 
 pub use self::js_ref::JsRef;
 pub use self::string_builder::StringBuilder;
@@ -195,7 +236,6 @@ mod _gated {
     #[path = "CppTask.rs"] pub mod cpp_task;
     #[path = "EventLoopHandle.rs"] pub mod event_loop_handle;
     #[path = "FFI.rs"] pub mod ffi;
-    #[path = "FetchHeaders.rs"] pub mod fetch_headers;
     #[path = "GarbageCollectionController.rs"] pub mod garbage_collection_controller;
     #[path = "HTTPServerAgent.rs"] pub mod http_server_agent;
     #[path = "JSCScheduler.rs"] pub mod jsc_scheduler;
@@ -312,6 +352,22 @@ impl JSValue {
     #[inline] pub fn is_date(self) -> bool {
         self.is_cell() && self.js_type() == JSType::JSDate
     }
+    #[inline] pub fn is_symbol(self) -> bool {
+        // SAFETY: pure FFI predicate.
+        self.is_cell() && unsafe { JSC__JSValue__isSymbol(self) }
+    }
+    #[inline] pub fn is_big_int(self) -> bool {
+        // SAFETY: pure FFI predicate.
+        self.is_cell() && unsafe { JSC__JSValue__isBigInt(self) }
+    }
+    /// `JSValue.isCallable()` (JSValue.zig:1159).
+    #[inline] pub fn is_callable(self) -> bool {
+        // SAFETY: pure FFI predicate.
+        self.is_cell() && unsafe { JSC__JSValue__isCallable(self) }
+    }
+    /// Alias used throughout the runtime drafts. A "function" in the JS sense
+    /// is any callable cell.
+    #[inline] pub fn is_function(self) -> bool { self.is_callable() }
 
     /// `jsType()` — only valid when `is_cell()`. Reads the JSCell type byte.
     #[inline] pub fn js_type(self) -> JSType {
@@ -522,6 +578,15 @@ impl JSValue {
         if !self.is_cell() { return None; }
         T::from_js(self)
     }
+    /// `JSValue.asDirect(T)` (JSValue.zig:431) — unchecked-prototype downcast.
+    /// Caller must have already verified `is_cell()`; dispatches via
+    /// [`JsClass::from_js_direct`] (skips the prototype-chain walk that `as_`
+    /// performs, so subclasses are *not* matched).
+    #[inline]
+    pub fn as_direct<T: JsClass>(self) -> Option<*mut T> {
+        debug_assert!(self.is_cell());
+        T::from_js_direct(self)
+    }
     /// `JSValue.asPromise()` — downcast to `JSPromise` (matches `JSInternalPromise` too).
     pub fn as_promise(self) -> Option<&'static mut JSPromise> {
         if !self.is_cell() { return None; }
@@ -576,8 +641,61 @@ impl JSValue {
     }
 
     // ── property access ──────────────────────────────────────────────────
+    /// `JSValue.fastGet(global, BuiltinName)` (JSValue.zig:1414) — property
+    /// lookup using a preallocated `JSC::Identifier` (avoids allocating a key
+    /// string). `self` must be known to be an object.
+    pub fn fast_get(self, global: &JSGlobalObject, builtin_name: BuiltinName) -> JsResult<Option<JSValue>> {
+        debug_assert!(self.is_object());
+        // SAFETY: `global` is live; `builtin_name` is a valid `u8` index into
+        // C++ `BuiltinNamesMap`.
+        let v = host_fn::from_js_host_call_generic(global, || unsafe {
+            JSC__JSValue__fastGet(self, global, builtin_name as u8)
+        })?;
+        // JSValue.zig:1424 — `.property_does_not_exist_on_object` (0x4) and
+        // `.js_undefined` map to None; `.zero` ⇒ exception (handled above).
+        if v.0 == JSValue::PROPERTY_DOES_NOT_EXIST.0 || v.is_undefined() { Ok(None) } else { Ok(Some(v)) }
+    }
+
+    /// `JSValue.coerceToInt64` (JSValue.zig:47) — full ToNumber → Int64 path
+    /// (may throw via `valueOf`/`toString`).
+    pub fn coerce_to_int64(self, global: &JSGlobalObject) -> JsResult<i64> {
+        // SAFETY: `global` is live; FFI may set an exception.
+        host_fn::from_js_host_call_generic(global, || unsafe {
+            JSC__JSValue__coerceToInt64(self, global)
+        })
+    }
+
+    /// `JSValue.getZigString` — read a JS string into a `ZigString` view.
+    /// Convenience wrapper over [`JSValue::to_zig_string`] that returns the
+    /// out-param by value.
+    pub fn get_zig_string(self, global: &JSGlobalObject) -> JsResult<bun_string::ZigString> {
+        let mut out = bun_string::ZigString::EMPTY;
+        self.to_zig_string(&mut out, global)?;
+        Ok(out)
+    }
+
+    /// `JSValue.jsonStringify` (JSValue.zig:1278).
+    pub fn json_stringify(self, global: &JSGlobalObject, indent: u32, out: &mut bun_string::String) -> JsResult<()> {
+        // SAFETY: `global` is live; `out` is a valid out-param for the call.
+        host_fn::from_js_host_call_generic(global, || unsafe {
+            JSC__JSValue__jsonStringify(self, global, indent, out)
+        })
+    }
+
+    /// `JSValue.jsonStringifyFast` (JSValue.zig:1287) — `JSON.stringify(this)`
+    /// with no indent / no replacer (fast path used by SQL value binders).
+    pub fn json_stringify_fast(self, global: &JSGlobalObject, out: &mut bun_string::String) -> JsResult<()> {
+        // SAFETY: `global` is live; `out` is a valid out-param for the call.
+        host_fn::from_js_host_call_generic(global, || unsafe {
+            JSC__JSValue__jsonStringifyFast(self, global, out)
+        })
+    }
+
     pub fn get(self, global: &JSGlobalObject, property: &[u8]) -> JsResult<Option<JSValue>> {
-        // TODO(b2): BuiltinName fast-path — see JSValue.zig:1439.
+        // Fast-path: known builtin keys avoid allocating a `JSC::Identifier`.
+        if let Some(builtin) = BuiltinName::get(property) {
+            return self.fast_get(global, builtin);
+        }
         // SAFETY: `global` is live; bytes valid for the call.
         let v = unsafe {
             JSC__JSValue__getIfPropertyExistsImpl(self, global, property.as_ptr(), property.len())
@@ -754,6 +872,13 @@ unsafe extern "C" {
     fn JSC__JSValue__toBoolean(this: JSValue) -> bool;
     fn JSC__JSValue__toInt32(this: JSValue) -> i32;
     fn JSC__JSValue__toInt64(this: JSValue) -> i64;
+    fn JSC__JSValue__isSymbol(this: JSValue) -> bool;
+    fn JSC__JSValue__isBigInt(this: JSValue) -> bool;
+    fn JSC__JSValue__isCallable(this: JSValue) -> bool;
+    fn JSC__JSValue__coerceToInt64(this: JSValue, global: *const JSGlobalObject) -> i64;
+    fn JSC__JSValue__fastGet(this: JSValue, global: *const JSGlobalObject, builtin: u8) -> JSValue;
+    fn JSC__JSValue__jsonStringify(this: JSValue, global: *const JSGlobalObject, indent: u32, out: *mut bun_string::String);
+    fn JSC__JSValue__jsonStringifyFast(this: JSValue, global: *const JSGlobalObject, out: *mut bun_string::String);
     fn JSC__JSValue__toError_(this: JSValue) -> JSValue;
     fn JSC__JSValue__toZigException(this: JSValue, global: *const JSGlobalObject, exception: *mut ZigException);
     fn JSC__JSValue__getUnixTimestamp(this: JSValue) -> f64;
@@ -1089,8 +1214,105 @@ stub_ty!(
     URL, VM,
     ResolvedSource, ZigStackTrace, ZigStackFrame,
     ZigException, RuntimeTranspilerCache,
-    FetchHeaders, AbortSignal, BuiltinName, JSBundler,
+    AbortSignal, JSBundler,
 );
+
+// ──────────────────────────────────────────────────────────────────────────
+// FetchHeaders — un-gated (B-2). Opaque C++ `WebCore::FetchHeaders` handle
+// plus the `HTTPHeaderName` enum used by `fast_get`/`fast_has`/`put`.
+// ──────────────────────────────────────────────────────────────────────────
+#[path = "FetchHeaders.rs"] pub mod fetch_headers;
+pub use self::fetch_headers::{FetchHeaders, HTTPHeaderName};
+
+/// `BuiltinName` — fast-path property keys preallocated as `JSC::Identifier`s
+/// in C++ (`BunBuiltinNames.h`). Passed to `JSValue::fast_get` as a `u8` index
+/// into `BuiltinNamesMap` (src/jsc/bindings/bindings.cpp).
+///
+/// The Zig source (JSValue.zig:1491) uses lowercase variant names; downstream
+/// Rust callers were drafted with PascalCase. Associated-const aliases below
+/// keep both spellings working until the call sites converge.
+#[repr(u8)]
+#[allow(non_camel_case_types)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum BuiltinName {
+    method,
+    headers,
+    status,
+    statusText,
+    url,
+    body,
+    data,
+    toString,
+    redirect,
+    inspectCustom,
+    highWaterMark,
+    path,
+    stream,
+    asyncIterator,
+    name,
+    message,
+    error,
+    default,
+    encoding,
+    fatal,
+    ignoreBOM,
+    type_,
+    signal,
+    cmd,
+}
+
+#[allow(non_upper_case_globals)]
+impl BuiltinName {
+    // PascalCase aliases for downstream Phase-A drafts (Response.rs / Request.rs
+    // / streams.rs / fetch.rs / TextDecoder.rs / pretty_format.rs use these).
+    pub const Method: Self = Self::method;
+    pub const Headers: Self = Self::headers;
+    pub const Status: Self = Self::status;
+    pub const StatusText: Self = Self::statusText;
+    pub const Url: Self = Self::url;
+    pub const Body: Self = Self::body;
+    pub const Data: Self = Self::data;
+    pub const HighWaterMark: Self = Self::highWaterMark;
+    pub const Path: Self = Self::path;
+    pub const Stream: Self = Self::stream;
+    pub const Message: Self = Self::message;
+    pub const Error: Self = Self::error;
+    pub const Encoding: Self = Self::encoding;
+    pub const Type: Self = Self::type_;
+    pub const Signal: Self = Self::signal;
+
+    pub fn has(property: &[u8]) -> bool { Self::get(property).is_some() }
+    pub fn get(property: &[u8]) -> Option<BuiltinName> {
+        BUILTIN_NAME_MAP.get(property).copied()
+    }
+}
+
+static BUILTIN_NAME_MAP: phf::Map<&'static [u8], BuiltinName> = phf::phf_map! {
+    b"method" => BuiltinName::method,
+    b"headers" => BuiltinName::headers,
+    b"status" => BuiltinName::status,
+    b"statusText" => BuiltinName::statusText,
+    b"url" => BuiltinName::url,
+    b"body" => BuiltinName::body,
+    b"data" => BuiltinName::data,
+    b"toString" => BuiltinName::toString,
+    b"redirect" => BuiltinName::redirect,
+    b"inspectCustom" => BuiltinName::inspectCustom,
+    b"highWaterMark" => BuiltinName::highWaterMark,
+    b"path" => BuiltinName::path,
+    b"stream" => BuiltinName::stream,
+    b"asyncIterator" => BuiltinName::asyncIterator,
+    b"name" => BuiltinName::name,
+    b"message" => BuiltinName::message,
+    b"error" => BuiltinName::error,
+    b"default" => BuiltinName::default,
+    b"encoding" => BuiltinName::encoding,
+    b"fatal" => BuiltinName::fatal,
+    b"ignoreBOM" => BuiltinName::ignoreBOM,
+    b"type" => BuiltinName::type_,
+    b"signal" => BuiltinName::signal,
+    b"cmd" => BuiltinName::cmd,
+};
 
 /// `jsc.BinaryType` — how raw bytes surface to JS (`Buffer` | `Uint8Array` |
 /// `ArrayBuffer`). Mirrors `src/jsc/BinaryType.zig`.
@@ -1256,6 +1478,20 @@ impl JSGlobalObject {
         let zs = bun_string::ZigString::init_utf8(buf.as_bytes());
         // SAFETY: `self` is live; `zs` borrowed for the call.
         unsafe { ZigString__toSyntaxErrorInstance(&zs, self) }
+    }
+    pub fn create_range_error_instance(&self, args: core::fmt::Arguments<'_>) -> JSValue {
+        let buf = alloc::fmt::format(args);
+        let zs = bun_string::ZigString::init_utf8(buf.as_bytes());
+        // SAFETY: `self` is live; `zs` borrowed for the call.
+        unsafe { ZigString__toRangeErrorInstance(&zs, self) }
+    }
+    /// `JSGlobalObject.commonStrings()` (JSGlobalObject.zig:840) — accessor for
+    /// the lazily-initialized `BunCommonStrings.h` `JSString` table. The
+    /// returned struct is a thin view borrowing `self`.
+    #[inline]
+    pub fn common_strings(&self) -> CommonStrings<'_> {
+        crate::mark_binding!();
+        CommonStrings { global_object: self }
     }
     pub fn create_aggregate_error(
         &self,
@@ -2159,6 +2395,7 @@ pub mod bun_string_jsc {
         fn BunString__transferToJS(this: *mut bun_string::String, global: *mut JSGlobalObject) -> JSValue;
         fn BunString__toJSON(this: *mut bun_string::String, global: *mut JSGlobalObject) -> JSValue;
         fn BunString__toErrorInstance(this: *const bun_string::String, global: *mut JSGlobalObject) -> JSValue;
+        fn BunString__toTypeErrorInstance(this: *const bun_string::String, global: *mut JSGlobalObject) -> JSValue;
     }
     pub fn from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<bun_string::String> {
         let mut out = bun_string::String::DEAD;
@@ -2188,6 +2425,10 @@ pub mod bun_string_jsc {
         // SAFETY: `this` borrowed; `global` is live.
         unsafe { BunString__toErrorInstance(this, global.as_ptr()) }
     }
+    pub fn to_type_error_instance(this: &bun_string::String, global: &JSGlobalObject) -> JSValue {
+        // SAFETY: `this` borrowed; `global` is live.
+        unsafe { BunString__toTypeErrorInstance(this, global.as_ptr()) }
+    }
 }
 
 /// Extension trait providing JSC-aware methods on `bun_string::String`.
@@ -2198,6 +2439,7 @@ pub trait StringJsc {
     fn transfer_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue>;
     fn to_js_by_parse_json(&mut self, global: &JSGlobalObject) -> JsResult<JSValue>;
     fn to_error_instance(&self, global: &JSGlobalObject) -> JSValue;
+    fn to_type_error_instance(&self, global: &JSGlobalObject) -> JSValue;
 }
 impl StringJsc for bun_string::String {
     fn from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<bun_string::String> {
@@ -2214,6 +2456,9 @@ impl StringJsc for bun_string::String {
     }
     fn to_error_instance(&self, global: &JSGlobalObject) -> JSValue {
         bun_string_jsc::to_error_instance(self, global)
+    }
+    fn to_type_error_instance(&self, global: &JSGlobalObject) -> JSValue {
+        bun_string_jsc::to_type_error_instance(self, global)
     }
 }
 

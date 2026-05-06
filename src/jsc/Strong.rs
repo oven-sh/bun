@@ -125,6 +125,15 @@ impl Optional {
         Some(result)
     }
 
+    /// Explicit teardown for call sites ported from Zig that wrote
+    /// `strong.deinit()` (Strong.zig:96). Idempotent; equivalent to dropping
+    /// in place and leaving `self` empty so `Drop` is a no-op.
+    pub fn deinit(&mut self) {
+        let Some(r) = self.handle.take() else { return };
+        // SAFETY: `r` came from `Impl::init` and is consumed exactly once here.
+        unsafe { Impl::destroy(r) };
+    }
+
     pub fn set(&mut self, global: &JSGlobalObject, value: JSValue) {
         let Some(r) = self.handle else {
             if value.is_empty() {

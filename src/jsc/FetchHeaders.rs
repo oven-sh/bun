@@ -1,9 +1,9 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
-use bun_jsc::{JSGlobalObject, JSValue, JsResult, VM, VirtualMachine};
-use bun_str::ZigString;
-use bun_schema::api::StringPointer;
+use crate::{host_fn, JSGlobalObject, JSValue, JsResult, VM};
+use crate::virtual_machine::VirtualMachine;
+use bun_string::{ZigString, StringPointer};
 use bun_uws::ResponseKind;
 
 /// Opaque C++ `WebCore::FetchHeaders` handle (ref-counted on the C++ side; see `deref`).
@@ -82,7 +82,7 @@ impl FetchHeaders {
     /// If empty, returns null.
     pub fn create_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<NonNull<FetchHeaders>>> {
         // TODO(port): bun.jsc.fromJSHostCallGeneric — wraps the FFI call and converts a pending VM exception into JsError
-        bun_jsc::from_js_host_call_generic(global, || {
+        host_fn::from_js_host_call_generic(global, || {
             // SAFETY: global is a valid borrowed ref
             let p = unsafe { WebCore__FetchHeaders__createFromJS(global as *const _ as *mut _, value) };
             NonNull::new(p)
@@ -201,7 +201,7 @@ impl FetchHeaders {
 
     pub fn put(&mut self, name_: HTTPHeaderName, value: &[u8], global: &JSGlobalObject) -> JsResult<()> {
         // TODO(port): bun.jsc.fromJSHostCallGeneric — wraps the FFI call and converts a pending VM exception into JsError
-        bun_jsc::from_js_host_call_generic(global, || {
+        host_fn::from_js_host_call_generic(global, || {
             let zs = ZigString::init(value);
             // SAFETY: self/global are valid; &zs lives across the call
             unsafe { WebCore__FetchHeaders__put(self, name_, &zs, global as *const _ as *mut _) }
@@ -220,12 +220,14 @@ impl FetchHeaders {
         }
     }
 
-    pub fn get(&mut self, name_: &[u8], global: &JSGlobalObject) -> Option<&[u8]> {
+    pub fn get(&mut self, name_: &[u8], global: &JSGlobalObject) -> Option<ZigString> {
         let mut out = ZigString::EMPTY;
         self.get_(&ZigString::init(name_), &mut out, global);
         if out.len > 0 {
-            // TODO(port): lifetime — slice borrows C++-owned header storage; valid as long as `self` is not mutated
-            return Some(out.slice());
+            // PORT NOTE: returns the ZigString view (borrows C++-owned header
+            // storage); caller may `.slice()` it. Returning `&[u8]` directly
+            // would borrow the local `out`, not the underlying buffer.
+            return Some(out);
         }
 
         None
@@ -309,7 +311,10 @@ impl FetchHeaders {
     }
 
     pub fn cast(value: JSValue) -> Option<NonNull<FetchHeaders>> {
-        Self::cast_(value, VirtualMachine::get().global.vm())
+        // SAFETY: `VirtualMachine::get()` is only called from the JS thread, where
+        // `global` is a live non-null JSGlobalObject for the VM's lifetime.
+        let global = unsafe { &*VirtualMachine::get().global };
+        Self::cast_(value, global.vm())
     }
 
     pub fn to_js(&mut self, global_this: &JSGlobalObject) -> JSValue {
@@ -340,7 +345,7 @@ impl FetchHeaders {
 
     pub fn clone_this(&mut self, global: &JSGlobalObject) -> JsResult<Option<NonNull<FetchHeaders>>> {
         // TODO(port): bun.jsc.fromJSHostCallGeneric — wraps the FFI call and converts a pending VM exception into JsError
-        bun_jsc::from_js_host_call_generic(global, || {
+        host_fn::from_js_host_call_generic(global, || {
             // SAFETY: self/global are valid for the duration of the call
             let p = unsafe { WebCore__FetchHeaders__cloneThis(self, global as *const _ as *mut _) };
             NonNull::new(p)

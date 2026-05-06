@@ -29,12 +29,16 @@ mod high_tier {
     pub mod node_cluster_binding {
         use crate::{JSGlobalObject, JSValue, JsResult};
         pub fn handle_internal_message_child(_g: &JSGlobalObject, _m: JSValue) -> JsResult<bool> {
-            // TODO(port): bun_runtime::node::node_cluster_binding
-            Ok(false)
+            // TODO(port): bun_runtime::node::node_cluster_binding — must NOT
+            // silently return false (would mis-route internal cluster messages
+            // as user `message` events). Crash loudly until wired.
+            todo!("node_cluster_binding::handle_internal_message_child shim")
         }
         pub fn handle_internal_message_primary(
             _g: &JSGlobalObject, _sub: *mut super::Subprocess, _m: JSValue,
-        ) -> JsResult<bool> { Ok(false) }
+        ) -> JsResult<bool> {
+            todo!("node_cluster_binding::handle_internal_message_primary shim")
+        }
     }
     #[derive(Default)] pub struct JSONLineBuffer { _opaque: () }
 }
@@ -103,9 +107,11 @@ impl Mode {
 
     // TODO(port): move to *_jsc — Map.fromJS wrapper
     pub fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Mode>> {
-        // TODO(port): ComptimeStringMap.fromJS — get string from JSValue then from_string
+        // TODO(port): ComptimeStringMap.fromJS — get string from JSValue then
+        // `from_string`. MUST NOT return `Err(JsError::Thrown)` without an
+        // exception actually pending on `global` (violates JSC invariant).
         let _ = (global, value);
-        Err(JsError::Thrown) // placeholder
+        todo!("ipc::Mode::from_js — ComptimeStringMap.fromJS")
     }
 }
 
@@ -170,8 +176,25 @@ pub enum IPCSerializationError {
 //   - `bun_sys::windows::libuv` (windows-only; cfg-gated above)
 //   - `JSValue::call_next_tick`, `JSGlobalObject::err`, `Fd::close`
 //   - `#[crate::host_fn]` proc-macro
-// Gated wholesale; the public `Mode`/`SerializeAndSendResult`/error enums
-// above are the only surface downstream callers need at this tier.
+// STILL GATED (phase-b2): `#[crate::host_fn]` exists, but un-gating produces
+// ~100 errors. Remaining hard blockers (all outside this file):
+//   - `crate::ManagedTask` is a *module*, body uses it as a type (4×)
+//   - `JSValue::{call_next_tick, serialize, deserialize, is_callable,
+//      get_own, fast_get, to_js, get_own_truthy}` — missing methods
+//   - `JSGlobalObject::{err, emit_warning, throw_missing_arguments_value,
+//      throw_invalid_argument_type_value_one_of}` — missing methods
+//   - `VirtualMachine::{get, process_emit_error_event, get_ipc_instance}`
+//   - `jsc::SerializeOptions`, `jsc::virtual_machine::IPCInstance` — missing types
+//   - `BuiltinName::{Cmd, Data, Message}`, `ErrorCode::IPC_CHANNEL_CLOSED`
+//   - `bun_event_loop::Task::as_<T>()` downcast
+//   - `bun_string::String::{to_js, to_js_by_parse_json, transfer_to_js, from_js}`
+//   - `bun_uws::NewSocketHandler::write_fd`
+//   - `bun_core::Fd::{close, to_js}`
+//   - `JSONLineBuffer` real impl (sibling, shimmed above)
+//   - `Subprocess`/`node_cluster_binding::InternalMsgHolder` (bun_runtime cycle)
+//   - `uv` crate path on non-windows (cfg leak, 3×)
+// Re-attempt once the `JSValue` / `JSGlobalObject` surface in
+// `src/jsc/JSValue.rs` + `src/jsc/JSGlobalObject.rs` lands.
 // ──────────────────────────────────────────────────────────────────────────
 #[cfg(any())]
 mod _body {
@@ -1481,8 +1504,7 @@ impl Drop for SendQueue {
 
 const MAX_HANDLE_RETRANSMISSIONS: u32 = 3;
 
-// TODO(port): #[crate::host_fn] proc-macro — gated.
-#[cfg(any())]
+#[crate::host_fn]
 fn emit_process_error_event(
     global_this: &JSGlobalObject,
     callframe: &CallFrame,
@@ -1513,7 +1535,9 @@ fn do_send_err(
         let target = jsc::JSFunction::create(
             global_object,
             BunString::empty(),
-            emit_process_error_event,
+            // `#[crate::host_fn]` emits the C-ABI shim under this name; the
+            // safe `emit_process_error_event` is `JSHostFnZig`, not `JSHostFn`.
+            __jsc_host_emit_process_error_event,
             1,
             Default::default(),
         );
@@ -1639,8 +1663,7 @@ pub fn do_send(
     })
 }
 
-// TODO(port): #[crate::host_fn] proc-macro — gated.
-#[cfg(any())]
+#[crate::host_fn]
 pub fn emit_handle_ipc_message(
     global_this: &JSGlobalObject,
     callframe: &CallFrame,

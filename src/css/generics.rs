@@ -369,6 +369,13 @@ impl CssEql for bun_logger::Loc {
     }
 }
 
+impl CssEql for () {
+    #[inline]
+    fn eql(&self, _other: &Self) -> bool {
+        true
+    }
+}
+
 // CustomIdent/DashedIdent/Ident wrapper structs are hoisted as data-only stubs
 // in `crate::values::ident` (lib.rs); the full impls live in gated
 // `values/ident.rs` and supersede these on un-gate.
@@ -570,6 +577,16 @@ impl CssHash for VendorPrefix {
     }
 }
 
+impl CssHash for bun_logger::Loc {
+    #[inline]
+    fn hash(&self, hasher: &mut Wyhash) {
+        // Zig `implementHash` doesn't reach `Loc` (callers skip it), but
+        // providing a structural hash here lets `#[derive(CssHash)]` types
+        // include a `loc` field without `#[css(skip)]` if they want.
+        hasher.update(&self.start.to_ne_bytes());
+    }
+}
+
 // ───────────────────────────────────────────────────────────────────────────────
 // slice / isCompatible
 // ───────────────────────────────────────────────────────────────────────────────
@@ -611,6 +628,13 @@ pub trait IsCompatible {
     fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool;
 }
 
+/// `#[derive(IsCompatible)]` — field-wise / variant-wise port of the
+/// hand-written `isCompatible` pattern (struct → AND of fields, enum → unit
+/// variants `true` / payload variants delegate). See `src/css_derive/lib.rs`.
+/// Re-exported here so `use crate::generics::IsCompatible;` brings both trait
+/// and derive into scope.
+pub use bun_css_derive::IsCompatible;
+
 #[inline]
 pub fn is_compatible<T: IsCompatible>(val: &T, browsers: crate::targets::Browsers) -> bool {
     val.is_compatible(browsers)
@@ -620,6 +644,52 @@ impl<T: IsCompatible + ?Sized> IsCompatible for &T {
     #[inline]
     fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
         (**self).is_compatible(browsers)
+    }
+}
+
+impl<T: IsCompatible + ?Sized> IsCompatible for Box<T> {
+    #[inline]
+    fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
+        (**self).is_compatible(browsers)
+    }
+}
+
+impl<T: IsCompatible> IsCompatible for Option<T> {
+    #[inline]
+    fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
+        // Zig's `isCompatible` doesn't special-case Optional, but every
+        // hand-written caller treats absent as compatible (no value → no
+        // feature gate to check).
+        match self {
+            Some(v) => v.is_compatible(browsers),
+            None => true,
+        }
+    }
+}
+
+impl<T: IsCompatible> IsCompatible for [T] {
+    #[inline]
+    fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
+        for item in self {
+            if !item.is_compatible(browsers) {
+                return false;
+            }
+        }
+        true
+    }
+}
+
+impl<T: IsCompatible, const N: usize> IsCompatible for [T; N] {
+    #[inline]
+    fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
+        self.as_slice().is_compatible(browsers)
+    }
+}
+
+impl<T: IsCompatible> IsCompatible for Vec<T> {
+    #[inline]
+    fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
+        self.as_slice().is_compatible(browsers)
     }
 }
 

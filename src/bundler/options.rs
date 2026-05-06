@@ -19,8 +19,9 @@ use bun_options_types::schema::api;
 // TODO(b2-blocked): bun_analytics — Cargo.toml does not yet list the dep
 // (adding it triggers upstream rebuilds with in-progress breakage). The
 // `analytics::features::*` counters are pure telemetry side effects; the
-// increments below are no-ops until the dep is wired. Shim keeps the call
-// sites compiling so the surrounding logic stays un-gated.
+// increment call-sites below are `#[cfg(any())]`-gated until the dep is wired
+// so the no-op is explicit (PORTING.md §Forbidden patterns: silent no-ops).
+#[cfg(any())]
 mod analytics {
     #[allow(non_upper_case_globals)]
     pub mod features {
@@ -2028,9 +2029,10 @@ pub struct BundleOptions<'a> {
     /// Initialized once from the CLI --feature flags.
     ///
     /// Zig: `*const bun.StringSet = &Runtime.Features.empty_bundler_feature_flags`.
-    /// `None` ≡ the static empty set; `Some` is a leaked `&'static` from
-    /// `Runtime::Features::init_bundler_feature_flags`.
-    pub bundler_feature_flags: Option<&'static StringSet>,
+    /// `None` ≡ the static empty set; `Some` is the owned `Box` returned by
+    /// `Runtime::Features::init_bundler_feature_flags` (freed on Drop, matching
+    /// options.zig:1888-1892 which frees iff distinct from the static empty set).
+    pub bundler_feature_flags: Option<Box<StringSet>>,
     pub loaders: LoaderHashTable,
     pub resolve_dir: Cow<'static, [u8]>,
     pub jsx: jsx::Pragma,
@@ -2393,10 +2395,13 @@ impl<'a> BundleOptions<'a> {
             optimize_imports: None,
         };
 
-        analytics::features::define
-            .fetch_add(usize::from(transform.define.is_some()), Ordering::Relaxed);
-        analytics::features::loaders
-            .fetch_add(usize::from(transform.loaders.is_some()), Ordering::Relaxed);
+        #[cfg(any())] // TODO(b2-blocked): bun_analytics dep not yet wired in bundler/Cargo.toml
+        {
+            analytics::features::define
+                .fetch_add(usize::from(transform.define.is_some()), Ordering::Relaxed);
+            analytics::features::loaders
+                .fetch_add(usize::from(transform.loaders.is_some()), Ordering::Relaxed);
+        }
 
         opts.serve_plugins = transform
             .serve_plugins
@@ -2536,10 +2541,13 @@ impl<'a> BundleOptions<'a> {
             opts.tsconfig_override = Some(tsconfig.clone());
         }
 
-        analytics::features::macros
-            .fetch_add(usize::from(opts.target == Target::BunMacro), Ordering::Relaxed);
-        analytics::features::external
-            .fetch_add(usize::from(!transform.external.is_empty()), Ordering::Relaxed);
+        #[cfg(any())] // TODO(b2-blocked): bun_analytics dep not yet wired in bundler/Cargo.toml
+        {
+            analytics::features::macros
+                .fetch_add(usize::from(opts.target == Target::BunMacro), Ordering::Relaxed);
+            analytics::features::external
+                .fetch_add(usize::from(!transform.external.is_empty()), Ordering::Relaxed);
+        }
         Ok(opts)
     }
 }
@@ -2550,9 +2558,8 @@ impl Drop for BundleOptions<'_> {
         //
         // bundler_feature_flags: Zig compared the pointer to
         // `&Runtime.Features.empty_bundler_feature_flags` and freed iff distinct.
-        // In Rust the field is `Option<&'static StringSet>` produced by
-        // `Box::leak` inside `init_bundler_feature_flags`, so the allocation
-        // intentionally lives for the process lifetime — nothing to free here.
+        // In Rust the field is `Option<Box<StringSet>>`; `None` ≡ the static
+        // empty set (nothing to free), `Some` drops the Box here automatically.
     }
 }
 
@@ -2597,7 +2604,17 @@ pub fn open_output_dir(output_dir: &[u8]) -> Result<Dir, bun_core::Error> {
     match bun_sys::open_dir_at(bun_sys::Fd::cwd(), output_dir) {
         Ok(d) => Ok(d),
         Err(_) => {
-            if let Err(err) = bun_sys::Dir::cwd().make_path(output_dir) {
+            // Zig: `std.fs.cwd().makeDir(output_dir)` — single-level mkdir
+            // (fails ENOENT if parent missing). Do NOT use `make_path` (the
+            // recursive `mkdir -p` variant) here.
+            let mut buf = bun_paths::PathBuffer::uninit();
+            let len = output_dir.len().min(buf.0.len() - 1);
+            buf.0[..len].copy_from_slice(&output_dir[..len]);
+            buf.0[len] = 0;
+            // SAFETY: NUL-terminated above; `buf` outlives the `mkdirat` call.
+            let z = unsafe { bun_core::ZStr::from_raw(buf.0.as_ptr(), len) };
+            if let Err(err) = bun_sys::mkdirat(bun_sys::Fd::cwd(), z, 0o755) {
+                let err: bun_core::Error = err.into();
                 Output::print_errorln(format_args!(
                     "error: Unable to mkdir \"{}\": \"{}\"",
                     bstr::BStr::new(output_dir),

@@ -3157,7 +3157,6 @@ pub struct Parser<'a> {
 }
 
 impl<'a> Parser<'a> {
-    #[cfg(any())] // blocked_on: ArrayHashMap::entry API + SymbolList push
     pub fn add_symbol_for_name(
         &mut self,
         name: &[u8],
@@ -3172,52 +3171,79 @@ impl<'a> Parser<'a> {
             debug_assert!(tag.bits().count_ones() <= 1);
         }
 
-        let extra = self.extra.as_mut().unwrap();
+        let extra = self.extra.as_deref_mut().unwrap();
+        // Split borrows so the vacant arm can grow `symbols` while
+        // `local_scope` is borrowed by the entry.
+        let symbols = &mut extra.symbols;
+        let local_scope = &mut extra.local_scope;
+        let source_index = extra.source_index.get();
 
-        // TODO(port): `getOrPut` — ArrayHashMap entry API.
-        let entry = extra.local_scope.entry(name.into());
-        let entry = entry.or_insert_with(|| {
-            let inner_index = u32::try_from(extra.symbols.len()).unwrap();
-            extra.symbols.push(bun_logger::Symbol {
-                kind: bun_logger::SymbolKind::LocalCss,
-                original_name: name.into(),
-                ..Default::default()
-            });
-            LocalEntry { ref_: CssRef::new(inner_index, tag), loc }
-        });
-        // If existing:
-        let prev_tag = entry.ref_.tag();
-        if !prev_tag.contains(CssRefTag::CLASS) && tag.contains(CssRefTag::CLASS) {
-            entry.loc = loc;
-            entry.ref_.set_tag(prev_tag | tag);
-        }
+        // SAFETY: `name` is a slice into the parser source / arena, both of
+        // which outlive the symbol table (`ParserExtra` is consumed into
+        // `StylesheetExtra` alongside the same arena). Detach the borrow so it
+        // satisfies `Symbol.original_name: &'static [u8]` (Phase-A lifetime
+        // erasure — see PORTING.md §Lifetimes).
+        let name_static: &'static [u8] = unsafe { &*(name as *const [u8]) };
 
-        entry.ref_.to_real_ref(extra.source_index.get())
+        let entry = match local_scope.entry(Box::<[u8]>::from(name)) {
+            MapEntry::Vacant(v) => {
+                let inner_index = symbols.len;
+                bun_core::handle_oom(symbols.append(bun_logger::Symbol {
+                    kind: bun_logger::SymbolKind::LocalCss,
+                    original_name: name_static,
+                    ..Default::default()
+                }));
+                v.insert(LocalEntry { ref_: CssRef::new(inner_index, tag), loc })
+            }
+            MapEntry::Occupied(o) => {
+                let e = o.into_mut();
+                let prev_tag = e.ref_.tag();
+                if !prev_tag.contains(CssRefTag::CLASS) && tag.contains(CssRefTag::CLASS) {
+                    e.loc = loc;
+                    e.ref_.set_tag(prev_tag | tag);
+                }
+                e
+            }
+        };
+
+        entry.ref_.to_real_ref(source_index)
     }
 
     // TODO: dedupe import records??
-    #[cfg(any())] // blocked_on: BabyList push/len API + ImportRecord Default
     pub fn add_import_record(
         &mut self,
         url: &[u8],
         start_position: usize,
         kind: ImportKind,
     ) -> CssResult<u32> {
-        if let Some(import_records) = &mut self.import_records {
-            let idx = import_records.len();
-            import_records.push(ImportRecord {
-                path: ast::fs::path_init(url),
+        if let Some(import_records) = self.import_records.as_deref_mut() {
+            let idx = import_records.len;
+            // SAFETY: `url` borrows the parser source / arena which outlives
+            // every `ImportRecord` produced by this parse. `bun.fs.Path` in
+            // the Zig original stores the same borrowed slice; Phase-A
+            // erases the lifetime to 'static (see PORTING.md §Lifetimes).
+            let url_static: &'static [u8] = unsafe { &*(url as *const [u8]) };
+            bun_core::handle_oom(import_records.append(ImportRecord {
+                path: ast::fs::path_init(url_static),
                 kind,
                 range: logger::Range {
                     loc: logger::Loc { start: i32::try_from(start_position).unwrap() },
                     // TODO: technically this is not correct because the url could be escaped
                     len: i32::try_from(url.len()).unwrap(),
                 },
-                ..Default::default()
-            });
+                tag: Default::default(),
+                loader: None,
+                source_index: Default::default(),
+                module_id: 0,
+                original_path: b"",
+                flags: Default::default(),
+            }));
             Ok(idx)
         } else {
-            Err(self.new_basic_unexpected_token_error(Token::UnquotedUrl(url)))
+            // SAFETY: same lifetime erasure as above; the error token is only
+            // used for diagnostics borrowing the same source.
+            let url_static: &'static [u8] = unsafe { &*(url as *const [u8]) };
+            Err(self.new_basic_unexpected_token_error(Token::UnquotedUrl(url_static)))
         }
     }
 

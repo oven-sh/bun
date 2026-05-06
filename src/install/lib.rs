@@ -713,6 +713,7 @@ pub use lockfile::{Lockfile, PatchedDep, LoadResult, LoadStep};
 #[derive(Default)] pub struct PackageManagerEnableStub {
     pub manifest_cache: bool,
 }
+pub struct PackageManagerTmpDirStub { pub handle: bun_sys::Fd }
 #[derive(Default)] pub struct FolderResolution;
 #[derive(Default)] pub struct LifecycleScriptSubprocess;
 #[derive(Default)] pub struct SecurityScanSubprocess;
@@ -723,7 +724,7 @@ pub use lockfile::{Lockfile, PatchedDep, LoadResult, LoadStep};
 impl PackageManager {
     pub fn verbose_install() -> bool { false }
     pub fn get_cache_directory(&mut self) -> bun_sys::Fd { todo!("phase-b2: PackageManager::get_cache_directory (gated)") }
-    pub fn get_temporary_directory(&mut self) -> bun_sys::Fd { todo!("phase-b2: PackageManager::get_temporary_directory (gated)") }
+    pub fn get_temporary_directory(&mut self) -> PackageManagerTmpDirStub { todo!("phase-b2: PackageManager::get_temporary_directory (gated)") }
 }
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub enum Subcommand { #[default] Install, Add, Remove, Update, Link, Unlink, Pm, Patch, PatchCommit, Outdated }

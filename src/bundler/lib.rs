@@ -33,7 +33,7 @@ pub mod entry_points;
 #[cfg(any())]
 pub mod AstBuilder;
 pub mod analyze_transpiled_module;
-/* TEMP-UNGATE */
+#[cfg(any())]
 pub mod linker;
 pub mod defines;
 pub mod barrel_imports;

@@ -519,82 +519,6 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    fn _parse<const TS: bool, JX: JsxT>(&mut self) -> Result<js_ast::Result, Error> {
-        // TODO(port): narrow error set
-        // TODO(b2-blocked): bun_crash_handler::current_action — `Action` stores
-        // `&'static [u8]` but `self.source.path.text` is `'a`; Phase B widens
-        // the lifetime on `Action` (Zig held the same pointer).
-        let _prev_action = (); // bun_crash_handler::CURRENT_ACTION.replace(...)
-        let _restore = scopeguard::guard((), |_| {
-            // bun_crash_handler::CURRENT_ACTION.set(prev_action);
-        });
-
-        // SAFETY: see `log_mut` — `self.log` aliases the `&'a mut Log` handed
-        // to the lexer at `Parser::init`; reading the error count is sound.
-        let orig_error_count = unsafe { self.log.as_ref() }.errors;
-        let mut p = P::<TS, JX, false>::init(
-            self.bump,
-            // SAFETY: handing the unique `&'a mut Log` to the inner parser;
-            // matches Zig's two-`*Log` aliasing model (P also receives the
-            // lexer which holds the same Log).
-            unsafe { &mut *self.log.as_ptr() },
-            self.source,
-            self.define,
-            // SAFETY: Zig moves lexer/options by value into `P`; `Parser` is
-            // not reused after `_parse` returns.
-            unsafe { core::ptr::read(&self.lexer) },
-            unsafe { core::ptr::read(&self.options) },
-        )?;
-
-        if p.options.features.hot_module_reloading {
-            debug_assert!(!p.options.tree_shaking);
-        }
-
-        // Instead of doing "should_fold_typescript_constant_expressions or features.minify_syntax"
-        // Let's enable this flag file-wide
-        if p.options.features.minify_syntax || p.options.features.inlining {
-            p.should_fold_typescript_constant_expressions = true;
-        }
-
-        // PERF(port): was stack-fallback allocator (42 * sizeof(BinaryExpressionVisitor)) — profile in Phase B
-        p.binary_expression_stack = BumpVec::with_capacity_in(41, p.allocator);
-        // PERF(port): was stack-fallback allocator (48 * sizeof(BinaryExpressionSimplifyVisitor)) — profile in Phase B
-        p.binary_expression_simplify_stack = BumpVec::with_capacity_in(47, p.allocator);
-
-        // (Zig asserted the stack-fallback allocator owns the buffer; not applicable here.)
-
-        // defer {
-        //     if (p.allocated_names_pool) |pool| {
-        //         pool.data = p.allocated_names;
-        //         pool.release();
-        //         p.allocated_names_pool = null;
-        //     }
-        // }
-
-        // Consume a leading hashbang comment
-        let mut hashbang: &[u8] = b"";
-        if p.lexer.token == js_lexer::T::THashbang {
-            hashbang = p.lexer.identifier;
-            p.lexer.next()?;
-        }
-
-        // Detect a leading "// @bun" pragma
-        if self.options.features.dont_bundle_twice {
-            if let Some(pragma) = self.has_bun_pragma(!hashbang.is_empty()) {
-                return Ok(js_ast::Result::AlreadyBundled(pragma));
-            }
-        }
-
-        // reconciler-6: tail re-gated — port errors below (Path::is_node_module/
-        // is_jsx_file, p.bump→allocator, Stmt::Data paths, Tracer.end() on (), Loc:!Hash,
-        // Part:!Clone, G::Decl::List assoc-type, b::Identifier.ref_).
-        // Body preserved verbatim under #[cfg(any())]; runtime panics until un-gate.
-        #[cfg(any())]
-        {
-        } // end reconciler-6 #[cfg(any())] gate
-        let _ = (&hashbang, &mut p);
-        todo!("phase-b2: Parser::_parse tail (cache→to_ast) re-gated by reconciler-6")
-    }
 
     #[cfg(any())] // blocked_on: P::init / parse_stmts_up_to / prepare_for_visit_pass / append_part (P.rs gated)
     pub fn analyze(
@@ -671,8 +595,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    #[cfg(any())] // reconciler-6: full _parse body re-gated (duplicate of stub above; ~60 port errors)
-    fn _parse_full<const TS: bool, JX: JsxT>(&mut self) -> Result<js_ast::Result, Error> {
+    fn _parse<const TS: bool, JX: JsxT>(&mut self) -> Result<js_ast::Result, Error> {
         // TODO(port): narrow error set
         // TODO(b2-blocked): bun_crash_handler::current_action — `Action` stores
         // `&'static [u8]` but `self.source.path.text` is `'a`; Phase B widens

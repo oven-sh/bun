@@ -2875,8 +2875,11 @@ impl PackageManifest {
                     // iteration's slice of `bundled_deps_buf`, so an
                     // unconditional empty pass would clobber the value the
                     // `dependencies` iteration just produced.
+                    // PORT NOTE: hoist `versioned_deps` so the borrowed
+                    // `obj.properties.slice()` outlives the labelled block.
+                    let versioned_deps = prop.value.as_ref().unwrap().as_property(pair.prop);
                     let items: &[JSON::Property] = 'items: {
-                        if let Some(versioned_deps) = prop.value.as_ref().unwrap().as_property(pair.prop) {
+                        if let Some(versioned_deps) = &versioned_deps {
                             if let JSON::ExprData::EObject(obj) = &versioned_deps.expr.data {
                                 break 'items obj.properties.slice();
                             }

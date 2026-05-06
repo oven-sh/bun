@@ -7752,7 +7752,6 @@ pub struct LowerUsingDeclarationsContext {
 // reconciler-6 re-gate removed: those API divergences are fixed inline below;
 // `generate_temp_ref` is real (round-G, see ~6407). DO NOT re-gate — `visit.rs`
 // calls these via `should_lower_using_declarations` path.
-#[cfg(any())] // reconciler-6: re-gate (r#ref→ref_, DeclaredSymbolList::push, generate_temp_ref gated)
 impl LowerUsingDeclarationsContext {
     pub fn init<'a, const T: bool, J: JsxT, const S_: bool>(
         p: &mut P<'a, T, J, S_>,
@@ -7827,7 +7826,7 @@ impl LowerUsingDeclarationsContext {
         let mut end: u32 = 0;
         for i in 0..stmts.len() {
             let stmt = stmts[i];
-            match &stmt.data {
+            match stmt.data {
                 js_ast::StmtData::SDirective(_)
                 | js_ast::StmtData::SImport(_)
                 | js_ast::StmtData::SExportFrom(_)
@@ -7847,8 +7846,17 @@ impl LowerUsingDeclarationsContext {
                     continue; // this prevents re-exporting default since we already have it as an .s_export_clause
                 }
                 js_ast::StmtData::SExportClause(data) => {
-                    // Merge export clauses together
-                    exports.extend_from_slice(data.items);
+                    // Merge export clauses together.
+                    // PORT NOTE: ClauseItem isn't `Clone` (POD-only fields, no derive);
+                    // shallow-copy via ptr::read to mirror Zig `appendSlice`.
+                    // SAFETY: arena-owned `*mut [ClauseItem]` slice valid for 'a; the
+                    // source slot is never read again (this whole stmt is dropped via
+                    // the `continue` below).
+                    let items = unsafe { &*data.items };
+                    exports.reserve(items.len());
+                    for item in items {
+                        exports.push(unsafe { core::ptr::read(item) });
+                    }
                     continue;
                 }
                 js_ast::StmtData::SFunction(_) => {
@@ -7858,15 +7866,17 @@ impl LowerUsingDeclarationsContext {
                         continue;
                     }
                 }
-                js_ast::StmtData::SLocal(local) => {
+                js_ast::StmtData::SLocal(mut local) => {
                     // If any of these are exported, turn it into a "var" and add export clauses
                     if local.is_export {
                         local.is_export = false;
                         for decl in local.decls.slice() {
-                            if let Binding::Data::BIdentifier(identifier) = decl.binding.data {
+                            if let js_ast::b::B::BIdentifier(identifier) = decl.binding.data {
+                                // SAFETY: arena-owned `*mut B::Identifier` valid for 'a; no aliasing &mut.
+                                let id_ref = unsafe { &*identifier }.r#ref;
                                 exports.push(js_ast::ClauseItem {
-                                    name: LocRef { loc: decl.binding.loc, r#ref: Some(identifier.r#ref) },
-                                    alias: p.symbols[identifier.r#ref.inner_index() as usize].original_name,
+                                    name: LocRef { loc: decl.binding.loc, ref_: Some(id_ref) },
+                                    alias: p.symbols[id_ref.inner_index() as usize].original_name,
                                     alias_loc: decl.binding.loc,
                                     ..Default::default()
                                 });
@@ -7882,7 +7892,7 @@ impl LowerUsingDeclarationsContext {
             end += 1;
         }
 
-        let non_exported_statements = &mut stmts[..end as usize];
+        let non_exported_statements: *mut [Stmt] = &mut stmts[..end as usize] as *mut [Stmt];
 
         let caught_ref = p.generate_temp_ref(Some(b"_catch"));
         let err_ref = p.generate_temp_ref(Some(b"_err"));
@@ -7899,20 +7909,18 @@ impl LowerUsingDeclarationsContext {
         // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
         unsafe { &mut *scope }
             .generated
-            .append_slice(p.allocator, &[self.stack_ref, caught_ref, err_ref, has_err_ref])
+            .append_slice(&[self.stack_ref, caught_ref, err_ref, has_err_ref])
             .expect("oom");
         p.declared_symbols
             .ensure_unused_capacity(
-                p.allocator,
                 // 5 to include the _promise decl later on:
                 if self.has_await_using { 5 } else { 4 },
             )
             .expect("oom");
-        p.declared_symbols.push(p.allocator, DeclaredSymbol { is_top_level, r#ref: self.stack_ref }).unwrap();
-        p.declared_symbols.push(p.allocator, DeclaredSymbol { is_top_level, r#ref: caught_ref }).unwrap();
-        p.declared_symbols.push(p.allocator, DeclaredSymbol { is_top_level, r#ref: err_ref }).unwrap();
-        p.declared_symbols.push(p.allocator, DeclaredSymbol { is_top_level, r#ref: has_err_ref }).unwrap();
-        // PERF(port): was assume_capacity
+        p.declared_symbols.append_assume_capacity(DeclaredSymbol { is_top_level, ref_: self.stack_ref });
+        p.declared_symbols.append_assume_capacity(DeclaredSymbol { is_top_level, ref_: caught_ref });
+        p.declared_symbols.append_assume_capacity(DeclaredSymbol { is_top_level, ref_: err_ref });
+        p.declared_symbols.append_assume_capacity(DeclaredSymbol { is_top_level, ref_: has_err_ref });
 
         let loc = self.first_using_loc;
         let call_dispose = {
@@ -7920,34 +7928,31 @@ impl LowerUsingDeclarationsContext {
             p.record_usage(err_ref);
             p.record_usage(has_err_ref);
             let args = p.allocator.alloc_slice_copy(&[
-                Expr { data: js_ast::ExprData::EIdentifier(E::Identifier { r#ref: self.stack_ref, ..Default::default() }), loc },
-                Expr { data: js_ast::ExprData::EIdentifier(E::Identifier { r#ref: err_ref, ..Default::default() }), loc },
-                Expr { data: js_ast::ExprData::EIdentifier(E::Identifier { r#ref: has_err_ref, ..Default::default() }), loc },
+                p.new_expr(E::Identifier { r#ref: self.stack_ref, ..Default::default() }, loc),
+                p.new_expr(E::Identifier { r#ref: err_ref, ..Default::default() }, loc),
+                p.new_expr(E::Identifier { r#ref: has_err_ref, ..Default::default() }, loc),
             ]);
-            p.call_runtime(loc, b"__callDispose", args)
+            // SAFETY: bump-arena slice valid for 'a; Borrowed origin → no-op Drop.
+            p.call_runtime(loc, b"__callDispose", unsafe { ExprNodeList::from_bump_slice(args) })
         };
 
         let finally_stmts: &'a mut [Stmt] = if self.has_await_using {
             let promise_ref = p.generate_temp_ref(Some(b"_promise"));
             // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-            unsafe { &mut *scope }.generated.push(p.allocator, promise_ref).expect("oom");
-            p.declared_symbols.push(p.allocator, DeclaredSymbol { is_top_level, r#ref: promise_ref }).unwrap();
+            unsafe { &mut *scope }.generated.append(promise_ref).expect("oom");
+            p.declared_symbols.append_assume_capacity(DeclaredSymbol { is_top_level, ref_: promise_ref });
 
             let promise_ref_expr = p.new_expr(E::Identifier { r#ref: promise_ref, ..Default::default() }, loc);
 
             let await_expr = p.new_expr(E::Await { value: promise_ref_expr }, loc);
             p.record_usage(promise_ref);
 
-            let statements = p.allocator.alloc_slice_fill_default::<Stmt>(2);
-            statements[0] = p.s(
+            // var promise = __callDispose(stack, error, hasError);
+            let promise_binding = p.b(B::Identifier { r#ref: promise_ref }, loc);
+            let stmt0 = p.s(
                 S::Local {
-                    decls: {
-                        let decls = p.allocator.alloc_slice_copy(&[Decl {
-                            binding: p.b(B::Identifier { r#ref: promise_ref }, loc),
-                            value: Some(call_dispose),
-                        }]);
-                        G::Decl::List::from_owned_slice(decls)
-                    },
+                    decls: G::DeclList::init_one(Decl { binding: promise_binding, value: Some(call_dispose) })
+                        .expect("oom"),
                     ..Default::default()
                 },
                 loc,
@@ -7959,7 +7964,7 @@ impl LowerUsingDeclarationsContext {
             //   var promise = __callDispose(stack, error, hasError);
             //   promise && await promise;
             //
-            statements[1] = p.s(
+            let stmt1 = p.s(
                 S::SExpr {
                     value: p.new_expr(
                         E::Binary { op: js_ast::op::Code::BinLogicalAnd, left: promise_ref_expr, right: await_expr },
@@ -7970,68 +7975,58 @@ impl LowerUsingDeclarationsContext {
                 loc,
             );
 
-            statements
+            p.allocator.alloc_slice_copy(&[stmt0, stmt1])
         } else {
-            p.allocator.alloc_slice_copy(&[p.s(S::SExpr { value: call_dispose, ..Default::default() }, call_dispose.loc)])
+            let call_dispose_loc = call_dispose.loc;
+            p.allocator.alloc_slice_copy(&[p.s(S::SExpr { value: call_dispose, ..Default::default() }, call_dispose_loc)])
         };
 
         // Wrap everything in a try/catch/finally block
         p.record_usage(caught_ref);
         result.reserve(2 + usize::from(!exports.is_empty()));
+        let stack_binding = p.b(B::Identifier { r#ref: self.stack_ref }, loc);
+        let stack_init = p.new_expr(E::Array::default(), loc);
         result.push(p.s(
             S::Local {
-                decls: {
-                    let decls = p.allocator.alloc_slice_copy(&[Decl {
-                        binding: p.b(B::Identifier { r#ref: self.stack_ref }, loc),
-                        value: Some(p.new_expr(E::Array::default(), loc)),
-                    }]);
-                    G::Decl::List::from_owned_slice(decls)
-                },
+                decls: G::DeclList::init_one(Decl { binding: stack_binding, value: Some(stack_init) }).expect("oom"),
                 kind: js_ast::s::Kind::KLet,
                 ..Default::default()
             },
             loc,
         ));
         // PERF(port): was assume_capacity
+        let catch_binding = p.b(B::Identifier { r#ref: caught_ref }, loc);
+        let catch_body: *mut [Stmt] = {
+            let err_binding = p.b(B::Identifier { r#ref: err_ref }, loc);
+            let err_value = p.new_expr(E::Identifier { r#ref: caught_ref, ..Default::default() }, loc);
+            let has_err_binding = p.b(B::Identifier { r#ref: has_err_ref }, loc);
+            let has_err_value = p.new_expr(E::Number { value: 1.0 }, loc);
+            let mut decls = G::DeclList::default();
+            decls.append(Decl { binding: err_binding, value: Some(err_value) }).expect("oom");
+            decls.append(Decl { binding: has_err_binding, value: Some(has_err_value) }).expect("oom");
+            let stmt0 = p.s(S::Local { decls, ..Default::default() }, loc);
+            p.allocator.alloc_slice_copy(&[stmt0]) as *mut [Stmt]
+        };
         result.push(p.s(
             S::Try {
                 body: non_exported_statements,
                 body_loc: loc,
                 catch_: Some(js_ast::Catch {
-                    binding: Some(p.b(B::Identifier { r#ref: caught_ref }, loc)),
-                    body: {
-                        let statements = p.allocator.alloc_slice_fill_default::<Stmt>(1);
-                        statements[0] = p.s(
-                            S::Local {
-                                decls: {
-                                    let decls = p.allocator.alloc_slice_copy(&[
-                                        Decl {
-                                            binding: p.b(B::Identifier { r#ref: err_ref }, loc),
-                                            value: Some(p.new_expr(E::Identifier { r#ref: caught_ref, ..Default::default() }, loc)),
-                                        },
-                                        Decl {
-                                            binding: p.b(B::Identifier { r#ref: has_err_ref }, loc),
-                                            value: Some(p.new_expr(E::Number { value: 1.0 }, loc)),
-                                        },
-                                    ]);
-                                    G::Decl::List::from_owned_slice(decls)
-                                },
-                                ..Default::default()
-                            },
-                            loc,
-                        );
-                        statements
-                    },
+                    binding: Some(catch_binding),
+                    body: catch_body,
                     body_loc: loc,
                     loc,
                 }),
-                finally: Some(js_ast::Finally { loc, stmts: finally_stmts }),
+                finally: Some(js_ast::Finally { loc, stmts: finally_stmts as *mut [Stmt] }),
             },
             loc,
         ));
 
         if !exports.is_empty() {
-            result.push(p.s(S::ExportClause { items: exports.into_bump_slice(), is_single_line: false }, loc));
+            result.push(p.s(
+                S::ExportClause { items: exports.into_bump_slice() as *mut [js_ast::ClauseItem], is_single_line: false },
+                loc,
+            ));
         }
 
         result

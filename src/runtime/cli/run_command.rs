@@ -15,13 +15,19 @@
 use ::core::ffi::c_void;
 use ::core::sync::atomic::{AtomicBool, Ordering};
 
-use bun_core::{self as core, Global, Output};
+use bun_bundler::Transpiler;
+use bun_core::{self as core, Environment, Global, Output, ZStr};
 use bun_core::{pretty, pretty_errorln, prettyln};
+use bun_dotenv as DotEnv;
 use bun_jsc::js_promise::Status as PromiseStatus;
 use bun_jsc::virtual_machine::{InitOptions as VmInitOptions, VirtualMachine};
 use bun_jsc::{JSGlobalObject, JSValue};
+use bun_options_types::schema::api;
 use bun_options_types::BundleEnums::Loader;
 use bun_paths::{self as paths, MAX_PATH_BYTES, PathBuffer};
+use bun_resolver::dir_info::DirInfo;
+use bun_string::strings;
+use bun_which::which;
 
 use crate::cli::arguments;
 use crate::cli::command::{ContextData, Tag as CommandTag};

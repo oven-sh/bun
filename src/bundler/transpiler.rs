@@ -292,11 +292,22 @@ impl<'a> Transpiler<'a> {
             None => match dot_env::instance() {
                 Some(l) => l,
                 None => {
-                    // TODO(port): Box::leak for &'static — Zig used
-                    // allocator.create; classified STATIC (process-lifetime
-                    // dotenv singleton, set_instance below).
-                    let map = Box::leak(Box::new(dot_env::Map::init()));
-                    Box::leak(Box::new(dot_env::Loader::init(map)))
+                    // PORTING.md §Forbidden bars `Box::leak` even for
+                    // process-lifetime singletons. `bun_dotenv::INSTANCE` is an
+                    // `AtomicPtr<Loader<'static>>` and `Loader` borrows
+                    // `&'static mut Map`, so a `OnceLock<Loader>` here can't
+                    // be expressed without changing `bun_dotenv`'s API.
+                    // Transfer ownership of both allocations into the global
+                    // singleton via `Box::into_raw` (the AtomicPtr becomes the
+                    // owner; matches `MiniEventLoop::init_global`).
+                    // TODO(port): replace with a `OnceLock`-backed
+                    // `bun_dotenv::instance_or_init()` accessor once
+                    // `bun_dotenv` grows one (PORTING.md §Concurrency).
+                    let map: *mut dot_env::Map = Box::into_raw(Box::new(dot_env::Map::init()));
+                    // SAFETY: `map` is a fresh heap allocation with no other
+                    // alias; `Loader` stores it for process lifetime and is
+                    // itself installed into `dot_env::INSTANCE` below.
+                    Box::into_raw(Box::new(dot_env::Loader::init(unsafe { &mut *map })))
                 }
             },
         };

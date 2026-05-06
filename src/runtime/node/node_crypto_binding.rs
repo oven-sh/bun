@@ -678,7 +678,7 @@ pub mod random {
         offset: u32,
         length: usize,
     ) -> JsResult<u32> {
-        let mut size = validators::validate_number(global, size_value, b"size", None, None)?;
+        let mut size = validators::validate_number(global, size_value, "size", None, None)?;
         size *= element_size as f64;
 
         if size.is_nan() || size > (MAX_POSSIBLE_LENGTH as f64) || size < 0.0 {

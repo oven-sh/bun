@@ -23,7 +23,7 @@
 
 import { packageJsonInternals } from "bun:internal-for-testing";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 
 const { sideEffectsHasSideEffects } = packageJsonInternals;
 
@@ -100,9 +100,11 @@ test("#30320 SideEffects mixed (exact + glob) both match against Windows-style p
   ).toBe(false);
 });
 
-test("#30320 SideEffects behaviour on POSIX paths unchanged", () => {
+test.skipIf(isWindows)("#30320 SideEffects behaviour on POSIX paths unchanged", () => {
   // The fix must not regress POSIX matching — it produces the same
-  // absolute pattern on both code paths there.
+  // absolute pattern on both code paths there. Windows-skipped because
+  // `r.fs.abs` on Windows prepends the current drive letter to any
+  // `/`-rooted input, which the synthetic matching pair can't share.
   expect(sideEffectsHasSideEffects("/pkg/", ["adapters/**/*.js"], "/pkg/adapters/foo.js", true)).toBe(true);
   expect(sideEffectsHasSideEffects("/pkg/", ["adapters/**/*.js"], "/pkg/adapters/foo.js", false)).toBe(true);
 
@@ -140,8 +142,10 @@ test("#30320 bundler preserves sideEffects glob imports", async () => {
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toBe("");
+  // Don't pin stderr to empty — ASAN shards can emit benign warnings on a
+  // clean run. Only consult stderr when the build actually failed.
   expect(stdout).toContain("foo adapter registered");
   expect(stdout).toContain("bar adapter registered");
+  if (exitCode !== 0) expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });

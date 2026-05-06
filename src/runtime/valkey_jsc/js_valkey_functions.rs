@@ -12,6 +12,15 @@ use super::valkey_command_body::{Args as CommandArgs, Command, Meta as CommandMe
 
 type Slice = bun_jsc::ZigStringSlice;
 
+/// Reinterpret an ASCII byte-string literal as `&str` for the
+/// `throw_invalid_argument_type` family (which take `&'static str`).
+/// SAFETY: every command/method name passed to the `cmd_*!` macros is a
+/// static ASCII byte-string literal, so it is always valid UTF-8.
+#[inline(always)]
+const fn bname(b: &'static [u8]) -> &'static str {
+    unsafe { core::str::from_utf8_unchecked(b) }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Helpers
 // ──────────────────────────────────────────────────────────────────────────

@@ -35,7 +35,7 @@ use bun_bundler::transpiler::{MacroJSCtx, ParseResult, ParseOptions};
 use bun_core::Error;
 use bun_jsc::{
     self as jsc, ArgumentsSlice, CallFrame, JSArrayIterator, JSGlobalObject, JSPromise,
-    JSPropertyIterator, JSPropertyIteratorOptions, JSValue, JsResult, LogJsc, StringJsc,
+    JSPropertyIterator, JSPropertyIteratorOptions, JSValue, JsError, JsResult, LogJsc, StringJsc,
     ComptimeStringMapExt,
 };
 use bun_jsc::zig_string::ZigString as JscZigString;
@@ -103,7 +103,7 @@ pub struct Config {
     pub tsconfig_buf: Box<[u8]>,
     pub macros_buf: Box<[u8]>,
     pub log: logger::Log,
-    pub runtime: Runtime::Features<'static>,
+    pub runtime: Runtime::Features,
     pub tree_shaking: bool,
     pub trim_unused_imports: Option<bool>,
     pub inlining: bool,
@@ -1447,7 +1447,23 @@ fn named_exports_to_js(
         names.push(BunString::from_bytes(&**entry.key_ptr));
     }
     // TODO(port): `bun_str::String::to_js_array` — use the free fn in bun_jsc.
-    bun_jsc::bun_string_jsc::to_js_array(global, &names)
+    bun_string_to_js_array(global, &names)
+}
+
+/// Local shim for `bun.String.toJSArray` — `bun_jsc::bun_string_jsc` (the inline
+/// module re-exported at the crate root) does not yet expose `to_js_array`.
+// TODO(port): drop once `bun_jsc::bun_string_jsc::to_js_array` is re-exported.
+fn bun_string_to_js_array(global: &JSGlobalObject, array: &[BunString]) -> JsResult<JSValue> {
+    unsafe extern "C" {
+        fn BunString__createArray(
+            global_object: *mut JSGlobalObject,
+            ptr: *const BunString,
+            len: usize,
+        ) -> JSValue;
+    }
+    // SAFETY: ptr/len from a live slice; `global` borrowed for the call duration.
+    let v = unsafe { BunString__createArray(global.as_ptr(), array.as_ptr(), array.len()) };
+    if global.has_exception() { Err(JsError::Thrown) } else { Ok(v) }
 }
 
 fn named_imports_to_js(

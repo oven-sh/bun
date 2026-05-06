@@ -620,7 +620,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 );
                 Global.exit(1);
             };
-            ctx.test_options.test_filter_regex = regex;
+            ctx.test_options.test_filter_regex = @ptrCast(regex);
         }
         if (args.option("--changed")) |since| {
             ctx.test_options.changed = since;

@@ -1834,8 +1834,8 @@ pub fn matchWildcardLiteral(literal: []const u8, path: []const u8) bool {
     return std.mem.eql(u8, literal, path);
 }
 
-const DirIterator = @import("../bun.js/node/dir_iterator.zig");
-const ResolvePath = @import("../resolver/resolve_path.zig");
+const DirIterator = @import("../runtime/node/dir_iterator.zig");
+const ResolvePath = @import("../paths/resolve_path.zig");
 
 const bun = @import("bun");
 const BunString = bun.String;

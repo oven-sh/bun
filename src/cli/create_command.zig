@@ -449,7 +449,7 @@ pub const CreateCommand = struct {
                 }
 
                 const destination_dir = destination_dir__;
-                const Walker = @import("../walker_skippable.zig");
+                const Walker = @import("../sys/walker_skippable.zig");
                 var walker_ = try Walker.walk(.fromStdDir(template_dir), ctx.allocator, skip_files, skip_dirs);
                 defer walker_.deinit();
 
@@ -1631,7 +1631,7 @@ pub const CreateCommand = struct {
                 child.stdout_behavior = .Inherit;
                 child.stderr_behavior = .Inherit;
 
-                const open = @import("../open.zig");
+                const open = @import("./open.zig");
                 open.openURL("http://localhost:3000/");
 
                 try child.spawn();
@@ -2428,17 +2428,17 @@ const GitHandler = struct {
 
 const string = []const u8;
 
-const CopyFile = @import("../copy_file.zig");
-const DotEnv = @import("../env_loader.zig");
-const SourceFileProjectGenerator = @import("../create/SourceFileProjectGenerator.zig");
-const Zlib = @import("../zlib.zig");
-const fs = @import("../fs.zig");
-const resolve_path = @import("../resolver/resolve_path.zig");
+const CopyFile = @import("../sys/copy_file.zig");
+const DotEnv = @import("../dotenv/env_loader.zig");
+const SourceFileProjectGenerator = @import("./create/SourceFileProjectGenerator.zig");
+const Zlib = @import("../zlib/zlib.zig");
+const fs = @import("../resolver/fs.zig");
+const resolve_path = @import("../paths/resolve_path.zig");
 const std = @import("std");
-const Command = @import("../cli.zig").Command;
-const NPMClient = @import("../which_npm_client.zig").NPMClient;
-const URL = @import("../url.zig").URL;
-const which = @import("../which.zig").which;
+const Command = @import("./cli.zig").Command;
+const NPMClient = @import("./which_npm_client.zig").NPMClient;
+const URL = @import("../url/url.zig").URL;
+const which = @import("../which/which.zig").which;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

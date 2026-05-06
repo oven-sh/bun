@@ -59,7 +59,7 @@
 //! and let `EnvStr` handle it.
 const string = []const u8;
 pub const Arena = std.heap.ArenaAllocator;
-pub const Braces = @import("./braces.zig");
+pub const Braces = @import("../shell_parser/braces.zig");
 pub const Syscall = bun.sys;
 pub const WorkPoolTask = jsc.WorkPoolTask;
 pub const WorkPool = jsc.WorkPool;
@@ -2066,7 +2066,7 @@ pub fn unsupportedFlag(comptime name: []const u8) []const u8 {
 pub const ParseFlagResult = union(enum) { continue_parsing, done, illegal_option: []const u8, unsupported: []const u8, show_usage };
 pub fn FlagParser(comptime Opts: type) type {
     return struct {
-        pub const Result = @import("../result.zig").Result;
+        pub const Result = @import("../bun_core/result.zig").Result;
 
         pub fn parseFlags(opts: Opts, args: []const [*:0]const u8) Result(?[]const [*:0]const u8, ParseError) {
             var idx: usize = 0;
@@ -2139,7 +2139,7 @@ pub fn unreachableState(context: []const u8, state: []const u8) noreturn {
 }
 
 const builtin = @import("builtin");
-const WTFStringImplStruct = @import("../string.zig").WTFStringImplStruct;
+const WTFStringImplStruct = @import("../string/string.zig").WTFStringImplStruct;
 
 const bun = @import("bun");
 const ResolvePath = bun.path;

@@ -50,7 +50,7 @@ export const zstd: Dependency = {
 
     // Upstream's if(MSVC) block sets these for the static target.
     // ZSTD_HEAPMODE=0 makes the one-shot ZSTD_decompress() (used by
-    // src/deps/zstd.zig) stack-allocate its DCtx instead of malloc/free
+    // src/zstd/zstd.zig) stack-allocate its DCtx instead of malloc/free
     // per call; the source default is 1.
     if (cfg.windows) {
       defines.ZSTD_HEAPMODE = 0;

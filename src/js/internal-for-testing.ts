@@ -7,7 +7,7 @@
 // In a debug build, the import is always allowed.
 // It is disallowed in release builds unless run in Bun's CI.
 
-const fmtBinding = $bindgenFn("fmt.bind.ts", "fmtString");
+const fmtBinding = $bindgenFn("fmt_jsc.bind.ts", "fmtString");
 
 export const highlightJavaScript = (code: string) => fmtBinding(code, "highlight-javascript");
 export const escapePowershell = (code: string) => fmtBinding(code, "escape-powershell");
@@ -174,7 +174,7 @@ export const isOperatingSystemMatch: (operatingSystem: string[]) => boolean = $n
   1,
 );
 
-export const createSocketPair: () => [number, number] = $newZigFunction("socket.zig", "jsCreateSocketPair", 0);
+export const createSocketPair: () => [number, number] = $newZigFunction("runtime/socket/socket.zig", "jsCreateSocketPair", 0);
 
 export const isModuleResolveFilenameSlowPathEnabled: () => boolean = $newCppFunction(
   "NodeModuleModule.cpp",
@@ -212,7 +212,7 @@ export const arrayBufferViewHasBuffer = $newCppFunction(
 );
 
 export const timerInternals = {
-  timerClockMs: $newZigFunction("Timer.zig", "internal_bindings.timerClockMs", 0),
+  timerClockMs: $newZigFunction("runtime/timer/Timer.zig", "internal_bindings.timerClockMs", 0),
 };
 
 export const decodeURIComponentSIMD = $newCppFunction(
@@ -230,7 +230,7 @@ interface setSocketOptionsFn {
   (socket: Bun.Socket, recvBuffer: 2, size: number): void;
 }
 
-export const setSocketOptions: setSocketOptionsFn = $newZigFunction("socket.zig", "jsSetSocketOptions", 3);
+export const setSocketOptions: setSocketOptionsFn = $newZigFunction("runtime/socket/socket.zig", "jsSetSocketOptions", 3);
 type SerializationContext = "worker" | "window" | "postMessage" | "default";
 export const structuredCloneAdvanced: (
   value: any,
@@ -295,5 +295,5 @@ export const fetchH3Internals = {
 };
 
 export const fileSinkInternals = {
-  liveCount: $newZigFunction("bun.js/webcore/FileSink.zig", "TestingAPIs.fileSinkLiveCount", 0) as () => number,
+  liveCount: $newZigFunction("runtime/webcore/FileSink.zig", "TestingAPIs.fileSinkLiveCount", 0) as () => number,
 };

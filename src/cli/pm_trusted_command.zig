@@ -443,7 +443,7 @@ pub const TrustCommand = struct {
 const string = []const u8;
 
 const std = @import("std");
-const Command = @import("../cli.zig").Command;
+const Command = @import("./cli.zig").Command;
 const PackageManagerCommand = @import("./package_manager_command.zig").PackageManagerCommand;
 
 const Install = @import("../install/install.zig");

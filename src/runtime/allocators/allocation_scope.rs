@@ -282,7 +282,11 @@ impl State {
 
 impl Drop for State {
     fn drop(&mut self) {
-        let history = self.history.into_unprotected();
+        // Zig: `var history = self.#history.intoUnprotected();` — moves the value out. In Rust
+        // `Drop::drop` only has `&mut self`, so we can't consume `self.history`. `GuardedBy`
+        // exposes `unsynchronized_value: UnsafeCell<History>` publicly; in Drop we hold the sole
+        // `&mut State`, so `UnsafeCell::get_mut` gives safe exclusive access without the mutex.
+        let history = self.history.unsynchronized_value.get_mut();
 
         let count = history.allocations.len();
         if count == 0 {

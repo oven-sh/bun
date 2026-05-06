@@ -1296,6 +1296,24 @@ where
     false
 }
 
+// Local shim: upstream `bun_jsc::AnyPromise` (lib.rs enum) lacks `.result()`;
+// only the per-file `jsc::any_promise::AnyPromise` has it. Hand-dispatch here.
+trait AnyPromiseResultExt {
+    fn result(self, vm: &jsc::VM) -> JSValue;
+}
+impl AnyPromiseResultExt for jsc::AnyPromise {
+    #[inline]
+    fn result(self, vm: &jsc::VM) -> JSValue {
+        match self {
+            // SAFETY: variants hold a live JSC heap cell created via `as_any_promise`.
+            jsc::AnyPromise::Normal(p) => unsafe { (*p).result(vm) },
+            jsc::AnyPromise::Internal(_p) => {
+                todo!("blocked_on: bun_jsc::JSInternalPromise::result")
+            }
+        }
+    }
+}
+
 // ───────────────────────── ElementHandler ────────────────────────────────
 
 pub struct ElementHandler {

@@ -574,6 +574,11 @@ impl EditorContext {
 
     pub fn detect_editor(&mut self, env: &mut dot_env::Loader) {
         let mut buf = PathBuffer::uninit();
+        // PORT NOTE: borrowck — `by_path_for_editor`/`by_fallback` tie `out`'s lifetime
+        // to `&'a mut buf`. On the `false` path NLL conservatively keeps `buf` borrowed
+        // (Polonius case). Re-borrow through a raw pointer at each call site; on a hit
+        // we return immediately so only one `&mut` is ever live.
+        let buf_ptr: *mut PathBuffer = &mut buf;
         let mut out: &[u8] = b"";
 
         // first: choose from user preference
@@ -589,10 +594,11 @@ impl EditorContext {
 
             // "vscode"
             if let Some(editor_) = Editor::by_name(bun_paths::basename(self.name)) {
+                // SAFETY: see PORT NOTE above — exclusive per-call reborrow.
                 if Editor::by_path_for_editor(
                     env,
                     editor_,
-                    &mut buf,
+                    unsafe { &mut *buf_ptr },
                     Fs::FileSystem::instance().top_level_dir,
                     &mut out,
                 ) {

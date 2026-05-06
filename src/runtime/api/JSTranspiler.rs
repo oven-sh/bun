@@ -67,7 +67,9 @@ pub struct JSTranspiler {
     pub log_level: logger::Level,
     // TODO(port): non-AST crate keeps an arena field for bulk-freeing config strings.
     // Consider replacing with per-field Box ownership in Phase B.
-    pub arena: Arena,
+    // Boxed so its address is stable across the move into `Box<JSTranspiler>` —
+    // `transpiler.allocator` holds a `&'static Arena` pointing into it.
+    pub arena: Box<Arena>,
     // Intrusive refcount field for `bun_ptr::IntrusiveRc<JSTranspiler>`.
     // TODO(port): LIFETIMES.tsv classifies the consumer (`TransformTask.js_instance`) as
     // `Arc<JSTranspiler>`, but `bun.ptr.RefCount` is single-thread intrusive and `*JSTranspiler`

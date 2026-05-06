@@ -429,17 +429,11 @@ pub mod lib_c {
         // SAFETY: request was just Box::into_raw'd in init() and is exclusively owned here.
         let promise_value = unsafe { (*request).head.promise.value() };
 
-        // TODO(port): `get_addr_info_request::Task` is `jsc::WorkTask`, which is
-        // generic over `WorkTaskContext` and takes `&Context` — the
-        // `GetAddrInfoRequest` impl and the non-generic alias are not yet
-        // wired up upstream.
-        let _ = (global_this, request);
-        todo!("blocked_on: bun_jsc::WorkTask::<GetAddrInfoRequest>::create_on_js_thread");
-        #[allow(unreachable_code)]
-        {
-            this.request_sent(this.vm());
-            promise_value
-        }
+        let io = get_addr_info_request::Task::create_on_js_thread(global_this, request);
+        get_addr_info_request::Task::schedule(io);
+        this.request_sent(this.vm());
+
+        promise_value
     }
 
     #[cfg(windows)]
@@ -1100,10 +1094,9 @@ pub struct GetAddrInfoRequest {
 pub mod get_addr_info_request {
     use super::*;
 
-    // TODO(port): WorkTask is currently an opaque stub in `bun_jsc`; restore the
-    // generic `WorkTask<GetAddrInfoRequest>` parameter once the real type is
-    // un-gated.
-    pub type Task = jsc::WorkTask;
+    /// `bun.jsc.WorkTask(GetAddrInfoRequest)` — runs blocking `getaddrinfo`
+    /// on the work pool, then re-enters the JS thread via `then`.
+    pub type Task = jsc::work_task::WorkTask<super::GetAddrInfoRequest>;
 
     pub struct PendingCacheKey {
         pub hash: u64,
@@ -1370,9 +1363,8 @@ impl GetAddrInfoRequest {
                 get_addr_info_request::Backend::Libc(l) => l.run(),
                 _ => unreachable!(),
             }
-            let _ = task;
-            todo!("blocked_on: bun_jsc::WorkTask::on_finish");
         }
+        get_addr_info_request::Task::on_finish(task);
     }
 
     pub fn then(this: *mut Self, _global: &JSGlobalObject) {

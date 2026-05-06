@@ -892,6 +892,7 @@ pub struct ReadWriteLoop {
     pub uv_buf: libuv::uv_buf_t,
 }
 
+#[cfg(windows)]
 impl ReadWriteLoop {
     pub fn start(&mut self, this: &mut CopyFileWindows) -> bun_sys::Result<()> {
         self.read_buf.reserve_exact(64 * 1024);
@@ -959,6 +960,7 @@ impl ReadWriteLoop {
     }
 }
 
+#[cfg(windows)]
 extern "C" fn on_read(req: *mut libuv::fs_t) {
     // SAFETY: req points to CopyFileWindows.io_request
     let this: &mut CopyFileWindows = unsafe {

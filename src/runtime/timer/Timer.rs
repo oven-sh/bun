@@ -127,11 +127,13 @@ impl All {
         // SAFETY: caller guarantees `timer` is a valid live EventLoopTimer
         let timer_ref = unsafe { &mut *timer };
         if self.fake_timers.is_active() && timer_ref.tag.allow_fake_timers() {
-            self.fake_timers.timers.insert(timer);
+            // SAFETY: `timer` is a valid, exclusively-owned node not currently in any heap.
+            unsafe { self.fake_timers.timers.insert(timer) };
             timer_ref.state = EventLoopTimerState::ACTIVE;
             timer_ref.in_heap = InHeap::Fake;
         } else {
-            self.timers.insert(timer);
+            // SAFETY: `timer` is a valid, exclusively-owned node not currently in any heap.
+            unsafe { self.timers.insert(timer) };
             timer_ref.state = EventLoopTimerState::ACTIVE;
             timer_ref.in_heap = InHeap::Regular;
 

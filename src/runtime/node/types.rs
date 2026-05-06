@@ -796,9 +796,12 @@ impl Encoding {
             input.len(),
             MAX_SIZE,
         );
+        // PERF(port): Zig used comptime-sized stack buffers; stable Rust forbids
+        // const-generic arithmetic in array lengths, so we heap-allocate.
         match self {
             Self::Base64 => {
-                let mut base64_buf = [0u8; bun_core::base64::standard_encoded_len(MAX_SIZE * 4)];
+                let mut base64_buf =
+                    vec![0u8; bun_core::base64::standard_encoder_calc_size(MAX_SIZE * 4)];
                 let encoded_len = bun_core::base64::encode(&mut base64_buf, input);
                 let (mut encoded, bytes) = bun_str::String::create_uninitialized_latin1(encoded_len);
                 // SAFETY: `bytes` is a freshly-allocated Latin-1 buffer of `encoded_len` bytes.
@@ -812,12 +815,12 @@ impl Encoding {
                 encoded.transfer_to_js(global_object)
             }
             Self::Base64url => {
-                let mut buf = [0u8; bun_core::base64::url_safe_no_pad_encoded_len(MAX_SIZE * 4)];
-                let encoded = bun_core::base64::url_safe_no_pad_encode(&mut buf, input);
-                Ok(ZigString::init(&buf[..encoded.len()]).to_js(global_object))
+                let mut buf = vec![0u8; bun_base64::simdutf_encode_len_url_safe(MAX_SIZE * 4)];
+                let encoded = bun_base64::simdutf_encode_url_safe(&mut buf, input);
+                Ok(ZigString::init(&buf[..encoded]).to_js(global_object))
             }
             Self::Hex => {
-                let mut buf = [0u8; MAX_SIZE * 4];
+                let mut buf = vec![0u8; MAX_SIZE * 4];
                 use std::io::Write;
                 let mut cursor: &mut [u8] = &mut buf[..];
                 for b in input {

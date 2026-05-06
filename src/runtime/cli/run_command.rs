@@ -1881,8 +1881,44 @@ use bun_sys::{self as sys, Fd};
 use bun_threading::Channel;
 use bun_which::which;
 
-use crate::list_of_yarn_commands::all_yarn_commands as yarn_commands;
+use crate::cli::list_of_yarn_commands as yarn_commands;
 use crate::shell_completions::ShellCompletions;
+
+/// Port of `bun.pathLiteral` — returns the literal as-is on POSIX, with
+/// `/` rewritten to `\` on Windows. Local because `bun_paths` does not (yet)
+/// export a macro form; see `src/bun.rs` for the eventual shared definition.
+macro_rules! path_literal {
+    ($posix:literal, $win:literal) => {{
+        #[cfg(windows)]
+        { $win }
+        #[cfg(not(windows))]
+        { $posix }
+    }};
+}
+
+// TODO(b2-blocked): `bun_md` shim — keeps the markdown render path compiling
+// until `bun_md` is added to `runtime/Cargo.toml`. Swap for `use bun_md as md;`
+// once the dep edge lands.
+pub(super) mod md_stub {
+    #[derive(Clone, Copy)]
+    pub struct Options;
+    impl Options { pub const TERMINAL: Self = Self; }
+    pub struct ImageUrlCollector;
+    impl ImageUrlCollector {
+        pub fn init() -> Self { Self }
+        pub fn renderer(&mut self) -> &mut Self { self }
+        pub fn urls(&self) -> &[&[u8]] { &[] }
+    }
+    pub struct AnsiTheme { pub light: bool }
+    pub fn detect_kitty_graphics() -> bool { false }
+    pub fn detect_light_background() -> bool { false }
+    pub fn render_with_renderer<R>(_src: &[u8], _opts: Options, _r: R) -> Result<(), ()> {
+        todo!("blocked_on: bun_md")
+    }
+    pub fn render_to_ansi(_src: &[u8], _opts: Options, _theme: AnsiTheme) -> Result<Vec<u8>, ()> {
+        todo!("blocked_on: bun_md")
+    }
+}
 
 bun_output::declare_scope!(RUN, visible);
 bun_output::declare_scope!(BunXFastPath, visible);

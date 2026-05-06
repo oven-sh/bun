@@ -1,5 +1,5 @@
 use bun_core::Error;
-use crate::ast::{self as js_ast, ClauseItem, Expr, LocRef, E};
+use crate::ast::{ClauseItem, Expr, LocRef, E};
 use crate::ast::expr::Data as ExprData;
 use crate::ast::op::Level;
 use crate::ast::p::P;

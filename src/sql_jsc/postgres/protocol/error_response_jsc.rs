@@ -124,56 +124,34 @@ pub fn to_js(this: &ErrorResponse, global_object: &JSGlobalObject) -> JSValue {
     let len = b.len;
     let error_message: &[u8] = if len > 0 { &b.allocated_slice()[..len] } else { b"" };
 
-    
-    {
-        // TODO(b2-blocked): bun_sql::postgres::PostgresErrorOptions<'a> —
-        // currently every slice field is `&'static [u8]` (Phase-A placeholder),
-        // so the borrowed `byte_slice()` results above won't typecheck. Once
-        // bun_sql gives PostgresErrorOptions a lifetime param this gate drops
-        // unchanged.
-        return create_postgres_error(
-            global_object,
-            error_message,
-            PostgresErrorOptions {
-                code: error_code,
-                errno,
-                detail: detail_slice,
-                hint: hint_slice,
-                severity: severity_slice,
-                position: position_slice,
-                internal_position: internal_position_slice,
-                internal_query: internal_query_slice,
-                r#where: where_slice,
-                schema: schema_slice,
-                table: table_slice,
-                column: column_slice,
-                data_type: data_type_slice,
-                constraint: constraint_slice,
-                file: file_slice,
-                line: line_slice,
-                routine: routine_slice,
-            },
-        )
-        .unwrap_or_else(|e| global_object.take_error(e));
-    }
-    #[cfg(any())]
-    {
-        let _ = (
-            errno, detail_slice, hint_slice, severity_slice, position_slice,
-            internal_position_slice, internal_query_slice, where_slice, schema_slice,
-            table_slice, column_slice, data_type_slice, constraint_slice, file_slice,
-            line_slice, routine_slice, error_message,
-        );
-        // Partial fallback (no per-field options) so callers still get a JS
-        // error object instead of `unimplemented!()`. The full options-struct
-        // path above is the canonical impl.
-        create_postgres_error(
-            global_object,
-            b"", // error_message borrows `b` which is non-'static
-            PostgresErrorOptions { code: error_code, ..Default::default() },
-        )
-        .unwrap_or_else(|e| global_object.take_error(e))
-    }
+    // TODO(port): bun_sql::postgres::PostgresErrorOptions<'a> — currently every
+    // slice field is `&'static [u8]` (Phase-A placeholder), so the borrowed
+    // `byte_slice()` results above won't typecheck. Once bun_sql gives
+    // PostgresErrorOptions a lifetime param this body compiles unchanged.
+    create_postgres_error(
+        global_object,
+        error_message,
+        PostgresErrorOptions {
+            code: error_code,
+            errno,
+            detail: detail_slice,
+            hint: hint_slice,
+            severity: severity_slice,
+            position: position_slice,
+            internal_position: internal_position_slice,
+            internal_query: internal_query_slice,
+            r#where: where_slice,
+            schema: schema_slice,
+            table: table_slice,
+            column: column_slice,
+            data_type: data_type_slice,
+            constraint: constraint_slice,
+            file: file_slice,
+            line: line_slice,
+            routine: routine_slice,
+        },
+    )
+    .unwrap_or_else(|e| global_object.take_error(e))
 }
 
 // ──────────────────────────────────────────────────────────────────────────

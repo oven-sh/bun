@@ -112,27 +112,40 @@ impl Request {
         // SAFETY: uws returns a pointer+len pair valid for the lifetime of the request
         unsafe { core::slice::from_raw_parts(p, n) }
     }
-    pub fn for_each_header<Ctx>(
-        &mut self,
-        cb: fn(ctx: &mut Ctx, name: &[u8], value: &[u8]),
-        ctx: *mut Ctx,
-    ) {
-        // TODO(port): Zig monomorphized `cb` at comptime into the C trampoline.
-        // Rust cannot capture a runtime fn pointer inside a bare `extern "C" fn`
-        // without const-fn-ptr generics (unstable) or a macro. Phase B: convert
-        // call sites to `h3_for_each_header!(req, ctx, |ctx, n, v| ...)` macro.
-        let _ = cb;
-        unsafe extern "C" fn each<Ctx>(
-            _n: *const u8,
-            _nl: usize,
-            _v: *const u8,
-            _vl: usize,
-            _ud: *mut c_void,
-        ) {
-            unimplemented!("TODO(port): comptime handler trampoline");
+    /// Iterate all request headers.
+    ///
+    /// Zig takes `comptime cb` and bakes it into the trampoline at
+    /// monomorphization time. Rust models this by requiring `H` to be a
+    /// zero-sized type (function item or capture-less closure): the trampoline
+    /// is monomorphized over `H` and conjures the ZST inside, so the user
+    /// handler is baked in with no runtime storage.
+    pub fn for_each_header<Ctx, H>(&mut self, _cb: H, ctx: *mut Ctx)
+    where
+        H: Fn(&mut Ctx, &[u8], &[u8]) + Copy + 'static,
+    {
+        const { assert!(core::mem::size_of::<H>() == 0, "handler must be a fn item or capture-less closure") };
+        unsafe extern "C" fn each<Ctx, H>(
+            n: *const u8,
+            nl: usize,
+            v: *const u8,
+            vl: usize,
+            ud: *mut c_void,
+        ) where
+            H: Fn(&mut Ctx, &[u8], &[u8]) + Copy + 'static,
+        {
+            // SAFETY: H is a ZST (asserted at compile time above), so any bit
+            // pattern (i.e. zero bits) is a valid value.
+            let cb: H = unsafe { core::mem::zeroed() };
+            // SAFETY: ud is the `ctx` pointer we passed below; non-null by caller contract.
+            let ctx = unsafe { &mut *ud.cast::<Ctx>() };
+            // SAFETY: uws passes (ptr,len) pairs valid for the duration of this callback.
+            let name = unsafe { core::slice::from_raw_parts(n, nl) };
+            // SAFETY: see above.
+            let value = unsafe { core::slice::from_raw_parts(v, vl) };
+            cb(ctx, name, value);
         }
         // SAFETY: self is a live FFI handle; trampoline is `extern "C"`; ctx forwarded opaquely
-        unsafe { c::uws_h3_req_for_each_header(self, each::<Ctx>, ctx.cast()) }
+        unsafe { c::uws_h3_req_for_each_header(self, each::<Ctx, H>, ctx.cast()) }
     }
 }
 

@@ -470,25 +470,23 @@ impl<'a> Parser<'a> {
             ..Default::default()
         };
 
-        let stmts = p.allocator.alloc_slice_fill_with(1, |_| Stmt {
-            data: js_ast::StmtData::SLazyExport({
-                let data = p.allocator.alloc(final_expr.data);
-                data
-            }),
+        let lazy_data = js_ast::StoreRef::from_bump(p.allocator.alloc(final_expr.data));
+        let stmts: &mut [Stmt] = p.allocator.alloc_slice_fill_with(1, |_| Stmt {
+            data: js_ast::StmtData::SLazyExport(lazy_data),
             loc: expr.loc,
         });
         let part = js_ast::Part {
             stmts,
-            symbol_uses: p.symbol_uses,
+            symbol_uses: core::mem::take(&mut p.symbol_uses),
             ..Default::default()
         };
-        p.symbol_uses = Default::default();
         let mut parts = BumpVec::with_capacity_in(2, p.allocator);
         // PERF(port): was appendSliceAssumeCapacity — profile in Phase B
-        parts.extend_from_slice(&[ns_export_part, part]);
+        parts.push(ns_export_part);
+        parts.push(part);
 
         let exports_kind: js_ast::ExportsKind = 'brk: {
-            if matches!(expr.data, js_ast::ExprData::EUndefined) {
+            if matches!(expr.data, js_ast::ExprData::EUndefined(_)) {
                 if self.source.path.name.ext == b".cjs" {
                     break 'brk js_ast::ExportsKind::Cjs;
                 }

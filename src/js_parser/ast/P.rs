@@ -4512,21 +4512,19 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         Output::panic(format_args!("{}\n{}", fmt, args));
     }
 
-     // blocked_on: log.print(&mut [u8]); add_range_error_fmt allocator arg; Output::panic
     pub fn panic_loc(&mut self, fmt: &'static str, args: core::fmt::Arguments, loc: Option<logger::Loc>) -> ! {
-        let panic_buffer = self.allocator.alloc_slice_fill_default::<u8>(32 * 1024);
-        // TODO(port): std.Io.Writer.fixed → write into &mut [u8] via std::io::Write
-        let mut panic_stream: &mut [u8] = panic_buffer;
-        let start_len = panic_stream.len();
+        // PORT NOTE: Zig used a fixed `std.Io.Writer` over a 32 KiB stack buffer.
+        // Rust's `Log::print` takes `IntoLogWrite` (`fmt::Write`), so write into a
+        // bump-backed `String` instead — same single contiguous text output.
+        let mut panic_stream = bumpalo::collections::String::with_capacity_in(32 * 1024, self.allocator);
 
         // panic during visit pass leaves the lexer at the end, which
         // would make this location absolutely useless.
         let location = loc.unwrap_or_else(|| self.lexer.loc());
         if (location.start as usize) < self.lexer.source.contents.len() && !location.is_empty() {
             let _ = self.log.add_range_error_fmt(
-                self.source,
+                Some(self.source),
                 logger::Range { loc: location, ..Default::default() },
-                self.allocator,
                 format_args!("panic here"),
             );
         }
@@ -4534,8 +4532,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         self.log.level = logger::Level::Verbose;
         let _ = self.log.print(&mut panic_stream);
 
-        let written = start_len - panic_stream.len();
-        Output::panic(format_args!("{}\n{}{}", fmt, args, bstr::BStr::new(&panic_buffer[..written])));
+        Output::panic(format_args!("{}\n{}{}", fmt, args, panic_stream.as_str()));
     }
 
     pub fn jsx_strings_to_member_expression(

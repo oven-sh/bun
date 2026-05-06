@@ -32,26 +32,18 @@ pub fn to_js_with_type<T>(
     global: &JSGlobalObject,
     value: T,
 ) -> Result<JSValue, AnyPostgresError> {
-    
-    {
-        // TODO(b2-blocked): per-arm dispatch trait (DataCell is the only caller
-        // and it always passes `*Data`, so a single concrete impl may suffice).
-        match tag {
-            Tag::numeric => Ok(JSValue::js_number(value)),
-            Tag::float4 | Tag::float8 => Ok(JSValue::js_number(value)),
-            Tag::json | Tag::jsonb => super::json::to_js(global, value),
-            Tag::bool => super::r#bool::to_js(global, value),
-            Tag::timestamp | Tag::timestamptz => super::date::to_js(global, value),
-            Tag::bytea => super::bytea::to_js(global, value),
-            Tag::int8 => Ok(JSValue::from_int64_no_truncate(global, value)),
-            Tag::int4 => Ok(JSValue::js_number(value)),
-            _ => super::postgres_string::to_js(global, value),
-        }
-    }
-    #[cfg(any())]
-    {
-        let _ = (tag, global, value);
-        unimplemented!("b2-blocked: per-arm anytype dispatch trait")
+    // TODO(port): per-arm dispatch trait (DataCell is the only caller and it
+    // always passes `*Data`, so a single concrete impl may suffice).
+    match tag {
+        Tag::numeric => Ok(JSValue::js_number(value)),
+        Tag::float4 | Tag::float8 => Ok(JSValue::js_number(value)),
+        Tag::json | Tag::jsonb => super::json::to_js(global, value),
+        Tag::bool => super::r#bool::to_js(global, value),
+        Tag::timestamp | Tag::timestamptz => super::date::to_js(global, value),
+        Tag::bytea => super::bytea::to_js(global, value),
+        Tag::int8 => Ok(JSValue::from_int64_no_truncate(global, value)),
+        Tag::int4 => Ok(JSValue::js_number(value)),
+        _ => super::postgres_string::to_js(global, value),
     }
 }
 

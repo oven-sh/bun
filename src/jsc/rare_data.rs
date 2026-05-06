@@ -758,28 +758,25 @@ impl RareData {
 
     // ── watch-mode listen sockets ─────────────────────────────────────────
     pub fn add_listening_socket_for_watch_mode(&mut self, socket: Fd) {
-        self.listening_sockets_for_watch_mode_lock.lock();
+        let _g = self.listening_sockets_for_watch_mode_lock.lock();
         self.listening_sockets_for_watch_mode.push(socket);
-        self.listening_sockets_for_watch_mode_lock.unlock();
     }
 
     pub fn remove_listening_socket_for_watch_mode(&mut self, socket: Fd) {
-        self.listening_sockets_for_watch_mode_lock.lock();
+        let _g = self.listening_sockets_for_watch_mode_lock.lock();
         if let Some(i) = self.listening_sockets_for_watch_mode.iter().position(|s| *s == socket) {
             self.listening_sockets_for_watch_mode.swap_remove(i);
         }
-        self.listening_sockets_for_watch_mode_lock.unlock();
     }
 
     pub fn close_all_listen_sockets_for_watch_mode(&mut self) {
-        self.listening_sockets_for_watch_mode_lock.lock();
+        let _g = self.listening_sockets_for_watch_mode_lock.lock();
         for socket in core::mem::take(&mut self.listening_sockets_for_watch_mode) {
             // Prevent TIME_WAIT state.
             // SAFETY: FFI; `socket` is a live fd we registered.
             unsafe { Bun__disableSOLinger(socket.native()) };
             socket.close();
         }
-        self.listening_sockets_for_watch_mode_lock.unlock();
     }
 
     // ── isolation watchers (FSWatcher / StatWatcher) ──────────────────────

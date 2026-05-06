@@ -3892,37 +3892,63 @@ impl HTTPClient {
     /// transport, so there is no `ctx`/`socket` to hand back to the pool here.
     fn send_progress_update_multiplexed(&mut self) {
         debug_assert!(self.flags.protocol != Protocol::Http1_1);
-        // PORT NOTE: reshaped for borrowck — read Copy fields before to_result()
-        // takes &mut self, then re-borrow via raw pointer for the post-mutations.
+        // PORT NOTE: reshaped for borrowck — `to_result()` ties `result`'s
+        // lifetime to `&mut self`, so holding it across the `is_done` mutations
+        // would require a second live `&mut Self` (aliased UB). Instead snapshot
+        // every owned/Copy field out of the result, drop it, mutate `self`
+        // directly, then rebuild a fresh `HTTPClientResult` for the callback.
+        // See send_progress_update_without_stage_check for the same pattern.
         let body = self.state.body_out_str;
         // Snapshot the body buffer's CONTENTS by value (http.zig:2326-2327
         // `const body = out_str.*`); restored below (http.zig:2340).
         // SAFETY: body points at the caller-owned MutableString.
         let body_snapshot = body.map(|p| unsafe { core::mem::take(&mut (*p.as_ptr()).list) });
         let callback = self.result_callback;
-        let this_ptr = self as *mut Self;
-        let mut result = self.to_result();
-        let is_done = !result.has_more;
+
+        let (has_more, redirected, can_stream, is_http2, fail, metadata, body_size, certificate_info) = {
+            let r = self.to_result();
+            (
+                r.has_more,
+                r.redirected,
+                r.can_stream,
+                r.is_http2,
+                r.fail,
+                r.metadata,
+                r.body_size,
+                r.certificate_info,
+            )
+        }; // r (and its &mut borrow of self) dropped here
+        let is_done = !has_more;
         bun_core::scoped_log!(fetch, "progressUpdate {}", is_done);
-        // SAFETY: this_ptr aliases *self for disjoint-field writes.
-        let self_ = unsafe { &mut *this_ptr };
         if is_done {
-            self_.unregister_abort_tracker();
-            self_.state.reset();
-            self_.state.response_stage = ResponseStage::Done;
-            self_.state.request_stage = RequestStage::Done;
-            self_.state.stage = Stage::Done;
-            self_.flags.proxy_tunneling = false;
+            self.unregister_abort_tracker();
+            self.state.reset();
+            self.state.response_stage = ResponseStage::Done;
+            self.state.request_stage = RequestStage::Done;
+            self.state.stage = Stage::Done;
+            self.flags.proxy_tunneling = false;
         }
         // Restore the body bytes that `state.reset()` cleared (http.zig:2340).
         if let (Some(p), Some(v)) = (body, body_snapshot) {
             // SAFETY: p points at the caller-owned MutableString.
             unsafe { (*p.as_ptr()).list = v };
         }
-        // SAFETY: see send_progress_update_without_stage_check
-        result.body = body.map(|p| unsafe { &mut *p.as_ptr() });
-        // SAFETY: this_ptr points at *self; disjoint from result's borrows.
-        callback.run(unsafe { (*this_ptr).parent_async_http() }, result);
+        let async_http = self.parent_async_http();
+        // Rebuild the result from snapshotted fields now that all `&mut self`
+        // mutations are finished — no aliased borrows remain.
+        let result = HTTPClientResult {
+            // SAFETY: body points at the caller-owned MutableString which outlives the callback.
+            body: body.map(|p| unsafe { &mut *p.as_ptr() }),
+            has_more,
+            redirected,
+            can_stream,
+            is_http2,
+            fail,
+            metadata,
+            body_size,
+            certificate_info,
+        };
+        callback.run(async_http, result);
     }
 
     /// `do_redirect` minus the per-request socket release/close. The session

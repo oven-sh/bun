@@ -4068,7 +4068,14 @@ pub struct Resolver<'a> {
 
     pub package_manager: Option<NonNull<PackageManager>>, // TODO(port): lifetime
     pub on_wake_package_manager: Install::WakeHandler,
-    pub env_loader: Option<&'a DotEnv::Loader<'a>>,
+    // Spec resolver.zig:477 `env_loader: ?*DotEnv.Loader` — raw nullable pointer.
+    // Stored as `NonNull` (not `&'a Loader`) because the same allocation is
+    // mutably reborrowed via `Transpiler.env: *mut Loader` after this field is
+    // set (e.g. bake/production.rs assigns this then calls `configure_defines()`
+    // → `run_env_loader()` which takes `&mut *self.env`). Holding a live
+    // `&Loader` across that `&mut Loader` would be aliased-&mut UB; a raw
+    // pointer carries no aliasing guarantee and matches the Zig shape.
+    pub env_loader: Option<NonNull<DotEnv::Loader<'a>>>,
     pub store_fd: bool,
 
     pub standalone_module_graph: Option<&'a bun_core::StandaloneModuleGraph>,
@@ -5923,7 +5930,11 @@ impl<'a> Resolver<'a> {
         // try resolve from `NODE_PATH`
         // https://nodejs.org/api/modules.html#loading-from-the-global-folders
         let node_path: &[u8] = if let Some(env_loader) = self.env_loader {
-            env_loader.get(b"NODE_PATH").unwrap_or(b"")
+            // SAFETY: `env_loader` points at the Transpiler-owned `DotEnv::Loader`
+            // (set from `transpiler.env`). It outlives the resolver, and no
+            // `&mut Loader` is live here — `run_env_loader()` runs before
+            // resolution begins, and resolution itself never mutates the env.
+            unsafe { env_loader.as_ref() }.get(b"NODE_PATH").unwrap_or(b"")
         } else {
             b""
         };

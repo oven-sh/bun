@@ -313,7 +313,11 @@ impl Options {
         log: &mut logger::Log,
         env: &mut DotEnvLoader,
         maybe_cli: Option<CommandLineArguments>,
-        bun_install_: Option<&mut Api::BunInstall>,
+        // Spec PackageManagerOptions.zig:224 `bun_install_: ?*Api.BunInstall` —
+        // every access below is a read of `config.*`; no field is ever written.
+        // Taking `&` (not `&mut`) keeps provenance coherent with the bundler/
+        // resolver storage (`Option<&api::BunInstall>` / `*const ()`).
+        bun_install_: Option<&Api::BunInstall>,
         subcommand: Subcommand,
     ) -> Result<(), bun_alloc::AllocError> {
         let mut base = Api::NpmRegistry {
@@ -324,7 +328,7 @@ impl Options {
             email: b"",
         };
         // PORT NOTE: reshaped for borrowck — Zig captures `*Api.BunInstall` twice via `if (bun_install_) |config|`.
-        let bun_install_ref = bun_install_.as_deref();
+        let bun_install_ref = bun_install_;
         if let Some(config) = bun_install_ref {
             if let Some(registry) = &config.default_registry {
                 base = registry.clone();

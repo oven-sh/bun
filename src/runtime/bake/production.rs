@@ -124,7 +124,13 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
         b.options.global_cache = b.resolver.opts.global_cache;
         b.options.prefer_offline_install = b.resolver.opts.prefer_offline_install;
         b.options.prefer_latest_install = b.resolver.opts.prefer_latest_install;
-        b.resolver.env_loader = Some(unsafe { &*b.env });
+        // SAFETY: spec production.zig:56 `b.resolver.env_loader = b.env` — raw
+        // pointer copy. `b.env` is the Transpiler-owned `*mut Loader`; store it
+        // as `NonNull` (not `&Loader`) because `configure_defines()` below
+        // reborrows the same allocation as `&mut Loader` via `run_env_loader()`,
+        // which would alias a live `&Loader` here. The Loader outlives the
+        // resolver (process-lifetime singleton or VM-owned).
+        b.resolver.env_loader = NonNull::new(b.env);
         b.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
         b.options.minify_whitespace = ctx.bundler_options.minify_whitespace;
         b.options.ignore_dce_annotations = ctx.bundler_options.ignore_dce_annotations;

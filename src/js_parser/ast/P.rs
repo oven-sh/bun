@@ -607,14 +607,15 @@ pub struct P<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> {
 // inherent `P` methods (`maybe_transpose_if_{import,require,require_resolve}`)
 // so the only live `&mut` is the caller's `&mut P`.
 //
-// The structs below are thin by-value shims kept so existing
-// `p.import_transposer.maybe_transpose_if(..)` call sites in visitExpr.rs keep
-// compiling; their methods take `self` (Copy) — the field is *read*, not
-// mutably borrowed, before `&mut P` is formed, so no `&mut`-overlap exists.
-// The raw `*mut P` they carry is refreshed at the start of `prepare_for_visit_pass`;
-// callers should migrate to the inherent `P` methods which need no raw pointer.
+// The structs below are ZST placeholders kept so the `P` struct retains the
+// `import_transposer` / `require_transposer` / `require_resolve_transposer`
+// field shape from Zig. They no longer carry a `*mut P` self-pointer: storing
+// `addr_of_mut!(*self)` in `prepare_for_visit_pass` produced a raw pointer
+// whose Stacked-Borrows tag was a child of *that* `&mut self` retag — every
+// later `&mut self` retag (entering any visit method) invalidated it, so the
+// shim's `&mut *(stored as *mut P)` was UB. Call sites now invoke the inherent
+// `P::maybe_transpose_if_*` / `P::transpose_known_to_be_if_*` methods directly.
 pub struct ImportTransposer<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>(
-    pub(crate) *mut core::ffi::c_void,
     core::marker::PhantomData<(&'a (), fn() -> J)>,
 );
 impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> Clone
@@ -630,21 +631,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     ImportTransposer<'a, TYPESCRIPT, J, SCAN_ONLY>
 {
     const fn dangling() -> Self {
-        Self(core::ptr::null_mut(), core::marker::PhantomData)
-    }
-    pub fn maybe_transpose_if(self, arg: Expr, state: TransposeState) -> Expr {
-        debug_assert!(!self.0.is_null(), "transposer not wired (prepare_for_visit_pass)");
-        // SAFETY: `self` was copied out of `p.import_transposer` by value; no
-        // borrow of any `P` field is live here. `self.0` was set to
-        // `addr_of_mut!(*p)` in `prepare_for_visit_pass` for the visit-pass `P`.
-        // `transpose_import` does not touch the transposer fields.
-        let p = unsafe { &mut *(self.0 as *mut P<'a, TYPESCRIPT, J, SCAN_ONLY>) };
-        p.maybe_transpose_if_import(arg, &state)
+        Self(core::marker::PhantomData)
     }
 }
 
 pub struct RequireTransposer<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>(
-    pub(crate) *mut core::ffi::c_void,
     core::marker::PhantomData<(&'a (), fn() -> J)>,
 );
 impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> Clone
@@ -660,18 +651,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     RequireTransposer<'a, TYPESCRIPT, J, SCAN_ONLY>
 {
     const fn dangling() -> Self {
-        Self(core::ptr::null_mut(), core::marker::PhantomData)
-    }
-    pub fn transpose_known_to_be_if(self, arg: Expr, state: TransposeState) -> Expr {
-        debug_assert!(!self.0.is_null(), "transposer not wired (prepare_for_visit_pass)");
-        // SAFETY: see `ImportTransposer::maybe_transpose_if`.
-        let p = unsafe { &mut *(self.0 as *mut P<'a, TYPESCRIPT, J, SCAN_ONLY>) };
-        p.transpose_known_to_be_if_require(arg, &state)
+        Self(core::marker::PhantomData)
     }
 }
 
 pub struct RequireResolveTransposer<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>(
-    pub(crate) *mut core::ffi::c_void,
     core::marker::PhantomData<(&'a (), fn() -> J)>,
 );
 impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> Clone
@@ -687,13 +671,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     RequireResolveTransposer<'a, TYPESCRIPT, J, SCAN_ONLY>
 {
     const fn dangling() -> Self {
-        Self(core::ptr::null_mut(), core::marker::PhantomData)
-    }
-    pub fn transpose_known_to_be_if(self, arg: Expr, state: Expr) -> Expr {
-        debug_assert!(!self.0.is_null(), "transposer not wired (prepare_for_visit_pass)");
-        // SAFETY: see `ImportTransposer::maybe_transpose_if`.
-        let p = unsafe { &mut *(self.0 as *mut P<'a, TYPESCRIPT, J, SCAN_ONLY>) };
-        p.transpose_known_to_be_if_require_resolve(arg, state)
+        Self(core::marker::PhantomData)
     }
 }
 
@@ -2597,18 +2575,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         }
                     }
 
-                    // `E::Template.parts` is `&'static [TemplatePart]` in Phase A (arena-owned
-                    // slice with the lifetime erased per PORTING.md). Zig held `[]TemplatePart`
-                    // and mutated `part.value` in place; recover the mutable view via raw cast.
-                    // SAFETY: parts points into the parser arena, which the single-threaded
-                    // visit pass has exclusive access to; no other &-borrow of this slice
-                    // is live across the loop body.
-                    let parts = unsafe {
-                        core::slice::from_raw_parts_mut(
-                            e.parts.as_ptr() as *mut E::TemplatePart,
-                            e.parts.len(),
-                        )
-                    };
+                    // Zig held `[]TemplatePart` and mutated `part.value` in place;
+                    // `E::Template.parts` is `*mut [TemplatePart]` (arena-owned, mutable
+                    // provenance preserved end-to-end) so derive the unique view directly.
+                    // SAFETY: arena-owned slice; single-threaded visit pass has exclusive
+                    // access and no other borrow of this slice is live across the loop body.
+                    let parts = unsafe { &mut *e.parts };
                     for part in parts.iter_mut() {
                         match self.substitute_single_use_symbol_in_expr(part.value, r#ref, replacement, replacement_can_be_removed) {
                             Substitution::Continue(_) => {}

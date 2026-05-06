@@ -44,6 +44,100 @@ pub struct StdAllocator {
     pub ptr: *mut core::ffi::c_void,
     pub vtable: &'static AllocatorVTable,
 }
+/// Legacy alias — Phase-A drafts spell it `crate::VTable`.
+pub type VTable = AllocatorVTable;
+
+impl StdAllocator {
+    /// Zig: `Allocator.rawAlloc`.
+    #[inline]
+    pub fn raw_alloc(&self, len: usize, alignment: Alignment, ra: usize) -> Option<*mut u8> {
+        // SAFETY: vtable invariant — `alloc` callee respects (ptr, len, alignment, ra) contract.
+        let p = unsafe { (self.vtable.alloc)(self.ptr, len, alignment, ra) };
+        if p.is_null() { None } else { Some(p) }
+    }
+    /// Zig: `Allocator.rawResize`.
+    #[inline]
+    pub fn raw_resize(&self, buf: &mut [u8], alignment: Alignment, new_len: usize, ra: usize) -> bool {
+        // SAFETY: see `raw_alloc`.
+        unsafe { (self.vtable.resize)(self.ptr, buf, alignment, new_len, ra) }
+    }
+    /// Zig: `Allocator.rawRemap`.
+    #[inline]
+    pub fn raw_remap(&self, buf: &mut [u8], alignment: Alignment, new_len: usize, ra: usize) -> Option<*mut u8> {
+        // SAFETY: see `raw_alloc`.
+        let p = unsafe { (self.vtable.remap)(self.ptr, buf, alignment, new_len, ra) };
+        if p.is_null() { None } else { Some(p) }
+    }
+    /// Zig: `Allocator.rawFree`.
+    #[inline]
+    pub fn raw_free(&self, buf: &mut [u8], alignment: Alignment, ra: usize) {
+        // SAFETY: see `raw_alloc`.
+        unsafe { (self.vtable.free)(self.ptr, buf, alignment, ra) }
+    }
+    /// Zig: `Allocator.free` — `rawFree` with `ret_addr = 0`, byte-aligned.
+    #[inline]
+    pub fn free(&self, bytes: &[u8]) {
+        if bytes.is_empty() { return; }
+        // SAFETY: `bytes` is reborrowed mutably only for the vtable signature; the
+        // callee treats it as opaque (Zig passes `[]u8`).
+        let buf = unsafe {
+            core::slice::from_raw_parts_mut(bytes.as_ptr() as *mut u8, bytes.len())
+        };
+        self.raw_free(buf, Alignment::from_byte_units(1), 0);
+    }
+}
+
+/// CYCLEBREAK hook: `bun_string::String::is_wtf_allocator`. Installed by
+/// bun_string at init; vtable-identity check against the WTF deallocator.
+pub static mut IS_WTF_ALLOCATOR: fn(&'static AllocatorVTable) -> bool = |_| false;
+
+/// `std.heap.FixedBufferAllocator` — bump allocator over a caller-owned buffer.
+pub struct FixedBufferAllocator<'a> {
+    end: usize,
+    buffer: &'a mut [u8],
+}
+impl<'a> FixedBufferAllocator<'a> {
+    #[inline]
+    pub fn init(buffer: &'a mut [u8]) -> Self { Self { end: 0, buffer } }
+    #[inline]
+    pub fn reset(&mut self) { self.end = 0; }
+    #[inline]
+    pub fn owns_ptr(&self, p: *const u8) -> bool {
+        let base = self.buffer.as_ptr() as usize;
+        let q = p as usize;
+        q >= base && q < base + self.buffer.len()
+    }
+    pub fn alloc(&mut self, len: usize, alignment: Alignment, _ra: usize) -> Option<*mut u8> {
+        let base = self.buffer.as_mut_ptr() as usize;
+        let aligned = (base + self.end + alignment.to_byte_units() - 1)
+            & !(alignment.to_byte_units() - 1);
+        let new_end = (aligned - base).checked_add(len)?;
+        if new_end > self.buffer.len() { return None; }
+        self.end = new_end;
+        Some(aligned as *mut u8)
+    }
+    pub fn resize(&mut self, buf: &mut [u8], _a: Alignment, new_len: usize, _ra: usize) -> bool {
+        // Only the last allocation can grow; shrinks always succeed.
+        let buf_end = buf.as_ptr() as usize - self.buffer.as_ptr() as usize + buf.len();
+        if buf_end != self.end {
+            return new_len <= buf.len();
+        }
+        let new_end = buf_end - buf.len() + new_len;
+        if new_end > self.buffer.len() { return false; }
+        self.end = new_end;
+        true
+    }
+    #[inline]
+    pub fn remap(&mut self, buf: &mut [u8], a: Alignment, new_len: usize, ra: usize) -> Option<*mut u8> {
+        if self.resize(buf, a, new_len, ra) { Some(buf.as_mut_ptr()) } else { None }
+    }
+    #[inline]
+    pub fn free(&mut self, buf: &mut [u8], _a: Alignment, _ra: usize) {
+        // Only the last allocation can be freed.
+        let buf_end = buf.as_ptr() as usize - self.buffer.as_ptr() as usize + buf.len();
+        if buf_end == self.end { self.end -= buf.len(); }
+    }
+}
 
 // PORTING.md §Allocators: AST crates use bumpalo; non-AST use Vec/Box (global mimalloc).
 pub type Arena = bumpalo::Bump;

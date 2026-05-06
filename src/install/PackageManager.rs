@@ -1722,7 +1722,12 @@ pub fn init(
 
 pub fn init_with_runtime(
     log: &mut logger::Log,
-    bun_install: Option<&mut Api::BunInstall>,
+    // Spec PackageManager.zig:983 `bun_install: ?*Api.BunInstall` — used read-only
+    // (PackageManagerOptions.zig:load lines 224-380 only ever reads `config.*`).
+    // Upstream storage is `Option<&api::BunInstall>` (options.rs) / `*const ()`
+    // (resolver opts); taking `&mut` here would force a const→mut provenance
+    // launder at the resolver call site.
+    bun_install: Option<&Api::BunInstall>,
     cli: CommandLineArguments,
     env: &mut dot_env::Loader,
 ) -> &'static mut PackageManager {
@@ -1731,12 +1736,12 @@ pub fn init_with_runtime(
 }
 
 static INIT_WITH_RUNTIME_ONCE: Once<
-    fn(&mut logger::Log, Option<&mut Api::BunInstall>, CommandLineArguments, &mut dot_env::Loader),
+    fn(&mut logger::Log, Option<&Api::BunInstall>, CommandLineArguments, &mut dot_env::Loader),
 > = Once::new(init_with_runtime_once);
 
 pub fn init_with_runtime_once(
     log: &mut logger::Log,
-    bun_install: Option<&mut Api::BunInstall>,
+    bun_install: Option<&Api::BunInstall>,
     cli: CommandLineArguments,
     env: &mut dot_env::Loader,
 ) {
@@ -1749,7 +1754,15 @@ pub fn init_with_runtime_once(
 
     let cpu_count = bun_core::get_thread_count();
     allocate_package_manager();
-    let manager = get();
+    // SAFETY: holder::RAW_PTR was just set by allocate_package_manager() to a
+    // freshly allocated, *uninitialized* PackageManager. Do NOT call `get()` /
+    // form `&mut PackageManager` yet — the struct contains niche-bearing fields
+    // (`Box`, `Vec`, `Option<NonNull<_>>`, `ZStr`) for which the uninit bit
+    // pattern is an invalid value, so materializing a reference is instant UB.
+    // Work through the raw pointer until `ptr::write` below has fully
+    // initialized it (Zig PackageManager.zig:1013 `const manager = get()`
+    // yields a raw `*PackageManager` with no validity invariant).
+    let manager_ptr: *mut PackageManager = unsafe { holder::RAW_PTR };
     let root_dir = match FileSystem::instance().fs.read_directory(
         FileSystem::instance().top_level_dir,
         None,
@@ -1780,10 +1793,10 @@ pub fn init_with_runtime_once(
         .copy_from_slice(b"/package.json");
     // last byte already 0 (sentinel)
 
-    // SAFETY: manager points to uninitialized memory; fully initialize via ptr::write
+    // SAFETY: manager_ptr points to uninitialized memory; fully initialize via ptr::write
     unsafe {
         core::ptr::write(
-            manager as *mut PackageManager,
+            manager_ptr,
             PackageManager {
                 cache_directory_: None,
                 cache_directory_path: ZStr::EMPTY_BOX, // TODO(port): default
@@ -1796,7 +1809,7 @@ pub fn init_with_runtime_once(
                     ..Default::default()
                 },
                 active_lifecycle_scripts: LifecycleScriptSubprocess::List {
-                    context: manager as *mut _,
+                    context: manager_ptr,
                 },
                 network_task_fifo: NetworkQueue::init(),
                 log: log as *mut _,
@@ -1881,6 +1894,10 @@ pub fn init_with_runtime_once(
             },
         );
     }
+    // SAFETY: `ptr::write` above fully initialized the PackageManager in place;
+    // the `&mut PackageManager` validity invariant now holds for the post-init
+    // body (Zig PackageManager.zig:1031 onward).
+    let manager = unsafe { &mut *manager_ptr };
     manager.lockfile = Box::new(Lockfile::default());
 
     if Output::enable_ansi_colors_stderr() {

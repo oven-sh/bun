@@ -94,9 +94,7 @@ pub struct Options<'a> {
 
 impl<'a> Default for Options<'a> {
     fn default() -> Self {
-        // TODO(port): macro_context default was `undefined` in Zig — caller must set before use.
-        // Using a dangling reference is UB in Rust; Phase B should make this Option<&'a mut ...>
-        // or require it in a constructor.
+        // Zig: `macro_context = undefined` — modeled as `None`; caller must set before use.
         unimplemented!("Options::default() requires macro_context; use Options::init()")
     }
 }
@@ -143,9 +141,9 @@ impl<'a> Options<'a> {
     }
 
     pub fn init(jsx: options::JSX::Pragma, loader: options::Loader) -> Options<'static> {
-        // TODO(port): Zig left `macro_context` as `undefined` and the rest of the fields at
-        // their declared defaults. Rust cannot express an undefined &mut field. Phase B must
-        // restructure: either pass macro_context here, or make it Option<&mut MacroContext>.
+        // Zig left `macro_context` as `undefined` and the rest of the fields at
+        // their declared defaults. Rust models the undefined pointer as `None`
+        // (see field comment); caller overwrites before use.
         let mut opts = Options {
             ts: loader.is_typescript(),
             jsx,
@@ -160,12 +158,12 @@ impl<'a> Options<'a> {
             bundle: false,
             code_splitting: false,
             package_version: b"",
-            // TODO(port): was `undefined` in Zig
-            macro_context: unsafe {
-                // SAFETY: matches Zig's `undefined`; caller must overwrite before any read.
-                core::mem::transmute::<usize, &'static mut MacroContext>(usize::MAX)
-                // TODO(port): replace with Option<&mut MacroContext> in Phase B
-            },
+            // Zig: `macro_context: *MacroContextType() = undefined` — uninitialized
+            // raw pointer the caller overwrites before any read. In Rust,
+            // materializing an invalid `&mut T` is immediate UB regardless of
+            // use, so model "not yet set" as `None`; callers must assign `Some(_)`
+            // before any read site `.unwrap()`s it.
+            macro_context: None,
             warn_about_unbundled_modules: true,
             allow_unresolved: &options::AllowUnresolved::DEFAULT,
             module_type: options::ModuleType::Unknown,

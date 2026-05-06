@@ -1632,7 +1632,12 @@ impl RealFS {
         FileSystem::set_max_fd(std_file.handle().native());
         let file = std_file;
 
-        let mut file_contents: &[u8] = b"";
+        // PORT NOTE: `file_contents` borrows either `shared_buffer.list` (USE_SHARED_BUFFER) or
+        // a leaked heap alloc; both are tracked as a raw (ptr, len) pair so borrowck doesn't tie
+        // the slice to `&mut shared_buffer` across the read/truncate/grow loop. The final slice
+        // is reconstituted with `from_raw_parts` (matches Zig's `[]const u8` return).
+        let mut file_contents_ptr: *const u8 = b"".as_ptr();
+        let mut file_contents_len: usize = 0;
         // When we're serving a JavaScript-like file over HTTP, we do not want to cache the contents in memory
         // This imposes a performance hit because not reading from disk is faster than reading from disk
         // Part of that hit is allocating a temporary buffer to store the file contents in
@@ -1660,11 +1665,7 @@ impl RealFS {
             if size == 0 {
                 if USE_SHARED_BUFFER {
                     shared_buffer.reset();
-                    return Ok(PathContentsPair {
-                        path: Path::init(path),
-                        contents: shared_buffer.list.as_slice(),
-                        // TODO(port): lifetime — contents borrows shared_buffer
-                    });
+                    return Ok(PathContentsPair { path: Path::init(path), contents: b"" });
                 } else {
                     return Ok(PathContentsPair { path: Path::init(path), contents: b"" });
                 }
@@ -1692,7 +1693,8 @@ impl RealFS {
                     }
                 };
                 shared_buffer.list.truncate(read_count + bytes_read as usize);
-                file_contents = shared_buffer.list.as_slice();
+                file_contents_ptr = shared_buffer.list.as_ptr();
+                file_contents_len = shared_buffer.list.len();
                 debug!("read({}, {}) = {}", file.handle(), size, read_count);
 
                 if STREAM {
@@ -1727,10 +1729,10 @@ impl RealFS {
                 break;
             }
 
-            if shared_buffer.list.capacity() > file_contents.len() {
+            if shared_buffer.list.capacity() > file_contents_len {
                 // SAFETY: capacity > len, so writing one byte past len is in-bounds
                 unsafe {
-                    *shared_buffer.list.as_mut_ptr().add(file_contents.len()) = 0;
+                    *shared_buffer.list.as_mut_ptr().add(file_contents_len) = 0;
                 }
             }
 

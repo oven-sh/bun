@@ -1147,6 +1147,7 @@ dependencies = [
  "bun_resolve_builtins",
  "bun_resolver",
  "bun_sha_hmac",
+ "bun_simdutf_sys",
  "bun_sourcemap",
  "bun_string",
  "bun_sys",
@@ -1156,6 +1157,7 @@ dependencies = [
  "bun_uws",
  "bun_watcher",
  "bun_wyhash",
+ "bytemuck",
  "const_format",
  "enum-map",
  "enumset",
@@ -2386,6 +2388,12 @@ dependencies = [
  "scopeguard",
  "strum",
 ]
+
+[[package]]
+name = "bytemuck"
+version = "1.25.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c8efb64bd706a16a1bdde310ae86b351e4d21550d98d056f22f8a7f7a2183fec"
 
 [[package]]
 name = "byteorder"

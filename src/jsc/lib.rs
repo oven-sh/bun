@@ -109,6 +109,9 @@ pub const CONV: &str = "C";
 #[path = "rare_data.rs"] pub mod rare_data;
 #[path = "ipc.rs"] pub mod ipc;
 #[path = "ConsoleObject.rs"] pub mod console_object;
+#[path = "JSValue.rs"] pub mod js_value;
+
+pub use self::js_value::{js_value_hash, BackingInt, CoerceTo, FromJsEnum, JSValue, PropertyIteratorFn};
 
 pub use self::task::{Taskable, RUN_TASK_HOOK, set_run_task_hook};
 pub use self::js_promise::JSPromise;
@@ -215,7 +218,6 @@ pub use self::zig_stack_frame_position::ZigStackFramePosition;
 #[rustfmt::skip]
 mod _gated {
     #![cfg(any())]
-    #[path = "JSValue.rs"] pub mod js_value;
     #[path = "host_fn.rs"] pub mod host_fn;
     #[path = "AnyPromise.rs"] pub mod any_promise;
     #[path = "CachedBytecode.rs"] pub mod cached_bytecode;
@@ -311,35 +313,9 @@ Warning: options change between releases of Bun and WebKit without notice. This 
     bun_core::exit(1);
 }
 
-// `JSValue` stub — `#[repr(transparent)]` over the encoded 64-bit JSC::JSValue.
-// PhantomData<*const ()> makes the type `!Send + !Sync` (PORTING.md §JSC types):
-// JSValues are GC-cell pointers and must never cross threads.
-// TODO(b2): inner type should be `i64` per spec; kept `usize` (same width on
-// all supported 64-bit targets) until `JSValue.rs` is un-gated to avoid a
-// cascading bit-twiddle rewrite of the tag-mask helpers below.
-#[repr(transparent)]
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct JSValue(pub usize, PhantomData<*const ()>);
-
-// B-2: minimal `JSValue` surface so un-gated leaf modules type-check while
-// `JSValue.rs` itself remains gated. These match the real definitions in
-// `JSValue.rs` (`#[repr(transparent)] i64` — stub uses `usize`, same size).
-impl JSValue {
-    pub const ZERO: JSValue = JSValue(0, PhantomData);
-    pub const UNDEFINED: JSValue = JSValue(0xa, PhantomData);
-    pub const NULL: JSValue = JSValue(0x2, PhantomData);
-    /// `JSC::JSValue::ValueDeleted` (0x4) — sentinel returned by
-    /// `getIfPropertyExistsImpl` when the property does not exist.
-    pub const PROPERTY_DOES_NOT_EXIST: JSValue = JSValue(0x4, PhantomData);
-    #[inline] pub fn is_empty(self) -> bool { self.0 == 0 }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// B-2 Track A — JSValue surface (signatures sourced from src/jsc/JSValue.zig).
-// Bodies wrap the real `extern "C"` symbols where the ABI is trivially known;
-// the rest are `todo!()` until JSValue.rs is un-gated.
-// ──────────────────────────────────────────────────────────────────────────
-impl JSValue {
+// `JSValue` — un-gated; real impl in `JSValue.rs` (see `pub mod js_value` above).
+#[cfg(any())]
+mod _jsvalue_stub_removed {
     pub const TRUE: JSValue = JSValue(0x7, PhantomData);
     pub const FALSE: JSValue = JSValue(0x6, PhantomData);
 

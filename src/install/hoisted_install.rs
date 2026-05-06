@@ -504,9 +504,13 @@ pub fn install_hoisted_packages(
         this.tick_lifecycle_scripts();
         this.report_slow_lifecycle_scripts();
 
-        for tree in installer.trees.iter() {
+        // PORT NOTE: reshaped for borrowck — Zig iterates `installer.trees`
+        // by value while calling `installer.installAvailablePackages` (which
+        // also touches `installer.trees`); index instead of `.iter()` so the
+        // immutable borrow doesn't overlap `&mut self`.
+        for tree_idx in 0..installer.trees.len() {
             if cfg!(debug_assertions) {
-                debug_assert!(tree.pending_installs.len() == 0);
+                debug_assert!(installer.trees[tree_idx].pending_installs.len() == 0);
             }
             // force = true
             installer.install_available_packages::<true>(log_level);

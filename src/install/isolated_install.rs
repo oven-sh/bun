@@ -400,11 +400,20 @@ pub fn install_isolated_packages(
         'next_node: while let Some(entry) = node_queue.pop() {
             'check_cycle: {
                 // check for cycles
-                let nodes_slice = nodes.slice();
-                let node_pkg_ids = nodes_slice.items().pkg_id;
-                let node_dep_ids = nodes_slice.items().dep_id;
-                let node_parent_ids = nodes_slice.items().parent_id;
-                let node_nodes = nodes_slice.items_mut().nodes;
+                let mut nodes_slice = nodes.slice();
+                let node_pkg_ids = nodes_slice.pkg_id();
+                let node_dep_ids = nodes_slice.dep_id();
+                let node_parent_ids = nodes_slice.parent_id();
+                // PORT NOTE: reshaped for borrowck — Zig grabbed multiple
+                // mutable column views from one Slice; in Rust those overlap
+                // on `&mut self`, so go through `items_raw` and rebuild
+                // disjoint `&mut [_]` views.
+                let node_nodes: &mut [Vec<store::node::Id>] = unsafe {
+                    core::slice::from_raw_parts_mut(
+                        nodes_slice.items_raw::<Vec<store::node::Id>>(store::NodeField::nodes),
+                        nodes_slice.len(),
+                    )
+                };
 
                 let mut curr_id = entry.parent_id;
                 while curr_id != store::node::Id::INVALID {

@@ -366,7 +366,7 @@ bun_output::declare_scope!(PackageManager, hidden);
 
 pub struct PackageManager {
     pub cache_directory_: Option<bun_sys::Dir>, // TODO(port): std.fs.Dir → bun_sys::Dir
-    pub cache_directory_path: Box<ZStr>,        // TODO(port): lifetime — singleton-leaked
+    pub cache_directory_path: ZBox,             // TODO(port): lifetime — singleton-leaked
     pub root_dir: &'static mut fs::DirEntry,
     // allocator: dropped per §Allocators
     // TODO(port): lifetime — LIFETIMES.tsv classifies this BORROW_PARAM → `&'a mut logger::Log`

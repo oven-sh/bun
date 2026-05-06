@@ -1123,12 +1123,23 @@ impl<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool>
     }
 
     fn run_and_wait(this: &mut PackageManager) -> Result<(), bun_core::Error> {
+        // Derive the raw pointer first and route *every* manager access through it.
+        // Previously `closure.manager` was taken from `this`, then `this` was reborrowed
+        // into `sleep_until`'s `&mut self` — under Stacked Borrows that reborrow popped
+        // the raw pointer's tag, so the later `&mut *closure.manager` in `is_done` used
+        // an invalidated provenance. Now `mgr` is the root: both the `sleep_until`
+        // receiver and the closure share it, and `this` is never touched again.
+        let mgr: *mut PackageManager = this;
         let mut closure = RunAndWaitClosure::<CHECK_PEERS, ONLY_PRE_PATCH> {
-            manager: this as *mut PackageManager,
+            manager: mgr,
             err: None,
         };
 
-        this.sleep_until(&mut closure, Self::is_done);
+        // SAFETY: `mgr` was just derived from the live exclusive `this` borrow above and
+        // is the sole access path for the manager from here on. Reborrow `&mut *mgr` for
+        // the method receiver so `sleep_until`'s `&mut self` is a child of `mgr`, not a
+        // sibling that would invalidate `closure.manager`.
+        unsafe { (*mgr).sleep_until(&mut closure, Self::is_done) };
 
         if let Some(err) = closure.err {
             return Err(err);

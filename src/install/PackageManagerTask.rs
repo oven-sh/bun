@@ -214,7 +214,7 @@ impl<'a> Task<'a> {
                         // SAFETY: scope is borrowed from manager.options which is not
                         // touched by get_package_metadata (only the cache-dir fields are).
                         unsafe { &*scope },
-                        metadata.response.clone(),
+                        metadata.response,
                         body.slice(),
                         &mut this.log,
                         manifest.name.slice(),

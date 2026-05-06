@@ -121,29 +121,40 @@ pub struct BufferedReaderVTableFn {
 // SAFETY-thunk wrappers for the vtable. Module-level so they can be named in
 // `const` context (closures/fn items inside a const initializer can't be
 // coerced to fn pointers there).
+//
+// These are raw-pointer passthroughs: they cast `*mut c_void` → `*mut T` and
+// hand it to the trait without ever materializing a `&mut T`. The caller
+// (a `BufferedReader` method) holds a live `&mut BufferedReader` which is a
+// field of `T`, so creating `&mut T` here would alias it. See the
+// `BufferedReaderParent` aliasing contract above.
 fn vt_on_read_chunk<T: BufferedReaderParent>(
     this: *mut c_void,
     chunk: &[u8],
     has_more: ReadState,
 ) -> bool {
-    // SAFETY: parent was set via set_parent with a *mut T.
-    unsafe { &mut *(this as *mut T) }.on_read_chunk(chunk, has_more)
+    // SAFETY: parent was set via set_parent with a *mut T; raw-ptr passthrough,
+    // no `&mut T` materialized (reader field of T may have a live `&mut`).
+    unsafe { T::on_read_chunk(this as *mut T, chunk, has_more) }
 }
 fn vt_on_reader_done<T: BufferedReaderParent>(this: *mut c_void) {
-    // SAFETY: parent was set via set_parent with a *mut T.
-    unsafe { &mut *(this as *mut T) }.on_reader_done()
+    // SAFETY: parent was set via set_parent with a *mut T; raw-ptr passthrough,
+    // no `&mut T` materialized (reader field of T may have a live `&mut`).
+    unsafe { T::on_reader_done(this as *mut T) }
 }
 fn vt_on_reader_error<T: BufferedReaderParent>(this: *mut c_void, err: sys::Error) {
-    // SAFETY: parent was set via set_parent with a *mut T.
-    unsafe { &mut *(this as *mut T) }.on_reader_error(err)
+    // SAFETY: parent was set via set_parent with a *mut T; raw-ptr passthrough,
+    // no `&mut T` materialized (reader field of T may have a live `&mut`).
+    unsafe { T::on_reader_error(this as *mut T, err) }
 }
 fn vt_event_loop<T: BufferedReaderParent>(this: *mut c_void) -> EventLoopHandle {
-    // SAFETY: parent was set via set_parent with a *mut T.
-    unsafe { &mut *(this as *mut T) }.event_loop()
+    // SAFETY: parent was set via set_parent with a *mut T; raw-ptr passthrough,
+    // no `&mut T` materialized (reader field of T may have a live `&mut`).
+    unsafe { T::event_loop(this as *mut T) }
 }
 fn vt_loop<T: BufferedReaderParent>(this: *mut c_void) -> *mut Loop {
-    // SAFETY: parent was set via set_parent with a *mut T.
-    unsafe { &mut *(this as *mut T) }.loop_()
+    // SAFETY: parent was set via set_parent with a *mut T; raw-ptr passthrough,
+    // no `&mut T` materialized (reader field of T may have a live `&mut`).
+    unsafe { T::loop_(this as *mut T) }
 }
 
 /// Per-`T` vtable instance in rodata, mirroring Zig's `comptime &Fn{...}`.

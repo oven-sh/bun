@@ -2798,7 +2798,7 @@ impl VirtualMachine {
         if !ok && flags == FetchFlags::PrintSource {
             guard.1 = true; // errdefer
         }
-        drop(blob_to_deinit);
+        // `blob_to_deinit` drop guard fires here (spec :1677 `defer`).
         ret.unwrap()
     }
 

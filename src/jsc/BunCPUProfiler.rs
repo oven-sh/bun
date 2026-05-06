@@ -15,7 +15,7 @@ pub enum ProfilerError {
 }
 impl From<ProfilerError> for bun_core::Error {
     fn from(e: ProfilerError) -> Self {
-        bun_core::Error::from_static_str(<&'static str>::from(e))
+        bun_core::Error::from_name(<&'static str>::from(e))
     }
 }
 
@@ -123,7 +123,7 @@ fn write_profile_to_file(
     if let Err(err) = result {
         // If we got ENOENT, PERM, or ACCES, try creating the directory and retry
         let errno = err.get_errno();
-        if errno == Errno::NOENT || errno == Errno::PERM || errno == Errno::ACCES {
+        if errno == Errno::ENOENT || errno == Errno::EPERM || errno == Errno::EACCES {
             if !config.dir.is_empty() {
                 let _ = Fd::cwd().make_path(config.dir);
                 // Retry write
@@ -192,7 +192,7 @@ fn generate_default_filename(
     // Generate filename like: CPU.{timestamp}.{pid}.cpuprofile (or .md for markdown format)
     // Use microsecond timestamp for uniqueness
     // TODO(port): verify bun_core::Timespec::now API name/signature
-    let timespec = bun_core::Timespec::now(bun_core::TimespecClock::ForceRealTime);
+    let timespec = bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime);
     #[cfg(windows)]
     let pid = bun_sys::windows::GetCurrentProcessId();
     #[cfg(not(windows))]

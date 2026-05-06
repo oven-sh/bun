@@ -21,8 +21,8 @@ pub fn configure_transform_options_for_bun_vm(
 ) -> Result<api::TransformOptions, bun_core::Error> {
     let mut args = args;
 
-    args.write = false;
-    args.resolve = api::ResolveMode::Lazy;
+    args.write = Some(false);
+    args.resolve = Some(api::ResolveMode::Lazy);
     configure_transform_options_for_bun(args)
 }
 
@@ -31,7 +31,7 @@ pub fn configure_transform_options_for_bun(
     args: api::TransformOptions,
 ) -> Result<api::TransformOptions, bun_core::Error> {
     let mut args = args;
-    args.target = api::Target::Bun;
+    args.target = Some(api::Target::Bun);
     Ok(args)
 }
 

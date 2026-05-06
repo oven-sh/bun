@@ -99,16 +99,16 @@ impl JSValue {
         self,
         global: &JSGlobalObject,
         ctx: *mut T,
-        resolve: host_fn::JsHostFn,
-        reject: host_fn::JsHostFn,
+        resolve: host_fn::JSHostFn,
+        reject: host_fn::JSHostFn,
     ) {
         unsafe extern "C" {
             fn JSC__JSValue___then(
                 this: JSValue,
                 global: *mut JSGlobalObject,
                 ctx: JSValue,
-                resolve: host_fn::JsHostFn,
-                reject: host_fn::JsHostFn,
+                resolve: host_fn::JSHostFn,
+                reject: host_fn::JSHostFn,
             );
         }
         // SAFETY: FFI into JSC; `self` is a Promise (caller contract), `global`

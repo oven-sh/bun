@@ -709,5 +709,5 @@ impl PostgresSQLQuery {
 //   source:     src/sql_jsc/postgres/PostgresSQLQuery.zig (539 lines)
 //   confidence: medium
 //   todos:      10
-//   notes:      Intrusive RefCount + Rc<PostgresSQLStatement> (per LIFETIMES.tsv) conflict — Phase B should pick IntrusiveRc; do_run holds *mut into connection.statements across &mut connection (borrowck reshape needed); scopeguard closures borrow &mut self overlapping other uses.
+//   notes:      Intrusive RefCount + Rc<PostgresSQLStatement> (per LIFETIMES.tsv) conflict — Phase B should pick IntrusiveRc; do_run holds *mut into connection.statements across &mut connection (borrowck reshape needed); deref_ now takes *mut Self (was &self const→mut UB) — scopeguard sites capture raw ptr derived from &mut self, sound at drop time but Phase B IntrusiveRc should subsume.
 // ──────────────────────────────────────────────────────────────────────────

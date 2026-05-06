@@ -4857,7 +4857,12 @@ pub mod fs {
     /// One-shot registration (mirrors `bun_core::output::install_output_sink`).
     #[inline]
     pub fn install_fs_vtable(v: &'static FsVTable) {
-        FS_VTABLE.store(v as *const _ as *mut _, Ordering::Release);
+        // SAFETY(const→mut): `AtomicPtr<T>` only accepts `*mut T`, but the
+        // pointee is never written through — `vtable()` is the sole consumer
+        // and it materializes a `&'static FsVTable` (shared read). Casting a
+        // `&'static` to `*mut` here is therefore provenance-preserving and
+        // sound; no `&mut`/write is ever derived from the stored pointer.
+        FS_VTABLE.store((v as *const FsVTable).cast_mut(), Ordering::Release);
     }
 
     #[inline]

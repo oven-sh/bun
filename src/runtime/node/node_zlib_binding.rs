@@ -132,8 +132,8 @@ pub fn crc32(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
 
         if data.is_empty() {
             return Err(global_this.throw_invalid_argument_type_value(
-                b"data",
-                b"string or an instance of Buffer, TypedArray, or DataView",
+                "data",
+                "string or an instance of Buffer, TypedArray, or DataView",
                 JSValue::UNDEFINED,
             ));
         }

@@ -688,6 +688,25 @@ impl From<Encoding> for bun_str::NodeEncoding {
     }
 }
 
+impl From<bun_str::NodeEncoding> for Encoding {
+    fn from(e: bun_str::NodeEncoding) -> Self {
+        // Reverse of the impl above — both enums are `#[repr(u8)]` with identical
+        // discriminant order; required so `webcore::encoding::{to_string,to_bun_string}`'s
+        // `impl Into<Encoding>` bound accepts `bun_str::NodeEncoding` directly.
+        match e {
+            bun_str::NodeEncoding::Utf8 => Self::Utf8,
+            bun_str::NodeEncoding::Ucs2 => Self::Ucs2,
+            bun_str::NodeEncoding::Utf16le => Self::Utf16le,
+            bun_str::NodeEncoding::Latin1 => Self::Latin1,
+            bun_str::NodeEncoding::Ascii => Self::Ascii,
+            bun_str::NodeEncoding::Base64 => Self::Base64,
+            bun_str::NodeEncoding::Base64url => Self::Base64url,
+            bun_str::NodeEncoding::Hex => Self::Hex,
+            bun_str::NodeEncoding::Buffer => Self::Buffer,
+        }
+    }
+}
+
 impl Encoding {
     pub fn is_binary_to_text(self) -> bool {
         matches!(self, Self::Hex | Self::Base64 | Self::Base64url)
@@ -809,7 +828,7 @@ impl Encoding {
             }
             Self::Buffer => jsc::ArrayBuffer::create_buffer(global_object, input),
             // PERF(port): was comptime monomorphization (`inline else`) — profile in Phase B
-            enc => crate::webcore::encoding::to_string(input, global_object, enc.into()),
+            enc => crate::webcore::encoding::to_string(input, global_object, enc),
         }
     }
 
@@ -865,7 +884,7 @@ impl Encoding {
             }
             Self::Buffer => jsc::ArrayBuffer::create_buffer(global_object, input),
             // PERF(port): was comptime monomorphization (`inline else`) — profile in Phase B
-            enc => crate::webcore::encoding::to_string(input, global_object, enc.into()),
+            enc => crate::webcore::encoding::to_string(input, global_object, enc),
         }
     }
 

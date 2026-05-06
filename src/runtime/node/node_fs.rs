@@ -5376,7 +5376,7 @@ impl NodeFS {
                 _ => {
                     if string_type == ReadFileStringType::Default {
                         Maybe::Ok(ret::ReadFileWithOptions::TranscodedString(
-                            webcore::encoding::to_bun_string(temporary_read_buffer_before_stat_call, args.encoding.into()),
+                            webcore::encoding::to_bun_string(temporary_read_buffer_before_stat_call, args.encoding),
                         ))
                     } else {
                         let mut z = temporary_read_buffer_before_stat_call.to_vec();
@@ -6917,7 +6917,7 @@ impl ReaddirEntry for BunString {
     fn destroy_entry(&mut self) { self.deref(); }
     fn into_readdir(v: Vec<Self>) -> ret::Readdir { ret::Readdir::Files(v.into_boxed_slice()) }
     fn append_entry(entries: &mut Vec<Self>, utf8_name: &[u8], _dirent_path: &BunString, _kind: sys::FileKind, encoding: Encoding) {
-        entries.push(webcore::encoding::to_bun_string(utf8_name, encoding.into()));
+        entries.push(webcore::encoding::to_bun_string(utf8_name, encoding));
     }
     fn append_entry_recursive(entries: &mut Vec<Self>, _utf8_name: &[u8], name_to_copy: &[u8], _dirent_path: &BunString, _kind: sys::FileKind, encoding: Encoding, apply_encoding: bool) {
         let bytes = without_nt_prefix::<u8>(name_to_copy);

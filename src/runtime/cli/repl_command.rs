@@ -273,9 +273,10 @@ impl<'a> ReplRunner<'a> {
         // yet — inline the trivial trailing-sep strip here.
         let cwd = unsafe {
             let tld = (*vm.transpiler.fs).top_level_dir;
-            match tld.split_last() {
-                Some((&last, rest)) if rest.len() > 0 && bun_paths::is_sep_any(last) => rest,
-                _ => tld,
+            if tld.len() > 1 && tld[tld.len() - 1] == bun_paths::SEP {
+                &tld[..tld.len() - 1]
+            } else {
+                tld
             }
         };
         // SAFETY: cwd is a valid byte slice; FFI fn reads exactly `len` bytes.

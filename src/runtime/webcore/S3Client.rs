@@ -118,13 +118,14 @@ where
 
         if let Some(acl_value) = acl {
             formatter.write_indent(writer)?;
-            writer.write_str(output::pretty_fmt!("<r>acl<d>:<r> ", ENABLE_ANSI_COLORS))?;
+            writer.write_str(pfmt!("<r>acl<d>:<r> ", ENABLE_ANSI_COLORS))?;
             write!(
                 writer,
                 "{}",
-                output::pretty_fmt_args!::<ENABLE_ANSI_COLORS>(
+                output::pretty_fmt_args(
                     "<r><b>{}<r>\"",
-                    BStr::new(acl_value.to_string())
+                    ENABLE_ANSI_COLORS,
+                    (BStr::new(acl_value.to_string()),),
                 )
             )?;
             formatter.print_comma(writer, ENABLE_ANSI_COLORS)?;
@@ -133,7 +134,7 @@ where
         }
 
         formatter.write_indent(writer)?;
-        writer.write_str(output::pretty_fmt!("<r>partSize<d>:<r> ", ENABLE_ANSI_COLORS))?;
+        writer.write_str(pfmt!("<r>partSize<d>:<r> ", ENABLE_ANSI_COLORS))?;
         formatter.print_as(
             FormatTag::Double,
             writer,
@@ -146,7 +147,7 @@ where
         writer.write_str("\n")?;
 
         formatter.write_indent(writer)?;
-        writer.write_str(output::pretty_fmt!("<r>queueSize<d>:<r> ", ENABLE_ANSI_COLORS))?;
+        writer.write_str(pfmt!("<r>queueSize<d>:<r> ", ENABLE_ANSI_COLORS))?;
         formatter.print_as(
             FormatTag::Double,
             writer,
@@ -158,7 +159,7 @@ where
         writer.write_str("\n")?;
 
         formatter.write_indent(writer)?;
-        writer.write_str(output::pretty_fmt!("<r>retry<d>:<r> ", ENABLE_ANSI_COLORS))?;
+        writer.write_str(pfmt!("<r>retry<d>:<r> ", ENABLE_ANSI_COLORS))?;
         formatter.print_as(
             FormatTag::Double,
             writer,
@@ -212,7 +213,7 @@ impl S3Client {
     where
         W: core::fmt::Write,
     {
-        writer.write_str(output::pretty_fmt!("<r>S3Client<r>", ENABLE_ANSI_COLORS))?;
+        writer.write_str(pfmt!("<r>S3Client<r>", ENABLE_ANSI_COLORS))?;
         // detect virtual host style bucket name
         let bucket_name: &[u8] =
             if self.credentials.virtual_hosted_style && !self.credentials.endpoint.is_empty() {
@@ -225,9 +226,10 @@ impl S3Client {
             write!(
                 writer,
                 "{}",
-                output::pretty_fmt_args!::<ENABLE_ANSI_COLORS>(
+                output::pretty_fmt_args(
                     " (<green>\"{}\"<r>)<r> {{",
-                    BStr::new(bucket_name)
+                    ENABLE_ANSI_COLORS,
+                    (BStr::new(bucket_name),),
                 )
             )?;
         } else {

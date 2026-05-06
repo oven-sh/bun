@@ -1824,15 +1824,29 @@ impl PipeReader {
     }
 
     // Helper accessors used above to paper over Arc<PipeReader> interior mutability.
-    // TODO(port): remove once IntrusiveRc + Cell-wrapped fields land.
-    fn set_state(&self, _state: PipeReaderState) {
-        unimplemented!("TODO(port): Arc interior mutability")
+    // TODO(port): remove once IntrusiveRc + Cell-wrapped fields land (Phase B).
+    fn set_state(&self, state: PipeReaderState) {
+        // SAFETY: Zig `PipeReader` is intrusively ref-counted (`bun.ptr.RefCount`) and
+        // mutated through any `*PipeReader`; the JS-thread single-owner invariant means
+        // no aliasing &mut exists when this runs. Mirrors `r.pipe.state = .{ ... }`.
+        unsafe { (*(self as *const Self as *mut Self)).state = state };
     }
-    fn set_buffered_output(&self, _bo: BufferedOutput) {
-        unimplemented!("TODO(port): Arc interior mutability")
+    fn set_buffered_output(&self, bo: BufferedOutput) {
+        // SAFETY: see set_state. Mirrors `readable.pipe.buffered_output = .{ ... }` in
+        // Readable.init — called immediately after `PipeReader.create` while the Arc is
+        // uniquely held.
+        unsafe { (*(self as *const Self as *mut Self)).buffered_output = bo };
     }
     fn take_done_buffer(&self) -> Box<[u8]> {
-        unimplemented!("TODO(port): Arc interior mutability")
+        // SAFETY: see set_state. Mirrors onCloseIO:
+        //   out.* = .{ .buffer = pipe.state.done }; pipe.state = .{ .done = &.{} };
+        let this = unsafe { &mut *(self as *const Self as *mut Self) };
+        if let PipeReaderState::Done(buf) =
+            core::mem::replace(&mut this.state, PipeReaderState::Done(Box::default()))
+        {
+            return buf;
+        }
+        Box::default()
     }
 }
 

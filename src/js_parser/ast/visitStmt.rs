@@ -448,6 +448,16 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // blocked_on: react_refresh.hook_ctx_storage is `Option<&'a mut Option<HookContext>>`;
         //   a stack-local `react_hook_data` can't satisfy `'a`. Zig stores a raw ptr.
         //   Hook tracking deferred — see _draft::s_function for save/restore + emission.
+        //
+        // Spec (visitStmt.zig:517-520) unconditionally points p.react_refresh.hook_ctx_storage
+        // at this stack-local before visit_func and defer-restores it. We don't do that yet,
+        // so any visit_func with react_fast_refresh enabled would mis-attribute inner hook
+        // calls into the parent scope's hook_ctx_storage. Gate loud HERE (before visit_func)
+        // so no live path — including the early `return Ok(())` for remove_overwritten below —
+        // can run visit_func with the parent's storage active and then escape the check.
+        if p.options.features.react_fast_refresh {
+            todo!("s_function: react_fast_refresh hook_ctx_storage save/restore — see _draft");
+        }
         let mut react_hook_data: Option<crate::parser::HookContext> = None;
 
         let open_parens_loc = data.func.open_parens_loc;

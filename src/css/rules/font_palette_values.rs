@@ -101,6 +101,22 @@ impl FontPaletteValuesProperty {
     pub fn to_css(&self, _dest: &mut Printer) -> Result<(), PrintErr> {
         todo!("blocked_on: properties::{{font,custom}} un-gate — FontPaletteValuesProperty enum body")
     }
+    pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+        todo!("blocked_on: properties::{{font,custom}} un-gate — FontPaletteValuesProperty enum body")
+    }
+}
+
+impl FontPaletteValuesRule {
+    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+        // PORT NOTE: `css.implementDeepClone` field-walk. `FontPaletteValuesProperty`'s
+        // variant-walk lands when its enum body un-gates (properties::{font,
+        // custom}); the gated stub above panics with the blocker named.
+        Self {
+            name: self.name.deep_clone(bump),
+            properties: self.properties.iter().map(|p| p.deep_clone(bump)).collect(),
+            loc: self.loc,
+        }
+    }
 }
 
 #[cfg(any())]

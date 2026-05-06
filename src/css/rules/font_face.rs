@@ -52,6 +52,9 @@ impl FontFaceProperty {
     pub fn to_css(&self, _dest: &mut Printer) -> Result<(), PrintErr> {
         todo!("blocked_on: properties::{{font,custom}} un-gate — FontFaceProperty enum body")
     }
+    pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+        todo!("blocked_on: properties::{{font,custom}} un-gate — FontFaceProperty enum body")
+    }
 }
 
 #[cfg(any())]
@@ -708,12 +711,15 @@ impl FontFaceRule {
     }
 }
 
-// blocked_on: DeepClone.
-#[cfg(any())]
 impl FontFaceRule {
-    pub fn deep_clone(&self, allocator: &bun_alloc::Arena) -> Self {
-        // TODO(port): comptime-reflection deep clone — replace with derive in Phase B.
-        css::implement_deep_clone(self, allocator)
+    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+        // PORT NOTE: `css.implementDeepClone` field-walk. `FontFaceProperty`'s
+        // variant-walk lands when its enum body un-gates (properties::{font,
+        // custom}); the gated stub above panics with the blocker named.
+        Self {
+            properties: self.properties.iter().map(|p| p.deep_clone(bump)).collect(),
+            loc: self.loc,
+        }
     }
 }
 

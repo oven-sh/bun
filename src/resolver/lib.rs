@@ -631,8 +631,12 @@ pub mod fs {
     }
 
     /// Port of `FileSystem.Entry` in `fs.zig`.
+    // PORT NOTE: `cache` / `need_stat` are lazily populated by `Entry::kind` /
+    // `Entry::symlink` while callers hold a shared `&Entry` (Zig used a freely-
+    // aliasing-mutable `*Entry`). Wrapped in `UnsafeCell` / `Cell` so writing
+    // through `&self` is sound — `RealFS.entries_mutex` serializes access.
     pub struct Entry {
-        pub cache: EntryCache,
+        pub cache: core::cell::UnsafeCell<EntryCache>,
         // TODO(port): rule deviation — Zig deinit calls allocator.free(e.dir) so guide
         // says Box<[u8]>, but this points into DirnameStore (a &'static BSSList).
         pub dir: &'static [u8],
@@ -640,11 +644,27 @@ pub mod fs {
         // Necessary because the hash table uses it as a key
         pub base_lowercase_: strings::StringOrTinyString,
         pub mutex: Mutex,
-        pub need_stat: bool,
+        pub need_stat: core::cell::Cell<bool>,
         pub abs_path: PathString,
     }
 
     impl Entry {
+        /// Shared accessor for the lazily-populated stat cache.
+        #[inline(always)]
+        pub fn cache(&self) -> &EntryCache {
+            // SAFETY: ARENA — Entry slots live in the EntryStore singleton; reads are
+            // serialized via `RealFS.entries_mutex` so no concurrent writer aliases this.
+            unsafe { &*self.cache.get() }
+        }
+
+        /// Mutable accessor for the lazily-populated stat cache (interior mutability).
+        #[inline(always)]
+        pub fn cache_mut(&self) -> &mut EntryCache {
+            // SAFETY: ARENA — Entry slots live in the EntryStore singleton; callers hold
+            // `RealFS.entries_mutex` so the returned `&mut` is exclusive for its lifetime.
+            unsafe { &mut *self.cache.get() }
+        }
+
         #[inline]
         pub fn base(&self) -> &[u8] {
             self.base_.slice()

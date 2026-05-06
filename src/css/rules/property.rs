@@ -78,10 +78,29 @@ impl PropertyRule {
     }
 }
 
-// ─── PropertyRule parse/clone ─────────────────────────────────────────────
+impl PropertyRule {
+    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+        // PORT NOTE: `css.implementDeepClone` field-walk. `SyntaxString` has an
+        // inherent `deep_clone(&self, &Arena)`. While `ParsedComponent` is
+        // `#[cfg(any())]`-gated to `()`, `Option<()>::deep_clone` is provided by
+        // the generics blanket; once it un-gates, the real `ParsedComponent::
+        // deep_clone` (values/syntax.rs) takes over via method-syntax dispatch.
+        #[allow(unused_imports)]
+        use crate::generics::DeepClone as _;
+        Self {
+            name: self.name.deep_clone(bump),
+            syntax: self.syntax.deep_clone(bump),
+            inherits: self.inherits,
+            initial_value: self.initial_value.as_ref().map(|v| v.deep_clone(bump)),
+            loc: self.loc,
+        }
+    }
+}
+
+// ─── PropertyRule parse ───────────────────────────────────────────────────
 // blocked_on: RuleBodyParser, ParserInput, Parser::new signature,
 // SyntaxString::{parse,parse_value}, ParsedComponent::TokenList,
-// ParserError variants, DeepClone.
+// ParserError variants.
 #[cfg(any())]
 impl PropertyRule {
     pub fn parse(

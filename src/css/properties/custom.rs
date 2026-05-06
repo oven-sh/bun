@@ -1609,13 +1609,14 @@ pub fn try_parse_color_token(
 //   source:     src/css/properties/custom.zig (1554 lines)
 //   confidence: medium
 //   todos:      3
-//   notes:      module un-gated; all data types real; eql/hash/deep_clone
-//               provided by #[derive(CssEql/CssHash/DeepClone)] (Token impls
-//               hand-written here). parse/to_css/get_fallback bodies remain
-//               internally gated on values::ident (DashedIdent{,Reference}::
-//               to_css/parse_with_options), values::url (Url::parse),
-//               values::color (ComponentParser / supports_condition),
-//               AnimationName::to_css. Allocator params dropped (Vec/global
-//               mimalloc per LIFETIMES.tsv — Phase B revisit for arena);
-//               Zig closure structs collapsed to Rust closures.
+//   notes:      module un-gated; all data types real; eql/hash/deep_clone via
+//               #[derive(CssEql/CssHash/DeepClone)] (Token impls hand-written
+//               here). parse/to_css real (leaf calls into still-gated
+//               values/{url,ident}.rs inlined under `mod ext`). Remaining
+//               gates: get_fallback chain (CssColor::get_fallback shape),
+//               UnresolvedColor::parse rgb/hsl arms (values::color::
+//               gated_full_impl::ComponentParser), AnimationName::to_css
+//               (properties::animation gated_prop! stub). Allocator params
+//               dropped (Vec/global mimalloc per LIFETIMES.tsv — Phase B
+//               revisit for arena); Zig closure structs collapsed to closures.
 // ──────────────────────────────────────────────────────────────────────────

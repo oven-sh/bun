@@ -402,9 +402,11 @@ impl<T: JsSinkAbi> JSSink<T> {
         destructor: usize,
     ) -> crate::webcore::jsc::JSValue {
         // SAFETY: FFI call into generated C++ sink glue (`${abi_name}__createObject`).
+        // `JSGlobalObject` is an opaque ZST handle; `.as_ptr()` is the sanctioned
+        // &self → *mut conversion for FFI (no Rust-visible bytes are aliased).
         unsafe {
             T::create_object_extern(
-                global as *const _ as *mut _,
+                global.as_ptr(),
                 object as *mut T as *mut c_void,
                 destructor,
             )
@@ -429,9 +431,11 @@ impl<T: JsSinkAbi> JSSink<T> {
         jsvalue_ptr: *mut *mut c_void,
     ) -> crate::webcore::jsc::JSValue {
         // SAFETY: FFI call into generated C++ sink glue (`${abi_name}__assignToStream`).
+        // `JSGlobalObject` is an opaque ZST handle; `.as_ptr()` is the sanctioned
+        // &self → *mut conversion for FFI (no Rust-visible bytes are aliased).
         unsafe {
             T::assign_to_stream_extern(
-                global as *const _ as *mut _,
+                global.as_ptr(),
                 stream,
                 ptr as *mut T as *mut c_void,
                 jsvalue_ptr,
@@ -649,8 +653,9 @@ macro_rules! js_sink {
                 ptr: *mut c_void,
                 jsvalue_ptr: *mut *mut c_void,
             ) -> JSValue {
-                // SAFETY: FFI call into generated C++ sink glue.
-                unsafe { assign_to_stream_extern(global as *const _ as *mut _, stream, ptr, jsvalue_ptr) }
+                // SAFETY: FFI call into generated C++ sink glue. `JSGlobalObject` is an
+                // opaque ZST handle; `.as_ptr()` is the sanctioned &self → *mut for FFI.
+                unsafe { assign_to_stream_extern(global.as_ptr(), stream, ptr, jsvalue_ptr) }
             }
 
             pub fn on_close(ptr: JSValue, reason: JSValue) {
@@ -672,14 +677,16 @@ macro_rules! js_sink {
 
             pub fn on_start(ptr: JSValue, global: &JSGlobalObject) {
                 ::bun_jsc::mark_binding(::core::panic::Location::caller());
-                // SAFETY: FFI call into generated C++ sink glue.
-                unsafe { on_start_extern(ptr, global as *const _ as *mut _) }
+                // SAFETY: FFI call into generated C++ sink glue. `JSGlobalObject` is an
+                // opaque ZST handle; `.as_ptr()` is the sanctioned &self → *mut for FFI.
+                unsafe { on_start_extern(ptr, global.as_ptr()) }
             }
 
             pub fn create_object(global: &JSGlobalObject, object: *mut c_void, destructor: usize) -> JSValue {
                 ::bun_jsc::mark_binding(::core::panic::Location::caller());
-                // SAFETY: FFI call into generated C++ sink glue.
-                unsafe { create_object_extern(global as *const _ as *mut _, object, destructor) }
+                // SAFETY: FFI call into generated C++ sink glue. `JSGlobalObject` is an
+                // opaque ZST handle; `.as_ptr()` is the sanctioned &self → *mut for FFI.
+                unsafe { create_object_extern(global.as_ptr(), object, destructor) }
             }
 
             pub fn set_destroy_callback(value: JSValue, callback: usize) {

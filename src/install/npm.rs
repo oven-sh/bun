@@ -1590,20 +1590,28 @@ pub mod package_manifest {
             PackageManager::get().thread_pool.schedule(batch);
         }
 
-        fn manifest_file_name(
-            buf: &mut [u8],
+        fn manifest_file_name<'b>(
+            buf: &'b mut [u8],
             file_id: u64,
             scope: &registry::Scope,
-        ) -> Result<&bun_str::ZStr, Error> {
+        ) -> Result<&'b bun_str::ZStr, Error> {
+            use core::fmt::Write as _;
             let file_id_hex_fmt = bun_fmt::hex_int_lower(file_id);
+            let mut stream = bun_io::FixedBufferStream::new_mut(buf);
             if scope.url_hash == *registry::DEFAULT_URL_HASH {
-                bun_str::buf_print_z(buf, format_args!("{}.npm", file_id_hex_fmt))
+                write!(stream, "{}.npm", file_id_hex_fmt)?;
             } else {
-                bun_str::buf_print_z(
-                    buf,
-                    format_args!("{}-{}.npm", file_id_hex_fmt, bun_fmt::hex_int_lower(scope.url_hash)),
-                )
+                write!(
+                    stream,
+                    "{}-{}.npm",
+                    file_id_hex_fmt,
+                    bun_fmt::hex_int_lower(scope.url_hash),
+                )?;
             }
+            stream.write_byte(0)?;
+            let len = stream.pos;
+            // SAFETY: we wrote `len` bytes ending in a NUL into `buf`.
+            Ok(unsafe { bun_str::ZStr::from_raw_mut(buf.as_mut_ptr(), len - 1) })
         }
 
         pub fn save(
@@ -1635,10 +1643,10 @@ pub mod package_manifest {
         ) -> Result<Option<PackageManifest>, Error> {
             let mut file_path_buf = [0u8; 512 + 64];
             let file_name = Self::manifest_file_name(&mut file_path_buf, file_id, scope)?;
-            let Ok(cache_file) = File::openat(cache_dir, file_name, bun_sys::O::RDONLY, 0).unwrap() else {
+            let Ok(cache_file) = File::openat(cache_dir, file_name, bun_sys::O::RDONLY, 0) else {
                 return Ok(None);
             };
-            let _close = scopeguard::guard((), |_| cache_file.close());
+            let _close = scopeguard::guard((), |_| { let _ = cache_file.close(); });
 
             'delete: {
                 match Self::load_by_file(scope, &cache_file) {
@@ -1648,7 +1656,7 @@ pub mod package_manifest {
             }
 
             // delete the outdated/invalid manifest
-            bun_sys::unlinkat(cache_dir, file_name).unwrap()?;
+            bun_sys::unlinkat(cache_dir, file_name)?;
             Ok(None)
         }
 

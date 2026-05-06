@@ -618,7 +618,7 @@ impl Linux {
         if let Some(err) = sys::errno_sys(rc, Syscall::Watch) {
             return Err(err);
         }
-        manager.platform.fd = Fd::from_native(i32::try_from(rc).unwrap());
+        manager.platform.get_mut().fd = Fd::from_native(i32::try_from(rc).unwrap());
         // The manager is process-global and never torn down, so the reader thread is
         // a daemon — detach it instead of stashing a handle we'd never join.
         let mgr_ptr = manager as *mut PathWatcherManager as usize;
@@ -628,7 +628,7 @@ impl Linux {
         }) {
             Ok(thread) => thread.detach(),
             Err(_) => {
-                manager.platform.fd.close();
+                manager.platform.get_mut().fd.close();
                 return Err(sys::Error {
                     errno: sys::E::NOMEM as _,
                     syscall: Syscall::Watch,
@@ -656,14 +656,16 @@ impl Linux {
         abs_path: &ZStr,
         subpath: &[u8],
     ) -> sys::Result<()> {
-        // SAFETY: caller holds manager.mutex; exclusive access to platform.
-        let plat = unsafe { &mut *(&manager.platform as *const _ as *mut Linux) };
+        let plat: *mut Linux = manager.platform.get();
         let mask: u32 = if watcher.is_file && subpath.is_empty() {
             inotify_masks::WATCH_FILE_MASK
         } else {
             inotify_masks::WATCH_DIR_MASK
         };
-        let rc = sys::syscall::inotify_add_watch(plat.fd.native(), abs_path, mask);
+        // SAFETY: `fd` is set once in `init()` before the reader thread spawns and
+        // never mutated again; reading it here races with nothing.
+        let fd = unsafe { (*plat).fd };
+        let rc = sys::syscall::inotify_add_watch(fd.native(), abs_path, mask);
         if let Some(err) = sys::errno_sys_p(rc, Syscall::Watch, abs_path.as_bytes()) {
             // ENOTDIR/ENOENT during a recursive walk just means we raced; skip.
             if !subpath.is_empty() {
@@ -672,7 +674,10 @@ impl Linux {
             return Err(err);
         }
         let wd: i32 = i32::try_from(rc).unwrap();
-        let owners = plat.wd_map.entry(wd).or_default();
+        // SAFETY: caller holds manager.mutex; exclusive access to `wd_map`. Project
+        // only the field (not `&mut Linux`) so this can coexist with the reader
+        // thread's long-lived `&AtomicBool` borrow of the disjoint `running` field.
+        let owners = unsafe { (*plat).wd_map.entry(wd).or_default() };
         // This wd may already have this watcher as an owner:
         //   - IN_CREATE raced the initial walk (same subpath → the reassign is a no-op)
         //   - a subdirectory was *renamed* within the tree: IN_MOVED_TO re-adds it,

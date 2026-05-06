@@ -800,26 +800,32 @@ pub mod heap_breakdown {
 
     impl Zone {
         /// Zig: `Zone.init(comptime name)` — creates and names a malloc zone.
+        ///
+        /// # Safety
+        /// `name` must point to a NUL-terminated C string that remains valid
+        /// for the entire process lifetime — `malloc_set_zone_name` stores the
+        /// pointer (does not copy).
         #[cfg(target_os = "macos")]
-        pub fn init(name: &'static core::ffi::CStr) -> &'static Zone {
+        pub unsafe fn init(name: *const c_char) -> &'static Zone {
             // SAFETY: `malloc_create_zone(0, 0)` returns a process-lifetime zone;
-            // `malloc_set_zone_name` stores (does not copy) `name`, hence 'static.
+            // caller guarantees `name` outlives the process.
             unsafe {
                 let zone = malloc_create_zone(0, 0);
-                malloc_set_zone_name(zone, name.as_ptr());
+                malloc_set_zone_name(zone, name);
                 &*zone
             }
         }
         #[cfg(not(target_os = "macos"))]
-        pub fn init(_name: &'static core::ffi::CStr) -> &'static Zone {
+        #[allow(clippy::missing_safety_doc)]
+        pub unsafe fn init(_name: *const c_char) -> &'static Zone {
             unreachable!("heap_breakdown is macOS-only; guard call sites on ENABLED")
         }
 
         /// Zig: `Zone.isInstance(allocator)` — vtable-identity check.
-        // TODO(port): Zig compared `allocator.vtable == &Zone.vtable`; with the
-        // marker `Allocator` trait there is no portable identity to compare.
-        pub fn is_instance(_alloc: &dyn crate::Allocator) -> bool {
-            false
+        // Zig compared `allocator.vtable == &Zone.vtable`; the Rust trait
+        // exposes a `type_id()` hook so identity is checked by concrete type.
+        pub fn is_instance(alloc: &dyn crate::Allocator) -> bool {
+            crate::Allocator::type_id(alloc) == core::any::TypeId::of::<Zone>()
         }
 
         #[inline]

@@ -773,7 +773,7 @@ impl<'a> Repl<'a> {
         // Enable raw mode
         #[cfg(unix)]
         {
-            let _ = bun_sys::tty::set_mode(0, bun_sys::tty::Mode::Raw);
+            let _ = tty::set_mode(0, tty::Mode::Raw);
         }
         #[cfg(windows)]
         {
@@ -792,7 +792,7 @@ impl<'a> Repl<'a> {
     fn restore_terminal(&mut self) {
         #[cfg(unix)]
         {
-            let _ = bun_sys::tty::set_mode(0, bun_sys::tty::Mode::Normal);
+            let _ = tty::set_mode(0, tty::Mode::Normal);
         }
         #[cfg(windows)]
         {
@@ -818,7 +818,7 @@ impl<'a> Repl<'a> {
         #[cfg(unix)]
         {
             // Switch to normal terminal mode (has ISIG) so Ctrl+C generates SIGINT
-            let _ = bun_sys::tty::set_mode(0, bun_sys::tty::Mode::Normal);
+            let _ = tty::set_mode(0, tty::Mode::Normal);
 
             // Install SIGINT handler
             // TODO(port): wrap std.posix.Sigaction in bun_sys
@@ -845,7 +845,7 @@ impl<'a> Repl<'a> {
         #[cfg(unix)]
         {
             // Back to raw mode
-            let _ = bun_sys::tty::set_mode(0, bun_sys::tty::Mode::Raw);
+            let _ = tty::set_mode(0, tty::Mode::Raw);
 
             // Restore default SIGINT handling
             let act = bun_sys::posix::Sigaction {

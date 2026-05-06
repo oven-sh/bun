@@ -49,10 +49,22 @@ pub struct StaticPipeWriter<P: StaticPipeWriterProcess> {
 
 // Zig: `const WriterRefCount = bun.ptr.RefCount(@This(), "ref_count", _deinit, .{});`
 // Zig: `pub const ref = WriterRefCount.ref; pub const deref = WriterRefCount.deref;`
-// In Rust the intrusive refcount methods come from `bun_ptr::IntrusiveRefCounted`;
-// the `_deinit` destructor maps to `impl Drop` below, and the final `bun.destroy`
-// (Box free) is performed by `IntrusiveRc<Self>` when the count reaches zero.
-// TODO(port): impl `bun_ptr::IntrusiveRefCounted for StaticPipeWriter<P>` (field = ref_count).
+// In Rust the intrusive refcount methods come from `bun_ptr::RefCount` /
+// `bun_ptr::RefCounted`; the `_deinit` destructor maps to `impl Drop` below,
+// and the final `bun.destroy` (Box free) is performed inside
+// `RefCounted::destructor` when the count reaches zero.
+impl<P: StaticPipeWriterProcess> RefCounted for StaticPipeWriter<P> {
+    type DestructorCtx = ();
+    unsafe fn get_ref_count(this: *mut Self) -> *mut RefCount<Self> {
+        // SAFETY: caller contract — `this` points to a live Self.
+        unsafe { &raw mut (*this).ref_count }
+    }
+    unsafe fn destructor(this: *mut Self, _: ()) {
+        // SAFETY: refcount hit 0; allocated via `Box::into_raw` in `create()`.
+        // `Drop` (below) performs `_deinit`'s `writer.end(); source.detach()`.
+        drop(unsafe { Box::from_raw(this) });
+    }
+}
 
 // Zig: `const print = bun.Output.scoped(.StaticPipeWriter, .visible);`
 // NOTE: `print` is declared but never used in the Zig source; the file-level

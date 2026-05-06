@@ -413,7 +413,7 @@ impl Interpreter {
         {
             use crate::shell::shell_body::{LexerAscii, LexerUnicode, ParseError, Parser};
             let jsobjs_len = jsobjs.len() as u32;
-            let lex_result = if bun_str::is_all_ascii(src) {
+            let lex_result = if bun_core::strings::is_all_ascii(src) {
                 let mut lexer = LexerAscii::new(arena, src, &[], jsobjs_len);
                 lexer.lex()?;
                 lexer.get_result()

@@ -1081,15 +1081,14 @@ pub mod js_bundler {
 
                     if entry_points.len() == 1 {
                         // TODO(port): std.fs.path.dirname → bun_paths::dirname
+                        let d = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(entry_points[0]);
                         break 'brk ZigString::Slice::from_utf8_never_free(
-                            bun_paths::dirname(entry_points[0], bun_paths::Platform::Auto)
-                                .filter(|d| !d.is_empty())
-                                .unwrap_or(b"."),
+                            if d.is_empty() { b"." } else { d },
                         );
                     }
 
                     break 'brk ZigString::Slice::from_utf8_never_free(
-                        resolve_path::get_if_exists_longest_common_path(entry_points).unwrap_or(b"."),
+                        bun_paths::resolve_path::get_if_exists_longest_common_path(entry_points).unwrap_or(b"."),
                     );
                 };
 
@@ -1395,7 +1394,7 @@ pub mod js_bundler {
                         this.define.insert(key, value)?;
                     }
 
-                    let base_public_path = crate::StandaloneModuleGraph::target_base_public_path(
+                    let base_public_path = StandaloneModuleGraph::target_base_public_path(
                         compile.compile_target.os,
                         b"root/",
                     );

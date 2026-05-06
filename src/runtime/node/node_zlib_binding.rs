@@ -65,8 +65,10 @@ use core::mem::offset_of;
 
 use bun_core::Output;
 use bun_jsc::{
-    self as jsc, CallFrame, ConcurrentTask, JSGlobalObject, JSValue, JsResult, Task, VirtualMachine,
+    self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, Task,
 };
+use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::ConcurrentTask::ConcurrentTask;
 use crate::node::types::Buffer;
 use bun_str::{self, String as BunString, ZigString};
 use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};

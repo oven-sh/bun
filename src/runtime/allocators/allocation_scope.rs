@@ -177,7 +177,7 @@ impl<'a> LockedState<'a> {
         }
     }
 
-    fn track_allocation(&mut self, buf: &[u8], ret_addr: usize, extra: Extra) -> Result<(), crate::AllocError> {
+    fn track_allocation(&mut self, buf: &[u8], ret_addr: usize, extra: Extra) -> Result<(), AllocError> {
         let trace = StoredTrace::capture(ret_addr);
         // TODO(port): `putNoClobber` asserts the key is new. `bun_collections::HashMap` should expose
         // an equivalent; using `insert` + debug_assert for now.
@@ -341,14 +341,14 @@ pub struct AllocationScopeIn<A> {
 ///
 /// This type is a `GenericAllocator`; see `src/allocators.zig`.
 pub struct Borrowed<'a, A> {
-    parent: crate::Borrowed<A>,
+    parent: BorrowedAlloc<A>,
     #[cfg(feature = "alloc_scopes")]
     state: &'a State,
     #[cfg(not(feature = "alloc_scopes"))]
     state: core::marker::PhantomData<&'a ()>,
 }
 
-impl<'a, A> Borrowed<'a, A> {
+impl<'a, A: GenericAllocator> Borrowed<'a, A> {
     pub fn allocator(&self) -> StdAllocator {
         #[cfg(feature = "alloc_scopes")]
         {

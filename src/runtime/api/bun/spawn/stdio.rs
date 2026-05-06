@@ -376,7 +376,7 @@ impl Stdio {
         out_stdio: &mut Stdio,
         global: &JSGlobalObject,
         i: i32,
-        body: &mut jsc::webcore::body::Value,
+        body: &mut webcore::body::Value,
         is_sync: bool,
     ) -> JsResult<()> {
         body.to_blob_if_possible();

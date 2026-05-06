@@ -947,8 +947,8 @@ impl PublishCommand {
         }
 
         // TODO(port): Zig used std.process.Child here; bun_spawn::spawn_sync should be substituted in Phase B
-        let mut child = bun_spawn::Child::init(&[open::OPENER, auth_url.as_bytes()]);
-        let _ = child.spawn_and_wait();
+        let _ = (open::OPENER, auth_url.as_bytes());
+        todo!("blocked_on: bun_spawn::spawn_sync (std.process.Child) for browser open");
     }
 
     fn get_otp<const DIRECTORY_PUBLISH: bool>(
@@ -1003,19 +1003,19 @@ impl PublishCommand {
                 for _ in 0..OFFSET { Output::print(format_args!(" ")); }
                 Output::print(format_args!("{}", top_left));
                 for _ in 0..width { Output::print(format_args!("{}", horizontal)); }
-                Output::println(format_args!("{}", top_right));
+                Output::print(format_args!("{}\n", top_right));
 
                 for _ in 0..OFFSET { Output::print(format_args!(" ")); }
                 Output::print(format_args!("{}", vertical));
                 for _ in 0..PADDING { Output::print(format_args!(" ")); }
                 Output::pretty(format_args!("<b>{}<r>", bstr::BStr::new(auth_url_str.as_bytes())));
                 for _ in 0..PADDING { Output::print(format_args!(" ")); }
-                Output::println(format_args!("{}", vertical));
+                Output::print(format_args!("{}\n", vertical));
 
                 for _ in 0..OFFSET { Output::print(format_args!(" ")); }
                 Output::print(format_args!("{}", bottom_left));
                 for _ in 0..width { Output::print(format_args!("{}", horizontal)); }
-                Output::println(format_args!("{}", bottom_right));
+                Output::print(format_args!("{}\n", bottom_right));
                 Output::flush();
 
                 // on another thread because pressing enter is not required

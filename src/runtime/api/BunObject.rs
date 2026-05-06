@@ -751,8 +751,8 @@ pub fn shell_escape(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsRe
 
     let mut outbuf: Vec<u8> = Vec::new();
 
-    if crate::shell::needs_escape_bunstr(&bunstr) {
-        let result = crate::shell::escape_bun_str(&bunstr, &mut outbuf, true)?;
+    if bun_shell_parser::needs_escape_bunstr(bunstr) {
+        let result = bun_shell_parser::escape_bun_str::<true>(bunstr, &mut outbuf)?;
         if !result {
             return global_this.throw(
                 "String has invalid utf-16: {s}",

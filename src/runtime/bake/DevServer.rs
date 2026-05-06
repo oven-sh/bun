@@ -4065,7 +4065,7 @@ impl DevServer<'_> {
 
         let pre = const_format::concatcp!(
             "\"),c=>c.charCodeAt(0));let config={bun:\"",
-            bun_core::Global::PACKAGE_JSON_VERSION_WITH_CANARY,
+            bun_core::Global::package_json_version_with_canary,
             "\"};"
         );
         let post = "</script></body></html>";

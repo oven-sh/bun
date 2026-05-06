@@ -62,7 +62,7 @@ impl FileRoute {
 mod _gated {
 use super::*;
 use bun_aio::Closer;
-use bun_http_types::Method;
+use bun_http::Method;
 use bun_io::FileType;
 use bun_str::String as BunString;
 use crate::server::{write_status, FileResponseStream, RangeRequest};
@@ -319,17 +319,17 @@ impl FileRoute {
             let _size: u64 = stat_size.min(self.blob.size as u64);
 
             let mode = u32::try_from(stat.mode).unwrap();
-            if bun_sys::S::isdir(mode) {
+            if bun_sys::S::ISDIR(mode) {
                 break 'brk (false, 0, FileType::File, false);
             }
 
             self.stat_hash.hash(&stat, path);
 
-            if bun_sys::S::isfifo(mode) || bun_sys::S::ischr(mode) {
+            if bun_sys::S::ISFIFO(mode) || bun_sys::S::ISCHR(mode) {
                 break 'brk (true, _size, FileType::Pipe, true);
             }
 
-            if bun_sys::S::issock(mode) {
+            if bun_sys::S::ISSOCK(mode) {
                 break 'brk (true, _size, FileType::Socket, true);
             }
 

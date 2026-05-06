@@ -1704,7 +1704,9 @@ impl Stream {
         }
         // unsafe to ask GC to run if we are already inside GC
         if !FINALIZING {
-            VirtualMachine::get().event_loop().process_gc_timer();
+            // SAFETY: VirtualMachine::get() returns the thread-local VM (non-null while
+            // JS is running); event_loop() returns a non-null *mut EventLoop owned by it.
+            unsafe { (*(*VirtualMachine::get()).event_loop()).process_gc_timer() };
         }
     }
 }
@@ -3483,7 +3485,7 @@ impl H2FrameParser {
         this.handlers.binary_type = match BinaryType::from_js_value(global_object, args_list.ptr[0])? {
             Some(bt) => bt,
             None => {
-                let err = bun_jsc::to_invalid_arguments("Expected 'binaryType' to be 'arraybuffer', 'uint8array', 'buffer'", global_object).as_object_ref();
+                let err = global_object.to_invalid_arguments(format_args!("Expected 'binaryType' to be 'arraybuffer', 'uint8array', 'buffer'")).as_object_ref();
                 return global_object.throw_value(err);
             }
         };
@@ -3565,7 +3567,7 @@ impl H2FrameParser {
                     let setting_id_str = prop_name.to_utf8();
                     // Parse bytes directly (ASCII decimal) — Zig: std.fmt.parseInt(u32, slice, 10).
                     // Do not insert UTF-8 validation on external data per PORTING.md §Strings.
-                    let Some(setting_id) = bun_str::strings::parse_uint::<u32>(setting_id_str.as_bytes(), 10)
+                    let Some(setting_id) = bun_str::strings::parse_int::<u32>(setting_id_str.as_bytes(), 10).ok()
                     else {
                         return global_object.err_http2_invalid_setting_value_range_error("Invalid custom setting identifier").throw();
                     };

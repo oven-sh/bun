@@ -40,11 +40,10 @@ impl UntrustedCommand {
         args: &[&ZStr],
     ) -> Result<(), bun_core::Error> {
         let _ = args;
-        Output::pretty_error(format_args!(const_format::concatcp!(
-            "<r><b>bun pm untrusted <r><d>v",
-            bun_core::Global::PACKAGE_JSON_VERSION_WITH_SHA,
-            "<r>\n\n"
-        )));
+        Output::pretty_error(format_args!(
+            "<r><b>bun pm untrusted <r><d>v{}<r>\n\n",
+            Global::package_json_version_with_sha,
+        ));
         Output::flush();
 
         let load_lockfile = pm.lockfile.load_from_cwd(pm, ctx.log, true);

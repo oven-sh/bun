@@ -1455,12 +1455,12 @@ impl Terminal {
         #[cfg(unix)]
         {
             // Use the existing TTY mode function
-            let tty_result = bun_tty::set_mode(
+            let tty_result = bun_core::tty::set_mode(
                 self.master_fd.cast(),
                 if enabled {
-                    bun_tty::Mode::Raw
+                    bun_core::tty::Mode::Raw
                 } else {
-                    bun_tty::Mode::Normal
+                    bun_core::tty::Mode::Normal
                 },
             );
             if tty_result != 0 {
@@ -1475,7 +1475,7 @@ impl Terminal {
 
 /// POSIX termios struct for terminal flags manipulation
 #[cfg(unix)]
-type Termios = sys::posix::termios;
+type Termios = sys::posix::Termios;
 #[cfg(not(unix))]
 type Termios = ();
 
@@ -1499,7 +1499,7 @@ fn set_termios(fd: Fd, termios_p: &Termios) -> bool {
     }
     #[cfg(unix)]
     {
-        sys::posix::tcsetattr(fd.cast(), sys::posix::TCSANOW, termios_p).is_ok()
+        sys::posix::tcsetattr(fd.cast(), sys::posix::TCSA::Now, termios_p).is_ok()
     }
 }
 

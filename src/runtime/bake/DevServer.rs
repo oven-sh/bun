@@ -1940,10 +1940,14 @@ impl DevServer<'_> {
             router_type_main: match router_type.server_file_string.get() {
                 Some(s) => s,
                 None => 'str: {
-                    let name = &self.server_graph.bundled_files.keys()
+                    // SAFETY: see PORT NOTE on `self_ptr` above.
+                    let name = &unsafe { &*self_ptr }.server_graph.bundled_files.keys()
                         [from_opaque_file_id::<{ bake::Side::Server }>(router_type.server_file).get() as usize];
                     let mut buf = paths::path_buffer_pool::get();
-                    let s = bun_jsc::bun_string_jsc::create_utf8_for_js(global, self.relative_path(&mut *buf, name))?;
+                    let s = bun_jsc::bun_string_jsc::create_utf8_for_js(
+                        global,
+                        unsafe { &*self_ptr }.relative_path(&mut *buf, name),
+                    )?;
                     router_type.server_file_string = jsc::StrongOptional::create(s, global);
                     break 'str s;
                 }
@@ -1952,21 +1956,22 @@ impl DevServer<'_> {
             route_modules: match framework_bundle.cached_module_list.get() {
                 Some(a) => a,
                 None => 'arr: {
-                    let keys = self.server_graph.bundled_files.keys();
+                    // SAFETY: see PORT NOTE on `self_ptr` above.
+                    let keys = unsafe { &*self_ptr }.server_graph.bundled_files.keys();
                     let mut n: usize = 1;
-                    let mut route = self.router.route_ptr(framework_bundle.route_index);
+                    let mut route = unsafe { &*self_ptr }.router.route_ptr(framework_bundle.route_index);
                     loop {
                         if route.file_layout.is_some() {
                             n += 1;
                         }
                         let Some(p) = route.parent else { break };
-                        route = self.router.route_ptr(p);
+                        route = unsafe { &*self_ptr }.router.route_ptr(p);
                     }
                     let arr = JSValue::create_empty_array(global, n)?;
-                    route = self.router.route_ptr(framework_bundle.route_index);
+                    route = unsafe { &*self_ptr }.router.route_ptr(framework_bundle.route_index);
                     {
-                        let buf = paths::path_buffer_pool::get();
-                        let mut route_name = BunString::clone_utf8(self.relative_path(
+                        let mut buf = paths::path_buffer_pool::get();
+                        let mut route_name = BunString::clone_utf8(unsafe { &*self_ptr }.relative_path(
                             &mut *buf,
                             &keys[from_opaque_file_id::<{ bake::Side::Server }>(
                                 route.file_page.unwrap(),
@@ -1978,8 +1983,8 @@ impl DevServer<'_> {
                     n = 1;
                     loop {
                         if let Some(layout) = route.file_layout {
-                            let buf = paths::path_buffer_pool::get();
-                            let mut layout_name = BunString::clone_utf8(self.relative_path(
+                            let mut buf = paths::path_buffer_pool::get();
+                            let mut layout_name = BunString::clone_utf8(unsafe { &*self_ptr }.relative_path(
                                 &mut *buf,
                                 &keys[from_opaque_file_id::<{ bake::Side::Server }>(layout).get() as usize],
                             ));
@@ -1987,7 +1992,7 @@ impl DevServer<'_> {
                             n += 1;
                         }
                         let Some(p) = route.parent else { break };
-                        route = self.router.route_ptr(p);
+                        route = unsafe { &*self_ptr }.router.route_ptr(p);
                     }
                     framework_bundle.cached_module_list = jsc::StrongOptional::create(arr, global);
                     break 'arr arr;

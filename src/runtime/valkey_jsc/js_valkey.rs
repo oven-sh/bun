@@ -1007,13 +1007,14 @@ impl JSValkeyClient {
         // Without this, every subsequent command rejects with "Connection has
         // failed" forever — see https://github.com/oven-sh/bun/issues/29925.
         self.client.flags.failed = false;
-        let _update = scopeguard::guard((), |_| self.update_poll_ref());
+        let self_ptr = self as *mut Self;
+        let _update = scopeguard::guard(self_ptr, |p| unsafe { (*p).update_poll_ref() });
 
         if self.client.flags.needs_to_open_socket {
-            self.poll_ref.ref_(self.client.vm);
+            self.poll_ref.ref_(vm_event_loop_ctx());
 
             if let Err(err) = self.connect() {
-                self.poll_ref.unref(self.client.vm);
+                self.poll_ref.unref(vm_event_loop_ctx());
                 self.client.flags.needs_to_open_socket = true;
                 let err_value = global_object
                     .err(
@@ -1021,10 +1022,11 @@ impl JSValkeyClient {
                         format_args!(" {} connecting to Valkey", err.name()),
                     )
                     .to_js();
-                let event_loop = self.client.vm.event_loop();
-                event_loop.enter();
-                let _exit = scopeguard::guard((), |_| event_loop.exit());
-                promise_ptr.reject(global_object, err_value)?;
+                let event_loop = self.vm().event_loop();
+                // SAFETY: VM-owned event loop, non-null on the JS thread.
+                unsafe { (*event_loop).enter() };
+                let _exit = scopeguard::guard(event_loop, |el| unsafe { (*el).exit() });
+                promise_ptr.reject(global_object, Ok(err_value))?;
                 return Ok(promise);
             }
 

@@ -51,8 +51,11 @@ pub fn to_be_instance_of(
     }
 
     // handle failure
+    // PORT NOTE: two live `to_fmt(&mut Formatter)` wrappers alias the same formatter under
+    // borrowck — use a second Formatter for the second value (matches toBe.rs / toInclude.rs).
+    let mut formatter2 = super::make_formatter(global);
     let expected_fmt = expected_value.to_fmt(&mut formatter);
-    let value_fmt = value.to_fmt(&mut formatter);
+    let value_fmt = value.to_fmt(&mut formatter2);
     if not {
         // PORT NOTE: Zig built the fmt string via comptime `++` concatenation of
         // `expected_line`/`received_line` consts; inlined here because Rust `concat!`

@@ -238,7 +238,6 @@ pub mod stubs {
     pub struct WriteStackTraceLimits;
     pub struct BufWriter;
     #[inline] pub fn dump_stack_trace(_: &StoredTrace, _: &WriteStackTraceLimits) {}
-    #[inline] pub fn is_smol_mode() -> bool { false }
     pub mod strings {
         #[inline] pub fn includes(h: &[u8], n: &[u8]) -> bool { bstr::ByteSlice::find(h, n).is_some() }
         #[inline]

@@ -372,6 +372,16 @@ thread_local! {
 
 pub static mut IS_SMOL_MODE: bool = false;
 
+/// Process-global "smol" flag (Zig: `bun.jsc.VirtualMachine.is_smol_mode`).
+/// Set once during VM init before workers spawn; thereafter read-only, so a
+/// relaxed unsynchronized read is sound.
+#[inline]
+pub fn is_smol_mode() -> bool {
+    // SAFETY: written once at startup before any concurrent reader exists;
+    // `&raw const` avoids the edition-2024 `static_mut_refs` lint.
+    unsafe { *&raw const IS_SMOL_MODE }
+}
+
 #[derive(Default)]
 pub struct ExitHandler {
     pub exit_code: u8,

@@ -435,18 +435,20 @@ impl StringOrBuffer {
                 }
                 let str = bun_str::String::from_js(value, global)?;
                 // str.deref() on Drop
+                // TODO(b2-blocked): `bun_str::String::to_thread_safe_slice` /
+                // `to_slice` (returning SliceWithUnderlyingString) are not yet
+                // implemented upstream. Fall back to an owned UTF-8 copy so
+                // both sync and async paths return correct (if slower) data.
+                let owned = str.to_owned_slice();
+                vm_report_extra_memory(global, owned.len());
+                let slice = ZigStringSlice::init_owned(owned);
                 if is_async {
-                    let mut possible_clone = str;
-                    let mut sliced = possible_clone.to_thread_safe_slice()?;
-                    sliced.report_extra_memory(global.vm());
-
-                    if sliced.underlying.is_empty() {
-                        return Ok(Some(Self::EncodedSlice(sliced.utf8)));
-                    }
-
-                    return Ok(Some(Self::ThreadsafeString(sliced)));
+                    return Ok(Some(Self::EncodedSlice(slice)));
                 } else {
-                    return Ok(Some(Self::String(str.to_slice())));
+                    return Ok(Some(Self::String(SliceWithUnderlyingString {
+                        utf8: slice,
+                        underlying: bun_str::String::default(),
+                    })));
                 }
             }
 

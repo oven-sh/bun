@@ -369,7 +369,7 @@ impl BlockList {
         let array = JSValue::create_empty_array(global, this.da_rules.len())?;
 
         for (i, rule) in this.da_rules.iter().enumerate() {
-            let s = match rule {
+            let mut s = match rule {
                 Rule::Addr(a) => {
                     let mut buf = [0u8; inet::INET6_ADDRSTRLEN as usize];
                     BunString::create_format(format_args!(

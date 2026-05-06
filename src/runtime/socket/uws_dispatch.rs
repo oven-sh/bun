@@ -142,7 +142,7 @@ pub extern "C" fn us_dispatch_data(
 
 #[unsafe(no_mangle)]
 pub extern "C" fn us_dispatch_fd(s: *mut us_socket_t, fd: c_int) -> *mut us_socket_t {
-    if let Some(f) = vt(s).on_fd { f(s, fd) } else { s }
+    if let Some(f) = vt(s).on_fd { unsafe { f(s, fd) } } else { s }
 }
 
 #[unsafe(no_mangle)]

@@ -1742,6 +1742,7 @@ dependencies = [
  "bun_standalone_graph",
  "bun_string",
  "bun_sys",
+ "bun_tcc_sys",
  "bun_threading",
  "bun_transpiler",
  "bun_url",

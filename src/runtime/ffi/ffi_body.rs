@@ -1126,7 +1126,7 @@ impl FFI {
         let mut compile_c = CompileC::default();
 
         let symbols_object: JSValue = object
-            .get_own(global_this, "symbols")?
+            .get_own(global_this, &bun_str::String::borrow_utf8(b"symbols"))?
             .unwrap_or(JSValue::UNDEFINED);
         if !global_this.has_exception() && (symbols_object.is_empty() || !symbols_object.is_object())
         {

@@ -379,7 +379,7 @@ fn parse_option_definitions(
     options_obj: JSValue,
     option_definitions: &mut Vec<OptionDefinition>,
 ) -> JsResult<()> {
-    validators::validate_object(global, options_obj, "options", format_args!(""), Default::default())?;
+    validators::validate_object(global, options_obj, "options", Default::default())?;
 
     // TODO(port): JSPropertyIterator comptime config (.skip_empty_name=false, .include_value=true)
     let mut iter = bun_jsc::JSPropertyIterator::init(

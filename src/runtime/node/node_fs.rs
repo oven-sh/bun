@@ -983,7 +983,7 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
             subtask_count: AtomicUsize::new(1),
             shelltask,
         });
-        if !IS_SHELL { task.r#ref.ref_(vm); }
+        if !IS_SHELL { task.r#ref.ref_(event_loop_handle_to_ctx(task.evtloop)); }
         task.args.src.to_thread_safe();
         task.args.dest.to_thread_safe();
         task.tracker.did_schedule(global_object);
@@ -1011,7 +1011,7 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
             subtask_count: AtomicUsize::new(1),
             shelltask,
         });
-        if !IS_SHELL { task.r#ref.ref_(mini); }
+        if !IS_SHELL { task.r#ref.ref_(event_loop_handle_to_ctx(task.evtloop)); }
         task.args.src.to_thread_safe();
         task.args.dest.to_thread_safe();
 
@@ -1145,7 +1145,7 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
         if let Maybe::Err(err) = this_ref.result.get_mut() {
             err.deinit();
         }
-        if !IS_SHELL { this_ref.r#ref.unref(this_ref.evtloop); }
+        if !IS_SHELL { this_ref.r#ref.unref(event_loop_handle_to_ctx(this_ref.evtloop)); }
         this_ref.args.deinit();
         this_ref.promise.deinit();
         // SAFETY: paired with Box::leak in create_with_shell_task()/create_mini()

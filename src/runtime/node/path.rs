@@ -371,15 +371,16 @@ fn without_trailing_slash(s: &[u8]) -> &[u8] {
 }
 
 pub fn get_cwd_windows_u16(buf: &mut [u16]) -> MaybeBuf<'_, u16> {
-    let len: u32 = strings::convert_utf8_to_utf16_in_buffer(
+    let len = strings::convert_utf8_to_utf16_in_buffer(
         buf,
         without_trailing_slash(bun_paths::fs::FileSystem::instance().top_level_dir()),
-    );
+    )
+    .len();
     if len == 0 {
         // Indirectly calls std.os.windows.kernel32.GetLastError().
         return Err(bun_sys::Error::from_code_int(0, bun_sys::Tag::getcwd));
     }
-    Ok(&mut buf[0..len as usize])
+    Ok(&mut buf[0..len])
 }
 
 pub fn get_cwd_u8(buf: &mut [u8]) -> MaybeBuf<'_, u8> {

@@ -5488,77 +5488,89 @@ impl Property {
     }
 
     /// Returns the given longhand property for a shorthand.
-     // blocked_on: shorthand_handler_port — leaf shorthand types lack `.longhand()` (Zig body is `@compileError(todo_stuff.depth)`, .zig:7087-7160)
+    ///
+    /// PORT NOTE: in Zig (`properties_generated.zig:7087-7160`) each arm
+    /// dispatches to `v.longhand(property_id)` where the per-type `longhand`
+    /// is provided by `DefineShorthand`, whose body is
+    /// `@compileError(todo_stuff.depth)`. Zig only instantiates
+    /// `Property.longhand` when referenced (it isn't), so the @compileError
+    /// never fires. Rust type-checks eagerly, so the per-arm dispatch is
+    /// routed through a no-op `lh!` that mirrors the Zig fallthrough
+    /// (`return null`) until the `DefineShorthand` derive is ported. There
+    /// are no callers.
+    // blocked_on: shorthand_handler_port — leaf shorthand types lack `.longhand()` (Zig body is `@compileError(todo_stuff.depth)`, .zig:7087-7160)
     pub fn longhand(&self, property_id: &PropertyId) -> Option<Property> {
+        #[inline(always)]
+        fn lh<T: ?Sized>(_v: &T, _id: &PropertyId) -> Option<Property> { None }
         match self {
-            Property::BackgroundPosition(v) => v.longhand(property_id),
-            Property::Overflow(v) => v.longhand(property_id),
-            Property::InsetBlock(v) => v.longhand(property_id),
-            Property::InsetInline(v) => v.longhand(property_id),
-            Property::Inset(v) => v.longhand(property_id),
+            Property::BackgroundPosition(v) => lh(v, property_id),
+            Property::Overflow(v) => lh(v, property_id),
+            Property::InsetBlock(v) => lh(v, property_id),
+            Property::InsetInline(v) => lh(v, property_id),
+            Property::Inset(v) => lh(v, property_id),
             Property::BorderRadius(v) => {
                 if v.1 != property_id.prefix() { return None; }
-                v.0.longhand(property_id)
+                lh(&v.0, property_id)
             }
             Property::BorderImage(v) => {
                 if v.1 != property_id.prefix() { return None; }
-                v.0.longhand(property_id)
+                lh(&v.0, property_id)
             }
-            Property::BorderColor(v) => v.longhand(property_id),
-            Property::BorderStyle(v) => v.longhand(property_id),
-            Property::BorderWidth(v) => v.longhand(property_id),
-            Property::BorderBlockColor(v) => v.longhand(property_id),
-            Property::BorderBlockStyle(v) => v.longhand(property_id),
-            Property::BorderBlockWidth(v) => v.longhand(property_id),
-            Property::BorderInlineColor(v) => v.longhand(property_id),
-            Property::BorderInlineStyle(v) => v.longhand(property_id),
-            Property::BorderInlineWidth(v) => v.longhand(property_id),
-            Property::Border(v) => v.longhand(property_id),
-            Property::BorderTop(v) => v.longhand(property_id),
-            Property::BorderBottom(v) => v.longhand(property_id),
-            Property::BorderLeft(v) => v.longhand(property_id),
-            Property::BorderRight(v) => v.longhand(property_id),
-            Property::BorderBlock(v) => v.longhand(property_id),
-            Property::BorderBlockStart(v) => v.longhand(property_id),
-            Property::BorderBlockEnd(v) => v.longhand(property_id),
-            Property::BorderInline(v) => v.longhand(property_id),
-            Property::BorderInlineStart(v) => v.longhand(property_id),
-            Property::BorderInlineEnd(v) => v.longhand(property_id),
-            Property::Outline(v) => v.longhand(property_id),
+            Property::BorderColor(v) => lh(v, property_id),
+            Property::BorderStyle(v) => lh(v, property_id),
+            Property::BorderWidth(v) => lh(v, property_id),
+            Property::BorderBlockColor(v) => lh(v, property_id),
+            Property::BorderBlockStyle(v) => lh(v, property_id),
+            Property::BorderBlockWidth(v) => lh(v, property_id),
+            Property::BorderInlineColor(v) => lh(v, property_id),
+            Property::BorderInlineStyle(v) => lh(v, property_id),
+            Property::BorderInlineWidth(v) => lh(v, property_id),
+            Property::Border(v) => lh(v, property_id),
+            Property::BorderTop(v) => lh(v, property_id),
+            Property::BorderBottom(v) => lh(v, property_id),
+            Property::BorderLeft(v) => lh(v, property_id),
+            Property::BorderRight(v) => lh(v, property_id),
+            Property::BorderBlock(v) => lh(v, property_id),
+            Property::BorderBlockStart(v) => lh(v, property_id),
+            Property::BorderBlockEnd(v) => lh(v, property_id),
+            Property::BorderInline(v) => lh(v, property_id),
+            Property::BorderInlineStart(v) => lh(v, property_id),
+            Property::BorderInlineEnd(v) => lh(v, property_id),
+            Property::Outline(v) => lh(v, property_id),
             Property::FlexFlow(v) => {
                 if v.1 != property_id.prefix() { return None; }
-                v.0.longhand(property_id)
+                lh(&v.0, property_id)
             }
             Property::Flex(v) => {
                 if v.1 != property_id.prefix() { return None; }
-                v.0.longhand(property_id)
+                lh(&v.0, property_id)
             }
-            Property::PlaceContent(v) => v.longhand(property_id),
-            Property::PlaceSelf(v) => v.longhand(property_id),
-            Property::PlaceItems(v) => v.longhand(property_id),
-            Property::Gap(v) => v.longhand(property_id),
-            Property::MarginBlock(v) => v.longhand(property_id),
-            Property::MarginInline(v) => v.longhand(property_id),
-            Property::Margin(v) => v.longhand(property_id),
-            Property::PaddingBlock(v) => v.longhand(property_id),
-            Property::PaddingInline(v) => v.longhand(property_id),
-            Property::Padding(v) => v.longhand(property_id),
-            Property::ScrollMarginBlock(v) => v.longhand(property_id),
-            Property::ScrollMarginInline(v) => v.longhand(property_id),
-            Property::ScrollMargin(v) => v.longhand(property_id),
-            Property::ScrollPaddingBlock(v) => v.longhand(property_id),
-            Property::ScrollPaddingInline(v) => v.longhand(property_id),
-            Property::ScrollPadding(v) => v.longhand(property_id),
-            Property::Font(v) => v.longhand(property_id),
+            Property::PlaceContent(v) => lh(v, property_id),
+            Property::PlaceSelf(v) => lh(v, property_id),
+            Property::PlaceItems(v) => lh(v, property_id),
+            Property::Gap(v) => lh(v, property_id),
+            Property::MarginBlock(v) => lh(v, property_id),
+            Property::MarginInline(v) => lh(v, property_id),
+            Property::Margin(v) => lh(v, property_id),
+            Property::PaddingBlock(v) => lh(v, property_id),
+            Property::PaddingInline(v) => lh(v, property_id),
+            Property::Padding(v) => lh(v, property_id),
+            Property::ScrollMarginBlock(v) => lh(v, property_id),
+            Property::ScrollMarginInline(v) => lh(v, property_id),
+            Property::ScrollMargin(v) => lh(v, property_id),
+            Property::ScrollPaddingBlock(v) => lh(v, property_id),
+            Property::ScrollPaddingInline(v) => lh(v, property_id),
+            Property::ScrollPadding(v) => lh(v, property_id),
+            Property::Font(v) => lh(v, property_id),
             Property::Transition(v) => {
                 if v.1 != property_id.prefix() { return None; }
-                v.0.longhand(property_id)
+                lh(&v.0, property_id)
             }
             Property::Mask(v) => {
                 if v.1 != property_id.prefix() { return None; }
-                v.0.longhand(property_id)
+                lh(&v.0, property_id)
             }
-            Property::MaskBorder(v) => v.longhand(property_id),
+            Property::MaskBorder(v) => lh(v, property_id),
             _ => None,
         }
     }

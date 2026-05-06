@@ -422,7 +422,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 }
 
                 if log_level.is_verbose() {
-                    Output::pretty_error("    ", format_args!(""));
+                    Output::pretty_error("    ");
                     Output::print_elapsed(
                         (task.unsafe_http_client.elapsed as f64) / bun_core::time::NS_PER_MS,
                     );
@@ -740,7 +740,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 }
 
                 if log_level.is_verbose() {
-                    Output::pretty_error("    ", format_args!(""));
+                    Output::pretty_error("    ");
                     Output::print_elapsed(
                         (task.unsafe_http_client.elapsed as f64) / bun_core::time::NS_PER_MS,
                     );

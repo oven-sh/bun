@@ -193,13 +193,18 @@ impl ErrorLocation {
 
     pub fn to_location(&self, source: &logger::Source) -> Result<logger::Location, bun_core::Error> {
         // TODO(port): narrow error set (Zig narrowed to alloc-only).
+        // SAFETY: `'bump`-erasure — `logger::Location.line_text` is `Option<&'static [u8]>`
+        // (`Str` placeholder per src/logger/lib.rs); the slice borrows
+        // `source.contents` which outlives the diagnostic. Re-thread once
+        // `logger::Location` grows a real lifetime.
+        let line_text = bun_string::strings::get_lines_in_text::<1>(&source.contents, self.line)
+            .map(|lines| unsafe { &*(lines.as_slice()[0] as *const [u8]) });
         Ok(logger::Location {
             file: source.path.text,
             namespace: source.path.namespace,
             line: i32::try_from(self.line + 1).unwrap(),
             column: i32::try_from(self.column).unwrap(),
-            line_text: bun_string::strings::get_lines_in_text::<1>(&source.contents, self.line)
-                .map(|lines| lines.as_slice()[0]),
+            line_text,
             ..Default::default()
         })
     }

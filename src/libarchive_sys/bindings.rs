@@ -896,10 +896,7 @@ impl Archive {
                         continue;
                     } else {
                         *can_use_pwrite = false;
-                        bun_core::Output::debug_warn(
-                            "libarchive: falling back to write() after pwrite() failure",
-                            (),
-                        );
+                        bun_core::Output::debug_warn("libarchive: falling back to write() after pwrite() failure");
                         // Fall through to lseek+write path
                     }
                 }

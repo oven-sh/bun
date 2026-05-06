@@ -50,10 +50,7 @@ pub fn detect_and_load_other_lockfile(
             Ok(r) => r,
             Err(e) => {
                 if e == err!("NPMLockfileVersionMismatch") {
-                    Output::pretty_errorln(
-                        "<red><b>error<r><d>:<r> Please upgrade package-lock.json to lockfileVersion 2 or 3\n\nRun 'npm i --lockfile-version 3 --frozen-lockfile' to upgrade your lockfile without changing dependencies.",
-                        format_args!(""),
-                    );
+                    Output::pretty_errorln(&format_args!("<red><b>error<r><d>:<r> Please upgrade package-lock.json to lockfileVersion 2 or 3\n\nRun 'npm i --lockfile-version 3 --frozen-lockfile' to upgrade your lockfile without changing dependencies.", ));
                     Global::exit(1);
                 }
                 return LoadResult::Err {
@@ -67,8 +64,8 @@ pub fn detect_and_load_other_lockfile(
 
         if matches!(migrate_result, LoadResult::Ok { .. }) {
             Output::print_elapsed(timer.elapsed().as_nanos() as f64 / 1_000_000.0);
-            Output::pretty_error(" ", format_args!(""));
-            Output::pretty_errorln("<d>migrated lockfile from <r><green>package-lock.json<r>", format_args!(""));
+            Output::pretty_error(" ");
+            Output::pretty_errorln("<d>migrated lockfile from <r><green>package-lock.json<r>");
             Output::flush();
         }
 
@@ -97,8 +94,8 @@ pub fn detect_and_load_other_lockfile(
 
         if matches!(migrate_result, LoadResult::Ok { .. }) {
             Output::print_elapsed(timer.elapsed().as_nanos() as f64 / 1_000_000.0);
-            Output::pretty_error(" ", format_args!(""));
-            Output::pretty_errorln("<d>migrated lockfile from <r><green>yarn.lock<r>", format_args!(""));
+            Output::pretty_error(" ");
+            Output::pretty_errorln("<d>migrated lockfile from <r><green>yarn.lock<r>");
             Output::flush();
         }
 
@@ -118,28 +115,25 @@ pub fn detect_and_load_other_lockfile(
             Err(e) => {
                 match e {
                     e if e == err!("PnpmLockfileTooOld") => {
-                        Output::pretty_errorln(
-                            "<red><b>warning<r><d>:<r> pnpm-lock.yaml version is too old (< v7)\n\nPlease upgrade using 'pnpm install --lockfile-only' first, then try again.",
-                            format_args!(""),
-                        );
+                        Output::pretty_errorln(&format_args!("<red><b>warning<r><d>:<r> pnpm-lock.yaml version is too old (< v7)\n\nPlease upgrade using 'pnpm install --lockfile-only' first, then try again.", ));
                     }
                     e if e == err!("NonExistentWorkspaceDependency") => {
-                        Output::warn("Workspace link dependencies to non-existent folders aren't supported yet in pnpm-lock.yaml migration. Please follow along at <magenta>https://github.com/oven-sh/bun/issues/23026<r>", format_args!(""));
+                        Output::warn("Workspace link dependencies to non-existent folders aren't supported yet in pnpm-lock.yaml migration. Please follow along at <magenta>https://github.com/oven-sh/bun/issues/23026<r>");
                     }
                     e if e == err!("RelativeLinkDependency") => {
-                        Output::warn("Relative link dependencies aren't supported yet. Please follow along at <magenta>https://github.com/oven-sh/bun/issues/23026<r>", format_args!(""));
+                        Output::warn("Relative link dependencies aren't supported yet. Please follow along at <magenta>https://github.com/oven-sh/bun/issues/23026<r>");
                     }
                     e if e == err!("WorkspaceNameMissing") => {
                         if log.has_errors() {
                             let _ = log.print(Output::error_writer());
                         }
-                        Output::warn("pnpm-lock.yaml migration failed due to missing workspace name.", format_args!(""));
+                        Output::warn("pnpm-lock.yaml migration failed due to missing workspace name.");
                     }
                     e if e == err!("YamlParseError") => {
                         if log.has_errors() {
                             let _ = log.print(Output::error_writer());
                         }
-                        Output::warn("Failed to parse pnpm-lock.yaml.", format_args!(""));
+                        Output::warn("Failed to parse pnpm-lock.yaml.");
                     }
                     e if e == err!("PnpmLockfileNotObject")
                         || e == err!("PnpmLockfileMissingVersion")
@@ -174,8 +168,8 @@ pub fn detect_and_load_other_lockfile(
 
         if matches!(migrate_result, LoadResult::Ok { .. }) {
             Output::print_elapsed(timer.elapsed().as_nanos() as f64 / 1_000_000.0);
-            Output::pretty_error(" ", format_args!(""));
-            Output::pretty_errorln("<d>migrated lockfile from <r><green>pnpm-lock.yaml<r>", format_args!(""));
+            Output::pretty_error(" ");
+            Output::pretty_errorln("<d>migrated lockfile from <r><green>pnpm-lock.yaml<r>");
             Output::flush();
         }
 

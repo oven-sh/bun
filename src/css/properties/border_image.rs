@@ -330,16 +330,8 @@ impl crate::generics::IsCompatible for BorderImageSideWidth {
     }
 }
 
-// PORT NOTE: `Rect<LengthOrNumber>::is_compatible` requires `T: IsCompatible`.
-// `LengthOrNumber` only has the inherent method (`values/length.rs`) — supply
-// the trait impl here so `border-image-outset` flushing compiles. Move next to
-// the type once Phase B sweeps protocol-trait impls.
-impl crate::generics::IsCompatible for LengthOrNumber {
-    #[inline]
-    fn is_compatible(&self, browsers: css::targets::Browsers) -> bool {
-        LengthOrNumber::is_compatible(self, browsers)
-    }
-}
+// `IsCompatible for LengthOrNumber` is provided centrally by
+// `generics::bridges::bridge_is_compatible!` (forwards to the inherent method).
 
 /// A single [border-image-repeat](https://www.w3.org/TR/css-backgrounds-3/#border-image-repeat) keyword.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, css::DefineEnumProperty)]

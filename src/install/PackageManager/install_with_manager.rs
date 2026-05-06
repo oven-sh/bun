@@ -103,7 +103,7 @@ pub fn install_with_manager(
 
                 if !manager.options.enable.fail_early {
                     Output::print_error_ln("", format_args!(""));
-                    Output::warn("Ignoring lockfile", format_args!(""));
+                    Output::warn("Ignoring lockfile");
                 }
 
                 if ctx.log.errors > 0 {
@@ -826,7 +826,7 @@ pub fn install_with_manager(
 
             if log_level != Options::LogLevel::Silent {
                 Output::pretty_error_ln("<r><red>error<r><d>:<r> lockfile had changes, but lockfile is frozen", format_args!(""));
-                Output::note("try re-running without <d>--frozen-lockfile<r> and commit the updated lockfile", format_args!(""));
+                Output::note("try re-running without <d>--frozen-lockfile<r> and commit the updated lockfile");
             }
             Global::crash();
         }

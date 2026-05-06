@@ -793,10 +793,10 @@ pub fn crash_handler(
                 bun_core::set_auto_reload_on_crash(false);
 
                 // TODO(port): pretty_fmt! color tags — runtime rewrite via pretty_fmt_args
-                Output::pretty_errorln(
-                    "<d>--- Bun is auto-restarting due to crash <d>[time: <b>{s}<r><d>] ---<r>",
-                    (bun_core::time::milli_timestamp().max(0),),
-                );
+                Output::pretty_errorln(&format_args!(
+                    "<d>--- Bun is auto-restarting due to crash <d>[time: <b>{}<r><d>] ---<r>",
+                    bun_core::time::milli_timestamp().max(0),
+                ));
                 Output::flush();
 
                 // TODO(port): comptime assert void == @TypeOf(bun.reloadProcess(...))
@@ -1004,7 +1004,7 @@ pub fn handle_root_error(err: bun_core::Error, error_return_trace: Option<&Stack
         );
     } else if err == bun_core::err!("MissingPackageJSON") {
         err_generic!("Bun could not find a package.json file to install from");
-        Output::note("Run \"bun init\" to initialize a project", ());
+        Output::note("Run \"bun init\" to initialize a project");
     } else {
         // PORT NOTE: Zig picked the format string at comptime; the macros need
         // `:literal`, so branch on the const and call separately.
@@ -2088,7 +2088,7 @@ fn cold_handle_error_return_trace<const IS_ROOT: bool>(
         if IS_ROOT {
             // SAFETY: read-only access
             if unsafe { VERBOSE_ERROR_TRACE } {
-                Output::note("Release build will not have this trace by default:", ());
+                Output::note("Release build will not have this trace by default:");
             }
         } else {
             bun_core::pretty_errorln!("<blue>note<r><d>:<r> caught error.{}:", bstr::BStr::new(err.name()));

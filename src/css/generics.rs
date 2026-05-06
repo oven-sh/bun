@@ -616,12 +616,19 @@ mod inherent_bridge {
     use crate::properties::border_image::{
         BorderImage, BorderImageRepeat, BorderImageSideWidth, BorderImageSlice,
     };
-    bridge_clone_partialeq!(BorderImageRepeat, BorderImageSideWidth, BorderImageSlice);
+    // PORT NOTE: BorderImageRepeat/SideWidth/Slice carry inherent
+    // `deep_clone(&self, &Arena)` / `eql(&self, &Self)` (no `Clone`/`PartialEq`
+    // derives — see border_image.rs), so route through bridge_deep_clone/eql.
+    bridge_deep_clone!(BorderImageRepeat, BorderImageSideWidth, BorderImageSlice);
+    bridge_eql!(BorderImageRepeat, BorderImageSideWidth, BorderImageSlice);
     bridge_deep_clone!(BorderImage);
     bridge_eql!(BorderImage);
 
     use crate::properties::border_radius::BorderRadius;
-    bridge_clone_partialeq!(BorderRadius);
+    // PORT NOTE: BorderRadius has inherent deep_clone/eql (Size2D<T> lacks
+    // Clone/PartialEq derives — see border_radius.rs PORT NOTE).
+    bridge_deep_clone!(BorderRadius);
+    bridge_eql!(BorderRadius);
 
     // ── properties/background ──
     use crate::properties::background::{
@@ -825,7 +832,7 @@ mod inherent_bridge {
     );
 
     // ── properties/properties_generated ──
-    use crate::properties::properties_generated::PropertyId;
+    use crate::properties::PropertyId;
     bridge_deep_clone_copy!(PropertyId);
     bridge_eql_partialeq!(PropertyId);
 }

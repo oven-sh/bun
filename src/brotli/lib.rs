@@ -259,10 +259,7 @@ impl<'a> BrotliReaderArrayList<'a> {
                     if cfg!(debug_assertions) {
                         // SAFETY: self.brotli is a live decoder instance.
                         let code = BrotliDecoder::get_error_code(unsafe { &*self.brotli });
-                        bun_core::Output::debug_warn(
-                            "Brotli error: {} ({})",
-                            format_args!("{:?} ({})", code, code as i32),
-                        );
+                        bun_core::Output::debug_warn(&format_args!("Brotli error: {:?} ({})", code, code as i32));
                     }
 
                     return Err(err!("BrotliDecompressionError"));

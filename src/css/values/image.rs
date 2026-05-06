@@ -96,7 +96,8 @@ impl Image {
     }
 
     /// Needed to satisfy ImageFallback interface
-    pub fn with_image(&self, image: Image) -> Self {
+    pub fn with_image(&self, _allocator: &Arena, image: Image) -> Self {
+        let _ = self;
         image
     }
 
@@ -252,6 +253,23 @@ impl Image {
 impl Default for Image {
     fn default() -> Image {
         Image::None
+    }
+}
+
+impl crate::small_list::ImageFallback for Image {
+    #[inline]
+    fn get_image(&self) -> &Image { Image::get_image(self) }
+    #[inline]
+    fn with_image(&self, allocator: &Arena, image: Image) -> Self {
+        Image::with_image(self, allocator, image)
+    }
+    #[inline]
+    fn get_fallback(&self, allocator: &Arena, kind: ColorFallbackKind) -> Self {
+        Image::get_fallback(self, allocator, kind)
+    }
+    #[inline]
+    fn get_necessary_fallbacks(&self, targets: css::targets::Targets) -> ColorFallbackKind {
+        Image::get_necessary_fallbacks(self, targets)
     }
 }
 

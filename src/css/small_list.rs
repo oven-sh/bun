@@ -903,6 +903,28 @@ pub trait ImageFallback: Sized {
     ) -> crate::values::color::ColorFallbackKind;
 }
 
+impl ImageFallback for crate::values::image::Image {
+    #[inline]
+    fn get_image(&self) -> &crate::values::image::Image {
+        crate::values::image::Image::get_image(self)
+    }
+    #[inline]
+    fn with_image(&self, _allocator: &bun_alloc::Arena, image: crate::values::image::Image) -> Self {
+        crate::values::image::Image::with_image(self, image)
+    }
+    #[inline]
+    fn get_fallback(&self, allocator: &bun_alloc::Arena, kind: crate::values::color::ColorFallbackKind) -> Self {
+        crate::values::image::Image::get_fallback(self, allocator, kind)
+    }
+    #[inline]
+    fn get_necessary_fallbacks(
+        &self,
+        targets: crate::targets::Targets,
+    ) -> crate::values::color::ColorFallbackKind {
+        crate::values::image::Image::get_necessary_fallbacks(self, targets)
+    }
+}
+
 impl<T: ImageFallback> SmallList<T, 1> {
     /// Port of Zig `SmallList(T, N).getFallbacks` for the `@hasDecl(T, "getImage")`
     /// branch. The TextShadow branch is `get_fallbacks_text_shadow`.
@@ -1061,7 +1083,7 @@ pub fn get_fallbacks_text_shadow(
     if fallbacks.contains(css::ColorFallbackKind::RGB) {
         let mut rgb = SmallList::<TextShadow, 1>::init_capacity(this.len());
         for shadow in this.slice() {
-            let mut new_shadow = *shadow;
+            let mut new_shadow = shadow.clone();
             // dummy non-alloced color to avoid deep cloning the real one since we will replace it
             new_shadow.color = css::css_values::color::CssColor::CurrentColor;
             new_shadow = new_shadow.deep_clone(allocator);
@@ -1074,7 +1096,7 @@ pub fn get_fallbacks_text_shadow(
     if fallbacks.contains(css::ColorFallbackKind::P3) {
         let mut p3 = SmallList::<TextShadow, 1>::init_capacity(this.len());
         for shadow in this.slice() {
-            let mut new_shadow = *shadow;
+            let mut new_shadow = shadow.clone();
             // dummy non-alloced color to avoid deep cloning the real one since we will replace it
             new_shadow.color = css::css_values::color::CssColor::CurrentColor;
             new_shadow = new_shadow.deep_clone(allocator);

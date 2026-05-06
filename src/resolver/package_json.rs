@@ -99,7 +99,7 @@ pub mod install_stubs {
             pub fn npm(&self) -> &NpmInfo { &self.npm }
         }
         #[derive(Default, Clone)]
-        pub struct NpmInfo { pub version: bun_semver::Query::Group }
+        pub struct NpmInfo { pub version: bun_semver::query::Group }
     }
 
     #[derive(Default, Clone)]
@@ -203,9 +203,6 @@ pub mod install_stubs {
     pub struct PackageManager {
         pub lockfile: Lockfile,
     }
-}
-impl OperatingSystem {
-    pub fn all() -> Self { Self(()) }
 }
 // TODO(b2-blocked): bun_bundler::options::{Framework, RouteConfig} — local opaque
 // FORWARD_DECL: legacy `options::Framework` and friends. The Zig
@@ -676,7 +673,7 @@ impl PackageJSON {
                 js_ast::ExprData::EString(e_str) => {
                     let str = e_str.string(bump).unwrap_or_default();
 
-                    if str.as_ref() == b"defaults" {
+                    if str == b"defaults" {
                         match &prop.value.as_ref().unwrap().data {
                             js_ast::ExprData::EObject(obj) => {
                                 Self::load_define_defaults(env, obj, bump)?;
@@ -685,7 +682,7 @@ impl PackageJSON {
                                 env.defaults.truncate(0);
                             }
                         }
-                    } else if str.as_ref() == b".env" {
+                    } else if str == b".env" {
                         match &prop.value.as_ref().unwrap().data {
                             js_ast::ExprData::EString(value_str) => {
                                 env.set_behavior_from_prefix(Box::from(
@@ -713,7 +710,7 @@ impl PackageJSON {
         if let Some(client) = json.as_property(b"client") {
             if let Some(str) = client.expr.as_string(bump) {
                 if !str.is_empty() {
-                    framework.client.path = str;
+                    framework.client.path = str.into();
                     framework.client.kind = options::EntryPointKind::Client;
                 }
             }
@@ -722,7 +719,7 @@ impl PackageJSON {
         if let Some(client) = json.as_property(b"fallback") {
             if let Some(str) = client.expr.as_string(bump) {
                 if !str.is_empty() {
-                    framework.fallback.path = str;
+                    framework.fallback.path = str.into();
                     framework.fallback.kind = options::EntryPointKind::Fallback;
                 }
             }
@@ -730,7 +727,7 @@ impl PackageJSON {
 
         if let Some(css_prop) = json.as_property(b"css") {
             if let Some(str) = css_prop.expr.as_string(bump) {
-                if str.as_ref() == b"onimportcss" {
+                if str == b"onimportcss" {
                     framework.client_css_in_js = options::CssInJs::FacadeOnimportcss;
                 } else {
                     framework.client_css_in_js = options::CssInJs::Facade;
@@ -780,7 +777,7 @@ impl PackageJSON {
         if let Some(server) = json.as_property(b"server") {
             if let Some(str) = server.expr.as_string(bump) {
                 if !str.is_empty() {
-                    framework.server.path = str;
+                    framework.server.path = str.into();
                     framework.server.kind = options::EntryPointKind::Server;
                 }
             }
@@ -804,7 +801,7 @@ impl PackageJSON {
         if let Some(name) = framework_object.expr.as_property(b"displayName") {
             if let Some(str) = name.expr.as_string(bump) {
                 if !str.is_empty() {
-                    pair.framework.display_name = str;
+                    pair.framework.display_name = str.into();
                 }
             }
         }
@@ -812,7 +809,7 @@ impl PackageJSON {
         if let Some(version) = json.get(b"version") {
             if let Some(str) = version.as_string(bump) {
                 if !str.is_empty() {
-                    pair.framework.version = str;
+                    pair.framework.version = str.into();
                 }
             }
         }
@@ -820,7 +817,7 @@ impl PackageJSON {
         if let Some(static_prop) = framework_object.expr.as_property(b"static") {
             if let Some(str) = static_prop.expr.as_string(bump) {
                 if !str.is_empty() {
-                    pair.router.static_dir = str;
+                    pair.router.static_dir = str.into();
                     pair.router.static_dir_enabled = true;
                 }
             }
@@ -842,7 +839,7 @@ impl PackageJSON {
                         js_ast::ExprData::EString(estr) => {
                             let str = estr.string(bump).expect("unreachable");
                             if !str.is_empty() {
-                                pair.router.dir = str;
+                                pair.router.dir = str.into();
                                 pair.router.possible_dirs = Box::default();
 
                                 pair.loaded_routes = true;
@@ -859,7 +856,7 @@ impl PackageJSON {
                                 1 => {
                                     let str = items[0].data.e_string().unwrap().string(bump).expect("unreachable");
                                     if !str.is_empty() {
-                                        pair.router.dir = str;
+                                        pair.router.dir = str.into();
                                         pair.router.possible_dirs = Box::default();
 
                                         pair.loaded_routes = true;
@@ -929,7 +926,7 @@ impl PackageJSON {
                         if let Some(static_prop) = env.expr.as_property(b"static") {
                             if let Some(str) = static_prop.expr.as_string(bump) {
                                 if !str.is_empty() {
-                                    pair.router.static_dir = str;
+                                    pair.router.static_dir = str.into();
                                     pair.router.static_dir_enabled = true;
                                 }
                             }
@@ -948,7 +945,7 @@ impl PackageJSON {
                         if let Some(static_prop) = env.expr.as_property(b"static") {
                             if let Some(str) = static_prop.expr.as_string(bump) {
                                 if !str.is_empty() {
-                                    pair.router.static_dir = str;
+                                    pair.router.static_dir = str.into();
                                     pair.router.static_dir_enabled = true;
                                 }
                             }
@@ -961,7 +958,7 @@ impl PackageJSON {
             _ => unreachable!(), // @compileError("unreachable")
         }
 
-        if Self::load_framework_expression::<READ_DEFINES>(pair.framework, framework_object.expr) {
+        if Self::load_framework_expression::<READ_DEFINES>(pair.framework, framework_object.expr, bump) {
             pair.framework.package = package_json.name_for_import().expect("unreachable");
             pair.framework.development = false;
         }
@@ -1154,7 +1151,7 @@ impl PackageJSON {
             Ok(None) => return None,
             Err(err) => {
                 if cfg!(debug_assertions) {
-                    Output::print_error(format_args!(
+                    Output::print_error("{}", format_args!(
                         "{}: JSON parse error: {}",
                         bstr::BStr::new(package_json_path),
                         bstr::BStr::new(err.name())
@@ -1476,16 +1473,19 @@ impl PackageJSON {
 
                 // // if there is a name & version, check if the lockfile has the package
                 if !package_json.name.is_empty() && !package_json.version.is_empty() {
-                    if let Some(pm) = r.package_manager.as_ref() {
-                        let tag = Dependency::Version::Tag::infer(&package_json.version);
+                    if let Some(pm) = r.package_manager {
+                        // SAFETY: BACKREF — `pm` is the bun_install-owned PackageManager
+                        // pointer; live for the resolver's lifetime once installed.
+                        let pm = unsafe { pm.as_ref() };
+                        let tag = install_stubs::Version::Tag::infer(&package_json.version);
 
-                        if tag == Dependency::Version::Tag::Npm {
+                        if tag == install_stubs::Version::Tag::Npm {
                             let sliced = Semver::SlicedString::init(&package_json.version, &package_json.version);
                             if let Some(dependency_version) = Dependency::parse_with_tag(
                                 SemverString::init(&package_json.name, &package_json.name),
-                                SemverString::Builder::string_hash(&package_json.name),
+                                Semver::semver_string::Builder::string_hash(&package_json.name),
                                 &package_json.version,
-                                Dependency::Version::Tag::Npm,
+                                install_stubs::Version::Tag::Npm,
                                 &sliced,
                                 r.log,
                                 pm,
@@ -1533,7 +1533,7 @@ impl PackageJSON {
                     }
                 }
 
-                type DependencyGroup = Install::lockfile::Package::DependencyGroup;
+                type DependencyGroup = install_stubs::DependencyGroup;
                 // TODO(port): comptime feature flags + comptime brk block — expanded inline below
                 let dev_deps = INCLUDE_DEPENDENCIES == IncludeDependencies::Main;
                 let dependency_groups: &[DependencyGroup] = if dev_deps {
@@ -1554,7 +1554,7 @@ impl PackageJSON {
                 for group in dependency_groups {
                     if let Some(group_json) = json.get(group.field) {
                         if let js_ast::ExprData::EObject(obj) = &group_json.data {
-                            total_dependency_count += obj.properties.len();
+                            total_dependency_count += obj.properties.len as usize;
                         }
                     }
                 }

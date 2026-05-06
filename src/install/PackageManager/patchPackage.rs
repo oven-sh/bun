@@ -68,9 +68,9 @@ pub fn do_patch_commit(
                 }
 
                 if manager.options.enable.fail_early {
-                    Output::pretty_error("<b><red>failed to load lockfile<r>\n", format_args!(""));
+                    Output::pretty_error("<b><red>failed to load lockfile<r>\n");
                 } else {
-                    Output::pretty_error("<b><red>ignoring lockfile<r>\n", format_args!(""));
+                    Output::pretty_error("<b><red>ignoring lockfile<r>\n");
                 }
 
                 Output::flush();
@@ -110,10 +110,7 @@ pub fn do_patch_commit(
     ) {
         sys::Result::Ok(fd) => sys::Dir::from_fd(fd),
         sys::Result::Err(e) => {
-            Output::pretty_error(
-                "<r><red>error<r>: failed to open root <b>node_modules<r> folder: {f}<r>\n",
-                format_args!("{}", e),
-            );
+            Output::pretty_error(&format_args!("<r><red>error<r>: failed to open root <b>node_modules<r> folder: {f}<r>\n", e));
             Global::crash();
         }
     };
@@ -169,10 +166,7 @@ pub fn do_patch_commit(
             let name = lockfile.str(&package.name);
             let actual_package = match lockfile.package_index.get(&package.name_hash) {
                 None => {
-                    Output::pretty_error(
-                        "<r><red>error<r>: failed to find package in lockfile package index, this is a bug in Bun. Please file a GitHub issue.<r>\n",
-                        format_args!(""),
-                    );
+                    Output::pretty_error(&format_args!("<r><red>error<r>: failed to find package in lockfile package index, this is a bug in Bun. Please file a GitHub issue.<r>\n", ));
                     Global::crash();
                 }
                 Some(Lockfile::PackageIndexEntry::Id(id)) => lockfile.packages.get(id),
@@ -335,7 +329,7 @@ pub fn do_patch_commit(
                 patch_tag_tmpname,
                 sys::RenameOptions { move_fallback: true, ..Default::default() },
             ).as_err() {
-                Output::warn("failed renaming the bun patch tag, this may cause issues: {f}", format_args!("{}", e));
+                Output::warn(&format_args!("failed renaming the bun patch tag, this may cause issues: {f}", e));
                 break 'has_bun_patch_tag None;
             }
             break 'has_bun_patch_tag Some(patch_tag);
@@ -362,7 +356,7 @@ pub fn do_patch_commit(
                         b"node_modules",
                         sys::RenameOptions { move_fallback: true, ..Default::default() },
                     ).as_err() {
-                        Output::warn("failed renaming nested node_modules folder, this may cause issues: {f}", format_args!("{}", e));
+                        Output::warn(&format_args!("failed renaming nested node_modules folder, this may cause issues: {f}", e));
                     }
                 }
 
@@ -374,7 +368,7 @@ pub fn do_patch_commit(
                         patch_tag.as_bytes(),
                         sys::RenameOptions { move_fallback: true, ..Default::default() },
                     ).as_err() {
-                        Output::warn("failed renaming the bun patch tag, this may cause issues: {f}", format_args!("{}", e));
+                        Output::warn(&format_args!("failed renaming the bun patch tag, this may cause issues: {f}", e));
                     }
                 }
             }
@@ -384,10 +378,7 @@ pub fn do_patch_commit(
         let cwd = match sys::getcwd_z(&mut cwdbuf) {
             sys::Result::Ok(fd) => fd,
             sys::Result::Err(e) => {
-                Output::pretty_error(
-                    "<r><red>error<r>: failed to get cwd path {f}<r>\n",
-                    format_args!("{}", e),
-                );
+                Output::pretty_error(&format_args!("<r><red>error<r>: failed to get cwd path {f}<r>\n", e));
                 Global::crash();
             }
         };
@@ -395,10 +386,7 @@ pub fn do_patch_commit(
         let git = match bun_core::which(&mut gitbuf, env_var::PATH.get().unwrap_or(b""), cwd.as_bytes(), b"git") {
             Some(g) => g,
             None => {
-                Output::pretty_error(
-                    "<r><red>error<r>: git must be installed to use `bun patch --commit` <r>\n",
-                    format_args!(""),
-                );
+                Output::pretty_error(&format_args!("<r><red>error<r>: git must be installed to use `bun patch --commit` <r>\n", ));
                 Global::crash();
             }
         };
@@ -415,10 +403,7 @@ pub fn do_patch_commit(
             }
             Ok(sys::Result::Ok(r)) => r,
             Ok(sys::Result::Err(e)) => {
-                Output::pretty_error(
-                    "<r><red>error<r>: failed to make diff {f}<r>\n",
-                    format_args!("{}", e),
-                );
+                Output::pretty_error(&format_args!("<r><red>error<r>: failed to make diff {f}<r>\n", e));
                 Global::crash();
             }
         };
@@ -447,10 +432,7 @@ pub fn do_patch_commit(
                         }
                     }
                 }
-                Output::pretty_error(
-                    "<r><red>error<r>: failed to make diff {f}<r>\n",
-                    format_args!("{}", Truncate { stderr: &stderr }),
-                );
+                Output::pretty_error(&format_args!("<r><red>error<r>: failed to make diff {f}<r>\n", Truncate { stderr: &stderr }));
                 drop(stderr);
                 Global::crash();
             }
@@ -721,10 +703,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), bun_core::Error
             let name = lockfile.str(&package.name);
             let actual_package = match lockfile.package_index.get(&package.name_hash) {
                 None => {
-                    Output::pretty_error(
-                        "<r><red>error<r>: failed to find package in lockfile package index, this is a bug in Bun. Please file a GitHub issue.<r>\n",
-                        format_args!(""),
-                    );
+                    Output::pretty_error(&format_args!("<r><red>error<r>: failed to find package in lockfile package index, this is a bug in Bun. Please file a GitHub issue.<r>\n", ));
                     Global::crash();
                 }
                 Some(Lockfile::PackageIndexEntry::Id(id)) => lockfile.packages.get(id),

@@ -104,11 +104,24 @@ impl<'a> PropertyHandlerContext<'a> {
 // minify path; un-gate alongside `rules/style.rs`.
 
 impl<'a> PropertyHandlerContext<'a> {
+    /// `'static`-erased arena handle for building `DeclarationBlock<'static>` /
+    /// `DeclarationList<'static>` (see rules/mod.rs `decl_block_static`).
+    ///
+    /// SAFETY: `StyleRule.declarations: DeclarationBlock<'static>` is a
+    /// crate-wide `'bump`-erasure placeholder until `CssRule<'bump, R>`
+    /// re-threads the arena lifetime. The arena outlives every rule built
+    /// from it; centralized here so call-sites below don't open-code the
+    /// transmute (PORTING.md §Forbidden).
+    #[inline]
+    fn bump_static(&self) -> &'static Bump {
+        unsafe { core::mem::transmute::<&Bump, &'static Bump>(self.allocator) }
+    }
+
     /// Clone a std-Vec property list into a bump-allocated `DeclarationList`.
     /// (`'static` per crate-wide `'bump`-erasure; see rules/mod.rs decl_block_static.)
     #[inline]
     fn clone_decls(&self, list: &Vec<css::Property>) -> css::DeclarationList<'static> {
-        let bump: &'static Bump = self.allocator;
+        let bump: &'static Bump = self.bump_static();
         bun_alloc::ArenaVec::from_iter_in(
             list.iter().map(|p| p.deep_clone(bump)),
             bump,
@@ -207,7 +220,7 @@ impl<'a> PropertyHandlerContext<'a> {
                         vendor_prefix: css::VendorPrefix::NONE,
                         declarations: css::DeclarationBlock {
                             declarations: self.clone_decls(&self.dark),
-                            important_declarations: css::DeclarationList::new_in(self.allocator),
+                            important_declarations: css::DeclarationList::new_in(self.bump_static()),
                         },
                         rules: css::CssRuleList::default(),
                         loc: style_rule.loc,
@@ -244,7 +257,7 @@ impl<'a> PropertyHandlerContext<'a> {
             vendor_prefix: css::VendorPrefix::NONE,
             declarations: css::DeclarationBlock {
                 declarations: self.clone_decls(decls),
-                important_declarations: css::DeclarationList::new_in(self.allocator),
+                important_declarations: css::DeclarationList::new_in(self.bump_static()),
             },
             rules: css::CssRuleList::default(),
             loc: sty.loc,

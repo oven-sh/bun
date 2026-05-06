@@ -2167,13 +2167,13 @@ impl PackageManifest {
 type ExternalStringMapDeduper = HashMap<u64, ExternalStringList>;
 
 struct DependencyGroup {
-    prop: &'static str,
+    prop: &'static [u8],
     field: &'static str,
 }
 const DEPENDENCY_GROUPS: [DependencyGroup; 3] = [
-    DependencyGroup { prop: "dependencies", field: "dependencies" },
-    DependencyGroup { prop: "optionalDependencies", field: "optional_dependencies" },
-    DependencyGroup { prop: "peerDependencies", field: "peer_dependencies" },
+    DependencyGroup { prop: b"dependencies", field: "dependencies" },
+    DependencyGroup { prop: b"optionalDependencies", field: "optional_dependencies" },
+    DependencyGroup { prop: b"peerDependencies", field: "peer_dependencies" },
 ];
 
 impl PackageManifest {
@@ -2241,7 +2241,7 @@ impl PackageManifest {
         };
 
         if PackageManager::verbose_install() {
-            if let Some(name_q) = json.as_property("name") {
+            if let Some(name_q) = json.as_property(b"name") {
                 let Some(received_name) = name_q.expr.as_string() else {
                     return Ok(None);
                 };
@@ -2262,7 +2262,7 @@ impl PackageManifest {
 
         string_builder.count(expected_name);
 
-        if let Some(name_q) = json.as_property("modified") {
+        if let Some(name_q) = json.as_property(b"modified") {
             let Some(field) = name_q.expr.as_string() else {
                 return Ok(None);
             };
@@ -2276,7 +2276,7 @@ impl PackageManifest {
         let mut extern_string_count_bin: usize = 0;
         let mut tarball_urls_count: usize = 0;
         'get_versions: {
-            let Some(versions_q) = json.as_property("versions") else {
+            let Some(versions_q) = json.as_property(b"versions") else {
                 break 'get_versions;
             };
             let JSON::ExprData::EObject(versions_obj) = &versions_q.expr.data else {
@@ -2314,8 +2314,8 @@ impl PackageManifest {
 
                 string_builder.count(version_name);
 
-                if let Some(dist_q) = prop.value.as_ref().unwrap().as_property("dist") {
-                    if let Some(tarball_prop) = dist_q.expr.get("tarball") {
+                if let Some(dist_q) = prop.value.as_ref().unwrap().as_property(b"dist") {
+                    if let Some(tarball_prop) = dist_q.expr.get(b"tarball") {
                         if let JSON::ExprData::EString(s) = &tarball_prop.data {
                             let tarball = s.data;
                             string_builder.count(tarball);
@@ -2325,7 +2325,7 @@ impl PackageManifest {
                 }
 
                 'bin: {
-                    if let Some(bin) = prop.value.as_ref().unwrap().as_property("bin") {
+                    if let Some(bin) = prop.value.as_ref().unwrap().as_property(b"bin") {
                         match &bin.expr.data {
                             JSON::ExprData::EObject(obj) => {
                                 match obj.properties.slice().len() {
@@ -2357,8 +2357,8 @@ impl PackageManifest {
                         }
                     }
 
-                    if let Some(dirs) = prop.value.as_ref().unwrap().as_property("directories") {
-                        if let Some(bin_prop) = dirs.expr.as_property("bin") {
+                    if let Some(dirs) = prop.value.as_ref().unwrap().as_property(b"directories") {
+                        if let Some(bin_prop) = dirs.expr.as_property(b"bin") {
                             if let Some(str_) = bin_prop.expr.as_string() {
                                 string_builder.count(str_);
                                 break 'bin;
@@ -2373,8 +2373,8 @@ impl PackageManifest {
                     .value
                     .as_ref()
                     .unwrap()
-                    .get("bundleDependencies")
-                    .or_else(|| prop.value.as_ref().unwrap().get("bundledDependencies"))
+                    .get(b"bundleDependencies")
+                    .or_else(|| prop.value.as_ref().unwrap().get(b"bundledDependencies"))
                 {
                     match &bundled_deps_expr.data {
                         JSON::ExprData::EBoolean(boolean) => {
@@ -2417,10 +2417,10 @@ impl PackageManifest {
                 // entries that appear in `peerDependenciesMeta` but not in
                 // `peerDependencies`. Reserve space for them; the build
                 // pass below appends them after the declared peer deps.
-                if let Some(meta) = prop.value.as_ref().unwrap().as_property("peerDependenciesMeta") {
+                if let Some(meta) = prop.value.as_ref().unwrap().as_property(b"peerDependenciesMeta") {
                     if let JSON::ExprData::EObject(obj) = &meta.expr.data {
                         for meta_prop in obj.properties.slice() {
-                            let Some(optional) = meta_prop.value.as_ref().unwrap().as_property("optional") else {
+                            let Some(optional) = meta_prop.value.as_ref().unwrap().as_property(b"optional") else {
                                 continue;
                             };
                             let JSON::ExprData::EBoolean(b) = &optional.expr.data else { continue };
@@ -2442,7 +2442,7 @@ impl PackageManifest {
         extern_string_count += dependency_sum;
 
         let mut dist_tags_count: usize = 0;
-        if let Some(dist) = json.as_property("dist-tags") {
+        if let Some(dist) = json.as_property(b"dist-tags") {
             if let JSON::ExprData::EObject(obj) = &dist.expr.data {
                 let tags = obj.properties.slice();
                 for tag in tags {
@@ -2534,7 +2534,7 @@ impl PackageManifest {
         let all_dependency_names_and_values_len = dependency_sum;
 
         'get_versions2: {
-            let Some(versions_q) = json.as_property("versions") else {
+            let Some(versions_q) = json.as_property(b"versions") else {
                 break 'get_versions2;
             };
             let JSON::ExprData::EObject(versions_obj) = &versions_q.expr.data else {
@@ -2584,8 +2584,8 @@ impl PackageManifest {
                     .value
                     .as_ref()
                     .unwrap()
-                    .get("bundleDependencies")
-                    .or_else(|| prop.value.as_ref().unwrap().get("bundledDependencies"))
+                    .get(b"bundleDependencies")
+                    .or_else(|| prop.value.as_ref().unwrap().get(b"bundledDependencies"))
                 {
                     match &bundled_deps_expr.data {
                         JSON::ExprData::EBoolean(boolean) => {
@@ -2603,19 +2603,19 @@ impl PackageManifest {
 
                 let mut package_version: PackageVersion = empty_version;
 
-                if let Some(cpu_q) = prop.value.as_ref().unwrap().as_property("cpu") {
+                if let Some(cpu_q) = prop.value.as_ref().unwrap().as_property(b"cpu") {
                     package_version.cpu = Negatable::<Architecture>::from_json(cpu_q.expr)?;
                 }
 
-                if let Some(os_q) = prop.value.as_ref().unwrap().as_property("os") {
+                if let Some(os_q) = prop.value.as_ref().unwrap().as_property(b"os") {
                     package_version.os = Negatable::<OperatingSystem>::from_json(os_q.expr)?;
                 }
 
-                if let Some(libc) = prop.value.as_ref().unwrap().as_property("libc") {
+                if let Some(libc) = prop.value.as_ref().unwrap().as_property(b"libc") {
                     package_version.libc = Negatable::<Libc>::from_json(libc.expr)?;
                 }
 
-                if let Some(has_install_script) = prop.value.as_ref().unwrap().as_property("hasInstallScript") {
+                if let Some(has_install_script) = prop.value.as_ref().unwrap().as_property(b"hasInstallScript") {
                     if let JSON::ExprData::EBoolean(val) = &has_install_script.expr.data {
                         package_version.has_install_script = val.value;
                     }
@@ -2624,7 +2624,7 @@ impl PackageManifest {
                 'bin: {
                     // bins are extremely repetitive
                     // We try to avoid storing copies the string
-                    if let Some(bin) = prop.value.as_ref().unwrap().as_property("bin") {
+                    if let Some(bin) = prop.value.as_ref().unwrap().as_property(b"bin") {
                         match &bin.expr.data {
                             JSON::ExprData::EObject(obj) => {
                                 match obj.properties.slice().len() {
@@ -2760,7 +2760,7 @@ impl PackageManifest {
                         }
                     }
 
-                    if let Some(dirs) = prop.value.as_ref().unwrap().as_property("directories") {
+                    if let Some(dirs) = prop.value.as_ref().unwrap().as_property(b"directories") {
                         // https://docs.npmjs.com/cli/v8/configuring-npm/package-json#directoriesbin
                         // Because of the way the bin directive works,
                         // specifying both a bin path and setting
@@ -2768,7 +2768,7 @@ impl PackageManifest {
                         // specify individual files, use bin, and for all
                         // the files in an existing bin directory, use
                         // directories.bin.
-                        if let Some(bin_prop) = dirs.expr.as_property("bin") {
+                        if let Some(bin_prop) = dirs.expr.as_property(b"bin") {
                             if let Some(str_) = bin_prop.expr.as_string() {
                                 if !str_.is_empty() {
                                     package_version.bin = Bin {
@@ -2786,9 +2786,9 @@ impl PackageManifest {
                 }
 
                 'integrity: {
-                    if let Some(dist) = prop.value.as_ref().unwrap().as_property("dist") {
+                    if let Some(dist) = prop.value.as_ref().unwrap().as_property(b"dist") {
                         if let JSON::ExprData::EObject(_) = &dist.expr.data {
-                            if let Some(tarball_q) = dist.expr.as_property("tarball") {
+                            if let Some(tarball_q) = dist.expr.as_property(b"tarball") {
                                 if let JSON::ExprData::EString(s) = &tarball_q.expr.data {
                                     if s.len() > 0 {
                                         package_version.tarball_url =
@@ -2800,19 +2800,19 @@ impl PackageManifest {
                                 }
                             }
 
-                            if let Some(file_count_) = dist.expr.as_property("fileCount") {
+                            if let Some(file_count_) = dist.expr.as_property(b"fileCount") {
                                 if let JSON::ExprData::ENumber(n) = &file_count_.expr.data {
                                     package_version.file_count = n.value as u32;
                                 }
                             }
 
-                            if let Some(file_count_) = dist.expr.as_property("unpackedSize") {
+                            if let Some(file_count_) = dist.expr.as_property(b"unpackedSize") {
                                 if let JSON::ExprData::ENumber(n) = &file_count_.expr.data {
                                     package_version.unpacked_size = n.value as u32;
                                 }
                             }
 
-                            if let Some(shasum) = dist.expr.as_property("integrity") {
+                            if let Some(shasum) = dist.expr.as_property(b"integrity") {
                                 if let Some(shasum_str) = shasum.expr.as_string() {
                                     package_version.integrity = Integrity::parse(shasum_str);
                                     if package_version.integrity.tag.is_supported() {
@@ -2821,7 +2821,7 @@ impl PackageManifest {
                                 }
                             }
 
-                            if let Some(shasum) = dist.expr.as_property("shasum") {
+                            if let Some(shasum) = dist.expr.as_property(b"shasum") {
                                 if let Some(shasum_str) = shasum.expr.as_string() {
                                     package_version.integrity =
                                         Integrity::parse_sha_sum(shasum_str).unwrap_or_default();
@@ -2835,7 +2835,7 @@ impl PackageManifest {
 
                 // PERF(port): was comptime monomorphization (`inline for`) — profile in Phase B
                 for (group_idx, pair) in DEPENDENCY_GROUPS.iter().enumerate() {
-                    let is_peer = pair.prop == "peerDependencies";
+                    let is_peer = pair.prop == b"peerDependencies";
                     // For peer deps, fall through with an empty `items`
                     // slice when `peerDependencies` is absent so that
                     // `peerDependenciesMeta`-only entries (synthesised
@@ -2858,7 +2858,7 @@ impl PackageManifest {
                         &[]
                     };
                     let has_meta_only_peers = is_peer && 'blk: {
-                        let Some(meta) = prop.value.as_ref().unwrap().as_property("peerDependenciesMeta") else {
+                        let Some(meta) = prop.value.as_ref().unwrap().as_property(b"peerDependenciesMeta") else {
                             break 'blk false;
                         };
                         match &meta.expr.data {
@@ -2879,14 +2879,14 @@ impl PackageManifest {
                         if is_peer {
                             optional_peer_dep_names.clear();
 
-                            if let Some(meta) = prop.value.as_ref().unwrap().as_property("peerDependenciesMeta") {
+                            if let Some(meta) = prop.value.as_ref().unwrap().as_property(b"peerDependenciesMeta") {
                                 if let JSON::ExprData::EObject(obj) = &meta.expr.data {
                                     let meta_props = obj.properties.slice();
                                     optional_peer_dep_names.reserve(meta_props.len());
                                     // PERF(port): was assume_capacity
                                     for meta_prop in meta_props {
                                         if let Some(optional) =
-                                            meta_prop.value.as_ref().unwrap().as_property("optional")
+                                            meta_prop.value.as_ref().unwrap().as_property(b"optional")
                                         {
                                             let JSON::ExprData::EBoolean(b) = &optional.expr.data else {
                                                 continue;
@@ -3000,12 +3000,12 @@ impl PackageManifest {
                             // pnpm/yarn do this; webpack relies on it
                             // to make `webpack-cli` reachable.
                             if let Some(meta) =
-                                prop.value.as_ref().unwrap().as_property("peerDependenciesMeta")
+                                prop.value.as_ref().unwrap().as_property(b"peerDependenciesMeta")
                             {
                                 if let JSON::ExprData::EObject(obj) = &meta.expr.data {
                                     'outer: for meta_prop in obj.properties.slice() {
                                         let Some(optional) =
-                                            meta_prop.value.as_ref().unwrap().as_property("optional")
+                                            meta_prop.value.as_ref().unwrap().as_property(b"optional")
                                         else {
                                             continue;
                                         };
@@ -3128,7 +3128,7 @@ impl PackageManifest {
                     }
                 }
 
-                if let Some(time_obj) = json.as_property("time") {
+                if let Some(time_obj) = json.as_property(b"time") {
                     if let Some(publish_time_expr) = time_obj.expr.get(version_name) {
                         if let Some(publish_time_str) = publish_time_expr.as_string() {
                             // MOVE_DOWN(b0): bun_jsc::wtf::parse_es5_date → bun_wtf (date parser is
@@ -3180,7 +3180,7 @@ impl PackageManifest {
         let mut extern_strings_cursor = extern_strings_consumed;
         let _ = all_dependency_names_and_values_len;
 
-        if let Some(dist) = json.as_property("dist-tags") {
+        if let Some(dist) = json.as_property(b"dist-tags") {
             if let JSON::ExprData::EObject(obj) = &dist.expr.data {
                 let tags = obj.properties.slice();
                 let extern_strings_slice_start = extern_strings_cursor;
@@ -3235,7 +3235,7 @@ impl PackageManifest {
             result.pkg.etag = string_builder.append::<SemverString>(etag);
         }
 
-        if let Some(name_q) = json.as_property("modified") {
+        if let Some(name_q) = json.as_property(b"modified") {
             let Some(field) = name_q.expr.as_string() else {
                 return Ok(None);
             };

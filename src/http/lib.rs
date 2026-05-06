@@ -1040,14 +1040,14 @@ pub fn print_request(
         (ver, BStr::new(request.method), BStr::new(url)),
     );
     for header in request.headers {
-        Output::pretty_errorln("> {}", (header,));
+        Output::pretty_errorln(&format_args!("> {}", header));
     }
     Output::flush();
 }
 
 #[cold]
 fn print_response(response: &picohttp::Response<'_>) {
-    Output::pretty_errorln("{}", (response,));
+    Output::pretty_errorln(&format_args!("{}", response));
     Output::flush();
 }
 
@@ -5026,7 +5026,7 @@ pub fn print_request(
 
 #[cold]
 fn print_response(response: &picohttp::Response) {
-    Output::pretty_errorln("{}", (response,));
+    Output::pretty_errorln(&format_args!("{}", response));
     Output::flush();
 }
 

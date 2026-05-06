@@ -1242,16 +1242,14 @@ impl Archiver {
                                 ) {
                                     // Skip symlinks that would escape the extraction directory
                                     if options.log {
-                                        Output::warn(
+                                        Output::warn(&format_args!(
                                             "Skipping symlink with unsafe target: {} -> {}\n",
-                                            (
-                                                bun_core::fmt::fmt_os_path(
-                                                    path_slice,
-                                                    Default::default(),
-                                                ),
-                                                bstr::BStr::new(link_target.as_bytes()),
+                                            bun_core::fmt::fmt_os_path(
+                                                path_slice,
+                                                Default::default(),
                                             ),
-                                        );
+                                            bstr::BStr::new(link_target.as_bytes()),
+                                        ));
                                     }
                                     continue;
                                 }

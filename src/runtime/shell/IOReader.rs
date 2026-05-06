@@ -75,6 +75,17 @@ unsafe impl Send for IOReader {}
 unsafe impl Sync for IOReader {}
 
 impl IOReader {
+    /// Spec: IOReader.zig `__deinit` (body `AsyncDeinitReader` posts back to
+    /// main). Drops the last strong ref so the underlying `BufferedReader`
+    /// closes on the JS thread.
+    pub fn deinit_on_main_thread(this: *mut IOReader) {
+        // SAFETY: `this` is the `Arc::as_ptr` whose strong count was held by
+        // the async-deinit task.
+        unsafe { std::sync::Arc::decrement_strong_count(this) };
+    }
+}
+
+impl IOReader {
     #[inline]
     fn state(&self) -> &mut State {
         // SAFETY: single-threaded; matches Zig `*IOReader` model.

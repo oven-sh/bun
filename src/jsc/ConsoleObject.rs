@@ -4886,7 +4886,7 @@ pub mod formatter {
                 if C {
                     writer.write_all(pfmt!("<r><green>", true).as_bytes());
                 }
-                let _ = JSPrinter::write_json_string(slice, writer_, JSPrinter::Encoding::Utf8);
+                let _ = JSPrinter::write_json_string(slice, &mut *writer.ctx, JSPrinter::Encoding::Utf8);
                 if C {
                     writer.write_all(pfmt!("<r>", true).as_bytes());
                 }
@@ -4929,19 +4929,19 @@ pub mod formatter {
                 };
             }
             match js_type {
-                T::Int8Array => self.write_typed_array::<i8, C>(&mut writer, cast_slice!(i8)),
-                T::Int16Array => self.write_typed_array::<i16, C>(&mut writer, cast_slice!(i16)),
-                T::Uint16Array => self.write_typed_array::<u16, C>(&mut writer, cast_slice!(u16)),
-                T::Int32Array => self.write_typed_array::<i32, C>(&mut writer, cast_slice!(i32)),
-                T::Uint32Array => self.write_typed_array::<u32, C>(&mut writer, cast_slice!(u32)),
+                T::Int8Array => Self::write_typed_array::<i8, C>(&mut writer, cast_slice!(i8)),
+                T::Int16Array => Self::write_typed_array::<i16, C>(&mut writer, cast_slice!(i16)),
+                T::Uint16Array => Self::write_typed_array::<u16, C>(&mut writer, cast_slice!(u16)),
+                T::Int32Array => Self::write_typed_array::<i32, C>(&mut writer, cast_slice!(i32)),
+                T::Uint32Array => Self::write_typed_array::<u32, C>(&mut writer, cast_slice!(u32)),
                 // TODO(port): Rust has no native f16; use `half::f16` in Phase B.
-                T::Float16Array => self.write_typed_array::<bun_core::f16, C>(&mut writer, cast_slice!(bun_core::f16)),
-                T::Float32Array => self.write_typed_array::<f32, C>(&mut writer, cast_slice!(f32)),
-                T::Float64Array => self.write_typed_array::<f64, C>(&mut writer, cast_slice!(f64)),
-                T::BigInt64Array => self.write_typed_array::<i64, C>(&mut writer, cast_slice!(i64)),
-                T::BigUint64Array => self.write_typed_array::<u64, C>(&mut writer, cast_slice!(u64)),
+                T::Float16Array => Self::write_typed_array::<bun_core::f16, C>(&mut writer, cast_slice!(bun_core::f16)),
+                T::Float32Array => Self::write_typed_array::<f32, C>(&mut writer, cast_slice!(f32)),
+                T::Float64Array => Self::write_typed_array::<f64, C>(&mut writer, cast_slice!(f64)),
+                T::BigInt64Array => Self::write_typed_array::<i64, C>(&mut writer, cast_slice!(i64)),
+                T::BigUint64Array => Self::write_typed_array::<u64, C>(&mut writer, cast_slice!(u64)),
                 // Uint8Array, Uint8ClampedArray, DataView, ArrayBuffer
-                _ => self.write_typed_array::<u8, C>(&mut writer, slice),
+                _ => Self::write_typed_array::<u8, C>(&mut writer, slice),
             }
 
             writer.write_all(b" ]");
@@ -4949,8 +4949,11 @@ pub mod formatter {
             Ok(())
         }
 
+        // PORT NOTE: associated fn (no `&mut self`) so callers can pass a
+        // `WrappedWriter` that already borrows `&mut self.estimated_line_length`
+        // without tripping E0499. The only `self` use was `print_comma`, which
+        // `WrappedWriter` mirrors.
         fn write_typed_array<N: TypedArrayElement, const C: bool>(
-            &mut self,
             writer: &mut WrappedWriter<'_>,
             slice: &[N],
         ) {
@@ -4965,7 +4968,8 @@ pub mod formatter {
             const MAX: usize = 512;
             let leftover = &leftover[..leftover.len().min(MAX)];
             for &el in leftover {
-                if self.print_comma::<C>(writer.ctx).is_err() {
+                writer.print_comma::<C>();
+                if writer.failed {
                     return;
                 }
                 writer.space();
@@ -5315,7 +5319,7 @@ pub extern "C" fn Bun__ConsoleObject__takeHeapSnapshot(
     // PORT NOTE: `JSGlobalObject::generate_heap_snapshot` lives in the gated
     // `JSGlobalObject.rs` impl block (`#![cfg(any())]`), so call the FFI
     // export directly until that module un-gates.
-    extern "C" {
+    unsafe extern "C" {
         fn JSC__JSGlobalObject__generateHeapSnapshot(this: *const JSGlobalObject) -> JSValue;
     }
     // SAFETY: `global_this` is a live `JSGlobalObject*`; C++ side has no extra

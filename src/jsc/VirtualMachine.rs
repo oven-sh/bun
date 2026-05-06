@@ -3273,33 +3273,68 @@ impl VirtualMachine {
         // SAFETY: `global` valid for VM lifetime.
         let global_ref = unsafe { &*global };
 
-        if value.is_aggregate_error(global_ref) {
+        // PORT NOTE: `JSValue::is_aggregate_error` not yet ported; the C++
+        // binding exists, so call it directly.
+        unsafe extern "C" {
+            fn JSC__JSValue__isAggregateError(
+                this: JSValue,
+                global: *const JSGlobalObject,
+            ) -> bool;
+        }
+        // SAFETY: `global_ref` is live; FFI is infallible per JSValue.zig:2194.
+        if unsafe { JSC__JSValue__isAggregateError(value, global_ref) } {
             // PORT NOTE: Zig comptime-generated `AggregateErrorIterator` with
-            // `extern "C"` callbacks; here we use `for_each` with a Rust
-            // closure (the `bun_jsc` wrapper handles the C trampoline).
+            // `extern "C"` callbacks. `JSValue::for_each` takes a C-ABI fn
+            // pointer + erased ctx, so thread the captures through a struct.
+            struct AggCtx {
+                formatter: *mut crate::console_object::Formatter,
+                writer: *mut bun_core::io::Writer,
+                allow_ansi_color: bool,
+                allow_side_effects: bool,
+            }
+            extern "C" fn agg_iter(
+                _vm: *mut crate::VM,
+                _global: &JSGlobalObject,
+                ctx: *mut c_void,
+                next_value: JSValue,
+            ) {
+                // SAFETY: `ctx` is `&mut AggCtx` for the duration of `for_each`.
+                let ctx = unsafe { &mut *(ctx as *mut AggCtx) };
+                // SAFETY: per-thread VM.
+                let vm = unsafe { &mut *VirtualMachine::get() };
+                // SAFETY: `formatter`/`writer` borrow the caller's stack
+                // locals, live across the synchronous `for_each` call.
+                vm.print_errorlike_object(
+                    next_value,
+                    None,
+                    // PORT NOTE: reshaped for borrowck — Zig threaded
+                    // `exception_list` through the iterator ctx; the C
+                    // trampoline can't reborrow `&mut Option<&mut _>`, so
+                    // child errors don't append (matches observed behaviour:
+                    // only the top-level frame is added).
+                    None,
+                    unsafe { &mut *ctx.formatter },
+                    unsafe { &mut *ctx.writer },
+                    ctx.allow_ansi_color,
+                    ctx.allow_side_effects,
+                );
+            }
             let errors = value
                 .get(global_ref, "errors")
                 .ok()
                 .flatten()
                 .unwrap_or(JSValue::UNDEFINED);
-            let _ = errors.for_each(global_ref, |_, _, next_value| {
-                // SAFETY: per-thread VM.
-                let vm = unsafe { &mut *VirtualMachine::get() };
-                vm.print_errorlike_object(
-                    next_value,
-                    None,
-                    // PORT NOTE: reshaped for borrowck — Zig threaded
-                    // `exception_list` through the iterator ctx; the closure
-                    // can't reborrow `&mut Option<&mut _>` across the FFI
-                    // trampoline, so child errors don't append (matches the
-                    // observed behaviour: only the top-level frame is added).
-                    None,
-                    formatter,
-                    writer,
-                    allow_ansi_color,
-                    allow_side_effects,
-                );
-            });
+            let mut ctx = AggCtx {
+                formatter: formatter as *mut _,
+                writer: writer as *mut _,
+                allow_ansi_color,
+                allow_side_effects,
+            };
+            let _ = errors.for_each(
+                global_ref,
+                (&mut ctx as *mut AggCtx).cast(),
+                agg_iter,
+            );
             return;
         }
 
@@ -3335,6 +3370,26 @@ impl VirtualMachine {
         allow_ansi_color: bool,
         allow_side_effects: bool,
     ) -> bool {
+        // PORT NOTE: `Msg::write_format` takes `&mut impl fmt::Write` with a
+        // const-generic colour flag; `bun_core::io::Writer` is a vtable head
+        // (not `fmt::Write`), so adapt locally.
+        struct FmtAdapter<'a>(&'a mut bun_core::io::Writer);
+        impl core::fmt::Write for FmtAdapter<'_> {
+            #[inline]
+            fn write_str(&mut self, s: &str) -> core::fmt::Result {
+                self.0.write_all(s.as_bytes()).map_err(|_| core::fmt::Error)
+            }
+        }
+        macro_rules! write_msg {
+            ($msg:expr, $w:expr, $color:expr) => {
+                if $color {
+                    let _ = $msg.write_format::<true>(&mut FmtAdapter($w));
+                } else {
+                    let _ = $msg.write_format::<false>(&mut FmtAdapter($w));
+                }
+            };
+        }
+
         if value.js_type() == jsc::JSType::DOMWrapper {
             if let Some(build_error) = value.as_::<crate::BuildMessage>() {
                 // SAFETY: `as_` returns a live `*mut BuildMessage` backed by
@@ -3344,7 +3399,7 @@ impl VirtualMachine {
                     if self.had_errors {
                         let _ = writer.write_all(b"\n");
                     }
-                    let _ = build_error.msg.write_format(writer, allow_ansi_color);
+                    write_msg!(build_error.msg, writer, allow_ansi_color);
                     build_error.logged = true;
                     let _ = writer.write_all(b"\n");
                 }
@@ -3352,7 +3407,10 @@ impl VirtualMachine {
                 if exception_list.is_some() {
                     // SAFETY: `log` is set in `init` and live for VM lifetime.
                     if let Some(log) = self.log {
-                        let _ = unsafe { (*log.as_ptr()).add_msg(build_error.msg.clone()) };
+                        let _ = unsafe {
+                            (*log.as_ptr())
+                                .add_msg(bun_core::handle_oom(build_error.msg.clone()))
+                        };
                     }
                 }
                 bun_core::Output::flush();
@@ -3365,7 +3423,7 @@ impl VirtualMachine {
                     if self.had_errors {
                         let _ = writer.write_all(b"\n");
                     }
-                    let _ = resolve_error.msg.write_format(writer, allow_ansi_color);
+                    write_msg!(resolve_error.msg, writer, allow_ansi_color);
                     resolve_error.logged = true;
                     let _ = writer.write_all(b"\n");
                 }
@@ -3373,7 +3431,10 @@ impl VirtualMachine {
                 if exception_list.is_some() {
                     // SAFETY: see above.
                     if let Some(log) = self.log {
-                        let _ = unsafe { (*log.as_ptr()).add_msg(resolve_error.msg.clone()) };
+                        let _ = unsafe {
+                            (*log.as_ptr())
+                                .add_msg(bun_core::handle_oom(resolve_error.msg.clone()))
+                        };
                     }
                 }
                 bun_core::Output::flush();

@@ -698,9 +698,10 @@ impl PackageManager {
         if self.options.log_level != Options::LogLevel::Silent {
             // SAFETY: `self.log` points to a separate `logger::Log` allocation (borrowed from
             // `ctx.log`) that outlives the singleton. `&mut self` only covers the pointer field,
-            // not the pointee, and no other `&mut logger::Log` is live here — `crash()` is the
-            // sole accessor on this path and never returns.
-            let _ = unsafe { &mut *self.log }.print(Output::error_writer());
+            // not the pointee. `logger::Log::print` takes `&self` (Zig spec `*const Log`,
+            // logger.zig:1204), so we only need a shared borrow here — the sole invariant is
+            // that no `&mut logger::Log` to the pointee is live, which holds on this path.
+            let _ = unsafe { &*self.log }.print(Output::error_writer());
         }
         Global::crash();
     }
@@ -1176,11 +1177,17 @@ pub fn get() -> *mut PackageManager {
 // init
 // ──────────────────────────────────────────────────────────────────────────
 
+/// Returns `*mut PackageManager` (not `&'static mut`) to match Zig's non-exclusive
+/// `*PackageManager` (PackageManager.zig:568). Thread-pool workers (`UninstallTask::run`,
+/// npm `SaveTask`, `Repository` git ops) deref `get()` concurrently with the main thread
+/// once `http::HTTPThread::init` has spawned below; a `&'static mut` here would alias
+/// those projections under Stacked Borrows. Callers form their own scoped `&mut` only
+/// across regions where no worker thread is yet derefing `get()`.
 pub fn init(
     ctx: Command::Context,
     cli: CommandLineArguments,
     subcommand: Subcommand,
-) -> Result<(&'static mut PackageManager, Box<[u8]>), Error> {
+) -> Result<(*mut PackageManager, Box<[u8]>), Error> {
     // TODO(port): narrow error set
     if cli.global {
         let mut explicit_global_dir: &[u8] = b"";
@@ -1696,16 +1703,23 @@ pub fn init(
             },
         );
     }
-    // SAFETY: `ptr::write` above fully initialized the singleton in place; the
-    // `&mut PackageManager` validity invariant now holds for the post-init body
-    // and the `&'static mut` return (Zig PackageManager.zig:850 onward).
-    let manager = unsafe { &mut *manager_ptr };
-    manager
-        .event_loop
-        .loop_()
-        .internal_loop_data
-        .set_parent_event_loop(EventLoopHandle::init(&manager.event_loop));
-    manager.lockfile = Box::new(Lockfile::default());
+    // `ptr::write` above fully initialized the singleton in place; the
+    // `&mut PackageManager` validity invariant now holds (Zig PackageManager.zig:850
+    // onward). We do NOT bind a long-lived `&'static mut` here: `http::HTTPThread::init`
+    // below spawns workers that deref `get()` concurrently, which would alias such a
+    // borrow under Stacked Borrows. Instead each statement forms its own narrowly-scoped
+    // reborrow via `unsafe { &mut *manager_ptr }`, dropped before the next raw-ptr use.
+    {
+        // SAFETY: singleton fully initialized; main thread, no workers yet.
+        let manager = unsafe { &mut *manager_ptr };
+        manager
+            .event_loop
+            .loop_()
+            .internal_loop_data
+            .set_parent_event_loop(EventLoopHandle::init(&manager.event_loop));
+    }
+    // SAFETY: as above.
+    unsafe { &mut *manager_ptr }.lockfile = Box::new(Lockfile::default());
     // PORT NOTE: Zig `try ctx.allocator.create(Lockfile)` allocates uninit; Rust needs Default.
 
     {
@@ -1713,58 +1727,73 @@ pub fn init(
         // SAFETY: ROOT_PACKAGE_JSON_PATH set above
         let mut normalized =
             bun_paths::AbsPath::<{ bun_paths::Sep::Posix }>::from(unsafe { ROOT_PACKAGE_JSON_PATH });
-        manager.folders.put(
+        // SAFETY: singleton fully initialized; main thread, no workers yet.
+        unsafe { &mut *manager_ptr }.folders.put(
             FolderResolution::hash(normalized.slice()),
             FolderResolution::PackageId(0),
         )?;
         // normalized.deinit() → Drop
     }
 
-    MiniEventLoop::set_global(&mut manager.event_loop.mini());
-    if !manager.options.enable.cache {
-        manager.options.enable.manifest_cache = false;
-        manager.options.enable.manifest_cache_control = false;
-    }
-
-    if let Some(manifest_cache) = env.get("BUN_MANIFEST_CACHE") {
-        if manifest_cache == b"1" {
-            manager.options.enable.manifest_cache = true;
-            manager.options.enable.manifest_cache_control = false;
-        } else if manifest_cache == b"2" {
-            manager.options.enable.manifest_cache = true;
-            manager.options.enable.manifest_cache_control = true;
-        } else {
+    // SAFETY: singleton fully initialized; main thread, no workers yet.
+    MiniEventLoop::set_global(&mut unsafe { &mut *manager_ptr }.event_loop.mini());
+    {
+        // SAFETY: as above; scoped reborrow for the options/manifest-cache block.
+        let manager = unsafe { &mut *manager_ptr };
+        if !manager.options.enable.cache {
             manager.options.enable.manifest_cache = false;
             manager.options.enable.manifest_cache_control = false;
         }
+
+        if let Some(manifest_cache) = env.get("BUN_MANIFEST_CACHE") {
+            if manifest_cache == b"1" {
+                manager.options.enable.manifest_cache = true;
+                manager.options.enable.manifest_cache_control = false;
+            } else if manifest_cache == b"2" {
+                manager.options.enable.manifest_cache = true;
+                manager.options.enable.manifest_cache_control = true;
+            } else {
+                manager.options.enable.manifest_cache = false;
+                manager.options.enable.manifest_cache_control = false;
+            }
+        }
+
+        manager
+            .options
+            .load(ctx.log, env, cli, ctx.install, subcommand)?;
     }
 
-    manager
-        .options
-        .load(ctx.log, env, cli, ctx.install, subcommand)?;
-
     let mut ca: Vec<Box<ZStr>> = Vec::new();
-    if !manager.options.ca.is_empty() {
-        ca = Vec::with_capacity(manager.options.ca.len());
-        debug_assert_eq!(ca.capacity(), manager.options.ca.len());
-        for s in manager.options.ca.iter() {
-            ca.push(ZStr::dupe_z(s)?);
+    {
+        // SAFETY: singleton fully initialized; main thread, no workers yet. Shared
+        // borrow suffices — `options.ca` is only read here.
+        let options = unsafe { &(*manager_ptr).options };
+        if !options.ca.is_empty() {
+            ca = Vec::with_capacity(options.ca.len());
+            debug_assert_eq!(ca.capacity(), options.ca.len());
+            for s in options.ca.iter() {
+                ca.push(ZStr::dupe_z(s)?);
+            }
         }
     }
 
     let mut abs_ca_file_name: Box<ZStr> = ZStr::EMPTY_BOX; // TODO(port): empty ZStr
-    if !manager.options.ca_file_name.is_empty() {
-        // resolve with original cwd
-        if bun_paths::is_absolute(&manager.options.ca_file_name) {
-            abs_ca_file_name = ZStr::dupe_z(&manager.options.ca_file_name)?;
-        } else {
-            let mut path_buf = PathBuffer::uninit();
-            abs_ca_file_name = ZStr::dupe_z(path::join_abs_string_buf(
-                &original_cwd_clone,
-                &mut path_buf,
-                &[&manager.options.ca_file_name],
-                path::Style::Auto,
-            ))?;
+    {
+        // SAFETY: as above; shared read of `options.ca_file_name`.
+        let options = unsafe { &(*manager_ptr).options };
+        if !options.ca_file_name.is_empty() {
+            // resolve with original cwd
+            if bun_paths::is_absolute(&options.ca_file_name) {
+                abs_ca_file_name = ZStr::dupe_z(&options.ca_file_name)?;
+            } else {
+                let mut path_buf = PathBuffer::uninit();
+                abs_ca_file_name = ZStr::dupe_z(path::join_abs_string_buf(
+                    &original_cwd_clone,
+                    &mut path_buf,
+                    &[&options.ca_file_name],
+                    path::Style::Auto,
+                ))?;
+            }
         }
     }
 
@@ -1794,7 +1823,11 @@ pub fn init(
         on_init_error: http_thread_on_init_error,
     });
 
-    manager.timestamp_for_manifest_cache_control = 'brk: {
+    // SAFETY: singleton fully initialized. The HTTP thread is now live and may
+    // project `&(*get()).field` concurrently, but `timestamp_for_manifest_cache_control`
+    // is main-thread-only state; this narrowly-scoped place expression does not
+    // materialize a `&mut PackageManager` that outlives the assignment.
+    unsafe { (*manager_ptr).timestamp_for_manifest_cache_control = 'brk: {
         if cfg!(debug_assertions) {
             // TODO(port): bun.Environment.allow_assert
             if let Some(cache_control) = env.get("BUN_CONFIG_MANIFEST_CACHE_CONTROL_TIMESTAMP") {

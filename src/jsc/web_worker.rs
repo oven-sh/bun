@@ -133,10 +133,15 @@ pub struct WebWorker {
     /// Intrusive node for the process-global `LiveWorkers` list. Registered
     /// before the thread is spawned; removed in `shutdown()` once the worker is
     /// past all process-global resolver access.
+    ///
+    /// `UnsafeCell` because `terminate_all_and_wait` walks the list through
+    /// `&WebWorker` while `register`/`unregister` (under `live_workers::MUTEX`)
+    /// write these on another thread — the mutex serialises memory ops, but
+    /// Rust's aliasing model still requires interior mutability.
     // TODO(port): intrusive doubly-linked list node — `bun_collections` has no
     // `IntrusiveList` yet; raw next/prev pointers used directly.
-    live_next: *mut WebWorker,
-    live_prev: *mut WebWorker,
+    live_next: UnsafeCell<*mut WebWorker>,
+    live_prev: UnsafeCell<*mut WebWorker>,
 
     /// Set by the parent (`notifyNeedTermination`) or by the worker itself
     /// (`exit`). The worker loop polls this between ticks.
@@ -163,12 +168,18 @@ pub struct WebWorker {
     parent_poll_ref: KeepAlive,
 
     // ---- Worker-thread only -------------------------------------------------
+    // These are mutated only on the worker thread, but the worker-thread call
+    // chain takes `&self` (NOT `&mut self`) because the parent / main thread
+    // may concurrently hold `&WebWorker` (`notify_need_termination`,
+    // `terminate_all_and_wait`); materialising `&mut WebWorker` on the worker
+    // thread while another thread holds `&WebWorker` is aliased-&mut UB. Hence
+    // `Cell` / `UnsafeCell` even for single-threaded data.
 
-    status: Status,
+    status: Cell<Status>,
     // PERF(port): was MimallocArena bulk-free backing the worker VM — keep as
     // explicit arena rather than deleting per §Allocators non-AST rule, because
     // the VM's allocator IS this arena (load-bearing). Profile in Phase B.
-    arena: Option<MimallocArena>,
+    arena: UnsafeCell<Option<MimallocArena>>,
     /// Set by `exit()` so that `spin()`'s error paths don't clobber an explicit
     /// `process.exit(code)`. Atomic so `exit()` can take `&self` (the struct is
     /// observed concurrently by `terminate_all_and_wait` / parent-thread FFI;
@@ -230,10 +241,10 @@ mod live_workers {
         MUTEX.lock();
         // SAFETY: MUTEX held; `worker` is a valid heap allocation owned by C++.
         unsafe {
-            (*worker).live_prev = core::ptr::null_mut();
-            (*worker).live_next = HEAD;
+            *(*worker).live_prev.get() = core::ptr::null_mut();
+            *(*worker).live_next.get() = HEAD;
             if !HEAD.is_null() {
-                (*HEAD).live_prev = worker;
+                *(*HEAD).live_prev.get() = worker;
             }
             HEAD = worker;
         }
@@ -255,18 +266,18 @@ mod live_workers {
         MUTEX.lock();
         // SAFETY: MUTEX held; node was registered in `register`.
         unsafe {
-            let prev = (*worker).live_prev;
-            let next = (*worker).live_next;
+            let prev = *(*worker).live_prev.get();
+            let next = *(*worker).live_next.get();
             if !prev.is_null() {
-                (*prev).live_next = next;
+                *(*prev).live_next.get() = next;
             } else {
                 HEAD = next;
             }
             if !next.is_null() {
-                (*next).live_prev = prev;
+                *(*next).live_prev.get() = prev;
             }
-            (*worker).live_prev = core::ptr::null_mut();
-            (*worker).live_next = core::ptr::null_mut();
+            *(*worker).live_prev.get() = core::ptr::null_mut();
+            *(*worker).live_next.get() = core::ptr::null_mut();
         }
         MUTEX.unlock();
         // Wake any waiter in terminateAllAndWait when we hit zero. Waking

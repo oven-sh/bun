@@ -268,15 +268,27 @@ fn write_to_blocking_pipe(fd: Fd, buf: &[u8]) -> sys::Result<usize> {
 /// Stacked Borrows. Zig's `*Parent` freely aliases; we mirror that with raw
 /// pointers and never form a `&mut Parent` inside the writer.
 pub trait PosixBufferedWriterParent {
-    fn on_write(this: *mut Self, amount: usize, status: WriteStatus);
-    fn on_error(this: *mut Self, err: sys::Error);
+    /// # Safety
+    /// `this` must point to a live `Self`.
+    unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus);
+    /// # Safety
+    /// `this` must point to a live `Self`.
+    unsafe fn on_error(this: *mut Self, err: sys::Error);
     const HAS_ON_CLOSE: bool;
-    fn on_close(_this: *mut Self) {}
-    fn get_buffer<'a>(this: *mut Self) -> &'a [u8];
+    /// # Safety
+    /// `this` must point to a live `Self`.
+    unsafe fn on_close(_this: *mut Self) {}
+    /// # Safety
+    /// `this` must point to a live `Self`; returned slice borrows from it.
+    unsafe fn get_buffer<'a>(this: *mut Self) -> &'a [u8];
     const HAS_ON_WRITABLE: bool;
-    fn on_writable(_this: *mut Self) {}
+    /// # Safety
+    /// `this` must point to a live `Self`.
+    unsafe fn on_writable(_this: *mut Self) {}
     // TODO(port): Zig calls `parent.eventLoop()` (returns anytype). Phase B: pin concrete type.
-    fn event_loop(this: *mut Self) -> EventLoopHandle;
+    /// # Safety
+    /// `this` must point to a live `Self`.
+    unsafe fn event_loop(this: *mut Self) -> EventLoopHandle;
 }
 
 pub struct PosixBufferedWriter<Parent: PosixBufferedWriterParent> {
@@ -554,14 +566,26 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
 /// Stacked Borrows. Zig's `*Parent` freely aliases; we mirror that with raw
 /// pointers and never form a `&mut Parent` inside the writer.
 pub trait PosixStreamingWriterParent {
-    fn on_write(this: *mut Self, amount: usize, status: WriteStatus);
-    fn on_error(this: *mut Self, err: sys::Error);
+    /// # Safety
+    /// `this` must point to a live `Self`.
+    unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus);
+    /// # Safety
+    /// `this` must point to a live `Self`.
+    unsafe fn on_error(this: *mut Self, err: sys::Error);
     const HAS_ON_READY: bool;
-    fn on_ready(_this: *mut Self) {}
-    fn on_close(this: *mut Self);
-    fn event_loop(this: *mut Self) -> EventLoopHandle;
+    /// # Safety
+    /// `this` must point to a live `Self`.
+    unsafe fn on_ready(_this: *mut Self) {}
+    /// # Safety
+    /// `this` must point to a live `Self`.
+    unsafe fn on_close(this: *mut Self);
+    /// # Safety
+    /// `this` must point to a live `Self`.
+    unsafe fn event_loop(this: *mut Self) -> EventLoopHandle;
     // CYCLEBREAK(TYPE_ONLY): bun_uws::Loop → bun_uws_sys::Loop (T0).
-    fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop;
+    /// # Safety
+    /// `this` must point to a live `Self`.
+    unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop;
 }
 
 pub struct PosixStreamingWriter<Parent: PosixStreamingWriterParent> {
@@ -1258,9 +1282,15 @@ extern "C" fn on_tty_close(handle: *mut uv::uv_tty_t) {
 /// writer.
 #[cfg(windows)]
 pub trait WindowsWriterParent {
-    fn loop_(this: *mut Self) -> *mut uv::Loop;
-    fn ref_(this: *mut Self);
-    fn deref(this: *mut Self);
+    /// # Safety
+    /// `this` must point to a live `Self`.
+    unsafe fn loop_(this: *mut Self) -> *mut uv::Loop;
+    /// # Safety
+    /// `this` must point to a live `Self`.
+    unsafe fn ref_(this: *mut Self);
+    /// # Safety
+    /// `this` must point to a live `Self`.
+    unsafe fn deref(this: *mut Self);
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1272,13 +1302,23 @@ pub trait WindowsWriterParent {
 /// All methods take `*mut Self` — see [`WindowsWriterParent`] for rationale.
 #[cfg(windows)]
 pub trait WindowsBufferedWriterParent: WindowsWriterParent {
-    fn on_write(this: *mut Self, amount: usize, status: WriteStatus);
-    fn on_error(this: *mut Self, err: sys::Error);
+    /// # Safety
+    /// `this` must point to a live `Self`.
+    unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus);
+    /// # Safety
+    /// `this` must point to a live `Self`.
+    unsafe fn on_error(this: *mut Self, err: sys::Error);
     const HAS_ON_CLOSE: bool;
-    fn on_close(_this: *mut Self) {}
-    fn get_buffer<'a>(this: *mut Self) -> &'a [u8];
+    /// # Safety
+    /// `this` must point to a live `Self`.
+    unsafe fn on_close(_this: *mut Self) {}
+    /// # Safety
+    /// `this` must point to a live `Self`; returned slice borrows from it.
+    unsafe fn get_buffer<'a>(this: *mut Self) -> &'a [u8];
     const HAS_ON_WRITABLE: bool;
-    fn on_writable(_this: *mut Self) {}
+    /// # Safety
+    /// `this` must point to a live `Self`.
+    unsafe fn on_writable(_this: *mut Self) {}
 }
 
 #[cfg(windows)]
@@ -1659,11 +1699,19 @@ pub enum WriteKind {
 pub trait WindowsStreamingWriterParent: WindowsWriterParent {
     /// reports the amount written and done means that we dont have any
     /// other pending data to send (but we may send more data)
-    fn on_write(this: *mut Self, amount: usize, status: WriteStatus);
-    fn on_error(this: *mut Self, err: sys::Error);
+    /// # Safety
+    /// `this` must point to a live `Self`.
+    unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus);
+    /// # Safety
+    /// `this` must point to a live `Self`.
+    unsafe fn on_error(this: *mut Self, err: sys::Error);
     const HAS_ON_WRITABLE: bool;
-    fn on_writable(_this: *mut Self) {}
-    fn on_close(this: *mut Self);
+    /// # Safety
+    /// `this` must point to a live `Self`.
+    unsafe fn on_writable(_this: *mut Self) {}
+    /// # Safety
+    /// `this` must point to a live `Self`.
+    unsafe fn on_close(this: *mut Self);
 }
 
 #[cfg(windows)]

@@ -130,50 +130,64 @@ pub type Poll = IOWriter;
 #[cfg(unix)]
 impl bun_io::pipe_writer::PosixStreamingWriterParent for FileSink {
     const HAS_ON_READY: bool = true;
-    fn on_write(&mut self, amount: usize, status: WriteStatus) {
-        FileSink::on_write(self, amount, status)
+    unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus) {
+        // SAFETY: `this` is the BACKREF set via set_parent; the StreamingWriter
+        // never materializes `&mut FileSink`, so this is the unique access path
+        // for the callback's duration.
+        FileSink::on_write(unsafe { &mut *this }, amount, status)
     }
-    fn on_error(&mut self, err: sys::Error) {
-        FileSink::on_error(self, err)
+    unsafe fn on_error(this: *mut Self, err: sys::Error) {
+        // SAFETY: see on_write.
+        FileSink::on_error(unsafe { &mut *this }, err)
     }
-    fn on_ready(&mut self) {
-        FileSink::on_ready(self)
+    unsafe fn on_ready(this: *mut Self) {
+        // SAFETY: see on_write.
+        FileSink::on_ready(unsafe { &mut *this })
     }
-    fn on_close(&mut self) {
-        FileSink::on_close(self)
+    unsafe fn on_close(this: *mut Self) {
+        // SAFETY: see on_write.
+        FileSink::on_close(unsafe { &mut *this })
     }
-    fn event_loop(&self) -> bun_io::EventLoopHandle {
-        self.io_evtloop()
+    unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
+        // SAFETY: see on_write. Shared-only read of event_loop_handle.
+        unsafe { (*this).io_evtloop() }
     }
-    fn loop_(&self) -> *mut bun_uws_sys::Loop {
-        self.event_loop_handle.r#loop()
+    unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop {
+        // SAFETY: see on_write. Shared-only read of event_loop_handle.
+        unsafe { (*this).event_loop_handle.r#loop() }
     }
 }
 
 #[cfg(windows)]
 impl bun_io::pipe_writer::WindowsWriterParent for FileSink {
-    fn on_close(&mut self) {
-        FileSink::on_close(self)
+    unsafe fn on_close(this: *mut Self) {
+        // SAFETY: BACKREF set via set_parent; unique access for callback duration.
+        FileSink::on_close(unsafe { &mut *this })
     }
-    fn event_loop(&self) -> bun_io::EventLoopHandle {
-        self.io_evtloop()
+    unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
+        // SAFETY: see on_close.
+        unsafe { (*this).io_evtloop() }
     }
-    fn loop_(&self) -> *mut bun_uws_sys::Loop {
-        self.event_loop_handle.loop_().uv_loop
+    unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop {
+        // SAFETY: see on_close.
+        unsafe { (*this).event_loop_handle.loop_().uv_loop }
     }
 }
 
 #[cfg(windows)]
 impl bun_io::pipe_writer::WindowsStreamingWriterParent for FileSink {
     const HAS_ON_READY: bool = true;
-    fn on_write(&mut self, amount: usize, status: WriteStatus) {
-        FileSink::on_write(self, amount, status)
+    unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus) {
+        // SAFETY: BACKREF set via set_parent; unique access for callback duration.
+        FileSink::on_write(unsafe { &mut *this }, amount, status)
     }
-    fn on_error(&mut self, err: sys::Error) {
-        FileSink::on_error(self, err)
+    unsafe fn on_error(this: *mut Self, err: sys::Error) {
+        // SAFETY: see on_write.
+        FileSink::on_error(unsafe { &mut *this }, err)
     }
-    fn on_ready(&mut self) {
-        FileSink::on_ready(self)
+    unsafe fn on_ready(this: *mut Self) {
+        // SAFETY: see on_write.
+        FileSink::on_ready(unsafe { &mut *this })
     }
 }
 

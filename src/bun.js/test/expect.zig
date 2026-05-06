@@ -796,6 +796,12 @@ pub const Expect = struct {
         return .js_undefined;
     }
     pub fn matchAndFmtSnapshot(this: *Expect, globalThis: *JSGlobalObject, value: JSValue, property_matchers: ?JSValue, pretty_value: *std.Io.Writer, comptime fn_name: []const u8) bun.JSError!void {
+        // The value we ultimately serialize for the snapshot. When property
+        // matchers are supplied, this becomes a clone of `value` with the
+        // matchers substituted in (so the snapshot records `Any<String>` etc.)
+        // — never the user's original `value`. Issue #3521.
+        var snapshot_value = value;
+
         if (property_matchers) |_prop_matchers| {
             if (!value.isObject()) {
                 const signature = comptime getSignature(fn_name, "<green>properties<r><d>, <r>hint", false);
@@ -804,7 +810,7 @@ pub const Expect = struct {
 
             const prop_matchers = _prop_matchers;
 
-            if (!try value.jestDeepMatch(prop_matchers, globalThis, true)) {
+            if (!try value.jestDeepMatch(prop_matchers, globalThis)) {
                 // TODO: print diff with properties from propertyMatchers
                 const signature = comptime getSignature(fn_name, "<green>propertyMatchers<r>", false);
                 const fmt = signature ++ "\n\nExpected <green>propertyMatchers<r> to match properties from received object" ++
@@ -814,9 +820,11 @@ pub const Expect = struct {
                 defer formatter.deinit();
                 return globalThis.throwPretty(fmt, .{value.toFmt(&formatter)});
             }
+
+            snapshot_value = try value.jestSubstituteAsymmetricMatchers(prop_matchers, globalThis);
         }
 
-        value.jestSnapshotPrettyFormat(pretty_value, globalThis) catch {
+        snapshot_value.jestSnapshotPrettyFormat(pretty_value, globalThis) catch {
             var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis };
             defer formatter.deinit();
             return globalThis.throw("Failed to pretty format value: {f}", .{value.toFmt(&formatter)});

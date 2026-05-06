@@ -219,7 +219,6 @@ template bool Bun__deepMatch<true>(
     JSGlobalObject* globalObject,
     ThrowScope& throwScope,
     MarkedArgumentBuffer* gcBuffer,
-    bool replacePropsWithAsymmetricMatchers,
     bool isMatchingObjectContaining);
 
 template bool Bun__deepMatch<false>(
@@ -230,7 +229,6 @@ template bool Bun__deepMatch<false>(
     JSGlobalObject* globalObject,
     ThrowScope& throwScope,
     MarkedArgumentBuffer* gcBuffer,
-    bool replacePropsWithAsymmetricMatchers,
     bool isMatchingObjectContaining);
 
 extern "C" bool Expect_readFlagsAndProcessPromise(JSC::EncodedJSValue instanceValue, JSC::JSGlobalObject* globalObject, ExpectFlags* flags, JSC::EncodedJSValue* value, AsymmetricMatcherConstructorType* constructorType);
@@ -517,7 +515,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
                 // SAFETY: visited property sets are not required when
                 // `enableAsymmetricMatchers` and `isMatchingObjectContaining`
                 // are both true
-                bool match = Bun__deepMatch<true>(otherProp, nullptr, patternObject, nullptr, globalObject, throwScope, nullptr, false, true);
+                bool match = Bun__deepMatch<true>(otherProp, nullptr, patternObject, nullptr, globalObject, throwScope, nullptr, true);
                 RETURN_IF_EXCEPTION(throwScope, AsymmetricMatcherResult::FAIL);
                 if (match) {
                     return AsymmetricMatcherResult::PASS;
@@ -1593,6 +1591,12 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
  * properties currently within those stacks. Likely unnecessary, but better to
  * be safe tnan sorry
  *
+ * @note this function is intentionally side-effect free. Earlier versions
+ * mutated the received and/or expected objects in-place when an asymmetric
+ * matcher passed, which leaked back to user code (issue #3521). Callers that
+ * need a substituted view (e.g. snapshot serialization) should produce a clone
+ * via `Bun__substituteAsymmetricMatchers`.
+ *
  * @tparam enableAsymmetricMatchers
  * @param objValue
  * @param seenObjProperties already visited properties of `objValue`.
@@ -1601,7 +1605,6 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
  * @param globalObject
  * @param throwScope
  * @param gcBuffer
- * @param replacePropsWithAsymmetricMatchers
  * @param isMatchingObjectContaining
  *
  * @return true
@@ -1616,7 +1619,6 @@ bool Bun__deepMatch(
     JSGlobalObject* globalObject,
     ThrowScope& throwScope,
     MarkedArgumentBuffer* gcBuffer,
-    bool replacePropsWithAsymmetricMatchers,
     bool isMatchingObjectContaining)
 {
 
@@ -1670,10 +1672,6 @@ bool Bun__deepMatch(
                 case AsymmetricMatcherResult::FAIL:
                     return false;
                 case AsymmetricMatcherResult::PASS:
-                    if (replacePropsWithAsymmetricMatchers) {
-                        obj->putDirectMayBeIndex(globalObject, property, subsetProp);
-                        RETURN_IF_EXCEPTION(throwScope, false);
-                    }
                     // continue to next subset prop
                     continue;
                 case AsymmetricMatcherResult::NOT_MATCHER:
@@ -1684,10 +1682,6 @@ bool Bun__deepMatch(
                 case AsymmetricMatcherResult::FAIL:
                     return false;
                 case AsymmetricMatcherResult::PASS:
-                    if (replacePropsWithAsymmetricMatchers) {
-                        subsetObj->putDirectMayBeIndex(globalObject, property, prop);
-                        RETURN_IF_EXCEPTION(throwScope, false);
-                    }
                     // continue to next subset prop
                     continue;
                 case AsymmetricMatcherResult::NOT_MATCHER:
@@ -1716,7 +1710,7 @@ bool Bun__deepMatch(
                 gcBuffer->append(subsetProp);
                 // property cycle detected
                 if (!didInsertProp.second || !didInsertSubset.second) continue;
-                if (!Bun__deepMatch<enableAsymmetricMatchers>(prop, seenObjProperties, subsetProp, seenSubsetProperties, globalObject, throwScope, gcBuffer, replacePropsWithAsymmetricMatchers, isMatchingObjectContaining)) {
+                if (!Bun__deepMatch<enableAsymmetricMatchers>(prop, seenObjProperties, subsetProp, seenSubsetProperties, globalObject, throwScope, gcBuffer, isMatchingObjectContaining)) {
                     return false;
                 }
             }
@@ -1741,6 +1735,115 @@ inline bool deepEqualsWrapperImpl(JSC::EncodedJSValue a, JSC::EncodedJSValue b, 
     MarkedArgumentBuffer args;
     bool result = Bun__deepEquals<isStrict, enableAsymmetricMatchers>(global, JSC::JSValue::decode(a), JSC::JSValue::decode(b), args, stack, scope, true);
     RELEASE_AND_RETURN(scope, result);
+}
+
+bool isAsymmetricMatcher(JSValue v)
+{
+    if (!v.isCell()) return false;
+    JSCell* cell = v.asCell();
+    if (cell->type() != JSC::JSType(JSDOMWrapperType)) return false;
+    return dynamicDowncast<JSExpectAnything>(cell)
+        || dynamicDowncast<JSExpectAny>(cell)
+        || dynamicDowncast<JSExpectStringContaining>(cell)
+        || dynamicDowncast<JSExpectStringMatching>(cell)
+        || dynamicDowncast<JSExpectArrayContaining>(cell)
+        || dynamicDowncast<JSExpectObjectContaining>(cell)
+        || dynamicDowncast<JSExpectCloseTo>(cell)
+        || dynamicDowncast<JSExpectCustomAsymmetricMatcher>(cell);
+}
+
+// Walks `value` and `matchers` in parallel and returns a clone of `value`
+// where any asymmetric matchers in `matchers` have been substituted in place
+// of the corresponding `value` properties. If no substitutions were needed the
+// original `value` is returned unchanged (no allocation). Cycles in `value`
+// short-circuit by returning the original value at the cycle point.
+//
+// This is the non-mutating replacement for the old
+// `replacePropsWithAsymmetricMatchers=true` behaviour of `Bun__deepMatch`. It
+// is meant to be called *after* a successful match so the caller can format a
+// snapshot that records matchers (e.g. `Any<String>`) without mutating the
+// user's object. See issue #3521.
+JSValue substituteAsymmetricMatchersImpl(
+    JSGlobalObject* globalObject,
+    ThrowScope& throwScope,
+    JSValue value,
+    JSValue matchers,
+    std::set<EncodedJSValue>& seen,
+    MarkedArgumentBuffer& gcBuffer)
+{
+    if (isAsymmetricMatcher(matchers)) {
+        return matchers;
+    }
+    if (!value.isObject() || !matchers.isObject()) {
+        return value;
+    }
+
+    // Cycle detection on the value side. If we've seen this object before, the
+    // safest thing for snapshot output is to keep the original reference.
+    auto inserted = seen.insert(JSValue::encode(value));
+    if (!inserted.second) return value;
+
+    auto& vm = globalObject->vm();
+    JSObject* valueObj = value.getObject();
+    JSObject* matchersObj = matchers.getObject();
+
+    PropertyNameArrayBuilder matcherProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
+    matchersObj->getPropertyNames(globalObject, matcherProps, DontEnumPropertiesMode::Exclude);
+    RETURN_IF_EXCEPTION(throwScope, value);
+
+    // Recurse into each matcher property to collect the (possibly-)substituted
+    // value. We hold onto these via gcBuffer so the GC doesn't collect a
+    // brand-new clone before we get to use it.
+    JSObject* cloned = nullptr;
+    auto ensureCloned = [&]() -> bool {
+        if (cloned) return true;
+        if (isArray(globalObject, value)) {
+            unsigned len = valueObj->getArrayLength();
+            cloned = JSC::constructEmptyArray(globalObject, nullptr, len);
+        } else {
+            cloned = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype());
+        }
+        if (throwScope.exception()) return false;
+        gcBuffer.append(cloned);
+        // Shallow-copy the value's own properties onto the clone so the
+        // resulting snapshot retains every original property — substitutions
+        // will overwrite individual entries below.
+        PropertyNameArrayBuilder valueProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
+        valueObj->getPropertyNames(globalObject, valueProps, DontEnumPropertiesMode::Exclude);
+        if (throwScope.exception()) return false;
+        for (const auto& p : valueProps) {
+            JSValue v = valueObj->getIfPropertyExists(globalObject, p);
+            if (throwScope.exception()) return false;
+            if (v.isEmpty()) continue;
+            cloned->putDirectMayBeIndex(globalObject, p, v);
+            if (throwScope.exception()) return false;
+        }
+        return true;
+    };
+
+    for (const auto& property : matcherProps) {
+        JSValue valueProp = valueObj->getIfPropertyExists(globalObject, property);
+        RETURN_IF_EXCEPTION(throwScope, value);
+        if (valueProp.isEmpty()) continue;
+
+        JSValue matcherProp = matchersObj->get(globalObject, property);
+        RETURN_IF_EXCEPTION(throwScope, value);
+
+        gcBuffer.append(valueProp);
+        gcBuffer.append(matcherProp);
+
+        JSValue substituted = substituteAsymmetricMatchersImpl(globalObject, throwScope, valueProp, matcherProp, seen, gcBuffer);
+        RETURN_IF_EXCEPTION(throwScope, value);
+
+        if (substituted == valueProp) continue;
+
+        gcBuffer.append(substituted);
+        if (!ensureCloned()) return value;
+        cloned->putDirectMayBeIndex(globalObject, property, substituted);
+        RETURN_IF_EXCEPTION(throwScope, value);
+    }
+
+    return cloned ? JSValue(cloned) : value;
 }
 }
 
@@ -2879,7 +2982,7 @@ bool JSC__JSValue__jestStrictDeepEquals(JSC::EncodedJSValue JSValue0, JSC::Encod
 
 #undef IMPL_DEEP_EQUALS_WRAPPER
 
-bool JSC__JSValue__jestDeepMatch(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1, JSC::JSGlobalObject* globalObject, bool replacePropsWithAsymmetricMatchers)
+bool JSC__JSValue__jestDeepMatch(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1, JSC::JSGlobalObject* globalObject)
 {
     JSValue obj = JSValue::decode(JSValue0);
     JSValue subset = JSValue::decode(JSValue1);
@@ -2889,7 +2992,20 @@ bool JSC__JSValue__jestDeepMatch(JSC::EncodedJSValue JSValue0, JSC::EncodedJSVal
     std::set<EncodedJSValue> objVisited;
     std::set<EncodedJSValue> subsetVisited;
     MarkedArgumentBuffer gcBuffer;
-    RELEASE_AND_RETURN(scope, Bun__deepMatch<true>(obj, &objVisited, subset, &subsetVisited, globalObject, scope, &gcBuffer, replacePropsWithAsymmetricMatchers, false));
+    RELEASE_AND_RETURN(scope, Bun__deepMatch<true>(obj, &objVisited, subset, &subsetVisited, globalObject, scope, &gcBuffer, false));
+}
+
+extern "C" JSC::EncodedJSValue Bun__JSValue__substituteAsymmetricMatchers(JSC::EncodedJSValue valueEncoded, JSC::EncodedJSValue matchersEncoded, JSC::JSGlobalObject* globalObject)
+{
+    JSValue value = JSValue::decode(valueEncoded);
+    JSValue matchers = JSValue::decode(matchersEncoded);
+
+    ThrowScope scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    std::set<EncodedJSValue> seen;
+    MarkedArgumentBuffer gcBuffer;
+    JSValue result = substituteAsymmetricMatchersImpl(globalObject, scope, value, matchers, seen, gcBuffer);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(result);
 }
 
 extern "C" bool Bun__JSValue__isAsyncContextFrame(JSC::EncodedJSValue value)

@@ -34,7 +34,7 @@ pub fn toMatchObject(this: *Expect, globalThis: *JSGlobalObject, callFrame: *Cal
 
     const property_matchers = args[0];
 
-    var pass = try received_object.jestDeepMatch(property_matchers, globalThis, true);
+    var pass = try received_object.jestDeepMatch(property_matchers, globalThis);
 
     if (not) pass = !pass;
     if (pass) return .js_undefined;

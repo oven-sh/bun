@@ -1969,10 +1969,24 @@ pub const JSValue = enum(i64) {
     pub fn jestStrictDeepEquals(this: JSValue, other: JSValue, global: *JSGlobalObject) JSError!bool {
         return bun.jsc.fromJSHostCallGeneric(global, @src(), JSC__JSValue__jestStrictDeepEquals, .{ this, other, global });
     }
-    extern fn JSC__JSValue__jestDeepMatch(this: JSValue, subset: JSValue, global: *JSGlobalObject, replace_props_with_asymmetric_matchers: bool) bool;
-    /// same as `JSValue.deepMatch`, but with jest asymmetric matchers enabled
-    pub fn jestDeepMatch(this: JSValue, subset: JSValue, global: *JSGlobalObject, replace_props_with_asymmetric_matchers: bool) JSError!bool {
-        return bun.jsc.fromJSHostCallGeneric(global, @src(), JSC__JSValue__jestDeepMatch, .{ this, subset, global, replace_props_with_asymmetric_matchers });
+    extern fn JSC__JSValue__jestDeepMatch(this: JSValue, subset: JSValue, global: *JSGlobalObject) bool;
+    /// same as `JSValue.deepMatch`, but with jest asymmetric matchers enabled.
+    ///
+    /// This intentionally does not mutate `this` or `subset`. If you need a
+    /// view of `this` with asymmetric matchers from `subset` substituted in
+    /// (for snapshot output etc.), use `jestSubstituteAsymmetricMatchers` after
+    /// confirming the match passed.
+    pub fn jestDeepMatch(this: JSValue, subset: JSValue, global: *JSGlobalObject) JSError!bool {
+        return bun.jsc.fromJSHostCallGeneric(global, @src(), JSC__JSValue__jestDeepMatch, .{ this, subset, global });
+    }
+    extern fn Bun__JSValue__substituteAsymmetricMatchers(value: JSValue, matchers: JSValue, global: *JSGlobalObject) JSValue;
+    /// Returns a clone of `this` where any asymmetric matchers in `matchers`
+    /// have been substituted in place of the corresponding `this` properties.
+    /// If no substitutions are needed, returns `this` unchanged. Used by
+    /// snapshot serialization so matchers like `expect.any(String)` show up as
+    /// `Any<String>` in the saved snapshot, without mutating the user's value.
+    pub fn jestSubstituteAsymmetricMatchers(this: JSValue, matchers: JSValue, global: *JSGlobalObject) JSError!JSValue {
+        return bun.jsc.fromJSHostCall(global, @src(), Bun__JSValue__substituteAsymmetricMatchers, .{ this, matchers, global });
     }
 
     pub const DiffMethod = enum(u8) {

@@ -62,3 +62,15 @@ describe("toMatchSnapshot errors", () => {
     }).toThrow();
   });
 });
+
+// Regression test for https://github.com/oven-sh/bun/issues/3521 — applied to
+// the snapshot path. The matchers in the snapshot output must come from a
+// *clone*; the user's original object must remain unchanged so they can keep
+// using it after the assertion.
+test("toMatchSnapshot with property matchers must not mutate the received object", () => {
+  const obj = { a: 1, b: { c: "two" }, d: "keep" };
+  expect(obj).toMatchSnapshot({ a: expect.any(Number), b: { c: expect.any(String) } });
+  expect(obj).toEqual({ a: 1, b: { c: "two" }, d: "keep" });
+  expect(obj.a).toBe(1);
+  expect(obj.b.c).toBe("two");
+});

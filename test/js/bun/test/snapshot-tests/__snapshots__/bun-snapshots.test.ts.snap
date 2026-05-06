@@ -75,3 +75,13 @@ exports[`it will create a snapshot file if it doesn't exist 7`] = `
   "j": Any<RegExp>,
 }
 `;
+
+exports[`toMatchSnapshot with property matchers must not mutate the received object 1`] = `
+{
+  "a": Any<Number>,
+  "b": {
+    "c": Any<String>,
+  },
+  "d": "keep",
+}
+`;

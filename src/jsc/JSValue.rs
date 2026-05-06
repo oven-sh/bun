@@ -522,10 +522,9 @@ impl JSValue {
         let Some(prop) = self.get(global, property)? else { return Ok(None) };
         if prop.is_null() || prop == JSValue::FALSE { return Ok(None); }
         if prop.is_symbol() {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "Expected \"{}\" to be a string",
-                alloc::string::String::from_utf8_lossy(property),
-            )));
+            // JSValue.zig:1693 — `throwInvalidPropertyTypeValue(property, "string", prop)`
+            // (Node-style ERR_INVALID_ARG_TYPE TypeError including received value's type).
+            return Err(global.throw_invalid_property_type_value(property, b"string", prop));
         }
         let s = prop.to_bun_string(global)?;
         if s.is_empty() { Ok(None) } else { Ok(Some(s)) }
@@ -537,8 +536,9 @@ impl JSValue {
         let Some(prop) = self.get(global, property)? else { return Ok(None) };
         if prop.is_undefined_or_null() { return Ok(None); }
         if !prop.is_cell() || !prop.js_type().is_array() {
+            // JSValue.zig:1785-1787 — `property_name ++ " must be an array"` via throwInvalidArguments.
             return Err(global.throw_invalid_arguments(format_args!(
-                "Expected \"{}\" to be an array",
+                "{} must be an array",
                 alloc::string::String::from_utf8_lossy(property),
             )));
         }
@@ -606,12 +606,13 @@ impl JSValue {
         })
     }
 
-    /// `JSValue.parse` — parse a JSON string. Declared on JSValue in Zig but
-    /// implemented in C++ via `JSC__JSValue__parseJSON`.
-    pub fn parse(global: &JSGlobalObject, string: &bun_string::ZigString) -> JsResult<JSValue> {
-        // SAFETY: `global` is live; `string` borrowed for the call.
+    /// `JSC__JSValue__parseJSON` (bindings.cpp / headers.h:279) — parse `self`
+    /// (a JS string value) as JSON. The C++ symbol takes an *EncodedJSValue*,
+    /// not a `*const ZigString`.
+    pub fn parse_json(self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        // SAFETY: `global` is live; `self` is a valid encoded JSValue.
         host_fn::from_js_host_call(global, || unsafe {
-            JSC__JSValue__parseJSON(string, global)
+            JSC__JSValue__parseJSON(self, global)
         })
     }
 }
@@ -714,7 +715,19 @@ pub trait CoerceTo: Sized {
     fn coerce_from(v: JSValue, global: &JSGlobalObject) -> JsResult<Self>;
 }
 impl CoerceTo for i32 {
-    fn coerce_from(v: JSValue, global: &JSGlobalObject) -> JsResult<i32> { v.coerce_to_i32(global) }
+    fn coerce_from(v: JSValue, global: &JSGlobalObject) -> JsResult<i32> {
+        // JSValue.zig:163-170 `coerce(i32)` — fast-path numbers via
+        // `coerceJSValueDoubleTruncatingT(i32, num)` (NaN→0, out-of-range
+        // saturates to i32 MIN/MAX) BEFORE falling through to the C++
+        // `coerceToInt32` (ECMAScript ToInt32 modular wrap) for non-numbers.
+        if v.is_int32() { return Ok(v.as_int32()); }
+        if let Some(num) = v.get_number() {
+            // Rust `f64 as i32` saturates on overflow and yields 0 for NaN —
+            // matches `coerceJSValueDoubleTruncatingT` exactly.
+            return Ok(if num.is_nan() { 0 } else { num as i32 });
+        }
+        v.coerce_to_i32(global)
+    }
 }
 
 /// Dispatch trait for `JSValue::to_enum::<E>()`. Zig used `comptime Enum: type`
@@ -779,7 +792,7 @@ unsafe extern "C" {
     fn JSC__JSValue__isAnyError(this: JSValue) -> bool;
     fn JSC__JSValue__getClassInfoName(this: JSValue, out: *mut *const u8, len: *mut usize) -> bool;
     fn JSC__JSValue__getLengthIfPropertyExistsInternal(this: JSValue, global: *const JSGlobalObject) -> f64;
-    fn JSC__JSValue__parseJSON(string: *const bun_string::ZigString, global: *const JSGlobalObject) -> JSValue;
+    fn JSC__JSValue__parseJSON(this: JSValue, global: *const JSGlobalObject) -> JSValue;
     fn JSC__JSValue__toZigString(this: JSValue, out: *mut bun_string::ZigString, global: *const JSGlobalObject);
     fn JSC__JSValue__getIfPropertyExistsImpl(target: JSValue, global: *const JSGlobalObject, ptr: *const u8, len: usize) -> JSValue;
     fn JSC__JSValue__isTerminationException(this: JSValue) -> bool;

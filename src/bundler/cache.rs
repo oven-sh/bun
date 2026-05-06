@@ -526,58 +526,108 @@ impl Fs {
         })
     }
 
-    /// Inlined subset of `RealFS.readFileWithHandleAndAllocator` (fs.zig:1564) —
+    /// Inlined subset of `RealFS.readFileWithHandleAndAllocator` (fs.zig:1160) —
     /// the resolver's port of that method is still in the gated `fs_full` module,
-    /// so we go to `bun_sys` directly. Returns a `'static` slice per the `Entry`
-    /// contract above (borrows `shared_buffer` when `use_shared_buffer`, else a
-    /// `Box::leak`).
+    /// so we go to `bun_sys` directly. Returns provenance-tagged [`Contents`].
     // TODO(port): switch back to `rfs.read_file_with_handle_and_allocator` once
-    // `bun_resolver::fs_full` un-gates; this drops the BOM-strip / pread-loop
-    // refinements that path carries.
+    // `bun_resolver::fs_full` un-gates.
     fn read_handle_into(
         file: &bun_sys::File,
         _path: &[u8],
         use_shared_buffer: bool,
         shared: &mut MutableString,
-        _stream: bool,
-    ) -> Result<&'static [u8], bun_core::Error> {
+        stream: bool,
+    ) -> Result<Contents, bun_core::Error> {
+        // PORT NOTE: `strings::BOM` lives in the gated `unicode_draft` module
+        // and is not yet re-exported; inline the UTF-8 BOM constant here so the
+        // common case (UTF-8 BOM strip) is observable. UTF-16-LE BOM →UTF-8
+        // transcode falls through to the gated path once it un-gates.
+        // TODO(port): replace with `strings::BOM::detect` + `remove_and_convert_*`
+        // once `bun_string::strings::BOM` is public.
+        const UTF8_BOM: [u8; 3] = [0xEF, 0xBB, 0xBF];
+
         if use_shared_buffer {
             shared.reset();
-            let size = file.get_end_pos().map_err(bun_core::Error::from)?;
+            let mut size = file.get_end_pos().map_err(bun_core::Error::from)?;
             if size == 0 {
-                // SAFETY: ARENA — the empty slice into `shared.list` is what Zig
-                // returned; callers treat it as borrowed-until-reset.
-                return Ok(b"");
+                return Ok(Contents::Empty);
             }
             shared.list.reserve(size + 1);
-            // SAFETY: capacity reserved above; `read_all` writes initialized bytes
-            // and we set_len to exactly the count returned.
-            let n = unsafe {
-                let dst = core::slice::from_raw_parts_mut(
-                    shared.list.as_mut_ptr(),
-                    shared.list.capacity(),
-                );
-                let n = file.read_all(dst).map_err(bun_core::Error::from)?;
-                shared.list.set_len(n);
-                n
-            };
-            // Sentinel NUL past len when capacity allows (matches fs.zig:1671).
+
+            // fs.zig:1200-1239 — pread loop; when `stream`, re-stat after each
+            // read and grow if the file changed under us (HMR save race).
+            let mut bytes_read: usize = 0;
+            loop {
+                // SAFETY: capacity reserved above; `read_all` writes initialized
+                // bytes and we set_len to exactly bytes_read+read_count.
+                let read_count = unsafe {
+                    let cap = shared.list.capacity();
+                    let dst = core::slice::from_raw_parts_mut(
+                        shared.list.as_mut_ptr().add(bytes_read),
+                        cap - bytes_read,
+                    );
+                    let n = file.read_all(dst).map_err(bun_core::Error::from)?;
+                    shared.list.set_len(bytes_read + n);
+                    n
+                };
+
+                if stream {
+                    // check again that stat() didn't change the file size
+                    let new_size = file.get_end_pos().map_err(bun_core::Error::from)?;
+                    bytes_read += read_count;
+                    // don't infinite loop if we're still not reading more
+                    if read_count == 0 {
+                        break;
+                    }
+                    if bytes_read < new_size {
+                        shared.list.reserve(new_size - size);
+                        size = new_size;
+                        continue;
+                    }
+                }
+                break;
+            }
+
+            let mut n = shared.list.len();
+
+            // BOM strip (fs.zig:1244 `removeAndConvertToUTF8WithoutDealloc`).
+            if shared.list.starts_with(&UTF8_BOM) {
+                shared.list.copy_within(UTF8_BOM.len().., 0);
+                n -= UTF8_BOM.len();
+                // SAFETY: n <= prior len; bytes [0..n] were just initialized via copy_within.
+                unsafe { shared.list.set_len(n) };
+            }
+
+            // Sentinel NUL past len when capacity allows (matches fs.zig:1241).
             if shared.list.capacity() > n {
                 // SAFETY: capacity > len, so writing one byte past len is in-bounds.
                 unsafe { *shared.list.as_mut_ptr().add(n) = 0 };
             }
-            // SAFETY: ARENA — lifetime-erase the borrow of `shared.list`. Zig
-            // hands this slice straight to `logger::Source.contents`; the
-            // caller owns `shared` and resets it via `reset_shared_buffer`
-            // before reuse.
-            Ok(unsafe { core::slice::from_raw_parts(shared.list.as_ptr(), n) })
+
+            // Caller owns `shared` and resets it via `reset_shared_buffer` before
+            // reuse; tag as borrowed so `deinit` is a no-op.
+            Ok(Contents::SharedBuffer { ptr: shared.list.as_ptr(), len: n })
         } else {
-            let bytes = file.read_to_end().map_err(bun_core::Error::from)?;
+            let mut bytes = file.read_to_end().map_err(bun_core::Error::from)?;
             if bytes.is_empty() {
-                return Ok(b"");
+                return Ok(Contents::Empty);
             }
-            // SAFETY: see `Entry::deinit` — reclaimed there via `Box::from_raw`.
-            Ok(Box::leak(bytes.into_boxed_slice()))
+
+            // BOM strip (fs.zig:1299 `removeAndConvertToUTF8AndFree`).
+            if bytes.starts_with(&UTF8_BOM) {
+                bytes.copy_within(UTF8_BOM.len().., 0);
+                bytes.truncate(bytes.len() - UTF8_BOM.len());
+            }
+
+            // Sentinel NUL past len in spare capacity (matches fs.zig:1289
+            // `buf[size] = 0`). `Contents::Owned` keeps the `Vec` so capacity
+            // is preserved.
+            bytes.reserve_exact(1);
+            let len = bytes.len();
+            // SAFETY: capacity >= len+1 after reserve_exact; write is in-bounds.
+            unsafe { *bytes.as_mut_ptr().add(len) = 0 };
+
+            Ok(Contents::Owned(bytes))
         }
     }
 }
@@ -761,7 +811,8 @@ impl Json {
 //   source:     src/bundler/cache.zig (334 lines)
 //   confidence: medium
 //   todos:      3
-//   notes:      Entry.contents is lifetime-erased &'static [u8] (manual deinit) to flow into Source.contents;
-//               Fs::read_handle_into inlines RealFS.readFileWithHandle until bun_resolver::fs_full un-gates;
+//   notes:      Entry.contents is provenance-tagged `Contents` enum (Owned/SharedBuffer/External) — no Box::leak;
+//               Fs::read_handle_into inlines RealFS.readFileWithHandle until bun_resolver::fs_full un-gates
+//               (UTF-8 BOM strip + stream re-stat loop + trailing-NUL inlined; UTF-16 BOM transcode TODO);
 //               Fs.deinit (Zig) was dead code (referenced nonexistent `c.entries`).
 // ──────────────────────────────────────────────────────────────────────────

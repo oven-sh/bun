@@ -402,7 +402,7 @@ impl TimerObjectInternals {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/timer/TimerObjectInternals.zig
-//   confidence: medium — struct/flags + runImmediateTask path real;
+//   confidence: medium — struct/flags + runImmediateTask + deinit real;
 //               init/cancel/fire/reschedule remain in gated draft.
 //   notes:      `vm.timer` resolved via `jsc_hooks::runtime_state()` (b2-cycle
 //               — low-tier VirtualMachine.timer is `()`).

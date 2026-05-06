@@ -16,13 +16,17 @@ use bun_logger::{self as logger, Loc, Location, Log, Msg, Source};
 use bun_options_types::ImportRecord;
 use bun_string::{self, strings};
 use bun_sys::Fd;
-use bun_threading::ThreadPool as ThreadPoolLib;
+// PORT NOTE: Zig `bun.threading.ThreadPool` is the *module*; the draft used the
+// struct alias which made `ThreadPoolLib::Task` unresolvable. Import the module.
+use bun_threading::thread_pool as ThreadPoolLib;
 
 use bun_js_parser::{
     self as js_parser,
     ast::{self, BundledAst as JSAst, Expr, Part, E, G},
 };
 use bun_js_parser::Index;
+/// `js_parser.Parser.Options` — the real parser-entry options struct.
+pub use bun_js_parser::parser::ParserOptions;
 
 use crate::bun_css;
 use crate::bundle_v2::{self as bundler, BundleV2};

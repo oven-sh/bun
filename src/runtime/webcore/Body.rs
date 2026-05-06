@@ -13,6 +13,7 @@ use crate::webcore::{
     self, blob, streams, AnyBlob, Blob, ByteStream, DrainResult, FetchHeaders, InternalBlob,
     Lifetime, Pipe, ReadableStream,
 };
+use crate::jsc::HTTPHeaderName;
 use bun_str::{self as strings, MutableString, String as BunString, ZigString};
 use bun_str::WTFStringImpl;
 

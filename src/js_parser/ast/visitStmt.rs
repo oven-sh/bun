@@ -1,19 +1,49 @@
-#![allow(unused_imports, unused_variables, dead_code, unused_mut)]
+#![allow(unused_imports, unused_variables, dead_code, unused_mut, unreachable_code, unused_unsafe)]
 use bun_core::Error;
 use bun_logger as logger;
 use crate::parser::{
     statement_cares_about_scope, JsxT, PrependTempRefsOpts, ReactRefresh, Ref, RelocateVars,
-    SideEffects, StmtsKind,
+    RelocateVarsMode, SideEffects, StmtsKind,
 };
 use crate::ast::{self as js_ast, B, Binding, E, Expr, G, S, Stmt};
+use crate::ast::stmt::Data as StmtData;
 use crate::ast::G::Decl;
-use crate::ast::p::P;
+use crate::ast::p::{P, ReactRefreshExportKind};
 use crate::lexer as js_lexer;
+use crate::flags;
 use bun_string::strings;
 use bumpalo::collections::Vec as BumpVec;
 
 // `ListManaged(Stmt)` in the parser is arena-backed (`p.allocator`).
 type StmtList<'bump> = BumpVec<'bump, Stmt>;
+
+// ─── file-local arena helpers ────────────────────────────────────────────────
+// Phase-A keeps slice fields as `*const [u8]` / `*mut [T]` (see ast/mod.rs);
+// these wrap the unsafe deref so the visitor bodies stay readable. All pointers
+// are arena-owned and outlive the visit pass.
+#[inline(always)]
+unsafe fn arena_str<'a>(p: *const [u8]) -> &'a [u8] {
+    // SAFETY: arena-owned slice valid for the parse lifetime.
+    unsafe { &*p }
+}
+#[inline(always)]
+fn as_static(s: &[u8]) -> &'static [u8] {
+    // TODO(port): E::Dot::name is `&'static [u8]` placeholder for arena str; matches the
+    // transmute pattern at P.rs:1445 etc. Phase B threads `'bump` and removes this.
+    unsafe { core::mem::transmute::<&[u8], &'static [u8]>(s) }
+}
+#[inline(always)]
+unsafe fn items_mut<'a, T>(p: *mut [T]) -> &'a mut [T] {
+    // SAFETY: arena-owned slice valid for the parse lifetime.
+    unsafe { &mut *p }
+}
+
+// blocked_on: parser::Runtime::Features::replace_exports is `bool` placeholder (parser.rs:260),
+// not the `StringHashMap(ReplaceableExport)` it is in Zig — `.count()/.get_ptr()/.entries`
+// don't exist yet. All call sites guard on this const so the gated branches are reachable
+// but compile-dead until the real map type lands. Same for `server_components` (bool stub).
+const REPLACE_EXPORTS_REAL: bool = false;
+const SERVER_COMPONENTS_WRAPS_EXPORTS: bool = false;
 
 // Zig: `pub fn VisitStmt(comptime ts, comptime jsx, comptime scan_only) type { return struct { ... } }`
 // — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is

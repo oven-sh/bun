@@ -273,7 +273,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             && !result.is_inside_with_scope
             && !is_delete_target
         {
-            if let Some(def) = p.define.identifiers.get(name) {
+            if let Some(def) = p.define.for_identifier(name) {
                 if def.value.is_some() {
                     // blocked_on: P::value_for_define is in the gated round-D impl
                     // (P.rs `#[cfg(any())]` block); body preserved in _draft.

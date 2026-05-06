@@ -1851,30 +1851,33 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         Ok(())
     }
 
-    #[cfg(any())] // blocked_on: visit_expr; StmtData variant payload mut access; substitute_single_use_symbol_in_expr
     pub fn substitute_single_use_symbol_in_stmt(
         &mut self,
         stmt: Stmt,
         r#ref: Ref,
         replacement: Expr,
     ) -> bool {
+        // Zig matched on `stmt.data` and took `*Expr` into the arena-owned payload.
+        // `StmtData` stores `StoreRef<S::*>` (Copy NonNull); matching by value yields
+        // an owned `StoreRef` whose `DerefMut` reaches the same arena slot Zig wrote
+        // through, so writing to `*expr` below mutates the AST in place.
         let expr: *mut Expr = 'brk: {
-            match &stmt.data {
-                js_ast::StmtData::SExpr(exp) => break 'brk &mut exp.value as *const _ as *mut _,
-                js_ast::StmtData::SThrow(throw) => break 'brk &mut throw.value as *const _ as *mut _,
-                js_ast::StmtData::SReturn(ret) => {
-                    if let Some(value) = &ret.value {
-                        break 'brk value as *const _ as *mut _;
+            match stmt.data {
+                js_ast::StmtData::SExpr(mut exp) => break 'brk &mut exp.value as *mut Expr,
+                js_ast::StmtData::SThrow(mut throw) => break 'brk &mut throw.value as *mut Expr,
+                js_ast::StmtData::SReturn(mut ret) => {
+                    if let Some(value) = ret.value.as_mut() {
+                        break 'brk value as *mut Expr;
                     }
                 }
-                js_ast::StmtData::SIf(if_stmt) => break 'brk &mut if_stmt.test_ as *const _ as *mut _,
-                js_ast::StmtData::SSwitch(switch_stmt) => break 'brk &mut switch_stmt.test_ as *const _ as *mut _,
-                js_ast::StmtData::SLocal(local) => {
+                js_ast::StmtData::SIf(mut if_stmt) => break 'brk &mut if_stmt.test_ as *mut Expr,
+                js_ast::StmtData::SSwitch(mut switch_stmt) => break 'brk &mut switch_stmt.test_ as *mut Expr,
+                js_ast::StmtData::SLocal(mut local) => {
                     if local.decls.len > 0 {
-                        let first = &mut local.decls.ptr_mut()[0];
-                        if let Some(value) = &mut first.value {
-                            if matches!(first.binding.data, Binding::Data::BIdentifier(_)) {
-                                break 'brk value as *mut _;
+                        let first = &mut local.decls.slice_mut()[0];
+                        if matches!(first.binding.data, js_ast::b::B::BIdentifier(_)) {
+                            if let Some(value) = first.value.as_mut() {
+                                break 'brk value as *mut Expr;
                             }
                         }
                     }
@@ -1883,10 +1886,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             }
             return false;
         };
-        // TODO(port): the above takes raw *mut Expr because js_ast::StmtData variants store
-        // arena-backed boxed payloads with interior mutability in Zig. Phase B should
-        // re-type these as `&'a mut` once js_ast::StmtData is finalized.
-        // SAFETY: raw *mut Expr into arena-owned tree; parser holds exclusive access during visit
+        // SAFETY: raw *mut Expr into arena-owned tree; parser holds exclusive access
+        // during the single-threaded visit pass (same contract as Zig `*Expr`).
         let expr = unsafe { &mut *expr };
 
         // Only continue trying to insert this replacement into sub-expressions
@@ -1925,7 +1926,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         false
     }
 
-    #[cfg(any())] // blocked_on: full ExprData variant set mut access via StoreRef
     fn substitute_single_use_symbol_in_expr(
         &mut self,
         expr: Expr,
@@ -1933,17 +1933,21 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         replacement: Expr,
         replacement_can_be_removed: bool,
     ) -> Substitution {
+        // Zig matched on `expr.data` (a tagged union of `*E.*`) and mutated through
+        // the captured pointer. `ExprData` is `Copy`; matching by value yields owned
+        // `StoreRef<E::*>` copies whose `DerefMut` writes to the same arena slot,
+        // so `e.target = result` mutates the AST in place exactly as Zig did.
         'outer: {
-            match &expr.data {
+            match expr.data {
                 js_ast::ExprData::EIdentifier(ident) => {
-                    if ident.r#ref.eql(r#ref)
-                        || self.symbols[ident.r#ref.inner_index() as usize].link.eql(r#ref)
+                    if ident.ref_.eql(r#ref)
+                        || self.symbols[ident.ref_.inner_index() as usize].link.eql(r#ref)
                     {
                         self.ignore_usage(r#ref);
                         return Substitution::Success(replacement);
                     }
                 }
-                js_ast::ExprData::ENew(new) => {
+                js_ast::ExprData::ENew(mut new) => {
                     match self.substitute_single_use_symbol_in_expr(new.target, r#ref, replacement, replacement_can_be_removed) {
                         Substitution::Continue(_) => {}
                         Substitution::Success(result) => {
@@ -1972,7 +1976,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         }
                     }
                 }
-                js_ast::ExprData::ESpread(spread) => {
+                js_ast::ExprData::ESpread(mut spread) => {
                     match self.substitute_single_use_symbol_in_expr(spread.value, r#ref, replacement, replacement_can_be_removed) {
                         Substitution::Continue(_) => {}
                         Substitution::Success(result) => {
@@ -1985,7 +1989,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         }
                     }
                 }
-                js_ast::ExprData::EAwait(await_expr) => {
+                js_ast::ExprData::EAwait(mut await_expr) => {
                     match self.substitute_single_use_symbol_in_expr(await_expr.value, r#ref, replacement, replacement_can_be_removed) {
                         Substitution::Continue(_) => {}
                         Substitution::Success(result) => {
@@ -1998,7 +2002,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         }
                     }
                 }
-                js_ast::ExprData::EYield(yield_) => {
+                js_ast::ExprData::EYield(mut yield_) => {
                     let value = yield_.value.unwrap_or(Expr {
                         data: js_ast::ExprData::EMissing(E::Missing {}),
                         loc: expr.loc,
@@ -2015,7 +2019,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         }
                     }
                 }
-                js_ast::ExprData::EImport(import) => {
+                js_ast::ExprData::EImport(mut import) => {
                     match self.substitute_single_use_symbol_in_expr(import.expr, r#ref, replacement, replacement_can_be_removed) {
                         Substitution::Continue(_) => {}
                         Substitution::Success(result) => {
@@ -2037,8 +2041,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         return Substitution::Continue(expr);
                     }
                 }
-                js_ast::ExprData::EUnary(e) => {
-                    use js_ast::Op;
+                js_ast::ExprData::EUnary(mut e) => {
                     match e.op {
                         js_ast::op::Code::UnPreInc | js_ast::op::Code::UnPostInc | js_ast::op::Code::UnPreDec | js_ast::op::Code::UnPostDec | js_ast::op::Code::UnDelete => {
                             // Do not substitute into an assignment position
@@ -2056,7 +2059,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         },
                     }
                 }
-                js_ast::ExprData::EDot(e) => {
+                js_ast::ExprData::EDot(mut e) => {
                     match self.substitute_single_use_symbol_in_expr(e.target, r#ref, replacement, replacement_can_be_removed) {
                         Substitution::Continue(_) => {}
                         Substitution::Success(result) => {
@@ -2069,7 +2072,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         }
                     }
                 }
-                js_ast::ExprData::EBinary(e) => {
+                js_ast::ExprData::EBinary(mut e) => {
                     // Do not substitute into an assignment position
                     if e.op.binary_assign_target() == js_ast::AssignTarget::None {
                         match self.substitute_single_use_symbol_in_expr(e.left, r#ref, replacement, replacement_can_be_removed) {
@@ -2117,7 +2120,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         }
                     }
                 }
-                js_ast::ExprData::EIf(e) => {
+                js_ast::ExprData::EIf(mut e) => {
                     match self.substitute_single_use_symbol_in_expr(e.test_, r#ref, replacement, replacement_can_be_removed) {
                         Substitution::Continue(_) => {}
                         Substitution::Success(result) => {
@@ -2158,7 +2161,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         }
                     }
                 }
-                js_ast::ExprData::EIndex(index) => {
+                js_ast::ExprData::EIndex(mut index) => {
                     match self.substitute_single_use_symbol_in_expr(index.target, r#ref, replacement, replacement_can_be_removed) {
                         Substitution::Continue(_) => {}
                         Substitution::Success(result) => {
@@ -2187,11 +2190,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         }
                     }
                 }
-                js_ast::ExprData::ECall(e) => {
+                js_ast::ExprData::ECall(mut e) => {
                     // Don't substitute something into a call target that could change "this"
                     match replacement.data {
                         js_ast::ExprData::EDot(_) | js_ast::ExprData::EIndex(_) => {
-                            if matches!(e.target.data, js_ast::ExprData::EIdentifier(id) if id.r#ref.eql(r#ref)) {
+                            if matches!(e.target.data, js_ast::ExprData::EIdentifier(id) if id.ref_.eql(r#ref)) {
                                 break 'outer;
                             }
                         }
@@ -2228,7 +2231,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         }
                     }
                 }
-                js_ast::ExprData::EArray(e) => {
+                js_ast::ExprData::EArray(mut e) => {
                     for item in e.items.slice_mut() {
                         match self.substitute_single_use_symbol_in_expr(*item, r#ref, replacement, replacement_can_be_removed) {
                             Substitution::Continue(_) => {}
@@ -2243,7 +2246,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         }
                     }
                 }
-                js_ast::ExprData::EObject(e) => {
+                js_ast::ExprData::EObject(mut e) => {
                     for property in e.properties.slice_mut() {
                         // Check the key
                         if property.flags.contains(Flags::Property::IsComputed) {
@@ -2279,8 +2282,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         }
                     }
                 }
-                js_ast::ExprData::ETemplate(e) => {
-                    if let Some(tag) = &mut e.tag {
+                js_ast::ExprData::ETemplate(mut e) => {
+                    if let Some(tag) = e.tag.as_mut() {
                         match self.substitute_single_use_symbol_in_expr(*tag, r#ref, replacement, replacement_can_be_removed) {
                             Substitution::Continue(_) => {}
                             Substitution::Success(result) => {
@@ -2294,7 +2297,19 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         }
                     }
 
-                    for part in e.parts.iter_mut() {
+                    // `E::Template.parts` is `&'static [TemplatePart]` in Phase A (arena-owned
+                    // slice with the lifetime erased per PORTING.md). Zig held `[]TemplatePart`
+                    // and mutated `part.value` in place; recover the mutable view via raw cast.
+                    // SAFETY: parts points into the parser arena, which the single-threaded
+                    // visit pass has exclusive access to; no other &-borrow of this slice
+                    // is live across the loop body.
+                    let parts = unsafe {
+                        core::slice::from_raw_parts_mut(
+                            e.parts.as_ptr() as *mut E::TemplatePart,
+                            e.parts.len(),
+                        )
+                    };
+                    for part in parts.iter_mut() {
                         match self.substitute_single_use_symbol_in_expr(part.value, r#ref, replacement, replacement_can_be_removed) {
                             Substitution::Continue(_) => {}
                             Substitution::Success(result) => {
@@ -2319,7 +2334,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             return Substitution::Continue(expr);
         }
 
-        let tag: Expr::Tag = expr.data.tag();
+        let tag: js_ast::ExprTag = expr.data.tag();
 
         // We can always reorder past primitive values
         if tag.is_primitive_literal() {

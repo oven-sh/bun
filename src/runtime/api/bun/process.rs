@@ -368,7 +368,7 @@ impl Process {
     #[cfg(unix)]
     pub fn init_posix(
         posix: PosixSpawnResult,
-        event_loop: impl Into<EventLoopHandle>,
+        event_loop: EventLoopHandle,
         sync_: bool,
     ) -> *mut Process {
         let status = 'brk: {
@@ -381,13 +381,13 @@ impl Process {
         };
         // bun.new → Box::into_raw (pointer crosses FFI / intrusive refcount)
         Box::into_raw(Box::new(Process {
-            ref_count: AtomicU32::new(1),
+            ref_count: bun_ptr::ThreadSafeRefCount::init(),
             pid: posix.pid,
             #[cfg(target_os = "linux")]
             pidfd: posix.pidfd.unwrap_or(0),
             #[cfg(not(target_os = "linux"))]
             pidfd: (),
-            event_loop: EventLoopHandle::init(event_loop),
+            event_loop,
             sync: sync_,
             poller: Poller::Detached,
             status,
@@ -395,43 +395,17 @@ impl Process {
         }))
     }
 
-    pub fn has_exited(&self) -> bool {
-        matches!(self.status, Status::Exited(_) | Status::Signaled(_) | Status::Err(_))
-    }
-
-    pub fn has_killed(&self) -> bool {
-        matches!(self.status, Status::Exited(_) | Status::Signaled(_))
-    }
+    // has_exited / has_killed / signal_code live in the always-on impl above.
 
     pub fn on_exit(&mut self, status: Status, rusage: &Rusage) {
-        let exit_handler = core::mem::take(&mut self.exit_handler);
-        // PORT NOTE: Zig copies exit_handler by value then assigns status; we take()
-        // because detach() resets it anyway. Restore if not exited.
-        self.status = status;
-
-        let exited = self.has_exited();
-        if exited {
+        // ProcessExitHandler is Copy (owner ptr + &'static vtable), so mirror
+        // Zig exactly: snapshot, assign status, detach-if-exited, then call.
+        let exit_handler = self.exit_handler;
+        self.status = status.clone();
+        if self.has_exited() {
             self.detach();
-        } else {
-            // restore handler (Zig left it in place)
-            // TODO(port): ProcessExitHandler is Copy in Zig; make it Copy in Rust too
         }
-        // PORT NOTE: reshaped for borrowck — Zig keeps exit_handler in self while calling
-        self.exit_handler = exit_handler;
-        let handler_copy = ProcessExitHandler { ptr: self.exit_handler.ptr };
-        if exited {
-            self.exit_handler = ProcessExitHandler::default();
-        }
-        handler_copy.call(self, status, rusage);
-    }
-    // TODO(port): the above on_exit reshaping is ugly; in Phase B make
-    // ProcessExitHandler #[derive(Copy)] and mirror Zig exactly:
-    //   let exit_handler = self.exit_handler; self.status = status;
-    //   if self.has_exited() { self.detach(); }
-    //   exit_handler.call(self, status, rusage);
-
-    pub fn signal_code(&self) -> Option<bun_core::SignalCode> {
-        self.status.signal_code()
+        exit_handler.call(self, status, rusage);
     }
 
     #[cfg(unix)]

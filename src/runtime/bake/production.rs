@@ -786,7 +786,8 @@ pub fn build_with_vm(
             client_entry_urls.put_index(global, u32::try_from(i).unwrap(), JSValue::NULL)?;
         }
 
-        let server_entry_point = pt.load_bundled_module(router_type.server_file)?;
+        let server_file = OpaqueFileId::init(router_type.server_file.get());
+        let server_entry_point = pt.load_bundled_module(server_file)?;
         let server_render_func = 'brk: {
             let Some(raw) = bake_get_on_module_namespace(global, server_entry_point, b"prerender")
             else {

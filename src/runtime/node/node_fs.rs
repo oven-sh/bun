@@ -5240,10 +5240,10 @@ impl NodeFS {
     }
 
     pub fn statfs(&mut self, args: &args::StatFS, _: Flavor) -> Maybe<ret::StatFS> {
-        let _ = args;
-        // blocked_on: bun_sys::statfs — `Syscall::statfs` not yet exported on
-        // POSIX (`sys_uv` has it for Windows). Zig body is a 3-line forward.
-        todo!("blocked_on: bun_sys::statfs")
+        match Syscall::statfs(args.path.slice_z(&mut self.sync_error_buf)) {
+            Maybe::Ok(result) => Maybe::Ok(ret::StatFS::init(&result, args.big_int)),
+            Maybe::Err(err) => Maybe::Err(err),
+        }
     }
 
     pub fn stat(&mut self, args: &args::Stat, _: Flavor) -> Maybe<ret::Stat> {

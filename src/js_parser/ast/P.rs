@@ -6957,8 +6957,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // erase to a raw pointer immediately so we can call other `&mut self`
         // methods (generate_temp_ref_with_scope, declared_symbols.append) while
         // holding the storage — exactly mirroring the Zig pointer flow.
-        let ctx_storage_ptr: *mut Option<crate::HookContext> = match self.react_refresh.hook_ctx_storage.as_deref_mut() {
-            Some(s) => s as *mut _,
+        let ctx_storage_ptr: *mut Option<crate::HookContext> = match self.react_refresh.hook_ctx_storage {
+            Some(s) => s.as_ptr(),
             None => return, // not in a function, ignore this hook call.
         };
         // SAFETY: hook_ctx_storage points at stack storage in the visiting fn frame,

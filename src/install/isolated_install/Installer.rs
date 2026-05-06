@@ -1616,7 +1616,7 @@ impl Task {
                         );
                     }
 
-                    let mut bin_linker = bin::Linker {
+                    let mut bin_linker = bin_real::Linker {
                         bin,
                         // SAFETY: read-only `PackageManager` access; see top-of-fn note.
                         global_bin_path: unsafe { &*manager_ptr }.options.bin_path,
@@ -1797,7 +1797,7 @@ impl Task {
                     bun_core::assert_with_location(
                         installer.store.entries.items_step()[this.entry_id.get() as usize]
                             .load(Ordering::Relaxed)
-                            == Step::CheckIfBlocked,
+                            == Step::CheckIfBlocked as u32,
                         core::panic::Location::caller(),
                     );
                 }
@@ -1811,7 +1811,7 @@ impl Task {
                     bun_core::assert_with_location(
                         installer.store.entries.items_step()[this.entry_id.get() as usize]
                             .load(Ordering::Relaxed)
-                            != Step::Done,
+                            != Step::Done as u32,
                         core::panic::Location::caller(),
                     );
                 }
@@ -1868,8 +1868,8 @@ impl<'a> Installer<'a> {
         pkg_name_hash: PackageNameHash,
         pkg_res: &Resolution,
     ) -> core::result::Result<PatchInfo, bun_alloc::AllocError> {
-        if self.lockfile.patched_dependencies.entries.len() == 0
-            && self.manager.patched_dependencies_to_remove.entries.len() == 0
+        if self.lockfile.patched_dependencies.len() == 0
+            && self.manager.patched_dependencies_to_remove.len() == 0
         {
             return Ok(PatchInfo::None);
         }
@@ -1899,7 +1899,7 @@ impl<'a> Installer<'a> {
             }
         }
 
-        let name_and_version_hash = SemverString::Builder::string_hash(&version_buf);
+        let name_and_version_hash = bun_semver::semver_string::Builder::string_hash(&version_buf);
 
         if let Some(patch) = self.lockfile.patched_dependencies.get(&name_and_version_hash) {
             return Ok(PatchInfo::Patch(PatchInfoPatch {
@@ -2094,7 +2094,7 @@ impl<'a> Installer<'a> {
                 );
             }
 
-            let mut bin_linker = bin::Linker {
+            let mut bin_linker = bin_real::Linker {
                 bin,
                 global_bin_path: self.manager.options.bin_path,
                 package_name,

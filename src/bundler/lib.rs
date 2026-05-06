@@ -392,6 +392,9 @@ pub mod options {
 }
 
 pub use cache::Set as Cache;
+/// Re-export so `crate::RuntimeTranspilerCache` resolves for `transpiler::ParseOptions`
+/// and downstream callers (`jsc_hooks` / `RuntimeTranspilerStore`).
+pub use cache::RuntimeTranspilerCache;
 
 // ──────────────────────────────────────────────────────────────────────────
 // CYCLEBREAK(b0) TYPE_ONLY: pure value types from bake that bundler needs

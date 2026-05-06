@@ -144,14 +144,14 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // TODO(b2-blocked): `js_ast::{Expr,Stmt}::Data::Store::create()` once
         // `bun_js_parser` exposes the store ctors at this tier.
 
-        let vm = VirtualMachine::init(VmInitOptions {
+        let vm_ptr = VirtualMachine::init(VmInitOptions {
             smol: ctx.runtime_options.smol,
             eval_mode: !ctx.runtime_options.eval.script.is_empty(),
             is_main_thread: true,
             ..Default::default()
         })?;
         // SAFETY: `init` returns the unique freshly-boxed VM on this thread.
-        let vm = unsafe { &mut *vm };
+        let vm = unsafe { &mut *vm_ptr };
 
         // PORT NOTE: `vm.preload`/`vm.argv` are `Vec<Box<[u8]>>` on both sides;
         // hand the CLI's vectors over wholesale (process-lifetime, never freed).
@@ -186,7 +186,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // trampoline reads it, never freed (`global_exit` ends the process).
         unsafe {
             RUN = Run {
-                vm,
+                vm: vm_ptr,
                 entry_path,
                 any_unhandled: false,
                 eval_and_print: ctx.runtime_options.eval.eval_and_print,

@@ -84,6 +84,480 @@ pub struct Transpiler<'a> {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
+// B-2 un-gated: `ParseResult` / `AlreadyBundled` / `ParseOptions` +
+// `Transpiler::parse*` — real types so `ModuleLoader::transpile_source_code`
+// (jsc_hooks.rs) and `AsyncModule` / `JSTranspiler` can name them. The body
+// of `parse_maybe_return_file_only_allow_shared_buffer` does the source-load
+// step (virtual / client-entry / `node:` fallback) for real and gates the
+// per-loader transpile branches behind `#[cfg(any())]` until the lower-tier
+// surfaces (`cache::Fs::read_file*`, `js_parser::Options::init`,
+// `cache::JavaScript::parse`) un-gate.
+// ══════════════════════════════════════════════════════════════════════════
+
+use bun_sys::Fd as FD;
+use bun_string::strings;
+use bun_resolver::package_json::MacroMap as MacroRemap;
+use crate::entry_points as EntryPoints;
+use crate::cache::RuntimeTranspilerCache;
+use crate::ungate_support::bun_node_fallbacks as NodeFallbackModules;
+
+/// Port of `transpiler.zig:ParseResult.AlreadyBundled` (tagged union).
+pub enum AlreadyBundled {
+    None,
+    SourceCode,
+    SourceCodeCjs,
+    Bytecode(Box<[u8]>),
+    BytecodeCjs(Box<[u8]>),
+}
+
+impl Default for AlreadyBundled {
+    fn default() -> Self {
+        AlreadyBundled::None
+    }
+}
+
+impl AlreadyBundled {
+    pub fn bytecode_slice(&self) -> &[u8] {
+        match self {
+            AlreadyBundled::Bytecode(slice) | AlreadyBundled::BytecodeCjs(slice) => slice,
+            _ => &[],
+        }
+    }
+
+    pub fn is_bytecode(&self) -> bool {
+        matches!(self, AlreadyBundled::Bytecode(_) | AlreadyBundled::BytecodeCjs(_))
+    }
+
+    pub fn is_common_js(&self) -> bool {
+        matches!(self, AlreadyBundled::SourceCodeCjs | AlreadyBundled::BytecodeCjs(_))
+    }
+}
+
+/// Port of `transpiler.zig:ParseResult`.
+// PORT NOTE: lifetime-free — `runtime_transpiler_cache` is a raw pointer (Zig
+// `?*RuntimeTranspilerCache`) so `AsyncModule.parse_result` / `JSTranspiler`
+// can store this by value without threading a borrow lifetime.
+pub struct ParseResult {
+    pub source: logger::Source,
+    pub loader: options::Loader,
+    pub ast: js_ast::Ast,
+    pub already_bundled: AlreadyBundled,
+    pub input_fd: Option<FD>,
+    pub empty: bool,
+    // PORT NOTE: Zig `_resolver.PendingResolution.List` is
+    // `MultiArrayList(PendingResolution)`; that alias isn't re-exported from
+    // bun_resolver yet, so spell the type out.
+    pub pending_imports: bun_collections::MultiArrayList<resolver::PendingResolution>,
+
+    /// Zig: `?*bun.RuntimeTranspilerCache`. SAFETY: erased — bundler stores it
+    /// and hands it back to the runtime side; never dereferenced here.
+    pub runtime_transpiler_cache: Option<core::ptr::NonNull<RuntimeTranspilerCache>>,
+}
+
+impl ParseResult {
+    #[inline]
+    fn empty_with(source: logger::Source, loader: options::Loader, input_fd: Option<FD>) -> Self {
+        ParseResult {
+            source,
+            loader,
+            ast: js_ast::Ast::empty(),
+            already_bundled: AlreadyBundled::None,
+            input_fd,
+            empty: true,
+            pending_imports: Default::default(),
+            runtime_transpiler_cache: None,
+        }
+    }
+
+    pub fn is_pending_import(&self, id: u32) -> bool {
+        // TODO(b2-blocked): MultiArrayList::items(.import_record_id) field
+        // projection — `bun_collections::MultiArrayList` doesn't yet expose a
+        // by-field accessor for `PendingResolution.import_record_id`. Iterate
+        // the dense slice once it lands; until then this is only ever called
+        // from `print_with_source_map` (gated).
+        let _ = id;
+        false
+    }
+}
+
+/// Port of `transpiler.zig:Transpiler.ParseOptions`.
+pub struct ParseOptions<'a> {
+    pub allocator: &'a Arena,
+    pub dirname_fd: FD,
+    pub file_descriptor: Option<FD>,
+    pub file_hash: Option<u32>,
+
+    /// On exception, we might still want to watch the file.
+    pub file_fd_ptr: Option<&'a mut FD>,
+
+    pub path: logger::fs::Path,
+    pub loader: options::Loader,
+    /// `BundleOptions.jsx` — the file-backed `options_impl::jsx::Pragma`, NOT
+    /// the lib.rs shim. Callers pass `transpiler.options.jsx.clone()`.
+    pub jsx: crate::options_impl::jsx::Pragma,
+    pub macro_remappings: MacroRemap,
+    pub macro_js_ctx: MacroJSCtx,
+    pub virtual_source: Option<&'a logger::Source>,
+    /// Zig: `runtime.Runtime.Features.ReplaceableExport.Map`.
+    pub replace_exports: bun_collections::StringArrayHashMap<js_ast::runtime::ReplaceableExport>,
+    pub inject_jest_globals: bool,
+    pub set_breakpoint_on_first_line: bool,
+    pub emit_decorator_metadata: bool,
+    pub experimental_decorators: bool,
+    pub remove_cjs_module_wrapper: bool,
+
+    pub dont_bundle_twice: bool,
+    pub allow_commonjs: bool,
+    /// `"type"` from `package.json`. Used to make sure the parser defaults
+    /// to CommonJS or ESM based on what the package.json says, when it
+    /// doesn't otherwise know from reading the source code.
+    ///
+    /// See: https://nodejs.org/api/packages.html#type
+    pub module_type: options::ModuleType,
+
+    pub runtime_transpiler_cache: Option<&'a mut RuntimeTranspilerCache>,
+
+    pub keep_json_and_toml_as_one_statement: bool,
+    pub allow_bytecode_cache: bool,
+}
+
+/// Manual clone — `logger::Source` doesn't `derive(Clone)` yet but every field
+/// is `Copy`/`Clone` (`fs::Path`: Clone; `Str = &'static [u8]`: Copy).
+#[inline]
+fn dup_source(s: &logger::Source) -> logger::Source {
+    logger::Source {
+        path: s.path.clone(),
+        contents: s.contents,
+        contents_is_recycled: s.contents_is_recycled,
+        identifier_name: s.identifier_name,
+        index: s.index,
+    }
+}
+
+impl<'a> Transpiler<'a> {
+    pub fn parse(
+        &mut self,
+        this_parse: ParseOptions<'_>,
+        client_entry_point_: Option<&mut EntryPoints::ClientEntryPoint>,
+    ) -> Option<ParseResult> {
+        self.parse_maybe_return_file_only::<false>(this_parse, client_entry_point_)
+    }
+
+    pub fn parse_maybe_return_file_only<const RETURN_FILE_ONLY: bool>(
+        &mut self,
+        this_parse: ParseOptions<'_>,
+        client_entry_point_: Option<&mut EntryPoints::ClientEntryPoint>,
+    ) -> Option<ParseResult> {
+        self.parse_maybe_return_file_only_allow_shared_buffer::<RETURN_FILE_ONLY, false>(
+            this_parse,
+            client_entry_point_,
+        )
+    }
+
+    pub fn parse_maybe_return_file_only_allow_shared_buffer<
+        const RETURN_FILE_ONLY: bool,
+        const USE_SHARED_BUFFER: bool,
+    >(
+        &mut self,
+        this_parse: ParseOptions<'_>,
+        // TODO(port): Zig `anytype` + `@hasField(.., "source")` — only ever
+        // called with `?*EntryPoints.ClientEntryPoint` in this file. If other
+        // callers pass a different type, introduce a `ClientEntryPointLike`
+        // trait with `fn source() -> Option<&Source>`.
+        client_entry_point_: Option<&mut EntryPoints::ClientEntryPoint>,
+    ) -> Option<ParseResult> {
+        let allocator = this_parse.allocator;
+        let dirname_fd = this_parse.dirname_fd;
+        let file_descriptor = this_parse.file_descriptor;
+        let file_hash = this_parse.file_hash;
+        let path = this_parse.path;
+        let loader = this_parse.loader;
+        // SAFETY: `self.log` is a non-null `*mut Log` aliasing the same Log as
+        // `self.resolver.log` / `self.linker.log` (see header PORT NOTE).
+        let log: &mut logger::Log = unsafe { &mut *self.log };
+
+        let mut input_fd: Option<FD> = None;
+
+        // PORT NOTE: Zig `&brk: { ... }` took the address of a temporary; Rust
+        // owns the value and borrows it after the block.
+        let source_owned: logger::Source = 'brk: {
+            if let Some(virtual_source) = this_parse.virtual_source {
+                break 'brk dup_source(virtual_source);
+            }
+
+            if let Some(client_entry_point) = client_entry_point_ {
+                // Zig: if (@hasField(Child, "source")) — ClientEntryPoint always has it.
+                break 'brk dup_source(&client_entry_point.source);
+            }
+
+            if path.namespace == b"node" {
+                if let Some(code) = NodeFallbackModules::contents_from_path(path.text) {
+                    break 'brk logger::Source::init_path_string(path.text, code);
+                }
+
+                break 'brk logger::Source::init_path_string(path.text, b"");
+            }
+
+            // TODO(b2-blocked): `data:` URL → `bun_resolver::data_url::DataURL`.
+            // `decode_data()` returns `Vec<u8>` but `Source.contents: &'static
+            // [u8]` (Phase-B Str-ownership rework); can't surface without leaking.
+            #[cfg(any())]
+            if path.text.starts_with(b"data:") {
+                use bun_resolver::data_url::DataURL;
+                let data_url = match DataURL::parse_without_check(path.text) {
+                    Ok(u) => u,
+                    Err(err) => {
+                        let _ = log.add_error_fmt(
+                            None,
+                            logger::Loc::EMPTY,
+                            format_args!("{} parsing data url \"{}\"", err, bstr::BStr::new(path.text)),
+                        );
+                        return None;
+                    }
+                };
+                let body = match data_url.decode_data() {
+                    Ok(b) => b,
+                    Err(err) => {
+                        let _ = log.add_error_fmt(
+                            None,
+                            logger::Loc::EMPTY,
+                            format_args!("{} decoding data \"{}\"", err, bstr::BStr::new(path.text)),
+                        );
+                        return None;
+                    }
+                };
+                break 'brk logger::Source::init_path_string(path.text, body);
+            }
+
+            // TODO(b2-blocked): `crate::cache::Fs::read_file_with_allocator` is
+            // gated (depends on `bun_resolver::fs::FileSystem` + `bun_sys::File`
+            // surface) and the resolver's CYCLEBREAK `CacheSet.fs` stub body is
+            // `unimplemented!()`. Un-gate this block once either lands; the
+            // `init_recycled_file` constructor also needs the public
+            // `PathContentsPair` (logger keeps it module-private).
+            #[cfg(any())]
+            {
+                let entry = match self.resolver.caches.fs.read_file_with_allocator(
+                    // PERF(port): USE_SHARED_BUFFER selected default_allocator vs this_parse.allocator
+                    &mut *self.fs,
+                    path.text,
+                    dirname_fd,
+                    USE_SHARED_BUFFER,
+                    file_descriptor,
+                ) {
+                    Ok(e) => e,
+                    Err(err) => {
+                        let _ = log.add_error_fmt(
+                            None,
+                            logger::Loc::EMPTY,
+                            format_args!("{} reading \"{}\"", err, bstr::BStr::new(path.text)),
+                        );
+                        return None;
+                    }
+                };
+                input_fd = Some(entry.fd);
+                if let Some(file_fd_ptr) = this_parse.file_fd_ptr {
+                    *file_fd_ptr = entry.fd;
+                }
+                match logger::Source::init_recycled_file(logger::PathContentsPair {
+                    path: path.clone(),
+                    contents: entry.contents,
+                }) {
+                    Ok(s) => break 'brk s,
+                    Err(_) => return None,
+                }
+            }
+            #[cfg(not(any()))]
+            {
+                let _ = (file_descriptor, dirname_fd, &this_parse.file_fd_ptr);
+                let _ = log.add_error_fmt(
+                    None,
+                    logger::Loc::EMPTY,
+                    format_args!(
+                        "reading \"{}\" (b2-blocked: cache::Fs::read_file)",
+                        bstr::BStr::new(path.text)
+                    ),
+                );
+                return None;
+            }
+        };
+        let source: &logger::Source = &source_owned;
+
+        if RETURN_FILE_ONLY {
+            return Some(ParseResult::empty_with(dup_source(source), loader, input_fd));
+        }
+
+        if source.contents.is_empty()
+            || (source.contents.len() < 33
+                && strings::trim(source.contents, b"\n\r ").is_empty())
+        {
+            if !loader.handles_empty_file() {
+                return Some(ParseResult::empty_with(dup_source(source), loader, input_fd));
+            }
+        }
+
+        match loader {
+            options::Loader::Js
+            | options::Loader::Jsx
+            | options::Loader::Ts
+            | options::Loader::Tsx => {
+                // wasm magic number
+                if source.is_web_assembly() {
+                    return Some(ParseResult::empty_with(
+                        dup_source(source),
+                        options::Loader::Wasm,
+                        input_fd,
+                    ));
+                }
+
+                let target = self.options.target;
+
+                let mut jsx = this_parse.jsx;
+                jsx.parse = loader.is_jsx();
+                let _ = (allocator, file_hash, target, &jsx, &this_parse.macro_remappings);
+
+                // TODO(b2-blocked): `js_parser::ParserOptions::init` is gated
+                // (b2-ast-round-D) and the live `Options` has a non-defaultable
+                // `&mut MacroContext` field plus a different `JSX::Pragma`
+                // type than `options_impl::jsx::Pragma`. The full body —
+                // copying every `BundleOptions`/`ParseOptions` flag onto
+                // `opts.features.*` then calling
+                // `self.resolver.caches.js.parse()` — lives in
+                // `__phase_a_draft` below; un-gate once `Options::init` and
+                // `cache::JavaScript::parse` surface.
+                #[cfg(any())]
+                {
+                    let mut opts = js_ast::ParserOptions::init(jsx, loader);
+                    opts.features.emit_decorator_metadata = this_parse.emit_decorator_metadata;
+                    opts.features.standard_decorators = !loader.is_typescript()
+                        || !(this_parse.experimental_decorators || this_parse.emit_decorator_metadata);
+                    opts.features.allow_runtime = self.options.allow_runtime;
+                    opts.features.set_breakpoint_on_first_line =
+                        this_parse.set_breakpoint_on_first_line;
+                    opts.features.trim_unused_imports =
+                        self.options.trim_unused_imports.unwrap_or(loader.is_typescript());
+                    opts.features.no_macros = self.options.no_macros;
+                    opts.features.runtime_transpiler_cache =
+                        this_parse.runtime_transpiler_cache.is_some();
+                    opts.transform_only = self.options.transform_only;
+                    opts.ignore_dce_annotations = self.options.ignore_dce_annotations;
+                    opts.features.dont_bundle_twice = this_parse.dont_bundle_twice;
+                    opts.features.commonjs_at_runtime = this_parse.allow_commonjs;
+                    opts.module_type = this_parse.module_type;
+                    opts.tree_shaking = self.options.tree_shaking;
+                    opts.features.inlining = self.options.inlining;
+                    opts.filepath_hash_for_hmr = file_hash.unwrap_or(0);
+                    opts.features.auto_import_jsx = self.options.auto_import_jsx;
+                    opts.warn_about_unbundled_modules = !target.is_bun();
+                    opts.features.lower_using = !target.is_bun();
+                    opts.features.inject_jest_globals = this_parse.inject_jest_globals;
+                    opts.features.minify_syntax = self.options.minify_syntax;
+                    opts.features.minify_identifiers = self.options.minify_identifiers;
+                    opts.features.dead_code_elimination = self.options.dead_code_elimination;
+                    opts.features.remove_cjs_module_wrapper = this_parse.remove_cjs_module_wrapper;
+                    opts.repl_mode = self.options.repl_mode;
+                    if self.macro_context.is_none() {
+                        self.macro_context = Some(js_ast::Macro::MacroContext::init(self));
+                    }
+                    opts.features.top_level_await = true;
+                    opts.macro_context = self.macro_context.as_mut().unwrap();
+                    if target != options::Target::BunMacro {
+                        opts.macro_context.javascript_object = this_parse.macro_js_ctx;
+                    }
+                    opts.features.is_macro_runtime = target == options::Target::BunMacro;
+
+                    let parsed = crate::cache::JavaScript::init()
+                        .parse(allocator, opts, &mut self.options.define, log, source)
+                        .ok()??;
+                    return Some(match parsed {
+                        js_ast::Result::Ast(value) => ParseResult {
+                            ast: value,
+                            source: dup_source(source),
+                            loader,
+                            input_fd,
+                            runtime_transpiler_cache: this_parse
+                                .runtime_transpiler_cache
+                                .map(|p| core::ptr::NonNull::from(p)),
+                            already_bundled: AlreadyBundled::None,
+                            pending_imports: Default::default(),
+                            empty: false,
+                        },
+                        js_ast::Result::Cached => ParseResult {
+                            // TODO(port): Zig used `undefined` for ast here.
+                            ast: js_ast::Ast::empty(),
+                            runtime_transpiler_cache: this_parse
+                                .runtime_transpiler_cache
+                                .map(|p| core::ptr::NonNull::from(p)),
+                            source: dup_source(source),
+                            loader,
+                            input_fd,
+                            already_bundled: AlreadyBundled::None,
+                            pending_imports: Default::default(),
+                            empty: false,
+                        },
+                        js_ast::Result::AlreadyBundled(already_bundled) => ParseResult {
+                            ast: js_ast::Ast::empty(),
+                            // bytecode-cache lookup lives in __phase_a_draft.
+                            already_bundled: match already_bundled {
+                                js_ast::AlreadyBundled::Bun => AlreadyBundled::SourceCode,
+                                js_ast::AlreadyBundled::BunCjs => AlreadyBundled::SourceCodeCjs,
+                                js_ast::AlreadyBundled::BytecodeCjs => AlreadyBundled::SourceCodeCjs,
+                                js_ast::AlreadyBundled::Bytecode => AlreadyBundled::SourceCode,
+                            },
+                            source: dup_source(source),
+                            loader,
+                            input_fd,
+                            pending_imports: Default::default(),
+                            runtime_transpiler_cache: None,
+                            empty: false,
+                        },
+                    });
+                }
+            }
+            // TODO(b2-blocked): JSON/JSONC/TOML/YAML/JSON5/Text/Md branches
+            // build `js_ast::Stmt`/`Part` slabs via `Arena::alloc_slice_*` and
+            // `Stmt::alloc(S::ExportDefault { .. })` — those constructors are
+            // shaped differently in the live `bun_js_parser::ast` surface.
+            // Full body preserved in `__phase_a_draft` below.
+            options::Loader::Wasm => {
+                if self.options.target.is_bun() {
+                    if !source.is_web_assembly() {
+                        let _ = log.add_error_fmt(
+                            None,
+                            logger::Loc::EMPTY,
+                            format_args!(
+                                "Invalid wasm file \"{}\" (missing magic header)",
+                                bstr::BStr::new(path.text)
+                            ),
+                        );
+                        return None;
+                    }
+
+                    return Some(ParseResult {
+                        ast: js_ast::Ast::empty(),
+                        source: dup_source(source),
+                        loader,
+                        input_fd,
+                        already_bundled: AlreadyBundled::None,
+                        pending_imports: Default::default(),
+                        runtime_transpiler_cache: None,
+                        empty: false,
+                    });
+                }
+            }
+            options::Loader::Css => {}
+            _ => {
+                // .toml/.yaml/.json/.jsonc/.json5/.text/.md and the long-tail
+                // loaders fall through here until their AST-building branches
+                // un-gate (see __phase_a_draft).
+            }
+        }
+
+        None
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════
 // Phase-A draft body — gated until lower-tier crate surfaces solidify.
 // (`bun_fs`/`bun_str`/`bun_data_url`/`bun_node_fallbacks` crate aliases,
 // `crate::linker`, `resolver::PendingResolution::List`, parser FFI.)

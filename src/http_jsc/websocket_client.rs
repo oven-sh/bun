@@ -1239,8 +1239,9 @@ impl<const SSL: bool> WebSocket<SSL> {
             if let Some(tunnel) = &self.proxy_tunnel {
                 // In tunnel mode, route through the tunnel's TLS layer
                 // instead of the detached raw socket.
-                // SAFETY: `tunnel` holds a live ref (RefPtr has no `Deref`).
-                match unsafe { tunnel.data.as_ref() }.write(out_buf) {
+                // SAFETY: `tunnel` holds a live ref (RefPtr has no `Deref`);
+                // `write` mutates the SSL wrapper on the owning thread.
+                match unsafe { &mut *tunnel.data.as_ptr() }.write(out_buf) {
                     Ok(w) => Ok(w),
                     Err(_) => Err(true),
                 }

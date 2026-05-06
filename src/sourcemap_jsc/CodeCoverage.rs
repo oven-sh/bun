@@ -874,22 +874,11 @@ pub extern "C" fn ByteRangeMapping__findExecutedLines(
     v
 }
 
-#[derive(Clone, Copy)]
-pub struct Fraction {
-    pub functions: f64,
-    pub lines: f64,
-
-    /// This metric is less accurate right now
-    pub stmts: f64,
-
-    pub failing: bool,
-}
-
-impl Default for Fraction {
-    fn default() -> Self {
-        Self { functions: 0.9, lines: 0.9, stmts: 0.75, failing: false }
-    }
-}
+// move-out: TYPE_ONLY → bun_options_types::CodeCoverageOptions::Fraction.
+// Lifted into options_types so the CLI tier can hold `CodeCoverageOptions.fractions`
+// without depending on tier-6 sourcemap_jsc; re-exported here so coverage report
+// writers and the test runner share one definition.
+pub use bun_options_types::CodeCoverageOptions::Fraction;
 
 #[derive(Clone, Copy, Default)]
 pub struct Block {

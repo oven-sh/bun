@@ -214,13 +214,16 @@ impl<'a> AnyEventLoop<'a> {
 
     pub fn enqueue_task_concurrent<Context, ParentContext>(
         &mut self,
-        ctx: &mut Context,
-        // TODO(port): Zig param `comptime field: std.meta.FieldEnum(Context)` — struct-field
-        // reflection has no Rust equivalent. Likely becomes `core::mem::offset_of!`-based or
-        // the caller passes `&mut ctx.<field>` directly. See MiniEventLoop port.
+        ctx: *mut Context,
+        callback: fn(*mut Context, *mut ParentContext),
+        // Zig param `comptime field: std.meta.FieldEnum(Context)` — replaced per
+        // PORTING.md (§reflection) with a caller-supplied byte offset to the
+        // embedded `AnyTaskWithExtraContext` (`core::mem::offset_of!(Context, field)`).
+        field_offset: usize,
     ) {
         match self {
             AnyEventLoop::Js { .. } => {
+                let _ = (ctx, callback, field_offset);
                 // Zig: `bun.todoPanic(@src(), "AnyEventLoop.enqueueTaskConcurrent", .{});`
                 // — intentionally unreachable in Zig too.
                 unreachable!("AnyEventLoop.enqueueTaskConcurrent");
@@ -232,8 +235,11 @@ impl<'a> AnyEventLoop<'a> {
                 // this.virtual_machine.jsc.enqueueTaskConcurrent(concurrent);
             }
             AnyEventLoop::Mini(mini) => {
-                // TODO(port): forward the `field` reflection param once its Rust shape is decided.
-                mini.enqueue_task_concurrent_with_extra_ctx::<Context, ParentContext>(ctx);
+                mini.enqueue_task_concurrent_with_extra_ctx::<Context, ParentContext>(
+                    ctx,
+                    callback,
+                    field_offset,
+                );
             }
         }
     }

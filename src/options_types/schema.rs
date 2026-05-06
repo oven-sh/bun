@@ -609,4 +609,159 @@ pub mod api {
         Bundle = 0,
         External = 1,
     }
+
+    // ── Fallback error-page wire types (schema.zig:548-708) ────────────────
+    // Hand-stubbed subset so `js_parser::runtime::Fallback` un-gates. Full
+    // bodies (with `decode`) arrive from the peechy generator.
+
+    /// schema.zig:548 — `enum(u8)` (open).
+    #[repr(u8)]
+    #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
+    pub enum FallbackStep {
+        #[default]
+        _none = 0,
+        ssr_disabled = 1,
+        create_vm = 2,
+        configure_router = 3,
+        configure_defines = 4,
+        resolve_entry_point = 5,
+        load_entry_point = 6,
+        eval_entry_point = 7,
+        fetch_event_handler = 8,
+    }
+
+    /// schema.zig:612 — peechy `struct Router`.
+    #[derive(Clone, Debug, Default)]
+    pub struct Router {
+        pub routes: StringMap,
+        pub route: i32,
+        pub params: StringMap,
+    }
+    impl Router {
+        pub fn encode(&self, w: &mut super::Writer<'_>) {
+            self.routes.encode(w);
+            w.write_int(self.route);
+            self.params.encode(w);
+        }
+    }
+
+    /// schema.zig:581 — peechy `struct Problems`.
+    #[derive(Clone, Debug, Default)]
+    pub struct Problems {
+        pub code: u16,
+        pub name: Box<[u8]>,
+        pub exceptions: Vec<JsException>,
+        pub build: Log,
+    }
+    impl Problems {
+        pub fn encode(&self, w: &mut super::Writer<'_>) {
+            w.write_int(self.code);
+            w.write_array_u8(&self.name);
+            w.write_int(self.exceptions.len() as u32);
+            for ex in &self.exceptions {
+                ex.encode(w);
+            }
+            self.build.encode(w);
+        }
+    }
+
+    /// schema.zig:475 — peechy `message JsException` (all fields optional).
+    #[derive(Clone, Debug, Default)]
+    pub struct JsException {
+        pub name: Option<Box<[u8]>>,
+        pub message: Option<Box<[u8]>>,
+        pub runtime_type: Option<u16>,
+        pub code: Option<u8>,
+        // `stack: ?StackTrace` — omitted until StackTrace is ported.
+    }
+    impl JsException {
+        pub fn encode(&self, w: &mut super::Writer<'_>) {
+            if let Some(ref v) = self.name {
+                w.write_field_id(1);
+                w.write_array_u8(v);
+            }
+            if let Some(ref v) = self.message {
+                w.write_field_id(2);
+                w.write_array_u8(v);
+            }
+            if let Some(v) = self.runtime_type {
+                w.write_field_id(3);
+                w.write_int(v);
+            }
+            if let Some(v) = self.code {
+                w.write_field_id(4);
+                w.write_int(v);
+            }
+            w.end_message();
+        }
+    }
+
+    /// schema.zig — peechy `struct StringMap { keys: [][]u8, values: [][]u8 }`.
+    #[derive(Clone, Debug, Default)]
+    pub struct StringMap {
+        pub keys: Vec<Box<[u8]>>,
+        pub values: Vec<Box<[u8]>>,
+    }
+    impl StringMap {
+        pub fn encode(&self, w: &mut super::Writer<'_>) {
+            w.write_int(self.keys.len() as u32);
+            for k in &self.keys {
+                w.write_array_u8(k);
+            }
+            w.write_int(self.values.len() as u32);
+            for v in &self.values {
+                w.write_array_u8(v);
+            }
+        }
+    }
+
+    /// schema.zig — peechy `struct Log` (minimal: `warnings`, `errors`, `msgs`).
+    #[derive(Clone, Debug, Default)]
+    pub struct Log {
+        pub warnings: u32,
+        pub errors: u32,
+        // `msgs: []Message` — omitted until `Message` is ported.
+    }
+    impl Log {
+        pub fn encode(&self, w: &mut super::Writer<'_>) {
+            w.write_int(self.warnings);
+            w.write_int(self.errors);
+            w.write_int(0u32); // msgs.len
+        }
+    }
+
+    /// schema.zig:638 — peechy `message FallbackMessageContainer`.
+    #[derive(Clone, Debug, Default)]
+    pub struct FallbackMessageContainer {
+        pub message: Option<Box<[u8]>>,
+        pub router: Option<Router>,
+        pub reason: Option<FallbackStep>,
+        pub problems: Option<Problems>,
+        pub cwd: Option<Box<[u8]>>,
+    }
+    impl FallbackMessageContainer {
+        pub fn encode(&self, w: &mut super::Writer<'_>) {
+            if let Some(ref message) = self.message {
+                w.write_field_id(1);
+                w.write_array_u8(message);
+            }
+            if let Some(ref router) = self.router {
+                w.write_field_id(2);
+                router.encode(w);
+            }
+            if let Some(reason) = self.reason {
+                w.write_field_id(3);
+                w.write_enum(reason);
+            }
+            if let Some(ref problems) = self.problems {
+                w.write_field_id(4);
+                problems.encode(w);
+            }
+            if let Some(ref cwd) = self.cwd {
+                w.write_field_id(5);
+                w.write_array_u8(cwd);
+            }
+            w.end_message();
+        }
+    }
 }

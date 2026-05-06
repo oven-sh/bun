@@ -478,16 +478,43 @@ impl HTMLRewriterLoader {
         }
     }
 
-    pub fn write_utf16(&mut self, _data: StreamResult) -> streams::Writable {
-        // TODO(b2-blocked): `webcore::sink::UTF8Fallback::write_utf16` body is
-        // gated upstream (Sink.rs).
-        todo!("blocked_on: webcore::sink::UTF8Fallback::write_utf16")
+    pub fn write_utf16(&mut self, data: StreamResult) -> streams::Writable {
+        webcore::sink::UTF8Fallback::write_utf16(self, data, HTMLRewriterLoader::write)
     }
 
-    pub fn write_latin1(&mut self, _data: StreamResult) -> streams::Writable {
-        // TODO(b2-blocked): `webcore::sink::UTF8Fallback::write_latin1` body is
-        // gated upstream (Sink.rs).
-        todo!("blocked_on: webcore::sink::UTF8Fallback::write_latin1")
+    pub fn write_latin1(&mut self, data: StreamResult) -> streams::Writable {
+        webcore::sink::UTF8Fallback::write_latin1(self, data, HTMLRewriterLoader::write)
+    }
+}
+
+impl webcore::sink::SinkHandler for HTMLRewriterLoader {
+    fn write(&mut self, data: StreamResult) -> streams::Writable {
+        HTMLRewriterLoader::write(self, data)
+    }
+    fn write_latin1(&mut self, data: StreamResult) -> streams::Writable {
+        HTMLRewriterLoader::write_latin1(self, data)
+    }
+    fn write_utf16(&mut self, data: StreamResult) -> streams::Writable {
+        HTMLRewriterLoader::write_utf16(self, data)
+    }
+    fn connect(&mut self, signal: Signal) -> bun_sys::Result<()> {
+        HTMLRewriterLoader::connect(self, signal);
+        Ok(())
+    }
+    fn end(&mut self, err: Option<bun_sys::Error>) -> bun_sys::Result<()> {
+        // PORT NOTE: Zig HTMLRewriterLoader has no `end` (sink() is dead code
+        // there). On input-stream end, flush the rewriter (which calls
+        // OutputSink::done → self.done()) or fail.
+        if let Some(e) = err {
+            self.fail(e);
+        } else {
+            if !self.finalized {
+                // SAFETY: rewriter set by setup(); not yet finalized.
+                let _ = unsafe { lolhtml::HTMLRewriter::end(self.rewriter) };
+            }
+            self.done();
+        }
+        Ok(())
     }
 }
 

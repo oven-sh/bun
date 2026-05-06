@@ -1098,10 +1098,13 @@ impl<
         // "export * as ns from 'path'"
         if let Some(alias) = &data.alias {
             if p.options.features.replace_exports.count() > 0 {
-                if let Some(entry) = p.options.features.replace_exports.get_ptr(alias.original_name) {
+                // SAFETY: `original_name` is an arena-owned slice (Phase-A
+                // `ArenaStr = *const [u8]`); valid for the source lifetime.
+                let original_name = unsafe { arena_str(alias.original_name) };
+                if let Some(entry) = p.options.features.replace_exports.get_ptr(original_name) {
                     let _ = p.inject_replacement_export(
                         stmts,
-                        p.declare_symbol(js_ast::Symbol::Kind::Other, logger::Loc::EMPTY, alias.original_name)
+                        p.declare_symbol(js_ast::Symbol::Kind::Other, logger::Loc::EMPTY, original_name)
                             .expect("unreachable"),
                         logger::Loc::EMPTY,
                         entry,

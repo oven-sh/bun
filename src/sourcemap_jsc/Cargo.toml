@@ -23,6 +23,7 @@ bun_collections.workspace = true
 bun_io.workspace = true
 bun_jsc.workspace = true
 bun_logger.workspace = true
+bun_options_types.workspace = true
 bun_paths.workspace = true
 # bun_runtime — only used in BakeSourceProvider::get_external_data, which is
 # re-gated on bun_runtime::bake::production::PerThread. Dep dropped to keep

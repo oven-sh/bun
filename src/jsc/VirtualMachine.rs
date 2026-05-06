@@ -197,8 +197,7 @@ pub struct VirtualMachine {
     pub regular_event_loop: EventLoop,
     pub event_loop: *mut EventLoop, // BORROW_FIELD — points at sibling regular_event_loop/macro_event_loop
 
-    // TODO(b2): `RefString::Map` — RefString.rs gated.
-    pub ref_strings: (),
+    pub ref_strings: crate::ref_string::Map,
     pub ref_strings_mutex: bun_threading::Mutex,
 
     pub active_tasks: usize,

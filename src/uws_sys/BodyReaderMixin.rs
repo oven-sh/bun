@@ -58,7 +58,7 @@ impl<const SSL: bool> BodyResponse for Response<SSL> {
 /// comptime fn pointers (`onBody`, `onError`). In Rust those are expressed as
 /// a trait the wrapper type implements, plus an associated `MIXIN_OFFSET`
 /// const replacing the comptime `field` name used by `@fieldParentPtr`.
-pub trait BodyReaderHandler: Sized {
+pub trait BodyReaderHandler: Sized + 'static {
     /// Byte offset of the `BodyReaderMixin<Self>` field within `Self`.
     /// Implementors should set this to `core::mem::offset_of!(Self, <field>)`.
     const MIXIN_OFFSET: usize;
@@ -84,66 +84,94 @@ impl<Wrap: BodyReaderHandler> BodyReaderMixin<Wrap> {
     }
 
     /// Memory is freed after the callback returns, or automatically on failure.
-    pub fn read_body<R: BodyResponse>(&mut self, resp: &mut R) {
-        let ctx: *mut Self = self;
-        resp.on_data(Self::on_data_generic::<R>, ctx);
-        resp.on_aborted(Self::on_aborted_handler::<R>, ctx);
+    ///
+    /// Takes `*mut Wrap` (not `&mut self`) so the registered C user_data carries
+    /// provenance for the *entire* enclosing `Wrap`, not just the mixin field.
+    /// Zig used `@fieldParentPtr(field, ctx)` which has no provenance/aliasing
+    /// restriction; in Rust, deriving the parent by `.sub(MIXIN_OFFSET)` from a
+    /// `&mut self`-sourced pointer is out-of-provenance under Stacked Borrows
+    /// and the resulting `&mut Wrap` would overlap a live `&mut Self`. Callers
+    /// pass the `Box::into_raw`'d wrapper pointer directly; trampolines below
+    /// reach the mixin via *forward* offset (`mixin_of`), so the stored pointer
+    /// already has full-Wrap provenance and no overlapping `&mut` are formed.
+    pub fn read_body<R: BodyResponse>(wrap: *mut Wrap, resp: &mut R) {
+        resp.on_data(Self::on_data_generic::<R>, wrap);
+        resp.on_aborted(Self::on_aborted_handler::<R>, wrap);
     }
 
-    fn on_data_generic<R: BodyResponse>(mixin: *mut Self, r: &mut R, chunk: &[u8], last: bool) {
+    /// Forward offset `Wrap` → its embedded mixin field. Inverse direction of
+    /// Zig's `@fieldParentPtr` — we go parent→field because the stored user_data
+    /// is the parent (full provenance), never the field.
+    #[inline]
+    unsafe fn mixin_of(wrap: *mut Wrap) -> *mut Self {
+        // SAFETY: caller guarantees `wrap` points to a live Wrap; MIXIN_OFFSET
+        // is `offset_of!(Wrap, <field>)`, so the result is in-bounds and
+        // inherits `wrap`'s provenance over the whole allocation.
+        unsafe { wrap.byte_add(Wrap::MIXIN_OFFSET).cast::<Self>() }
+    }
+
+    fn on_data_generic<R: BodyResponse>(wrap: *mut Wrap, r: &mut R, chunk: &[u8], last: bool) {
         let any = r.to_any();
-        // SAFETY: mixin was registered via read_body and remains alive for the request duration.
-        let this = unsafe { &mut *mixin };
-        match this.on_data(any, chunk, last) {
+        match Self::on_data(wrap, any, chunk, last) {
             Ok(()) => {}
             // Match Zig's `error.OutOfMemory => onOOM, else => onInvalid` by error
             // *kind* only — `bun_core::Error`'s derived `PartialEq` compares all
             // fields (syscall/fd/path), and `err!("OutOfMemory")` is currently a
             // TODO sentinel, so a full-struct compare would invert the branch.
-            Err(e) if e.errno == bun_core::Error::OUT_OF_MEMORY.errno => this.on_oom(any),
-            Err(_) => this.on_invalid(any),
+            Err(e) if e.errno == bun_core::Error::OUT_OF_MEMORY.errno => Self::on_oom(wrap, any),
+            Err(_) => Self::on_invalid(wrap, any),
         }
     }
 
-    fn on_aborted_handler<R>(mixin: *mut Self, _r: &mut R) {
-        // SAFETY: mixin was registered via read_body and remains alive for the request duration.
-        let this = unsafe { &mut *mixin };
-        this.body = Vec::new();
-        // SAFETY: mixin points to the BodyReaderMixin field embedded in Wrap at MIXIN_OFFSET.
-        unsafe { (*Self::parent(mixin)).on_error() };
+    fn on_aborted_handler<R>(wrap: *mut Wrap, _r: &mut R) {
+        // SAFETY: wrap was registered via read_body and remains alive for the
+        // request duration; mixin_of yields an in-bounds field pointer.
+        unsafe { (*Self::mixin_of(wrap)).body = Vec::new() };
+        // SAFETY: wrap is live; the temporary &mut to the mixin field above has
+        // ended, so this is the sole live mutable access into the allocation.
+        unsafe { (*wrap).on_error() };
     }
 
     fn on_data(
-        &mut self,
+        wrap: *mut Wrap,
         resp: AnyResponse,
         chunk: &[u8],
         last: bool,
     ) -> Result<(), bun_core::Error> {
+        // SAFETY: wrap was registered via read_body with full-Wrap provenance.
+        let mixin = unsafe { Self::mixin_of(wrap) };
         if last {
-            // Free everything after
-            let mut body = mem::take(&mut self.body);
+            // Free everything after. Take via raw mixin ptr first — no `&mut Wrap`
+            // is live yet, so this short-lived field borrow does not overlap one.
+            // SAFETY: mixin is an in-bounds field of *wrap.
+            let mut body = unsafe { mem::take(&mut (*mixin).body) };
             resp.clear_on_data();
-            // SAFETY: self points to the BodyReaderMixin field embedded in Wrap at MIXIN_OFFSET.
-            let wrap = unsafe { &mut *Self::parent(self as *mut Self) };
+            // SAFETY: wrap is live; the &mut to mixin.body has ended, so this
+            // `&mut Wrap` is the sole live mutable reference into the allocation.
+            let wrap_ref = unsafe { &mut *wrap };
             if !body.is_empty() {
                 // TODO(port): Zig handled OOM gracefully here; Vec::extend_from_slice aborts.
                 // Consider try_reserve in Phase B if graceful 500 on OOM is required.
                 body.extend_from_slice(chunk);
-                wrap.on_body(body.as_slice(), resp)?;
+                wrap_ref.on_body(body.as_slice(), resp)?;
             } else {
-                wrap.on_body(chunk, resp)?;
+                wrap_ref.on_body(chunk, resp)?;
             }
             // `body` drops here (was `defer body.deinit()` in Zig)
             Ok(())
         } else {
-            self.body.extend_from_slice(chunk);
+            // SAFETY: mixin is an in-bounds field of *wrap; no other &mut into
+            // *wrap is live.
+            unsafe { (*mixin).body.extend_from_slice(chunk) };
             Ok(())
         }
     }
 
-    fn on_oom(&mut self, r: AnyResponse) {
-        let _body = mem::take(&mut self.body);
-        drop(_body);
+    fn on_oom(wrap: *mut Wrap, r: AnyResponse) {
+        // SAFETY: wrap was registered via read_body with full-Wrap provenance;
+        // mixin_of yields an in-bounds field pointer and no other &mut into
+        // *wrap is live.
+        drop(unsafe { mem::take(&mut (*Self::mixin_of(wrap)).body) });
         r.clear_aborted();
         r.clear_on_data();
         r.clear_on_writable();
@@ -151,13 +179,15 @@ impl<Wrap: BodyReaderHandler> BodyReaderMixin<Wrap> {
         r.write_status(b"500 Internal Server Error");
         r.end_without_body(false);
 
-        // SAFETY: self points to the BodyReaderMixin field embedded in Wrap at MIXIN_OFFSET.
-        unsafe { (*Self::parent(self as *mut Self)).on_error() };
+        // SAFETY: wrap is live; the &mut to mixin.body above has ended.
+        unsafe { (*wrap).on_error() };
     }
 
-    fn on_invalid(&mut self, r: AnyResponse) {
-        let _body = mem::take(&mut self.body);
-        drop(_body);
+    fn on_invalid(wrap: *mut Wrap, r: AnyResponse) {
+        // SAFETY: wrap was registered via read_body with full-Wrap provenance;
+        // mixin_of yields an in-bounds field pointer and no other &mut into
+        // *wrap is live.
+        drop(unsafe { mem::take(&mut (*Self::mixin_of(wrap)).body) });
 
         r.clear_aborted();
         r.clear_on_data();
@@ -166,15 +196,8 @@ impl<Wrap: BodyReaderHandler> BodyReaderMixin<Wrap> {
         r.write_status(b"400 Bad Request");
         r.end_without_body(false);
 
-        // SAFETY: self points to the BodyReaderMixin field embedded in Wrap at MIXIN_OFFSET.
-        unsafe { (*Self::parent(self as *mut Self)).on_error() };
-    }
-
-    #[inline]
-    unsafe fn parent(ctx: *mut Self) -> *mut Wrap {
-        // SAFETY: caller guarantees ctx is the BodyReaderMixin field embedded at
-        // Wrap::MIXIN_OFFSET inside a live Wrap (Zig: @fieldParentPtr(field, ctx)).
-        unsafe { (ctx as *mut u8).sub(Wrap::MIXIN_OFFSET).cast::<Wrap>() }
+        // SAFETY: wrap is live; the &mut to mixin.body above has ended.
+        unsafe { (*wrap).on_error() };
     }
 }
 

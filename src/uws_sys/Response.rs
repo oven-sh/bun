@@ -1217,7 +1217,12 @@ pub mod c {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/uws_sys/Response.zig (782 lines)
-//   confidence: medium
-//   todos:      16
-//   notes:      async callback registrars (on_writable/on_aborted/on_timeout/on_data) need a trait/macro to bake the handler into the extern "C" trampoline (Zig used `comptime handler`); H3Response method surface assumed to mirror Response<SSL>.
+//   confidence: high
+//   todos:      1
+//   notes:      on_writable/on_aborted/on_timeout/on_data trampolines are real:
+//               handler is required to be a ZST (fn item / capture-less closure),
+//               compile-time asserted, and conjured via `mem::zeroed` inside the
+//               monomorphized extern "C" shim — equivalent to Zig's comptime
+//               `handler` baked into `Wrapper.handle`. H3Response method surface
+//               assumed to mirror Response<SSL>.
 // ──────────────────────────────────────────────────────────────────────────

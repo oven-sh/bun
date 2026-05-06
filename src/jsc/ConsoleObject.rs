@@ -492,7 +492,9 @@ fn message_with_type_and_level_(
         if opts.is_object() {
             if let Some(depth_prop) = opts.get(global, b"depth")? {
                 if depth_prop.is_int32() || depth_prop.is_number() || depth_prop.is_big_int() {
-                    print_options.max_depth = depth_prop.to_int32().clamp(0, i32::from(u16::MAX)) as u16;
+                    // Match Zig `JSValue.toU16`: `@truncate(@max(toInt32(), 0))`
+                    // — clamp negatives to 0, then truncate (not saturate) to u16.
+                    print_options.max_depth = depth_prop.to_int32().max(0) as u32 as u16;
                 } else if depth_prop.is_null() {
                     print_options.max_depth = u16::MAX;
                 }
@@ -1523,7 +1525,7 @@ pub mod formatter {
                 ordered_properties: false,
                 custom_formatted_object: CustomFormattedObject::default(),
                 disable_inspect_custom: false,
-                stack_check: StackCheck { cached_stack_end: usize::MAX },
+                stack_check: StackCheck::init(),
                 can_throw_stack_overflow: false,
                 error_display_level: ErrorDisplayLevel::Full,
                 format_buffer_as_text: false,
@@ -1648,38 +1650,32 @@ pub mod formatter {
             // through `core::fmt::Write`. Phase B may need a `bun_io::Write`
             // adapter for `core::fmt::Formatter` to keep the byte path.
             //
-            // Move the unique `&mut Formatter` out of the cell; re-seat it on
-            // every exit path so the adapter can be `Display`ed again if a
-            // caller ever reuses it.
+            // Move the unique `&mut Formatter` out of the cell for the body;
+            // re-seat it (and clear `remaining_values`) on the way out so the
+            // adapter mirrors Zig's `defer` and stays reusable.
             let formatter: &mut Formatter<'_> = self
                 .formatter
                 .take()
                 .expect("ZigFormatter::fmt re-entered or used after consumption");
-            let fmt_ptr: *mut Formatter<'_> = formatter;
-            let _reseat = scopeguard::guard((), |_| {
-                // SAFETY: `fmt_ptr` is the same unique borrow we just moved
-                // out; the body's `formatter` reference is dead by drop time.
-                self.formatter.set(Some(unsafe { &mut *fmt_ptr }));
-            });
 
             let one = [self.value];
             formatter.remaining_values = &one;
-            // Reset `remaining_values` on every exit path (mirrors Zig
-            // `defer self.formatter.remaining_values = &.{}`). Capture a raw
-            // pointer so the body can keep using `formatter`.
-            let fmt_ptr: *mut Formatter<'_> = formatter;
-            let _reset = scopeguard::guard((), move |_| unsafe {
-                (*fmt_ptr).remaining_values = &[];
-            });
 
-            let tag = Tag::get(self.value, formatter.global_this)
-                .map_err(|_| core::fmt::Error)?;
-            // TODO(port): need a `&mut dyn bun_io::Write` over `f`.
-            let mut sink = bun_io::FmtAdapter::new(f);
-            let global = formatter.global_this;
-            formatter
-                .format::<false>(tag, &mut sink, self.value, global)
-                .map_err(|_| core::fmt::Error)
+            let result = (|| {
+                let tag = Tag::get(self.value, formatter.global_this)
+                    .map_err(|_| core::fmt::Error)?;
+                // TODO(port): need a `&mut dyn bun_io::Write` over `f`.
+                let mut sink = bun_io::FmtAdapter::new(f);
+                let global = formatter.global_this;
+                formatter
+                    .format::<false>(tag, &mut sink, self.value, global)
+                    .map_err(|_| core::fmt::Error)
+            })();
+
+            // Mirrors Zig `defer self.formatter.remaining_values = &.{}`.
+            formatter.remaining_values = &[];
+            self.formatter.set(Some(formatter));
+            result
         }
     }
 

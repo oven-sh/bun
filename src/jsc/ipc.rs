@@ -1101,10 +1101,20 @@ impl SendQueue {
                 Ok(())
             });
             self.after_close_task = Some(task);
-            // SAFETY: bun_vm() returns a &VirtualMachine borrowed from the
-            // global; enqueue_task only mutates the task queue.
-            unsafe { &mut *(self.get_global_this().bun_vm() as *const _ as *mut VirtualMachine) }
-                .enqueue_task(self.after_close_task.unwrap());
+            // Spec ipc.zig:589 calls `bunVM().enqueueTask(...)` on a raw
+            // `*VirtualMachine`. Do NOT materialize `&mut VirtualMachine` from
+            // `bun_vm()`'s shared `&VirtualMachine` (Stacked-Borrows UB —
+            // `&mut T` while other `&T` exist). `event_loop()` takes `&self`
+            // and yields the raw `*mut EventLoop`; route the enqueue through
+            // that, mirroring `VirtualMachine::enqueue_task`'s body without
+            // the `&mut self` receiver.
+            // SAFETY: `event_loop()` returns the VM-owned `*mut EventLoop`,
+            // live for the VM's lifetime; short-lived `&mut` reborrow at the
+            // call site only.
+            unsafe {
+                (*(*self.get_global_this().bun_vm()).event_loop())
+                    .enqueue_task(self.after_close_task.unwrap());
+            }
         }
     }
 
@@ -2079,15 +2089,14 @@ fn handle_ipc_message(
                     SendQueueOwnerKind::VirtualMachine => JSValue::NULL,
                 };
 
-                // SAFETY: bun_vm() borrows the singleton VM; event_loop()
-                // requires &mut for the enter/exit counter only.
-                let vm = unsafe {
-                    &mut *(global_this.bun_vm() as *const _ as *mut VirtualMachine)
-                };
+                // `event_loop()` takes `&self`; never materialize
+                // `&mut VirtualMachine` from the shared `bun_vm()` borrow
+                // (Stacked-Borrows UB). Keep `vm` as `&VirtualMachine`.
+                let vm = global_this.bun_vm();
                 // SAFETY: `event_loop()` returns the VM-owned `*mut EventLoop`;
                 // it stays live for the duration of the VM. Reborrow per use to
                 // avoid holding `&mut EventLoop` across the call below.
-                unsafe { (*vm.event_loop()).enter() };
+                unsafe { (*(*vm).event_loop()).enter() };
                 // TODO(port): errdefer — scopeguard for event_loop().exit()
                 // FD.toJS — `uv()` is the user-visible numeric fd on both
                 // platforms (posix == native, windows == uv_file).
@@ -2096,10 +2105,10 @@ fn handle_ipc_message(
                 if let Err(e) = res {
                     // ack written already, that's okay.
                     global_this.report_active_exception_as_unhandled(e);
-                    unsafe { (*vm.event_loop()).exit() };
+                    unsafe { (*(*vm).event_loop()).exit() };
                     return;
                 }
-                unsafe { (*vm.event_loop()).exit() };
+                unsafe { (*(*vm).event_loop()).exit() };
 
                 // ipc_parse will call the callback which calls handleIPCMessage()
                 // we have sent the ack already so the next message could arrive at any time. maybe even before
@@ -2313,11 +2322,10 @@ pub mod IPCHandlers {
 
         pub fn on_data(send_queue: &mut SendQueue, _: Socket, all_data: &[u8]) {
             let global_this = send_queue.get_global_this();
-            // SAFETY: bun_vm() borrows the singleton VM; event_loop() needs
-            // &mut only for its enter/exit counter.
-            let loop_ = unsafe {
-                (*(global_this.bun_vm() as *const _ as *mut VirtualMachine)).event_loop()
-            };
+            // `event_loop()` takes `&self`; never materialize
+            // `&mut VirtualMachine` from the shared `bun_vm()` borrow
+            // (Stacked-Borrows UB).
+            let loop_ = unsafe { (*global_this.bun_vm()).event_loop() };
             // SAFETY: `loop_` is the VM-owned `*mut EventLoop` (lives as long
             // as the VM); reborrow per use so `&mut EventLoop` isn't held
             // across `on_data2`.
@@ -2349,10 +2357,8 @@ pub mod IPCHandlers {
             log!("onWritable");
 
             let global_this = send_queue.get_global_this();
-            // SAFETY: see on_data.
-            let loop_ = unsafe {
-                (*(global_this.bun_vm() as *const _ as *mut VirtualMachine)).event_loop()
-            };
+            // See on_data — `event_loop()` takes `&self`; no `&mut VirtualMachine`.
+            let loop_ = unsafe { (*global_this.bun_vm()).event_loop() };
             // SAFETY: see `on_data` — VM-owned `*mut EventLoop`, per-use reborrow.
             unsafe { (*loop_).enter() };
             // TODO(port): errdefer — scopeguard for loop.exit()
@@ -2432,10 +2438,9 @@ pub mod IPCHandlers {
         pub fn on_read(send_queue: &mut SendQueue, buffer: &[u8]) {
             log!("NewNamedPipeIPCHandler#onRead {}", buffer.len());
             let global_this = send_queue.get_global_this();
-            // SAFETY: see PosixSocket::on_data.
-            let loop_ = unsafe {
-                (*(global_this.bun_vm() as *const _ as *mut VirtualMachine)).event_loop()
-            };
+            // See PosixSocket::on_data — `event_loop()` takes `&self`; no
+            // `&mut VirtualMachine`.
+            let loop_ = unsafe { (*global_this.bun_vm()).event_loop() };
             // SAFETY: `loop_` is the VM-owned `*mut EventLoop` (lives as long
             // as the VM); reborrow at each enter/exit so `&mut EventLoop` isn't
             // held across the decode loop or send_queue borrows below.

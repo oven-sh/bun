@@ -68,24 +68,32 @@ impl Parse for HostFnArgs {
     }
 }
 
-/// Emit a `#[unsafe(no_mangle)]` extern shim with the JSC calling convention.
+/// Emit an extern shim with the JSC calling convention.
 /// The body is duplicated under two `#[cfg]` arms because Rust does not accept
 /// a macro/const in ABI-string position.
+///
+/// `export_name = None` means no `#[export_name]` is emitted (Rust mangling
+/// applies); used for the default getter/setter/method case where the real
+/// link name is owned by the `JsClass` codegen and the placeholder shim only
+/// needs to type-check, not link.
 fn jsc_extern_fn(
-    export_name: &str,
+    export_name: Option<&str>,
     sig_args: TokenStream2,
     ret: TokenStream2,
     body: TokenStream2,
 ) -> TokenStream2 {
-    let export_lit = LitStr::new(export_name, Span::call_site());
+    let export_attr = export_name.map(|n| {
+        let lit = LitStr::new(n, Span::call_site());
+        quote! { #[unsafe(export_name = #lit)] }
+    });
     quote! {
         #[cfg(all(windows, target_arch = "x86_64"))]
-        #[unsafe(export_name = #export_lit)]
+        #export_attr
         #[doc(hidden)]
         pub unsafe extern "sysv64" fn #sig_args -> #ret { #body }
 
         #[cfg(not(all(windows, target_arch = "x86_64")))]
-        #[unsafe(export_name = #export_lit)]
+        #export_attr
         #[doc(hidden)]
         pub unsafe extern "C" fn #sig_args -> #ret { #body }
     }
@@ -114,20 +122,23 @@ fn expand_host_fn(args: HostFnArgs, func: ItemFn) -> syn::Result<TokenStream2> {
         .first()
         .is_some_and(|a| matches!(a, FnArg::Receiver(_)));
 
-    // Shim symbol name. Without `export = "..."` the default is
-    // `<fn_name>` (free) — matches Zig `@export(&toJSHostFn(f), .{ .name = ... })`
-    // where the name is supplied by the caller. For instance hooks the
-    // `.classes.ts` generator owns the name (`TypePrototype__name` etc.); the
-    // `JsClass` macro re-emits with the proper name, so here we just need a
-    // collision-free default.
-    let export = args
-        .export
-        .as_ref()
-        .map(|l| l.value())
-        .unwrap_or_else(|| match args.kind {
-            HostFnKind::Free if !has_receiver => fn_name_str.clone(),
-            _ => format!("__jsc_host_{fn_name_str}"),
-        });
+    // Shim symbol name. Without `export = "..."` the default for a free
+    // (non-receiver) function is `<fn_name>` — matches Zig
+    // `@export(&toJSHostFn(f), .{ .name = ... })` where the name is supplied
+    // by the caller. For getter/setter/method hooks the `.classes.ts`
+    // generator owns the link name (`TypePrototype__name` etc.) and the
+    // `JsClass` macro re-emits with the proper name; the placeholder shim
+    // here therefore gets NO `#[export_name]` (Rust mangling keeps each
+    // type's `__jsc_host_*` shim unique even when method names collide
+    // across types — e.g. `BuildMessage::get_column` vs
+    // `ResolveMessage::get_column`).
+    let export: Option<String> = match args.export.as_ref() {
+        Some(l) => Some(l.value()),
+        None => match args.kind {
+            HostFnKind::Free if !has_receiver => Some(fn_name_str.clone()),
+            _ => None,
+        },
+    };
     let shim_ident = format_ident!("__jsc_host_{}", fn_name);
 
     let (sig_args, ret, body): (TokenStream2, TokenStream2, TokenStream2) = match args.kind {
@@ -202,7 +213,7 @@ fn expand_host_fn(args: HostFnArgs, func: ItemFn) -> syn::Result<TokenStream2> {
         ),
     };
 
-    let shim = jsc_extern_fn(&export, sig_args, ret, body);
+    let shim = jsc_extern_fn(export.as_deref(), sig_args, ret, body);
 
     Ok(quote! {
         #func
@@ -484,7 +495,7 @@ fn js_class_hooks(args: &JsClassArgs, strukt: &ItemStruct) -> TokenStream2 {
         quote! {}
     } else {
         jsc_extern_fn(
-            &finalize_sym,
+            Some(&finalize_sym),
             quote! { #finalize_ident(__ptr: *mut ::core::ffi::c_void) },
             quote! { () },
             quote! {
@@ -500,7 +511,7 @@ fn js_class_hooks(args: &JsClassArgs, strukt: &ItemStruct) -> TokenStream2 {
         quote! {}
     } else {
         jsc_extern_fn(
-            &construct_sym,
+            Some(&construct_sym),
             quote! {
                 #construct_ident(
                     __global: *mut ::bun_jsc::JSGlobalObject,
@@ -531,7 +542,7 @@ fn js_class_hooks(args: &JsClassArgs, strukt: &ItemStruct) -> TokenStream2 {
     // default (`size_of::<Self>()`).
     let estimated_hook = if args.estimated_size {
         jsc_extern_fn(
-            &estimated_sym,
+            Some(&estimated_sym),
             quote! { #estimated_ident(__ptr: *mut ::core::ffi::c_void) },
             quote! { usize },
             quote! {

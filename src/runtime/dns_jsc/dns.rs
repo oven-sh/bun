@@ -1835,6 +1835,9 @@ pub mod internal {
     // ───────────── GlobalCache ─────────────
 
     const MAX_ENTRIES: usize = 256;
+    /// `bun_fmt::fast_digit_count(u16::MAX) + 2` — 5 decimal digits + NUL + slack.
+    /// Hard-coded because `fast_digit_count` is not `const fn`.
+    const U16_PORT_BUF_LEN: usize = 7;
 
     /// The cache data guarded by `GLOBAL_CACHE`. The Zig code stored a `bun.Mutex`
     /// adjacent to `cache`/`len`; in Rust the lock owns the data (PORTING.md §Concurrency).
@@ -2002,7 +2005,9 @@ pub mod internal {
                     us_internal_dns_callback_threadsafe(*socket, req)
                 },
                 DNSRequestOwner::Prefetch(_) => freeaddrinfo(req, 0),
-                DNSRequestOwner::Quic(pc) => unsafe { (**pc).on_dns_resolved_threadsafe() },
+                DNSRequestOwner::Quic(pc) => unsafe {
+                    bun_http::H3::PendingConnect::on_dns_resolved_threadsafe(*pc)
+                },
             }
         }
 
@@ -2012,15 +2017,17 @@ pub mod internal {
                 DNSRequestOwner::Socket(socket) => unsafe {
                     us_internal_dns_callback(*socket, req)
                 },
-                DNSRequestOwner::Quic(pc) => unsafe { (**pc).on_dns_resolved() },
+                DNSRequestOwner::Quic(pc) => unsafe {
+                    bun_http::H3::PendingConnect::on_dns_resolved(*pc)
+                },
             }
         }
 
         pub fn loop_(&self) -> *mut Loop {
             match self {
                 DNSRequestOwner::Prefetch(l) => *l,
-                DNSRequestOwner::Socket(s) => unsafe { (**s).loop_() },
-                DNSRequestOwner::Quic(pc) => unsafe { (**pc).loop_() },
+                DNSRequestOwner::Socket(s) => unsafe { (**s).r#loop() },
+                DNSRequestOwner::Quic(pc) => unsafe { (**pc).r#loop() },
             }
         }
     }
@@ -2136,7 +2143,15 @@ pub mod internal {
         let guard = global_cache().lock();
 
         let notify = unsafe {
-            (*req).result = Some(RequestResult { info: results, err });
+            // RequestResult is the C-ABI view (thin ptr); ownership of the
+            // Box<[ResultEntry]> is leaked here and reclaimed in Request::deinit.
+            // TODO(port): store the owning Box on Request once Phase B settles ownership.
+            let info = results.and_then(|mut b| {
+                let p = b.as_mut_ptr();
+                core::mem::forget(b);
+                NonNull::new(p)
+            });
+            (*req).result = Some(RequestResult { info, err });
             let notify = core::mem::take(&mut (*req).notify);
             (*req).refcount -= 1;
             notify
@@ -2151,7 +2166,7 @@ pub mod internal {
     }
 
     fn work_pool_callback(req: *mut Request) {
-        let mut service_buf = [0u8; bun_fmt::fast_digit_count(u16::MAX as u64) as usize + 2];
+        let mut service_buf = [0u8; U16_PORT_BUF_LEN];
         let service: *const c_char = unsafe {
             if (*req).key.port > 0 {
                 use std::io::Write;
@@ -2207,7 +2222,7 @@ pub mod internal {
         };
 
         let mut machport: mach_port = 0;
-        let mut service_buf = [0u8; bun_fmt::fast_digit_count(u16::MAX as u64) as usize + 2];
+        let mut service_buf = [0u8; U16_PORT_BUF_LEN];
         let service: *const c_char = unsafe {
             if (*req).key.port > 0 {
                 use std::io::Write;
@@ -2270,7 +2285,7 @@ pub mod internal {
             unsafe {
                 if status == libc::EAI_NONAME as i32 && (*req).can_retry_for_addrconfig {
                     (*req).can_retry_for_addrconfig = false;
-                    let mut service_buf = [0u8; bun_fmt::fast_digit_count(u16::MAX as u64) as usize + 2];
+                    let mut service_buf = [0u8; U16_PORT_BUF_LEN];
                     let service: *const c_char = if (*req).key.port > 0 {
                         use std::io::Write;
                         let n = {

@@ -212,7 +212,10 @@ pub struct ProcessExitVTable {
 #[derive(Clone, Copy)]
 pub struct ProcessExitHandler {
     pub owner: *mut (),
-    pub vtable: Option<&'static ProcessExitVTable>,
+    // PORT NOTE: stored by value (one fn ptr, `Copy`) instead of
+    // `&'static ProcessExitVTable` so the generic `ProcessExitOwner::exit_vtable`
+    // default can synthesise it without a per-type `static` item.
+    pub vtable: Option<ProcessExitVTable>,
 }
 
 impl Default for ProcessExitHandler {
@@ -246,11 +249,10 @@ pub trait ProcessExitOwner: Sized {
         rusage: &Rusage,
     );
 
-    /// Returns the static vtable for this owner type. Generated per-`T` via a
-    /// generic-monomorphised thunk; the `'static` lifetime is satisfied by a
-    /// per-monomorphisation `static` item.
+    /// Returns the vtable for this owner type. Generated per-`T` via a
+    /// generic-monomorphised thunk.
     #[inline]
-    fn exit_vtable() -> &'static ProcessExitVTable {
+    fn exit_vtable() -> ProcessExitVTable {
         unsafe fn thunk<T: ProcessExitOwner>(
             owner: *mut (),
             process: *mut Process,
@@ -261,20 +263,13 @@ pub trait ProcessExitOwner: Sized {
             // pointer for the duration of the call (see `ProcessExitHandler::call`).
             unsafe { T::on_process_exit_dyn(owner.cast::<T>(), process, status, &*rusage) }
         }
-        // PORT NOTE: associated `const VTABLE: ProcessExitVTable` cannot be
-        // borrowed `&'static` from a default trait body; use a generic local
-        // `static` instead (one instance per monomorphisation).
-        struct Holder<T: ProcessExitOwner>(core::marker::PhantomData<T>);
-        impl<T: ProcessExitOwner> Holder<T> {
-            const V: ProcessExitVTable = ProcessExitVTable { on_process_exit: thunk::<T> };
-        }
-        &Holder::<Self>::V
+        ProcessExitVTable { on_process_exit: thunk::<Self> }
     }
 }
 
 impl ProcessExitHandler {
     /// Zig: `init(anytype)` — high-tier callers pass `(&mut self, &SELF_EXIT_VTABLE)`.
-    pub fn init(&mut self, owner: *mut (), vtable: &'static ProcessExitVTable) {
+    pub fn init(&mut self, owner: *mut (), vtable: ProcessExitVTable) {
         self.owner = owner;
         self.vtable = Some(vtable);
     }
@@ -326,7 +321,7 @@ impl Process {
     }
 
     /// Low-level: set the exit handler from an explicit erased owner + vtable.
-    pub fn set_exit_handler_raw(&mut self, owner: *mut (), vtable: &'static ProcessExitVTable) {
+    pub fn set_exit_handler_raw(&mut self, owner: *mut (), vtable: ProcessExitVTable) {
         self.exit_handler.init(owner, vtable);
     }
 
@@ -336,8 +331,8 @@ impl Process {
     /// is intrusively ref-counted and treated as raw-ptr-mutable in Zig.
     pub fn set_exit_handler<T: ProcessExitOwner>(&self, owner: *mut T) {
         // SAFETY: Process is heap-allocated and never moved; exit_handler is a
-        // POD (`*mut ()` + `Option<&'static>`) so a raw write is sound and
-        // matches the Zig single-threaded mutation model.
+        // POD (`*mut ()` + `Option<fn>`) so a raw write is sound and matches
+        // the Zig single-threaded mutation model.
         unsafe {
             let this = self as *const Self as *mut Self;
             (*this).exit_handler.owner = owner.cast();
@@ -3412,7 +3407,7 @@ pub mod sync {
         unsafe {
             let p = &mut *(*this_ptr).process;
             p.ref_();
-            p.set_exit_handler(this_ptr.cast(), &SYNC_WINDOWS_EXIT_VTABLE);
+            p.set_exit_handler_raw(this_ptr.cast(), SYNC_WINDOWS_EXIT_VTABLE);
             p.enable_keeping_event_loop_alive();
         }
 

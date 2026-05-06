@@ -1082,9 +1082,10 @@ impl<'a> Repl<'a> {
             opts: fmt::HighlighterOptions {
                 enable_colors: true,
                 check_for_unhighlighted_write: false,
+                redact_sensitive_information: false,
             },
         };
-        if highlighter.format(writer).is_err() {
+        if writer.write_fmt(format_args!("{}", highlighter)).is_err() {
             let _ = writer.write_all(text);
         }
     }
@@ -1133,8 +1134,11 @@ impl<'a> Repl<'a> {
         // Handle async IIFE results - wait for promise to resolve
         let mut resolved_result = result;
         if let Some(promise) = result.as_promise() {
+            // SAFETY: `promise` is a live JSC heap cell returned by `as_promise`;
+            // dereferenced for the synchronous calls below while `result` is
+            // protected by the conservative stack scan.
             // Mark as handled BEFORE waiting to prevent unhandled rejection output
-            promise.set_handled();
+            unsafe { (*promise).set_handled() };
 
             // Temporarily re-enable signal delivery so Ctrl+C can interrupt
             // the blocking waitForPromise call
@@ -1142,28 +1146,31 @@ impl<'a> Repl<'a> {
             // PORT NOTE: reshaped for borrowck — call disable_signals_during_wait() explicitly on each return path below
 
             // Wait for the promise to settle
-            vm.wait_for_promise(jsc::AnyPromise::Normal(promise));
+            vm_mut(vm).wait_for_promise(jsc::AnyPromise::Normal(promise));
 
             // If execution was forbidden by SIGINT, clear it and report
-            if vm.jsc_vm.execution_forbidden() {
-                vm.jsc_vm.set_execution_forbidden(false);
+            // SAFETY: `vm.jsc_vm` is the live JSC VM handle for this thread.
+            if unsafe { (*vm.jsc_vm).execution_forbidden() } {
+                vm_set_execution_forbidden(vm.jsc_vm, false);
                 global.clear_termination_exception();
                 self.print(format_args!("\n"));
                 self.disable_signals_during_wait();
                 return;
             }
 
+            // SAFETY: `vm.jsc_vm` is the live JSC VM handle for this thread.
+            let jsc_vm_ref = unsafe { &*vm.jsc_vm };
             // Check promise status after waiting
-            match promise.status() {
+            match unsafe { (*promise).status() } {
                 PromiseStatus::Fulfilled => {
-                    resolved_result = promise.result(vm.jsc_vm);
+                    resolved_result = unsafe { (*promise).result(jsc_vm_ref) };
                 }
                 PromiseStatus::Rejected => {
-                    let rejection = promise.result(vm.jsc_vm);
+                    let rejection = unsafe { (*promise).result(jsc_vm_ref) };
                     self.set_last_error(rejection);
                     // Set _error on the global object
-                    let global_this = global.to_js_value();
-                    global_this.put(global, "_error", rejection);
+                    let global_this = global_to_js_value(global);
+                    global_this.put(global, b"_error", rejection);
                     self.print_js_error(rejection);
                     self.disable_signals_during_wait();
                     return;
@@ -1184,13 +1191,13 @@ impl<'a> Repl<'a> {
         if resolved_result.is_object() {
             // Wrapper is REPL-built { __proto__: null, value: ... } so getOwn shouldn't throw,
             // but if it does, propagate as a REPL error.
-            let maybe_value = match resolved_result.get_own(global, "value") {
+            let maybe_value = match resolved_result.get_own(global, &bun_str::String::static_("value")) {
                 Ok(v) => v,
                 Err(err) => {
                     let exc = global.take_exception(err);
                     self.set_last_error(exc);
                     self.print_js_error(exc);
-                    vm.tick();
+                    vm_mut(vm).tick();
                     return;
                 }
             };
@@ -1205,8 +1212,8 @@ impl<'a> Repl<'a> {
         // Set _ to the last result (only if not undefined)
         // Use the global object as JSValue and put the property on it
         if !actual_result.is_undefined() {
-            let global_this = global.to_js_value();
-            global_this.put(global, "_", actual_result);
+            let global_this = global_to_js_value(global);
+            global_this.put(global, b"_", actual_result);
         }
 
         if actual_result.is_undefined() {

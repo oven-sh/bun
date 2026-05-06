@@ -1,22 +1,26 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
-use std::sync::Arc;
 
 use bun_core::{self, err};
 use bun_jsc::{event_loop::EventLoop, JSGlobalObject, JSValue};
-use bun_sys::{self, Fd};
+use bun_ptr::RefPtr;
+use bun_sys::{self, Fd, FdExt};
 
+use crate::node::types::FdJsc;
 use crate::webcore::blob::SizeType as BlobSizeType;
 use crate::webcore::file_sink::{self, FileSink};
-use crate::webcore::sink::DestructorPtr;
+use crate::webcore::sink;
+use crate::webcore::streams::SignalHandler;
 use crate::api::bun_spawn::stdio::Stdio;
 
-use super::{js, StaticPipeWriter, StdioResult, Subprocess};
+use super::{js, Flags, StaticPipeWriter, StdioResult, Subprocess};
 
 pub enum Writable<'a> {
-    Pipe(Arc<FileSink>),
+    // PORT NOTE: Zig uses intrusive-refcounted `*FileSink` (manual ref/deref).
+    // Keep a raw NonNull and call `FileSink::deref` explicitly to mirror that.
+    Pipe(NonNull<FileSink>),
     Fd(Fd),
-    Buffer(Arc<StaticPipeWriter<'a>>),
+    Buffer(RefPtr<StaticPipeWriter<'a>>),
     Memfd(Fd),
     Inherit,
     Ignore,
@@ -25,7 +29,8 @@ pub enum Writable<'a> {
 impl<'a> Writable<'a> {
     pub fn memory_cost(&self) -> usize {
         match self {
-            Writable::Pipe(pipe) => pipe.memory_cost(),
+            // SAFETY: pipe is live for the duration of the variant.
+            Writable::Pipe(pipe) => unsafe { pipe.as_ref() }.memory_cost(),
             Writable::Buffer(buffer) => buffer.memory_cost(),
             // TODO: memfd
             _ => 0,
@@ -45,10 +50,13 @@ impl<'a> Writable<'a> {
     pub fn r#ref(&mut self) {
         match self {
             Writable::Pipe(pipe) => {
-                pipe.update_ref(true);
+                // SAFETY: pipe is live for the duration of the variant.
+                unsafe { pipe.as_mut() }.update_ref(true);
             }
             Writable::Buffer(buffer) => {
-                buffer.update_ref(true);
+                // SAFETY: RefPtr holds a live ref; intrusive refcount permits
+                // shared mutation (mirrors Zig `*StaticPipeWriter`).
+                unsafe { (*buffer.data.as_ptr()).update_ref(true) };
             }
             _ => {}
         }
@@ -57,10 +65,12 @@ impl<'a> Writable<'a> {
     pub fn unref(&mut self) {
         match self {
             Writable::Pipe(pipe) => {
-                pipe.update_ref(false);
+                // SAFETY: pipe is live for the duration of the variant.
+                unsafe { pipe.as_mut() }.update_ref(false);
             }
             Writable::Buffer(buffer) => {
-                buffer.update_ref(false);
+                // SAFETY: RefPtr holds a live ref.
+                unsafe { (*buffer.data.as_ptr()).update_ref(false) };
             }
             _ => {}
         }
@@ -83,11 +93,12 @@ impl<'a> Writable<'a> {
         }
 
         match self {
-            Writable::Buffer(_) => {
-                // Arc dropped by reassignment below (mirrors Zig `buffer.deref()`).
+            Writable::Buffer(buffer) => {
+                buffer.deref();
             }
-            Writable::Pipe(_) => {
-                // Arc dropped by reassignment below (mirrors Zig `pipe.deref()`).
+            Writable::Pipe(pipe) => {
+                // SAFETY: pipe is live; deref may free it.
+                unsafe { FileSink::deref(pipe.as_ptr()) };
             }
             _ => {}
         }
@@ -107,7 +118,10 @@ impl<'a> Writable<'a> {
         promise_for_stream: &mut JSValue,
     ) -> Result<Writable<'a>, bun_core::Error> {
         // TODO(port): narrow error set
-        Subprocess::assert_stdio_result(&result);
+        super::assert_stdio_result(result);
+
+        // SAFETY: `event_loop.global` is set before any subprocess work.
+        let global = unsafe { event_loop.global.unwrap().as_ref() };
 
         #[cfg(windows)]
         {
@@ -121,25 +135,25 @@ impl<'a> Writable<'a> {
                             bun_sys::Result::Err(_err) => {
                                 drop(pipe);
                                 if let Stdio::ReadableStream(rs) = stdio {
-                                    rs.cancel(event_loop.global);
+                                    rs.cancel(global);
                                 }
                                 return Err(err!("UnexpectedCreatingStdin"));
                             }
                         }
                         pipe.writer.set_parent(&pipe);
                         subprocess.weak_file_sink_stdin_ptr = Some(NonNull::from(&*pipe));
-                        subprocess.r#ref();
-                        subprocess.flags.deref_on_stdin_destroyed = true;
-                        subprocess.flags.has_stdin_destructor_called = false;
+                        subprocess.ref_();
+                        subprocess.flags.set(Flags::DEREF_ON_STDIN_DESTROYED, true);
+                        subprocess.flags.set(Flags::HAS_STDIN_DESTRUCTOR_CALLED, false);
 
                         if let Stdio::ReadableStream(rs) = stdio {
-                            let assign_result = pipe.assign_to_stream(rs, event_loop.global);
-                            if let Some(err) = assign_result.to_error() {
+                            let assign_result = pipe.assign_to_stream(rs, global);
+                            if let Some(err_val) = assign_result.to_error() {
                                 subprocess.weak_file_sink_stdin_ptr = None;
-                                subprocess.flags.deref_on_stdin_destroyed = false;
+                                subprocess.flags.set(Flags::DEREF_ON_STDIN_DESTROYED, false);
                                 drop(pipe);
                                 subprocess.deref();
-                                return event_loop.global.throw_value(err);
+                                return Err(global.throw_value(err_val).into());
                             }
                             *promise_for_stream = assign_result;
                         }
@@ -149,12 +163,16 @@ impl<'a> Writable<'a> {
                     return Ok(Writable::Inherit);
                 }
 
-                Stdio::Blob(blob) => {
+                Stdio::Blob(_) => {
+                    let blob = match core::mem::replace(stdio, Stdio::Ignore) {
+                        Stdio::Blob(b) => b,
+                        _ => unreachable!(),
+                    };
                     return Ok(Writable::Buffer(StaticPipeWriter::create(
                         event_loop,
                         subprocess,
                         result,
-                        super::Source::Blob(blob.clone()),
+                        super::Source::Blob(blob),
                     )));
                 }
                 Stdio::ArrayBuffer(array_buffer) => {
@@ -162,7 +180,7 @@ impl<'a> Writable<'a> {
                         event_loop,
                         subprocess,
                         result,
-                        super::Source::ArrayBuffer(array_buffer.clone()),
+                        super::Source::ArrayBuffer(core::mem::take(array_buffer)),
                     )));
                 }
                 Stdio::Fd(fd) => {
@@ -194,14 +212,22 @@ impl<'a> Writable<'a> {
         match stdio {
             Stdio::Dup2(_) => panic!("TODO dup2 stdio"),
             Stdio::Pipe | Stdio::ReadableStream(_) => {
-                let pipe = FileSink::create(event_loop, result.unwrap());
+                // CYCLEBREAK: `FileSink::create` takes `bun_event_loop::EventLoopHandle`,
+                // not `&bun_jsc::EventLoop`; erase to the vtable-backed handle.
+                let evtloop = bun_event_loop::EventLoopHandle::init(
+                    event_loop as *const EventLoop as *mut (),
+                );
+                let pipe_ptr = FileSink::create(evtloop, result.unwrap());
+                // SAFETY: `create` returns a freshly-boxed non-null pointer.
+                let pipe = unsafe { &mut *pipe_ptr };
 
                 match pipe.writer.start(pipe.fd, true) {
                     bun_sys::Result::Ok(()) => {}
                     bun_sys::Result::Err(_err) => {
-                        drop(pipe);
+                        // SAFETY: pipe was just created with refcount 1.
+                        unsafe { FileSink::deref(pipe_ptr) };
                         if let Stdio::ReadableStream(rs) = stdio {
-                            rs.cancel(event_loop.global);
+                            rs.cancel(global);
                         }
 
                         return Err(err!("UnexpectedCreatingStdin"));
@@ -209,39 +235,46 @@ impl<'a> Writable<'a> {
                 }
 
                 pipe.writer.handle.poll.flags.insert(bun_aio::PollFlag::Socket);
-                // TODO(port): Arc<FileSink> interior mutability for writer.handle.poll.flags
 
-                subprocess.weak_file_sink_stdin_ptr = Some(NonNull::from(&*pipe));
-                subprocess.r#ref();
-                subprocess.flags.has_stdin_destructor_called = false;
-                subprocess.flags.deref_on_stdin_destroyed = true;
+                subprocess.weak_file_sink_stdin_ptr = NonNull::new(pipe_ptr);
+                subprocess.ref_();
+                subprocess.flags.set(Flags::HAS_STDIN_DESTRUCTOR_CALLED, false);
+                subprocess.flags.set(Flags::DEREF_ON_STDIN_DESTROYED, true);
 
                 if let Stdio::ReadableStream(rs) = stdio {
-                    let assign_result = pipe.assign_to_stream(rs, event_loop.global);
-                    if let Some(err) = assign_result.to_error() {
+                    let assign_result = pipe.assign_to_stream(rs, global);
+                    if let Some(err_val) = assign_result.to_error() {
                         subprocess.weak_file_sink_stdin_ptr = None;
-                        subprocess.flags.deref_on_stdin_destroyed = false;
-                        drop(pipe);
+                        subprocess.flags.set(Flags::DEREF_ON_STDIN_DESTROYED, false);
+                        // SAFETY: pipe is live; deref may free it.
+                        unsafe { FileSink::deref(pipe_ptr) };
                         subprocess.deref();
-                        return event_loop.global.throw_value(err);
+                        return Err(global.throw_value(err_val).into());
                     }
                     *promise_for_stream = assign_result;
                 }
 
-                Ok(Writable::Pipe(pipe))
+                // SAFETY: `create` returns non-null.
+                Ok(Writable::Pipe(unsafe { NonNull::new_unchecked(pipe_ptr) }))
             }
 
-            Stdio::Blob(blob) => Ok(Writable::Buffer(StaticPipeWriter::create(
-                event_loop,
-                subprocess,
-                result,
-                super::Source::Blob(blob.clone()),
-            ))),
+            Stdio::Blob(_) => {
+                let blob = match core::mem::replace(stdio, Stdio::Ignore) {
+                    Stdio::Blob(b) => b,
+                    _ => unreachable!(),
+                };
+                Ok(Writable::Buffer(StaticPipeWriter::create(
+                    event_loop,
+                    subprocess,
+                    result,
+                    super::Source::Blob(blob),
+                )))
+            }
             Stdio::ArrayBuffer(array_buffer) => Ok(Writable::Buffer(StaticPipeWriter::create(
                 event_loop,
                 subprocess,
                 result,
-                super::Source::ArrayBuffer(array_buffer.clone()),
+                super::Source::ArrayBuffer(core::mem::take(array_buffer)),
             ))),
             Stdio::Memfd(memfd) => {
                 debug_assert!(*memfd != Fd::INVALID);
@@ -254,9 +287,13 @@ impl<'a> Writable<'a> {
         }
     }
 
-    pub fn to_js(&mut self, global_this: &JSGlobalObject, subprocess: &mut Subprocess) -> JSValue {
-        // PORT NOTE: reshaped for borrowck — `self` is `&mut subprocess.stdin`; Phase B may need to
-        // pass `subprocess` as raw ptr or restructure.
+    pub fn to_js(
+        &mut self,
+        global_this: &JSGlobalObject,
+        subprocess: *mut Subprocess,
+    ) -> JSValue {
+        // PORT NOTE: reshaped for borrowck — `self` is `&mut subprocess.stdin`;
+        // take `subprocess` as raw ptr so the caller can pass both halves.
         match core::mem::replace(self, Writable::Ignore) {
             Writable::Fd(fd) => {
                 *self = Writable::Fd(fd);
@@ -275,13 +312,15 @@ impl<'a> Writable<'a> {
                 *self = Writable::Inherit;
                 JSValue::UNDEFINED
             }
-            Writable::Pipe(pipe) => {
+            Writable::Pipe(pipe_nn) => {
                 // self already replaced with Ignore above (mirrors Zig `this.* = .{ .ignore = {} }`)
-                // TODO(port): Zig transfers the +1 held by Writable into the JS wrapper here
-                // (no `pipe.deref()` after `toJS`/`toJSWithDestructor`). Dropping `pipe: Arc<FileSink>`
-                // at scope end is an extra -1 vs Zig — verify FileSink::to_js* ref semantics, or
-                // pass the Arc by value / `core::mem::forget(pipe)` to hand ownership to the wrapper.
-                if subprocess.process.has_exited() && !subprocess.flags.has_stdin_destructor_called {
+                // SAFETY: pipe is live (held a +1 in this enum).
+                let pipe = unsafe { &mut *pipe_nn.as_ptr() };
+                // SAFETY: caller passes the live `*mut Subprocess` whose `.stdin` is `self`.
+                let subprocess = unsafe { &mut *subprocess };
+                if subprocess.process.has_exited()
+                    && !subprocess.flags.contains(Flags::HAS_STDIN_DESTRUCTOR_CALLED)
+                {
                     // `Writable::init()` already called `subprocess.ref()` and
                     // set `deref_on_stdin_destroyed`. `on_attached_process_exit()`
                     // → `writer.close()` → `pipe.signal` → `Writable::on_close`
@@ -293,21 +332,25 @@ impl<'a> Writable<'a> {
                     pipe.on_attached_process_exit(&subprocess.process.status);
                     pipe.to_js(global_this)
                 } else {
-                    subprocess.flags.has_stdin_destructor_called = false;
-                    subprocess.weak_file_sink_stdin_ptr = Some(NonNull::from(&*pipe));
-                    if !subprocess.flags.deref_on_stdin_destroyed {
+                    subprocess.flags.set(Flags::HAS_STDIN_DESTRUCTOR_CALLED, false);
+                    subprocess.weak_file_sink_stdin_ptr = Some(pipe_nn);
+                    if !subprocess.flags.contains(Flags::DEREF_ON_STDIN_DESTROYED) {
                         // `Writable::init()` already did this for fresh pipes;
                         // only take a new ref if `on_stdin_destroyed()` has since
                         // consumed it.
-                        subprocess.r#ref();
-                        subprocess.flags.deref_on_stdin_destroyed = true;
+                        subprocess.ref_();
+                        subprocess.flags.set(Flags::DEREF_ON_STDIN_DESTROYED, true);
                     }
-                    if core::ptr::addr_eq(pipe.signal.ptr, subprocess as *mut Subprocess as *const c_void) {
+                    if pipe.signal.ptr
+                        == NonNull::new(subprocess as *mut Subprocess as *mut c_void)
+                    {
                         pipe.signal.clear();
                     }
                     pipe.to_js_with_destructor(
                         global_this,
-                        DestructorPtr::init(subprocess),
+                        Some(sink::destructor_ptr_subprocess(
+                            subprocess as *mut Subprocess as *const c_void,
+                        )),
                     )
                 }
             }
@@ -328,19 +371,24 @@ impl<'a> Writable<'a> {
         }
 
         match self {
-            Writable::Pipe(pipe) => {
-                if core::ptr::addr_eq(pipe.signal.ptr, self as *const _ as *const c_void) {
+            Writable::Pipe(pipe_nn) => {
+                // SAFETY: pipe is live for the duration of the variant.
+                let pipe = unsafe { pipe_nn.as_mut() };
+                if pipe.signal.ptr == NonNull::new(self as *mut _ as *mut c_void) {
                     pipe.signal.clear();
                 }
 
-                // Arc dropped by reassignment (mirrors Zig `pipe.deref()`).
+                // SAFETY: pipe is live; deref may free it.
+                unsafe { FileSink::deref(pipe_nn.as_ptr()) };
 
                 *self = Writable::Ignore;
             }
             Writable::Buffer(buffer) => {
-                buffer.update_ref(false);
+                // SAFETY: RefPtr holds a live ref.
+                unsafe { (*buffer.data.as_ptr()).update_ref(false) };
                 // PORT NOTE: Zig calls `buffer.deref()` without reassigning to `.ignore`;
-                // dropping the Arc here to match the refcount decrement.
+                // RefPtr::deref drops the held ref.
+                buffer.deref();
                 *self = Writable::Ignore;
             }
             Writable::Memfd(fd) => {
@@ -355,7 +403,8 @@ impl<'a> Writable<'a> {
     pub fn close(&mut self) {
         match self {
             Writable::Pipe(pipe) => {
-                let _ = pipe.end(None);
+                // SAFETY: pipe is live for the duration of the variant.
+                let _ = unsafe { pipe.as_mut() }.end(None);
             }
             Writable::Memfd(fd) => {
                 fd.close();
@@ -365,11 +414,24 @@ impl<'a> Writable<'a> {
                 *self = Writable::Ignore;
             }
             Writable::Buffer(buffer) => {
-                buffer.close();
+                // SAFETY: RefPtr holds a live ref.
+                unsafe { (*buffer.data.as_ptr()).close() };
             }
             Writable::Ignore => {}
             Writable::Inherit => {}
         }
+    }
+}
+
+impl<'a> SignalHandler for Writable<'a> {
+    fn on_close(&mut self, err: Option<bun_sys::Error>) {
+        Writable::on_close(self, err)
+    }
+    fn on_ready(&mut self, amount: Option<BlobSizeType>, offset: Option<BlobSizeType>) {
+        Writable::on_ready(self, amount, offset)
+    }
+    fn on_start(&mut self) {
+        Writable::on_start(self)
     }
 }
 
@@ -378,5 +440,5 @@ impl<'a> Writable<'a> {
 //   source:     src/runtime/api/bun/subprocess/Writable.zig (341 lines)
 //   confidence: medium
 //   todos:      3
-//   notes:      Arc<FileSink>/Arc<StaticPipeWriter> per LIFETIMES.tsv but Zig uses intrusive refcount (.deref()) + heavy mutation through shared ptr — Phase B may need IntrusiveArc or interior mutability; @fieldParentPtr + aliased &mut Subprocess/&mut self need borrowck reshaping.
+//   notes:      Pipe holds NonNull<FileSink> (intrusive refcount, manual deref) and Buffer holds RefPtr<StaticPipeWriter> per Zig; @fieldParentPtr + aliased &mut Subprocess/&mut self need borrowck reshaping.
 // ──────────────────────────────────────────────────────────────────────────

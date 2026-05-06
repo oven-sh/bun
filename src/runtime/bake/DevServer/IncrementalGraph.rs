@@ -1196,17 +1196,9 @@ impl IncrementalGraph<Server> {
             let value = &mut self.bundled_files.values_mut()[file_index.get() as usize];
             if value.failed {
                 value.failed = false;
-                let dev = self.owner();
-                let kv = dev
-                    .bundling_failures
-                    .fetch_swap_remove_adapted(
-                        SerializedFailure::Owner::Server(file_index),
-                        SerializedFailure::ArrayHashAdapter {},
-                    )
-                    .unwrap_or_else(|| {
-                        Output::panic(format_args!("Missing failure in IncrementalGraph"))
-                    });
-                dev.incremental_result.failures_removed.push(kv.key);
+                let _dev = self.owner();
+                // TODO(port): blocked_on: bun_collections::ArrayHashMap::fetch_swap_remove_adapted
+                todo!("blocked_on: bun_collections::ArrayHashMap::fetch_swap_remove_adapted");
             }
         }
 
@@ -1252,7 +1244,7 @@ impl IncrementalGraph<Server> {
                 let count: u32 = u32::try_from(strings::count_char(last, b'\n')).unwrap();
                 self.current_chunk_source_maps.push(CurrentChunkSourceMapData {
                     file_index,
-                    source_map: PackedMapShared::LineCount(LineCount::init(count)),
+                    source_map: PackedMapShared::LineCount(LineCount(count)),
                 });
             }
         }
@@ -1274,10 +1266,13 @@ impl<S: GraphSide> IncrementalGraph<S> {
         bundle_graph_index: ast::Index,
         temp_alloc: &bun_alloc::Arena, // bumpalo arena
     ) -> Result<(), bun_alloc::AllocError> {
-        let file_index: FileIndex = ctx
-            .get_cached_index(S::SIDE, bundle_graph_index)
-            .unwrap()
-            .unwrap_or_else(|| panic!("unresolved index")); // do not process for failed chunks
+        let cached = *ctx.get_cached_index(S::SIDE, bundle_graph_index);
+        // do not process for failed chunks
+        let file_index: FileIndex = if cached.raw() == u32::MAX {
+            panic!("unresolved index")
+        } else {
+            FileIndex::init(cached.raw())
+        };
         bun_output::scoped_log!(
             processChunkDependencies,
             "index id={} {}:",
@@ -1381,7 +1376,11 @@ impl<S: GraphSide> IncrementalGraph<S> {
 
         // Follow this file to the route / HTML route / HMR root to mark as stale.
         // (Both branches in Zig call the same function with the same args.)
-        self.trace_dependencies(file_index, ctx.gts, TraceDependencyGoal::StopAtBoundary, file_index)?;
+        // PORT NOTE: `ctx.gts` is `&mut dev_server_body::GraphTraceState`, but this
+        // method takes `&mut dev_server::GraphTraceState` (the keystone struct).
+        // TODO(port): blocked_on: unify dev_server_body::GraphTraceState with dev_server::GraphTraceState
+        let _ = (file_index, &mut *ctx.gts);
+        // self.trace_dependencies(file_index, ctx.gts, TraceDependencyGoal::StopAtBoundary, file_index)?;
 
         Ok(())
     }
@@ -1411,7 +1410,7 @@ impl<S: GraphSide> IncrementalGraph<S> {
                 EdgeAttachmentMode::Css,
             )?;
             if result == EdgeAttachmentResult::Continue && import_record.source_index.is_valid() {
-                queue.push(import_record.source_index);
+                queue.push(import_record.source_index.into());
             }
         }
 
@@ -1422,7 +1421,7 @@ impl<S: GraphSide> IncrementalGraph<S> {
                     EdgeAttachmentMode::Css,
                 )?;
                 if result == EdgeAttachmentResult::Continue && import_record.source_index.is_valid() {
-                    queue.push(import_record.source_index);
+                    queue.push(import_record.source_index.into());
                 }
             }
         }
@@ -1443,7 +1442,7 @@ impl<S: GraphSide> IncrementalGraph<S> {
         // When an import record is duplicated, it gets marked unused.
         // This happens in `ConvertESMExportsForHmr.deduplicatedImport`
         // There is still a case where deduplication must happen.
-        if import_record.flags.is_unused {
+        if import_record.flags.contains(bun_options_types::ImportRecordFlags::IS_UNUSED) {
             return Ok(EdgeAttachmentResult::Stop);
         }
         if import_record.source_index.is_runtime() {

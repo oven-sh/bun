@@ -2617,7 +2617,7 @@ impl TestCommand {
 pub fn handle_top_level_test_error_before_javascript_start(err: bun_core::Error) -> ! {
     if cfg!(debug_assertions) {
         if err != bun_core::err!("ModuleNotFound") {
-            Output::debug_warn("Unhandled error: {}\n", (err.name(),));
+            bun_core::debug_warn!("Unhandled error: {}", err.name());
         }
     }
     Global::exit(1);

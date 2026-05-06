@@ -343,8 +343,8 @@ pub fn init_watch_trigger() {
 
     #[cfg(not(windows))]
     {
-        let path: Box<ZStr> = if let Some(existing) = getenv_z(TRIGGER_FILE_ENV_VAR) {
-            ZStr::from_bytes(existing)
+        let path: ZBox = if let Some(existing) = getenv_z(TRIGGER_FILE_ENV_VAR_Z) {
+            ZBox::from_bytes(existing)
         } else {
             // TODO(port): std.Random.DefaultPrng / std.time.milliTimestamp / std.c.getpid —
             // pick Rust equivalents (likely bun_core::time::milli_timestamp() ^ libc::getpid())
@@ -353,7 +353,7 @@ pub fn init_watch_trigger() {
                 bun_core::time::milli_timestamp() as u64 ^ unsafe { libc::getpid() } as u64;
             let rand: u64 = bun_wyhash::hash(&seed.to_ne_bytes());
             // TODO(port): Zig used DefaultPrng (xoshiro256++); wyhash-of-seed is a placeholder
-            let tmpdir = FileSystem::RealFS::tmpdir_path();
+            let tmpdir = RealFS::tmpdir_path();
             let mut fresh: Vec<u8> = Vec::new();
             {
                 use std::io::Write as _;
@@ -368,9 +368,7 @@ pub fn init_watch_trigger() {
                 )
                 .expect("unreachable");
             }
-            fresh.push(0);
-            // SAFETY: fresh[len-1] == 0 written above; len excludes the NUL.
-            let fresh = unsafe { ZStr::from_raw_owned(fresh) };
+            let fresh = ZBox::from_vec(fresh);
             // Export once so every exec()'d descendant inherits the same
             // path. Adding (not removing) an env var is safe w.r.t.
             // `std.os.environ`; it simply won't be visible to code that
@@ -378,9 +376,8 @@ pub fn init_watch_trigger() {
             // SAFETY: both strings are NUL-terminated; setenv copies into libc env storage.
             unsafe {
                 setenv(
-                    TRIGGER_FILE_ENV_VAR.as_ptr().cast::<c_char>(),
-                    // TODO(port): TRIGGER_FILE_ENV_VAR needs trailing NUL for setenv; use c"..." literal
-                    fresh.as_ptr().cast::<c_char>(),
+                    TRIGGER_FILE_ENV_VAR_Z.as_ptr(),
+                    fresh.as_ptr(),
                     1,
                 );
             }
@@ -393,7 +390,8 @@ pub fn init_watch_trigger() {
         // on `hot_reloader::WATCH_CHANGED_PATHS`.
         unsafe {
             jsc::hot_reloader::WATCH_CHANGED_PATHS = Some(set as *mut StringSet);
-            jsc::hot_reloader::WATCH_CHANGED_TRIGGER_FILE = Some(Box::leak(path));
+            jsc::hot_reloader::WATCH_CHANGED_TRIGGER_FILE =
+                Some(Box::leak(Box::new(path)).as_zstr());
         }
     }
 }

@@ -1,19 +1,21 @@
 use core::ffi::{c_char, CStr};
+use core::ptr::NonNull;
 use std::io::Write as _;
 
 use bun_collections::BabyList;
-use bun_core::{fmt as bun_fmt, Output, SignalCode, StackCheck};
+use bun_core::{fmt as bun_fmt, Output, SignalCode, StackCheck, Timespec, TimespecMockMode, ZBox};
 use bun_sys::UV_E;
 use bun_event_loop::SpawnSyncEventLoop::TickState;
-use bun_io::max_buf::MaxBuf;
+use bun_io::max_buf::{MaxBuf, MaxBufOwnerVTable};
 use bun_jsc::{
     self as jsc, CallFrame, EventLoopHandle, JSGlobalObject, JSObject,
     JSPropertyIterator, JSValue, JsError, JsResult, SystemError,
 };
+use bun_jsc::{JsClass as _, SysErrorJsc as _};
 use bun_jsc::ipc as IPC;
 use bun_paths::PathBuffer;
 use bun_str::{self as strings_mod, strings, String as BunString, ZStr, ZigString};
-use bun_sys::{self as sys, Fd};
+use bun_sys::{self as sys, Fd, FdExt as _};
 
 // Process / spawn machinery is local to this crate (api/bun/process.rs).
 use crate::api::bun_process::{
@@ -24,6 +26,77 @@ use crate::api::bun_spawn::stdio::{self, Stdio};
 use crate::api::bun_subprocess::{self as Subprocess, Readable, Subprocess as SubprocessT, Writable};
 use crate::api::bun::terminal::Terminal;
 use crate::webcore as WebCore;
+
+// ── local shims for upstream-crate methods not yet available ────────────────
+// `JSValue::withAsyncContextIfNeeded` (Zig) — async-context wrapper. Upstream
+// `bun_jsc` hasn't exposed it yet; pass through unchanged so calls type-check.
+trait JSValueSpawnExt {
+    fn with_async_context_if_needed(self, _global: &JSGlobalObject) -> JSValue;
+    fn is_finite(self) -> bool;
+}
+impl JSValueSpawnExt for JSValue {
+    #[inline]
+    fn with_async_context_if_needed(self, _global: &JSGlobalObject) -> JSValue {
+        // TODO(port): wire to JSC__JSValue__withAsyncContextIfNeeded once exported.
+        self
+    }
+    #[inline]
+    fn is_finite(self) -> bool {
+        self.is_number() && self.as_number().is_finite()
+    }
+}
+
+/// `bun.String.indexOfAsciiChar` — upstream `bun_str::String` doesn't expose it
+/// yet; route through the underlying byte view.
+trait BunStringSpawnExt {
+    fn index_of_ascii_char(&self, chr: u8) -> Option<usize>;
+}
+impl BunStringSpawnExt for BunString {
+    #[inline]
+    fn index_of_ascii_char(&self, chr: u8) -> Option<usize> {
+        // PORT NOTE: Zig walks the WTFStringImpl encoding-aware; for the
+        // null-byte-injection check (chr == 0) a UTF-8 view scan is equivalent.
+        let zs = self.to_zig_string();
+        strings::index_of_char(zs.slice(), chr)
+    }
+}
+
+/// `SignalCode.fromJS` lives in `bun_sys_jsc`; wrap as a free fn here so the
+/// call sites stay shape-compatible with the Zig spec.
+#[inline]
+fn signal_code_from_js(val: JSValue, global: &JSGlobalObject) -> JsResult<SignalCode> {
+    bun_sys_jsc::signal_code_jsc::from_js(val, global)
+}
+
+/// `bun.timespec.orderIgnoreEpoch` — not yet on `bun_core::Timespec`; local port.
+#[inline]
+fn timespec_order_ignore_epoch(a: &Timespec, b: &Timespec) -> core::cmp::Ordering {
+    if a.eql(&Timespec::EPOCH) {
+        return core::cmp::Ordering::Greater;
+    }
+    if b.eql(&Timespec::EPOCH) {
+        return core::cmp::Ordering::Less;
+    }
+    a.order(b)
+}
+
+/// `Terminal.CreateResult` — full struct gated behind `bun_terminal_body`. Stub
+/// the shape used by `spawn_maybe_sync` so the parsing path type-checks.
+pub struct TerminalCreateResult {
+    pub terminal: *mut Terminal,
+    pub js_value: JSValue,
+}
+
+/// `MaxBuf` owner vtable for `Subprocess` — routes max-buffer-exceeded
+/// notifications back to `Subprocess::on_max_buffer`.
+static SUBPROCESS_MAXBUF_VTABLE: MaxBufOwnerVTable = MaxBufOwnerVTable {
+    on_max_buffer: |owner, kind| {
+        // SAFETY: `owner` was set from a live `*mut Subprocess<'static>` in
+        // `MaxBuf::create_for_subprocess` below; the subprocess clears the
+        // maxbuf slot before drop.
+        unsafe { (*owner.cast::<SubprocessT<'static>>().as_ptr()).on_max_buffer(kind) };
+    },
+};
 
 bun_output::declare_scope!(Subprocess, hidden);
 

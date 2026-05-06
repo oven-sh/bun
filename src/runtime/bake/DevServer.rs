@@ -40,7 +40,7 @@ use bun_bundler::{self as bundler, options::Loader, BundleV2, Transpiler};
 use bun_http::{Method, MimeType};
 use bun_options_types::{ImportKind, ImportRecord};
 use crate::api::server::StaticRoute;
-use crate::timer::EventLoopTimer;
+use crate::timer::{EventLoopTimer, EventLoopTimerState};
 use crate::api::{AnyServer, HTMLBundle, JSBundler, SavedRequest};
 use crate::server::html_bundle::HTMLBundleRoute;
 use crate::webcore::{Blob, Request as WebRequest, Response};
@@ -2406,12 +2406,13 @@ impl DevServer<'_> {
             },
             alloc,
             // SAFETY: vm is JSC_BORROW â valid for DevServer lifetime
-            bundler::EventLoop::Js(unsafe { &*self.vm }.event_loop()),
+            // PORT NOTE: bundler::EventLoop is an erased `Option<NonNull<()>>` (was AnyEventLoop union).
+            ::core::ptr::NonNull::new(unsafe { &*self.vm }.event_loop().cast::<()>()),
             false, // watching is handled separately
             bun_threading::work_pool::WorkPool::get(),
             heap,
         )?;
-        bv2.bun_watcher = Some(&mut *self.bun_watcher);
+        bv2.bun_watcher = Some(::core::ptr::NonNull::from(&mut *self.bun_watcher).cast::<()>());
         bv2.asynchronous = true;
 
         {
@@ -2421,7 +2422,7 @@ impl DevServer<'_> {
             self.server_graph.reset();
         }
 
-        let start_data = bv2.start_from_bake_dev_server(&entry_points)?;
+        let start_data = bv2.start_from_bake_dev_server(entry_points)?;
         self.current_bundle = Some(CurrentBundle {
             bv2,
             timer,
@@ -2434,7 +2435,7 @@ impl DevServer<'_> {
 
         self.next_bundle.promise = DeferredPromise::default();
         self.next_bundle.requests = deferred_request::List::default();
-        self.next_bundle.route_queue.clear();
+        self.next_bundle.route_queue.clear_retaining_capacity();
         Ok(())
     }
 
@@ -2466,7 +2467,7 @@ impl DevServer<'_> {
             if cfg!(debug_assertions) {
                 Output::debug_warn("dev.log should not be written into when using DevServer");
             }
-            let _ = self.log.print(Output::error_writer());
+            let _ = self.log.print(Output::error_writer() as *mut _);
         }
         Ok(())
     }
@@ -2541,7 +2542,7 @@ impl DevServer<'_> {
                     route_bundle::State::PossibleBundlingFailures;
             }
 
-            self.publish(HmrTopic::Errors, &payload, Opcode::Binary);
+            self.publish(HmrTopic::Errors, &payload, Opcode::BINARY);
         } else if !self.incremental_result.failures_removed.is_empty() {
             let mut payload: Vec<u8> = Vec::with_capacity(
                 ::core::mem::size_of::<MessageId>()
@@ -2564,7 +2565,7 @@ impl DevServer<'_> {
                 removed.deinit(self);
             }
 
-            self.publish(HmrTopic::Errors, &payload, Opcode::Binary);
+            self.publish(HmrTopic::Errors, &payload, Opcode::BINARY);
         }
 
         self.incremental_result.failures_removed.clear();
@@ -2861,7 +2862,7 @@ pub fn finalize_bundle(
             dev.publish(
                 HmrTopic::TestingWatchSynchronization,
                 &[MessageId::TestingWatchSynchronization.char(), 0],
-                Opcode::Binary,
+                Opcode::BINARY,
             );
         } else {
             dev.publish(
@@ -2870,7 +2871,7 @@ pub fn finalize_bundle(
                     MessageId::TestingWatchSynchronization.char(),
                     if had_sent_hmr_event { 4 } else { 3 },
                 ],
-                Opcode::Binary,
+                Opcode::BINARY,
             );
         }
 
@@ -3488,7 +3489,7 @@ pub fn finalize_bundle(
             w_int!(i32, 0);
         }
 
-        dev.publish(HmrTopic::HotUpdate, &hot_update_payload, Opcode::Binary);
+        dev.publish(HmrTopic::HotUpdate, &hot_update_payload, Opcode::BINARY);
         had_sent_hmr_event = true;
     }
 
@@ -4473,7 +4474,7 @@ impl DevServer<'_> {
             return; // visualizer does not get an update if it OOMs
         }
 
-        self.publish(HmrTopic::IncrementalVisualizer, &payload, Opcode::Binary);
+        self.publish(HmrTopic::IncrementalVisualizer, &payload, Opcode::BINARY);
     }
 
     pub fn emit_memory_visualizer_message_timer(timer: &mut EventLoopTimer, _: &bun_core::Timespec) {
@@ -4513,7 +4514,7 @@ impl DevServer<'_> {
         if self.write_memory_visualizer_message(&mut payload).is_err() {
             return; // drop packet
         }
-        self.publish(HmrTopic::MemoryVisualizer, &payload, Opcode::Binary);
+        self.publish(HmrTopic::MemoryVisualizer, &payload, Opcode::BINARY);
     }
 
     pub fn write_memory_visualizer_message(&self, payload: &mut Vec<u8>) -> Result<(), bun_core::Error> {

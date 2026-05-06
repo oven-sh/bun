@@ -104,7 +104,7 @@ impl Options {
     /// - `--revision` or `--version` flags are passed without a target
     ///   command also being provided. This is not a failure.
     /// - Incorrect arguments are passed. Prints usage and exits with a failure code.
-    fn parse(ctx: &mut Command::Context, argv: &[&'static ZStr]) -> Result<Options, AllocError> {
+    fn parse(ctx: &mut ContextData, argv: &[&'static ZStr]) -> Result<Options, AllocError> {
         let mut found_subcommand_name = false;
         let mut maybe_package_name: Option<&'static [u8]> = None;
         let mut has_version = false; //  --version
@@ -181,12 +181,12 @@ impl Options {
             if let Some(package_name) = maybe_package_name {
                 if package_name.is_empty() {
                     Output::err_generic("When using --package, you must specify the binary to run", format_args!(""));
-                    Output::prettyln("  <d>usage: bunx --package=\\<package-name\\> \\<binary-name\\> [args...]<r>", format_args!(""));
+                    Output::prettyln(format_args!("  <d>usage: bunx --package=\\<package-name\\> \\<binary-name\\> [args...]<r>"));
                     Global::exit(1);
                 }
             } else {
                 Output::err_generic("When using --package, you must specify the binary to run", format_args!(""));
-                Output::prettyln("  <d>usage: bunx --package=\\<package-name\\> \\<binary-name\\> [args...]<r>", format_args!(""));
+                Output::prettyln(format_args!("  <d>usage: bunx --package=\\<package-name\\> \\<binary-name\\> [args...]<r>"));
                 Global::exit(1);
             }
             opts.binary_name = maybe_package_name;

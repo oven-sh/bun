@@ -901,18 +901,21 @@ pub mod js_bundler {
             }
 
             let mut has_out_dir = false;
-            if let Some(slice) = config.get_optional::<ZigString::Slice>(global_this, "outdir")? {
+            if let Some(slice) = config
+get_optional_slice($SELF, global_this, b"outdir")? {
                 this.outdir.append_slice_exact(slice.slice())?;
                 has_out_dir = true;
                 drop(slice);
             }
 
-            if let Some(slice) = config.get_optional::<ZigString::Slice>(global_this, "banner")? {
+            if let Some(slice) = config
+get_optional_slice($SELF, global_this, b"banner")? {
                 this.banner.append_slice_exact(slice.slice())?;
                 drop(slice);
             }
 
-            if let Some(slice) = config.get_optional::<ZigString::Slice>(global_this, "footer")? {
+            if let Some(slice) = config
+get_optional_slice($SELF, global_this, b"footer")? {
                 this.footer.append_slice_exact(slice.slice())?;
                 drop(slice);
             }
@@ -988,7 +991,8 @@ pub mod js_bundler {
                 }
 
                 if let Some(slice) =
-                    jsx_value.get_optional::<ZigString::Slice>(global_this, "runtime")?
+                    jsx_value
+get_optional_slice($SELF, global_this, b"runtime")?
                 {
                     let mut str_lower = [0u8; 128];
                     let len = (slice.len() as usize).min(str_lower.len());
@@ -1014,21 +1018,24 @@ pub mod js_bundler {
                 }
 
                 if let Some(slice) =
-                    jsx_value.get_optional::<ZigString::Slice>(global_this, "factory")?
+                    jsx_value
+get_optional_slice($SELF, global_this, b"factory")?
                 {
                     this.jsx.factory = Box::<[u8]>::from(slice.slice());
                     drop(slice);
                 }
 
                 if let Some(slice) =
-                    jsx_value.get_optional::<ZigString::Slice>(global_this, "fragment")?
+                    jsx_value
+get_optional_slice($SELF, global_this, b"fragment")?
                 {
                     this.jsx.fragment = Box::<[u8]>::from(slice.slice());
                     drop(slice);
                 }
 
                 if let Some(slice) =
-                    jsx_value.get_optional::<ZigString::Slice>(global_this, "importSource")?
+                    jsx_value
+get_optional_slice($SELF, global_this, b"importSource")?
                 {
                     this.jsx.import_source = Box::<[u8]>::from(slice.slice());
                     drop(slice);
@@ -1140,7 +1147,8 @@ pub mod js_bundler {
             {
                 let path: ZigString::Slice = 'brk: {
                     if let Some(slice) =
-                        config.get_optional::<ZigString::Slice>(global_this, "root")?
+                        config
+get_optional_slice($SELF, global_this, b"root")?
                     {
                         break 'brk slice;
                     }
@@ -1263,7 +1271,8 @@ pub mod js_bundler {
             //     this.appendSliceExact(globalThis.bunVM().transpiler.fs.top_level_dir) catch unreachable;
             // }
 
-            if let Some(slice) = config.get_optional::<ZigString::Slice>(global_this, "publicPath")? {
+            if let Some(slice) = config
+get_optional_slice($SELF, global_this, b"publicPath")? {
                 this.public_path.append_slice_exact(slice.slice())?;
                 drop(slice);
             }
@@ -1271,7 +1280,8 @@ pub mod js_bundler {
             if let Some(naming) = config.get_truthy(global_this, "naming")? {
                 if naming.is_string() {
                     if let Some(slice) =
-                        config.get_optional::<ZigString::Slice>(global_this, "naming")?
+                        config
+get_optional_slice($SELF, global_this, b"naming")?
                     {
                         if !slice.slice().starts_with(b"./") {
                             this.names.owned_entry_point.append_slice_exact(b"./")?;
@@ -1283,7 +1293,8 @@ pub mod js_bundler {
                     }
                 } else if naming.is_object() {
                     if let Some(slice) =
-                        naming.get_optional::<ZigString::Slice>(global_this, "entry")?
+                        naming
+get_optional_slice($SELF, global_this, b"entry")?
                     {
                         if !slice.slice().starts_with(b"./") {
                             this.names.owned_entry_point.append_slice_exact(b"./")?;
@@ -1294,7 +1305,8 @@ pub mod js_bundler {
                     }
 
                     if let Some(slice) =
-                        naming.get_optional::<ZigString::Slice>(global_this, "chunk")?
+                        naming
+get_optional_slice($SELF, global_this, b"chunk")?
                     {
                         if !slice.slice().starts_with(b"./") {
                             this.names.owned_chunk.append_slice_exact(b"./")?;
@@ -1305,7 +1317,8 @@ pub mod js_bundler {
                     }
 
                     if let Some(slice) =
-                        naming.get_optional::<ZigString::Slice>(global_this, "asset")?
+                        naming
+get_optional_slice($SELF, global_this, b"asset")?
                     {
                         if !slice.slice().starts_with(b"./") {
                             this.names.owned_asset.append_slice_exact(b"./")?;
@@ -1423,13 +1436,15 @@ pub mod js_bundler {
                     // metafile: { json?: string, markdown?: string }
                     this.metafile = true;
                     if let Some(slice) =
-                        metafile_value.get_optional::<ZigString::Slice>(global_this, "json")?
+                        metafile_value
+get_optional_slice($SELF, global_this, b"json")?
                     {
                         this.metafile_json_path.append_slice_exact(slice.slice())?;
                         drop(slice);
                     }
                     if let Some(slice) =
-                        metafile_value.get_optional::<ZigString::Slice>(global_this, "markdown")?
+                        metafile_value
+get_optional_slice($SELF, global_this, b"markdown")?
                     {
                         this.metafile_markdown_path.append_slice_exact(slice.slice())?;
                         drop(slice);

@@ -764,7 +764,7 @@ impl Framework {
 
         // SAFETY: `Resolver.fs` is a `*mut FileSystem` singleton live for the
         // resolver's lifetime (LIFETIMES.tsv JSC_BORROW).
-        let top_level_dir = unsafe { &(*r.fs).top_level_dir };
+        let top_level_dir = unsafe { (*r.fs).top_level_dir };
         let mut result = match r.resolve(top_level_dir, *path, bun_options_types::ImportKind::Stmt) {
             Ok(res) => res,
             Err(err) => {
@@ -913,9 +913,7 @@ impl Framework {
 
             let len = array.get_length(global)?;
             let mut files: ArrayHashMap<&'static [u8], BuiltInModule> = ArrayHashMap::new();
-            files
-                .ensure_total_capacity(len as usize)
-                .map_err(|e| throw_core_error(global, e.into(), "ensure_total_capacity"))?;
+            bun_core::handle_oom(files.ensure_total_capacity(len as usize));
 
             let mut it = array.array_iterator(global)?;
             let mut i: usize = 0;
@@ -1391,7 +1389,7 @@ impl Default for ReactFastRefresh {
 fn resolve_or_null(r: &mut bun_resolver::Resolver, path: &[u8]) -> Option<&'static [u8]> {
     // SAFETY: `Resolver.fs` / `Resolver.log` are `*mut` singletons live for
     // the resolver's lifetime (LIFETIMES.tsv JSC_BORROW).
-    let top_level_dir = unsafe { &(*r.fs).top_level_dir };
+    let top_level_dir = unsafe { (*r.fs).top_level_dir };
     match r.resolve(top_level_dir, path, bun_options_types::ImportKind::Stmt) {
         Ok(res) => Some(arena_erase(res.path_const().unwrap().text)),
         Err(_) => {

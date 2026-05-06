@@ -803,9 +803,10 @@ pub fn get_cron_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
 
 #[bun_jsc::host_fn]
 pub fn shell_escape(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let arguments = callframe.arguments_old(1);
-    if arguments.len() < 1 {
-        return global_this.throw("shell escape expected at least 1 argument", format_args!(""));
+    use bun_jsc::StringJsc as _;
+    let arguments = callframe.arguments_old::<1>();
+    if arguments.len < 1 {
+        return Err(global_this.throw("shell escape expected at least 1 argument"));
     }
 
     let jsval = arguments.ptr[0];
@@ -820,13 +821,13 @@ pub fn shell_escape(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsRe
     if bun_shell_parser::needs_escape_bunstr(bunstr) {
         let result = bun_shell_parser::escape_bun_str::<true>(bunstr, &mut outbuf)?;
         if !result {
-            return global_this.throw(
-                "String has invalid utf-16: {s}",
-                format_args!("{}", bstr::BStr::new(bunstr.byte_slice())),
-            );
+            return Err(global_this.throw(format_args!(
+                "String has invalid utf-16: {}",
+                bstr::BStr::new(bunstr.byte_slice()),
+            )));
         }
         let mut str = BunString::clone_utf8(&outbuf[..]);
-        return Ok(str.transfer_to_js(global_this));
+        return str.transfer_to_js(global_this);
     }
 
     Ok(jsval)
@@ -841,19 +842,20 @@ pub fn braces(
 
     // PERF(port): was arena bulk-free — profile in Phase B
     let mut arena = bun_alloc::Arena::new();
+    let _ = &mut arena;
 
     let lexer_output = 'lexer_output: {
         if strings::is_all_ascii(brace_slice.slice()) {
-            break 'lexer_output match Braces::Lexer::tokenize(&arena, brace_slice.slice()) {
+            break 'lexer_output match Braces::Lexer::tokenize(brace_slice.slice()) {
                 Ok(v) => v,
-                Err(err) => return global.throw_error(err, "failed to tokenize braces"),
+                Err(err) => return Err(global.throw_error(err.into(), "failed to tokenize braces")),
             };
         }
 
-        match Braces::NewLexer::<{ Braces::StringEncoding::Wtf8 }>::tokenize(&arena, brace_slice.slice())
+        match Braces::NewLexer::<{ Braces::StringEncoding::Wtf8 }>::tokenize(brace_slice.slice())
         {
             Ok(v) => break 'lexer_output v,
-            Err(err) => return global.throw_error(err, "failed to tokenize braces"),
+            Err(err) => return Err(global.throw_error(err.into(), "failed to tokenize braces")),
         }
     };
 
@@ -1739,7 +1741,7 @@ pub extern "C" fn Bun__resolveSyncWithSource(
 
 #[bun_jsc::host_fn]
 pub fn index_of_line(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let arguments_ = callframe.arguments_old(2);
+    let arguments_ = callframe.arguments_old::<2>();
     let arguments = arguments_.slice();
     if arguments.is_empty() {
         return Ok(JSValue::js_number_from_int32(-1));
@@ -1751,8 +1753,8 @@ pub fn index_of_line(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsR
 
     let mut offset: usize = 0;
     if arguments.len() > 1 {
-        let offset_value = arguments[1].coerce::<i64>(global_this)?;
-        offset = usize::try_from(offset_value.max(0)).unwrap();
+        let offset_value = arguments[1].coerce_to_int64(global_this)?;
+        offset = offset_value.max(0) as usize;
     }
 
     let bytes = buffer.byte_slice();
@@ -1768,7 +1770,7 @@ pub fn index_of_line(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsR
             }
 
             if byte == b'\n' {
-                return Ok(JSValue::js_number(i));
+                return Ok(JSValue::js_number(i as f64));
             }
 
             current_offset = i as usize + 1;
@@ -1787,20 +1789,24 @@ pub use crate::crypto as crypto_mod;
 
 #[bun_jsc::host_fn]
 pub fn nanoseconds(global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
-    let ns = global_this.bun_vm().origin_timer.read();
+    // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
+    let ns = unsafe { (*global_this.bun_vm()).origin_timer.elapsed().as_nanos() as u64 };
     Ok(JSValue::js_number_from_uint64(ns))
 }
 
 #[bun_jsc::host_fn]
 pub fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let arguments = callframe.arguments_old(2).slice();
+    let arguments = callframe.arguments_old::<2>();
+    let arguments = arguments.slice();
+    // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
+    let vm = unsafe { &mut *global_object.bun_vm() };
     let mut config: crate::server::ServerConfig = 'brk: {
-        let mut args = CallFrame::ArgumentsSlice::init(global_object.bun_vm(), arguments);
+        let mut args = ArgumentsSlice::init(vm, arguments);
 
         let config = crate::server::ServerConfig::from_js(
             global_object,
             &mut args,
-            crate::server::server_config::FromJSOptions {
+            crate::server::server_config::_gated_from_js::FromJSOptions {
                 allow_bake_config: bun_core::FeatureFlags::bake(),
                 is_fetch_required: true,
                 has_user_routes: false,
@@ -1815,12 +1821,13 @@ pub fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<
         break 'brk config;
     };
 
-    let vm = global_object.bun_vm();
+    // SAFETY: same VM pointer; re-borrow after `args` is dropped.
+    let vm = unsafe { &mut *global_object.bun_vm() };
 
     if config.allow_hot {
         if let Some(hot) = vm.hot_map() {
             if config.id.is_empty() {
-                config.id = config.compute_id();
+                config.id = config.compute_id().into();
             }
 
             if let Some(_entry) = hot.get_entry(&config.id) {

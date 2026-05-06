@@ -90,7 +90,7 @@ use crate::bake::dev_server::DevServer;
 use crate::node::fs::async_ as fs_async;
 // `node_fs_watcher` / `node_fs_stat_watcher` — modules not yet declared in
 // `node.rs` (b2-blocked); FSWatchTask / StatWatcherScheduler arms stubbed.
-use crate::node::zlib::{NativeBrotli, NativeZlib, NativeZstd};
+use crate::node::zlib::{native_brotli::NativeBrotli, native_zlib::NativeZlib, native_zstd::NativeZstd};
 use crate::node::node_zlib_binding;
 
 #[allow(unused_imports)]

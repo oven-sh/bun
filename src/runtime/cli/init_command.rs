@@ -1670,10 +1670,10 @@ impl Template {
             };
             if let Err(err) = result {
                 if err == bun_core::err!("EEXIST") {
-                    Output::prettyln(
-                        " ○ <r><yellow>{s}<r> (already exists, skipping)",
-                        format_args!("{}", bstr::BStr::new(path)),
-                    );
+                    Output::prettyln(format_args!(
+                        " ○ <r><yellow>{}<r> (already exists, skipping)",
+                        bstr::BStr::new(path),
+                    ));
                     Output::flush();
                 } else {
                     Output::err(
@@ -1686,7 +1686,7 @@ impl Template {
             }
         }
 
-        Output::pretty("\n", format_args!(""));
+        Output::pretty(format_args!("\n"));
         Output::flush();
 
         // Zig: std.process.Child stdin=.Ignore stdout/stderr=.Inherit → spawnAndWait
@@ -1695,7 +1695,7 @@ impl Template {
         let self_exe = bun::self_exe_path()?;
         let _ = bun::spawn_sync_inherit(&[self_exe.as_bytes(), b"install"])?;
 
-        Output::prettyln(
+        Output::prettyln(format_args!(
             "\n\
              ✨ New project configured!\n\
              \n\
@@ -1712,8 +1712,7 @@ impl Template {
              \x20   <green><b>bun start<r>\n\
              \n\
              <blue>Happy bunning! 🐇<r>\n",
-            format_args!(""),
-        );
+        ));
 
         Output::flush();
         Ok(())
@@ -1799,8 +1798,8 @@ pub(crate) fn exists(path: &[u8]) -> bool {
 #[inline]
 fn exists_z(path: &[u8]) -> bool {
     // TODO(port): Zig `existsZ` takes `[:0]const u8`; here we accept `&[u8]` and
-    // let bun_sys handle termination.
-    bun_sys::exists_z(path)
+    // let bun_sys handle termination via the non-Z `exists` (copies into a buffer).
+    bun_sys::exists(path)
 }
 
 // ──────────────────────────────────────────────────────────────────────────

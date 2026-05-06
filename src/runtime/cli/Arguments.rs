@@ -2030,7 +2030,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
             bun_core::set_auto_reload_on_crash(true);
 
             if args.flag(b"--no-clear-screen") {
-                bun_dotenv::Loader::set_has_no_clear_screen_cli_flag(true);
+                let _ = bun_dotenv::HAS_NO_CLEAR_SCREEN_CLI_FLAG.set(true);
             }
         }
 

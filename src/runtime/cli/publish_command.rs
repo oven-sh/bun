@@ -175,62 +175,13 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
         ctx: Command::Context<'a>,
         manager: &'a mut PackageManager,
     ) -> Result<Context<'a, DIRECTORY_PUBLISH>, FromWorkspaceError> {
-        // TODO(port): in-place init — Lockfile::loadFromCwd writes into out-param `lockfile`
-        let mut lockfile = Lockfile::default();
-        let load_from_disk_result = lockfile.load_from_cwd(
-            manager,
-            manager.log,
-            false,
-        );
-
-        let mut pack_ctx = Pack::Context {
-            manager,
-            command_ctx: ctx,
-            lockfile: match load_from_disk_result {
-                Lockfile::LoadResult::Ok(ok) => Some(ok.lockfile),
-                Lockfile::LoadResult::NotFound => None,
-                Lockfile::LoadResult::Err(cause) => 'err: {
-                    match cause.step {
-                        Lockfile::LoadStep::OpenFile => {
-                            if cause.value == err!(ENOENT) {
-                                break 'err None;
-                            }
-                            Output::err_generic(format_args!(
-                                "failed to open lockfile: {}",
-                                cause.value.name(),
-                            ));
-                        }
-                        Lockfile::LoadStep::ParseFile => {
-                            Output::err_generic(format_args!(
-                                "failed to parse lockfile: {}",
-                                cause.value.name(),
-                            ));
-                        }
-                        Lockfile::LoadStep::ReadFile => {
-                            Output::err_generic(format_args!(
-                                "failed to read lockfile: {}",
-                                cause.value.name(),
-                            ));
-                        }
-                        Lockfile::LoadStep::Migrating => {
-                            Output::err_generic(format_args!(
-                                "failed to migrate lockfile: {}",
-                                cause.value.name(),
-                            ));
-                        }
-                    }
-
-                    if manager.log.has_errors() {
-                        let _ = manager.log.print(Output::error_writer());
-                    }
-
-                    Global::crash();
-                }
-            },
-            ..Default::default()
-        };
-
-        Pack::pack(&mut pack_ctx, &manager.original_package_json_path, true)
+        // TODO(port): `Lockfile::load_from_cwd` / `LoadResult` variants /
+        // `PackageManager::{log, original_package_json_path}` are unit-stubs
+        // in `bun_install` (gated behind `package_manager_real`, reconciler-6).
+        // The Zig body builds a `pack::Context` from the lockfile load result
+        // and calls `pack::pack::<true>`; gated until upstream stubs widen.
+        let _ = (ctx, manager);
+        todo!("blocked_on: bun_install::Lockfile::load_from_cwd + bun_install::lockfile::LoadResult variants (reconciler-6)")
     }
 }
 

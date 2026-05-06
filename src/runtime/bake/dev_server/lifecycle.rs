@@ -322,7 +322,7 @@ impl DevServer {
         self.incremental_result.reset();
 
         // Ref server to keep it from closing mid-bundle.
-        if let Some(server) = self.server {
+        if let Some(mut server) = self.server {
             server.on_pending_request();
         }
 
@@ -345,7 +345,9 @@ impl DevServer {
         let ssr_transpiler = self.ssr_transpiler.as_mut_ptr();
         let client_transpiler = core::ptr::NonNull::new(self.client_transpiler.as_mut_ptr());
         let bv2 = Box::new(bun_bundler::BundleV2 {
-            transpiler: server_transpiler,
+            // SAFETY: `'static` stand-in — see `CurrentBundle.bv2` PORT NOTE.
+            // The transpiler lives inline in `DevServer` (stable heap address).
+            transpiler: unsafe { &mut *server_transpiler },
             client_transpiler,
             ssr_transpiler,
             framework: None, // TODO(b2): bake::Framework → bundler::bake_types::Framework bridge
@@ -369,7 +371,7 @@ impl DevServer {
             finalizers: Vec::new(),
             drain_defer_task: Default::default(),
             asynchronous: true,
-            thread_lock: ThreadLock::init_locked(),
+            thread_lock: bun_core::ThreadLock::init_locked(),
             has_any_top_level_await_modules: false,
             requested_exports: Default::default(),
         });
@@ -444,7 +446,7 @@ impl DevServer {
         self.start_next_bundle_if_present();
 
         // De-ref the keep-alive taken in `start_async_bundle`.
-        if let Some(server) = self.server {
+        if let Some(mut server) = self.server {
             server.on_static_request_complete();
         }
         Ok(())
@@ -494,7 +496,7 @@ impl DevServer {
 
         // No framework match — fall through to the user's `fetch` handler if
         // one is configured (DevServer.zig:3199), else built-in 404.
-        if let Some(server) = self.server {
+        if let Some(mut server) = self.server {
             if server.config().on_request.is_some() {
                 return server.on_request(req, resp);
             }

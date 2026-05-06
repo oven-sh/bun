@@ -107,7 +107,8 @@ mod _gated {
 use super::*;
 use bun_aio::{self as aio, Closer};
 use bun_core::Environment;
-use bun_io::ReadState;
+use bun_io::{ReadState, FilePollFlag};
+use bun_io::pipe_reader::PosixFlags;
 use crate::server::jsc::{EventLoopHandle, Task};
 
 bun_core::declare_scope!(FileResponseStream, hidden);

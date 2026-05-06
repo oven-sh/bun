@@ -102,8 +102,8 @@ pub type DefineColonList = colon_list_type::ColonListType<&'static [u8]>;
 
 #[cold]
 pub fn invalid_target(diag: &mut clap::Diagnostic, target: &[u8]) -> ! {
-    diag.name.long = b"target";
-    diag.arg = target;
+    diag.long = Some(b"target".to_vec());
+    diag.arg = target.to_vec();
     let _ = diag.report(Output::error_writer(), bun_core::err!("InvalidTarget"));
     Global::exit(1);
 }
@@ -258,12 +258,16 @@ Join our Discord community:      <blue>https://bun.com/discord<r>
         let mut rand_state = bun_core::rand::DefaultPrng::init(
             u64::try_from(bun_core::time::milli_timestamp().max(0)).unwrap(),
         );
-        let rand = rand_state.random();
+        // Zig `random().uintAtMost(usize, n)` — DefaultPrng has no `random()`
+        // accessor in the Rust port; sample `next_u64()` and reduce mod len.
+        let mut uint_at_most = |max: usize| -> usize {
+            (rand_state.next_u64() % (max as u64 + 1)) as usize
+        };
 
-        let package_x_i = rand.uint_at_most(PACKAGES_TO_X_FILLER.len() - 1);
-        let package_add_i = rand.uint_at_most(PACKAGES_TO_ADD_FILLER.len() - 1);
-        let package_remove_i = rand.uint_at_most(PACKAGES_TO_REMOVE_FILLER.len() - 1);
-        let package_create_i = rand.uint_at_most(PACKAGES_TO_CREATE_FILLER.len() - 1);
+        let package_x_i = uint_at_most(PACKAGES_TO_X_FILLER.len() - 1);
+        let package_add_i = uint_at_most(PACKAGES_TO_ADD_FILLER.len() - 1);
+        let package_remove_i = uint_at_most(PACKAGES_TO_REMOVE_FILLER.len() - 1);
+        let package_create_i = uint_at_most(PACKAGES_TO_CREATE_FILLER.len() - 1);
 
         let args = (
             bstr::BStr::new(PACKAGES_TO_X_FILLER[package_x_i]),

@@ -372,6 +372,8 @@ pub trait JsSinkAbi {
         object: *mut c_void,
         destructor: usize,
     ) -> crate::webcore::jsc::JSValue;
+    /// `${abi_name}__setDestroyCallback`.
+    unsafe fn set_destroy_callback_extern(value: crate::webcore::jsc::JSValue, callback: usize);
     /// `${abi_name}__assignToStream`.
     unsafe fn assign_to_stream_extern(
         global: *mut crate::webcore::jsc::JSGlobalObject,
@@ -414,6 +416,11 @@ impl<T: JsSinkAbi> JSSink<T> {
                 destructor,
             )
         }
+    }
+
+    pub fn set_destroy_callback(value: crate::webcore::jsc::JSValue, callback: usize) {
+        // SAFETY: FFI call into generated C++ sink glue (`${abi_name}__setDestroyCallback`).
+        unsafe { T::set_destroy_callback_extern(value, callback) }
     }
 
     /// `JSSink.fromJS(value)` — recover `*mut JSSink<T>` (= `*mut ThisSink`) from

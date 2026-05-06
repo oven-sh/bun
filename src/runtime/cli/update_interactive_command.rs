@@ -164,32 +164,25 @@ impl UpdateInteractiveCommand {
         ));
         Output::flush();
 
-        let cli = PackageManager::CommandLineArguments::parse(PackageManager::Subcommand::Update)?;
-
-        let (manager, original_cwd) = match PackageManager::init(ctx, cli, PackageManager::Subcommand::Update) {
-            Ok(v) => v,
-            Err(err) => {
-                if !cli.silent {
-                    if err == bun_core::err!("MissingPackageJSON") {
-                        Output::err_generic(format_args!("missing package.json, nothing outdated"));
-                    }
-                    Output::err_generic(format_args!(
-                        "failed to initialize bun install: {}",
-                        err.name()
-                    ));
-                }
-                Global::crash();
-            }
-        };
-        // `original_cwd` is owned; drops at end of scope.
-
-        Self::update_interactive(ctx, &original_cwd, manager)
+        let _ = ctx;
+        // Zig: `PackageManager.CommandLineArguments.parse(.update)` +
+        // `PackageManager.init(ctx, cli, .update)` — both gated behind
+        // `package_manager_real` (`#![cfg(any())]` reconciler-6).
+        todo!("blocked_on: bun_install::PackageManager::init / CommandLineArguments (package_manager_real un-gate)")
     }
 
+    #[allow(dead_code)]
     fn update_package_json_files_from_updates(
         manager: &mut PackageManager,
         updates: &[PackageUpdate],
     ) -> Result<(), bun_core::Error> {
+        let _ = (manager, updates);
+        // Real body needs `manager.workspace_package_json_cache`, `manager.log`,
+        // and `E::Object::put(&Bump, ...)` — all gated behind
+        // `package_manager_real` / settling AST allocator API.
+        return Err(todo!("blocked_on: bun_install::PackageManager::workspace_package_json_cache (package_manager_real un-gate)"));
+        #[allow(unreachable_code)]
+        {
         // Group updates by workspace
         let mut workspace_groups: StringHashMap<Vec<&PackageUpdate>> = StringHashMap::default();
 

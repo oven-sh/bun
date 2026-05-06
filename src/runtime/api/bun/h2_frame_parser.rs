@@ -1608,9 +1608,9 @@ impl Stream {
                 vec![0u8; MAX_PAYLOAD_SIZE_WITHOUT_FRAME]
             },
             callback: if callback.is_callable() {
-                Strong::create(callback, global_this)
+                StrongOptional::create(callback, global_this)
             } else {
-                Strong::empty()
+                StrongOptional::empty()
             },
         };
         if !bytes.is_empty() {
@@ -1686,7 +1686,7 @@ impl Stream {
     }
 
     pub fn get_identifier(&self) -> JSValue {
-        self.js_context.get().unwrap_or_else(|| JSValue::js_number(self.id))
+        self.js_context.get().unwrap_or_else(|| JSValue::js_number(self.id as f64))
     }
 
     pub fn attach_signal(&mut self, parser: &mut H2FrameParser, signal: &mut AbortSignal) {
@@ -1786,7 +1786,7 @@ impl H2FrameParser {
 
     pub fn decode(&mut self, src_buffer: &[u8]) -> Result<HeaderValue, bun_core::Error> {
         if let Some(hpack) = self.hpack.as_mut() {
-            return hpack.decode(src_buffer);
+            return hpack.decode(src_buffer).map_err(hpack_error_to_core);
         }
         Err(bun_core::err!("UnableToDecode"))
     }
@@ -1801,7 +1801,7 @@ impl H2FrameParser {
     ) -> Result<usize, bun_core::Error> {
         if let Some(hpack) = self.hpack.as_mut() {
             // lets make sure the name is lowercase
-            return hpack.encode(name, value, never_index, dst_buffer, dst_offset);
+            return hpack.encode(name, value, never_index, dst_buffer, dst_offset).map_err(hpack_error_to_core);
         }
         Err(bun_core::err!("UnableToEncode"))
     }
@@ -1917,7 +1917,7 @@ impl H2FrameParser {
         let identifier = stream.get_identifier();
         identifier.ensure_still_alive();
         stream.free_resources::<false>(self);
-        self.dispatch_with_2_extra(JSH2FrameParser::Gc::onAborted, identifier, abort_reason, JSValue::js_number(old_state as u8));
+        self.dispatch_with_2_extra(JSH2FrameParser::Gc::onAborted, identifier, abort_reason, JSValue::js_number(old_state as u8 as f64));
         let _ = self.write(&buffer);
     }
 
@@ -1946,9 +1946,9 @@ impl H2FrameParser {
         identifier.ensure_still_alive();
         stream.free_resources::<false>(self);
         if rst_code == ErrorCode::NO_ERROR {
-            self.dispatch_with_extra(JSH2FrameParser::Gc::onStreamEnd, identifier, JSValue::js_number(stream.state as u8));
+            self.dispatch_with_extra(JSH2FrameParser::Gc::onStreamEnd, identifier, JSValue::js_number(stream.state as u8 as f64));
         } else {
-            self.dispatch_with_extra(JSH2FrameParser::Gc::onStreamError, identifier, JSValue::js_number(rst_code.0));
+            self.dispatch_with_extra(JSH2FrameParser::Gc::onStreamError, identifier, JSValue::js_number(rst_code.0 as f64));
         }
 
         let _ = self.write(&buffer);
@@ -2002,12 +2002,12 @@ impl H2FrameParser {
             if rst_code != ErrorCode::NO_ERROR {
                 self.dispatch_with_2_extra(
                     JSH2FrameParser::Gc::onError,
-                    JSValue::js_number(rst_code.0),
-                    JSValue::js_number(self.last_stream_id),
+                    JSValue::js_number(rst_code.0 as f64),
+                    JSValue::js_number(self.last_stream_id as f64),
                     chunk,
                 );
             }
-            self.dispatch_with_extra(JSH2FrameParser::Gc::onEnd, JSValue::js_number(self.last_stream_id), chunk);
+            self.dispatch_with_extra(JSH2FrameParser::Gc::onEnd, JSValue::js_number(self.last_stream_id as f64), chunk);
         }
     }
 
@@ -2200,7 +2200,7 @@ impl H2FrameParser {
             // lets keep size under control
             if self.write_buffer.cap > MAX_BUFFER_SIZE {
                 self.write_buffer.len = MAX_BUFFER_SIZE;
-                self.write_buffer.shrink_and_free(MAX_BUFFER_SIZE);
+                self.write_buffer.shrink_and_free(MAX_BUFFER_SIZE as usize);
                 self.write_buffer.clear_retaining_capacity();
             }
             bun_output::scoped_log!(H2FrameParser, "_genericFlush {}", buffer_len);
@@ -2251,7 +2251,7 @@ impl H2FrameParser {
             // lets keep size under control
             if self.write_buffer.cap > MAX_BUFFER_SIZE {
                 self.write_buffer.len = MAX_BUFFER_SIZE;
-                self.write_buffer.shrink_and_free(MAX_BUFFER_SIZE);
+                self.write_buffer.shrink_and_free(MAX_BUFFER_SIZE as usize);
                 self.write_buffer.clear_retaining_capacity();
             }
             return true;
@@ -2334,7 +2334,7 @@ impl H2FrameParser {
                     self.write_buffer.len = 0;
                     if self.write_buffer.cap > MAX_BUFFER_SIZE {
                         self.write_buffer.len = MAX_BUFFER_SIZE;
-                        self.write_buffer.shrink_and_free(MAX_BUFFER_SIZE);
+                        self.write_buffer.shrink_and_free(MAX_BUFFER_SIZE as usize);
                         self.write_buffer.clear_retaining_capacity();
                     }
 
@@ -2384,7 +2384,7 @@ impl H2FrameParser {
                 let output_value = self.handlers.binary_type.to_js(bytes, unsafe { &*self.handlers.global_object }).unwrap_or(JSValue::ZERO);
                 // TODO: properly propagate exception upwards
                 let result = self.call(JSH2FrameParser::Gc::onWrite, output_value);
-                let code = if result.is_number() { result.to::<i32>() } else { -1 };
+                let code = if result.is_number() { result.to_int32() } else { -1 };
                 let r = match code {
                     -1 => {
                         // dropped
@@ -2891,7 +2891,7 @@ impl H2FrameParser {
                 } else {
                     stream.state = StreamState::HALF_CLOSED_REMOTE;
                 }
-                self.dispatch_with_extra(JSH2FrameParser::Gc::onStreamEnd, identifier, JSValue::js_number(stream.state as u8));
+                self.dispatch_with_extra(JSH2FrameParser::Gc::onStreamEnd, identifier, JSValue::js_number(stream.state as u8 as f64));
             }
         }
 
@@ -2922,7 +2922,7 @@ impl H2FrameParser {
             // TODO: properly propagate exception upwards
             let end = content.end;
             self.read_buffer.reset();
-            self.dispatch_with_2_extra(JSH2FrameParser::Gc::onGoAway, JSValue::js_number(error_code), JSValue::js_number(self.last_stream_id), chunk);
+            self.dispatch_with_2_extra(JSH2FrameParser::Gc::onGoAway, JSValue::js_number(error_code), JSValue::js_number(self.last_stream_id as f64), chunk);
             return end;
         }
         data.len()
@@ -2932,9 +2932,9 @@ impl H2FrameParser {
         // SAFETY: handlers.global_object is JSC_BORROW (set at construction from &JSGlobalObject); outlives self, never null
         let global = unsafe { &*self.handlers.global_object };
         if payload.is_empty() {
-            return Ok(BunString::empty().to_js(global));
+            return BunString::empty().to_js(global);
         }
-        BunString::create_utf8_for_js(global, payload)
+        bun_jsc::bun_string_jsc::create_utf8_for_js(global, payload)
     }
 
     pub fn handle_origin_frame(&mut self, frame: FrameHeader, data: &[u8], _: Option<*mut Stream>) -> JsResult<usize> {
@@ -3030,7 +3030,7 @@ impl H2FrameParser {
                 JSH2FrameParser::Gc::onAltSvc,
                 self.string_or_empty_to_js(&origin_and_value[0..origin_length])?,
                 self.string_or_empty_to_js(&origin_and_value[origin_length..])?,
-                JSValue::js_number(frame.stream_identifier),
+                JSValue::js_number(frame.stream_identifier as f64),
             );
             return Ok(end);
         }
@@ -3069,9 +3069,9 @@ impl H2FrameParser {
             identifier.ensure_still_alive();
             stream.free_resources::<false>(self);
             if rst_code == ErrorCode::NO_ERROR.0 {
-                self.dispatch_with_extra(JSH2FrameParser::Gc::onStreamEnd, identifier, JSValue::js_number(stream.state as u8));
+                self.dispatch_with_extra(JSH2FrameParser::Gc::onStreamEnd, identifier, JSValue::js_number(stream.state as u8 as f64));
             } else {
-                self.dispatch_with_extra(JSH2FrameParser::Gc::onStreamError, identifier, JSValue::js_number(rst_code));
+                self.dispatch_with_extra(JSH2FrameParser::Gc::onStreamError, identifier, JSValue::js_number(rst_code as f64));
             }
             return end;
         }
@@ -3193,7 +3193,7 @@ impl H2FrameParser {
                     } else {
                         stream.state = StreamState::HALF_CLOSED_LOCAL;
                     }
-                    self.dispatch_with_extra(JSH2FrameParser::Gc::onStreamEnd, identifier, JSValue::js_number(stream.state as u8));
+                    self.dispatch_with_extra(JSH2FrameParser::Gc::onStreamEnd, identifier, JSValue::js_number(stream.state as u8 as f64));
                 }
             }
             return Ok(end);
@@ -3277,7 +3277,7 @@ impl H2FrameParser {
                         stream.state = StreamState::HALF_CLOSED_REMOTE;
                     }
                 }
-                self.dispatch_with_extra(JSH2FrameParser::Gc::onStreamEnd, identifier, JSValue::js_number(stream.state as u8));
+                self.dispatch_with_extra(JSH2FrameParser::Gc::onStreamEnd, identifier, JSValue::js_number(stream.state as u8 as f64));
             }
             return Ok(end_);
         }
@@ -4027,7 +4027,7 @@ impl H2FrameParser {
         let state = JSValue::create_empty_object(global_object, 6);
 
         state.put(global_object, ZigString::static_("localWindowSize"), JSValue::js_number(stream.window_size));
-        state.put(global_object, ZigString::static_("state"), JSValue::js_number(stream.state as u8));
+        state.put(global_object, ZigString::static_("state"), JSValue::js_number(stream.state as u8 as f64));
         state.put(global_object, ZigString::static_("localClose"), JSValue::js_number(if stream.can_send_data() { 0i32 } else { 1 }));
         state.put(global_object, ZigString::static_("remoteClose"), JSValue::js_number(if stream.can_receive_data() { 0i32 } else { 1 }));
         // TODO: sumDependencyWeight
@@ -4309,7 +4309,7 @@ impl H2FrameParser {
                     } else {
                         stream.state = StreamState::HALF_CLOSED_LOCAL;
                     }
-                    self.dispatch_with_extra(JSH2FrameParser::Gc::onStreamEnd, identifier, JSValue::js_number(stream.state as u8));
+                    self.dispatch_with_extra(JSH2FrameParser::Gc::onStreamEnd, identifier, JSValue::js_number(stream.state as u8 as f64));
                 }
             }
         }
@@ -4621,7 +4621,7 @@ impl H2FrameParser {
         } else {
             stream.state = StreamState::HALF_CLOSED_LOCAL;
         }
-        this.dispatch_with_extra(JSH2FrameParser::Gc::onStreamEnd, identifier, JSValue::js_number(stream.state as u8));
+        this.dispatch_with_extra(JSH2FrameParser::Gc::onStreamEnd, identifier, JSValue::js_number(stream.state as u8 as f64));
         Ok(JSValue::UNDEFINED)
     }
 
@@ -4833,7 +4833,7 @@ impl H2FrameParser {
                 // routed through the same provenance the iterator's raw pointer carries.
                 stream.free_resources::<false>(unsafe { &mut *this_ptr });
                 // SAFETY: same as above; reborrow through this_ptr keeps the iterator's tag valid.
-                unsafe { &mut *this_ptr }.dispatch_with_2_extra(JSH2FrameParser::Gc::onAborted, identifier, JSValue::UNDEFINED, JSValue::js_number(old_state as u8));
+                unsafe { &mut *this_ptr }.dispatch_with_2_extra(JSH2FrameParser::Gc::onAborted, identifier, JSValue::UNDEFINED, JSValue::js_number(old_state as u8 as f64));
             }
         }
         Ok(JSValue::UNDEFINED)

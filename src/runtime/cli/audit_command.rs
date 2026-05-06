@@ -1,5 +1,4 @@
 use bstr::BStr;
-use std::collections::VecDeque;
 use std::io::Write as _;
 
 use bun_collections::StringHashMap;
@@ -8,14 +7,13 @@ use bun_http::{self as http, HeaderBuilder};
 use bun_install::package_manager::command_line_arguments::AuditLevel;
 use bun_install::PackageManager;
 use bun_interchange::json as bun_json;
-use bun_js_parser::Expr;
 use bun_libdeflate_sys::libdeflate;
 use bun_logger as logger;
-use bun_str::strings;
+use bun_logger::js_ast::{Expr, ExprData};
+use bun_str::{strings, MutableString};
 use bun_url::URL;
 
 use crate::cli::Command;
-use crate::package_manager_command::PackageManagerCommand;
 
 // TODO(port): in Zig these `[]const u8` fields borrow from the JSON parse arena (and a few are
 // `allocator.dupe`d). Phase A boxes them to avoid a struct lifetime param; revisit in Phase B if
@@ -29,6 +27,7 @@ struct VulnerabilityInfo {
     package_name: Box<[u8]>,
 }
 
+#[derive(Default)]
 struct PackageInfo {
     package_id: u32,
     name: Box<[u8]>,

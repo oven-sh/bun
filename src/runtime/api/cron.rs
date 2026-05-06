@@ -294,14 +294,14 @@ impl CronRegisterJob {
                     } else {
                         self.set_err(format_args!("Process exited with code {}", exited.code));
                     }
-                    self.finish();
+                    Self::finish(self);
                     return;
                 }
             }
             Status::Signaled(sig) => {
                 if self.state != RegisterState::BootingOut {
                     self.set_err(format_args!("Process killed by signal {}", sig as i32));
-                    self.finish();
+                    Self::finish(self);
                     return;
                 }
             }
@@ -310,7 +310,7 @@ impl CronRegisterJob {
                     "Process error: {}",
                     <&'static str>::from(err.get_errno())
                 ));
-                self.finish();
+                Self::finish(self);
                 return;
             }
             Status::Running => return,
@@ -324,10 +324,10 @@ impl CronRegisterJob {
             match self.state {
                 RegisterState::WritingPlist => self.spawn_bootout(),
                 RegisterState::BootingOut => self.spawn_bootstrap(),
-                RegisterState::Bootstrapping => self.finish(),
+                RegisterState::Bootstrapping => Self::finish(self),
                 _ => {
                     self.set_err(format_args!("Unexpected state"));
-                    self.finish();
+                    Self::finish(self);
                 }
             }
         }
@@ -335,10 +335,10 @@ impl CronRegisterJob {
         {
             match self.state {
                 RegisterState::ReadingCrontab => self.process_crontab_and_install(),
-                RegisterState::InstallingCrontab => self.finish(),
+                RegisterState::InstallingCrontab => Self::finish(self),
                 _ => {
                     self.set_err(format_args!("Unexpected state"));
-                    self.finish();
+                    Self::finish(self);
                 }
             }
         }
@@ -352,16 +352,17 @@ impl CronRegisterJob {
         } else {
             RegisterState::Done
         };
-        this_ref.poll.unref(VirtualMachine::get());
-        let ev = VirtualMachine::get().event_loop();
+        this_ref.poll.unref(vm_ctx());
+        // SAFETY: per-thread VM singleton; `event_loop()` returns a live `*mut`.
+        let ev = unsafe { &mut *vm_mut().event_loop() };
         ev.enter();
         // TODO(port): RAII guard for ev.exit() on early return
         if let Some(msg) = &this_ref.err_msg {
             let _ = this_ref.promise.reject_with_async_stack(
                 this_ref.global,
-                this_ref
+                Ok(this_ref
                     .global
-                    .create_error_instance(format_args!("{}", bstr::BStr::new(msg))),
+                    .create_error_instance(format_args!("{}", bstr::BStr::new(msg)))),
             );
         } else {
             let _ = this_ref.promise.resolve(this_ref.global, JSValue::UNDEFINED);
@@ -392,7 +393,7 @@ impl CronRegisterJob {
     fn start_linux(&mut self) {
         self.state = RegisterState::ReadingCrontab;
         self.stdout_reader = OutputReader::init::<CronRegisterJob>();
-        self.stdout_reader.set_parent(self);
+        self.stdout_reader.set_parent(self as *mut Self as *mut _);
         let Some(crontab_path) = find_crontab() else {
             self.set_err(format_args!("crontab not found in PATH"));
             return Self::finish(self);

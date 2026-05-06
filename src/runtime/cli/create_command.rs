@@ -457,26 +457,27 @@ impl CreateCommand {
                 let package_json_lit: &OSPathSlice = b"package.json";
                 #[cfg(windows)]
                 let package_json_lit: &OSPathSlice = bun_str::w!("package.json");
-                let mut pluckers: [Archiver::Plucker; 1] = if !create_options.skip_package_json {
-                    [Archiver::Plucker::init(package_json_lit, 2048)?]
+                let pluckers: Vec<archiver::Plucker> = if !create_options.skip_package_json {
+                    vec![archiver::Plucker::init(package_json_lit, 2048)?]
                 } else {
-                    // SAFETY: never read when skip_package_json is true
-                    [unsafe { core::mem::zeroed() }]
+                    Vec::new()
                 };
 
-                let mut archive_context = Archiver::Context {
-                    pluckers: &mut pluckers[0..usize::from(!create_options.skip_package_json)],
+                let mut archive_context = archiver::Context {
+                    pluckers,
                     all_files: Default::default(), // undefined in Zig
                     overwrite_list: bun_collections::StringArrayHashMap::<()>::default(),
                 };
 
                 if !create_options.overwrite {
-                    Archiver::get_overwriting_file_list(
+                    // TODO(port): blocked_on bun_libarchive::ArchiveAppender impl for
+                    // fs::DirnameStore — Zig passed `FileSystem.DirnameStore` (has
+                    // appendMutable). For now route through the no-op `()` appender.
+                    Archiver::get_overwriting_file_list::<(), 1>(
                         &tarball_buf_list,
                         destination,
                         &mut archive_context,
-                        &filesystem.dirname_store,
-                        1,
+                        &mut (),
                     )?;
 
                     for never_conflict_path in NEVER_CONFLICT {
@@ -488,25 +489,25 @@ impl CreateCommand {
                         progress.refresh();
 
                         // Thank you create-react-app for this copy (and idea)
-                        Output::pretty_errorln(
+                        pretty_errorln!(
                             "<r>\n<red>error<r><d>: <r>The directory <b><blue>{}<r>/ contains files that could conflict:\n\n",
-                            format_args!("{}", bstr::BStr::new(bun_paths::basename(destination))),
+                            bstr::BStr::new(bun_paths::basename(destination)),
                         );
                         for path in archive_context.overwrite_list.keys() {
                             if strings::ends_with(path, bun_paths::SEP_STR.as_bytes()) {
-                                Output::pretty_error(
+                                pretty_error!(
                                     "<r>  <blue>{}<r>",
-                                    format_args!("{}", bstr::BStr::new(&path[0..path.len().max(1) - 1])),
+                                    bstr::BStr::new(&path[0..path.len().max(1) - 1]),
                                 );
-                                Output::pretty_errorln(bun_paths::SEP_STR, format_args!(""));
+                                Output::pretty_errorln(bun_paths::SEP_STR);
                             } else {
-                                Output::pretty_errorln("<r>  {}", format_args!("{}", bstr::BStr::new(path)));
+                                pretty_errorln!("<r>  {}", bstr::BStr::new(path));
                             }
                         }
 
-                        Output::pretty_errorln(
+                        pretty_errorln!(
                             "<r>\n<d>To download {} anyway, use --force<r>",
-                            format_args!("{}", bstr::BStr::new(template)),
+                            bstr::BStr::new(template),
                         );
                         Global::exit(1);
                     }
@@ -515,20 +516,20 @@ impl CreateCommand {
                 let _ = Archiver::extract_to_disk(
                     &tarball_buf_list,
                     destination,
-                    &mut archive_context,
-                    (),
-                    Archiver::ExtractOptions { depth_to_skip: 1, ..Default::default() },
+                    Some(&mut archive_context),
+                    &mut (),
+                    archiver::ExtractOptions { depth_to_skip: 1, ..Default::default() },
                 )?;
 
                 if !create_options.skip_package_json {
-                    let plucker = &pluckers[0];
+                    let plucker = &archive_context.pluckers[0];
 
                     if plucker.found && plucker.fd.is_valid() {
                         node.name = b"Updating package.json";
                         progress.refresh();
 
                         package_json_contents = plucker.contents.clone();
-                        package_json_file = Some(plucker.fd.to_file());
+                        package_json_file = Some(bun_sys::File::from_fd(plucker.fd));
                     }
                 }
             }

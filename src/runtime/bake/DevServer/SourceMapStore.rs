@@ -324,15 +324,14 @@ impl Entry {
         }
 
         // TODO(port): Zig used `array_list.writer()` then `writePreQuotedString(..., @TypeOf(writer), writer, ...)`.
-        // In Rust this becomes `&mut impl core::fmt::Write` (or bun_io::Write) per §Type map "(comptime X: type, arg: X)".
-        bun_js_printer::write_pre_quoted_string(
-            utf8_input,
-            array_list,
+        // In Rust this becomes `&mut impl bun_io::Write` per §Type map "(comptime X: type, arg: X)".
+        bun_js_printer::write_pre_quoted_string::<
+            _,
             b'"',
             false,
             true,
-            bun_js_printer::Encoding::Utf8,
-        )
+            { bun_js_printer::Encoding::Utf8 },
+        >(utf8_input, array_list)
         .map_err(EncodeSourceMapPathError::from)
     }
 
@@ -344,8 +343,8 @@ impl Entry {
         side: Side,
     ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
-        let _ = side;
-        let map_files = self.files.slice();
+        let _ = (side, arena);
+        let map_files = self.files.as_slice();
 
         let runtime: bun_bundler::bake_types::HmrRuntime = match kind {
             ChunkKind::InitialResponse => bun_bundler::bake_types::get_hmr_runtime(Side::Client),

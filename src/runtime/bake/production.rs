@@ -613,23 +613,33 @@ pub fn build_with_vm(
         framework_router::InsertionContext::wrap(&mut entry_points),
     )?;
 
-    let bundled_outputs_list = BundleV2::generate_from_bake_production_cli(
-        entry_points,
-        server_transpiler,
-        bun_bundler::bundle_v2::BakeOptions {
-            framework: framework.clone(),
-            client_transpiler: NonNull::from(&mut *client_transpiler),
-            ssr_transpiler: if separate_ssr_graph {
-                NonNull::from(&mut *ssr_transpiler)
-            } else {
-                NonNull::from(&mut *server_transpiler)
-            },
-            plugins: options.bundler_options.plugin,
-        },
-        &options.arena,
-        // SAFETY: vm.event_loop() returns a self-ptr; unique access here.
-        bun_bundler::EventLoop::Js(unsafe { &*vm.event_loop() }),
-    )?;
+    // PORT NOTE: `BundleV2::generate_from_bake_production_cli` takes the
+    // bundler-crate's nominal `bake_types::production::EntryPointMap`,
+    // `bake_types::Framework`, `JSBundlerPlugin` and an opaque `EventLoop =
+    // Option<NonNull<()>>`. The runtime crate currently carries its own richer
+    // duplicates (`production_body::EntryPointMap`, `bake_body::Framework`,
+    // `api::JSBundler::Plugin`). Converting between them requires upstream
+    // surface that doesn't exist yet; defer the call body until Phase B unifies
+    // the types. Keep all locals referenced so the surrounding borrowck shape
+    // stays exercised.
+    let bundled_outputs_list: Vec<OutputFile> = {
+        let _ = (
+            &entry_points,
+            &mut *server_transpiler,
+            &mut *client_transpiler,
+            &mut *ssr_transpiler,
+            separate_ssr_graph,
+            &options.arena,
+            options.bundler_options.plugin,
+            // SAFETY: vm.event_loop() returns a self-ptr; unique access here.
+            unsafe { &*vm.event_loop() },
+            &*framework,
+        );
+        todo!(
+            "blocked_on: bun_bundler::BundleV2::generate_from_bake_production_cli — \
+             EntryPointMap/Framework/JSBundlerPlugin/EventLoop type unification"
+        )
+    };
     let bundled_outputs = bundled_outputs_list.as_slice();
     if bundled_outputs.is_empty() {
         bun_core::prettyln!("done");

@@ -512,24 +512,11 @@ impl Listener {
             SSLConfig::from_js(vm, global, tls)?
         } {
             // PORT NOTE: `defer cfg.deinit()` — handled by Drop on SSLConfig
-            let mut create_err = uws::create_bun_socket_error_t::none;
-            // SAFETY: per-thread VM; valid for program lifetime.
-            let vm = unsafe { &mut *VirtualMachine::get() };
-            match vm.rare_data().ssl_ctx_cache().get_or_create(&ssl_config, &mut create_err) {
-                Some(ctx) => ctx.cast::<boring_sys::SSL_CTX>(),
-                None => {
-                    if create_err != uws::create_bun_socket_error_t::none {
-                        return Err(global.throw_value(
-                            crate::socket::uws_jsc::create_bun_socket_error_to_js(create_err, global),
-                        ));
-                    }
-                    // SAFETY: FFI — ERR_get_error reads thread-local BoringSSL error queue
-                    return Err(global.throw_value(crate::crypto::boringssl_jsc::err_to_js(
-                        global,
-                        unsafe { boring_sys::ERR_get_error() },
-                    )));
-                }
-            }
+            let _ = ssl_config;
+            // `bun_jsc::rare_data::SSLContextCache` is an opaque stub; the real
+            // `get_or_create` lives in `crate::api::bun::SSLContextCache` and the
+            // RareData→runtime bridge isn't wired yet.
+            todo!("blocked_on: bun_jsc::rare_data::SSLContextCache::get_or_create")
         } else {
             return Ok(JSValue::UNDEFINED);
         };
@@ -852,16 +839,12 @@ impl Listener {
         // SecureContext was already borrowed above; build the SSL_CTX from
         // SSLConfig only if no SecureContext was passed.
         if ssl_enabled && ssl_ctx_guard.is_none() {
-            if let Some(ssl_cfg) = socket_config.ssl.as_ref() {
-                let mut create_err = uws::create_bun_socket_error_t::none;
-                *ssl_ctx_guard = match vm.rare_data().ssl_ctx_cache().get_or_create(ssl_cfg, &mut create_err) {
-                    Some(c) => NonNull::new(c.cast::<boring_sys::SSL_CTX>()),
-                    None => {
-                        return Err(global.throw_value(
-                            crate::socket::uws_jsc::create_bun_socket_error_to_js(create_err, global),
-                        ));
-                    }
-                };
+            if let Some(_ssl_cfg) = socket_config.ssl.as_ref() {
+                // `bun_jsc::rare_data::SSLContextCache` is an opaque stub; the
+                // real `get_or_create` lives in `crate::api::bun::SSLContextCache`
+                // and the RareData→runtime bridge isn't wired yet.
+                let _ = &mut *ssl_ctx_guard;
+                todo!("blocked_on: bun_jsc::rare_data::SSLContextCache::get_or_create");
             }
         }
 
@@ -1009,9 +992,9 @@ fn connect_finish<const IS_SSL: bool>(
         prev.server_name = ssl.as_mut().and_then(|s| s.take_server_name());
         if let Some(old) = prev.owned_ssl_ctx {
             // SAFETY: FFI — old is the previous owned SSL_CTX ref on this reused socket
-            unsafe { boring_sys::SSL_CTX_free(old.cast::<boring_sys::SSL_CTX>()) };
+            unsafe { boring_sys::SSL_CTX_free(old) };
         }
-        prev.owned_ssl_ctx = owned_ssl_ctx.map(|p| p.as_ptr().cast());
+        prev.owned_ssl_ctx = owned_ssl_ctx.map(|p| p.as_ptr());
         prev_ptr
     } else {
         NewSocket::<IS_SSL>::new(NewSocket::<IS_SSL> {
@@ -1021,7 +1004,7 @@ fn connect_finish<const IS_SSL: bool>(
             connection: Some(connection),
             protos: ssl.as_mut().and_then(|s| s.take_protos()),
             server_name: ssl.as_mut().and_then(|s| s.take_server_name()),
-            owned_ssl_ctx: owned_ssl_ctx.map(|p| p.as_ptr().cast()),
+            owned_ssl_ctx: owned_ssl_ctx.map(|p| p.as_ptr()),
             flags: SocketFlags::default(),
             this_value: jsc::JsRef::empty(),
             poll_ref: KeepAlive::init(),

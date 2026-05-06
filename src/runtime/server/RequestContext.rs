@@ -1421,11 +1421,8 @@ where
             ) {
                 bun_sys::Result::Ok(fd_) => fd_,
                 bun_sys::Result::Err(err) => {
-                    let Ok(js_err) =
-                        err.with_path(file.pathlike.path().slice()).to_js(global_this)
-                    else {
-                        return self.render_production_error(500);
-                    };
+                    let js_err =
+                        err.with_path(file.pathlike.path().slice()).to_js(global_this);
                     return self.run_error_handler(js_err);
                 }
             }
@@ -1437,9 +1434,7 @@ where
                 if auto_close {
                     fd.close();
                 }
-                let Ok(js_err) = err.with_path(&file.pathlike).to_js(global_this) else {
-                    return self.render_production_error(500);
-                };
+                let js_err = err.with_path(&file.pathlike).to_js(global_this);
                 return self.run_error_handler(js_err);
             }
         };

@@ -894,26 +894,28 @@ impl<'a> Snapshots<'a> {
                 bun_sys::Result::Err(err) => return Ok(bun_sys::Result::Err(err)),
             };
 
-            let mut file = File {
+            let file = File {
                 id: file_id,
                 file: bun_sys::File::from_fd(fd),
             };
-            let guard = scopeguard::guard(&mut file, |f| {
-                f.file.close();
+            // PORT NOTE: `errdefer file.file.close()` — close fd on `?` early-return.
+            // Guard the `Fd` (Copy) directly so we don't need to move out of `bun_sys::File`.
+            let guard = scopeguard::guard(fd, |fd| {
+                let _ = bun_sys::close(fd);
             });
 
             if self.update_snapshots {
                 self.file_buf.extend_from_slice(Self::FILE_HEADER);
             } else {
-                let length = guard.file.get_end_pos().map_err(Error::from)?;
+                let length = file.file.get_end_pos().map_err(Error::from)?;
                 if length == 0 {
                     self.file_buf.extend_from_slice(Self::FILE_HEADER);
                 } else {
                     let mut tmp = vec![0u8; length];
-                    let _ = guard.file.pread_all(&mut tmp, 0).map_err(Error::from)?;
+                    let _ = file.file.pread_all(&mut tmp, 0).map_err(Error::from)?;
                     #[cfg(windows)]
                     {
-                        guard.file.seek_to(0).map_err(Error::from)?;
+                        file.file.seek_to(0).map_err(Error::from)?;
                     }
                     self.file_buf.extend_from_slice(&tmp);
                     // tmp dropped here (was: allocator.free(buf))
@@ -921,14 +923,9 @@ impl<'a> Snapshots<'a> {
             }
 
             // errdefer stays armed across parse_file — if it errors, guard closes the fd.
-            self.parse_file(&**guard)?;
-            let file = scopeguard::ScopeGuard::into_inner(guard);
-            // PORT NOTE: reshaped for borrowck — guard captured &mut file; re-read it here.
-            self._current_file = Some(File {
-                id: file.id,
-                // TODO(port): bun_sys::File move semantics — Zig copied the std.fs.File by value.
-                file: core::mem::take(&mut file.file),
-            });
+            self.parse_file(&file)?;
+            scopeguard::ScopeGuard::into_inner(guard);
+            self._current_file = Some(file);
         }
 
         Ok(bun_sys::Result::Ok(()))

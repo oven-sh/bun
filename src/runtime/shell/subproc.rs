@@ -2071,14 +2071,36 @@ impl Drop for PipeReader {
             // CapturedWriter::drop handles err.deref() and writer Arc drop.
         }
 
-        if let PipeReaderState::Err(Some(e)) = &mut self.state {
-            e.deref();
-            self.state = PipeReaderState::Err(None);
+        if let PipeReaderState::Err(slot) = &mut self.state {
+            // PORT NOTE: Zig `e.deref()`; Rust drops via take().
+            *slot = None;
         }
 
         // buffered_output drops automatically.
         // reader drops automatically.
         // Box dealloc handled by Arc.
+    }
+}
+
+impl bun_io::pipe_reader::BufferedReaderParent for PipeReader {
+    unsafe fn on_read_chunk(this: *mut Self, chunk: &[u8], has_more: ReadState) -> bool {
+        PipeReader::on_read_chunk(this.cast::<c_void>(), chunk, has_more)
+    }
+    unsafe fn on_reader_done(this: *mut Self) {
+        // SAFETY: see trait contract.
+        unsafe { (*this).on_reader_done() }
+    }
+    unsafe fn on_reader_error(this: *mut Self, err: bun_sys::Error) {
+        // SAFETY: see trait contract.
+        unsafe { (*this).on_reader_error(err) }
+    }
+    unsafe fn loop_(this: *mut Self) -> *mut AsyncLoop {
+        // SAFETY: see trait contract.
+        unsafe { (*this).r#loop() }
+    }
+    unsafe fn event_loop(this: *mut Self) -> EventLoopHandle {
+        // SAFETY: see trait contract.
+        unsafe { (*this).event_loop() }
     }
 }
 

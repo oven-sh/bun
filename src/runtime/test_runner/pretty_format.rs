@@ -2359,7 +2359,11 @@ impl<'a> Formatter<'a> {
                                     writer.print(format_args!(
                                         "{}{}{}={}",
                                         pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r><blue>"),
-                                        prop.trunc(128),
+                                        // TODO(blocked_on: bun_str::String::trunc) — .zig
+                                        // truncates the JSX prop name at 128 chars; the
+                                        // Rust `bun_str::String` has no `trunc` yet, so
+                                        // print untruncated for now (cosmetic only).
+                                        prop,
                                         pretty_fmt_const::<ENABLE_ANSI_COLORS>("<d>"),
                                         pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
                                     ));

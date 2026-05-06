@@ -669,7 +669,9 @@ impl JSValkeyClient {
             ref_count: bun_ptr::RefCount::init(),
             _subscription_ctx: subscription_ctx_uninit,
             client: valkey::ValkeyClient {
-                vm: vm.cast(),
+                // SAFETY: `bun_vm()` returns the per-thread JS VM, alive for
+                // the process lifetime; we only need a `&'static` view.
+                vm: unsafe { &*vm },
                 address: match uri {
                     valkey::Protocol::StandaloneUnix | valkey::Protocol::StandaloneTlsUnix => {
                         valkey::Address::Unix(hostname)
@@ -706,7 +708,7 @@ impl JSValkeyClient {
                 write_buffer: Default::default(),
                 read_buffer: Default::default(),
                 retry_attempts: 0,
-                auto_flusher: (),
+                auto_flusher: Default::default(),
             },
             global_object,
             this_value: JsRef::empty(),
@@ -784,7 +786,9 @@ impl JSValkeyClient {
             ref_count: bun_ptr::RefCount::init(),
             _subscription_ctx: subscription_ctx_uninit,
             client: valkey::ValkeyClient {
-                vm: vm.cast(),
+                // SAFETY: `bun_vm()` returns the per-thread JS VM, alive for
+                // the process lifetime; we only need a `&'static` view.
+                vm: unsafe { &*vm },
                 address: match self.client.protocol {
                     valkey::Protocol::StandaloneUnix | valkey::Protocol::StandaloneTlsUnix => {
                         valkey::Address::Unix(hostname)
@@ -838,7 +842,7 @@ impl JSValkeyClient {
                 write_buffer: Default::default(),
                 read_buffer: Default::default(),
                 retry_attempts: 0,
-                auto_flusher: (),
+                auto_flusher: Default::default(),
             },
             global_object,
             this_value: JsRef::empty(),

@@ -2443,12 +2443,10 @@ impl Package<u64> {
 
                                 self.bin = Bin {
                                     tag: bin::Tag::NamedFile,
-                                    value: bin::Value {
-                                        named_file: [
-                                            string_builder.append::<String>(bin_name),
-                                            string_builder.append::<String>(value),
-                                        ],
-                                    },
+                                    value: bin::Value::init_named_file([
+                                        string_builder.append::<String>(bin_name),
+                                        string_builder.append::<String>(value),
+                                    ]),
                                     ..Default::default()
                                 };
                             }

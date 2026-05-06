@@ -1436,12 +1436,15 @@ fn compress_gzip(data: &[u8], level: u8) -> Result<Vec<u8>, CompressError> {
 
     // Use stack buffer for small data, heap for large
     const STACK_THRESHOLD: usize = 256 * 1024;
-    // PERF(port): was 256 KiB on-stack buffer; Rust uses heap Vec to avoid stack overflow.
-    // Phase B: consider Box<[u8; STACK_THRESHOLD]> or thread-local.
-    let mut stack_buf = vec![0u8; STACK_THRESHOLD];
 
     if max_size <= STACK_THRESHOLD {
-        let result = compressor.gzip(data, &mut stack_buf);
+        // PERF(port): Zig used a 256 KiB on-stack array; Rust boxes it to avoid
+        // blowing the (smaller) default stack. Single uninit alloc — libdeflate
+        // writes `result.written` bytes before we read them back.
+        let mut stack_buf: Box<[u8; STACK_THRESHOLD]> =
+            // SAFETY: `u8` has no invalid bit patterns; only `..written` is read.
+            unsafe { Box::new_uninit().assume_init() };
+        let result = compressor.gzip(data, &mut stack_buf[..]);
         if result.status != libdeflate::Status::Success {
             return Err(CompressError::GzipCompressFailed);
         }

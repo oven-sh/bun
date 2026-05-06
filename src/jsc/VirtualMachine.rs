@@ -2040,14 +2040,18 @@ impl VirtualMachine {
 
     /// Spec VirtualMachine.zig:255 `initRequestBodyValue`.
     ///
-    /// TODO(b2-cycle): real signature is
-    /// `(body: bun_runtime::webcore::Body::Value) -> *mut Body::Value::HiveRef`,
-    /// but `bun_runtime` is a forward-dep on `bun_jsc` (cycle). The
-    /// `body_value_hive_allocator` lives inside `runtime_state` (high tier);
-    /// callers in `bun_runtime` must construct the `HiveRef` directly until the
-    /// `RuntimeHooks` slot lands.
-    pub fn init_request_body_value(&mut self, _body: *mut c_void) -> *mut c_void {
-        todo!("blocked_on: bun_runtime::webcore::Body::Value (b2-cycle)")
+    /// PORT NOTE: `Body::Value` and its `HiveAllocator` live in `bun_runtime`
+    /// (forward-dep cycle on `bun_jsc`). The hive allocator is held inside
+    /// `runtime_state`; the body of `Body.Value.HiveRef.init(body, &allocator)`
+    /// is dispatched through [`RuntimeHooks::init_request_body_value`] per
+    /// §Dispatch (cold path). Callers on the `bun_runtime` side cast the
+    /// erased pointers back to `*mut Body::Value` / `*mut Body::Value::HiveRef`.
+    pub fn init_request_body_value(&mut self, body: *mut c_void) -> *mut c_void {
+        let hooks = runtime_hooks()
+            .expect("init_request_body_value: bun_runtime hooks not installed");
+        // SAFETY: hook contract — `self` is the live per-thread VM; `body`
+        // points at a stack-or-heap `Body::Value` owned by the caller.
+        unsafe { (hooks.init_request_body_value)(self, body) }
     }
 
     /// Spec VirtualMachine.zig:279 `uvLoop`.
@@ -2074,22 +2078,13 @@ impl VirtualMachine {
     }
 
     /// Spec VirtualMachine.zig:302 `onSubprocessSpawn`.
-    ///
-    /// TODO(b2-cycle): `process` is `*mut bun_spawn::Process`; `auto_killer`
-    /// is a `()` placeholder. Widen to `ProcessAutoKiller` when the sibling
-    /// crate un-gates — body is a one-liner forward to
-    /// `self.auto_killer.on_subprocess_spawn(process)`.
-    pub fn on_subprocess_spawn(&mut self, process: *mut c_void) {
-        let _ = process;
-        todo!("blocked_on: ProcessAutoKiller / bun_spawn::Process (b2-cycle)")
+    pub fn on_subprocess_spawn(&mut self, process: *mut bun_spawn::Process) {
+        self.auto_killer.on_subprocess_spawn(process);
     }
 
     /// Spec VirtualMachine.zig:306 `onSubprocessExit`.
-    ///
-    /// TODO(b2-cycle): see [`on_subprocess_spawn`].
-    pub fn on_subprocess_exit(&mut self, process: *mut c_void) {
-        let _ = process;
-        todo!("blocked_on: ProcessAutoKiller / bun_spawn::Process (b2-cycle)")
+    pub fn on_subprocess_exit(&mut self, process: *mut bun_spawn::Process) {
+        self.auto_killer.on_subprocess_exit(process);
     }
 
     /// Spec VirtualMachine.zig:310 `getVerboseFetch`.

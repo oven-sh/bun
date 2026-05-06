@@ -1688,7 +1688,7 @@ impl RunCommand {
         }
 
         let bun_node_exe = Self::bun_node_file_utf8()?;
-        let bun_node_dir_win = bun_core::util::dirname(bun_node_exe.as_bytes())
+        let bun_node_dir_win = bun_paths::dirname(bun_node_exe.as_bytes())
             .ok_or(bun_core::err!("FailedToGetTempPath"))?;
         let found_node = env_loader
             .load_node_js_config(

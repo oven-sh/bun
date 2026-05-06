@@ -238,6 +238,19 @@ impl JSValue {
         // SAFETY: `self` is a cell.
         unsafe { JSC__JSValue__isAnyError(self) }
     }
+    /// `JSValue.isError()` (JSValue.zig:999) — true iff this is an
+    /// `ErrorInstance` cell (does NOT match `Exception`).
+    #[inline] pub fn is_error(self) -> bool {
+        self.is_cell() && self.js_type() == JSType::ErrorInstance
+    }
+    /// `JSValue.isAggregateError(globalObject)` (JSValue.zig:2194).
+    #[inline] pub fn is_aggregate_error(self, global: &JSGlobalObject) -> bool {
+        unsafe extern "C" {
+            fn JSC__JSValue__isAggregateError(this: JSValue, global: *const JSGlobalObject) -> bool;
+        }
+        // SAFETY: pure FFI predicate; `global` is live.
+        unsafe { JSC__JSValue__isAggregateError(self, global) }
+    }
     /// `JSValue.isTerminationException()` (JSValue.zig:1182) — true if this
     /// value is the VM's termination-exception sentinel.
     #[inline] pub fn is_termination_exception(self) -> bool {

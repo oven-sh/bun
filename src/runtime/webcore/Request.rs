@@ -1401,20 +1401,38 @@ impl Request {
 
             // Extract redirect option
             if !fields.contains(Fields::Redirect) {
-                let _ = (&value, global_this);
-                todo!("blocked_on: bun_jsc::FromJsEnum for FetchRedirect");
+                match value.get_optional_enum::<FetchRedirect>(global_this, "redirect") {
+                    Ok(Some(redirect_value)) => {
+                        req.flags.redirect = redirect_value;
+                        fields.insert(Fields::Redirect);
+                    }
+                    Ok(None) => {}
+                    Err(e) => bail!(Err(e)),
+                }
             }
 
             // Extract cache option
             if !fields.contains(Fields::Cache) {
-                let _ = (&value, global_this);
-                todo!("blocked_on: bun_jsc::FromJsEnum for FetchCacheMode");
+                match value.get_optional_enum::<FetchCacheMode>(global_this, "cache") {
+                    Ok(Some(cache_value)) => {
+                        req.flags.cache = cache_value;
+                        fields.insert(Fields::Cache);
+                    }
+                    Ok(None) => {}
+                    Err(e) => bail!(Err(e)),
+                }
             }
 
             // Extract mode option
             if !fields.contains(Fields::Mode) {
-                let _ = (&value, global_this);
-                todo!("blocked_on: bun_jsc::FromJsEnum for FetchRequestMode");
+                match value.get_optional_enum::<FetchRequestMode>(global_this, "mode") {
+                    Ok(Some(mode_value)) => {
+                        req.flags.mode = mode_value;
+                        fields.insert(Fields::Mode);
+                    }
+                    Ok(None) => {}
+                    Err(e) => bail!(Err(e)),
+                }
             }
         }
 

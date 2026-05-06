@@ -2604,20 +2604,19 @@ where
 
                     if stream.is_locked(global_this) {
                         stream_log!("was locked but it shouldn't be");
-                        // `bun_jsc::SystemError` does not impl Default; build
-                        // via the global helper instead.
-                        let _ = (
-                            <&'static str>::from(jsc::ErrorCode::ERR_STREAM_CANNOT_PIPE),
-                            "Stream already used, please create a new one",
-                        );
+                        let err = jsc::SystemError {
+                            code: BunString::static_(<&'static str>::from(
+                                jsc::ErrorCode::ERR_STREAM_CANNOT_PIPE,
+                            )),
+                            message: BunString::static_(
+                                "Stream already used, please create a new one",
+                            ),
+                            ..Default::default()
+                        };
                         stream.value.unprotect();
-                        let js_err: JSValue =
-                            todo!("blocked_on: bun_jsc::SystemError::default");
-                        #[allow(unreachable_code)]
-                        {
-                            this.run_error_handler(js_err);
-                            return;
-                        }
+                        let js_err = err.to_error_instance(global_this);
+                        this.run_error_handler(js_err);
+                        return;
                     }
 
                     match stream.ptr {

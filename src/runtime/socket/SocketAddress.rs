@@ -272,8 +272,23 @@ impl SocketAddress {
         let paddr = host.latin1(); // presentation address
         // PORT NOTE: Zig used `std.net.Ip{4,6}Address.parse`; Rust port uses
         // `ares_inet_pton` (already linked) to fill the sockaddr in place.
+        // `std.net.Ip6Address.parse` accepts a `%scope` suffix and populates
+        // `scope_id`; `ares_inet_pton` does not, so we strip and parse it here.
+        // (WHATWG URL host parsing rejects zone identifiers, so in practice
+        // `URL::host_()` should not yield one — handled defensively.)
         let addr = if paddr[0] == b'[' && paddr[paddr.len() - 1] == b']' {
-            let inner = &paddr[1..paddr.len() - 1];
+            let mut inner = &paddr[1..paddr.len() - 1];
+            let mut scope_id: u32 = 0;
+            if let Some(pct) = inner.iter().position(|&b| b == b'%') {
+                let zone = &inner[pct + 1..];
+                inner = &inner[..pct];
+                // Numeric zone → scope_id directly (matches std.net.Ip6Address.parse).
+                // Non-numeric zone would require if_nametoindex; treat as invalid here.
+                scope_id = match core::str::from_utf8(zone).ok().and_then(|s| s.parse::<u32>().ok()) {
+                    Some(id) => id,
+                    None => return Ok(JSValue::UNDEFINED),
+                };
+            }
             let mut sin6 = inet::sockaddr_in6 {
                 family: AF::INET6.int(),
                 port: port_.to_be(),

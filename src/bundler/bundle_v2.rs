@@ -2,7 +2,7 @@
 // B-2 un-gated header — real `BundleV2` struct definition.
 // resolver↔bundler cycle broken in O; `bun_resolver` is now a direct dep, so
 // `Transpiler` (which embeds `Resolver`) is referenceable here. Method bodies
-// remain in the gated `__phase_a_draft` module below until `LinkerContext`,
+// remain in the gated `v2_impl` module below until `LinkerContext`,
 // `ParseTask`, `ThreadPool`, and the JSBundler/api TYPE_ONLY split land.
 // ══════════════════════════════════════════════════════════════════════════
 
@@ -12,17 +12,17 @@ use bun_collections::{ArrayHashMap, BabyList, StringHashMap};
 use bun_core::ThreadLock;
 use bun_logger as Logger;
 
-// `bake_types` / `dispatch` are canonically defined in `__phase_a_draft` below
+// `bake_types` / `dispatch` are canonically defined in `v2_impl` below
 // (the full versions); re-exported here so the crate-root `lib.rs` modules and
 // the outer `BundleV2` struct see exactly the same types as the impl bodies.
-pub use __phase_a_draft::bake_types;
-pub use __phase_a_draft::dispatch;
-pub use __phase_a_draft::api;
-pub use __phase_a_draft::{
+pub use v2_impl::bake_types;
+pub use v2_impl::dispatch;
+pub use v2_impl::api;
+pub use v2_impl::{
     JSMeta, ImportData, ExportData, ImportTracker, DevServerOutput, DevServerInput,
     EntryPoint, EntryPointKind, EntryPointList, generic_path_with_pretty_initialized,
 };
-pub use __phase_a_draft::{DependenciesScanner, DependenciesScannerResult};
+pub use v2_impl::{DependenciesScanner, DependenciesScannerResult};
 pub use crate::ungate_support::RefImportData;
 use self::bake_types as bake;
 
@@ -48,7 +48,7 @@ pub struct BundleThread(());
 pub use api::JSBundler::Plugin as JSBundlerPlugin;
 
 /// `BundleV2.JSBundleCompletionTask` — re-exported from the canonical def below.
-pub use __phase_a_draft::JSBundleCompletionTask;
+pub use v2_impl::JSBundleCompletionTask;
 
 /// `jsc::api::JSBundler::FileMap` — re-exported from the canonical def below.
 pub use api::JSBundler::FileMap;
@@ -130,7 +130,7 @@ pub struct BundleV2<'a> {
 // still-gated modules (`ThreadPool`, full `dispatch::DevServerVTable`,
 // `ServerComponentParseTask`, `Watcher`) are ``-gated inline so
 // the call shape is preserved verbatim and un-gates by deletion once those
-// land. See `__phase_a_draft` below for the full reference bodies.
+// land. See `v2_impl` below for the full reference bodies.
 // ──────────────────────────────────────────────────────────────────────────
 
 bun_core::declare_scope!(Bundle, visible);
@@ -231,7 +231,7 @@ impl<'a> BundleV2<'a> {
 // `ParseTask`, `ThreadPool`, OUT_DIR codegen for HmrRuntime embeds.)
 // ══════════════════════════════════════════════════════════════════════════
 
-pub mod __phase_a_draft {
+pub mod v2_impl {
 // This is Bun's JavaScript/TypeScript bundler
 //
 // A lot of the implementation is based on the Go implementation of esbuild. Thank you Evan Wallace.

@@ -897,15 +897,20 @@ impl Tree {
     // `trees: &mut [Tree]`, `dependency_lists: &mut [...]`, and `builder: &mut Builder`
     // simultaneously, which overlaps mutable borrows. The body never mutates `self`, `trees`,
     // or `dependency_lists`, so we take `self_id: Id` by value and re-derive read-only views
-    // from `builder.list` on each access. The only long-lived `&mut` is `builder`.
+    // from `builder.list` on each access. `dependency` is passed by id and re-derived from
+    // `builder.dependencies` (a `&'a [Dependency]` field, copied out so the borrow detaches
+    // from `builder`). The only long-lived `&mut` is `builder`.
     fn hoist_dependency<const AS_DEFINED: bool, const METHOD: BuilderMethod>(
         self_id: Id,
         hoist_root_id: Id,
         package_id: PackageID,
-        dependency: &Dependency,
+        input_dep_id: DependencyID,
         builder: &mut Builder<'_, METHOD>,
     ) -> Result<HoistDependencyResult, SubtreeError> {
-        // TODO(port): narrow error set
+        // Copy the slice ref out of `builder` so subsequent `&mut builder` does not conflict.
+        let deps: &[Dependency] = builder.dependencies;
+        let dependency: &Dependency = &deps[input_dep_id as usize];
+
         // Tree is Copy — snapshot the fields we need so we don't hold a borrow of builder.list.
         let this: Tree = builder.list.items_tree()[self_id as usize];
         let this_dependencies_len = this
@@ -917,7 +922,7 @@ impl Tree {
             let dep_id = this
                 .dependencies
                 .get(builder.list.items_dependencies()[self_id as usize].as_slice())[i];
-            let dep = &builder.dependencies[dep_id as usize];
+            let dep = &deps[dep_id as usize];
             if dep.name_hash != dependency.name_hash {
                 continue;
             }
@@ -966,12 +971,14 @@ impl Tree {
 
             if dependency.behavior.is_peer() {
                 if dependency.version.tag == crate::dependency::VersionTag::Npm {
-                    let resolution: Resolution =
-                        builder.lockfile.packages.items_resolution()[res_id as usize];
-                    let version = &dependency.version.value.npm.version;
+                    let resolution: &Resolution =
+                        &builder.lockfile.packages.items_resolution()[res_id as usize];
+                    // SAFETY: tag-guarded union access — `dependency.version.tag == Npm` checked above.
+                    let version = unsafe { &dependency.version.value.npm.version };
                     if resolution.tag == crate::resolution::Tag::Npm
                         && version.satisfies(
-                            &resolution.value.npm.version,
+                            // SAFETY: tag-guarded union access — `resolution.tag == Npm` checked above.
+                            unsafe { resolution.value.npm.version },
                             builder.buf(),
                             builder.buf(),
                         )
@@ -989,15 +996,26 @@ impl Tree {
             }
 
             if AS_DEFINED && !dep.behavior.is_peer() {
-                builder.maybe_report_error(format_args!(
-                    "Package \"{}@{}\" has a dependency loop\n  Resolution: \"{}@{}\"\n  Dependency: \"{}@{}\"",
-                    builder.package_name(package_id),
-                    builder.package_version(package_id),
-                    builder.package_name(res_id),
-                    builder.package_version(res_id),
-                    dependency.name.fmt(builder.buf()),
-                    dependency.version.literal.fmt(builder.buf()),
-                ));
+                // PORT NOTE: reshaped for borrowck — `maybe_report_error(&mut self, args)` cannot
+                // accept `format_args!` capturing `&self` borrows. Split into disjoint field
+                // borrows: read-only via the `&'a Lockfile` (Copy) and `&mut` only on `log`.
+                let lockfile = builder.lockfile;
+                let buf = lockfile.buffers.string_bytes.as_slice();
+                let pkg_names = lockfile.packages.items_name();
+                let pkg_resolutions = lockfile.packages.items_resolution();
+                let _ = builder.log.add_error_fmt(
+                    None,
+                    logger::Loc::EMPTY,
+                    format_args!(
+                        "Package \"{}@{}\" has a dependency loop\n  Resolution: \"{}@{}\"\n  Dependency: \"{}@{}\"",
+                        pkg_names[package_id as usize].fmt(buf),
+                        pkg_resolutions[package_id as usize].fmt(buf, bun_core::fmt::PathSep::Auto),
+                        pkg_names[res_id as usize].fmt(buf),
+                        pkg_resolutions[res_id as usize].fmt(buf, bun_core::fmt::PathSep::Auto),
+                        dependency.name.fmt(buf),
+                        dependency.version.literal.fmt(buf),
+                    ),
+                );
                 return Err(SubtreeError::DependencyLoop);
             }
 
@@ -1010,7 +1028,7 @@ impl Tree {
                 this.parent,
                 hoist_root_id,
                 package_id,
-                dependency,
+                input_dep_id,
                 builder,
             )
             .expect("unreachable");

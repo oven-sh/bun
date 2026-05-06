@@ -211,7 +211,10 @@ pub struct RareData {
 
     pub file_polls_: Option<Box<FilePollStore>>,
 
-    pub global_dns_data: Option<Box<DnsGlobalData>>,
+    /// `bun_runtime::dns_jsc::GlobalData` — type-erased to `*mut c_void` to
+    /// break the `bun_jsc → bun_runtime` cycle. Owned (`Box::into_raw`); the
+    /// real accessor lives at `bun_runtime::dns_jsc::dns::global_resolver_mut`.
+    pub global_dns_data: Option<core::ptr::NonNull<c_void>>,
 
     /// Embedded socket groups for kinds that aren't tied to a Listener / server.
     /// Lazily linked into the loop on first socket; never separately allocated.
@@ -1220,12 +1223,12 @@ impl RareData {
         self.default_client_ssl_ctx.unwrap()
     }
 
-    pub fn global_dns_resolver(&mut self, vm: &mut VirtualMachine) -> &mut dns::Resolver {
-        if self.global_dns_data.is_none() {
-            self.global_dns_data = Some(dns::GlobalData::init(vm));
-            self.global_dns_data.as_mut().unwrap().resolver.ref_(); // live forever
-        }
-        &mut self.global_dns_data.as_mut().unwrap().resolver
+    /// Raw slot for the per-VM global DNS data. The lazy init + `&mut Resolver`
+    /// accessor lives in `bun_runtime::dns_jsc::dns::global_resolver_mut` (the
+    /// `Resolver` type is higher-tier and cannot be named here without a cycle).
+    #[inline]
+    pub fn global_dns_data_slot(&mut self) -> &mut Option<core::ptr::NonNull<c_void>> {
+        &mut self.global_dns_data
     }
 
     pub fn node_fs_stat_watcher_scheduler(

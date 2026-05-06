@@ -2935,6 +2935,7 @@ pub fn usize2loc(loc: usize) -> Loc {
 // Source
 // ───────────────────────────────────────────────────────────────────────────
 
+#[derive(Clone)]
 pub struct Source {
     pub path: fs::Path,
 

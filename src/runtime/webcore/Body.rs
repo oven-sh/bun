@@ -395,7 +395,6 @@ impl PendingValue {
                 | Action::GetBlob
                 | Action::GetArrayBuffer
                 | Action::GetBytes => {
-                    use ReadableStreamConvert as _;
                     let promise = match &mut self.action {
                         Action::GetJSON => global_this.readable_stream_to_json(readable.value),
                         Action::GetArrayBuffer => {
@@ -464,38 +463,6 @@ impl Action {
 impl PartialEq for Action {
     fn eq(&self, other: &Self) -> bool {
         core::mem::discriminant(self) == core::mem::discriminant(other)
-    }
-}
-
-/// Local extension shim for `JSGlobalObject::readableStreamTo*` — the real
-/// methods live in the cfg-gated `src/jsc/JSGlobalObject.rs`.
-// TODO(b2-blocked): drop once `bun_jsc::JSGlobalObject::readable_stream_to_*` un-gates.
-trait ReadableStreamConvert {
-    fn readable_stream_to_json(&self, value: JSValue) -> JSValue;
-    fn readable_stream_to_array_buffer(&self, value: JSValue) -> JSValue;
-    fn readable_stream_to_bytes(&self, value: JSValue) -> JSValue;
-    fn readable_stream_to_text(&self, value: JSValue) -> JSValue;
-    fn readable_stream_to_blob(&self, value: JSValue) -> JSValue;
-    fn readable_stream_to_form_data(&self, value: JSValue, content_type: JSValue) -> JSValue;
-}
-impl ReadableStreamConvert for JSGlobalObject {
-    fn readable_stream_to_json(&self, _value: JSValue) -> JSValue {
-        todo!("blocked_on: bun_jsc::JSGlobalObject::readable_stream_to_json")
-    }
-    fn readable_stream_to_array_buffer(&self, _value: JSValue) -> JSValue {
-        todo!("blocked_on: bun_jsc::JSGlobalObject::readable_stream_to_array_buffer")
-    }
-    fn readable_stream_to_bytes(&self, _value: JSValue) -> JSValue {
-        todo!("blocked_on: bun_jsc::JSGlobalObject::readable_stream_to_bytes")
-    }
-    fn readable_stream_to_text(&self, _value: JSValue) -> JSValue {
-        todo!("blocked_on: bun_jsc::JSGlobalObject::readable_stream_to_text")
-    }
-    fn readable_stream_to_blob(&self, _value: JSValue) -> JSValue {
-        todo!("blocked_on: bun_jsc::JSGlobalObject::readable_stream_to_blob")
-    }
-    fn readable_stream_to_form_data(&self, _value: JSValue, _content_type: JSValue) -> JSValue {
-        todo!("blocked_on: bun_jsc::JSGlobalObject::readable_stream_to_form_data")
     }
 }
 

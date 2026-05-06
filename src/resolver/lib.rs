@@ -140,6 +140,10 @@ pub mod fs {
     pub struct FileSystem {
         pub top_level_dir: &'static [u8],
 
+        // used on subsequent updates (process.chdir writes here and re-slices
+        // `top_level_dir` to point into it).
+        pub top_level_dir_buf: bun_paths::PathBuffer,
+
         pub fs: Implementation,
         pub dirname_store: &'static DirnameStore,
         pub filename_store: &'static FilenameStore,

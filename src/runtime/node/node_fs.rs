@@ -6059,26 +6059,31 @@ impl NodeFS {
             .unwrap_or(Maybe::Ok(()))
     }
 
-    // TODO(b2-blocked): args::WatchFile = StatWatcher::Arguments — module gated.
-    
-    pub fn watch_file(&mut self, args: &args::WatchFile, flavor: Flavor) -> Maybe<ret::WatchFile> {
+    pub fn watch_file(&mut self, args: args::WatchFile, flavor: Flavor) -> Maybe<ret::WatchFile> {
         debug_assert!(flavor == Flavor::Sync);
+        // `create_stat_watcher` consumes `args`; capture what the error path
+        // needs (path bytes + global) before the move.
+        let global_this = args.global_this;
+        // PORT NOTE: reshaped for borrowck — Zig read `args.path.slice()` after
+        // the `catch`, but Rust moved `args` into `create_stat_watcher`. Buffer
+        // the path up front (only used on the cold error branch).
+        let path_for_err: Box<[u8]> = Box::from(args.path.slice());
         let watcher = match args.create_stat_watcher() {
             Ok(w) => w,
             Err(err) => {
                 let mut buf = Vec::new();
                 use std::io::Write as _;
-                let _ = write!(&mut buf, "Failed to watch file {}", bun_core::fmt::QuotedFormatter { text: args.path.slice() });
-                let _ = args.global_this.throw_value(bun_jsc::SystemError {
+                let _ = write!(&mut buf, "Failed to watch file {}", bun_core::fmt::QuotedFormatter { text: &path_for_err });
+                let _ = global_this.throw_value(bun_jsc::SystemError {
                     errno: 0,
                     message: BunString::init(&buf[..]),
                     code: BunString::init(err.name()),
-                    path: BunString::init(args.path.slice()),
+                    path: BunString::init(&path_for_err),
                     syscall: BunString::default(),
                     hostname: BunString::default(),
                     fd: -1,
                     dest: BunString::default(),
-                }.to_error_instance(args.global_this));
+                }.to_error_instance(global_this));
                 return Maybe::Ok(JSValue::UNDEFINED);
             }
         };
@@ -6131,12 +6136,12 @@ impl NodeFS {
         }
     }
 
-    // TODO(b2-blocked): args::Watch = Watcher::Arguments — module gated.
-    
-    pub fn watch(&mut self, args: &args::Watch, _: Flavor) -> Maybe<ret::Watch> {
+    pub fn watch(&mut self, args: args::Watch<'_>, _: Flavor) -> Maybe<ret::Watch> {
         match args.create_fs_watcher() {
-            Maybe::Ok(result) => Maybe::Ok(result.js_this),
-            Maybe::Err(err) => Maybe::Err(err),
+            // SAFETY: `FSWatcher::init` returns a freshly heap-allocated
+            // `*mut FSWatcher` (boxed JSC payload); valid to deref here.
+            Ok(result) => Maybe::Ok(unsafe { (*result).js_this }),
+            Err(err) => Maybe::Err(err),
         }
     }
 

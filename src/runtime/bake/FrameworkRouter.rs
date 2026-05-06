@@ -1896,15 +1896,23 @@ impl JSFrameworkRouter {
         });
 
         // SAFETY: `bun_vm()` returns a non-null `*mut VirtualMachine` for a Bun-owned global.
-        let _resolver = unsafe { &mut (*global.bun_vm()).transpiler.resolver };
-        // TODO(port): borrowck — Zig calls `jsfr.router.scan(.init(0), &vm.transpiler.resolver,
-        // InsertionContext.wrap(jsfr))`, which needs `&mut jsfr.router` and
-        // `&mut *jsfr as &mut dyn InsertionHandler` simultaneously. The handler only touches
-        // `files`/`stored_parse_errors`, so the regions are disjoint at runtime; needs a
-        // split-field reshape (move `router` out, scan, move back) in Phase B.
-        todo!("blocked_on: borrowck — JSFrameworkRouter::constructor split-borrow of router/self");
-        #[allow(unreachable_code)]
+        let resolver = unsafe { &mut (*global.bun_vm()).transpiler.resolver };
+        // PORT NOTE: reshaped for borrowck — Zig passes `jsfr` as both the router owner and the
+        // insertion-context. The handler only touches `files`/`stored_parse_errors`, so
+        // split-borrow those two fields into a dedicated context (see `JSFrameworkRouterScanCtx`).
         {
+            let JSFrameworkRouter {
+                router,
+                files,
+                stored_parse_errors,
+            } = &mut *jsfr;
+            let mut ctx = JSFrameworkRouterScanCtx {
+                files,
+                stored_parse_errors,
+            };
+            router.scan(TypeIndex::init(0), resolver, &mut ctx)?;
+        }
+
         if !jsfr.stored_parse_errors.is_empty() {
             let arr = JSValue::create_empty_array(global, jsfr.stored_parse_errors.len())?;
             for (i, item) in jsfr.stored_parse_errors.iter().enumerate() {
@@ -1927,7 +1935,6 @@ impl JSFrameworkRouter {
         }
 
         Ok(jsfr)
-        }
     }
 
     #[bun_jsc::host_fn(method)]

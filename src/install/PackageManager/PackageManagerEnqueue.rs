@@ -1096,21 +1096,22 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                 let network_task = this.get_network_task();
                                 // SAFETY: network_task is a freshly acquired pool slot
                                 unsafe {
-                                    *network_task = NetworkTask {
-                                        package_manager: this,
+                                    network_task.write(NetworkTask {
+                                        package_manager: (this as *mut PackageManager).cast(),
                                         // TODO(port): `callback: undefined` in Zig
                                         callback: core::mem::zeroed(),
                                         task_id,
                                         // allocator dropped — global mimalloc
-                                        ..NetworkTask::uninit()
-                                    };
+                                        ..NetworkTask::default()
+                                    });
                                 }
 
+                                let scope = this.scope_for_package_name(name_str);
                                 // SAFETY: network_task points to a valid initialized NetworkTask slot
                                 unsafe {
                                     (*network_task).for_manifest(
                                         name_str,
-                                        this.scope_for_package_name(name_str),
+                                        scope,
                                         loaded_manifest.as_ref(),
                                         dependency.behavior.is_optional(),
                                         needs_extended_manifest,

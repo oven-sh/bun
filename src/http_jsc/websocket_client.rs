@@ -1287,12 +1287,7 @@ impl<const SSL: bool> WebSocket<SSL> {
                         debug_assert!(self.tcp.is_established());
                     }
                 }
-                // PORT NOTE: reshaped for borrowck
-                let slice_ptr = self.send_buffer.readable_slice(0).as_ptr();
-                let slice_len = self.send_buffer.readable_slice(0).len();
-                // SAFETY: slice valid for this call
-                let slice = unsafe { core::slice::from_raw_parts(slice_ptr, slice_len) };
-                return self.send_buffer_out(slice);
+                return self.send_buffer_out();
             }
         } else {
             return self.send_data_uncompressed(bytes, do_write, opcode);
@@ -1322,48 +1317,61 @@ impl<const SSL: bool> WebSocket<SSL> {
                     debug_assert!(self.tcp.is_established());
                 }
             }
-            // PORT NOTE: reshaped for borrowck
-            let slice_ptr = self.send_buffer.readable_slice(0).as_ptr();
-            let slice_len = self.send_buffer.readable_slice(0).len();
-            // SAFETY: slice valid for this call
-            let slice = unsafe { core::slice::from_raw_parts(slice_ptr, slice_len) };
-            return self.send_buffer_out(slice);
+            return self.send_buffer_out();
         }
 
         true
     }
 
-    // PORT NOTE: renamed from `sendBuffer` to avoid clash with `send_buffer` field
-    fn send_buffer_out(&mut self, out_buf: &[u8]) -> bool {
-        debug_assert!(!out_buf.is_empty());
+    // PORT NOTE: renamed from `sendBuffer` to avoid clash with `send_buffer`
+    // field. Reshaped to take no slice argument: every caller in the Zig
+    // passed `this.send_buffer.readableSlice(0)`, and laundering that slice
+    // through `from_raw_parts` while holding `&mut self` is aliased-&mut UB
+    // (PORTING.md §Forbidden). Instead, take ownership of the fifo, write its
+    // readable region, then restore. The Zig pointer-equality check becomes
+    // unconditional `discard`.
+    fn send_buffer_out(&mut self) -> bool {
+        let mut buf = core::mem::replace(
+            &mut self.send_buffer,
+            LinearFifo::<u8, DynamicBuffer<u8>>::init(),
+        );
         // Do not use MSG_MORE, see https://github.com/oven-sh/bun/issues/4010
-        let wrote: usize = if let Some(tunnel) = &self.proxy_tunnel {
-            // In tunnel mode, route through the tunnel's TLS layer
-            // instead of the detached raw socket.
-            // SAFETY: `tunnel` holds a live ref (RefPtr has no `Deref`).
-            match unsafe { tunnel.data.as_ref() }.write(out_buf) {
-                Ok(w) => w,
-                Err(_) => {
-                    self.terminate(ErrorCode::FailedToWrite);
-                    return false;
+        let wrote: Result<usize, bool> = {
+            let out_buf = buf.readable_slice(0);
+            debug_assert!(!out_buf.is_empty());
+            if let Some(tunnel) = &self.proxy_tunnel {
+                // In tunnel mode, route through the tunnel's TLS layer
+                // instead of the detached raw socket.
+                // SAFETY: `tunnel` holds a live ref (RefPtr has no `Deref`).
+                match unsafe { tunnel.data.as_ref() }.write(out_buf) {
+                    Ok(w) => Ok(w),
+                    Err(_) => Err(true),
                 }
+            } else if self.tcp.is_closed() {
+                Err(false)
+            } else {
+                let w = self.tcp.write(out_buf);
+                if w < 0 { Err(true) } else { Ok(usize::try_from(w).unwrap()) }
             }
-        } else {
-            if self.tcp.is_closed() {
-                return false;
-            }
-            let w = self.tcp.write(out_buf);
-            if w < 0 {
-                self.terminate(ErrorCode::FailedToWrite);
-                return false;
-            }
-            usize::try_from(w).unwrap()
         };
-        let readable = self.send_buffer.readable_slice(0);
-        if readable.as_ptr() == out_buf.as_ptr() {
-            self.send_buffer.discard(wrote);
+        match wrote {
+            Ok(wrote) => {
+                buf.discard(wrote);
+                self.send_buffer = buf;
+                true
+            }
+            Err(true) => {
+                // `terminate → clear_data` resets `send_buffer`; drop the
+                // taken fifo without restoring.
+                drop(buf);
+                self.terminate(ErrorCode::FailedToWrite);
+                false
+            }
+            Err(false) => {
+                self.send_buffer = buf;
+                false
+            }
         }
-        true
     }
 
     fn send_pong(&mut self, socket: &Socket<SSL>) -> bool {
@@ -1498,14 +1506,10 @@ impl<const SSL: bool> WebSocket<SSL> {
             return;
         }
         debug_assert!(self.is_same_socket(&socket));
-        let send_buf_ptr = self.send_buffer.readable_slice(0).as_ptr();
-        let send_buf_len = self.send_buffer.readable_slice(0).len();
-        if send_buf_len == 0 {
+        if self.send_buffer.readable_length() == 0 {
             return;
         }
-        // SAFETY: slice valid for this call
-        let send_buf = unsafe { core::slice::from_raw_parts(send_buf_ptr, send_buf_len) };
-        let _ = self.send_buffer_out(send_buf);
+        let _ = self.send_buffer_out();
     }
 
     pub fn handle_timeout(&mut self, _socket: Socket<SSL>) {
@@ -2065,14 +2069,10 @@ impl<const SSL: bool> WebSocket<SSL> {
         });
         // TODO(port): scopeguard borrowck
 
-        let send_buf_ptr = self.send_buffer.readable_slice(0).as_ptr();
-        let send_buf_len = self.send_buffer.readable_slice(0).len();
-        if send_buf_len == 0 {
+        if self.send_buffer.readable_length() == 0 {
             return;
         }
-        // SAFETY: slice valid for this call
-        let send_buf = unsafe { core::slice::from_raw_parts(send_buf_ptr, send_buf_len) };
-        let _ = self.send_buffer_out(send_buf);
+        let _ = self.send_buffer_out();
     }
 
     pub extern "C" fn finalize(this: *mut Self) {

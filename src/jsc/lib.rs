@@ -2129,7 +2129,17 @@ pub type ErrorableZigString = Errorable<ZigString>;
 pub type ErrorableJSValue = Errorable<JSValue>;
 pub type ErrorableString = Errorable<bun_string::String>;
 
-pub mod hot_reloader {}
+#[path = "hot_reloader.rs"] pub mod hot_reloader;
+pub use self::hot_reloader::{HotReloader, ImportWatcher, NewHotReloader, WatchReloader};
+
+#[path = "RuntimeTranspilerCache.rs"] pub mod runtime_transpiler_cache;
+pub use self::runtime_transpiler_cache::RuntimeTranspilerCache;
+
+#[path = "RuntimeTranspilerStore.rs"] pub mod runtime_transpiler_store;
+pub use self::runtime_transpiler_store::RuntimeTranspilerStore;
+
+#[path = "web_worker.rs"] pub mod web_worker;
+pub use self::web_worker::WebWorker;
 
 // TODO(b1): bun_runtime crate not in dep-graph at this tier; gate re-exports.
 #[cfg(any())]

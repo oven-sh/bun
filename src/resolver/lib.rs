@@ -845,7 +845,11 @@ pub mod fs {
         #[inline]
         pub const fn new() -> Self { Self(()) }
         #[inline]
-        fn inner(&mut self) -> &'static mut EntriesOptionMap { entries_option_map() }
+        fn inner(&mut self) -> &'static mut EntriesOptionMap {
+            // SAFETY: `entries_option_map()` returns the raw `*mut` singleton (Zig `*Self`);
+            // all access goes through `RealFS.entries_mutex`.
+            unsafe { &mut *entries_option_map() }
+        }
         pub fn get(&mut self, key: &[u8]) -> Option<&mut EntriesOption> {
             self.inner().get(key)
         }
@@ -2340,7 +2344,10 @@ impl<'a> Resolver<'a> {
         let care_about_browser_field = opts.target == options::Target::Browser;
         Resolver {
             // allocator dropped
-            dir_cache: DirInfo::HashMap::init(),
+            // Route through the per-monomorphization singleton so this field and
+            // `DirInfo::get_parent()` / `get_enclosing_browser_scope()` share storage
+            // (Zig `BSSMap.init()` is a per-type singleton, not a fresh alloc).
+            dir_cache: DirInfo::hash_map_instance(),
             mutex: &*RESOLVER_MUTEX,
             caches: CacheSet::init(),
             opts,

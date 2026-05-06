@@ -161,15 +161,21 @@ pub(crate) mod install {
 /// `windows-shim/BinLinkingShim.zig` — `.bunx` shim encoder consumed by
 /// `bin::Linker` (Windows only at runtime, but the encoder types are
 /// referenced unconditionally so the module must exist on all targets).
+// PORT NOTE: `#[path]` inside an inline `mod {}` resolves relative to the
+// synthetic `windows_shim/` directory, which doesn't exist on disk. Hoist the
+// file-backed module to crate level with an absolute-ish path and re-export
+// through the inline mod so `windows_shim::bin_linking_shim` keeps resolving.
+#[path = "windows-shim/BinLinkingShim.rs"]
+mod _bin_linking_shim;
 pub mod windows_shim {
-    #[path = "../windows-shim/BinLinkingShim.rs"]
-    pub mod bin_linking_shim;
+    pub use super::_bin_linking_shim as bin_linking_shim;
     pub use bin_linking_shim::BinLinkingShim;
 }
 
+#[path = "resolvers/folder_resolver.rs"]
+mod _folder_resolver;
 pub mod resolvers {
-    #[path = "../resolvers/folder_resolver.rs"]
-    pub mod folder_resolver;
+    pub use super::_folder_resolver as folder_resolver;
 }
 
 // ──────────────────────────────────────────────────────────────────────────

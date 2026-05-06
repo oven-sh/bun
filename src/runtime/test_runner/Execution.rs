@@ -922,16 +922,23 @@ fn step_sequence(
 fn step_sequence_one(
     buntest_strong: BunTestPtr,
     global_this: &JSGlobalObject,
-    group: &mut ConcurrentGroup,
+    group: NonNull<ConcurrentGroup>,
     sequence_index: usize,
     now: &mut Timespec,
 ) -> JsResult<Option<AdvanceSequenceStatus>> {
     let _scope = group_log::begin();
     let buntest = buntest_strong.get();
+    let buntest_ptr = NonNull::from(&mut *buntest);
     let this = &mut buntest.execution;
 
-    // TODO(port): borrowck — `sequence` borrows `this.sequences` while `this`/`group` are also used below.
-    let sequence = &mut group.sequences(this)[sequence_index];
+    // Locate the sequence by absolute index, then carry it as NonNull so it can coexist with
+    // `group` (disjoint field) and with later re-borrows through `buntest_ptr` in advance_sequence.
+    // SAFETY: group points into this.groups; read-only.
+    let seq_abs = unsafe { group.as_ref() }.sequence_start + sequence_index;
+    let sequence_ptr: NonNull<ExecutionSequence> = NonNull::from(&mut this.sequences[seq_abs]);
+    // SAFETY: sequence_ptr points into this.sequences; this is the unique live `&mut` to that
+    // element until we hand it off to advance_sequence (which takes the NonNull, not the &mut).
+    let sequence = unsafe { &mut *sequence_ptr.as_ptr() };
     if sequence.executing {
         let Some(active_entry_ptr) = sequence.active_entry else {
             debug_assert!(false); // sequence is executing with no active entry
@@ -942,7 +949,7 @@ fn step_sequence_one(
         // SAFETY: arena-owned entry
         let active_entry = unsafe { &mut *active_entry_ptr.as_ptr() };
         if active_entry.evaluate_timeout(sequence, now) {
-            this.advance_sequence(sequence, group);
+            Execution::advance_sequence(buntest_ptr, sequence_ptr, group);
             return Ok(None); // run again
         }
         group_log::log("runOne: can't advance; already executing");
@@ -962,9 +969,9 @@ fn step_sequence_one(
     let next_item = unsafe { &mut *next_item_ptr.as_ptr() };
     sequence.executing = true;
     if Some(next_item_ptr) == sequence.first_entry {
-        this.on_sequence_started(sequence);
+        Execution::on_sequence_started(sequence);
     }
-    this.on_entry_started(next_item);
+    Execution::on_entry_started(next_item);
 
     if let Some(cb) = next_item.callback.as_ref() {
         group_log::log("runSequence queued callback");
@@ -990,10 +997,13 @@ fn step_sequence_one(
         .is_some()
         {
             *now = Timespec::now_force_real_time();
+            // SAFETY: re-deref after run_test_callback; sequence_ptr still valid (sequences is a
+            // Box<[ExecutionSequence]>, never reallocated during execution).
+            let sequence = unsafe { &mut *sequence_ptr.as_ptr() };
             let _ = next_item.evaluate_timeout(sequence, now);
 
             // the result is available immediately; advance the sequence and run again.
-            this.advance_sequence(sequence, group);
+            Execution::advance_sequence(buntest_ptr, sequence_ptr, group);
             return Ok(None); // run again
         }
         return Ok(Some(AdvanceSequenceStatus::Execute {
@@ -1027,7 +1037,7 @@ fn step_sequence_one(
                 debug_assert!(false);
             }
         }
-        this.advance_sequence(sequence, group);
+        Execution::advance_sequence(buntest_ptr, sequence_ptr, group);
         return Ok(None); // run again
     }
 }

@@ -1,7 +1,7 @@
 // NOTE: not `thiserror::Error` — that derive requires a per-variant `#[error("...")]`
 // attr. We hand-roll Display via `IntoStaticStr` so the message == the variant name
 // (matching Zig `@errorName`), and impl `std::error::Error` manually below.
-#[derive(strum::IntoStaticStr, Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(strum::IntoStaticStr, strum::EnumString, Debug, Copy, Clone, Eq, PartialEq)]
 pub enum Error {
     ConnectionClosed,
     ConnectionTimedOut,
@@ -59,6 +59,16 @@ pub type AnyMySQLError = Error;
 impl From<Error> for bun_core::Error {
     fn from(e: Error) -> Self {
         bun_core::Error::from_name(<&'static str>::from(e))
+    }
+}
+
+// Reverse of the above: `bun_core::Error` is just an interned name; recover the
+// matching variant by name (or `UnknownError` as a catch-all). Needed because
+// helpers like `decode_binary_value` were widened to `bun_core::Error` while
+// callers (e.g. `ResultSet::Row::decode_binary`) still propagate `AnyMySQLError`.
+impl From<bun_core::Error> for Error {
+    fn from(e: bun_core::Error) -> Self {
+        e.name().parse().unwrap_or(Error::UnknownError)
     }
 }
 

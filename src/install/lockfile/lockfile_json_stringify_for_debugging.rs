@@ -6,7 +6,7 @@ use bun_install::{
     self as install, invalid_package_id, Dependency, DependencyID, Npm, PackageID, Repository,
 };
 use bun_install::dependency::Behavior;
-use bun_install::lockfile::{Lockfile, Package, PackageIndex, Tree};
+use bun_install::lockfile::{Lockfile, Package, package_index as PackageIndex, Tree};
 
 // TODO(port): `w: anytype` is a `std.json.WriteStream`-shaped writer. Phase B should
 // introduce a `JsonWriter` trait in bun_core (or bun_collections) with the methods

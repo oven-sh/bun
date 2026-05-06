@@ -750,17 +750,21 @@ impl Linux {
     fn thread_main(manager: &'static PathWatcherManager) {
         use bun_sys::linux::IN;
         Output::Source::configure_named_thread("fs.watch");
-        // SAFETY: thread owns no other &mut to manager.platform; reads of `fd`/`running`
-        // are safe (fd set before spawn; running is atomic). wd_map access below is under
-        // manager.mutex.
-        let plat = unsafe { &*(&manager.platform as *const Linux) };
+        let plat: *mut Linux = manager.platform.get();
+        // SAFETY: `fd` and `running` are set in `init()` before this thread spawns and
+        // the fields themselves are never reassigned afterwards. We borrow only these
+        // disjoint fields (never `&Linux` / `&mut Linux` whole-struct) so the `&mut`
+        // projections of `wd_map` taken under `manager.mutex` below — and inside
+        // `add_one` when called reentrantly from the dispatch loop — never alias them.
+        let fd = unsafe { (*plat).fd };
+        let running: &AtomicBool = unsafe { &(*plat).running };
         // Large enough for a burst of events; inotify guarantees whole events per read.
         // TODO(port): align(InotifyEvent) — ensure buf alignment for ptr cast below.
         let mut buf = [0u8; 64 * 1024];
         let mut path_buf = PathBuffer::uninit();
 
-        while plat.running.load(Ordering::Acquire) {
-            let rc = sys::syscall::read(plat.fd.native(), buf.as_mut_ptr(), buf.len());
+        while running.load(Ordering::Acquire) {
+            let rc = sys::syscall::read(fd.native(), buf.as_mut_ptr(), buf.len());
             match sys::get_errno(rc) {
                 sys::E::SUCCESS => {}
                 sys::E::AGAIN | sys::E::INTR => continue,
@@ -773,9 +777,7 @@ impl Linux {
                     };
                     manager.mutex.lock();
                     // SAFETY: holding manager.mutex.
-                    let watchers = unsafe {
-                        &*(&manager.watchers as *const StringArrayHashMap<*mut PathWatcher>)
-                    };
+                    let watchers = unsafe { &*manager.watchers.get() };
                     for &w in watchers.values() {
                         // SAFETY: holding manager.mutex; w is live.
                         unsafe {
@@ -793,8 +795,6 @@ impl Linux {
             }
 
             manager.mutex.lock();
-            // SAFETY: holding manager.mutex.
-            let plat_mut = unsafe { &mut *(&manager.platform as *const _ as *mut Linux) };
             // Track which PathWatchers got at least one event so we flush() each once.
             let mut touched: ArrayHashMap<*mut PathWatcher, ()> = ArrayHashMap::default();
 
@@ -808,22 +808,23 @@ impl Linux {
 
                 // Kernel retired this wd (rm_watch, or the watched inode is gone).
                 if ev.mask & IN::IGNORED != 0 {
-                    if let Some(owners) = plat_mut.wd_map.get_mut(&wd) {
+                    // SAFETY: holding manager.mutex; exclusive access to `wd_map`.
+                    let wd_map = unsafe { &mut (*plat).wd_map };
+                    if let Some(owners) = wd_map.get_mut(&wd) {
                         for o in owners.drain(..) {
                             // SAFETY: o.watcher live under manager.mutex.
-                            let w = unsafe {
-                                &mut *(o.watcher as *const PathWatcher as *mut PathWatcher)
-                            };
+                            let w = unsafe { &mut *o.watcher };
                             if let Some(idx) = w.platform.wds.iter().position(|&x| x == wd) {
                                 w.platform.wds.swap_remove(idx);
                             }
                         }
-                        plat_mut.wd_map.remove(&wd);
+                        wd_map.remove(&wd);
                     }
                     continue;
                 }
 
-                if plat_mut.wd_map.get(&wd).is_none() {
+                // SAFETY: holding manager.mutex.
+                if unsafe { (*plat).wd_map.get(&wd).is_none() } {
                     continue;
                 }
 

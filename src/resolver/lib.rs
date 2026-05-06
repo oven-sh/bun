@@ -6212,7 +6212,7 @@ impl<'a> Resolver<'a> {
                                     if esm.subpath == b"./package.json" {
                                         if let Some(d) = self.debug_logs.as_mut() { d.decrease_indent(); }
                                         return MatchResultUnion::Success(MatchResult {
-                                            path_pair: PathPair { primary: package_json.source.path.clone(), secondary: None },
+                                            path_pair: PathPair { primary: Fs::Path::init(package_json.source.path.text), secondary: None },
                                             dirname_fd: pkg_dir_info.get_file_descriptor(),
                                             file_fd: FD::INVALID,
                                             is_node_module: package_json.source.path.is_node_module(),
@@ -6401,7 +6401,12 @@ impl<'a> Resolver<'a> {
     
     fn enqueue_dependency_to_resolve(
         &mut self,
-        package_json_: Option<&mut PackageJSON>,
+        // PORT NOTE: Zig `package_json_: ?*PackageJSON` — DirInfo holds these as
+        // `&'static`, but the body writes `package_manager_package_id` back.
+        // Carry as `*const` and re-derive `*mut` at the single write site (the
+        // PackageJSON arena slot is interior-mutable in practice; no other
+        // borrow is live across that store).
+        package_json_: Option<*const PackageJSON>,
         esm: &crate::package_json::Package<'_>,
         behavior: Dependency::Behavior,
         input_package_id_: &mut Install::PackageID,

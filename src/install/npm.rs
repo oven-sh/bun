@@ -2268,11 +2268,13 @@ impl PackageManifest {
                 if scope.url_hash == *registry::DEFAULT_URL_HASH
                     && !strings::eql_long(expected_name, received_name, true)
                 {
-                    Output::warn(format_args!(
+                    Output::warn(
                         "Package name mismatch. Expected <b>\"{}\"<r> but received <red>\"{}\"<r>",
-                        bstr::BStr::new(expected_name),
-                        bstr::BStr::new(received_name),
-                    ));
+                        (
+                            bstr::BStr::new(expected_name),
+                            bstr::BStr::new(received_name),
+                        ),
+                    );
                 }
             }
         }

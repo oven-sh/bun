@@ -865,20 +865,21 @@ pub mod heap_breakdown {
             return *z;
         }
         // Zone names live forever (zones are never destroyed); allocate the
-        // NUL-terminated label once, stash it in the 'static map, then hand the
-        // OS a raw pointer into the map-owned buffer (PORTING.md §Forbidden:
-        // no `&*(p as *const _)` lifetime extension; ownership is the map's).
+        // NUL-terminated label once, hand the OS a raw pointer into its heap
+        // buffer, then move the owning `Vec` into the 'static map so the buffer
+        // outlives the process. PORTING.md §Forbidden: no `&*(p as *const _)`
+        // lifetime extension — ownership is encoded in the map, not faked.
         let mut owned = Vec::with_capacity(name.len() + 1);
         owned.extend_from_slice(name);
         owned.push(0);
-        let entry = map.entry(name.to_vec()).or_insert((owned, core::ptr::null()));
-        // `Vec`'s heap buffer address is stable across map rehashes (only the
-        // `Vec` struct moves), and this entry is never removed or overwritten.
-        let raw = entry.0.as_ptr() as *const c_char;
-        // SAFETY: `raw` points into the map-owned, NUL-terminated, never-freed
-        // buffer; valid for process lifetime per `Zone::init` contract.
+        // `Vec`'s heap buffer address is stable when the `Vec` struct is moved
+        // (only the {ptr,len,cap} header moves), and the map never removes or
+        // mutates this entry, so `raw` remains valid for process lifetime.
+        let raw = owned.as_ptr() as *const c_char;
+        // SAFETY: `raw` points into a NUL-terminated buffer that is moved into
+        // the 'static `ZONES` map immediately below and never freed.
         let zone = unsafe { Zone::init(raw) };
-        entry.1 = zone;
+        map.insert(name.to_vec(), (owned, zone));
         zone
     }
 
@@ -913,13 +914,13 @@ macro_rules! get_zone {
         static ZONE: ::std::sync::OnceLock<&'static $crate::heap_breakdown::Zone> =
             ::std::sync::OnceLock::new();
         *ZONE.get_or_init(|| {
-            // SAFETY: concat!($name, "\0") is a valid NUL-terminated C string literal.
-            let cstr = unsafe {
-                ::core::ffi::CStr::from_bytes_with_nul_unchecked(
-                    concat!($name, "\0").as_bytes(),
+            // SAFETY: concat!($name, "\0") is a valid NUL-terminated string
+            // literal in static memory — valid for process lifetime.
+            unsafe {
+                $crate::heap_breakdown::Zone::init(
+                    concat!($name, "\0").as_ptr() as *const ::core::ffi::c_char,
                 )
-            };
-            $crate::heap_breakdown::Zone::init(cstr)
+            }
         })
     }};
 }

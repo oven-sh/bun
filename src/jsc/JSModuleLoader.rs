@@ -9,9 +9,15 @@ pub struct JSModuleLoader {
 }
 
 // TODO(port): move to jsc_sys
+//
+// `JSGlobalObject` is an opaque ZST handle on the Rust side; Rust never reads or
+// writes bytes through it. C++ mutates VM state internally, but that is outside
+// Rust's aliasing model, so these externs take `*const JSGlobalObject` (matching
+// the convention in `JSGlobalObject.rs`) rather than forcing callers to launder
+// `&JSGlobalObject` through a `*const _ as *mut _` cast.
 unsafe extern "C" {
     fn JSC__JSModuleLoader__evaluate(
-        globalObject: *mut JSGlobalObject,
+        globalObject: *const JSGlobalObject,
         sourceCodePtr: *const u8,
         sourceCodeLen: usize,
         originUrlPtr: *const u8,
@@ -23,12 +29,12 @@ unsafe extern "C" {
     ) -> JSValue;
 
     fn JSC__JSModuleLoader__loadAndEvaluateModule(
-        arg0: *mut JSGlobalObject,
+        arg0: *const JSGlobalObject,
         arg1: *const BunString,
     ) -> *mut JSInternalPromise;
 
     fn JSModuleLoader__import(
-        arg0: *mut JSGlobalObject,
+        arg0: *const JSGlobalObject,
         arg1: *const BunString,
     ) -> *mut JSInternalPromise;
 }

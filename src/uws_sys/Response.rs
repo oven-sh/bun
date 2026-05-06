@@ -374,7 +374,10 @@ impl<const SSL: bool> Response<SSL> {
             // SAFETY: H is a ZST (asserted at compile time above), so any bit
             // pattern (i.e. zero bits) is a valid value.
             let handler: H = unsafe { core::mem::zeroed() };
-            // SAFETY: `this` is a live uws_res for the duration of the callback.
+            // SAFETY: `this` is a live uws_res for the duration of the callback;
+            // no prior Rust `&mut` to it survives (the registering `&mut self`
+            // returned before uWS fires this), and `Response<SSL>` is a
+            // zero-sized opaque so the `&mut` covers no Rust-owned bytes.
             let res = unsafe { &mut *Response::<SSL>::cast_res(this) };
             // PERF(port): was @call(.always_inline)
             handler(data.cast::<U>(), amount, res)

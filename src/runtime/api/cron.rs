@@ -1343,6 +1343,10 @@ impl CronJob {
     /// timer/cron_jobs list), so bind `${T}__create` directly — same extern the
     /// `#[JsClass]` proc-macro emits (generate-classes.ts).
     fn to_js_ptr(this: *mut Self, global: &JSGlobalObject) -> JSValue {
+        // `*mut CronJob` is opaque to C++ (linked by symbol name only); the
+        // pointee's Rust layout never crosses the FFI boundary — silence the
+        // improper_ctypes layout lint.
+        #[allow(improper_ctypes)]
         unsafe extern "C" {
             // Must match the signature `#[bun_jsc::JsClass]` already emitted for
             // `CronJob__create` (clashing_extern_declarations).

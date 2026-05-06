@@ -1933,7 +1933,7 @@ impl DevServer<'_> {
             }
             route_bundle::Data::Html(html) => {
                 // SAFETY: html_bundle is a live *mut HTMLBundleRoute (held strong by route_bundle::Html)
-                let bundle_path = unsafe { &(*html.html_bundle).bundle.path };
+                let bundle_path = unsafe { &(*(*html.html_bundle).bundle).path };
                 entry_points.append(bundle_path, entry_point_list::Flags::CLIENT)?;
             }
         }
@@ -2269,7 +2269,7 @@ impl DevServer<'_> {
 
         let mut display_name = strings::without_suffix_comptime(
             // SAFETY: html_bundle is a live *mut HTMLBundleRoute (held strong by route_bundle::Html)
-            paths::basename(unsafe { &(*html.html_bundle).bundle.path }),
+            paths::basename(unsafe { &(*(*html.html_bundle).bundle).path }),
             b".html",
         );
         // TODO: function for URL safe chars
@@ -3498,7 +3498,8 @@ pub fn finalize_bundle(
         let source_map_json = if !dev.server_graph.current_chunk_source_maps.is_empty() {
             'json: {
                 // Create a temporary source map entry to render
-                let mut source_map_entry = source_map_store::Entry { ref_count: 1, ..Default::default() };
+                let mut source_map_entry = source_map_store::Entry::default();
+                source_map_entry.ref_count = 1;
 
                 // Fill the source map entry
                 // PERF(port): was ArenaAllocator
@@ -3744,7 +3745,7 @@ pub fn finalize_bundle(
                     route_bundle::Data::Html(html) => {
                         if let Some(blob) = html.cached_response.take() {
                             // Arc<StaticRoute> drop = .deref()
-                            drop(blob);
+                            let _ = blob;
                         }
                     }
                 }

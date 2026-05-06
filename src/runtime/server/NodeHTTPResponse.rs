@@ -317,6 +317,10 @@ impl HasAutoFlusher for NodeHTTPResponse {
 
 // JsClass impl: hand-roll the codegen externs (`.classes.ts` emits
 // `NodeHTTPResponse__{fromJS,fromJSDirect,create,getConstructor}`).
+// `*mut NodeHTTPResponse` is opaque to C++ (linked by symbol name only); the
+// pointee's Rust layout is irrelevant to the FFI boundary, but the struct
+// lacks `#[repr(C)]` so rustc lints anyway.
+#[allow(improper_ctypes)]
 unsafe extern "C" {
     fn NodeHTTPResponse__fromJS(value: JSValue) -> Option<core::ptr::NonNull<NodeHTTPResponse>>;
     fn NodeHTTPResponse__fromJSDirect(value: JSValue) -> Option<core::ptr::NonNull<NodeHTTPResponse>>;

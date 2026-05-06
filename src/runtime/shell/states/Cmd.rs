@@ -161,6 +161,25 @@ impl Cmd {
         }
     }
 
+    /// Spec: Cmd.zig `onIOWriterChunk` (lines 355-362).
+    pub fn on_io_writer_chunk(
+        interp: &mut Interpreter,
+        this: NodeId,
+        _written: usize,
+        e: Option<bun_sys::SystemError>,
+    ) -> Yield {
+        if let Some(err) = e {
+            interp.throw(&crate::shell::ShellErr::from_system(&err));
+            return Yield::failed();
+        }
+        debug_assert!(matches!(
+            interp.as_cmd(this).state,
+            CmdState::WaitingWriteErr
+        ));
+        let parent = interp.as_cmd(this).base.parent;
+        interp.child_done(parent, this, 1)
+    }
+
     pub fn child_done(
         interp: &mut Interpreter,
         this: NodeId,

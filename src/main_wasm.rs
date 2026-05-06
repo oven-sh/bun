@@ -561,8 +561,9 @@ pub extern "C" fn getTests(opts_array: u64) -> u64 {
         js_ast::Expr::Data::Store::reset();
     });
 
-    // SAFETY: DEFINE initialized in `init()`.
-    let define = unsafe { &mut *DEFINE.assume_init() };
+    // SAFETY: DEFINE initialized in `init()`; wasm32 single-threaded so this is the
+    // sole live borrow of the boxed Define. Parser only reads it (`&'a Define`).
+    let define = unsafe { &*DEFINE.assume_init() };
     let mut parser = js_parser::Parser::init(
         js_parser::Options {
             jsx: Default::default(),
@@ -643,8 +644,9 @@ pub extern "C" fn transform(opts_array: u64) -> u64 {
     let mut code = logger::Source::init_path_string(path, &opts.contents);
     code.contents_is_recycled = true;
 
-    // SAFETY: DEFINE initialized in `init()`.
-    let define = unsafe { &mut *DEFINE.assume_init() };
+    // SAFETY: DEFINE initialized in `init()`; wasm32 single-threaded so this is the
+    // sole live borrow of the boxed Define. Parser only reads it (`&'a Define`).
+    let define = unsafe { &*DEFINE.assume_init() };
     let mut parser = js_parser::Parser::init(
         js_parser::Options { jsx: Default::default(), ..Default::default() },
         log,
@@ -736,8 +738,9 @@ pub extern "C" fn scan(opts_array: u64) -> u64 {
     let mut code = logger::Source::init_path_string(path, &opts.contents);
     code.contents_is_recycled = true;
 
-    // SAFETY: DEFINE initialized in `init()`.
-    let define = unsafe { &mut *DEFINE.assume_init() };
+    // SAFETY: DEFINE initialized in `init()`; wasm32 single-threaded so this is the
+    // sole live borrow of the boxed Define. Parser only reads it (`&'a Define`).
+    let define = unsafe { &*DEFINE.assume_init() };
     let mut parser = js_parser::Parser::init(
         js_parser::Options { jsx: Default::default(), ..Default::default() },
         log,

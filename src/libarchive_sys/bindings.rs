@@ -1,5 +1,6 @@
 #![allow(non_camel_case_types, non_upper_case_globals, clippy::missing_safety_doc)]
 
+use core::cell::UnsafeCell;
 use core::ffi::{c_char, c_int, c_long, c_uint, c_void};
 use core::marker::{PhantomData, PhantomPinned};
 

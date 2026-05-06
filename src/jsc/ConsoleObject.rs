@@ -2171,7 +2171,7 @@ pub mod formatter {
                         // PORT NOTE: borrowck — `writer` holds `&mut self.estimated_line_length`,
                         // so route `remaining_values` reads/writes through the raw-pointer
                         // field directly instead of the `&self` helper methods.
-                        if unsafe { (*self.remaining_values).is_empty() } {
+                        if unsafe { (&*self.remaining_values).is_empty() } {
                             break;
                         }
 
@@ -2211,8 +2211,11 @@ pub mod formatter {
                         i = 0;
                         hit_percent = true;
                         len = slice.len() as u32;
-                        let next_value = unsafe { (*self.remaining_values)[0] };
-                        self.remaining_values = unsafe { &(*self.remaining_values)[1..] };
+                        let next_value = unsafe {
+                            let s = &*self.remaining_values;
+                            self.remaining_values = &s[1..];
+                            s[0]
+                        };
 
                         // https://console.spec.whatwg.org/#formatter
                         const MAX_BEFORE_E_NOTATION: f64 = 1.0e21;
@@ -2412,7 +2415,7 @@ pub mod formatter {
                                 str.deref();
                             }
                         }
-                        if unsafe { (*self.remaining_values).is_empty() } {
+                        if unsafe { (&*self.remaining_values).is_empty() } {
                             break;
                         }
                     }

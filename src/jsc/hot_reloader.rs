@@ -623,11 +623,16 @@ where
         let file_paths = slice.items_file_path();
         // PORT NOTE: `WatchItemColumns` doesn't expose a `count` accessor; reach
         // through the generic SoA column directly. Zig mutates this in place
-        // (`counts[index] = update_count`) — cast away const to match.
-        // SAFETY: column 4 (`Count`) is `u32`; the watcher thread is the sole
-        // writer of this column for the loop's duration.
+        // (`counts[index] = update_count`) — build the &mut from the raw column
+        // pointer rather than ref-casting `&[u32]` (which is UB).
+        // SAFETY: column `Count` is `u32`; `items_raw` yields a pointer valid
+        // for `slice.len()` elements; the watcher thread is the sole writer of
+        // this column for the loop's duration and no other `&` to it is live.
         let counts: &mut [u32] = unsafe {
-            &mut *(slice.items::<u32>(WatchItemField::Count) as *const [u32] as *mut [u32])
+            core::slice::from_raw_parts_mut(
+                slice.items_raw::<u32>(WatchItemField::Count),
+                slice.len(),
+            )
         };
         let kinds = slice.items_kind();
         let hashes = slice.items_hash();

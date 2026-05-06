@@ -121,17 +121,20 @@ unsafe fn get_context(ctx: *mut Context) {
     #[cfg(windows)]
     {
         // TODO(port): std.os.windows.ntdll.RtlCaptureContext → bun_sys::windows::ntdll
-        bun_sys::windows::ntdll::RtlCaptureContext(ctx);
+        // SAFETY: ctx is a valid, writable, properly-aligned CONTEXT (caller contract).
+        unsafe { bun_sys::windows::ntdll::RtlCaptureContext(ctx) };
     }
     #[cfg(all(target_os = "linux", target_env = "musl"))]
     {
-        let _ = musl::setjmp(ctx);
+        // SAFETY: ctx is a valid, writable, properly-aligned jmp_buf (caller contract).
+        let _ = unsafe { musl::setjmp(ctx) };
     }
     #[cfg(not(any(windows, all(target_os = "linux", target_env = "musl"))))]
     {
         // TODO(port): Zig called std.debug.getContext(ctx) which wraps
         // getcontext(3). Call libc::getcontext directly here.
-        let _ = libc::getcontext(ctx);
+        // SAFETY: ctx is a valid, writable, properly-aligned ucontext_t (caller contract).
+        let _ = unsafe { libc::getcontext(ctx) };
     }
 }
 
@@ -139,15 +142,21 @@ unsafe fn get_context(ctx: *mut Context) {
 unsafe fn set_context(ctx: *const Context) -> ! {
     #[cfg(windows)]
     {
-        RtlRestoreContext(ctx, core::ptr::null());
+        // SAFETY: ctx points to a Context previously filled by get_context on
+        // this thread; the captured frame is still live (caller contract).
+        unsafe { RtlRestoreContext(ctx, core::ptr::null()) };
     }
     #[cfg(all(target_os = "linux", target_env = "musl"))]
     {
-        musl::longjmp(ctx, 1);
+        // SAFETY: ctx points to a jmp_buf previously filled by setjmp on this
+        // thread; the captured frame is still live (caller contract).
+        unsafe { musl::longjmp(ctx, 1) };
     }
     #[cfg(not(any(windows, all(target_os = "linux", target_env = "musl"))))]
     {
-        setcontext(ctx);
+        // SAFETY: ctx points to a ucontext_t previously filled by getcontext on
+        // this thread; the captured frame is still live (caller contract).
+        unsafe { setcontext(ctx) };
     }
 }
 

@@ -2960,14 +2960,24 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 }
                 // If we ended the response without attaching an ondata handler, we discard the body read stream
                 else if !matches!(http_result, HTTPResult::Pending(_)) {
-                    // SAFETY: `self.vm` is the singleton runtime VM (`&'static`); `Ref::unref`
-                    // mutates `active_tasks`, so reborrow exclusively for this call.
-                    let vm_mut = unsafe {
-                        &mut *(vm as *const jsc::virtual_machine::VirtualMachine
-                            as *mut jsc::virtual_machine::VirtualMachine)
-                    };
-                    node_response.maybe_stop_reading_body(vm_mut, node_response.get_this_value());
+                    // SAFETY: see `vm` decl above — singleton VM.
+                    node_response.maybe_stop_reading_body(unsafe { &mut *vm }, node_response.get_this_value());
                 }
+            }
+        }
+
+        // PORT NOTE: Zig `defer` cleanup, hoisted out of scopeguards (see comment above).
+        // Drop order matches reverse-declaration: strong_promise, drain, node_http_response.
+        strong_promise.deinit();
+        if needs_to_drain {
+            // SAFETY: see `vm` decl above — singleton VM.
+            unsafe { &mut *vm }.drain_microtasks();
+        }
+        if !is_async {
+            if let Some(node_response) = node_http_response {
+                // SAFETY: node_response was returned by NodeHTTPServer__onRequest_* with a ref;
+                // synchronous path drops that ref here (intrusive refcount)
+                unsafe { &mut *node_response }.deref();
             }
         }
     }
@@ -3141,11 +3151,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         callback: JSValue,
         extra_args: [JSValue; ARG_COUNT],
     ) {
+        let self_ptr: *mut Self = self;
         let prepared: ServerPreparedRequest<'_, SSL, DEBUG> = match &req {
             SavedRequestUnion::Stack(r) => {
+                let r: *mut uws::Request = *r;
                 match self.prepare_js_request_context(
                     // SAFETY: stack uws::Request still alive
-                    unsafe { &mut **r },
+                    unsafe { &mut *r },
                     resp,
                     None,
                     CreateJsRequest::Bake,

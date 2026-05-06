@@ -3304,47 +3304,62 @@ pub mod sync {
             Maybe::Err(err) => return Ok(Maybe::Err(err)),
             Maybe::Result(process) => process,
         };
-        let mut this = SyncWindowsProcess::new(SyncWindowsProcess {
-            process: spawned.to_process((), true),
-            stderr: Vec::new(),
-            stdout: Vec::new(),
-            err: bun_sys::E::SUCCESS,
-            waiting_count: 1,
-            status: None,
-        });
-        let this_ptr = this.as_mut() as *mut SyncWindowsProcess;
-        // SAFETY: `this.process` was just produced by `to_process` (sole
+        // Single-pointer ownership (mirrors Zig `bun.TrivialNew`): the
+        // `Box::into_raw` result is the *only* root for this allocation. Every
+        // field access below — including those inside uv callbacks fired from
+        // `tick()` — goes through `this_ptr`, so no Box auto-deref ever
+        // reasserts a Unique tag and pops the callbacks' tags under Stacked
+        // Borrows.
+        let this_ptr: *mut SyncWindowsProcess =
+            Box::into_raw(SyncWindowsProcess::new(SyncWindowsProcess {
+                process: spawned.to_process((), true),
+                stderr: Vec::new(),
+                stdout: Vec::new(),
+                err: bun_sys::E::SUCCESS,
+                waiting_count: 1,
+                status: None,
+            }));
+        // SAFETY: `(*this_ptr).process` was just produced by `to_process` (sole
         // owner, mutable provenance from Box::into_raw). Mirrors Zig:
         // `this.process.ref(); this.process.setExitHandler(this);
         //  this.process.enableKeepingEventLoopAlive();`
         unsafe {
-            let p = &mut *this.process;
+            let p = &mut *(*this_ptr).process;
             p.ref_();
-            p.set_exit_handler(this_ptr);
+            p.set_exit_handler(this_ptr.cast(), &SYNC_WINDOWS_EXIT_VTABLE);
             p.enable_keeping_event_loop_alive();
         }
 
-        for (tag, stdio) in [(OutFd::Stdout, &spawned.stdout), (OutFd::Stderr, &spawned.stderr)] {
-            if let WindowsStdioResult::Buffer(pipe) = stdio {
-                // TODO(port): moving Box<uv::Pipe> out of `spawned` — Phase B: take()
-                let mut reader = SyncWindowsPipeReader::new(SyncWindowsPipeReader {
+        for (tag, stdio) in [
+            (OutFd::Stdout, &mut spawned.stdout),
+            (OutFd::Stderr, &mut spawned.stderr),
+        ] {
+            // Move ownership of the `Box<uv::Pipe>` out of `spawned` by
+            // resetting the slot to `Unavailable`; otherwise `spawned`'s
+            // auto-Drop at scope end would double-free the pipe already freed
+            // via `SyncWindowsPipeReader::on_close`.
+            let taken = core::mem::replace(stdio, WindowsStdioResult::Unavailable);
+            if let WindowsStdioResult::Buffer(pipe) = taken {
+                let reader = SyncWindowsPipeReader::new(SyncWindowsPipeReader {
                     context: this_ptr,
                     tag,
-                    pipe: unsafe {
-                        // SAFETY: ownership transfer; spawned.{stdout,stderr} not used after
-                        core::ptr::read(pipe as *const Box<uv::Pipe>)
-                    },
+                    pipe,
                     chunks: Vec::new(),
                     err: bun_sys::E::SUCCESS,
                     on_done_callback: SyncWindowsProcess::on_reader_done,
                 });
-                this.waiting_count += 1;
+                // SAFETY: sole owner via `this_ptr`; no uv callback has fired yet.
+                unsafe {
+                    (*this_ptr).waiting_count += 1;
+                }
+                // `start` consumes the Box and transfers ownership to libuv
+                // via pipe.data (Box::into_raw inside).
                 match reader.start() {
                     Maybe::Err(err) => {
-                        // SAFETY: sync spawn — `this.process` is the only
+                        // SAFETY: sync spawn — `(*this_ptr).process` is the only
                         // handle and no uv callback has fired yet.
                         unsafe {
-                            let _ = (*this.process).kill(1);
+                            let _ = (*(*this_ptr).process).kill(1);
                         }
                         Output::panic(
                             format_args!(
@@ -3354,27 +3369,35 @@ pub mod sync {
                             ),
                         );
                     }
-                    Maybe::Result(()) => {
-                        // reader is now owned by libuv via pipe.data
-                        Box::leak(reader);
-                    }
+                    Maybe::Result(()) => {}
                 }
             }
         }
 
-        while this.waiting_count > 0 {
+        // SAFETY: read-only field access between uv ticks; callbacks fired
+        // inside `tick()` write through the same `this_ptr` root.
+        while unsafe { (*this_ptr).waiting_count } > 0 {
             loop_.platform_event_loop().tick();
         }
 
-        let result = Result {
-            status: this
-                .status
-                .expect("Expected Process to have exited when waiting_count == 0"),
-            stdout: flatten_owned_chunks(core::mem::take(&mut this.stdout)),
-            stderr: flatten_owned_chunks(core::mem::take(&mut this.stderr)),
+        // SAFETY: loop drained (waiting_count == 0); no further uv callback
+        // will touch `this_ptr`.
+        let result = unsafe {
+            Result {
+                status: (*this_ptr)
+                    .status
+                    .take()
+                    .expect("Expected Process to have exited when waiting_count == 0"),
+                stdout: flatten_owned_chunks(core::mem::take(&mut (*this_ptr).stdout)),
+                stderr: flatten_owned_chunks(core::mem::take(&mut (*this_ptr).stderr)),
+            }
         };
-        // SAFETY: loop drained (waiting_count == 0); drop the ref taken above.
-        unsafe { (*this.process).deref() };
+        // SAFETY: drop the ref taken above, then reclaim the SyncWindowsProcess
+        // allocation. Mirrors Zig `this.process.deref(); destroy(this);`.
+        unsafe {
+            (*(*this_ptr).process).deref();
+            drop(Box::from_raw(this_ptr));
+        }
         Ok(Maybe::Result(result))
     }
 

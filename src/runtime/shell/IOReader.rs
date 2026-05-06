@@ -264,17 +264,15 @@ impl IOReader {
         let should_continue = has_more != bun_io::ReadState::Eof;
         if should_continue && !self.state().readers.is_empty() {
             self.set_reading(true);
-            #[cfg(not(windows))]
-            {
-                self.reader().register_poll();
-            }
-            #[cfg(windows)]
-            {
-                if let Err(e) = self.reader().start_with_current_pipe() {
-                    self.on_reader_error(e);
-                    return false;
-                }
-            }
+            // PORT NOTE: Spec IOReader.zig:159-167 calls
+            // `this.reader.registerPoll()` (posix) / `startWithCurrentPipe()`
+            // (windows) here. In Rust this would re-derive a second
+            // `&mut ReaderImpl` while the bun_io read loop still holds one on
+            // its stack (PipeReader.rs aliasing contract) — Stacked-Borrows UB.
+            // It's also redundant: the read loop re-arms itself after the
+            // callback returns based on the `bool` we return (see
+            // PipeReader.rs:731/755/846/920/986 posix, :1228/1242 windows).
+            // So: do nothing — let the caller re-register.
         }
         should_continue
     }

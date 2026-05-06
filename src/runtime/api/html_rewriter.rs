@@ -23,10 +23,10 @@ use std::rc::Rc;
 
 use bun_collections::{ByteList, LinearFifo};
 use bun_collections::linear_fifo::DynamicBuffer;
-use bun_string::MutableString;
+use bun_string::{MutableString, ZigString};
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, Strong, SystemError,
-    TopExceptionScope, VirtualMachine, ZigString,
+    TopExceptionScope, VirtualMachine,
 };
 // PORT NOTE: there is no `bun_lolhtml` safe-wrapper crate yet — the safe
 // surface lives directly in `bun_lolhtml_sys::lol_html`. The Phase-A draft

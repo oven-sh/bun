@@ -155,6 +155,50 @@ pub enum HmrTopic {
     TestingWatchSynchronization = b'r',
 }
 
+impl HmrTopic {
+    /// `HmrTopic.max_count` — `@typeInfo(HmrTopic).@"enum".fields.len`.
+    pub const MAX_COUNT: usize = 6;
+
+    /// All variants in declaration order — Zig: `std.enums.values(HmrTopic)`.
+    pub const ALL: &[HmrTopic] = &[
+        HmrTopic::HotUpdate,
+        HmrTopic::Errors,
+        HmrTopic::BrowserError,
+        HmrTopic::IncrementalVisualizer,
+        HmrTopic::MemoryVisualizer,
+        HmrTopic::TestingWatchSynchronization,
+    ];
+
+    /// Maps the wire-byte discriminant back to the variant (`@enumFromInt`
+    /// with range-check). `None` for unknown bytes.
+    #[inline]
+    pub fn from_u8(ch: u8) -> Option<HmrTopic> {
+        match ch {
+            b'h' => Some(HmrTopic::HotUpdate),
+            b'e' => Some(HmrTopic::Errors),
+            b'E' => Some(HmrTopic::BrowserError),
+            b'v' => Some(HmrTopic::IncrementalVisualizer),
+            b'M' => Some(HmrTopic::MemoryVisualizer),
+            b'r' => Some(HmrTopic::TestingWatchSynchronization),
+            _ => None,
+        }
+    }
+
+    /// Maps a topic to its packed `HmrTopicBits` flag.
+    #[inline]
+    pub fn as_bit(self) -> crate::bake::dev_server_body::HmrTopicBits {
+        use crate::bake::dev_server_body::HmrTopicBits;
+        match self {
+            HmrTopic::HotUpdate => HmrTopicBits::HOT_UPDATE,
+            HmrTopic::Errors => HmrTopicBits::ERRORS,
+            HmrTopic::BrowserError => HmrTopicBits::BROWSER_ERROR,
+            HmrTopic::IncrementalVisualizer => HmrTopicBits::INCREMENTAL_VISUALIZER,
+            HmrTopic::MemoryVisualizer => HmrTopicBits::MEMORY_VISUALIZER,
+            HmrTopic::TestingWatchSynchronization => HmrTopicBits::TESTING_WATCH_SYNCHRONIZATION,
+        }
+    }
+}
+
 /// `RouteIndexAndRecurseFlag` — `packed struct(u32)` (31-bit index + 1 flag).
 #[repr(transparent)]
 #[derive(Copy, Clone)]

@@ -160,11 +160,15 @@ impl PBKDF2 {
 
         let algorithm = 'brk: {
             if !arg4.is_string() {
-                return global_this.throw_invalid_argument_type_value("digest", "string", arg4);
+                return Err(global_this.throw_invalid_argument_type_value("digest", "string", arg4));
             }
 
             'invalid: {
-                match evp::Algorithm::map().from_js_case_insensitive(global_this, arg4)? {
+                match bun_jsc::comptime_string_map_jsc::from_js_case_insensitive(
+                    evp::Algorithm::map(),
+                    global_this,
+                    arg4,
+                )? {
                     Some(alg) => match alg {
                         Algorithm::Shake128 | Algorithm::Shake256 => break 'invalid,
                         other => break 'brk other,
@@ -176,10 +180,12 @@ impl PBKDF2 {
             if !global_this.has_exception() {
                 let slice = arg4.to_slice(global_this)?;
                 let name = slice.slice();
-                return global_this
-                    .err(bun_jsc::ErrorCode::CRYPTO_INVALID_DIGEST)
-                    .fmt(format_args!("Invalid digest: {}", bstr::BStr::new(name)))
-                    .throw();
+                return Err(global_this
+                    .err(
+                        bun_jsc::ErrorCode::CRYPTO_INVALID_DIGEST,
+                        format_args!("Invalid digest: {}", bstr::BStr::new(name)),
+                    )
+                    .throw());
                 // `slice` drops here (was `defer slice.deinit()`).
             }
             return Err(bun_jsc::JsError::Thrown);

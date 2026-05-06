@@ -1587,10 +1587,10 @@ impl<'a> PerThread<'a> {
 
         // SAFETY: vm is the live per-thread VM; vm.global is live for VM lifetime.
         let global = unsafe { &*(*vm).global };
-        let all_server_files = bun_jsc::Strong::create(
-            JSValue::create_empty_array(global, opts.output_indexes.len())?,
+        let all_server_files = Some(bun_jsc::Strong::create(
+            JSValue::create_empty_array(global, opts.output_indexes.len()).map_err(js_err)?,
             global,
-        );
+        ));
 
         Ok(PerThread {
             input_files: opts.input_files,

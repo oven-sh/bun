@@ -2130,7 +2130,7 @@ impl<'a> Repl<'a> {
         let len = match completions.get_length(global) {
             Ok(n) => n,
             Err(_) => {
-                global.clear_exception();
+                global_clear_exception(global);
                 0
             }
         };
@@ -2146,7 +2146,7 @@ impl<'a> Repl<'a> {
             let item = match completions.get_index(global, 0) {
                 Ok(v) => v,
                 Err(_) => {
-                    global.clear_exception();
+                    global_clear_exception(global);
                     JSValue::UNDEFINED
                 }
             };
@@ -2154,7 +2154,7 @@ impl<'a> Repl<'a> {
                 let slice = match item.to_slice(global) {
                     Ok(s) => s,
                     Err(_) => {
-                        global.clear_exception();
+                        global_clear_exception(global);
                         return;
                     }
                 };

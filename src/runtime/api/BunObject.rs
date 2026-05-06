@@ -519,6 +519,15 @@ impl ZigStringToJs for ZigString {
         // SAFETY: see `to_js`.
         unsafe { ZigString__toExternalValue(self, global) }
     }
+    /// `ZigString.withEncoding()` — auto-detect UTF-8 vs Latin-1 and tag the
+    /// pointer accordingly. Mirrors src/jsc/ZigString.rs:842.
+    #[inline]
+    fn with_encoding(mut self) -> Self {
+        if !self.is_16bit() && !strings::is_all_ascii(self.slice()) {
+            self.mark_utf8();
+        }
+        self
+    }
 }
 
 // PORT NOTE: `bun_gen::bun_object::BracesOptions` is codegen output from

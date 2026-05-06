@@ -126,18 +126,12 @@ impl<Owner: ChannelOwner> Channel<Owner> {
         // separate processes so there's never more than one Owner type sharing
         // this group.
         if g.vtable.is_none() {
-            // PORT NOTE: `uws::vtable::make` (re-export of
-            // `bun_uws_sys::vtable::make`) returns
-            // `&'static bun_uws_sys::socket_group::VTable`, but the embedded
-            // group field is typed as `&'static bun_uws::SocketGroupVTable`.
-            // Both are `#[repr(C)]` mirrors of `us_socket_vtable_t` with
-            // identical layout (11 fn-ptr Options); cast the static ref.
-            let vt = uws::vtable::make::<PosixHandlers<Owner>>();
-            // SAFETY: layout-identical `#[repr(C)]` vtable structs (see note).
-            let vt: &'static uws::SocketGroupVTable = unsafe {
-                &*(vt as *const _ as *const uws::SocketGroupVTable)
-            };
-            g.vtable = Some(vt);
+            // PORT NOTE: cannot use `uws::vtable::make::<PosixHandlers<Owner>>()`
+            // because `bun_uws_sys::vtable::Handler` requires `Self: 'static`
+            // and one owner (`WorkerCommands<'a>`) carries a lifetime. The
+            // hand-rolled `PosixHandlers::<Owner>::VTABLE` const below mirrors
+            // exactly what `vtable::make` would produce.
+            g.vtable = Some(&PosixHandlers::<Owner>::VTABLE);
         }
         g
     }

@@ -1230,7 +1230,11 @@ impl CronRemoveJob {
 impl Drop for CronRemoveJob {
     fn drop(&mut self) {
         if let Some(proc) = self.process.take() {
-            proc.detach();
+            // SAFETY: intrusive-RC pointer; we hold a ref.
+            unsafe {
+                (*proc).detach();
+                (*proc).deref();
+            }
         }
         if let Some(p) = self.tmp_path.take() {
             let _ = sys::unlink(&p);

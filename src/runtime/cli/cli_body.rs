@@ -825,7 +825,11 @@ pub mod command {
             Tag::HelpCommand => return HelpCommand::exec(),
             Tag::ReservedCommand => return ReservedCommand::exec(),
             Tag::InitCommand => {
-                return InitCommand::exec(&bun::argv()[2.min(bun::argv().len())..])
+                let skip = 2.min(bun::argv().len());
+                let init_args: Vec<&'static ZStr> = (skip..bun::argv().len())
+                    .map(|i| bun::argv().get(i).unwrap())
+                    .collect();
+                return InitCommand::exec(&init_args);
             }
             Tag::InfoCommand => {
                 bun_info(log)?;

@@ -1027,9 +1027,12 @@ impl CreateCommand {
                         // InjectionPrefill.bun_macros_relay_only_object.properties = ...fromBorrowedSliceDangerous(&bun_macros_relay_only_object_properties);
                     }
 
-                    pub fn npx_react_scripts_build() -> js_ast::Expr {
+                    pub fn npx_react_scripts_build() -> bun_logger::js_ast::Expr {
                         // TODO(port): build js_ast::Expr { .e_string = "npx react-scripts build" }
-                        js_ast::Expr::new_string(b"npx react-scripts build", logger::Loc::EMPTY)
+                        bun_logger::js_ast::Expr::init(
+                            bun_logger::js_ast::E::EString::init(b"npx react-scripts build"),
+                            logger::Loc::EMPTY,
+                        )
                     }
                 }
 

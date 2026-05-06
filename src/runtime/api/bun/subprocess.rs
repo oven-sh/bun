@@ -866,9 +866,13 @@ impl Subprocess<'_> {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_connected(this: &mut Self, _global_this: &JSGlobalObject) -> JSValue {
-        let ipc_data = this.ipc();
-        JSValue::from(ipc_data.is_some() && ipc_data.unwrap().is_connected())
+    pub fn get_connected(this: &Self, _global_this: &JSGlobalObject) -> JSValue {
+        let connected = this
+            .ipc_data
+            .as_ref()
+            .map(|d| d.is_connected())
+            .unwrap_or(false);
+        JSValue::from(connected)
     }
 
     pub fn pid(&self) -> i32 {
@@ -877,7 +881,7 @@ impl Subprocess<'_> {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_pid(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        JSValue::js_number(this.pid())
+        JSValue::js_number(this.pid() as f64)
     }
 
     #[bun_jsc::host_fn(getter)]

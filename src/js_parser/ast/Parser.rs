@@ -576,15 +576,15 @@ impl<'a> Parser<'a> {
             return Err(err!("SyntaxError"));
         }
 
-        let visit_tracer = /* TODO(b2-blocked): bun_perf */ (); // TODO(b2-blocked): bun_perf::trace
+        let visit_tracer = bun_core::perf::trace("JSParser.visit");
         p.prepare_for_visit_pass()?;
 
         let mut parts = BumpVec::new_in(p.allocator);
 
-        p.append_part(&mut parts, stmts)?;
+        p.append_part(&mut parts, stmts.into_bump_slice_mut())?;
         visit_tracer.end();
 
-        let analyze_tracer = /* TODO(b2-blocked): bun_perf */ (); // TODO(b2-blocked): bun_perf::trace
+        let analyze_tracer = bun_core::perf::trace("JSParser.analyze");
         callback(context, &mut p, parts.as_mut_slice())?;
         analyze_tracer.end();
         Ok(())

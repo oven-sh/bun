@@ -48,7 +48,9 @@ pub struct BundledAst<'arena> {
     /// they can be manipulated efficiently without a full AST traversal
     pub import_records: import_record::List,
 
-    pub hashbang: &'arena [u8],
+    // PORT NOTE: Ast.hashbang is &'static [u8]; mirror it here so init/to_ast can
+    // round-trip without an 'arena⊂'static bound.
+    pub hashbang: &'static [u8],
     pub parts: part::List,
     // Zig: `?*bun.css.BundlerStyleSheet` (nullable mutable raw ptr). Downstream
     // bundler binds the SoA column as `&[Option<*mut css::BundlerStyleSheet>]`,

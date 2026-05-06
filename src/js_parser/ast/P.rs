@@ -5475,10 +5475,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         self.options.features.replace_exports.contains(symbol_name)
     }
 
-     // blocked_on: b(); visit_and_append_stmt; Runtime::ReplaceableExport variants; Decl::List
     pub fn inject_replacement_export(
         &mut self,
-        stmts: &mut StmtList,
+        stmts: &mut crate::parser::StmtList<'a>,
         name_ref: Ref,
         loc: logger::Loc,
         replacement: &crate::parser::Runtime::ReplaceableExport,
@@ -5487,28 +5486,34 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             crate::parser::Runtime::ReplaceableExport::Delete => false,
             crate::parser::Runtime::ReplaceableExport::Replace(value) => {
                 let count = stmts.len();
-                let decls = self.allocator.alloc_slice_copy(&[G::Decl {
+                let decls = js_ast::g::DeclList::from_slice(&[G::Decl {
                     binding: self.b(B::Identifier { r#ref: name_ref }, loc),
                     value: Some(*value),
-                }]);
+                }])
+                .expect("oom");
                 let mut local = self.s(
-                    S::Local { is_export: true, decls: js_ast::g::DeclList::from_owned_slice(decls), ..Default::default() },
+                    S::Local { is_export: true, decls, ..Default::default() },
                     loc,
                 );
                 self.visit_and_append_stmt(stmts, &mut local).expect("unreachable");
                 count != stmts.len()
             }
-            crate::parser::Runtime::ReplaceableExport::Inject(with) => {
+            crate::parser::Runtime::ReplaceableExport::Inject { name, value } => {
                 let count = stmts.len();
-                let decls = self.allocator.alloc_slice_copy(&[G::Decl {
+                // PORT NOTE: Zig kept `with.name` as an arena slice; the Rust
+                // `ReplaceableExport::Inject` boxes it, so copy into the bump
+                // arena to satisfy `declare_symbol`'s `&'a [u8]`.
+                let name: &'a [u8] = self.allocator.alloc_slice_copy(name);
+                let decls = js_ast::g::DeclList::from_slice(&[G::Decl {
                     binding: self.b(
-                        B::Identifier { r#ref: self.declare_symbol(js_ast::symbol::Kind::Other, loc, with.name).expect("unreachable") },
+                        B::Identifier { r#ref: self.declare_symbol(js_ast::symbol::Kind::Other, loc, name).expect("unreachable") },
                         loc,
                     ),
-                    value: Some(with.value),
-                }]);
+                    value: Some(*value),
+                }])
+                .expect("oom");
                 let mut local = self.s(
-                    S::Local { is_export: true, decls: js_ast::g::DeclList::from_owned_slice(decls), ..Default::default() },
+                    S::Local { is_export: true, decls, ..Default::default() },
                     loc,
                 );
                 self.visit_and_append_stmt(stmts, &mut local).expect("unreachable");

@@ -1957,10 +1957,8 @@ impl RegExp {
         b""
     }
 
-    // TODO(port): jsonStringify — Zig std.json protocol.
-    pub fn json_stringify<W>(&self, writer: &mut W) -> Result<(), bun_core::Error> {
-        let _ = writer;
-        todo!("jsonStringify protocol")
+    pub fn json_stringify<W: crate::JsonWriter>(&self, writer: &mut W) -> Result<(), bun_core::Error> {
+        writer.write(self.value)
     }
 }
 

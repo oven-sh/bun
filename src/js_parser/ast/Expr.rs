@@ -2166,7 +2166,7 @@ impl Data {
         let this = *self;
         match &this {
             Data::EArray(el) => {
-                let items = el.items.deep_clone(bump)?;
+                let items = el.items.try_deep_clone_with(|e| e.deep_clone(bump))?;
                 let item = bump.alloc(E::Array {
                     items,
                     comma_after_spread: el.comma_after_spread,
@@ -2175,7 +2175,7 @@ impl Data {
                     is_parenthesized: el.is_parenthesized,
                     close_bracket_loc: el.close_bracket_loc,
                 });
-                Ok(Data::EArray(item))
+                Ok(Data::EArray(StoreRef::from_bump(item)))
             }
             Data::EUnary(el) => {
                 let item = bump.alloc(E::Unary {
@@ -2183,7 +2183,7 @@ impl Data {
                     value: el.value.deep_clone(bump)?,
                     flags: el.flags,
                 });
-                Ok(Data::EUnary(item))
+                Ok(Data::EUnary(StoreRef::from_bump(item)))
             }
             Data::EBinary(el) => {
                 let item = bump.alloc(E::Binary {
@@ -2191,18 +2191,23 @@ impl Data {
                     left: el.left.deep_clone(bump)?,
                     right: el.right.deep_clone(bump)?,
                 });
-                Ok(Data::EBinary(item))
+                Ok(Data::EBinary(StoreRef::from_bump(item)))
             }
             Data::EClass(el) => {
-                let mut properties = bumpalo::collections::Vec::with_capacity_in(el.properties.len(), bump);
-                for prop in el.properties.iter() {
+                // SAFETY: `properties` is an arena-owned `*mut [Property]` (Zig: `[]Property`).
+                let src_props: &[G::Property] = unsafe { &*el.properties };
+                let mut properties =
+                    bumpalo::collections::Vec::with_capacity_in(src_props.len(), bump);
+                for prop in src_props.iter() {
                     properties.push(prop.deep_clone(bump)?);
                 }
-                let properties = properties.into_bump_slice();
+                let properties = properties.into_bump_slice_mut() as *mut [G::Property];
 
                 let item = bump.alloc(E::Class {
                     class_keyword: el.class_keyword,
-                    ts_decorators: el.ts_decorators.deep_clone(bump)?,
+                    ts_decorators: el
+                        .ts_decorators
+                        .try_deep_clone_with(|e| e.deep_clone(bump))?,
                     class_name: el.class_name,
                     extends: match &el.extends {
                         Some(e) => Some(e.deep_clone(bump)?),
@@ -2212,35 +2217,36 @@ impl Data {
                     close_brace_loc: el.close_brace_loc,
                     properties,
                     has_decorators: el.has_decorators,
+                    should_lower_standard_decorators: el.should_lower_standard_decorators,
                 });
-                Ok(Data::EClass(item))
+                Ok(Data::EClass(StoreRef::from_bump(item)))
             }
             Data::ENew(el) => {
                 let item = bump.alloc(E::New {
                     target: el.target.deep_clone(bump)?,
-                    args: el.args.deep_clone(bump)?,
+                    args: el.args.try_deep_clone_with(|e| e.deep_clone(bump))?,
                     can_be_unwrapped_if_unused: el.can_be_unwrapped_if_unused,
                     close_parens_loc: el.close_parens_loc,
                 });
-                Ok(Data::ENew(item))
+                Ok(Data::ENew(StoreRef::from_bump(item)))
             }
             Data::EFunction(el) => {
                 let item = bump.alloc(E::Function {
                     func: el.func.deep_clone(bump)?,
                 });
-                Ok(Data::EFunction(item))
+                Ok(Data::EFunction(StoreRef::from_bump(item)))
             }
             Data::ECall(el) => {
                 let item = bump.alloc(E::Call {
                     target: el.target.deep_clone(bump)?,
-                    args: el.args.deep_clone(bump)?,
+                    args: el.args.try_deep_clone_with(|e| e.deep_clone(bump))?,
                     optional_chain: el.optional_chain,
                     is_direct_eval: el.is_direct_eval,
                     close_paren_loc: el.close_paren_loc,
                     can_be_unwrapped_if_unused: el.can_be_unwrapped_if_unused,
                     was_jsx_element: el.was_jsx_element,
                 });
-                Ok(Data::ECall(item))
+                Ok(Data::ECall(StoreRef::from_bump(item)))
             }
             Data::EDot(el) => {
                 let item = bump.alloc(E::Dot {
@@ -2251,7 +2257,7 @@ impl Data {
                     can_be_removed_if_unused: el.can_be_removed_if_unused,
                     call_can_be_unwrapped_if_unused: el.call_can_be_unwrapped_if_unused,
                 });
-                Ok(Data::EDot(item))
+                Ok(Data::EDot(StoreRef::from_bump(item)))
             }
             Data::EIndex(el) => {
                 let item = bump.alloc(E::Index {
@@ -2259,14 +2265,21 @@ impl Data {
                     index: el.index.deep_clone(bump)?,
                     optional_chain: el.optional_chain,
                 });
-                Ok(Data::EIndex(item))
+                Ok(Data::EIndex(StoreRef::from_bump(item)))
             }
             Data::EArrow(el) => {
                 let mut args = bumpalo::collections::Vec::with_capacity_in(el.args.len(), bump);
                 for i in 0..el.args.len() {
                     args.push(el.args[i].deep_clone(bump)?);
                 }
-                let args = args.into_bump_slice();
+                // TODO(port): `Arrow.args` is `&'static [G::Arg]` pending Phase-B
+                // arena-lifetime threading; erase the bump lifetime here (the
+                // slice lives in the same arena as the `Arrow` node).
+                let args: &'static [G::Arg] = unsafe {
+                    core::mem::transmute::<&[G::Arg], &'static [G::Arg]>(
+                        args.into_bump_slice(),
+                    )
+                };
                 let item = bump.alloc(E::Arrow {
                     args,
                     body: el.body,
@@ -2274,7 +2287,7 @@ impl Data {
                     has_rest_arg: el.has_rest_arg,
                     prefer_expr: el.prefer_expr,
                 });
-                Ok(Data::EArrow(item))
+                Ok(Data::EArrow(StoreRef::from_bump(item)))
             }
             Data::EJsxElement(el) => {
                 let item = bump.alloc(E::JSXElement {
@@ -2282,30 +2295,34 @@ impl Data {
                         Some(tag) => Some(tag.deep_clone(bump)?),
                         None => None,
                     },
-                    properties: el.properties.deep_clone(bump)?,
-                    children: el.children.deep_clone(bump)?,
+                    properties: el
+                        .properties
+                        .try_deep_clone_with(|p| p.deep_clone(bump))?,
+                    children: el.children.try_deep_clone_with(|e| e.deep_clone(bump))?,
                     key_prop_index: el.key_prop_index,
                     flags: el.flags,
                     close_tag_loc: el.close_tag_loc,
                 });
-                Ok(Data::EJsxElement(item))
+                Ok(Data::EJsxElement(StoreRef::from_bump(item)))
             }
             Data::EObject(el) => {
                 let item = bump.alloc(E::Object {
-                    properties: el.properties.deep_clone(bump)?,
+                    properties: el
+                        .properties
+                        .try_deep_clone_with(|p| p.deep_clone(bump))?,
                     comma_after_spread: el.comma_after_spread,
                     is_single_line: el.is_single_line,
                     is_parenthesized: el.is_parenthesized,
                     was_originally_macro: el.was_originally_macro,
                     close_brace_loc: el.close_brace_loc,
                 });
-                Ok(Data::EObject(item))
+                Ok(Data::EObject(StoreRef::from_bump(item)))
             }
             Data::ESpread(el) => {
                 let item = bump.alloc(E::Spread {
                     value: el.value.deep_clone(bump)?,
                 });
-                Ok(Data::ESpread(item))
+                Ok(Data::ESpread(StoreRef::from_bump(item)))
             }
             Data::ETemplate(el) => {
                 let item = bump.alloc(E::Template {
@@ -2316,20 +2333,20 @@ impl Data {
                     parts: el.parts,
                     head: el.head,
                 });
-                Ok(Data::ETemplate(item))
+                Ok(Data::ETemplate(StoreRef::from_bump(item)))
             }
             Data::ERegExp(el) => {
                 let item = bump.alloc(E::RegExp {
                     value: el.value,
                     flags_offset: el.flags_offset,
                 });
-                Ok(Data::ERegExp(item))
+                Ok(Data::ERegExp(StoreRef::from_bump(item)))
             }
             Data::EAwait(el) => {
                 let item = bump.alloc(E::Await {
                     value: el.value.deep_clone(bump)?,
                 });
-                Ok(Data::EAwait(item))
+                Ok(Data::EAwait(StoreRef::from_bump(item)))
             }
             Data::EYield(el) => {
                 let item = bump.alloc(E::Yield {
@@ -2339,7 +2356,7 @@ impl Data {
                     },
                     is_star: el.is_star,
                 });
-                Ok(Data::EYield(item))
+                Ok(Data::EYield(StoreRef::from_bump(item)))
             }
             Data::EIf(el) => {
                 let item = bump.alloc(E::If {
@@ -2347,7 +2364,7 @@ impl Data {
                     yes: el.yes.deep_clone(bump)?,
                     no: el.no.deep_clone(bump)?,
                 });
-                Ok(Data::EIf(item))
+                Ok(Data::EIf(StoreRef::from_bump(item)))
             }
             Data::EImport(el) => {
                 let item = bump.alloc(E::Import {
@@ -2355,11 +2372,11 @@ impl Data {
                     options: el.options.deep_clone(bump)?,
                     import_record_index: el.import_record_index,
                 });
-                Ok(Data::EImport(item))
+                Ok(Data::EImport(StoreRef::from_bump(item)))
             }
             Data::EBigInt(el) => {
                 let item = bump.alloc(E::BigInt { value: el.value });
-                Ok(Data::EBigInt(item))
+                Ok(Data::EBigInt(StoreRef::from_bump(item)))
             }
             Data::EString(el) => {
                 let item = bump.alloc(E::String {
@@ -2370,19 +2387,19 @@ impl Data {
                     rope_len: el.rope_len,
                     is_utf16: el.is_utf16,
                 });
-                Ok(Data::EString(item))
+                Ok(Data::EString(StoreRef::from_bump(item)))
             }
             Data::EInlinedEnum(el) => {
                 let item = bump.alloc(E::InlinedEnum {
                     value: el.value,
                     comment: el.comment,
                 });
-                Ok(Data::EInlinedEnum(item))
+                Ok(Data::EInlinedEnum(StoreRef::from_bump(item)))
             }
             _ => Ok(this),
         }
     }
-} // end gated `impl Data` (clone/deep_clone)
+} // end `impl Data` (clone_in/deep_clone)
 
 impl Data {
     /// `hasher` should be something with `fn update(&[u8])`;

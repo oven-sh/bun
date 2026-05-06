@@ -243,20 +243,11 @@ pub(super) mod dc {
     }
 
     /// `Property::deep_clone` — routes to the real inherent
-    /// `Property::deep_clone` in properties_generated.rs. That body is the
-    /// faithful per-variant port (.zig:6307-6558) but is ``-gated
-    /// on `leaf_value_traits`; the `todo!()` arm below names the blocker so
-    /// callers fail loudly until it un-gates (PORTING.md §Forbidden: silent
-    /// no-op).
+    /// `Property::deep_clone` in properties_generated.rs (faithful per-variant
+    /// port of .zig:6307-6558).
     #[inline]
     pub fn property(this: &crate::properties::Property, bump: &Arena) -> crate::properties::Property {
-        
-        return this.deep_clone(bump);
-        #[cfg(any())]
-        {
-            let _ = (this, bump);
-            todo!("blocked_on: Property::deep_clone — leaf_value_traits (properties_generated.rs)")
-        }
+        this.deep_clone(bump)
     }
 }
 

@@ -226,26 +226,31 @@ impl DirectoryWatchStore {
         // self.* accesses below may need raw-ptr workaround in Phase B.
 
         // Try to use an existing open directory handle
-        let cache_fd: Option<Fd> =
-            match dev.server_transpiler.resolver.read_dir_info(dir_name_to_watch) {
-                Ok(Some(cache)) => cache.get_file_descriptor().unwrap_valid(),
-                Ok(None) | Err(_) => None,
-            };
+        // SAFETY: server_transpiler is initialized by Framework::init_transpiler
+        // before DevServer accepts requests / processes resolution failures.
+        let cache_fd: Option<Fd> = match unsafe { dev.server_transpiler.assume_init_mut() }
+            .resolver
+            .read_dir_info(dir_name_to_watch)
+        {
+            // SAFETY: read_dir_info returns a live *mut DirInfo on Some.
+            Ok(Some(cache)) => unsafe { (*cache).get_file_descriptor() }.unwrap_valid(),
+            Ok(None) | Err(_) => None,
+        };
 
-        let (fd, owned_fd): (Fd, bool) = if Watcher::REQUIRES_FILE_DESCRIPTORS {
+        let (fd, owned_fd): (Fd, bool) = if bun_watcher::REQUIRES_FILE_DESCRIPTORS {
             if let Some(fd) = cache_fd {
                 (fd, false)
             } else {
-                // TODO(port): std.posix.toPosixPath — build a NUL-terminated
-                // path buffer. Using bun_str::ZStr conversion; NameTooLong
-                // maps to Ignore.
-                let zpath = match bun_str::ZStr::from_bytes_in_buf(dir_name_to_watch) {
-                    Ok(p) => p,
-                    Err(_) => return Err(InsertError::Ignore), // NameTooLong: wouldn't be able to open, ignore
-                };
-                match bun_sys::open(&zpath, O::DIRECTORY | Watcher::WATCH_OPEN_FLAGS, 0) {
+                // std.posix.toPosixPath — build a NUL-terminated path buffer.
+                // NameTooLong maps to Ignore.
+                if dir_name_to_watch.len() >= bun_paths::MAX_PATH_BYTES {
+                    return Err(InsertError::Ignore); // NameTooLong: wouldn't be able to open, ignore
+                }
+                let mut zbuf = path_buffer_pool::get();
+                let zpath = path::resolve_path::z(dir_name_to_watch, &mut zbuf);
+                match bun_sys::open(zpath, O::DIRECTORY | bun_watcher::WATCH_OPEN_FLAGS, 0) {
                     bun_sys::Result::Ok(fd) => (fd, true),
-                    bun_sys::Result::Err(err) => match err.errno() {
+                    bun_sys::Result::Err(err) => match err.get_errno() {
                         // If this directory doesn't exist, a watcher should be placed
                         // on the parent directory. Then, if this directory is later
                         // created, the watcher can be properly initialized. This would
@@ -253,11 +258,11 @@ impl DirectoryWatchStore {
                         // `dir` does not exist, Bun must place a watcher on `.`, see
                         // the creation of `dir`, and repeat until it can open a watcher
                         // on `whatever` to see the creation of `hello.tsx`
-                        bun_sys::Errno::NOENT => {
+                        bun_sys::Errno::ENOENT => {
                             // TODO: implement that. for now it ignores (BUN-10968)
                             return Err(InsertError::Ignore);
                         }
-                        bun_sys::Errno::NOTDIR => return Err(InsertError::Ignore), // ignore
+                        bun_sys::Errno::ENOTDIR => return Err(InsertError::Ignore), // ignore
                         _ => {
                             bun_core::todo_panic!("log watcher error");
                         }

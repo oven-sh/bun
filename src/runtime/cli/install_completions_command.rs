@@ -2,9 +2,10 @@ use core::fmt::Write as _;
 use std::io::Write as _;
 
 use bun_core::{env_var, Global, Output};
+use bun_core::{pretty_errorln, print_errorln, note};
 use bun_paths::{platform, resolve_path, PathBuffer, WPathBuffer};
-use bun_str::strings;
-use bun_sys::{self, Dir, File};
+use bun_str::{strings, ZStr};
+use bun_sys::{self, Dir, File, E};
 
 use crate::shell_completions::{self as ShellCompletions, Shell};
 

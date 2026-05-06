@@ -141,7 +141,7 @@ impl INotifyWatcher {
         bun_core::scoped_log!(watcher, "inotify_add_watch({}) = {}", self.fd, rc);
         let result = if rc < 0 {
             Err(
-                bun_sys::Error::from_code_int(bun_sys::last_errno(), bun_sys::Tag::inotify)
+                bun_sys::Error::from_code_int(bun_sys::last_errno(), bun_sys::Tag::watch)
                     .with_path(pathname.as_bytes()),
             )
         } else {
@@ -172,7 +172,7 @@ impl INotifyWatcher {
         bun_core::scoped_log!(watcher, "inotify_add_watch({}) = {}", self.fd, rc);
         let result = if rc < 0 {
             Err(
-                bun_sys::Error::from_code_int(bun_sys::last_errno(), bun_sys::Tag::inotify)
+                bun_sys::Error::from_code_int(bun_sys::last_errno(), bun_sys::Tag::watch)
                     .with_path(pathname.as_bytes()),
             )
         } else {
@@ -533,17 +533,21 @@ fn process_inotify_event_batch(
     if watch_events.is_empty() {
         return Ok(());
     }
+    // End the &mut borrow of `this` via `watch_events` before re-borrowing other
+    // fields below; we re-slice `this.watch_events` directly after the lock.
+    let _ = watch_events;
 
     this.mutex.lock();
     let _unlock = scopeguard::guard((), |_| this.mutex.unlock());
     if this.running {
-        // watch_events.len == 0 is checked above, so last_event_index + 1 is safe
-        // PORT NOTE: reshaped for borrowck — copy the (small) deduped slice into a
-        // local so `this` is no longer mutably borrowed via `watch_events`.
-        let deduped: Vec<WatchEvent> = watch_events[..last_event_index + 1].to_vec();
+        // watch_events.len == 0 is checked above, so last_event_index + 1 is safe.
+        // PORT NOTE: reshaped for borrowck — split disjoint field borrows so we can
+        // pass `&mut watch_events[..]` in place (matching Zig's `all_events[0..]`)
+        // without a gratuitous `.to_vec()`/`.clone()`.
+        let deduped = &mut this.watch_events[..last_event_index + 1];
         let changed = &this.changed_filepaths[..name_off as usize];
-        this.write_trace_events(&deduped, changed);
-        (this.on_file_update)(this.ctx, &mut deduped.clone(), changed, &this.watchlist);
+        Watcher::write_trace_events_static(&this.trace, deduped, changed, &this.watchlist);
+        (this.on_file_update)(this.ctx, deduped, changed, &this.watchlist);
     }
 
     Ok(())

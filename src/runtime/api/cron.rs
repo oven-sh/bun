@@ -1342,6 +1342,22 @@ impl CronJob {
         }
     }
 
+    /// Wrap an existing heap-allocated `*mut CronJob` in a fresh JS wrapper.
+    /// `JsClass::to_js` boxes by value; `register()` already produced the
+    /// `Box::into_raw` pointer (it needs the address before wrapping for the
+    /// timer/cron_jobs list), so bind `${T}__create` directly — same extern the
+    /// `#[JsClass]` proc-macro emits (generate-classes.ts).
+    fn to_js_ptr(this: *mut Self, global: &JSGlobalObject) -> JSValue {
+        unsafe extern "C" {
+            #[link_name = "CronJob__create"]
+            fn __create(global: *mut JSGlobalObject, ptr: *mut CronJob) -> JSValue;
+        }
+        // SAFETY: `global` is live; `this` is a live `Box::into_raw` pointer.
+        // Ownership of one ref transfers to the C++ wrapper (released via
+        // `finalize` → `deref`). `as_mut_ptr` derives `*mut` via `UnsafeCell`.
+        unsafe { __create(global.as_mut_ptr(), this) }
+    }
+
     fn release_pending_ref(this: *mut Self) {
         // SAFETY: caller holds at least one ref.
         let this_ref = unsafe { &mut *this };
@@ -1694,7 +1710,7 @@ pub static Bun__CronJob__onPromiseReject: jsc::JSHostFn = __jsc_host_on_promise_
 fn on_promise_resolve(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let args = frame.arguments();
     let this: *mut CronJob = args[args.len() - 1].as_promise_ptr::<CronJob>();
-    let _guard = scopeguard::guard((), |_| CronJob::release_pending_ref(this));
+    let _guard = scopeguard::guard(this, |p| CronJob::release_pending_ref(p));
     // SAFETY: pending_ref holds a ref on `this`.
     let this_ref = unsafe { &mut *this };
     // SAFETY: `bun_vm()` returns the per-thread singleton.
@@ -1710,7 +1726,7 @@ fn on_promise_resolve(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<J
 fn on_promise_reject(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let args = frame.arguments();
     let this: *mut CronJob = args[args.len() - 1].as_promise_ptr::<CronJob>();
-    let _guard = scopeguard::guard((), |_| CronJob::release_pending_ref(this));
+    let _guard = scopeguard::guard(this, |p| CronJob::release_pending_ref(p));
     // SAFETY: pending_ref holds a ref on `this`.
     let this_ref = unsafe { &mut *this };
     // SAFETY: `bun_vm()` returns the per-thread singleton.

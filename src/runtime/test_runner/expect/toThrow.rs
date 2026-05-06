@@ -247,9 +247,10 @@ pub fn to_throw(
 
             let signature: &'static str = get_signature("toThrow", "<green>expected<r>", false);
 
+            let mut formatter2 = super::make_formatter(global);
             if let Some(received_message) = received_message_opt {
                 let expected_value_fmt = expected_value.to_fmt(&mut formatter);
-                let received_message_fmt = received_message.to_fmt(&mut formatter);
+                let received_message_fmt = received_message.to_fmt(&mut formatter2);
                 return this.throw_fmt(
                     global,
                     signature,
@@ -259,7 +260,7 @@ pub fn to_throw(
             }
 
             let expected_fmt = expected_value.to_fmt(&mut formatter);
-            let received_fmt = result.to_fmt(&mut formatter);
+            let received_fmt = result.to_fmt(&mut formatter2);
             return this.throw_fmt(
                 global,
                 signature,
@@ -284,9 +285,10 @@ pub fn to_throw(
             // error: message from received error does not match expected pattern
             let mut formatter = Formatter::new(global).with_quote_strings(true);
 
+            let mut formatter2 = super::make_formatter(global);
             if let Some(received_message) = received_message_opt {
                 let expected_value_fmt = expected_value.to_fmt(&mut formatter);
-                let received_message_fmt = received_message.to_fmt(&mut formatter);
+                let received_message_fmt = received_message.to_fmt(&mut formatter2);
                 let signature: &'static str = get_signature("toThrow", "<green>expected<r>", false);
 
                 return this.throw_fmt(
@@ -298,7 +300,7 @@ pub fn to_throw(
             }
 
             let expected_fmt = expected_value.to_fmt(&mut formatter);
-            let received_fmt = result.to_fmt(&mut formatter);
+            let received_fmt = result.to_fmt(&mut formatter2);
             let signature: &'static str = get_signature("toThrow", "<green>expected<r>", false);
             return this.throw_fmt(
                 global,
@@ -321,8 +323,9 @@ pub fn to_throw(
             }
 
             let mut formatter = Formatter::new(global).with_quote_strings(true);
+            let mut formatter2 = super::make_formatter(global);
             let received_fmt = result.to_fmt(&mut formatter);
-            let expected_fmt = expected_value.to_fmt(&mut formatter);
+            let expected_fmt = expected_value.to_fmt(&mut formatter2);
             return this.throw_fmt(
                 global,
                 signature,
@@ -345,10 +348,11 @@ pub fn to_throw(
 
             // error: message from received error does not match expected error message.
             let mut formatter = Formatter::new(global).with_quote_strings(true);
+            let mut formatter2 = super::make_formatter(global);
 
             if let Some(received_message) = received_message_opt {
                 let expected_fmt = expected_message.to_fmt(&mut formatter);
-                let received_fmt = received_message.to_fmt(&mut formatter);
+                let received_fmt = received_message.to_fmt(&mut formatter2);
                 return this.throw_fmt(
                     global,
                     signature,
@@ -358,7 +362,7 @@ pub fn to_throw(
             }
 
             let expected_fmt = expected_message.to_fmt(&mut formatter);
-            let received_fmt = result.to_fmt(&mut formatter);
+            let received_fmt = result.to_fmt(&mut formatter2);
             return this.throw_fmt(
                 global,
                 signature,
@@ -405,6 +409,7 @@ pub fn to_throw(
     // did not throw
     let result = return_value_from_function;
     let mut formatter = Formatter::new(global).with_quote_strings(true);
+    let mut formatter2 = super::make_formatter(global);
     // PORT NOTE: Zig `received_line` was concatenated via `++` into each fmt string
     // below; Rust `concat!` only accepts literals so the value is inlined at each site.
     // received_line = "Received function did not throw\nReceived value: <red>{any}<r>\n"
@@ -433,7 +438,7 @@ pub fn to_throw(
             format_args!(
                 "{}{}",
                 expected_value.to_fmt(&mut formatter),
-                result.to_fmt(&mut formatter),
+                result.to_fmt(&mut formatter2),
             ),
         );
     }

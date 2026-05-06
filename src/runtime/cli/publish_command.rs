@@ -91,6 +91,22 @@ impl From<Access> for &'static str {
     }
 }
 
+// `json_mod::parse_utf8` returns `bun_logger::js_ast::Expr` (the value-shaped
+// JSON-only `Expr`), not `bun_js_parser::Expr`, so `Expr::get_string_cloned`
+// can't be applied. Mirror the lookup as a free fn over the JSON `Expr` using
+// its own `as_property` / `as_string_cloned` surface.
+#[inline]
+fn json_get_string_cloned<'b>(
+    expr: &json_mod::Expr,
+    bump: &'b bun_alloc::Arena,
+    name: &[u8],
+) -> Result<Option<&'b [u8]>, AllocError> {
+    match expr.as_property(name) {
+        Some(q) => q.expr.as_string_cloned(bump),
+        None => Ok(None),
+    }
+}
+
 use crate::Command;
 use crate::cli::pack_command::{self as pack, PackCommand as Pack};
 use crate::run_command::RunCommand as Run;
@@ -370,7 +386,11 @@ impl PublishCommand {
             return Ok(());
         }
 
-        let publish_req_body = Self::construct_publish_request_body::<DIRECTORY_PUBLISH>(ctx)?;
+        // PORT NOTE: `AsyncHTTP::init_sync` requires `&'static [u8]` for the
+        // request body (Zig had no lifetimes). Single-shot CLI path — leak the
+        // body buffer; freed at process exit.
+        let publish_req_body: &'static [u8] =
+            Box::leak(Self::construct_publish_request_body::<DIRECTORY_PUBLISH>(ctx)?);
 
         let mut print_buf: Vec<u8> = Vec::new();
 
@@ -402,12 +422,12 @@ impl PublishCommand {
 
         let mut req = http::AsyncHTTP::init_sync(
             http::Method::PUT,
-            publish_url,
+            publish_url.clone(),
             publish_headers.entries,
             // SAFETY: publish_headers.content was allocated by construct_publish_headers
             unsafe { core::slice::from_raw_parts(publish_headers.content.ptr.unwrap().as_ptr(), publish_headers.content.len) },
             &mut response_buf,
-            &publish_req_body,
+            publish_req_body,
             None,
             None,
             http::FetchRedirect::Follow,
@@ -494,7 +514,7 @@ impl PublishCommand {
                     // SAFETY: otp_headers.content was allocated by construct_publish_headers
                     unsafe { core::slice::from_raw_parts(otp_headers.content.ptr.unwrap().as_ptr(), otp_headers.content.len) },
                     &mut response_buf,
-                    &publish_req_body,
+                    publish_req_body,
                     None,
                     None,
                     http::FetchRedirect::Follow,

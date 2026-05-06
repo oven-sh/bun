@@ -763,7 +763,7 @@ impl JunitReporter {
                 Output::err(bun_core::err!("JUnitReportFailed"), "Failed to write JUnit report to {}\n{}", (bstr::BStr::new(path), err));
             }
             bun_sys::Result::Ok(fd) => {
-                let _close = scopeguard::guard((), |_| { let _ = fd.close(); });
+                let fd = scopeguard::guard(fd, |fd| { let _ = fd.close(); });
                 match File::write_all(&fd, &self.contents) {
                     bun_sys::Result::Ok(()) => {}
                     bun_sys::Result::Err(err) => {
@@ -892,7 +892,8 @@ impl CommandLineReporter {
                     }
                     let _ = writer.write_all(b" ");
 
-                    let _ = writer.write_all(if DIM { &*Output::pretty_fmt::<true>("<r><d>") } else { &*Output::pretty_fmt::<true>("<r>") });
+                    let prefix = if DIM { Output::pretty_fmt::<true>("<r><d>") } else { Output::pretty_fmt::<true>("<r>") };
+                    let _ = writer.write_all(&prefix);
                     let _ = writer.write_all(name);
                     let _ = writer.write_all(&Output::pretty_fmt::<true>("<d>"));
                     let _ = writer.write_all(b" >");
@@ -913,7 +914,8 @@ impl CommandLineReporter {
             }
 
             if Output::enable_ansi_colors_stderr() {
-                let _ = writer.write_all(if DIM { &*Output::pretty_fmt::<true>("<r><d> ") } else { &*Output::pretty_fmt::<true>("<r><b> ") });
+                let label_prefix = if DIM { Output::pretty_fmt::<true>("<r><d> ") } else { Output::pretty_fmt::<true>("<r><b> ") };
+                let _ = writer.write_all(&label_prefix);
                 let _ = writer.write_all(display_label);
                 let _ = writer.write_all(&Output::pretty_fmt::<true>("<r>"));
             } else {
@@ -975,7 +977,12 @@ impl CommandLineReporter {
         elapsed_ns: u64,
     ) {
         // PERF(port): was comptime monomorphization on `status` — profile in Phase B
-        let Some(cmd_reporter) = buntest.reporter.as_mut() else { return; };
+        let Some(cmd_reporter) = buntest.reporter else { return; };
+        // SAFETY: Zig stores `?*CommandLineReporter` and freely mutates; the
+        // shared borrow is treated as a raw pointer here (single-threaded test
+        // runner, exclusive access for the duration of the callback).
+        let cmd_reporter: &mut CommandLineReporter =
+            unsafe { &mut *(cmd_reporter as *const CommandLineReporter as *mut CommandLineReporter) };
         let Some(junit) = cmd_reporter.reporters.junit.as_mut() else { return; };
 
         let mut scopes_stack: BoundedArray<*const bun_test::DescribeScope, 64> = BoundedArray::default();
@@ -1196,7 +1203,12 @@ impl CommandLineReporter {
             let _ = err_w().write_all(formatted_line);
         }
 
-        let Some(this) = buntest.reporter.as_mut() else { return; }; // command line reporter is missing! uh oh!
+        let Some(this) = buntest.reporter else { return; }; // command line reporter is missing! uh oh!
+        // SAFETY: Zig stores `?*CommandLineReporter` and freely mutates; the
+        // shared borrow is treated as a raw pointer here (single-threaded test
+        // runner, sole writer for the duration of this completion callback).
+        let this: &mut CommandLineReporter =
+            unsafe { &mut *(this as *const CommandLineReporter as *mut CommandLineReporter) };
 
         if !this.reporters.dots && !this.reporters.only_failures {
             match sequence.result.basic_result() {
@@ -1320,7 +1332,7 @@ impl CommandLineReporter {
             }
             bun_sys::Result::Ok(f) => f,
         };
-        let _close = scopeguard::guard((), |_| { file.close(); });
+        let file = scopeguard::guard(file, |f| { f.close(); });
         // TODO(port): file.writer().adaptToNewApi(buf) — Zig's buffered writer adapter
         // not present on `bun_sys::File`; buffer in a Vec (impl `bun_io::Write`) and
         // write through in one shot below.
@@ -1361,7 +1373,7 @@ impl CommandLineReporter {
         opts: &mut CodeCoverageOptions,
         byte_ranges: &mut [&mut ByteRangeMapping],
     ) -> Result<(), bun_core::Error> {
-        let trace = if REPORTERS_TEXT && REPORTERS_LCOV {
+        let mut trace = if REPORTERS_TEXT && REPORTERS_LCOV {
             bun::perf::trace("TestCommand.printCodeCoverageLCovAndText")
         } else if REPORTERS_TEXT {
             bun::perf::trace("TestCommand.printCodeCoverageText")

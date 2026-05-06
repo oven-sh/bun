@@ -3765,7 +3765,9 @@ pub mod sync {
                 unsafe { Bun__noOrphans_begin(no_orphans_kq.native(), process.pid) };
             }
         }
-        let _no_orphans_guard = scopeguard::guard((), |_| {
+        // Move `jc` into the guard so the defer closure owns it (avoids holding
+        // a mutable borrow across the wait loop below); access via `&*jc` deref.
+        let jc = scopeguard::guard(jc, move |mut jc| {
             if no_orphans {
                 jc.restore();
                 // pgroup → tracked uniqueids (macOS). Do NOT call the
@@ -3840,7 +3842,7 @@ pub mod sync {
                 let r: Option<Maybe<Status>> = wait_mac_kqueue(
                     process.pid,
                     ppid,
-                    &jc,
+                    &*jc,
                     no_orphans_kq,
                     &mut out,
                     &mut out_fds_to_wait_for,
@@ -3850,7 +3852,7 @@ pub mod sync {
                 let r: Option<Maybe<Status>> = wait_linux_signalfd(
                     process.pid,
                     ppid,
-                    &jc,
+                    &*jc,
                     &mut out,
                     &mut out_fds_to_wait_for,
                     &mut out_fds,

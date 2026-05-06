@@ -1435,7 +1435,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             if proc.has_exited() {
                 // process has already exited, we called wait4(), but we did not call onProcessExit()
                 // SAFETY: all-zero is a valid Rusage (POD).
-                let status = proc.status;
+                let status = proc.status.clone();
                 proc.on_exit(status, &unsafe { core::mem::zeroed::<Rusage>() });
             } else {
                 // process has already exited, but we haven't called wait4() yet
@@ -1446,7 +1446,9 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     });
 
     if let Writable::Buffer(buffer) = &mut subprocess.stdin {
-        if let Err(err) = buffer.start() {
+        // SAFETY: RefPtr has no DerefMut; StaticPipeWriter is single-thread
+        // ref-counted and we hold the owning ref via `subprocess.stdin`.
+        if let Err(err) = unsafe { (*buffer.data.as_ptr()).start() } {
             let _ = subprocess.try_kill(subprocess.kill_signal);
             let _ = global_this.throw_value(err.to_js(global_this));
             return Err(JsError::Thrown);

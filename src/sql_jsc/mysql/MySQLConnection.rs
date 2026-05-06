@@ -411,10 +411,24 @@ impl MySQLConnection {
                             return Ok(false);
                         }
 
-                        // TODO(b2-blocked): AnySocket::get_native_handle +
-                        // bun_boringssl::check_server_identity (takes &mut SSL).
-                        // Gated until uws SSL handle accessor lands.
-                        unimplemented!("b2-blocked: SSL servername identity check");
+                        // SAFETY: native handle of a connected TLS socket is `SSL*`.
+                        let ssl_ptr: *mut bun_boringssl_sys::SSL = self
+                            .socket
+                            .get_native_handle()
+                            .map(|h| h.cast())
+                            .unwrap_or(core::ptr::null_mut());
+                        // SAFETY: `ssl_ptr` is a live SSL* (handshake just succeeded).
+                        let servername = unsafe { bun_boringssl_sys::SSL_get_servername(ssl_ptr, 0) };
+                        if !servername.is_null() {
+                            // SAFETY: SSL_get_servername returns a NUL-terminated C string
+                            // borrowed for the SSL session lifetime.
+                            let hostname = unsafe { core::ffi::CStr::from_ptr(servername) }.to_bytes();
+                            // SAFETY: `ssl_ptr` is non-null and live (see above).
+                            if !bun_boringssl::check_server_identity(unsafe { &mut *ssl_ptr }, hostname) {
+                                self.tls_status = TLSStatus::SslFailed;
+                                return Ok(false);
+                            }
+                        }
                     }
                     // require is the same as prefer
                     SSLMode::Require | SSLMode::Prefer | SSLMode::Disable => {}

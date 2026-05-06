@@ -433,8 +433,13 @@ pub fn open_dir_for_iteration_os_path(dir: Fd, path: &bun_paths::OSPathSlice) ->
         openat(dir, z, flags, 0)
     }
     #[cfg(windows)] {
-        let _ = (dir, path);
-        todo!("b2-blocked: open_dir_for_iteration_os_path windows")
+        // bun.zig:884 → `sys.openDirAtWindowsA(dir, path, .{ .iterable = true,
+        // .read_only = true })`.
+        open_dir_at_windows(dir, path, WindowsOpenDirOptions {
+            iterable: true,
+            read_only: true,
+            ..Default::default()
+        })
     }
 }
 
@@ -2660,8 +2665,9 @@ pub fn dlsym_impl(handle: Option<*mut c_void>, name: &ZStr) -> Option<*mut c_voi
         if p.is_null() { None } else { Some(p) }
     }
     #[cfg(windows)] {
-        let _ = (handle, name);
-        todo!("dlsym_impl windows: GetProcAddress")
+        // sys.zig:4565 — Windows arm calls `GetProcAddressA` (which widens
+        // `name` to UTF-16 and forwards to kernel32 `GetProcAddress`).
+        windows::GetProcAddressA(handle, name)
     }
 }
 /// `bun.c.dlsymWithHandle` — once-cached typed lookup. The Zig version

@@ -438,18 +438,19 @@ pub trait Encoding: Copy + 'static {
         u.into()
     }
 
-    /// `enc.literal("...")` — comptime string literal in the target encoding.
-    /// TODO(port): for Utf16 this needs `bun_str::w!("...")`; callers pass ASCII only.
-    fn literal(s: &'static [u8]) -> &'static [Self::Unit];
+    /// `enc.literal("...")` — Zig's comptime string literal in the target
+    /// encoding. Callers pass ASCII only; widened into an inline `EncLit`
+    /// buffer (see `EncLit` doc for the const-generics rationale).
+    fn literal(s: &'static [u8]) -> EncLit<Self::Unit>;
 
     /// Reinterpret a `&[Unit]` slice as `&[u8]` for `StringHashMap` keying
     /// (`anchors` / `tag_handles`). Zig's `bun.StringHashMap` is keyed by
     /// `[]const u8`; calls like `tag_handles.put(handle.slice(self.input), {})`
     /// only type-check there for `unit() == u8` thanks to lazy generic
     /// instantiation. Rust eagerly checks generics, so we route through this
-    /// method — identity for `u8` encodings, `unimplemented!()` for `Utf16`
-    /// (matching the Zig behavior of "compile error on Utf16 instantiation").
-    /// TODO(port): Utf16 needs a real keying story (transcode or u16-keyed map).
+    /// method — identity for `u8` encodings, byte-reinterpret (`len * 2`) for
+    /// `Utf16`. Byte-reinterpret preserves key uniqueness; do **not** use this
+    /// for text (see `NodeScalar::to_expr` for the encoding-aware string path).
     fn key_bytes(s: &[Self::Unit]) -> &[u8];
 
     /// Construct a Unit from a `u16` code unit. Only meaningful for `Utf16`

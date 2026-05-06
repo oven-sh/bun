@@ -362,18 +362,12 @@ impl SSLConfigFile {
                         out.push(SSLConfigSingleFile::convert_from_extern(elem));
                     }
                     // PORT NOTE: Zig `BindgenArray` reuses the allocation in-place
-                    // when `ZigType == ExternType`. Phase A frees the source buffer
-                    // via mimalloc to match the alloc-side; in-place reuse deferred.
+                    // when `ZigType == ExternType`. Phase A copies-then-frees the
+                    // source buffer; in-place reuse deferred.
                     // PERF(port): was BindgenArray in-place convert — profile in Phase B
-                    // SAFETY: `arr.data` was allocated by `WTF::fastMalloc` ≡ mimalloc
-                    // (per crate prereq); freeing via the global allocator matches.
-                    unsafe {
-                        bun_alloc::free_raw(
-                            arr.data.cast(),
-                            arr.capacity as usize
-                                * core::mem::size_of::<ExternSSLConfigSingleFile>(),
-                        )
-                    };
+                    // `arr.data` was allocated by `WTF::fastMalloc` ≡ mimalloc
+                    // (per crate prereq); `mi_free` is size-agnostic.
+                    bun_alloc::basic::free_without_size(arr.data.cast());
                 }
                 Self::Array(GenList(out))
             }

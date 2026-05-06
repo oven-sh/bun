@@ -1819,14 +1819,18 @@ pub mod defines_full_draft {
 
             // Value is JSON — round-trip through the env-JSON parser.
             let source = logger::Source {
-                contents: value_str,
-                path: bun_paths::fs::Path::init_with_namespace("defines.json", "internal"),
+                contents: std::borrow::Cow::Owned(value_str.to_vec()),
+                path: logger::fs::Path::init_with_namespace(b"defines.json", b"internal"),
                 ..Default::default()
             };
             // TODO(b0-genuine): same-tier T4 dep on bun_interchange::json — direct call.
             let expr = bun_interchange::json::parse_env_json(&source, log, bump)?;
-            let cloned = expr.data.deep_clone(bump)?;
-            if expr.is_primitive_literal() {
+            // Zig: `expr.data.deepClone(allocator)` followed by `expr.isPrimitiveLiteral()`.
+            // The JSON parser returns the cycle-broken `bun_logger::js_ast::Expr`
+            // subset; convert into the full `expr::Data` here (re-allocating
+            // payloads in `bump` — this *is* the deep clone).
+            let cloned = json_data_to_expr_data(expr.data, bump)?;
+            if json_data_is_primitive_literal(expr.data) {
                 flags |= DefineDataFlags::CAN_BE_REMOVED_IF_UNUSED;
             }
             Ok(DefineData {
@@ -1835,6 +1839,82 @@ pub mod defines_full_draft {
                 flags,
             })
         }
+    }
+
+    /// Zig: `Expr.isPrimitiveLiteral` — restricted to the JSON-value subset.
+    fn json_data_is_primitive_literal(data: bun_logger::js_ast::expr::Data) -> bool {
+        use bun_logger::js_ast::expr::Data as J;
+        matches!(
+            data,
+            J::ENull(_) | J::EUndefined(_) | J::EString(_) | J::EBoolean(_) | J::ENumber(_)
+        )
+    }
+
+    /// Zig: `Expr.Data.deepClone` — restricted to the JSON-value subset, mapping
+    /// the cycle-broken `bun_logger::js_ast` payloads onto the full parser
+    /// `expr::Data`. Recurses through arrays/objects.
+    fn json_data_to_expr_data(
+        data: bun_logger::js_ast::expr::Data,
+        bump: &bun_alloc::Arena,
+    ) -> core::result::Result<expr::Data, bun_core::Error> {
+        use bun_logger::js_ast::expr::Data as J;
+        Ok(match data {
+            J::EBoolean(b) => expr::Data::EBoolean(E::Boolean { value: b.value }),
+            J::ENumber(n) => expr::Data::ENumber(E::Number { value: n.value }),
+            J::ENull(_) => expr::Data::ENull(E::Null {}),
+            J::EUndefined(_) => expr::Data::EUndefined(E::Undefined {}),
+            J::EMissing(_) => expr::Data::EMissing(E::Missing {}),
+            J::EString(s) => {
+                let src = unsafe { &*s.as_ptr() };
+                let item = bump.alloc(E::String {
+                    data: src.data,
+                    is_utf16: src.is_utf16,
+                    ..Default::default()
+                });
+                expr::Data::EString(StoreRef::from_bump(item))
+            }
+            J::EArray(a) => {
+                let src = unsafe { &*a.as_ptr() };
+                let mut items = bun_collections::BabyList::<expr::Expr>::with_capacity(
+                    bump,
+                    src.items.len() as usize,
+                )?;
+                for it in src.items.as_slice() {
+                    items.push(
+                        bump,
+                        expr::Expr { loc: it.loc, data: json_data_to_expr_data(it.data, bump)? },
+                    )?;
+                }
+                let item = bump.alloc(E::Array { items, ..Default::default() });
+                expr::Data::EArray(StoreRef::from_bump(item))
+            }
+            J::EObject(o) => {
+                let src = unsafe { &*o.as_ptr() };
+                let mut properties = bun_collections::BabyList::<G::Property>::with_capacity(
+                    bump,
+                    src.properties.len() as usize,
+                )?;
+                for prop in src.properties.as_slice() {
+                    let key = match &prop.key {
+                        Some(k) => Some(expr::Expr {
+                            loc: k.loc,
+                            data: json_data_to_expr_data(k.data, bump)?,
+                        }),
+                        None => None,
+                    };
+                    let value = match &prop.value {
+                        Some(v) => Some(expr::Expr {
+                            loc: v.loc,
+                            data: json_data_to_expr_data(v.data, bump)?,
+                        }),
+                        None => None,
+                    };
+                    properties.push(bump, G::Property { key, value, ..Default::default() })?;
+                }
+                let item = bump.alloc(E::Object { properties, ..Default::default() });
+                expr::Data::EObject(StoreRef::from_bump(item))
+            }
+        })
     }
 
     pub struct Define {

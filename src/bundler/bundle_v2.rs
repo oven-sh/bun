@@ -4789,12 +4789,12 @@ impl<'a> BundleV2<'a> {
         };
 
         let fake_source_index = fake_input_file.source.index;
-        graph.input_files.append(fake_input_file)?;
-        graph.ast.append(ast_for_html_entrypoint);
+        self.graph.input_files.append(fake_input_file)?;
+        self.graph.ast.append(ast_for_html_entrypoint);
 
         import_record.source_index = Index::init(fake_source_index.0);
         self.path_to_source_index_map(target).put(path_text.into(), fake_source_index.0);
-        graph.html_imports.server_source_indices.append(fake_source_index.0);
+        self.graph.html_imports.server_source_indices.append(fake_source_index.0);
         self.ensure_client_transpiler();
         Ok(())
     }

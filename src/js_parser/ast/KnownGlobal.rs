@@ -57,16 +57,12 @@ pub static MAP: phf::Map<&'static [u8], KnownGlobal> = phf::phf_map! {
     b"RegExp" => KnownGlobal::RegExp,
 };
 
-// TODO(b2-ast-D): bodies depend on `E::Call: Default`, `BabyList::len()` method (field?),
-// `Expr::known_primitive` (free fn `js_ast::expr::known_primitive`), `prefill::Data` path,
-// `E::String::eql` (gated). The enum + MAP above are real; method bodies gated.
-#[cfg(any())]
 impl KnownGlobal {
     #[inline(always)]
-    fn call_from_new(e: &E::New, loc: logger::Loc) -> js_ast::Expr {
+    fn call_from_new(e: &mut E::New, loc: logger::Loc) -> js_ast::Expr {
         let call = E::Call {
             target: e.target,
-            args: e.args,
+            args: core::mem::take(&mut e.args),
             close_paren_loc: e.close_parens_loc,
             can_be_unwrapped_if_unused: e.can_be_unwrapped_if_unused,
             ..Default::default()
@@ -74,15 +70,17 @@ impl KnownGlobal {
         js_ast::Expr::init(call, loc)
     }
 
+    // PORT NOTE: `_bump` is kept for call-site shape parity with the Zig
+    // `std.mem.Allocator` arg. Phase-A `BabyList` uses the global allocator.
     #[inline(never)]
-    pub fn minify_global_constructor<'bump>(
-        bump: &'bump Bump,
+    pub fn minify_global_constructor(
+        _bump: &Bump,
         e: &mut E::New,
         symbols: &[Symbol],
         loc: logger::Loc,
         minify_whitespace: bool,
     ) -> Option<js_ast::Expr> {
-        let id = if let js_ast::ExprData::EIdentifier(ident) = &e.target.data {
+        let id = if let js_ast::ExprData::EIdentifier(ident) = e.target.data {
             ident.ref_
         } else {
             return None;
@@ -92,7 +90,11 @@ impl KnownGlobal {
             return None;
         }
 
-        let Some(constructor) = MAP.get(symbol.original_name.as_ref()).copied() else {
+        // SAFETY: `original_name` is an arena-owned slice valid for the
+        // lifetime of the symbol table (set at declaration time, never freed
+        // before `P` teardown).
+        let original_name = unsafe { &*symbol.original_name };
+        let Some(constructor) = MAP.get(original_name).copied() else {
             return None;
         };
 
@@ -111,7 +113,7 @@ impl KnownGlobal {
             }
 
             KnownGlobal::Object => {
-                let n = e.args.len();
+                let n = e.args.len;
 
                 if n == 0 {
                     // new Object() -> {}
@@ -140,7 +142,7 @@ impl KnownGlobal {
             }
 
             KnownGlobal::Array => {
-                let n = e.args.len();
+                let n = e.args.len;
 
                 match n {
                     0 => {
@@ -157,7 +159,10 @@ impl KnownGlobal {
                                 // new Array({}) -> [{}], new Array([1]) -> [[1]]
                                 // These are definitely not numbers, safe to convert
                                 return Some(js_ast::Expr::init(
-                                    E::Array { items: e.args, ..Default::default() },
+                                    E::Array {
+                                        items: core::mem::take(&mut e.args),
+                                        ..Default::default()
+                                    },
                                     loc,
                                 ));
                             }
@@ -176,7 +181,10 @@ impl KnownGlobal {
                             | js_ast::expr::PrimitiveType::Bigint => {
                                 // These are definitely not numbers, safe to convert
                                 Some(js_ast::Expr::init(
-                                    E::Array { items: e.args, ..Default::default() },
+                                    E::Array {
+                                        items: core::mem::take(&mut e.args),
+                                        ..Default::default()
+                                    },
                                     loc,
                                 ))
                             }
@@ -201,20 +209,19 @@ impl KnownGlobal {
                                         || val == 10.0)
                                 {
                                     let arg_loc = arg.loc;
-                                    // TODO(port): BabyList<Expr>::move_to_list_managed / move_from_list — verify arena-backed Vec API
-                                    let mut list = e.args.move_to_list_managed(bump);
+                                    let mut list = e.args.move_to_list_managed();
                                     list.clear();
                                     // PERF(port): was bun.handleOom(appendNTimes) — Vec::resize aborts on OOM
                                     list.resize(
                                         val as usize,
                                         js_ast::Expr {
-                                            data: crate::parser::prefill::Data::E_MISSING,
+                                            data: js_ast::ExprData::EMissing(E::Missing {}),
                                             loc: arg_loc,
                                         },
                                     );
                                     return Some(js_ast::Expr::init(
                                         E::Array {
-                                            items: bun_collections::BabyList::move_from_list(&mut list),
+                                            items: bun_collections::BabyList::move_from_list(list),
                                             ..Default::default()
                                         },
                                         loc,
@@ -222,7 +229,8 @@ impl KnownGlobal {
                                 }
                                 Some(Self::call_from_new(e, loc))
                             }
-                            js_ast::expr::PrimitiveType::Unknown | js_ast::expr::PrimitiveType::Mixed => {
+                            js_ast::expr::PrimitiveType::Unknown
+                            | js_ast::expr::PrimitiveType::Mixed => {
                                 // Could be a number, preserve Array() call
                                 Some(Self::call_from_new(e, loc))
                             }
@@ -233,7 +241,10 @@ impl KnownGlobal {
                         // new Array(1, 2, 3) -> [1, 2, 3]
                         // But NOT new Array(3) which creates an array with 3 empty slots
                         Some(js_ast::Expr::init(
-                            E::Array { items: e.args, ..Default::default() },
+                            E::Array {
+                                items: core::mem::take(&mut e.args),
+                                ..Default::default()
+                            },
                             loc,
                         ))
                     }
@@ -253,7 +264,7 @@ impl KnownGlobal {
                 None
             }
             KnownGlobal::WeakSet | KnownGlobal::WeakMap => {
-                let n = e.args.len();
+                let n = e.args.len;
 
                 if n == 0 {
                     // "new WeakSet()" is pure
@@ -263,14 +274,14 @@ impl KnownGlobal {
                 }
 
                 if n == 1 {
-                    match &e.args.slice()[0].data {
+                    match e.args.slice()[0].data {
                         js_ast::ExprData::ENull(_) | js_ast::ExprData::EUndefined(_) => {
                             // "new WeakSet(null)" is pure
                             // "new WeakSet(void 0)" is pure
                             e.can_be_unwrapped_if_unused = js_ast::CanBeUnwrapped::IfUnused;
                         }
                         js_ast::ExprData::EArray(array) => {
-                            if array.items.len() == 0 {
+                            if array.items.len == 0 {
                                 // "new WeakSet([])" is pure
                                 e.can_be_unwrapped_if_unused = js_ast::CanBeUnwrapped::IfUnused;
                             } else {
@@ -285,7 +296,7 @@ impl KnownGlobal {
                 None
             }
             KnownGlobal::Date => {
-                let n = e.args.len();
+                let n = e.args.len;
 
                 if n == 0 {
                     // "new Date()" is pure
@@ -318,7 +329,7 @@ impl KnownGlobal {
             }
 
             KnownGlobal::Set => {
-                let n = e.args.len();
+                let n = e.args.len;
 
                 if n == 0 {
                     // "new Set()" is pure
@@ -327,7 +338,7 @@ impl KnownGlobal {
                 }
 
                 if n == 1 {
-                    match &e.args.slice()[0].data {
+                    match e.args.slice()[0].data {
                         js_ast::ExprData::EArray(_)
                         | js_ast::ExprData::ENull(_)
                         | js_ast::ExprData::EUndefined(_) => {
@@ -345,7 +356,7 @@ impl KnownGlobal {
             }
 
             KnownGlobal::Headers => {
-                let n = e.args.len();
+                let n = e.args.len;
 
                 if n == 0 {
                     // "new Headers()" is pure
@@ -357,7 +368,7 @@ impl KnownGlobal {
             }
 
             KnownGlobal::Response => {
-                let n = e.args.len();
+                let n = e.args.len;
 
                 if n == 0 {
                     // "new Response()" is pure
@@ -390,7 +401,7 @@ impl KnownGlobal {
                 None
             }
             KnownGlobal::TextDecoder | KnownGlobal::TextEncoder => {
-                let n = e.args.len();
+                let n = e.args.len;
 
                 if n == 0 {
                     // "new TextEncoder()" is pure
@@ -406,7 +417,7 @@ impl KnownGlobal {
             }
 
             KnownGlobal::Map => {
-                let n = e.args.len();
+                let n = e.args.len;
 
                 if n == 0 {
                     // "new Map()" is pure
@@ -415,7 +426,7 @@ impl KnownGlobal {
                 }
 
                 if n == 1 {
-                    match &e.args.slice()[0].data {
+                    match e.args.slice()[0].data {
                         js_ast::ExprData::ENull(_) | js_ast::ExprData::EUndefined(_) => {
                             // "new Map(null)" is pure
                             // "new Map(void 0)" is pure
@@ -449,7 +460,7 @@ impl KnownGlobal {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/js_parser/ast/KnownGlobal.zig (361 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      ExprData variant names, E::Call/Array/Object struct-init shapes, BabyList<Expr> move_to_list/move_from_list, and Expr::init signature need Phase-B fixup.
+//   confidence: high
+//   todos:      0
+//   notes:      `_bump` arg retained for call-site parity (Phase-A BabyList uses global allocator).
 // ──────────────────────────────────────────────────────────────────────────

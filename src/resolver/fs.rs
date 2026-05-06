@@ -1996,8 +1996,10 @@ impl RealFS {
             debug!("read({}, {}) = {}", file.handle(), size, read_count);
             buf.truncate(total);
 
-            // TODO(b2-blocked): `strings::BOM` (gated in `immutable/unicode.rs`) —
-            // BOM strip + UTF-16→UTF-8 transcode. Serve bytes verbatim until then.
+            if let Some(bom) = BOM::detect(&buf) {
+                debug!("Convert {} BOM", bom.tag_name());
+                buf = bom.remove_and_convert_to_utf8_and_free(buf);
+            }
 
             return Ok(PathContentsPair { path: Path::init(path), contents: Cow::Owned(buf) });
         }

@@ -1027,12 +1027,455 @@ impl PollerWindows {
 #[cfg(unix)]
 pub use waiter_thread_posix::WaiterThreadPosix as WaiterThread;
 
+// Machines which do not support pidfd_open (GVisor, Linux Kernel < 5.6)
+// use a thread to wait for the child process to exit.
+// We use a single thread to call waitpid() in a loop.
 #[cfg(unix)]
 pub mod waiter_thread_posix {
-    //! Thin un-gated surface: full body in `waiter_thread_posix_body` below.
-    //! Blocked on `super::spawn::bun_spawn::wait4`, `bun_threading::UnboundedQueue`
-    //! intrusive-next wiring, and `bun_event_loop::ConcurrentTask::create` /
-    //! `AnyTaskWithExtraContext::init_for` method surface.
+    use super::*;
+    use bun_event_loop::AnyTaskWithExtraContext::{
+        AnyTaskWithExtraContext, New as AnyTaskNew,
+    };
+    use bun_event_loop::ConcurrentTask::{ConcurrentTask, Task, TaskTag};
+    use bun_event_loop::{EventLoopTaskPtr, task_tag};
+    use bun_threading::UnboundedQueue;
+    use core::sync::atomic::AtomicPtr;
+
+    pub struct WaiterThreadPosix {
+        pub started: AtomicU32,
+        #[cfg(target_os = "linux")]
+        pub eventfd: Fd,
+        #[cfg(not(target_os = "linux"))]
+        pub eventfd: (),
+        pub js_process: ProcessQueue,
+    }
+
+    pub type ProcessQueue = NewQueue<Process>;
+
+    /// Zig: `fn NewQueue(comptime T: type) type` → generic struct.
+    pub struct NewQueue<T: 'static> {
+        pub queue: ConcurrentQueue<T>,
+        // PORT NOTE: Zig active list holds raw `*T` whose strong ref was taken
+        // by the caller before `append()` (Process::watch does `self.ref_()`).
+        // The matching `deref()` happens in `on_wait_pid_from_waiter_thread`.
+        pub active: Vec<*mut T>,
+    }
+
+    impl<T> NewQueue<T> {
+        pub const fn new() -> Self {
+            Self {
+                queue: ConcurrentQueue::new(),
+                active: Vec::new(),
+            }
+        }
+    }
+
+    impl<T> Default for NewQueue<T> {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
+    /// Intrusive node pushed onto `ConcurrentQueue` from the JS thread and
+    /// drained on the waiter thread (`TrivialNew`/`TrivialDeinit` in Zig).
+    pub struct TaskQueueEntry<T: 'static> {
+        pub process: *mut T,
+        pub next: *mut TaskQueueEntry<T>,
+    }
+
+    // SAFETY: all four accessors route through the same `next` field; the
+    // atomic variants reinterpret it as `AtomicPtr` (same layout/alignment as
+    // `*mut TaskQueueEntry<T>`).
+    unsafe impl<T: 'static> bun_threading::unbounded_queue::Node for TaskQueueEntry<T> {
+        unsafe fn get_next(item: *mut Self) -> *mut Self {
+            unsafe { (*item).next }
+        }
+        unsafe fn set_next(item: *mut Self, ptr: *mut Self) {
+            unsafe { (*item).next = ptr };
+        }
+        unsafe fn atomic_load_next(item: *mut Self, ordering: Ordering) -> *mut Self {
+            unsafe {
+                (*(core::ptr::addr_of!((*item).next) as *const AtomicPtr<Self>)).load(ordering)
+            }
+        }
+        unsafe fn atomic_store_next(item: *mut Self, ptr: *mut Self, ordering: Ordering) {
+            unsafe {
+                (*(core::ptr::addr_of!((*item).next) as *const AtomicPtr<Self>))
+                    .store(ptr, ordering)
+            };
+        }
+    }
+
+    pub type ConcurrentQueue<T> = UnboundedQueue<TaskQueueEntry<T>>;
+
+    /// Posted to the JS event loop from the waiter thread when a `wait4()`
+    /// resolves. Maps to `task_tag::ProcessWaiterThreadTask` in `jsc::Task`.
+    pub struct ResultTask<T: 'static> {
+        pub result: bun_sys::Result<WaitPidResult>,
+        pub subprocess: *mut T,
+        pub rusage: Rusage,
+    }
+
+    impl<T: ProcessLike> ResultTask<T> {
+        #[inline]
+        pub fn new(v: ResultTask<T>) -> *mut ResultTask<T> {
+            Box::into_raw(Box::new(v))
+        }
+
+        pub fn run_from_js_thread(self: Box<Self>) {
+            self.run_from_main_thread();
+        }
+
+        pub fn run_from_main_thread(self: Box<Self>) {
+            let this = *self;
+            // bun.destroy(self) — Box dropped here.
+            // SAFETY: subprocess strong-ref'd before append(); released by
+            // on_wait_pid_from_waiter_thread → deref().
+            unsafe {
+                T::on_wait_pid_from_waiter_thread(this.subprocess, &this.result, &this.rusage)
+            };
+        }
+
+        pub fn run_from_main_thread_mini(self: Box<Self>, _: *mut ()) {
+            self.run_from_main_thread();
+        }
+    }
+
+    /// Posted to `MiniEventLoop` from the waiter thread. Self-referential via
+    /// the embedded intrusive `task: AnyTaskWithExtraContext` (`.ctx == self`).
+    #[repr(C)]
+    pub struct ResultTaskMini<T: 'static> {
+        pub result: bun_sys::Result<WaitPidResult>,
+        pub subprocess: *mut T,
+        pub task: AnyTaskWithExtraContext,
+    }
+
+    impl<T: ProcessLike> ResultTaskMini<T> {
+        #[inline]
+        pub fn new(v: ResultTaskMini<T>) -> *mut ResultTaskMini<T> {
+            Box::into_raw(Box::new(v))
+        }
+
+        pub fn run_from_main_thread(self: Box<Self>) {
+            let result = self.result;
+            let subprocess = self.subprocess;
+            // bun.destroy(self) — Box drops at end of scope.
+            // SAFETY: see ResultTask::run_from_main_thread.
+            unsafe {
+                T::on_wait_pid_from_waiter_thread(subprocess, &result, &rusage_zeroed())
+            };
+        }
+
+        /// Stored thunk for `AnyTaskWithExtraContext` (`fn(*mut T, *mut C)`
+        /// shape — `C = ()`).
+        pub extern "Rust" fn run_from_main_thread_mini(this: *mut Self, _: *mut ()) {
+            // SAFETY: `this` was Box::into_raw'd in `loop_()` below; the mini
+            // event loop hands ownership back here exactly once.
+            unsafe { Box::from_raw(this) }.run_from_main_thread();
+        }
+    }
+
+    /// Trait abstracting `process.pid` / `process.event_loop` /
+    /// `process.onWaitPidFromWaiterThread` for generic `T` (only `Process`
+    /// today). The Zig `comptime @TypeOf` switch in `append` is the moral
+    /// equivalent.
+    pub trait ProcessLike: 'static {
+        /// `jsc::Task` tag for this `T`'s `ResultTask` — Zig derived this at
+        /// comptime via `TaggedPointerUnion`; Rust callers supply it.
+        const TASK_TAG: TaskTag;
+        fn pid(this: *const Self) -> PidT;
+        fn event_loop(this: *const Self) -> EventLoopHandle;
+        /// # Safety
+        /// `this` must be a live, strong-ref'd pointer; callee releases one ref.
+        unsafe fn on_wait_pid_from_waiter_thread(
+            this: *mut Self,
+            result: &bun_sys::Result<WaitPidResult>,
+            rusage: &Rusage,
+        );
+    }
+
+    impl ProcessLike for Process {
+        const TASK_TAG: TaskTag = task_tag::ProcessWaiterThreadTask;
+        #[inline]
+        fn pid(this: *const Self) -> PidT {
+            // SAFETY: caller holds a strong ref.
+            unsafe { (*this).pid }
+        }
+        #[inline]
+        fn event_loop(this: *const Self) -> EventLoopHandle {
+            // SAFETY: caller holds a strong ref.
+            unsafe { (*this).event_loop }
+        }
+        #[inline]
+        unsafe fn on_wait_pid_from_waiter_thread(
+            this: *mut Self,
+            result: &bun_sys::Result<WaitPidResult>,
+            rusage: &Rusage,
+        ) {
+            // SAFETY: caller contract.
+            unsafe { (*this).on_wait_pid_from_waiter_thread(result, rusage) };
+        }
+    }
+
+    impl<T: ProcessLike> NewQueue<T> {
+        pub fn append(&self, process: *mut T) {
+            self.queue.push(Box::into_raw(Box::new(TaskQueueEntry {
+                process,
+                next: core::ptr::null_mut(),
+            })));
+        }
+
+        pub fn loop_(&mut self) {
+            {
+                let batch = self.queue.pop_batch();
+                self.active.reserve(batch.count);
+                let mut iter = batch.iterator();
+                loop {
+                    let task = iter.next();
+                    if task.is_null() {
+                        break;
+                    }
+                    // SAFETY: task was Box::into_raw'd in append().
+                    let task = unsafe { Box::from_raw(task) };
+                    // PERF(port): was assume_capacity
+                    self.active.push(task.process);
+                    // task drops here (TrivialDeinit)
+                }
+            }
+
+            let mut i: usize = 0;
+            while i < self.active.len() {
+                let mut remove = false;
+
+                let process = self.active[i];
+                let pid = T::pid(process);
+                // this case shouldn't really happen
+                if pid == 0 {
+                    remove = true;
+                } else {
+                    let mut rusage = rusage_zeroed();
+                    let result =
+                        posix_spawn::wait4(pid, libc::WNOHANG as u32, Some(&mut rusage));
+                    let matched = match &result {
+                        Err(_) => true,
+                        Ok(r) => r.pid == pid,
+                    };
+                    if matched {
+                        remove = true;
+
+                        match T::event_loop(process) {
+                            EventLoopHandle::Js { owner, vtable } => {
+                                let ct = ConcurrentTask::create(Task::new(
+                                    T::TASK_TAG,
+                                    ResultTask::<T>::new(ResultTask {
+                                        result,
+                                        subprocess: process,
+                                        rusage,
+                                    })
+                                    .cast(),
+                                ));
+                                // SAFETY: vtable contract.
+                                unsafe { (vtable.enqueue_task_concurrent)(owner, ct) };
+                            }
+                            EventLoopHandle::Mini(mini) => {
+                                let out = ResultTaskMini::<T>::new(ResultTaskMini {
+                                    result,
+                                    subprocess: process,
+                                    task: AnyTaskWithExtraContext::default(),
+                                });
+                                // SAFETY: `out` just produced by Box::into_raw.
+                                unsafe {
+                                    (*out).task = AnyTaskNew::<ResultTaskMini<T>, ()>::init(
+                                        out,
+                                        ResultTaskMini::<T>::run_from_main_thread_mini,
+                                    );
+                                    (*mini).enqueue_task_concurrent(
+                                        core::ptr::addr_of_mut!((*out).task),
+                                    );
+                                }
+                                // PORT NOTE: `out` is now owned by the mini queue;
+                                // freed in `run_from_main_thread_mini`.
+                            }
+                        }
+                    }
+                }
+
+                if remove {
+                    let _ = self.active.remove(i);
+                } else {
+                    i += 1;
+                }
+            }
+        }
+    }
+
+    static SHOULD_USE_WAITER_THREAD: AtomicBool = AtomicBool::new(false);
+    const STACK_SIZE: usize = 512 * 1024;
+
+    // Singleton — Zig `pub var instance: WaiterThread = .{};`. The waiter
+    // thread is the sole mutator of `js_process.active`; producers only touch
+    // the lock-free `queue`. Wrapped so the address is stable for the SIGCHLD
+    // handler / waiter loop without taking `&mut` to a `static mut`.
+    struct Instance(core::cell::UnsafeCell<WaiterThreadPosix>);
+    // SAFETY: see field-level access notes above.
+    unsafe impl Sync for Instance {}
+    static INSTANCE: Instance = Instance(core::cell::UnsafeCell::new(WaiterThreadPosix {
+        started: AtomicU32::new(0),
+        #[cfg(target_os = "linux")]
+        eventfd: Fd::INVALID,
+        #[cfg(not(target_os = "linux"))]
+        eventfd: (),
+        js_process: ProcessQueue::new(),
+    }));
+
+    #[inline]
+    fn instance() -> *mut WaiterThreadPosix {
+        INSTANCE.0.get()
+    }
+
+    impl WaiterThreadPosix {
+        #[inline]
+        pub fn set_should_use_waiter_thread() {
+            SHOULD_USE_WAITER_THREAD.store(true, Ordering::Relaxed);
+        }
+
+        #[inline]
+        pub fn should_use_waiter_thread() -> bool {
+            SHOULD_USE_WAITER_THREAD.load(Ordering::Relaxed)
+        }
+
+        pub fn append(process: *mut Process) {
+            // SAFETY: `js_process.queue` is an MPSC lock-free queue; `append`
+            // is the producer half and only touches `queue`, never `active`.
+            unsafe { (*instance()).js_process.append(process) };
+
+            init().unwrap_or_else(|_| panic!("Failed to start WaiterThread"));
+
+            #[cfg(target_os = "linux")]
+            {
+                let one: [u8; 8] = (1usize).to_ne_bytes();
+                // SAFETY: eventfd valid after init(); write(2) is async-signal-safe.
+                let _ = unsafe {
+                    libc::write(
+                        (*instance()).eventfd.native(),
+                        one.as_ptr().cast(),
+                        8,
+                    )
+                };
+            }
+        }
+
+        pub fn reload_handlers() {
+            if !SHOULD_USE_WAITER_THREAD.load(Ordering::Relaxed) {
+                return;
+            }
+
+            #[cfg(target_os = "linux")]
+            {
+                // SAFETY: sigaction with a valid handler.
+                unsafe {
+                    let mut current_mask: libc::sigset_t = core::mem::zeroed();
+                    libc::sigemptyset(&mut current_mask);
+                    libc::sigaddset(&mut current_mask, libc::SIGCHLD);
+                    let act = libc::sigaction {
+                        sa_sigaction: wakeup as usize,
+                        sa_mask: current_mask,
+                        sa_flags: libc::SA_NOCLDSTOP,
+                        sa_restorer: None,
+                    };
+                    libc::sigaction(libc::SIGCHLD, &act, core::ptr::null_mut());
+                }
+            }
+        }
+    }
+
+    pub fn init() -> Result<(), std::io::Error> {
+        debug_assert!(SHOULD_USE_WAITER_THREAD.load(Ordering::Relaxed));
+
+        // SAFETY: `started` is atomic; raced fetch_max is fine.
+        if unsafe { (*instance()).started.fetch_max(1, Ordering::Relaxed) } > 0 {
+            return Ok(());
+        }
+
+        #[cfg(target_os = "linux")]
+        {
+            // SAFETY: eventfd(2) syscall.
+            let fd = unsafe { libc::eventfd(0, libc::EFD_NONBLOCK | libc::EFD_CLOEXEC | 0) };
+            if fd < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            // SAFETY: single-writer init path (guarded by fetch_max above).
+            unsafe { (*instance()).eventfd = Fd::from_native(fd) };
+        }
+
+        let thread = std::thread::Builder::new()
+            .stack_size(STACK_SIZE)
+            .spawn(loop_)?;
+        drop(thread); // detach
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    extern "C" fn wakeup(_: c_int) {
+        let one: [u8; 8] = (1usize).to_ne_bytes();
+        // SAFETY: eventfd is valid; called from signal handler — write(2) is
+        // async-signal-safe.
+        let _ = bun_sys::write(unsafe { (*instance()).eventfd }, &one).unwrap_or(0);
+    }
+
+    pub fn loop_() {
+        // SAFETY: NUL-terminated literal.
+        Output::Source::configure_named_thread(unsafe {
+            bun_core::ZStr::from_raw(b"Waitpid\0".as_ptr(), 7)
+        });
+        WaiterThreadPosix::reload_handlers();
+        // SAFETY: dedicated waiter thread is the sole mutator of `active`.
+        let this = unsafe { &mut *instance() };
+
+        #[allow(unused_labels)]
+        'outer: loop {
+            this.js_process.loop_();
+
+            #[cfg(target_os = "linux")]
+            {
+                let mut polls = [libc::pollfd {
+                    fd: this.eventfd.native(),
+                    events: (libc::POLLIN | libc::POLLERR) as _,
+                    revents: 0,
+                }];
+
+                // Consume the pending eventfd
+                let mut buf = [0u8; 8];
+                if bun_sys::read(this.eventfd, &mut buf).unwrap_or(0) > 0 {
+                    continue 'outer;
+                }
+
+                // SAFETY: valid pollfd array.
+                let _ = unsafe { libc::poll(polls.as_mut_ptr(), 1, i32::MAX) };
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                // SAFETY: sigwait with a valid (empty) mask.
+                unsafe {
+                    let mut mask: libc::sigset_t = core::mem::zeroed();
+                    libc::sigemptyset(&mut mask);
+                    let mut signal: c_int = libc::SIGCHLD;
+                    let _rc = libc::sigwait(&mask, &mut signal);
+                }
+            }
+        }
+    }
+
+    // Suppress unused warnings on non-generic helpers when only `Process` is wired.
+    #[allow(dead_code)]
+    const _: () = {
+        let _ = core::mem::size_of::<EventLoopTaskPtr>();
+    };
+}
+
+#[cfg(any())]
+mod waiter_thread_posix_shim_removed {
+    // Preserved for diff-pass: the old thin-surface stub. Dead.
     use super::*;
     pub struct WaiterThreadPosix(());
     static SHOULD_USE_WAITER_THREAD: AtomicBool = AtomicBool::new(false);

@@ -563,6 +563,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             && matches!(e_.children.slice()[0].data, Data::ESpread(..)));
 
                     if is_static_jsx {
+                        // Capture before `mem::take` zeroes `e_.children.len` (struct-literal
+                        // fields evaluate in written order; spec reads original len).
+                        let children_single_line = e_.children.len < 2;
                         // SAFETY: `props` arena-ptr; see note above.
                         unsafe { &mut *props }
                             .append(G::Property {
@@ -570,7 +573,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 value: Some(p.new_expr(
                                     E::Array {
                                         items: core::mem::take(&mut e_.children),
-                                        is_single_line: e_.children.len < 2,
+                                        is_single_line: children_single_line,
                                         ..Default::default()
                                     },
                                     e_.close_tag_loc,
@@ -2287,8 +2290,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         // blocked_on: react_refresh.hook_ctx_storage is `Option<&'a mut Option<HookContext>>`;
         //   a stack-local `react_hook_data` can't satisfy `'a`. Zig stores a raw ptr.
-        //   Hook tracking deferred — save/restore + emission preserved in `_draft::e_arrow`.
+        //   Until reshaped, save/clear/restore so the parent frame's hook context is not
+        //   attributed while visiting this arrow's body. Emission preserved in `_draft::e_arrow`.
         let mut react_hook_data: Option<crate::parser::HookContext> = None;
+        // Zig: const prev = p.react_refresh.hook_ctx_storage; defer ... = prev; ... = &react_hook_data;
+        let prev_hook_ctx = p.react_refresh.hook_ctx_storage.take();
 
         // TODO(port): Zig `ListManaged(Stmt).fromOwnedSlice(p.allocator, dupe)` takes ownership of
         // the arena slice without copying. bumpalo Vec cannot adopt an existing slice; Phase B may

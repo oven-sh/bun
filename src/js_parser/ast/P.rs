@@ -6392,6 +6392,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         r#ref
     }
 
+    #[cfg(any())] // blocked_on: js_ast::Ast::TsEnumsMap path; StringHashMap::put_assume_capacity_no_clobber; ts::Data variants — only caller is to_ast
     pub fn compute_ts_enums_map(&self, allocator: &'a Bump) -> Result<js_ast::Ast::TsEnumsMap, bun_core::Error> {
         // When hot module reloading is enabled, we disable enum inlining
         // to avoid making the HMR graph more complicated.
@@ -6813,6 +6814,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         )
     }
 
+    #[cfg(any())] // blocked_on: ImportScanner::scan_stub; ConvertESMExportsForHmr; full Ast struct field set; compute_ts_enums_map
     pub fn to_ast(
         &mut self,
         parts: &mut ListManaged<'a, js_ast::Part>,
@@ -7142,6 +7144,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     ///
     /// The logic in this function must be in sync with the hoisting
     /// logic in `LinkerContext.generateCodeForFileInChunkJS`
+    #[cfg(any())] // blocked_on: part.stmts iteration over *mut [Stmt]; S::Class StoreRef auto-deref; only caller is to_ast
     fn needs_wrapper_ref(&self, parts: &[js_ast::Part]) -> bool {
         debug_assert!(self.options.bundle);
         for part in parts {

@@ -1326,10 +1326,13 @@ pub fn print_errorable(args: fmt::Arguments<'_>) -> Result<(), crate::Error> {
 /// Text automatically buffers
 #[macro_export]
 macro_rules! println {
-    ($fmt:literal $(, $arg:expr)* $(,)?) => {
-        $crate::output::print_to($crate::output::Destination::Stdout,
-            ::core::format_args!(concat!($fmt, "\n") $(, $arg)*))
-    };
+    ($fmt:literal $(, $arg:expr)* $(,)?) => {{
+        const __NL: &str = $crate::output::_needs_nl($fmt);
+        $crate::output::print_to(
+            $crate::output::Destination::Stdout,
+            ::core::format_args!(concat!($fmt, "{}"), $($arg,)* __NL),
+        )
+    }};
 }
 
 /// Print to stdout, but only in debug builds.
@@ -1848,12 +1851,21 @@ pub fn pretty_with_printer(
 
 #[macro_export]
 macro_rules! pretty {
-    ($fmt:literal $(, $arg:expr)* $(,)?) => {
-        $crate::output::pretty_to(
-            $crate::output::Destination::Stdout,
-            ::core::format_args!($crate::pretty_fmt!($fmt, true) $(, $arg)*),
-            ::core::format_args!($crate::pretty_fmt!($fmt, false) $(, $arg)*),
-        )
+    ($fmt:expr $(, $arg:expr)* $(,)?) => {
+        // Branch *before* building `format_args!` so each `$arg` is evaluated
+        // exactly once (Zig `prettyTo` constructs the args tuple once and
+        // dispatches on the color flag — output.zig:1066-1074).
+        if $crate::output::enable_color_for($crate::output::Destination::Stdout) {
+            $crate::output::print_to(
+                $crate::output::Destination::Stdout,
+                ::core::format_args!($crate::pretty_fmt!($fmt, true) $(, $arg)*),
+            )
+        } else {
+            $crate::output::print_to(
+                $crate::output::Destination::Stdout,
+                ::core::format_args!($crate::pretty_fmt!($fmt, false) $(, $arg)*),
+            )
+        }
     };
 }
 
@@ -1861,33 +1873,48 @@ macro_rules! pretty {
 /// the terminal doesn't support them.
 #[macro_export]
 macro_rules! prettyln {
-    ($fmt:literal $(, $arg:expr)* $(,)?) => {
-        $crate::output::pretty_to(
-            $crate::output::Destination::Stdout,
-            ::core::format_args!(concat!($crate::pretty_fmt!($fmt, true), "\n") $(, $arg)*),
-            ::core::format_args!(concat!($crate::pretty_fmt!($fmt, false), "\n") $(, $arg)*),
-        )
-    };
+    ($fmt:expr $(, $arg:expr)* $(,)?) => {{
+        // Only append `\n` when the template doesn't already end in one.
+        const __NL: &str = $crate::output::_needs_nl($crate::pretty_fmt!($fmt, false));
+        if $crate::output::enable_color_for($crate::output::Destination::Stdout) {
+            $crate::output::print_to(
+                $crate::output::Destination::Stdout,
+                ::core::format_args!(concat!($crate::pretty_fmt!($fmt, true), "{}"), $($arg,)* __NL),
+            )
+        } else {
+            $crate::output::print_to(
+                $crate::output::Destination::Stdout,
+                ::core::format_args!(concat!($crate::pretty_fmt!($fmt, false), "{}"), $($arg,)* __NL),
+            )
+        }
+    }};
 }
 
 #[macro_export]
 macro_rules! print_errorln {
-    ($fmt:literal $(, $arg:expr)* $(,)?) => {
+    ($fmt:literal $(, $arg:expr)* $(,)?) => {{
+        const __NL: &str = $crate::output::_needs_nl($fmt);
         $crate::output::print_to(
             $crate::output::Destination::Stderr,
-            ::core::format_args!(concat!($fmt, "\n") $(, $arg)*),
+            ::core::format_args!(concat!($fmt, "{}"), $($arg,)* __NL),
         )
-    };
+    }};
 }
 
 #[macro_export]
 macro_rules! pretty_error {
-    ($fmt:literal $(, $arg:expr)* $(,)?) => {
-        $crate::output::pretty_to(
-            $crate::output::Destination::Stderr,
-            ::core::format_args!($crate::pretty_fmt!($fmt, true) $(, $arg)*),
-            ::core::format_args!($crate::pretty_fmt!($fmt, false) $(, $arg)*),
-        )
+    ($fmt:expr $(, $arg:expr)* $(,)?) => {
+        if $crate::output::enable_color_for($crate::output::Destination::Stderr) {
+            $crate::output::print_to(
+                $crate::output::Destination::Stderr,
+                ::core::format_args!($crate::pretty_fmt!($fmt, true) $(, $arg)*),
+            )
+        } else {
+            $crate::output::print_to(
+                $crate::output::Destination::Stderr,
+                ::core::format_args!($crate::pretty_fmt!($fmt, false) $(, $arg)*),
+            )
+        }
     };
 }
 
@@ -1895,13 +1922,20 @@ macro_rules! pretty_error {
 /// terminal doesn't support them. Text is buffered
 #[macro_export]
 macro_rules! pretty_errorln {
-    ($fmt:literal $(, $arg:expr)* $(,)?) => {
-        $crate::output::pretty_to(
-            $crate::output::Destination::Stderr,
-            ::core::format_args!(concat!($crate::pretty_fmt!($fmt, true), "\n") $(, $arg)*),
-            ::core::format_args!(concat!($crate::pretty_fmt!($fmt, false), "\n") $(, $arg)*),
-        )
-    };
+    ($fmt:expr $(, $arg:expr)* $(,)?) => {{
+        const __NL: &str = $crate::output::_needs_nl($crate::pretty_fmt!($fmt, false));
+        if $crate::output::enable_color_for($crate::output::Destination::Stderr) {
+            $crate::output::print_to(
+                $crate::output::Destination::Stderr,
+                ::core::format_args!(concat!($crate::pretty_fmt!($fmt, true), "{}"), $($arg,)* __NL),
+            )
+        } else {
+            $crate::output::print_to(
+                $crate::output::Destination::Stderr,
+                ::core::format_args!(concat!($crate::pretty_fmt!($fmt, false), "{}"), $($arg,)* __NL),
+            )
+        }
+    }};
 }
 
 // ── printCommand ──────────────────────────────────────────────────────────

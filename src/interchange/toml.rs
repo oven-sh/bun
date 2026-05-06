@@ -281,7 +281,7 @@ impl<'a> TOML<'a> {
             path: source_.path.clone(),
             contents: source_.contents,
             contents_is_recycled: source_.contents_is_recycled,
-            identifier_name: source_.identifier_name,
+            identifier_name: source_.identifier_name.clone(),
             index: source_.index,
         };
         let mut parser = TOML::init(bump, source_copy, log, redact_logs)?;

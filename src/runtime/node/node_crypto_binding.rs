@@ -366,8 +366,9 @@ impl<Ctx: CryptoJobCtx> CryptoJob<Ctx> {
                 node: Default::default(),
                 callback: Self::run_task,
             },
-            // SAFETY: any_task is overwritten below before any use.
-            any_task: unsafe { core::mem::zeroed() },
+            // Overwritten below before any use; `Default` provides a non-null
+            // sentinel callback (zeroed() is UB for the `fn` field).
+            any_task: AnyTask::default(),
             poll: KeepAlive::default(),
             ctx,
             callback: StrongOptional::create(callback.with_async_context_if_needed(global), global),

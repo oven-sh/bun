@@ -338,7 +338,7 @@ unsafe fn load_preloads_inner(
         // SAFETY: `i < n`; the `Box<[u8]>` allocation is stable across the
         // `resolve_and_auto_install` call below (which only touches
         // `vm.transpiler.resolver`, not `vm.preload`).
-        let preload: *const [u8] = unsafe { &*(*vm).preload[i] };
+        let preload: *const [u8] = unsafe { &*(&(*vm).preload)[i] };
         // Spec VirtualMachine.zig:1865 — `normalizeSource`: strip "file://".
         // SAFETY: `preload` points at a live boxed slice for this iteration.
         let normalized: &[u8] = {

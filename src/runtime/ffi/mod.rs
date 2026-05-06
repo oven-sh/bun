@@ -388,7 +388,7 @@ unsafe extern "C" {
     fn FFI_Callback_threadsafe_call(_: *mut c_void, _: usize, _: *mut JSValue) -> JSValue;
     fn FFI_Callback_call_6(_: *mut c_void, _: usize, _: *mut JSValue) -> JSValue;
     fn FFI_Callback_call_7(_: *mut c_void, _: usize, _: *mut JSValue) -> JSValue;
-    fn Bun__createFFICallbackFunction(_: *mut JSGlobalObject, _: JSValue) -> *mut c_void;
+    fn Bun__createFFICallbackFunction(_: &JSGlobalObject, _: JSValue) -> *mut c_void;
 }
 
 // ═════════════════════════════════════════════════════════════════════════════

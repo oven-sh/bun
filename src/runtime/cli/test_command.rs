@@ -981,8 +981,9 @@ impl CommandLineReporter {
         // SAFETY: Zig stores `?*CommandLineReporter` and freely mutates; the
         // shared borrow is treated as a raw pointer here (single-threaded test
         // runner, exclusive access for the duration of the callback).
+        #[allow(invalid_reference_casting)]
         let cmd_reporter: &mut CommandLineReporter =
-            unsafe { &mut *(cmd_reporter as *const CommandLineReporter as *mut CommandLineReporter) };
+            unsafe { &mut *(core::ptr::from_ref(cmd_reporter) as *mut CommandLineReporter) };
         let Some(junit) = cmd_reporter.reporters.junit.as_mut() else { return; };
 
         let mut scopes_stack: BoundedArray<*const bun_test::DescribeScope, 64> = BoundedArray::default();

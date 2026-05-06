@@ -100,7 +100,7 @@ fn create_object2(
 ) -> JSValue {
     unsafe extern "C" {
         fn JSC__JSValue__createObject2(
-            global: *mut JSGlobalObject,
+            global: *const JSGlobalObject,
             key1: *const ZigString,
             key2: *const ZigString,
             value1: JSValue,
@@ -108,7 +108,7 @@ fn create_object2(
         ) -> JSValue;
     }
     // SAFETY: keys/values are valid; global is live.
-    unsafe { JSC__JSValue__createObject2(global.as_mut_ptr(), key1, key2, value1, value2) }
+    unsafe { JSC__JSValue__createObject2(global, key1, key2, value1, value2) }
 }
 
 /// Construct a `SystemError` with code+message and remaining fields defaulted.

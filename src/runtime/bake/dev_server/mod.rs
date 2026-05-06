@@ -485,6 +485,48 @@ pub trait ResponseLike {
     );
 }
 
+// `AnyResponse` already type-erases SSL/TCP/H3 — it satisfies `resp: anytype`
+// trivially. The trait methods take `&mut self` (matching `Response<SSL>`'s
+// shape); `AnyResponse` is `Copy`, so the inherent by-value methods are called
+// on `*self`.
+impl ResponseLike for bun_uws::AnyResponse {
+    fn write_status(&mut self, status: &[u8]) {
+        (*self).write_status(status)
+    }
+    fn end(&mut self, data: &[u8], close_connection: bool) {
+        (*self).end(data, close_connection)
+    }
+    fn as_any_response(&mut self) -> bun_uws::AnyResponse {
+        *self
+    }
+    fn get_remote_socket_info(&mut self) -> Option<bun_uws::SocketAddress> {
+        // `bun_uws_sys::SocketAddress<'static>` borrows the socket's IP buffer;
+        // re-box into the owned `bun_uws::SocketAddress` shape this trait uses.
+        (*self).get_remote_socket_info().map(|a| bun_uws::SocketAddress {
+            ip: a.ip.to_vec().into_boxed_slice(),
+            port: a.port,
+            is_ipv6: a.is_ipv6,
+        })
+    }
+    fn upgrade<D>(
+        &mut self,
+        data: D,
+        sec_web_socket_key: &[u8],
+        sec_web_socket_protocol: &[u8],
+        sec_web_socket_extensions: &[u8],
+        ctx: &mut bun_uws::WebSocketUpgradeContext,
+    ) {
+        let boxed = Box::into_raw(Box::new(data));
+        let _ = (*self).upgrade(
+            boxed,
+            sec_web_socket_key,
+            sec_web_socket_protocol,
+            sec_web_socket_extensions,
+            Some(ctx),
+        );
+    }
+}
+
 /// `DevServer.HmrSocket` — per-WebSocket state. Full body (open/close/message
 /// handlers) gated in `HmrSocket.rs` (heavy `bun_uws` + jsc dep).
 pub struct HmrSocket {

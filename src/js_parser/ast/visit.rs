@@ -158,10 +158,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             .expect("unreachable");
 
         if self.options.features.react_fast_refresh {
-            // PORT NOTE: react_refresh.hook_ctx_storage is `Option<&'a mut Option<HookContext>>`;
-            // borrowing it through `&mut self` while calling another `&mut self` method is
-            // disjoint-borrow-incompatible under stacked borrows. The Zig original holds a
-            // `*?Hook` raw pointer; we mirror that here to break the exclusive-borrow chain.
+            // PORT NOTE: react_refresh.hook_ctx_storage is `Option<NonNull<Option<HookContext>>>`
+            // pointing at a stack-local on the visitStmt caller frame (Zig: `*?Hook`). We pull a
+            // raw ptr to the inner HookContext here to avoid holding a `&mut self` field borrow
+            // across the `&mut self` method call below.
             let hook_ptr: *mut crate::HookContext = {
                 let storage_ptr = self
                     .react_refresh
@@ -174,9 +174,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 }
             };
             if !hook_ptr.is_null() {
-                // SAFETY: `hook_ptr` points into arena-owned storage (`react_refresh.hook_ctx_storage`)
-                // that outlives this call and is not aliased by `handle_react_refresh_post_visit_function_body`
-                // (which only touches `stmts` and unrelated `P` fields).
+                // SAFETY: `hook_ptr` points into the visiting caller's stack-local
+                // `Option<HookContext>` (set in visitStmt); that frame outlives this call and
+                // `handle_react_refresh_post_visit_function_body` does not re-enter
+                // `hook_ctx_storage` (it only touches `stmts` and unrelated `P` fields).
                 self.handle_react_refresh_post_visit_function_body(&mut stmts, unsafe { &*hook_ptr });
             }
         }

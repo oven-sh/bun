@@ -2942,18 +2942,24 @@ impl<'a> BundleV2<'a> {
     pub fn process_files_to_copy(&mut self, reachable_files: &[Index]) -> Result<(), Error> {
         if self.graph.estimated_file_loader_count > 0 {
             // PORT NOTE: Zig per-file `allocator` column dropped — Box owns its alloc.
-            let unique_key_for_additional_files = self.graph.input_files.items_unique_key_for_additional_file();
-            let content_hashes_for_additional_files = self.graph.input_files.items_content_hash_for_additional_file();
-            let sources = self.graph.input_files.items_source();
-            let targets = self.graph.ast.items_target();
+            // SAFETY: MultiArrayList columns are disjoint backing storage; raw-ptr
+            // sidestep so we can hold several read-only column slices, one mutable
+            // column slice (`additional_files`), and call `transpiler_for_target`
+            // (which needs `&mut self`) inside the loop. Zig accessed all of these
+            // as raw `.items(.field)` slices with no borrow-checking.
+            let self_ptr: *mut Self = self;
+            let unique_key_for_additional_files = unsafe { (*self_ptr).graph.input_files.items_unique_key_for_additional_file() };
+            let content_hashes_for_additional_files = unsafe { (*self_ptr).graph.input_files.items_content_hash_for_additional_file() };
+            let sources = unsafe { (*self_ptr).graph.input_files.items_source() };
+            let targets = unsafe { (*self_ptr).graph.ast.items_target() };
             let mut additional_output_files: Vec<options::OutputFile> = Vec::new();
 
-            let additional_files = self.graph.input_files.items_additional_files_mut();
-            let loaders = self.graph.input_files.items_loader();
+            let additional_files = unsafe { (*self_ptr).graph.input_files.items_additional_files_mut() };
+            let loaders = unsafe { (*self_ptr).graph.input_files.items_loader() };
 
             for reachable_source in reachable_files {
                 let index = reachable_source.get() as usize;
-                let key = unique_key_for_additional_files[index];
+                let key: &[u8] = &unique_key_for_additional_files[index];
                 if !key.is_empty() {
                     let mut template: options::PathTemplate = if self.graph.html_imports.server_source_indices.len != 0
                         && self.transpiler.options.asset_naming.is_empty()

@@ -3430,7 +3430,7 @@ pub fn resolve_posix_js_t<T: PathChar>(
     buf2: &mut [T],
 ) -> JsResult<JSValue> {
     match resolve_posix_t(paths, buf, buf2) {
-        Ok(r) => BunString::create_utf8_for_js(global_object, r),
+        Ok(r) => create_js_string_t::<T>(global_object, r),
         Err(e) => Ok(e.to_js(global_object)),
     }
 }

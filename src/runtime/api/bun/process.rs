@@ -285,31 +285,18 @@ impl Process {
         core::mem::size_of::<Self>()
     }
 
-    /// Low-level: set the exit handler from an explicit erased owner + vtable.
-    pub fn set_exit_handler_raw(&mut self, owner: *mut (), vtable: ProcessExitVTable) {
+    pub fn set_exit_handler(&mut self, owner: *mut (), vtable: &'static ProcessExitVTable) {
         self.exit_handler.init(owner, vtable);
     }
 
-    /// Zig: `setExitHandler(anytype)`. Stores `owner` together with a vtable
-    /// synthesized from `T: ProcessExitOwner`. Takes `&self` (interior write
-    /// through raw ptr) so it can be called through `Arc<Process>` — Process
-    /// is intrusively ref-counted and treated as raw-ptr-mutable in Zig.
-    pub fn set_exit_handler<T: ProcessExitOwner>(&self, owner: *mut T) {
-        // SAFETY: Process is heap-allocated and never moved; exit_handler is a
-        // POD (`*mut ()` + `Option<fn>`) so a raw write is sound and matches
-        // the Zig single-threaded mutation model.
-        unsafe {
-            let this = self as *const Self as *mut Self;
-            (*this).exit_handler.owner = owner.cast();
-            (*this).exit_handler.vtable = Some(T::exit_vtable());
-        }
-    }
-
     /// Reset the exit handler to "no handler" (Zig: `exit_handler = .{}`).
-    /// `&self` for the same reason as `set_exit_handler` — called via
-    /// `Arc<Process>` from `closeProcess`.
+    /// Takes `&self` (interior write through raw ptr) so it can be called via
+    /// `Arc<Process>` from `closeProcess` — Process is intrusively ref-counted
+    /// and treated as raw-ptr-mutable in Zig.
     pub fn set_exit_handler_default(&self) {
-        // SAFETY: see set_exit_handler.
+        // SAFETY: Process is heap-allocated and never moved; exit_handler is a
+        // POD (`*mut ()` + `Option<&'static>`) so a raw write is sound and
+        // matches the Zig single-threaded mutation model.
         unsafe {
             let this = self as *const Self as *mut Self;
             (*this).exit_handler = ProcessExitHandler::default();
@@ -3391,7 +3378,7 @@ pub mod sync {
         unsafe {
             let p = &mut *(*this_ptr).process;
             p.ref_();
-            p.set_exit_handler_raw(this_ptr.cast(), SYNC_WINDOWS_EXIT_VTABLE);
+            p.set_exit_handler(this_ptr.cast(), &SYNC_WINDOWS_EXIT_VTABLE);
             p.enable_keeping_event_loop_alive();
         }
 

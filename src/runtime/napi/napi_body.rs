@@ -361,17 +361,17 @@ pub struct napi_value(i64);
 impl napi_value {
     pub fn set(&mut self, env: &NapiEnv, val: JSValue) {
         NapiHandleScope::append(env, val);
-        self.0 = val.encoded();
+        self.0 = val.encoded() as i64;
     }
 
     pub fn get(&self) -> JSValue {
-        // SAFETY: napi_value stores the same i64 encoding as JSValue.
-        unsafe { JSValue::from_encoded(self.0) }
+        // SAFETY: napi_value stores the same 64-bit encoding as JSValue.
+        unsafe { JSValue::from_encoded(self.0 as usize) }
     }
 
     pub fn create(env: &NapiEnv, val: JSValue) -> napi_value {
         NapiHandleScope::append(env, val);
-        napi_value(val.encoded())
+        napi_value(val.encoded() as i64)
     }
 }
 
@@ -625,7 +625,7 @@ pub extern "C" fn napi_create_array_with_length(
         0
     };
 
-    let array = match JSValue::create_empty_array(env.to_js(), len) {
+    let array = match JSValue::create_empty_array(env.to_js(), len as usize) {
         Ok(v) => v,
         Err(_) => return NapiEnv::set_last_error(Some(env), NapiStatus::pending_exception),
     };

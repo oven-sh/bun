@@ -423,8 +423,9 @@ pub extern "C" fn create_argv(global_object: *const JSGlobalObject) -> JSValue {
 pub extern "C" fn get_eval(global_object: *const JSGlobalObject) -> JSValue {
     // SAFETY: global_object is valid for the duration of this call
     let global_object = unsafe { &*global_object };
-    let vm = global_object.bun_vm();
-    if let Some(source) = vm.module_loader().eval_source() {
+    // SAFETY: `bun_vm()` returns the live per-thread VM for this global.
+    let vm = unsafe { &*global_object.bun_vm() };
+    if let Some(source) = vm.module_loader.eval_source.as_deref() {
         return ZigString::init(source.contents()).to_js(global_object);
     }
     JSValue::UNDEFINED
@@ -434,68 +435,59 @@ pub extern "C" fn get_eval(global_object: *const JSGlobalObject) -> JSValue {
 
 #[bun_jsc::host_fn]
 #[unsafe(export_name = "Bun__Process__getCwd")]
-pub fn get_cwd(global_object: &JSGlobalObject) -> JsResult<JSValue> {
+pub fn get_cwd(global_object: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let mut buf = PathBuffer::uninit();
     match crate::node::path::get_cwd(&mut buf) {
         bun_sys::Result::Ok(r) => Ok(ZigString::init(r).with_encoding().to_js(global_object)),
-        bun_sys::Result::Err(e) => global_object.throw_value(e.to_js(global_object)?),
+        bun_sys::Result::Err(e) => Err(global_object.throw_value(e.to_js(global_object))),
     }
 }
 
 #[bun_jsc::host_fn]
 #[unsafe(export_name = "Bun__Process__setCwd")]
-pub fn set_cwd(global_object: &JSGlobalObject, to: &ZigString) -> JsResult<JSValue> {
-    if to.len() == 0 {
-        return global_object
-            .throw_invalid_arguments("Expected path to be a non-empty string", format_args!(""));
+pub fn set_cwd(global_object: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    // Zig wraps via `host_fn.wrap2` which auto-coerces arg 0 → ZigString. The
+    // Rust `#[host_fn]` macro emits a fixed `(global, frame)` shim, so the
+    // ZigString extraction must happen here.
+    // TODO(port): JSValue→ZigString coercion lives in the gated wrapN surface;
+    // until that lands the body is unreachable.
+    let _ = frame;
+    todo!("blocked_on: bun_jsc::host_fn::wrap2 (JSValue → ZigString)");
+    #[allow(unreachable_code)]
+    let to: &ZigString = unreachable!();
+
+    if to.length() == 0 {
+        return Err(global_object
+            .throw_invalid_arguments("Expected path to be a non-empty string"));
     }
-    let vm = global_object.bun_vm();
-    let fs = vm.transpiler().fs();
 
     let mut buf = PathBuffer::uninit();
     let Ok(slice) = to.slice_z_buf(&mut buf) else {
-        return global_object.throw("Invalid path", format_args!(""));
+        return Err(global_object.throw("Invalid path"));
     };
 
-    match Syscall::chdir(fs.top_level_dir(), slice) {
+    match Syscall::chdir(slice) {
         bun_sys::Result::Ok(()) => {
             // When we update the cwd from JS, we have to update the bundler's version as well
             // However, this might be called many times in a row, so we use a pre-allocated buffer
             // that way we don't have to worry about garbage collector
-            let into_cwd_buf = match bun_sys::getcwd(&mut buf) {
-                bun_sys::Result::Ok(r) => r,
-                bun_sys::Result::Err(err) => {
-                    let _ = Syscall::chdir(fs.top_level_dir(), fs.top_level_dir());
-                    return global_object.throw_value(err.to_js(global_object)?);
-                }
-            };
-            // PORT NOTE: reshaped for borrowck — capture len before re-borrowing fs.top_level_dir_buf
-            let cwd_len = into_cwd_buf.len();
-            fs.top_level_dir_buf_mut()[0..cwd_len].copy_from_slice(into_cwd_buf);
-            fs.top_level_dir_buf_mut()[cwd_len] = 0;
-            // SAFETY: buf[cwd_len] == 0 written above
-            fs.set_top_level_dir(unsafe {
-                bun_str::ZStr::from_raw(fs.top_level_dir_buf().as_ptr(), cwd_len)
-            });
-
-            let len = fs.top_level_dir().len();
-            // Ensure the path ends with a slash
-            if fs.top_level_dir_buf()[len - 1] != SEP {
-                fs.top_level_dir_buf_mut()[len] = SEP;
-                fs.top_level_dir_buf_mut()[len + 1] = 0;
-                // SAFETY: buf[len + 1] == 0 written above
-                fs.set_top_level_dir(unsafe {
-                    bun_str::ZStr::from_raw(fs.top_level_dir_buf().as_ptr(), len + 1)
-                });
+            // TODO(port): Zig writes into `vm.transpiler.fs.top_level_dir_buf` and
+            // re-slices `top_level_dir`. The Rust `bun_resolver::fs::FileSystem`
+            // singleton has no `top_level_dir_buf` field yet (and `Transpiler`
+            // exposes no `.fs` accessor). Stub the bundler-cwd sync until those land.
+            todo!("blocked_on: bun_resolver::fs::FileSystem::top_level_dir_buf");
+            #[allow(unreachable_code)]
+            {
+                #[cfg(windows)]
+                let without_trailing_slash = strings::without_trailing_slash_windows_path;
+                #[cfg(not(windows))]
+                let without_trailing_slash = strings::without_trailing_slash;
+                let fs = bun_resolver::fs::FileSystem::instance();
+                let mut str_ = BunString::clone_utf8(without_trailing_slash(fs.top_level_dir));
+                str_.transfer_to_js(global_object)
             }
-            #[cfg(windows)]
-            let without_trailing_slash = strings::without_trailing_slash_windows_path;
-            #[cfg(not(windows))]
-            let without_trailing_slash = strings::without_trailing_slash;
-            let mut str_ = BunString::clone_utf8(without_trailing_slash(fs.top_level_dir()));
-            Ok(str_.transfer_to_js(global_object))
         }
-        bun_sys::Result::Err(e) => global_object.throw_value(e.to_js(global_object)?),
+        bun_sys::Result::Err(e) => Err(global_object.throw_value(e.to_js(global_object))),
     }
 }
 

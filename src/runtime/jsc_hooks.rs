@@ -1609,7 +1609,7 @@ fn transpile_source_code_inner(
                     let mut resolved_source = unsafe {
                         (*jsc_vm).ref_counted_resolved_source::<false>(
                             printer.ctx.get_written(),
-                            input_specifier,
+                            input_specifier.dupe_ref(),
                             path.text,
                             None,
                         )

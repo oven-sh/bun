@@ -412,8 +412,7 @@ fn parse_option_definitions(
         option.r#type = validators::validate_string_enum::<OptionValueType>(
             global,
             option_type,
-            "options.{}.type",
-            format_args!("{}", option.long_name),
+            format_args!("options.{}.type", option.long_name),
         )?;
 
         if let Some(short_option) = obj.get_own(global, "short")? {

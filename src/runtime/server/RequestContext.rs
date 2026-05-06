@@ -138,7 +138,7 @@ pub struct RequestContext<ThisServer, const SSL_ENABLED: bool, const DEBUG_MODE:
     // is opaque/Copy; revisit once bun_jsc::AbortSignal is real.
     pub signal: Option<Arc<AbortSignal>>,
     pub method: Method,
-    pub cookies: Option<Rc<CookieMap>>,
+    pub cookies: Option<*mut CookieMap>,
 
     pub flags: Flags<DEBUG_MODE>,
 

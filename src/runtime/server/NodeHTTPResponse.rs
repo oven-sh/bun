@@ -374,7 +374,7 @@ impl NodeHTTPResponse {
         }
         let raw = self.raw_response.as_ref().unwrap();
         // SAFETY: raw_response is Some (checked above) and socket() returns a live uSockets handle.
-        unsafe { Bun__getNodeHTTPResponseThisValue(raw.is_ssl(), raw.socket()) }
+        unsafe { Bun__getNodeHTTPResponseThisValue(any_response_is_ssl(raw), raw.socket().cast()) }
     }
 
     pub fn get_server_socket_value(&self) -> JSValue {

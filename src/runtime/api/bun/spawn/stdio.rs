@@ -498,7 +498,8 @@ impl Stdio {
             }
 
             if file_fd >= i32::MAX as _ {
-                let mut formatter = jsc::console_object::Formatter { global, ..Default::default() };
+                use crate::test_runner::expect::JSValueTestExt as _;
+                let mut formatter = jsc::console_object::Formatter { global_this: global, ..Default::default() };
                 // `defer formatter.deinit()` — handled by Drop.
                 return Err(global.throw_invalid_arguments(format_args!(
                     "file descriptor must be a valid integer, received: {}",
@@ -537,8 +538,10 @@ impl Stdio {
 
             *out_stdio = Stdio::Fd(fd);
             return Ok(());
-        } else if let Some(blob) = value.as_::<jsc::webcore::Blob>() {
-            return out_stdio.extract_blob(global, webcore::blob::Any::Blob(blob.dupe()), i);
+        } else if let Some(blob) = value.as_::<webcore::Blob>() {
+            // SAFETY: `as_` returns a live JSC-owned `*mut Blob` (the wrapper's
+            // m_ctx); deref to call `dupe()`, which only bumps the store refcount.
+            return out_stdio.extract_blob(global, webcore::blob::Any::Blob(unsafe { (*blob).dupe() }), i);
         } else if let Some(req) = value.as_::<webcore::Request>() {
             // SAFETY: `as_` returns a live `*mut Request` owned by the JS wrapper.
             return Self::extract_body_value(out_stdio, global, i, unsafe { (*req).get_body_value() }, is_sync);

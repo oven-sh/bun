@@ -178,7 +178,8 @@ impl FileResponseStream {
                 this.reader.flags.insert(PosixFlags::SOCKET);
             }
         }
-        this.reader.set_parent(this as *mut FileResponseStream as *mut c_void);
+        let this_parent = this as *mut FileResponseStream as *mut c_void;
+        this.reader.set_parent(this_parent);
 
         this.r#ref();
         let this_ptr: *mut FileResponseStream = this;
@@ -514,7 +515,7 @@ impl FileResponseStream {
     pub fn event_loop(&self) -> EventLoopHandle {
         // SAFETY: `vm` is `&'static VirtualMachine` (LIFETIMES.tsv); event_loop()
         // returns a `*mut EventLoop` we reborrow as `&EventLoop` for the handle.
-        EventLoopHandle::init(unsafe { &*(*self.vm).event_loop() })
+        EventLoopHandle::init(unsafe { (*self.vm).event_loop() } as *mut ())
     }
 
     pub fn r#loop(&self) -> *mut aio::Loop {

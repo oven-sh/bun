@@ -4121,7 +4121,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 
     pub fn on_client_error_callback(&mut self, socket: &mut uws::Socket, error_code: u8, raw_packet: &[u8]) {
-        let callback = self.on_clienterror.get();
+        let Some(callback) = self.on_clienterror.get() else { return };
         {
             let is_ssl = SSL;
             let global = unsafe { &*self.global_this };

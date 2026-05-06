@@ -5334,6 +5334,16 @@ pub enum Any {
 }
 
 impl Any {
+    /// Unwrap the `InternalBlob` payload. Panics on any other variant — callers
+    /// (e.g. DevServer asset bundling) only invoke this on values they
+    /// constructed via `from_owned_slice`.
+    pub fn internal_blob(&self) -> &Internal {
+        match self {
+            Any::InternalBlob(ib) => ib,
+            _ => unreachable!("Any::internal_blob called on non-InternalBlob variant"),
+        }
+    }
+
     pub fn from_owned_slice(bytes: Vec<u8>) -> Any {
         Any::InternalBlob(Internal { bytes, was_string: false })
     }

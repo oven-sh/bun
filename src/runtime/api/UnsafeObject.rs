@@ -31,7 +31,7 @@ pub fn gc_aggression_level(
     // SAFETY: `bun_vm()` returns a non-null `*mut VirtualMachine` for a Bun-owned global;
     // we hold no other Rust borrow of the VM across these accesses.
     let vm = unsafe { &mut *global.bun_vm() };
-    let ret = JSValue::js_number(vm.aggressive_garbage_collection as i32);
+    let ret = JSValue::js_number(vm.aggressive_garbage_collection as i32 as f64);
     let value = frame.arguments_old::<1>().ptr[0];
 
     if !value.is_empty_or_undefined_or_null() {

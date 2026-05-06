@@ -689,7 +689,6 @@ pub enum Translate {
     },
 }
 
-#[cfg(any())] // blocked_on: LengthPercentage/Length::{parse,to_css,is_zero}
 impl Translate {
     pub fn parse(input: &mut Parser) -> Result<Self> {
         if input
@@ -776,7 +775,6 @@ pub struct Rotate {
     pub angle: Angle,
 }
 
-#[cfg(any())] // blocked_on: Angle::{parse,to_css} + CSSNumberFns
 impl Rotate {
     pub fn parse(input: &mut Parser) -> Result<Self> {
         if input
@@ -809,7 +807,9 @@ impl Rotate {
             } else if strings::eql_case_insensitive_ascii_check_length(ident, b"z") {
                 return Ok(Xyz { x: 0.0, y: 0.0, z: 1.0 });
             }
-            Err(location.new_unexpected_token_error(Token::Ident(ident)))
+            Err(location.new_unexpected_token_error(Token::Ident(unsafe {
+                crate::css_parser::src_str(ident)
+            })))
         }) {
             Ok(v) => v,
             Err(_) => input
@@ -898,7 +898,6 @@ pub enum Scale {
     },
 }
 
-#[cfg(any())] // blocked_on: NumberOrPercentage::{parse,to_css}
 impl Scale {
     pub fn parse(input: &mut Parser) -> Result<Self> {
         if input

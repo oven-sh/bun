@@ -725,6 +725,13 @@ impl Tag {
         ];
         NAMES.get(self.0 as usize).copied().unwrap_or("unknown")
     }
+
+    /// sys.zig:327-329 — `Tag.isWindows`: tags strictly above `WriteFile`
+    /// belong to the Windows-only block.
+    #[inline]
+    pub const fn is_windows(self) -> bool {
+        self.0 > Self::WriteFile.0
+    }
 }
 impl From<Tag> for &'static str {
     #[inline] fn from(t: Tag) -> &'static str { t.name() }

@@ -55,13 +55,13 @@ pub fn derive_deep_clone(input: TokenStream) -> TokenStream {
 // Zig's `implementEql` / `implementHash` use `@typeInfo(T)` to walk struct
 // fields or `union(enum)` variants and recurse via `eql(field.type, …)` /
 // `hash(field.type, …)`, which in turn dispatch to `T.eql` / `T.hash` if the
-// type `@hasDecl`s one. `CssEql` keeps method-syntax dispatch (no conflicting
-// inherents exist — `BabyList::eql`/`SmallList::eql` are associated fns, not
-// `&self` methods, so the trait resolves). `CssHash` uses **UFCS** trait
-// dispatch (`CssHash::hash(&field, hasher)`) so an unrelated inherent
-// `fn hash` on a container type cannot shadow the blanket trait impl — Rust's
-// method probe picks inherents by name only and does NOT fall through on
-// signature mismatch.
+// type `@hasDecl`s one. The derives below preserve that two-level dispatch by
+// emitting **method-syntax** calls (`field.eql(other)`, `field.hash(hasher)`)
+// with the trait brought into scope inside the body — so a field type may
+// satisfy the recursion either with a *signature-matching* inherent
+// `pub fn eql/hash` *or* a `CssEql`/`CssHash` impl. See the CAVEAT in the
+// crate-level doc: an inherent with a *different* signature shadows the trait
+// and is a hard error — rename such inherents rather than expecting fallthrough.
 //
 // Unions: Zig prefixes the hash with `bun.writeAnyToHasher(@intFromEnum(this))`.
 // The derive feeds the variant index as a `u32` (CSS hashing is in-process

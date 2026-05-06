@@ -1273,18 +1273,23 @@ pub mod fs {
             err: bun_core::Error,
         ) -> core::result::Result<&'static mut EntriesOption, bun_core::Error> {
             if bun_core::FeatureFlags::ENABLE_ENTRY_CACHE {
-                let mut get_or_put_result = self.entries.get_or_put(dir)?;
+                // SAFETY: `&mut self` ensures no aliased `EntriesMap` access in this scope.
+                let mut get_or_put_result = unsafe { self.entries.get_or_put(dir) }?;
                 if err == bun_core::err!("ENOENT") || err == bun_core::err!("FileNotFound") {
-                    self.entries.mark_not_found(get_or_put_result);
+                    // SAFETY: see above.
+                    unsafe { self.entries.mark_not_found(get_or_put_result) };
                     return Ok(temp_entries_option_write(EntriesOption::Err(dir_entry::Err {
                         original_err: err,
                         canonical_error: err,
                     })));
                 } else {
-                    let opt = self.entries.put(
-                        &mut get_or_put_result,
-                        EntriesOption::Err(dir_entry::Err { original_err: err, canonical_error: err }),
-                    )?;
+                    // SAFETY: see above — sole `&mut` to the slot.
+                    let opt = unsafe {
+                        self.entries.put(
+                            &mut get_or_put_result,
+                            EntriesOption::Err(dir_entry::Err { original_err: err, canonical_error: err }),
+                        )
+                    }?;
                     // SAFETY: BSSMap-owned slot; outlives caller (process-static singleton).
                     return Ok(unsafe { &mut *opt });
                 }
@@ -1347,11 +1352,13 @@ pub mod fs {
             let mut in_place: Option<*mut DirEntry> = None;
 
             if bun_core::FeatureFlags::ENABLE_ENTRY_CACHE {
-                cache_result = Some(self.entries.get_or_put(dir)?);
+                // SAFETY: `entries_mutex` is held; no aliased map access in this scope.
+                cache_result = Some(unsafe { self.entries.get_or_put(dir) }?);
 
                 let cr = cache_result.as_ref().unwrap();
                 if cr.has_checked_if_exists() {
-                    if let Some(cached_result) = self.entries.at_index(cr.index) {
+                    // SAFETY: `entries_mutex` is held; sole `&mut` to this slot.
+                    if let Some(cached_result) = unsafe { self.entries.at_index(cr.index) } {
                         // PORT NOTE: erase to raw immediately so the early-return reborrow
                         // doesn't conflict with the `&mut self.entries` borrow above.
                         let cached_ptr = cached_result as *mut EntriesOption;

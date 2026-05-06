@@ -1607,6 +1607,40 @@ pub struct InternalJSEventCallback {
     pub function: jsc::strong::Optional, // jsc.Strong.Optional → bun_jsc::Strong
 }
 
+/// Re-export of `NodeHTTPResponse.AbortEvent` (Zig: `pub const EventType =
+/// jsc.API.NodeHTTPResponse.AbortEvent`).
+pub type EventType = crate::server::node_http_response::AbortEvent;
+
+impl InternalJSEventCallback {
+    pub fn init(function: JSValue, global_this: &JSGlobalObject) -> InternalJSEventCallback {
+        InternalJSEventCallback {
+            function: jsc::strong::Optional::create(function, global_this),
+        }
+    }
+
+    pub fn has_callback(&self) -> bool {
+        self.function.has()
+    }
+
+    pub fn deinit(&mut self) {
+        self.function.deinit();
+    }
+
+    pub fn trigger(&mut self, event_type: EventType, global_this: &JSGlobalObject) -> bool {
+        if let Some(callback) = self.function.get() {
+            let _ = callback
+                .call(
+                    global_this,
+                    JSValue::UNDEFINED,
+                    &[JSValue::js_number(event_type as i32 as f64)],
+                )
+                .map_err(|err| global_this.report_active_exception_as_unhandled(err));
+            return true;
+        }
+        false
+    }
+}
+
 impl Request {
     pub fn init(
         method: Method,

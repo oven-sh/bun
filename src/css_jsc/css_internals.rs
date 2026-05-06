@@ -60,20 +60,6 @@ pub fn _test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     testing_impl(global, frame, TestKind::Normal, TestCategory::Normal)
 }
 
-// blocked_on: bun_css::stylesheet_impl (StyleSheet::parse/minify/to_css are
-// ``-gated). Un-gate together with `src/css/css_parser.rs`
-// `mod stylesheet_impl`.
-#[cfg(any())]
-pub fn testing_impl(
-    _global: &JSGlobalObject,
-    _frame: &CallFrame,
-    _test_kind: TestKind,
-    _test_category: TestCategory,
-) -> JsResult<JSValue> {
-    todo!("b2-blocked: css_internals::testing_impl — gated on bun_css::stylesheet_impl")
-}
-
-
 pub fn testing_impl(
     global: &JSGlobalObject,
     frame: &CallFrame,

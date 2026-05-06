@@ -8,11 +8,10 @@
 // still does not build (transitive deps `bun_css`/`bun_sourcemap`/`bun_aio`
 // fail), so this crate cannot `use bun_jsc::*` directly. Instead, the JSC
 // opaque handle types AND the method surface the bodies need are shimmed
-// locally below; modules import them from `crate::`. Every shim method is
-// `todo!()` and tagged `// TODO(b2-blocked): bun_jsc::Symbol` — the *bodies*
-// in the modules are now real and type-checked against signatures that mirror
-// `bun_jsc`'s actual API (verified against `src/jsc/{lib,JSGlobalObject,
-// CallFrame,VM,SystemError}.rs`).
+// locally below; modules import them from `crate::`. Every shim method body
+// is a REAL port of the corresponding `src/jsc/*.zig` logic, calling the
+// same `extern "C"` symbols `bun_jsc` would (verified against
+// `src/jsc/{JSValue,JSGlobalObject,CallFrame,VM,JSString,SystemError}.rs`).
 //
 // Once `bun_jsc` is green, replace the entire shim block with
 // `pub use bun_jsc::{JSValue, JSGlobalObject, JSPromise, JSString, CallFrame,

@@ -1322,11 +1322,11 @@ impl Blob {
             // normal zero-sized blob instead of calling it "detached".
             if self.size > 0 {
                 if self.is_jsdom_file {
-                    writer.write_str(Output::pretty_fmt::<ENABLE_ANSI_COLORS>(
+                    write!(writer, "{}", Output::pretty_fmt::<ENABLE_ANSI_COLORS>(
                         "<d>[<r>File<r> detached<d>]<r>",
                     ))?;
                 } else {
-                    writer.write_str(Output::pretty_fmt::<ENABLE_ANSI_COLORS>(
+                    write!(writer, "{}", Output::pretty_fmt::<ENABLE_ANSI_COLORS>(
                         "<d>[<r>Blob<r> detached<d>]<r>",
                     ))?;
                 }
@@ -1334,21 +1334,24 @@ impl Blob {
             }
             write_format_for_size::<W, ENABLE_ANSI_COLORS>(self.is_jsdom_file, 0, writer)?;
         } else {
+            let content_type = self.content_type_slice();
+            let offset = self.offset;
             let store = self.store.as_ref().unwrap();
-            match &store.data {
+            match store.data_mut() {
                 store::Data::S3(s3) => {
                     S3File::write_format::<F, W, ENABLE_ANSI_COLORS>(
-                        s3, formatter, writer, self.content_type_slice(), self.offset,
-                    )?;
+                        s3, formatter, writer, content_type, offset as usize,
+                    )
+                    .map_err(|_| core::fmt::Error)?;
                 }
                 store::Data::File(file) => {
-                    writer.write_str(Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>FileRef<r>"))?;
+                    write!(writer, "{}", Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>FileRef<r>"))?;
                     match &file.pathlike {
-                        node::PathLike::Path(path) => {
+                        PathOrFileDescriptor::Path(path) => {
                             // TODO(port): Output::pretty_fmt with embedded {s}
                             write!(writer, " (\"{}\")", bstr::BStr::new(path.slice()))?;
                         }
-                        node::PathLike::Fd(fd) => {
+                        PathOrFileDescriptor::Fd(fd) => {
                             #[cfg(windows)]
                             match fd.decode_windows() {
                                 bun_sys::WindowsFd::Uv(uv_file) => {
@@ -1454,11 +1457,11 @@ pub fn mkdir_if_not_exists<T: MkdirpTarget>(
     path_string: &bun_str::ZStr,
     err_path: &[u8],
 ) -> Retry {
-    if err.get_errno() == bun_sys::E::NOENT && this.mkdirp_if_not_exists() {
+    if err.get_errno() == bun_sys::E::ENOENT && this.mkdirp_if_not_exists() {
         // Zig: `std.fs.path.dirname(path_string)` → `bun_core::dirname` (Option-returning).
         if let Some(dirname) = bun_core::dirname(path_string.as_bytes()) {
             let mut node_fs = node::fs::NodeFS::default();
-            match node_fs.mkdir_recursive(node::fs::args::Mkdir {
+            match node_fs.mkdir_recursive(&node::fs::args::Mkdir {
                 path: node::PathLike::String(bun_str::PathString::init(dirname)),
                 recursive: true,
                 always_return_none: true,
@@ -1469,7 +1472,7 @@ pub fn mkdir_if_not_exists<T: MkdirpTarget>(
                     return Retry::Continue;
                 }
                 bun_sys::Result::Err(err2) => {
-                    this.set_errno_if_present(bun_core::errno_to_zig_err(err2.errno));
+                    this.set_errno_if_present(bun_core::errno_to_zig_err(err2.errno as i32));
                     this.set_system_error(err.with_path(err_path).to_system_error());
                     this.set_opened_fd_if_present(Fd::INVALID);
                     return Retry::Fail;

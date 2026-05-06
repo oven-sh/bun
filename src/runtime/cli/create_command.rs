@@ -2282,7 +2282,8 @@ impl Example {
         progress.name = b"Fetching package.json";
         refresher.refresh();
 
-        let mut url_buf = [0u8; 1024];
+        // SAFETY: single-threaded CLI access to static buffer.
+        let url_buf = unsafe { &mut NPM_REGISTRY_URL_BUF };
         let mutable = Box::leak(Box::new(MutableString::init(2048)?));
 
         // SAFETY: single-threaded CLI access to static URL_
@@ -2300,8 +2301,12 @@ impl Example {
             }));
         }
 
-        // SAFETY: single-threaded CLI access to static URL_ (set just above)
-        let mut http_proxy: Option<URL> = env_loader.get_http_proxy_for(unsafe { URL_.as_ref().unwrap() });
+        // SAFETY: `http_proxy` borrows from `env_loader`'s leaked map (see
+        // `DotEnv::Loader::init(Box::leak(map))` in `exec`); erase to `'static`
+        // for `AsyncHTTP::init_sync` — same as `fetch_from_github` above.
+        let mut http_proxy: Option<URL<'static>> = env_loader
+            .get_http_proxy_for(unsafe { URL_.as_ref().unwrap() })
+            .map(|u| unsafe { core::mem::transmute::<URL<'_>, URL<'static>>(u) });
 
         // ensure very stable memory address
         let async_http: &mut HTTP::AsyncHTTP = Box::leak(Box::new(HTTP::AsyncHTTP::init_sync(
@@ -2400,7 +2405,10 @@ impl Example {
         // ensure very stable memory address
         let parsed_tarball_url = URL::parse(tarball_url);
 
-        http_proxy = env_loader.get_http_proxy_for(&parsed_tarball_url);
+        // SAFETY: see note on `http_proxy` above — env-loader-backed `'static`.
+        http_proxy = env_loader
+            .get_http_proxy_for(&parsed_tarball_url)
+            .map(|u| unsafe { core::mem::transmute::<URL<'_>, URL<'static>>(u) });
 
         *async_http = HTTP::AsyncHTTP::init_sync(
             HTTP::Method::GET,
@@ -2448,8 +2456,12 @@ impl Example {
             URL_ = Some(URL::parse(Self::EXAMPLES_URL));
         }
 
-        // SAFETY: single-threaded CLI access to static URL_ (set just above)
-        let http_proxy: Option<URL> = env_loader.get_http_proxy_for(unsafe { URL_.as_ref().unwrap() });
+        // SAFETY: single-threaded CLI access to static URL_ (set just above);
+        // proxy URL borrows from the env loader's leaked map — erase to
+        // `'static` for `AsyncHTTP::init_sync` (same as `fetch_from_github`).
+        let http_proxy: Option<URL<'static>> = env_loader
+            .get_http_proxy_for(unsafe { URL_.as_ref().unwrap() })
+            .map(|u| unsafe { core::mem::transmute::<URL<'_>, URL<'static>>(u) });
 
         let mutable = Box::leak(Box::new(MutableString::init(2048)?));
 

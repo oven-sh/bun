@@ -6,10 +6,33 @@
 
 use bun_collections::ArrayHashMap;
 use bun_jsc::ipc::{IsInternal, SerializeAndSendResult};
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc, StrongOptional};
+use bun_jsc::{CallFrame, ErrorCode, JSGlobalObject, JSValue, JsError, JsResult, StringJsc, StrongOptional};
 use bun_str::String as BunString;
 
 use crate::api::bun::subprocess::Subprocess;
+
+// ──────────────────────────────────────────────────────────────────────────
+// Local shim — `throw_missing_arguments_value` lives in the gated
+// `bun_jsc/JSGlobalObject.rs` impl, not on the `lib.rs` surface this crate
+// links against. Re-implement the single-arg case (only shape used here)
+// against the public `err()`/`throw()` API.
+// TODO(port): drop once `bun_jsc::JSGlobalObject` un-gates this.
+// ──────────────────────────────────────────────────────────────────────────
+trait JSGlobalObjectClusterExt {
+    fn throw_missing_arguments_value(&self, arg_names: &[&str]) -> JsError;
+}
+
+impl JSGlobalObjectClusterExt for JSGlobalObject {
+    #[inline]
+    fn throw_missing_arguments_value(&self, arg_names: &[&str]) -> JsError {
+        debug_assert_eq!(arg_names.len(), 1);
+        self.err(
+            ErrorCode::MISSING_ARGS,
+            format_args!("The \"{}\" argument must be specified", arg_names[0]),
+        )
+        .throw()
+    }
+}
 
 bun_output::declare_scope!(IPC, visible);
 
@@ -63,7 +86,7 @@ pub fn send_helper_child(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
         return Err(global.throw("passing 'handle' not implemented yet"));
     }
     if !message.is_object() {
-        return Err(global.throw_invalid_argument_type_value(b"message", b"object", message));
+        return Err(global.throw_invalid_argument_type_value("message", "object", message));
     }
     let singleton = child_singleton();
     if callback.is_function() {

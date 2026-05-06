@@ -553,7 +553,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
             cfg!(feature = "bake_debugging_features")
                 && options
                     .dump_state_on_crash
-                    .unwrap_or_else(|| bun_core::env_var::feature_flag::BUN_DUMP_STATE_ON_CRASH.get())
+                    .unwrap_or_else(|| bun_core::env_var::feature_flag::BUN_DUMP_STATE_ON_CRASH.get().unwrap_or(false))
         );
         // `dev.frontend_only = dev.framework.file_system_router_types.len == 0`
         w!(
@@ -562,8 +562,8 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
                 .file_system_router_types
                 .is_empty()
         );
-        w!(client_graph, IncrementalGraph::EMPTY);
-        w!(server_graph, IncrementalGraph::EMPTY);
+        w!(client_graph, IncrementalGraph::default());
+        w!(server_graph, IncrementalGraph::default());
         w!(barrel_files_with_deferrals, Default::default());
         w!(barrel_needed_exports, Default::default());
         w!(incremental_result, IncrementalResult::EMPTY);
@@ -581,16 +581,19 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
                 promise: DeferredPromise::default(),
             }
         );
-        w!(inspector_server_id, DebuggerId::init(0)); // TODO paper clover:
+        w!(inspector_server_id, DebuggerId::new(0)); // TODO paper clover:
         w!(
             assets,
             Assets {
                 path_map: Default::default(),
                 files: Default::default(),
                 refs: Default::default(),
+                needs_reindex: false,
             }
         );
         w!(source_maps, SourceMapStore::EMPTY);
+        // TODO(port): blocked_on: SourceMapStore::EMPTY const — needs Default
+        // for inner LinearFifo/EventLoopTimer; see source_map_store.rs
         w!(plugin_state, PluginState::Unknown);
         w!(bundling_failures, Default::default());
         w!(
@@ -621,7 +624,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
                 routes: Vec::new(),
                 static_routes: Default::default(),
                 dynamic_routes: Default::default(),
-                pattern_string_arena: Arena::new(),
+                pattern_arena: Arena::new(),
             }
         );
     }

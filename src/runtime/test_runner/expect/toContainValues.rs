@@ -69,20 +69,23 @@ impl Expect {
         }
 
         // handle failure
-        // TODO(port): Formatter struct-init shape — confirm field names / Default impl in bun_jsc.
+        // PORT NOTE: reshaped for borrowck — `to_fmt` returns an adapter holding `&mut Formatter`,
+        // so two live adapters cannot alias one backing formatter. Use a second formatter for the
+        // received value (`make_formatter` is a trivial struct init with no shared state between values).
         let mut formatter = super::make_formatter(global);
+        let mut formatter2 = super::make_formatter(global);
         // `defer formatter.deinit()` → dropped; Formatter impls Drop.
-        let value_fmt = value.to_fmt(&mut formatter);
         let expected_fmt = expected.to_fmt(&mut formatter);
+        let value_fmt = value.to_fmt(&mut formatter2);
         if not {
-            let received_fmt = value.to_fmt(&mut formatter);
+            // Zig's `received_fmt` is `value.toFmt(&formatter)` — identical to `value_fmt`.
             const EXPECTED_LINE: &str = "Expected to not contain: <green>{}<r>\nReceived: <red>{}<r>\n";
             const FMT: &str = concat!("\n\n", "Expected to not contain: <green>{}<r>\nReceived: <red>{}<r>\n");
             let _ = EXPECTED_LINE;
             return this.throw(
                 global,
                 Expect::get_signature("toContainValues", "<green>expected<r>", true),
-                format_args!("\n\nExpected to not contain: <green>{}<r>\nReceived: <red>{}<r>\n", expected_fmt, received_fmt),
+                format_args!("\n\nExpected to not contain: <green>{}<r>\nReceived: <red>{}<r>\n", expected_fmt, value_fmt),
             );
             // PORT NOTE: Zig used `comptime` string concat (`++`) for FMT; Rust `format_args!`
             // requires a single literal, so the pieces are inlined above. `FMT` kept for diff parity.

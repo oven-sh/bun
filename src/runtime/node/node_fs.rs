@@ -2017,11 +2017,17 @@ impl AsyncReaddirRecursiveTask {
     pub fn perform_work(&mut self, basename: &ZStr, buf: &mut PathBuffer, is_root: bool) {
         // PERF(port): was comptime monomorphization on tag — runtime match here
         // PERF(port): was stack-fallback alloc (8192) for entries
+        // SAFETY: `readdir_with_entries_recursive_async` takes `args` and
+        // `async_task` separately even though `args == &async_task.args`. The
+        // callee never mutates `args` (only `async_task.{root_fd, enqueue}`),
+        // so erase the field borrow through a raw pointer to satisfy borrowck —
+        // mirrors the Zig spec, which passed both freely.
+        let args_ptr: *const args::Readdir = &self.args;
         macro_rules! impl_tag {
             ($T:ty, $variant:ident) => {{
                 let mut entries: Vec<$T> = Vec::new();
                 let res = NodeFS::readdir_with_entries_recursive_async::<$T>(
-                    buf, &self.args, self, basename, &mut entries, is_root,
+                    buf, unsafe { &*args_ptr }, self, basename, &mut entries, is_root,
                 );
                 match res {
                     Maybe::Err(err) => {

@@ -741,7 +741,7 @@ impl Writable {
                         event_loop,
                         subprocess,
                         result,
-                        StaticPipeWriter::Source::Blob(blob),
+                        JscSubprocess::Source::Blob(blob),
                     )));
                 }
                 Stdio::ArrayBuffer(array_buffer) => {
@@ -749,7 +749,7 @@ impl Writable {
                         event_loop,
                         subprocess,
                         result,
-                        StaticPipeWriter::Source::ArrayBuffer(array_buffer),
+                        JscSubprocess::Source::ArrayBuffer(array_buffer),
                     )));
                 }
                 Stdio::Fd(fd) => {
@@ -764,7 +764,7 @@ impl Writable {
                 Stdio::Memfd(_) | Stdio::Path(_) | Stdio::Ignore => {
                     return Ok(Writable::Ignore);
                 }
-                Stdio::Ipc(_) | Stdio::Capture(_) => {
+                Stdio::Ipc | Stdio::Capture(_) => {
                     return Ok(Writable::Ignore);
                 }
             }
@@ -968,7 +968,7 @@ impl Readable {
         {
             return match stdio {
                 Stdio::Inherit => Readable::Inherit,
-                Stdio::Ipc(_) | Stdio::Dup2(_) | Stdio::Ignore => Readable::Ignore,
+                Stdio::Ipc | Stdio::Dup2(_) | Stdio::Ignore => Readable::Ignore,
                 Stdio::Path(_) => Readable::Ignore,
                 Stdio::Fd(fd) => Readable::Fd(fd),
                 // blobs are immutable, so we should only ever get the case

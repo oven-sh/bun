@@ -342,7 +342,10 @@ use crate::webcore::s3_file as S3File;
 use crate::webcore::s3::client as s3_client;
 use crate::webcore::s3::simple_request::S3UploadResult;
 use crate::api::archive::Archive;
-use super::write_file::WriteFileWaitFromLockedValueTask;
+// `write_file` (module) is shadowed inside this scope by `pub fn write_file`;
+// alias the module so `write_file_mod::WriteFile{,Task,Windows,Promise}` resolve.
+use super::write_file as write_file_mod;
+use super::write_file::{WriteFilePromise, WriteFileWaitFromLockedValueTask};
 
 impl Blob {
     pub fn do_read_from_s3<F>(&mut self, global: &JSGlobalObject) -> jsc::JsTerminatedResult<JSValue>
@@ -1360,7 +1363,8 @@ fn write_file_with_empty_source_to_destination(
                                 if options.mkdirp_if_not_exists == Some(false) { break 'err; }
                                 let dirpath: &[u8] = match &file.pathlike {
                                     node::PathLike::Path(path) => {
-                                        match bun_paths::dirname(path.slice(), bun_paths::Platform::Auto) {
+                                        // Zig: `std.fs.path.dirname` — Option-returning.
+                                        match bun_core::dirname(path.slice()) {
                                             Some(d) => d,
                                             None => break 'err,
                                         }
@@ -1374,8 +1378,8 @@ fn write_file_with_empty_source_to_destination(
                                         break 'err;
                                     }
                                 };
-                                let mkdir_result = node_fs.mkdir_recursive(node::fs::MkdirArgs {
-                                    path: node::PathLike::String(bun_str::PathString::init_borrowed(dirpath)),
+                                let mkdir_result = node_fs.mkdir_recursive(node::fs::args::Mkdir {
+                                    path: node::PathLike::String(bun_str::PathString::init(dirpath)),
                                     recursive: true,
                                     always_return_none: true,
                                     ..Default::default()

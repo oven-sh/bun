@@ -781,10 +781,6 @@ pub fn renegotiate(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame)
     Ok(JSValue::UNDEFINED)
 }
 
-// `#[bun_jsc::host_fn(method)]` expands to a shim referencing `Self`, so these
-// must live inside an inherent impl block even though the Zig source defines
-// them as free mixin functions.
-impl This {
 pub fn disable_renegotiation(this: &mut This, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let Some(ssl_ptr) = this.socket.ssl() else { return Ok(JSValue::UNDEFINED) };
     // SAFETY: ssl_ptr is a live *mut SSL returned by this.socket.ssl().

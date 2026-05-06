@@ -13,6 +13,7 @@ use bun_http_types::FetchRedirect::FetchRedirect;
 use bun_http_types::FetchRequestMode::FetchRequestMode;
 use bun_http_types::Method::Method;
 use crate::webcore::jsc::codegen::JSRequest as js;
+use bun_jsc::generated::JSRequest as js_gen;
 use crate::webcore::jsc::{
     self as jsc, CallFrame, HTTPHeaderName, JSGlobalObject, JSValue, JsError, JsRef, JsResult,
     Strong, URL,
@@ -97,7 +98,7 @@ impl Request {
 
 impl crate::webcore::body::BodyOwnerJs for Request {
     fn body_get_cached(this_value: JSValue) -> Option<JSValue> {
-        js::body_get_cached(this_value)
+        js_gen::body_get_cached(this_value)
     }
 }
 

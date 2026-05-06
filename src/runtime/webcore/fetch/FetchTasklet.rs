@@ -663,7 +663,7 @@ impl FetchTasklet {
         }
 
         impl Holder {
-            fn resolve(self_: *mut Holder) -> bun_jsc::JsTerminatedResult<()> {
+            fn resolve(self_: *mut Holder) -> JsTerminatedResult<()> {
                 // SAFETY: allocated via Box::into_raw below; consumed once
                 let mut self_ = unsafe { Box::from_raw(self_) };
                 // resolve the promise
@@ -677,7 +677,7 @@ impl FetchTasklet {
                 r
             }
 
-            fn reject(self_: *mut Holder) -> bun_jsc::JsTerminatedResult<()> {
+            fn reject(self_: *mut Holder) -> JsTerminatedResult<()> {
                 // SAFETY: allocated via Box::into_raw below; consumed once
                 let mut self_ = unsafe { Box::from_raw(self_) };
                 // reject the promise
@@ -692,6 +692,16 @@ impl FetchTasklet {
             }
         }
 
+        // PORT NOTE: Zig `AnyTask.New(Holder, cb)` monomorphized a `*anyopaque -> void` shim
+        // per (Type, Callback). Rust `AnyTask` stores `fn(*mut c_void) -> JsResult<()>`; write
+        // the type-erased shims by hand and convert `JsTerminated` → `JsError` via `From`.
+        fn resolve_erased(p: *mut c_void) -> JsResult<()> {
+            Holder::resolve(p as *mut Holder).map_err(Into::into)
+        }
+        fn reject_erased(p: *mut c_void) -> JsResult<()> {
+            Holder::reject(p as *mut Holder).map_err(Into::into)
+        }
+
         let holder = Box::into_raw(Box::new(Holder {
             held: result,
             // we need the promise to be alive until the task is done
@@ -701,10 +711,9 @@ impl FetchTasklet {
         }));
         // SAFETY: holder is valid until consumed by resolve/reject
         unsafe {
-            (*holder).task = if success {
-                AnyTask::new::<Holder>(Holder::resolve, holder)
-            } else {
-                AnyTask::new::<Holder>(Holder::reject, holder)
+            (*holder).task = AnyTask {
+                ctx: core::ptr::NonNull::new(holder as *mut c_void),
+                callback: if success { resolve_erased } else { reject_erased },
             };
             vm.enqueue_task(Task::init(&mut (*holder).task));
         }
@@ -721,9 +730,14 @@ impl FetchTasklet {
                 let cert = &certificate_info.cert;
                 let mut cert_ptr = cert.as_ptr();
                 // SAFETY: cert is a valid DER buffer; d2i_X509 reads up to cert.len() bytes
-                if let Some(x509) = unsafe {
-                    boringssl::d2i_X509(core::ptr::null_mut(), &mut cert_ptr, i64::try_from(cert.len()).unwrap())
-                } {
+                let x509 = unsafe {
+                    d2i_X509(
+                        core::ptr::null_mut(),
+                        &mut cert_ptr,
+                        core::ffi::c_long::try_from(cert.len()).unwrap(),
+                    )
+                };
+                if !x509.is_null() {
                     let global_object = self.global_this;
                     let _x509_guard = scopeguard::guard(x509, |x| x.free());
                     let js_cert = match X509::to_js(x509, global_object) {

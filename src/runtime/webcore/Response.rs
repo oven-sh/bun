@@ -205,25 +205,14 @@ impl crate::webcore::body::BodyOwnerJs for Response {
 // returns `None`; without this override the `@hasDecl(Type, "getBodyReadableStream")`
 // paths in Body.zig are silently dead.
 
-impl BodyMixin for Response {
-    fn get_body_value(&mut self) -> &mut BodyValue {
-        Response::get_body_value(self)
-    }
-    fn get_fetch_headers(&self) -> Option<&FetchHeaders> {
-        Response::get_fetch_headers(self)
-    }
-    fn get_form_data_encoding(
-        &mut self,
-    ) -> JsResult<Option<Box<bun_core::form_data::AsyncFormData>>> {
-        Response::get_form_data_encoding(self)
-    }
-    fn get_body_readable_stream(
-        &mut self,
-        global_object: &JSGlobalObject,
-    ) -> Option<ReadableStream> {
-        Response::get_body_readable_stream(self, global_object)
-    }
-}
+// PORT NOTE: the public `body::BodyMixin` is currently a methodless stub
+// (the real trait with `get_body_value`/`get_fetch_headers`/etc. defaults lives
+// in `body::_jsc_gated` and is TODO(b2-blocked) to be re-exported). The
+// inherent `Response::get_body_value` / `get_fetch_headers` /
+// `get_form_data_encoding` / `get_body_readable_stream` methods below carry the
+// real bodies; once `body` re-exports the gated trait, restore the delegating
+// impl (see git history).
+impl BodyMixin for Response {}
 
 impl Response {
     pub fn init(response_init: Init, body: Body, url: BunString, redirected: bool) -> Response {
@@ -345,7 +334,7 @@ impl Response {
                     // anyone using Response should not use Locked.readable directly because it dont always owns it
                     // the owner will be always the Response object it self
                     stream.value.ensure_still_alive();
-                    js::gc::stream::set(js_value, global_object, stream.value);
+                    js::stream_set_cached(js_value, global_object, stream.value);
                     // old readable dropped; reset to empty
                     locked.readable = Default::default();
                 }
@@ -365,7 +354,7 @@ impl Response {
     #[inline]
     pub fn get_body_readable_stream(&mut self, global_object: &JSGlobalObject) -> Option<ReadableStream> {
         if let Some(js_ref) = self.js_ref.try_get() {
-            if let Some(stream) = js::gc::stream::get(js_ref) {
+            if let Some(stream) = js::stream_get_cached(js_ref) {
                 // JS is always source of truth for the stream
                 return match ReadableStream::from_js(stream, global_object) {
                     Ok(rs) => rs,
@@ -385,7 +374,8 @@ impl Response {
     #[inline]
     pub fn detach_readable_stream(&mut self, global_object: &JSGlobalObject) {
         if let Some(js_ref) = self.js_ref.try_get() {
-            js::gc::stream::clear(js_ref, global_object);
+            // Zig `js.gc.stream.clear` ⇒ `set(.., .zero)`.
+            js::stream_set_cached(js_ref, global_object, JSValue::ZERO);
         }
         if let BodyValue::Locked(locked) = &mut self.body.value {
             // old readable dropped; reset to empty

@@ -122,19 +122,19 @@ pub extern "C" fn select_alpn_callback(
     _arg: *mut c_void,
 ) -> c_int {
     // SAFETY: `SSL_get_ex_data(ssl, 0)` was set in `on_open` to `*mut TLSSocket`.
-    let this_ptr = unsafe { boringssl::SSL_get_ex_data(ssl, 0) };
+    let this_ptr = unsafe { boringssl_ffi::SSL_get_ex_data(ssl, 0) };
     if this_ptr.is_null() {
-        return boringssl::SSL_TLSEXT_ERR_NOACK;
+        return boringssl_ffi::SSL_TLSEXT_ERR_NOACK;
     }
     // SAFETY: ex_data slot 0 holds a `*mut TLSSocket` (set in on_open).
     let this: &TLSSocket = unsafe { &*(this_ptr as *const TLSSocket) };
     if let Some(protos) = &this.protos {
         if protos.is_empty() {
-            return boringssl::SSL_TLSEXT_ERR_NOACK;
+            return boringssl_ffi::SSL_TLSEXT_ERR_NOACK;
         }
         // SAFETY: out/outlen/in are valid per BoringSSL ALPN callback contract.
         let status = unsafe {
-            boringssl::SSL_select_next_proto(
+            boringssl_ffi::SSL_select_next_proto(
                 out as *mut *mut u8,
                 outlen,
                 protos.as_ptr(),
@@ -148,13 +148,13 @@ pub extern "C" fn select_alpn_callback(
         // in a useful ALPN response as part of the Server Hello message.
         // We now return SSL_TLSEXT_ERR_ALERT_FATAL in that case as per Section 3.2
         // of RFC 7301, which causes a fatal no_application_protocol alert.
-        if status == boringssl::OPENSSL_NPN_NEGOTIATED {
-            boringssl::SSL_TLSEXT_ERR_OK
+        if status == boringssl_ffi::OPENSSL_NPN_NEGOTIATED {
+            boringssl_ffi::SSL_TLSEXT_ERR_OK
         } else {
-            boringssl::SSL_TLSEXT_ERR_ALERT_FATAL
+            boringssl_ffi::SSL_TLSEXT_ERR_ALERT_FATAL
         }
     } else {
-        boringssl::SSL_TLSEXT_ERR_NOACK
+        boringssl_ffi::SSL_TLSEXT_ERR_NOACK
     }
 }
 
@@ -427,7 +427,10 @@ impl<const SSL: bool> NewSocket<SSL> {
         Ok(())
     }
 
-    #[bun_jsc::host_fn]
+    // PORT NOTE: no `#[bun_jsc::host_fn]` here — that macro's free-fn shim
+    // emits a bare `constructor(...)` call which doesn't resolve inside an
+    // `impl<const SSL: bool>` block. The codegen `JsClass` derive owns the
+    // constructor link name, so the placeholder shim isn't needed.
     pub fn constructor(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<*mut Self> {
         global.throw("Cannot construct Socket", ())
     }
@@ -494,9 +497,9 @@ impl<const SSL: bool> NewSocket<SSL> {
             u32::try_from(global.validate_integer_range(
                 args.ptr()[1],
                 0i32,
-                jsc::IntegerRangeOptions {
+                jsc::IntegerRange {
                     min: 0,
-                    field_name: "initialDelay",
+                    field_name: b"initialDelay",
                     ..Default::default()
                 },
             )?)
@@ -828,7 +831,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
     }
 
-    pub fn close_and_detach(&mut self, code: uws::SocketCloseCode) {
+    pub fn close_and_detach(&mut self, code: uws::CloseCode) {
         let socket = self.socket;
         self.buffered_data_for_node_net.clear_and_free();
 
@@ -844,7 +847,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // otherwise we will get a segfault
             // uSockets will defer freeing the TCP socket until the next tick
             if !self.socket.is_closed() {
-                self.close_and_detach(uws::SocketCloseCode::Normal);
+                self.close_and_detach(uws::CloseCode::Normal);
                 // onClose will call markInactive again
                 return;
             }

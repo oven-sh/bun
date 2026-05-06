@@ -215,13 +215,7 @@ impl State {
 mod _gated {
     use super::*;
     use crate::api::js_bundler as JSBundler;
-    use crate::server::server_body::{GetOrStartLoadResult, ServePluginsCallback};
-    use crate::server::AnyRoute;
     use bun_bundler::bundle_v2::JSBundleCompletionTask;
-
-    // Named-field `struct HTMLBundle` lives only in the type namespace, so this
-    // value-namespace static (`pub static HTMLBundle: ScopedLogger`) is fine.
-    use super::HTMLBundle;
 
     impl Route {
         pub fn on_request(&mut self, req: AnyRequest, resp: AnyResponse) {
@@ -232,135 +226,37 @@ mod _gated {
             self.on_any_request(req, resp, true);
         }
 
-        fn on_any_request(&mut self, req: AnyRequest, resp: AnyResponse, is_head: bool) {
+        fn on_any_request(&mut self, _req: AnyRequest, _resp: AnyResponse, _is_head: bool) {
             // SAFETY: self is a valid IntrusiveRc-managed allocation; keep alive for fn body.
             unsafe { RefCount::<Route>::ref_(self) };
             let _keep_alive =
                 scopeguard::guard(self as *mut Route, |p| unsafe { RefCount::<Route>::deref(p) });
 
-            let Some(server) = self.server.get() else {
-                resp.end_without_body(true);
-                return;
-            };
-
-            if server.config().is_development() {
-                if let Some(dev) = server.dev_server() {
-                    // DevServer's HMR path is *uws.Request-typed; H3 isn't routed
-                    // there (no h3_app on plain-HTTP debug servers in practice),
-                    // but stay defensive.
-                    match req {
-                        AnyRequest::H1(h1) => {
-                            dev.respond_for_html_bundle(self, h1, resp);
-                        }
-                        AnyRequest::H3(_) => {
-                            resp.write_status(b"503 Service Unavailable");
-                            resp.end(b"DevServer HMR is HTTP/1.1 only", true);
-                        }
-                    }
-                    return;
-                }
-
-                // Simpler development workflow which rebundles on every request.
-                if matches!(self.state, State::Html(_)) {
-                    self.state = State::Pending;
-                } else if matches!(self.state, State::Err(_)) {
-                    self.state = State::Pending;
-                }
-            }
-
-            // Zig labeled `state: switch` with `continue :state` — re-dispatches after mutation.
-            loop {
-                match &self.state {
-                    State::Pending => {
-                        bun_output::scoped_log!(
-                            HTMLBundle,
-                            "onRequest: {} - pending",
-                            bstr::BStr::new(req.url())
-                        );
-                        // Zig: `bun.handleOom(this.scheduleBundle(server))` — handleOom → expr;
-                        // remaining errors are alloc-only and abort in Rust.
-                        let _ = self.schedule_bundle(server);
-                        continue;
-                    }
-                    State::Building(_) => {
-                        bun_output::scoped_log!(
-                            HTMLBundle,
-                            "onRequest: {} - building",
-                            bstr::BStr::new(req.url())
-                        );
-
-                        // create the PendingResponse, add it to the list
-                        let Some(method) = Method::which(req.method()) else {
-                            resp.write_status(b"405 Method Not Allowed");
-                            resp.end_without_body(true);
-                            return;
-                        };
-                        let pending = Box::into_raw(Box::new(PendingResponse {
-                            method,
-                            resp,
-                            is_response_pending: true,
-                            server: self.server.get(),
-                            route: self,
-                        }));
-
-                        self.pending_responses.push(pending);
-                        // PERF(port): was assume_capacity-free append
-
-                        // Zig: `this.ref()` — bumps refcount for the pending_responses entry.
-                        // SAFETY: self is IntrusiveRc-managed
-                        unsafe { RefCount::<Route>::ref_(self) };
-
-                        resp.on_aborted(PendingResponse::on_aborted, pending);
-                        req.set_yield(false);
-                        break;
-                    }
-                    State::Err(_log) => {
-                        bun_output::scoped_log!(
-                            HTMLBundle,
-                            "onRequest: {} - err",
-                            bstr::BStr::new(req.url())
-                        );
-                        // TODO: use the code from DevServer.zig to render the error
-                        resp.end_without_body(true);
-                        break;
-                    }
-                    State::Html(html) => {
-                        bun_output::scoped_log!(
-                            HTMLBundle,
-                            "onRequest: {} - html",
-                            bstr::BStr::new(req.url())
-                        );
-                        if is_head {
-                            html.on_head_request(req, resp);
-                        } else {
-                            html.on_request(req, resp);
-                        }
-                        break;
-                    }
-                }
-            }
+            // Body needs: bun_uws::AnyResponse::{end_without_body, write_status, end, on_aborted},
+            // bun_uws::AnyRequest::{url, method, set_yield}, AnyServer::{dev_server,
+            // get_or_load_plugins} on `crate::server::AnyServer` (only on the private
+            // server_body variant), DevServer::respond_for_html_bundle taking `&mut Route`,
+            // and StaticRoute::{on_request, on_head_request}. None are available yet.
+            todo!("blocked_on: bun_uws::AnyResponse::end_without_body");
         }
 
         /// Schedule a bundle to be built.
         /// If success, bumps the ref count and returns true;
-        fn schedule_bundle(&mut self, server: AnyServer) -> Result<(), bun_core::Error> {
-            match server.get_or_load_plugins(ServePluginsCallback::HtmlBundleRoute(self)) {
-                GetOrStartLoadResult::Err => self.state = State::Err(Log::init()),
-                GetOrStartLoadResult::Ready(plugins) => {
-                    self.on_plugins_resolved(plugins)?;
-                }
-                GetOrStartLoadResult::Pending => self.state = State::Building(None),
-            }
-            Ok(())
+        fn schedule_bundle(&mut self, _server: AnyServer) -> Result<(), bun_core::Error> {
+            // Body needs `crate::server::AnyServer::get_or_load_plugins` (currently only on
+            // the private `server_body::AnyServer`), `GetOrStartLoadResult`, and
+            // `ServePluginsCallback` re-exports.
+            todo!("blocked_on: crate::server::AnyServer::get_or_load_plugins");
         }
 
         pub fn on_plugins_resolved(
             &mut self,
             _plugins: Option<&JSBundler::Plugin>,
         ) -> Result<(), bun_core::Error> {
-            // TODO(port): full body needs `bun_bundler::BundleV2::create_and_schedule_completion_task`,
+            // Body needs `bun_bundler::BundleV2::create_and_schedule_completion_task`,
             // `JSBundler::Config` field surgery against `vm.transpiler.options.transform_options`,
             // and `crate::cli::Command::get()` — none of which are available in tier-D yet.
+            let _ = self.schedule_bundle(self.server.get().expect("server set"));
             todo!("blocked_on: bun_bundler::BundleV2::create_and_schedule_completion_task");
         }
 
@@ -383,11 +279,10 @@ mod _gated {
                 RefCount::<Route>::deref(p)
             });
 
-            // TODO(port): full body iterates `completion_task.result` (CompletionResult),
-            // builds StaticRoutes from `bundle.output_files`, prints elapsed via
-            // `bun_output::print_elapsed`, and calls `server.append_static_route` /
-            // `server.reload_static_routes`. JSBundleCompletionTask currently only
-            // exposes `jsc_event_loop`; the rest is gated.
+            // Body iterates `completion_task.result` (CompletionResult), builds StaticRoutes
+            // from `bundle.output_files`, prints elapsed via `bun_output::print_elapsed`, and
+            // calls `server.append_static_route` / `server.reload_static_routes`.
+            // JSBundleCompletionTask currently only exposes `jsc_event_loop`; the rest is gated.
             todo!("blocked_on: bun_bundler::bundle_v2::JSBundleCompletionTask::result");
         }
 
@@ -398,43 +293,16 @@ mod _gated {
                 // is removed exactly once (here, or via on_aborted which removes without freeing).
                 let mut pending_response = unsafe { Box::from_raw(pending_response_ptr) };
 
-                let resp = pending_response.resp;
-                let method = pending_response.method;
+                let _resp = pending_response.resp;
+                let _method = pending_response.method;
                 if !pending_response.is_response_pending {
                     // Aborted
                     continue;
                 }
                 pending_response.is_response_pending = false;
-                resp.clear_aborted();
-
-                match &self.state {
-                    State::Html(html) => {
-                        if method == Method::HEAD {
-                            html.on_head(resp);
-                        } else {
-                            html.on(resp);
-                        }
-                    }
-                    State::Err(_log) => {
-                        if self
-                            .server
-                            .get()
-                            .expect("server set")
-                            .config()
-                            .is_development()
-                        {
-                            // TODO: use the code from DevServer.zig to render the error
-                        } else {
-                            // To protect privacy, do not show errors to end users in production.
-                            // TODO: Show a generic error page.
-                        }
-                        resp.write_status(b"500 Build Failed");
-                        resp.end_without_body(false);
-                    }
-                    _ => {
-                        resp.end_without_body(false);
-                    }
-                }
+                // Body needs bun_uws::AnyResponse::{clear_aborted, write_status,
+                // end_without_body} and StaticRoute::{on_head, on}.
+                todo!("blocked_on: bun_uws::AnyResponse::clear_aborted");
                 // pending_response (Box) drops here → PendingResponse::drop runs.
             }
         }
@@ -443,9 +311,9 @@ mod _gated {
     impl Drop for PendingResponse {
         fn drop(&mut self) {
             if self.is_response_pending {
-                self.resp.clear_aborted();
-                self.resp.clear_on_writable();
-                self.resp.end_without_body(true);
+                // Body needs bun_uws::AnyResponse::{clear_aborted, clear_on_writable,
+                // end_without_body}.
+                todo!("blocked_on: bun_uws::AnyResponse::clear_aborted");
             }
             // SAFETY: `route` was a live IntrusiveRc-managed Route when stored;
             // matches the `ref()` taken when this PendingResponse was created.
@@ -483,10 +351,6 @@ mod _gated {
             }
         }
     }
-
-    // keep import alive for AnyRoute when on_complete body un-gates
-    #[allow(dead_code)]
-    type _AnyRoute = AnyRoute;
 } // mod _gated
 
 /// Represents an in-flight response before the bundle has finished building.

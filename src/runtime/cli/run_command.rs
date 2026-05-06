@@ -3835,7 +3835,7 @@ impl RunCommand {
             };
             bun_paths::join_abs_string_buf(cwd, &mut base_buf, &[path], bun_paths::Style::Auto)
         };
-        let dir = bun_paths::dirname(abs_md_path, bun_paths::Style::Auto);
+        let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(abs_md_path);
         // When dirname returns empty (bare filename + getcwd failed), fall
         // back to "." instead of abs_md_path — otherwise joinAbsString
         // downstream would treat the file path itself as a directory.

@@ -1427,7 +1427,7 @@ impl CommandLineReporter {
                 let mut fs = jsc::node::fs::NodeFS::default();
                 let _ = fs.mkdir_recursive(jsc::node::fs::MkdirRecursiveArgs {
                     path: jsc::node::PathLike {
-                        encoded_slice: ZigString::Slice::from_utf8_never_free(&opts.reports_directory),
+                        encoded_slice: ZigStringSlice::from_utf8_never_free(&opts.reports_directory),
                     },
                     always_return_none: true,
                 });

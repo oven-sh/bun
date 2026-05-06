@@ -9,10 +9,13 @@ use bun_str::strings;
 
 use crate::bake::{self as bake, Side, HmrRuntime};
 use crate::bake::dev_server::{
-    self as DevServer, ChunkKind, DevAllocator, EntryPointList, FileKind, GraphTraceState,
-    HotUpdateContext, PackedMap, RouteBundle, SerializedFailure, SourceMapStore, TraceImportGoal,
+    self as DevServer, ChunkKind, EntryPointList, FileKind, GraphTraceState,
+    RouteBundle, SerializedFailure, SourceMapStore, TraceImportGoal,
 };
-use crate::bake::dev_server::packed_map::LineCount;
+use crate::bake::dev_server::route_bundle::Index as RouteBundleIndex;
+use crate::bake::dev_server::source_map_store::Key as SourceMapStoreKey;
+use crate::bake::dev_server_body::{DevAllocator, HotUpdateContext};
+use super::packed_map_body::{PackedMap, Shared as PackedMapShared, LineCount};
 use crate::bake::framework_router::{self as FrameworkRouter, Route};
 use bun_bundler::{self as bundle_v2, BundleV2, Chunk};
 use bun_options_types::ImportRecord;

@@ -201,7 +201,7 @@ type BorrowedHeap = NonNull<mimalloc::Heap>;
 
 struct DebugHeap {
     inner: NonNull<mimalloc::Heap>,
-    thread_lock: crate::stubs::ThreadLock,
+    thread_lock: bun_core::ThreadLock,
 }
 // Zig: `pub const deinit = void;` — sentinel meaning "no deinit"; no Drop impl.
 

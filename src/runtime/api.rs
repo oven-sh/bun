@@ -76,6 +76,16 @@ pub mod bun_object;
 pub mod hash_object;
 #[path = "api/NativePromiseContext.rs"]
 pub mod native_promise_context;
+#[path = "api/TOMLObject.rs"]
+pub mod toml_object;
+#[path = "api/UnsafeObject.rs"]
+pub mod unsafe_object;
+#[path = "api/JSON5Object.rs"]
+pub mod json5_object;
+#[path = "api/YAMLObject.rs"]
+pub mod yaml_object;
+#[path = "api/glob.rs"]
+pub mod glob;
 
 // ─── api/bun/ core (process / spawn / pty / h2) ──────────────────────────────
 // `#[path]` is relative to the dir containing this file (`src/runtime/`); the

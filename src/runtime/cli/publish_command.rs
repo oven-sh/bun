@@ -731,20 +731,21 @@ impl PublishCommand {
                         }
                         200 => {
                             // login successful
-                            let otp_done_source = logger::Source::init_path_string(b"???", &response_buf.list);
-                            let otp_done_json = match json_mod::parse_utf8(&otp_done_source, ctx.manager.log) {
+                            let done_bump = bun_alloc::Arena::new();
+                            let otp_done_source = logger::Source::init_path_string(b"???", response_buf.list.as_slice());
+                            let otp_done_json = match json_mod::parse_utf8(&otp_done_source, ctx.manager.log_mut(), &done_bump) {
                                 Ok(j) => j,
                                 Err(e) => {
                                     if e == err!(OutOfMemory) {
                                         return Err(GetOTPError::OutOfMemory);
                                     }
-                                    Output::err("WebLogin", format_args!("failed to parse response json"));
+                                    Output::err("WebLogin", "failed to parse response json", ());
                                     Global::crash();
                                 }
                             };
 
-                            let token = otp_done_json.get_string_cloned(b"token")?.unwrap_or_else(|| {
-                                Output::err("WebLogin", format_args!("missing `token` field in reponse json"));
+                            let token = Expr::get_string_cloned(&otp_done_json, &done_bump, b"token")?.unwrap_or_else(|| {
+                                Output::err("WebLogin", "missing `token` field in reponse json", ());
                                 Global::crash();
                             });
 

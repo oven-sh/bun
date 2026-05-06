@@ -575,17 +575,17 @@ impl JSValkeyClient {
         let mut args: Vec<JSArgument> = Vec::with_capacity(args_view.len());
 
         let Some(key) = from_js(global, frame.argument(0))? else {
-            return global.throw_invalid_argument_type("set", "key", "string or buffer");
+            return Err(global.throw_invalid_argument_type("set", "key", "string or buffer"));
         };
         // PERF(port): was assume_capacity
         args.push(key);
 
         let Some(value) = from_js(global, frame.argument(1))? else {
-            return global.throw_invalid_argument_type(
+            return Err(global.throw_invalid_argument_type(
                 "set",
                 "value",
                 "string or buffer or number",
-            );
+            ));
         };
         // PERF(port): was assume_capacity
         args.push(value);
@@ -597,11 +597,11 @@ impl JSValkeyClient {
                 }
                 // PERF(port): was assume_capacity
                 let Some(v) = from_js(global, *arg)? else {
-                    return global.throw_invalid_argument_type(
+                    return Err(global.throw_invalid_argument_type(
                         "set",
                         "arguments",
                         "string or buffer",
-                    );
+                    ));
                 };
                 args.push(v);
             }

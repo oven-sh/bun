@@ -744,8 +744,11 @@ impl ServerConfig {
             // — Vec<StaticRouteEntry> drops elements (which deref route) automatically on error.
 
             while let Some(key) = iter.next()? {
-                let (path, is_ascii) = key.to_owned_slice_returning_all_ascii();
-                let path: Box<[u8]> = path;
+                // PORT NOTE: `to_owned_slice_returning_all_ascii` not yet on
+                // `bun_str::String`; split into `to_owned_slice()` + `is_all_ascii`.
+                let path_vec = key.to_owned_slice();
+                let is_ascii = strings::is_all_ascii(&path_vec);
+                let path: Box<[u8]> = path_vec.into_boxed_slice();
                 // errdefer free(path) — Box drops on error
 
                 let value: JSValue = iter.value;

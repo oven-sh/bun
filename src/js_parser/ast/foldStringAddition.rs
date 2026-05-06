@@ -340,6 +340,7 @@ use js_ast as _;
 //   source:     src/js_parser/ast/foldStringAddition.zig (233 lines)
 //   confidence: medium
 //   notes:      Rope `push`/`clone_rope_nodes` inlined locally pending E.rs
-//               round-C un-gate. `Template.parts` element writes go through
-//               a `*mut` cast (Phase-A `&'static [T]` arena convention).
+//               round-C un-gate. `Template.parts` is `*mut [TemplatePart]`
+//               (arena-owned, mutable provenance) — element writes use
+//               `parts_mut()`.
 // ──────────────────────────────────────────────────────────────────────────

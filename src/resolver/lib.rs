@@ -6126,7 +6126,13 @@ impl<'a> Resolver<'a> {
                         if err == bun_core::err!("FileNotFound") {
                             match manager.get_preinstall_state(resolved_package_id) {
                                 Install::PreinstallState::Done => {
-                                    let mut path = Fs::Path::init(import_path);
+                                    // PORT NOTE: `MatchResult.path_pair` is `Path<'static>`;
+                                    // intern `import_path` so the disabled-module record
+                                    // outlives this frame (Zig had no lifetime here).
+                                    let interned = Fs::file_system::DirnameStore::instance()
+                                        .append_slice(import_path)
+                                        .expect("unreachable");
+                                    let mut path = Fs::Path::init(interned);
                                     path.is_disabled = true;
                                     // this might mean the package is disabled
                                     if let Some(d) = self.debug_logs.as_mut() { d.decrease_indent(); }
@@ -6143,12 +6149,21 @@ impl<'a> Resolver<'a> {
                                     let (cloned, string_buf) = esm.copy().expect("unreachable");
 
                                     if st == Install::PreinstallState::Extract {
+                                        // PORT NOTE: split borrow — args read `manager.lockfile`
+                                        // immutably; compute before the `&mut manager` call.
+                                        let dependency_id = manager.lockfile.buffers
+                                            .legacy_package_to_dependency_id(None, resolved_package_id)
+                                            .expect("unreachable");
+                                        // PERF(port): owned copy to drop the `&manager.lockfile`
+                                        // borrow before the `&mut manager` call below.
+                                        let npm_url: Box<[u8]> =
+                                            Box::from(manager.lockfile.str(&resolution.value.npm.url));
                                         if let Err(enqueue_download_err) = manager.enqueue_package_for_download(
                                             esm.name,
-                                            manager.lockfile.buffers.legacy_package_to_dependency_id(None, resolved_package_id).expect("unreachable"),
+                                            dependency_id,
                                             resolved_package_id,
                                             resolution.value.npm.version,
-                                            manager.lockfile.str(&resolution.value.npm.url),
+                                            &npm_url,
                                             Install::TaskCallbackContext { root_request_id: 0 },
                                             None,
                                         ) {

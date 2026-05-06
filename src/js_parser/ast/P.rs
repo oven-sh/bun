@@ -7989,13 +7989,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         }
         // For SCAN_ONLY, the caller (Parser) assigns the borrowed variants after construction.
 
-        // PORT NOTE: Zig wires `ImportTransposer.init(this)` etc. here. The Rust
-        // struct-literal above seeded each transposer compat-shim as `dangling()`;
-        // `prepare_for_visit_pass` writes `addr_of_mut!(*self)` once `this`
-        // reaches its final address. The recursion itself lives as inherent
-        // `P::maybe_transpose_if_*` methods (no aliased `&mut`).
-        // TODO(port): Binding2ExprWrapper.{Namespace,Hoisted}.init(this) —
-        // self-referential; same pattern once the wrapper types are real.
+        // PORT NOTE: Zig wires `ImportTransposer.init(this)` etc. here. In Rust
+        // the recursion lives as inherent `P::maybe_transpose_if_*` methods
+        // called directly (no stored `*mut P`), and `Binding2ExprWrapper`
+        // receives its `*mut P` per-call from the live `&mut P` at the call
+        // site — `prepare_for_visit_pass` only wires the allocator/trampoline.
 
         if this.options.features.top_level_await || SCAN_ONLY {
             this.fn_or_arrow_data_parse.allow_await = crate::AwaitOrYield::AllowExpr;

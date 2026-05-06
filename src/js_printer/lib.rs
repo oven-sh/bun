@@ -3765,8 +3765,8 @@ where
                         E::TemplateContents::Raw(raw) => self.print_raw_template_literal(raw),
                         E::TemplateContents::Cooked(cooked) => {
                             if cooked.is_present() {
-                                // PORT NOTE: `parts` is `&'static [TemplatePart]` (arena, immutable
-                                // borrow). Zig mutates in place; Rust resolves a local copy of the
+                                // PORT NOTE: `parts` is `*mut [TemplatePart]` but accessed `&[T]`
+                                // here. Zig mutates in place; Rust resolves a local copy of the
                                 // EString header (the rope chain is StoreRef-linked and Copy) and
                                 // prints from that — the arena node stays roped.
                                 let mut local = E::EString { ..*cooked };

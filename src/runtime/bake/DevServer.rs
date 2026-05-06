@@ -3245,7 +3245,12 @@ pub fn finalize_bundle(
             .unwrap()
             .call(
                 global,
-                global.to_js_value(),
+                {
+                    // `bun_jsc::JSGlobalObject::to_js_value` lives in the
+                    // not-yet-re-exported `JSGlobalObject.rs` impl block.
+                    let _ = global;
+                    todo!("blocked_on: bun_jsc::JSGlobalObject::to_js_value")
+                },
                 &[
                     server_modules,
                     dev.make_array_for_server_components_patch(
@@ -3994,7 +3999,7 @@ impl DevServer<'_> {
         &mut self,
         saved_request: SavedRequest,
         render_path: &[u8],
-        resp: AnyResponse,
+        mut resp: AnyResponse,
     ) -> Result<(), bun_core::Error> {
         // Match the render path against the router
         let mut params: framework_router::MatchedParams = Default::default();
@@ -4058,12 +4063,22 @@ impl DevServer<'_> {
     ) -> Result<route_bundle::Index, bun_core::Error> {
         let index_location: *mut route_bundle::IndexOptional = match &route {
             route_bundle::UnresolvedIndex::Framework(route_index) => {
-                &mut self.router.route_ptr(*route_index).bundle
+                &mut self.router.route_ptr_mut(*route_index).bundle
             }
-            route_bundle::UnresolvedIndex::Html(html) => &mut html.dev_server_id,
+            route_bundle::UnresolvedIndex::Html(html) => {
+                // PORT NOTE: `UnresolvedIndex::Html` borrows `&HTMLBundleRoute`
+                // (LIFETIMES.tsv BORROW_PARAM); Zig stored a `*HTMLBundle.Route`
+                // and mutated through it. Cast away the shared borrow to obtain
+                // the writable slot — the route outlives this call and is
+                // single-threaded here.
+                // SAFETY: see PORT NOTE above.
+                unsafe {
+                    &mut (*(*html as *const HTMLBundleRoute as *mut HTMLBundleRoute)).dev_server_id
+                }
+            }
         };
-        // SAFETY: index_location points into self which outlives this fn
-        if let Some(bundle_index) = unsafe { (*index_location).unwrap_() } {
+        // SAFETY: index_location points into self/html which outlive this fn
+        if let Some(bundle_index) = unsafe { *index_location } {
             return Ok(bundle_index);
         }
 

@@ -850,16 +850,25 @@ pub fn run_scripts_with_filter(ctx: Command::Context) -> Result<core::convert::I
         Global::exit(1);
     }
 
-    let event_loop = MiniEventLoop::init_global(this_transpiler.env, None);
+    // SAFETY: Transpiler::init always sets `env` to the process-lifetime singleton.
+    let env_ptr: *mut bun_dotenv::Loader<'static> = this_transpiler.env;
+    let event_loop = MiniEventLoopMod::init_global(
+        // SAFETY: see above; `&'static mut` reborrow of the singleton for first-init only.
+        Some(unsafe { &mut *env_ptr }),
+        None,
+    );
     // --no-orphans: register the macOS kqueue parent watch on this MiniEventLoop
     // (the VirtualMachine.init path is never reached for --filter). Linux is
     // already covered by prctl in enable() + linux_pdeathsig on each spawn.
-    bun_aio::ParentDeathWatchdog::install_on_event_loop(EventLoopHandle::init(event_loop));
-    let shell_bin: ZStr<'static> = {
+    bun_aio::ParentDeathWatchdog::install_on_event_loop(
+        MiniEventLoop::as_event_loop_ctx(event_loop),
+    );
+    let shell_bin: &'static ZStr = {
         #[cfg(unix)]
         {
             RunCommand::find_shell(
-                this_transpiler.env.get(b"PATH").unwrap_or(b""),
+                // SAFETY: env_ptr is the live process-lifetime DotEnv loader.
+                unsafe { (*env_ptr).get(b"PATH") }.unwrap_or(b""),
                 fsinstance.top_level_dir,
             )
             .ok_or(bun_core::err!("MissingShell"))?
@@ -870,7 +879,7 @@ pub fn run_scripts_with_filter(ctx: Command::Context) -> Result<core::convert::I
         }
     };
 
-    let mut handles: Box<[ProcessHandle]> =
+    let handles: Box<[ProcessHandle]> =
         // TODO(port): Box::new_uninit_slice — handles initialized in loop below.
         Vec::with_capacity(scripts.len()).into();
     // PORT NOTE: reshaped for borrowck — Zig allocates uninit slice then writes each element.

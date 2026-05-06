@@ -2745,7 +2745,7 @@ where
                 unsafe { resp.run_corked_with_type(Self::do_render_blob_corked, self) };
             }
         } else {
-            self.do_render_blob_corked();
+            Self::do_render_blob_corked(self as *mut Self);
         }
     }
 
@@ -2771,7 +2771,8 @@ where
         let response = self.response_weakref.get().unwrap();
         // SAFETY: BACKREF
         let global_this = unsafe { (*self.server.unwrap()).global_this() };
-        self.do_render_with_body(
+        Self::do_render_with_body(
+            self,
             response.get_body_value(),
             response.get_body_readable_stream(global_this),
         );

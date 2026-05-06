@@ -152,12 +152,12 @@ impl ScopeFunctions {
 
         let [array] = frame.arguments_as_array::<1>();
         if array.is_undefined_or_null() || !array.is_array() {
-            let formatter = bun_jsc::ConsoleObject::Formatter::new(global);
-            return global.throw(format_args!("Expected array, got {}", array.to_fmt(&formatter)));
+            let mut formatter = bun_jsc::ConsoleObject::Formatter::new(global);
+            return Err(global.throw(format_args!("Expected array, got {}", array.to_fmt(&mut formatter))));
         }
 
         if !this.each.is_empty() {
-            return global.throw(format_args!("Cannot {} on {}", "each", this));
+            return Err(global.throw(format_args!("Cannot {} on {}", "each", this)));
         }
         create_bound(global, this.mode, array, this.cfg, strings::EACH())
     }

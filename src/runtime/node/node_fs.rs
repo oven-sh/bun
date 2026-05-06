@@ -418,6 +418,17 @@ fn with_path_like(err: sys::Error, p: &PathOrFileDescriptor) -> sys::Error {
     }
 }
 
+/// `node::Encoding` → `bun_string::NodeEncoding`. Both are `#[repr(u8)]` with the
+/// identical discriminant layout (`Utf8..Buffer`); `webcore::encoding` was ported
+/// against the upstream copy, so adapt at the boundary instead of changing
+/// either definition.
+#[inline]
+fn encoding_to_node(e: Encoding) -> bun_string::NodeEncoding {
+    // SAFETY: identical `#[repr(u8)]` layout — see `src/runtime/node/types.rs`
+    // Encoding vs `bun_string::encoding::Encoding`.
+    unsafe { core::mem::transmute::<u8, bun_string::NodeEncoding>(e as u8) }
+}
+
 
 /// `bun.sys.PosixStat` — uv-shaped stat struct. `Stats::init` (from
 /// `super::stat`) takes its sibling `PosixStat` by reference, so route through

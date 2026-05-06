@@ -1620,18 +1620,19 @@ impl Expect {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn not_implemented_jsc_prop(_this: &Self, _: JSValue, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    pub fn not_implemented_jsc_prop(_this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         Err(global_this.throw(format_args!("Not implemented")))
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn not_implemented_static_prop(global_this: &JSGlobalObject, _: JSValue, _: JSValue) -> JsResult<JSValue> {
+    pub fn not_implemented_static_prop(_this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         Err(global_this.throw(format_args!("Not implemented")))
     }
 
     pub fn post_match(&self, global_this: &JSGlobalObject) {
         let vm = global_this.bun_vm();
-        vm.auto_garbage_collect();
+        // SAFETY: bun_vm() returns the live VM pointer for this global.
+        unsafe { (*vm).auto_garbage_collect() };
     }
 
     // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
@@ -1676,11 +1677,11 @@ impl fmt::Display for CustomMatcherParamsFormatter<'_> {
                         if param_index > 0 {
                             // skip the first param from the matcher_fn, which is the received value
                             if param_index > 1 {
-                                writer.write_str(if self.colors {
-                                    Output::pretty_fmt("<r><d>, <r><green>", true)
+                                if self.colors {
+                                    write!(writer, "{}", Output::pretty_fmt::<true>("<r><d>, <r><green>"))?;
                                 } else {
-                                    ", "
-                                })?;
+                                    writer.write_str(", ")?;
+                                }
                             } else if self.colors {
                                 writer.write_str("<green>")?;
                             }

@@ -77,7 +77,7 @@ unsafe extern "C" {
 extern "C" fn on_close(socket: *mut uws::udp::Socket) {
     // SAFETY: socket.user() was set to `*mut UDPSocket` in `udp_socket()` via the `user` arg to
     // `uws::udp::Socket::create`. uws guarantees the user pointer is non-null here.
-    let this: &mut UDPSocket = unsafe { &mut *((*socket).user().unwrap() as *mut UDPSocket) };
+    let this: &mut UDPSocket = unsafe { &mut *((*socket).user() as *mut UDPSocket) };
     this.closed = true;
     this.poll_ref.disable();
     this.this_value.downgrade();
@@ -92,25 +92,25 @@ extern "C" fn on_recv_error(socket: *mut uws::udp::Socket, errno: c_int) {
     // SystemError from the ICMP errno (ECONNREFUSED, EHOSTUNREACH,
     // ENETUNREACH, EMSGSIZE, ...) and dispatches through the 'error' handler.
     // SAFETY: see on_close.
-    let this: &mut UDPSocket = unsafe { &mut *((*socket).user().unwrap() as *mut UDPSocket) };
-    let sys_err = bun_sys::Error::from_code_int(errno, bun_sys::Tag::Recv);
+    let this: &mut UDPSocket = unsafe { &mut *((*socket).user() as *mut UDPSocket) };
+    let sys_err = bun_sys::Error::from_code_int(errno, bun_sys::Tag::recv);
     // SAFETY: globalThis stored at construction; VM outlives socket.
     let global_this = unsafe { &*this.global_this };
-    let Ok(err_value) = sys_err.to_js(global_this) else { return };
+    let err_value = sys_err.to_js(global_this);
     this.call_error_handler(JSValue::ZERO, err_value);
 }
 
 extern "C" fn on_drain(socket: *mut uws::udp::Socket) {
     // SAFETY: see on_close.
-    let this: &mut UDPSocket = unsafe { &mut *((*socket).user().unwrap() as *mut UDPSocket) };
+    let this: &mut UDPSocket = unsafe { &mut *((*socket).user() as *mut UDPSocket) };
     let Some(this_value) = this.this_value.try_get() else { return };
     let Some(callback) = UDPSocket::js().gc.on_drain.get(this_value) else { return };
     if callback.is_empty_or_undefined_or_null() {
         return;
     }
 
-    let vm = VirtualMachine::get();
-    let event_loop = vm.event_loop();
+    // SAFETY: VM singleton is live for the JS thread.
+    let event_loop = unsafe { &mut *(*VirtualMachine::get()).event_loop() };
     event_loop.enter();
     // SAFETY: globalThis stored at construction; VM outlives socket.
     let global_this = unsafe { &*this.global_this };
@@ -123,7 +123,7 @@ extern "C" fn on_drain(socket: *mut uws::udp::Socket) {
 
 extern "C" fn on_data(socket: *mut uws::udp::Socket, buf: *mut uws::udp::PacketBuffer, packets: c_int) {
     // SAFETY: see on_close.
-    let udp_socket: &mut UDPSocket = unsafe { &mut *((*socket).user().unwrap() as *mut UDPSocket) };
+    let udp_socket: &mut UDPSocket = unsafe { &mut *((*socket).user() as *mut UDPSocket) };
     let Some(this_value) = udp_socket.this_value.try_get() else { return };
     let Some(callback) = UDPSocket::js().gc.on_data.get(this_value) else { return };
     if callback.is_empty_or_undefined_or_null() {

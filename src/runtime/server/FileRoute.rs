@@ -117,11 +117,8 @@ impl AnyRequestExt for AnyRequest {
 }
 
 #[inline]
-fn sp_slice(ptr: &StringPointer, buf: &[u8]) -> &[u8] {
-    // SAFETY: `ptr` indexes into `buf` (Headers invariant).
-    unsafe {
-        core::slice::from_raw_parts(buf.as_ptr().add(ptr.offset as usize), ptr.length as usize)
-    }
+fn sp_slice<'a>(ptr: &StringPointer, buf: &'a [u8]) -> &'a [u8] {
+    &buf[ptr.offset as usize..][..ptr.length as usize]
 }
 
 /// Local adapter for `Headers::from` — the upstream signature takes

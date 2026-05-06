@@ -1091,7 +1091,8 @@ impl SourceMapDataTask {
         };
         let worker = crate::thread_pool::Worker::get(unsafe { &*bundle });
         let _wguard = scopeguard::guard((), |_| worker.unget());
-        SourceMapData::compute_line_offsets(ctx, worker.allocator, task.source_index);
+        // SAFETY: `worker.allocator` points at `worker.heap` (init by `Worker::create`).
+        SourceMapData::compute_line_offsets(ctx, unsafe { &*worker.allocator }, task.source_index);
     }
 
     pub fn run_quoted_source_contents(thread_task: *mut ThreadPoolLib::Task) {
@@ -1122,13 +1123,19 @@ impl SourceMapDataTask {
         // was generated. This will be preserved so that remapping
         // stack traces can show the source code, even after incremental
         // rebuilds occur.
-        let alloc = if let Some(dev) = worker.ctx.transpiler.options.dev_server.as_ref() {
-            dev.allocator()
-        } else {
-            worker.allocator
+        // SAFETY: `worker.ctx` is a `*mut BundleV2` backref; `transpiler` is a
+        // `*mut Transpiler` backref. Both valid for the worker's lifetime.
+        let alloc: *const Bump = unsafe {
+            if let Some(dev) = (*(*worker.ctx).transpiler).options.dev_server.as_ref() {
+                dev.allocator()
+            } else {
+                worker.allocator
+            }
         };
 
-        SourceMapData::compute_quoted_source_contents(ctx, alloc, task.source_index);
+        // SAFETY: `alloc` is either the dev-server's static arena or the
+        // thread-local worker arena (initialized by `Worker::create`).
+        SourceMapData::compute_quoted_source_contents(ctx, unsafe { &*alloc }, task.source_index);
     }
 }
 
@@ -1196,7 +1203,7 @@ impl SourceMapData {
                 .items_raw::<Option<Box<[u8]>>>(FileField::quoted_source_contents)
                 .add(source_index as usize)
         };
-        quoted_source_contents.reset();
+        *quoted_source_contents = None;
 
         // SAFETY: parse_graph backref; read-only across all tasks.
         let parse_graph = unsafe { &*(*this).parse_graph };
@@ -1208,8 +1215,7 @@ impl SourceMapData {
         let source: &Source = &parse_graph.input_files.items_source()[source_index as usize];
         let mut mutable = MutableString::init_empty();
         js_printer::quote_for_json(&source.contents, &mut mutable, false).expect("OOM");
-        let mutable_owned = mutable.to_default_owned();
-        *quoted_source_contents = mutable_owned.to_optional();
+        *quoted_source_contents = Some(mutable.to_default_owned());
     }
 }
 

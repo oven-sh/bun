@@ -3950,58 +3950,55 @@ impl<'a> BundleV2<'a> {
             };
         }
 
-        let chunks = self.allocator().alloc_slice_fill_default::<Chunk>(
+        // PORT NOTE: `Chunk: !Default` (BabyList fields). Allocate via Vec then
+        // leak into the arena.
+        let mut chunks: Vec<Chunk> = Vec::with_capacity(
             1 + start.css_entry_points.count() + html_files.count(),
         );
 
         // First is a chunk to contain all JavaScript modules.
-        chunks[0] = Chunk {
-            entry_point: Chunk::EntryPoint {
-                entry_point_id: 0,
-                source_index: 0,
-                is_entry_point: true,
-            },
-            content: Chunk::Content::Javascript {
+        chunks.push(Chunk {
+            entry_point: chunk::EntryPoint::new(0, 0, true, false),
+            content: chunk::Content::Javascript({
+                let mut js = chunk::JavaScriptChunk::default();
                 // TODO(@paperclover): remove this ptrCast when Source Index is fixed
                 // SAFETY: Index is repr(transparent) over u32
-                files_in_chunk_order: unsafe { core::mem::transmute(js_reachable_files) },
-                parts_in_chunk_in_order: js_part_ranges,
-            },
+                js.files_in_chunk_order = unsafe { core::mem::transmute::<&[Index], &[u32]>(js_reachable_files) }
+                    .to_vec().into_boxed_slice();
+                js.parts_in_chunk_in_order = js_part_ranges.to_vec().into_boxed_slice();
+                js
+            }),
             output_source_map: SourceMap::SourceMapPieces::init(self.allocator()),
-            ..Default::default()
-        };
+            ..Chunk::empty()
+        });
 
         // Then all the distinct CSS bundles (these are JS->CSS, not CSS->CSS)
-        for (chunk, entry_point) in chunks[1..][..start.css_entry_points.count()].iter_mut().zip(start.css_entry_points.keys()) {
+        for entry_point in start.css_entry_points.keys() {
             let order = self.linker.find_imported_files_in_css_order(self.allocator(), &[*entry_point]);
-            *chunk = Chunk {
-                entry_point: Chunk::EntryPoint {
-                    entry_point_id: u32::try_from(entry_point.get()).unwrap(),
-                    source_index: entry_point.get(),
-                    is_entry_point: false,
-                },
-                content: Chunk::Content::Css {
+            chunks.push(Chunk {
+                entry_point: chunk::EntryPoint::new(entry_point.get(), entry_point.get(), false, false),
+                content: chunk::Content::Css(chunk::CssChunk {
                     imports_in_chunk_in_order: order,
-                    asts: self.allocator().alloc_slice_fill_default::<bun_css::BundlerStyleSheet>(order.len()),
-                },
+                    asts: (0..order.len())
+                        .map(|_| bun_css::BundlerStyleSheet::empty(self.allocator()))
+                        .collect::<Vec<_>>()
+                        .into_boxed_slice(),
+                }),
                 output_source_map: SourceMap::SourceMapPieces::init(self.allocator()),
-                ..Default::default()
-            };
+                ..Chunk::empty()
+            });
         }
 
         // Then all HTML files
-        for (source_index, chunk) in html_files.keys().iter().zip(chunks[1 + start.css_entry_points.count()..].iter_mut()) {
-            *chunk = Chunk {
-                entry_point: Chunk::EntryPoint {
-                    entry_point_id: u32::try_from(source_index.get()).unwrap(),
-                    source_index: source_index.get(),
-                    is_entry_point: false,
-                },
-                content: Chunk::Content::Html,
+        for source_index in html_files.keys() {
+            chunks.push(Chunk {
+                entry_point: chunk::EntryPoint::new(source_index.get(), source_index.get(), false, true),
+                content: chunk::Content::Html,
                 output_source_map: SourceMap::SourceMapPieces::init(self.allocator()),
-                ..Default::default()
-            };
+                ..Chunk::empty()
+            });
         }
+        let chunks: &mut [Chunk] = Box::leak(chunks.into_boxed_slice());
 
         self.graph.heap.help_catch_memory_issues();
 

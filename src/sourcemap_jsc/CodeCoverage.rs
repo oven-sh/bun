@@ -372,9 +372,17 @@ impl<'a> Generator<'a> {
         ignore_sourcemap: bool,
     ) {
         // SAFETY: `this` was passed as &mut Generator to CodeCoverage__withBlocksAndFunctions
-        // and is valid for the duration of this synchronous callback. blocks_ptr[0..blocks_len]
-        // is a valid contiguous C array provided by JSC.
+        // and is valid for the duration of this synchronous callback.
         let this = unsafe { &mut *this };
+        // The C++ side (CodeCoverage.cpp) invokes this callback with `(nullptr, 0, 0)` when
+        // basicBlocks is empty. `core::slice::from_raw_parts` requires a non-null, aligned
+        // pointer even for zero-length slices, so we must bail before constructing the slice
+        // (matches the Zig spec, which early-returns on `blocks.len == 0`).
+        if blocks_len == 0 {
+            return;
+        }
+        // SAFETY: blocks_len != 0, so blocks_ptr[0..blocks_len] is a valid contiguous C array
+        // provided by JSC for the duration of this synchronous callback.
         let all = unsafe { core::slice::from_raw_parts(blocks_ptr, blocks_len) };
         let blocks: &[BasicBlockRange] = &all[0..function_start_offset];
         let mut function_blocks: &[BasicBlockRange] = &all[function_start_offset..blocks_len];

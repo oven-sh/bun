@@ -1521,28 +1521,33 @@ mod __css_validation {
                 let local_original_name: &[u8] =
                     unsafe { &*(*self.all_symbols.get(local).unwrap()).original_name };
 
-                self.log.add_msg(Logger::Msg {
-                    kind: Logger::MsgKind::Err,
+                let _ = self.log.add_msg(Logger::Msg {
+                    kind: Logger::Kind::Err,
                     data: Logger::range_data(
-                        &col_ref!(self.all_sources)[source_index as usize],
+                        Some(&col_ref!(self.all_sources)[source_index as usize]),
                         range,
-                        Log::alloc_print(format_args!(
+                        Logger::alloc_print(format_args!(
                             "<r>The value of <b>{}<r> in the class <b>{}<r> is undefined.",
                             bstr::BStr::new(property_name),
                             bstr::BStr::new(local_original_name),
-                        )),
+                        ))
+                        .expect("oom"),
                     )
-                    .clone_line_text(self.log.clone_line_text),
+                    .clone_line_text(self.log.clone_line_text)
+                    .expect("oom"),
                     notes: Box::<[Logger::Data]>::from(
                         &[
                             Logger::range_data(
-                                &col_ref!(self.all_sources)
-                                    [entry.value_ptr.source_index as usize],
+                                Some(
+                                    &col_ref!(self.all_sources)
+                                        [entry.value_ptr.source_index as usize],
+                                ),
                                 entry.value_ptr.range,
-                                Log::alloc_print(format_args!(
+                                Logger::alloc_print(format_args!(
                                     "The first definition of {} is in this style rule:",
                                     bstr::BStr::new(property_name)
-                                )),
+                                ))
+                                .expect("oom"),
                             ),
                             Logger::Data {
                                 text: {
@@ -1558,7 +1563,7 @@ mod __css_validation {
                                         bun_core::fmt::quote(property_name),
                                         bun_core::fmt::quote(local_original_name),
                                     );
-                                    v.into_boxed_slice()
+                                    std::borrow::Cow::Owned(v)
                                 },
                                 ..Default::default()
                             },
@@ -1573,8 +1578,8 @@ mod __css_validation {
             }
 
             fn clear_retaining_capacity(&mut self) {
-                self.visited.clear();
-                self.properties.clear();
+                self.visited.clear_retaining_capacity();
+                self.properties.clear_retaining_capacity();
             }
 
             fn visit(&mut self, idx: IndexInt, ast: &BundlerStyleSheet, r#ref: Ref) {
@@ -1588,7 +1593,7 @@ mod __css_validation {
                     for compose in composes.composes.slice_const() {
                         // is an import
                         if let Some(from) = compose.from.as_ref() {
-                            if let ComposeFrom::ImportRecordIndex(import_record_idx) = from {
+                            if let Specifier::ImportRecordIndex(import_record_idx) = from {
                                 let record = &col_ref!(self.all_import_records)[idx as usize]
                                     .slice()[*import_record_idx as usize];
                                 if record.source_index.is_invalid() {

@@ -1890,36 +1890,41 @@ impl<'a> OnBeforeParsePlugin<'a> {
 
 fn get_source_code(
     task: &mut ParseTask,
-    this: &mut ThreadPool::Worker,
+    this: &mut crate::Worker,
     log: &mut Log,
 ) -> core::result::Result<CacheEntry, AnyError> {
-    let bump = this.allocator;
+    // SAFETY: `Worker.allocator` points at `Worker.heap` once `has_created` (see
+    // `ThreadPool::Worker::create`); the worker is pinned for the bundle pass.
+    let bump: &Bump = unsafe { &*this.allocator };
 
-    let data = this.data;
-    let transpiler = &mut data.transpiler;
-    // PORT NOTE: errdefer transpiler.resetStore() — using scopeguard.
-    let guard = scopeguard::guard(&mut *transpiler, |t| t.reset_store());
-    let resolver: &mut Resolver = &mut guard.resolver;
+    // SAFETY: `has_created` ⇒ `data`/`transpiler` were initialized in `create()`.
+    let data = unsafe { this.data.assume_init_mut() };
+    let transpiler: &mut Transpiler<'static> = unsafe { data.transpiler.assume_init_mut() };
+    // PORT NOTE: errdefer transpiler.resetStore() — reshaped: call on the err
+    // path explicitly (scopeguard would alias `transpiler` with the &mut passed
+    // to `get_code_for_parse_task` below).
+    // PORT NOTE: reshaped for borrowck — `resolver` is a field of `transpiler`;
+    // pass via raw to avoid two overlapping `&mut`.
+    let resolver: &mut Resolver = unsafe { &mut *(core::ptr::addr_of_mut!(transpiler.resolver)) };
     let mut file_path = task.path.clone();
     let mut loader = task
         .loader
-        .or_else(|| file_path.loader(&guard.options.loaders))
+        .or_else(|| file_path.loader(&transpiler.options.loaders))
         .unwrap_or(Loader::File);
 
     let mut contents_came_from_plugin: bool = false;
     let result = get_code_for_parse_task(
         task,
         log,
-        // PORT NOTE: reshaped for borrowck — guard derefs to &mut Transpiler.
-        &mut *guard,
+        transpiler,
         resolver,
         bump,
         &mut file_path,
         &mut loader,
         &mut contents_came_from_plugin,
     );
-    if result.is_ok() {
-        scopeguard::ScopeGuard::into_inner(guard);
+    if result.is_err() {
+        transpiler.reset_store();
     }
     result
 }

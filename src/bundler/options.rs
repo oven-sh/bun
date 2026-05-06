@@ -3141,7 +3141,10 @@ impl PathTemplateConst {
                 }
                 PlaceholderField::Hash => {
                     if let Some(hash) = self.placeholder.hash {
-                        writer.write_all(Placeholder::hash_string(hash).as_bytes())?;
+                        writer.write_fmt(format_args!(
+                            "{}",
+                            bun_core::fmt::truncated_hash32(hash)
+                        ))?;
                     }
                 }
                 PlaceholderField::Target => PathTemplate::write_replacing_slashes_on_windows(

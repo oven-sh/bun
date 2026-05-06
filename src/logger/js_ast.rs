@@ -85,7 +85,7 @@ impl<T> StoreRef<T> {
         // SAFETY: `r` is a non-null, aligned, dereferenceable `'static`
         // reference, so `new_unchecked` is sound. Provenance is shared/read-
         // only: this mirrors Zig `@constCast` on the `Expr.Data.e_string`
-        // prefill tables (see `src/js_parser/ast/E.zig`), where a `*const
+        // prefill tables (see `src/bundler/defines.zig:102`), where a `*const
         // E.String` is widened to `*E.String` solely to fit the payload slot
         // type. The pointee is *never* written through — `DerefMut` /
         // `as_ptr().write()` on a `StoreRef` produced here is UB and callers

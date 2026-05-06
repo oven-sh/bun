@@ -165,12 +165,12 @@ impl HotReloadEvent {
                             dev.directory_watchers.free_dependency_index(index);
                         } else {
                             // rebuild a new linked list for unaffected files
-                            dev.directory_watchers.dependencies[index.get()].next = new_chain;
-                            new_chain = index.to_optional();
+                            dev.directory_watchers.dependencies[index as usize].next = new_chain;
+                            new_chain = Some(index);
                         }
                     }
 
-                    if let Some(new_first_dep) = new_chain.unwrap() {
+                    if let Some(new_first_dep) = new_chain {
                         dev.directory_watchers.watches.values_mut()[watcher_index].first_dep =
                             new_first_dep;
                     } else {

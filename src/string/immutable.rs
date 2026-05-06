@@ -2615,12 +2615,36 @@ impl<T, F: Fn(&T) -> &[u8]> GlobLengthSorter<T, F> {
     }
 }
 
-/// Update all strings in a struct pointing to "from" to point to "to".
-// TODO(port): Zig used `std.meta.fields(Type)` reflection to find every `[]const u8`
-// field. Rust has no field reflection; Phase B should provide a per-type derive
-// (e.g. `#[derive(MoveSlices)]`) or hand-written impls at call sites.
-pub fn move_all_slices<T>(_container: &mut T, _from: &[u8], _to: &[u8]) {
-    unimplemented!("move_all_slices: requires field reflection — see TODO(port)")
+/// Reflection adapter for [`move_all_slices`]. Zig's `moveAllSlices` used
+/// `std.meta.fields(Type)` to enumerate every `[]const u8` field at comptime;
+/// Rust has no field reflection, so each container type hand-implements this
+/// trait (or, once landed, `#[derive(MoveSlices)]`) to yield the same set of
+/// fields as `&mut &'a [u8]` so they can be re-pointed into a new backing
+/// buffer of lifetime `'a` without any unsafe.
+pub trait MoveSlices<'a> {
+    /// Invoke `f` once per byte-slice field of `self`.
+    fn for_each_byte_slice_field(&mut self, f: &mut dyn FnMut(&mut &'a [u8]));
+}
+
+/// Update all `&[u8]` fields in `container` that currently point into `from`
+/// to instead point at the same offset within `to`. Port of
+/// `immutable.zig:moveAllSlices`.
+pub fn move_all_slices<'a, T: MoveSlices<'a> + ?Sized>(
+    container: &mut T,
+    from: &[u8],
+    to: &'a [u8],
+) {
+    let from_start = from.as_ptr() as usize;
+    let from_end = from_start + from.len();
+    container.for_each_byte_slice_field(&mut |field| {
+        let slice_start = field.as_ptr() as usize;
+        let slice_end = slice_start + field.len();
+        // `if (@intFromPtr(from.ptr) + from.len) >= @intFromPtr(slice.ptr) + slice.len
+        //   and (@intFromPtr(from.ptr) <= @intFromPtr(slice.ptr))`
+        if from_end >= slice_end && from_start <= slice_start {
+            *field = move_slice(field, from, to);
+        }
+    });
 }
 
 pub fn move_slice<'a>(slice: &[u8], from: &[u8], to: &'a [u8]) -> &'a [u8] {

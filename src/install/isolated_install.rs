@@ -2067,7 +2067,7 @@ pub fn install_isolated_packages(
                                 // final step, so the directory existing at its
                                 // final path is the completeness signal.
                                 installer.append_global_store_entry_path(&mut store_path, entry_id, installer::Which::Final);
-                                break 'needs_install !sys::directory_exists_at(Fd::cwd(), store_path.slice_z())
+                                break 'needs_install !sys::directory_exists_at(Fd::cwd(), store_path.slice_z().as_bytes())
                                     .ok()
                                     .unwrap_or(false);
                             }
@@ -2076,7 +2076,7 @@ pub fn install_isolated_packages(
                             if pkg_res_tag == ResolutionTag::Npm {
                                 // if it's from npm, it should always have a package.json.
                                 // in other cases, probably yes but i'm less confident.
-                                store_path.append(b"package.json");
+                                bun_core::handle_oom(store_path.append(b"package.json"));
                             }
                             let exists = sys::exists_z(store_path.slice_z());
 
@@ -2088,7 +2088,7 @@ pub fn install_isolated_packages(
                                     let mut hash_buf: install::BuntagHashBuf = Default::default();
                                     let hash = install::buntaghashbuf_make(&mut hash_buf, patch.contents_hash);
                                     scope_for_patch_tag_path.restore();
-                                    store_path.append(hash);
+                                    bun_core::handle_oom(store_path.append(&*hash));
                                     !sys::exists_z(store_path.slice_z())
                                 }
                             };
@@ -2385,9 +2385,10 @@ pub fn install_isolated_packages(
             debug_assert!(done);
         }
 
-        installer.summary.successfully_installed = installer.installed;
+        let mut summary = core::mem::take(&mut installer.summary);
+        summary.successfully_installed = core::mem::take(&mut installer.installed);
 
-        return Ok(installer.summary);
+        return Ok(summary);
     }
 }
 

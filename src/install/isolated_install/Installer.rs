@@ -2500,25 +2500,24 @@ impl<'a> Installer<'a> {
     ///                                               ^ this one
     /// Need to know this to avoid collisions with dependencies
     /// with the same name as the package.
-    pub fn entry_store_node_modules_package_name(
-        &self,
+    pub fn entry_store_node_modules_package_name<'b>(
+        &'b self,
         dep_id: DependencyID,
         pkg_id: PackageID,
         pkg_res: &Resolution,
-        pkg_names: &[SemverString],
-    ) -> Option<&[u8]> {
+        pkg_names: &'b [SemverString],
+    ) -> Option<&'b [u8]> {
         let string_buf = self.lockfile.buffers.string_bytes.as_slice();
 
         match pkg_res.tag {
             ResolutionTag::Root => {
                 if dep_id != invalid_dependency_id {
-                    let pkg_name = pkg_names[pkg_id as usize];
-                    if pkg_name.is_empty() {
+                    if pkg_names[pkg_id as usize].is_empty() {
                         return Some(paths::basename(
                             bun_fs::FileSystem::instance().top_level_dir(),
                         ));
                     }
-                    return Some(pkg_name.slice(string_buf));
+                    return Some(pkg_names[pkg_id as usize].slice(string_buf));
                 }
                 None
             }

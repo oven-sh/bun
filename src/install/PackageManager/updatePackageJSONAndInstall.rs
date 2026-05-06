@@ -131,7 +131,8 @@ fn update_package_json_and_install_with_manager_with_updates(
     let log_level = manager.options.log_level;
     if manager.log.errors > 0 {
         if log_level != LogLevel::Silent {
-            let _ = manager.log.print(Output::error_writer());
+            // SAFETY: `manager.log` is a non-null backref to the CLI log set at init().
+            let _ = unsafe { &*manager.log }.print(Output::error_writer());
         }
         Global::crash();
     }

@@ -203,14 +203,6 @@ pub mod lib {
             unsafe { archive_read_data(self.as_mut_ptr(), buf.as_mut_ptr().cast(), buf.len()) }
         }
 
-        /// One block from `archive_read_data_block`. `bytes` borrows
-        /// libarchive's internal buffer (valid until the next read call).
-        pub struct Block<'a> {
-            pub bytes: &'a [u8],
-            pub offset: i64,
-            pub result: Result,
-        }
-
         /// `archive_read_data_block` — returns `None` on EOF.
         pub fn next(&self, offset: &mut i64) -> Option<Block<'_>> {
             let mut buff: *const c_void = core::ptr::null();

@@ -1894,6 +1894,6 @@ mod generated {
 // PORT STATUS
 //   source:     src/runtime/server/NodeHTTPResponse.zig (1255 lines)
 //   confidence: medium
-//   todos:      6
-//   notes:      .classes.ts payload w/ intrusive refcount; many `defer self.deref()` reshaped to tail calls — verify ordering vs early returns; `js::*` cached accessors are codegen stubs; ERR_* throw helpers assumed on JSGlobalObject; UpgradeCTX::deinit renamed reset (mid-lifetime).
+//   todos:      0
+//   notes:      .classes.ts payload w/ intrusive refcount; many `defer self.deref()` reshaped to tail calls — verify ordering vs early returns; `js::*` cached accessors via codegen_cached_accessors!; ERR_* throw helpers assumed on JSGlobalObject; UpgradeCTX::deinit renamed reset (mid-lifetime).
 // ──────────────────────────────────────────────────────────────────────────

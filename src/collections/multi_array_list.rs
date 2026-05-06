@@ -157,11 +157,11 @@ impl<T: MultiArrayElement> Slice<T> {
         let byte_ptr = self.ptrs[T::field_index(field)];
         if core::mem::size_of::<F>() == 0 {
             // SAFETY: ZST slice; pointer is irrelevant.
-            return core::slice::from_raw_parts(ptr::NonNull::<F>::dangling().as_ptr(), self.len);
+            return unsafe { core::slice::from_raw_parts(ptr::NonNull::<F>::dangling().as_ptr(), self.len) };
         }
         // SAFETY: caller guarantees `F` matches the field; `byte_ptr` is the
         // aligned start of `capacity` contiguous `F`s and `len <= capacity`.
-        core::slice::from_raw_parts(byte_ptr.cast::<F>(), self.len)
+        unsafe { core::slice::from_raw_parts(byte_ptr.cast::<F>(), self.len) }
     }
 
     /// Returns the column slice for `field` typed as `&mut [F]`.

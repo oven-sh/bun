@@ -364,10 +364,11 @@ fn any_socket_close(socket: &AnySocket) {
     }
 }
 
-/// `bun_valkey::ValkeyReader::pos` is private with no accessor.
+/// Read the parser's current byte offset. Mirrors direct `reader.pos` field
+/// access in the Zig implementation (Zig struct fields are public).
 #[inline]
-fn reader_pos(_reader: &protocol::ValkeyReader<'_>) -> usize {
-    todo!("blocked_on: bun_valkey::ValkeyReader::pos")
+fn reader_pos(reader: &protocol::ValkeyReader<'_>) -> usize {
+    reader.pos()
 }
 
 impl ValkeyClient {

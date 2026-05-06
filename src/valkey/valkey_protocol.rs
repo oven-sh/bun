@@ -217,6 +217,15 @@ impl<'a> ValkeyReader<'a> {
         ValkeyReader { buffer, pos: 0 }
     }
 
+    /// Current read offset into the underlying buffer.
+    ///
+    /// Mirrors the public `pos` field on the Zig `ValkeyReader` struct; callers
+    /// use this to compute how many bytes a `read_value` call consumed.
+    #[inline]
+    pub fn pos(&self) -> usize {
+        self.pos
+    }
+
     pub fn read_byte(&mut self) -> Result<u8, RedisError> {
         if self.pos >= self.buffer.len() {
             return Err(RedisError::InvalidResponse);

@@ -371,21 +371,23 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     }
 
     fn ensure_not_in_heap(&mut self) {
-        let manager = self.manager_mut();
+        // PORT NOTE: reshaped for borrowck — `manager_mut()` borrows `&self`,
+        // which would conflict with the `self as *mut Self` reborrow below.
+        // Capture the raw `*mut PackageManager` and deref it inside the unsafe
+        // block instead (Zig: `this.manager.*` is a non-exclusive pointer).
+        let manager: *mut PackageManager = self.manager;
+        // SAFETY: `manager` is non-null and outlives every subprocess (see
+        // `Self::manager`); the install loop is single-threaded here.
+        let active = unsafe { &mut (*manager).active_lifecycle_scripts };
         if !self.heap.child.is_null()
             || !self.heap.next.is_null()
             || !self.heap.prev.is_null()
-            || core::ptr::eq(
-                manager.active_lifecycle_scripts.root,
-                self as *const _ as *const _,
-            )
+            || core::ptr::eq(active.root, self as *const _ as *const _)
         {
             // SAFETY: `self` was inserted via `insert(this)` with allocation-rooted
             // provenance; the heap holds no other live `&mut` to it here.
             unsafe {
-                manager
-                    .active_lifecycle_scripts
-                    .remove(self as *mut Self as *mut LifecycleScriptSubprocess<'static>);
+                active.remove(self as *mut Self as *mut LifecycleScriptSubprocess<'static>);
             }
         }
     }
@@ -1107,9 +1109,10 @@ impl<'a> BufferedReaderParent for LifecycleScriptSubprocess<'a> {
         // SAFETY: as above.
         unsafe { (*this).on_reader_error(err) }
     }
-    unsafe fn loop_(this: *mut Self) -> *mut bun_io::Loop {
-        // SAFETY: as above.
-        unsafe { (*this).loop_() as *mut bun_io::Loop }
+    unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop {
+        // SAFETY: as above. `AsyncLoop` (= `bun_aio::Loop`) aliases the uws
+        // loop on POSIX; cast through for the trait's nominal type.
+        unsafe { (*this).loop_() as *mut bun_uws_sys::Loop }
     }
     unsafe fn event_loop(this: *mut Self) -> EventLoopHandle {
         // SAFETY: as above. Erase `&AnyEventLoop` → opaque handle (see

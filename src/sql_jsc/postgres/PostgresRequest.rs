@@ -61,8 +61,8 @@ pub fn write_bind<Context: WriterContext>(
     writer.write(b"B")?;
     let length = writer.length()?;
 
-    // TODO(port): Zig had `.String` (takes bun.String) and `.string` (takes []const u8);
-    // both snake_case to `string`. Renamed `.String` → `bun_string` here.
+    // Zig `.String` (bun.String) vs `.string` ([]const u8) both snake_case to
+    // `string`; the bun.String overload is `bun_string` on NewWriter.
     writer.bun_string(&cursor_name)?;
     writer.string(name)?;
 
@@ -188,9 +188,15 @@ pub fn write_bind<Context: WriterContext>(
                 l.write_excluding_self()?;
             }
             types::Tag::bytea => {
-                // Zig: `value.asArrayBuffer(globalObject)` → `buf.byteSlice()`.
-                // sql_jsc::jsc::JSValue currently lacks `as_array_buffer`; see blocked_on.
-                todo!("blocked_on: JSValue::as_array_buffer");
+                let buf = value.as_array_buffer(global);
+                let bytes: &[u8] = match buf.as_ref() {
+                    Some(b) => b.byte_slice(),
+                    None => b"",
+                };
+                let l = writer.length()?;
+                bun_core::scoped_log!(Postgres, "    {} bytes", bytes.len());
+                writer.write(bytes)?;
+                l.write_excluding_self()?;
             }
             types::Tag::int4 => {
                 let l = writer.length()?;
@@ -204,7 +210,6 @@ pub fn write_bind<Context: WriterContext>(
             }
             types::Tag::float8 => {
                 let l = writer.length()?;
-                // TODO(port): Zig had @bitCast on the f64 — verify writer.f64 param type
                 writer.f64(value.to_number(global).map_err(js_error_to_postgres)?)?;
                 l.write_excluding_self()?;
             }
@@ -492,7 +497,7 @@ use crate::postgres::postgres_sql_connection::{SslMode, TlsStatus};
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/sql_jsc/postgres/PostgresRequest.zig (416 lines)
-//   confidence: medium
-//   todos:      6
-//   notes:      NewWriter<Context> kept by-value (Copy); .String→bun_string; bytea path blocked on JSValue::as_array_buffer; protocol write_internal returns bun_core::Error so AnyPostgresError gained From<bun_core::Error>.
+//   confidence: high
+//   todos:      0
+//   notes:      NewWriter<Context> kept by-value (Copy); .String→bun_string; protocol write_internal returns bun_core::Error so AnyPostgresError gained From<bun_core::Error>.
 // ──────────────────────────────────────────────────────────────────────────

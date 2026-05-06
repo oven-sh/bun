@@ -7,8 +7,9 @@
 //! by `GeneratedJS2Native.h` (the JS-module → native dispatch table).
 //!
 //! Mirrors `generated_classes.rs` exactly: thunks dispatch through a
-//! `Js2NativeImpl` trait whose default bodies panic with `unimplemented!()`;
-//! porting a `$zig()` call site means overriding the matching method.
+//! `Js2NativeImpl` trait whose default method bodies panic with a "not yet
+//! ported" message; porting a `$zig()` call site means overriding the
+//! matching method on `Js2Native`.
 #![allow(
     non_snake_case,
     non_camel_case_types,

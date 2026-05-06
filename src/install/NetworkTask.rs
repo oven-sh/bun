@@ -537,7 +537,14 @@ impl NetworkTask {
                 .unwrap_or(false)
         {
             self.unsafe_http_client.client.flags.force_last_modified = true;
-            self.unsafe_http_client.client.if_modified_since = last_modified;
+            // SAFETY (lifetime extension): `last_modified` either points into
+            // the leaked `header_builder.content` buffer (reassigned above) or
+            // into the manifest's `string_buf`, which is the same allocation
+            // referenced by the `PackageManifest` we just cloned into
+            // `self.callback`. Both outlive the HTTP request; Zig stores the
+            // raw slice under the same contract.
+            self.unsafe_http_client.client.if_modified_since =
+                unsafe { &*(last_modified as *const [u8]) };
         }
 
         Ok(())
@@ -624,7 +631,7 @@ impl NetworkTask {
         self.response_buffer = MutableString::init_empty();
 
         let mut header_builder = HeaderBuilder::default();
-        let mut header_buf: &[u8] = b"";
+        let mut header_buf: &'static [u8] = b"";
 
         if matches!(authorization, Authorization::AllowAuthorization) {
             count_auth(&mut header_builder, scope);
@@ -645,8 +652,18 @@ impl NetworkTask {
                 )
             };
         }
+        // PORT NOTE: Zig has no destructors — `header_builder.content` is
+        // intentionally leaked (ownership transfers to the HTTP client).
+        // Forget it so `StringBuilder::drop` doesn't free the buffer that
+        // `header_buf` now aliases.
+        core::mem::forget(core::mem::take(&mut header_builder.content));
 
-        let url = URL::parse(&self.url_buf);
+        // SAFETY (lifetime extension): `url_buf` is a heap allocation owned by
+        // `*self`, which outlives the HTTP request. `AsyncHTTP::init` demands a
+        // `'static` borrow because the HTTP thread reads it concurrently; the
+        // Zig source passes a raw slice under the same ownership contract. See
+        // the identical pattern in `for_manifest` above.
+        let url = URL::parse(unsafe { &*(&*self.url_buf as *const [u8]) });
 
         let mut http_options = AsyncHTTPOptions {
             http_proxy: pm.http_proxy(&url),

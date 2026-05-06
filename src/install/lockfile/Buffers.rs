@@ -294,10 +294,12 @@ where
             use bun_install::dependency::version::Tag;
             const SEP_WINDOWS: u8 = b'\\';
             for dep in remaining {
+                // SAFETY: `dep.version.value` is a tag-discriminated union; each
+                // arm reads only the field corresponding to `dep.version.tag`.
                 match dep.version.tag {
                     Tag::Folder => {
-                        let folder = lockfile.str(&dep.version.value.folder);
-                        if strings::index_of_char(folder, SEP_WINDOWS).is_some() {
+                        let folder = lockfile.str(unsafe { &dep.version.value.folder });
+                        if strings::contains_char(folder, SEP_WINDOWS) {
                             panic!(
                                 "workspace windows separator: {}\n",
                                 bstr::BStr::new(folder)
@@ -306,10 +308,10 @@ where
                     }
                     Tag::Tarball => {
                         if let crate::dependency::URI::Local(local) =
-                            &dep.version.value.tarball.uri
+                            unsafe { dep.version.value.tarball.uri }
                         {
-                            let tarball = lockfile.str(local);
-                            if strings::index_of_char(tarball, SEP_WINDOWS).is_some() {
+                            let tarball = lockfile.str(&local);
+                            if strings::contains_char(tarball, SEP_WINDOWS) {
                                 panic!(
                                     "tarball windows separator: {}",
                                     bstr::BStr::new(tarball)
@@ -318,8 +320,8 @@ where
                         }
                     }
                     Tag::Workspace => {
-                        let workspace = lockfile.str(&dep.version.value.workspace);
-                        if strings::index_of_char(workspace, SEP_WINDOWS).is_some() {
+                        let workspace = lockfile.str(unsafe { &dep.version.value.workspace });
+                        if strings::contains_char(workspace, SEP_WINDOWS) {
                             panic!(
                                 "workspace windows separator: {}\n",
                                 bstr::BStr::new(workspace)
@@ -327,8 +329,8 @@ where
                         }
                     }
                     Tag::Symlink => {
-                        let symlink = lockfile.str(&dep.version.value.symlink);
-                        if strings::index_of_char(symlink, SEP_WINDOWS).is_some() {
+                        let symlink = lockfile.str(unsafe { &dep.version.value.symlink });
+                        if strings::contains_char(symlink, SEP_WINDOWS) {
                             panic!(
                                 "symlink windows separator: {}\n",
                                 bstr::BStr::new(symlink)

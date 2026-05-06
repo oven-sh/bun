@@ -2186,10 +2186,10 @@ impl NetworkSink {
 
     pub fn memory_cost(&self) -> usize {
         // Since this is a JSSink, the NewJSSink function does @sizeOf(JSSink) which includes @sizeOf(ArrayBufferSink).
-        if let Some(_task) = self.task {
+        if let Some(task) = self.task {
             //TODO: we could do better here
-            // SAFETY: task ref-counted, alive
-            todo!("blocked_on: webcore::StreamBuffer::memory_cost");
+            // SAFETY: task is intrusively ref-counted and alive while held in `self.task`.
+            return unsafe { task.as_ref() }.buffered.memory_cost();
         }
         0
     }

@@ -4,15 +4,6 @@
 
 #![allow(unused, dead_code, non_snake_case, non_camel_case_types, non_upper_case_globals)]
 
-// ──────────────────────────────────────────────────────────────────────────
-// B-2 un-gated. Shadow stubs removed; real defs re-exported from
-// `phase_a_draft` below.
-// ──────────────────────────────────────────────────────────────────────────
-
-pub use phase_a_draft::*;
-
-mod phase_a_draft {
-
 use core::mem;
 
 use bun_collections::bit_set::ArrayBitSet;
@@ -2053,9 +2044,6 @@ fn should_skip_line(line: &[u8]) -> bool {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/patch/patch.zig (1434 lines)
-//   confidence: medium
-//   todos:      10
-//   notes:      All `&'a [u8]` borrow input patch text (Phase-A lifetime exception); git_diff_internal stubbed (std::process banned); spawn_opts/NodeFs/bun_spawn shapes guessed; git_diff_postprocess iterator reshaped for borrowck.
+//   notes:      All `&'a [u8]` borrow input patch text; git_diff_postprocess
+//               iterator reshaped for borrowck.
 // ──────────────────────────────────────────────────────────────────────────
-
-} // mod phase_a_draft

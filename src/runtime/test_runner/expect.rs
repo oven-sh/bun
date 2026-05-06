@@ -30,9 +30,9 @@ impl AnyPromiseResultExt for bun_jsc::AnyPromise {
         match self {
             // SAFETY: variants hold a live JSC heap cell created via `as_any_promise`.
             bun_jsc::AnyPromise::Normal(p) => unsafe { (*p).result(vm) },
-            bun_jsc::AnyPromise::Internal(_p) => {
-                todo!("blocked_on: bun_jsc::JSInternalPromise::result")
-            }
+            // `JSInternalPromise` is a transparent alias for `JSPromise`
+            // (JSInternalPromise.rs), so the same `result()` applies.
+            bun_jsc::AnyPromise::Internal(p) => unsafe { (*p).result(vm) },
         }
     }
 }
@@ -1592,10 +1592,11 @@ impl Expect {
         };
 
         // retrieve the captured expected value
-        // TODO(port): blocked_on Expect::js cached-accessor module (codegen_cached_accessors!)
-        let _ = this_value;
-        #[allow(unreachable_code)]
-        let mut value: JSValue = todo!("blocked_on: Expect::js::captured_value_get_cached");
+        let Some(mut value) = super::expect::js::captured_value_get_cached(this_value) else {
+            return Err(global_this.throw(format_args!(
+                "Internal consistency error: failed to retrieve the captured value"
+            )));
+        };
         value = Self::process_promise(
             expect.custom_label.clone(),
             expect.flags,

@@ -515,9 +515,10 @@ where
             // std.fmt.printInt(&buf, k, 10, .lower, .{})
             let len = {
                 use std::io::Write;
+                let cap = buf.len();
                 let mut cursor: &mut [u8] = &mut buf[..];
                 let _ = write!(cursor, "{}", k);
-                buf.len() - cursor.len()
+                cap - cursor.len()
             };
             w.object_field(&buf[..len])?;
             w.write(v.slice(sb))?;
@@ -541,9 +542,10 @@ where
         {
             let len = {
                 use std::io::Write;
+                let cap = buf.len();
                 let mut cursor: &mut [u8] = &mut buf[..];
                 let _ = write!(cursor, "{}", k);
-                buf.len() - cursor.len()
+                cap - cursor.len()
             };
             w.object_field(&buf[..len])?;
             w.print(format_args!("\"{}\"", v.fmt(sb)))?;

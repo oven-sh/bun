@@ -1527,7 +1527,10 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
 
                             let mut taken_active_file = active_file_strong.take().unwrap();
 
-                            crate::test_runner::jest::Jest::runner().unwrap().remove_active_timeout(jsc_vm);
+                            // SAFETY: jsc_vm_ptr is the live thread VM.
+                            crate::test_runner::jest::Jest::runner()
+                                .unwrap()
+                                .remove_active_timeout(unsafe { &mut *jsc_vm_ptr });
 
                             // This might internally call `std.c.kill` on this
                             // spawnSync process. Even if we do that, we still
@@ -1535,9 +1538,10 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                             // the event loop again, but it should wake up
                             // ~instantly so we can drain the events.
                             crate::test_runner::bun_test::BunTest::bun_test_timeout_callback(
-                                &mut taken_active_file,
+                                taken_active_file,
                                 &absolute_timespec,
-                                jsc_vm,
+                                // SAFETY: jsc_vm_ptr is the live thread VM.
+                                unsafe { &*jsc_vm_ptr },
                             );
                             // active_file_strong / taken_active_file drop here (was `defer .deinit()`).
                         }

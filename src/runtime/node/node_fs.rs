@@ -6951,7 +6951,7 @@ fn dt_delete_file(parent: sys::Dir, name: &[u8]) -> Result<(), E> {
     path_buf[len] = 0;
     // SAFETY: NUL written at [len].
     let z = unsafe { ZStr::from_raw(path_buf.as_ptr(), len) };
-    match Syscall::unlinkat(parent.fd, z, 0) {
+    match Syscall::unlinkat(parent.fd, z) {
         Maybe::Ok(()) => Ok(()),
         Maybe::Err(e) => Err(e.get_errno()),
     }
@@ -6966,10 +6966,10 @@ fn dt_delete_dir(parent: sys::Dir, name: &[u8]) -> Result<(), E> {
     // SAFETY: NUL written at [len].
     let z = unsafe { ZStr::from_raw(path_buf.as_ptr(), len) };
     #[cfg(unix)]
-    let flags = libc::AT_REMOVEDIR;
+    let flags: i32 = libc::AT_REMOVEDIR;
     #[cfg(not(unix))]
     let flags = 0x200; // AT_REMOVEDIR — Windows path goes through sys_uv which maps this.
-    match Syscall::unlinkat(parent.fd, z, flags) {
+    match Syscall::unlinkat_with_flags(parent.fd, z, flags) {
         Maybe::Ok(()) => Ok(()),
         Maybe::Err(e) => Err(e.get_errno()),
     }

@@ -993,7 +993,7 @@ impl<'a> BunTest<'a> {
                 };
                 afterall_order.set_failure_skip_to(&mut order);
 
-                self.execution.load_from_order(&order)?;
+                self.execution.load_from_order(&mut order)?;
                 debug::dump_order(&self.execution)?;
                 Ok(Advance::Cont)
             }

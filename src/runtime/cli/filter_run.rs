@@ -770,14 +770,13 @@ pub fn run_scripts_with_filter(ctx: Command::Context) -> Result<core::convert::I
             continue;
         }
 
-        let path_var = RunCommand::configure_path_for_run_with_package_json_dir(
-            &ctx,
-            dirpath,
-            &mut this_transpiler,
-            None,
-            dirpath,
-            ctx.debug.run_in_bun,
-        )?;
+        // TODO(port): the real body lives in run_command.rs `mod phase_a_draft`,
+        // which currently shadows `RunCommand` with a private duplicate struct so
+        // the impl isn't visible here. Stub until the draft impl is hoisted.
+        let path_var: Vec<u8> = {
+            let _ = (&ctx, dirpath, &mut this_transpiler, ctx.debug.run_in_bun);
+            todo!("blocked_on: run_command::RunCommand::configure_path_for_run_with_package_json_dir")
+        };
 
         for (i, name) in [&pre_script_name[..], script_name, &post_script_name[..]].iter().enumerate() {
             let Some(original_content) = pkgscripts.get(*name) else {

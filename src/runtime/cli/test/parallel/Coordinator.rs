@@ -25,20 +25,20 @@ use crate::api::bun::process::Status as SpawnStatus;
 pub struct Coordinator<'a> {
     pub vm: &'a VirtualMachine,
     pub reporter: &'a mut CommandLineReporter,
-    pub files: &'a [PathString],
-    pub cwd: &'a ZStr,
+    pub files: Vec<PathString>,
+    pub cwd: &'a [u8],
     // TODO(port): [:null]?[*:0]const u8 — null-sentinel-terminated slice of C strings;
     // backing storage has a null at [len] for execve-style consumers.
-    pub argv: &'a [*const c_char],
+    pub argv: Box<[Option<*const c_char>]>,
     /// One envp per worker slot — same base, with that slot's JEST_WORKER_ID
     /// and BUN_TEST_WORKER_ID appended.
     // TODO(port): []const [:null]?[*:0]const u8 — see argv note.
-    pub envps: &'a [&'a [*const c_char]],
+    pub envps: Vec<bun_dotenv::NullDelimitedEnvMap>,
 
     pub workers: &'a mut [Worker],
     /// Temp dir for per-worker JUnit XML and LCOV coverage fragments; None
     /// when neither was requested.
-    pub worker_tmpdir: Option<&'a ZStr>,
+    pub worker_tmpdir: Option<&'a [u8]>,
     pub junit_fragments: Vec<Box<[u8]>>,
     pub coverage_fragments: Vec<Box<[u8]>>,
     /// File index whose `path:` header was most recently written. Result lines

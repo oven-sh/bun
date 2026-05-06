@@ -245,7 +245,7 @@ impl ShellSubprocess {
 
     /// This disables the keeping process alive flag on the poll and also in the stdin, stdout, and stderr
     pub fn unref<const _DEREF: bool>(&mut self) {
-        self.process.disable_keeping_event_loop_alive();
+        self.proc().disable_keeping_event_loop_alive();
 
         self.stdout.unref();
 
@@ -253,15 +253,15 @@ impl ShellSubprocess {
     }
 
     pub fn has_killed(&self) -> bool {
-        self.process.has_killed()
+        self.proc().has_killed()
     }
 
     pub fn try_kill(&mut self, sig: i32) -> bun_sys::Result<()> {
         if self.has_exited() {
-            return bun_sys::Result::success();
+            return Ok(());
         }
 
-        self.process.kill(u8::try_from(sig).unwrap())
+        self.proc().kill(u8::try_from(sig).unwrap())
     }
 
     // fn has_called_getter(self: &Subprocess, comptime getter: @Type(.enum_literal)) -> bool {

@@ -418,25 +418,61 @@ pub mod host_fn {
         }
     }
     /// `host_fn::toJSHostFn` — wrap a safe Rust-style host fn (`JSHostFnZig`)
-    /// into the raw C ABI (`JSHostFn`). The wrapper is monomorphized over the
-    /// concrete fn item via a const generic, mirroring Zig's comptime
-    /// `toJSHostFn(comptime Fn)`.
-    pub fn to_js_host_fn(_f: JSHostFnZig) -> JSHostFn {
-        // PORT NOTE: a const-generic `<const F: JSHostFnZig>` wrapper would be
-        // ideal but fn-pointer const generics are unstable. Callers that need a
-        // raw `JSHostFn` should use `#[bun_jsc::host_fn]` or `JSFunction::create`
-        // (which accepts `JSHostFnZig` directly).
-        todo!("blocked_on: bun_jsc_macros::host_fn — use JSFunction::create instead")
+    /// into the raw C ABI shape. Mirrors Zig's comptime `toJSHostFn(comptime Fn)`
+    /// (host_fn.zig:16): returns a thunk that calls the wrapped fn and routes
+    /// its `JsResult` through `to_js_host_fn_result`.
+    ///
+    /// PORT NOTE: a const-generic `<const F: JSHostFnZig>` wrapper would mint a
+    /// true `extern "C" fn` item, but fn-pointer const generics are unstable.
+    /// Returning `impl Fn` covers the immediate-call pattern
+    /// (`to_js_host_fn(f)(global, callframe)`); callers that need a real
+    /// `JSHostFn` pointer use `#[bun_jsc::host_fn]` or `JSFunction::create`.
+    #[inline]
+    pub fn to_js_host_fn(
+        function_to_wrap: JSHostFnZig,
+    ) -> impl Fn(*mut crate::JSGlobalObject, *mut crate::CallFrame) -> crate::JSValue {
+        move |global, callframe| {
+            // SAFETY: JSC guarantees both pointers are live for the host call.
+            let (global, callframe) = unsafe { (&*global, &*callframe) };
+            to_js_host_fn_result(global, function_to_wrap(global, callframe))
+        }
     }
-    pub fn to_js_host_fn_result() { todo!() }
-    pub fn to_js_host_fn_with_context() { todo!() }
+    /// `host_fn::toJSHostFnResult` (host_fn.zig:31) — map a `JsResult<JSValue>`
+    /// to the raw `JSValue` a host fn must return: `.zero` when an exception is
+    /// pending (or terminated), and a freshly-thrown OOM for `OutOfMemory`.
+    #[inline]
+    pub fn to_js_host_fn_result(global: &JSGlobalObject, result: JsResult<JSValue>) -> JSValue {
+        match result {
+            Ok(v) => v,
+            Err(JsError::Thrown) => JSValue::ZERO,
+            Err(JsError::OutOfMemory) => global.throw_out_of_memory_value(),
+            Err(JsError::Terminated) => JSValue::ZERO,
+        }
+    }
+    /// `host_fn::toJSHostFnWithContext` (host_fn.zig:24) — like `to_js_host_fn`
+    /// but threads a leading `&mut Context` through to the wrapped fn.
+    #[inline]
+    pub fn to_js_host_fn_with_context<C>(
+        function: JSHostFnZigWithContext<C>,
+    ) -> impl Fn(*mut C, *mut crate::JSGlobalObject, *mut crate::CallFrame) -> crate::JSValue {
+        move |ctx, global, callframe| {
+            // SAFETY: JSC guarantees all three pointers are live for the call;
+            // `ctx` is the `m_ctx` payload owned by the JS wrapper.
+            let (ctx, global, callframe) = unsafe { (&mut *ctx, &*global, &*callframe) };
+            to_js_host_fn_result(global, function(ctx, global, callframe))
+        }
+    }
     // TODO(port): jsc.conv ABI — proc-macro emits `extern "sysv64"` on windows-x64.
     pub type JSHostFn =
         unsafe extern "C" fn(*mut crate::JSGlobalObject, *mut crate::CallFrame) -> crate::JSValue;
     pub type JSHostFnZig =
         fn(&crate::JSGlobalObject, &crate::CallFrame) -> crate::JsResult<crate::JSValue>;
-    pub type JSHostFnZigWithContext = unsafe extern "C" fn();
-    pub type JSHostFunctionTypeWithContext = unsafe extern "C" fn();
+    /// `JSHostFnZigWithContext(ContextType)` (host_fn.zig:8).
+    pub type JSHostFnZigWithContext<C> =
+        fn(&mut C, &crate::JSGlobalObject, &crate::CallFrame) -> crate::JsResult<crate::JSValue>;
+    /// `JSHostFunctionTypeWithContext(ContextType)` (host_fn.zig:12).
+    pub type JSHostFunctionTypeWithContext<C> =
+        unsafe extern "C" fn(*mut C, *mut crate::JSGlobalObject, *mut crate::CallFrame) -> crate::JSValue;
 
     /// `host_fn::DOMCall` — Zig type-generator that emits a DOM-call put helper +
     /// fast-path/slow-path callbacks. The Rust port encodes this as the

@@ -271,21 +271,47 @@ pub fn void_wrap<T>(
 // helper bodies that callers in other files reference.
 
 /// Shorthand longhand-reconstruction helpers.
-/// TODO(port): Zig version was `@compileError(todo_stuff.depth)` for every fn
-/// body; preserve that as `todo!()`.
+///
+/// PORT NOTE: Zig's `DefineShorthand` bodies are `@compileError(todo_stuff.depth)`
+/// — i.e. instantiating the comptime fn and reaching any method is a compile
+/// error. The faithful Rust mapping is a trait with **no default bodies**: any
+/// `impl DefineShorthand for T` that omits a method fails at compile time, same
+/// as the Zig. Per-type bodies are emitted by `#[derive(DefineShorthand)]`
+/// using the (currently commented-out) `PropertyFieldMap`/`VendorPrefixMap`
+/// reflection algorithm in `css_parser.zig` lines 316–500.
 pub trait DefineShorthand: Sized {
-    fn from_longhands(_decls: &DeclarationBlock, _vendor_prefix: VendorPrefix) -> Option<(Self, bool)> {
-        todo!("{}", todo_stuff::DEPTH)
-    }
-    fn longhands(_vendor_prefix: VendorPrefix) -> &'static [PropertyId] {
-        todo!("{}", todo_stuff::DEPTH)
-    }
-    fn longhand(&self, _property_id: &PropertyId) -> Option<Property> {
-        todo!("{}", todo_stuff::DEPTH)
-    }
-    fn set_longhand(&mut self, _property: &Property) -> bool {
-        todo!("{}", todo_stuff::DEPTH)
-    }
+    /// The shorthand's own `PropertyIdTag` (Zig: `comptime property_name`).
+    const PROPERTY_NAME: PropertyIdTag;
+
+    /// Returns a shorthand from the longhand properties defined in the given
+    /// declaration block, plus whether all matched longhands were `!important`.
+    ///
+    /// Derive walks `decls.declarations` then `decls.important_declarations`;
+    /// for each property, matches its `PropertyIdTag` against each field's
+    /// mapped tag (and vendor prefix where applicable), deep-clones the value
+    /// into the corresponding field, and tracks a per-field set bitmask. If any
+    /// field's prefix mismatches, returns `None`. If `important_count > 0 &&
+    /// important_count != count`, returns `None`. Returns `Some((self, important))`
+    /// only when every field was set.
+    fn from_longhands(decls: &DeclarationBlock, vendor_prefix: VendorPrefix) -> Option<(Self, bool)>;
+
+    /// Returns the longhand `PropertyId`s this shorthand expands to, in field
+    /// declaration order. Derive emits a `const` array of
+    /// `PropertyId::<field>{ vendor_prefix }` (prefix only for fields present
+    /// in `VendorPrefixMap`).
+    fn longhands(vendor_prefix: VendorPrefix) -> &'static [PropertyId];
+
+    /// Returns a single longhand `Property` for this shorthand, given its id.
+    /// Derive matches `property_id`'s tag against each field's mapped tag,
+    /// deep-clones the field value, and wraps it in the corresponding
+    /// `Property::<field>` variant (paired with the prefix when vendor-mapped).
+    /// Returns `None` if no field matches.
+    fn longhand(&self, property_id: &PropertyId) -> Option<Property>;
+
+    /// Updates this shorthand from a longhand property. Derive matches
+    /// `property`'s tag against each field's mapped tag and deep-clones the
+    /// payload into the field. Returns `true` on match, `false` otherwise.
+    fn set_longhand(&mut self, property: &Property) -> bool;
 }
 
 /// Marker trait — Zig's `DefineListShorthand` does nothing.

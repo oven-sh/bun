@@ -728,7 +728,6 @@ fn dump_btjs_trace_debug_impl() -> *const c_char {
     let mut result_writer: Vec<u8> = Vec::new();
     let w = &mut result_writer;
 
-    // TODO(port): std.debug.getSelfDebugInfo()
     let debug_info: &mut SelfInfo = match get_self_debug_info() {
         Ok(di) => di,
         Err(err) => {
@@ -802,7 +801,6 @@ fn print_source_at_address(
     if !cfg!(debug_assertions) {
         unreachable!();
     }
-    // TODO(port): debug_info.getModuleForAddress(address)
     let module = match get_module_for_address(debug_info, address) {
         Ok(m) => m,
         Err(e) if e == err!("MissingDebugInfo") || e == err!("InvalidDebugInfo") => {

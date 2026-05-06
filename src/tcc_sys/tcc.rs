@@ -288,13 +288,44 @@ impl State {
         unsafe { tcc_define_symbol(self, sym.as_ptr(), value.as_ptr()) }
     }
 
-    // TODO(port): `defineSymbolsComptime` uses `@typeInfo`/`@field` to iterate anonymous-struct
-    // fields and dispatch on field type at comptime. No Rust equivalent — replace call sites with
-    // a `macro_rules!` (e.g. `define_symbols!(state, { foo = "bar", baz = 42 })`) or explicit
-    // `define_symbol` calls. Stubbed for Phase B.
-    #[doc(hidden)]
-    pub fn define_symbols_comptime(&mut self) {
-        unimplemented!("TODO(port): comptime reflection over anonymous struct — use a macro at call sites")
+    /// Define multiple preprocessor symbols with integer values.
+    ///
+    /// Zig: `defineSymbolsComptime(s, symbols: anytype)` — iterated anonymous-struct fields via
+    /// `@typeInfo`/`@field` and dispatched on field type at comptime. Per PORTING.md §Comptime
+    /// reflection, homogenized to a slice + plain `for` since every call site passes ints (the
+    /// Zig `.pointer` arm at tcc.zig:192 is dead and itself buggy — it passes `s` twice).
+    ///
+    /// ## Example
+    /// ```ignore
+    /// state.define_symbols(&[("foo", 1), ("baz", 42)]);
+    /// ```
+    pub fn define_symbols(&mut self, symbols: &[(&str, i64)]) {
+        // Zig: `var buf: [256]u8 = undefined;`
+        let mut buf = [0u8; 256];
+        for &(name, value) in symbols {
+            // Zig field names are `[:0]const u8` (comptime NUL-terminated); copy into the stack
+            // buffer to recover that invariant for the C ABI.
+            // PERF(port): was comptime monomorphization (zero-copy name) — profile in Phase B.
+            let name_len = name.len();
+            debug_assert!(name_len < buf.len());
+            buf[..name_len].copy_from_slice(name.as_bytes());
+            buf[name_len] = 0;
+            let sym_ptr = buf.as_ptr().cast::<c_char>();
+
+            // Zig: `std.fmt.bufPrintZ(&buf, "{d}", .{value}) catch unreachable`
+            let mut itoa = itoa::Buffer::new();
+            let digits = itoa.format(value);
+            let val_off = name_len + 1;
+            let val_end = val_off + digits.len();
+            debug_assert!(val_end < buf.len());
+            buf[val_off..val_end].copy_from_slice(digits.as_bytes());
+            buf[val_end] = 0;
+            let val_ptr = buf[val_off..].as_ptr().cast::<c_char>();
+
+            // SAFETY: self is a valid *mut TCCState; both buffer regions are NUL-terminated and
+            // outlive the FFI call (tcc_define_symbol copies its arguments).
+            unsafe { tcc_define_symbol(self, sym_ptr, val_ptr) }
+        }
     }
 
     /// Undefine preprocess symbol 'sym'
@@ -375,13 +406,39 @@ impl State {
         Ok(())
     }
 
-    // TODO(port): `addSymbolsComptime` uses `@typeInfo`/`@field` to iterate anonymous-struct
-    // fields at comptime. Replace call sites with a `macro_rules!` (e.g.
-    // `add_symbols!(state, { add => add as *const c_void, sub => sub as *const c_void })`) or
-    // explicit `add_symbol` calls. Stubbed for Phase B.
-    #[doc(hidden)]
-    pub fn add_symbols_comptime(&mut self) -> Result<(), Error> {
-        unimplemented!("TODO(port): comptime reflection over anonymous struct — use a macro at call sites")
+    /// Add multiple symbols to the compiled program.
+    ///
+    /// Zig: `addSymbolsComptime(s, symbols: anytype)` — iterated anonymous-struct fields via
+    /// `@typeInfo`/`@field` at comptime. Per PORTING.md §Comptime reflection, homogenized to a
+    /// slice of `(name, *const c_void)` + plain `for` since every call site passes opaque
+    /// function/data pointers.
+    ///
+    /// ## Example
+    /// ```ignore
+    /// state.add_symbols(&[
+    ///     ("add", add as *const c_void),
+    ///     ("sub", sub as *const c_void),
+    /// ])?;
+    /// ```
+    pub fn add_symbols(&mut self, symbols: &[(&str, *const c_void)]) -> Result<(), Error> {
+        // Zig field names are `[:0]const u8` (comptime NUL-terminated); copy into a stack buffer
+        // to recover that invariant for the C ABI.
+        // PERF(port): was comptime monomorphization (zero-copy name) — profile in Phase B.
+        let mut buf = [0u8; 256];
+        for &(name, val) in symbols {
+            let len = name.len();
+            debug_assert!(len < buf.len());
+            buf[..len].copy_from_slice(name.as_bytes());
+            buf[len] = 0;
+            // Zig: `try s.addSymbol(field.name, value);`
+            // SAFETY: self is a valid *mut TCCState; buf[..=len] is NUL-terminated and outlives
+            // the FFI call (tcc_add_symbol copies the name); val is an opaque address.
+            if unsafe { tcc_add_symbol(self, buf.as_ptr().cast::<c_char>(), val) } != 0 {
+                // PERF(port): @branchHint(.unlikely)
+                return Err(Error::InvalidSymbol);
+            }
+        }
+        Ok(())
     }
 
     /// Output an executable, library or object file. DO NOT call `relocate` before.
@@ -440,6 +497,6 @@ impl State {
 // PORT STATUS
 //   source:     src/tcc_sys/tcc.zig (323 lines)
 //   confidence: medium
-//   todos:      8
-//   notes:      FFI sys-crate; opaque handle uses NonNull<State>+explicit destroy (no Drop); Config.options is raw NonNull<ZStr> (no struct lifetime in Phase A); two comptime-reflection helpers stubbed for macro replacement; OutputError added to enum to surface latent Zig bug.
+//   todos:      6
+//   notes:      FFI sys-crate; opaque handle uses NonNull<State>+explicit destroy (no Drop); Config.options is raw NonNull<ZStr> (no struct lifetime in Phase A); comptime-reflection helpers ported as slice-iterating fns (define_symbols/add_symbols); OutputError added to enum to surface latent Zig bug.
 // ──────────────────────────────────────────────────────────────────────────

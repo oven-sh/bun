@@ -1944,28 +1944,32 @@ pub mod defines_full_draft {
             key: &[u8],
             value: DefineData,
         ) -> core::result::Result<(), bun_alloc::AllocError> {
+            let _ = bump;
             // If it has a dot, then it's a DotDefine.
             // e.g. process.env.NODE_ENV
             if let Some(last_dot) = strings::last_index_of_char(key, b'.') {
                 let tail = &key[last_dot + 1..];
                 let remainder = &key[..last_dot];
                 let count = remainder.iter().filter(|&&c| c == b'.').count() + 1;
-                let parts = bump.alloc_slice_fill_default::<*const [u8]>(count + 1);
-                for (i, split) in remainder.split(|&c| c == b'.').enumerate() {
-                    parts[i] = split as *const [u8];
+                // Zig allocated `[][]const u8` borrowing the input key; the Rust
+                // port owns the part bytes (tiny startup-time copies) so the
+                // caller can drop `key` after `Define::init`.
+                let mut parts: Vec<Box<[u8]>> = Vec::with_capacity(count + 1);
+                for split in remainder.split(|&c| c == b'.') {
+                    parts.push(Box::from(split));
                 }
-                parts[count] = tail as *const [u8];
+                parts.push(Box::from(tail));
 
                 // "NODE_ENV"
                 let entry = self.dots.entry(tail.into()).or_default();
                 for part in entry.iter_mut() {
                     // ["process", "env"] === ["process", "env"]
-                    if are_parts_equal(part.parts, parts) {
+                    if are_parts_equal(&part.parts, &parts) {
                         part.data = DefineData::merge(&part.data, &value);
                         return Ok(());
                     }
                 }
-                entry.push(DotDefine { data: value, parts: parts as *const [_] });
+                entry.push(DotDefine { data: value, parts });
             } else {
                 // e.g. IS_BROWSER
                 self.identifiers.insert(key.into(), value);
@@ -1991,30 +1995,31 @@ pub mod defines_full_draft {
             // here is safe-ish: only affects pure-annotation tree shaking.
 
             // Step 3. Load user data into hash tables
-            if let Some(user_defines) = user_defines {
-                for (k, v) in user_defines.into_iter() {
+            // (Zig: `iter.next()` over `StringHashMap` — consume the inner map.)
+            if let Some(mut user_defines) = user_defines {
+                for (k, v) in core::mem::take(&mut *user_defines).into_iter() {
                     define.insert(bump, &k, v)?;
                 }
             }
             // Step 4. Load environment data into hash tables.
-            if let Some(string_defines) = string_defines {
-                for (k, v) in string_defines.into_iter() {
-                    define.insert(bump, &k, v)?;
+            // (Zig: `it.next()` over `StringArrayHashMap` — `ArrayHashMap` has
+            // no `IntoIterator`; walk insertion-order entries.)
+            if let Some(mut string_defines) = string_defines {
+                let mut it = string_defines.iterator();
+                while let Some(entry) = it.next() {
+                    define.insert(bump, &**entry.key_ptr, entry.value_ptr.clone())?;
                 }
             }
             Ok(define)
         }
     }
 
-    fn are_parts_equal(a: *const [*const [u8]], b: &[*const [u8]]) -> bool {
-        // SAFETY: `a` was constructed from a valid arena slice in `insert`.
-        let a = unsafe { &*a };
+    fn are_parts_equal(a: &[Box<[u8]>], b: &[Box<[u8]>]) -> bool {
         if a.len() != b.len() {
             return false;
         }
         for i in 0..a.len() {
-            // SAFETY: each part is a valid borrow of the original key slice.
-            if unsafe { &*a[i] } != unsafe { &*b[i] } {
+            if !strings::eql(&a[i], &b[i]) {
                 return false;
             }
         }

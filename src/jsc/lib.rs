@@ -2030,6 +2030,7 @@ pub mod WebCore {
         fn Blob__fromJS(value: crate::JSValue) -> Option<core::ptr::NonNull<Blob>>;
         fn Blob__fromJSDirect(value: crate::JSValue) -> Option<core::ptr::NonNull<Blob>>;
         fn Blob__create(ptr: *mut Blob, global: *mut crate::JSGlobalObject) -> crate::JSValue;
+        fn Blob__getConstructor(global: *mut crate::JSGlobalObject) -> crate::JSValue;
         /// Exported from `bun_runtime::webcore::Blob` as
         /// `Bun__Blob__sharedView` (C-ABI trampoline; breaks the dep cycle).
         fn Bun__Blob__sharedView(this: *const Blob, len: *mut usize) -> *const u8;
@@ -2052,6 +2053,10 @@ pub mod WebCore {
             let _ = global;
             // SAFETY: never called on the opaque shim (zero-sized, no state).
             unsafe { core::hint::unreachable_unchecked() }
+        }
+        fn get_constructor(global: &crate::JSGlobalObject) -> crate::JSValue {
+            // SAFETY: `global` is live; codegen extern returns the cached ctor.
+            unsafe { Blob__getConstructor(global.as_ptr()) }
         }
     }
 

@@ -181,17 +181,19 @@ pub struct BunInstall {
 /// nest a type inside a struct, so it lives in a sibling module and the
 /// canonical path becomes `bun_api::npm_registry::Parser`.
 pub mod npm_registry {
+    use std::io::Write as _;
+
+    use bun_string::strings;
+    use bun_url::URL;
+
     pub use super::NpmRegistry;
 
-    // TODO(b2-blocked): bun_logger::Log / bun_logger::Source / bun_url::URL
-    //
-    // The `Parser` body (`parse_registry_url_string_impl` /
-    // `parse_registry_object` / `parse_registry`) needs `bun_logger` and
-    // `bun_url`, which would drag tier-2+ deps into this leaf schema crate.
-    // The struct + method *signatures* are provided so downstream
-    // `bun_ini::ScopeIterator` / `load_npmrc` can name them; bodies are
-    // `todo!()` until the URL/log surface is wired (or the parser moves up to
-    // a crate that already has those deps).
+    // PORT NOTE: `Parser` stays generic over `L` (Log) / `S` (Source) so this
+    // leaf schema crate doesn't need to name `bun_logger`. The lone live body
+    // (`parse_registry_url_string_impl`) doesn't touch log/source — only the
+    // not-yet-ported `parse_registry_object` / `parse_registry` paths do, and
+    // those need `js_ast::Expr` so they belong upstream in the bunfig parser
+    // anyway.
     pub struct Parser<'a, L, S> {
         pub log: &'a mut L,
         pub source: &'a S,
@@ -200,11 +202,50 @@ pub mod npm_registry {
     impl<'a, L, S> Parser<'a, L, S> {
         pub fn parse_registry_url_string_impl(
             &mut self,
-            _str: &[u8],
+            str: &[u8],
         ) -> Result<NpmRegistry, bun_alloc::AllocError> {
-            // TODO(b2-blocked): bun_url::URL::parse + allocPrint port
-            todo!("npm_registry::Parser::parse_registry_url_string_impl — blocked on bun_url in bun_api")
+            let url = URL::parse(str);
+            let mut registry = NpmRegistry::default();
+
+            // Token
+            if url.username.is_empty() && !url.password.is_empty() {
+                registry.token = Box::<[u8]>::from(url.password);
+                registry.url = format_url_without_auth(&url);
+            } else if !url.username.is_empty() && !url.password.is_empty() {
+                registry.username = Box::<[u8]>::from(url.username);
+                registry.password = Box::<[u8]>::from(url.password);
+
+                registry.url = format_url_without_auth(&url);
+            } else {
+                // Do not include a trailing slash. There might be parameters at the end.
+                registry.url = Box::<[u8]>::from(url.href);
+            }
+
+            Ok(registry)
         }
+    }
+
+    /// Zig: `std.fmt.allocPrint(alloc, "{s}://{f}/{s}/", .{
+    ///     url.displayProtocol(), url.displayHost(),
+    ///     std.mem.trim(u8, url.pathname, "/") })`.
+    ///
+    /// `display_host()` yields a `bun_core::fmt::HostFormatter` (impls
+    /// `Display`); the other two pieces are raw byte slices, so we assemble
+    /// into a `Vec<u8>` directly rather than going through `format!` and
+    /// risking lossy UTF-8 round-trips.
+    fn format_url_without_auth(url: &URL<'_>) -> Box<[u8]> {
+        let proto = url.display_protocol();
+        let path = strings::trim(url.pathname, b"/");
+
+        let mut buf: Vec<u8> = Vec::with_capacity(proto.len() + 3 + url.host.len() + 1 + path.len() + 1);
+        buf.extend_from_slice(proto);
+        buf.extend_from_slice(b"://");
+        // io::Write on Vec<u8> is infallible.
+        let _ = write!(&mut buf, "{}", url.display_host());
+        buf.push(b'/');
+        buf.extend_from_slice(path);
+        buf.push(b'/');
+        buf.into_boxed_slice()
     }
 }
 

@@ -1644,8 +1644,35 @@ pub struct FetchOptions {
 
 impl Default for FetchOptions {
     fn default() -> Self {
-        // TODO(port): Zig had per-field defaults; only the optional/defaulted ones matter at callsites
-        unimplemented!("FetchOptions::default - construct explicitly")
+        // PORT NOTE: Zig FetchOptions had per-field defaults for the optional half of the struct;
+        // the required fields (method/headers/body/url/bools/unix_socket_path/globalThis) had none.
+        // We supply zero-values for those so callers can use `..Default::default()` struct-update
+        // syntax while still overriding the required fields explicitly.
+        Self {
+            method: Method::GET,
+            headers: Headers::default(),
+            body: HTTPRequestBody::EMPTY,
+            disable_timeout: false,
+            disable_keepalive: false,
+            disable_decompression: false,
+            reject_unauthorized: true,
+            url: ZigURL::default(),
+            verbose: http::HTTPVerboseLevel::None,
+            redirect_type: FetchRedirect::Follow,
+            proxy: None,
+            proxy_headers: None,
+            url_proxy_buffer: Box::default(),
+            signal: None,
+            global_this: None,
+            hostname: None,
+            check_server_identity: Strong::EMPTY,
+            unix_socket_path: ZigString::Slice::EMPTY,
+            ssl_config: None,
+            upgraded_connection: false,
+            force_http2: false,
+            force_http3: false,
+            force_http1: false,
+        }
     }
 }
 

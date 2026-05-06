@@ -6173,12 +6173,7 @@ where
         printer
     }
 
-    // TODO(b2-blocked): bun_logger::fs::Path::pretty + bun_js_parser::Part::stmts shape
-    // — `print_dev_server_module` walks `source.path.pretty` (not yet ported on
-    // bun_logger's Path) and indexes `part.stmts: *mut [Stmt]` for ESM bake-dev
-    // output. Re-gated until those land.
-    
-    fn print_dev_server_module(&mut self, source: &logger::Source, ast: &js_ast::Ast, part: &js_ast::Part) {
+    pub fn print_dev_server_module(&mut self, source: &logger::Source, ast: &js_ast::Ast, part: &js_ast::Part) {
         self.indent();
         self.print_indent();
 
@@ -6946,37 +6941,50 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     Ok(usize::try_from(printer.writer.written().max(0)).unwrap())
 }
 
-// TODO(b2-blocked): bun_js_parser::Ast::init_test (re-gated upstream in Ast.rs)
-// TODO(b2-blocked): bun_js_parser::Symbol::{List,NestedList}::from_borrowed_slice_dangerous
-
 pub fn print_json<W: WriterTrait>(
     _writer: W,
-    expr: Expr,
+    expr: js_ast::Expr,
     source: &logger::Source,
-    opts: Options,
+    opts: PrintJsonOptions<'_>,
 ) -> Result<usize, bun_core::Error> {
+    // NewPrinter(ascii_only=false, Writer, rewrite_esm_to_cjs=false, is_bun_platform=false, is_json=true, generate_source_map=false)
     type PrinterType<'a, W> = Printer<'a, W, false, false, false, true, false>;
     let writer = _writer;
-    let mut s_expr = S::SExpr { value: expr, ..Default::default() };
-    let stmt = Stmt { loc: logger::Loc::EMPTY, data: StmtData::SExpr(&mut s_expr) };
-    let mut stmts = [stmt];
-    let mut parts = [js_ast::Part { stmts: &stmts[..], ..Default::default() }];
-    let ast = Ast::init_test(&mut parts);
-    let list = js_ast::Symbol::List::from_borrowed_slice_dangerous(ast.symbols.slice());
-    let nested_list = js_ast::Symbol::NestedList::from_borrowed_slice_dangerous(&[list]);
-    let mut renamer = rename::NoOpRenamer::init(js_ast::ast::symbol::Map::init_list(nested_list), source);
+    // PORT NOTE: Zig built a throwaway `Ast.initTest(&parts)` (wrapping `expr` in
+    // an `S.SExpr`/Part) solely so the printer could read its default-empty
+    // `import_records` and `symbols` for the no-op renamer; the body then calls
+    // `printExpr(expr, ...)` directly without ever walking those parts. Rust
+    // constructs the same empty inputs without round-tripping through `Ast`.
+    let bump = bumpalo::Bump::new();
+    // SAFETY: borrowed lists are empty / read-only and never freed (the
+    // resulting `Map` is moved into a `NoOpRenamer` whose drop is a no-op for
+    // borrowed BabyLists).
+    let list = unsafe { js_ast::ast::symbol::List::from_borrowed_slice_dangerous(&[]) };
+    let nested_list = unsafe {
+        js_ast::ast::symbol::NestedList::from_borrowed_slice_dangerous(core::slice::from_ref(&*list))
+    };
+    let mut no_op = rename::NoOpRenamer::init(
+        js_ast::ast::symbol::Map::init_list(core::mem::ManuallyDrop::into_inner(nested_list)),
+        source,
+    );
 
+    let full_opts = Options {
+        indent: opts.indent,
+        mangled_props: opts.mangled_props,
+        ..Default::default()
+    };
     let mut printer = PrinterType::<W>::init(
         writer,
-        ast.import_records.slice(),
-        opts,
-        renamer.to_renamer(),
+        &bump,
+        &[], // ast.import_records.slice()
+        full_opts,
+        no_op.to_renamer(),
         SourceMap::chunk::Builder::default(), // undefined
     );
     // PERF(port): was stack-fallback allocator
     printer.binary_expression_stack = Vec::new();
 
-    printer.print_expr(expr, Level::Lowest, ExprFlagSet::empty());
+    printer.print_expr(expr, js_ast::ast::op::Level::Lowest, ExprFlagSet::empty());
     printer.writer.get_error()?;
     printer.writer.done()?;
 
@@ -7075,12 +7083,7 @@ pub fn print_with_writer_and_platform<'a, W: WriterTrait, const IS_BUN_PLATFORM:
 
     // `Index::is_runtime` ⇔ `index.value == 0` (src/js_parser/ast/base.zig).
     if module_type == bundle_opts::Format::InternalBakeDev && source.index.0 != 0 {
-        // TODO(b2-blocked): bun_js_printer::__gated_printer::Printer::print_dev_server_module
-        // (re-gated above on bun_logger::fs::Path::pretty + Part::stmts shape).
-        
         printer.print_dev_server_module(source, ast, &parts[0]);
-        #[cfg(any())]
-        { let _ = (&ast, &parts); todo!("b2 stub: print_dev_server_module") }
     } else {
         // The IIFE wrapper is done in `postProcessJSChunk`, so we just manually
         // trigger an indent.

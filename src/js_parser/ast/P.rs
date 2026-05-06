@@ -8365,7 +8365,8 @@ pub fn key_expr_data() -> js_ast::ExprData {
     // `ExprData::EString` now wraps a `StoreRef<EString>`; allocate a fresh
     // store node from the prefill constant on each call (callers are JSX-only
     // and infrequent — see js_ast::expr::IntoExprData for `EString`).
-    <E::String as js_ast::expr::IntoExprData>::into_expr_data(E::String::init(b"key"))
+    use js_ast::expr::IntoExprData as _;
+    E::String::init(b"key").into_data_store()
 }
 #[inline]
 pub fn null_value_expr() -> js_ast::ExprData {

@@ -2750,8 +2750,9 @@ unsafe fn transpile_virtual_module(
     // SAFETY: per fn contract.
     let referrer_slice = unsafe { &*referrer_ptr }.to_utf8();
 
-    let virtual_source = logger::Source::init_path_string(specifier, source_code_slice.slice());
-    let mut log = logger::Log::init();
+    let virtual_source =
+        bun_logger::Source::init_path_string(specifier, source_code_slice.slice());
+    let mut log = bun_logger::Log::init();
     let path = Fs::Path::init(specifier);
 
     // Spec :1262-1270 — `loader_ != ._none ? fromAPI(loader_) : loaders.get(ext)
@@ -2806,7 +2807,7 @@ unsafe fn transpile_virtual_module(
         // SAFETY: per fn contract — `*specifier_ptr` is valid for the call;
         // `bun.String` is `Copy` (tagged-pointer pair) so by-value is sound.
         input_specifier: unsafe { *specifier_ptr },
-        log: &mut log as *mut logger::Log,
+        log: &mut log as *mut bun_logger::Log,
         virtual_source: Some(&virtual_source),
         global_object: global,
         flags: FetchFlags::Transpile,

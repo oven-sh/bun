@@ -1490,11 +1490,52 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
         &mut self,
         args: core::fmt::Arguments<'_>,
     ) -> core::result::Result<&[u8], AllocError> {
-        // TODO(port): Zig uses `std.fmt.count(fmt, args)`; `core::fmt::Arguments` has
-        // `estimated_capacity()` (nightly) but no exact count. Phase B: count via a counting
-        // `Write` adaptor first, then bufPrint.
-        let _ = args;
-        unimplemented!("print_with_type: needs fmt::count equivalent (Phase B)")
+        // ── std.fmt.count: drive a discarding `fmt::Write` that only sums byte lengths.
+        // (Inlined here because bun_alloc sits below bun_core in T0; cannot pull
+        // `bun_core::fmt::count`.)
+        struct Discarding(usize);
+        impl core::fmt::Write for Discarding {
+            #[inline]
+            fn write_str(&mut self, s: &str) -> core::fmt::Result {
+                self.0 += s.len();
+                Ok(())
+            }
+        }
+        let mut counter = Discarding(0);
+        // Infallible: our `write_str` never errors (Zig: `error.WriteFailed => unreachable`).
+        let _ = core::fmt::write(&mut counter, args);
+        let len = counter.0;
+
+        // var buf = try self.appendMutable(EmptyType, .{ .len = count + 1 });
+        let buf = self.append_mutable(EmptyType { len: len + 1 })?;
+        let buf_len = buf.len();
+        // buf[buf.len - 1] = 0;
+        buf[buf_len - 1] = 0;
+
+        // ── std.fmt.bufPrint(buf[0..len-1], fmt, args) catch unreachable
+        struct SliceCursor<'a> {
+            buf: &'a mut [u8],
+            pos: usize,
+        }
+        impl<'a> core::fmt::Write for SliceCursor<'a> {
+            fn write_str(&mut self, s: &str) -> core::fmt::Result {
+                let bytes = s.as_bytes();
+                let end = self.pos + bytes.len();
+                if end > self.buf.len() {
+                    return Err(core::fmt::Error);
+                }
+                self.buf[self.pos..end].copy_from_slice(bytes);
+                self.pos = end;
+                Ok(())
+            }
+        }
+        let written = {
+            let mut cursor = SliceCursor { buf: &mut buf[..buf_len - 1], pos: 0 };
+            // `catch unreachable`: we counted the exact length above.
+            core::fmt::write(&mut cursor, args).expect("counted length");
+            cursor.pos
+        };
+        Ok(&buf[..written])
     }
 
     pub fn print(

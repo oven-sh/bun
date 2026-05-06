@@ -989,101 +989,11 @@ pub mod npm {
     }
 }
 
- // B-2: replaced by real module above
-pub mod hosted_git_info_stub {
-    /// Port of `HostedGitInfo` (src/install/hosted_git_info.zig). Owned-buffer
-    /// fields collapse to `Box<[u8]>`; the Zig `_memory_buffer`/`_allocator`
-    /// pair is the backing arena and drops with the struct.
-    pub struct HostedGitInfo {
-        pub committish: Option<Box<[u8]>>,
-        pub project: Box<[u8]>,
-        pub user: Option<Box<[u8]>>,
-        pub host_provider: HostProvider,
-        pub default_representation: Representation,
-    }
-
-    impl HostedGitInfo {
-        // PORT NOTE: Zig signature is `fromUrl(allocator, npa_str: []u8)` (mutable
-        // — it rewrites scp-style `git@host:user/repo` in place). Callers in
-        // `dependency.rs` only have `&[u8]`; the real impl will need to dupe into
-        // a scratch buffer before mutation. Stub takes `&[u8]` so call sites
-        // type-check.
-        pub fn from_url(_npa_str: &[u8]) -> Result<Option<Self>, bun_core::Error> {
-            todo!("B-2: HostedGitInfo::from_url")
-        }
-    }
-
-    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-    pub enum HostProvider { Github, Gitlab, Bitbucket, Gist, Sourcehut }
-    impl HostProvider {
-        pub fn type_str(self) -> &'static [u8] {
-            match self {
-                Self::Github => b"github", Self::Gitlab => b"gitlab",
-                Self::Bitbucket => b"bitbucket", Self::Gist => b"gist",
-                Self::Sourcehut => b"sourcehut",
-            }
-        }
-        pub fn domain(self) -> &'static [u8] {
-            match self {
-                Self::Github => b"github.com", Self::Gitlab => b"gitlab.com",
-                Self::Bitbucket => b"bitbucket.org", Self::Gist => b"gist.github.com",
-                Self::Sourcehut => b"git.sr.ht",
-            }
-        }
-    }
-
-    #[derive(Clone, Copy, PartialEq, Eq, Debug, strum::IntoStaticStr)]
-    #[strum(serialize_all = "lowercase")]
-    pub enum Representation { Shortcut, Https, Ssh, Git }
-
-    pub struct ParsedUrl {
-        /// Zig: `url: *jsc.URL` (WTF::URL handle, src/install/hosted_git_info.zig).
-        /// `MOVE_DOWN(b0)` placed the WTF::URL FFI in `bun_url::whatwg`, so this
-        /// no longer needs a `bun_jsc` dep.
-        pub url: WhatwgUrl,
-        pub proto: UrlProtocol,
-    }
-
-    /// Owned WTF::URL handle — RAII over `bun_url::whatwg::URL` (opaque C++).
-    /// Zig held `*jsc.URL` and called `.deinit()` at scope exit; `Drop` does it here.
-    pub struct WhatwgUrl(core::ptr::NonNull<bun_url::whatwg::URL>);
-    impl WhatwgUrl {
-        pub fn from_string(s: &bun_string::String) -> Option<Self> {
-            bun_url::whatwg::URL::from_string(s).map(Self)
-        }
-        pub fn from_utf8(input: &[u8]) -> Option<Self> {
-            bun_url::whatwg::URL::from_utf8(input).map(Self)
-        }
-        /// Zig: `jsc.URL.href()` → `bun.String`.
-        pub fn href(&mut self) -> bun_string::String {
-            // SAFETY: handle is live for `'self`; C++ side reads, never invalidates.
-            unsafe { self.0.as_mut() }.href()
-        }
-        pub fn as_raw(&mut self) -> &mut bun_url::whatwg::URL {
-            // SAFETY: handle is live for `'self`.
-            unsafe { self.0.as_mut() }
-        }
-    }
-    impl Drop for WhatwgUrl {
-        fn drop(&mut self) {
-            // SAFETY: `from_string`/`from_utf8` returned a heap-allocated WTF::URL we own.
-            unsafe { self.0.as_mut() }.deinit();
-        }
-    }
-
-    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-    pub enum UrlProtocol { Git, GitSsh, GitHttps, Http, Https, Ssh, File, Other }
-
-    /// Zig: `parseUrl(allocator, npa_str) error{InvalidGitUrl,OOM}!{ url, proto }`.
-    pub fn parse_url(_npa_str: &mut [u8]) -> Result<ParsedUrl, bun_core::Error> {
-        todo!("B-2: hosted_git_info::parse_url")
-    }
-
-    /// Zig: `hosted_git_info.isGitHubShorthand(spec)` — owner/repo[#committish].
-    pub fn is_github_shorthand(_spec: &[u8]) -> bool {
-        todo!("B-2: hosted_git_info::is_github_shorthand — un-gate hosted_git_info.rs")
-    }
-}
+// B-2: `hosted_git_info_stub` removed — the real `hosted_git_info` module
+// (src/install/hosted_git_info.rs) is un-gated above and carries the full
+// `HostedGitInfo::from_url` / `parse_url` / `is_github_shorthand` ports. The
+// inline stub had zero call sites and its `UrlProtocol`/`Representation`
+// shapes had already diverged from the Zig source.
 
 // ──────────────────────────────────────────────────────────────────────────
 // Re-exports

@@ -1583,11 +1583,24 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
     }
 }
 
+/// Narrow an `Enc::Unit` slice to ASCII bytes. Only valid when the lexer has
+/// guaranteed every unit is `< 0x80` (digits / sign / `.` / `e` / `_` / radix
+/// prefix); callers are `parse_double_generic` and `parse_unsigned_radix0`.
+#[inline]
+fn ascii_narrow<Enc: Encoding>(s: &[Enc::Unit]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(s.len());
+    for &u in s {
+        let w = Enc::wide(u);
+        debug_assert!(w < 0x80, "ascii_narrow: non-ASCII unit {w:#x}");
+        out.push(w as u8);
+    }
+    out
+}
+
 /// Port of `bun.jsc.wtf.parseDouble(slice)` over an encoding-generic slice.
 /// `bun_str::wtf::parse_double` takes `&[u8]`; for `Utf8`/`Latin1` we narrow
-/// via `Enc::key_bytes` (identity). The `Utf16` monomorph fails loudly via
-/// `todo!()` rather than silently returning `Err(())` (PORTING.md
-/// §Forbidden-patterns: silent-no-op).
+/// via `Enc::key_bytes` (identity). For `Utf16` the lexer guarantees the
+/// slice is ASCII-only, so it is narrowed unit-by-unit.
 // MOVE_DOWN(b0): wtf::parse_double → bun_str (T1)
 fn parse_double_generic<Enc: Encoding>(s: &[Enc::Unit]) -> Result<f64, ()> {
     match Enc::KIND {
@@ -1596,9 +1609,8 @@ fn parse_double_generic<Enc: Encoding>(s: &[Enc::Unit]) -> Result<f64, ()> {
             bun_str::wtf::parse_double(bytes).map_err(|_| ())
         }
         EncodingKind::Utf16 => {
-            // TODO(port): needs &[u16]→ASCII narrowing (the lexer guaranteed
-            // ASCII-only digits/sign/dot/e in this slice). Phase B.
-            todo!("parse_double_generic<Utf16>: ASCII-narrow &[u16] before wtf::parse_double")
+            let narrowed = ascii_narrow::<Enc>(s);
+            bun_str::wtf::parse_double(&narrowed).map_err(|_| ())
         }
     }
 }
@@ -1606,15 +1618,15 @@ fn parse_double_generic<Enc: Encoding>(s: &[Enc::Unit]) -> Result<f64, ()> {
 /// Port of `std.fmt.parseUnsigned(u64, slice, 0)` over an encoding-generic
 /// slice. Radix 0 = auto-detect `0x`/`0X` (hex), `0o`/`0O` (oct), `0b`/`0B`
 /// (bin), else decimal; `_` is a digit separator. Utf8/Latin1 narrow via
-/// `Enc::key_bytes`; Utf16 is `todo!()` (loud, not silent).
+/// `Enc::key_bytes`; Utf16 narrows ASCII unit-by-unit.
 fn parse_unsigned_radix0<Enc: Encoding>(s: &[Enc::Unit]) -> Result<u64, ()> {
     match Enc::KIND {
         EncodingKind::Utf8 | EncodingKind::Latin1 => {
             parse_unsigned_radix0_bytes(Enc::key_bytes(s))
         }
         EncodingKind::Utf16 => {
-            // TODO(port): needs &[u16]→ASCII narrowing. Phase B.
-            todo!("parse_unsigned_radix0<Utf16>: ASCII-narrow &[u16]")
+            let narrowed = ascii_narrow::<Enc>(s);
+            parse_unsigned_radix0_bytes(&narrowed)
         }
     }
 }

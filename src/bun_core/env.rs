@@ -122,6 +122,18 @@ pub enum OperatingSystem {
     Wasm,
 }
 
+/// Port of the subset of Zig's `std.Target.Os.Tag` that Bun targets.
+/// Variant names match the Zig stdlib tags (`.macos`, `.linux`, `.freebsd`,
+/// `.windows`) so cross-references in ported code stay 1:1.
+#[repr(u8)]
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum StdOsTag {
+    Macos,
+    Linux,
+    Freebsd,
+    Windows,
+}
+
 impl OperatingSystem {
     pub const NAMES: phf::Map<&'static [u8], OperatingSystem> = phf_map! {
         b"windows" => OperatingSystem::Windows,
@@ -165,10 +177,14 @@ impl OperatingSystem {
         }
     }
 
-    // TODO(port): std.Target.Os.Tag has no Rust equivalent; callers should match on
-    // OperatingSystem directly or use cfg!. Phase B decides if this is needed.
-    pub fn std_os_tag(self) -> ! {
-        unimplemented!("std.Target.Os.Tag has no Rust equivalent")
+    pub const fn std_os_tag(self) -> StdOsTag {
+        match self {
+            Self::Mac => StdOsTag::Macos,
+            Self::Linux => StdOsTag::Linux,
+            Self::Freebsd => StdOsTag::Freebsd,
+            Self::Windows => StdOsTag::Windows,
+            Self::Wasm => unreachable!(),
+        }
     }
 
     /// npm package name, `@oven-sh/bun-{os}-{arch}`

@@ -3044,7 +3044,7 @@ impl Data {
             },
             Data::EBigInt(l) => {
                 if let Data::EBigInt(r) = right {
-                    if strings::strings::eql_long::<true>(l.value, r.value) {
+                    if strings::strings::eql_long(l.value, r.value, true) {
                         return Equality::TRUE;
                     }
                     // 0x0000n == 0n is true

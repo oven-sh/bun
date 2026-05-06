@@ -324,23 +324,21 @@ impl SplitBundlerOptions {
         plugin_array: JSValue,
         global: &JSGlobalObject,
     ) -> JsResult<()> {
-        // The real `Plugin::create` / `add_plugin` live in
-        // `crate::api::js_bundler::_jsc_gated`, which is still
-        // ``-gated. The validation walk below mirrors the spec
-        // (bake.zig:152-196) so error paths are exercised; the FFI calls are
-        // stubbed until the upstream module un-gates.
-        //
-        // Spec (bake.zig:149-150) creates `Plugin` and assigns it to
+        // Spec (bake.zig:149-150): create the Plugin and assign it to
         // `opts.plugin` BEFORE iterating, so `plugins: []` still leaves
-        // `self.plugin = Some(_)`. We can't construct the real Plugin yet, so
-        // fail loudly here rather than silently diverging on the empty-array
-        // path. TODO(b2-blocked): crate::api::js_bundler::Plugin — replace
-        // with `self.plugin.get_or_insert_with(|| Plugin::create(global, .bun))`.
-        let _ = &mut self.plugin;
-        todo!("blocked_on: crate::api::js_bundler::Plugin");
-        #[allow(unreachable_code)]
+        // `self.plugin = Some(_)`.
+        let plugin: NonNull<Plugin> = match self.plugin {
+            Some(p) => p,
+            None => {
+                let p = Plugin::create(global, bun_jsc::BunPluginTarget::Bun);
+                // SAFETY: `JSBundlerPlugin__create` returns a non-null JSCell
+                // pointer (it `protect()`s it before returning).
+                let p = unsafe { NonNull::new_unchecked(p) };
+                self.plugin = Some(p);
+                p
+            }
+        };
         let empty_object = JSValue::create_empty_object(global, 0);
-        let _ = empty_object;
 
         let mut iter = plugin_array.array_iterator(global)?;
         while let Some(plugin_config) = iter.next()? {
@@ -363,7 +361,7 @@ impl SplitBundlerOptions {
                 )));
             }
 
-            let _function = match get_function(plugin_config, global, b"setup")? {
+            let function = match get_function(plugin_config, global, b"setup")? {
                 Some(f) => f,
                 None => {
                     return Err(global.throw_invalid_arguments(format_args!(
@@ -371,10 +369,31 @@ impl SplitBundlerOptions {
                     )));
                 }
             };
-            // TODO(b2-blocked): crate::api::js_bundler::Plugin — un-gate
-            // `_jsc_gated` to wire `Plugin::create` + `add_plugin` +
-            // promise-unwrap (bun_jsc::PromiseUnwrapMode::MarkHandled).
-            todo!("blocked_on: crate::api::js_bundler::Plugin");
+
+            // SAFETY: `plugin` is a live opaque FFI handle held in
+            // `self.plugin` (protected JSCell); reborrowed uniquely for the
+            // duration of this call.
+            let plugin_result = unsafe { &mut *plugin.as_ptr() }.add_plugin(
+                function,
+                empty_object,
+                JSValue::NULL,
+                false,
+                true,
+            )?;
+
+            if let Some(promise) = plugin_result.as_any_promise() {
+                promise.set_handled(global.vm());
+                // TODO: remove this call, replace with a promise list that must
+                // be resolved before the first bundle task can begin.
+                global.bun_vm().wait_for_promise(promise);
+                match promise.unwrap(global.vm(), bun_jsc::PromiseUnwrapMode::MarkHandled) {
+                    bun_jsc::PromiseResult::Pending => unreachable!(),
+                    bun_jsc::PromiseResult::Fulfilled(_val) => {}
+                    bun_jsc::PromiseResult::Rejected(err) => {
+                        return Err(global.throw_value(err));
+                    }
+                }
+            }
         }
         Ok(())
     }

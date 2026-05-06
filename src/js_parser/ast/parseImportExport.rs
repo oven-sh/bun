@@ -483,7 +483,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/js_parser/ast/parseImportExport.zig (437 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      mixin-struct pattern ported as ZST + assoc fns over P<const TS, const JSX, const SCAN_ONLY>; Phase B may flatten into `impl P`. Arena Vec used for clause items (AST crate).
+//   confidence: high
+//   todos:      0
+//   notes:      mixin-struct pattern flattened into `impl P<'a, const TS, J, const SCAN_ONLY>`. Arena Vec used for clause items (AST crate).
 // ──────────────────────────────────────────────────────────────────────────

@@ -21,3 +21,4 @@ bun_alloc.workspace = true
 bun_core.workspace = true
 
 thiserror.workspace = true
+itoa.workspace = true

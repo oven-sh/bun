@@ -1280,24 +1280,6 @@ impl<'a> ScopeIterator<'a> {
 // loadNpmrcConfig / loadNpmrc
 // ──────────────────────────────────────────────────────────────────────────
 
-// TODO(b2-blocked): bun_core::output::ErrName for bun_sys::Error
-// TODO(b2-blocked): bun_js_parser::Expr::{as_property,get,as_bool,is_array,as_string,as_string_cloned}
-// TODO(b2-blocked): bun_install_types::NodeLinker::PnpmMatcher::from_expr (Expr type unification — currently takes bun_logger::ast::Expr, callers have bun_js_parser::Expr)
-//
-// `load_npmrc_config` / `load_npmrc` stay gated:
-//   • `load_npmrc_config` — `Output::err(err: bun_sys::Error, ..)` needs the
-//     `ErrName for bun_sys::Error` impl (TODO(b0) in bun_core/output.rs); and
-//     `Log::print` wants `&mut impl fmt::Write` but `Output::error_writer()`
-//     yields `*mut io::Writer`.
-//   • `load_npmrc` — depends on the wide `bun_js_parser::Expr` accessor
-//     surface listed above and on `PnpmMatcher::from_expr` accepting a
-//     `bun_js_parser::Expr` (currently typed against `bun_logger::ast::Expr`).
-// Shadow stubs preserve the public symbol names so dependents type-check.
-
-pub fn load_npmrc_config() { todo!("b2-blocked: bun_api::BunInstall") }
-pub fn load_npmrc() { todo!("b2-blocked: bun_api::BunInstall / bun_js_parser::Expr accessors") }
-
-
 pub fn load_npmrc_config(
     install: &mut BunInstall,
     env: &mut DotEnvLoader<'_>,
@@ -1312,7 +1294,6 @@ pub fn load_npmrc_config(
     let mut configs: Vec<ConfigItem> = Vec::new();
 
     for &npmrc_path in npmrc_paths {
-        // TODO(b2-blocked): bun_logger::source_from_file (was bun_sys::File::to_source — moved up to T2)
         let source = match logger::source_from_file(
             npmrc_path,
             logger::ToSourceOpts { convert_bom: true },
@@ -1324,7 +1305,8 @@ pub fn load_npmrc_config(
                 }
                 Output::err(
                     err,
-                    format_args!("failed to read .npmrc: \"{}\"", bstr::BStr::new(npmrc_path.as_bytes())),
+                    "failed to read .npmrc: \"{s}\"",
+                    (bstr::BStr::new(npmrc_path.as_bytes()),),
                 );
                 Global::crash();
             }
@@ -1337,19 +1319,19 @@ pub fn load_npmrc_config(
         }
         if log.has_errors() {
             if log.errors == 1 {
-                Output::warn(format_args!(
-                    "Encountered an error while reading <b>{}<r>:\n\n",
-                    bstr::BStr::new(npmrc_path.as_bytes())
-                ));
+                Output::warn(
+                    "Encountered an error while reading <b>{s}<r>:\n\n",
+                    (bstr::BStr::new(npmrc_path.as_bytes()),),
+                );
             } else {
-                Output::warn(format_args!(
-                    "Encountered errors while reading <b>{}<r>:\n\n",
-                    bstr::BStr::new(npmrc_path.as_bytes())
-                ));
+                Output::warn(
+                    "Encountered errors while reading <b>{s}<r>:\n\n",
+                    (bstr::BStr::new(npmrc_path.as_bytes()),),
+                );
             }
             Output::flush();
         }
-        let _ = log.print(Output::error_writer());
+        let _ = log.print(Output::error_writer() as *mut bun_core::io::Writer);
     }
 }
 
@@ -1404,12 +1386,11 @@ pub fn load_npmrc(
     if let Some(query) = out.as_property(b"ca") {
         if let Some(str_) = query.expr.as_utf8_string_literal() {
             install.ca = Some(bun_api::Ca::Str(Box::<[u8]>::from(str_)));
-        } else if query.expr.is_array() {
-            let arr = query.expr.data.e_array();
+        } else if let ExprData::EArray(arr) = &query.expr.data {
             let mut list: Vec<Box<[u8]>> = Vec::with_capacity(arr.items.len());
             for item in arr.items.slice() {
-                if let Some(s) = item.as_string_cloned()? {
-                    list.push(s);
+                if let Some(s) = item.as_string_cloned(bump)? {
+                    list.push(Box::<[u8]>::from(s));
                 }
             }
             install.ca = Some(bun_api::Ca::List(list.into_boxed_slice()));
@@ -1417,8 +1398,8 @@ pub fn load_npmrc(
     }
 
     if let Some(query) = out.as_property(b"cafile") {
-        if let Some(cafile) = query.expr.as_string_cloned()? {
-            install.cafile = Some(cafile);
+        if let Some(cafile) = query.expr.as_string_cloned(bump)? {
+            install.cafile = Some(Box::<[u8]>::from(cafile));
         }
     }
 

@@ -362,6 +362,8 @@ pub struct Task<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> {
 
 impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool>
     Task<Ctx, EventLoopType, RELOAD_IMMEDIATELY>
+where
+    Ctx: HotReloaderCtx<EventLoop = EventLoopType>,
 {
     pub fn init_empty(
         reloader: *mut NewHotReloader<Ctx, EventLoopType, RELOAD_IMMEDIATELY>,
@@ -387,8 +389,6 @@ impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool>
     }
 
     pub fn run(&mut self) {
-         // TODO(b2-blocked): HotReloaderCtx trait — Ctx::reload(self, task)
-        {
         // Since we rely on the event loop for hot reloads, there can be
         // a delay before the next reload begins. In the time between the
         // last reload and the next one, we shouldn't schedule any more
@@ -402,10 +402,8 @@ impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool>
         let reloader = unsafe { &mut *self.reloader };
         while reloader.pending_count.swap(0, Ordering::Relaxed) > 0 {
             // SAFETY: ctx outlives reloader (BACKREF).
-            // TODO(port): requires `Ctx: HotReloaderCtx` trait bound for `.reload`
             unsafe { (*reloader.ctx).reload(self) };
         }
-        } // end 
     }
 
     pub fn enqueue(&mut self) {
@@ -472,15 +470,15 @@ impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool>
 
 impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool>
     NewHotReloader<Ctx, EventLoopType, RELOAD_IMMEDIATELY>
+where
+    Ctx: HotReloaderCtx<EventLoop = EventLoopType>,
 {
     pub fn init(
         ctx: *mut Ctx,
-        fs: &mut FileSystem,
+        fs: &'static FileSystem,
         verbose: bool,
         clear_screen_flag: bool,
     ) -> Box<Watcher> {
-         // TODO(b2-blocked): bun_watcher::Watcher::{init, start}, bun_core::{handle_error_return_trace, Output::panic}
-        {
         let reloader = Box::into_raw(Box::new(Self {
             ctx,
             verbose: cfg!(feature = "debug_logs") || verbose,
@@ -509,10 +507,7 @@ impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool>
                 err.name()
             ));
         }
-        return watcher;
-        } // end 
-        let _ = (ctx, fs, verbose, clear_screen_flag);
-        todo!("NewHotReloader::init — blocked on bun_watcher::Watcher::init")
+        watcher
     }
 
     fn debug(args: core::fmt::Arguments<'_>) {
@@ -525,12 +520,8 @@ impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool>
     }
 
     pub fn event_loop(&self) -> *mut EventLoopType {
-         // TODO(b2-blocked): HotReloaderCtx trait — Ctx::event_loop
-        {
-            // SAFETY: ctx outlives reloader (BACKREF).
-            return unsafe { (*self.ctx).event_loop() };
-        }
-        todo!("NewHotReloader::event_loop — blocked on HotReloaderCtx trait")
+        // SAFETY: ctx outlives reloader (BACKREF).
+        unsafe { (*self.ctx).event_loop() }
     }
 
     pub fn enqueue_task_concurrent(&self, task: *mut ConcurrentTask) {
@@ -706,15 +697,11 @@ impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool>
     }
 
     pub fn get_context(&mut self) -> &mut Watcher {
-         // TODO(b2-blocked): HotReloaderCtx trait — Ctx::bun_watcher_mut
-        {
-            // TODO(port): comptime reflection on `@TypeOf(this.ctx.bun_watcher)`.
-            // Zig branches three ways: ImportWatcher / Option / bare. Phase B:
-            // `HotReloaderCtx::watcher(&mut self) -> &mut Watcher` trait method.
-            // SAFETY: ctx outlives reloader (BACKREF).
-            return unsafe { (*self.ctx).bun_watcher_mut() };
-        }
-        todo!("get_context — blocked on HotReloaderCtx trait")
+        // PORT NOTE: Zig branched three ways on `@TypeOf(this.ctx.bun_watcher)`
+        // (ImportWatcher / Option / bare). Folded into `HotReloaderCtx::bun_watcher_mut`;
+        // each impl picks the right unwrap.
+        // SAFETY: ctx outlives reloader (BACKREF).
+        unsafe { (*self.ctx).bun_watcher_mut() }
     }
 
     #[inline(never)]
@@ -1068,6 +1055,38 @@ impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool>
         // _flush guard handles `Output::flush()` then `ctx.flush_evictions()` on drop (LIFO).
         } // end 
         let _ = (events, changed_files, watchlist);
+    }
+}
+
+/// `Watcher::init` stores the `NewHotReloader` as its opaque context and
+/// dispatches file-change/error callbacks through this trait. In Zig this
+/// was structural (`@hasDecl(T, "onFileUpdate")`); the Rust watcher uses
+/// `WatcherContext` instead.
+impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> bun_watcher::WatcherContext
+    for NewHotReloader<Ctx, EventLoopType, RELOAD_IMMEDIATELY>
+where
+    Ctx: HotReloaderCtx<EventLoop = EventLoopType>,
+{
+    fn on_file_update(
+        &mut self,
+        events: &mut [bun_watcher::WatchEvent],
+        changed_files: &[bun_watcher::ChangedFilePath],
+        watchlist: &bun_watcher::WatchList,
+    ) {
+        // PORT NOTE: the inherent `on_file_update` below was ported with
+        // slightly different param mutability (`&[WatchEvent]`, `&mut [Option<&mut ZStr>]`,
+        // by-value `WatchList`). Bridge the shapes here; Phase B should
+        // converge the inherent fn's signature onto this one and drop the cast.
+        // SAFETY: `ChangedFilePath = Option<&'static ZStr>`; the inherent fn
+        // never writes through `changed_files`, only reads — the `&mut` in its
+        // signature is a porting artifact.
+        let changed: *const [bun_watcher::ChangedFilePath] = changed_files;
+        let changed = unsafe { &mut *(changed as *mut [Option<&mut ZStr>]) };
+        Self::on_file_update(self, events, changed, *watchlist);
+    }
+
+    fn on_error(&mut self, err: bun_sys::Error) {
+        Self::on_error(self, err);
     }
 }
 

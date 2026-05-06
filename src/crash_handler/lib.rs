@@ -219,19 +219,25 @@ fn abort() -> ! {
 use super::debug::{SelfInfo, SourceLocation, TtyConfig};
 use super::cpu_features::CPUFeatures;
 
-// ── small local helpers (B-2) ─────────────────────────────────────────────
-/// Zig: `Output.enable_ansi_colors_stderr`. bun_core only exposes the atomic.
-#[inline(always)]
-fn enable_ansi_colors_stderr() -> bool {
-    Output::ENABLE_ANSI_COLORS_STDERR.load(Ordering::Relaxed)
+/// Zig: `bun.fmt.fmtArgv` — print an argv vector as a shell-ish line.
+/// crash_handler.zig:1024 calls this when the addr2line spawn fails.
+fn fmt_argv<W: core::fmt::Write>(w: &mut W, argv: &[Vec<u8>]) -> core::fmt::Result {
+    for (i, a) in argv.iter().enumerate() {
+        if i > 0 { w.write_char(' ')?; }
+        // Best-effort lossy print — argv came from this process so it's UTF-8
+        // by construction, but the stderr sink is `core::fmt::Write`.
+        match core::str::from_utf8(a) {
+            Ok(s) => w.write_str(s)?,
+            Err(_) => {
+                for &b in a {
+                    w.write_char(b as char)?;
+                }
+            }
+        }
+    }
+    Ok(())
 }
-/// Zig: `std.posix.abort()` — bun_sys::posix has no `abort` yet; libc is
-/// async-signal-safe and equivalent on all targets.
-#[cold]
-fn abort() -> ! {
-    // SAFETY: libc::abort is async-signal-safe and never returns.
-    unsafe { libc::abort() }
-}
+
 /// Zig: `bun.strings.indexOf`. bun_core::strings has no `index_of` yet.
 #[inline]
 fn index_of(h: &[u8], n: &[u8]) -> Option<usize> {

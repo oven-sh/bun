@@ -2175,21 +2175,24 @@ pub fn format_ip<'a>(address: &impl Display, into: &'a mut [u8]) -> Result<&'a m
     let mut cursor = std::io::Cursor::new(&mut into[..]);
     write!(cursor, "{}", address).map_err(|_| crate::err!("NoSpaceLeft"))?;
     let written = cursor.position() as usize;
-    let mut result = &mut into[..written];
+
+    // PORT NOTE: reshaped for borrowck — compute (start, end) offsets against
+    // `into` instead of iteratively reborrowing a `result` slice, so the final
+    // returned `&mut into[start..end]` carries the caller's `'a` lifetime
+    // cleanly. Semantics match Zig's `result = result[a..b]` chain exactly.
+    let mut start = 0usize;
+    let mut end = written;
 
     // Strip `:<port>`
-    if let Some(colon) = result.iter().rposition(|&b| b == b':') {
-        result = &mut result[..colon];
+    if let Some(colon) = into[start..end].iter().rposition(|&b| b == b':') {
+        end = start + colon;
     }
     // Strip brackets
-    if !result.is_empty() && result[0] == b'[' && result[result.len() - 1] == b']' {
-        let len = result.len();
-        result = &mut result[1..len - 1];
+    if start < end && into[start] == b'[' && into[end - 1] == b']' {
+        start += 1;
+        end -= 1;
     }
-    // PORT NOTE: reshaped for borrowck — recompute slice from `into` to satisfy lifetimes.
-    // TODO(port): narrow error set
-    let _ = result;
-    todo!("// TODO(port): return mutable subslice of `into`; reborrow plumbing for Phase B")
+    Ok(&mut into[start..end])
 }
 
 // ───────────────────────────────────────────────────────────────────────────

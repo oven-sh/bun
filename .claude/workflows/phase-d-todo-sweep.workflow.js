@@ -13,6 +13,8 @@ export const meta = {
 const MAX_ROUNDS = (args && args.max_rounds) || 6;
 const MAX_FILES = (args && args.max_files) || 250;
 const PREFIX_RE = (args && args.prefix) || ""; // shard regex e.g. "src/runtime/"
+||||||| Stash base
+const PREFIX = (args && args.prefix) || ""; // shard by path prefix, e.g. "src/runtime/" or "src/jsc/|src/js_"
 
 const SURVEY_S = {
   type: "object",
@@ -90,7 +92,9 @@ for (let round = 1; round <= MAX_ROUNDS; round++) {
 
 \`grep -rn 'todo!(\\|unimplemented!(' src/ --include='*.rs'\` → for each match, capture file:line + the message string (if any). Find the enclosing fn name (look upward for \`fn <name>\` / \`pub fn <name>\`).
 
-Group by file. Return {files:[{file, n, sites:[{line, msg, fn}]}], total}. Skip src/bun_bin/phase_c_exports.rs (those are intentional extern panic stubs handled separately).`,
+**SHARD FILTER:** Only include files whose path matches regex \`^(${PREFIX || ".*"})\`. ${PREFIX ? `This shard owns: \`${PREFIX}\`.` : "(no shard filter — full sweep)"}
+
+Group by file. Return {files:[{file, n, sites:[{line, msg, fn}]}], total}. Skip src/bun_bin/phase_c_exports.rs.`,
     { label: `survey-r${round}`, phase: "Survey", schema: SURVEY_S },
   );
   if (!survey || survey.total === 0) {

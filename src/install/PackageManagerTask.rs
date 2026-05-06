@@ -47,6 +47,35 @@ pub struct Task<'a> {
     pub next: *mut Task<'a>,
 }
 
+/// Zig: struct field defaults (`status = .waiting`, `threadpool_task = .{ .callback = &callback }`,
+/// `err = null`, `apply_patch_task = null`, `next = null`) with the remaining fields left
+/// `= undefined`. Callers MUST overwrite `tag`, `request`, `id`, `log`, `package_manager`
+/// before the task is observed. Exposed as a module-level fn so call sites that import this
+/// module as `Task` can write `..Task::uninit()` in struct-update position.
+#[inline]
+pub fn uninit() -> Task<'static> {
+    Task {
+        // Overwritten by every caller; zero/garbage matches Zig `undefined`.
+        // SAFETY: untagged unions of `ManuallyDrop<_>` — any bit pattern is
+        // valid storage and is never read before the caller overwrites it.
+        tag: Tag::PackageManifest,
+        request: unsafe { core::mem::zeroed() },
+        data: unsafe { core::mem::zeroed() },
+        log: unsafe { core::mem::zeroed() },
+        id: Id(0),
+        package_manager: core::ptr::null(),
+        // Real Zig field defaults:
+        status: Status::Waiting,
+        threadpool_task: thread_pool::Task {
+            node: Default::default(),
+            callback: Task::callback,
+        },
+        err: None,
+        apply_patch_task: None,
+        next: core::ptr::null_mut(),
+    }
+}
+
 // SAFETY: `next` is the sole intrusive link and is only ever read/written via
 // these accessors by `UnboundedQueue<Task>`. Mirrors Zig's `@field(item, "next")`.
 unsafe impl<'a> bun_threading::unbounded_queue::Node for Task<'a> {

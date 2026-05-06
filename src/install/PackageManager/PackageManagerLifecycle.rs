@@ -502,6 +502,89 @@ fn add_dependencies_to_set(
 use bun_install::LogLevel;
 
 // ──────────────────────────────────────────────────────────────────────────
+// Free-function re-export surface — Zig declares these at file scope with an
+// explicit `*PackageManager` first param. The `impl PackageManager` bodies
+// above are the canonical port; these thin shims keep the
+// `pub use lifecycle::{...}` re-exports in `PackageManager.rs` resolving the
+// same way `PackageManagerDirectories.rs` / `PackageManagerEnqueue.rs` do.
+// ──────────────────────────────────────────────────────────────────────────
+
+#[inline]
+pub fn ensure_preinstall_state_list_capacity(this: &mut PackageManager, count: usize) {
+    this.ensure_preinstall_state_list_capacity(count)
+}
+
+#[inline]
+pub fn set_preinstall_state(
+    this: &mut PackageManager,
+    package_id: PackageID,
+    lockfile: &Lockfile,
+    value: PreinstallState,
+) {
+    this.set_preinstall_state(package_id, lockfile, value)
+}
+
+#[inline]
+pub fn get_preinstall_state(this: &PackageManager, package_id: PackageID) -> PreinstallState {
+    this.get_preinstall_state(package_id)
+}
+
+#[inline]
+pub fn determine_preinstall_state(
+    this: &mut PackageManager,
+    pkg: Package,
+    lockfile: &mut Lockfile,
+    out_name_and_version_hash: &mut Option<u64>,
+    out_patchfile_hash: &mut Option<u64>,
+) -> PreinstallState {
+    this.determine_preinstall_state(pkg, lockfile, out_name_and_version_hash, out_patchfile_hash)
+}
+
+#[inline]
+pub fn has_no_more_pending_lifecycle_scripts(this: &mut PackageManager) -> bool {
+    this.has_no_more_pending_lifecycle_scripts()
+}
+
+#[inline]
+pub fn tick_lifecycle_scripts(this: &mut PackageManager) {
+    this.tick_lifecycle_scripts()
+}
+
+#[inline]
+pub fn sleep(this: &mut PackageManager) {
+    this.sleep()
+}
+
+#[inline]
+pub fn report_slow_lifecycle_scripts(this: &mut PackageManager) {
+    this.report_slow_lifecycle_scripts()
+}
+
+#[inline]
+pub fn load_root_lifecycle_scripts(this: &mut PackageManager, root_package: Package) {
+    this.load_root_lifecycle_scripts(root_package)
+}
+
+#[inline]
+pub fn spawn_package_lifecycle_scripts(
+    this: &mut PackageManager,
+    ctx: Command::Context,
+    list: lockfile::package::scripts::List,
+    optional: bool,
+    foreground: bool,
+    install_ctx: Option<LifecycleScriptSubprocess::InstallCtx>,
+) -> Result<(), bun_core::Error> {
+    this.spawn_package_lifecycle_scripts(ctx, list, optional, foreground, install_ctx)
+}
+
+#[inline]
+pub fn find_trusted_dependencies_from_update_requests(
+    this: &mut PackageManager,
+) -> ArrayHashMap<TruncatedPackageNameHash, ()> {
+    this.find_trusted_dependencies_from_update_requests()
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/install/PackageManager/PackageManagerLifecycle.zig (393 lines)
 //   confidence: medium

@@ -398,16 +398,16 @@ impl NetworkTask {
             } else {
                 DEFAULT_HEADERS_BUF
             };
-            header_builder.entries.push(http::Header {
-                name: http::PointerOffset {
+            header_builder.entries.append(http::headers::Entry {
+                name: http::headers::api::StringPointer {
                     offset: 0,
                     length: "Accept".len() as u32,
                 },
-                value: http::PointerOffset {
+                value: http::headers::api::StringPointer {
                     offset: "Accept".len() as u32,
                     length: (header_buf.len() - "Accept".len()) as u32,
                 },
-            });
+            })?;
             header_builder.header_count = 1;
             // SAFETY: header_buf is &'static str; GlobalStringBuilder borrows
             // it mutably in type but is never written to on this path.
@@ -442,7 +442,7 @@ impl NetworkTask {
         self.unsafe_http_client.client.flags.reject_unauthorized = pm.tls_reject_unauthorized();
 
         if PackageManager::verbose_install() {
-            self.unsafe_http_client.client.verbose = http::Verbose::Headers;
+            self.unsafe_http_client.client.verbose = HTTPVerboseLevel::Headers;
         }
 
         self.callback = Callback::PackageManifest {

@@ -424,14 +424,14 @@ impl List {
         // PERF(port): was comptime enum param — profile in Phase B
         let needle = const_format::concatcp!(SEP_STR, "node_modules", SEP_STR).as_bytes();
         if let Some(i) = strings::index_of(self.cwd.as_bytes(), needle) {
-            output::pretty!(
+            bun_core::pretty!(
                 "<d>.{s}{s} @{f}<r>\n",
                 BStr::new(SEP_STR.as_bytes()),
                 BStr::new(strings::without_trailing_slash(&self.cwd.as_bytes()[i + 1..])),
                 resolution.fmt(resolution_buf, bun_paths::Style::Posix),
             );
         } else {
-            output::pretty!(
+            bun_core::pretty!(
                 "<d>{s} @{f}<r>\n",
                 BStr::new(strings::without_trailing_slash(self.cwd.as_bytes())),
                 resolution.fmt(resolution_buf, bun_paths::Style::Posix),
@@ -442,17 +442,17 @@ impl List {
             if let Some(script) = maybe_script {
                 let name = LockfileScripts::NAMES[script_index];
                 match format_type {
-                    PrintFormat::Completed => output::pretty!(
+                    PrintFormat::Completed => bun_core::pretty!(
                         " <green>✓<r> [{s}]<d>:<r> <cyan>{s}<r>\n",
                         BStr::new(name),
                         BStr::new(script),
                     ),
-                    PrintFormat::Untrusted => output::pretty!(
+                    PrintFormat::Untrusted => bun_core::pretty!(
                         " <yellow>»<r> [{s}]<d>:<r> <cyan>{s}<r>\n",
                         BStr::new(name),
                         BStr::new(script),
                     ),
-                    PrintFormat::Info => output::pretty!(
+                    PrintFormat::Info => bun_core::pretty!(
                         " [{s}]<d>:<r> <cyan>{s}<r>\n",
                         BStr::new(name),
                         BStr::new(script),

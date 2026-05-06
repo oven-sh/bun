@@ -217,7 +217,11 @@ impl JsonCache {
         ) -> Result<Option<js_ast::Expr>, bun_core::Error> {
             // PORT NOTE: `comptime force_utf8: bool` → runtime branch over the two
             // monomorphizations (vtable slot is a plain `fn`, not generic).
-            let f = if force_utf8 {
+            let f: fn(
+                &logger::Source,
+                &mut logger::Log,
+                &bun_alloc::Arena,
+            ) -> Result<json_parser::Expr, bun_core::Error> = if force_utf8 {
                 json_parser::parse_ts_config::<true>
             } else {
                 json_parser::parse_ts_config::<false>

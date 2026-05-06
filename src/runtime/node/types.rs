@@ -466,10 +466,22 @@ impl StringOrBuffer {
     }
 
     pub fn to_js(&mut self, ctx: &JSGlobalObject) -> JsResult<JSValue> {
-        let _ = ctx;
-        // TODO(b2-blocked): SliceWithUnderlyingString::transfer_to_js +
-        // Buffer::to_node_buffer not yet ported.
-        todo!("blocked_on: bun_str::SliceWithUnderlyingString::transfer_to_js")
+        match self {
+            Self::ThreadsafeString(str) | Self::String(str) => str.transfer_to_js(ctx),
+            Self::EncodedSlice(encoded_slice) => {
+                let result =
+                    jsc::bun_string_jsc::create_utf8_for_js(ctx, encoded_slice.slice());
+                // Zig: `defer { this.encoded_slice.deinit(); this.encoded_slice = .{}; }`
+                *encoded_slice = ZigStringSlice::default();
+                result
+            }
+            Self::Buffer(buffer) => {
+                if buffer.buffer.value != JSValue::ZERO {
+                    return Ok(buffer.buffer.value);
+                }
+                Ok(buffer.to_node_buffer(ctx))
+            }
+        }
     }
 
     /// Explicit cleanup hook (Zig parity). Ownership is on `Drop`.

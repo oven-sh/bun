@@ -4,15 +4,7 @@ use crate::css_values::ident::DashedIdent;
 use crate::css_values::syntax::SyntaxString;
 use crate::{PrintErr, Printer};
 
-// `ParsedComponent` is `#[cfg(any())]`-gated in values/syntax.rs (its variant
-// payloads need the gated `properties::{transform,custom}` + `values::{image,
-// color}` un-gates). Re-export when available; otherwise unit-stub so the
-// `initial_value: Option<ParsedComponent>` field compiles. The `to_css`/`parse`
-// bodies that touch its variants are gated below.
-#[cfg(any())]
 use crate::css_values::syntax::ParsedComponent;
-#[cfg(not(any()))]
-type ParsedComponent = ();
 
 pub struct PropertyRule {
     pub name: DashedIdent,
@@ -54,19 +46,8 @@ impl PropertyRule {
 
             dest.write_str("initial-value:")?;
             dest.whitespace()?;
-            // blocked_on: values/syntax.rs ParsedComponent un-gate (its variant
-            // payloads need properties::{transform,custom} + values::{image,
-            // color}). While gated, `ParsedComponent = ()` and `initial_value`
-            // is never `Some` — panic loudly if that invariant is violated.
-            #[cfg(any())]
             initial_value.to_css(dest)?;
-            #[cfg(not(any()))]
-            {
-                let _ = initial_value;
-                todo!("blocked_on: ParsedComponent::to_css — values/syntax.rs un-gate")
-            }
 
-            #[allow(unreachable_code)]
             if !dest.minify {
                 dest.write_char(b';')?;
             }
@@ -90,10 +71,7 @@ impl PropertyRule {
             name: self.name.deep_clone(bump),
             syntax: self.syntax.deep_clone(bump),
             inherits: self.inherits,
-            #[cfg(any())]
             initial_value: self.initial_value.as_ref().map(|v| v.deep_clone(bump)),
-            #[cfg(not(any()))]
-            initial_value: self.initial_value,
             loc: self.loc,
         }
     }

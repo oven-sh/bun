@@ -164,7 +164,7 @@ pub use parse_task::ParseTask;
 /// associated type on the struct (not a sibling module — that would collide
 /// with this re-export).
 pub use ungate_support::entry_point::EntryPoint;
-pub use defines::Define;
+pub use defines::{Define, DefineExt, DefineDataExt};
 /// Real `ThreadPool` (un-gated B-2). See `thread_pool` module.
 pub use thread_pool::{ThreadPool, Worker};
 /// Stub: defined in gated `bundle_v2` module (`bundle_v2.zig:AdditionalFile`).
@@ -483,8 +483,10 @@ pub mod options {
 
 pub use cache::Set as Cache;
 /// Re-export so `crate::RuntimeTranspilerCache` resolves for `transpiler::ParseOptions`
-/// and downstream callers (`jsc_hooks` / `RuntimeTranspilerStore`).
-pub use cache::RuntimeTranspilerCache;
+/// and downstream callers (`jsc_hooks` / `RuntimeTranspilerStore`). B-3: the
+/// struct is canonical in `bun_js_parser`; the bundler-tier `put`/`disabled`/
+/// `as_printer_ref` live on `RuntimeTranspilerCacheExt`.
+pub use cache::{RuntimeTranspilerCache, RuntimeTranspilerCacheExt};
 
 // ──────────────────────────────────────────────────────────────────────────
 // CYCLEBREAK(b0) TYPE_ONLY: pure value types from bake that bundler needs

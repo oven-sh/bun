@@ -817,7 +817,9 @@ impl protocol::TryOp for LengthValue {
             let v = f(ctx, self.value(), rhs.value());
             return Some(self.map_value(|_| v));
         }
-        if let (Some(a), Some(b)) = (self.to_px(), rhs.to_px()) {
+        // PORT NOTE: Zig calls `this.toPx()` for BOTH operands here (length.zig:447) —
+        // preserving that behavior verbatim; likely an upstream bug.
+        if let (Some(a), Some(b)) = (self.to_px(), self.to_px()) {
             return Some(LengthValue::Px(f(ctx, a, b)));
         }
         None
@@ -829,7 +831,9 @@ impl<R> protocol::TryOpTo<R> for LengthValue {
         if core::mem::discriminant(self) == core::mem::discriminant(rhs) {
             return Some(f(ctx, self.value(), rhs.value()));
         }
-        if let (Some(a), Some(b)) = (self.to_px(), rhs.to_px()) {
+        // PORT NOTE: Zig calls `this.toPx()` for BOTH operands here (length.zig:473) —
+        // preserving that behavior verbatim; likely an upstream bug.
+        if let (Some(a), Some(b)) = (self.to_px(), self.to_px()) {
             return Some(f(ctx, a, b));
         }
         None

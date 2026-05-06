@@ -789,8 +789,11 @@ impl PackageJSON {
         // PERF(port): include_scripts_ was a comptime enum param — profile in Phase B
         let include_scripts = include_scripts_ == IncludeScripts::IncludeScripts;
 
-        let r_fs: &mut fs::FileSystem = r.fs();
-        let r_log: &mut logger::Log = r.log();
+        // SAFETY: caller upholds the single-thread `Resolver` aliasing contract
+        // (Zig had no borrow split here either — `r.fs`/`r.log` are accessed
+        // freely throughout `parse`).
+        let r_fs: &mut fs::FileSystem = unsafe { r.fs() };
+        let r_log: &mut logger::Log = unsafe { r.log() };
 
         // TODO: remove this extra copy
         let parts: [&[u8]; 2] = [input_path, b"package.json"];

@@ -522,12 +522,18 @@ fn dup_source(s: &logger::Source) -> logger::Source {
 
 use bun_options_types::schema::api;
 
-// ── B-2 un-gate shims (parse_maybe Js/Ts arm) ────────────────────────────
-// `bun_js_parser::parser::options::JSX::Pragma` and
-// `crate::options_impl::jsx::Pragma` are field-for-field identical but
-// nominally distinct (the parser crate carries a CYCLEBREAK local copy until
-// `bun_options_types` grows the JSX surface — see parser.rs:47 TODO). Same for
-// `ModuleType`. Phase B-3 collapses the duplicates; until then convert by value.
+// ── B-3 type unification (parse_maybe Js/Ts arm) ─────────────────────────
+// `ModuleType`, `Define`, `RuntimeTranspilerCache` are now single nominal
+// types shared between `bun_js_parser` and this crate (canonical defs live in
+// the lower-tier crate; bundler re-exports). The by-value conversion shims
+// for those are gone — `to_parser_module_type` is an identity fn and
+// `parse_maybe` threads `self.options.define` / `runtime_transpiler_cache`
+// directly.
+//
+// `JSX::Pragma` keeps a thin by-value conversion: `options_impl::jsx::Runtime`
+// carries a 4th `_None` state for `api::JsxRuntime` round-tripping that the
+// parser-side 3-state enum lacks. Collapsing it would change parser match
+// exhaustiveness; deferred until `bun_options_types` grows the JSX surface.
 
 #[inline]
 fn to_parser_jsx_pragma(

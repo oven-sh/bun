@@ -299,7 +299,8 @@ pub fn view(
 
     // Treat versions specially because npm does some normalization on there.
     if let Some(versions_object) = json.get_object(b"versions") {
-        let props = versions_object.data.e_object().unwrap().properties.slice();
+        let versions_e_obj = versions_object.data.e_object().unwrap();
+        let props = versions_e_obj.properties.slice();
         let mut keys: Vec<ast::Expr> = Vec::with_capacity(props.len());
         debug_assert_eq!(props.len(), keys.capacity());
         for prop in props {

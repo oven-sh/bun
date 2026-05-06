@@ -992,6 +992,12 @@ impl Drop for PathLike {
 }
 
 impl PathLike {
+    /// Zig parity: `pathlike == .string`.
+    #[inline]
+    pub fn is_string(&self) -> bool {
+        matches!(self, Self::String(_))
+    }
+
     #[inline]
     pub fn slice(&self) -> &[u8] {
         match self {

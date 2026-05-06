@@ -2936,7 +2936,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 }
                 // If we ended the response without attaching an ondata handler, we discard the body read stream
                 else if !matches!(http_result, HTTPResult::Pending(_)) {
-                    node_response.maybe_stop_reading_body(vm, node_response.get_this_value());
+                    // SAFETY: `self.vm` is the singleton runtime VM (`&'static`); `Ref::unref`
+                    // mutates `active_tasks`, so reborrow exclusively for this call.
+                    let vm_mut = unsafe {
+                        &mut *(vm as *const jsc::virtual_machine::VirtualMachine
+                            as *mut jsc::virtual_machine::VirtualMachine)
+                    };
+                    node_response.maybe_stop_reading_body(vm_mut, node_response.get_this_value());
                 }
             }
         }

@@ -1622,9 +1622,9 @@ pub mod package_manifest {
             let mut dest_path_buf = [0u8; 512 + 64];
             let mut out_path_buf = [0u8; ("18446744073709551615".len() * 2) + "_".len() + ".npm".len() + 1];
             let mut dest_path_stream = bun_io::FixedBufferStream::new_mut(&mut dest_path_buf);
-            let file_id_hex_fmt = bun_fmt::hex_int_lower(file_id);
+            let file_id_hex_fmt = bun_fmt::hex_int_lower::<16>(file_id);
             let hex_timestamp: usize = usize::try_from(bun_core::time::milli_timestamp().max(0)).unwrap();
-            let hex_timestamp_fmt = bun_fmt::hex_int_lower(hex_timestamp as u64);
+            let hex_timestamp_fmt = bun_fmt::hex_int_lower::<16>(hex_timestamp as u64);
             write!(dest_path_stream, "{}.npm-{}", file_id_hex_fmt, hex_timestamp_fmt)?;
             dest_path_stream.write_byte(0)?;
             let pos = dest_path_stream.pos;
@@ -1644,7 +1644,7 @@ pub mod package_manifest {
             let Ok(cache_file) = File::openat(cache_dir, file_name, bun_sys::O::RDONLY, 0) else {
                 return Ok(None);
             };
-            let _close = scopeguard::guard((), |_| { let _ = cache_file.close(); });
+            let cache_file = scopeguard::guard(cache_file, |f| { let _ = f.close(); });
 
             'delete: {
                 match Self::load_by_file(scope, &cache_file) {

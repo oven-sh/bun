@@ -18,7 +18,9 @@ impl MethodJsc for Method {
     fn to_js(self, global: &JSGlobalObject) -> JSValue {
         // SAFETY: `global` is a valid live JSGlobalObject for the duration of the call;
         // `Method` is `#[repr(uN)]` matching the C++ definition of `Bun__HTTPMethod__toJS`.
-        unsafe { Bun__HTTPMethod__toJS(self, global as *const _ as *mut _) }
+        // `as_ptr()` routes through `JSGlobalObject`'s `UnsafeCell` interior, so the
+        // resulting `*mut` carries write provenance (C++ may mutate VM/heap state).
+        unsafe { Bun__HTTPMethod__toJS(self, global.as_ptr()) }
     }
 }
 
